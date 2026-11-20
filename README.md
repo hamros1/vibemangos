@@ -307,7 +307,9 @@ What works now:
     tutorial flags, saved as they change.
   * **Creatures and game objects:** every `creature` and `gameobject` spawn of the world database
     (pools, spawn groups and game events decide which; a spawn group's members without an entry of
-    their own get its entries by their `MinCount`, `MaxCount` and chances), created when a player first comes near
+    their own get its entries by their `MinCount`, `MaxCount` and chances; each time a pool's member is due
+    to respawn the pool rolls again, so a rare spawn comes back at one of its places, the one rolled after a
+    respawn time of its own), created when a player first comes near
     their cell, with their levels, health, models, equipment, mounts and emotes. Their names come
     from `CMSG_CREATURE_QUERY` and `CMSG_GAMEOBJECT_QUERY`. Game objects whose `spawntimesecs` is
     below 0 wait for events and scripts to spawn them.
@@ -396,6 +398,9 @@ What works now:
   * **Creatures fight:** attacked, they fight back; aggressive ones
     (not `CREATURE_EXTRA_FLAG_NO_AGGRO_ON_SIGHT`) attack a hostile player that comes within their
     aggro radius (`Detection`, a yard more for each level the player is below them) and in sight.
+    Charm and possession (Enslave Demon, Mind Control, Eyes of the Beast): the creature is the player's pet
+    while the aura lasts (its spells on the bar, the player's faction, out of its fights); possessed, the client
+    moves it and sees as it. When it ends the creature is its own again and turns on the player.
     Crowd control: a stunned, feared or disoriented creature neither fights nor casts (a cast under way
     stops); feared it runs from whoever feared it, disoriented it wanders; silenced it casts no spell that silence
     prevents, pacified it does not swing. A feared or disoriented player loses control of its character
@@ -411,11 +416,20 @@ What works now:
     They keep a threat list (damage is threat; a new victim needs 110% of the current one's in melee
     reach, 130% elsewhere), chase in straight lines, swing with the attack table (crushing
     blows included), and give warriors rage. They give up (evade) when nobody is left to fight, or
-    when their victim is 30 yards beyond where their `Pursuit` time last started; they run back to
-    where the fight began, evading attacks, and get a third of their health back every 5 seconds out
-    of combat. Starting a fight, a creature calls for help: allies
+    (outside dungeons) when their victim is 30 yards beyond where their `Pursuit` time last started, or
+    past their `Leash` from where the fight began; they run back there, evading attacks, losing their
+    auras (their enemies' debuffs and damage over time, their own buffs; not their passives), and get a
+    third of their health back every 5 seconds out of combat. In a dungeon a fighting creature also takes
+    on those who come within its aggro radius, and one with `CREATURE_EXTRA_FLAG_AGGRO_ZONE` fights everyone
+    in the dungeon once a player pulls it. Healing (and buffing) one a creature fights puts the healer in
+    its fight, with half the heal shared out as threat among the creatures fighting the one healed
+    (none for `SPELL_ATTR_EX_NO_THREAT` spells). Starting a fight, a creature calls for help: allies
     within 5 yards (or its `CallForHelp`) that would attack the enemy on sight join in a moment and a
-    half later; and a fighting creature that passes within 5 yards of an idle ally pulls it in.
+    half later, if their faction answers calls (`FACTION_TEMPLATE_RESPOND_TO_CALL_FOR_HELP`; in a dungeon
+    any creature that may attack the enemy, fighting or not); and a fighting creature that passes within 5
+    yards of an idle ally pulls it in. A creature's spells made for a lower level
+    (`SPELL_ATTR_SCALES_WITH_CREATURE_LEVEL`) do damage, heals and absorbs as its level's base damage is to
+    the spell level's, and cost mana as CMaNGOS scales it.
   * **Scripts in D** (docs/SCRIPTING.md): gameplay the database cannot describe is written as D
     structs in `source/dmangos/scripts/`, bound by the world database's `ScriptName` columns
     (`creature_template`, `instance_template`) and found at compile time. A script handles typed
@@ -463,16 +477,22 @@ What works now:
   * **Creature scripts** (EventAI, `creature_ai_scripts`, for each creature entry or
     spawn): their events (timers in and out of combat, health, mana and the victim's health between
     two percentages, the victim within a range or casting, aggro, a kill, death, evading, spawning,
-    reaching home, an aura of their own there or missing, a spell hitting them, a player's emote at
-    them, a friend near them hurt, another creature's AI event) run their actions by chance and phase, repeating after their
-    repeat timers: casting a spell (healing that friend too), saying, yelling, emoting or whispering
+    reaching home, an aura of their own (or their victim's) there with so many stacks or missing, a spell
+    hitting them or their spell hitting another, a player's emote at them, a friend near them hurt, held
+    (rooted, stunned, slowed, feared) or missing a buff, another creature's AI event, a player or creature
+    coming into their sight out of combat, a creature they summoned or its death, their victim's mana, an
+    enemy at a range, standing behind or before their victim, a victim they cannot reach, a timer in and
+    out of combat alike) run their actions by chance and phase, repeating after their repeat timers
+    (at the target types CMaNGOS has, the nearest within a spell's radius and the farthest out of melee
+    reach included): casting a spell (healing that friend too), saying, yelling, emoting or whispering
     a `broadcast_text` (or one of a `dbscript_random_templates` group, or by a chance), emotes,
     sounds, phases, fleeing in fear for 7 seconds, calling for help, combat movement, swings on or
     off, ranged mode (keeping a distance to cast, coming in to melee when out of mana), stand states,
     unit flags, taking auras off, despawning, not dying of damage, react states, factions, random
     phases, quest events and kill credit for the players fighting it, relay scripts (the database
     scripts below), AI events to the friendly creatures around, summoning creatures (beside it or at a `creature_ai_summons` spot, attacking
-    its target), evading, attacking. Summoned creatures are never saved and never come back: they
+    its target), evading, attacking, chasing at a distance and angle, standing, wandering or walking its
+    waypoints, and pausing them. Summoned creatures are never saved and never come back: they
     go as their summon type says (after their time, out of combat only, when they die, or
     when their corpse goes). A creature casts only
     when it can (not while casting another, in range, with the mana): cast
@@ -580,6 +600,22 @@ What works now:
     creatures' (without the creature's level bonus). Ground effects (persistent area auras:
     Consecration, Blizzard, a frost trap) hurt the enemies inside every tick, players it may fight
     too, or hold their other aura (a slow) on them while they stay.
+  * **Effects beyond damage and healing** (`effecthandlers.d`; the combat log's lines in
+    `SMSG_SPELLLOGEXECUTE`): threat (Distracting Shot adds it, Cower and Feint take it, never below none) and
+    taunts (Growl, Taunt: the creature's threat raised to the top's and attacked at once; a taunt aura, with
+    Challenging Shout and Mocking Blow, keeps it on the taunter whatever the threat while it lasts); charges
+    (Charge, Intercept, Feral Charge: the player runs to its target at the spell's speed, shown to everyone
+    and its own client by `SMSG_MONSTER_MOVE`, stops at the target's reach and attacks it); Blink (20 yards
+    ahead by a near teleport, two yards at a time, stopping before walls, cliffs' edges and slopes over 50
+    degrees); power burns (Mana Burn: mana burned, and half of it as arcane damage), drains (Dark Pact) and
+    leeches (Death Coil heals its caster by its damage), Lay on Hands (the caster's whole health); Sword
+    Specialization's and Reckoning's extra swings (at most five owed, swung at the next melee update, granting
+    no more); Escape Artist (auras of a mechanic removed); Vanish and Divine Intervention (every creature
+    fighting the player forgets it, out of combat; Vanish frees of roots too); Distract (creatures out of
+    combat stop and face the spot for its seconds); Stuck (a ghost to its graveyard, else the Hearthstone if
+    ready, else a nudge ten yards ahead); the hunters' traps (one per slot, replacing the old, the hunter's
+    level, for the spell's duration; it springs on the first enemy creature or player within its radius, its
+    spell cast by the hunter at it from the trap's place, then waits its cooldown and goes after its charges).
   * **Auras:** buffs and debuffs fill the aura fields
     (positive slots 0..31, negative 32..47) and the buff bar's durations, refresh and stack, and end
     when their time is up, when clicked off, at death, or by their interrupt flags (standing up ends
@@ -595,7 +631,7 @@ What works now:
     an ability, a spell, a heal or a tick, dealt or taken, on a dodge, parry or block, or on a kill worth
     experience do so as their spell and its `spell_proc_event` row say (its school, family and spells, crits
     only, a rate a minute at the weapon's speed, a cooldown), by their chance, using their charges: a Proc
-    Trigger Spell casts its spell, Proc Trigger Damage deals its damage (Holy Shield), a dummy or an override
+    Trigger Spell casts its spell, a dummy or an override
     class script does its talent's thing (Ignite, Seal of Righteousness, Nightfall); what a proc casts sets
     off no procs. The class abilities whose behaviour is code (`classspells.d`, by class there; and the spell
     scripts `spell_scripts` binds: Execute, Life Tap, Preparation) work as CMaNGOS has them: the aura states
@@ -609,7 +645,19 @@ What works now:
     active one (Searing Totem) casts its spell at the nearest enemy in range. Their kills are their
     owner's. Dispels (Dispel Magic, Cleanse, Remove Curse, Purge) take random auras of their type:
     harmful magic off friends, helpful magic off enemies. Creatures are slowed and sped up by their
-    auras, and stand still while rooted or stunned. A seal, a blessing, an aspect, a sting, a curse puts out its
+    auras, and stand still while rooted or stunned. Drains over time: Drain Life and Siphon Life hurt
+    (`SMSG_SPELLNONMELEEDAMAGELOG`, periodic) and heal their caster by it, Drain Mana and Viper Sting take
+    mana and give it (`SMSG_PERIODICAURALOG` with the gain); between players too. Feign Death looks dead
+    (`UNIT_DYNFLAG_DEAD`) and, unless the highest-level creature fighting the hunter sees through it (its spell
+    miss chance; `SMSG_FEIGN_DEATH_RESISTED`), leaves every fight and creatures let it be until it stands; Fade
+    takes its amount of threat with every creature while it lasts. Tracking (`PLAYER_TRACK_CREATURES`,
+    `PLAYER_TRACK_RESOURCES`), Hunter's Mark (the track-unit flag, and its attack power for ranged attacks at the
+    target), Aspect of the Beast (untrackable), Bestial Wrath's size. Regeneration's auras: Innervate, Evocation
+    and Adrenaline Rush multiply their power's regeneration, Regeneration's health out of combat, its share in
+    combat, Demon Armor's health every second whatever; Bloodrage and Enrage stop regeneration (and rage's decay)
+    as combat does. Holy Shield and Blessing of Sanctuary strike back at whoever's swing the player blocks
+    (their charges used); Blessing of Sacrifice passes up to its amount of each blow to its paladin; Curse of
+    Recklessness keeps a creature from fleeing. A seal, a blessing, an aspect, a sting, a curse puts out its
     caster's other one, and a buff's higher rank its lower. Not yet: procs on a creature's own auras (beside
     Judgement of Light, of Wisdom, Vampiric Embrace and Stormstrike), the stacking rules of other spells.
   * **Quests:** quest givers (`creature_questrelation`, `creature_involvedrelation`) show what they have for the player

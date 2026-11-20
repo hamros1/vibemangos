@@ -501,6 +501,48 @@ ubyte[] energizeLog(ulong target, ulong caster, uint spell, uint power, uint amo
     return w.data.dup;
 }
 
+/**
+ * `SMSG_SPELLLOGEXECUTE` of one effect on one target (CMaNGOS's `SpellLog::AddLog` and `SendToSet`): the
+ * caster, the spell, one effect, one target, and what the effect writes of it (`targetData`: the target's
+ * packed guid, then for some effects more: a power drain's amount, power and multiplier, extra attacks'
+ * count, an interrupted spell). It gives the client's combat log its line ("X drains 30 Mana from Y",
+ * "You gain 1 extra attack", "You interrupt ..."). The targets' guids are packed, as the 1.12 client reads
+ * them (CMaNGOS writes them whole).
+ */
+ubyte[] executeLog(ulong caster, uint spell, uint effect, const(ubyte)[] targetData)
+{
+    ByteWriter w;
+    w.putPackedGuid(caster);
+    w.put(spell);
+    w.put(1u); // effects
+    w.put(effect);
+    w.put(1u); // targets of it
+    w.putBytes(targetData);
+    return w.data.dup;
+}
+
+/// The target part of an `executeLog`: the target, then `more` (each written as it is).
+ubyte[] executeTarget(T...)(ulong target, T more)
+{
+    ByteWriter w;
+    w.put(target); // whole, as CMaNGOS and vmangos write it (the caster packed)
+    foreach (m; more)
+        w.put(m);
+    return w.data.dup;
+}
+
+///
+unittest
+{
+    import dmangos.bytes : ByteReader;
+
+    const body_ = executeLog(0x10, 5138, 8, executeTarget(0xF130000000000042UL, 30u, 0u, 1.5f));
+    auto r = ByteReader(body_);
+    assert(r.readPackedGuid == 0x10 && r.read!uint == 5138 && r.read!uint == 1 && r.read!uint == 8 && r.read!uint == 1);
+    assert(r.read!ulong == 0xF130000000000042UL && r.read!uint == 30 && r.read!uint == 0 && r.read!float == 1.5f);
+    assert(r.empty);
+}
+
 /// `SMSG_SPELLLOGMISS` for one target.
 ubyte[] spellMissLog(uint spell, ulong caster, ulong target, SpellMissInfo miss)
 {
@@ -589,7 +631,7 @@ float magicMissChance(const Fighter caster, const Fighter victim, const ref Spel
 
     import dmangos.world.combat : mechanics;
 
-    float chance = spellMissChance(caster.level, victim.level, victim.player) - hitBonus;
+    float chance = spellMissChance(caster.level, victim.level, victim.player) - hitBonus - victim.attackerHit[2];
     // Resisted more often for its mechanic (a fear, a stun): the victim's `MOD_MECHANIC_RESISTANCE`.
     if (spell.casting.mechanic && spell.casting.mechanic < mechanics)
         chance += victim.mechanicResist[spell.casting.mechanic];

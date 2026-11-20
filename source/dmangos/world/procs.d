@@ -185,6 +185,7 @@ mixin template ProcHandlers()
     import dmangos.world.aurahandlers : ProcFlag;
     import dmangos.world.procs : effectProcsOn, ppmChance, procEventMatches, ProcHit, takenProcFlags;
     import dmangos.world.spellcast : SpellTargets, TargetFlags;
+    import dmangos.world.spellids : SpellEffect;
     import dmangos.world.spellmods : SpellModOp;
     import dmangos.world.spells : SpellProcEvent;
     import dmangos.world.unit : UnitKind, UnitRef;
@@ -216,6 +217,8 @@ mixin template ProcHandlers()
         const victim = (flags & takenProcFlags) != 0;
         foreach (aura; player.auras.list)
         {
+            if (aura.has(AuraType.procTriggerDamage)) // Holy Shield's kind: on a block, `blockDamageProcs`
+                continue;
             const event = context.data.spells.procEvent(aura.spell.id);
             const auraFlags = event !is null && event.procFlags ? event.procFlags : aura.spell.casting.procFlags;
             if (!procEventMatches(auraFlags, event, flags, hit))
@@ -280,7 +283,11 @@ mixin template ProcHandlers()
         {
         case AuraType.procTriggerSpell:
             auto c = ProcCast(aura.spell.triggerSpell[i], other ? other.combatGuid : player.guid);
-            if (!classProcTrigger(aura, i, hit, other, c) || context.data.spells.spell(c.spell) is null)
+            if (!classProcTrigger(aura, i, hit, other, c))
+                return false;
+            const trigger = context.data.spells.spell(c.spell);
+            // An extra swing grants no more of them (CMaNGOS's `m_extraAttacksExecuting`).
+            if (trigger is null || (extraAttacksExecuting && trigger.hasEffect(SpellEffect.addExtraAttacks)))
                 return false;
             casts ~= c;
             return true;
@@ -288,33 +295,12 @@ mixin template ProcHandlers()
             return classDummyProc(aura, i, hit, other, casts);
         case AuraType.overrideClassScripts:
             return classScriptProc(aura, i, hit, other, casts);
-        case AuraType.procTriggerDamage:
-            return procDamage(aura, i, other);
         case AuraType.addFlatModifier, AuraType.addPctModifier: // their charges go as the spells they change are cast
             return false;
         case AuraType.modMeleeHaste: // Blade Flurry, Flurry
             return classHasteProc(aura, i, hit, other, casts);
         default:
             return aura.charges != 0; // a proc that only counts (`HandleNULLProc`): a charge goes
-        }
-    }
-
-    /// `HandleProcTriggerDamageAuraProc`: the aura's amount of its school's damage at the other unit (Holy Shield,
-    /// Blessing of Sanctuary), as its spell.
-    private bool procDamage(Aura aura, size_t i, UnitRef other)
-    {
-        if (!other || !other.fighter.alive || aura.amount[i] <= 0)
-            return false;
-        final switch (other.kind)
-        {
-        case UnitKind.none:
-            return false;
-        case UnitKind.creature:
-            spellDamage(aura.spell, other.creature, aura.amount[i], aura.spell.casting.school);
-            return true;
-        case UnitKind.player:
-            spellDamageToPlayer(aura.spell, other.session, aura.amount[i]);
-            return true;
         }
     }
 

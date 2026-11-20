@@ -42,6 +42,7 @@ import dmangos.world.spellhandlers : SpellHandlers;
 import dmangos.world.aurahandlers : AuraHandlers;
 import dmangos.world.classspells : ClassSpells;
 import dmangos.world.procs : ProcHandlers;
+import dmangos.world.effecthandlers : EffectHandlers;
 import dmangos.world.tradehandlers : TradeHandlers;
 import dmangos.world.duelhandlers : DuelHandlers;
 import dmangos.world.questhandlers : QuestHandlers;
@@ -332,6 +333,8 @@ final class Character : OnlinePlayer, Looter
                 && blow.melee.outcome != MeleeHitOutcome.parry;
             if (landed)
                 damageShields(attacker);
+            if (blow.melee.outcome == MeleeHitOutcome.block)
+                blockDamageProcs(attacker); // Holy Shield
             if (player !is null && player.fighter.alive)
                 procAuras(ProcFlag.takeMeleeSwing, attacker, ProcHit(null, procExOfSwing(blow.melee.outcome), damage,
                     cast(ubyte) blow.melee.type, damage != 0));
@@ -384,7 +387,7 @@ final class Character : OnlinePlayer, Looter
     /// See `UnitRef`.
     @property bool untouchable()
     {
-        return invincible;
+        return invincible || feigningDeath;
     }
 
     /// See `UnitRef`.
@@ -802,6 +805,7 @@ private:
     mixin AuraHandlers;
     mixin ProcHandlers;
     mixin ClassSpells;
+    mixin EffectHandlers;
     mixin TradeHandlers;
     mixin DuelHandlers;
     mixin QuestHandlers;

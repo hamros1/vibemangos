@@ -18,8 +18,7 @@
  *   by the weapon's speed, Judgement of Command (half unless stunned), Holy Shock (a heal or a blast), Holy Light
  *   and Flash of Light (their heals), Judgement of Light and of Wisdom (the striker healed or given mana),
  *   Forbearance, Hammer of Wrath under a fifth of health, Illumination's mana back, Blessing of Light.)
- * $(LI Warlock: Conflagrate (needs and consumes Immolate), Nightfall's Shadow Trance, Curse of Doom not at players,
- *   Drain Soul's and Shadowburn's Soul Shard.)
+ * $(LI Warlock: Conflagrate (needs and consumes Immolate), Nightfall's Shadow Trance, Curse of Doom not at players.)
  * $(LI Mage: Cold Snap, Ignite, Combustion, Master of Elements, Shatter against frozen targets, Mana Shield's bonus,
  *   Improved Blizzard's chill.)
  * $(LI Rogue: Rupture's attack power, Ambush's bonus, Ruthlessness' and Seal Fate's points after the move; Vanish's
@@ -27,7 +26,7 @@
  * $(LI Priest: Weakened Soul, Holy Nova's heal, Vampiric Embrace, Blessed Recovery, Touch of Weakness, Shadowguard.)
  * $(LI Druid: Ferocious Bite's extra energy, Rip's attack power, Swiftmend, Enrage, Frenzied Regeneration.)
  * $(LI Shaman: Lightning Shield's ranks, Flametongue (weapon and totem) by the weapon's speed, Healing Way,
- *   Stormstrike's charges, Windfury's extra attacks.)
+ *   Stormstrike's charges.)
  * $(LI Hunter: Counterattack after a parry, Mongoose Bite after a dodge, Wyvern Sting's poison as it wakes.)
  * )
  */
@@ -301,13 +300,11 @@ mixin template ClassSpells()
         reactiveLeft[kind] = reactiveTime;
     }
 
-    /// Each tick: the reactive states' time (`Unit::UpdateReactives`: each ends four seconds on; all at death), and
-    /// the extra swings owed.
+    /// Each tick: the reactive states' time (`Unit::UpdateReactives`: each ends four seconds on; all at death).
     package void updateReactives(int ms)
     {
         if (player is null)
             return;
-        strikeExtraAttacks();
         const dead = !player.fighter.alive;
         foreach (kind; 0 .. reactiveLeft.length)
         {
@@ -594,46 +591,6 @@ mixin template ClassSpells()
         }
     }
 
-    /**
-     * An effect the class rules do (before the pipeline's own): Lay on Hands' heal of all the caster's health
-     * (`EffectHealMaxHealth`), extra swings (`EffectAddExtraAttacks`: Windfury Weapon, Sword Specialization,
-     * Reckoning), struck at once after the swing that gave them. True if done.
-     */
-    package bool classEffect(const(SpellInfo)* spell, size_t i, ulong targetGuid, int value)
-    {
-        switch (spell.effect[i])
-        {
-        case SpellEffect.healMaxHealth:
-            heal(spell, targetGuid, cast(int) player.values.get!UNIT_FIELD_MAXHEALTH);
-            return true;
-        case SpellEffect.addExtraAttacks:
-            if (value > 0)
-                extraAttacks += value;
-            return true;
-        default:
-            return false;
-        }
-    }
-
-    private int extraAttacks; // swings owed (`m_extraAttacks`)
-
-    /// The extra swings owed, at the creature fought (if in reach): each a swing of the main hand.
-    private void strikeExtraAttacks()
-    {
-        import dmangos.world.combat : canReachWithMelee;
-
-        if (extraAttacks <= 0)
-            return;
-        auto victim = attacking ? cast(Creature) map.findObject(attacking) : null;
-        const owed = extraAttacks;
-        extraAttacks = 0;
-        if (victim is null || !victim.alive || !canReachWithMelee(player.fighter, victim.fighter))
-            return;
-        foreach (_; 0 .. owed)
-            if (victim.alive)
-                swing(victim, AttackType.mainHand);
-    }
-
     /// Judgement, Holy Shock, Judgement of Command, Holy Light, Flash of Light.
     private bool paladinDummy(const(SpellInfo)* spell, size_t i, UnitRef target, int value)
     {
@@ -898,32 +855,13 @@ mixin template ClassSpells()
         return 0;
     }
 
-    /**
-     * This player's aura on `target` ended: Wyvern Sting's sleep leaves its poison; a Drain Soul or Shadowburn on a
-     * creature that died of it gives its item (a Soul Shard: `HandleChannelDeathItem`), if it was worth experience.
-     */
+    /// This player's aura on `target` ended: Wyvern Sting's sleep leaves its poison.
     package void classCreatureAuraLost(Creature target, Aura aura)
     {
-        if (!target.alive)
-        {
-            foreach (i; 0 .. 3)
-                if ((aura.effects & (1 << i)) && aura.type(i) == AuraType.channelDeathItem && aura.spell.itemType[i]
-                        && givesExperience(target))
-                    scriptGiveItem(aura.spell.itemType[i], 1);
-            return;
-        }
-        if (!ofFamily(aura.spell, SpellFamily.hunter, 0x10000) || !aura.has(AuraType.modStun))
+        if (!target.alive || !ofFamily(aura.spell, SpellFamily.hunter, 0x10000) || !aura.has(AuraType.modStun))
             return;
         if (const poison = rankSpell(wyvernStingPoison, aura.spell.id))
             castCustom(poison, target.guid);
-    }
-
-    /// Whether killing `creature` is worth experience to this player (not grey: `isHonorOrXPTarget`).
-    private bool givesExperience(Creature creature)
-    {
-        import dmangos.world.experience : grayLevel;
-
-        return creature.values.get!UNIT_FIELD_LEVEL > grayLevel(player.data.level);
     }
 
     /// The factor of a weapon ability's fixed bonus instead of its weapon percentage (`EffectWeaponDmg`): Ambush's.

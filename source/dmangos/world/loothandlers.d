@@ -338,6 +338,24 @@ private:
             tapper = this;
         if (victim.lootRecipient == 0)
             tapCreature(victim);
+        // The killing blow, in the combat log (`PARTY_KILL`): to the killer and its group near the kill, when it
+        // is the tapper's or of the tapper's group (CMaNGOS's `Unit::Kill`).
+        {
+            auto group = context.groups.of(player.guid);
+            if (tapper is this || (group !is null && group is context.groups.of(tapper.player.guid)))
+            {
+                ByteWriter w;
+                w.put(player.guid);
+                w.put(victim.guid);
+                deliver(Opcode.SMSG_PARTYKILLLOG, w.data);
+                if (group !is null)
+                    foreach (ref slot; group.members)
+                        if (slot.guid != player.guid)
+                            if (auto member = cast(Character) context.onlinePlayer(slot.guid))
+                                if (member.map is map && member.atGroupRewardDistance(victim))
+                                    member.deliver(Opcode.SMSG_PARTYKILLLOG, w.data);
+            }
+        }
         tapper.rewardAtKill(victim);
         tapper.prepareBodyLoot(victim);
         map.flushObjectChanges(victim);
@@ -351,7 +369,6 @@ private:
         import dmangos.world.replication : Replica;
         import dmangos.world.character : Character;
 
-        // `SMSG_PARTYKILLLOG` is for the killing blow of another; the tapper's own is not shown.
         const value = killValue(victim);
         auto group = context.groups.of(player.guid);
         if (group is null)

@@ -2,18 +2,23 @@
  * Creature scripts: `creature_ai_scripts`' events and
  * actions for the creatures whose `AIName` is `EventAI`.
  *
- * Each event waits for its moment: timers in and out of combat, health and mana between two
- * percentages, the victim in a range or casting, the fight starting, a kill, death, evading,
- * spawning, reaching home, an aura of its own there or missing, a spell hitting it, a player's
- * emote at it, a friend near it hurt. Then (by its chance, in the phases its mask allows) its
- * actions run: casting a spell (at itself, its victim, another on its threat list, the one who
- * caused the event, the friend the event found), saying, yelling or emoting a text (`broadcast_text`,
- * or one of a `dbscript_random_templates` group, or by a chance), an emote, a sound, setting or
- * stepping its phase, fleeing, calling for help, turning combat movement or its swings on or off,
- * keeping its distance to cast (ranged mode), standing up or down, unit flags, taking an aura off,
- * despawning, not dying of damage, its react state, its faction, a random phase, quest events and
- * kill credit, relay scripts, evading, attacking. Repeating events go again after their repeat
- * timers.
+ * Each event waits for its moment: timers in and out of combat (or both), health and mana between two
+ * percentages (its own, or its victim's), the victim in a range, casting, behind or before it, or out of
+ * reach, the fight starting, a kill (of a player, if it asks), death, evading, spawning (on a map or in a
+ * zone, if it asks), reaching home, an aura of its own or its victim's there (with so many stacks) or
+ * missing, a spell hitting it or one of its spells hitting another, a player's emote at it, a friend near it
+ * hurt, held or missing a buff, an enemy at a range, someone coming into its sight out of combat, a
+ * creature it summoned, or that one's death. Conditions (`conditions`) on deaths, emotes and sightings are
+ * the killer's, emoter's or sighted player's. Then (by its chance, in the phases its mask allows) its
+ * actions run: casting a spell (at itself, its victim, another on its threat list chosen as CMaNGOS chooses:
+ * in the spell's range, players only if the cast says so; the one who caused the event or its owner, the
+ * friend the event found, its summoner, the player who tapped it), saying, yelling or emoting a text
+ * (`broadcast_text`, or one of a `dbscript_random_templates` group, or by a chance), an emote, a sound,
+ * setting or stepping its phase, fleeing, calling for help, turning combat movement or its swings on or off,
+ * keeping its distance to cast (ranged mode) or chasing at a distance and angle, standing up or down, unit
+ * flags, taking an aura off, despawning, not dying of damage, its react state, its faction, a random phase,
+ * quest events and kill credit, relay scripts, evading, attacking, its movement (standing, wandering, its
+ * waypoints) and pausing its waypoints. Repeating events go again after their repeat timers.
  *
  * Also: summons, faction changes, morphs and mounts, the sheath, dying, a dungeon's players all
  * joining the fight (zone combat pulse), and setting instance data (a signal to the dungeon copy's
@@ -23,8 +28,9 @@
  *
  * And becoming another entry (updating the template).
  *
- * Not yet: the other actions (following),
- * immunities. Spell lists (`creature_spell_list`) are run by the creature AI itself.
+ * Every event, action and target type the database uses is done. Not yet: following, immunities, the cast
+ * flags for casting targets and for switching caster and target. Spell lists (`creature_spell_list`) are run
+ * by the creature AI itself.
  */
 module dmangos.world.eventai;
 
@@ -54,6 +60,19 @@ enum EventType : ubyte
     receiveAiEvent = 30,
     aura = 23,
     missingAura = 27,
+    oocLineOfSight = 10,
+    friendlyIsCrowdControlled = 15,
+    friendlyMissingBuff = 16,
+    summonedUnit = 17,
+    targetMana = 18,
+    targetAura = 24,
+    summonedJustDied = 25,
+    targetMissingAura = 28,
+    timerGeneric = 29,
+    selectAttackingTarget = 32,
+    facingTarget = 33,
+    spellHitTarget = 34,
+    targetNotReachable = 36,
 }
 
 /// A `creature_ai_summons` row: where a summon stands, and for how long (seconds; 0: until out of combat).
@@ -116,6 +135,9 @@ enum ActionType : ubyte
     attackStart = 55,
     despawnGuardians = 56,
     setRangedMode = 57,
+    rangedMovement = 29,
+    changeMovement = 48,
+    pauseWaypoints = 51,
 }
 
 /// `event_flags`
@@ -141,6 +163,13 @@ enum EventTarget : int
     eventSender = 10,
     eventSpecific = 12,
     none = 15,
+    actionInvokerOwner = 7,
+    spawner = 11,
+    playerInvoker = 13,
+    playerTapped = 14,
+    hostileRandomMana = 16,
+    nearestAoeTarget = 17,
+    hostileFarthestAway = 18,
 }
 
 /// One action of an event.
@@ -354,6 +383,54 @@ interface Scripted
     void scriptCombatMovement(bool on);
     void scriptRangedMode(bool on, float distance); /// ditto
     @property bool rangedMode(); /// ditto
+
+    /// The stacks of the aura of `spell` on it, or (`onVictim`) on its victim; 0 if there is none.
+    uint auraStacks(bool onVictim, uint spell);
+
+    /// Its victim's mana in percent; uint.max if it has no victim, or one without mana.
+    uint victimManaPercent();
+
+    /// A friend within `radius` (itself too), fighting and held: rooted, stunned, slowed, fleeing or
+    /// confused; 0 if none.
+    ulong crowdControlledFriend(float radius);
+
+    /// A friend (itself too) within the range of `spell` without its aura: only those fighting (`inCombat`), or
+    /// only those not; 0 if none.
+    ulong friendMissingBuff(uint spell, bool inCombat);
+
+    /// One on its threat list at random, between `min` and `max` yards (combat reach left out); 0 if none.
+    ulong attackerWithin(float min, float max);
+
+    /// Whether it stands within 5 yards in front of its victim (`front`), or behind it.
+    bool besideVictim(bool front);
+
+    /// Whether it chases a victim its way does not reach.
+    bool victimUnreachable();
+
+    /**
+     * The targets picked from its threat list (CMaNGOS's `SelectAttackingTarget`): the second, the last, one at
+     * random (not the first; a player; one with mana), the nearest within the radius of `spell`, the farthest
+     * out of melee reach; only players with `CAST_PLAYER_ONLY` among `castFlags`, only those without the aura
+     * with `CAST_AURA_NOT_PRESENT`, only those `spell` reaches unless it is cast triggered or forced. And the
+     * invoker's owner, its summoner, the player who tapped it. 0 if there is none.
+     */
+    ulong moreTargetFor(int type, ulong invoker, uint spell, uint castFlags);
+
+    /// It keeps `distance` yards from its victim, at `angle` degrees, when it chases.
+    void scriptRangedMovement(float distance, float angle);
+
+    /// Its movement: 0 standing, 1 wandering `param` yards, 2 its waypoints; its default from now if `asDefault`.
+    void scriptChangeMovement(uint type, int param, bool asDefault);
+
+    /// Its waypoints paused (it stands) or going on.
+    void scriptPauseWaypoints(bool pause);
+
+    /// Whether it spawned where `EVENT_T_SPAWNED` asks: anywhere (0), on map `value` (1), in zone or area
+    /// `value` (2).
+    bool spawnedIn(uint condition, uint value);
+
+    /// Whether `who` (or the player controlling it) meets condition `id` (`conditions`).
+    bool conditionMet(uint id, ulong who);
 }
 
 /// See the module documentation.
@@ -376,16 +453,36 @@ final class EventAI
         foreach (ref e; events)
         {
             holders ~= EventHolder(&e);
-            if (e.type == EventType.timerOutOfCombat || e.type == EventType.missingAura)
+            switch (e.type)
+            {
+            case EventType.timerOutOfCombat, EventType.missingAura, EventType.aura, EventType.timerGeneric:
                 hasOutOfCombatTimers = true;
+                break;
+            case EventType.friendlyMissingBuff:
+                hasOutOfCombatTimers |= (e.params[4] & 3) != 0; // its flags: also, or only, out of combat
+                break;
+            case EventType.oocLineOfSight:
+                hasLineOfSightEvents = true;
+                break;
+            default:
+                break;
+            }
         }
         resetSpawned();
     }
+
+    private bool hasLineOfSightEvents;
 
     /// Whether it needs ticks out of combat: timers there, or its spawn events still to run.
     @property bool wantsTicks() const
     {
         return spawnPending || hasOutOfCombatTimers;
+    }
+
+    /// Whether it watches for those coming into its sight out of combat (`EVENT_T_OOC_LOS`).
+    @property bool watchesLineOfSight() const
+    {
+        return hasLineOfSightEvents;
     }
 
     /// It has spawned: the timers start (in combat ones wait for the fight).
@@ -395,7 +492,8 @@ final class EventAI
         {
             h.enabled = true;
             h.timer = 0;
-            if (h.event.type == EventType.timerOutOfCombat || h.event.type == EventType.timerInCombat)
+            if (h.event.type == EventType.timerOutOfCombat || h.event.type == EventType.timerInCombat
+                    || h.event.type == EventType.timerGeneric)
                 setTimer(h, h.event.params[0], h.event.params[1]);
         }
     }
@@ -418,6 +516,11 @@ final class EventAI
         {
             min = e.params[0];
             max = e.params[1];
+        }
+        else if (e.type == EventType.summonedUnit || e.type == EventType.summonedJustDied)
+        {
+            min = e.params[1];
+            max = e.params[2];
         }
         else
         {
@@ -480,13 +583,67 @@ final class EventAI
             h.eventTarget = friend;
             return friend != 0;
         }
+        // An aura's stacks (at least one) there, or fewer than that.
         case EventType.aura:
-            return me.hasOwnAura(e.params[0]);
+            return me.auraStacks(false, e.params[0]) >= atLeastOne(e.params[1]);
         case EventType.missingAura:
-            return !me.hasOwnAura(e.params[0]);
+            return me.auraStacks(false, e.params[0]) < atLeastOne(e.params[1]);
+        case EventType.targetAura:
+            return fightingSomeone(me) && me.auraStacks(true, e.params[0]) >= atLeastOne(e.params[1]);
+        case EventType.targetMissingAura:
+            return fightingSomeone(me) && me.auraStacks(true, e.params[0]) < atLeastOne(e.params[1]);
+        case EventType.timerGeneric:
+            return true;
+        case EventType.spawned:
+            return me.spawnedIn(e.params[0] > 0 ? e.params[0] : 0, e.params[1] > 0 ? e.params[1] : 0);
+        case EventType.targetMana:
+        {
+            if (!me.fighting)
+                return false;
+            const p = me.victimManaPercent;
+            return p != uint.max && p <= e.params[0] && p >= e.params[1];
+        }
+        case EventType.friendlyIsCrowdControlled:
+        {
+            // Its first parameter (a dispel type) is not looked at, as on CMaNGOS.
+            if (!me.fighting)
+                return false;
+            h.eventTarget = me.crowdControlledFriend(e.params[1]);
+            return h.eventTarget != 0;
+        }
+        case EventType.friendlyMissingBuff:
+        {
+            // Its flags: 0 only in combat, 1 in and out of it, 2 only out of it. The friends looked for are
+            // those within the spell's range (its radius parameter is not used, as on CMaNGOS).
+            const flags = e.params[4] & 3;
+            if (flags == 0 && !me.fighting || flags == 2 && me.fighting)
+                return false;
+            h.eventTarget = me.friendMissingBuff(e.params[0], flags == 0 || flags == 1 && me.fighting);
+            return h.eventTarget != 0;
+        }
+        case EventType.selectAttackingTarget:
+            h.eventTarget = me.attackerWithin(e.params[0], e.params[1]);
+            return h.eventTarget != 0;
+        case EventType.facingTarget:
+            // 0: behind its victim, 1: in front of it (within 5 yards).
+            return fightingSomeone(me) && me.besideVictim(e.params[0] == 1);
+        case EventType.targetNotReachable:
+            return me.targetFor(EventTarget.hostile, 0) && me.victimUnreachable;
         default:
             return true;
         }
+    }
+
+    /// In combat, with a victim.
+    private static bool fightingSomeone(Scripted me)
+    {
+        return me.fighting && me.targetFor(EventTarget.hostile, 0) != 0;
+    }
+
+    /// A stack count asked for: at least one.
+    private static uint atLeastOne(int amount) pure nothrow @nogc @safe
+    {
+        return amount > 1 ? amount : 1;
     }
 
     /// By its chance, its actions (one at random with `EFLAG_RANDOM_ACTION`), then its reset.
@@ -535,7 +692,10 @@ final class EventAI
         {
         case EventType.timerInCombat, EventType.timerOutOfCombat, EventType.hp, EventType.mana, EventType.kill,
                 EventType.range, EventType.targetHp, EventType.aura, EventType.missingAura, EventType.spellHit,
-                EventType.targetCasting, EventType.friendlyHp:
+                EventType.targetCasting, EventType.friendlyHp, EventType.timerGeneric, EventType.oocLineOfSight,
+                EventType.friendlyIsCrowdControlled, EventType.friendlyMissingBuff, EventType.summonedUnit,
+                EventType.summonedJustDied, EventType.targetMana, EventType.targetAura, EventType.targetMissingAura,
+                EventType.selectAttackingTarget, EventType.facingTarget, EventType.spellHitTarget:
             setTimer(h, min, max);
             break;
         default:
@@ -724,11 +884,23 @@ final class EventAI
         }
         case ActionType.castSpell:
         {
-            const target = targetOf(a.params[1], me, invoker);
+            auto target = targetOf(a.params[1], me, invoker, a.params[0], a.params[2]);
             if (target == 0 && a.params[1] != EventTarget.none)
                 return false;
+            if (a.params[1] == EventTarget.nearestAoeTarget)
+                target = 0; // only that there is one in reach: the spell finds its own
             return me.scriptCast(a.params[0], target, cast(uint) a.params[2]);
         }
+        case ActionType.rangedMovement:
+            me.scriptRangedMovement(a.params[0], a.params[1]);
+            return true;
+        case ActionType.changeMovement:
+            // Its type, the wander distance (or path), and its flags (1: from now its default).
+            me.scriptChangeMovement(a.params[0] > 0 ? a.params[0] : 0, a.params[1], (a.params[2] & 1) != 0);
+            return true;
+        case ActionType.pauseWaypoints:
+            me.scriptPauseWaypoints(a.params[0] != 0);
+            return true;
         case ActionType.combatMovement:
             me.scriptCombatMovement(a.params[0] != 0);
             return true;
@@ -754,7 +926,7 @@ final class EventAI
             return true;
         case ActionType.attackStart:
         {
-            const target = me.targetFor(a.params[0], invoker);
+            const target = targetOf(a.params[0], me, invoker);
             if (target)
                 me.scriptAttack(target);
             return target != 0;
@@ -768,11 +940,22 @@ final class EventAI
     }
 
     /// The target of an action by its type, with the event's own target (`TARGET_T_EVENT_SPECIFIC`).
-    private ulong targetOf(int type, Scripted me, ulong invoker)
+    private ulong targetOf(int type, Scripted me, ulong invoker, uint spell = 0, uint castFlags = 0)
     {
-        if (type == EventTarget.eventSender)
+        switch (type)
+        {
+        case EventTarget.eventSender:
             return eventSender;
-        return type == EventTarget.eventSpecific ? eventTarget : me.targetFor(type, invoker);
+        case EventTarget.eventSpecific:
+            return eventTarget;
+        case EventTarget.actionInvokerOwner, EventTarget.spawner, EventTarget.playerInvoker, EventTarget.playerTapped,
+                EventTarget.hostileRandomMana, EventTarget.nearestAoeTarget, EventTarget.hostileFarthestAway,
+                EventTarget.hostileSecondAggro, EventTarget.hostileLastAggro, EventTarget.hostileRandom,
+                EventTarget.hostileRandomNotTop, EventTarget.hostileRandomPlayer, EventTarget.hostileRandomNotTopPlayer:
+            return me.moreTargetFor(type, invoker, spell, castFlags);
+        default:
+            return me.targetFor(type, invoker);
+        }
     }
 
     /// A spell (`spell` of `schoolMask`) hit it.
@@ -802,11 +985,66 @@ final class EventAI
             }
     }
 
+    /// Its spell hit `target` (`EVENT_T_SPELLHIT_TARGET`).
+    void spellHitTarget(Scripted me, ulong target, uint spell, uint schoolMask)
+    {
+        foreach (ref h; holders)
+            if (h.event.type == EventType.spellHitTarget && check(h, me))
+            {
+                const e = h.event;
+                if (e.params[0] ? e.params[0] != spell : !(schoolMask & cast(uint) e.params[1]))
+                    continue;
+                process(h, me, target);
+            }
+    }
+
+    /**
+     * `who` came into its sight, `distance` yards away (`EVENT_T_OOC_LOS`): its events for those near enough, a
+     * player if they ask for one, hostile to it (`enemy`) or not as they ask. The caller looks at the line of sight,
+     * and only while it has no victim.
+     */
+    void seen(Scripted me, ulong who, bool enemy, bool player, float distance)
+    {
+        foreach (ref h; holders)
+        {
+            const e = h.event;
+            if (e.type != EventType.oocLineOfSight || distance > e.params[1] || (e.params[4] && !player))
+                continue;
+            // Its first parameter: 1, those not hostile to it; 0, those hostile.
+            if ((e.params[0] != 0) == enemy)
+                continue;
+            if (e.params[5] > 0 && player && !me.conditionMet(e.params[5], who)) // its condition, for a player
+                continue;
+            if (check(h, me))
+                process(h, me, who);
+        }
+    }
+
+    /// It summoned `summoned`, a creature of `entry` (`EVENT_T_SUMMONED_UNIT`).
+    void summoned(Scripted me, ulong summoned, uint entry)
+    {
+        summonEvent(EventType.summonedUnit, me, summoned, entry);
+    }
+
+    /// A creature of `entry` it summoned died (`EVENT_T_SUMMONED_JUST_DIED`).
+    void summonedDied(Scripted me, ulong summoned, uint entry)
+    {
+        summonEvent(EventType.summonedJustDied, me, summoned, entry);
+    }
+
+    private void summonEvent(EventType type, Scripted me, ulong summoned, uint entry)
+    {
+        foreach (ref h; holders)
+            if (h.event.type == type && h.event.params[0] == entry && check(h, me))
+                process(h, me, summoned);
+    }
+
     /// A player's text emote at it.
     void receivedEmote(Scripted me, ulong player, uint emote)
     {
         foreach (ref h; holders)
-            if (h.event.type == EventType.receiveEmote && h.event.params[0] == emote && check(h, me))
+            if (h.event.type == EventType.receiveEmote && h.event.params[0] == emote
+                    && (h.event.params[1] <= 0 || me.conditionMet(h.event.params[1], player)) && check(h, me))
                 process(h, me, player);
     }
 
@@ -833,21 +1071,36 @@ final class EventAI
             }
             else if (h.event.type == EventType.aggro)
                 h.enabled = true;
+            else if (h.event.type == EventType.friendlyHp || h.event.type == EventType.friendlyIsCrowdControlled
+                    || h.event.type == EventType.friendlyMissingBuff || h.event.type == EventType.selectAttackingTarget)
+            {
+                // These wait their repeat time from the start of the fight.
+                h.enabled = true;
+                setTimer(h, h.event.params[2], h.event.params[3]);
+            }
         fire(EventType.aggro, me, enemy);
         updateIn = 500;
         pendingDiff = 0;
     }
 
-    /// It killed `victim`.
+    /// It killed `victim`: its kill events (those with a third parameter of 1 for players only).
     void killed(Scripted me, ulong victim)
     {
-        fire(EventType.kill, me, victim);
+        import dmangos.world.objects : HighGuid, highGuidOf;
+
+        const player = highGuidOf(victim) == HighGuid.player;
+        foreach (ref h; holders)
+            if (h.event.type == EventType.kill && (h.event.params[2] != 1 || player) && check(h, me))
+                process(h, me, victim);
     }
 
-    /// It died.
+    /// It died: its death events (those with a condition, if its killer meets it).
     void died(Scripted me, ulong killer)
     {
-        fire(EventType.death, me, killer);
+        foreach (ref h; holders)
+            if (h.event.type == EventType.death && (h.event.params[0] <= 0 || (killer && me.conditionMet(h.event.params[0],
+                    killer))) && check(h, me))
+                process(h, me, killer);
     }
 
     /// It evades: the evade events, then the events start over for out of combat.
@@ -858,7 +1111,7 @@ final class EventAI
         foreach (ref h; holders)
             switch (h.event.type)
             {
-            case EventType.timerInCombat, EventType.aggro:
+            case EventType.timerInCombat, EventType.aggro, EventType.timerGeneric:
                 break;
             case EventType.timerOutOfCombat:
                 h.enabled = true;
@@ -900,7 +1153,10 @@ final class EventAI
             {
             case EventType.timerInCombat, EventType.timerOutOfCombat, EventType.hp, EventType.mana,
                     EventType.targetHp, EventType.range, EventType.aura, EventType.missingAura,
-                    EventType.targetCasting, EventType.friendlyHp:
+                    EventType.targetCasting, EventType.friendlyHp, EventType.timerGeneric,
+                    EventType.friendlyIsCrowdControlled, EventType.friendlyMissingBuff, EventType.targetMana,
+                    EventType.targetAura, EventType.targetMissingAura, EventType.selectAttackingTarget,
+                    EventType.facingTarget, EventType.targetNotReachable:
                 if (check(h, me))
                     process(h, me, 0);
                 break;
@@ -955,7 +1211,7 @@ unittest
         uint victimHealthPercent() { return 100; }
         float victimDistance() { return 2; }
         ulong targetFor(int type, ulong invoker) { return type == EventTarget.self ? 1 : 2; }
-        bool scriptCast(uint spell, ulong target, uint flags) { cast_ ~= spell; return true; }
+        bool scriptCast(uint spell, ulong target, uint flags) { cast_ ~= spell; castAt ~= target; return true; }
         void scriptText(uint text, ulong target) { texts ~= text; }
         void scriptEmote(uint emote) {}
         void scriptStandState(uint state) {}
@@ -966,6 +1222,24 @@ unittest
         void scriptCombatMovement(bool on) {}
         void scriptRangedMode(bool on, float distance) {}
         @property bool rangedMode() { return false; }
+        uint[uint] victimAuras, ownAuras;
+        uint victimMana = uint.max;
+        ulong heldFriend, unbuffedFriend;
+        bool behind, unreachable;
+        ulong[] castAt;
+        uint auraStacks(bool onVictim, uint spell) { return (onVictim ? victimAuras : ownAuras).get(spell, 0); }
+        uint victimManaPercent() { return victimMana; }
+        ulong crowdControlledFriend(float radius) { return heldFriend; }
+        ulong friendMissingBuff(uint spell, bool inCombat) { return unbuffedFriend; }
+        ulong attackerWithin(float min, float max) { return 0; }
+        bool besideVictim(bool front) { return front != behind; }
+        bool victimUnreachable() { return unreachable; }
+        ulong moreTargetFor(int type, ulong invoker, uint spell, uint castFlags) { return 2; }
+        void scriptRangedMovement(float distance, float angle) {}
+        void scriptChangeMovement(uint type, int param, bool asDefault) {}
+        void scriptPauseWaypoints(bool pause) {}
+        bool spawnedIn(uint condition, uint value) { return condition == 0 || value == 1; }
+        bool conditionMet(uint id, ulong who) { return id == 1; }
     }
 
     auto data = new EventAiData;
@@ -996,4 +1270,86 @@ unittest
     me.health = 12;
     ai.update(me, 500);
     assert(me.fled, "flees at 15%");
+
+    // The events of the rows it did not know before.
+    {
+        // A sunder at five stacks on its victim; a heal on a friend held; a strike from behind; a shout when it
+        // cannot reach its victim; a nova at whoever is near (the spell picks); a drain on a victim low on mana.
+        EventAiEvent sunder = {id: 10, type: EventType.targetAura, chance: 100, flags: eventRepeatable,
+            params: [7386, 5, 1000, 1000, 0, 0]};
+        sunder.actions[0] = EventAiAction(ActionType.castSpell, [1, EventTarget.hostile, 0]);
+        EventAiEvent freedom = {id: 11, type: EventType.friendlyIsCrowdControlled, chance: 100, flags: eventRepeatable,
+            params: [0, 30, 0, 0, 0, 0]};
+        freedom.actions[0] = EventAiAction(ActionType.castSpell, [2, EventTarget.eventSpecific, 0]);
+        EventAiEvent backstab = {id: 12, type: EventType.facingTarget, chance: 100, flags: eventRepeatable,
+            params: [0, 0, 3000, 3000, 0, 0]};
+        backstab.actions[0] = EventAiAction(ActionType.castSpell, [3, EventTarget.hostile, 0]);
+        EventAiEvent stuck = {id: 13, type: EventType.targetNotReachable, chance: 100};
+        stuck.actions[0] = EventAiAction(ActionType.text, [200, 0, 0]);
+        EventAiEvent nova = {id: 14, type: EventType.timerGeneric, chance: 100, params: [0, 0, 0, 0, 0, 0]};
+        nova.actions[0] = EventAiAction(ActionType.castSpell, [4, EventTarget.nearestAoeTarget, 0]);
+        EventAiEvent drain = {id: 15, type: EventType.targetMana, chance: 100, params: [50, 0, 0, 0, 0, 0]};
+        drain.actions[0] = EventAiAction(ActionType.castSpell, [5, EventTarget.hostile, 0]);
+        const rows = [sunder, freedom, backstab, stuck, nova, drain];
+        auto it = new Dummy;
+        auto eai = new EventAI(rows, data);
+        eai.update(it, 500);
+        assert(it.cast_ == [4] && it.castAt == [0], "a generic timer goes out of combat too; the nova finds its own");
+        it.inFight = true;
+        eai.combatStarted(it, 2);
+        it.victimAuras[7386] = 4;
+        eai.update(it, 500);
+        assert(it.cast_ == [4], "four stacks, in front, no friend held, a victim without mana: nothing");
+        it.victimAuras[7386] = 5;
+        it.heldFriend = 77;
+        it.behind = true;
+        it.victimMana = 40;
+        eai.update(it, 500);
+        assert(it.cast_ == [4, 1, 2, 3, 5], "the sunder, the friend's heal, the backstab and the drain");
+        assert(it.castAt[2] == 77, "the heal at the friend the event found");
+        it.unreachable = true;
+        eai.update(it, 500);
+        assert(it.texts == [200], "it cannot reach its victim");
+        eai.update(it, 500);
+        assert(it.texts == [200], "once (not repeatable)");
+    }
+    // In its sight out of combat: a greeting for players not hostile to it within 10 yards.
+    {
+        EventAiEvent greet = {id: 20, type: EventType.oocLineOfSight, chance: 100, flags: eventRepeatable,
+            params: [1, 10, 5000, 5000, 1, 0]};
+        greet.actions[0] = EventAiAction(ActionType.text, [300, 0, 0]);
+        const rows = [greet];
+        auto it = new Dummy;
+        auto eai = new EventAI(rows, data);
+        assert(eai.watchesLineOfSight);
+        eai.seen(it, 5, true, true, 5);
+        eai.seen(it, 5, false, false, 5);
+        eai.seen(it, 5, false, true, 12);
+        assert(it.texts.length == 0, "an enemy, a creature, one too far: no greeting");
+        eai.seen(it, 5, false, true, 8);
+        assert(it.texts == [300], "a friendly player near");
+        eai.seen(it, 5, false, true, 8);
+        assert(it.texts == [300], "not again before its repeat time");
+    }
+
+    // Conditions and players only: an emote answered only for those who meet its condition, a kill event
+    // for players only.
+    {
+        EventAiEvent wave = {id: 30, type: EventType.receiveEmote, chance: 100, flags: eventRepeatable,
+            params: [101, 2, 0, 0, 0, 0]};
+        wave.actions[0] = EventAiAction(ActionType.text, [400, 0, 0]);
+        EventAiEvent gloat = {id: 31, type: EventType.kill, chance: 100, flags: eventRepeatable,
+            params: [0, 0, 1, 0, 0, 0]};
+        gloat.actions[0] = EventAiAction(ActionType.text, [500, 0, 0]);
+        const rows = [wave, gloat];
+        auto it = new Dummy;
+        auto eai = new EventAI(rows, data);
+        eai.receivedEmote(it, 5, 101);
+        assert(it.texts.length == 0, "condition 2 not met (the dummy meets only 1)");
+        it.inFight = true;
+        eai.killed(it, imported!"dmangos.world.objects".makeGuid(imported!"dmangos.world.objects".HighGuid.unit, 6, 7));
+        assert(it.texts.length == 0, "a creature killed: not for it");
+        eai.killed(it, 9);
+        assert(it.texts == [500], "a player killed");
+    }
 }

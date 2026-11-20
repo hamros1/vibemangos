@@ -138,6 +138,7 @@ struct AuraSet
         }
         list ~= aura;
         writeSlot(aura, values);
+        showOnFields(aura, true, values);
         return aura;
     }
 
@@ -159,6 +160,44 @@ struct AuraSet
             setBits!UNIT_FIELD_AURAAPPLICATIONS(values, aura.slot, 8, 0);
             aura.slot = noSlot;
         }
+        showOnFields(aura, false, values);
+    }
+
+    /// `UNIT_DYNFLAG_TRACK_UNIT`, `UNIT_DYNFLAG_DEAD` and `UNIT_VIS_FLAG_UNTRACKABLE` (`UNIT_FIELD_BYTES_1`'s fourth byte).
+    enum uint dynTrackUnit = 0x02, dynDead = 0x20;
+    enum ubyte visUntrackable = 0x04; /// ditto
+
+    /**
+     * What the unit's fields show of an aura that began (`applied`) or ended, for every client that sees the
+     * unit (CMaNGOS's aura handlers): Hunter's Mark (`MOD_STALKED`) the track-unit flag, Feign Death the dead
+     * flag, while any such aura lasts; Aspect of the Beast (`UNTRACKABLE`) the untrackable flag; Bestial Wrath
+     * (`MOD_SCALE`) its size, by its percentage (`ApplyPercentModFloatValue`).
+     */
+    private void showOnFields(const Aura aura, bool applied, ref UpdateValues values)
+    {
+        void dynamicFlag(uint flag, AuraType type)
+        {
+            const flags = values.get!UNIT_DYNAMIC_FLAGS;
+            values.set!UNIT_DYNAMIC_FLAGS(has(type) ? flags | flag : flags & ~flag);
+        }
+
+        if (aura.has(AuraType.modStalked))
+            dynamicFlag(dynTrackUnit, AuraType.modStalked);
+        if (aura.has(AuraType.feignDeath))
+            dynamicFlag(dynDead, AuraType.feignDeath);
+        if (aura.has(AuraType.untrackable))
+        {
+            const vis = values.getByte!UNIT_FIELD_BYTES_1(3);
+            values.setByte!UNIT_FIELD_BYTES_1(3, cast(ubyte)(has(AuraType.untrackable) ? vis | visUntrackable
+                : vis & ~visUntrackable));
+        }
+        foreach (i; 0 .. 3)
+            if ((aura.effects & (1 << i)) && aura.type(i) == AuraType.modScale && aura.amount[i] > -100)
+            {
+                const factor = (100.0f + aura.amount[i]) / 100;
+                const scale = values.get!OBJECT_FIELD_SCALE_X;
+                values.set!OBJECT_FIELD_SCALE_X(applied ? scale * factor : scale / factor);
+            }
     }
 
     /// Writes the aura's slot: its spell, flags, level and applications.
@@ -325,6 +364,43 @@ struct AuraSet
         if (ammo)
             apply(ammo);
         return factor;
+    }
+
+    /// By how much its casts take longer (`MOD_CASTING_SPEED`: Curse of Tongues), as attack times are (`UNIT_MOD_CAST_SPEED`).
+    float castTimeFactor() const
+    {
+        float factor = 1;
+        foreach (aura; list)
+            foreach (i; 0 .. 3)
+                if ((aura.effects & (1 << i)) && aura.type(i) == AuraType.modCastingSpeed)
+                {
+                    const a = aura.amount[i] * cast(int) aura.stacks;
+                    factor *= a > 0 ? 100.0f / (100 + a) : (100.0f - a) / 100;
+                }
+        return factor;
+    }
+
+    /**
+     * Whether one with these auras sees through `target`'s invisibility (`MOD_INVISIBILITY` levels by type against
+     * this set's `MOD_INVISIBILITY_DETECTION`): what `combat.seesThrough` decides, from the auras alone, for the
+     * map's sight checks (no `Fighter` to build for each object).
+     */
+    bool seesThroughInvisibility(const ref AuraSet target) const
+    {
+        bool invisible;
+        foreach (aura; target.list)
+            foreach (i; 0 .. 3)
+                if ((aura.effects & (1 << i)) && aura.type(i) == AuraType.modInvisibility)
+                {
+                    const type = aura.misc(i);
+                    const level = target.totalByMisc(AuraType.modInvisibility, type);
+                    if (level <= 0)
+                        continue;
+                    invisible = true;
+                    if (level <= totalByMisc(AuraType.modInvisibilityDetection, type))
+                        return true;
+                }
+        return !invisible;
     }
 
     /// The sum of those whose misc value is `misc`.
@@ -598,4 +674,22 @@ unittest
         "a slow of the main hand only");
     set.apply(makeAura(&rapidFire, 1, 10, 15_000, true, [40, 0, 0]), values, isNew);
     assert(isClose(set.attackTimeFactor(2), 100.0f / 140));
+}
+
+/// Curse of Tongues: casts take longer, as a slow makes swings.
+unittest
+{
+    import std.math : isClose;
+    import dmangos.world.updatefields : TypeId;
+
+    auto values = UpdateValues(TypeId.unit);
+    SpellInfo tongues;
+    tongues.id = 1714;
+    tongues.effect[0] = SpellEffect.applyAura;
+    tongues.casting.applyAuraName[0] = AuraType.modCastingSpeed;
+    AuraSet set;
+    bool isNew;
+    assert(set.castTimeFactor() == 1);
+    set.apply(makeAura(&tongues, 1, 10, 30_000, false, [-50, 0, 0]), values, isNew);
+    assert(isClose(set.castTimeFactor(), 1.5f));
 }

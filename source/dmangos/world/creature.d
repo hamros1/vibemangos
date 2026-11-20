@@ -749,8 +749,15 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
                 world.sendToObservers(guid, cast(Opcode) pair[0], w.data);
             }
         }
-        // Its attack times by its haste and slows (Thunder Clap, Chilled): the template's, scaled.
+        // Its attack times by its haste and slows (Thunder Clap, Chilled): the template's, scaled; its casts too.
         {
+            const castSpeed = auras.castTimeFactor();
+            if (castSpeed != values.get!UNIT_MOD_CAST_SPEED)
+            {
+                values.set!UNIT_MOD_CAST_SPEED(castSpeed);
+                if (auto combat = cast(CombatWorld) world)
+                    combat.flushCreature(this);
+            }
             const melee = cast(uint)(template_.meleeBaseAttackTime * auras.attackTimeFactor(0)),
                 ranged = cast(uint)(template_.rangedBaseAttackTime * auras.attackTimeFactor(2));
             if (melee != values.get!UNIT_FIELD_BASEATTACKTIME || ranged != values.get!UNIT_FIELD_RANGEDATTACKTIME)
@@ -770,7 +777,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             | UnitFlags.pacified | UnitFlags.disarmed);
         if (stunned)
             flagged |= UnitFlags.stunned;
-        if (auras.has(AuraType.modFear) || (ai !is null && ai.fleeingAtLowHealth))
+        if ((auras.has(AuraType.modFear) && !auras.has(AuraType.preventsFleeing)) || (ai !is null && ai.fleeingAtLowHealth))
             flagged |= UnitFlags.fleeing;
         if (auras.has(AuraType.modConfuse))
             flagged |= UnitFlags.confused;
@@ -965,6 +972,11 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
 
             if (auras.list.length || template_.mechanicImmuneMask || template_.schoolImmuneMask)
                 f.immune = Immunities.of(auras, template_.mechanicImmuneMask, template_.schoolImmuneMask);
+            if (auras.list.length)
+            {
+                f.attackerChancesFrom(auras);
+                f.invisibilityFrom(auras);
+            }
         }
         // Crit, dodge, parry and block chances: 5% each for creatures.
         f.crit = f.dodge = f.parry = f.block = 5;
@@ -1017,12 +1029,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         corpseTimer = decay * 1000;
         respawnAt = now + respawnDelay;
         foreach (aura; auras.list.dup) // every aura goes on death
-        {
             auras.remove(aura, values);
-            if (auto combat = cast(CombatWorld) world) // its caster hears of it (a Soul Shard from Drain Soul)
-                if (auto caster = combat.unit(aura.caster))
-                    caster.auraEndedOn(this, aura);
-        }
         values.set!UNIT_NPC_FLAGS(0u);
         stopMoving(this, world);
         generator = new IdleMovement;

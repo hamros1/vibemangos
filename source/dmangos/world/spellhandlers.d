@@ -9,9 +9,11 @@
  * happen. Spells "on next swing" (Heroic Strike) wait for the next main-hand swing and replace it.
  * Items with an on-use spell (food, drink, the hearthstone) cast it.
  *
- * The effects done so far: school damage, weapon damage (with bonus and percentage), heals,
- * energize, teleports (home bind), creating items, learning spells, triggering spells. Auras
- * (`SPELL_EFFECT_APPLY_AURA`) are logged as not yet done; so are the others.
+ * The effects done here: school damage, weapon damage (with bonus and percentage), heals,
+ * energize, teleports (home bind), creating items, learning spells, triggering spells and the rest
+ * of the effect switch; auras are `dmangos.world.aurahandlers`'s, threat, taunts, charges, leaps,
+ * drains, traps and the like `dmangos.world.effecthandlers`'. Those no player's cast does yet are
+ * logged once each.
  */
 module dmangos.world.spellhandlers;
 
@@ -426,8 +428,8 @@ private:
         }
         if (!triggered)
         {
-            c.timer = castTimeCheat ? 0 : max(0, spellMod(SpellModOp.castingTime, spell,
-                castTime(*spell, context.client, player.data.level)));
+            c.timer = castTimeCheat ? 0 : max(0, cast(int)(spellMod(SpellModOp.castingTime, spell,
+                castTime(*spell, context.client, player.data.level)) * player.auras.castTimeFactor()));
             c.castTime = c.timer;
             pushbacks = 0;
             enum uint gcdCategory = 133;
@@ -454,6 +456,7 @@ private:
             updateBobber(cast(int) elapsed.total!"msecs");
         if (persistentAreas.length)
             updatePersistentAreas(cast(int) elapsed.total!"msecs");
+        updateTraps(cast(int) elapsed.total!"msecs");
         if (pendingHits.length)
         {
             // The missiles that arrive now (a copy: an effect may cast another).
@@ -1061,6 +1064,7 @@ private:
         foreach (ref area; persistentAreas)
             map.removeObject(area.spot.guid);
         persistentAreas = null;
+        removeTraps();
         nextSwing.active = false;
     }
 
@@ -1814,8 +1818,6 @@ private:
                 base += cast(int)(player.stats.attackPower * castCombo * 0.03f);
         }
         const value = effectMod(spell, i, base);
-        if (classEffect(spell, i, target, value)) // `dmangos.world.classspells`: Lay on Hands, extra attacks
-            return;
         final switch (spell.effect[i]) // every effect decided: done, or listed as not done below
         {
         case SpellEffect.schoolDamage: // SPELL_EFFECT_SCHOOL_DAMAGE
@@ -2040,33 +2042,71 @@ private:
             break;
         case SpellEffect.attack: // SPELL_EFFECT_ATTACK
             break;
+        case SpellEffect.threat: // SPELL_EFFECT_THREAT: Distracting Shot, Cower, Feint
+            threatEffect(spell, i, target, value);
+            break;
+        case SpellEffect.attackMe: // SPELL_EFFECT_ATTACK_ME: Growl, Taunt
+            attackMeEffect(spell, i, target);
+            break;
+        case SpellEffect.sanctuary: // SPELL_EFFECT_SANCTUARY: Vanish, Divine Intervention
+            sanctuaryEffect(spell, i, target);
+            break;
+        case SpellEffect.charge: // SPELL_EFFECT_CHARGE: Charge, Intercept, Feral Charge
+            chargeEffect(spell, target != player.guid ? target : c.targets.unit);
+            break;
+        case SpellEffect.leap: // SPELL_EFFECT_LEAP: Blink
+            leapEffect(spell, i);
+            break;
+        case SpellEffect.stuck: // SPELL_EFFECT_STUCK: the help menu's Stuck
+            stuckEffect();
+            break;
+        case SpellEffect.powerBurn: // SPELL_EFFECT_POWER_BURN: Mana Burn
+            powerBurnEffect(spell, i, target, value);
+            break;
+        case SpellEffect.powerDrain: // SPELL_EFFECT_POWER_DRAIN: Dark Pact
+            powerDrainEffect(spell, i, target, value);
+            break;
+        case SpellEffect.healthLeech: // SPELL_EFFECT_HEALTH_LEECH: Death Coil
+            healthLeechEffect(spell, i, target, value);
+            break;
+        case SpellEffect.healMaxHealth: // SPELL_EFFECT_HEAL_MAX_HEALTH: Lay on Hands
+            healMaxHealthEffect(spell, target);
+            break;
+        case SpellEffect.addExtraAttacks: // SPELL_EFFECT_ADD_EXTRA_ATTACKS: Sword Specialization, Reckoning
+            addExtraAttacksEffect(spell, i, target, value);
+            break;
+        case SpellEffect.dispelMechanic: // SPELL_EFFECT_DISPEL_MECHANIC: Escape Artist
+            dispelMechanicEffect(spell, i, target, value);
+            break;
+        case SpellEffect.distract: // SPELL_EFFECT_DISTRACT: Distract
+            distractEffect(spell, i, target, value, c.targets);
+            break;
+        case SpellEffect.summonObjectSlot1, SpellEffect.summonObjectSlot2, SpellEffect.summonObjectSlot3,
+                SpellEffect.summonObjectSlot4: // SPELL_EFFECT_SUMMON_OBJECT_SLOT1 .. 4: the hunters' traps
+            if (target == player.guid)
+                summonTrapEffect(spell, i, c.targets);
+            break;
+        case SpellEffect.detect: // SPELL_EFFECT_DETECT: Detect's marker; CMaNGOS does nothing with it either
+            break;
         case SpellEffect.none:
             break;
         // Not done by a player's cast (some, such as skills and proficiencies, are done when a spell is learned):
-        case SpellEffect.portalTeleport, SpellEffect.environmentalDamage, SpellEffect.powerDrain,
-            SpellEffect.healthLeech, SpellEffect.bind, SpellEffect.portal, SpellEffect.ritualBase,
-            SpellEffect.ritualSpecialize, SpellEffect.ritualActivatePortal,
-            SpellEffect.addExtraAttacks, SpellEffect.dodge, SpellEffect.evade, SpellEffect.parry,
-            SpellEffect.block, SpellEffect.weapon, SpellEffect.defense, SpellEffect.summon, SpellEffect.leap,
-            SpellEffect.triggerMissile, SpellEffect.summonChangeItem, SpellEffect.spellDefense,
+        case SpellEffect.portalTeleport, SpellEffect.environmentalDamage, SpellEffect.bind, SpellEffect.portal,
+            SpellEffect.ritualBase, SpellEffect.ritualSpecialize, SpellEffect.ritualActivatePortal, SpellEffect.dodge,
+            SpellEffect.evade, SpellEffect.parry, SpellEffect.block, SpellEffect.weapon, SpellEffect.defense,
+            SpellEffect.summon, SpellEffect.triggerMissile, SpellEffect.summonChangeItem, SpellEffect.spellDefense,
             SpellEffect.language, SpellEffect.dualWield, SpellEffect.summonGuardian,
             SpellEffect.teleportUnitsFaceCaster, SpellEffect.skillStep, SpellEffect.addHonor, SpellEffect.spawn,
-            SpellEffect.tradeSkill, SpellEffect.stealth, SpellEffect.detect, SpellEffect.forceCriticalHit,
-            SpellEffect.guaranteeHit, SpellEffect.proficiency, SpellEffect.powerBurn,
-            SpellEffect.threat, SpellEffect.healthFunnel, SpellEffect.powerFunnel, SpellEffect.healMaxHealth,
-            SpellEffect.distract, SpellEffect.pull, SpellEffect.summonPossessed,
-            SpellEffect.healMechanical, SpellEffect.summonObjectWild, SpellEffect.sanctuary,
-            SpellEffect.createHouse, SpellEffect.bindSight, SpellEffect.stuck,
-            SpellEffect.summonPlayer, SpellEffect.activateObject, SpellEffect.threatAll,
-            SpellEffect.enchantHeldItem, SpellEffect.summonPhantasm, SpellEffect.charge,
-            SpellEffect.knockBack, SpellEffect.inebriate,
-            SpellEffect.summonObjectSlot1, SpellEffect.summonObjectSlot2, SpellEffect.summonObjectSlot3,
-            SpellEffect.summonObjectSlot4, SpellEffect.dispelMechanic, SpellEffect.destroyAllTotems,
-            SpellEffect.durabilityDamage, SpellEffect.summonDemon, SpellEffect.attackMe,
-            SpellEffect.durabilityDamagePct, SpellEffect.spiritHeal,
-            SpellEffect.skill, SpellEffect.applyAreaAuraPet, SpellEffect.teleportGraveyard, SpellEffect.n122,
-            SpellEffect.sendTaxi, SpellEffect.pullTowards, SpellEffect.modifyThreatPercent, SpellEffect.n126,
-            SpellEffect.n127, SpellEffect.applyAreaAuraFriend, SpellEffect.applyAreaAuraEnemy:
+            SpellEffect.tradeSkill, SpellEffect.stealth, SpellEffect.forceCriticalHit, SpellEffect.guaranteeHit,
+            SpellEffect.proficiency, SpellEffect.healthFunnel, SpellEffect.powerFunnel, SpellEffect.pull,
+            SpellEffect.summonPossessed, SpellEffect.healMechanical, SpellEffect.summonObjectWild,
+            SpellEffect.createHouse, SpellEffect.bindSight, SpellEffect.summonPlayer, SpellEffect.activateObject,
+            SpellEffect.threatAll, SpellEffect.enchantHeldItem, SpellEffect.summonPhantasm, SpellEffect.knockBack,
+            SpellEffect.inebriate, SpellEffect.destroyAllTotems, SpellEffect.durabilityDamage,
+            SpellEffect.summonDemon, SpellEffect.durabilityDamagePct, SpellEffect.spiritHeal, SpellEffect.skill,
+            SpellEffect.applyAreaAuraPet, SpellEffect.teleportGraveyard, SpellEffect.n122, SpellEffect.sendTaxi,
+            SpellEffect.pullTowards, SpellEffect.modifyThreatPercent, SpellEffect.n126, SpellEffect.n127,
+            SpellEffect.applyAreaAuraFriend, SpellEffect.applyAreaAuraEnemy:
             static bool[SpellEffect] told; // once per effect, not at every cast
             if (spell.effect[i] !in told)
             {
@@ -2171,6 +2211,18 @@ private:
                 entry.spellMs = cast(uint) spellLeft.total!"msecs";
             list ~= entry;
         }
+        // Held in use until an aura ends (CMaNGOS's permanent cooldown: 1, and the category's high bit).
+        foreach (spellId, item; eventCooldowns)
+        {
+            InitialCooldown entry;
+            entry.spell = cast(ushort) spellId;
+            entry.item = cast(ushort) item;
+            if (const info = context.data.spells.spell(spellId))
+                entry.category = cast(ushort) info.category;
+            entry.spellMs = 1;
+            entry.categoryMs = 0x80000000;
+            list ~= entry;
+        }
         return list;
     }
 
@@ -2264,6 +2316,7 @@ private:
     {
         if (count == 0 || target == 0)
             return;
+        dropRetainedComboPoints();
         const now = target == comboTarget ? comboPoints + count : count;
         comboTarget = target;
         comboPoints = cast(ubyte)(now < 0 ? 0 : now > 5 ? 5 : now);
@@ -2275,9 +2328,33 @@ private:
     {
         if (comboTarget == 0)
             return;
+        dropRetainedComboPoints();
         comboPoints = 0;
         sendComboPoints();
         comboTarget = 0;
+    }
+
+    private bool droppingRetained; // the retaining auras go because the points changed: they keep their points
+
+    /**
+     * Premeditation's points (`SPELL_AURA_RETAIN_COMBO_POINTS`) are kept once others are added or they are spent:
+     * its aura goes then without taking them back (CMaNGOS's `Unit::AddComboPoints`); expired, it takes them.
+     */
+    private void dropRetainedComboPoints()
+    {
+        droppingRetained = true;
+        scope (exit)
+            droppingRetained = false;
+        foreach (aura; player.auras.list.dup)
+            if (aura.has(AuraType.retainComboPoints))
+                removeAura(aura);
+    }
+
+    /// A retaining aura ran out (`AURA_REMOVE_BY_EXPIRE`): its points go.
+    package void retainedComboPointsExpired(int points)
+    {
+        if (!droppingRetained && comboTarget && points > 0)
+            addComboPoints(comboTarget, -points);
     }
 
     private void sendComboPoints()
@@ -2285,6 +2362,14 @@ private:
         player.values.set!PLAYER__FIELD_COMBO_TARGET(comboTarget);
         player.values.setByte!PLAYER_FIELD_BYTES(1, comboPoints);
         flushPlayerChanges();
+    }
+
+    /// `spell` held in use until its aura ends (`cooldownEvent`), as after a login with the aura on.
+    package void holdForCooldownEvent(const(SpellInfo)* spell)
+    {
+        if (spell.id !in eventCooldowns)
+            eventCooldowns[spell.id] = 0;
+        spellReadyAt[spell.id] = MonoTime.max;
     }
 
     /// The spells whose cooldown waits for their aura to end, with the item each was cast from.
@@ -2530,11 +2615,16 @@ private:
         return chance + classCritBonus(spell, victim);
     }
 
+    /// Whether `spell` is a melee or ranged ability: it crits as its weapon does.
+    static bool weaponCrit(const(SpellInfo)* spell)
+    {
+        return spell.casting.dmgClass == DamageClass.melee || spell.casting.dmgClass == DamageClass.ranged;
+    }
+
     /// A crit's damage (`SpellCriticalDamageBonus`): double for a melee or ranged ability, half again for a spell.
     static uint critDamage(const(SpellInfo)* spell, uint damage)
     {
-        return spell.casting.dmgClass == DamageClass.melee || spell.casting.dmgClass == DamageClass.ranged
-            ? damage * 2 : damage * 3 / 2;
+        return weaponCrit(spell) ? damage * 2 : damage * 3 / 2;
     }
 
     float spellCritOf(const(SpellInfo)* spell)
@@ -2642,6 +2732,8 @@ private:
         if ((kind == ImplicitTarget.enemiesAroundDest || kind == ImplicitTarget.friendsAroundDest)
             && (targets.mask & TargetFlags.destLocation))
             center = Position(targets.dest[0], targets.dest[1], targets.dest[2]);
+        else if (kind == ImplicitTarget.enemiesAroundSource && (targets.mask & TargetFlags.sourceLocation))
+            center = Position(targets.source[0], targets.source[1], targets.source[2]); // a trap's place
         // The target and its party (Prayer of Fortitude, Arcane Brilliance, Gift of the Wild: `TARGET_UNIT_FRIEND_AND_PARTY`),
         // around it.
         ulong partyOf = player.guid;
@@ -2736,13 +2828,16 @@ private:
         return chain;
     }
 
-    /// A school's damage to a player: a crit is half again; armor for physical.
-    package void spellDamageToPlayer(const(SpellInfo)* spell, typeof(this) other, uint damage)
+    /// A school's damage to a player: a crit is half again; armor for physical. Without `withBonus`, no spell
+    /// power (Mana Burn's). Returns the damage dealt.
+    package uint spellDamageToPlayer(const(SpellInfo)* spell, typeof(this) other, uint damage, bool withBonus = true)
     {
-        damage += spellDamageBonus(spell, spell.casting.school); // spell power, as against a creature
+        if (withBonus)
+            damage += spellDamageBonus(spell, spell.casting.school); // spell power, as against a creature
         damage = spellDamageFactors(damage, spell.casting.school, creatureTypeHumanoid, other.player.damageMods.taken,
             other.player.damageMods.takenFlat);
-        const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(map.random) * 100 < critChanceOf(spell, other.unit);
+        const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(map.random) * 100 < critChanceOf(spell, other.unit)
+            + (weaponCrit(spell) ? 0 : other.player.fighter.attackerCrit[2]); // (a weapon's has the victim's in it)
         if (crit)
             damage = critDamage(spell, damage);
         const school = spell.casting.school;
@@ -2765,6 +2860,7 @@ private:
 
             spellHitProcs(spell, other.unit, crit, damage);
         }
+        return damage;
     }
 
     /// A school's damage: a crit is half again; armor for physical.
@@ -2853,16 +2949,20 @@ private:
         return total > 0 ? cast(uint) total : 0;
     }
 
-    void spellDamage(const(SpellInfo)* spell, Creature victim, uint damage, uint school)
+    /// A school's damage to a creature (see `spellDamageToPlayer`). Returns the damage dealt.
+    uint spellDamage(const(SpellInfo)* spell, Creature victim, uint damage, uint school, bool withBonus = true)
     {
-        damage += spellDamageBonus(spell, school);
+        if (withBonus)
+            damage += spellDamageBonus(spell, school);
+        float victimCrit = 0;
         {
             const victimFighter = victim.fighter;
             damage = spellDamageFactors(damage, school, victimFighter.creatureType, victimFighter.damageTaken,
                 victimFighter.damageTakenFlat);
+            victimCrit = victimFighter.attackerCrit[2]; // Winter's Chill
         }
         const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit)
-            && uniform01(map.random) * 100 < critChanceOf(spell, map.unitOf(victim));
+            && uniform01(map.random) * 100 < critChanceOf(spell, map.unitOf(victim)) + (weaponCrit(spell) ? 0 : victimCrit);
         if (crit)
             damage = critDamage(spell, damage);
         uint resisted;
@@ -2884,6 +2984,7 @@ private:
         spellAttacked(victim, damage, false, school);
         if (victim.alive)
             spellHitProcs(spell, map.unitOf(victim), crit, damage);
+        return damage;
     }
 
     /**
@@ -2901,6 +3002,10 @@ private:
         const type = spell.casting.dmgClass == DamageClass.ranged || (spell.attributes & spellAttrRanged)
             ? AttackType.ranged : AttackType.mainHand;
         float damage = weaponDamage(me, type, map.random);
+        // A ranged attack's attack power against a marked victim (Hunter's Mark: `RANGED_ATTACK_POWER_ATTACKER_BONUS`),
+        // at the weapon's speed as attack power counts (CMaNGOS's `MeleeDamageBonusDone`).
+        if (type == AttackType.ranged)
+            damage += rangedAttackerBonus(victim) / 14.0f * player.stats.attackTime[AttackType.ranged] / 1000;
         float percent = 100, fixed = 0;
         foreach (j; i .. 3)
         {
@@ -3000,6 +3105,7 @@ private:
             procAuras(spellProcFlags(*spell, true, false), who.unit, ProcHit(spell, crit ? ProcEx.criticalHit
                 : ProcEx.normalHit, amount, 0, amount != 0));
         }
+        imported!"dmangos.world.creatureai".assistThreat(map, who.threateners, unit, healed, *spell);
     }
 
     /// Power given back, of the effect's kind (`EffectMiscValue`).
@@ -4621,4 +4727,85 @@ unittest
     assert(!opcodesOf(priest.read()).canFind(Opcode.SMSG_SPELL_GO), "pushed back");
     priest.session.update(1800.msecs);
     assert(opcodesOf(priest.read()).canFind(Opcode.SMSG_SPELL_GO), "then it goes");
+}
+
+/// An invisible creature is not seen until the player sees through its invisibility (Detect Invisibility).
+unittest
+{
+    import dmangos.auth.accounts : AccountLevel;
+    import dmangos.world.auras : makeAura;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.spells : SpellInfo;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto unseen = SpellInfo(90071);
+    unseen.effect[0] = SpellEffect.applyAura;
+    unseen.casting.applyAuraName[0] = AuraType.modInvisibility;
+    unseen.miscValue[0] = 0;
+    auto detect = SpellInfo(90072);
+    detect.effect[0] = SpellEffect.applyAura;
+    detect.casting.applyAuraName[0] = AuraType.modInvisibilityDetection;
+    detect.miscValue[0] = 0;
+    context.data.spells.spells[90071] = unseen;
+    context.data.spells.spells[90072] = detect;
+
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.player);
+    anduin.read();
+    auto session = anduin.session.inWorld;
+    auto map = context.map(0);
+    auto keeper = cast(Creature) map.findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
+    assert(map.seesObject(7, keeper.guid));
+    bool isNew;
+    keeper.auras.apply(makeAura((90071 in context.data.spells.spells), 0, 60, -1, true, [300, 0, 0]), keeper.values, isNew);
+    map.refreshVisibility(session);
+    assert(!map.seesObject(7, keeper.guid), "invisible: gone from the player's sight");
+    session.addAura(makeAura((90072 in context.data.spells.spells), 7, 60, 60_000, true, [300, 0, 0]));
+    assert(map.seesObject(7, keeper.guid), "seen through it");
+}
+
+/// A charm (Enslave Demon): the creature is the player's pet while the aura lasts, then its own again.
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import dmangos.auth.accounts : AccountLevel;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.spellcast : SpellCastResult, SpellTargets, TargetFlags;
+    import dmangos.world.spells : SpellInfo;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields : UNIT_FIELD_CHARMEDBY, UNIT_FIELD_FACTIONTEMPLATE;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto enslave = SpellInfo(1098);
+    enslave.effect[0] = SpellEffect.applyAura;
+    enslave.implicitTargetA[0] = ImplicitTarget.enemy;
+    enslave.casting.applyAuraName[0] = AuraType.modCharm;
+    enslave.casting.durationIndex = 0; // until cancelled
+    enslave.casting.rangeIndex = 0;
+    context.data.spells.spells[1098] = enslave;
+
+    auto warlock = loggedIn(context, db, 7, "Gul", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.player);
+    warlock.read();
+    auto session = warlock.session.inWorld;
+    auto map = context.map(0);
+    auto keeper = cast(Creature) map.findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
+    const ownFaction = keeper.values.get!UNIT_FIELD_FACTIONTEMPLATE;
+    session.applyAuraEffect((1098 in context.data.spells.spells), 0, keeper.guid);
+    assert(session.charmed is keeper && keeper.petOwner == 7, "the player's");
+    assert(keeper.values.get!UNIT_FIELD_CHARMEDBY == 7);
+    assert(keeper.values.get!UNIT_FIELD_FACTIONTEMPLATE == session.player.values.get!UNIT_FIELD_FACTIONTEMPLATE);
+    assert(opcodesOf(warlock.read()).canFind(Opcode.SMSG_PET_SPELLS), "its pet bar");
+
+    keeper.loseAura(keeper.auras.find(1098), map);
+    assert(session.charmed is null && keeper.petOwner == 0 && keeper.petData is null, "its own again");
+    assert(keeper.values.get!UNIT_FIELD_FACTIONTEMPLATE == ownFaction);
 }

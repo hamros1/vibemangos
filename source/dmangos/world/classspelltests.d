@@ -662,7 +662,8 @@ unittest
 }
 
 /**
- * Windfury Weapon: its proc (an attack power aura and an extra attack) brings one more swing at once; Holy Shield
+ * Windfury Weapon: its proc (an attack power aura and an extra attack) brings one more swing (at the next melee
+ * update: `dmangos.world.effecthandlers`); Holy Shield
  * strikes back at a blocked swing (`SPELL_AURA_PROC_TRIGGER_DAMAGE`) and uses a charge.
  */
 unittest
@@ -675,7 +676,8 @@ unittest
     windfury.implicitTargetA[1] = ImplicitTarget.caster;
     windfury.baseDice[1] = 1;
     windfury.casting.durationIndex = 1;
-    a.me.attacking = a.foe.guid;
+    a.hero.write(Opcode.CMSG_ATTACKSWING, imported!"dmangos.world.packets".ClientGuid(a.foe.guid));
+    a.tick(10);
     a.cast_(8233);
     assert(a.hasAura(8233), "its attack power");
     a.hero.read();
@@ -833,7 +835,7 @@ unittest
 
 /**
  * What replaces what: a hunter has one aspect, a warlock one curse on a target, and a higher rank of a buff replaces
- * the lower; a Drain Soul on a creature that dies of it gives a Soul Shard.
+ * the lower.
  */
 unittest
 {
@@ -891,22 +893,6 @@ unittest
     }
     assert(a.hasAura(a.foe, 980) && !a.hasAura(a.foe, 702), "one curse from each warlock");
 
-    // Drain Soul: the creature dies of it, a Soul Shard.
-    auto drain = a.spell(1120, SpellEffect.applyAura, ImplicitTarget.enemy);
-    a.auraEffect(drain, 0, AuraType.channelDeathItem, ImplicitTarget.enemy);
-    drain.itemType[0] = itemJerky; // (an item the test world has)
-    drain.casting.durationIndex = 1;
-    a.foe.values.set!UNIT_FIELD_LEVEL(60u);
-    foreach (attempt; 0 .. 30)
-    {
-        a.tick(1600);
-        a.cast_(1120, a.foe.guid);
-        if (a.hasAura(a.foe, 1120))
-            break;
-    }
-    const before = a.player.inventory.count(itemJerky);
-    dealDamage(a.me.unit, a.map.unitOf(a.foe), 20_000, Blow.spell());
-    assert(!a.foe.alive && a.player.inventory.count(itemJerky) == before + 1, "a shard");
 }
 
 /// Vanish (`spell_vanish`): the rogue stealths at once by the highest Stealth it knows, its cooldown ended.

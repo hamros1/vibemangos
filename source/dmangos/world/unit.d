@@ -155,6 +155,47 @@ struct UnitRef
         }
     }
 
+    /// Its auras and its fields; null if it is not a unit here (a player not in the world).
+    @property imported!"dmangos.world.auras".AuraSet* auraSet()
+    {
+        final switch (kind)
+        {
+        case UnitKind.none: return null;
+        case UnitKind.player: return session.player is null ? null : &session.player.auras;
+        case UnitKind.creature: return &creature.auras;
+        }
+    }
+
+    /// ditto
+    @property imported!"dmangos.world.objects".UpdateValues* fields()
+    {
+        final switch (kind)
+        {
+        case UnitKind.none: return null;
+        case UnitKind.player: return session.player is null ? null : &session.player.values;
+        case UnitKind.creature: return &creature.values;
+        }
+    }
+
+    /// The stacks of its aura of `spell`; 0 if it has none.
+    uint auraStacks(uint spell)
+    {
+        auto set = auraSet;
+        auto aura = set is null ? null : set.find(spell);
+        return aura is null ? 0 : aura.stacks;
+    }
+
+    /// Its mana in percent; uint.max if it has no mana (another power, or none at all).
+    uint manaPercent()
+    {
+        import dmangos.world.updatefields : UNIT_FIELD_BYTES_0, UNIT_FIELD_MAXPOWER1, UNIT_FIELD_POWER1;
+
+        auto v = fields;
+        if (v is null || v.getByte!UNIT_FIELD_BYTES_0(3) != 0 || v.get!UNIT_FIELD_MAXPOWER1 == 0)
+            return uint.max;
+        return cast(uint)(ulong(v.get!UNIT_FIELD_POWER1) * 100 / v.get!UNIT_FIELD_MAXPOWER1);
+    }
+
     /// Whether it is casting.
     @property bool castingSpell()
     {
@@ -457,6 +498,7 @@ private void creatureDamaged(UnitRef attacker, UnitRef victim, uint damage, cons
     map.flushObjectChanges(creature);
     if (!killed)
         return;
+    deathItems(creature, map);
     if (creature.petOwner)
     {
         // A pet: dead for its owner to revive (or to summon again).
@@ -468,4 +510,40 @@ private void creatureDamaged(UnitRef attacker, UnitRef victim, uint damage, cons
     if (credited !is null)
         return credited.killedCreature(creature); // the player's kill: its rewards
     map.creatureDeath(creature);
+}
+
+/**
+ * A creature dies under a `SPELL_AURA_CHANNEL_DEATH_ITEM` (Drain Soul, Shadowburn): the caster gets the item
+ * (CMaNGOS's `Aura::HandleChannelDeathItem`). A Soul Shard only from a creature that is not grey to the warlock and
+ * tapped by it or its group, and one only for several such auras of the warlock on it.
+ */
+private void deathItems(Creature creature, Map map)
+{
+    import dmangos.world.auras : AuraType;
+    import dmangos.world.experience : grayLevel;
+    import dmangos.world.updatefields : UNIT_FIELD_LEVEL;
+
+    enum uint soulShard = 6265;
+    bool[ulong] shardGiven;
+    foreach (aura; creature.auras.list)
+        foreach (i; 0 .. 3)
+        {
+            if (!(aura.effects & (1 << i)) || aura.type(i) != AuraType.channelDeathItem || aura.amount[i] <= 0)
+                continue;
+            const item = aura.spell.itemType[i];
+            auto caster = cast(Character) map.find(aura.caster);
+            if (item == 0 || caster is null || caster.player is null)
+                continue;
+            if (item == soulShard)
+            {
+                const level = creature.values.get!UNIT_FIELD_LEVEL;
+                auto group = caster.context.groups.of(caster.player.guid);
+                if (level <= grayLevel(caster.player.data.level)
+                        || !creature.tappedBy(caster.player.guid, group is null ? 0 : group.id)
+                        || aura.caster in shardGiven)
+                    continue;
+                shardGiven[aura.caster] = true;
+            }
+            caster.giveItem(item, aura.amount[i], true, true);
+        }
 }

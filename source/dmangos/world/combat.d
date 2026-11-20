@@ -117,6 +117,48 @@ struct Fighter
     float[7] damageTaken = 1;  /// by school: what its auras multiply blows against it by (`MOD_DAMAGE_PERCENT_TAKEN`)
     int[7] damageTakenFlat;    /// by school: what its auras add to each blow first (`MOD_DAMAGE_TAKEN`: Blessing of Sanctuary)
     Immunities immune;         /// what cannot touch it
+    /// What its auras do to its attackers' chances (melee, ranged, spell): crits against it (`MOD_ATTACKER_*_CRIT_CHANCE`:
+    /// Winter's Chill, Sleight of Hand), hits on it (`MOD_ATTACKER_*_HIT_CHANCE`: Heightened Senses).
+    float[3] attackerCrit = 0, attackerHit = 0;
+    int rangedTakenFlat;       /// `MOD_RANGED_DAMAGE_TAKEN` (Elune's Grace): added to each ranged blow against it
+    /// Its invisibility by type (`MOD_INVISIBILITY`'s misc value: 0 general, ...) and what it sees through
+    /// (`MOD_INVISIBILITY_DETECTION`): the levels, summed.
+    int[invisibilityTypes] invisibility, invisibilityDetect;
+
+    /// Fills `invisibility` and `invisibilityDetect` from `auras`.
+    void invisibilityFrom(A)(const ref A auras)
+    {
+        import dmangos.world.spellids : AuraType;
+
+        if (!auras.hasType(AuraType.modInvisibility) && !auras.hasType(AuraType.modInvisibilityDetection))
+            return; // the common case: nothing to sum
+        foreach (int i; 0 .. cast(int) invisibilityTypes)
+        {
+            invisibility[i] = auras.totalByMisc(AuraType.modInvisibility, i);
+            invisibilityDetect[i] = auras.totalByMisc(AuraType.modInvisibilityDetection, i);
+        }
+    }
+
+    /// Whether it is invisible in any way.
+    @property bool invisible() const pure nothrow @nogc @safe
+    {
+        foreach (level; invisibility)
+            if (level > 0)
+                return true;
+        return false;
+    }
+
+    /// Fills `attackerCrit` and `attackerHit` from `auras`.
+    void attackerChancesFrom(A)(const ref A auras)
+    {
+        import dmangos.world.spellids : AuraType;
+
+        attackerCrit = [auras.total(AuraType.modAttackerMeleeCritChance), auras.total(AuraType.modAttackerRangedCritChance),
+            auras.total(AuraType.modAttackerSpellCritChance)];
+        attackerHit = [auras.total(AuraType.modAttackerMeleeHitChance), auras.total(AuraType.modAttackerRangedHitChance),
+            auras.total(AuraType.modAttackerSpellHitChance)];
+        rangedTakenFlat = auras.total(AuraType.modRangedDamageTaken);
+    }
     float[mechanics] mechanicResist = 0; /// percent more often it resists spells of each mechanic (`MOD_MECHANIC_RESISTANCE`)
     uint creatureType = creatureTypeHumanoid; /// `CreatureType` (a player is a humanoid)
     bool stealthed;            /// under a `MOD_STEALTH` aura (Stealth, Prowl)
@@ -332,6 +374,42 @@ unittest
     assert(shielded.toSpell(4, 0, 0) && shielded.toDamage(0));
 }
 
+/// The invisibility types `Fighter.invisibility` covers (the data uses 0 to 5).
+enum size_t invisibilityTypes = 8;
+
+/**
+ * Whether `viewer` sees `target` through its invisibility (CMaNGOS's `VisibilityData::CanDetectInvisibilityOf`):
+ * not invisible at all, or one of its invisibility types no stronger than the viewer's detection of it (Detect
+ * Invisibility, a quest's detection potion; a creature's innate detection).
+ */
+bool seesThrough(const Fighter viewer, const Fighter target) pure nothrow @nogc @safe
+{
+    bool invisible;
+    foreach (i; 0 .. invisibilityTypes)
+        if (target.invisibility[i] > 0)
+        {
+            invisible = true;
+            if (target.invisibility[i] <= viewer.invisibilityDetect[i])
+                return true;
+        }
+    return !invisible;
+}
+
+unittest
+{
+    Fighter ghost, viewer;
+    assert(seesThrough(viewer, ghost), "nothing to see through");
+    ghost.invisibility[0] = 300;
+    assert(!seesThrough(viewer, ghost));
+    viewer.invisibilityDetect[0] = 100;
+    assert(!seesThrough(viewer, ghost), "not strong enough");
+    viewer.invisibilityDetect[0] = 300;
+    assert(seesThrough(viewer, ghost));
+    viewer.invisibilityDetect[0] = 0;
+    viewer.invisibilityDetect[1] = 500;
+    assert(!seesThrough(viewer, ghost), "another type");
+}
+
 /// The spell mechanics (`Mechanics`) `Fighter.mechanicResist` covers.
 enum size_t mechanics = 32;
 
@@ -473,6 +551,7 @@ float missChance(const Fighter attacker, const Fighter victim, AttackType type) 
     }
     chance += difference * factor;
     chance -= attacker.hitBonus;
+    chance -= victim.attackerHit[type == AttackType.ranged ? 1 : 0]; // Heightened Senses: less often hit
     const minimum = difference > 10 ? 1.0f : 0.0f;
     return chance < minimum ? minimum : chance > 100 ? 100 : chance;
 }
@@ -552,6 +631,7 @@ float critChance(const Fighter attacker, const Fighter victim, AttackType type) 
     const skill = !vsPlayer ? weaponSkillValue(attacker, type, victim) : skillMaxForLevel(attacker, victim);
     const difference = int(skill) - int(defenseSkillValue(victim, attacker));
     chance += difference * (vsPlayer ? 0.04f : 0.2f);
+    chance += victim.attackerCrit[type == AttackType.ranged ? 1 : 0]; // Sleight of Hand: crit less often
     return clamp100(chance);
 }
 
@@ -744,6 +824,8 @@ MeleeDamage calculateMeleeDamage(const Fighter attacker, const Fighter victim, A
         return d;
     }
     float damage = weaponDamage(attacker, type, rng) * damageFactor(attacker, victim, type, d.school);
+    if (type == AttackType.ranged && victim.rangedTakenFlat)
+        damage = imported!"std.algorithm.comparison".max(0.0f, damage + victim.rangedTakenFlat);
     if (d.school < 7 && victim.damageTakenFlat[d.school]) // the victim's flat part, as its percent takes it
         damage = imported!"std.algorithm.comparison".max(0.0f, damage + victim.damageTakenFlat[d.school] * victim.damageTaken[d.school]);
     if (d.school == 0)
@@ -975,6 +1057,11 @@ unittest
     const immune = calculateMeleeDamage(player, wolf, AttackType.mainHand, rng);
     assert(immune.targetState == VictimState.isImmune && immune.damage == 0);
     wolf.immune.schools = 0;
+    // Sleight of Hand on the victim: crits against it less often.
+    const before = critChance(player, wolf, AttackType.mainHand);
+    wolf.attackerCrit[0] = -2;
+    assert(critChance(player, wolf, AttackType.mainHand) < before || before == 0);
+    wolf.attackerCrit[0] = 0;
 
     // Rage: a level 1 warrior hitting for 10 gets 10 / 7.49 * 7.5 = 10.0 rage, 100 in the field.
     const rage = rageReward(1, 10, true);

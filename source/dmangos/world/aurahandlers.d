@@ -70,7 +70,7 @@ private:
      * `SPELL_EFFECT_APPLY_AURA` (at the spell's first aura effect, for all of them): the aura on its
      * target, this player or another, or a creature.
      */
-    void applyAuraEffect(const(SpellInfo)* spell, size_t i, ulong target)
+    package void applyAuraEffect(const(SpellInfo)* spell, size_t i, ulong target)
     {
         static bool auraEffect(uint effect) { return effect == SpellEffect.applyAura || effect == SpellEffect.applyAreaAuraParty; }
         foreach (j; 0 .. i)
@@ -119,6 +119,19 @@ private:
             foreach (j; 0 .. 3)
                 if (auraEffect(spell.effect[j]))
                     auraAppliedScript(spell, j, target, values[j]);
+            // A charm (Enslave Demon) or a possession (Mind Control, Eyes of the Beast): the creature is the player's.
+            foreach (j; 0 .. 3)
+                if (auraEffect(spell.effect[j]))
+                {
+                    const kind = spell.casting.applyAuraName[j];
+                    if (kind == AuraType.modCharm || kind == AuraType.modPossess || kind == AuraType.modPossessPet)
+                    {
+                        takeCharm(creature, spell, kind != AuraType.modCharm);
+                        break;
+                    }
+                }
+            if (charmed is creature)
+                return;
             spellAttacked(creature, 0);
             return;
         }
@@ -128,6 +141,8 @@ private:
         // On an enemy (a duel's opponent) it is a debuff.
         const hostile = who !is this && canAttack(relatingNow(), who.relatingNow(), context.client);
         who.addAura(makeAura(spell, player.guid, player.data.level, ms, !hostile, values));
+        if (!hostile && who !is this) // a buff on one fighting: those it fights fight this player too
+            imported!"dmangos.world.creatureai".assistThreat(map, who.threateners, unit, 0, *spell);
     }
 
     // -----------------------------------------------------------------------
@@ -323,6 +338,7 @@ private:
             }
         foreach (aura; spent)
             removeAura(aura);
+        splitDamage(school, damage); // Blessing of Sacrifice: a share to its paladin
         if (absorbed)
             flushPlayerChanges();
         return absorbed;
@@ -443,7 +459,7 @@ private:
                     AuraType.modDamagePercentDone, AuraType.modDamagePercentTaken, AuraType.modDamageTaken, AuraType.modDamageDoneVersus,
                     AuraType.modCritPercentVersus, AuraType.modThreat, AuraType.modMechanicResistance, AuraType.modShieldBlockvaluePct,
                     AuraType.modMeleeHaste, AuraType.modRangedHaste, AuraType.modAttackSpeed, AuraType.modRangedAmmoHaste,
-                    AuraType.modResistanceExclusive:
+                    AuraType.modResistanceExclusive, AuraType.modCastingSpeed:
                 stats = true;
                 break;
             // Speeds (`dmangos.world.moveorders`: `speedRate`).
@@ -499,6 +515,10 @@ private:
                             removeAura(other);
                 }
                 break;
+            case AuraType.retainComboPoints: // Premeditation ran out: its combo points with it
+                if (!apply)
+                    retainedComboPointsExpired(aura.amount[i]);
+                break;
             case AuraType.addFlatModifier, AuraType.addPctModifier: // talents: the client's numbers
                 if (map !is null) // in the world (at login they all go at once: `sendAllSpellMods`)
                     spellModChanged(aura, i);
@@ -509,9 +529,22 @@ private:
                 if (map !is null)
                     map.refreshVisibility(this);
                 break;
-            case AuraType.modInvisibility:
+            case AuraType.modInvisibility: // the glow it sees itself with; who sees it changes
+            {
                 if (apply)
                     interruptAuras(AuraInterrupt.stealthInvisCancels, aura);
+                enum ubyte invisibilityGlow = 0x40; // PLAYER_FIELD_BYTE2_INVISIBILITY_GLOW
+                const bytes = player.values.getByte!PLAYER_FIELD_BYTES2(1);
+                const glowing = player.auras.hasType(AuraType.modInvisibility);
+                player.values.setByte!PLAYER_FIELD_BYTES2(1, cast(ubyte)(glowing ? bytes | invisibilityGlow
+                    : bytes & ~invisibilityGlow));
+                if (map !is null)
+                    map.refreshVisibility(this);
+                break;
+            }
+            case AuraType.modInvisibilityDetection: // what it sees changes
+                if (map !is null)
+                    map.refreshVisibility(this);
                 break;
             case AuraType.modShapeshift:
                 player.values.setByte!UNIT_FIELD_BYTES_1(2, apply ? cast(ubyte) aura.misc(i) : 0);
@@ -520,6 +553,20 @@ private:
                 break;
             case AuraType.modRoot:
                 movement = true;
+                break;
+            case AuraType.feignDeath: // creatures let the player be, if it is not seen through
+                feignDeathAura(aura, apply);
+                break;
+            case AuraType.modTotalThreat: // Fade: less threat with every creature, while it lasts
+                fadeThreat(aura, i, apply);
+                break;
+            // Tracking: the minimap's creature types and resources (`PLAYER_TRACK_CREATURES`, `_RESOURCES`), a bit
+            // for each type (the misc value, from 1).
+            case AuraType.trackCreatures, AuraType.trackResources, AuraType.trackStealthed:
+                trackingAura(aura, i, apply);
+                break;
+            case AuraType.modUnattackable: // Divine Intervention: out of every fight, and nothing may target it
+                unattackableAura(apply);
                 break;
             // Crowd control (CMaNGOS's `SetStunned`, `SetFleeing`, `SetConfused`, silence, pacify, disarm): on the
             // unit's flags while any such aura lasts; as it begins, what it stops stops.
@@ -730,6 +777,10 @@ private:
                 if (aura.period[i] > 0 && row.periodTimer[i] > 0)
                     aura.periodTimer[i] = row.periodTimer[i];
             addAura(aura);
+            // Its own Presence of Mind still on: the spell held in use again, its cooldown to start as it ends.
+            enum uint cooldownOnEvent = 0x02000000; // SPELL_ATTR_COOLDOWN_ON_EVENT
+            if (row.caster == player.guid && (spell.attributes & cooldownOnEvent))
+                holdForCooldownEvent(spell);
         }
     }
 
@@ -803,6 +854,16 @@ private:
             if (const spell = context.data.spells.spell(aura.spell.triggerSpell[i]))
                 castSpell(spell, SpellTargets(TargetFlags.self, player.guid), true, 0);
             return;
+        case AuraType.periodicLeech, AuraType.periodicManaLeech:
+            // Another player's drain (a duel, world PvP): its caster's doing, as on a creature.
+            if (aura.caster != player.guid)
+                if (auto caster = cast(typeof(this)) context.onlinePlayer(aura.caster))
+                    if (caster.map is map && caster.player !is null)
+                        return aura.type(i) == AuraType.periodicLeech ? caster.leechTick(unit, aura, i, amount)
+                            : caster.manaLeechTick(unit, aura, i, amount);
+            if (aura.type(i) == AuraType.periodicManaLeech)
+                return;
+            goto case AuraType.periodicDamage; // a creature's: damage over time
         case AuraType.periodicDamage:
         {
             // A creature's damage over time (armor takes off physical).
@@ -812,10 +873,31 @@ private:
             if (aura.spell.casting.school == 0)
                 damage = cast(uint) armorReducedDamage(aura.casterLevel, player.fighter.armor, damage);
             const absorbed = absorbIncoming(aura.spell.casting.school, damage);
-            periodicLog(player.guid, aura, i, damage, 0, absorbed);
             import dmangos.world.unit : Blow, dealDamage;
 
-            return dealDamage(map.unit(aura.caster), unit, damage, Blow.periodic());
+            if (aura.type(i) != AuraType.periodicLeech)
+            {
+                periodicLog(player.guid, aura, i, damage, 0, absorbed);
+                return dealDamage(map.unit(aura.caster), unit, damage, Blow.periodic());
+            }
+            // A creature's drain: the periodic damage log (as CMaNGOS's leech sends), and its health back.
+            import dmangos.world.spellcast : nonMeleeDamageLog;
+
+            const school = aura.spell.casting.school;
+            tellAround(player.guid, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(player.guid, aura.caster,
+                aura.spell.id, damage, school, absorbed, 0, true, 0, false));
+            const dealt = damage < v.get!UNIT_FIELD_HEALTH ? damage : v.get!UNIT_FIELD_HEALTH;
+            dealDamage(map.unit(aura.caster), unit, damage, Blow.periodic(school));
+            if (auto drainer = cast(Creature) map.findObject(aura.caster))
+                if (drainer.alive)
+                {
+                    const factor = aura.spell.casting.multipleValue[i] > 0 ? aura.spell.casting.multipleValue[i] : 1;
+                    const health = drainer.values.get!UNIT_FIELD_HEALTH, top = drainer.values.get!UNIT_FIELD_MAXHEALTH;
+                    const back = cast(uint)(dealt * factor);
+                    drainer.values.set!UNIT_FIELD_HEALTH(health + back > top ? top : health + back);
+                    map.flushObjectChanges(drainer);
+                }
+            return;
         }
         default:
             return;
@@ -826,10 +908,15 @@ private:
         v.set!UNIT_FIELD_HEALTH(health + healed > maxHealth ? maxHealth : health + healed);
         if (aura.type(i) != AuraType.modRegen) // food shows no log
             periodicLog(player.guid, aura, i, healed, 0);
+        if (aura.type(i) == AuraType.periodicHeal) // a heal over time angers as a heal does
+            if (auto healer = map.unit(aura.caster))
+                imported!"dmangos.world.creatureai".assistThreat(map, threateners, healer,
+                    health + healed > maxHealth ? maxHealth - health : healed, *aura.spell);
     }
 
-    /// `SMSG_PERIODICAURALOG`
-    void periodicLog(ulong target, const Aura aura, size_t i, uint amount, uint powerOrSchool, uint absorbed = 0)
+    /// `SMSG_PERIODICAURALOG` (a mana leech's with what its caster gains of each point, `gainMultiplier`)
+    void periodicLog(ulong target, const Aura aura, size_t i, uint amount, uint powerOrSchool, uint absorbed = 0,
+        float gainMultiplier = 0)
     {
         ByteWriter w;
         w.putPackedGuid(target);
@@ -848,16 +935,27 @@ private:
         case AuraType.periodicHeal, AuraType.obsModHealth:
             w.put(amount);
             break;
+        case AuraType.periodicManaLeech:
+            w.put(powerOrSchool);
+            w.put(amount);
+            w.put(gainMultiplier);
+            break;
         default:
             w.put(powerOrSchool);
             w.put(amount);
             break;
         }
+        tellAround(target, Opcode.SMSG_PERIODICAURALOG, w.data);
+    }
+
+    /// A log about `target` (this player or another unit) for everyone who sees it, and for this player.
+    package void tellAround(ulong target, Opcode opcode, const(ubyte)[] body_)
+    {
         if (target == player.guid)
-            return map.sendToWatchers(this, Opcode.SMSG_PERIODICAURALOG, w.data, true);
-        map.sendToObservers(target, Opcode.SMSG_PERIODICAURALOG, w.data);
+            return map.sendToWatchers(this, opcode, body_, true);
+        map.sendToObservers(target, opcode, body_);
         if (!map.seesObject(player.guid, target))
-            deliver(Opcode.SMSG_PERIODICAURALOG, w.data);
+            deliver(opcode, body_);
     }
 
     /**
@@ -892,6 +990,8 @@ private:
                     player.data.level, target.fighter, isBinarySpell(*aura.spell), false,
                     uniform!"[]"(1u, 10000u, map.random)).damage;
             }
+            if (aura.type(i) == AuraType.periodicLeech)
+                return leechTick(map.unitOf(target), aura, i, damage);
             periodicLog(target.guid, aura, i, damage, aura.spell.casting.school);
             spellAttacked(target, damage, true, aura.spell.casting.school);
             if (target.alive) // its ticks' procs (Nightfall)
@@ -902,6 +1002,8 @@ private:
                 procAuras(ProcFlag.dealHarmfulPeriodic, map.unitOf(target), ProcHit(aura.spell, 1, damage, 0, damage != 0));
             }
             break;
+        case AuraType.periodicManaLeech:
+            return manaLeechTick(map.unitOf(target), aura, i, amount);
         default:
             break;
         }

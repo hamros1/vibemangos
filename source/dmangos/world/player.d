@@ -643,11 +643,11 @@ final class Player : InventoryOwner
         spiritPaused = 5000;
     }
 
-    /// Mana per second, from spirit and class; while the five-second rule holds, only the share auras keep.
+    /// Mana per second, from spirit and class, times what `MOD_POWER_REGEN_PERCENT` auras of mana make it (Innervate,
+    /// Evocation); while the five-second rule holds, only the share auras keep.
     float manaRegenPerSecond() const
     {
-        // `MOD_POWER_REGEN_PERCENT` of mana multiplies it (Innervate, Evocation).
-        const full = spiritManaPerSecond() * auras.multiplier(AuraType.modPowerRegenPercent, (int misc) => misc == Power.mana);
+        const full = spiritManaPerSecond() * powerRegenFactor(Power.mana);
         if (spiritPaused == 0)
             return full;
         const kept = auras.total(AuraType.modManaRegenInterrupt);
@@ -677,22 +677,59 @@ final class Player : InventoryOwner
         return perTick / 2; // the values above are per two-second tick
     }
 
+    /// What `MOD_POWER_REGEN_PERCENT` auras of `power` make its regeneration (or a rage's decay): Innervate,
+    /// Evocation, Adrenaline Rush.
+    float powerRegenFactor(Power power) const
+    {
+        return auras.multiplier(AuraType.modPowerRegenPercent, (int misc) => misc == power);
+    }
+
     /**
-     * Regeneration over `milliseconds` out of combat: health (half again as fast sitting),
-     * mana, energy, and rage decaying. Returns whether anything changed.
+     * Whether an aura that stops regeneration holds (`SPELL_AURA_INTERRUPT_REGEN`: Bloodrage, Enrage put the
+     * warrior or druid in combat for it, CMaNGOS's `SetInDummyCombatState`, which only those two spells do).
+     */
+    bool regenInterrupted() const
+    {
+        enum uint enrage = 5229, bloodrage = 29131;
+        foreach (aura; auras.list)
+            if (aura.has(AuraType.interruptRegen) && (aura.spell.id == enrage || aura.spell.id == bloodrage))
+                return true;
+        return false;
+    }
+
+    /**
+     * Health per second now (CMaNGOS's `RegenerateHealth`): out of combat from spirit, times
+     * `MOD_HEALTH_REGEN_PERCENT` auras (Regeneration), half again sitting; in combat none, but the share
+     * `MOD_REGEN_DURING_COMBAT` auras keep of it; and always `MOD_HEALTH_REGEN_IN_COMBAT`'s (Demon Armor).
+     */
+    float healthRegenNow(float healthRate, bool inCombat) const
+    {
+        float add = 0;
+        const duringCombat = auras.total(AuraType.modRegenDuringCombat);
+        if (!inCombat || duringCombat)
+        {
+            add = healthRegenPerSecond() * healthRate;
+            add *= inCombat ? duringCombat / 100.0f : auras.multiplier(AuraType.modHealthRegenPercent);
+            if (values.getByte!UNIT_FIELD_BYTES_1(0) != 0)
+                add *= 1.5f; // not standing
+        }
+        add += auras.total(AuraType.modHealthRegenInCombat);
+        return add > 0 ? add : 0;
+    }
+
+    /**
+     * Regeneration over `milliseconds`: health (`healthRegenNow`), mana, energy, and out of combat rage
+     * decaying; Bloodrage and Enrage count as combat for it (`regenInterrupted`). Returns whether anything changed.
      */
     bool regenerate(uint milliseconds, float healthRate, float manaRate, float rageLoss, float energyRate,
         bool inCombat = false)
     {
         bool changed;
+        inCombat |= regenInterrupted();
         const health = values.get!UNIT_FIELD_HEALTH, maxHealth = values.get!UNIT_FIELD_MAXHEALTH;
-        // Health, and the loss of rage, only out of combat.
-        if (!inCombat && health < maxHealth && health > 0)
+        if (health < maxHealth && health > 0)
         {
-            float add = max(0, healthRegenPerSecond() * healthRate);
-            if (values.getByte!UNIT_FIELD_BYTES_1(0) != 0)
-                add *= 1.5f; // not standing
-            const gained = cast(uint)(add * milliseconds / 1000);
+            const gained = cast(uint)(healthRegenNow(healthRate, inCombat) * milliseconds / 1000);
             if (gained)
             {
                 values.set!UNIT_FIELD_HEALTH(min(health + gained, maxHealth));
@@ -701,10 +738,9 @@ final class Player : InventoryOwner
         }
         changed |= addPower(Power.mana, cast(int)(manaRegenPerSecond() * manaRate * (milliseconds / 1000)));
         spiritPaused = spiritPaused > milliseconds ? spiritPaused - milliseconds : 0;
-        changed |= addPower(Power.energy, cast(int)((milliseconds / 100) * energyRate // and Adrenaline Rush's:
-            * auras.multiplier(AuraType.modPowerRegenPercent, (int misc) => misc == Power.energy)));
+        changed |= addPower(Power.energy, cast(int)((milliseconds / 100) * energyRate * powerRegenFactor(Power.energy)));
         if (!inCombat)
-            changed |= addPower(Power.rage, -cast(int)((milliseconds / 200) * 2.5f * rageLoss));
+            changed |= addPower(Power.rage, -cast(int)((milliseconds / 200) * 2.5f * rageLoss * powerRegenFactor(Power.rage)));
         return changed;
     }
 
@@ -1196,6 +1232,8 @@ private:
             import dmangos.world.combat : Immunities;
 
             f.immune = Immunities.of(auras);
+            f.attackerChancesFrom(auras);
+            f.invisibilityFrom(auras);
         }
         return f;
     }
@@ -1354,6 +1392,7 @@ private:
         v.set!UNIT_FIELD_ATTACK_POWER(stats.attackPower);
         v.set!UNIT_FIELD_RANGED_ATTACK_POWER(stats.rangedAttackPower);
         // Attack times are sent as whole numbers, not floats.
+        v.set!UNIT_MOD_CAST_SPEED(auras.castTimeFactor()); // Curse of Tongues: the client's cast bar
         v.set!UNIT_FIELD_BASEATTACKTIME(stats.attackTime[AttackType.mainHand]);
         v.set!UNIT_FIELD_BASEATTACKTIME(1, stats.attackTime[AttackType.offHand]); // the off hand
         v.set!UNIT_FIELD_RANGEDATTACKTIME(stats.attackTime[AttackType.ranged]);
