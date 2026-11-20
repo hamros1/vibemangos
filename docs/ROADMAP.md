@@ -121,8 +121,13 @@ The largest area. In order:
    included, and EventAI scripts with creatures' spells, texts and fleeing (`eventai.d`,
    `creaturecasting.d`; README's "Creature scripts"), and database scripts for quests, gossip and
    game objects (`dbscripts.d`). Temporary summons (EventAI's and the scripts'). EventAI's morphs, mounts and
-   instance data, and paths by id in scripts: done. Not yet: summons handed over between nodes,
-   movement maps for chasing, help from another node's creatures in a cluster.
+   instance data, and paths by id in scripts: done. Every event, action and target type the database's
+   `creature_ai_scripts` uses: done (conditions of `EVENT_T_OOC_LOS` and `EVENT_T_DEATH` not looked at).
+   Dungeon rules (no pursuit leash, those who come near join the fight, `AGGRO_ZONE`), auras lost on evade,
+   creature spells scaled to the caster's level, threat from heals and buffs, pools rolled again at each
+   respawn: done. Not yet: summons handed over between nodes, movement maps for chasing, help from another
+   node's creatures in a cluster, a pool's roll seen by the other nodes (each keeps its own), a creature's
+   mana regenerating in combat.
 3. **Death: done** (`death.d`, `corpse.d`; README's "Death"), resurrection sickness and battleground
    spirit guides included, and ghosts hidden from the living. Bones (an hour where a body was, bare; CMaNGOS's
    `Death.Bones` on): done. Not yet: the ghost's own auras (applied by

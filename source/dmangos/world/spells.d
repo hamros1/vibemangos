@@ -130,6 +130,7 @@ struct SpellCastInfo
     float[3] dmgMultiplier = 0;
     uint[3] effectMechanic;    /// `EffectMechanic1..3`: each effect's own mechanic (a stun on a damaging spell)
     uint[2] totems;            /// `Totem1/2`: tools that must be in the bags (a blacksmith hammer, thieves' tools)
+    uint attributesServerside; /// `AttributesServerside`: CMaNGOS's own flags (`SPELL_ATTR_SS_*`)
 }
 
 /// `spell_template`'s casting columns, in `SpellCastRow` order.
@@ -147,7 +148,8 @@ enum spellCastQuery = "SELECT Id, SpellName, School, Dispel, Mechanic, Attribute
     ~ "EffectPointsPerComboPoint1, EffectPointsPerComboPoint2, EffectPointsPerComboPoint3, SpellVisual, SpellIconID, "
     ~ "ManaCostPercentage, StartRecoveryCategory, StartRecoveryTime, MaxTargetLevel, SpellFamilyName, "
     ~ "SpellFamilyFlags, MaxAffectedTargets, DmgClass, PreventionType, DmgMultiplier1, DmgMultiplier2, "
-    ~ "DmgMultiplier3, EffectMechanic1, EffectMechanic2, EffectMechanic3, Totem1, Totem2 FROM spell_template";
+    ~ "DmgMultiplier3, EffectMechanic1, EffectMechanic2, EffectMechanic3, Totem1, Totem2, AttributesServerside "
+    ~ "FROM spell_template";
 
 /// One row of `spellCastQuery` (flat, for `Row.as`).
 struct SpellCastRow
@@ -177,6 +179,7 @@ struct SpellCastRow
     float dm1, dm2, dm3;
     uint em1, em2, em3;
     uint totem1, totem2;
+    uint attributesServerside;
 
     SpellCastInfo toInfo() const
     {
@@ -187,7 +190,7 @@ struct SpellCastRow
                 "baseLevel", "durationIndex", "powerType", "manaCost", "manaCostPerLevel", "manaPerSecond",
                 "manaPerSecondPerLevel", "rangeIndex", "speed", "stackAmount", "spellVisual", "spellIconId", "manaCostPercentage",
                 "startRecoveryCategory", "startRecoveryTime", "maxTargetLevel", "spellFamilyName", "spellFamilyFlags",
-                "maxAffectedTargets", "dmgClass", "preventionType"])
+                "maxAffectedTargets", "dmgClass", "preventionType", "attributesServerside"])
             __traits(getMember, c, field) = cast(typeof(__traits(getMember, c, field))) __traits(getMember, this, field);
         c.reagentCount = [rc1, rc2, rc3, rc4, rc5, rc6, rc7, rc8];
         c.dieSides = [ds1, ds2, ds3];

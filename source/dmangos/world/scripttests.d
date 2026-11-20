@@ -649,6 +649,8 @@ unittest
         auto t = cast() context.data.creatureTemplates[creatureInnkeeper];
         t.entry = w.entry;
         t.npcFlags = w.flags;
+        if (w.entry == disciple) // as the database has him: immune to players (no ambusher's ally in a fight with them)
+            t.unitFlags |= 0x100;
         context.data.creatureTemplates[w.entry] = t;
         context.data.creatureSpawns ~= CreatureSpawn(nextGuid++, w.entry, mapDeadmines, w.x, start.y, start.z);
         context.data.creatureCells[mapDeadmines][cellKeyAt(w.x, start.y)] ~= context.data.creatureSpawns.length - 1;

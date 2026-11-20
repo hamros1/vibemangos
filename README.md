@@ -307,7 +307,9 @@ What works now:
     tutorial flags, saved as they change.
   * **Creatures and game objects:** every `creature` and `gameobject` spawn of the world database
     (pools, spawn groups and game events decide which; a spawn group's members without an entry of
-    their own get its entries by their `MinCount`, `MaxCount` and chances), created when a player first comes near
+    their own get its entries by their `MinCount`, `MaxCount` and chances; each time a pool's member is due
+    to respawn the pool rolls again, so a rare spawn comes back at one of its places, the one rolled after a
+    respawn time of its own), created when a player first comes near
     their cell, with their levels, health, models, equipment, mounts and emotes. Their names come
     from `CMSG_CREATURE_QUERY` and `CMSG_GAMEOBJECT_QUERY`. Game objects whose `spawntimesecs` is
     below 0 wait for events and scripts to spawn them.
@@ -411,11 +413,20 @@ What works now:
     They keep a threat list (damage is threat; a new victim needs 110% of the current one's in melee
     reach, 130% elsewhere), chase in straight lines, swing with the attack table (crushing
     blows included), and give warriors rage. They give up (evade) when nobody is left to fight, or
-    when their victim is 30 yards beyond where their `Pursuit` time last started; they run back to
-    where the fight began, evading attacks, and get a third of their health back every 5 seconds out
-    of combat. Starting a fight, a creature calls for help: allies
+    (outside dungeons) when their victim is 30 yards beyond where their `Pursuit` time last started, or
+    past their `Leash` from where the fight began; they run back there, evading attacks, losing their
+    auras (their enemies' debuffs and damage over time, their own buffs; not their passives), and get a
+    third of their health back every 5 seconds out of combat. In a dungeon a fighting creature also takes
+    on those who come within its aggro radius, and one with `CREATURE_EXTRA_FLAG_AGGRO_ZONE` fights everyone
+    in the dungeon once a player pulls it. Healing (and buffing) one a creature fights puts the healer in
+    its fight, with half the heal shared out as threat among the creatures fighting the one healed
+    (none for `SPELL_ATTR_EX_NO_THREAT` spells). Starting a fight, a creature calls for help: allies
     within 5 yards (or its `CallForHelp`) that would attack the enemy on sight join in a moment and a
-    half later; and a fighting creature that passes within 5 yards of an idle ally pulls it in.
+    half later, if their faction answers calls (`FACTION_TEMPLATE_RESPOND_TO_CALL_FOR_HELP`; in a dungeon
+    any creature that may attack the enemy, fighting or not); and a fighting creature that passes within 5
+    yards of an idle ally pulls it in. A creature's spells made for a lower level
+    (`SPELL_ATTR_SCALES_WITH_CREATURE_LEVEL`) do damage, heals and absorbs as its level's base damage is to
+    the spell level's, and cost mana as CMaNGOS scales it.
   * **Scripts in D** (docs/SCRIPTING.md): gameplay the database cannot describe is written as D
     structs in `source/dmangos/scripts/`, bound by the world database's `ScriptName` columns
     (`creature_template`, `instance_template`) and found at compile time. A script handles typed
@@ -463,16 +474,22 @@ What works now:
   * **Creature scripts** (EventAI, `creature_ai_scripts`, for each creature entry or
     spawn): their events (timers in and out of combat, health, mana and the victim's health between
     two percentages, the victim within a range or casting, aggro, a kill, death, evading, spawning,
-    reaching home, an aura of their own there or missing, a spell hitting them, a player's emote at
-    them, a friend near them hurt, another creature's AI event) run their actions by chance and phase, repeating after their
-    repeat timers: casting a spell (healing that friend too), saying, yelling, emoting or whispering
+    reaching home, an aura of their own (or their victim's) there with so many stacks or missing, a spell
+    hitting them or their spell hitting another, a player's emote at them, a friend near them hurt, held
+    (rooted, stunned, slowed, feared) or missing a buff, another creature's AI event, a player or creature
+    coming into their sight out of combat, a creature they summoned or its death, their victim's mana, an
+    enemy at a range, standing behind or before their victim, a victim they cannot reach, a timer in and
+    out of combat alike) run their actions by chance and phase, repeating after their repeat timers
+    (at the target types CMaNGOS has, the nearest within a spell's radius and the farthest out of melee
+    reach included): casting a spell (healing that friend too), saying, yelling, emoting or whispering
     a `broadcast_text` (or one of a `dbscript_random_templates` group, or by a chance), emotes,
     sounds, phases, fleeing in fear for 7 seconds, calling for help, combat movement, swings on or
     off, ranged mode (keeping a distance to cast, coming in to melee when out of mana), stand states,
     unit flags, taking auras off, despawning, not dying of damage, react states, factions, random
     phases, quest events and kill credit for the players fighting it, relay scripts (the database
     scripts below), AI events to the friendly creatures around, summoning creatures (beside it or at a `creature_ai_summons` spot, attacking
-    its target), evading, attacking. Summoned creatures are never saved and never come back: they
+    its target), evading, attacking, chasing at a distance and angle, standing, wandering or walking its
+    waypoints, and pausing them. Summoned creatures are never saved and never come back: they
     go as their summon type says (after their time, out of combat only, when they die, or
     when their corpse goes). A creature casts only
     when it can (not while casting another, in range, with the mana): cast

@@ -132,6 +132,12 @@ mixin template CombatHandlers()
         threatenedBy.remove(creature);
     }
 
+    /// The creatures that have this player in their threat list (whom healing it angers).
+    package ulong[] threateners()
+    {
+        return threatenedBy.keys;
+    }
+
 private:
     bool[ulong] threatenedBy;      // the creatures that have this player in their threat list
 

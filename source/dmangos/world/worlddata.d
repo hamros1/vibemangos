@@ -418,7 +418,7 @@ final class WorldData
 
     StaticMap!(uint, CreatureTemplate) creatureTemplates;       /// by entry
     StaticMap!(uint, GameObjectTemplate) gameObjectTemplates;   /// by entry
-    CreatureSpawn[] creatureSpawns;                 /// the spawns in the world now (pools chosen, events off)
+    CreatureSpawn[] creatureSpawns;                 /// every spawn (`pools` says which pooled ones are up)
     GameObjectSpawn[] gameObjectSpawns;             /// ditto
     size_t[][ulong][uint] creatureCells;            /// map -> cell key -> indexes into `creatureSpawns`
     size_t[][ulong][uint] gameObjectCells;          /// ditto, into `gameObjectSpawns`
@@ -458,6 +458,7 @@ final class WorldData
     int[uint] fishingBaseSkill;                     /// `skill_fishing_base_level`: area or zone -> skill to fish there
     uint[uint] instanceResetDays;                   /// `instance_template.reset_delay` (a raid's lockout), by map
     WaypointStore waypoints;                        /// `creature_movement` and `creature_movement_template`
+    PoolChooser pools;                              /// `pool_*`: which pooled spawns are up now (null: none pooled)
     EventAiData eventAi;                            /// `creature_ai_scripts`, by creature entry
     PetData pets;                                   /// `pet_levelstats`, `petcreateinfo_spell`, `pet_name_generation`
     string[uint] creatureScriptNames;               /// `creature_template.ScriptName`, by entry (docs/SCRIPTING.md)
@@ -871,6 +872,7 @@ final class WorldData
             pools.add(row.get!uint(1), PoolMember(PoolMember.Kind.gameObject, row.get!uint(0), row.get!float(2)));
         auto rng = Random(spawnSeed ? cast(uint)(spawnSeed ^ spawnSeed >> 32) : unpredictableSeed);
         pools.choose(rng);
+        this.pools = pools; // every member is loaded; those not chosen wait for a roll (`PoolChooser.reroll`)
 
         // Spawn groups: at most MaxCount members up at once, entries for members without one;
         // groups that depend on a world state stay down, as no world state is kept yet.
@@ -893,8 +895,7 @@ final class WorldData
         {
             import std.random : uniform;
 
-            if (!pools.spawns(PoolMember.Kind.creature, row.guid) || row.guid >= 1 << 24
-                || !groups.spawns(0, row.guid))
+            if (row.guid >= 1 << 24 || !groups.spawns(0, row.guid))
                 continue;
             if (row.entry == 0)
             {
@@ -934,8 +935,7 @@ final class WorldData
             foreach (i; 0 .. 4)
                 s.rotation[i] = row.get!float(7 + i);
             s.respawnSeconds = row.get!int(11);
-            if (!pools.spawns(PoolMember.Kind.gameObject, s.guid) || s.guid >= 1 << 24
-                || !groups.spawns(1, s.guid))
+            if (s.guid >= 1 << 24 || !groups.spawns(1, s.guid))
                 continue;
             if (s.entry == 0)
                 s.entry = groups.entryFor(s.guid, rng);
@@ -1388,9 +1388,13 @@ struct PoolMember
 }
 
 /**
- * Pools at start-up: each pool spawns at most its `max_limit` members, chosen at random
+ * Pools: at start-up each pool spawns at most its `max_limit` members, chosen at random
  * (those with a chance by their chance, the others evenly), and a pool inside another one only if
  * that one chose it. Spawns that are in no pool always spawn.
+ *
+ * Then, as on CMaNGOS (`PoolManager::UpdatePool`), whenever a member's respawn time is up the pool rolls
+ * again (`reroll`): the member comes back, or another member not up stands in for it, after a respawn
+ * time of its own. A rare spawn moves between its places so.
  */
 final class PoolChooser
 {
@@ -1398,14 +1402,71 @@ final class PoolChooser
     private PoolMember[][uint] members; // by pool
     private bool[uint] childPools;
     private bool[uint][PoolMember.Kind] pooled, chosen;
+    private uint[uint][PoolMember.Kind] poolOf; // the pool each member is in
 
     /// Adds a member to a pool.
     void add(uint pool, PoolMember member)
     {
         members[pool] ~= member;
         pooled[member.kind][member.id] = true;
+        poolOf[member.kind][member.id] = pool;
         if (member.kind == PoolMember.Kind.pool)
             childPools[member.id] = true;
+    }
+
+    /// Whether a spawn is in a pool at all.
+    bool inPool(PoolMember.Kind kind, uint id) const
+    {
+        const byKind = kind in poolOf;
+        return byKind !is null && (id in *byKind) !is null;
+    }
+
+    /**
+     * Member `id`'s respawn time is up: its pool rolls again (CMaNGOS's `RollOne` with it as the trigger), among
+     * itself and the members of its kind not up. Returns the one that spawns: `id` itself, or another that is up
+     * from now (and `id` not); 0 if `id` is not up in its pool (it stays away) or not in one.
+     */
+    uint reroll(PoolMember.Kind kind, uint id, ref Random rng)
+    {
+        import std.random : randomShuffle, uniform01;
+
+        if (!inPool(kind, id) || !spawns(kind, id))
+            return 0;
+        auto candidates = members.get(poolOf[kind][id], null).dup;
+        randomShuffle(candidates, rng);
+        bool eligible(const ref PoolMember m)
+        {
+            return m.kind == kind && (m.id == id || !spawns(kind, m.id));
+        }
+        uint found;
+        uint fallback; // the first with a chance, if no roll hits one and none is without
+        const roll = uniform01(rng) * 100;
+        foreach (ref m; candidates)
+            if (m.chance > 0 && eligible(m))
+            {
+                if (!fallback)
+                    fallback = m.id;
+                if (roll < m.chance)
+                {
+                    found = m.id;
+                    break;
+                }
+            }
+        if (!found)
+            foreach (ref m; candidates)
+                if (m.chance == 0 && eligible(m))
+                {
+                    found = m.id;
+                    break;
+                }
+        if (!found)
+            found = fallback ? fallback : id;
+        if (found != id)
+        {
+            chosen[kind].remove(id);
+            chosen[kind][found] = true;
+        }
+        return found;
     }
 
     /// Chooses the members of every top-level pool, and of the pools those choose.
@@ -1487,6 +1548,27 @@ unittest
     assert(!pools.spawns(PoolMember.Kind.creature, 20) && !pools.spawns(PoolMember.Kind.creature, 21),
         "pool 3 may spawn no member, so pool 2 is not chosen");
     assert(pools.spawns(PoolMember.Kind.creature, 99), "not in a pool");
+
+    // A rare spawn with three places: each time it comes back it may be at another, never at two at once.
+    uint up;
+    foreach (guid; [10u, 11, 12])
+        if (pools.spawns(PoolMember.Kind.gameObject, guid))
+            up = guid;
+    assert(pools.reroll(PoolMember.Kind.gameObject, up == 10 ? 11 : 10, rng) == 0, "one not up stays away");
+    bool[uint] seen;
+    foreach (_; 0 .. 60)
+    {
+        const next = pools.reroll(PoolMember.Kind.gameObject, up, rng);
+        assert(next != 0);
+        seen[next] = true;
+        size_t count;
+        foreach (guid; [10u, 11, 12])
+            count += pools.spawns(PoolMember.Kind.gameObject, guid);
+        assert(count == 1 && pools.spawns(PoolMember.Kind.gameObject, next), "one up, the one rolled");
+        up = next;
+    }
+    assert(seen.length == 3, "in time, at every place");
+    assert(pools.reroll(PoolMember.Kind.creature, 99, rng) == 0, "not in a pool");
 }
 
 /**

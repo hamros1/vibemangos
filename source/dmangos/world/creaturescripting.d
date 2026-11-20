@@ -616,6 +616,9 @@ mixin template CreatureScripting()
         if (world !is null)
             world_ = world;
         raiseScript(SummonedDied(summoned, killer));
+        if (script !is null && world_ !is null) // `EVENT_T_SUMMONED_JUST_DIED`
+            if (auto c = world_.creatureAt(summoned.guid))
+                script.summonedDied(this, summoned.guid, c.template_.entry);
         if (world_ !is null)
             world_.wake(me.guid);
     }

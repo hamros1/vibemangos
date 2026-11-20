@@ -269,8 +269,12 @@ mixin template CreatureCasting()
     /// The spell's mana cost for it.
     private int manaCost(const(SpellInfo)* spell)
     {
-        return powerCost(*spell, me.values.get!UNIT_FIELD_LEVEL, me.values.get!UNIT_FIELD_MAXPOWER1,
+        import dmangos.world.creatureevents : levelScaledCost, spellAttrScalesWithCreatureLevel;
+
+        const cost = powerCost(*spell, me.values.get!UNIT_FIELD_LEVEL, me.values.get!UNIT_FIELD_MAXPOWER1,
             me.values.get!UNIT_FIELD_MAXHEALTH, me.values.get!UNIT_FIELD_MAXPOWER1);
+        return spell.attributes & spellAttrScalesWithCreatureLevel
+            ? levelScaledCost(cost, spell.spellLevel, me.values.get!UNIT_FIELD_LEVEL) : cost;
     }
 
     /// Within the spell's range of its target (and out of its minimum).
@@ -431,7 +435,7 @@ mixin template CreatureCasting()
             const effect = spell.effect[i];
             if (effect == SpellEffect.none)
                 continue;
-            const value = effectValue(*spell, i, level, uniform01(world_.random));
+            const value = levelScaled(spell, i, effectValue(*spell, i, level, uniform01(world_.random)));
             foreach (guid; reached[i])
             {
                 if (guid in missed)
@@ -600,6 +604,9 @@ mixin template CreatureCasting()
             if (effect == SpellEffect.applyAura)
                 auraDone = true;
         }
+        foreach (r; results) // its script hears whom it hit, once the effects are done (`SpellHitTarget`)
+            if (r.miss == SpellMissInfo.none && script !is null && me.alive)
+                script.spellHitTarget(this, r.guid, spell.id, 1u << spell.casting.school);
         world_.flushCreature(me);
     }
 
@@ -651,7 +658,7 @@ mixin template CreatureCasting()
         int[3] values;
         foreach (j; 0 .. 3)
             if (spell.effect[j] == SpellEffect.applyAura)
-                values[j] = effectValue(*spell, j, level, uniform01(world_.random));
+                values[j] = levelScaled(spell, j, effectValue(*spell, j, level, uniform01(world_.random)));
         const ms = duration(*spell, lore.clientData, level);
         if (auto creature = guid == me.guid ? me : world_.creatureAt(guid))
         {
@@ -1288,8 +1295,9 @@ mixin template CreatureCasting()
         if (!enemy)
             return;
         foreach (other; world_.creaturesNear(me.position, radius))
-            if (other !is me && other.ai !is null && other.ai.canAssistAgainst(me, enemy))
-                other.ai.attackStart(enemy, world_);
+            if (other !is me && other.ai !is null && other.ai.canAssistAgainst(me, enemy) && other.ai.answersCallsForHelp
+                    && world_.inLineOfSight(me.position, other.position))
+                other.ai.joinFightAgainst(enemy, world_);
     }
 
     /// ditto

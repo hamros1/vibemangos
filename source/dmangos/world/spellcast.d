@@ -458,7 +458,7 @@ ubyte[] nonMeleeDamageLog(ulong target, ulong attacker, uint spell, uint damage,
 {
     enum uint hitTypeCrit = 0x02;
     ByteWriter w;
-    w.putPackedGuid(target);
+    w.put(target); // whole, as CMaNGOS and vmangos write it (the caster packed)
     w.putPackedGuid(attacker);
     w.put(spell);
     w.put(damage);
@@ -477,7 +477,7 @@ ubyte[] nonMeleeDamageLog(ulong target, ulong attacker, uint spell, uint damage,
 ubyte[] healLog(ulong target, ulong caster, uint spell, uint amount, bool crit)
 {
     ByteWriter w;
-    w.putPackedGuid(target);
+    w.put(target); // whole, as CMaNGOS and vmangos write it (the caster packed)
     w.putPackedGuid(caster);
     w.put(spell);
     w.put(amount);
@@ -489,7 +489,7 @@ ubyte[] healLog(ulong target, ulong caster, uint spell, uint amount, bool crit)
 ubyte[] energizeLog(ulong target, ulong caster, uint spell, uint power, uint amount)
 {
     ByteWriter w;
-    w.putPackedGuid(target);
+    w.put(target); // whole, as CMaNGOS and vmangos write it (the caster packed)
     w.putPackedGuid(caster);
     w.put(spell);
     w.put(power);
@@ -521,7 +521,7 @@ ubyte[] executeLog(ulong caster, uint spell, uint effect, const(ubyte)[] targetD
 ubyte[] executeTarget(T...)(ulong target, T more)
 {
     ByteWriter w;
-    w.putPackedGuid(target);
+    w.put(target); // whole, as CMaNGOS and vmangos write it (the caster packed)
     foreach (m; more)
         w.put(m);
     return w.data.dup;
@@ -535,7 +535,7 @@ unittest
     const body_ = executeLog(0x10, 5138, 8, executeTarget(0xF130000000000042UL, 30u, 0u, 1.5f));
     auto r = ByteReader(body_);
     assert(r.readPackedGuid == 0x10 && r.read!uint == 5138 && r.read!uint == 1 && r.read!uint == 8 && r.read!uint == 1);
-    assert(r.readPackedGuid == 0xF130000000000042UL && r.read!uint == 30 && r.read!uint == 0 && r.read!float == 1.5f);
+    assert(r.read!ulong == 0xF130000000000042UL && r.read!uint == 30 && r.read!uint == 0 && r.read!float == 1.5f);
     assert(r.empty);
 }
 
