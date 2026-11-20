@@ -838,7 +838,7 @@ unittest
 
 /**
  * Witch Doctor Zum'rah (7271): come near, he turns hostile ("Sands consume you!", -1209000) and fights
- * (-1209001); his Shadow Bolt (12739), and the graves give up their dead (zombies 7286, -1209003).
+ * (-1209001); his Shadow Bolt (12739), and the graves give up their dead (zombies 7286).
  */
 unittest
 {
@@ -852,7 +852,8 @@ unittest
     assert(d.heard(-1209000), "he turns\n" ~ d.story);
     assert(boss.ai.inCombat && d.heard(-1209001), "and fights\n" ~ d.story);
     assert(d.cast_(12739, zumrah), "Shadow Bolt\n" ~ d.story);
-    assert(d.runUntil(() => d.summoned(zombie) && d.heard(-1209003), 60.seconds), "the dead rise\n" ~ d.story);
+    // ("Come to me, my children!", -1209003, is said three times in ten: not asserted.)
+    assert(d.runUntil(() => d.summoned(zombie) > 0, 60.seconds), "the dead rise\n" ~ d.story);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
