@@ -599,6 +599,8 @@ version (unittest)
         uint delegate(int i, int j) areaId;
         ushort[int[2]] holes;          /// by cell [i, j]
         float[int[2]] waterLevel;      /// cells with water, and its level
+        bool[int[2]] magma;            /// of those, the cells whose liquid is magma
+        bool[int[2]] deepWater;        /// of those, the cells of the open sea's deep water
     }
 
     /// A 1.12 ADT (version 18, MCIN at 84, absolute MCNK offsets) whose terrain is `t`.
@@ -634,7 +636,7 @@ version (unittest)
                 w.bytes[mcinEntries + (i * 16 + j) * 16 .. mcinEntries + (i * 16 + j) * 16 + 4]
                     = nativeToLittleEndian(cast(uint) start);
                 chunk("MCNK", cellSize_ - 8);
-                w.put(cast(uint)(water ? 1 << 2 : 0)); // flags: water
+                w.put(cast(uint)(!water ? 0 : [i, j] in t.magma ? 1 << 4 : 1 << 2)); // flags: water or magma
                 w.put(cast(uint) j);
                 w.put(cast(uint) i);
                 foreach (_; 0 .. 2)
@@ -680,7 +682,7 @@ version (unittest)
                         w.put(*water);
                     }
                     foreach (_; 0 .. 64)
-                        w.put(ubyte(0)); // every square shows water
+                        w.put(ubyte([i, j] in t.deepWater ? 0x80 : 0)); // every square shows it (0x80: deep)
                     foreach (_; 0 .. 84)
                         w.put(ubyte(0));
                 }

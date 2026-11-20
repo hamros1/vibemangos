@@ -3,7 +3,9 @@
  * ticks, and cancelling them; mixed into `dmangos.world.character.Character`.
  *
  * What an aura does while it lasts: stats, resistances, armor and attack power (the stats are worked
- * out again), speeds (and mounts), a stance or form, being rooted or stunned, and periodic effects:
+ * out again), speeds (and mounts), water walking, slow fall and hover (`dmangos.world.moveorders`),
+ * breathing under water (`dmangos.world.environment`), a stance or form, being rooted or stunned, and
+ * periodic effects:
  * damage and heals over time, food's health and drink's mana, energize, triggered spells. Auras end
  * when their time is up, when cancelled (positive ones), at death, and by what their
  * `AuraInterruptFlags` say: standing up (food and drink), moving, taking damage, casting, attacking.
@@ -432,7 +434,7 @@ private:
      */
     void auraEffects(Aura aura, bool apply)
     {
-        bool stats, speeds, movement;
+        bool stats, speeds, movement, movementAuras, breathing;
         foreach (i; 0 .. 3)
         {
             if (!(aura.effects & (1 << i)))
@@ -450,13 +452,20 @@ private:
                     AuraType.modResistanceExclusive:
                 stats = true;
                 break;
-            case AuraType.modIncreaseSpeed, AuraType.modDecreaseSpeed, AuraType.modIncreaseSwimSpeed:
+            // Speeds (`dmangos.world.moveorders`: `speedRate`).
+            case AuraType.modIncreaseSpeed, AuraType.modDecreaseSpeed, AuraType.modIncreaseSwimSpeed,
+                    AuraType.modIncreaseMountedSpeed, AuraType.modSpeedAlways, AuraType.modMountedSpeedAlways,
+                    AuraType.modSpeedNotStack, AuraType.modMountedSpeedNotStack, AuraType.useNormalMovementSpeed:
                 speeds = true;
                 break;
-            case AuraType.modIncreaseMountedSpeed:
-                speeds = true;
+            case AuraType.waterWalk, AuraType.featherFall, AuraType.hover:
+                movementAuras = true;
+                break;
+            case AuraType.waterBreathing, AuraType.modWaterBreathing:
+                breathing = true;
                 break;
             case AuraType.mounted:
+                speeds = true; // mounted, the mount's speed counts instead of the speed on foot
                 uint display;
                 if (apply)
                     if (const t = cast(uint) aura.misc(i) in context.data.creatureTemplates)
@@ -507,27 +516,10 @@ private:
             refreshSpeeds();
         if (movement)
             refreshRooted();
-    }
-
-    /// Run and swim speeds by the strongest speed-up (or mount) and slow.
-    void refreshSpeeds()
-    {
-        const auras = &player.auras;
-        int up = auras.strongest(AuraType.modIncreaseSpeed, true);
-        const mounted = auras.strongest(AuraType.modIncreaseMountedSpeed, true);
-        if (mounted > up)
-            up = mounted;
-        const down = auras.strongest(AuraType.modDecreaseSpeed, false);
-        float factor = (1 + up / 100.0f) * (1 + down / 100.0f);
-        if (player.deathState == DeathState.ghost)
-            factor *= player.data.race == 4 ? 1.5f : 1.25f;
-        const run = baseMoveSpeed[MoveType.run] * factor;
-        if (run != player.speeds[MoveType.run])
-            forceSpeed!(Opcode.SMSG_FORCE_RUN_SPEED_CHANGE)(MoveType.run, run);
-        const swimFactor = factor * (1 + auras.strongest(AuraType.modIncreaseSwimSpeed, true) / 100.0f);
-        const swim = baseMoveSpeed[MoveType.swim] * swimFactor;
-        if (swim != player.speeds[MoveType.swim])
-            forceSpeed!(Opcode.SMSG_FORCE_SWIM_SPEED_CHANGE)(MoveType.swim, swim);
+        if (movementAuras)
+            refreshMovementAuras();
+        if (breathing)
+            refreshWaterBreathing();
     }
 
     /// Rooted while any root or stun lasts (and stunned while a stun does).

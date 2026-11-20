@@ -80,7 +80,7 @@ private:
 
     /**
      * After the player moved: a zone the client announced is checked against
-     * the map data, and, at most every 100 ms, what the player has explored.
+     * the map data, and, at most every 100 ms, what the player has explored and the liquid it is in.
      */
     void afterMove()
     {
@@ -100,6 +100,7 @@ private:
         {
             lastPositionCheck = now;
             checkAreaExplore();
+            updateEnvironment(); // water, lava (`dmangos.world.environment`)
         }
     }
 

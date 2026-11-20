@@ -180,6 +180,16 @@ struct WorldConfig
     @JsonName("rate_mana") float rateMana = 1;              /// ditto
     @JsonName("rate_rage_loss") float rateRageLoss = 1;     /// ditto
     @JsonName("rate_energy") float rateEnergy = 1;          /// ditto
+    /// `Rate.Damage.Fall`: falling damage (`dmangos.world.environment`).
+    @JsonName("rate_damage_fall") float rateDamageFall = 1;
+    /// `MirrorTimer.Fatigue.Max`, `MirrorTimer.Breath.Max`, `MirrorTimer.Environmental.Max`: seconds in deep water,
+    /// under water and in lava before they hurt.
+    @JsonName("mirror_timer_fatigue_max") uint mirrorTimerFatigueMax = 60;
+    @JsonName("mirror_timer_breath_max") uint mirrorTimerBreathMax = 60;             /// ditto
+    @JsonName("mirror_timer_environmental_max") uint mirrorTimerEnvironmentalMax = 1; /// ditto
+    /// `EnvironmentalDamage.Min`, `EnvironmentalDamage.Max`: what lava deals each time.
+    @JsonName("environmental_damage_min") uint environmentalDamageMin = 605;
+    @JsonName("environmental_damage_max") uint environmentalDamageMax = 610; /// ditto
     /// `Rate.Rest.InGame`, `Rate.Rest.Offline.InTavernOrCity`, `Rate.Rest.Offline.InWilderness`.
     @JsonName("rate_rest_ingame") float rateRestInGame = 1;
     @JsonName("rate_rest_offline_in_tavern_or_city") float rateRestOfflineInTavernOrCity = 1; /// ditto
