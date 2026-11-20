@@ -990,8 +990,17 @@ unittest
     a.tick(1600);
     a.cast_(20230);
     a.hero.read();
-    a.swing(true, MeleeHitOutcome.normal, 5);
-    assert(a.damageLogs().canFind!(l => l[0] == 22858), "struck back");
+    bool struck; // the strike back is rolled: it may be dodged or parried
+    foreach (_; 0 .. 20)
+    {
+        a.swing(true, MeleeHitOutcome.normal, 5);
+        if (a.damageLogs().canFind!(l => l[0] == 22858))
+        {
+            struck = true;
+            break;
+        }
+    }
+    assert(struck, "struck back");
     a.player.movement.position.orientation = 3.14159f; // its back to the creature
     a.swing(true, MeleeHitOutcome.normal, 5);
     assert(!a.damageLogs().canFind!(l => l[0] == 22858), "not from behind");
