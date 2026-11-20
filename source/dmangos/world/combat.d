@@ -130,6 +130,8 @@ struct Fighter
     {
         import dmangos.world.spellids : AuraType;
 
+        if (!auras.hasType(AuraType.modInvisibility) && !auras.hasType(AuraType.modInvisibilityDetection))
+            return; // the common case: nothing to sum
         foreach (int i; 0 .. cast(int) invisibilityTypes)
         {
             invisibility[i] = auras.totalByMisc(AuraType.modInvisibility, i);

@@ -1007,11 +1007,7 @@ final class Map : CombatWorld, GameObjectWorld
 
             if (creature.auras.hasType(AuraType.modInvisibility)
                     && !who.character.hasFlag(imported!"dmangos.world.player".PlayerFlags.gm))
-            {
-                import dmangos.world.combat : seesThrough;
-
-                return seesThrough(who.character.fighter, creature.fighter);
-            }
+                return who.character.auras.seesThroughInvisibility(creature.auras);
             return true;
         }
         return true;
