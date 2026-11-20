@@ -232,6 +232,45 @@ enum ReactState : ubyte
     aggressive, /// also attacks on sight
 }
 
+/// The least and the most aggro radius, in yards (docs/FORMULAS.md, "Aggro radius").
+enum float minAggroRadius = 5, maxAggroRadius = 45;
+
+/**
+ * The aggro radius of a creature whose detection range is `detection` yards against a target `levelDiff` levels
+ * above it (below: negative): a yard less a level above, a yard more a level below, between 5 and 45 yards (or
+ * the detection range itself, where that is wider).
+ */
+float aggroRadius(float detection, int levelDiff) pure nothrow @nogc @safe
+{
+    const most = detection > maxAggroRadius ? detection : maxAggroRadius;
+    const radius = detection - levelDiff;
+    return radius < minAggroRadius ? minAggroRadius : radius > most ? most : radius;
+}
+
+unittest
+{
+    assert(aggroRadius(20, 0) == 20 && aggroRadius(20, 3) == 17 && aggroRadius(20, -3) == 23);
+    assert(aggroRadius(20, 20) == 5 && aggroRadius(20, -25) == 45 && aggroRadius(20, -40) == 45);
+    assert(aggroRadius(18, -40) == 45, "the cap, not 25 levels' worth");
+    assert(aggroRadius(80, -10) == 80, "a wider range of its own is kept");
+}
+
+/**
+ * How long a creature of `level` (its template's least) chases a victim it does not reach before the victim may
+ * get away, in milliseconds (docs/FORMULAS.md, "Leash"): 11 s to level 29, a second more at 30, 40 and 45, and 15 s
+ * from level 50.
+ */
+int pursuitTime(uint level) pure nothrow @nogc @safe
+{
+    return level < 30 ? 11_000 : level < 40 ? 12_000 : level < 45 ? 13_000 : level < 50 ? 14_000 : 15_000;
+}
+
+unittest
+{
+    assert(pursuitTime(1) == 11_000 && pursuitTime(29) == 11_000 && pursuitTime(30) == 12_000);
+    assert(pursuitTime(40) == 13_000 && pursuitTime(45) == 14_000 && pursuitTime(50) == 15_000 && pursuitTime(63) == 15_000);
+}
+
 /// Past this from where its timer last started, a creature's victim is out of reach.
 enum float leashRadius = 30;
 
@@ -630,20 +669,21 @@ private:
         return r;
     }
 
-    /// Its aggro radius: its detection range, a yard more for each level its target is below it.
+    /**
+     * Its aggro radius (docs/FORMULAS.md, "Aggro radius"): its detection range at its target's level, a yard more
+     * for each level its target is below it and a yard less for each above, never under melee range (5 yards)
+     * and never over 45 yards (reached 25 levels below it). A template whose own range is wider keeps it.
+     * Mind Soothe and Soothe Animal (`MOD_DETECT_RANGE`) shorten it.
+     */
     float attackDistance(const Fighter target) const
     {
         const self = me.fighter;
-        int levelDiff = int(levelFor(target, self)) - int(levelFor(self, target));
-        if (levelDiff < -25)
-            levelDiff = -25;
-        float distance = me.template_.detection;
-        if (distance == 0)
+        const detection = float(me.template_.detection);
+        if (detection == 0)
             return 0;
-        distance -= levelDiff;
-        // Mind Soothe, Soothe Animal: `MOD_DETECT_RANGE` on it (CMaNGOS's `Unit::GetAttackDistance`).
-        distance += me.auras.total(AuraType.modDetectRange);
-        return distance < 5 ? 5 : distance;
+        const levelDiff = int(levelFor(target, self)) - int(levelFor(self, target));
+        const distance = aggroRadius(detection, levelDiff) + me.auras.total(AuraType.modDetectRange);
+        return distance < minAggroRadius ? minAggroRadius : distance;
     }
 
     /// `who`'s threat changes by `percent` (-100: none left; it stays in the list).
@@ -947,10 +987,11 @@ private:
         stopMoving(me, world);
     }
 
-    /// Its pursuit time again, from where it is.
+    /// Its pursuit time again, from where it is: by its level (`pursuitTime`), not the template's `Pursuit`,
+    /// which the database holds at one default (15 s) for every creature.
     void triggerCombatTimer()
     {
-        combatTimer = me.template_.pursuit;
+        combatTimer = pursuitTime(me.template_.minLevel);
         lastRefresh = me.position;
     }
 

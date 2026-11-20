@@ -706,6 +706,9 @@ final class ClientData
     /// Blizzard's spell power coefficients by spell (data/coefficients.csv, tools/fetch-coefficients.py): what each
     /// effect of it gets of the caster's spell power. Empty without the file: the 1.12 formula then (`bonusCoefficient`).
     SpellCoefficient[3][uint] spellCoefficients;
+    /// Blizzard's reset interval of each instanced map (data/instance-resets.csv, tools/fetch-instance-resets.py:
+    /// MapDifficulty's `ResetInterval`, see `resetIntervalDays`). Empty without the file: `instance_template` then.
+    ubyte[uint] instanceResets;
     const(TaxiPathNodeEntry)*[][uint] taxiPathPoints;
     bool[uint] taxiNetwork;
     @DbcFile("AuctionHouse") DbcStore!(AuctionHouseEntry, auctionHouseFormat) auctionHouses;
@@ -749,6 +752,7 @@ final class ClientData
             }
         data.buildIndexes();
         data.loadCoefficients(buildPath(dataDir, "coefficients.csv"));
+        data.loadInstanceResets(buildPath(dataDir, "instance-resets.csv"));
         info!"loaded client data from %s (%s races, %s classes, %s skill lines, %s skill abilities)"(dir,
             data.races.rows.length, data.classes.rows.length, data.skillLines.rows.length,
             data.skillLineAbilities.rows.length);
@@ -786,6 +790,44 @@ final class ClientData
             spellCoefficients[spell][index] = SpellCoefficient(true, f[2].to!ushort, f[3].to!ushort, f[4].to!float);
         }
         info!"spell power coefficients of %s spells from %s"(spellCoefficients.length, path);
+    }
+
+    /// The instance reset intervals of `path` (`map,reset interval,max players` a line, `#` comments), if it is there.
+    void loadInstanceResets(string path)
+    {
+        import std.array : split;
+        import std.conv : to;
+        import std.file : exists, readText;
+        import std.string : lineSplitter, strip;
+
+        if (!exists(path))
+        {
+            warning!"no %s (tools/fetch-instance-resets.py): raid resets from instance_template"(path);
+            return;
+        }
+        foreach (line; readText(path).lineSplitter)
+        {
+            line = line.strip;
+            if (line.length == 0 || line[0] == '#')
+                continue;
+            const f = line.split(",");
+            if (f.length == 3)
+                instanceResets[f[0].to!uint] = f[1].to!ubyte;
+        }
+        info!"reset intervals of %s maps from %s"(instanceResets.length, path);
+    }
+
+    /**
+     * How many days apart map `mapId`'s copies reset by Blizzard's data (docs/FORMULAS.md, "Raid resets"):
+     * MapDifficulty's `ResetInterval` 1 a day, 2 a week, 3 three days, 4 five days; 0 when it never does (a
+     * dungeon) or the data does not say (no file, or a map it lacks: `known` false).
+     */
+    uint resetIntervalDays(uint mapId, out bool known) const
+    {
+        static immutable uint[5] days = [0, 1, 7, 3, 5];
+        const interval = mapId in instanceResets;
+        known = interval !is null && *interval < days.length;
+        return known ? days[*interval] : 0;
     }
 
     /// Builds the derived lookups. Call after filling the stores by hand (tests).

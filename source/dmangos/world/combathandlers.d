@@ -99,6 +99,8 @@ mixin template CombatHandlers()
             flushPlayerChanges();
             return duelLost();
         }
+        if (damage && damage >= health && spiritOfRedemption()) // a priest's last breath (Spirit of Redemption)
+            return;
         const died = damage && damage >= health;
         if (damage)
             player.values.set!UNIT_FIELD_HEALTH(died ? 0 : health - damage);

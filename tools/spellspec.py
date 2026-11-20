@@ -3,7 +3,7 @@
 description, with the numbers the spell's data gives filled in), and how it does it: what in it the data alone
 does not say, so the server's own code must (a dummy or script effect, a dummy aura, a proc, a class script, an
 aura state, a modifier of other spells). Each such spell is listed with where the server does it and whether a test
-casts it on the real data (source/dmangos/world/realspelltests.d). Writes docs/spells/.
+casts it on the real data (source/dmangos/world/realspelltests.d, realclassspelltests.d, realclass_*.d). Writes docs/spells/.
 
     tools/spellspec.py MYSQL_COMMAND... -- DBC_DIR
 
@@ -224,7 +224,7 @@ def main():
     for path in glob.glob(os.path.join(SOURCE, '**', '*.d'), recursive=True):
         if not path.endswith('spellids.d'):
             code[os.path.relpath(path, REPO)] = open(path).read()
-    real_tests = ''.join(t for p, t in code.items() if re.search(r'real(spelltests|classspelltests|class_\w+)\.d$', p))
+    real_tests = ''.join(t for p, t in code.items() if re.match(r'real(spell|classspell)tests\.d$|realclass_\w+\.d$', os.path.basename(p)))
 
     def where(ids):
         """The source files naming one of `ids` (as a number), but the real-data tests."""
@@ -301,7 +301,7 @@ def main():
                  'edit. Each spell a %s can learn (or that one of them casts, procs or triggers), its tooltip with the '
                  'numbers of its highest rank, and what the data alone does not say. **code**: the source files that '
                  'name one of its ranks; **real test**: a test casts it on the real data '
-                 '(source/dmangos/world/realspelltests.d).' % klass, '']
+                 '(source/dmangos/world/realspelltests.d, realclassspelltests.d, realclass_*.d).' % klass, '']
         scripted = done = coded = 0
         plain = []
         for name, ids in entries:

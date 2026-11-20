@@ -90,10 +90,6 @@ private:
                         + cast(int)(spell.casting.pointsPerComboPoint[j] * castCombo)); // a finisher's (Expose Armor)
         classAuraValues(spell, values); // Rip's and Rupture's attack power, Mana Shield's spell power
         const ms = modDuration(spell, duration(*spell, context.client, player.data.level));
-        // Damage over time (`SPELLMOD_DOT`): what each tick deals.
-        foreach (j; 0 .. 3)
-            if (auraEffect(j) && spell.casting.applyAuraName[j] == AuraType.periodicDamage)
-                values[j] = spellMod(SpellModOp.dot, spell, values[j]);
         // The caster's spell power over time: each tick its coefficient's share (`bonusCoefficient`).
         foreach (j; 0 .. 3)
             if (auraEffect(j) && spell.casting.amplitude[j] > 0 && ms > 0)
@@ -109,6 +105,11 @@ private:
                 if (done > 0)
                     values[j] += cast(int)(done * bonusCoefficient(*spell, j, context.client, player.data.level));
             }
+        // Damage over time (`SPELLMOD_DOT`): what each tick deals or drains, its spell power's share with it.
+        foreach (j; 0 .. 3)
+            if (auraEffect(j) && (spell.casting.applyAuraName[j] == AuraType.periodicDamage
+                    || spell.casting.applyAuraName[j] == AuraType.periodicLeech))
+                values[j] = spellMod(SpellModOp.dot, spell, values[j]);
         if (auto creature = cast(Creature) map.findObject(target))
         {
             if (!creature.alive)
@@ -123,7 +124,7 @@ private:
             if (hostile)
                 aura.setHeartbeatResist(heartbeatResistChance(player.fighter, creature.fighter, *spell,
                     targetResistance(cast(int) creature.values.get!UNIT_FIELD_RESISTANCES(spell.casting.school),
-                    spell.casting.school), spellHitBonus), ms);
+                    spell.casting.school), spellHitBonusOf(spell)), ms);
             bool isNew;
             if (auto displaced = creature.auras.displacedBy(aura, creature.values)) // another's that may not stay beside it
                 creature.loseAura(displaced, map);
@@ -163,7 +164,7 @@ private:
         if (hostile)
             given.setHeartbeatResist(heartbeatResistChance(player.fighter, who.player.fighter, *spell,
                 targetResistance(cast(int) who.player.values.get!UNIT_FIELD_RESISTANCES(spell.casting.school),
-                spell.casting.school), spellHitBonus), ms);
+                spell.casting.school), spellHitBonusOf(spell)), ms);
         who.addAura(given);
         if (!hostile && who !is this) // a buff on one fighting: those it fights fight this player too
             imported!"dmangos.world.creatureai".assistThreat(map, who.threateners, unit, 0, *spell);
@@ -334,7 +335,10 @@ private:
                 uint take = damage < cast(uint) aura.amount[i] ? damage : cast(uint) aura.amount[i];
                 if (type == AuraType.manaShield)
                 {
-                    const perPoint = aura.spell.casting.multipleValue[i];
+                    // (less by its caster's modifiers: Improved Mana Shield, `SPELLMOD_MULTIPLE_VALUE`)
+                    const perPoint = aura.caster == player.guid
+                        ? spellMod(SpellModOp.multipleValue, aura.spell, aura.spell.casting.multipleValue[i])
+                        : aura.spell.casting.multipleValue[i];
                     const mana = player.values.get!UNIT_FIELD_POWER1(0);
                     if (perPoint > 0 && take * perPoint > mana)
                         take = cast(uint)(mana / perPoint);
@@ -1003,7 +1007,14 @@ private:
             if (classPeriodicTrigger(aura, i)) // Frenzied Regeneration
                 return;
             if (const spell = context.data.spells.spell(aura.spell.triggerSpell[i]))
-                castSpell(spell, SpellTargets(TargetFlags.self, player.guid), true, 0);
+            {
+                // A channel's ticks (Arcane Missiles' missiles) go at what it is channelled at.
+                const channelled = aura.caster == player.guid ? channelledAt(aura.spell) : 0;
+                if (channelled && channelled != player.guid)
+                    castSpell(spell, SpellTargets(TargetFlags.unit, channelled), true, 0);
+                else
+                    castSpell(spell, SpellTargets(TargetFlags.self, player.guid), true, 0);
+            }
             return;
         case AuraType.periodicLeech, AuraType.periodicManaLeech:
             // Another player's drain (a duel, world PvP): its caster's doing, as on a creature.
@@ -1172,7 +1183,7 @@ private:
             if (aura.type(i) == AuraType.periodicLeech)
                 return leechTick(map.unitOf(target), aura, i, damage);
             periodicLog(target.guid, aura, i, damage, aura.spell.casting.school);
-            spellAttacked(target, damage, true, aura.spell.casting.school);
+            spellAttacked(target, damage, true, aura.spell.casting.school, aura.spell);
             tickProcs(map.unitOf(target), aura.spell, damage); // Nightfall, Vampiric Embrace
             break;
         case AuraType.periodicManaLeech:

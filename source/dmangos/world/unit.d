@@ -14,7 +14,7 @@
  */
 module dmangos.world.unit;
 
-import dmangos.world.auras : Aura, makeAura;
+import dmangos.world.auras : Aura, AuraSet, makeAura;
 import dmangos.world.combat : Fighter, MeleeDamage, MeleeHitOutcome, VictimState;
 import dmangos.world.creature : Creature;
 import dmangos.world.map : Map;
@@ -46,6 +46,7 @@ struct Blow
     BlowKind kind;
     MeleeDamage melee; /// a swing's outcome, hit flags and damage before blocks
     uint school;       /// a spell's or a tick's school index (a swing's is its own)
+    float threat = 1;  /// its threat's factor by its spell's modifiers (`SPELLMOD_THREAT`)
 
     ///
     static Blow swing(const ref MeleeDamage d)
@@ -518,18 +519,22 @@ private void creatureDamaged(UnitRef attacker, UnitRef victim, uint damage, cons
         if (attacker.kind == UnitKind.player && blow.school < 7)
             if (const p = attacker.session.character)
                 threat = p.damageMods.threat[blow.school];
-        creature.ai.damageTaken(attacker, damage, threat);
+        creature.ai.damageTaken(attacker, damage, threat * blow.threat);
     }
     map.wake(creature.guid);
     if (damage == 0)
         return;
+    foreach (aura; brokenByDamage(creature.auras, blow, map.random))
+        creature.loseAura(aura, map);
     // A blow of its school uses a charge of what adds to the damage it takes (Hemorrhage: "30 charges"); what any
     // damage ends ends (`AuraInterruptFlags` damage: Wyvern Sting's "Any damage will cancel the effect", Sap).
     {
+        import std.algorithm.searching : canFind;
         import dmangos.world.auras : AuraInterrupt, AuraType;
 
         foreach (aura; creature.auras.interruptedBy(AuraInterrupt.damage))
-            creature.loseAura(aura, map);
+            if (creature.auras.list.canFind!(a => a is aura))
+                creature.loseAura(aura, map);
         foreach (aura; creature.auras.list.dup)
         {
             if (!aura.charges || blow.school >= 7)
@@ -550,6 +555,7 @@ private void creatureDamaged(UnitRef attacker, UnitRef victim, uint damage, cons
     if (!killed)
         return;
     deathItems(creature, map);
+    deathProcs(creature, map);
     if (creature.petOwner)
     {
         // A pet: dead for its owner to revive (or to summon again).
@@ -561,6 +567,59 @@ private void creatureDamaged(UnitRef attacker, UnitRef victim, uint damage, cons
     if (credited !is null)
         return credited.killedCreature(creature); // the player's kill: its rewards
     map.creatureDeath(creature);
+}
+
+/**
+ * The auras that `blow`'s damage breaks: a hold whose spell's proc flags take such a blow ("Damage caused may
+ * interrupt the effect": Frost Nova, Fear, Psychic Scream, Howl of Terror; their `ProcFlags` the blows taken, their
+ * `ProcChance` the chance, with no proc effect of their own), a root, a fear, a stun or a confusion; and a more
+ * damage taken that lasts its charges ("until 4 non-periodic damage sources are applied": Improved Shadow Bolt's
+ * Shadow Vulnerability), its last spent.
+ */
+Aura[] brokenByDamage(R)(ref AuraSet auras, const Blow blow, ref R random)
+{
+    import std.random : uniform01;
+    import dmangos.world.aurahandlers : ProcFlag;
+    import dmangos.world.auras : AuraType;
+
+    const uint taken = blow.kind == BlowKind.melee ? ProcFlag.takeMeleeSwing | ProcFlag.takeMeleeAbility
+        : blow.kind == BlowKind.periodic ? ProcFlag.takeHarmfulPeriodic
+        : ProcFlag.takeHarmfulSpell | ProcFlag.takeHarmfulAbility | ProcFlag.takeRangedAbility | ProcFlag.takeRangedAttack;
+    Aura[] broken;
+    foreach (aura; auras.list)
+    {
+        const spell = aura.spell;
+        if (!(spell.casting.procFlags & taken) || aura.has(AuraType.procTriggerSpell) || aura.has(AuraType.dummy))
+            continue;
+        if (aura.charges && aura.has(AuraType.modDamagePercentTaken))
+        {
+            if (--aura.charges == 0)
+                broken ~= aura;
+            continue;
+        }
+        if (!aura.has(AuraType.modRoot) && !aura.has(AuraType.modFear) && !aura.has(AuraType.modStun)
+                && !aura.has(AuraType.modConfuse))
+            continue;
+        if (uniform01(random) * 100 < spell.casting.procChance)
+            broken ~= aura;
+    }
+    return broken;
+}
+
+/**
+ * A creature dies under an aura of a player's that procs on the kill (its proc flags: Drain Soul's Soul Siphon,
+ * 18371): the caster's to roll (`Character.deathAuraProc`).
+ */
+private void deathProcs(Creature creature, Map map)
+{
+    import dmangos.world.aurahandlers : ProcFlag;
+    import dmangos.world.auras : AuraType;
+
+    foreach (aura; creature.auras.list.dup)
+        if ((aura.spell.casting.procFlags & ProcFlag.kill) && aura.has(AuraType.procTriggerSpell))
+            if (auto caster = cast(Character) map.find(aura.caster))
+                if (caster.player !is null && caster.player.alive)
+                    caster.deathAuraProc(aura);
 }
 
 /**

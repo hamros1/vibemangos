@@ -422,15 +422,14 @@ private:
             sumLevel += m.level;
             if (highest is null || highest.level < m.level)
                 highest = &m;
-            if (!isTrivialLevelDifference(m.level, victim.values.get!UNIT_FIELD_LEVEL)
+            if (!isGray(m.level, victim.values.get!UNIT_FIELD_LEVEL)
                 && (highestNotGray is null || highestNotGray.level < m.level))
                 highestNotGray = &m;
         }
-        // The reputation: a share each (all of it in a dungeon).
-        const dungeon = context.client.maps.lookup(map.id) !is null && context.client.maps.lookup(map.id).isDungeon;
+        // The reputation: all of it to each, as alone (docs/FORMULAS.md, "Reputation").
         foreach (ref m; members)
             if (m.alive)
-                m.reputationRate = dungeon ? 1.0f : 1.0f / nearCount;
+                m.reputationRate = 1;
         if (highest !is null && highestNotGray !is null)
         {
             import std.math : round;
@@ -494,8 +493,8 @@ private:
         KillValue value;
         value.level = victim.values.get!UNIT_FIELD_LEVEL;
         value.elite = t.rank != rankNormal && t.rank != rankRare;
-        const entry = context.client.maps.lookup(map.id);
-        value.raidMap = entry !is null && entry.isRaid;
+        if (const entry = context.client.maps.lookup(map.id))
+            value.place = entry.isRaid ? KillPlace.raid : entry.isDungeon ? KillPlace.dungeon : KillPlace.world;
         value.multiplier = t.experienceMultiplier;
         value.noXp = t.creatureType == critter || (t.staticFlags1 & noXp) != 0;
         return value;
@@ -975,5 +974,5 @@ unittest
     const share = shares[0];
     assert(share.target == 9 && share.victim == victim.guid && share.entry == creatureInnkeeper);
     assert(share.xp > 0 && share.xp == me.values[PLAYER_XP], "halves of a level 1 creature, alike");
-    assert(share.reputationRate == 0.5f);
+    assert(share.reputationRate == 1, "all of the reputation to each");
 }

@@ -2,5 +2,3 @@
 # the audit fails on any gap not listed here.
 aura aurasVisible: Detect Magic shows a target's auras: the client's, nothing yet sent for it
 aura empathy: Beast Lore's special info (UNIT_DYNFLAG_SPECIALINFO for the caster only): needs a per-viewer field
-aura reflectSpellsSchool: the Wards' reflection (a talent's chance; 0 without): not yet done
-effect summonPossessed: Eye of Kilrogg: a summon to possess, not yet done (charm and possession are)

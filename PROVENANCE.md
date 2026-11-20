@@ -643,6 +643,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Files: `BattleGroundAV.cpp`, `BattleGroundAV.h`
 * Functions: `BattleGroundAV::Reset`, `Update`, `HandleKillPlayer`, `HandleKillUnit`, `HandlePlayerClickedOnFlag`, `ProcessPlayerAssaultsPoint`, `ProcessPlayerDefendsPoint`, `ProcessPlayerDestroyedPoint`, `ChangeMineOwner`, `UpdateScore`, `EndBattleGround`, `GetPrematureWinner`, `HandleAreaTrigger`
+* Not from an emulator: the bonus honor units of the general, captain and towers (Wowpedia "Honor system (pre-2.0 formulas)")
 
 ## world/auctionhandlers.d
 
@@ -692,8 +693,9 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: ArcEmu, CMaNGOS, MaNGOS
 * Files: `BattleGroundHandler.cpp`
-* Functions: `BattleGround::AddPlayer`, `BattleGround::EndBattleGround`, `BattleGround::EventPlayerLoggedOut`, `BattleGround::HandleKillPlayer`, `BattleGround::RemovePlayerAtLeave`, `BattleGround::SendMessageToAll`, `BattleGround::Update`, `BattleGroundMap::Update`, `BattleGroundMgr::BuildPvpLogDataPacket`, `BattleGroundMgr::SendBattleGroundList`, `BattleGroundMgr::SendToBattleGround`, `BattleGroundMgr::ToggleTesting`, `CBattleground::Close`, `Creature::CanInteractWithBattleMaster`, `Group::CanJoinBattleGroundQueue`, `MaNGOS::Honor`, `Player::CanJoinToBattleground`, `Player::LeaveBattleground`, `Player::LoadFromDB`, `Player::TeleportToBGEntryPoint`, `Player::_LoadBGData`, `Player::_SaveBGData`, `WorldSession::LogoutPlayer`
+* Functions: `BattleGround::AddPlayer`, `BattleGround::EndBattleGround`, `BattleGround::EventPlayerLoggedOut`, `BattleGround::HandleKillPlayer`, `BattleGround::RemovePlayerAtLeave`, `BattleGround::SendMessageToAll`, `BattleGround::Update`, `BattleGroundMap::Update`, `BattleGroundMgr::BuildPvpLogDataPacket`, `BattleGroundMgr::SendBattleGroundList`, `BattleGroundMgr::SendToBattleGround`, `BattleGroundMgr::ToggleTesting`, `CBattleground::Close`, `Creature::CanInteractWithBattleMaster`, `Group::CanJoinBattleGroundQueue`, `Player::CanJoinToBattleground`, `Player::LeaveBattleground`, `Player::LoadFromDB`, `Player::TeleportToBGEntryPoint`, `Player::_LoadBGData`, `Player::_SaveBGData`, `WorldSession::LogoutPlayer`
 * Constants: `BG_EVENT_DOOR`, `BG_EVENT_NONE`, `CHAT_MSG_BATTLEGROUND`, `CMSG_AREA_SPIRIT_HEALER_QUEUE`, `CMSG_BATTLEFIELD_PORT`, `MAX_OFFLINE_TIME`, `MSG_BATTLEGROUND_PLAYER_POSITIONS`, `MSG_PVP_LOG_DATA`, `SMSG_AREA_SPIRIT_HEALER_TIME`, `SMSG_GROUP_JOINED_BATTLEGROUND`, `SMSG_INIT_WORLD_STATES`, `SMSG_MESSAGECHAT`, `SOUND_BG_START`, `SPELL_ID_BATTLEGROUND_DESERTER`, `TEAM_INVALID`, `TIME_TO_AUTOREMOVE`
+* Not from an emulator: `bonusHonor`, a bonus honor unit by the player's bracket (Wowpedia "Honor system (pre-2.0 formulas)"; docs/FORMULAS.md, "Honor"); the units of Warsong Gulch (warsong.d) and Arathi Basin (arathi.d) from the same page
 
 ## world/bgqueue.d
 
@@ -763,6 +765,11 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
   `spell_judgement_of_wisdom_intermediate`, `spell_swiftmend`, `spell_curse_of_doom`, `spell_power_infusion`,
   `spell_shatter_mage`, `spell_retaliation_warrior`, `spell_blessing_of_light`, `spell_healing_way`, `spell_seal_of_the_crusader`, `spell_shadowguard`, `spell_blizzard`
 * Constants: `IsSealSpell`, `REACTIVE_TIMER_START`, `SPELL_ATTR_EX_DRAIN_ALL_POWER`, `TRIGGERED_IGNORE_HIT_CALCULATION`
+* Not from an emulator (the 1.12.1 tooltips and data, docs/FORMULAS.md "Class rules from the tooltips"): Arcane
+  Concentration's Blizzard ticks, the Wards' reflection by Improved Fire Ward and Frost Warding, Magic Absorption,
+  Permafrost's and the curses' slow (`classEffectMod`), Pyroclasm, Improved Drain Mana, Drain Soul's Soul Siphon,
+  Shadow Trance's charge, Create Healthstone and Improved Healthstone, Spirit of Redemption, Eye of Kilrogg
+  (`summonPossessedEffect`)
 * Not from an emulator: Add Target Trigger talents roll once a target, the caster only alone (Relentless Strikes' tooltip); Ruthlessness and Seal Fate cast once, after the finishing move
 
 ## world/classspelltests.d
@@ -775,6 +782,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `DBCStores.cpp`, `DBCStructure.h`, `DBCfmt.h`, `SpellMgr.cpp`
 * Functions: `MapEntry::IsBattleGround`, `MapEntry::IsContinent`, `MapEntry::IsDungeon`, `MapEntry::IsRaid`, `MapManager::IsValidMapCoord`, `Player::InitDisplayIds`, `Player::TeamForRace`
 * Constants: `CLASSMASK_ALL_PLAYABLE`, `MAX_OUTFIT_ITEMS`, `MAX_SKILL_STEP`, `MAX_TALENT_RANK`, `RACEMASK_ALL_PLAYABLE`, `SECTION_FLAG_UNAVAILABLE`, `SKILL_FLAG_MAXIMIZED`
+* Not from an emulator: `instanceResets`, `resetIntervalDays` (Classic Era's MapDifficulty.db2, `tools/fetch-instance-resets.py`; docs/FORMULAS.md)
 
 ## world/combat.d
 
@@ -830,6 +838,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions: `AuctionHouseObject::Update`, `BattleGroundMap::CanEnter`, `CommandTableStorage::Load`, `Creature::Create`, `Creature::Despawn`, `Creature::SaveRespawnTime`, `Creature::Update`, `DungeonMap::Add`, `GameObject::SaveRespawnTime`, `GameObject::Update`, `GameObject::Use`, `InstanceMap::UnloadAll`, `InstanceSaveManager::LoadFromDB`, `MailDraft::SendMailTo`, `Map::Instanceable`, `Map::Update`, `MapManager::CanPlayerEnter`, `MapManager::CreateInstance`, `MapMgr::InstanceShutdown`, `ObjectMgr::ReturnOrDeleteOldMails`, `Pet::Create`, `Player::GetBoundInstance`, `Player::Update`, `TerrainManager::LoadTerrain`, `WeatherSystem::FindOrCreateWeather`, `WeatherSystem::UpdateWeathers`, `World::SendGlobalMessage`, `World::ShutdownMsg`, `World::ShutdownServ`, `World::Update`, `World::m_StartTime`, `WorldObject::SummonCreature`
 * Constants: `DEAD`, `GAMEOBJECT_TYPE_TRAP`, `SMSG_TRANSFER_ABORTED`, `SMSG_WEATHER`, `WUPDATE_AUCTIONS`
 * Also: `CreatureLinkingHolder::DoCreatureLinkingEvent` (the respawn flags in dungeon copies), `Creature::Respawn`, `PoolManager::UpdatePool` (a pooled spawn's respawn rolls its pool again)
+* Not from an emulator: `raidResetDays` (MapDifficulty.db2's `ResetInterval`, patch 1.9.0's days), `instanceLimitReached` and `tooManyInstances` (five copies an hour, Blizzard's statement) (docs/FORMULAS.md)
 
 ## world/corpse.d
 
@@ -849,9 +858,10 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS, mangosd
 * Files: `CombatManager.cpp`, `CreatureAI.cpp`, `ThreatManager.cpp`, `UnitAI.cpp`
-* Functions: `CombatManager::IsEvadingHome`, `CombatManager::IsInEvadeMode`, `CreatureAI::HandleAssistanceCall`, `CreatureAI::OnCallForHelp`, `HostileRefManager::threatAssist`, `Unit::CanAssistInCombatAgainst`, `Unit::CanJoinInAttacking`, `Unit::RemoveAllAurasOnEvade`, `UnitAI::DetectOrAttack`, `CombatManager::StartEvadeTimer`, `CombatManager::TriggerCombatTimer`, `CombatManager::Update`, `CombatManager::m_combatTimer`, `CombatManager::m_evadeTimer`, `Creature::CallAssistance`, `Creature::RegenerateAll`, `Creature::Update`, `FactionTemplateEntry::IsNeutralToAll`, `HomeMovementGenerator::Finalize`, `ThreatContainer::selectNextVictim`, `ThreatManager::addThreat`, `Unit::Attack`, `Unit::EvadeTimerExpired`, `Unit::GetAttackDistance`, `Unit::SelectHostileTarget`, `UnitAI::AttackStart`, `UnitAI::AttackedBy`, `UnitAI::CheckForHelp`, `UnitAI::EnterEvadeMode`, `UnitAI::MoveInLineOfSight`, `UnitAI::UpdateAI`
+* Functions: `CombatManager::IsEvadingHome`, `CombatManager::IsInEvadeMode`, `CreatureAI::HandleAssistanceCall`, `CreatureAI::OnCallForHelp`, `HostileRefManager::threatAssist`, `Unit::CanAssistInCombatAgainst`, `Unit::CanJoinInAttacking`, `Unit::RemoveAllAurasOnEvade`, `UnitAI::DetectOrAttack`, `CombatManager::StartEvadeTimer`, `CombatManager::TriggerCombatTimer`, `CombatManager::Update`, `CombatManager::m_combatTimer`, `CombatManager::m_evadeTimer`, `Creature::CallAssistance`, `Creature::RegenerateAll`, `Creature::Update`, `FactionTemplateEntry::IsNeutralToAll`, `HomeMovementGenerator::Finalize`, `ThreatContainer::selectNextVictim`, `ThreatManager::addThreat`, `Unit::Attack`, `Unit::EvadeTimerExpired`, `Unit::SelectHostileTarget`, `UnitAI::AttackStart`, `UnitAI::AttackedBy`, `UnitAI::CheckForHelp`, `UnitAI::EnterEvadeMode`, `UnitAI::MoveInLineOfSight`, `UnitAI::UpdateAI`
 * Constants: `AI_REACTION_HOSTILE`, `COMBAT_MANAGER_TICK`, `CONFIG_FLOAT_LEASH_RADIUS`, `CREATURE_EXTRA_FLAG_AGGRO_ZONE`, `CREATURE_EXTRA_FLAG_NO_AGGRO_ON_SIGHT`, `CREATURE_EXTRA_FLAG_NO_CALL_ASSIST`, `FACTION_TEMPLATE_RESPOND_TO_CALL_FOR_HELP`, `SPELL_ATTR_EX_NO_THREAT`, `SPELL_ATTR_EX2_NO_INITIAL_THREAT`, `EVADE_HOME`, `REGEN_TIME_FULL_UNIT`, `STATE_SUPPRESSED`, `UNIT_STAT_MELEE_ATTACKING`, `UNIT_STAT_STUNNED`
 * Also: `Spell::EffectTaunt`, `ThreatManager::TauntUpdate` and the taunt states (`taunt`, `tauntedBy`), `Unit::CombatStop`'s deleted hostile references (`forget`), `MotionMaster::MoveDistract` (`distract`)
+* Not from an emulator: `aggroRadius` (Warcraft Wiki "Aggro radius": 5 to 45 yards, a yard a level), `pursuitTime` (the leash time by level, measured on Classic Era) (docs/FORMULAS.md)
 
 ## world/creatureevents.d
 
@@ -939,9 +949,9 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 ## world/experience.d
 
 * Projects: CMaNGOS, MaNGOS
-* Files: `Formulas.h`
-* Functions: `MaNGOS::XP`, `XP::BaseGain`, `XP::Gain`, `XP::GetGrayLevel`, `XP::GetQuestGreenRange`, `XP::GetZeroDifference`, `XP::IsTrivialLevelDifference`, `XP::xp_in_group_rate`
+* Functions: `XP::xp_in_group_rate` (a raid's rate), `Player::ComputeRest` (the client doubling the rest field)
 * Constants: `CONFIG_FLOAT_GROUP_XP_DISTANCE`, `NO_XP`
+* Not from an emulator: `baseGain`, `zeroDifference`, `grayLevel`/`isGray` (47 at 60), `eliteFactor`, the party rates, `restEarned`, `restCap`, `restedBonus`, `restAfterKill`: Wowpedia's 1.x research and Exhaustion.dbc (docs/FORMULAS.md, "Experience")
 
 ## world/exploration.d
 
@@ -1111,13 +1121,15 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: ArcEmu, CMaNGOS, MaNGOS
 * Files: `HonorHandler.cpp`
-* Functions: `HonorCP::isKill`, `MaNGOS::Honor`, `Player::AddHonorCP`, `Player::CalculateTotalKills`, `Player::GetRankPoints`, `Player::RewardHonor`, `Player::UpdateHonor`, `Unit::Kill`, `World::GetDateLastMaintenanceDay`, `WorldSession::HandleInspectHonorStatsOpcode`
+* Not from an emulator: `honorableKillPoints`, `rankOneHonorAt`, `dishonorableKillPoints`, the grey (`isGray`) and the civilian rule: Wowpedia "Honor system (pre-2.0 formulas)", "Civilian" (docs/FORMULAS.md, "Honor"); from CMaNGOS still: the victim's level over the killer's, equal shares within 74 yards, a racial leader's 398
+* Functions: `HonorCP::isKill`, `Player::AddHonorCP`, `Player::CalculateTotalKills`, `Player::GetRankPoints`, `Player::RewardHonor`, `Player::UpdateHonor`, `Unit::Kill`, `World::GetDateLastMaintenanceDay`, `WorldSession::HandleInspectHonorStatsOpcode`
 * Constants: `SMSG_PVP_CREDIT`, `TYPE_OF_HONOR`
 
 ## world/honorweek.d
 
 * Projects: CMaNGOS, MaNGOS
-* Functions: `MaNGOS::Honor`, `ObjectMgr::CalculateRpDecay`, `ObjectMgr::CalculateRpEarning`, `ObjectMgr::FlushRankPoints`, `ObjectMgr::GenerateScores`, `World::ServerMaintenanceStart`
+* Functions: `ObjectMgr::CalculateRpDecay`, `ObjectMgr::CalculateRpEarning`, `ObjectMgr::FlushRankPoints`, `ObjectMgr::GenerateScores`, `World::ServerMaintenanceStart`
+* Not from an emulator: the standing's 1.12 breakpoints; the decay, the 15 kills and the rank points agree with Wowpedia "Honor system (pre-2.0 formulas)" (docs/FORMULAS.md, "Honor")
 
 ## world/inventory.d
 
@@ -1150,6 +1162,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `LootHandler.cpp`
+* Not from an emulator: a group kill's reputation, all of it to each member near it (docs/FORMULAS.md, "Reputation"); the shares of experience agree with Wowpedia "Mob experience" (CMaNGOS's half-plus-one when the highest member finds the kill grey has no source)
 * Functions: `Creature::PrepareBodyLootState`, `CreatureStaticFlags::NO_LOOT`, `CreatureStaticFlags::NO_XP`, `Group::RewardGroupAtKill`, `Item::m_loot`, `LockEntry::Skill`, `Loot::Loot`, `Loot::Release`, `Loot::SetGroupLootRight`, `Loot::SetPlayerIsLooting`, `ObjectMgr::IsConditionSatisfied`, `Player::IsAtGroupRewardDistance`, `Player::RemoveFromWorld`, `Player::RewardSinglePlayerAtKill`, `Player::SendLootError`, `Unit::DealDamage`, `Unit::Kill`, `XP::Gain`
 * Constants: `CMSG_AUTOSTORE_LOOT_ITEM`, `CMSG_LOOT_MASTER_GIVE`, `CMSG_LOOT_ROLL`, `SMSG_PARTYKILLLOG`, `UNIT_FLAG_LOOTING`
 
@@ -1297,6 +1310,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Files: `GridNotifiers.h`, `LootMgr.cpp`, `Spell.cpp`, `SpellEffects.cpp`
 * Functions: `GameObjectFocusCheck`, `Loot::Release`, `ObjectMgr::LoadItemPrototypes`, `Spell::CanOpenLock`, `Spell::CheckCast`, `Spell::CheckItems`, `Spell::EffectDisEnchant`, `Spell::EffectOpenLock`, `Spell::SendCastResult`, `WorldObject::IsWithinDistInMap`
+* Not from an emulator: `skinningSkillFor`, `fishingSkillUpChance` (docs/FORMULAS.md)
 * Constants: `ITEM_DYNFLAG_UNLOCKED`, `LOOT_DISENCHANTING`, `SPELL_FAILED_ALREADY_OPEN`, `SPELL_FAILED_CANT_BE_DISENCHANTED`, `SPELL_FAILED_ITEM_GONE`, `SPELL_FAILED_REQUIRES_SPELL_FOCUS`, `SPELL_FAILED_TOTEMS`, `SPELL_FAILED_TRY_AGAIN`
 
 ## world/pvp.d
@@ -1321,7 +1335,8 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `QuestDef.cpp`
-* Functions: `ObjectMgr::LoadQuests`, `Player::GetQuestLevelForPlayer`, `Quest::XPValue`
+* Functions: `ObjectMgr::LoadQuests`, `Player::GetQuestLevelForPlayer`
+* Not from an emulator: `questXp`, from 1.12's quest money and Wowpedia's falloff (docs/FORMULAS.md, "Quest experience")
 * Constants: `MAX_QUEST_LOG_SIZE`, `QUEST_OBJECTIVES_COUNT`, `QUEST_REWARDS_COUNT`, `QUEST_REWARD_CHOICES_COUNT`, `SMSG_QUESTGIVER_QUEST_INVALID`
 
 ## world/realclassspelltests.d
@@ -1359,6 +1374,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `MiscHandler.cpp`
+* Not from an emulator: a grey kill's fifth of the reputation (Wowpedia "Reputation"; docs/FORMULAS.md, "Reputation")
 * Functions: `Player::CalculateReputationGain`, `Player::GetReputationPriceDiscount`, `Player::ReputationChanged`, `Player::RewardReputation`, `ReputationMgr::LoadFromDB`, `ReputationMgr::ModifyReputation`, `ReputationMgr::SaveToDB`, `Aura::HandleForceReaction`, `ReputationMgr::ApplyForceReaction`, `ReputationMgr::SendForceReactions`, `Player::StopAttackFaction`
 * Constants: `SMSG_INITIALIZE_FACTIONS`, `SMSG_SET_FACTION_STANDING`
 
@@ -1391,9 +1407,10 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `Spell.cpp`, `SpellEffects.cpp`, `SpellHandler.cpp`
-* Functions: `GameObject::Use`, `Player::ClearCooldownForSpell`, `Player::ClearCooldownsOnLine`, `Player::HasItemFitToSpellReqirements`, `Player::UpdateFishingSkill`, `Player::_LoadSpellCooldowns`, `Player::_SaveSpellCooldowns`, `Spell::CheckCast`, `Spell::CheckItems`, `Spell::EffectEnergize`, `Spell::EffectHeal`, `Spell::EffectInstaKill`, `Spell::EffectPersistentAA`, `Spell::EffectTeleportUnits`, `Spell::EffectTransmitted`, `Spell::EffectWeaponDmg`, `Spell::SendChannelStart`, `Spell::SendChannelUpdate`, `Spell::SetTargetMap`, `Spell::SpellStart`, `Spell::cancel`, `Spell::cast`, `Spell::m_delayMoment`, `Spell::update`, `Unit::AttackerStateUpdate`, `Unit::CalculateSpellDamage`, `Unit::SpellDamageBonusDone`, `Unit::SpellHealingBonusDone`, `Unit::SpellHitResult`
+* Functions: `GameObject::Use`, `Player::ClearCooldownForSpell`, `Player::ClearCooldownsOnLine`, `Player::HasItemFitToSpellReqirements`, `Player::_LoadSpellCooldowns`, `Player::_SaveSpellCooldowns`, `Spell::CheckCast`, `Spell::CheckItems`, `Spell::EffectEnergize`, `Spell::EffectHeal`, `Spell::EffectInstaKill`, `Spell::EffectPersistentAA`, `Spell::EffectTeleportUnits`, `Spell::EffectTransmitted`, `Spell::EffectWeaponDmg`, `Spell::SendChannelStart`, `Spell::SendChannelUpdate`, `Spell::SetTargetMap`, `Spell::SpellStart`, `Spell::cancel`, `Spell::cast`, `Spell::m_delayMoment`, `Spell::update`, `Unit::AttackerStateUpdate`, `Unit::CalculateSpellDamage`, `Unit::SpellDamageBonusDone`, `Unit::SpellHealingBonusDone`, `Unit::SpellHitResult`
 * Constants: `CMSG_CANCEL_CHANNELLING`, `CURRENT_CHANNELED_SPELL`, `CURRENT_GENERIC_SPELL`, `CURRENT_MELEE_SPELL`, `FISHING_BOBBER_READY_TIME`, `MSG_CHANNEL_START`, `MSG_CHANNEL_UPDATE`, `SMSG_CLEAR_COOLDOWN`, `SMSG_FISH_NOT_HOOKED`, `SMSG_INITIAL_SPELLS`, `SMSG_SPELLINSTAKILLLOG`, `SMSG_SPELL_GO`, `SMSG_SPELL_START`, `SPELL_ATTR_EX_IS_CHANNELED`, `SPELL_AURA_MOD_DAMAGE_DONE`, `SPELL_AURA_MOD_HEALING_DONE`, `SPELL_AURA_PERIODIC_DAMAGE`, `SPELL_EFFECT_APPLY_AURA`, `SPELL_FAILED_EQUIPPED_ITEM_CLASS`, `SPELL_INTERRUPT_FLAG_MOVEMENT`, `TARGET_ALL_ENEMY_IN_AREA`, `TARGET_CASTER_COORDINATES`, `TRIGGERED_OLD_TRIGGERED`
 * Also: `TARGET_UNIT_SCRIPT_NEAR_CASTER`, `Spell::CheckScriptTargeting` (`spell_script_target`), `TARGET_UNIT_FRIEND_AND_PARTY`
+* Not from an emulator: fishing's skill-ups (only on a catch, by the measured catches a point) and skinning's required skill (one formula, Wowpedia "Skinning") (docs/FORMULAS.md)
 * Also: `Spell::OnCheckCast` (a script's refusal last of `CheckCast`), `Spell::OnSuccessfulStart` (in `Spell::Prepare`),
   `TARGET_UNIT_RAID`
 * Not from an emulator: the spell data's `CasterAuraState` and `TargetAuraState` refused at the cast (Revenge,
@@ -1418,6 +1435,8 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Functions: `Player::ApplySpellMod`, `SpellModifier::isAffectedOnSpell`
 * Constants: `SPELL_AURA_ADD_FLAT_MODIFIER`, `SPELL_AURA_ADD_PCT_MODIFIER`
+* Not from an emulator: where each modifier comes in (the damage with the spell power, the crit's bonus, the hit
+  chance, the threat, every stack: the talents' tooltips, docs/FORMULAS.md)
 
 ## world/spells.d
 
@@ -1485,7 +1504,13 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Functions: `Unit::DealDamage`
 * Constants: `DIRECT_DAMAGE`, `SPELL_DIRECT_DAMAGE`
+* Not from an emulator: `brokenByDamage` (the holds' proc flags and chance, Shadow Vulnerability's charges: the
+  tooltips and data), `deathProcs` (Drain Soul's proc on the kill), `Blow.threat` (`SPELLMOD_THREAT`)
 * Not from an emulator: a creature's damage-taken aura with charges spends one at a blow of its school (Hemorrhage's tooltip); a creature's auras that damage ends (`AuraInterruptFlags`: Wyvern Sting's tooltip)
+
+## world/tooltipmasks.d
+
+* Not from an emulator: the talents' tooltips against the world database's `spell_affect` masks (docs/FORMULAS.md)
 
 ## world/updatefields.d
 

@@ -6,8 +6,8 @@
  * while its own flag is at home. A carrier who dies, leaves or logs out drops the flag where it is:
  * its own side may return it (to its base) by touching it, the other side take it up again, and left
  * alone for ten seconds it goes home by itself. After a capture both flags come back 23 seconds
- * later. A capture gives the side 35 reputation and the bonus honor of two kills; the winner gets the
- * bonus honor of one kill more.
+ * later. A capture gives the side 35 reputation and two bonus honor units; the winner gets one unit more (on
+ * the holiday three more, and the loser three).
  *
  * The flags, the spirit guides and the doors are the map's battleground events (0 the Alliance's
  * flag, 1 the Horde's, 2 the spirit guides). Until the start each side's graveyard is in its flag
@@ -27,14 +27,16 @@ enum uint maxCaptures = 3;
 /// ditto
 enum Duration flagRespawnTime = 23.seconds, flagDropTime = 10.seconds;
 
-/// Reputation per capture and the bonus honor kills of a win (the normal, not a Call to Arms weekend).
+/// Reputation per capture, and the bonus honor units of a win and a capture (Wowpedia "Honor system (pre-2.0
+/// formulas)": "2 BHU for each capture", "1 BHU for winning").
 enum int captureReputation = 35;
 /// ditto
 enum uint winKills = 1, captureKills = 2;
-/// The same on a Call to Arms weekend.
+/// On a Call to Arms weekend: more reputation; "an additional 3 BHU when match ends" to both sides, "an additional
+/// 2 BHU" to the winner.
 enum int weekendCaptureReputation = 45;
 /// ditto
-enum uint weekendWinKills = 3;
+enum uint weekendEndKills = 3, weekendWinKills = 2;
 
 /// The sides' reputation factions: Silverwing Sentinels, Warsong Outriders.
 immutable uint[2] reputationFactions = [890, 889];
@@ -222,11 +224,14 @@ final class WarsongRules : BattlegroundRules
 
     override void ending(Battleground copy, ubyte winner)
     {
-        const kills = copy.weekend ? weekendWinKills : winKills;
+        const kills = winKills + (copy.weekend ? weekendWinKills : 0);
         if (winner == winnerAlliance)
             copy.rewardHonorToTeam(kills, 0);
         else if (winner == winnerHorde)
             copy.rewardHonorToTeam(kills, 1);
+        if (copy.weekend)
+            foreach (ubyte side; 0 .. 2)
+                copy.rewardHonorToTeam(weekendEndKills, side);
     }
 
     /// The side's players, and the carrier of its own flag (the enemy who holds it).
@@ -543,6 +548,5 @@ unittest
     }
     assert(copy.status == BattlegroundStatus.waitLeave && copy.winner == winnerHorde);
     assert(copy.members[8].extra[scoreCaptures] == 3);
-    assert(copy.members[8].bonusHonor == 3 * bonusHonor(captureKills) + bonusHonor(winKills),
-        "two kills' honor a capture, one more for the win");
+    assert(copy.members[8].bonusHonor == 7 * 24, "two units a capture, one more for the win (24 each in 10-19)");
 }
