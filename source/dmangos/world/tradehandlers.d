@@ -6,8 +6,14 @@
  * it to begin, and both see the window. Each puts up to six items and some money on its side;
  * any change takes back both sides' acceptance. When both accept, the trade goes through if both
  * can pay and carry what they get: the items change hands (saved as their giver's rows gone and
- * their taker's new), so does the money, and both are saved. The seventh, "will not be traded"
- * slot (for enchanting another's item) is shown but its spell is not cast yet.
+ * their taker's new), so does the money, and both are saved.
+ *
+ * The seventh, "will not be traded" slot holds an item its owner keeps, for the other to enchant: a spell cast at it
+ * (`TARGET_FLAG_TRADE_ITEM`, the slot's number for its guid) is not cast then but remembered for its side (`TradeData::
+ * SetSpell`: both acceptances taken back, both windows showing it), and cast when the trade goes through, at once and
+ * paying its costs (`TRIGGERED_FORCE_COSTS`), on the other's item, which stays with its owner. Changing that item
+ * forgets the other's spell; a spell whose item (or the scroll it is cast from) is gone, or that cannot be cast as
+ * the trade completes, is forgotten and the trade waits (`WorldSession::HandleAcceptTradeOpcode`).
  */
 module dmangos.world.tradehandlers;
 
@@ -51,6 +57,9 @@ final class TradeSide
     ulong[tradeSlotCount] items; /// the items put up, by their full guid; 0 empty
     uint money;
     bool accepted;
+    uint spell;             /// cast at the other's "will not be traded" item when the trade goes through; 0: none
+    ulong spellItem;        /// ... from this item of the caster's (a scroll); 0: none
+    uint spellItemEntry;    /// ... its entry
 }
 
 /// See the module documentation.
@@ -139,7 +148,7 @@ private:
         w.put(tradeSlotCount);
         w.put(tradeSlotCount);
         w.put(side.money);
-        w.put(0u); // spell cast on the non-traded slot's item
+        w.put(side.spell); // the spell to be cast on the non-traded slot's item
         foreach (ubyte i; 0 .. tradeSlotCount)
         {
             w.put(i);
@@ -278,6 +287,9 @@ private:
             if (put == item.fullGuid)
                 return sendTradeStatus(TradeStatus.tradeCanceled);
         tradeSide.items[tradeSlot] = item.fullGuid;
+        if (tradeSlot == tradeSlotTradedCount) // another item to enchant: the other's spell is forgotten
+            if (auto partner = tradePartner())
+                partner.setTradeSpell(0, 0, 0);
         tradeChanged();
     }
 
@@ -289,6 +301,9 @@ private:
         if (tradeSide is null || tradeSlot >= tradeSlotCount)
             return;
         tradeSide.items[tradeSlot] = 0;
+        if (tradeSlot == tradeSlotTradedCount)
+            if (auto partner = tradePartner())
+                partner.setTradeSpell(0, 0, 0);
         tradeChanged();
     }
 
@@ -376,6 +391,9 @@ private:
         }
         if (!his.accepted)
             return partner.sendTradeStatus(TradeStatus.tradeAccept);
+        // The spells at the "will not be traded" items: still castable, or forgotten and the trade waits.
+        if (!tradeSpellReady(partner) || !partner.tradeSpellReady(this))
+            return;
 
         partner.sendTradeStatus(TradeStatus.tradeAccept);
         // Room for what each gets, counting what each gives away.
@@ -406,6 +424,8 @@ private:
         partner.player.pay(Copper(his.money));
         player.receive(Copper(his.money));
         partner.player.receive(Copper(mine.money));
+        castTradeSpell(partner);
+        partner.castTradeSpell(this);
         tradeSide = null;
         partner.tradeSide = null;
         flushInventory(true);
@@ -414,6 +434,113 @@ private:
             player.data.name, myItems.length, mine.money, hisItems.length, his.money, partner.player.data.name);
         partner.sendTradeStatus(TradeStatus.tradeComplete);
         sendTradeStatus(TradeStatus.tradeComplete);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enchanting across the window (the "will not be traded" slot)
+    // -----------------------------------------------------------------------
+
+    package bool tradeSpellCompleting; /// the trade's spell is being cast as the trade goes through
+
+    /// This side's spell at the other's "will not be traded" item (0: none), the item it is cast from; both sides see it.
+    package void setTradeSpell(uint spell, ulong fromItem, uint fromEntry)
+    {
+        auto partner = tradePartner();
+        if (partner is null || (tradeSide.spell == spell && tradeSide.spellItem == fromItem))
+            return;
+        tradeSide.spell = spell;
+        tradeSide.spellItem = fromItem;
+        tradeSide.spellItemEntry = fromEntry;
+        tradeSide.accepted = false;
+        partner.tradeSide.accepted = false;
+        partner.sendUpdateTrade(true);
+        sendUpdateTrade(false);
+    }
+
+    /**
+     * A spell cast at the trade window (`Spell::CheckCast`, last): only while trading, at the "will not be traded"
+     * slot; remembered for when the trade goes through (`dontReport`: nothing cast now).
+     */
+    package imported!"dmangos.world.spellcast".SpellCastResult tradeSpellCheck(
+        const(imported!"dmangos.world.spells".SpellInfo)* spell, const ref imported!"dmangos.world.spellcast".SpellTargets targets,
+        uint castItemEntry)
+    {
+        import dmangos.world.spellcast : SpellCastResult;
+
+        if (tradeSpellCompleting)
+            return SpellCastResult.ok;
+        if (tradePartner() is null)
+            return SpellCastResult.notTrading;
+        if (targets.item != tradeSlotTradedCount)
+            return SpellCastResult.itemNotReady;
+        setTradeSpell(spell.id, castItemEntry ? usingItemGuid : 0, castItemEntry);
+        return SpellCastResult.dontReport;
+    }
+
+    /// The trade's spell as the targets will have it: the other's "will not be traded" item, by its guid.
+    private imported!"dmangos.world.spellcast".SpellTargets tradeSpellTargets(typeof(this) partner)
+    {
+        import dmangos.world.spellcast : SpellTargets, TargetFlags;
+
+        auto t = SpellTargets(TargetFlags.tradeItem);
+        t.item = partner.tradeSide.items[tradeSlotTradedCount];
+        return t;
+    }
+
+    /// Whether this side's spell (if any) may be cast as the trade goes through; if not it is forgotten.
+    private bool tradeSpellReady(typeof(this) partner)
+    {
+        import dmangos.world.spellcast : castResultPacket, SpellCastResult;
+
+        if (!tradeSide.spell)
+            return true;
+        const spell = context.data.spells.spell(tradeSide.spell);
+        auto targets = tradeSpellTargets(partner);
+        bool ready = spell !is null && partner.itemByGuid(targets.item) !is null
+            && (!tradeSide.spellItem || itemByGuid(tradeSide.spellItem) !is null);
+        if (ready)
+        {
+            tradeSpellCompleting = true;
+            scope (exit)
+                tradeSpellCompleting = false;
+            const result = checkCast(spell, targets, false, tradeSide.spellItemEntry, true);
+            if (result != SpellCastResult.ok)
+            {
+                deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, result, spell));
+                ready = false;
+            }
+        }
+        if (!ready)
+            setTradeSpell(0, 0, 0);
+        return ready;
+    }
+
+    /// This side's spell, cast now at the other's item, at once and paying its costs.
+    private void castTradeSpell(typeof(this) partner)
+    {
+        if (!tradeSide.spell)
+            return;
+        if (const spell = context.data.spells.spell(tradeSide.spell))
+        {
+            tradeSpellCompleting = true;
+            scope (exit)
+                tradeSpellCompleting = false;
+            usingItemGuid = tradeSide.spellItem;
+            castSpell(spell, tradeSpellTargets(partner), false, tradeSide.spellItemEntry);
+            usingItemGuid = 0;
+        }
+    }
+
+    /// An enchantment a spell puts on its item target: the caster's own, or (at the trade window) the other's.
+    package void enchantTarget(const ref imported!"dmangos.world.spellcast".SpellTargets targets, uint enchantment,
+        bool temporary, int durationSeconds)
+    {
+        import dmangos.world.spellcast : TargetFlags;
+
+        if (!(targets.mask & TargetFlags.tradeItem))
+            return enchantItem(targets.item, enchantment, temporary, durationSeconds);
+        if (auto owner = tradePartner())
+            owner.enchantItem(targets.item, enchantment, temporary, durationSeconds);
     }
 
     /// The items leave this player's inventory for `taker`: copies of them (same guids) are returned.
@@ -500,4 +627,90 @@ unittest
     assert(a.money == Copper(70) && j.money == Copper(130));
     assert(jerky.guid in db.itemRows, "saved again under its taker");
     assert(opcodesOf(jaina.read()).canFind(Opcode.SMSG_TRADE_STATUS));
+}
+
+/**
+ * Anduin enchants Jaina's shirt in the "will not be traded" slot: the spell is kept and shown, not cast; it is cast
+ * when the trade goes through, the reagent taken, and the shirt stays hers, enchanted. Not trading: refused.
+ */
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import dmangos.bytes : ByteReader, ByteWriter;
+    import dmangos.world.defines : nullBag, nullSlot;
+    import dmangos.world.enchantments : EnchantmentEffect, EnchantmentType;
+    import dmangos.world.inventory : InventoryResult, ItemPosCount;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes;
+    import dmangos.world.player : Player;
+    import dmangos.world.spellcast : castResultPacket, SpellCastResult, SpellTargets, TargetFlags;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.spellids : SpellEffect;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields : ITEM_FIELD_ENCHANTMENT;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    enum uint enchantShirt = 91_601, enchantment = 902;
+    context.data.enchantmentEffects[enchantment] = [EnchantmentEffect(EnchantmentType.stat, 1, 7), EnchantmentEffect.init,
+        EnchantmentEffect.init];
+    context.data.spells.spells[enchantShirt] = testSpell(enchantShirt, SpellEffect.enchantItem, 0, 0);
+    context.data.spells.spells.edit(enchantShirt).miscValue[0] = enchantment;
+    context.data.spells.spells.edit(enchantShirt).reagents[0] = itemJerky;
+    context.data.spells.spells.edit(enchantShirt).casting.reagentCount[0] = 1;
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    auto jaina = loggedIn(context, db, 8, "Jaina", Position(-8945, -132, 83.5f));
+    auto a = cast(Player) anduin.session.character, j = cast(Player) jaina.session.character;
+    a.spells ~= enchantShirt;
+    ItemPosCount[] dest;
+    assert(a.inventory.canStoreNew(nullBag, nullSlot, dest, itemJerky, 2) == InventoryResult.ok);
+    a.inventory.storeNew(dest, itemJerky);
+    dest = null;
+    assert(j.inventory.canStoreNew(nullBag, nullSlot, dest, itemShirt, 1) == InventoryResult.ok);
+    auto shirt = j.inventory.storeNew(dest, itemShirt);
+    anduin.read();
+    jaina.read();
+    ubyte[] atTradeSlot()
+    {
+        ByteWriter w;
+        w.put(enchantShirt);
+        auto t = SpellTargets(TargetFlags.tradeItem);
+        t.item = 6; // the "will not be traded" slot
+        t.write(w);
+        return w.data.dup;
+    }
+
+    // Not trading: "Tried to enchant a trade item, but not trading".
+    anduin.write(Opcode.CMSG_CAST_SPELL, atTradeSlot());
+    assert(bodyOf(anduin.read(), Opcode.SMSG_CAST_RESULT) == castResultPacket(enchantShirt, SpellCastResult.notTrading));
+
+    ByteWriter target;
+    target.put(j.guid);
+    anduin.write(Opcode.CMSG_INITIATE_TRADE, target.data);
+    jaina.write(Opcode.CMSG_BEGIN_TRADE, null);
+    jaina.write(Opcode.CMSG_SET_TRADE_ITEM, [ubyte(6), shirt.bagSlot, shirt.slot]);
+    anduin.read();
+    jaina.read();
+
+    // Cast at it: kept, not cast; both windows show it.
+    anduin.write(Opcode.CMSG_CAST_SPELL, atTradeSlot());
+    const mine = anduin.read();
+    assert(bodyOf(mine, Opcode.SMSG_CAST_RESULT) == castResultPacket(enchantShirt, SpellCastResult.dontReport));
+    assert(!opcodesOf(mine).canFind(Opcode.SMSG_SPELL_GO) && a.inventory.count(itemJerky) == 2);
+    auto shown = ByteReader(bodyOf(jaina.read(), Opcode.SMSG_TRADE_STATUS_EXTENDED));
+    assert(shown.read!ubyte == 1, "his side, as she sees it");
+    shown.read!uint;
+    shown.read!uint;
+    shown.read!uint; // money
+    assert(shown.read!uint == enchantShirt);
+
+    // Both accept: cast now, the jerky taken, the shirt still hers and enchanted.
+    ByteWriter accept;
+    accept.put(1u);
+    anduin.write(Opcode.CMSG_ACCEPT_TRADE, accept.data);
+    jaina.write(Opcode.CMSG_ACCEPT_TRADE, accept.data);
+    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_SPELL_GO));
+    assert(a.inventory.count(itemJerky) == 1, "the reagent paid");
+    assert(j.inventory.byGuid(shirt.fullGuid) is shirt && shirt.values.get!ITEM_FIELD_ENCHANTMENT(0) == enchantment);
 }

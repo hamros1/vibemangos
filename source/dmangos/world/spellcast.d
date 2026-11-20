@@ -61,6 +61,7 @@ enum SpellCastResult : ubyte
     notKnown = 0x38,
     notReady = 0x3C,
     notStanding = 0x3E,
+    notTrading = 0x40,         /// "Tried to enchant a trade item, but not trading"
     notMounted = 0x39,         /// "You are mounted"
     notOnTaxi = 0x3A,          /// "You are in flight"
     notWhileGhost = 0x42,

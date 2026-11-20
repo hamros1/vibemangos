@@ -425,7 +425,7 @@ private:
         }
         if (!triggered)
         {
-            c.timer = castTimeCheat ? 0 : max(0, cast(int)(spellMod(SpellModOp.castingTime, spell,
+            c.timer = castTimeCheat || tradeSpellCompleting ? 0 : max(0, cast(int)(spellMod(SpellModOp.castingTime, spell,
                 castTime(*spell, context.client, player.data.level)) * player.auras.castTimeFactor()));
             c.castTime = c.timer;
             pushbacks = 0;
@@ -1215,6 +1215,9 @@ private:
             if (toolResult != SpellCastResult.ok)
                 return toolResult;
         }
+        // At the trade window's "will not be traded" item: kept for the trade's end (`dmangos.world.tradehandlers`).
+        if (targets.mask & TargetFlags.tradeItem)
+            return tradeSpellCheck(spell, targets, itemEntry);
         return SpellCastResult.ok;
     }
 
@@ -1999,12 +2002,12 @@ private:
         case SpellEffect.feedPet: // SPELL_EFFECT_FEED_PET
             feedPet(c.targets.item);
             break;
-        case SpellEffect.enchantItem: // SPELL_EFFECT_ENCHANT_ITEM
-            enchantItem(c.targets.item, cast(uint) spell.miscValue[i], false, 0);
+        case SpellEffect.enchantItem: // SPELL_EFFECT_ENCHANT_ITEM (at the trade window: the other's item)
+            enchantTarget(c.targets, cast(uint) spell.miscValue[i], false, 0);
             updateCraftSkill(spell.id);
             break;
         case SpellEffect.enchantItemTemporary: // SPELL_EFFECT_ENCHANT_ITEM_TEMPORARY
-            enchantItem(c.targets.item, cast(uint) spell.miscValue[i], true, value);
+            enchantTarget(c.targets, cast(uint) spell.miscValue[i], true, value);
             break;
         case SpellEffect.triggerSpell: // SPELL_EFFECT_TRIGGER_SPELL
             if (const triggered = context.data.spells.spell(spell.triggerSpell[i]))

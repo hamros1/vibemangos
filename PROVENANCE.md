@@ -871,7 +871,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 ## world/gmactions.d
 
 * Projects: ArcEmu, CMaNGOS
-* Functions: `Player::DestroyItemCount`, `Player::GiveLevel` (TBC's mail at level-up), `ObjectMgr::LoadMailLevelRewards` (TBC), `Player::SaveToDB`, `Player::SetPlayerSpeed`, `Player::SetSkill`, `Player::learnSpell`, `Player::removeSpell`, `World::SendGMWorldText`, `World::SendWorldText`, `World::SendWorldWideScreenText`
+* Functions: `Player::DestroyItemCount`, `Player::learnSpell`, `Player::removeSpell` (the free primary professions), `Player::GiveLevel` (TBC's mail at level-up), `ObjectMgr::LoadMailLevelRewards` (TBC), `Player::SaveToDB`, `Player::SetPlayerSpeed`, `Player::SetSkill`, `Player::learnSpell`, `Player::removeSpell`, `World::SendGMWorldText`, `World::SendWorldText`, `World::SendWorldWideScreenText`
 * Constants: `SMSG_AREA_TRIGGER_MESSAGE`, `SMSG_LEARNED_SPELL`, `SMSG_LEVELUP_INFO`
 
 ## world/gmdebug.d
@@ -1027,7 +1027,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: ArcEmu, CMaNGOS
 * Files: `ChatHandler.cpp`, `ItemHandler.cpp`, `MiscHandler.cpp`, `MovementHandler.cpp`, `QueryHandler.cpp`
-* Functions: `Player::RegenerateAll`, `Player::Say`, `Player::Update`, `Player::Whisper`, `Unit::HandleEmote`, `WorldSession::HandleLogoutRequestOpcode`, `WorldSession::LogoutPlayer`, `WorldSession::Update`, `WorldSession::VerifyMovementInfo`, `WorldSession::m_muted`
+* Functions: `WorldSession::HandleUnlearnSkillOpcode`, `Player::UpdateSkillTrainedSpells`, `Player::RegenerateAll`, `Player::Say`, `Player::Update`, `Player::Whisper`, `Unit::HandleEmote`, `WorldSession::HandleLogoutRequestOpcode`, `WorldSession::LogoutPlayer`, `WorldSession::Update`, `WorldSession::VerifyMovementInfo`, `WorldSession::m_muted`
 
 ## world/itemhandlers.d
 
@@ -1318,8 +1318,8 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `TradeHandler.cpp`
-* Functions: `Item::CanBeTraded`, `Player::TradeCancel`, `TradeData::SetAccepted`
-* Constants: `ITEM_FIELD_GIFTCREATOR`, `TRADE_DISTANCE`, `TRADE_SLOT_COUNT`, `TRADE_SLOT_TRADED_COUNT`
+* Functions: `Item::CanBeTraded`, `Player::TradeCancel`, `TradeData::SetAccepted`, `TradeData::SetSpell`, `TradeData::SetItem`, `WorldSession::HandleAcceptTradeOpcode`, `WorldSession::SendUpdateTrade`, `Spell::CheckCast` (the trade slot), `SpellCastTargets::setTradeItemTarget`
+* Constants: `ITEM_FIELD_GIFTCREATOR`, `TRADE_DISTANCE`, `TRADE_SLOT_COUNT`, `TRADE_SLOT_TRADED_COUNT`, `TRADE_SLOT_NONTRADED`, `TARGET_FLAG_TRADE_ITEM`, `SPELL_FAILED_NOT_TRADING`, `SPELL_FAILED_ITEM_NOT_READY`, `SPELL_FAILED_DONT_REPORT`, `TRIGGERED_FORCE_COSTS`
 
 ## world/unit.d
 

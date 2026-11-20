@@ -95,6 +95,10 @@ private:
         send(ServerLearnedSpell(spell));
         context.database.saveSpell(player.data.guid, spell, true, false);
         player.recordSpellRow(NewSpell(spell, true, false));
+        // A primary profession takes one of the free slots, while there is one (`Player::learnSpell`).
+        const free = player.values.get!PLAYER_CHARACTER_POINTS2;
+        if (free && isPrimaryProfessionFirstRank(spell))
+            player.values.set!PLAYER_CHARACTER_POINTS2(free - 1);
         return true;
     }
 
@@ -109,6 +113,15 @@ private:
         send(ServerRemovedSpell(cast(ushort) spell));
         context.database.deleteSpell(player.data.guid, spell);
         player.forgetSpellRow(spell);
+        // A primary profession forgotten gives its slot back, up to the most (`Player::removeSpell`).
+        if (isPrimaryProfessionFirstRank(spell))
+        {
+            const settings = context.creationSettings;
+            const most = cast(uint) account.level < settings.gmIgnoreMaxPrimarySkills ? settings.maxPrimaryTradeSkill : 10;
+            const free = player.values.get!PLAYER_CHARACTER_POINTS2 + 1;
+            if (free <= most)
+                player.values.set!PLAYER_CHARACTER_POINTS2(free);
+        }
         return true;
     }
 

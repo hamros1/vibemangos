@@ -1125,9 +1125,10 @@ private:
             return;
         player.setSkill(skill, 0, 0);
         context.database.saveSkill(player.data.guid, skill, 0, 0);
+        // Every spell of the skill goes, however it was learned (`UpdateSkillTrainedSpells` removing the skill): the
+        // profession's own rank spells too, which gives a primary profession's slot back (`unlearn`).
         foreach (ability; context.client.abilitiesForSkill(skill))
-            if (ability.learnOnGetSkill)
-                unlearn(ability.spellId);
+            unlearn(ability.spellId);
         flushPlayerChanges();
     }
 
@@ -1967,4 +1968,62 @@ unittest
     assert(r.read!uint == 4);
     const size = r.read!uint;
     assert(cast(string) uncompress(r.readBytes(r.remaining), size) == text[0 .. $ - 1], "the same macros");
+}
+
+/// A primary profession unlearned: every spell of its skill goes, its own rank spell too, and its slot comes back.
+unittest
+{
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.clientdata : skillLineAbilityFormat, skillLineFormat, skillRaceClassInfoFormat;
+    import dmangos.world.spells : SpellChainNode;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.spellids : SpellEffect;
+    import dmangos.world.testclient;
+    import dmangos.world.updatefields : PLAYER_CHARACTER_POINTS2;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    enum uint alchemy = 171, apprentice = 2259, recipe = 2330, professionCategory = 11, canUnlearn = 0x20;
+    with (context.client)
+    {
+        auto line = new uint[skillLineFormat.length];
+        line[0] = alchemy;
+        line[1] = professionCategory;
+        skillLines = typeof(skillLines).parse(buildDbc(skillLineFormat, [line]), "SkillLine.dbc");
+        skillRaceClassInfos = typeof(skillRaceClassInfos).parse(buildDbc(skillRaceClassInfoFormat,
+            [[1u, alchemy, 0xFF, 0x5DF, canUnlearn, 0, 0, 0]]), "SkillRaceClassInfo.dbc");
+        uint[] ability(uint id, uint spell, uint onGetSkill)
+        {
+            auto r = new uint[skillLineAbilityFormat.length];
+            r[0] = id;
+            r[1] = alchemy;
+            r[2] = spell;
+            r[9] = onGetSkill;
+            return r;
+        }
+        skillLineAbilities = typeof(skillLineAbilities).parse(buildDbc(skillLineAbilityFormat,
+            [ability(1, apprentice, 0), ability(2, recipe, 1)]), "SkillLineAbility.dbc");
+        buildIndexes();
+    }
+    with (context.data.spells)
+    {
+        spells[apprentice] = testSpell(apprentice, SpellEffect.dummy, 1, 0);
+        spells.edit(apprentice).effect[1] = SpellEffect.skill;
+        spells.edit(apprentice).miscValue[1] = alchemy;
+        spells[recipe] = testSpell(recipe, SpellEffect.createItem, 1, 0);
+        chains[apprentice] = SpellChainNode(0, apprentice, 1, 0);
+    }
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    auto me = anduin.session.inWorld;
+    me.player.spells ~= [apprentice, recipe];
+    me.player.values.set!PLAYER_CHARACTER_POINTS2(1u); // one of the two slots taken
+    me.player.setSkill(alchemy, 1, 75);
+    anduin.read();
+
+    ByteWriter w;
+    w.put(alchemy);
+    anduin.write(Opcode.CMSG_UNLEARN_SKILL, w.data);
+    assert(!me.player.knowsSpell(apprentice) && !me.player.knowsSpell(recipe), "both spells gone");
+    assert(me.player.skillValue(alchemy)[1] == 0);
+    assert(me.player.values.get!PLAYER_CHARACTER_POINTS2 == 2, "the slot back");
 }

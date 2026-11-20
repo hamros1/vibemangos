@@ -62,9 +62,10 @@
     run down and expire. Crafting raises professions. Spell foci and tools are enforced; disenchanting
     and picking lockboxes are done.
   * Weapon enchantments' procs (poisons, Crusader) are done.
-  * Not yet: enchanting another player's item through
-    trade, and wrapping. Readable items and pages (`page_text`): done. Loot in items is done (`CMSG_OPEN_ITEM`). Dying and the spirit healer wear gear
-  down; a broken worn item's stats come back when it is repaired.
+  * Enchanting another player's item through trade (the "will not be traded" slot): done. Not yet: wrapping.
+    Readable items and pages (`page_text`): done. Loot in items is done (`CMSG_OPEN_ITEM`). Dying and the spirit healer
+    wear gear down (the spirit healer what is in the bags too); a broken worn item's stats come back when it is repaired.
+    Unlearning a primary profession forgets all its spells and gives its slot back.
 * **GM system:** commands that need missing systems answer "Not yet implemented."
   (COMMANDS.md lists them); GM invisibility (`.invisible`) needs sight to be one-sided first. The
   `c` letter makes speech universal but does not also teach the language skills, as the GM contract does.
