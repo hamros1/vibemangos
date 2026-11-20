@@ -747,8 +747,15 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS, mangosd
 * Files: `CombatManager.cpp`, `CreatureAI.cpp`, `ThreatManager.cpp`, `UnitAI.cpp`
-* Functions: `CombatManager::IsEvadingHome`, `CombatManager::IsInEvadeMode`, `CombatManager::StartEvadeTimer`, `CombatManager::TriggerCombatTimer`, `CombatManager::Update`, `CombatManager::m_combatTimer`, `CombatManager::m_evadeTimer`, `Creature::CallAssistance`, `Creature::RegenerateAll`, `Creature::Update`, `FactionTemplateEntry::IsNeutralToAll`, `HomeMovementGenerator::Finalize`, `ThreatContainer::selectNextVictim`, `ThreatManager::addThreat`, `Unit::Attack`, `Unit::EvadeTimerExpired`, `Unit::GetAttackDistance`, `Unit::SelectHostileTarget`, `UnitAI::AttackStart`, `UnitAI::AttackedBy`, `UnitAI::CheckForHelp`, `UnitAI::EnterEvadeMode`, `UnitAI::MoveInLineOfSight`, `UnitAI::UpdateAI`
-* Constants: `AI_REACTION_HOSTILE`, `COMBAT_MANAGER_TICK`, `CONFIG_FLOAT_LEASH_RADIUS`, `CREATURE_EXTRA_FLAG_NO_AGGRO_ON_SIGHT`, `CREATURE_EXTRA_FLAG_NO_CALL_ASSIST`, `EVADE_HOME`, `REGEN_TIME_FULL_UNIT`, `STATE_SUPPRESSED`, `UNIT_STAT_MELEE_ATTACKING`, `UNIT_STAT_STUNNED`
+* Functions: `CombatManager::IsEvadingHome`, `CombatManager::IsInEvadeMode`, `CreatureAI::HandleAssistanceCall`, `CreatureAI::OnCallForHelp`, `HostileRefManager::threatAssist`, `Unit::CanAssistInCombatAgainst`, `Unit::CanJoinInAttacking`, `Unit::RemoveAllAurasOnEvade`, `UnitAI::DetectOrAttack`, `CombatManager::StartEvadeTimer`, `CombatManager::TriggerCombatTimer`, `CombatManager::Update`, `CombatManager::m_combatTimer`, `CombatManager::m_evadeTimer`, `Creature::CallAssistance`, `Creature::RegenerateAll`, `Creature::Update`, `FactionTemplateEntry::IsNeutralToAll`, `HomeMovementGenerator::Finalize`, `ThreatContainer::selectNextVictim`, `ThreatManager::addThreat`, `Unit::Attack`, `Unit::EvadeTimerExpired`, `Unit::GetAttackDistance`, `Unit::SelectHostileTarget`, `UnitAI::AttackStart`, `UnitAI::AttackedBy`, `UnitAI::CheckForHelp`, `UnitAI::EnterEvadeMode`, `UnitAI::MoveInLineOfSight`, `UnitAI::UpdateAI`
+* Constants: `AI_REACTION_HOSTILE`, `COMBAT_MANAGER_TICK`, `CONFIG_FLOAT_LEASH_RADIUS`, `CREATURE_EXTRA_FLAG_AGGRO_ZONE`, `CREATURE_EXTRA_FLAG_NO_AGGRO_ON_SIGHT`, `CREATURE_EXTRA_FLAG_NO_CALL_ASSIST`, `FACTION_TEMPLATE_RESPOND_TO_CALL_FOR_HELP`, `SPELL_ATTR_EX_NO_THREAT`, `SPELL_ATTR_EX2_NO_INITIAL_THREAT`, `EVADE_HOME`, `REGEN_TIME_FULL_UNIT`, `STATE_SUPPRESSED`, `UNIT_STAT_MELEE_ATTACKING`, `UNIT_STAT_STUNNED`
+
+## world/creatureevents.d
+
+* Projects: CMaNGOS, EventAI
+* Files: `CreatureEventAI.cpp`, `GridNotifiers.h`, `Object.cpp`, `SpellMgr.h`, `UnitAI.cpp`
+* Functions: `CreatureEventAI::GetTargetByType`, `FriendlyEligibleDispelInRangeCheck`, `FriendlyMissingBuffInRangeInCombatCheck`, `FriendlyMissingBuffInRangeNotInCombatCheck`, `IsSpellRemovedOnEvade`, `Spell::CalculatePowerCost`, `Unit::SelectAttackingTarget`, `UnitAI::DoFindFriendlyEligibleDispel`, `UnitAI::DoFindFriendlyMissingBuff`, `Unit::isInBackInMap`, `Unit::isInFrontInMap`, `WorldObject::CalculateSpellEffectValue`
+* Constants: `SELECT_FLAG_NOT_IN_MELEE_RANGE`, `SELECT_FLAG_POWER_MANA`, `SELECT_FLAG_RANGE_RANGE`, `SELECT_FLAG_USE_EFFECT_RADIUS`, `SPELL_ATTR_EX_AURA_STAYS_AFTER_COMBAT`, `SPELL_ATTR_SCALES_WITH_CREATURE_LEVEL`, `SPELL_ATTR_SS_IGNORE_EVADE`
 
 ## world/creaturecasting.d
 
@@ -814,7 +821,8 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS, EventAI
 * Files: `CreatureEventAI.cpp`
-* Constants: `EFLAG_RANDOM_ACTION`, `EVENT_UPDATE_TIME`, `TARGET_T_EVENT_SENDER`, `TARGET_T_EVENT_SPECIFIC`
+* Functions: `CreatureEventAI::CheckEvent`, `CreatureEventAI::EnterCombat`, `CreatureEventAI::IsTimerBasedEvent`, `CreatureEventAI::IsTimerExecutedEvent`, `CreatureEventAI::JustRespawned`, `CreatureEventAI::JustSummoned`, `CreatureEventAI::MoveInLineOfSight`, `CreatureEventAI::ProcessAction`, `CreatureEventAI::Reset`, `CreatureEventAI::SpellHitTarget`, `CreatureEventAI::SummonedCreatureJustDied`, `CreatureEventAI::UpdateEventTimers`, `GetRepeatTimers`
+* Constants: `EFLAG_RANDOM_ACTION`, `EVENT_UPDATE_TIME`, `TARGET_T_EVENT_SENDER`, `TARGET_T_EVENT_SPECIFIC`, `EVENT_T_OOC_LOS`, `EVENT_T_FRIENDLY_IS_CC`, `EVENT_T_FRIENDLY_MISSING_BUFF`, `EVENT_T_SUMMONED_UNIT`, `EVENT_T_TARGET_MANA`, `EVENT_T_TARGET_AURA`, `EVENT_T_SUMMONED_JUST_DIED`, `EVENT_T_TARGET_MISSING_AURA`, `EVENT_T_TIMER_GENERIC`, `EVENT_T_SELECT_ATTACKING_TARGET`, `EVENT_T_FACING_TARGET`, `EVENT_T_SPELLHIT_TARGET`, `EVENT_T_TARGET_NOT_REACHABLE`, `ACTION_T_RANGED_MOVEMENT`, `ACTION_T_CHANGE_MOVEMENT`, `ACTION_T_PAUSE_WAYPOINTS`, `TARGET_T_ACTION_INVOKER_OWNER`, `TARGET_T_SPAWNER`, `TARGET_T_PLAYER_INVOKER`, `TARGET_T_PLAYER_TAPPED`, `TARGET_T_HOSTILE_RANDOM_MANA`, `TARGET_T_NEAREST_AOE_TARGET`, `TARGET_T_HOSTILE_FARTHEST_AWAY`
 
 ## world/experience.d
 

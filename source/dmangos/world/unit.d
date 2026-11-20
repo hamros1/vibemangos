@@ -155,6 +155,47 @@ struct UnitRef
         }
     }
 
+    /// Its auras and its fields; null if it is not a unit here (a player not in the world).
+    @property imported!"dmangos.world.auras".AuraSet* auraSet()
+    {
+        final switch (kind)
+        {
+        case UnitKind.none: return null;
+        case UnitKind.player: return session.player is null ? null : &session.player.auras;
+        case UnitKind.creature: return &creature.auras;
+        }
+    }
+
+    /// ditto
+    @property imported!"dmangos.world.objects".UpdateValues* fields()
+    {
+        final switch (kind)
+        {
+        case UnitKind.none: return null;
+        case UnitKind.player: return session.player is null ? null : &session.player.values;
+        case UnitKind.creature: return &creature.values;
+        }
+    }
+
+    /// The stacks of its aura of `spell`; 0 if it has none.
+    uint auraStacks(uint spell)
+    {
+        auto set = auraSet;
+        auto aura = set is null ? null : set.find(spell);
+        return aura is null ? 0 : aura.stacks;
+    }
+
+    /// Its mana in percent; uint.max if it has no mana (another power, or none at all).
+    uint manaPercent()
+    {
+        import dmangos.world.updatefields : UNIT_FIELD_BYTES_0, UNIT_FIELD_MAXPOWER1, UNIT_FIELD_POWER1;
+
+        auto v = fields;
+        if (v is null || v.getByte!UNIT_FIELD_BYTES_0(3) != 0 || v.get!UNIT_FIELD_MAXPOWER1 == 0)
+            return uint.max;
+        return cast(uint)(ulong(v.get!UNIT_FIELD_POWER1) * 100 / v.get!UNIT_FIELD_MAXPOWER1);
+    }
+
     /// Whether it is casting.
     @property bool castingSpell()
     {

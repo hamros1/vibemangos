@@ -34,7 +34,7 @@ import dmangos.script.registry : ScriptHandle, ScriptRuntime;
 import dmangos.script.api : ActionResult, MenuOption, QuestProgress, Waypoint, CreatureHost, Damaged, Died, EnteredCombat, EntityRef, Evaded, KilledUnit, Reset, UnitInSight;
 import dmangos.world.updatefields;
 import dmangos.vmap.math : Vector3;
-import dmangos.world.unit : UnitRef;
+import dmangos.world.unit : UnitKind, UnitRef;
 
 
 /**
@@ -140,6 +140,16 @@ interface CreatureLore
 
     /// The waypoint path a creature of `entry` (spawn `guid`) walks by default; none if it has none.
     const(imported!"dmangos.world.motion".WaypointNode)[] creaturePath(uint entry, uint guid);
+
+    /// A creature's base damage at `level` for its class (`creature_template_classlevelstats`); 0 if none.
+    float creatureBaseDamage(uint level, uint unitClass);
+
+    /// The zone and area at `at` on map `map`; zeros where the terrain is not known.
+    uint[2] zoneAndAreaAt(uint map, Position at);
+
+    /// Whether the player `player` (a pet's owner for a pet) meets condition `id` (`conditions`); false if the
+    /// player is not online here.
+    bool conditionMet(uint id, ulong player);
 }
 
 /// What a creature's AI needs of its map.
@@ -200,6 +210,9 @@ enum float checkForHelpRadius = 5; /// ditto
 /// `CREATURE_EXTRA_FLAG_NO_CALL_ASSIST`: it does not call for help when it starts fighting.
 enum uint extraFlagNoCallAssist = 0x800;
 
+/// `CREATURE_EXTRA_FLAG_AGGRO_ZONE`: in a dungeon, a player's attack puts it in combat with everyone there.
+enum uint extraFlagAggroZone = 0x200;
+
 /// How a creature reacts to others.
 enum ReactState : ubyte
 {
@@ -226,8 +239,11 @@ final class CreatureAI : Scripted, CreatureHost
     import dmangos.world.creaturecasting : CreatureCasting;
     import dmangos.world.creaturescripting : CreatureScripting;
 
+    import dmangos.world.creatureevents : CreatureEvents;
+
     mixin CreatureCasting;
     mixin CreatureScripting;
+    mixin CreatureEvents;
     import dmangos.world.petai : PetBehaviour;
 
     mixin PetBehaviour;
@@ -305,6 +321,8 @@ final class CreatureAI : Scripted, CreatureHost
         // Eastern Kingdoms scripts: a script that wants to hear of the players in its sight (`UnitInSight`) does.
         if (behaviour && me.alive && scripts_.handles!UnitInSight(behaviour))
             return true;
+        if (script !is null && script.watchesLineOfSight && me.alive && !me.petOwner) // `EVENT_T_OOC_LOS`
+            return true;
         return react == ReactState.aggressive && me.alive && !me.petOwner
             && (me.factionTemplate is null || !isNeutralToAll(*me.factionTemplate));
     }
@@ -341,7 +359,10 @@ final class CreatureAI : Scripted, CreatureHost
         world_ = world;
         if (behaviour && me.alive)
             unitInSight(who); // Eastern Kingdoms scripts
-        if (react != ReactState.aggressive || victim || evadingHome || !me.alive || me.petOwner)
+        scriptSaw(who, world);
+        // In a dungeon a fighting creature still notices those coming near: they join its fight (CMaNGOS's
+        // `DetectOrAttack`, `EngageInCombatWith`). Elsewhere it has eyes only for its victim.
+        if (react != ReactState.aggressive || (victim && !inDungeon) || evadingHome || !me.alive || me.petOwner)
             return;
         if (me.factionTemplate !is null && isNeutralToAll(*me.factionTemplate))
             return;
@@ -378,6 +399,20 @@ final class CreatureAI : Scripted, CreatureHost
         }
         if (!inCombat_)
             attackStart(who, world);
+        else if ((who.combatGuid in threat) is null)
+            addThreat(who, 0);
+    }
+
+    /**
+     * Whether it is in a dungeon (an instance or a raid, not a battleground), where creatures do not
+     * give up a fight by their pursuit time, and see those who come near while they fight.
+     */
+    @property bool inDungeon()
+    {
+        if (lore is null || !me.instanceId)
+            return false;
+        const entry = lore.clientData.maps.lookup(me.spawn.map);
+        return entry !is null && entry.isDungeon;
     }
 
     /// Hit (or swung at) by `attacker`; it fights back if it is not fighting yet.
@@ -648,6 +683,10 @@ private:
             raiseScript(EnteredCombat(EntityRef(guid)));
             if (lore !is null && me.instanceId) // its dungeon's script: an encounter may begin
                 lore.dungeonFight(me.instanceId, EntityRef(me.guid), EntityRef(guid));
+            // `CREATURE_EXTRA_FLAG_AGGRO_ZONE`: a boss pulled by a player in a dungeon fights everyone in it.
+            if ((me.template_.extraFlags & extraFlagAggroZone) && inDungeon && inCombat_
+                    && (who.kind == UnitKind.player || who.relating.playerOwned))
+                scriptZoneCombatPulse();
             world.linked(me, LinkEvent.aggro, guid); // its pack joins in
         }
         world.flushCreature(me);
@@ -688,26 +727,49 @@ private:
     }
 
     /**
-     * Whether it may help `who` against `enemy` (outside dungeons): not fighting already, an ally of
-     * `who` (friendly to it), and one that would attack `enemy` on sight.
+     * Whether it may help `who` against `enemy` (CMaNGOS's `CanAssistInCombatAgainst`): one that would attack
+     * `enemy`, and outside dungeons not fighting already and an ally of `who` (friendly to it). In a dungeon (or
+     * a battleground) any creature that may attack `enemy` joins, fighting or not, whatever its faction.
      */
     bool canAssistAgainst(const Creature who, UnitRef enemy)
     {
-        if (!me.alive || inCombat_ || evadingHome || react != ReactState.aggressive)
+        if (!me.alive || evadingHome || react != ReactState.aggressive)
             return false;
         if (me.values.get!UNIT_FIELD_FLAGS & (UnitFlags.spawning | UnitFlags.uninteractible | UnitFlags.immuneToNpc))
             return false;
-        if (who.values.get!UNIT_FIELD_FLAGS & UnitFlags.uninteractible)
+        const self = relating, target = enemy.relating;
+        if (!enemy.fighter.alive || enemy.untouchable || !canAttack(self, target, me.client))
             return false;
-        const self = relating, ally = who.ai.relating;
+        if (instanceable)
+            return victim != enemy.combatGuid;
+        if (inCombat_ || who.values.get!UNIT_FIELD_FLAGS & UnitFlags.uninteractible)
+            return false;
+        const ally = who.ai.relating;
         if (reactionTo(self, ally, me.client) < ReputationRank.friendly)
             return false;
-        const target = enemy.relating;
-        return enemy.fighter.alive && !enemy.untouchable && canAttack(self, target, me.client)
-            && isEnemy(self, target, me.client);
+        return isEnemy(self, target, me.client);
     }
 
-    /// The help called for arrives: each ally still free to come attacks.
+    /// Whether it is in a dungeon or a battleground (CMaNGOS's `Map::Instanceable`).
+    @property bool instanceable()
+    {
+        if (lore is null || !me.instanceId)
+            return false;
+        const entry = lore.clientData.maps.lookup(me.spawn.map);
+        return entry !is null && (entry.isDungeon || entry.isBattleground);
+    }
+
+    /**
+     * Whether it answers a call for help (CMaNGOS's `OnCallForHelp`): only a creature whose faction template
+     * says so (`FACTION_TEMPLATE_RESPOND_TO_CALL_FOR_HELP`). Allies it pulls in by passing them do not ask.
+     */
+    @property bool answersCallsForHelp() const
+    {
+        enum uint respondToCallForHelp = 0x01;
+        return me.factionTemplate is null || (me.factionTemplate.flags & respondToCallForHelp) != 0;
+    }
+
+    /// The help called for arrives: each ally still free to come, and whose faction answers, attacks.
     void deliverAssistance(CombatWorld world)
     {
         auto enemy = world.unit(assistanceEnemy);
@@ -719,8 +781,18 @@ private:
             if (other.ai !is null && other.ai.canAssistAgainst(me, enemy))
             {
                 other.ai.calledAssistance = true; // it does not call others in turn
-                other.ai.attackStart(enemy, world);
+                if (other.ai.answersCallsForHelp)
+                    other.ai.joinFightAgainst(enemy, world);
             }
+    }
+
+    /// Attacks `enemy`, or (fighting already, in a dungeon) adds it to those it fights.
+    void joinFightAgainst(UnitRef enemy, CombatWorld world)
+    {
+        if (inCombat_)
+            addThreat(enemy, 0);
+        else
+            attackStart(enemy, world);
     }
 
     /**
@@ -735,7 +807,7 @@ private:
         if (!enemy)
             return;
         foreach (other; world.creaturesNear(me.position, checkForHelpRadius))
-            if (other !is me && other.ai !is null && other.ai.canCallForAssistance
+            if (other !is me && other.ai !is null && other.ai.canCallForAssistance && !other.ai.inCombat
                 && other.ai.canAssistAgainst(me, enemy) && world.inLineOfSight(other.position, me.position))
                 other.ai.attackStart(enemy, world);
     }
@@ -783,7 +855,8 @@ private:
         if (combatTick < combatManagerTick)
             return;
         combatTick -= combatManagerTick;
-        if (combatTimer == 0 && victim)
+        // The pursuit time is not looked at in dungeons (CMaNGOS: "disabled in instances").
+        if (combatTimer == 0 && victim && !inDungeon)
             if (auto target = world.unit(victim))
             {
                 const at = target.fighter.position;
@@ -911,10 +984,11 @@ private:
         me.movement.position.orientation = angleTo(me.position, other.position);
         if (!combatMovement_)
             return;
-        if (rangedMode_ && moved(me.position, other.position) <= chaseDistance_
+        // Ranged mode, or its script's distance (`ACTION_T_RANGED_MOVEMENT`): near enough, it stays (`m_attackDistance`).
+        const keep = rangedMode_ ? chaseDistance_ : attackDistance_;
+        if (keep > 0 && moved(me.position, other.position) <= keep
             && world.inLineOfSight(me.position, other.position))
         {
-            // Ranged mode: near enough to cast; it stays (`m_attackDistance`).
             if (!me.spline.finalized)
                 stopMoving(me, world);
             return;
@@ -929,8 +1003,10 @@ private:
         if (!me.spline.finalized && moved(chasedTo, other.position) < 1)
             return;
         // To a point just within reach (or its casting distance), on the line between the two.
-        const reach = rangedMode_ ? chaseDistance_ - 1 : meleeReach(self, other) - 1;
-        const angle = angleTo(other.position, me.position);
+        const reach = keep > 0 ? keep - 1 : meleeReach(self, other) - 1;
+        // At its script's angle from the way its victim faces, or on the line between the two.
+        const angle = !rangedMode_ && attackDistance_ > 0 && attackAngle_ != 0
+            ? other.position.orientation + attackAngle_ : angleTo(other.position, me.position);
         const x = other.position.x + reach * cos(angle), y = other.position.y + reach * sin(angle);
         auto z = world.groundHeight(x, y, other.position.z + 2, false);
         if (!(z > -100_000))
@@ -1166,6 +1242,7 @@ private:
         }
         combatMovement_ = true;
         rangedMode_ = rangedModeSet;
+        attackDistance_ = attackAngle_ = 0; // its script's chase distance is for one fight
         meleeStop(world);
         foreach (guid, _; threat)
             notifyRemoved(guid, world);
@@ -1180,6 +1257,7 @@ private:
         assistanceReceivers = null;
         me.values.set!UNIT_FIELD_TARGET(0UL);
         me.values.set!UNIT_FIELD_FLAGS(me.values.get!UNIT_FIELD_FLAGS & ~UnitFlags.inCombat);
+        removeAurasOnEvade(world);
         if (script !is null)
             script.evaded(this);
         raiseScript(Evaded());
@@ -1194,6 +1272,20 @@ private:
             return reachedHome(world);
         Vector3[] points = [Vector3(0, 0, 0), Vector3(home.x, home.y, home.z)];
         launch(me, world, points, false, home.orientation, true);
+    }
+
+    /**
+     * Evading, it loses its auras (CMaNGOS's `RemoveAllAurasOnEvade`): its enemies' debuffs and damage over time
+     * and its own buffs, but not its passives (`creatureevents.removedOnEvade`). Its health comes back as it does
+     * out of combat, a third every five seconds, from the moment it turns for home.
+     */
+    void removeAurasOnEvade(CombatWorld world)
+    {
+        import dmangos.world.creatureevents : removedOnEvade;
+
+        foreach (aura; me.auras.list.dup)
+            if (aura.spell !is null && removedOnEvade(*aura.spell))
+                me.loseAura(aura, world);
     }
 
     /// Back home; it moves as before the fight.
@@ -1426,8 +1518,8 @@ unittest
     enum uint players = 1, monsters = 8;
     const humans = anduin.session.character.values.get!UNIT_FIELD_FACTIONTEMPLATE;
     context.client.factionTemplates = typeof(context.client.factionTemplates).parse(buildDbc(factionTemplateFormat,
-        [[humans, 1, 0, players | 2, 2, monsters, 0, 0, 0, 0, 0, 0, 0, 0], [14u, 14, 0, monsters, monsters, players, 0, 0,
-        0, 0, 0, 0, 0, 0]]), "FactionTemplate.dbc");
+        [[humans, 1, 0, players | 2, 2, monsters, 0, 0, 0, 0, 0, 0, 0, 0], [14u, 14, 1, monsters, monsters, players, 0, 0,
+        0, 0, 0, 0, 0, 0]]), "FactionTemplate.dbc"); // monsters that answer a call for help (as faction 16 does)
     foreach (c; [keeper, trainer])
     {
         c.factionTemplate = context.client.factionTemplates.lookup(14);

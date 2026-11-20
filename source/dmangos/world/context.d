@@ -2870,7 +2870,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// See `CreatureLore.summon`.
     Creature summon(CombatWorld world, uint entry, Position at, uint type, uint durationMs, ulong summoner)
     {
-        return summonCreature(world, entry, at, cast(TempSpawnType) type, durationMs, summoner);
+        auto summoned = summonCreature(world, entry, at, cast(TempSpawnType) type, durationMs, summoner);
+        if (summoned !is null && summoner) // its summoner's script hears of it (`EVENT_T_SUMMONED_UNIT`)
+            if (auto by = world.creatureAt(summoner))
+                if (by.ai !is null)
+                    by.ai.summonedCreature(world, summoned);
+        return summoned;
     }
 
     /// See `CreatureLore.sameGroup`.
@@ -3830,6 +3835,35 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (auto map = cast(Map) world)
             if (map.instanceId == 0)
                 signalWorld(map.id, from, id, value);
+    }
+
+    /// See `CreatureLore.conditionMet`.
+    bool conditionMet(uint id, ulong player)
+    {
+        import dmangos.world.character : Character;
+        import dmangos.world.conditions : ConditionSubject;
+
+        auto c = cast(Character) onlinePlayer(player);
+        if (c is null || c.player is null)
+            return false;
+        const subject = ConditionSubject(c.player, null);
+        return data.npcs.conditions.satisfied(id, subject, client);
+    }
+
+    /// See `CreatureLore.zoneAndAreaAt`.
+    uint[2] zoneAndAreaAt(uint map, Position at)
+    {
+        auto t = terrain(map);
+        return t is null || !t.knows(at.x, at.y) ? [0u, 0u] : t.zoneAndArea(at.x, at.y, at.z);
+    }
+
+    /// See `CreatureLore.creatureBaseDamage`.
+    float creatureBaseDamage(uint level, uint unitClass)
+    {
+        import dmangos.world.creature : classStatsKey;
+
+        const stats = classStatsKey(level, unitClass) in data.creatureClassStats;
+        return stats is null ? 0 : stats.baseDamage;
     }
 
     /// Open-world round 2: see `CreatureLore.creaturePath`.
