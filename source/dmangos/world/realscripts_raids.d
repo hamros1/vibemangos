@@ -1056,3 +1056,202 @@ unittest
     s.run(2.seconds);
     assert(s.ask(8) == 3, "his encounter not done");
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Naxxramas (533)
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * The bosses of the four quarters fought one at a time: each one's abilities by its timers and thresholds, what
+ * it calls, its encounter. Anub'Rekhan: Impale, a Crypt Guard at 20 s, Locust Swarm (80 .. 120 s). Faerlina: Poison
+ * Bolt Volley, Rain of Fire, Enrage at 60 s. Maexxna: Poison Shock, Necrotic Poison, Web Wrap (20 s), Web Spray
+ * (40 s), spiderlings (30 s), Frenzy under 30%. Noth: Curse, Blink, his Plagued Warriors (12 s), to his balcony at
+ * 90 s. Heigan: Mana Burn, Decrepit Fever, to his platform at 90 s (Plague Cloud). Loatheb: Corrupted Mind, his
+ * Remove Curse, spores (13 s), Inevitable Doom at two minutes. Razuvious: Disrupting Shout, Unbalancing Strike.
+ * Gothik: his trainees at 24 s. Patchwerk: Hateful Strike; under 5% Enrage. Grobbulus: Mutating Injection, Slime
+ * Spray and its slimes, his poison clouds. Gluth: Mortal Wound, Frenzy, Terrifying Roar, his zombies, Decimate at
+ * 105 s.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum : uint
+    {
+        cryptGuard = 16_573, spiderling = 17_055, webWrap = 16_486, plaguedWarrior = 16_984, spore = 16_286,
+        trainee = 16_124, falloutSlime = 16_290, grobbulusCloud = 16_363, zombieChow = 16_360,
+    }
+    const Boss[] bosses = [
+        Boss("Anub'Rekhan", 533, 15_956, 0, [], [Stage(0, 22, [28_783], null, [[cryptGuard, 1]]),
+            Stage(0, 100, [28_785])]),
+        Boss("Grand Widow Faerlina", 533, 15_953, 1, [], [Stage(0, 62, [28_796, 28_794, 28_798])]),
+        Boss("Maexxna", 533, 15_952, 2, [], [Stage(0, 42, [28_741, 28_776, 29_484], null, [[spiderling, 1]]),
+            Stage(29, 2, [28_747])]),
+        Boss("Noth the Plaguebringer", 533, 15_954, 3, [], [Stage(0, 32, [29_208, 29_213], null,
+            [[plaguedWarrior, 1]]), Stage(0, 60, [29_230])]),
+        Boss("Heigan the Unclean", 533, 15_936, 4, [], [Stage(0, 22, [29_998, 29_310]), Stage(0, 70, [29_350])]),
+        Boss("Loatheb", 533, 16_011, 5, [], [Stage(0, 16, [29_201, 30_281], null, [[spore, 1]]),
+            Stage(0, 106, [29_204])]),
+        Boss("Instructor Razuvious", 533, 16_061, 6, [], [Stage(0, 32, [29_107, 26_613])]),
+        Boss("Gothik the Harvester", 533, 16_060, 7, [], [Stage(0, 26, null, null, [[trainee, 1]])]),
+        Boss("Patchwerk", 533, 16_028, 9, [], [Stage(0, 5, [28_308]), Stage(4, 2, [28_131])]),
+        Boss("Grobbulus", 533, 15_931, 10, [], [Stage(0, 32, [28_169, 28_157], null,
+            [[falloutSlime, 1], [grobbulusCloud, 1]])]),
+        Boss("Gluth", 533, 15_932, 11, [], [Stage(0, 22, [25_646, 28_371, 29_685], null, [[zombieChow, 1]]),
+            Stage(0, 85, [28_374])]),
+    ];
+    foreach (b; bosses)
+    {
+        fight(b);
+        wipe(b);
+    }
+}
+
+/**
+ * The Four Horsemen: each one's mark (20 s) and special (15 s); each that dies leaves its spirit; the four slain,
+ * the encounter is done and their chest appears.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    static immutable uint[4][4] horsemen = [ // entry, mark, special, spirit
+        [16_065, 28_833, 28_863, 28_931], [16_062, 28_834, 28_882, 28_928], [16_064, 28_832, 28_884, 28_932],
+        [16_063, 28_835, 28_883, 28_934]];
+    auto at = spawnOf(533, horsemen[0][0]);
+    auto s = new Scene(533, Position(at.x + 3, at.y, at.z), [classWarrior, classMage]);
+    s.run(1.seconds);
+    Creature[4] four;
+    foreach (i, h; horsemen)
+        four[i] = s.the(h[0]);
+    s.clear(four[0].position, 60, [16_065, 16_062, 16_064, 16_063]);
+    foreach (h; four)
+        s.engage(h);
+    s.stayWith = four[0];
+    s.stayWithin = 60;
+    s.run(22.seconds);
+    assert(s.ask(8) == 1, "the encounter not in progress");
+    foreach (h; horsemen)
+        assert(s.castBy(h[0], h[1]) && s.castBy(h[0], h[2]), format!"horseman %s: mark %s or special %s not cast\n%s"(
+            h[0], h[1], h[2], s.seen()));
+    s.stayWith = null;
+    foreach (i, h; four)
+    {
+        s.kill(h);
+        s.run(1.seconds);
+        assert(s.cast_(horsemen[i][3]), format!"horseman %s left no spirit"(horsemen[i][0]));
+        if (i < 3)
+            assert(s.ask(8) != 3, "the encounter done with a horseman alive");
+    }
+    s.run(2.seconds);
+    assert(s.ask(8) == 3, "the four slain, the encounter not done");
+    assert(s.objects(181_366).length, "no chest of the Four Horsemen");
+}
+
+/**
+ * Thaddius: Stalagg and Feugen fall (each a fake death; the other's death within the window keeps both down), then
+ * Thaddius wakes: Polarity Shift (15 s), Chain Lightning, Ball Lightning when no one is in his reach.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint stalagg = 15_929, feugen = 15_930, thaddiusEntry = 15_928;
+    auto at = spawnOf(533, stalagg);
+    auto s = new Scene(533, Position(at.x + 3, at.y, at.z), [classWarrior, classMage]);
+    s.run(1.seconds);
+    auto st = s.the(stalagg), fe = s.the(feugen), th = s.the(thaddiusEntry);
+    s.clear(th.position, 100, [stalagg, feugen, thaddiusEntry]);
+    s.engage(st);
+    s.engage(fe);
+    s.run(16.seconds);
+    assert(s.ask(12) == 1, "the encounter not in progress");
+    s.kill(st);
+    s.kill(fe);
+    s.run(2.seconds);
+    assert(s.ask(12) == 4, format!"both adds down, but the encounter is %s"(s.ask(12)));
+    s.run(6.seconds);
+    assert(!st.alive && !fe.alive, format!"an add rose again (Stalagg %s, Feugen %s)"(st.alive, fe.alive));
+    s.stayWith = th;
+    assert(s.runUntil(() => th.ai.inCombat, 30.seconds), "Thaddius does not wake");
+    s.forget();
+    s.run(30.seconds);
+    foreach (spell; [28_089, 28_167])
+        assert(s.castBy(thaddiusEntry, spell), format!"Thaddius: %s not cast\n%s"(spell, s.seen()));
+    s.kill(th);
+    s.run(2.seconds);
+    assert(s.ask(12) == 3, "his encounter not done");
+}
+
+/**
+ * Sapphiron: the Frostwyrm Lair's way open (the copy's "special"), he comes 22 s later and fights all there:
+ * Frost Aura, Cleave, Tail Sweep, Life Drain, his blizzard; at 46 s he takes to the air (Icebolt) and lands. His
+ * Frost Breath is left out (the ice blocks that shelter from it are not done: the script's documentation).
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint sapphironEntry = 15_989;
+    auto s = new Scene(533, Position(3521.48f, -5225.87f, 137.626f), [classWarrior, classMage]);
+    s.run(1.seconds);
+    s.signalCopy(13, 4);
+    assert(s.runUntil(() => s.find(sapphironEntry) !is null, 30.seconds), "no Sapphiron");
+    auto sap = s.the(sapphironEntry);
+    s.stayWith = sap;
+    s.stayWithin = 60;
+    assert(s.runUntil(() => sap.ai.inCombat, 10.seconds), "Sapphiron does not fight");
+    s.run(17.seconds);
+    foreach (spell; [28_529, 19_983, 15_847, 28_542, 28_560])
+        assert(s.castBy(sapphironEntry, spell), format!"Sapphiron: %s not cast\n%s"(spell, s.seen()));
+    s.forget();
+    s.run(50.seconds);
+    assert(s.castBy(sapphironEntry, 28_522), "Sapphiron: no Icebolt from the air\n" ~ s.seen());
+    s.kill(sap);
+    s.run(2.seconds);
+    assert(s.ask(13) == 3, "his encounter not done");
+}
+
+/**
+ * Kel'Thuzad: the trigger in his chamber (4112) begins it: he channels while his minions come from the alcoves
+ * (Soldiers of the Frozen Wastes at once, Unstoppable Abominations at 30 s, Soul Weavers at 40 s); at 5:25 he
+ * fights: Frostbolt, Frost Nova, Mana Detonation, Shadow Fissure, Frost Blast; under 40% the Guardians of
+ * Icecrown come. Wowpedia: phase two after about 3.5 minutes (or the adds' deaths); four or five Guardians in the
+ * third.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum : uint { ktEntry = 15_990, soldier = 16_427, abomination = 16_428, weaver = 16_429, guardian = 16_441 }
+    auto at = spawnOf(533, ktEntry);
+    auto s = new Scene(533, Position(at.x + 3, at.y, at.z), [classWarrior, classMage]);
+    s.run(1.seconds);
+    auto kt = s.the(ktEntry);
+    s.signalCopy(1000 + 4112, 0);
+    s.run(1.seconds);
+    assert(s.ask(14) == 1, format!"the trigger did not begin it (%s)"(s.ask(14)));
+    s.run(41.seconds);
+    foreach (e; [soldier, abomination, weaver])
+        assert(s.all(e).length, format!"no minion %s from the alcoves"(e));
+    // His minions slain as they come, till he fights.
+    s.stayWith = kt;
+    s.stayWithin = 30;
+    const fights = s.runUntil(() {
+        foreach (e; [soldier, abomination, weaver])
+            foreach (m; s.all(e))
+                s.kill(m);
+        return kt.ai.inCombat && (kt.values.get!UNIT_FIELD_FLAGS & 0x0200_0000) == 0;
+    }, 330.seconds, 1.seconds);
+    assert(fights, "Kel'Thuzad never fights");
+    s.forget();
+    s.run(61.seconds);
+    foreach (spell; [28_478, 28_479, 27_819, 27_810, 27_808])
+        assert(s.castBy(ktEntry, spell), format!"Kel'Thuzad: %s not cast\n%s"(spell, s.seen()));
+    s.hurtTo(kt, 39);
+    s.run(8.seconds);
+    assert(s.all(guardian).length >= 1, "no Guardian of Icecrown under 40%");
+    s.kill(kt);
+    s.run(2.seconds);
+    assert(s.ask(14) == 3, "his encounter not done");
+}

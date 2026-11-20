@@ -1630,6 +1630,15 @@ private mixin template ThaddiusAdd(uint other, uint warstompOrPull, uint aggro, 
 
     void on(ref CreatureContext me, const ref Signal e)
     {
+        if (e.id == NaxxSignal.addsDone && down)
+        {
+            // The other fell within our window and died: so do we (else we rose again beside Thaddius).
+            steps.clear();
+            me.sayText(death);
+            me.deathPrevention(false);
+            me.die();
+            return;
+        }
         if (e.id != NaxxSignal.addFell || !down)
             return;
         // Both down within the window: both die, and Thaddius wakes.
@@ -1702,8 +1711,8 @@ struct Thaddius
 {
     static immutable uint[3] aggroLines = [13_086, 13_087, 13_088];
     enum uint slayLine = 13_096, deathLine = 13_089, sayElect = 13_090;
-    enum : uint { spawn = 28_160, ballLightning = 28_299, chainLightning = 28_167, polarityShift = 28_089,
-        berserk = 27_680 }
+    enum : uint { spawn = 28_160, lightningVisual = 28_136, ballLightning = 28_299, chainLightning = 28_167,
+        polarityShift = 28_089, berserk = 27_680 }
     enum Step : ubyte { wake, polarity, chain, ball, berserk }
     Schedule!Step steps;
     bool awake;
@@ -1716,6 +1725,8 @@ struct Thaddius
         {
             me.unitFlags(UnitFlag.uninteractible | UnitFlag.immuneToPlayer, true);
             me.reactState(Reaction.passive);
+            if (!me.hasAura(me.self, spawn))
+                me.castSelf(spawn, true); // waiting, stunned, till his coils' masters fall
         }
     }
 
@@ -1738,8 +1749,11 @@ struct Thaddius
         final switch (step)
         {
         case Step.wake:
+            // Thadius Spawn (28160) is the stun he waits in (ScriptDev casts it as he spawns and takes it off as
+            // the coils' lightning wakes him: `SPELL_THADIUS_LIGHTNING_VISUAL`); cast here, it stunned him for good.
             awake = true;
-            me.castSelf(spawn, true);
+            me.removeAura(me.self, spawn);
+            me.castSelf(lightningVisual, true);
             me.unitFlags(UnitFlag.uninteractible | UnitFlag.immuneToPlayer, false);
             me.reactState(Reaction.aggressive);
             me.zoneCombat();

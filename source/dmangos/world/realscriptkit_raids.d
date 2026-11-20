@@ -451,11 +451,16 @@ final class Scene
         return o.data;
     }
 
-    /// Every creature within `radius` of `center` but those of `keep` taken off the map (the trash cleared).
+    /**
+     * Every creature within `radius` of `center` that one could fight, but those of `keep`, taken off the map (the
+     * trash cleared); the unselectable and unattackable (triggers, the scenery's creatures) stay.
+     */
     void clear(Position center, float radius, const(uint)[] keep)
     {
+        enum uint nonAttackable = 0x2, notSelectable = 0x0200_0000;
         foreach (c; map.creaturesNear(center, radius))
-            if (!keep.canFind(c.spawn.entry) && !c.petOwner)
+            if (!keep.canFind(c.spawn.entry) && !c.petOwner
+                    && !(c.values.get!UNIT_FIELD_FLAGS & (nonAttackable | notSelectable)))
                 map.removeObject(c.guid);
         listen();
     }
