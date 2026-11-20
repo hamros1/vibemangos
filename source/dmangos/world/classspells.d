@@ -508,8 +508,8 @@ mixin template ClassSpells()
 
     /**
      * A school damage effect's amount by the class rules (`EffectSchoolDMG`): Bloodthirst is a share of the attack
-     * power; Ferocious Bite turns the energy left into damage, and the attack power by the combo points; Conflagrate
-     * consumes the Immolate it needs.
+     * power; Shield Slam adds the shield's block value; Ferocious Bite turns the energy left into damage, and the
+     * attack power by the combo points; Conflagrate consumes the Immolate it needs.
      */
     package int classSchoolDamage(const(SpellInfo)* spell, size_t i, ulong targetGuid, int damage)
     {
@@ -518,6 +518,9 @@ mixin template ClassSpells()
         // Bloodthirst
         if (ofFamily(spell, SpellFamily.warrior, 0x2000000) && spell.casting.spellIconId == 38)
             return damage * player.stats.attackPower / 100;
+        // Shield Slam (the same family flag): its damage and the shield's block value.
+        if (ofFamily(spell, SpellFamily.warrior, 0x2000000) && spell.casting.spellIconId == 413)
+            return damage + cast(int) player.fighter.shieldBlock;
         // Ferocious Bite
         enum uint ferociousBiteVisual = 6587;
         if (ofFamily(spell, SpellFamily.druid, 0x800000) && spell.casting.spellVisual == ferociousBiteVisual)
@@ -590,9 +593,10 @@ mixin template ClassSpells()
             enum uint enrage = 5229, enrageArmor = 25503, direBearForm = 9634;
             if (spell.id == enrage)
             {
-                // Less armor while enraged: a sixth less in Dire Bear Form, more in Bear Form.
+                // Less armor while enraged: 16% in Dire Bear Form, 27% in Bear Form: 25503's second effect (its first
+                // is none).
                 const reduction = player.auras.find(direBearForm) !is null ? -16 : -27;
-                castCustom(enrageArmor, player.guid, CustomValues.first(reduction));
+                castCustom(enrageArmor, player.guid, CustomValues([0, reduction, 0], 0b10));
                 return true;
             }
             return false;
@@ -1097,14 +1101,17 @@ mixin template ClassSpells()
             return true;
         }
         // Retaliation: a strike back at each swing that does not come from behind.
-        enum uint retaliation = 20230, retaliationStrike = 22858;
+        // (20240, `spell_retaliation_warrior`'s: 22858 is a creature's, `spell_retaliation_creature`)
+        enum uint retaliation = 20230, retaliationStrike = 20240;
         if (spell.id == retaliation)
         {
             import dmangos.world.combat : hasInArc;
 
             if (!other || !hasInArc(player.position, other.position))
                 return false;
-            casts ~= ProcCast(retaliationStrike, other.combatGuid);
+            auto always = CustomValues.init;
+            always.alwaysHits = true; // TRIGGERED_IGNORE_HIT_CALCULATION
+            casts ~= ProcCast(retaliationStrike, other.combatGuid, always);
             return true;
         }
         // Seal of Righteousness
@@ -1237,23 +1244,25 @@ mixin template ClassSpells()
     }
 
     /**
-     * This player's spell or swing hit `victim` (`hit`): what the victim's auras do to it (`victim`'s procs as
-     * CMaNGOS runs them on its side): Judgement of Light and of Wisdom heal or give mana to who strikes it in melee,
-     * Vampiric Embrace heals the priest's party by a share of the priest's shadow damage.
+     * This player's spell, swing or tick hit `victim` (`hit`): what the victim's auras do to it (`victim`'s procs as
+     * CMaNGOS runs them on its side, each on what its spell's proc flags take): Judgement of Light heals who strikes it
+     * in melee, Judgement of Wisdom gives mana to who strikes it in melee, at range or with a spell, Vampiric Embrace
+     * heals the priest's party by a share of the priest's shadow damage (its damage over time's too).
      */
     package void victimAuraProcs(UnitRef victim, uint flags, const ref ProcHit hit)
     {
-        import dmangos.world.aurahandlers : ProcFlag;
-
         auto set = aurasOf(victim);
         if (set is null || !victim.alive)
             return;
+        const taken = flags << 1; // what the victim took: each taken flag is the dealt one's next bit
         ProcCast[] casts;
         Aura[] spent;
         enum uint vampiricEmbrace = 15286, vampiricHeal = 15290;
         foreach (aura; set.list)
         {
-            if ((flags & (ProcFlag.dealMeleeSwing | ProcFlag.dealMeleeAbility)) && aura.has(AuraType.procTriggerSpell))
+            if (!(aura.spell.casting.procFlags & taken))
+                continue;
+            if (aura.has(AuraType.procTriggerSpell))
             {
                 auto heal = rankSpell(judgementOfLightHeal, aura.spell.id);
                 if (!heal)

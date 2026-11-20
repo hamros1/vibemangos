@@ -114,7 +114,7 @@ struct HateToZero
 
 /**
  * Curse of Agony: its damage grows: of its twelve ticks, the first four deal half the average and
- * the last four half again as much (the total stays what the spell says).
+ * the last four half again as much, rounded up (the total stays what the spell says: 84 of rank 1's 7 a tick).
  */
 @spell("spell_curse_of_agony")
 struct CurseOfAgony
@@ -127,6 +127,6 @@ struct CurseOfAgony
         if (e.tick <= third)
             it.setAmount(e.amount / 2);
         else if (e.tick > e.ticks - third)
-            it.setAmount(e.amount + e.amount / 2);
+            it.setAmount(e.amount + (e.amount + 1) / 2); // (the half a point the first ticks lost)
     }
 }

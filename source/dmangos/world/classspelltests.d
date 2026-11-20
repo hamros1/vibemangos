@@ -337,10 +337,18 @@ unittest
         assert(attempt < 29, "a swing lands");
     }
 
-    a.tick(2000);
-    a.hero.read();
-    assert(a.cast_(20271, a.foe.guid) == SpellCastResult.ok);
-    assert(a.damageLogs().canFind!(l => l[0] == 20187 && l[1] >= 20), "the judgement strikes");
+    // Judgement is rolled as any spell at an enemy: a miss leaves the seal on, to judge again.
+    uint[2][] logs;
+    foreach (attempt; 0 .. 30)
+    {
+        a.tick(2000);
+        a.hero.read();
+        assert(a.cast_(20271, a.foe.guid) == SpellCastResult.ok);
+        logs = a.damageLogs();
+        if (!a.hasAura(21084))
+            break;
+    }
+    assert(logs.canFind!(l => l[0] == 20187 && l[1] >= 20), "the judgement strikes");
     assert(!a.hasAura(21084), "the seal spent");
     assert(!(a.player.values.get!UNIT_FIELD_AURASTATE & auraStateFlag(AuraState.judgement)), "nothing left to judge");
 }
@@ -404,7 +412,7 @@ unittest
     a.auraEffect(stun, 0, AuraType.modStun, ImplicitTarget.enemy);
     bool isNew;
     a.foe.auras.apply(makeAura(stun, a.player.guid, 60, -1, false, [0, 0, 0]), a.foe.values, isNew);
-    assert(judged().canFind!(d => d == 93), "whole against a stunned target");
+    import std.format : format; const j = judged(); assert(j.canFind!(d => d == 93 || d == 186), format!"whole against a stunned target (a crit twice): %s"(j));
 }
 
 /// Conflagrate: refused without the warlock's Immolate on the target; with it, it strikes and the Immolate goes.
@@ -451,11 +459,13 @@ unittest
 unittest
 {
     auto a = new Arena(PlayerClass.mage);
-    with (a.spell(122, SpellEffect.dummy, ImplicitTarget.caster))
+    with (a.spell(122, SpellEffect.dummy, ImplicitTarget.caster)) // Frost Nova, rank 1: its category's 25 seconds
     {
-        recoveryTime = 25_000;
+        category = 35;
+        categoryRecoveryTime = 25_000;
         casting.school = 4;
         casting.spellFamilyName = 3;
+        casting.spellFamilyFlags = 0x80040;
     }
     with (a.spell(2136, SpellEffect.dummy, ImplicitTarget.caster)) // fire: not reset
     {
@@ -496,18 +506,29 @@ unittest
 unittest
 {
     auto a = new Arena(PlayerClass.rogue);
-    with (a.spell(1856, SpellEffect.dummy, ImplicitTarget.caster))
+    with (a.spell(1856, SpellEffect.dummy, ImplicitTarget.caster)) // Vanish, rank 1: its category's five minutes
+    {
+        category = 39;
+        categoryRecoveryTime = 300_000;
+        casting.spellFamilyName = 8;
+        casting.spellFamilyFlags = 0x800;
+    }
+    with (a.spell(2094, SpellEffect.dummy, ImplicitTarget.caster)) // Blind: its own five minutes
     {
         recoveryTime = 300_000;
         casting.spellFamilyName = 8;
+        casting.spellFamilyFlags = 0x1000000;
     }
-    with (a.spell(14185, SpellEffect.dummy, ImplicitTarget.caster))
+    with (a.spell(14185, SpellEffect.dummy, ImplicitTarget.caster)) // Preparation: of no family
         recoveryTime = 600_000;
     a.context.data.spellScriptNames[14185] = "spell_preparation";
     a.cast_(1856);
     a.tick(1600);
+    a.cast_(2094);
+    a.tick(1600);
+    assert(!a.me.spellIsReady(1856) && !a.me.spellIsReady(2094));
     a.cast_(14185);
-    assert(a.me.spellIsReady(1856) && !a.me.spellIsReady(14185), "all but itself");
+    assert(a.me.spellIsReady(1856) && a.me.spellIsReady(2094) && !a.me.spellIsReady(14185), "all but itself");
 }
 
 /**
@@ -611,6 +632,39 @@ unittest
     a.tick(11_000);
     assert(!a.hasAura(17) && a.hasAura(6788));
     assert(a.cast_(17) == SpellCastResult.targetAuraState, "no shield while the soul is weak");
+}
+
+/// Shield Slam (23922: its second effect's 225, family flags 0x102000000 as Bloodthirst's 0x2000000) adds the
+/// shield's block value.
+unittest
+{
+    auto a = new Arena(PlayerClass.warrior);
+    auto slam = a.spell(23922, SpellEffect.dispel, ImplicitTarget.enemy, 1);
+    slam.effect[1] = SpellEffect.schoolDamage;
+    slam.implicitTargetA[1] = ImplicitTarget.enemy;
+    slam.basePoints[1] = 224;
+    slam.baseDice[1] = 1;
+    with (slam.casting)
+    {
+        dmgClass = DamageClass.melee;
+        spellFamilyName = 4;
+        spellFamilyFlags = 0x102000000;
+        spellIconId = 413;
+    }
+    a.player.chances.shieldBlock = 40; // (a shield's, as the stats would have it)
+    const block = a.player.fighter.shieldBlock;
+    assert(block == 40);
+    uint[2][] logs;
+    foreach (attempt; 0 .. 30)
+    {
+        a.tick(7000);
+        a.hero.read();
+        a.cast_(23922, a.foe.guid);
+        logs = a.damageLogs();
+        if (logs.canFind!(l => l[0] == 23922))
+            break;
+    }
+    assert(logs.canFind!(l => l[0] == 23922 && (l[1] == 225 + block || l[1] == 2 * (225 + block))), "225 and the block value");
 }
 
 /// Holy Nova (15237) heals the priest's party by its own spell (23455) though no enemy is near to hurt.
@@ -726,11 +780,22 @@ unittest
     }
     with (a.spell(26364, SpellEffect.schoolDamage, ImplicitTarget.enemy, 13))
         casting.school = 3;
-    a.cast_(324);
-    a.hero.read();
-    a.swing(true, MeleeHitOutcome.normal, 10);
-    assert(a.damageLogs().canFind!(l => l[0] == 26364 && (l[1] == 13 || l[1] == 19)), "13 nature damage back (a crit half again)");
-    assert(a.player.auras.find(324).charges == 2);
+    // Its strike back is rolled as any spell at the creature: a miss sends no damage (but spends the charge).
+    bool struck;
+    foreach (attempt; 0 .. 30)
+    {
+        a.tick(2000);
+        a.cast_(324); // its three charges again
+        a.hero.read();
+        a.swing(true, MeleeHitOutcome.normal, 10);
+        assert(a.player.auras.find(324).charges == 2, "a charge a swing that hits");
+        if (a.damageLogs().canFind!(l => l[0] == 26364 && (l[1] == 13 || l[1] == 19)))
+        {
+            struck = true;
+            break;
+        }
+    }
+    assert(struck, "13 nature damage back (a crit half again)");
     a.swing(true, MeleeHitOutcome.dodge);
     assert(a.player.auras.find(324).charges == 2, "a dodged swing does not strike it");
 }
@@ -753,17 +818,25 @@ unittest
     poison.casting.durationIndex = 2;
     poison.casting.amplitude[0] = 3000;
     poison.casting.school = 3;
+    // The sting and the poison after it are rolled as any spell at the creature: a miss of either, again.
+    bool poisoned;
     foreach (attempt; 0 .. 30)
     {
         a.tick(2000);
         a.cast_(19386, a.foe.guid);
-        if (a.hasAura(a.foe, 19386))
+        if (!a.hasAura(a.foe, 19386))
+            continue;
+        assert(!a.hasAura(a.foe, 24131));
+        foreach (_; 0 .. 11)
+            a.tick(1000);
+        assert(!a.hasAura(a.foe, 19386), "awake");
+        if (a.hasAura(a.foe, 24131))
+        {
+            poisoned = true;
             break;
+        }
     }
-    assert(!a.hasAura(a.foe, 24131));
-    foreach (_; 0 .. 11)
-        a.tick(1000);
-    assert(!a.hasAura(a.foe, 19386) && a.hasAura(a.foe, 24131), "awake, and poisoned");
+    assert(poisoned, "awake, and poisoned");
 }
 
 /**
@@ -1202,8 +1275,8 @@ unittest
 }
 
 /**
- * Sweeping Strikes strikes another enemy in reach for the blow's damage (12723); Retaliation strikes back at a swing
- * from the front, not one from behind.
+ * Sweeping Strikes strikes another enemy in reach for the blow's damage (12723); Retaliation strikes back (20240, the
+ * warrior's: 22858 is a creature's) at a swing from the front, not one from behind, without a hit roll.
  */
 unittest
 {
@@ -1248,25 +1321,19 @@ unittest
         procCharges = 30;
         durationIndex = 1;
     }
-    with (a.spell(22858, SpellEffect.weaponDamageNoschool, ImplicitTarget.enemy, 0))
+    with (a.spell(20240, SpellEffect.weaponDamageNoschool, ImplicitTarget.enemy, 0)) // the warrior's strike back
+    {
         casting.dmgClass = DamageClass.melee;
+        casting.spellFamilyName = 4;
+    }
     a.tick(1600);
     a.cast_(20230);
     a.hero.read();
-    bool struck; // the strike back is rolled: it may be dodged or parried
-    foreach (_; 0 .. 20)
-    {
-        a.swing(true, MeleeHitOutcome.normal, 5);
-        if (a.damageLogs().canFind!(l => l[0] == 22858))
-        {
-            struck = true;
-            break;
-        }
-    }
-    assert(struck, "struck back");
+    a.swing(true, MeleeHitOutcome.normal, 5);
+    assert(a.damageLogs().canFind!(l => l[0] == 20240), "struck back (20240, never missing: no hit roll)");
     a.player.movement.position.orientation = 3.14159f; // its back to the creature
     a.swing(true, MeleeHitOutcome.normal, 5);
-    assert(!a.damageLogs().canFind!(l => l[0] == 22858), "not from behind");
+    assert(!a.damageLogs().canFind!(l => l[0] == 20240), "not from behind");
 }
 
 /**

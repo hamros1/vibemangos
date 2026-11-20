@@ -177,7 +177,7 @@ enum uint takenProcFlags = ProcFlag.takeMeleeSwing | ProcFlag.takeMeleeAbility |
 /// The proc engine of a player (mixed into `dmangos.world.character.Character`); see the module documentation.
 mixin template ProcHandlers()
 {
-    import core.time : MonoTime, msecs;
+    import core.time : MonoTime, seconds;
     import std.algorithm.searching : canFind;
     import std.random : uniform01;
     import dmangos.world.auras : Aura, AuraType;
@@ -258,8 +258,9 @@ mixin template ProcHandlers()
                 c.by = r.aura.spell;
             if (!procced)
                 continue;
+            // (in seconds: spell_proc_event's 3 for Lightning Shield, 120 for 22648; CMaNGOS-classic of its time)
             if (r.event !is null && r.event.cooldown)
-                procReadyAt[r.aura.spell.id] = now + r.event.cooldown.msecs;
+                procReadyAt[r.aura.spell.id] = now + r.event.cooldown.seconds;
             if (r.aura.charges && --r.aura.charges == 0)
                 spent ~= r.aura;
         }
@@ -274,6 +275,22 @@ mixin template ProcHandlers()
                     procAuraSpell = null;
                 castCustom(spell, SpellTargets(TargetFlags.unit, c.target ? c.target : player.guid), c.custom);
             }
+    }
+
+    /**
+     * A tick of this player's damage over time (`spell`: Corruption, Shadow Word: Pain, Drain Life) dealt `damage`
+     * to `victim`: its procs (Nightfall), and what the victim's auras do to it (Vampiric Embrace).
+     */
+    package void tickProcs(UnitRef victim, const(SpellInfo)* spell, uint damage)
+    {
+        import dmangos.world.procs : ProcEx;
+
+        if (!victim || !victim.alive)
+            return;
+        const hit = ProcHit(spell, ProcEx.normalHit, damage, 0, damage != 0);
+        procAuras(ProcFlag.dealHarmfulPeriodic, victim, hit);
+        if (victim.alive)
+            victimAuraProcs(victim, ProcFlag.dealHarmfulPeriodic, hit);
     }
 
     /// What effect `i` of an aura that procced does; true if it did anything (then a charge goes).

@@ -367,6 +367,7 @@ mixin template EffectHandlers()
         const factor = aura.spell.casting.multipleValue[i] > 0 ? aura.spell.casting.multipleValue[i] : 1.0f;
         if (player.alive)
             healSelf(aura.spell, cast(uint)(dealt * spellMod(SpellModOp.multipleValue, aura.spell, factor)));
+        tickProcs(victim, aura.spell, damage); // a tick as any damage over time's: Nightfall, Vampiric Embrace
     }
 
     /**
