@@ -760,6 +760,11 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
   `spell_judgement_of_wisdom_intermediate`, `spell_swiftmend`, `spell_curse_of_doom`, `spell_power_infusion`,
   `spell_shatter_mage`, `spell_retaliation_warrior`, `spell_blessing_of_light`, `spell_healing_way`, `spell_seal_of_the_crusader`, `spell_shadowguard`, `spell_blizzard`
 * Constants: `IsSealSpell`, `REACTIVE_TIMER_START`, `SPELL_ATTR_EX_DRAIN_ALL_POWER`, `TRIGGERED_IGNORE_HIT_CALCULATION`
+* Not from an emulator (the 1.12.1 tooltips and data, docs/FORMULAS.md "Class rules from the tooltips"): Arcane
+  Concentration's Blizzard ticks, the Wards' reflection by Improved Fire Ward and Frost Warding, Magic Absorption,
+  Permafrost's and the curses' slow (`classEffectMod`), Pyroclasm, Improved Drain Mana, Drain Soul's Soul Siphon,
+  Shadow Trance's charge, Create Healthstone and Improved Healthstone, Spirit of Redemption, Eye of Kilrogg
+  (`summonPossessedEffect`)
 
 ## world/classspelltests.d
 
@@ -1394,6 +1399,8 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Functions: `Player::ApplySpellMod`, `SpellModifier::isAffectedOnSpell`
 * Constants: `SPELL_AURA_ADD_FLAT_MODIFIER`, `SPELL_AURA_ADD_PCT_MODIFIER`
+* Not from an emulator: where each modifier comes in (the damage with the spell power, the crit's bonus, the hit
+  chance, the threat, every stack: the talents' tooltips, docs/FORMULAS.md)
 
 ## world/spells.d
 
@@ -1461,6 +1468,12 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Functions: `Unit::DealDamage`
 * Constants: `DIRECT_DAMAGE`, `SPELL_DIRECT_DAMAGE`
+* Not from an emulator: `brokenByDamage` (the holds' proc flags and chance, Shadow Vulnerability's charges: the
+  tooltips and data), `deathProcs` (Drain Soul's proc on the kill), `Blow.threat` (`SPELLMOD_THREAT`)
+
+## world/tooltipmasks.d
+
+* Not from an emulator: the talents' tooltips against the world database's `spell_affect` masks (docs/FORMULAS.md)
 
 ## world/updatefields.d
 

@@ -1433,7 +1433,7 @@ unittest
     assert(auraOn(w, target, 17800) is null, "spent by the fourth");
 }
 
-/// Pyroclasm (13%, 26%): Rain of Fire's (5740) ticks stun (18093) for 3 sec.
+/// Pyroclasm (13%, 26%): a Rain of Fire (5740) may stun (18093) for 3 sec (the chance shared by its four ticks).
 unittest
 {
     if (!haveRealData())
@@ -1442,7 +1442,7 @@ unittest
     auto who = w.character(1103, "Pyroclast", warlock, 60, [5740]);
     learn(w, who, 18073);
     const kobold = toughEnemy(w, who, 10);
-    foreach (_; 0 .. 12)
+    foreach (_; 0 .. 40)
     {
         w.now += 2.seconds;
         topUp(who);
@@ -1971,4 +1971,118 @@ unittest
     pass(w, who, 46.seconds);
     assert(me.player.values.get!UNIT_FIELD_CHARM == 0 && me.activeMover == 0, "itself again");
     assert(creatureOf(w, eye) is null, "the eye gone");
+}
+
+/**
+ * Improved Enslave Demon (2% a rank): Enslave Demon's (11726) attack speed (-40%) and casting speed (-30%)
+ * penalties 10% less, and 10% less resisted; Improved Firestone (15%, 30%) and Improved Spellstone (15%, 30%): their
+ * stones' spells (Firestone Attack 17933, its fire damage 23480; Spellstone 128's absorb) that much more.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    alias Op = SpellModOp;
+    checkMods(warlock, [
+        ModRow("Improved Enslave Demon: resist", [18821, 18822, 18823, 18824, 18825], Op.resistMissChance, false,
+            [2, 4, 6, 8, 10], [1098, 11726], 0, [686]),
+        ModRow("Improved Firestone", [18767, 18768], Op.allEffects, true, [15, 30], [17809, 17933, 23480], 1000),
+        ModRow("Improved Spellstone", [18774, 18775], Op.allEffects, true, [15, 30], [128, 17729, 17730], 1000),
+    ]);
+    auto w = RealWorld.make();
+    auto who = w.character(1121, "Enslaver", warlock, 60, [128]);
+    auto me = who.session.inWorld;
+    foreach (k, rank; [18821u, 18822, 18823, 18824, 18825])
+    {
+        learn(w, who, rank);
+        const less = 2 * cast(int)(k + 1);
+        assert(me.effectMod(spellOf(w, 11726), 1, -40) == -40 + less, "the attack speed");
+        assert(me.effectMod(spellOf(w, 11726), 2, -30) == -30 + less, "the casting speed");
+        unlearn(who, rank);
+    }
+    learn(w, who, 18775);
+    assert(w.cast_(who, 128) == SpellCastResult.ok);
+    auto absorb = me.player.auras.find(128);
+    assert(absorb !is null && absorb.amount[1] == 400 * 13 / 10, "30% more absorbed");
+}
+
+/// Mind Vision rank 1 (2096): the priest sees through its target's eyes (the camera on it) while it lasts.
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = w.character(1220, "Visionary", priest, 60, [2096]);
+    auto me = who.session.inWorld;
+    const target = toughEnemy(w, who, 10);
+    assert(w.castAt(who, 2096, target) == SpellCastResult.ok);
+    pass(w, who, 4.seconds); // (its cast time)
+    assert(me.player.values.get!PLAYER_FARSIGHT == target, "the camera on it");
+}
+
+/**
+ * Mind Control rank 1 (605: humanoids up to level 44): the priest controls a kobold (charmed: its attacks 25% slower,
+ * 10912's third effect); the channel's end gives it back.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = w.character(1221, "Controller", priest, 60, [605]);
+    auto me = who.session.inWorld;
+    const kobold = toughEnemy(w, who, 10);
+    foreach (_; 0 .. 5)
+        if (me.player.values.get!UNIT_FIELD_CHARM != kobold)
+        {
+            topUp(who);
+            w.castAt(who, 605, kobold);
+            pass(w, who, 4.seconds);
+        }
+    assert(me.player.values.get!UNIT_FIELD_CHARM == kobold, "charmed");
+    assert(creatureOf(w, kobold).values.get!UNIT_FIELD_CHARMEDBY == me.player.guid);
+    assert(rolls(w, 605, 2)[0] == -25, "25% slower attacks");
+    pass(w, who, 61.seconds);
+    assert(me.player.values.get!UNIT_FIELD_CHARM == 0, "given back");
+}
+
+/// (Improved Fire Ward's ranks, 11094 and 13043, and Frost Warding's, 11189 and 28332: the Wards' test above.)
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    foreach (k, rank; [11094u, 13043, 11189, 28332])
+    {
+        const s = spellOf(w, rank);
+        const i = s.effect[0] == imported!"dmangos.world.spellids".SpellEffect.dummy ? 0 : 1;
+        assert(rolls(w, rank, i)[0] == [10, 20, 10, 20][k], "10% a rank to reflect");
+    }
+}
+
+/// Shadow Affinity rank 3 (15320): Shadow Word: Pain's (589) ticks make 25% less threat.
+unittest
+{
+    import std.math : isClose;
+
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = w.character(1222, "Affine", priest, 60, [589]);
+    auto me = who.session.inWorld;
+    learn(w, who, 15320);
+    const target = toughEnemy(w, who, 10);
+    foreach (_; 0 .. 5)
+        if (auraOn(w, target, 589) is null)
+        {
+            w.now += 2.seconds;
+            topUp(who);
+            w.castAt(who, 589, target);
+        }
+    auto pain = auraOn(w, target, 589);
+    assert(pain !is null);
+    const before = creatureOf(w, target).ai.threatOf(me.player.guid);
+    pass(w, who, 3.seconds); // a tick
+    const threat = creatureOf(w, target).ai.threatOf(me.player.guid) - before;
+    assert(isClose(threat, pain.amount[0] * 0.75f, 0.01), format!"%s threat of a tick of %s"(threat, pain.amount[0]));
 }

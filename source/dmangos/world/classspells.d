@@ -830,6 +830,17 @@ mixin template ClassSpells()
                         value += aura.amount[k];
                 }
         }
+        // Improved Enslave Demon: "Reduces the Attack Speed and Casting Speed penalty": its casting speed is a
+        // modifier of the third effect (Enslave Demon's casting speed), its attack speed one its data names 24 (no
+        // effect index): it goes to the attack speed (`MOD_MELEE_HASTE`) effect.
+        enum uint improvedEnslaveDemon = 18821;
+        enum int attackSpeedOp = 24;
+        if (spell.casting.applyAuraName[i] == AuraType.modMeleeHaste)
+            foreach (aura; player.auras.list)
+                if (chainFirstRank(aura.spell.id) == improvedEnslaveDemon)
+                    foreach (k; 0 .. 3)
+                        if ((aura.effects & (1 << k)) && aura.misc(k) == attackSpeedOp && affects(aura, k, *spell))
+                            value += aura.amount[k];
         return value;
     }
 
@@ -1181,22 +1192,36 @@ mixin template ClassSpells()
     }
 
     /**
-     * Pyroclasm (override scripts 2188, 2189: "a 13%" and "a 26% chance to stun the target for 3 sec", 18093): a
-     * Rain of Fire tick, a Hellfire tick, a Soul Fire at `target`. Its data's proc (a Dummy Trigger on damage over
-     * time) is this, not a cast of its own.
+     * Pyroclasm (override scripts 2188, 2189: "Gives your Rain of Fire, Hellfire, and Soul Fire spells a 13%" and "a
+     * 26% chance to stun the target for 3 sec", 18093) at `target`: the spell's chance, shared by its ticks (Rain of
+     * Fire's four, Hellfire's fifteen: their data's duration over their period), a Soul Fire's whole. Its data's proc
+     * (a Dummy Trigger on damage over time) is this, not a cast of its own.
      */
     private void pyroclasm(const(SpellInfo)* spell, ulong target)
     {
-        enum uint stun = 18093;
+        import dmangos.world.spellcast : castTime, duration;
+
+        enum uint stun = 18093, hellfire = 1949;
         if (!ofFamily(spell, SpellFamily.warlock, 0x20 | 0x40) || target == player.guid)
             return;
+        // Its ticks: of its own area (Rain of Fire), of Hellfire's channel (its Hellfire Effect is instant), none.
+        int ticks = 1;
+        const(SpellInfo)* periodic = ofFamily(spell, SpellFamily.warlock, 0x20) ? spell
+            : castTime(*spell, context.client, player.data.level) == 0 ? context.data.spells.spell(hellfire) : null;
+        if (periodic !is null)
+            foreach (i; 0 .. 3)
+                if (periodic.casting.amplitude[i] > 0)
+                {
+                    ticks = duration(*periodic, context.client, player.data.level) / periodic.casting.amplitude[i];
+                    break;
+                }
         foreach (aura; player.auras.list)
             foreach (i; 0 .. 3)
                 if ((aura.effects & (1 << i)) && aura.type(i) == AuraType.overrideClassScripts)
                 {
                     const script = cast(int) aura.misc(i);
-                    const chance = script == 2188 ? 13 : script == 2189 ? 26 : 0;
-                    if (chance && uniform01(map.random) * 100 < chance)
+                    const chance = (script == 2188 ? 13.0f : script == 2189 ? 26.0f : 0) / (ticks > 0 ? ticks : 1);
+                    if (chance > 0 && uniform01(map.random) * 100 < chance)
                         castCustom(stun, target);
                 }
     }

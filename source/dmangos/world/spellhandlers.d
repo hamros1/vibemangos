@@ -744,6 +744,17 @@ private:
         const spell = channelSpell;
         channelSpell = null;
         lastChannelSpell = cancelled ? null : spell;
+        // At its end, a creature it charms is let go (a charmed creature's own time does not run: Mind Control's);
+        // its other auras end as their time does (the last tick of Arcane Missiles, of Drain Life, with them).
+        if (!cancelled)
+            if (auto creature = cast(Creature) map.findObject(channelTarget))
+                if (creature is charmed)
+                    if (auto aura = creature.auras.find(spell.id))
+                        if (aura.caster == player.guid)
+                        {
+                            creature.loseAura(aura, map);
+                            map.flushCreature(creature);
+                        }
         if (cancelled)
         {
             if (auto creature = cast(Creature) map.findObject(channelTarget))
