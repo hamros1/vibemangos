@@ -1142,14 +1142,14 @@ private:
         send(ServerSummonRequest(summoner, zone, 120_000));
     }
 
-    /// The player answered a summon offer.
-    @Handles(Opcode.CMSG_SUMMON_RESPONSE, WorldState.inWorld)
-    void handleSummonResponse(const ClientSummonResponse)
+    /// The player answered a summon offer (`CMSG_SUMMON_RESPONSE`, `dmangos.world.rituals`): whether it was this one.
+    bool acceptGmSummonOffer()
     {
         if (!hasSummonOffer || context.clock() > summonOffer.expires)
-            return;
+            return false;
         hasSummonOffer = false;
         commandTeleport(summonOffer.map, summonOffer.position);
+        return true;
     }
 
     bool handleGlobalPlaySoundCommand(uint sound)

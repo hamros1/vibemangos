@@ -45,6 +45,7 @@ enum GameObjectType : uint
     camera = 13,
     moTransport = 15,   /// ships and zeppelins
     fishingNode = 17,   /// the bobber
+    summoningRitual = 18, /// a ritual's portal (`dmangos.world.rituals`)
     mailbox = 19,
     meetingStone = 23,  /// data 0, 1: the levels it serves; data 2: the area it queues for
     flagStand = 24,     /// a battleground's flag at its base
@@ -130,6 +131,9 @@ final class GameObject : Replicable, Moving, PerViewer
     uint gatherUses;             /// a vein's (or herb's) times emptied so far, against its least and most opens
     int despawnTimer;            /// ms until a chest opened but not emptied goes; 0: none
     bool[ulong] skilledUp;       /// those it gave a skill-up: once until it respawns
+    uint ritualSpell;            /// a summoning portal's: the spell that made it (`dmangos.world.rituals`)
+    ulong[] ritualUsers;         /// ... those who joined, the caster first
+    ulong ritualTarget;          /// ... the player to summon
     /// Whether it is usable for `viewer`'s quests; null: for nobody.
     bool delegate(ulong viewer) activatesFor;
 

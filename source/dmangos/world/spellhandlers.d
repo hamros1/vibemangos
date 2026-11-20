@@ -684,6 +684,7 @@ private:
         }
         if (bobber && !bobberLooted)
             removeBobber();
+        closeRitualPortal(); // a ritual's portal goes with its caster's channel
         // Tame Beast's twenty seconds are up: the beast is tamed.
         if (!cancelled && spell.id == imported!"dmangos.world.pethandlers".spellTameBeast)
             tameBeastChannelDone(channelTarget);
@@ -1837,8 +1838,11 @@ private:
                 makePersistentArea(spell, i, c.targets, value);
             }
             break;
-        case SpellEffect.transDoor: // SPELL_EFFECT_TRANS_DOOR: an object the spell puts down (a fishing bobber)
-            castBobber(spell, i);
+        case SpellEffect.transDoor: // SPELL_EFFECT_TRANS_DOOR: an object the spell puts down (a fishing bobber, a ritual's portal)
+            if (isRitualPortal(cast(uint) spell.miscValue[i] in context.data.gameObjectTemplates))
+                openRitualPortal(spell, i); // `dmangos.world.rituals`
+            else
+                castBobber(spell, i);
             break;
         case SpellEffect.sendEvent: // SPELL_EFFECT_SEND_EVENT: the event's script, the caster its source and a game object its target
         {
@@ -2072,6 +2076,13 @@ private:
                         spell.effect[i] == SpellEffect.summon);
             }
             break;
+        case SpellEffect.summonPlayer: // SPELL_EFFECT_SUMMON_PLAYER: the target asked to come (`dmangos.world.rituals`)
+            if (!(c.persistentDone & (1 << i)))
+            {
+                c.persistentDone |= cast(ubyte)(1 << i);
+                summonPlayerEffect(c.targets.unit ? c.targets.unit : target);
+            }
+            break;
         case SpellEffect.durabilityDamage, SpellEffect.durabilityDamagePct: // a player's gear worn (`dmangos.world.durability`)
             if (auto who = target == player.guid ? this : cast(typeof(this)) context.onlinePlayer(target))
                 if (who.player !is null && who.map is map)
@@ -2090,7 +2101,7 @@ private:
             SpellEffect.tradeSkill, SpellEffect.stealth, SpellEffect.forceCriticalHit, SpellEffect.guaranteeHit,
             SpellEffect.proficiency, SpellEffect.healthFunnel, SpellEffect.powerFunnel, SpellEffect.pull,
             SpellEffect.summonPossessed, SpellEffect.healMechanical,
-            SpellEffect.createHouse, SpellEffect.bindSight, SpellEffect.summonPlayer, SpellEffect.activateObject,
+            SpellEffect.createHouse, SpellEffect.bindSight, SpellEffect.activateObject,
             SpellEffect.threatAll, SpellEffect.enchantHeldItem, SpellEffect.summonPhantasm, SpellEffect.knockBack,
             SpellEffect.inebriate, SpellEffect.destroyAllTotems,
             SpellEffect.summonDemon, SpellEffect.spiritHeal, SpellEffect.skill,

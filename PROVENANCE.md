@@ -977,6 +977,13 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions: `Player::DurabilityLossAll`, `Player::DurabilityLoss`, `Player::DurabilityPointsLossAll`, `Player::DurabilityPointsLoss`, `Spell::EffectDurabilityDamage`, `Spell::EffectDurabilityDamagePCT`, `SpellLog::AddLog`
 * Constants: `SPELL_EFFECT_DURABILITY_DAMAGE`, `SPELL_EFFECT_DURABILITY_DAMAGE_PCT`, `SMSG_SPELLLOGEXECUTE`, `INVENTORY_SLOT_BAG_START`, `INVENTORY_SLOT_ITEM_START`
 
+## world/rituals.d
+
+* Projects: CMaNGOS
+* Files: `SpellEffects.cpp`, `GameObject.cpp`, `GameObject.h`, `MovementHandler.cpp`, `Player.cpp`, `Player.h`
+* Functions: `Spell::EffectTransmitted`, `Spell::EffectSummonPlayer`, `GameObject::Use`, `GameObject::IsUseRequirementMet`, `GameObject::TriggerSummoningRitual`, `GameObject::AddUniqueUse`, `WorldSession::HandleSummonResponseOpcode`, `Player::SetSummonPoint`, `Player::SummonIfPossible`
+* Constants: `GAMEOBJECT_TYPE_SUMMONING_RITUAL`, `GAMEOBJECT_TYPE_MEETINGSTONE`, `SPELL_EFFECT_TRANS_DOOR`, `SPELL_EFFECT_SUMMON_PLAYER`, `SMSG_SUMMON_REQUEST`, `CMSG_SUMMON_RESPONSE`, `MAX_PLAYER_SUMMON_DELAY`, `SPELL_ATTR_NOT_IN_COMBAT_ONLY_PEACEFUL`, `TRIGGERED_CHANNEL_ONLY`
+
 ## world/mounting.d
 
 * Projects: CMaNGOS

@@ -163,6 +163,10 @@ mixin template GameObjectHandlers()
             return;
         case GameObjectType.chair:
             return sitOnChair(go);
+        case GameObjectType.summoningRitual: // `dmangos.world.rituals`
+            return joinRitual(go);
+        case GameObjectType.meetingStone:
+            return useMeetingStoneToSummon(go);
         case GameObjectType.questGiver:
         {
             // Its own gossip menu (`gossipID`, data 3) with its quests; without one, its quests alone.
