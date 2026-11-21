@@ -2536,8 +2536,24 @@ private:
     /// The cells a local player or fighting creature is near now; the map's interest follows.
     void updateInterest(uint slot, Position position)
     {
+        observeCells(slot, position, settings.visibilityDistance);
+    }
+
+    /// A ground effect observes its occupied cells even if its caster moves away from them.
+    package void observeGroundArea(MapObject spot, float radius)
+    {
+        if (replicator !is null)
+        {
+            const slot = objectSlot(spot);
+            if (slot != uint.max)
+                observeCells(slot, spot.position, radius);
+        }
+    }
+
+    private void observeCells(uint slot, Position position, float radius)
+    {
         ulong[] near;
-        foreach (cell; cellKeysNear(position, settings.visibilityDistance))
+        foreach (cell; cellKeysNear(position, radius))
             near ~= cell;
         auto had = at(slot).interest;
         foreach (cell; near)

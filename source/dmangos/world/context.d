@@ -975,6 +975,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.procs : ProcEx, ProcHit, spellProcFlags;
         import dmangos.world.relations : canAttack;
         import dmangos.world.replication : Replica;
+        import dmangos.world.spellareas : damagingGroundEffect, refreshGroundAura;
         import dmangos.world.spellcast : radius, SpellMissInfo;
         import dmangos.world.spelldamage : creatureAreaShape, creatureTargetInRange, isCreatureTargetEffect,
             isHostileAreaEffect, isHostileChainEffect, isRemoteLeechChannel, isTargetedProcEffect, rollRemoteAreaDamage,
@@ -996,6 +997,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (map_ is null || map_.id != message.map)
             return;
         auto victim = map_.unit(message.target);
+        if (message.groundTick && !victim)
+        {
+            if (!message.groundRedirect)
+                redirectGroundTick(peer, map_, message);
+            return;
+        }
         if (!victim.alive || (victim.kind == UnitKind.player
             && (victim.session.transferring || victim.session.duelingWith(message.caster)))
             || (victim.kind == UnitKind.creature && (victim.creature.ai is null || victim.creature.ai.evading)))
@@ -1006,7 +1013,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return;
         auto copy = cast(Replica) map_.findObject(message.caster);
         if (copy is null || copy.owner != peer || (copy.fields.type != TypeId.player
-            && ((!message.triggered && !message.creatureCast) || copy.fields.type != TypeId.unit)))
+            && ((!message.triggered && !message.creatureCast && !message.groundTick) || copy.fields.type != TypeId.unit)))
             return;
         const attacker = UnitRef.observed(copy, map_).combatRelations(client);
         const hostile = canAttack(attacker, victim.relating(), client);
@@ -1035,7 +1042,23 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 return replyCreatureCast(peer, message, SpellMissInfo.evade);
             return remoteProcEffect(peer, message, spell, victim, true, attacker.hasFlag(UnitFlags.pvp));
         }
-        if (message.creatureArea)
+        if (message.groundTick)
+        {
+            if (message.triggered || message.creatureCast || message.creatureArea || message.previous
+                || !validGroundTick(spell, message) || !hostile || !attacker.alive || victim.untouchable)
+                return;
+            if (!damagingGroundEffect(*spell, message.effect))
+            {
+                if (refreshGroundAura(victim, spell, message.effect, message.caster, message.casterLevel,
+                    message.auraMs, message.auraValues) && victim.kind == UnitKind.creature)
+                {
+                    const blow = Blow.spell();
+                    dealRemoteDamage(UnitRef.observed(copy, map_), victim, 0, blow);
+                }
+                return;
+            }
+        }
+        else if (message.creatureArea)
         {
             if (copy.fields.type != TypeId.unit || !hostile || !attacker.alive || victim.untouchable)
                 return;
@@ -1092,11 +1115,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
         auto result = cast(AreaDamage) message; // the request holds no benefits to share with the reply
         result.reply = true;
+        result.groundRedirect = 0;
         rollRemoteAreaDamage(result, spell, victim);
         if (!result.miss)
         {
             const honor = victim.kind == UnitKind.player ? victim.session.describeHonorVictim() : HonorVictim.init;
-            auto blow = Blow.spell(spell.casting.school, result.critical);
+            auto blow = message.groundTick ? Blow.periodic(spell.casting.school)
+                : Blow.spell(spell.casting.school, result.critical);
             blow.remotePlayer = attacker.player ? message.caster : copy.meleeController;
             blow.remotePlayerPvP = attacker.hasFlag(UnitFlags.pvp);
             blow.threat = message.threatFactor;
@@ -1123,7 +1148,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             {
                 const hit = ProcHit(spell, result.critical ? ProcEx.criticalHit : ProcEx.normalHit, result.damage);
                 auto other = UnitRef.observed(copy, map_);
-                const flags = spellProcFlags(*spell, false, true);
+                const flags = message.groundTick
+                    ? imported!"dmangos.world.aurahandlers".ProcFlag.takeHarmfulPeriodic
+                    : spellProcFlags(*spell, false, true);
                 if (victim.kind == UnitKind.player)
                     victim.session.procAuras(flags, other, hit);
                 else
@@ -1133,6 +1160,74 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         }
         if (sendAreaDamage !is null)
             sendAreaDamage(peer, result);
+    }
+
+    private static bool validGroundTick(const(SpellInfo)* spell, const ref AreaDamage message)
+    {
+        import std.math : isFinite;
+        import dmangos.world.spellids : SpellEffect;
+
+        return spell !is null && message.effect < spell.effect.length
+            && spell.effect[message.effect] == SpellEffect.persistentAreaAura && spell.casting.school < 7
+            && message.radius > 0 && isFinite(message.radius) && isFinite(message.amount) && message.amount >= 0;
+    }
+
+    // The old owner declines without applying the tick. Only the source can issue a second request.
+    private void redirectGroundTick(ushort peer, Map map_, const ref AreaDamage message)
+    {
+        if (sendAreaDamage is null)
+            return;
+        ushort owner;
+        if (const hint = recentHandoff(message.target))
+            owner = hint.node;
+        else if (auto copy = cast(Replica) map_.findObject(message.target))
+            owner = copy.owner;
+        if (!owner || owner == nodeId)
+            return;
+        auto redirect = cast(AreaDamage) message;
+        redirect.reply = true;
+        redirect.groundRedirect = owner;
+        sendAreaDamage(peer, redirect);
+    }
+
+    private void retryGroundTick(ushort peer, const ref AreaDamage message)
+    {
+        import dmangos.world.caster : Caster;
+        import dmangos.world.spellareas : damagingGroundEffect, hitGroundTarget, refreshGroundAura, withinGroundArea;
+        import dmangos.world.unit : UnitKind;
+
+        auto map_ = existingMap(message.map, message.instance);
+        const spell = data.spells.spell(message.spell);
+        if (map_ is null || !validGroundTick(spell, message))
+            return;
+        auto unit = map_.unit(message.caster);
+        if (!unit.alive)
+            return;
+        if (message.groundRedirect != nodeId)
+        {
+            if (sendAreaDamage !is null && message.groundRedirect != peer)
+            {
+                auto retry = cast(AreaDamage) message;
+                retry.reply = false;
+                retry.groundRedirect = peer;
+                retry.sequence = nextGameplaySequence();
+                sendAreaDamage(message.groundRedirect, retry);
+            }
+            return;
+        }
+        auto target = map_.unit(message.target);
+        auto caster = unit.kind == UnitKind.player ? Caster.of(unit.session) : Caster.of(unit.creature, map_, this);
+        if (!caster || !target.alive || target.untouchable
+            || (target.kind == UnitKind.player && target.session.transferring)
+            || (target.kind == UnitKind.creature && target.creature.ai is null)
+            || !withinGroundArea(target.position, Position(message.x, message.y, message.z), message.radius)
+            || !caster.hostileTo(target))
+            return;
+        if (damagingGroundEffect(*spell, message.effect))
+            hitGroundTarget(caster, spell, target, message.groundAmount);
+        else
+            refreshGroundAura(target, spell, message.effect, caster.guid, message.casterLevel,
+                message.auraMs, message.auraValues);
     }
 
     private void updateRemoteChannelAura(UnitRef victim, const ref AreaDamage message)
@@ -1511,7 +1606,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (message.sequence <= lastAreaDamageReply.get(peer, 0))
             return;
         lastAreaDamageReply[peer] = message.sequence;
-        if ((message.triggered || message.creatureCast) && message.caster > uint.max)
+        if (message.groundTick && message.groundRedirect)
+            return retryGroundTick(peer, message);
+        if ((message.triggered || message.creatureCast || message.groundTick) && message.caster > uint.max)
             return creatureProcLanded(peer, message);
         auto caster = cast(Character) onlinePlayer(message.caster);
         if (caster is null || caster.player is null || caster.transferring
@@ -1542,7 +1639,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             caster.enterCombatFor(Character.combatLinger);
             if (message.targetPvP)
                 caster.attackedFlaggedPlayer();
-            if (message.damage)
+            if (message.damage && !message.groundTick)
                 caster.wearOnHit();
         }
         if (message.killed && message.target <= uint.max)
@@ -1554,6 +1651,21 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         map_.sendToWatchers(caster, Opcode.SMSG_SPELLNONMELEEDAMAGELOG,
             nonMeleeDamageLog(message.target, message.caster, message.spell, message.damage, spell.casting.school,
                 message.absorbed, message.resisted, false, 0, message.critical), true);
+        if (message.groundTick)
+        {
+            foreach (ref benefit; message.benefits)
+                caster.applySpellBenefit(benefit);
+            if (!message.killed)
+                if (auto copy = cast(Replica) map_.findObject(message.target))
+                    if (copy.owner == peer)
+                    {
+                        auto target = UnitRef.observed(copy, map_);
+                        caster.procAuras(ProcFlag.dealHarmfulPeriodic, target,
+                            ProcHit(spell, ProcEx.normalHit, message.damage, 0, message.damage != 0));
+                        caster.classAreaTick(spell, target);
+                    }
+            return;
+        }
         if (!message.triggered && !message.suppressProcs && !message.killed)
             if (auto copy = cast(Replica) map_.findObject(message.target))
                 if (copy.owner == peer)
@@ -1595,12 +1707,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         else if (spell.effect[message.effect] == SpellEffect.heal)
             map_.sendToObservers(message.caster, Opcode.SMSG_SPELLHEALLOG,
                 healLog(message.target, message.caster, message.spell, message.damage, message.critical));
-        else if (spell.effect[message.effect] == SpellEffect.schoolDamage)
+        else if (spell.effect[message.effect] == SpellEffect.schoolDamage || message.groundTick)
         {
             map_.sendToObservers(message.caster, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(message.target,
                 message.caster, message.spell, message.damage, spell.casting.school, message.absorbed,
                 message.resisted, false, 0, message.critical));
-            if (message.creatureCast && caster.alive && caster.ai !is null)
+            if ((message.creatureCast || message.groundTick) && caster.alive && caster.ai !is null)
                 caster.ai.remoteSpellDamageDealt(spell, UnitRef.observed(copy, map_), message.critical, message.damage,
                     message.killed);
         }

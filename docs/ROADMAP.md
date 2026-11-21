@@ -2,8 +2,8 @@
 
 ## Open work
 
-- **Clustering.** Route persistent ground effects and script-selected spell targets across
-  nodes. See [spell routing limits](CLUSTER.md#spell-routing-limits) and the
+- **Clustering.** Route script-selected spell targets across nodes. See
+  [spell routing limits](CLUSTER.md#spell-routing-limits) and the
   [cross-node feature list](CLUSTER.md#what-crosses-nodes-feature-by-feature).
 - **Terrain.** Include moving game objects such as doors and elevators in line-of-sight checks.
 - **Gameplay coverage.** See the [spell audit](SPELLS.md) for gaps by class and the

@@ -842,12 +842,27 @@ private:
     /// Loads the auras saved at the last logout, with the time they had left.
     package void loadAuras()
     {
+        import dmangos.world.auras : enableAuraEffect;
+
         foreach (ref row; context.database.loadAuras(player.data.guid))
         {
             const spell = context.data.spells.spell(row.spell);
             if (spell is null || row.remaining == 0)
                 continue;
             auto aura = makeAura(spell, row.caster, player.data.level, row.maxDuration, true, row.amount);
+            ubyte groundEffects;
+            foreach (i, effect; spell.effect)
+                if (effect == SpellEffect.persistentAreaAura && (row.effectMask & (1 << i)))
+                    groundEffects |= cast(ubyte)(1 << i);
+            if (groundEffects)
+            {
+                aura.positive = false;
+                aura.effects = 0;
+                aura.detachedChannel = true;
+                foreach (i; 0 .. spell.effect.length)
+                    if (groundEffects & (1 << i))
+                        enableAuraEffect(aura, i, row.amount[i]);
+            }
             aura.duration = row.remaining;
             aura.stacks = row.stacks ? row.stacks : 1;
             foreach (i; 0 .. 3)

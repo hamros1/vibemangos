@@ -769,29 +769,31 @@ Aura makeAura(const(SpellInfo)* spell, ulong caster, uint casterLevel, int durat
         if (spell.effect[i] != SpellEffect.applyAura && spell.effect[i] != SpellEffect.applyAreaAuraParty
                 && spell.effect[i] != SpellEffect.applyAreaAuraPet)
             continue;
-        aura.effects |= cast(ubyte)(1 << i);
-        aura.amount[i] = values[i];
-        int period = spell.casting.amplitude[i];
-        switch (cast(AuraType) spell.casting.applyAuraName[i])
-        {
-        case AuraType.modRegen:
-            period = 5000; // regenerates every 5 seconds
-            break;
-        case AuraType.modPowerRegen:
-            period = 0; // drink adds to the regeneration
-            break;
-        case AuraType.periodicDamage, AuraType.periodicHeal, AuraType.obsModHealth, AuraType.obsModMana,
-                AuraType.periodicEnergize, AuraType.periodicTriggerSpell, AuraType.periodicLeech,
-                AuraType.periodicManaLeech:
-            break;
-        default:
-            period = 0;
-            break;
-        }
-        aura.period[i] = period;
-        aura.periodTimer[i] = cast(AuraType) spell.casting.applyAuraName[i] == AuraType.modRegen ? 5000 : period;
+        enableAuraEffect(aura, i, values[i]);
     }
     return aura;
+}
+
+/// Initialize an effect included in this aura before it is applied.
+package void enableAuraEffect(Aura aura, size_t i, int value)
+{
+    aura.effects |= cast(ubyte)(1 << i);
+    aura.amount[i] = value;
+    int period = aura.spell.casting.amplitude[i];
+    switch (aura.type(i))
+    {
+    case AuraType.modRegen:
+        period = 5000;
+        break;
+    case AuraType.periodicDamage, AuraType.periodicHeal, AuraType.obsModHealth, AuraType.obsModMana,
+            AuraType.periodicEnergize, AuraType.periodicTriggerSpell, AuraType.periodicLeech,
+            AuraType.periodicManaLeech:
+        break;
+    default:
+        period = 0;
+        break;
+    }
+    aura.period[i] = aura.periodTimer[i] = period;
 }
 
 unittest

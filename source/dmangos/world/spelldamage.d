@@ -300,14 +300,14 @@ void rollRemoteAreaDamage(ref AreaDamage hit, const(SpellInfo)* spell, UnitRef v
     import std.algorithm.comparison : max;
     import std.random : uniform, uniform01;
     import dmangos.world.character : Character;
-    import dmangos.world.combat : Fighter, partiallyResisted;
+    import dmangos.world.combat : armorAgainst, armorReducedDamage, Fighter, partiallyResisted;
     import dmangos.world.spellcast : isBinarySpell, rollSpellHit, SpellMissInfo;
 
     enum uint noImmunities = 0x20000000;
     const school = spell.casting.school;
     auto target = victim.fighter;
     const immune = target.immune;
-    if (!(spell.attributes & noImmunities)
+    if (!hit.groundTick && !(spell.attributes & noImmunities)
         && (immune.toSpell(school, spell.casting.dispel, spell.casting.mechanic)
             || immune.toEffect(SpellEffect.schoolDamage, spell.casting.effectMechanic[hit.effect],
                 spell.casting.applyAuraName[hit.effect])))
@@ -317,7 +317,7 @@ void rollRemoteAreaDamage(ref AreaDamage hit, const(SpellInfo)* spell, UnitRef v
     }
     const resistance = max(0, victim.resistance(school) + hit.resistanceModifier);
     auto rng = &victim.map.random();
-    if (!hit.alwaysHits)
+    if (!hit.groundTick && !hit.alwaysHits)
     {
         const isPlayer = hit.caster <= uint.max;
         const caster = Fighter(guid: hit.caster, player: isPlayer, playerControlled: isPlayer, level: hit.casterLevel);
@@ -325,15 +325,21 @@ void rollRemoteAreaDamage(ref AreaDamage hit, const(SpellInfo)* spell, UnitRef v
         if (hit.miss)
             return;
     }
-    victim.hostileSpellLanded();
+    if (!hit.groundTick)
+        victim.hostileSpellLanded();
     target = victim.fighter;
     uint damage = cast(uint) max(0, (hit.amount + target.damageTakenFlat[school]) * target.damageTaken[school]);
     const frozenBonus = Character.frozenForSpellCrit(victim) ? hit.frozenCritBonus : 0;
-    hit.critical = !(spell.attributesEx2 & spellAttrEx2CantCrit)
+    hit.critical = !hit.groundTick && !(spell.attributesEx2 & spellAttrEx2CantCrit)
         && uniform01(*rng) * 100 < hit.critChance + frozenBonus + spellCritTaken(*victim.auraSet, school);
     if (hit.critical)
         damage += cast(uint) max(0, damage / 2 * hit.critBonusFactor + hit.critBonusFlat);
-    if (school != 1 && !isBinarySpell(*spell))
+    if (hit.groundTick && school == 0)
+    {
+        const source = Fighter(armorIgnored: cast(uint) max(0, hit.resistanceModifier));
+        damage = cast(uint) armorReducedDamage(hit.casterLevel, armorAgainst(source, target), damage);
+    }
+    else if (school > 1 && !isBinarySpell(*spell))
     {
         const reduced = partiallyResisted(damage, resistance, hit.casterLevel, target, false,
             uniform!"[]"(1u, 10000u, *rng));

@@ -1155,7 +1155,7 @@ mixin template ClassSpells()
     {
         static immutable uint[2][] improvedBlizzardChill = [[836, 12484], [988, 12485], [989, 12486]];
         if (target && target.alive)
-            pyroclasm(spell, target.combatGuid); // Rain of Fire
+            pyroclasm(spell, target.combatGuid, target.replica); // Rain of Fire
         if (!ofFamily(spell, SpellFamily.mage, 0x80) || !target || !target.alive)
             return;
         uint chill;
@@ -1165,8 +1165,17 @@ mixin template ClassSpells()
                     if (const ranked = rankSpell(improvedBlizzardChill, cast(uint) aura.misc(i)))
                         chill = ranked;
         if (chill)
-            castCustom(chill, target.combatGuid);
+            castAreaTickTrigger(chill, target.combatGuid, target.replica);
         arcaneConcentrationTick();
+    }
+
+    private void castAreaTickTrigger(uint spellId, ulong target,
+        imported!"dmangos.world.replication".Replica replica)
+    {
+        if (replica is null)
+            castCustom(spellId, target);
+        else if (const spell = context.data.spells.spell(spellId))
+            castProcAtReplica(spell, replica, CustomValues.init);
     }
 
     /**
@@ -1350,7 +1359,8 @@ mixin template ClassSpells()
      * Fire's four, Hellfire's fifteen: their data's duration over their period), a Soul Fire's whole. Its data's proc
      * (a Dummy Trigger on damage over time) is this, not a cast of its own.
      */
-    private void pyroclasm(const(SpellInfo)* spell, ulong target)
+    private void pyroclasm(const(SpellInfo)* spell, ulong target,
+        imported!"dmangos.world.replication".Replica replica = null)
     {
         import dmangos.world.spellcast : castTime, duration;
 
@@ -1375,7 +1385,7 @@ mixin template ClassSpells()
                     const script = cast(int) aura.misc(i);
                     const chance = (script == 2188 ? 13.0f : script == 2189 ? 26.0f : 0) / (ticks > 0 ? ticks : 1);
                     if (chance > 0 && uniform01(map.random) * 100 < chance)
-                        castCustom(stun, target);
+                        castAreaTickTrigger(stun, target, replica);
                 }
     }
 

@@ -1295,6 +1295,16 @@ private:
         if (generic.active)
             interruptCast(SpellCastResult.interrupted);
         endChannel(true);
+        endGroundCasts();
+        removeTraps();
+        nextSwing.active = false;
+    }
+
+    /// Ground casts belong to this caster simulation and end when it leaves this node.
+    package void endGroundCasts()
+    {
+        if (channelSpell !is null && channelSpell.hasEffect(SpellEffect.persistentAreaAura))
+            endChannel(true);
         if (persistentAreas.length)
         {
             import dmangos.world.caster : Caster;
@@ -1303,8 +1313,6 @@ private:
             auto me = Caster.of(this);
             endPersistentAreas(me, persistentAreas);
         }
-        removeTraps();
-        nextSwing.active = false;
     }
 
     /// A spell waiting for the next main-hand swing is cast

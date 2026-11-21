@@ -282,6 +282,7 @@ private:
         if (!context.settleWrites() && (context.config.cluster.gateway || connection.gatewayHome.node))
             return; // a gateway handoff needs a durable checkpoint before the old owner stops
 
+        endGroundCasts();
         ByteWriter w;
         w.put(account.id);
         w.put(cast(uint) account.username.length);

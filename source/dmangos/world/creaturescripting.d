@@ -49,6 +49,13 @@ mixin template CreatureScripting()
     /// It has left the world for good (gone, or moved to another node): its script's state goes.
     void releaseBehaviour()
     {
+        if (persistentAreas_.length)
+        {
+            import dmangos.world.spellareas : endPersistentAreas;
+
+            auto caster = spellCaster();
+            endPersistentAreas(caster, persistentAreas_);
+        }
         if (scripts_ !is null)
             scripts_.destroy(behaviour);
     }

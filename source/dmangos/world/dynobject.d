@@ -5,15 +5,16 @@
  */
 module dmangos.world.dynobject;
 
-import dmangos.world.map : MapObject;
 import dmangos.world.movement : Position;
 import dmangos.world.objects;
+import dmangos.world.replication : Replicable;
 import dmangos.world.updatefields;
 
 /// See the module documentation.
-final class DynamicObject : MapObject
+final class DynamicObject : Replicable
 {
     immutable ulong guid_;
+    immutable float radius;
     Position at;
     UpdateValues values;
 
@@ -21,6 +22,7 @@ final class DynamicObject : MapObject
     this(uint counter, ulong caster, uint spell, size_t effect, float radius, Position at)
     {
         guid_ = makeGuid(HighGuid.dynamicObject, counter);
+        this.radius = radius;
         this.at = at;
         values = UpdateValues(TypeId.dynamicObject);
         values.set!OBJECT_FIELD_GUID(guid_);
@@ -55,21 +57,33 @@ final class DynamicObject : MapObject
         return values;
     }
 
-    /// Its create block: a position and its fields (`UPDATEFLAG_ALL | UPDATEFLAG_HAS_POSITION`).
-    UpdateData appearance(uint serverTime) const
+    /// Ground effects are stationary.
+    MovementBlock motion(uint serverTime) const
     {
         MovementBlock block;
         block.flags = UpdateFlags.all | UpdateFlags.hasPosition;
         block.position = at;
+        return block;
+    }
+
+    /// Its create block: a position and its fields (`UPDATEFLAG_ALL | UPDATEFLAG_HAS_POSITION`).
+    UpdateData appearance(uint serverTime) const
+    {
+        const movement = motion(serverTime);
         UpdateData update;
-        update.addCreate(UpdateType.createObject, guid_, block, values, seenByEveryone);
+        update.addCreate(UpdateType.createObject, guid_, movement, values, seenByEveryone);
         return update;
     }
 }
 
 unittest
 {
+    import dmangos.world.replication : encodeState, Replica;
+
     auto spot = new DynamicObject(5, 7, 10, 0, 8, Position(1, 2, 3, 0));
     assert(highGuidOf(spot.guid) == HighGuid.dynamicObject && spot.values.get!DYNAMICOBJECT_SPELLID == 10);
     assert(spot.values.get!DYNAMICOBJECT_RADIUS == 8 && spot.appearance(0).blockCount == 1);
+    auto observed = new Replica(spot.guid, 2, encodeState(spot, 0));
+    assert(observed.position == spot.position && observed.fields.get!DYNAMICOBJECT_RADIUS == 8
+        && observed.appearance(0).blockCount == 1);
 }
