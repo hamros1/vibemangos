@@ -70,6 +70,7 @@ interface ReplicationHandler
     void gmRemote(ushort peer, const ref GmRemote message);
     void killShare(ushort peer, const ref KillShare message);
     void groupLootRoll(ushort peer, const ref GroupLootRoll message);
+    void lootCoinShare(ushort peer, const ref LootCoinShare message);
 
     /// A script's signal for a creature this node simulates.
     void scriptSignal(ushort peer, const ref ScriptSignal message);
@@ -758,6 +759,15 @@ final class ClusterNode : LinkOwner
             {
                 const m = decode!GroupLootRoll(payload);
                 replication.groupLootRoll(peer, m);
+            }
+            return;
+        }
+        if (type == MessageType.lootCoinShare)
+        {
+            if (replication !is null)
+            {
+                const m = decode!LootCoinShare(payload);
+                replication.lootCoinShare(peer, m);
             }
             return;
         }

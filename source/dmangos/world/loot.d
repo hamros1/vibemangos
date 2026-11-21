@@ -368,11 +368,13 @@ final class Loot
     bool[ulong] opened;          /// who has opened it
     bool haveItemOverThreshold;
     LootRoll[ubyte] rolls;
-    ushort[ulong] remoteRollers;  /// nearby party members simulated on other nodes
+    ushort[ulong] remoteMembers;  /// nearby party members simulated on other nodes
     uint rollMap;
     ulong delegate() nextRoll;
     bool delegate(ushort, const ref GroupLootRoll) sendRemoteRoll;
     void delegate(ushort, ulong, Opcode, const(ubyte)[]) tellRemoteRoller;
+    ushort delegate(ulong) coinNode; /// where a remote member can receive a share now
+    bool delegate(ushort, ulong, uint) payRemoteCoins;
     private bool checked;        // the rolls are started
 
     /// The players by guid, for packets and items.
@@ -747,7 +749,7 @@ final class Loot
     {
         auto item = itemInSlot(message.slot);
         if (item is null || !item.remoteAward || item.remoteAward != message.roll
-            || item.winner != message.player || remoteRollers.get(message.player, 0) != peer)
+            || item.winner != message.player || remoteMembers.get(message.player, 0) != peer)
             return;
         item.remoteAward = 0;
         item.blocked = false;
@@ -776,27 +778,54 @@ final class Loot
 
         if (gold == 0 || looter.looterGuid !in owners)
             return;
+        const copper = gold;
+        gold = 0; // consume the drop before calling either local or remote recipients
         foreach (guid; looking.keys)
             if (auto other = find(guid))
                 other.deliver(Opcode.SMSG_LOOT_CLEAR_MONEY, null);
-        if (rule != LootRule.notGroup)
+        if (rule != LootRule.notGroup || coinNode !is null)
         {
-            auto order = owners.keys;
             const self = looter.looterGuid;
-            order.sort!((a, b) => (a == self) != (b == self) ? a == self : a < b);
-            foreach (i, guid; order)
-                if (auto owner = find(guid))
+            struct Recipient
+            {
+                ulong guid;
+                Looter local;
+                ushort node;
+            }
+            Recipient[] recipients = [Recipient(self, looter)];
+            auto eligible = owners.keys;
+            if (coinNode !is null)
+                foreach (guid, _; remoteMembers)
+                    if (guid !in owners)
+                        eligible ~= guid;
+            foreach (guid; eligible)
+                if (guid != self)
                 {
-                    const share = cast(uint)(gold / order.length + (i < gold % order.length ? 1 : 0));
-                    owner.receiveMoney(share);
-                    ByteWriter w;
-                    w.put(share);
-                    owner.deliver(Opcode.SMSG_LOOT_MONEY_NOTIFY, w.data);
+                    if (auto local = find(guid))
+                        recipients ~= Recipient(guid, local);
+                    else if (coinNode !is null)
+                        if (const node = coinNode(guid))
+                            recipients ~= Recipient(guid, null, node);
                 }
+            recipients[1 .. $].sort!((a, b) => a.guid < b.guid);
+            const base = cast(uint)(copper / recipients.length);
+            const extra = copper % recipients.length;
+            uint looterShare = base + uint(extra != 0);
+            foreach (i, ref recipient; recipients[1 .. $])
+            {
+                const share = base + uint(i + 1 < extra);
+                if (recipient.local !is null)
+                    grantLootCoinShare(recipient.local, share);
+                else if (share && !payRemoteCoins(recipient.node, recipient.guid, share))
+                {
+                    // Nothing was queued on that link. The looter gets the undeliverable share.
+                    looterShare += share;
+                }
+            }
+            grantLootCoinShare(looter, looterShare);
         }
         else
-            looter.receiveMoney(gold);
-        gold = 0;
+            looter.receiveMoney(copper);
         if (lootedFor(looter.looterGuid))
             release(looter);
         else if (changed !is null)
@@ -900,7 +929,7 @@ final class Loot
 
     void remoteVote(ushort peer, const ref GroupLootRoll message)
     {
-        if (remoteRollers.get(message.player, 0) != peer
+        if (remoteMembers.get(message.player, 0) != peer
             || (message.choice > RollVote.greed && message.choice != RollVote.notValid))
             return;
         auto roll = message.slot in rolls;
@@ -951,10 +980,10 @@ final class LootRoll
             votes[guid] = Vote(RollVote.notEmittedYet);
             ++players;
         }
-        if (!item.freeForAll && loot.remoteRollers.length)
+        if (!item.freeForAll && loot.sendRemoteRoll !is null && loot.remoteMembers.length)
         {
             serial = loot.nextRoll();
-            foreach (guid, _; loot.remoteRollers)
+            foreach (guid, _; loot.remoteMembers)
                 if (guid !in votes)
                 {
                     votes[guid] = Vote(RollVote.notEmittedYet);
@@ -1007,7 +1036,7 @@ final class LootRoll
             {
                 if (auto looter = loot.find(guid))
                     looter.deliver(opcode, body_);
-                else if (const node = guid in loot.remoteRollers)
+                else if (const node = guid in loot.remoteMembers)
                     loot.tellRemoteRoller(*node, guid, opcode, body_);
             }
     }
@@ -1022,7 +1051,7 @@ final class LootRoll
             if (auto looter = loot.find(guid))
                 looter.deliver(Opcode.SMSG_LOOT_START_ROLL, startRollPacket(loot.target, item.slot, item.itemId,
                     item.randomPropertyId));
-            else if (const node = guid in loot.remoteRollers)
+            else if (const node = guid in loot.remoteMembers)
             {
                 const message = remoteMessage(GroupLootRoll.Action.offer, guid);
                 if (!loot.sendRemoteRoll(*node, message))
@@ -1178,7 +1207,7 @@ final class LootRoll
             item.allowed[winner] = true;
             if (auto looter = loot.find(winner))
                 loot.sendItem(looter, item);
-            else if (const node = winner in loot.remoteRollers)
+            else if (const node = winner in loot.remoteMembers)
             {
                 item.blocked = true;
                 item.remoteAward = serial;
@@ -1208,6 +1237,16 @@ ubyte[] startRollPacket(ulong target, ubyte slot, uint item, int randomProperty)
     w.put(uint(lootRollSeconds * 1000));
     w.put(ubyte(0x0F));
     return w.data.dup;
+}
+
+/// Group recipients see the same coin notification whether they are local or remote.
+void grantLootCoinShare(Looter looter, uint copper)
+{
+    if (copper)
+        looter.receiveMoney(copper);
+    ByteWriter w;
+    w.put(copper);
+    looter.deliver(Opcode.SMSG_LOOT_MONEY_NOTIFY, w.data);
 }
 
 // ---------------------------------------------------------------------------

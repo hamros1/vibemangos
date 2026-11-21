@@ -67,7 +67,7 @@ import dmangos.vmap.maptree : ModelCache;
 import dmangos.world.terrain : Terrain;
 import dmangos.world.group : GroupDirectory, Groups, memberStatus, MemberStatus;
 import dmangos.world.groupservice : groupCommand, GroupOp, GroupService;
-import dmangos.cluster.protocol : CreatureLoan, GmRemote, GroupCommand, GroupLootRoll, KillShare, ScriptSignal;
+import dmangos.cluster.protocol : CreatureLoan, GmRemote, GroupCommand, GroupLootRoll, KillShare, LootCoinShare, ScriptSignal;
 import dmangos.world.map : Inhabitant, Map, MapObject, MapSettings, VisibilityFacts;
 import dmangos.world.online : OnlinePlayer;
 import dmangos.world.playercreate : CreationSettings;
@@ -419,15 +419,18 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     /// The corpse's node owns the roll. Only the winner's node writes the award to inventory.
     bool delegate(ushort, const ref GroupLootRoll) sendRemoteGroupLoot;
-    private ulong groupLootSequence;
+    bool delegate(ushort) canSendLootCoins;
+    bool delegate(ushort, const ref LootCoinShare) sendRemoteLootCoins;
+    private ulong lootSequence;
+    private ulong[ushort] lastLootCoinShare;
 
-    ulong nextGroupLootRoll()
+    ulong nextLootSequence()
     {
         import std.datetime.systime : Clock;
 
-        if (!groupLootSequence)
-            groupLootSequence = cast(ulong) Clock.currStdTime;
-        return ++groupLootSequence;
+        if (!lootSequence)
+            lootSequence = cast(ulong) Clock.currStdTime;
+        return ++lootSequence;
     }
 
     void groupLootRollArrived(ushort peer, const ref GroupLootRoll message)
@@ -469,6 +472,20 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 loot.remoteAwardResult(peer, message);
             return;
         }
+    }
+
+    /// Loot shares arrive in sequence over a peer link, even when it resumes after a disconnect.
+    void lootCoinShareArrived(ushort peer, const ref LootCoinShare message)
+    {
+        import dmangos.world.character : Character;
+        import dmangos.world.loot : grantLootCoinShare;
+
+        if (!peer || !message.copper || message.sequence <= lastLootCoinShare.get(peer, 0) || !canWrite())
+            return;
+        lastLootCoinShare[peer] = message.sequence;
+        if (auto player = cast(Character) onlinePlayer(message.player))
+            if (player.character !is null && player.character.data.map == message.map)
+                grantLootCoinShare(player, message.copper);
     }
 
     /// What node `node` said of its players: all of them (`full`), or what changed and who left.

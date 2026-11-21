@@ -5,7 +5,7 @@
  */
 module dmangos.world.clusterbridge;
 
-import dmangos.cluster.protocol : GroupLootRoll;
+import dmangos.cluster.protocol : GroupLootRoll, LootCoinShare;
 
 import core.time : Duration, MonoTime, msecs;
 
@@ -335,6 +335,22 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
     void groupLootRoll(ushort peer, const ref GroupLootRoll message)
     {
         context.groupLootRollArrived(peer, message);
+    }
+
+    bool canSendLootCoins(ushort peer)
+    {
+        auto link = node.linkTo(peer);
+        return link !is null && !link.wantsClose;
+    }
+
+    bool sendLootCoinShare(ushort peer, const ref LootCoinShare message)
+    {
+        return canSendLootCoins(peer) && node.sendTo(peer, message);
+    }
+
+    void lootCoinShare(ushort peer, const ref LootCoinShare message)
+    {
+        context.lootCoinShareArrived(peer, message);
     }
 
     /// For the context: guild news for every other node.

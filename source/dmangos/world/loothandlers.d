@@ -663,6 +663,7 @@ private:
     package void setLootRights(Loot loot, Position at, scope bool delegate(ulong guid) fought)
     {
         import dmangos.world.character : Character;
+        import dmangos.cluster.protocol : LootCoinShare;
         import dmangos.world.replication : Replica;
 
         auto group = context.groups.of(player.guid);
@@ -677,6 +678,7 @@ private:
         loot.threshold = group.lootThreshold;
         const crossNodeRolls = context.sendRemoteGroupLoot !is null && context.deliverRemote !is null
             && (loot.rule == LootRule.groupLoot || loot.rule == LootRule.needBeforeGreed);
+        const crossNodeCoins = context.sendRemoteLootCoins !is null && context.canSendLootCoins !is null;
         const members = group.members;
         // From the member after the current looter around: the next looter is the first eligible.
         size_t current = members.length;
@@ -696,14 +698,14 @@ private:
             auto looter = cast(Character) context.onlinePlayer(guid);
             if (looter is null)
             {
-                if (crossNodeRolls)
+                if (crossNodeRolls || crossNodeCoins)
                     if (auto remote = cast(Replica) map.findObject(guid))
                     {
                         const b = remote.position;
                         if (remote.fields.type == TypeId.player && remote.owner != context.nodeId
                             && ((at.x - b.x) ^^ 2 + (at.y - b.y) ^^ 2 + (at.z - b.z) ^^ 2 <= groupXpDistance ^^ 2
                                 || fought(guid)))
-                            loot.remoteRollers[guid] = remote.owner;
+                            loot.remoteMembers[guid] = remote.owner;
                     }
                 continue;
             }
@@ -713,13 +715,28 @@ private:
                 ordered ~= guid;
             }
         }
-        if (loot.remoteRollers.length)
+        if (loot.remoteMembers.length && crossNodeRolls)
         {
             loot.rollMap = map.id;
-            loot.nextRoll = &context.nextGroupLootRoll;
+            loot.nextRoll = &context.nextLootSequence;
             loot.sendRemoteRoll = context.sendRemoteGroupLoot;
             loot.tellRemoteRoller = (ushort node, ulong guid, Opcode opcode, const(ubyte)[] body_) {
                 context.deliverRemote(node, guid, cast(ushort) opcode, body_);
+            };
+        }
+        if (crossNodeCoins)
+        {
+            auto theMap = map;
+            loot.coinNode = (ulong guid) {
+                if (auto remote = cast(Replica) theMap.findObject(guid))
+                    if (remote.fields.type == TypeId.player && remote.owner != context.nodeId
+                        && context.canSendLootCoins(remote.owner))
+                        return remote.owner;
+                return ushort(0);
+            };
+            loot.payRemoteCoins = (ushort node, ulong guid, uint copper) {
+                const message = LootCoinShare(context.nextLootSequence(), guid, theMap.id, copper);
+                return context.sendRemoteLootCoins(node, message);
             };
         }
         if (loot.rule == LootRule.masterLoot)
@@ -744,7 +761,7 @@ private:
         }
         loot.currentLooter = player.guid;
         loot.owners[player.guid] = true;
-        if (!loot.remoteRollers.length)
+        if (!loot.remoteMembers.length || !crossNodeRolls)
             loot.rule = LootRule.notGroup;
     }
 
@@ -789,7 +806,7 @@ private:
     public void receiveMoney(uint copper)
     {
         player.receive(Copper(copper));
-        flushPlayerChanges();
+        flushInventory(true);
     }
 
     /// See `Looter.canUseItem`.
@@ -1151,7 +1168,7 @@ unittest
         auto victim = lootableInnkeeper(corpseNode, conditioned ? 50 : 0); // fixture condition: level 10+
         killIt(anduin, victim, now);
         auto loot = victim.loot;
-        assert(loot.remoteRollers[8] == 2 && loot.itemInSlot(0).blocked);
+        assert(loot.remoteMembers[8] == 2 && loot.itemInSlot(0).blocked);
         anduin.write(Opcode.CMSG_LOOT, ClientGuid(victim.guid));
         assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_LOOT_START_ROLL));
         assert(opcodesOf(jaina.read()).canFind(Opcode.SMSG_LOOT_START_ROLL) == (remoteCanUse && remoteMeetsCondition),
@@ -1185,5 +1202,90 @@ unittest
                 assert(db.itemOwners[guid] == (remoteWins ? 8 : 7));
             }
         assert(saved == 1, "exactly one item is saved, for the winner");
+    }
+}
+
+// All the copper is allocated once, including an odd copper and a repeated remote credit.
+unittest
+{
+    import dmangos.cluster.protocol : LootCoinShare;
+    import dmangos.world.characterdb : GroupRecord, GroupMemberRecord;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.group : LootMethod;
+    import dmangos.world.replication : encodePlayerState;
+
+    enum Delivery { accepted, offline, refused }
+    foreach (delivery; [Delivery.accepted, Delivery.offline, Delivery.refused])
+    {
+        auto db = newDatabase();
+        GroupRecord party;
+        party.id = 1;
+        party.leader = 7;
+        party.leaderName = "Anduin";
+        party.lootMethod = LootMethod.roundRobin;
+        party.lootThreshold = 2;
+        party.members = [GroupMemberRecord(7, "Anduin"), GroupMemberRecord(8, "Jaina"),
+            GroupMemberRecord(9, "Varian")];
+        db.groups[party.id] = party;
+        auto corpseNode = newCreationContext(db), memberNode = newCreationContext(db);
+        corpseNode.nodeId = 1;
+        memberNode.nodeId = 2;
+        memberNode.ownsCell = (uint, ulong) => false;
+        auto now = MonoTime.currTime;
+        corpseNode.clock = memberNode.clock = () => now;
+        auto anduin = loggedIn(corpseNode, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
+        auto jaina = loggedIn(memberNode, db, 8, "Jaina", Position(-8945, -132, 83.5f));
+        auto varian = loggedIn(memberNode, db, 9, "Varian", Position(-8868, -132, 83.5f));
+        foreach (remote; [jaina.session.character, varian.session.character])
+        {
+            const p = remote.position;
+            corpseNode.map(0).replicaCreated(2, cellKeyAt(p.x, p.y), remote.guid, encodePlayerState(remote, 0));
+        }
+
+        size_t sent;
+        LootCoinShare paid;
+        corpseNode.canSendLootCoins = (ushort node) => node == 2 && delivery != Delivery.offline;
+        corpseNode.sendRemoteLootCoins = (ushort node, const ref LootCoinShare message) {
+            assert(node == 2 && message.player == 8 && message.copper == 5);
+            ++sent;
+            if (delivery == Delivery.refused)
+                return false;
+            paid = message;
+            memberNode.lootCoinShareArrived(1, message);
+            memberNode.lootCoinShareArrived(1, message);
+            return true;
+        };
+        auto victim = lootableInnkeeper(corpseNode);
+        with (*corpseNode.data.creatureTemplates.edit(creatureInnkeeper))
+            minLootGold = maxLootGold = 11;
+        const before = anduin.session.character.money, otherBefore = jaina.session.character.money;
+        const farBefore = varian.session.character.money;
+        killIt(anduin, victim, now);
+        assert(victim.loot.remoteMembers.keys == [8UL], "the distant member is outside the loot radius");
+        anduin.write(Opcode.CMSG_LOOT, ClientGuid(victim.guid));
+        anduin.read();
+        jaina.read();
+        anduin.write(Opcode.CMSG_LOOT_MONEY, null);
+        anduin.write(Opcode.CMSG_LOOT_MONEY, null); // retrying the client request changes nothing
+        assert(sent == (delivery == Delivery.offline ? 0 : 1));
+        assert(anduin.session.character.money == before + Copper(delivery == Delivery.accepted ? 6 : 11));
+        assert(jaina.session.character.money == otherBefore + Copper(delivery == Delivery.accepted ? 5 : 0));
+        assert(varian.session.character.money == farBefore);
+        assert(db.moneySaves[7][0] == anduin.session.character.money.amount);
+        if (delivery == Delivery.accepted)
+        {
+            assert(db.moneySaves[8][0] == jaina.session.character.money.amount);
+            auto packets = jaina.read();
+            size_t notifications;
+            foreach (packet; packets)
+                if (packet.opcode == Opcode.SMSG_LOOT_MONEY_NOTIFY)
+                {
+                    ++notifications;
+                    assert(ByteReader(packet.body_).read!uint == 5);
+                }
+            assert(notifications == 1, "a replay neither credits coins nor repeats the notification");
+            memberNode.lootCoinShareArrived(1, paid);
+            assert(jaina.session.character.money == otherBefore + Copper(5));
+        }
     }
 }
