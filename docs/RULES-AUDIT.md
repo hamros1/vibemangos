@@ -112,7 +112,7 @@ not on wago.tools). These are the measured values of emulator projects, with no 
    research). **Spell hit and resistance**: spellcast.d `spellMissChance`, combat.d `partialResistRows`, `effectiveResistPercent`,
    `fullResistChance`. Source: Wowpedia "Spell hit" and "Resistance" (verify which version they describe). The
    101×5 partial-resist table is an emulator fit; the binary-DoT "1/10 resist per tick" rule looks emulator-only.
-6. **Base stats → derived stats**: stats.d `agilityPerPercent` (a linear lvl 1→60 fit per class),
+6. **Done** as far as the sources go (FORMULAS.md "Health and mana from spirit", "Spell crit from intellect", "Attack power, crit and dodge from agility": health regen was doubled, the mage's spell crit the paladin's; below level 60 no source). **Base stats → derived stats**: stats.d `agilityPerPercent` (a linear lvl 1→60 fit per class),
    spellhandlers.d `spellCrit` (an INT fit), player.d `healthRegenPerSecond`, `spiritManaPerSecond`.
    No 1.12 data exists. Source: Classic Era's character sheet (measured), and Wowpedia "Spirit" (page exists) for the
    per-class 1.12 regen table.
@@ -343,19 +343,19 @@ risk.
 
 | where | what | emulator origin | primary source | risk |
 |---|---|---|---|---|
-| stats.d:healthBonusFromStamina / manaBonusFromIntellect | First 20 STA = 1 HP each, then 10; first 20 INT = 1 mana, then 15 | GetHealthBonusFromStamina, GetManaBonusFromIntellect | Wowpedia "Stamina", "Intellect" (verify) | H: every player |
-| stats.d:meleeAttackPower | War/Pal/Dru 3L+2STR−20; Rog/Hun 2L+STR+AGI−20; Sha 2L+2STR−20; casters STR−10 | UpdateAttackPowerAndDamage | Wowpedia "Attack power" (verify; classic table) | H: every melee hit |
-| stats.d:rangedAttackPower | Hunter 2L+2AGI−10; Rogue/Warrior L+AGI−10; others AGI−10 | UpdateAttackPowerAndDamage | Wowpedia "Attack power" (verify) | H |
-| stats.d:weaponDamage | + AP/14 × base weapon speed; ammo DPS × speed if ammo fits | CalculateMinMaxDamage | Wowpedia "Attack power" (verify) | H |
-| stats.d:agilityPerPercent | AGI per 1% crit/dodge interpolated linearly lvl 1→60 per class (e.g. Rogue 2.2→29, Hunter 3.5→53, others →20) | GetMeleeCritFromAgility | none in 1.12 data (gtChanceToMeleeCrit is 2.0+); Classic Era measured (character sheet) | H: emulator-fitted linear table, wrong at mid levels likely |
-| stats.d:meleeChances | Base dodge per class (War 0, Pal .75, Hun .64, Rog 0, Pri 3, Sha 1.75, Mag 3.25, Wlk 2, Dru .75); parry/block 5%; skill ×0.04; block value STR/20−1 | UpdateCritPercentage | Classic Era character sheet (measured); Wowpedia "Dodge" (verify) | H |
-| spellhandlers.d:spellCrit | Spell crit = base + INT/(a + b×level) per-class fitted table | fit replacing gtChanceToSpellCrit | none in 1.12 data; Classic Era character sheet (measured) | H |
+| stats.d:healthBonusFromStamina / manaBonusFromIntellect | First 20 STA = 1 HP each, then 10; first 20 INT = 1 mana, then 15 | GetHealthBonusFromStamina, GetManaBonusFromIntellect | Wowpedia "Stamina", "Intellect" (verify) | H: every player. **Done:** 10 and 15 a point are Blizzard's; the first 20 at 1 has no source (FORMULAS.md "Attack power, crit and dodge from agility") |
+| stats.d:meleeAttackPower | War/Pal/Dru 3L+2STR−20; Rog/Hun 2L+STR+AGI−20; Sha 2L+2STR−20; casters STR−10 | UpdateAttackPowerAndDamage | Wowpedia "Attack power" (verify; classic table) | H: every melee hit. **Done:** agrees with the 1.x and 2008 WoWWiki tables (FORMULAS.md "Attack power, crit and dodge from agility") |
+| stats.d:rangedAttackPower | Hunter 2L+2AGI−10; Rogue/Warrior L+AGI−10; others AGI−10 | UpdateAttackPowerAndDamage | Wowpedia "Attack power" (verify) | H. **Done:** agrees (hunters 2 a point before 2.0.1); one 2006 page's 2 a point for warriors and rogues left documented |
+| stats.d:weaponDamage | + AP/14 × base weapon speed; ammo DPS × speed if ammo fits | CalculateMinMaxDamage | Wowpedia "Attack power" (verify) | H. **Done:** AP/14 a second agrees |
+| stats.d:agilityPerPercent | AGI per 1% crit/dodge interpolated linearly lvl 1→60 per class (e.g. Rogue 2.2→29, Hunter 3.5→53, others →20) | GetMeleeCritFromAgility | none in 1.12 data (gtChanceToMeleeCrit is 2.0+); Classic Era measured (character sheet) | H: emulator-fitted linear table, wrong at mid levels likely. **Done** at level 60 (Blizzard's 20/29/53 and 20/14.5/26.5 agree); below 60 the straight line stays, no source |
+| stats.d:meleeChances | Base dodge per class (War 0, Pal .75, Hun .64, Rog 0, Pri 3, Sha 1.75, Mag 3.25, Wlk 2, Dru .75); parry/block 5%; skill ×0.04; block value STR/20−1 | UpdateCritPercentage | Classic Era character sheet (measured); Wowpedia "Dodge" (verify) | H. **Done:** the base dodge agrees with WoWWiki "Dodge" (2006-11) |
+| spellhandlers.d:spellCrit | Spell crit = base + INT/(a + b×level) per-class fitted table | fit replacing gtChanceToSpellCrit | none in 1.12 data; Classic Era character sheet (measured) | H. **Done** at level 60 (Tseric's figures; the mage's row was the paladin's, fixed); bases and slope no source (FORMULAS.md "Spell crit from intellect") |
 | creatureai.d:regenerate | OOC: +1/3 max health and mana every 5 s (pets too) | Creature::RegenerateAll | none found | H: tick length emulator guess |
 | creature.d:selectLevel | HP/mana/armor = classlevelstats base × multipliers; weapon (baseDamage×variance + AP/14)×atkTime×mult, max ×1.5; AP added again; off hand 50% | Creature::SelectLevel, UpdateDamagePhysical | none found for 1.12 (ExpectedStat absent from Classic Era DB2); creature_template_classlevelstats is emulator-collected | H: all creature damage/armor/HP; AP counted twice |
-| player.d:healthRegenPerSecond | OOC HP/s from spirit per class (e.g. warrior 1.26s−22.6, rogue 0.84s−13) | OCTRegenHPPerSpirit | none in 1.12 data (gt tables 2.0+); Wowpedia "Spirit" (page exists; verify 1.12 section) | H: every player |
-| player.d:healthRegenNow | No regen in combat except % auras; ×1.5 sitting | RegenerateHealth | Wowpedia "Spirit" (verify) | H |
-| player.d:spiritManaPerSecond | Mana per 2 s tick: s/5+15 (druid/hunter/paladin/warlock), s/4+12.5 (mage/priest), s/5+17 (shaman) | OCTRegenMPPerSpirit | Wowpedia "Spirit" (verify; the 1.12 per-class table is widely cited) | H |
-| player.d:manaSpent / manaRegenPerSecond | Five-second rule: 5 s no spirit regen after mana spend | Player::Regenerate | Wowpedia "Five second rule" (verify) | H |
+| player.d:healthRegenPerSecond | OOC HP/s from spirit per class (e.g. warrior 1.26s−22.6, rogue 0.84s−13) | OCTRegenHPPerSpirit | none in 1.12 data (gt tables 2.0+); Wowpedia "Spirit" (page exists; verify 1.12 section) | H: every player. **Done:** the 1.x per-tick table, a tick every 2 s (it was CMaNGOS's per-tick lines taken a second: twice); mage/paladin/priest constants none found (FORMULAS.md "Health and mana from spirit") |
+| player.d:healthRegenNow | No regen in combat except % auras; ×1.5 sitting | RegenerateHealth | Wowpedia "Spirit" (verify) | H. **Done:** a third more sitting (was half again) |
+| player.d:spiritManaPerSecond | Mana per 2 s tick: s/5+15 (druid/hunter/paladin/warlock), s/4+12.5 (mage/priest), s/5+17 (shaman) | OCTRegenMPPerSpirit | Wowpedia "Spirit" (verify; the 1.12 per-class table is widely cited) | H. **Done:** agrees (paladin / 5 + 15, by the 2006 item comparison) |
+| player.d:manaSpent / manaRegenPerSecond | Five-second rule: 5 s no spirit regen after mana spend | Player::Regenerate | Wowpedia "Five second rule" (verify) | H. **Done:** a channel paid at its start pauses it as long as it channels, if longer than 5 s |
 | stats.d:computeStats (base) | Unarmed 2000 ms, 1–2 dmg; off hand ×0.5 | CalculateMinMaxDamage | Wowpedia "Dual wield" (verify) | M |
 | stats.d:computeStats (stacking) | Flat stats, then % stat, then total %; armor += 2×AGI | _ApplyItemBonuses, UpdateArmor | Wowpedia "Agility" (verify) | M |
 | auras.d:multiplier / total | % auras multiply, flat amounts add | TOTAL_PCT | none found | M |
@@ -491,16 +491,16 @@ risk.
 | where | what | emulator origin | primary source | risk |
 |---|---|---|---|---|
 | combathandlers.d:takeBlow (durability) | On death gear loses 10% durability unless killed by player side or in a BG | Unit::DealDamage | Wowpedia "Durability" (verify); 1.12 patch-era Blizzard FAQ | H: every PvE death |
-| death.d:corpseReclaimDelay | Reclaim delay 30/60/120 s by recent deaths; 5 min step; max count 3 | UpdateCorpseReclaimDelay, CORPSE_RECLAIM_DELAY | Wowpedia "Death" (verify) | H: every death |
+| death.d:corpseReclaimDelay | Reclaim delay 30/60/120 s by recent deaths; 5 min step; max count 3 | UpdateCorpseReclaimDelay, CORPSE_RECLAIM_DELAY | Wowpedia "Death" (verify) | H: every death. Checked: no 1.12 number found (WoWWiki "Death" 2006 has none); kept |
 | death.d:handleReclaimCorpse (+ corpse.d:corpseReclaimRadius) | Reclaim within 39 yd after delay; back with 50% health/mana, rage 0 | CORPSE_RECLAIM_RADIUS, ResurrectPlayer(0.5) | Wowpedia "Corpse" (verify) | H: every corpse run |
-| death.d:handleSpiritHealerActivate | Spirit healer: 50% health/mana; 25% durability on worn and carried; res sickness | HandleSpiritHealerActivate | Wowpedia "Spirit healer" (verify) | H |
-| death.d:applyResurrectionSickness | Spell 15007; none below level 11; 1 min per level above 10, 10 min max | ResurrectPlayer (death sickness config) | Spell.dbc 15007 + SpellDuration; Wowpedia "Resurrection sickness" (verify) | H: level scaling is emulator config |
-| pvp.d:updatePvPTimers | PvP flag lasts 5 min after leaving PvP | UpdatePvPFlagTimer | Wowpedia "PvP flag" (verify); Blizzard 1.x patch notes | H |
-| pvp.d:enforcedPvPZone / isPvPRealm | Enemy capital flags; PvP realms flag in enemy/contested zones | UpdateZone | AreaTable.dbc Flags/team | H |
+| death.d:handleSpiritHealerActivate | Spirit healer: 50% health/mana; 25% durability on worn and carried; res sickness | HandleSpiritHealerActivate | Wowpedia "Spirit healer" (verify) | H. **Done:** 25% of maximum, worn and carried, agrees (WoWWiki "Spirit Healer" 2006-11) |
+| death.d:applyResurrectionSickness | Spell 15007; none below level 11; 1 min per level above 10, 10 min max | ResurrectPlayer (death sickness config) | Spell.dbc 15007 + SpellDuration; Wowpedia "Resurrection sickness" (verify) | H: level scaling is emulator config. **Done:** none to 10, a minute a level over 10, 10 minutes from 20: agrees (WoWWiki "Spirit Healer") |
+| pvp.d:updatePvPTimers | PvP flag lasts 5 min after leaving PvP | UpdatePvPFlagTimer | Wowpedia "PvP flag" (verify); Blizzard 1.x patch notes | H. **Done:** 5 minutes agrees (WoWWiki "PvP flag" 2006-10) |
+| pvp.d:enforcedPvPZone / isPvPRealm | Enemy capital flags; PvP realms flag in enemy/contested zones | UpdateZone | AreaTable.dbc Flags/team | H. **Done:** the other side's land flags on every realm (WoWWiki "PvP flag" 2006-10; it was PvP realms only), contested on PvP realms |
 | pvp.d:pvpHitBy | Hitting flagged player flags attacker; flagged attacker flags victim | SetInCombatWith(Aggressor) | none found | H |
-| pvp.d:pvpAssisted | Healing/buffing a flagged player in combat flags helper | SetInCombatWithAssisted | none found | H |
+| pvp.d:pvpAssisted | Healing/buffing a flagged player in combat flags helper | SetInCombatWithAssisted | none found | H. **Done:** a heal flags the healer in combat or not (was: only when the healed was in combat); buffs left (FORMULAS.md "The PvP flag") |
 | combathandlers.d:enterCombatFor / updateMelee | In combat until 5 s after last swing/hit and no creature has it on threat | Unit::Update | none found | M |
-| death.d:autoReleaseMs / deathOnLogout | Unreleased body auto-released after 6 min | Player::Update | Wowpedia "Death" (verify) | M |
+| death.d:autoReleaseMs / deathOnLogout | Unreleased body auto-released after 6 min | Player::Update | Wowpedia "Death" (verify) | M. Checked: no number found; kept |
 | death.d:closestGraveyard | Nearest own-team graveyard by area→zone→map links; instance: nearest the entrance | GetClosestGraveYard | WorldSafeLocs.dbc (positions); links none found (game_graveyard_zone is emulator data) | M |
 | itemuse.d:applyEquipCooldowns | Equipping an on-use item: 30 s cooldown | ApplyEquipCooldown | none found | M |
 | duelhandlers.d:handleDuelAccepted | 3 s countdown | Player::Update (duel) | Wowpedia "Duel" (verify) | M |
@@ -521,7 +521,7 @@ risk.
 | aurahandlers.d:interruptAurasOnCast / removeAurasOnDeath | Exceptions for own aura/stealth; non-passive auras removed on death | RemoveAurasOnCast | SpellMisc Attributes; SpellInterrupts | L |
 | death.d:buildPlayerRepop | Release: ghost with 1 HP; quests that fail on death fail | BuildPlayerRepop | none found | L |
 | death.d:selfResurrect / handleResurrectResponse | Res by spell: amounts capped; energy full; rage 0 | EffectSelfResurrect | Spell.dbc effect values | L |
-| corpse.d:bonesLifetime | Bones last 1 h | Corpse::IsExpired | none found | L |
+| corpse.d:bonesLifetime | Bones last 1 h | Corpse::IsExpired | none found | L. Checked: no source found; kept |
 | itemuse.d:useItemError | Required level, worn, NOT_IN_COMBAT checks | HandleUseItemOpcode | Spell.dbc Attributes | L |
 | itemuse.d:loadItemDurations | Timed items count while online (real-time offline) | UpdateItemDuration | none found | L |
 | spellhandlers.d:resurrectEffect | Res amounts from data; NO_RES_TIMER | EffectResurrect | Spell.dbc | L |
@@ -535,7 +535,7 @@ risk.
 | npchandlers.d:prepareGossipMenu | Talent unlearn at own class trainer from 10 | PrepareGossipMenu | none found | L |
 | npchandlers.d:handleBinderActivate | Bind at own position; not in instances | HandleBinderActivateOpcode | Spell.dbc 3286 | L |
 | talenthandlers.d:handleLearnTalent | 5 points per row; prerequisites | LearnTalent | Talent.dbc | L |
-| inworld.d:handleLogoutRequest | 20 s logout unless resting | HandleLogoutRequestOpcode | Wowpedia "Logout" (verify) | L |
+| inworld.d:handleLogoutRequest | 20 s logout unless resting | HandleLogoutRequestOpcode | Wowpedia "Logout" (verify) | L. Checked: no 1.12 page found; kept |
 | gameobjecthandlers.d:withinInteraction | GO range 5 yd + size (+2/+5); bobbers and chairs 100 yd | INTERACTION_DISTANCE | none found | L |
 | inventory.d:canUse | Class/race/skill/rank/level/reputation requirements | CanUseItem | item_template data | L |
 | inventory.d:bindsWhenStored | BoP/quest bind on store; BoE on equip | SetBinding | none needed | L |
@@ -553,21 +553,21 @@ risk.
 | where | what | emulator origin | primary source | risk |
 |---|---|---|---|---|
 | creature.d:setLootRecipient / tappedBy | Tap: first player and group; evade clears tap | SetLootRecipient, IsTappedBy | Wowpedia "Tapping" (verify) | H: every kill |
-| loot.d:Loot.fill / LootItem.slotTypeFor | Visibility per loot method (FFA, RR, group, NBG, master) | GetSlotTypeForSharedLoot | Wowpedia "Loot" (verify) | H: every group loot |
-| loothandlers.d:setLootRights | Owners: group in reward distance or on threat list; RR turn; master falls back | SetGroupLootRight | Wowpedia "Loot" (verify) | H: every group kill |
+| loot.d:Loot.fill / LootItem.slotTypeFor | Visibility per loot method (FFA, RR, group, NBG, master) | GetSlotTypeForSharedLoot | Wowpedia "Loot" (verify) | H: every group loot. **Done:** agrees with WoWWiki "Loot"/"Party" (2006) (FORMULAS.md "Group loot") |
+| loothandlers.d:setLootRights | Owners: group in reward distance or on threat list; RR turn; master falls back | SetGroupLootRight | Wowpedia "Loot" (verify) | H: every group kill. **Done:** out-of-range members get no share or roll, as WoWWiki "Party" says; chests keep the group's rules (left, FORMULAS.md "Group loot") |
 | spellhandlers.d:pickPocket | Gold = 10×(rand(0..clvl/2)+rand(0..plvl/2)) copper | pickpocket loot | none found | M |
 | creature.d:inspectingLoot / lootedOut | Looting extends corpse to ≥2 min; looted-out shortened to ≤2 min unless skinnable | InspectingLoot | none found | M |
 | loot.d:Loot.rollGroup | Group drops at most one entry; shuffled walk; already-dropped entry skipped with 50% | LootGroup::Roll | none found | M: emulator choices |
-| loot.d:questItems (+ loothandlers prepareBodyLoot) | Quest drops shown only to those who need them; never rolled; shared, not per-player copies | HasQuestDrop, FillLoot | Wowpedia "Quest item" (verify) | M |
-| loot.d:Loot.sendGold | Group money split evenly; remainder lost | Loot::SendGold | Wowpedia "Loot" (verify) | M |
+| loot.d:questItems (+ loothandlers prepareBodyLoot) | Quest drops shown only to those who need them; never rolled; shared, not per-player copies | HasQuestDrop, FillLoot | Wowpedia "Quest item" (verify) | M. **Done:** agrees with WoWWiki "Loot" (multi-drop: each with the quest; else free to those who need it) |
+| loot.d:Loot.sendGold | Group money split evenly; remainder lost | Loot::SendGold | Wowpedia "Loot" (verify) | M. **Done:** "as evenly as possible": the copper over goes one each (was lost) |
 | loot.d:Loot.canLoot | When a corpse sparkles for a member | Loot::CanLoot | none found | M |
-| loot.d:Loot.release | Closing window frees items to all owners | Loot::Release | Wowpedia "Loot" (verify) | M |
+| loot.d:Loot.release | Closing window frees items to all owners | Loot::Release | Wowpedia "Loot" (verify) | M. **Done:** agrees ("freely lootable" once passed or released) |
 | loot.d:LootRoll.tryToStart | Roll only with >1 present owner; quest items never roll | GroupLootRoll::TryToStart | none found | M |
 | loot.d:lootRollSeconds | Roll lasts 60 s; ends when all voted | LOOT_ROLL_TIMEOUT | Wowpedia "Group loot" (verify) | M |
-| loot.d:LootRoll.sendStartRoll | NBG hides Need when unusable | TryToStart | Wowpedia "Need before greed" (verify) | M |
-| loot.d:LootRoll.vote / allVoted | Need > greed, then 1–100; ties by hash order | PlayerVote, AllPlayerVoted | none found | M: tie handling arbitrary |
-| loot.d:Loot.threshold / group.d:Group.create | Threshold uncommon; new group = group loot | Group::Create | Wowpedia "Loot" (verify) | M |
-| group.d:setLoot | Threshold/master looter unvalidated | loot-method handling | none found | M |
+| loot.d:LootRoll.sendStartRoll | NBG hides Need when unusable | TryToStart | Wowpedia "Need before greed" (verify) | M. **Done:** "'Pass' is automatically selected" for who cannot use it, its weapon or armor skill counted (was: Need hidden, greed allowed) |
+| loot.d:LootRoll.vote / allVoted | Need > greed, then 1–100; ties by hash order | PlayerVote, AllPlayerVoted | none found | M: tie handling arbitrary. **Done:** need before greed, highest 1-100 agrees; ties no source |
+| loot.d:Loot.threshold / group.d:Group.create | Threshold uncommon; new group = group loot | Group::Create | Wowpedia "Loot" (verify) | M. **Done:** group loot the default (WoWWiki "Party") |
+| group.d:setLoot | Threshold/master looter unvalidated | loot-method handling | none found | M. **Done:** threshold uncommon..epic, master a member; else refused |
 | loothandlers.d:handleLoot | Loot reach max(5, reaches + 4/3); bones 10 yd; standing | LootHandler | none found | M |
 | loot.d:LootStoreItem.roll | Ungrouped entries drop independently with DB chance | LootStoreItem::Roll | none found (loot tables are emulator-collected data) | L |
 | loot.d:Loot.process | Reference entries; count uniform min..max; ≤16 items | LootTemplate::Process | none found | L |
@@ -584,28 +584,28 @@ risk.
 
 | where | what | emulator origin | primary source | risk |
 |---|---|---|---|---|
-| arathi.d:tick | Resource ticks 10 per 12/9/6/3 s, 30 per 1 s at 5 bases; win 2000 | BattleGroundAB::Update | Wowpedia "Arathi Basin" (verify) | H: decides every AB |
+| arathi.d:tick | Resource ticks 10 per 12/9/6/3 s, 30 per 1 s at 5 bases; win 2000 | BattleGroundAB::Update | Wowpedia "Arathi Basin" (verify) | H: decides every AB. **Left:** the 1.x page measured 11 s and 10 s for one and two nodes (FORMULAS.md "Battlegrounds"); unchanged |
 | (missing) 5 instances per hour | Not implemented; only the transfer-abort enum exists | — | Blizzard (Kaivax 2020-06-16: "the current limit of 5 instances per hour", realm-wide, not battlegrounds) | H. **Done:** FORMULAS.md "Instances per hour" (per node, in memory) |
 | death.d:removedInsignia | Insignia gold = rand(50..150)×0.016×(level/5.76)^2.5 | RemovedInsignia | none found | M: arbitrary formula |
 | mounting.d:dismountOnArrival | Dungeon with mountAllowed=0 dismounts | Map::IsMountAllowed | none found (instance_template) | M |
 | homebind.d:updateHomebindTimer | Ungrouped player in instance ported out after 60 s | UpdateHomebindTime | Wowpedia "Instance" (verify) | M |
 | rituals.d:useMeetingStoneToSummon | Meeting stone summon within level range | MEETINGSTONE | Wowpedia "Meeting Stone" (verify) | M |
 | battleground.d:end | 2 min end delay; mark spells winner/loser | EndBattleGround | Spell.dbc 24950–24955 | M |
-| battleground.d:checkPrematureEnd | Under min players 300 s → ends | BattleGround::Update | none found | M |
-| battleground.d:spiritHealInterval | Spirit guide resurrects every 30 s | BG spirit healer | Wowpedia "Spirit Guide" (verify) | M |
+| battleground.d:checkPrematureEnd | Under min players 300 s → ends | BattleGround::Update | none found | M. **Done:** 5 minutes agrees (WoWWiki "Warsong Gulch") |
+| battleground.d:spiritHealInterval | Spirit guide resurrects every 30 s | BG spirit healer | Wowpedia "Spirit Guide" (verify) | M. **Done:** 30 s agrees (WoWWiki "Warsong Gulch") |
 | battleground.d:leaveBattleground | Deserter 26013 on leaving | LeaveBattleground | Spell.dbc 26013 | M |
 | bgqueue.d:bracketOf | 10-level brackets from template minLevel; AV 51–60 | GetBattleGroundBracketIdFromLevel | PVPDifficulty (DB2: MapID, MinLevel, MaxLevel) | M |
 | bgqueue.d:inviteTime | Invitation 80 s; reminder 60 s | INVITE_ACCEPT_WAIT_TIME | none found | M |
 | bgqueue.d:update | Fill running copies first; minPerTeam to start | BattleGroundQueueItem::Update | BattlemasterList MinPlayers/MaxPlayers (DB2) | M |
-| alterac.d:reinforcements | 600 each; death −1, captain −100, tower −75 | UpdateScore | Wowpedia "Alterac Valley" (verify; changed by 1.x patches) | M |
+| alterac.d:reinforcements | 600 each; death −1, captain −100, tower −75 | UpdateScore | Wowpedia "Alterac Valley" (verify; changed by 1.x patches) | M. **Left, reported:** reinforcements came with patch 2.3.0; 1.12 had none (FORMULAS.md "Battlegrounds") |
 | alterac.d:generals / captains | General ends BG; honor/rep values | HandleKillUnit | Wowpedia "Alterac Valley" (verify) | M; **Done: the honor units; not the reputation** (FORMULAS.md "Honor") |
-| alterac.d:assault / defend / destroyed | Node falls 4 min after assault (Snowfall 5) | ProcessPlayerAssaultsPoint | Wowpedia "Alterac Valley" (verify) | M |
+| alterac.d:assault / defend / destroyed | Node falls 4 min after assault (Snowfall 5) | ProcessPlayerAssaultsPoint | Wowpedia "Alterac Valley" (verify) | M. **Done:** five minutes (2.3.0 cut it to four) |
 | alterac.d:mines | +1 reinforcement per 45 s; revert after 20 min | ChangeMineOwner | Wowpedia "Alterac Valley" (verify) | M |
-| alterac.d:ending | End-of-match honor/rep per surviving tower/captain/node/mine | EndBattleGround | Wowpedia "Alterac Valley" (verify) | M |
-| warsong.d:capture / ending | 3 captures; honor and rep per capture | EventPlayerCapturedFlag | Wowpedia "Warsong Gulch" (verify) | M; **Done: the honor units; not the reputation** (FORMULAS.md "Honor") |
+| alterac.d:ending | End-of-match honor/rep per surviving tower/captain/node/mine | EndBattleGround | Wowpedia "Alterac Valley" (verify) | M. **Left, reported:** the end-of-match honor for towers/captains is 2.3.0's |
+| warsong.d:capture / ending | 3 captures; honor and rep per capture | EventPlayerCapturedFlag | Wowpedia "Warsong Gulch" (verify) | M; **Done: the honor units; not the reputation** (FORMULAS.md "Honor"). **Done: the reputation** 35, 45 on the holiday, agrees (WoWWiki "Warsong Gulch" 2006-11) |
 | warsong.d:tick / flags | Dropped flag returns after 10 s; respawn 23 s | BG_WS_FLAG_DROP_TIME | Wowpedia "Warsong Gulch" (verify) | M |
 | arathi.d:objectUsed / taken | Base captured 60 s after assault | BG_AB_FLAG_CAPTURING_TIME | Wowpedia "Arathi Basin" (verify) | M |
-| arathi.d:tick (rewards) / ending | Honor per 260 resources, rep per 160; end bonuses | BattleGroundAB::Update | Wowpedia "Arathi Basin" (verify) | M; **Done: the honor units; not the reputation** (FORMULAS.md "Honor") |
+| arathi.d:tick (rewards) / ending | Honor per 260 resources, rep per 160; end bonuses | BattleGroundAB::Update | Wowpedia "Arathi Basin" (verify) | M; **Done: the honor units; not the reputation** (FORMULAS.md "Honor"). **Done: the reputation** every 200 (150 holiday; was 160/120) |
 | meetingstone.d:rolesOf / priorityOf | Class role priorities | vmangos LFGMgr::CalculateRoles | none found | M: vmangos invention |
 | meetingstone.d:update / fillRoles | 1 tank + 1 healer + 3 damage; queue rules | vmangos LFGQueue::Update | Wowpedia "Meeting Stone" (verify); LFGDungeons (DB2) for levels | M |
 | teleport.d:teleportTo (raid lock) | Bound to a different raid copy → refused | InstanceMap::CanEnter | none found | M |
@@ -630,10 +630,10 @@ risk.
 
 | where | what | emulator origin | primary source | risk |
 |---|---|---|---|---|
-| environment.d:breathingInterval | Breath 60 s × MOD_WATER_BREATHING; water breathing unlimited | GetWaterBreathingInterval | Wowpedia "Breath" (page exists) | H |
+| environment.d:breathingInterval | Breath 60 s × MOD_WATER_BREATHING; water breathing unlimited | GetWaterBreathingInterval | Wowpedia "Breath" (page exists) | H. Checked: WoWWiki "Breath" (2006-11) gives no length (Undead "three times longer" is their aura); kept |
 | environment.d:suffocationDamage | Drowning/fatigue damage maxHP/5 + rand(0..level−1) per 2 s | OnMirrorTimerExpirationPulse | Wowpedia "Breath" (verify %); EnvironmentalDamage.dbc holds visuals only | H |
 | environment.d:environmentalDamage (lava) | Lava: 1 s delay, then 605–610 fire every 2 s, partially resisted | EnvironmentalDamage config | Wowpedia "Lava" (verify) | H |
-| environment.d:fallDamage / landed | Safe under 14.57 yd; dmg = (0.018×(h−safe) − 0.2426)×maxHP | Player::HandleFall | Wowpedia "Fall damage" (page exists) | H |
+| environment.d:fallDamage / landed | Safe under 14.57 yd; dmg = (0.018×(h−safe) − 0.2426)×maxHP | Player::HandleFall | Wowpedia "Fall damage" (page exists) | H. Checked: WoWWiki "Fall damage" (2006-09) has no formula; Safe Fall's -17 is data; kept |
 | moveorders.d:speedRate | Speed = strongest increase × max(stacking always, non-stacking); swim; strongest decrease; caps | Unit::UpdateSpeed | none found | H: every move |
 | crowdcontrol.d:walkOn / updateCrowdControl | Fear: 10 yd away ±0.6 rad at run speed; confuse 3–6 yd random at walk speed | Fleeing/ConfusedMovementGenerator | none found | M: visible |
 | death.d:setGhost + moveorders.d:refreshSpeeds | Ghost run/swim ×1.25 (wisp ×1.5), water walk; hard-coded instead of from the auras | HandleAuraGhost; spells 8326/20584 | Spell.dbc 8326 and 20584 effect base points | M: copy of data |
@@ -655,34 +655,34 @@ risk.
 
 | where | what | emulator origin | primary source | risk |
 |---|---|---|---|---|
-| death.d:playerDied | Killed by a creature: 10% durability on worn gear; PvP deaths none | KillPlayer → DurabilityLossAll(0.10) | Wowpedia "Durability" (page exists) | H: every PvE death |
+| death.d:playerDied | Killed by a creature: 10% durability on worn gear; PvP deaths none | KillPlayer → DurabilityLossAll(0.10) | Wowpedia "Durability" (page exists) | H: every PvE death. **Done:** agrees; also drowning/fatigue/lava deaths now cost it (FORMULAS.md "Durability") |
 | itemuse.d:wearOnHit | Each hit dealt/taken: 0.5% chance a random slot loses 1 durability | DurabilityLossChance.Damage | Wowpedia "Durability" (verify) | H: constant in combat |
 | durability.d:durabilityLoss / durabilityPointsLoss | % loss = floor(max×pct), ≥1 pt; at 0 the item's stats go | DurabilityLoss, DurabilityPointsLoss | Wowpedia "Durability" (page exists) | M |
-| environment.d:environmentalDamage (died) | Fatal fall costs 10% durability; others none | Player::EnvironmentalDamage | none found | M |
+| environment.d:environmentalDamage (died) | Fatal fall costs 10% durability; others none | Player::EnvironmentalDamage | none found | M. **Done:** every environmental death but the fall through the world (WoWWiki "Death": only PvP and self-inflicted are free) |
 | pethandlers.d:petUntrainCost | Untrain 10 s first, then 50 s, 1 g, +1 g, max 10 g | Pet::resetTalentsCost | Wowpedia "Pet trainer" (verify) | M |
 | questhandlers.d:rewardQuest | At max level RewMoneyMaxLevel paid as money | RewardQuest | QuestMoneyReward (DB2) | M |
 | reputationhandlers.d:reputationPriceDiscount | 10% off at Honored; +10% at PvP rank ≥3; repair −5%/−5% by rank | GetReputationPriceDiscount | Wowpedia "Reputation", "Honor system (pre-2.0 formulas)" (verify) | M |
 | npchandlers.d:sendTrainerList / handleTrainerBuySpell | Lesson cost × discount; availability by level/race/class/rank/skill | GetTrainerSpellState | SkillLineAbility; trainer data is emulator DB | M |
-| talenthandlers.d:talentResetCost | 1, 5, 10 g then +5 g to 50 g; −5 g per 30 days | resetTalentsCost | Wowpedia "Respec" (page exists; verify classic section) | M |
+| talenthandlers.d:talentResetCost | 1, 5, 10 g then +5 g to 50 g; −5 g per 30 days | resetTalentsCost | Wowpedia "Respec" (page exists; verify classic section) | M. **Done** in part: +5 g a reset to 50 g agrees (WoWWiki "Talent" 2006); the first steps and the decay no source |
 | inventory.d:Item.sellPrice | SellPrice prorated by charges, minus base repair cost | Item::GetSellPrice | none found | M: damaged items sell for less |
 | itemhandlers.d:handleRepairItem | Repair discount 10% at Honored; PvP rank discounts | DurabilityRepair | Wowpedia "Repair" (verify) | M |
 | itemhandlers.d:buyItemFromVendor | Price × discount; reputation and honor-rank requirements | BuyItemFromVendor | Wowpedia "Honor system (pre-2.0 formulas)" (verify) | M |
-| auctionhouse.d:auctionDeposit | Deposit = SellPrice × count × (duration/2 h) × deposit% | AuctionHouseMgr deposit | AuctionHouse.dbc depositPercent | M: no minimum |
+| auctionhouse.d:auctionDeposit | Deposit = SellPrice × count × (duration/2 h) × deposit% | AuctionHouseMgr deposit | AuctionHouse.dbc depositPercent | M: no minimum. **Done:** the 2-hour base rounded down, then times the spans (WoWWiki "Auction House" 2006); AuctionHouse.dbc 5/25% |
 | auctionhouse.d:AuctionRecord.outBid | Minimum raise 5% (integer steps) | GetAuctionOutBid | Wowpedia "Auction House" (verify) | M |
-| auctionhandlers.d:handleAuctionRemoveItem | Cancel costs the cut; deposit kept | AuctionHouseHandler | Wowpedia "Auction House" (verify) | M |
+| auctionhandlers.d:handleAuctionRemoveItem | Cancel costs the cut; deposit kept | AuctionHouseHandler | Wowpedia "Auction House" (verify) | M. **Done:** agrees (deposit + cut of the bid) |
 | auctionhouse.d:auctionHouseFor | Hard-coded faction template → house table | GetAuctionHouseEntry | AuctionHouse.dbc, FactionTemplate | M |
-| context.d:auctionSold / auctionMail | Sale mail delay 1 h only when mail has no item/money (looks reversed) | SendAuctionSuccessfulMail | Wowpedia "Auction House" (verify) | M |
-| mailhandlers.d:handleSendMail | Postage 30 c; COD only with item; 1 h delay to other accounts | MailDraft::SendMailTo | Wowpedia "Mail" (verify) | M |
-| context.d:postMail / settleOldMail | Mail expires 30 days (3 with COD); money-only mail deleted | not in PROVENANCE | Wowpedia "Mail" (verify) | M |
+| context.d:auctionSold / auctionMail | Sale mail delay 1 h only when mail has no item/money (looks reversed) | SendAuctionSuccessfulMail | Wowpedia "Auction House" (verify) | M. Mail from the AH "arrives immediately, even with items" (WoWWiki "Mail"): not changed here (another agent's area), left |
+| mailhandlers.d:handleSendMail | Postage 30 c; COD only with item; 1 h delay to other accounts | MailDraft::SendMailTo | Wowpedia "Mail" (verify) | M. **Done:** money alone and returned mail at once, items an hour (WoWWiki "Mail"); postage none found |
+| context.d:postMail / settleOldMail | Mail expires 30 days (3 with COD); money-only mail deleted | not in PROVENANCE | Wowpedia "Mail" (verify) | M. **Done:** read: 3 days left; expired money mail returned (was lost); COD's 3 days none found |
 | durability.d:durabilityDamageEffect | DURABILITY_DAMAGE(_PCT) by slot misc value | EffectDurabilityDamage(PCT) | Spell.dbc EffectMiscValue/BasePoints | L: data-driven |
 | itemuse.d:takeCastItem / hasChargesLeft | Charge consumption; negative charges destroy | TakeCastItem | none found | L |
 | creature.d:VendorStock | Limited items restock per incrTime | GetVendorItemCurrentCount | none found (npc_vendor data) | L |
 | npchandlers.d:canSeeVendorItem | Hide BoP of other classes, wrong race | CanSeeVendorItem | none found | L |
-| inventory.d:baseRepairCost / repairCost | Repair = lost durability × DurabilityQuality × DurabilityCosts | CalculateDurabilityRepairCost | DurabilityCosts, DurabilityQuality (DBC/DB2) | L: matches data |
+| inventory.d:baseRepairCost / repairCost | Repair = lost durability × DurabilityQuality × DurabilityCosts | CalculateDurabilityRepairCost | DurabilityCosts, DurabilityQuality (DBC/DB2) | L: matches data. **Done:** data-driven, unchanged |
 | itemhandlers.d:handleSellItem / inventory.d:addToBuyback | 12 buyback slots, 30 h | AddItemToBuyBackSlot | Wowpedia "Buyback" (verify) | L |
 | itemhandlers.d:handleBuyBankSlot | Bank slot price | HandleBuyBankSlotOpcode | BankBagSlotPrices (DBC) | L: matches data |
-| auctionhouse.d:handleAuctionSellItem | Durations 2/8/24 h; no conjured/timed items | MIN_AUCTION_TIME | Wowpedia "Auction House" (verify) | L |
-| auctionhouse.d:AuctionRecord.cut | Cut = cutPercent × bid | AuctionHouseMgr cut | AuctionHouse.dbc cutPercent | L |
+| auctionhouse.d:handleAuctionSellItem | Durations 2/8/24 h; no conjured/timed items | MIN_AUCTION_TIME | Wowpedia "Auction House" (verify) | L. **Done:** 2/8/24 h agree (WoWWiki "Auction House") |
+| auctionhouse.d:AuctionRecord.cut | Cut = cutPercent × bid | AuctionHouseMgr cut | AuctionHouse.dbc cutPercent | L. **Done:** agrees (5/15%) |
 | auctionhandlers.d:handleAuctionPlaceBid | Bid rules | AuctionHouseHandler | none found | L |
 | mailhandlers.d:handleMailTakeItem / delete | COD payment; mailbox 10 yd; list 50 | MailHandler | none found | L |
 | money.d:Copper.max | Money cap int.max | not in PROVENANCE | 1.12 client field | L |
@@ -713,7 +713,7 @@ risk.
 | inworld.d:whisper | Same-faction whispers | Player::Whisper | none needed (client) | L |
 | gameobjecthandlers.d:useGameObject | Goober quest credit; spellcaster party-only and charges | GameObject::Use | none found (GO data) | L |
 | gameobjecthandlers.d:sitOnChair | Nearest chair slot | CHAIR | none found | L |
-| inventory.d:keyringSize | Keyring slots by level [4,4,4,4,8,12,12] | GetMaxKeyringClientSize | Wowpedia "Keyring" (verify) | L |
+| inventory.d:keyringSize | Keyring slots by level [4,4,4,4,8,12,12] | GetMaxKeyringClientSize | Wowpedia "Keyring" (verify) | L. **Done:** 4 to level 40, 8 to 50, 12 to 60 (Blizzard 1.11; it gave 8 at 40, 12 at 50) |
 | taxi.d:taxiMountCreature | Mount by node and team | GetNearestTaxiNode | TaxiNodes.MountCreatureID | L |
 | wareffort.d:pileTier | Pile tiers at 10/30/50/70/90% | GetResourceTier | none found | L |
 | wareffort.d:daysLeft | Days shown = ceil(remaining/86400) | GetDaysRemaining | none found | L |

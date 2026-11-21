@@ -854,3 +854,248 @@ supplies of one's own mine, 70 of the other's, Honored).
 500, 1000 and 1500 with 28418 .. 28420 (its automatic call is commented out); its lords, cavalry and fleets only count.
 CMaNGOS-classic does nothing with the turn-ins.
 
+
+## Health and mana from spirit
+
+**What:** out of combat a player regenerates health from spirit every two-second tick (world/player.d
+`healthRegenPerTick`, a second half of it); mana from spirit too, in and out of combat, but none for five seconds after
+mana is spent (`spiritManaPerSecond`, `manaSpent`).
+
+**Sources: documented 1.x research**, read at warcraft.wiki.gg, which keeps WoWWiki's history (the last revisions
+before patch 2.0.1, 2006-12-05, unless said).
+
+- Health, a tick (WoWWiki "Health regeneration", revision 1723894, 2007-11, its table marked "Pre-BC" for warriors,
+  unchanged since the 1.x measurements): druid spirit × 0.09 + 6.5, hunter × 0.25 + 6, mage × 0.10 + ?, paladin × 0.25
+  + ?, priest × 0.10 + ?, rogue × 0.50 + 2 ("Confirmed at level 60 patch 1.09"), shaman × 0.11 + 7, warlock × 0.07 + 6,
+  warrior × 0.80 + 6. "There is 1 tick of regeneration every 2 seconds" (revision 1723817, 2006-08-25). The talk page
+  (Talk:Health regeneration/Archive01) holds the measurements of 2006: a level 60 warrior "with 58 spirit gained 53
+  health a tick" and "With 44 spirit he gained 41/42"; a level 48 warlock "With 173 spirit I gained 17 health a tick
+  and with 101 spirit I gained 13".
+- Sitting: "Health Regeneration is increased by 33% while sitting" (same revision; added 2007-02, so after 2.0; a
+  Classic Era player in 2020: "close to 30% but i'm not sure").
+- Mana, a tick (WoWWiki "Mana regeneration", revision 1569850, 2006-03): druid, hunter, warlock spirit / 5 + 15;
+  mage, priest / 4 + 12.5; shaman / 5 + 17. Its paladin line (/ 4 + 8) disagrees with the same page's comparison of
+  2006-06 ("1.6 spi for 1 mana/5 for priests and mages, and 2 spi for all others", that is / 4 for those two and / 5
+  for the rest) and with the 2.x Armory fits (paladin 0.5 a point of spirit every 5 seconds, / 5 a tick).
+- The five-second rule (WoWWiki "Five second rule", revision 3630837, 2006-11-03; "Mana regeneration", 2006-11-09):
+  "After expending mana to cast a spell, a character does not regenerate mana for 5 seconds"; spells that cost no
+  mana (Clearcasting, Inner Focus, Nature's Swiftness) do not start it; "Channeled spells ... The five second rule
+  starts when the spell's channeling starts; i.e. when you pay the mana for it. The rule continues for at least five
+  seconds, and longer if the spell is channeled for more than five seconds ... Tranquility channels for 10 seconds and
+  interrupts your regeneration for the full 10 seconds"; Mod Power Regen effects (water, Anathema) and periodic
+  energize effects are not subject to it.
+
+**Rule:** health a tick by the table; a mage's (spirit × 0.11 + 1), a paladin's (× 0.25) and a priest's (× 0.15 + 1.4)
+lines, whose constants were never found, stay CMaNGOS's (the paladin's agrees with the 1.x slope). A third more not
+standing. Mana by the table (the paladin's / 5 + 15). Mana spent pauses spirit's mana for 5 seconds, or for the
+channel's length if longer.
+
+**What changed (2026-11-21):** health came from CMaNGOS's `OCTRegenHPPerSpirit` lines (e.g. warrior spirit × 1.26 −
+22.6), taken as a second, so a tick gave twice the line: a level 60 warrior with 58 spirit regenerated 101 a tick, the
+1.x warrior 53 (the table: 52). Sitting gave half again. A channel paused the regeneration for five seconds from its
+start whatever its length.
+
+**Left:** the tick's dependence on the level. A Classic Era warrior of level 15 with 30 spirit was shown "21 hp per
+tick" (Blizzard forums, "Passive health regeneration (warrior)", 2020-04-01), the table's 30, CMaNGOS's 30; a level 37
+warrior of 2006 measured 0.83 a point of spirit, the level 60 ones 0.9. That looks like a per-level rate (as 2.0's
+game tables have), but too few points were found to fit one.
+
+**Second opinion (CMaNGOS-classic, `Unit::OCTRegenHPPerSpirit`, `Player::RegenerateHealth`), compared afterwards:** the
+lines above, applied as health a second (`ModifyHealth(addvalue * diff / 1000)`); × 1.5 sitting; the mana table as
+dmangos has it (paladin / 5 + 15, its comment "the above addvalue are given per tick"). No channel rule.
+
+## Spell crit from intellect
+
+**What:** a player's spell crit, base + intellect / (a + b × level) by class (world/spellhandlers.d `spellCrit`).
+
+**Source: Blizzard's statement** (the community manager Tseric, 2006, quoted on WoWWiki "Attributes (pre-6.0)",
+revision 462389, 2006-11-13; the post: forums.worldofwarcraft.com thread 8532806): "exact figures at level 60 for
+spell crit": warlock 60.6 intellect a percent, druid 60.0, shaman 59.5, mage 59.5, priest 59.2. The paladin's was not
+given; Classic Era's guides give 54.
+
+**Rule:** at level 60 a, b give those figures: CMaNGOS's fit already does for the priest (59.23), shaman (59.51),
+warlock (60.5), druid (59.81) and paladin (53.77). The mage's row was the paladin's (53.77); it is now 14.673 + 0.7471
+× level (59.5 at 60, the old row's 15.42 at level 1). The bases (3.70 a mage, 2.97 a priest, ...) and the slope by
+level have no source (no 1.12 table; gtChanceToSpellCrit starts in 2.0): CMaNGOS's, its comment "from mangos 3462 for
+1.12 MUST BE CHECKED". A Classic Era mage of level 34 with 164 intellect saw 2.76% (Blizzard forums, "About Mage
+Stats"), where the formula gives 8.1%: the bases are likely too high, but nothing gives better ones.
+
+## Attack power, crit and dodge from agility
+
+**Sources: Blizzard's statements**, quoted on WoWWiki "Attributes (pre-6.0)" (revision 462389, 2006-11-13, "From the
+Developers"): "For most level 60 character classes, approximately 20 points of AGI will increase your critical hit
+chance by approximately 1%. Rogues require 29 AGI ... and Hunters require 53 AGI"; dodge: "approximately 20 points ...
+Rogues only require 14.5 AGI ... Hunters require 26.5 AGI". Base dodge (WoWWiki "Dodge", revision 3537383,
+2006-11-30): druid 0.75%, hunter 0.64%, mage 3.25%, paladin 0.75%, priest 3%, rogue 0%, shaman 1.75%, warlock 2%,
+warrior 0%. Attack power: "Attack Power increases your base DPS by 1 for every 14 attack power" and strength gives 2
+melee attack power, rogues and hunters 1 and 1 per agility (WoWWiki "Attack power", revision 781971, 2006-11-30);
+"Before patch 2.0.1, hunters received 2 Ranged AP per agility" (warcraft.wiki.gg "Attack power"); the level terms (3 a
+level for warriors and paladins, 2 for rogues, hunters and shamans; ranged 1 a level for warriors and rogues, 2 for
+hunters) are the 2008 WoWWiki table (revision 1317844), whose non-druid rows 2.0 did not change; a druid has none (see
+"A druid's attack power").
+
+**Rule:** all as dmangos had it (world/stats.d `meleeChances`, `meleeAttackPower`, `rangedAttackPower`,
+`weaponDamage`): the level 60 figures agree. The ratios below 60 are CMaNGOS's straight line from a level 1 figure,
+with no source. One disagreement left: the same Attributes revision says "Warriors, Hunters and Rogues gain 2 ranged
+attack power for each point of agility", where dmangos (and the 2008 table) give warriors and rogues 1; Blizzard's
+2.0 hunter notes name only hunters' change, so 1 stays. Health 10 a point of stamina, mana 15 a point of intellect
+(the same revision); the first 20 points giving 1 each has no source found.
+
+## Group loot
+
+**What:** who takes what from a group's kill (world/loot.d, loothandlers.d, group.d).
+
+**Sources: documented 1.12 play**, WoWWiki "Loot" (revision 3270605, 2006-10-19) and "Party" (revision 5183327,
+2006-11-20), read at warcraft.wiki.gg:
+
+- The methods: "Free-for-all ... Master Loot: One person in the group, designated by the leader, loots all corpses and
+  distributes loot ... Round-robin: Party members take turns looting corpses ... Group Loot: Like Round-robin, except
+  that there is a threshold set by the leader for which items must be rolled off ... Need before Greed: 'Pass' is
+  automatically selected for party members who can't use an item." "Group Loot: This is the default type for a group."
+  "the threshold can be set to Uncommon, Rare, or Epic"; the master looter is "set by the party leader by
+  right-clicking on any member's portrait".
+- Rolls: need, greed or pass, 1 to 100; "The looting will first resolve all NEED rolls, if none then Greed rolls. The
+  member with the highest roll will get the item"; "If everyone passes on a rollable item, the item becomes freely
+  lootable to anyone in the party".
+- Money: "In all loot settings, money on the corpse is distributed as evenly as possible among all party members";
+  "if a party member is out of range when a monster is killed ... he will not receive a share of any gold ... and will
+  not be able to roll".
+- Quest items: an item each member with the quest may take (the multi-drop flag); otherwise "if the current looter
+  can't collect the items ... the quest loot is FFA for those members who can still pick up the quest items".
+- Chests: "containers like chests ... are always treated by the game as 'free for all'".
+
+**Rule:** need before greed passes for a member who cannot use the item (its class, race, level, skill and spell
+requirements and its weapon or armor skill: a mage and mail): no roll window, an automatic pass shown to the group,
+and no other choice taken from it. Money: the share is the whole copper, and the copper over is one each, the
+looter first, then by guid. The threshold is uncommon to epic and the master a member; another setting is refused.
+The rest agreed already: the methods, need over greed, all passing frees it, the out-of-range members, quest items.
+
+**What changed (2026-11-21):** need before greed hid the Need button but let a member who could not use the item greed
+(as 2.0 later did), and took only the item's own requirements as "use" (a mage could need mail). The copper left over
+a split was lost. Any threshold and any master were taken.
+
+**Left:** chests stay under the group's rules: the 1.12 chest data has a "group loot rules" field (`data15`, set on 29
+of 770 chests in the world database, not on Cache of the Firelord), and raid chests were master-looted in 1.12 play,
+so "always free for all" is not taken as is. A tie between two equal rolls (by the order of the votes) and the minute
+to roll have no source.
+
+**Second opinion (CMaNGOS-classic, `GroupLootRoll`, `Loot::SendGold`, `Group::SetLootMethod`), compared
+afterwards:** need before greed takes the Need button away from who cannot use the item (`ROLL_VOTE_MASK_NEED`)
+and lets it greed, as dmangos had; the money is `m_gold / m_ownerSet.size()` each, the rest lost.
+
+**Second opinion on auctions and mail (CMaNGOS-classic `AuctionHouseMgr::GetAuctionDeposit`,
+`WorldSession::HandleSendMail`, `Mail::SendReturnToSender`, `HandleMailMarkAsRead`), compared afterwards:** the deposit
+rounded once at the end, with a configured minimum; the delivery delay "always applied, even if we're sending mails to
+our own characters" (its own comment), so money and words take it too; returned mail with items to another account
+takes it; reading changes no expiry. On durability (`Player::EnvironmentalDamage`): only a fall to death costs it.
+
+## Auctions
+
+**What:** the deposit, the house's cut, cancelling (world/auctionhouse.d `auctionDeposit`, `AuctionRecord.cut`;
+auctionhandlers.d).
+
+**Sources:** Blizzard's data, AuctionHouse.dbc (1.12.1): the six city houses deposit 5, cut 5; Blackwater (Booty
+Bay, Gadgetzan, Everlook) deposit 25, cut 15. WoWWiki "Auction House" (revision 4674101, 2006-10-16): "Deposit (2hr
+auction) = 0.05 * MSV" (0.25 neutral), "the base deposit is rounded first, and then multiplied ... Deposit (8hr
+auction) = 4 * Deposit (2hr auction), Deposit (24hr auction) = 12 * Deposit (2hr auction)"; "if an item has no sell
+value ... there will be no deposit"; its example: "The base deposit on 1 fish is 0. (0.05 * 4cp < 1cp) ... you can list
+single fish for any length of time with no deposit". Cut "0.05 * Winning Bid" (0.15 neutral); the seller gets the bid
+less the cut plus the deposit; unsold, "your deposit will not be refunded"; cancelled, "Cancellation Fee = Deposit"
+and with a bid "Deposit + Cut".
+
+**Rule:** deposit = floor(sell price × count × deposit% / 100) × (duration / 2 hours). **What changed (2026-11-21):**
+the product was rounded once at the end (a 4-copper item for a day: 2 copper, now none). The rest agreed (the cut,
+the cancel fee, the durations). The minimum raise (5% of the bid) has no source.
+
+## Mail
+
+**Sources:** WoWWiki "Mail" (revision 3830942, 2006-11-26): "Simple messages (including those with money attached)
+arrive immediately. One hour delivery if items are attached. Mail from the Auction House arrives immediately, even
+with items. Return mail arrives immediately." "Mail recieved stays in your mailbox for 30 days, but if you read the
+mail, it'll only last for 3 days. After the expiry period the mail is returned to the sender. If the mail comes from
+the Auction House, a quest NPC, or anything similar it is simply discarded".
+
+**Rule:** a letter with an item to another account comes an hour later; with money only, at once; returned, at once.
+Read, a letter has at most 3 days left. Expired, a player's letter goes back with its item or its money.
+
+**What changed (2026-11-21):** money alone took the hour (to another account), and so did returned mail; reading
+changed nothing; an expired letter with money only was deleted, the money lost.
+
+**Left, no source:** the 30 copper postage; the 3 days of a letter with cash on delivery; letters with items to the
+same account coming at once (no 1.12 statement either way).
+
+## Durability
+
+**Sources:** WoWWiki "Durability" (revision 671373, 2006-10-03) and "Death" (revision 2632986, 2006-07-25): "When you
+die, 10% durability is lost on all equipped items ... You will not lose 10% durability if you are killed in PvP combat";
+"When you use the services of a Spirit Healer you lose 25% durability on all equipped items and items in your bags"
+("25% of maximum, not current", "Spirit Healer", 2006-11-22); "If you are killed by self-inflicted death ... you will
+not suffer any durability damage"; "When your ghost is killed, you suffer another 10% durability loss". Resurrection
+sickness: none to level 10, "one minute of sickness for each level they are above 10", ten minutes from 20.
+
+**Rule:** a death costs a tenth of the worn gear's maximum durability, but by a player's side (dmangos's "killed by a
+player" covers pets and battlegrounds) or by one's own hand; drowning, fatigue and lava cost it as a fall does; the
+spirit healer a quarter of everything. **What changed (2026-11-21):** only a fall to death cost it among the
+environment's deaths. The rest agreed. A ghost dying of fatigue is not modelled (dmangos's ghosts do not die).
+
+## The PvP flag
+
+**Source:** WoWWiki "PvP flag" (revision 33320, 2006-10-05): the flag goes up when "You engage another player of an
+opposing faction in combat other than dueling", "You cast a spell on a player whose flag is up ... If you cast a
+healing spell or resurrect a flagged player, your flag will go up", "You enter a territory that is one of the
+beginning zones for the opposite faction", "Only applies to PvP Realms: You enter a contested territory", "You enter
+an opposing factions capital city ... This applies even on PvE Realms"; "There is a five-minute delay to pulling down
+your PvP flag ... after that five-minute delay from when you last performed an action that would bring up the flag".
+
+**Rule:** the other side's capitals and the zones its races begin in (playercreateinfo's zones: Elwynn Forest, Dun
+Morogh, Teldrassil / Durotar, Mulgore, Tirisfal Glades) flag on every realm; the rest of its land (AreaTable.dbc's
+team) and contested land on PvP realms; healing a
+flagged player flags the healer, in combat or not; five minutes to come down. **What changed (2026-11-21):** the
+other side's beginning zones flagged only on PvP realms (its capitals on every realm), and a heal flagged only when the healed player was
+in combat. **Left:** buffs flag too by the same page, but buffs do not reach the PvP code yet (the aura path is the
+spell pipeline's); the 30 seconds of "contested" have no source.
+
+**Second opinion (CMaNGOS-classic, `Player::UpdateZone`, `Unit::SetInCombatWithAssisted`), compared afterwards:**
+enemy land only on PvP realms or in capitals, as dmangos had; a heal flags only a helper of someone in combat.
+
+## Battlegrounds
+
+**Sources:** WoWWiki "Arathi Basin" (revision 3151467, 2006-11-30; the same table since 2006-02), "Warsong Gulch"
+(revision 5298624, 2006-11-13), "Alterac Valley" (revision 4644035, 2006-11-25), and warcraft.wiki.gg "Alterac Valley"
+(its patch history, Blizzard's notes).
+
+- Arathi Basin: "Collecting multiples of 200 resources (at 200, 400, 600, ...) = 10 rep (total 100 rep if you win)";
+  on the holiday "multiples of 150 ... (total 130 rep if you win)". Ticks: 1 node 10 every 11 s, 2 nodes 10 every
+  10 s, 3 every 6 s, 4 every 3 s, 5 nodes 30 every second; 2000 to win.
+- Warsong Gulch: "Flag Capture - 35 reputation for entire team (10 extra reputation on a Battlegrounds Holiday for a
+  total of 45)"; "Each side needs at least 5 players or the game will end after 5 minutes"; the spirit guide "casts a
+  resurrection every 30 seconds".
+- Alterac Valley, patch 2.3.0: "The Horde and Alliance now have a limited number of reinforcements available";
+  "Bonus Honor in Alterac Valley is now only awarded during the battle for destroying enemy towers and slaying the
+  enemy Captain. Upon conclusion of the battle, bonus honor is also awarded for intact towers, a surviving Captain,
+  and for victory"; "Towers and Graveyards in Alterac Valley are now captured in 4 minutes (down from 5)"; patch
+  2.4.0: "The time required for the first capture of Snowfall graveyard has been reduced from five minutes to four".
+  The 1.12 page (2006-11) has no reinforcements: the battle ends when a general dies.
+
+**Rule:** Arathi Basin's reputation every 200 resources (150 on the holiday); Alterac Valley's nodes fall five
+minutes after an assault. **What changed (2026-11-21):** 160 and 120; four minutes (2.3.0's).
+
+**Left (reported, not changed):** Alterac Valley's reinforcements (600 each, deaths, towers and captains costing them,
+the mines' +1) and its end-of-match honor for surviving towers and captains are 2.3.0's design; in 1.12 the general's
+death ends the battle and there is no count. Removing them reshapes alterac.d, a battleground module another
+pass owns. Arathi Basin's ticks for one and two nodes: the 1.x page measured 11 s and 10 s where dmangos (and
+CMaNGOS) have 12 s and 9 s; the page's per-second column (0.9, 1.0) is rounded, so the difference may be measurement;
+unchanged. Warsong Gulch's flag times (10 s on the ground, 23 s to respawn) have no source.
+
+## Smaller rules checked
+
+- **The keyring** (world/inventory.d `keyringSize`): Blizzard's announcement of patch 1.11 (quoted on WoWWiki
+  "Keyring", revision 3903237, 2006-11-17): "Level 1-40 = 4 slots, Level 41-50 = 8 slots, Level 51-60 = 12 slots".
+  It went by level / 10, so a level 40 had 8 and a level 50 had 12; now by (level − 1) / 10.
+- **Talent reset** (talenthandlers.d `talentResetCost`): WoWWiki "Talent" (2006-09): "a modest fee (which increases by
+  5g each use, to a maximum 50g)": agrees with the 5-gold steps and the cap; the first 1 and 5 gold and the monthly
+  decay have no source found.
+- **Not found** for 1.12 (kept, documented in RULES-AUDIT.md): the corpse reclaim delay and radius, the six minutes to
+  an automatic release, bones' hour, the 20 seconds of logging out, the duel's countdown and range, breath and
+  fatigue's minute, drowning's and lava's damage, the fall damage formula, the flight speed, the speed stacking.
+  WoWWiki's 1.x pages on these ("Death", "Breath", "Fatigue", "Fall damage", "Dueling") describe them without numbers.

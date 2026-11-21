@@ -127,14 +127,16 @@ struct AuctionRates
 }
 
 /**
- * The deposit: the sell price of the stack for each 2 hours (1, 4 or 12 times for 2, 8 or 24 hours), the house's
- * percentage of it (`AuctionHouse.dbc`: 5 in the factions' houses, 25 in the goblins'), at least `rates.depositMin`,
- * times `rates.deposit`. docs/FORMULAS.md, "Auction houses".
+ * The deposit: the house's percentage (`AuctionHouse.dbc`: 5 in the factions' houses, 25 in the goblins') of the
+ * stack's sell price, "rounded first, and then multiplied" (WoWWiki "Auction House", 2006-10) by the two-hour spans
+ * (1, 4 or 12 for 2, 8 or 24 hours); at least `rates.depositMin`, times `rates.deposit`. docs/FORMULAS.md, "Auction
+ * houses" and "Auctions".
  */
 uint auctionDeposit(const ref AuctionHouseEntry house, uint seconds, uint sellPrice, uint count,
     const AuctionRates rates = AuctionRates.init) pure nothrow @nogc @safe
 {
-    float deposit = float(sellPrice) * count * (seconds / minAuctionTime) * house.depositPercent / 100.0f;
+    const base = cast(ulong) sellPrice * count * house.depositPercent / 100;
+    ulong deposit = base * (seconds / minAuctionTime);
     if (deposit < rates.depositMin)
         deposit = rates.depositMin;
     return cast(uint)(deposit * rates.deposit);
@@ -222,13 +224,15 @@ string auctionMailSubject(const ref AuctionRecord a, AuctionMail what)
 
 unittest
 {
-    const stormwind = AuctionHouseEntry(1, 12, 15, 5);
+    const stormwind = AuctionHouseEntry(1, 12, 5, 5); // AuctionHouse.dbc: 5% deposit, 5% cut
     AuctionRecord a = {itemEntry: 2589, itemCount: 20, bid: 1000, buyout: 5000};
     assert(a.outBid == 50 && a.cut(stormwind) == 50);
     a.bid = 10;
     assert(a.outBid == 1, "a copper at least");
-    // 20 linen at 13 copper for 8 hours: 4 times 260, 15% of it.
-    assert(auctionDeposit(stormwind, 8 * 60 * 60, 13, 20) == 156);
+    // 20 linen at 13 copper for 8 hours: 5% of 260 for each 2 hours.
+    assert(auctionDeposit(stormwind, 8 * 60 * 60, 13, 20) == 52);
+    // One fish at 4 copper: 0.2 copper for two hours is none, so none for 24 (WoWWiki's example).
+    assert(auctionDeposit(stormwind, 24 * 60 * 60, 4, 1) == 0 && auctionDeposit(stormwind, 24 * 60 * 60, 4, 20) == 48);
     assert(auctionHouseFor(12, 0) == 1 && auctionHouseFor(29, 0) == 6 && auctionHouseFor(120, 0) == 7);
     assert(auctionHouseFor(1, 2) == 1 && auctionHouseFor(2, 4) == 6 && auctionHouseFor(3, 0) == 7);
     assert(auctionMailSubject(a, AuctionMail.won) == "2589:0:1");
@@ -237,7 +241,7 @@ unittest
     const rates = AuctionRates(deposit: 0.5f, cut: 2, time: 0.5f, depositMin: 100);
     a.bid = 1000;
     assert(a.cut(stormwind, rates.cut) == 100);
-    assert(auctionDeposit(stormwind, 8 * 60 * 60, 13, 20, rates) == 78, "156 halved");
+    assert(auctionDeposit(stormwind, 8 * 60 * 60, 13, 20, rates) == 50, "52, raised to the least, halved");
     assert(auctionDeposit(stormwind, 2 * 60 * 60, 1, 1, rates) == 50, "the least deposit, then halved");
     assert(auctionDuration(24 * 60 * 60, rates) == 12 * 60 * 60 && auctionDuration(7200) == 7200);
 }

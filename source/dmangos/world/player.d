@@ -615,33 +615,52 @@ final class Player : InventoryOwner
     uint innTrigger;   /// the inn's area trigger, while resting in it
     long restCountedAt; /// Unix time
 
-    /// Health per second out of combat, from spirit and class.
+    /**
+     * Health per second out of combat, from spirit and class: half of what a two-second tick gives (docs/FORMULAS.md
+     * "Health and mana from spirit"). The tick by class is the 1.x research's (WoWWiki "Health regeneration"): spirit
+     * times 0.09 plus 6.5 (druid), 0.25 plus 6 (hunter), 0.5 plus 2 (rogue), 0.11 plus 7 (shaman), 0.07 plus 6
+     * (warlock), 0.8 plus 6 (warrior); a mage's, a paladin's and a priest's had no constant found, and stay
+     * CMaNGOS's lines.
+     */
     float healthRegenPerSecond() const
     {
-        const spirit = float(values.get!UNIT_FIELD_STAT0(Stat.spirit));
-        switch (cast(PlayerClass) data.classId)
+        return healthRegenPerTick(cast(PlayerClass) data.classId, values.get!UNIT_FIELD_STAT0(Stat.spirit)) / 2;
+    }
+
+    /// ditto, a two-second tick's.
+    static float healthRegenPerTick(PlayerClass classId, float spirit) pure nothrow @nogc @safe
+    {
+        switch (classId)
         {
         default: return 0;
-        case PlayerClass.druid: return spirit * 0.11f + 1;
-        case PlayerClass.hunter: return spirit * 0.43f - 5.5f;
+        case PlayerClass.druid: return spirit * 0.09f + 6.5f;
+        case PlayerClass.hunter: return spirit * 0.25f + 6;
         case PlayerClass.mage: return spirit * 0.11f + 1;
         case PlayerClass.paladin: return spirit * 0.25f;
         case PlayerClass.priest: return spirit * 0.15f + 1.4f;
-        case PlayerClass.rogue: return spirit * 0.84f - 13;
-        case PlayerClass.shaman: return spirit * 0.28f - 3.6f;
-        case PlayerClass.warlock: return spirit * 0.12f + 1.5f;
-        case PlayerClass.warrior: return spirit * 1.26f - 22.6f;
+        case PlayerClass.rogue: return spirit * 0.5f + 2;
+        case PlayerClass.shaman: return spirit * 0.11f + 7;
+        case PlayerClass.warlock: return spirit * 0.07f + 6;
+        case PlayerClass.warrior: return spirit * 0.8f + 6;
         }
     }
+
+    /// How much more health a player regenerates not standing: a third (WoWWiki "Health regeneration": "increased by
+    /// 33% while sitting").
+    enum float sittingHealthRegen = 4.0f / 3;
 
     /// Milliseconds left of the five-second rule: after mana is spent, spirit regenerates none of it (`manaSpent`).
     uint spiritPaused;
 
-    /// Mana was spent on a spell: for five seconds spirit's regeneration stops, but for the share
-    /// `MOD_MANA_REGEN_INTERRUPT` auras keep (Meditation).
-    void manaSpent()
+    /**
+     * Mana was spent on a spell: for five seconds spirit's regeneration stops, but for the share
+     * `MOD_MANA_REGEN_INTERRUPT` auras keep (Meditation); for a channel, paid as it starts, as long as it channels if
+     * that is longer (WoWWiki "Mana regeneration": "Tranquility channels for 10 seconds and interrupts your
+     * regeneration for the full 10 seconds").
+     */
+    void manaSpent(uint channelMs = 0)
     {
-        spiritPaused = 5000;
+        spiritPaused = max(spiritPaused, 5000, channelMs);
     }
 
     /// Mana per second, from spirit and class, times what `MOD_POWER_REGEN_PERCENT` auras of mana make it (Innervate,
@@ -700,7 +719,7 @@ final class Player : InventoryOwner
 
     /**
      * Health per second now (CMaNGOS's `RegenerateHealth`): out of combat from spirit, times
-     * `MOD_HEALTH_REGEN_PERCENT` auras (Regeneration), half again sitting; in combat none, but the share
+     * `MOD_HEALTH_REGEN_PERCENT` auras (Regeneration), a third more sitting (`sittingHealthRegen`); in combat none, but the share
      * `MOD_REGEN_DURING_COMBAT` auras keep of it; and always `MOD_HEALTH_REGEN_IN_COMBAT`'s (Demon Armor).
      */
     float healthRegenNow(float healthRate, bool inCombat) const
@@ -712,7 +731,7 @@ final class Player : InventoryOwner
             add = healthRegenPerSecond() * healthRate;
             add *= inCombat ? duringCombat / 100.0f : auras.multiplier(AuraType.modHealthRegenPercent);
             if (values.getByte!UNIT_FIELD_BYTES_1(0) != 0)
-                add *= 1.5f; // not standing
+                add *= sittingHealthRegen; // not standing
         }
         add += auras.total(AuraType.modHealthRegenInCombat);
         return add > 0 ? add : 0;

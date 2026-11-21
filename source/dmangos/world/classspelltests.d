@@ -86,6 +86,13 @@ private final class Arena
         foe.values.set!UNIT_FIELD_HEALTH(10_000u);
         foe.values.set!UNIT_FIELD_RESISTANCES(0, 0u);
         hero.read();
+        // The same rolls at every run: a test fails for good or not at all (a dodge's aura state, a block's).
+        {
+            import std.random : rndGen;
+
+            map.random.seed(20_261_121);
+            rndGen.seed(20_261_121);
+        }
     }
 
     /// A spell of the world's, with its first effect, its target and amount (`value`; the dice's one included).

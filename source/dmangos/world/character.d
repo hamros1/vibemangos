@@ -900,7 +900,7 @@ unittest
     assert(pvpFlagged(anduin));
 }
 
-// An enemy capital flags a visitor on any realm; his own never does. The free-for-all arena.
+// The other side's land and capital flag a visitor on any realm; his own never does. The free-for-all arena.
 unittest
 {
     auto db = newDatabase();
@@ -914,7 +914,10 @@ unittest
     assert(!pvpFlagged(anduin), "a human at home");
     thrall.session.inWorld.updateZone(zoneElwynn, zoneElwynn);
     thrall.session.inWorld.updatePvPTimers(300_000);
-    assert(!pvpFlagged(thrall), "Alliance land on a normal realm: off after five minutes");
+    assert(pvpFlagged(thrall), "Alliance land flags him on a normal realm too");
+    thrall.session.inWorld.updateZone(zoneStranglethorn, zoneStranglethorn);
+    thrall.session.inWorld.updatePvPTimers(300_000);
+    assert(!pvpFlagged(thrall), "contested land on a normal realm: off after five minutes");
 
     auto me = anduin.session.inWorld;
     me.updateZone(zoneStranglethorn, areaGurubashiArena);
@@ -945,6 +948,19 @@ unittest
     orc.pvpLeftCombat();
     orc.updatePvPTimers(30_000);
     assert(!orc.isPvPContested && pvpFlagged(thrall), "30 s out of combat: not contested; flagged 5 minutes");
+}
+
+// Healing a flagged player flags the healer, though neither is fighting (it needed the flagged one in combat).
+unittest
+{
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(0, 0, 0));
+    auto jaina = loggedIn(context, db, 8, "Jaina", Position(2, 0, 0));
+    anduin.write(Opcode.CMSG_TOGGLE_PVP, null);
+    assert(pvpFlagged(anduin) && !pvpFlagged(jaina) && !anduin.session.inWorld.inCombat);
+    jaina.session.inWorld.pvpAssisted(anduin.session.inWorld);
+    assert(pvpFlagged(jaina));
 }
 
 // Honor (`dmangos.world.honor`): a kill of an enemy player, its credit and the fields; kept over a save.

@@ -4579,9 +4579,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         foreach (ref m; database.expiredMail(unixTime))
         {
             database.deleteMail(m.id);
-            if (m.itemGuid && m.messageType == 0 && m.sender && !(m.checked & (checkReturned | checkCodPayment)))
+            // "After the expiry period the mail is returned to the sender" with its item or money; the auction
+            // house's and NPCs' is discarded (WoWWiki "Mail", 2006-11; docs/FORMULAS.md "Mail").
+            if ((m.itemGuid || m.money) && m.messageType == 0 && m.sender
+                && !(m.checked & (checkReturned | checkCodPayment)))
             {
                 MailRecord back;
+                back.money = m.money;
                 back.sender = m.receiver;
                 back.receiver = m.sender;
                 back.subject = m.subject;
@@ -4589,8 +4593,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 back.itemGuid = m.itemGuid;
                 back.itemEntry = m.itemEntry;
                 back.checked = checkReturned;
-                if (auto item = database.looseItem(back.itemGuid))
-                    database.saveLooseItem(item.get, back.receiver);
+                if (back.itemGuid)
+                    if (auto item = database.looseItem(back.itemGuid))
+                        database.saveLooseItem(item.get, back.receiver);
                 postMail(back, 0);
                 continue;
             }

@@ -1856,8 +1856,8 @@ final class CharacterStatements
     void updateMail(const ref MailRecord m)
     {
         characters.transaction({
-            characters.execute!("UPDATE mail SET money = ?, cod = ?, checked = ?, has_items = ? WHERE id = ?")(m.money,
-                m.cod, m.checked, m.itemGuid ? 1 : 0, m.id);
+            characters.execute!("UPDATE mail SET money = ?, cod = ?, checked = ?, has_items = ?, expire_time = ? WHERE id = ?")(m.money,
+                m.cod, m.checked, m.itemGuid ? 1 : 0, m.expireTime, m.id);
             if (!m.itemGuid)
                 characters.execute!"DELETE FROM mail_items WHERE mail_id = ?"(m.id);
         });

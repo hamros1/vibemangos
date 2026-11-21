@@ -4,7 +4,7 @@
  * At a mailbox a player sends a letter to a character of its faction (30 copper), with an item,
  * money or cash on delivery; reads its letters (`mail`, newest last, 50 at most); takes their money
  * and items (paying what is due on delivery, which goes back to the sender by mail); copies a body
- * as a letter item; returns or deletes them. A letter with an item or money to another account
+ * as a letter item; returns or deletes them. A letter with an item to another account
  * arrives an hour later (`mail_delivery_delay`); others at once, with "you have new mail" if the
  * receiver is online here. The database holds it all and is read each time, so a player sees its
  * mail whichever node simulates it.
@@ -170,7 +170,8 @@ private:
         }
         else
             flushInventory(true);
-        const delay = (item !is null || money) && raceAccount[1] != account.id ? context.config.mailDeliveryDelay : 0;
+        // "One hour delivery if items are attached"; money and words at once (WoWWiki "Mail", 2006-11).
+        const delay = item !is null && raceAccount[1] != account.id ? context.config.mailDeliveryDelay : 0;
         postMail(mail, delay);
         info!"%s: '%s' mailed %s (item %s, %s copper, %s on delivery)"(remoteAddress, player.data.name, receiverName,
             mail.itemEntry, money, mail.cod);
@@ -305,6 +306,10 @@ private:
             return;
         if (auto mail = deliveredMail(id))
         {
+            // "if you read the mail, it'll only last for 3 days" (WoWWiki "Mail", 2006-11; docs/FORMULAS.md "Mail").
+            enum long readLasts = 3 * 24 * 60 * 60;
+            if (!(mail.checked & mailRead) && mail.expireTime > context.unixTime + readLasts)
+                mail.expireTime = context.unixTime + readLasts;
             mail.checked |= mailRead;
             context.database.updateMail(*mail);
         }
@@ -351,9 +356,7 @@ private:
             if (back.itemGuid)
                 if (auto item = context.database.looseItem(back.itemGuid))
                     context.database.saveLooseItem(item.get, back.receiver);
-            const senderAccount = context.database.characterRaceAccount(mail.sender)[1];
-            postMail(back, (back.itemGuid || back.money) && senderAccount != account.id
-                ? context.config.mailDeliveryDelay : 0);
+            postMail(back, 0); // "Return mail arrives immediately" (WoWWiki "Mail", 2006-11)
         }
         sendMailResult(id, MailAction.returnedToSender, MailError.ok);
     }
@@ -544,13 +547,66 @@ unittest
 }
 
 /**
+ * Money with no item comes at once, to another account too ("One hour delivery if items are attached", WoWWiki
+ * "Mail"; it took the hour); read, a letter's 30 days become 3.
+ */
+unittest
+{
+    import dmangos.bytes : ByteWriter;
+    import dmangos.world.gameobject : GameObject;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.opcodes;
+    import dmangos.world.player : Player;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8941, -140, 83));
+    auto jaina = loggedIn(context, db, 8, "Jaina", Position(-8939, -140, 83));
+    anduin.read();
+    jaina.read();
+    auto a = cast(Player) anduin.session.character, j = cast(Player) jaina.session.character;
+    const mailbox = makeGuid(HighGuid.gameObject, 32349, 26880);
+    assert(cast(GameObject) context.map(0).findObject(mailbox) !is null);
+    a.receive(Copper(100));
+    ByteWriter send;
+    send.put(mailbox);
+    send.putCString("jaina");
+    send.putCString("Coins");
+    send.putCString("");
+    send.put(41u);
+    send.put(0u);
+    send.put(0UL);
+    send.put(10u);
+    send.put(0u);
+    send.put(0UL);
+    send.put(ubyte(0));
+    anduin.write(Opcode.CMSG_SEND_MAIL, send.data);
+    anduin.read();
+    auto mails = db.loadMail(j.data.guid);
+    assert(mails.length == 1 && mails[0].money == 10 && mails[0].deliverTime <= context.unixTime, "at once");
+    assert(mails[0].expireTime >= context.unixTime + 29 * 24 * 60 * 60);
+    ByteWriter read;
+    read.put(mailbox);
+    read.put(mails[0].id);
+    jaina.write(Opcode.CMSG_MAIL_MARK_AS_READ, read.data);
+    jaina.read();
+    const after = db.loadMail(j.data.guid)[0];
+    assert(after.expireTime <= context.unixTime + 3 * 24 * 60 * 60 && after.expireTime > context.unixTime, "3 days");
+}
+
+/**
  * Old mail: a player's letter with an item, its time up, goes back to its sender
- * (once); one without an item, or already returned, is deleted with its item.
+ * (once); one with money too; one with neither, or already returned, is deleted with its item.
  */
 unittest
 {
     import core.time : MonoTime;
+    import std.algorithm.iteration : filter;
     import std.algorithm.searching : canFind;
+    import std.array : array;
     import dmangos.world.database : MailRecord;
     import dmangos.world.inventory : ItemRecord;
     import dmangos.world.testclient;
@@ -568,12 +624,20 @@ unittest
     db.saveLooseItem(sword, 8);
     auto withSword = MailRecord(901, 0, 41, 0, 7, 8, "a sword", 0, past, past, 0, 0, 0, 5001, itemSword);
     auto note = MailRecord(902, 0, 41, 0, 7, 8, "hello", 0, past, past, 0, 0, 0, 0, 0);
+    auto coins = MailRecord(903, 0, 41, 0, 7, 8, "coins", 0, past, past, 25, 0, 0, 0, 0);
     db.sendMail(withSword);
     db.sendMail(note);
+    db.sendMail(coins);
     context.update(now);
     auto mine = db.loadMail(7);
     assert(db.mailById(901).isNull && db.mailById(902).isNull, "both gone from the receiver");
+    // Money comes back too ("returned to the sender", WoWWiki "Mail"); it was lost.
+    assert(mine.canFind!(m => m.money == 25 && m.checked == mailReturned), "the coins back to their sender");
+    mine = mine.filter!(m => m.itemGuid).array;
     assert(mine.length == 1 && mine[0].itemGuid == 5001 && mine[0].checked == mailReturned, "the sword back to its sender");
+    foreach (m; db.loadMail(7))
+        if (!m.itemGuid)
+            db.deleteMail(m.id);
     assert(!db.looseItem(5001).isNull);
 
     // Returned once already: next time it is deleted, with the sword.

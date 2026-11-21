@@ -57,7 +57,8 @@ enum : uint
     skillFistWeapons = 473,
 }
 
-/// Keyring slots the client shows, by level / 10.
+/// Keyring slots by (level - 1) / 10: Blizzard's 1.11 announcement (WoWWiki "Keyring", 2006-11): "Level 1-40 = 4 slots,
+/// Level 41-50 = 8 slots, Level 51-60 = 12 slots" (it went by level / 10: 8 at 40, 12 at 50).
 private immutable uint[7] keyringSizeByLevel = [4, 4, 4, 4, 8, 12, 12];
 
 /// The client's equip errors (`SMSG_INVENTORY_CHANGE_FAILURE`); values are on the wire.
@@ -836,7 +837,7 @@ final class Inventory
     @property uint keyringSize() const
     {
         const level = owner.ownerLevel;
-        return level <= 60 ? keyringSizeByLevel[level / 10] : keyringSlotEnd - keyringSlotStart;
+        return level <= 60 ? keyringSizeByLevel[level > 0 ? (level - 1) / 10 : 0] : keyringSlotEnd - keyringSlotStart;
     }
 
     /// Whether the position can exist; without `explicitPos`, "anywhere" may be meant.
@@ -2298,9 +2299,10 @@ version (unittest)
     private final class TestOwner : InventoryOwner
     {
         bool dualWield;
+        uint level = 10;
 
         @property ulong ownerGuid() const { return makeGuid(HighGuid.player, 7); }
-        @property uint ownerLevel() const { return 10; }
+        @property uint ownerLevel() const { return level; }
         @property ubyte highestHonorRank() const { return 0; }
         @property ubyte ownerClass() const { return classWarrior; }
         @property ubyte ownerRace() const { return raceHuman; }
@@ -2320,6 +2322,20 @@ version (unittest)
         fields = new UpdateValues(TypeId.player);
         return new Inventory(world, new TestOwner, fields, testItemGuids());
     }
+}
+
+/// The keyring: 4 slots to level 40, 8 to 50, 12 to 60 (Blizzard's 1.11 announcement; it gave 8 at 40, 12 at 50).
+unittest
+{
+    auto world = testWorldData(testClientData());
+    auto owner = new TestOwner;
+    auto inventory = new Inventory(world, owner, new UpdateValues(TypeId.player), testItemGuids());
+    uint at(uint level)
+    {
+        owner.level = level;
+        return inventory.keyringSize;
+    }
+    assert(at(1) == 4 && at(40) == 4 && at(41) == 8 && at(50) == 8 && at(51) == 12 && at(60) == 12);
 }
 
 /// Storing: onto stacks first, then free backpack slots; special bags take what belongs in them.

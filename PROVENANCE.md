@@ -666,6 +666,8 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
   templates by name and faction); the turn-ins (warcraft.wiki.gg "Alterac Valley (original)", the quests', spells' and
   spawns' data; docs/FORMULAS.md, "Alterac Valley's turn-ins"); vmangos's `BattleGroundAV::HandleQuestComplete`
   (20 scraps a turn-in, 500 an upgrade, 28418 .. 28420) compared afterwards
+* Not from an emulator: the bonus honor units of the general, captain and towers (Wowpedia "Honor system (pre-2.0 formulas)")
+* Not from an emulator: five minutes to take a node (patch 2.3.0's notes: down from 5 to 4); Arathi Basin's reputation every 200 resources, 150 on the holiday (WoWWiki "Arathi Basin", 2006, in world/arathi.d)
 
 ## world/auctionhandlers.d
 
@@ -679,6 +681,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions: `AuctionHouseMgr::GetAuctionHouseEntry`, `AuctionHouseMgr::GetAuctionDeposit`, `AuctionEntry::GetAuctionCut`
 * Configuration: `Rate.Auction.Deposit`, `Rate.Auction.Cut`, `Rate.Auction.Time`, `Auction.Deposit.Min`
 * Constants: `MAX_AUCTION_ITEMS_CLIENT_UI_PAGE`, `MIN_AUCTION_TIME`, `SMSG_AUCTION_BIDDER_NOTIFICATION`, `SMSG_AUCTION_OWNER_NOTIFICATION`, `SMSG_AUCTION_REMOVED_NOTIFICATION`
+* Not from an emulator: the deposit's two-hour base rounded down before the spans (WoWWiki "Auction House", 2006; docs/FORMULAS.md "Auctions")
 
 ## world/aurahandlers.d
 
@@ -891,6 +894,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Constants: `DEAD`, `GAMEOBJECT_TYPE_TRAP`, `SMSG_TRANSFER_ABORTED`, `SMSG_WEATHER`, `WUPDATE_AUCTIONS`
 * Also: `CreatureLinkingHolder::DoCreatureLinkingEvent` (the respawn flags in dungeon copies), `Creature::Respawn`, `PoolManager::UpdatePool` (a pooled spawn's respawn rolls its pool again)
 * Not from an emulator: `raidResetDays` (MapDifficulty.db2's `ResetInterval`, patch 1.9.0's days), `instanceLimitReached` and `tooManyInstances` (five copies an hour, Blizzard's statement) (docs/FORMULAS.md)
+* Not from an emulator: an expired letter with money only returned to its sender (WoWWiki "Mail", 2006)
 
 ## world/corpse.d
 
@@ -1009,6 +1013,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `MovementHandler.cpp`, `World.cpp` (`MirrorTimer.*.Max`, `EnvironmentalDamage.Min/Max`, `Rate.Damage.Fall`)
 * Functions: `MirrorTimer` (`Start`, `Stop`, `SetScale`, `SetDuration`, `SetFrozen`, `Update`, `FetchStatus`), `Player::UpdateMirrorTimers`, `Player::CheckMirrorTimerActivation`, `Player::CheckMirrorTimerDeactivation`, `Player::OnMirrorTimerExpirationPulse`, `Player::GetMirrorTimerMaxDuration`, `Player::SendMirrorTimers`, `Player::SendMirrorTimerStart`, `Player::SendMirrorTimerStop`, `Player::SetEnvironmentFlags`, `Player::UpdateTerainEnvironmentFlags`, `Player::SetWaterBreathingIntervalMultiplier`, `Player::GetWaterBreathingInterval`, `Player::EnvironmentalDamage`, `Player::HandleFall`, `Player::UpdateFallInformationIfNeed`, `Player::SetFallInformation`, `Unit::SendEnvironmentalDamageLog`, `Unit::GetCollisionHeight`, `Aura::HandleWaterBreathing`, `Aura::HandleModWaterBreathing`, `WorldSession::HandleMoverRelocation` (below -500), `WorldSession::ProcessMovementInfo`
 * Constants: `EnvironmentFlags`, `EnvironmentalDamageType`, `MAP_ALL_LIQUIDS`, `SMSG_START_MIRROR_TIMER`, `SMSG_STOP_MIRROR_TIMER`, `SMSG_ENVIRONMENTALDAMAGELOG`, `AURA_INTERRUPT_FLAG_UNDERWATER_CANCELS`, `AURA_INTERRUPT_FLAG_ABOVEWATER_CANCELS`
+* Not from an emulator: durability lost on every environmental death but the fall through the world (WoWWiki "Death", 2006; docs/FORMULAS.md "Durability")
 
 ## world/eventai.d
 
@@ -1113,6 +1118,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `Group.cpp`
 * Functions: `Group::AddMember`, `Group::BroadcastPacket`, `Group::ChangeLeader`, `Group::ConvertToRaid`, `Group::Create`, `Group::Disband`, `Group::MemberSlot`, `Group::RemoveMember`, `Group::SendTargetIconList`, `Group::SendUpdate`, `Group::SendUpdateTo`, `Group::SetTargetIcon`, `Group::UpdatePlayerOnlineStatus`, `Group::UpdatePlayerOutOfRange`, `ObjectMgr::LoadGroups`, `Player::GetGroup`, `Player::GetGroupInvite`, `Player::IsInSameGroupWith`, `Player::UninviteFromGroup`, `WorldSession::BuildPartyMemberStatsChangedPacket`, `WorldSession::HandleRequestPartyMemberStatsOpcode`
 * Constants: `ITEM_QUALITY_UNCOMMON`, `MAX_GROUP_SIZE`, `MAX_RAID_SIZE`, `MAX_RAID_SUBGROUPS`, `SMSG_GROUP_LIST`, `SMSG_PARTY_MEMBER_STATS`, `SMSG_PARTY_MEMBER_STATS_FULL`, `TARGET_ICON_COUNT`
+* Not from an emulator: the loot threshold uncommon to epic and the master a member (WoWWiki "Party", 2006)
 
 ## world/grouphandlers.d
 
@@ -1209,6 +1215,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `Bag.cpp`, `Item.cpp`, `Item.h`, `ItemPrototype.h`, `Player.cpp`, `SharedDefines.h`
 * Functions: `Bag::Create`, `Bag::IsEmpty`, `Bag::RemoveItem`, `Bag::StoreItem`, `Item::CalculateDurabilityRepairCost`, `Item::CanBeMergedPartlyWith`, `Item::CloneItem`, `Item::CreateItem`, `Item::Create`, `Item::GetBagSlot`, `Item::GetBaseRepairCost`, `Item::GetPos`, `Item::GetSellPrice`, `Item::GetSkill`, `Item::IsBag`, `Item::IsBindedNotWith`, `Item::IsEquipped`, `Item::IsSoulBound`, `Item::LoadFromDB`, `Item::SaveToDB`, `Item::SetBinding`, `Item::SetState`, `ItemPosCount::isContainedIn`, `ItemPrototype::CanChangeEquipStateInCombat`, `Player::AddItemToBuyBackSlot`, `Player::AutoUnequipOffhandIfNeed`, `Player::CanBankItem`, `Player::CanDualWield`, `Player::CanEquipItem`, `Player::CanEquipNewItem`, `Player::CanStoreItem`, `Player::CanStoreNewItem`, `Player::CanUnequipItem`, `Player::CanUseAmmo`, `Player::CanUseItem`, `Player::DestroyItemCount`, `Player::DestroyItem`, `Player::EquipItem`, `Player::EquipNewItem`, `Player::FindEquipSlot`, `Player::GetBankBagSlotCount`, `Player::GetItemByGuid`, `Player::GetItemByPos`, `Player::GetItemCount`, `Player::GetItemFromBuyBackSlot`, `Player::GetMaxKeyringClientSize`, `Player::HasItemWithIdEquipped`, `Player::HasSpell`, `Player::IsBagPos`, `Player::IsBankPos`, `Player::IsEquipmentPos`, `Player::IsInventoryPos`, `Player::IsTwoHandUsed`, `Player::IsValidPos`, `Player::RemoveItemFromBuyBackSlot`, `Player::RemoveItem`, `Player::SaveItemToInventory`, `Player::SendEquipError`, `Player::SetBankBagSlotCount`, `Player::SetVisibleItemSlot`, `Player::SplitItem`, `Player::StoreItem`, `Player::StoreNewItem`, `Player::SwapItem`, `Player::ViableEquipSlots`, `Player::VisualizeItem`, `Player::_CanStoreItem_InBag`, `Player::_CanStoreItem_InInventorySlots`, `Player::_CanStoreItem_InSpecificSlot`, `Player::_CanStoreItem`, `Player::_CanTakeMoreSimilarItems`, `Player::_LoadInventory`, `Player::_SaveInventory`, `Player::_StoreItem`, `Player::m_items`
 * Constants: `EQUIP_ERR_NONE`, `ITEM_DYNFLAG_BINDED`, `ITEM_DYNFLAG_UNLOCKED`, `ITEM_DYNFLAG_WRAPPED`, `SMSG_BUY_FAILED`, `SMSG_INVENTORY_CHANGE_FAILURE`, `SMSG_SELL_ITEM`
+* Not from an emulator: the keyring's sizes by Blizzard's 1.11 levels (1-40, 41-50, 51-60)
 
 ## world/inworld.d
 
@@ -1229,6 +1236,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `LootMgr.cpp`
 * Functions: `GroupLootRoll::AllPlayerVoted`, `GroupLootRoll::Finish`, `GroupLootRoll::PlayerVote`, `GroupLootRoll::TryToStart`, `GroupLootRoll::UpdateRoll`, `Loot::AddItem`, `Loot::CanLoot`, `Loot::FillLoot`, `Loot::GenerateMoneyLoot`, `Loot::GetLootContentFor`, `Loot::GetLootStatusFor`, `Loot::GroupCheck`, `Loot::IsItemAlreadyIn`, `Loot::IsLootedFor`, `Loot::IsLootedForAll`, `Loot::NotifyItemRemoved`, `Loot::Release`, `Loot::SendGold`, `Loot::SendItem`, `Loot::SendReleaseFor`, `Loot::SendReleaseForAll`, `Loot::ShowContentTo`, `Loot::Update`, `LootGroup::Roll`, `LootItem::GetSlotTypeForSharedLoot`, `LootMgr::PlayerVote`, `LootStoreItem::Roll`, `LootTemplate::AddEntry`, `LootTemplate::HasQuestDrop`, `LootTemplate::LootGroup`, `LootTemplate::Process`
 * Constants: `ITEM_FLAG_MULTI_DROP`, `ITEM_QUALITY_UNCOMMON`, `LOOTITEM_TYPE_QUEST`, `LOOT_ROLL_TIMEOUT`, `LOOT_STATUS_FAKE_LOOT`, `MAX_NR_LOOT_ITEMS`, `SMSG_LOOT_RESPONSE`, `SMSG_LOOT_ROLL`, `SMSG_LOOT_START_ROLL`, `UNIT_FLAG_LOOTING`
+* Not from an emulator: need before greed's automatic pass for who cannot use the item, and the copper over a money split one each (WoWWiki "Loot", 2006; docs/FORMULAS.md "Group loot")
 
 ## world/loothandlers.d
 
@@ -1237,6 +1245,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Not from an emulator: a group kill's reputation, all of it to each member near it (docs/FORMULAS.md, "Reputation"); the shares of experience agree with Wowpedia "Mob experience" (CMaNGOS's half-plus-one when the highest member finds the kill grey has no source)
 * Functions: `Creature::PrepareBodyLootState`, `CreatureStaticFlags::NO_LOOT`, `CreatureStaticFlags::NO_XP`, `Group::RewardGroupAtKill`, `Item::m_loot`, `LockEntry::Skill`, `Loot::Loot`, `Loot::Release`, `Loot::SetGroupLootRight`, `Loot::SetPlayerIsLooting`, `ObjectMgr::IsConditionSatisfied`, `Player::IsAtGroupRewardDistance`, `Player::RemoveFromWorld`, `Player::RewardSinglePlayerAtKill`, `Player::SendLootError`, `Unit::DealDamage`, `Unit::Kill`, `XP::Gain`
 * Constants: `CMSG_AUTOSTORE_LOOT_ITEM`, `CMSG_LOOT_MASTER_GIVE`, `CMSG_LOOT_ROLL`, `SMSG_PARTYKILLLOG`, `UNIT_FLAG_LOOTING`
+* Not from an emulator: need before greed's "can use" counting the weapon or armor skill (docs/FORMULAS.md "Group loot")
 
 ## world/mailhandlers.d
 
@@ -1244,6 +1253,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `MailHandler.cpp`
 * Functions: `MailDraft::SendMailTo`, `Player::SendMailResult`
 * Constants: `MAIL_BODY_ITEM_TEMPLATE`
+* Not from an emulator: money alone and returned mail at once, a read letter's 3 days (WoWWiki "Mail", 2006; docs/FORMULAS.md "Mail")
 
 ## world/main.d
 
@@ -1358,6 +1368,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions: `Aura::HandleAuraModStat`, `Group::_updateMembersOnRosterChanged`, `Object::BuildValuesUpdate`, `Player::BuildCreateUpdateBlockForPlayer`, `Player::CanDualWield`, `Player::ComputeRest`, `Player::ExploreArea`, `Player::GetChatTag`, `Player::GiveLevel`, `Player::HasItemCount`, `Player::HasSpell`, `Player::LoadFromDB`, `Player::ModifyMoney`, `Player::RegenerateAll`, `Player::SaveToDB`, `Player::SendInitialPacketsBeforeAddToMap`, `Player::SetRestBonus`, `Player::SetRestType`, `Player::SetSkill`, `Player::UpdateFreeTalentPoints`, `Player::UpdateSkillsForLevel`, `Player::_ApplyItemMods`, `Player::_LoadInventory`, `Player::autoReplyMsg`, `Player::bGMTagOn`, `Player::m_areaUpdateId`, `Spell::EffectDualWield`, `Spell::EffectProficiency`, `Unit::GetPowerType`, `Unit::HandleEmoteState`, `Unit::OCTRegenHPPerSpirit`, `Unit::OCTRegenMPPerSpirit`, `Unit::SetStandState`, `Unit::SetStunned`, `Unit::SetTargetGuid`, `Unit::m_speed_rate`
 * Constants: `CORPSE`, `DEAD`, `MAX_MONEY_AMOUNT`, `PLAYER_EXPLORED_ZONES_1`, `PLAYER_FIELD_COINAGE`, `SKILL_FLAG_MAXIMIZED`, `SMSG_ACTION_BUTTONS`, `SMSG_LEVELUP_INFO`, `SMSG_SET_PROFICIENCY`, `SPELL_EFFECT_DUAL_WIELD`
 * Also: `Player::RegenerateHealth` (`SPELL_AURA_MOD_REGEN_DURING_COMBAT`, `SPELL_AURA_MOD_HEALTH_REGEN_PERCENT`, `SPELL_AURA_MOD_HEALTH_REGEN_IN_COMBAT`), `Player::Regenerate` and `Player::UpdateManaRegen` (`SPELL_AURA_MOD_POWER_REGEN_PERCENT`), `Aura::HandleInterruptRegen` (`SetInDummyCombatState`, spells 5229 and 29131)
+* Not from an emulator: health from spirit a two-second tick (the 1.x research table; a mage's, paladin's and priest's lines stay `OCTRegenHPPerSpirit`'s), a third more sitting, the five-second rule as long as a channel (docs/FORMULAS.md "Health and mana from spirit")
 
 ## world/playercreate.d
 
@@ -1410,6 +1421,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Functions: `Player::UpdateArea`, `Player::UpdatePvP`, `Player::UpdatePvPContested`, `Player::UpdatePvPFlagTimer`, `Player::UpdateZone`, `Unit::ClearInCombat`, `Unit::SetInCombatWith`, `Unit::SetInCombatWithAggressor`, `Unit::SetInCombatWithAssisted`, `Unit::SetPvP`, `WorldSession::HandleTogglePvP`
 * Constants: `AREA_FLAG_ARENA`, `AREA_FLAG_CAPITAL`, `FACTION_TEMPLATE_FLAG_ATTACK_PVP_ACTIVE_PLAYERS`, `PLAYER_FLAGS_CONTESTED_PVP`, `PLAYER_FLAGS_FFA_PVP`, `PLAYER_FLAGS_PVP_DESIRED`, `UNIT_FLAG_PVP`
+* Not from an emulator: the other side's land flagging on every realm, and a heal flagging out of combat (WoWWiki "PvP flag", 2006; docs/FORMULAS.md "The PvP flag")
 
 ## world/queries.d
 
@@ -1444,6 +1456,11 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 ## world/realclassspelltests.d
 
 * Projects: CMaNGOS (the client's DBC files and its classic world database, as the server runs on them)
+
+## world/realrules_world2.d
+
+* Not from an emulator: tests of the stats and regeneration rules, loot, the economy and the timers of docs/FORMULAS.md
+  on the client's DBC files and the classic world database.
 
 ## world/realrules_combat.d
 
@@ -1571,7 +1588,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions: `GameObject::Use`, `Player::ClearCooldownForSpell`, `Player::ClearCooldownsOnLine`, `Player::HasItemFitToSpellReqirements`, `Player::_LoadSpellCooldowns`, `Player::_SaveSpellCooldowns`, `Spell::CheckCast`, `Spell::CheckItems`, `Spell::EffectEnergize`, `Spell::EffectHeal`, `Spell::EffectInstaKill`, `Spell::EffectPersistentAA`, `Spell::EffectTeleportUnits`, `Spell::EffectTransmitted`, `Spell::EffectWeaponDmg`, `Spell::SendChannelStart`, `Spell::SendChannelUpdate`, `Spell::SetTargetMap`, `Spell::SpellStart`, `Spell::cancel`, `Spell::cast`, `Spell::m_delayMoment`, `Spell::update`, `Unit::AttackerStateUpdate`, `Unit::CalculateSpellDamage`, `Unit::SpellDamageBonusDone`, `Unit::SpellHealingBonusDone`, `Unit::SpellHitResult`
 * Constants: `CMSG_CANCEL_CHANNELLING`, `CURRENT_CHANNELED_SPELL`, `CURRENT_GENERIC_SPELL`, `CURRENT_MELEE_SPELL`, `FISHING_BOBBER_READY_TIME`, `MSG_CHANNEL_START`, `MSG_CHANNEL_UPDATE`, `SMSG_CLEAR_COOLDOWN`, `SMSG_FISH_NOT_HOOKED`, `SMSG_INITIAL_SPELLS`, `SMSG_SPELLINSTAKILLLOG`, `SMSG_SPELL_GO`, `SMSG_SPELL_START`, `SPELL_ATTR_EX_IS_CHANNELED`, `SPELL_AURA_MOD_DAMAGE_DONE`, `SPELL_AURA_MOD_HEALING_DONE`, `SPELL_AURA_PERIODIC_DAMAGE`, `SPELL_EFFECT_APPLY_AURA`, `SPELL_FAILED_EQUIPPED_ITEM_CLASS`, `SPELL_INTERRUPT_FLAG_MOVEMENT`, `TARGET_ALL_ENEMY_IN_AREA`, `TARGET_CASTER_COORDINATES`, `TRIGGERED_OLD_TRIGGERED`
 * Also: `TARGET_UNIT_SCRIPT_NEAR_CASTER`, `Spell::CheckScriptTargeting` (`spell_script_target`), `TARGET_UNIT_FRIEND_AND_PARTY`
-* Not from an emulator: fishing's skill-ups (only on a catch, by the measured catches a point) and skinning's required skill (one formula, Wowpedia "Skinning") (docs/FORMULAS.md)
+* Not from an emulator: fishing's skill-ups (only on a catch, by the measured catches a point) and skinning's required skill (one formula, Wowpedia "Skinning") (docs/FORMULAS.md); a mage's spell crit from intellect at level 60 (Blizzard's 59.5 a percent; docs/FORMULAS.md "Spell crit from intellect"), the other rows `Player::GetSpellCritFromIntellect`'s
 * Also: `Spell::OnCheckCast` (a script's refusal last of `CheckCast`), `Spell::OnSuccessfulStart` (in `Spell::Prepare`),
   `TARGET_UNIT_RAID`
 * Not from an emulator: the spell data's `CasterAuraState` and `TargetAuraState` refused at the cast (Revenge,

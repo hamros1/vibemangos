@@ -49,18 +49,22 @@ enum uint areaFlagArena = 0x80, areaFlagCapital = 0x100;
 enum uint spellHonorlessTarget = 2479;
 
 /**
- * Whether a zone enforces PvP: whether it flags a player of `alliance` (or the
- * Horde) for PvP, on a realm of `gameType`.
+ * Whether a zone enforces PvP: whether it flags a player of `alliance` (or the Horde) for PvP, on a realm of
+ * `gameType`. On every realm the other side's capitals and the zones its races begin in (`enemyStartZone`:
+ * playercreateinfo's); on PvP realms all the other side's land and contested land too (WoWWiki "PvP flag", 2006-10:
+ * "You enter a territory that is one of the beginning zones for the opposite faction", "You enter an opposing
+ * factions capital city ... This applies even on PvE Realms", "Only applies to PvP Realms: You enter a contested
+ * territory"; docs/FORMULAS.md "The PvP flag").
  */
-bool enforcedPvPZone(uint zoneTeam, uint zoneFlags, bool alliance, uint gameType, bool inBattleground = false)
-    pure nothrow @nogc @safe
+bool enforcedPvPZone(uint zoneTeam, uint zoneFlags, bool alliance, uint gameType, bool enemyStartZone = false,
+    bool inBattleground = false) pure nothrow @nogc @safe
 {
     switch (zoneTeam)
     {
-    case AreaTeam.alliance:
-        return !alliance && (isPvPRealm(gameType) || (zoneFlags & areaFlagCapital));
-    case AreaTeam.horde:
-        return alliance && (isPvPRealm(gameType) || (zoneFlags & areaFlagCapital));
+    case AreaTeam.alliance, AreaTeam.horde:
+        if ((zoneTeam == AreaTeam.alliance) == alliance)
+            return false; // at home
+        return enemyStartZone || (zoneFlags & areaFlagCapital) || isPvPRealm(gameType);
     case AreaTeam.none:
         return isPvPRealm(gameType) || inBattleground;
     default:
@@ -72,7 +76,8 @@ unittest
 {
     enum normal = 0, pvp = 1;
     assert(enforcedPvPZone(AreaTeam.horde, areaFlagCapital, true, normal), "an enemy capital, on any realm");
-    assert(!enforcedPvPZone(AreaTeam.horde, 0, true, normal), "enemy land, on a normal realm");
+    assert(enforcedPvPZone(AreaTeam.horde, 0, true, normal, true), "an enemy beginning zone, on any realm");
+    assert(!enforcedPvPZone(AreaTeam.horde, 0, true, normal), "the rest of the enemy's land: not on a normal realm");
     assert(enforcedPvPZone(AreaTeam.horde, 0, true, pvp) && enforcedPvPZone(AreaTeam.none, 0, false, pvp),
         "enemy and contested land, on a PvP realm");
     assert(!enforcedPvPZone(AreaTeam.alliance, areaFlagCapital, true, pvp), "never at home");
@@ -238,7 +243,14 @@ mixin template PvPHandlers()
         if (entry is null)
             return;
         const alliance = context.client.teamForRace(player.data.race) == Team.alliance;
-        pvpEnforcedArea = enforcedPvPZone(entry.team, entry.flags, alliance, context.config.gameType);
+        bool enemyStart; // a zone the other side's races begin in (playercreateinfo)
+        foreach (key, ref info; context.data.playerInfo)
+            if (info.zone == zone && (context.client.teamForRace(cast(ubyte)(key >> 8)) == Team.alliance) != alliance)
+            {
+                enemyStart = true;
+                break;
+            }
+        pvpEnforcedArea = enforcedPvPZone(entry.team, entry.flags, alliance, context.config.gameType, enemyStart);
         if (pvpEnforcedArea)
             updatePvP(true);
         if (pvpArrivedFar)
@@ -293,10 +305,11 @@ mixin template PvPHandlers()
         }
     }
 
-    /// Healing or buffing a flagged player in combat flags the helper.
+    /// Healing a flagged player flags the helper, in combat or not ("If you cast a healing spell or resurrect a
+    /// flagged player, your flag will go up", WoWWiki "PvP flag", 2006-10; docs/FORMULAS.md "The PvP flag").
     package void pvpAssisted(typeof(this) other)
     {
-        if (other is null || other is this || !other.isPvP || !other.inCombat)
+        if (other is null || other is this || !other.isPvP)
             return;
         if (other.pvpInCombat)
             pvpInCombat = true;
