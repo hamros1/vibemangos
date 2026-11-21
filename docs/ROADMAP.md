@@ -1,5 +1,17 @@
 # Status and roadmap
 
+## Open work
+
+- **Clustering.** Route persistent ground effects and script-selected spell targets across
+  nodes. See [spell routing limits](CLUSTER.md#spell-routing-limits) and the
+  [cross-node feature list](CLUSTER.md#what-crosses-nodes-feature-by-feature).
+- **Terrain.** Include moving game objects such as doors and elevators in line-of-sight checks.
+- **Gameplay coverage.** See the [spell audit](SPELLS.md) for gaps by class and the
+  battleground notes below for remaining Alterac Valley events.
+
+The rest of this page records progress and gaps by subsystem. The [gameplay reference](GAMEPLAY.md)
+describes how players use the systems available today.
+
 ## What works
 
 | Area | State | Where |
@@ -28,7 +40,6 @@
 
 * **Stats:** item bonuses, auras (talents' and racials' passive ones included) and the crit, dodge,
   parry and block chances are applied; passives bound to a kind of weapon or armour are not yet.
-* **Not loaded:** pets.
 * **Creatures** wander, walk their waypoints (running their scripts), fight, die and respawn. Type 3 paths (flying) are walked as waypoints; linked creatures
   (`creature_linking`) aggro together and follow their master, and formations (`spawn_group_formation`) walk their
   path with their members in place, and water creatures spawned in deep enough water swim. Conditions
@@ -62,7 +73,7 @@
     run down and expire. Crafting raises professions. Spell foci and tools are enforced; disenchanting
     and picking lockboxes are done.
   * Weapon enchantments' procs (poisons, Crusader) are done.
-  * Enchanting another player's item through trade (the "will not be traded" slot): done. Not yet: wrapping.
+  * Enchanting another player's item through trade and gift wrapping are implemented.
     Readable items and pages (`page_text`): done. Loot in items is done (`CMSG_OPEN_ITEM`). Dying and the spirit healer
     wear gear down (the spirit healer what is in the bags too); a broken worn item's stats come back when it is repaired.
     Unlearning a primary profession forgets all its spells and gives its slot back.
@@ -92,11 +103,9 @@ by the event loop after `idle_timeout`.
 
 Spawned and visible, with queries (ARCHITECTURE.md, "Creatures and game objects"), and gossip,
 trainers, innkeepers, bankers and vendors ("Talking to NPCs", and "Items" for trading), and
-movement: wandering and waypoints ("Creature movement"), and using game objects
-(`gameobject.d`, `gameobjecthandlers.d`; README's "Using game objects": doors, buttons, chairs,
-goobers, locks and chests with their loot, respawns, quest givers), and flight masters
-(`taxi.d`, `taxihandlers.d`; README's "Flight masters"). Next: traps, fishing, and unloading idle
-cells.
+movement, flight masters and interactive objects. Traps, fishing and idle cell unloading are
+implemented. See [NPCs, items and the world](GAMEPLAY.md#npcs-items-and-the-world) and
+[questing and travel](GAMEPLAY.md#questing-and-travel).
 
 ### 4. Map data: started
 
@@ -113,45 +122,44 @@ hearthstones, opening bags of loot) comes with milestone 6's spells and loot.
 
 The largest area. In order:
 
-1. **Melee auto-attack: done** (`combat.d`, `combathandlers.d`, `relations.d`; README's "Melee").
+1. **Melee auto-attack: done** (`combat.d`, `combathandlers.d`, `relations.d`).
    Weapon and defense skills rise with use. Parry haste: done (`combat.parryHasted`; not for a creature with
-   `CREATURE_EXTRA_FLAG_NO_PARRY_HASTEN`). `NO_SKILL_GAINS` is defined by CMaNGOS but used nowhere. Not yet: PvP (no way to be
-   flagged yet). Another node's creature: attacking (casting at, looting) its replica moves the
-   player to that node, and a fight keeps it there (docs/CLUSTER.md).
-2. **Creatures fighting back: done** (`creatureai.d`; README's "Creatures fight"), calling for help
+   `CREATURE_EXTRA_FLAG_NO_PARRY_HASTEN`). PvP and cross-node melee are implemented. See the
+   [cross-node combat paths](CLUSTER.md#what-crosses-nodes-feature-by-feature).
+2. **Creatures fighting back: done** (`creatureai.d`), calling for help
    included, and EventAI scripts with creatures' spells, texts and fleeing (`eventai.d`,
-   `creaturecasting.d`; README's "Creature scripts"), and database scripts for quests, gossip and
+   `creaturecasting.d`), and database scripts for quests, gossip and
    game objects (`dbscripts.d`). Temporary summons (EventAI's and the scripts'). EventAI's morphs, mounts and
    instance data, and paths by id in scripts: done. Every event, action and target type the database's
    `creature_ai_scripts` uses: done (conditions of `EVENT_T_OOC_LOS` and `EVENT_T_DEATH` not looked at).
    Dungeon rules (no pursuit leash, those who come near join the fight, `AGGRO_ZONE`), auras lost on evade,
    creature spells scaled to the caster's level, threat from heals and buffs, pools rolled again at each
-   respawn: done. Not yet: summons handed over between nodes, movement maps for chasing, help from another
-   node's creatures in a cluster, a pool's roll seen by the other nodes (each keeps its own), a creature's
-   mana regenerating in combat.
-3. **Death: done** (`death.d`, `corpse.d`; README's "Death"), resurrection sickness and battleground
+   respawn: done. Movement maps support chasing. Clusters share a seed for spawn pools and can
+   [borrow helpers across nodes](CLUSTER.md#creature-assistance). Remaining gaps include migration
+   of summoned creatures and mana regeneration in combat.
+3. **Death: done** (`death.d`, `corpse.d`), resurrection sickness and battleground
    spirit guides included, and ghosts hidden from the living. Bones (an hour where a body was, bare; CMaNGOS's
    `Death.Bones` on): done. Not yet: the ghost's own auras (applied by
    hand), corpses of a player on another node of a cluster (a corpse is put on
    the map its player's node simulates; a node that does not own the cell keeps it anyway).
-4. **Experience and loot: done** (`experience.d`, `loot.d`, `loothandlers.d`; README's "Experience
-   and loot"). Quest drops, skinning, pickpocketing and random properties are implemented. A cluster
+4. **Experience and loot: done** (`experience.d`, `loot.d`, `loothandlers.d`). Quest drops,
+   skinning, pickpocketing and random properties are implemented. A cluster
    supports group loot rolls, coin splits, round-robin pickup, quest drops and Master Loot across
    nodes (docs/CLUSTER.md).
 5. Spells, cooldowns and auras. **Casting and auras: done** (`spellcast.d`, `spellhandlers.d`,
-   `auras.d`, `aurahandlers.d`; README's "Spells" and "Auras"); creatures' spells come with their
+   `auras.d`, `aurahandlers.d`); creatures' spells come with their
    scripts (above), talents with milestone 7. Channelled spells, area, cone, party and chain targets, persistent area auras, missiles' flight, items'
    equip spells, spell and healing power (direct and over time), creatures' partial resists: done.
    Binary spells and resisted ticks, and resists against players: done. The effects and aura types of the
    classes' trainable spells beyond damage and healing (threat, taunts, charges, Blink, burns, drains and
    leeches, extra swings, Vanish, Feign Death, Fade, Distract, the hunters' traps, tracking, Hunter's Mark,
-   regeneration's auras, Holy Shield, Blessing of Sacrifice; `effecthandlers.d`, README's "Effects beyond
-   damage and healing"): done. Players' guardians (engineering dragonlings, dummies, the sheep; `guardians.d`), wild objects,
+   regeneration's auras, Holy Shield, Blessing of Sacrifice; `effecthandlers.d`): done. Players'
+   guardians (engineering dragonlings, dummies, the sheep; `guardians.d`), wild objects,
    and wear by spells (`durability.d`), Ritual of Summoning and the meeting stones' summons (`rituals.d`): done; a guardian's evade walks back to where it was summoned before it follows
    again. Not yet: Eye of Kilrogg (`SUMMON_POSSESSED`), invisibility and its
    detection, traps hidden from those not in the hunter's group.
-6. **Duels and trades: done** (`tradehandlers.d`, `duelhandlers.d`; README's "Trading" and
-   "Duels"). Players fight players in melee and with spells where the relations allow (duelists,
+6. **Duels and trades: done** (`tradehandlers.d`, `duelhandlers.d`). Players fight players in
+   melee and with spells where the relations allow (duelists,
    PvP-flagged enemies). The PvP flag (`pvp.d`): `/pvp`, enforced zones, contested players, free-for-all
    arenas, Honorless Target. Honor (`honor.d`): kills, dishonorable kills, racial leaders, ranks, the fields,
    inspecting, the weekly standing (`honorweek.d`), what ranks bring (rank items at vendors and to equip,
@@ -192,7 +200,7 @@ The largest area. In order:
 
 ### Quests
 
-**Done** (`quests.d`, `questhandlers.d`; README's "Quests"): givers, the log, kill and item
+**Done** (`quests.d`, `questhandlers.d`): givers, the log, kill and item
 objectives, rewards, saving, game objects and items as givers, sharing, exploration objectives,
 timed quests, `questgiver_greeting`, quest scripts (`dbscripts_on_quest_*`). Next: escort quests
 (with the D scripts' waypoint and gossip events), quest POIs.
@@ -216,14 +224,14 @@ Festival's fireworks, which need players' game object summons too), effect chanc
 (Venture Co. lookouts, Gallywix), the Scourge Invasion, caravans,
 the Eastern Kingdoms' world map script, and the mechanics the raids approximate (possession, mind
 control, Heigan's floor).
-Reputation is done (`reputation.d`, `reputationhandlers.d`; README's "Reputation"): kills, quests,
+Reputation is done (`reputation.d`, `reputationhandlers.d`): kills, quests,
 spillover, war and peace, discounts, requirements, reactions forced by auras (`SMSG_SET_FORCED_REACTIONS`: the
 disguises, the Corrupted Ashbringer's Scarlet Crusade). Reputation from spells (effect 103) and the PvP rank's
 discount: done.
 
 ### Talents
 
-**Done** (`talenthandlers.d`, `spellmods.d`; README's "Talents"): learning ranks, passive auras,
+**Done** (`talenthandlers.d`, `spellmods.d`): learning ranks, passive auras,
 the spell modifiers most talents are, unlearning them at a class trainer. The auras talents (and buffs)
 use for stats and combat: crit, dodge, parry, block and hit chances; percentages of stats, health, power,
 armor and resistances, attack power and the off hand's damage (`stats.d`); weapon and defense skill
@@ -238,13 +246,13 @@ Elements, Shatter, Frostbite and the other Add Target Triggers). Not yet: the re
 
 ### Mail
 
-**Done** (`mailhandlers.d`; README's "Mail"), auctions' mail and expiry included, quest and game event letters, and
+**Done** (`mailhandlers.d`), auctions' mail and expiry included, quest and game event letters, and
 `mail_level_reward`'s letter at a new level (TBC CMaNGOS's; only for templates a 1.12 client has, so none of the
 classic database's TBC rows is sent).
 
 ### Auctions
 
-**Done** (`auctionhouse.d`, `auctionhandlers.d`; README's "Auctions"): selling, searching, bidding,
+**Done** (`auctionhouse.d`, `auctionhandlers.d`): selling, searching, bidding,
 buyouts, cancelling, expiry, the mails, the houses' rates (`AuctionHouse.dbc`'s, and the server's own over them;
 docs/FORMULAS.md). Not yet: an auction bot. There is no `.auction` command (the
 GM command set has none).
@@ -265,7 +273,7 @@ GM command set has none).
 * The rest of the GM commands, as their systems arrive (COMMANDS.md lists them): each is one
   method of the handler group it belongs to.
 
-### Known issues
+### Earlier test failures
 
 * **A rare stop in release builds.** It was seen twice on the test server, never reproduced, and
   never in a debug build:
@@ -278,12 +286,8 @@ GM command set has none).
 * **A start that stalled.** Once a benchmark's server stopped at start-up inside its third database
   connection (the world database) and never listened. The game loop also talks to the database
   synchronously (saves, pets, mail), so a stalled database call stalls the loop. That may explain the
-  hang above. Step 6 of docs/DESIGN.md (the save writer) takes saves off the loop; a connect timeout
-  would make a stall at start-up fail instead of hanging.
+  hang above. The [save writer](ARCHITECTURE.md#writes-behind-the-loop) now handles regular saves.
 
-### Infrastructure, as needed
+### Login server
 
-* An epoll/kqueue loop beyond `select`'s 1024-descriptor limit.
-* Asynchronous database calls, or a worker thread for saves, once saves become frequent.
-* The rest of the login server: `crcHash` file integrity, PIN/TOTP (`account.token`) and patch
-  transfer.
+Open items include `crcHash` file integrity, PIN/TOTP (`account.token`) and patch transfer.

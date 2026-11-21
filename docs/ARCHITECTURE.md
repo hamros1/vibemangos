@@ -1,21 +1,24 @@
 # Architecture
 
-dmangos is one dub package that builds three programs:
+dmangos is one dub package with these programs.
 
 | Program | What it does | Entry point |
 |---|---|---|
 | `authserver` | the login server: SRP6 authentication, reconnects, the realm list | `source/dmangos/auth/main.d` |
 | `worldserver` | the world server: characters and the simulation, standalone or as one node of a cluster | `source/dmangos/world/main.d` |
 | `extractor` | client data from a 1.12 client: DBC files, terrain, vmaps, movement maps | `source/dmangos/extractor/main.d` |
+| `loadgen` | headless clients for load tests | `source/dmangos/loadgen/main.d` |
 
 They share the code directly under `source/dmangos/`. Each program is a dub configuration, and
 each configuration excludes the other programs' `main.d` files.
 
-The databases (`realmd`, `characters`, `mangos`) use the CMaNGOS schema unchanged, so existing data
-works as it is. Never run two world servers on one characters database at once: ids are allocated
-from the database's maxima at start-up.
+The three databases use the CMaNGOS schema. Each standalone world server needs its own
+characters database and allocates IDs from the database's maxima at startup. Nodes of a
+cluster share a characters database and receive ID blocks from their coordinator.
 
 ## Source layout
+
+See the [source layout reference](SOURCE-LAYOUT.md) for the module list.
 
 ```
 source/dmangos/

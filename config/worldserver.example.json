@@ -92,5 +92,14 @@
 	"announce_tag_color": 2,
 	"announce_gm_tag_color": 1,
 	"announce_name_color": 4,
-	"announce_message_color": 10
+	"announce_message_color": 10,
+	"cluster": {
+		"node_id": 1,
+		"name": "dmangos",
+		"listen_address": "127.0.0.1",
+		"listen_port": 9000,
+		"advertise_address": "127.0.0.1",
+		"client_address": "127.0.0.1:8085",
+		"coordinator": "127.0.0.1:9000"
+	}
 }

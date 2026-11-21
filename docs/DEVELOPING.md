@@ -1,11 +1,14 @@
 # Developing dmangos
 
+For a first login, start with [Set up dmangos](SETUP.md). This guide covers development builds,
+code changes and testing. Use the [source layout](SOURCE-LAYOUT.md) to find a module.
+
 ## Toolchain
 
 ```sh
 source ~/dlang/dmd-2.114.0/activate   # DMD 2.114, dub 1.43
 dub test                               # every module's unittests
-dub build -c authserver                # or worldserver, extractor; add -b release for release builds
+dub build -c authserver                # or worldserver, extractor; add -b release-fast for optimized builds
 ```
 
 Building also needs `g++` and `make`: dub first runs `thirdparty/Makefile`, which compiles Recast and
@@ -20,9 +23,8 @@ points (how to build it is in its header):
 navpath /path/to/data 1 1007.8 -4446.2 11.2 1629.4 -4373.4 31.3   # Durotar into Orgrimmar, by the gate
 ```
 
-The databases use the CMaNGOS Classic schema, so existing realm, character and world data works
-unchanged; where to get the schema's SQL and a world database is under "Live tests against real
-data" below.
+The databases use the CMaNGOS Classic schema. See [database setup](SETUP.md#3-import-the-database-and-write-the-configs)
+for a fresh install and [live tests](#live-tests-against-real-data) for the scripted client.
 
 ## Recipes
 
@@ -365,9 +367,8 @@ a setup from scratch without root:
 * Use `apt-get download` with `dpkg -x` to unpack `libmariadb3`, `mariadb-server-core` and
   `mariadb-client-core`, then run `mariadbd --no-defaults` with a private data directory and
   socket.
-* Import the schema, `sql/base/realmd.sql` and `characters.sql` of
-  [mangos-classic](https://github.com/cmangos/mangos-classic), and the world database,
-  [classic-db](https://github.com/cmangos/classic-db)'s `Full_DB/*.sql.gz` (about 5 s).
+* Import the [fresh-install SQL and world archive](SETUP.md#3-import-the-database-and-write-the-configs) with
+  `tools/database.sh install sql/local/classicmangos.sql.gz --socket=/path/to/mysql.sock`.
 * Extract the DBCs with `bin/extractor -i CLIENT -o DATA` and point `data_dir` at `DATA`.
 * Create accounts with `bin/authserver --config ... account create NAME PASSWORD`.
 
@@ -417,7 +418,8 @@ maps; and a single packet over 200 ms with its opcode.
 
 ### A local cluster
 
-Three nodes on one machine: copy `worldserver.json` three times and give each a `cluster` object
+Start with the [two-node local setup](SETUP.md#4-start-the-servers). For a three-node failover
+test, make three world server configs and give each a `cluster` object
 with its own `node_id` (1, 2, 3) and `listen_port` (9000, 9001, 9002), all with
 `"coordinator": "127.0.0.1:9000"`, and `metrics_interval_seconds` at 10 to see the links in the log.
 Node 1 is the coordinator. Give one other node `"standby": true` and it takes over when the
@@ -512,7 +514,8 @@ that cost time to find.
   of rare creatures and thousands of extra herbs and veins.
 * **Logging out takes 20 seconds** for player accounts. Session tests log out at once because
   `newCreationContext` sets `instant_logout` to 0; the tick test sets it back.
-* **Ids** come from `MAX(id) + 1` at start-up. Never run two servers on the same characters
-  database at once.
+* **Ids** come from `MAX(id) + 1` at start-up for standalone servers, which each require
+  their own characters database. Cluster nodes share a characters database and receive
+  blocks of IDs from their coordinator.
 * **Client builds:** 5875, 6005 and 6141 share the world protocol. The login protocol differs
-  slightly (see the README's protocol notes).
+  slightly. See the [protocol notes](CONFIGURATION.md#protocol-notes).

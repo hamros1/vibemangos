@@ -9,3 +9,11 @@ accounts.json.tmp
 __pycache__/
 thirdparty/build/
 .claude/
+/authserver.json
+/worldserver.json
+/worldserver-member.json
+/sql/local/
+/data/
+/logs/
+/writes-[12].log
+/writes-[12].log.failed

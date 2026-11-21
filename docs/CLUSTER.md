@@ -46,6 +46,9 @@ packets back.
 
 ## Configuration
 
+The [setup guide](SETUP.md) installs a two-node cluster with one realm (ID 1).
+Use the settings below to add nodes, change endpoints, or configure failover.
+
 The `cluster` object of `worldserver.json` (`cluster/config.d`):
 
 ```json
@@ -757,7 +760,7 @@ launching node still simulates the caster and can route to the target's current 
 The cluster code is tested in memory: links wired back to back and a fake clock, with whole clusters
 of world contexts (joining, views, heartbeats, timeouts, restarts and fencing; handovers with no cell
 ever having two owners on any 50 ms tick; replicas, migrations, takeovers, drains, splits and merges;
-services moving). docs/DEVELOPING.md describes running a local cluster of several processes, and
+services moving). The [developer guide](DEVELOPING.md#a-local-cluster) describes testing a local cluster, and
 docs/BENCHMARKS.md has the cluster's measurements.
 
 ## Background
