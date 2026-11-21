@@ -1830,7 +1830,7 @@ private:
      */
     SpellCastResult go(Casting c)
     {
-        import dmangos.world.spelldamage : chainHealJumpRadius, isChainHealEffect, isHostileAreaEffect;
+        import dmangos.world.spelldamage : isChainHealEffect, isHostileAreaEffect, isHostileChainEffect, spellJumpRadius;
 
         // `TARGET_FLAG_UNIT`, `_UNIT_ENEMY`, `_UNIT_ALLY`, `_CORPSE_ENEMY`, `_UNIT_DEAD`, `_CORPSE_ALLY`: a spell's
         // `Targets` that let the client name a unit.
@@ -1893,8 +1893,8 @@ private:
         TargetResult[] results;
         RemotePartyHeal[] remoteHeals;
         RemoteAreaDamage[] remoteDamage;
-        const(HealJump)[] healingChain;
-        float[ulong] healFactors;
+        const(SpellJump)[] spellChain;
+        uint[ulong] bounceOf;
         SpellMissInfo[ulong] missOf;
         ulong[][3] effectTargets;
         foreach (i; 0 .. 3)
@@ -1927,7 +1927,29 @@ private:
             {
                 targets = [c.targets.unit ? c.targets.unit : player.guid];
                 if (spell.casting.chainTarget[i] > 1 && a == ImplicitTarget.enemy)
-                    targets ~= chainTargets(targets[0], spell.casting.chainTarget[i] - 1);
+                {
+                    const chainDamage = isHostileChainEffect(*spell, i);
+                    const chain = chainTargets(targets[0], spell.casting.chainTarget[i] - 1, chainDamage);
+                    if (chainDamage)
+                        spellChain = chain;
+                    foreach (j; 1 .. chain.length)
+                    {
+                        const bounce = chain[j];
+                        if (!bounce.peer)
+                        {
+                            targets ~= bounce.target;
+                            if (chainDamage)
+                                bounceOf[bounce.target] = cast(uint) j;
+                            continue;
+                        }
+                        const previous = chain[j - 1];
+                        const at = previous.position;
+                        const hit = AreaDamage(caster: player.guid, target: bounce.target, spell: spell.id,
+                            effect: cast(ubyte) i, map: map.id, instance: map.instanceId, previous: previous.target,
+                            x: at.x, y: at.y, z: at.z, radius: spellJumpRadius);
+                        remoteDamage ~= RemoteAreaDamage(bounce.peer, hit, cast(uint) j);
+                    }
+                }
             }
             else if (a == ImplicitTarget.unitRaid || a == ImplicitTarget.unitFriendChainHeal)
             {
@@ -1946,27 +1968,23 @@ private:
                         group = null;
                     const chain = friendlyChainTargets(target, spell.casting.chainTarget[i] - 1, group);
                     if (chainHeal)
-                        healingChain = chain;
-                    const reduction = spell.casting.dmgMultiplier[i];
-                    float factor = 1;
+                        spellChain = chain;
                     foreach (j; 1 .. chain.length)
                     {
-                        if (chainHeal && reduction > 0)
-                            factor *= reduction;
                         const bounce = chain[j];
                         if (!bounce.peer)
                         {
                             targets ~= bounce.target;
                             if (chainHeal)
-                                healFactors[bounce.target] = factor;
+                                bounceOf[bounce.target] = cast(uint) j;
                             continue;
                         }
                         const previous = chain[j - 1];
                         const at = previous.position;
                         const heal = PartyHeal(caster: player.guid, target: bounce.target, spell: spell.id,
                             effect: cast(ubyte) i, map: map.id, instance: map.instanceId, group: group.id,
-                            previous: previous.target, x: at.x, y: at.y, z: at.z, radius: chainHealJumpRadius);
-                        remoteHeals ~= RemotePartyHeal(bounce.peer, heal, factor);
+                            previous: previous.target, x: at.x, y: at.y, z: at.z, radius: spellJumpRadius);
+                        remoteHeals ~= RemotePartyHeal(bounce.peer, heal, cast(uint) j);
                     }
                 }
             }
@@ -2023,10 +2041,10 @@ private:
             deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, SpellCastResult.ok));
         }
         auto displayedResults = results;
-        if (healingChain.length && remoteHeals.length)
+        if (spellChain.length && (remoteHeals.length || remoteDamage.length))
         {
             displayedResults = null;
-            foreach (ref bounce; healingChain)
+            foreach (ref bounce; spellChain)
                 displayedResults ~= TargetResult(bounce.target, missOf.get(bounce.target, SpellMissInfo.none));
         }
         else
@@ -2083,7 +2101,7 @@ private:
                     if (flight > 0)
                         pendingHits ~= PendingHit(spell, i, target, c, flight);
                     else
-                        doEffect(spell, i, target, c, healFactors.get(target, 1.0f));
+                        doEffect(spell, i, target, c, bounceOf.get(target, 0));
                 }
         foreach (ref remote; remoteHeals)
             sendRolledPartyHeal(spell, c, remote);
@@ -2200,17 +2218,20 @@ private:
     {
         ushort peer;
         PartyHeal heal;
-        float factor = 1;
+        uint bounce;
     }
 
     private static struct RemoteAreaDamage
     {
         ushort peer;
         AreaDamage hit;
+        uint bounce;
     }
 
     private void sendRolledAreaDamage(const(SpellInfo)* spell, const ref Casting c, ref RemoteAreaDamage remote)
     {
+        import dmangos.world.spelldamage : SpellBounce;
+
         effectCustom = c.custom;
         scope (exit)
             effectCustom = typeof(effectCustom).init;
@@ -2218,7 +2239,8 @@ private:
         auto hit = &remote.hit;
         const value = classSchoolDamage(spell, hit.effect, hit.target, effectAmount(spell, hit.effect));
         const base = max(0, value) + spellDamageBonus(spell, school);
-        const damage = spellMod(SpellModOp.damage, spell, base);
+        const damage = SpellBounce(spell.casting.dmgMultiplier[hit.effect], remote.bounce)
+            .scale(spellMod(SpellModOp.damage, spell, base));
         hit.sequence = context.nextGameplaySequence();
         hit.casterLevel = player.data.level;
         hit.amount = damage * player.damageMods.school[school] * player.damageMods.versus[creatureTypeHumanoid];
@@ -2260,7 +2282,7 @@ private:
     private void sendRolledPartyHeal(const(SpellInfo)* spell, const ref Casting c, ref RemotePartyHeal remote)
     {
         import dmangos.world.caster : Caster;
-        import dmangos.world.spelldamage : rollHealing;
+        import dmangos.world.spelldamage : rollHealing, SpellBounce;
 
         effectCustom = c.custom;
         scope (exit)
@@ -2269,20 +2291,21 @@ private:
         if (value > 0)
         {
             auto healer = Caster.of(this);
-            remote.heal.amount = rollHealing(healer, spell, value, remote.heal.critical, remote.factor);
+            remote.heal.amount = rollHealing(healer, spell, value, remote.heal.critical,
+                SpellBounce(spell.casting.dmgMultiplier[remote.heal.effect], remote.bounce));
             remote.heal.sequence = context.nextGameplaySequence();
             context.sendPartyHeal(remote.peer, remote.heal);
         }
     }
 
     /// Effect `i` of the cast `c` on `target`: the effect stage every caster shares (`dmangos.world.spelleffects`).
-    void doEffect(const(SpellInfo)* spell, size_t i, ulong target, ref Casting c, float healFactor = 1)
+    void doEffect(const(SpellInfo)* spell, size_t i, ulong target, ref Casting c, uint bounce = 0)
     {
         import dmangos.world.caster : Caster;
         import dmangos.world.spelleffects : applyEffect;
 
         auto me = Caster.of(this);
-        applyEffect(me, spell, i, target, c, healFactor);
+        applyEffect(me, spell, i, target, c, bounce);
     }
 
     /**
@@ -2944,14 +2967,11 @@ private:
                         found ~= other.player.guid;
             if (remoteEnemies)
                 foreach (object; map.objectsNear(center, r))
-                    if (auto replica = cast(Replica) object)
-                        if (replica.owner != context.nodeId && replica.fields.type == TypeId.player
-                            && context.onlinePlayer(replica.guid) is null && !duelingWith(replica.guid))
-                        {
-                            const target = replica.playerRelations(context.client);
-                            if (target.alive && canAttack(relatingNow(), target, context.client) && within(replica.position))
-                                found ~= replica.guid;
-                        }
+                {
+                    auto replica = cast(Replica) object;
+                    if (remoteEnemy(replica) && within(replica.position))
+                        found ~= replica.guid;
+                }
             // At most `MaxAffectedTargets` ("Up to 5 total nearby enemies", Thunder Clap's "up to 4 targets"): the one
             // aimed at among them, then the nearest (the same for each of its effects).
             const most = spell.casting.maxAffectedTargets;
@@ -3003,7 +3023,16 @@ private:
         return unit && unit.alive && !canAttack(relatingNow(), unit.relating(), context.client);
     }
 
-    private static struct HealJump
+    private bool remoteEnemy(Replica target)
+    {
+        if (target is null || target.owner == context.nodeId || target.fields.type != TypeId.player
+            || context.onlinePlayer(target.guid) !is null || duelingWith(target.guid))
+            return false;
+        const other = target.playerRelations(context.client);
+        return other.alive && canAttack(relatingNow(), other, context.client);
+    }
+
+    private static struct SpellJump
     {
         ulong target;
         Position position;
@@ -3011,22 +3040,22 @@ private:
     }
 
     /// From `first`, jump to the most injured eligible player within reach of the previous target.
-    HealJump[] friendlyChainTargets(ulong first, uint count, Group group)
+    SpellJump[] friendlyChainTargets(ulong first, uint count, Group group)
     {
-        import dmangos.world.spelldamage : chainHealJumpRadius;
+        import dmangos.world.spelldamage : spellJumpRadius;
 
         const initial = map.unit(first);
         if (!initial)
             return null;
-        HealJump[] chain = [HealJump(first, initial.position)];
+        SpellJump[] chain = [SpellJump(first, initial.position)];
         bool[ulong] taken = [first: true];
         const caster = relatingNow();
         foreach (_; 0 .. count)
         {
             const at = chain[$ - 1].position;
-            HealJump next;
+            SpellJump next;
             uint lowest = 100;
-            foreach (other; map.playersNear(at, chainHealJumpRadius))
+            foreach (other; map.playersNear(at, spellJumpRadius))
             {
                 const guid = other.combatGuid;
                 if (guid in taken || (group !is null && !group.isMember(guid)) || !assistable(guid))
@@ -3035,11 +3064,11 @@ private:
                 if (percent < lowest)
                 {
                     lowest = percent;
-                    next = HealJump(guid, other.position);
+                    next = SpellJump(guid, other.position);
                 }
             }
             if (group !is null && context.sendPartyHeal !is null)
-                foreach (object; map.objectsNear(at, chainHealJumpRadius))
+                foreach (object; map.objectsNear(at, spellJumpRadius))
                 {
                     auto replica = cast(Replica) object;
                     if (replica is null || replica.owner == context.nodeId || replica.fields.type != TypeId.player)
@@ -3055,7 +3084,7 @@ private:
                     if (percent < lowest && !canAttack(caster, replica.playerRelations(context.client), context.client))
                     {
                         lowest = percent;
-                        next = HealJump(guid, replica.position, replica.owner);
+                        next = SpellJump(guid, replica.position, replica.owner);
                     }
                 }
             if (!next.target)
@@ -3066,37 +3095,50 @@ private:
         return chain;
     }
 
-    /// Chain targets: from `first`, the nearest enemy within 10 yards of the last, `count` times.
-    ulong[] chainTargets(ulong first, uint count)
+    /// Pick the closest eligible enemy to the last target, sharing the count across nodes.
+    SpellJump[] chainTargets(ulong first, uint count, bool includePlayers)
     {
-        enum float jump = 10;
-        ulong[] chain;
-        bool[ulong] taken = [first: true];
-        auto last = cast(Creature) map.findObject(first);
-        if (last is null)
+        import dmangos.world.spelldamage : spellJumpRadius;
+
+        const initial = map.unit(first);
+        if (!initial || (!includePlayers && initial.kind != UnitKind.creature))
             return null;
-        Position at = last.position;
+        SpellJump[] chain = [SpellJump(first, initial.position)];
+        bool[ulong] taken = [first: true];
         foreach (_; 0 .. count)
         {
-            Creature next;
-            float best = jump * jump;
-            foreach (creature; map.creaturesNear(at, jump))
+            const at = chain[$ - 1].position;
+            SpellJump next;
+            float best = spellJumpRadius ^^ 2;
+            void consider(ulong guid, Position p, ushort peer = 0)
             {
-                if (creature.guid in taken || !spellEnemy(creature))
-                    continue;
-                const p = creature.position;
                 const d = (p.x - at.x) ^^ 2 + (p.y - at.y) ^^ 2 + (p.z - at.z) ^^ 2;
-                if (d <= best)
+                if (d <= best && guid !in taken)
                 {
                     best = d;
-                    next = creature;
+                    next = SpellJump(guid, p, peer);
                 }
             }
-            if (next is null)
+            foreach (creature; map.creaturesNear(at, spellJumpRadius))
+                if (spellEnemy(creature))
+                    consider(creature.guid, creature.position);
+            if (includePlayers)
+            {
+                foreach (other; map.playersNear(at, spellJumpRadius))
+                    if (other.alive && !other.session.transferring && enemyPlayer(other.combatGuid) !is null)
+                        consider(other.combatGuid, other.position);
+                if (context.sendAreaDamage !is null)
+                    foreach (object; map.objectsNear(at, spellJumpRadius))
+                    {
+                        auto replica = cast(Replica) object;
+                        if (remoteEnemy(replica))
+                            consider(replica.guid, replica.position, replica.owner);
+                    }
+            }
+            if (!next.target)
                 break;
-            chain ~= next.guid;
-            taken[next.guid] = true;
-            at = next.position;
+            chain ~= next;
+            taken[next.target] = true;
         }
         return chain;
     }
@@ -3662,6 +3704,201 @@ unittest
     caster.write(Opcode.CMSG_CAST_SPELL, request.data);
     assert(bodyOf(caster.read(), Opcode.SMSG_CAST_RESULT) == castResultPacket(blast, SpellCastResult.notReady));
     assert(mage.values.get!UNIT_FIELD_POWER1(Power.mana) == mana - cost && requests.length == 5);
+}
+
+// Chain Lightning shares its path, damage falloff and target cap between local and remote players.
+unittest
+{
+    import core.time : MonoTime, msecs;
+    import std.algorithm.searching : count;
+    import dmangos.bytes : ByteReader, ByteWriter;
+    import dmangos.cluster.protocol : AreaDamage, decode, FrameHeader, MessageType, putMessage, takeFrame;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.auras : makeAura;
+    import dmangos.world.clientdata : chrRacesFormat, factionTemplateFormat, spellCastTimesFormat, spellRangeFormat;
+    import dmangos.world.defines : Power;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.player : Player;
+    import dmangos.world.playercreate : NewSpell;
+    import dmangos.world.pvp : pvpFlagMs;
+    import dmangos.world.replication : encodePlayerState;
+    import dmangos.world.spellcast;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields;
+
+    AreaDamage roundTrip(const ref AreaDamage hit)
+    {
+        ByteWriter w;
+        putMessage(w, 1, hit);
+        const(ubyte)[] bytes = w.data, payload;
+        FrameHeader header;
+        assert(takeFrame(bytes, header, payload) && header.type == MessageType.areaDamage && !bytes.length);
+        return decode!AreaDamage(payload);
+    }
+
+    enum Scenario { bothRemote, lastLocal, movedAndUnflagged, immune }
+    foreach (scenario; [Scenario.bothRemote, Scenario.lastLocal, Scenario.movedAndUnflagged, Scenario.immune])
+    {
+        auto db = newDatabase();
+        auto origin = newCreationContext(db), owner = newCreationContext(db);
+        origin.nodeId = 1;
+        owner.nodeId = 2;
+        auto now = MonoTime.currTime;
+        origin.clock = owner.clock = () => now;
+        enum uint chain = 421, shield = 55012, school = 3, cost = 12, castMs = 2_500;
+        uint[chrRacesFormat.length] human, orc;
+        human[0] = raceHuman;
+        human[2] = human[8] = 7;
+        orc[0] = raceOrc;
+        orc[2] = orc[8] = 1;
+        foreach (node; [origin, owner])
+        {
+            node.client.races = typeof(node.client.races).parse(buildDbc(chrRacesFormat, [human[], orc[]]), "ChrRaces.dbc");
+            node.client.factionTemplates = typeof(node.client.factionTemplates).parse(buildDbc(factionTemplateFormat,
+                [[7u, 1, 0, 2, 2, 4, 0, 0, 0, 0, 0, 0, 0, 0], [1u, 2, 0, 4, 4, 2, 0, 0, 0, 0, 0, 0, 0, 0]]),
+                "FactionTemplate.dbc");
+            node.client.spellCastTimes = typeof(node.client.spellCastTimes).parse(buildDbc(spellCastTimesFormat,
+                [[1u, castMs, 0, castMs]]), "SpellCastTimes.dbc");
+            uint[spellRangeFormat.length] rangeRow;
+            rangeRow[0] = 1;
+            const float range = 30;
+            rangeRow[2] = *cast(const uint*) &range;
+            node.client.spellRanges = typeof(node.client.spellRanges).parse(buildDbc(spellRangeFormat, [rangeRow[]]),
+                "SpellRange.dbc");
+            auto attack = testSpell(chain, SpellEffect.schoolDamage, ImplicitTarget.enemy, 100, 1);
+            attack.casting.rangeIndex = 1;
+            attack.casting.chainTarget[0] = 3;
+            attack.casting.dmgMultiplier[0] = 0.7f;
+            attack.casting.school = school;
+            attack.casting.powerType = Power.mana;
+            attack.casting.manaCost = cost;
+            attack.casting.attributesEx3 |= spellAttrEx3AlwaysHit;
+            attack.attributesEx2 |= spellAttrEx2CantCrit;
+            attack.recoveryTime = 5_000;
+            node.data.spells.spells[chain] = attack;
+            auto immunity = testSpell(shield, SpellEffect.applyAura, ImplicitTarget.caster, 0);
+            immunity.casting.applyAuraName[0] = AuraType.schoolImmunity;
+            immunity.miscValue[0] = 1 << school;
+            node.data.spells.spells[shield] = immunity;
+        }
+
+        const start = Position(100, 100, 40);
+        auto caster = loggedIn(origin, db, 7, "Jaina", start, characterLevel: 40, setup: (ref c) {
+            c.classId = classMage;
+            c.power[Power.mana] = 80;
+            c.spells = [NewSpell(chain, true)];
+        });
+        auto mage = cast(Player) caster.session.character;
+        mage.values.set!UNIT_FIELD_POWER1(Power.mana, mage.values.get!UNIT_FIELD_MAXPOWER1(Power.mana));
+        owner.map(0).replicaCreated(1, cellKeyAt(start.x, start.y), 7, encodePlayerState(mage, 0));
+        TestClient target(uint guid, string name, float x, uint health, bool remote,
+            ubyte race = raceOrc, bool flagged = true)
+        {
+            const p = Position(start.x + x, start.y, start.z);
+            auto client = loggedIn(remote ? owner : origin, db, guid, name, p, race: race, characterLevel: 40);
+            auto player = cast(Player) client.session.character;
+            player.values.set!UNIT_FIELD_MAXHEALTH(300u);
+            player.values.set!UNIT_FIELD_HEALTH(health);
+            if (flagged)
+                client.write(Opcode.CMSG_TOGGLE_PVP, [ubyte(1)]);
+            if (remote)
+                origin.map(0).replicaCreated(2, cellKeyAt(p.x, p.y), guid, encodePlayerState(player, 0));
+            return client;
+        }
+        auto first = target(8, "Thrall", 20, 260, false);
+        auto second = target(9, "Durotan", 28, 60, true);
+        auto third = target(10, "Orgrim", 36, 200, scenario != Scenario.lastLocal);
+        auto fourth = target(11, "Garrosh", 44, 200, true);
+        auto alternate = target(12, "Rexxar", 11, 200, false);
+        auto friend = target(13, "Varian", 21, 200, true, raceHuman);
+        auto unflagged = target(14, "Nazgrel", 22, 200, true, raceOrc, false);
+        caster.read();
+
+        AreaDamage[] requests, replies;
+        origin.sendAreaDamage = (ushort peer, const ref AreaDamage hit) {
+            assert(peer == 2 && !hit.reply);
+            requests ~= roundTrip(hit);
+            return true;
+        };
+        owner.sendAreaDamage = (ushort peer, const ref AreaDamage hit) {
+            assert(peer == 1 && hit.reply);
+            replies ~= roundTrip(hit);
+            return true;
+        };
+        ByteWriter request;
+        request.put(chain);
+        request.put(cast(ushort) TargetFlags.unitEnemy);
+        request.putPackedGuid(8);
+        const mana = mage.values.get!UNIT_FIELD_POWER1(Power.mana);
+        caster.write(Opcode.CMSG_CAST_SPELL, request.data);
+        assert(opcodesOf(caster.read()).count(Opcode.SMSG_SPELL_START) == 1);
+        now += (castMs - 1).msecs;
+        caster.session.update((castMs - 1).msecs);
+        assert(!requests.length && mage.values.get!UNIT_FIELD_POWER1(Power.mana) == mana);
+        now += 1.msecs;
+        caster.session.update(1.msecs);
+        assert(mage.values.get!UNIT_FIELD_POWER1(Power.mana) == mana - cost && origin.onlinePlayer(7) is caster.session.inWorld);
+        assert(first.session.character.values.get!UNIT_FIELD_HEALTH == 160u);
+        assert(requests.length == (scenario == Scenario.lastLocal ? 1 : 2));
+        assert(requests[0].target == 9 && requests[0].previous == 8 && requests[0].x == start.x + 20 && requests[0].amount == 70);
+        if (requests.length > 1)
+            assert(requests[1].target == 10 && requests[1].previous == 9 && requests[1].x == start.x + 28
+                && requests[1].amount == 49 && requests[1].sequence > requests[0].sequence);
+        auto go = ByteReader(bodyOf(caster.read(), Opcode.SMSG_SPELL_GO));
+        assert(go.readPackedGuid() == 7 && go.readPackedGuid() == 7 && go.read!uint == chain);
+        go.read!ushort;
+        assert(go.read!ubyte == 3 && go.read!ulong == 8 && go.read!ulong == 9 && go.read!ulong == 10);
+
+        auto moving = cast(Player) second.session.character;
+        const before = moving.position;
+        if (scenario == Scenario.movedAndUnflagged)
+        {
+            third.write(Opcode.CMSG_TOGGLE_PVP, [ubyte(0)]);
+            third.session.inWorld.updatePvPTimers(pvpFlagMs);
+            moving.movement.position.x += 50;
+            owner.map(0).relocated(second.session.inWorld);
+        }
+        if (scenario == Scenario.immune)
+            third.session.inWorld.addAura(makeAura(shield in owner.data.spells.spells, 10, 40, -1, true, [0, 0, 0]));
+        foreach (ref hit; requests)
+        {
+            owner.areaDamageArrived(1, hit);
+            owner.areaDamageArrived(1, hit);
+        }
+        if (scenario == Scenario.movedAndUnflagged)
+        {
+            moving.movement.position = before;
+            owner.map(0).relocated(second.session.inWorld);
+            third.write(Opcode.CMSG_TOGGLE_PVP, [ubyte(1)]);
+            foreach (ref hit; requests)
+                owner.areaDamageArrived(1, hit);
+            assert(!replies.length && moving.values.get!UNIT_FIELD_HEALTH == 60u
+                && third.session.character.values.get!UNIT_FIELD_HEALTH == 200u);
+            continue;
+        }
+
+        assert(replies.length == requests.length && replies[0].damage == 70 && replies[0].killed);
+        if (scenario == Scenario.immune)
+            assert(replies[1].miss == SpellMissInfo.immune);
+        foreach (ref hit; replies)
+        {
+            origin.areaDamageArrived(2, hit);
+            origin.areaDamageArrived(2, hit);
+        }
+        const packets = opcodesOf(caster.read());
+        assert(packets.count(Opcode.SMSG_PVP_CREDIT) == 1);
+        assert(packets.count(Opcode.SMSG_SPELLNONMELEEDAMAGELOG) == (scenario == Scenario.bothRemote ? 2 : 1));
+        assert(packets.count(Opcode.SMSG_SPELLLOGMISS) == (scenario == Scenario.immune ? 1 : 0));
+        assert(moving.values.get!UNIT_FIELD_HEALTH == 0u);
+        assert(third.session.character.values.get!UNIT_FIELD_HEALTH == (scenario == Scenario.immune ? 200u : 151u));
+        foreach (untouched; [fourth, alternate, friend, unflagged])
+            assert(untouched.session.character.values.get!UNIT_FIELD_HEALTH == 200u);
+        caster.write(Opcode.CMSG_CAST_SPELL, request.data);
+        assert(bodyOf(caster.read(), Opcode.SMSG_CAST_RESULT) == castResultPacket(chain, SpellCastResult.notReady));
+    }
 }
 
 // Chain Heal follows one ordered path even when a bounce changes nodes.

@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 45; // 45: Chain Heal bounces across nodes; 44: hostile area damage across nodes
+enum ushort protocolVersion = 46; // 46: Chain Lightning bounces across nodes; 45: Chain Heal bounces across nodes
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -93,7 +93,7 @@ enum MessageType : ushort
     areaDamage = 54,
 }
 
-/// A player target's share of an instant hostile area cast, with the caster's spell modifiers.
+/// A player target's share of a hostile area or chain cast, with the caster's spell modifiers.
 struct AreaDamage
 {
     enum type = MessageType.areaDamage;
@@ -105,6 +105,7 @@ struct AreaDamage
     ubyte effect;
     uint map;
     uint instance;
+    ulong previous; /// the previous chain target, or zero for a caster-centered effect
     float x, y, z, radius;
     uint casterLevel;
     float amount;
@@ -1077,7 +1078,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 45, recordedFingerprint = 0xb1c6d0090edd0f7fUL;
+private enum recordedVersion = 46, recordedFingerprint = 0xc552edd8c321ae1cUL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

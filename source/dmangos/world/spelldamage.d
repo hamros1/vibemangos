@@ -15,6 +15,25 @@ import dmangos.world.spellids;
 import dmangos.world.spells : SpellInfo;
 import dmangos.world.unit : UnitKind, UnitRef;
 
+enum float spellJumpRadius = 10;
+
+/// The spell's multiplier applied once per jump, before the recipient's modifiers.
+struct SpellBounce
+{
+    float multiplier = 1;
+    uint index;
+
+    uint scale(uint amount) const
+    {
+        if (!index || !(multiplier > 0))
+            return amount;
+        float scaled = amount;
+        foreach (_; 0 .. index)
+            scaled *= multiplier;
+        return cast(uint) scaled;
+    }
+}
+
 /// How a spell's damage comes.
 struct SpellDamage
 {
@@ -22,6 +41,7 @@ struct SpellDamage
     int modOp = -1;        /// a `SpellModOp` its modifiers apply as (`SPELLMOD_DAMAGE`); -1: none
     bool periodic;         /// a tick (a persistent area's, a drain's): never crits, and sets off what a tick does
     bool weaponRolled;     /// a creature's weapon ability: its melee roll made it already (armor, crit)
+    SpellBounce bounce;
 }
 
 /// `SPELL_ATTR_EX2_CANT_CRIT`.
@@ -90,6 +110,7 @@ uint spellDamage(ref Caster caster, const(SpellInfo)* spell, UnitRef victim, uin
         damage += spellDamageBonus(caster, spell, school);
     if (how.modOp >= 0)
         damage = caster.spellMod(cast(SpellModOp) how.modOp, spell, damage);
+    damage = how.bounce.scale(damage);
     const target = victim.fighter;
     bool crit;
     uint resisted;
@@ -131,21 +152,36 @@ uint spellDamage(ref Caster caster, const(SpellInfo)* spell, UnitRef victim, uin
     return damage;
 }
 
+private bool isDirectMagicDamageEffect(const ref SpellInfo spell, size_t i)
+{
+    enum uint channels = 0x04 | 0x40;
+    return i < spell.effect.length && spell.effect[i] == SpellEffect.schoolDamage
+        && !(spell.attributesEx & channels) && spell.casting.speed <= 0
+        && spell.casting.school > 0 && spell.casting.school < 7
+        && (spell.casting.dmgClass == DamageClass.magic || spell.casting.dmgClass == DamageClass.none);
+}
+
 /// The instant magical area effects that can be split between nodes.
 bool isHostileAreaEffect(const ref SpellInfo spell, size_t i)
 {
     import std.algorithm.searching : count;
 
-    enum uint channels = 0x04 | 0x40;
-    if (i >= spell.effect.length || spell.effect[i] != SpellEffect.schoolDamage
-        || spell.effect[].count(SpellEffect.schoolDamage) != 1 || spell.casting.chainTarget[i] > 1
-        || (spell.attributesEx & channels) || spell.casting.speed > 0
-        || spell.casting.school == 0 || spell.casting.school >= 7
-        || (spell.casting.dmgClass != DamageClass.magic && spell.casting.dmgClass != DamageClass.none))
+    if (!isDirectMagicDamageEffect(spell, i) || spell.effect[].count(SpellEffect.schoolDamage) != 1
+        || spell.casting.chainTarget[i] > 1)
         return false;
     const a = spell.implicitTargetA[i], b = spell.casting.implicitTargetB[i];
     return b == ImplicitTarget.enemiesAroundSource
         || (b == ImplicitTarget.none && a == ImplicitTarget.enemiesAroundSource);
+}
+
+/// A magical hit that selects successive hostile targets, as Chain Lightning does.
+bool isHostileChainEffect(const ref SpellInfo spell, size_t i)
+{
+    import std.algorithm.searching : count;
+
+    return isDirectMagicDamageEffect(spell, i) && spell.effect[].count(SpellEffect.none) == spell.effect.length - 1
+        && spell.implicitTargetA[i] == ImplicitTarget.enemy && spell.casting.implicitTargetB[i] == ImplicitTarget.none
+        && spell.casting.chainTarget[i] > 1;
 }
 
 /// Resolve a remote hit using the recipient's current combat stats and auras.
@@ -202,10 +238,8 @@ void rollRemoteAreaDamage(ref AreaDamage hit, const(SpellInfo)* spell, UnitRef v
 struct SpellHeal
 {
     bool plain; /// no healing power, no crit, no class rules, procs nor threat: a leech's (CMaNGOS's `DealHeal`)
-    float factor = 1; /// the share of the heal left after its bounces
+    SpellBounce bounce;
 }
-
-enum float chainHealJumpRadius = 10;
 
 /// A direct heal that selects successive friendly targets, as Chain Heal does.
 bool isChainHealEffect(const ref SpellInfo spell, size_t i)
@@ -245,7 +279,8 @@ bool withinPartyHealRadius(const ref PartyHeal heal, Position target)
 }
 
 /// Roll the caster's part of a heal, before the recipient's own modifiers and health cap.
-uint rollHealing(ref Caster caster, const(SpellInfo)* spell, int value, out bool critical, float factor = 1)
+uint rollHealing(ref Caster caster, const(SpellInfo)* spell, int value, out bool critical,
+    SpellBounce bounce = SpellBounce.init)
 {
     import std.random : uniform01;
     import dmangos.world.auras : AuraType;
@@ -254,7 +289,7 @@ uint rollHealing(ref Caster caster, const(SpellInfo)* spell, int value, out bool
     value = cast(int)(value * caster.auras.multiplier(AuraType.modHealingDonePercent));
     critical = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(caster.map.random) * 100 < caster.spellCritChance(spell);
     const amount = critical ? value * 3 / 2 : value;
-    return factor == 1 ? cast(uint) amount : cast(uint)(amount * factor);
+    return bounce.scale(cast(uint) amount);
 }
 
 /// Apply the recipient's healing modifiers and health cap. Returns the amount for the heal log.
@@ -303,7 +338,7 @@ uint spellHeal(ref Caster caster, const(SpellInfo)* spell, UnitRef target, int v
             p.pvpAssisted(target.session);
         if (p !is null)
             value = p.classHeal(spell, target, value); // Swiftmend, Blessing of Light, Healing Way
-        rolled = rollHealing(caster, spell, value, crit, how.factor);
+        rolled = rollHealing(caster, spell, value, crit, how.bounce);
     }
     uint healed;
     const amount = applyHealAmount(spell, target, rolled, healed);

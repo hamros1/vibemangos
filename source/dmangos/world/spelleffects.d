@@ -134,7 +134,7 @@ private void notDone(ref Caster caster, const(SpellInfo)* spell, size_t i)
  * Effect `i` of `c`'s spell, cast by `caster`, on `target` (a guid: a unit, or the caster, or a game object the
  * cast was aimed at), which it reached: what it does.
  */
-void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong target, ref SpellCast c, float healFactor = 1)
+void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong target, ref SpellCast c, uint bounce = 0)
 {
     import dmangos.world.creature : Creature;
     import dmangos.world.movement : Position;
@@ -167,7 +167,7 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
     {
     case SpellEffect.schoolDamage: // SPELL_EFFECT_SCHOOL_DAMAGE
     {
-        import dmangos.world.spelldamage : mayHurt, spellDamage, SpellDamage;
+        import dmangos.world.spelldamage : mayHurt, spellDamage, SpellBounce, SpellDamage;
         import dmangos.world.spellmods : SpellModOp;
 
         auto victim = map.unit(target);
@@ -179,7 +179,7 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         // (its modifiers, `SPELLMOD_DAMAGE`, on the damage with the spell power)
         const damage = p !is null ? p.classSchoolDamage(spell, i, target, value) : value;
         spellDamage(caster, spell, victim, damage > 0 ? damage : 0, spell.casting.school,
-            SpellDamage(true, SpellModOp.damage));
+            SpellDamage(true, SpellModOp.damage, bounce: SpellBounce(spell.casting.dmgMultiplier[i], bounce)));
         break;
     }
     case SpellEffect.dummy, SpellEffect.scriptEffect: // SPELL_EFFECT_DUMMY, SPELL_EFFECT_SCRIPT_EFFECT: the spell's script, then its database script
@@ -365,11 +365,11 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         break;
     case SpellEffect.heal: // SPELL_EFFECT_HEAL
     {
-        import dmangos.world.spelldamage : spellHeal, SpellHeal;
+        import dmangos.world.spelldamage : spellHeal, SpellBounce, SpellHeal;
         import dmangos.world.spellmods : SpellModOp;
 
         spellHeal(caster, spell, map.unit(target), caster.spellMod(SpellModOp.damage, spell, value),
-            SpellHeal(factor: healFactor));
+            SpellHeal(bounce: SpellBounce(spell.casting.dmgMultiplier[i], bounce)));
         break;
     }
     case SpellEffect.summonCritter: // SPELL_EFFECT_SUMMON_CRITTER: a companion; the same again sends it away

@@ -450,6 +450,11 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   eligibility and immunity, then resolves hit chance, damage, resistance and shields. The
   caster's node records confirmed damage and PvP kill credit while it still simulates the
   caster. Each hit and its confirmation are processed once.
+* **Chain Lightning.** A cast that starts on a target on the caster's node can bounce to PvP
+  opponents on other nodes. The nearest eligible enemy to the previous target gets the next
+  jump. Local enemies and remote players share the target cap and 30% damage falloff per jump.
+  The receiving node rechecks range from the previous target's captured position, PvP
+  eligibility and immunities. Damage and kill credit are applied once for each hit.
 * **Trades** between nearby players move the requester to the other player's node, where the usual
   trade checks and exchange run. Both stay there until the trade ends. A forced move cancels any
   open trade before the player leaves.
@@ -636,7 +641,7 @@ services line (`ServiceHost.describe`). Every log line of the cluster code start
 
 ## Not yet
 
-* Remote creature targets and procs for hostile area spells, hostile chain spells, and cast-time party area heals.
+* Remote creature targets and procs for hostile area and chain spells, and cast-time party area heals.
 * Healing threat and caster procs for remote party-heal recipients.
 * Surviving an owner's loss without disconnecting the client: the home could take its player back
   from the last save, which is worth having only with gateways and much more frequent player saves.

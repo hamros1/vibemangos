@@ -554,7 +554,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     void partyHealArrived(ushort peer, const ref PartyHeal message)
     {
         import dmangos.world.character : Character;
-        import dmangos.world.spelldamage : applyHealAmount, chainHealJumpRadius, isChainHealEffect, isPartyHealEffect,
+        import dmangos.world.spelldamage : applyHealAmount, isChainHealEffect, isPartyHealEffect, spellJumpRadius,
             withinPartyHealRadius;
         import dmangos.world.spellids : SpellEffect;
 
@@ -580,7 +580,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return;
         if (message.previous)
         {
-            if (!isChainHealEffect(*spell, message.effect) || message.radius != chainHealJumpRadius
+            if (!isChainHealEffect(*spell, message.effect) || message.radius != spellJumpRadius
                 || message.previous == message.target || !group.isMember(message.previous)
                 || target.duelingWith(message.caster))
                 return;
@@ -632,7 +632,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.defines : UnitFlags;
         import dmangos.world.relations : canAttack;
         import dmangos.world.replication : Replica;
-        import dmangos.world.spelldamage : isHostileAreaEffect, rollRemoteAreaDamage;
+        import dmangos.world.spelldamage : isHostileAreaEffect, isHostileChainEffect, rollRemoteAreaDamage,
+            spellJumpRadius;
         import dmangos.world.unit : Blow, dealDamage, UnitRef;
         import dmangos.world.updatefields : TypeId;
 
@@ -659,7 +660,15 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (!canAttack(attacker, target.relatingNow(), client))
             return;
         const spell = data.spells.spell(message.spell);
-        if (spell is null || !isHostileAreaEffect(*spell, message.effect))
+        if (spell is null)
+            return;
+        if (message.previous)
+        {
+            if (!isHostileChainEffect(*spell, message.effect) || message.radius != spellJumpRadius
+                || message.previous == message.target || message.previous == message.caster)
+                return;
+        }
+        else if (!isHostileAreaEffect(*spell, message.effect))
             return;
 
         AreaDamage result = message;
