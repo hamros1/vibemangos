@@ -92,7 +92,10 @@ mixin template CombatHandlers()
         }
         enterCombatFor(combatLinger);
         if (swing && attacker.kind == UnitKind.creature)
-            updateCombatSkills(attacker.creature, AttackType.mainHand, true);
+            updateCombatSkills(attacker.creature.template_.creatureType, AttackType.mainHand, true);
+        else if (swing && attacker.replica !is null)
+            if (const template_ = attacker.replica.fields.get!OBJECT_FIELD_ENTRY in context.data.creatureTemplates)
+                updateCombatSkills(template_.creatureType, AttackType.mainHand, true);
         if (damage)
             interruptAuras(0x2 | 0x01000000); // AURA_INTERRUPT_FLAG_DAMAGE, _NON_PERIODIC_DAMAGE
         const health = player.values.get!UNIT_FIELD_HEALTH;
@@ -562,7 +565,7 @@ private:
 
         if (d.targetState == VictimState.evades)
             return flushPlayerChanges();
-        updateCombatSkills(victim, type, false);
+        updateCombatSkills(victim.template_.creatureType, type, false);
         if (d.hitInfo & HitInfo.criticalHit)
         {
             enum uint emoteWoundCritical = 34; // EMOTE_ONESHOT_WOUNDCRITICAL
@@ -667,14 +670,14 @@ private:
      * or one of its at the player, may raise the weapon skill or defense, more likely the farther it
      * is below its maximum (intellect helps weapon skills); then the skill's own roll to rise.
      */
-    void updateCombatSkills(Creature target, AttackType type, bool defence)
+    void updateCombatSkills(uint creatureType, AttackType type, bool defence)
     {
         import std.algorithm.comparison : min;
         import std.random : uniform, uniform01;
         import dmangos.world.defines : Stat;
 
         enum uint critter = 8, skillDefense = 95;
-        if (target.template_.creatureType == critter)
+        if (creatureType == critter)
             return;
         const skillId = defence ? skillDefense : player.weaponSkillFor(type);
         if (skillId == 0)
@@ -854,4 +857,187 @@ unittest
     now += 50.msecs;
     context.update(now);
     assert(innkeeperSpawn in db.creatureRespawns, "its respawn time, from the deaths phase");
+}
+
+/// The creature keeps a player's threat across a handoff; only the player's owner rolls and applies each swing.
+unittest
+{
+    import std.algorithm.searching : canFind, count;
+    import dmangos.cluster.protocol : CreatureSwing, decode;
+    import dmangos.dbc : buildDbc;
+    import dmangos.serialization : serialize;
+    import dmangos.bytes : ByteWriter;
+    import dmangos.world.auras : AuraType, makeAura;
+    import dmangos.world.clientdata : factionTemplateFormat;
+    import dmangos.world.combat : armorReducedDamage;
+    import dmangos.world.creature : CreatureSpawn;
+    import dmangos.world.defines : UnitFlags;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.inworld : ArrivalAction;
+    import dmangos.world.map : Map;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.replication : Replicator;
+    import dmangos.world.spellids : SpellEffect;
+    import dmangos.world.spells : SpellInfo;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto source = newCreationContext(db), owner = newCreationContext(db);
+    auto relay = new TestPlayerRelay(source, owner);
+    static final class ReplicationLink : Replicator
+    {
+        Map destination;
+        ushort sender;
+        void create(ushort, uint, ulong cell, ulong guid, const(ubyte)[] state)
+        {
+            destination.replicaCreated(sender, cell, guid, state);
+        }
+        void values(ushort, uint, ulong guid, const(ubyte)[] slots)
+        {
+            destination.replicaValues(sender, guid, slots);
+        }
+        void move(ushort, uint, ulong guid, ushort opcode, const(ubyte)[] body_, const(ubyte)[] motion)
+        {
+            destination.replicaMoved(sender, guid, opcode, body_, motion);
+        }
+        void remove(ushort, uint, ulong guid)
+        {
+            destination.replicaRemoved(sender, guid);
+        }
+        void inRange(ushort, uint, Position, float, ushort, const(ubyte)[]) {}
+    }
+    auto fromSender = new ReplicationLink, toSender = new ReplicationLink;
+    fromSender.sender = 1;
+    toSender.sender = 2;
+    source.replicator = fromSender;
+    owner.replicator = toSender;
+    CreatureSwing[] requests, replies;
+    source.sendCreatureSwing = (ushort peer, const ref CreatureSwing swing) {
+        assert(peer == 2 && !swing.reply);
+        requests ~= swing;
+        return true;
+    };
+    owner.sendCreatureSwing = (ushort peer, const ref CreatureSwing swing) {
+        assert(peer == 1 && swing.reply);
+        replies ~= swing;
+        return true;
+    };
+
+    const at = Position(100, 100, 40);
+    const near = Position(at.x + 2, at.y, at.z);
+    auto client = loggedIn(source, db, 7, "Anduin", near, characterLevel: 20);
+    auto previous = client.session.inWorld;
+    const playerGuid = previous.player.guid;
+    const humanFaction = previous.player.values.get!UNIT_FIELD_FACTIONTEMPLATE;
+    enum hostileFaction = 14;
+    foreach (node; [source, owner])
+    {
+        node.client.factionTemplates = typeof(node.client.factionTemplates).parse(buildDbc(factionTemplateFormat,
+            [[humanFaction, 1, 0, 1 | 2, 2, 8, 0, 0, 0, 0, 0, 0, 0, 0],
+            [hostileFaction, 14u, 0, 8, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]]), "FactionTemplate.dbc");
+        auto template_ = node.data.creatureTemplates.edit(creatureInnkeeper);
+        template_.faction = hostileFaction;
+        template_.minLevel = template_.maxLevel = 20;
+        template_.detection = 0;
+    }
+
+    auto from = source.map(0), to = owner.map(0);
+    fromSender.destination = to;
+    toSender.destination = from;
+    auto spawn = CreatureSpawn(91_060, creatureInnkeeper, from.id, at.x, at.y, at.z);
+    auto creature = source.makeCreature(&spawn);
+    from.addObject(creature);
+    creature.values.set!UNIT_FIELD_MINDAMAGE(20f);
+    creature.values.set!UNIT_FIELD_MAXDAMAGE(20f);
+    creature.values.set!UNIT_FIELD_BASEATTACKTIME(2000u);
+    creature.ai.attackedBy(previous.unit, from);
+    creature.ai.damageTaken(previous.unit, 42);
+    assert(creature.ai.currentVictim == playerGuid && creature.ai.threatOf(playerGuid) == 42);
+
+    auto otherSpawn = CreatureSpawn(91_061, creatureInnkeeper, to.id, near.x, near.y, near.z);
+    auto other = owner.makeCreature(&otherSpawn);
+    to.addObject(other);
+    ulong[] added, removed;
+    from.takeInterest(added, removed);
+    to.peerInterest(1, added, removed);
+    const targetCell = cellKeyAt(near.x, near.y);
+    assert(from.isReplica(other.guid) && added.canFind(targetCell));
+    assert(previous.actAtReplica(other.guid, ArrivalAction.init));
+    auto victim = relay.remote.inWorld;
+    assert(!from.unit(playerGuid) && from.isReplica(playerGuid) && to.unit(playerGuid).session is victim);
+    from.takeInterest(added, removed);
+    assert(!removed.canFind(targetCell), "the fight keeps the cell subscribed after the last player leaves");
+    to.peerInterest(1, added, removed);
+    to.takeInterest(added, removed);
+    from.peerInterest(2, added, removed);
+    assert(to.isReplica(creature.guid));
+
+    enum hitChance = 91_060, shield = 91_061;
+    foreach (id, type; [hitChance: AuraType.modAttackerMeleeHitChance, shield: AuraType.schoolAbsorb])
+    {
+        auto spell = SpellInfo(id);
+        spell.effect[0] = SpellEffect.applyAura;
+        spell.casting.applyAuraName[0] = type;
+        spell.miscValue[0] = 1; // physical
+        owner.data.spells.spells[id] = spell;
+    }
+    victim.addAura(makeAura(hitChance in owner.data.spells.spells, playerGuid, 20, -1, true, [100, 0, 0]));
+    victim.addAura(makeAura(shield in owner.data.spells.spells, playerGuid, 20, -1, true, [7, 0, 0]));
+    victim.player.values.set!UNIT_FIELD_MAXHEALTH(100u);
+    victim.player.values.set!UNIT_FIELD_HEALTH(100u);
+    victim.player.stats.resistances[0] = 1000;
+    victim.player.values.setByte!UNIT_FIELD_BYTES_1(0, 1); // a sitting defender takes a deterministic crit
+    const damage = cast(uint) armorReducedDamage(creature.fighter.level, victim.fighter.armor, 20) * 2;
+    const afterFirst = 100 - (damage - 7);
+    client.read();
+
+    CreatureSwing throughWire(const ref CreatureSwing swing)
+    {
+        ByteWriter payload;
+        serialize(payload, swing);
+        return decode!CreatureSwing(payload.data);
+    }
+
+    creature.ai.update(from, 50);
+    assert(requests.length == 1 && requests[0].target == playerGuid);
+    assert(creature.ai.currentVictim == playerGuid && creature.ai.threatOf(playerGuid) == 42);
+    const first = throughWire(requests[0]);
+    owner.creatureSwingArrived(3, first);
+    assert(victim.player.values.get!UNIT_FIELD_HEALTH == 100 && !replies.length, "only the creature owner can send");
+    owner.creatureSwingArrived(1, first);
+    owner.creatureSwingArrived(1, first);
+    assert(victim.player.values.get!UNIT_FIELD_HEALTH == afterFirst && victim.inCombat && !victim.hasAuraOf(shield));
+    assert(replies.length == 1 && replies[0].damage == damage - 7);
+    assert(opcodesOf(client.read()).count(Opcode.SMSG_ATTACKERSTATEUPDATE) == 1);
+    const confirmation = throughWire(replies[0]);
+    source.creatureSwingArrived(2, confirmation);
+    source.creatureSwingArrived(2, confirmation);
+
+    creature.ai.update(from, 50);
+    assert(requests.length == 1, "the creature still sets the weapon timer");
+    creature.ai.update(from, 2000);
+    assert(requests.length == 2);
+    victim.player.movement.position.x += 20; // the sender still sees the old position
+    owner.creatureSwingArrived(1, requests[1]);
+    victim.player.movement.position = near;
+    owner.creatureSwingArrived(1, requests[1]); // a rejected swing cannot be replayed after the player returns
+    assert(victim.player.values.get!UNIT_FIELD_HEALTH == afterFirst && replies.length == 1);
+    assert(opcodesOf(client.read()).count(Opcode.SMSG_ATTACKERSTATEUPDATE) == 0);
+
+    creature.ai.update(from, 2000);
+    assert(requests.length == 3);
+    victim.player.values.setByte!UNIT_FIELD_BYTES_1(0, 1);
+    owner.creatureSwingArrived(1, requests[2]);
+    assert(victim.player.values.get!UNIT_FIELD_HEALTH == afterFirst - damage && replies.length == 2);
+    victim.player.values.set!UNIT_FIELD_FLAGS(victim.player.values.get!UNIT_FIELD_FLAGS | UnitFlags.taxiFlight);
+    victim.flushPlayerChanges();
+    creature.ai.update(from, 50);
+    assert(!creature.ai.inCombat);
+    from.takeInterest(added, removed);
+    assert(removed.canFind(targetCell), "evading releases the fight's interest");
+    to.peerInterest(1, added, removed);
+    assert(!from.isReplica(playerGuid));
 }

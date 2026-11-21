@@ -74,6 +74,7 @@ interface ReplicationHandler
     void questLootCheck(ushort peer, const ref QuestLootCheck message);
     void partyHeal(ushort peer, const ref PartyHeal message);
     void areaDamage(ushort peer, const ref AreaDamage message);
+    void creatureSwing(ushort peer, const ref CreatureSwing message);
 
     /// A script's signal for a creature this node simulates.
     void scriptSignal(ushort peer, const ref ScriptSignal message);
@@ -803,6 +804,15 @@ final class ClusterNode : LinkOwner
             {
                 const m = decode!AreaDamage(payload);
                 replication.areaDamage(peer, m);
+            }
+            return;
+        }
+        if (type == MessageType.creatureSwing)
+        {
+            if (replication !is null)
+            {
+                const m = decode!CreatureSwing(payload);
+                replication.creatureSwing(peer, m);
             }
             return;
         }

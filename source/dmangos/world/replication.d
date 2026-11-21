@@ -251,6 +251,18 @@ final class Replica : Replicable, Moving, PerViewer
         return block.flags & UpdateFlags.living ? block.info.position : block.position;
     }
 
+    /// The public geometry of a replica. The owner supplies its actual combat stats.
+    package imported!"dmangos.world.combat".Fighter meleeGeometry() const
+    {
+        import dmangos.world.updatefields : UNIT_FIELD_COMBATREACH, UNIT_FIELD_HEALTH, UNIT_FIELD_LEVEL;
+
+        enum running = MovementFlags.forward | MovementFlags.backward | MovementFlags.strafeLeft | MovementFlags.strafeRight;
+        return typeof(return)(guid: guid, level: values_.get!UNIT_FIELD_LEVEL, position: position,
+            combatReach: values_.get!UNIT_FIELD_COMBATREACH,
+            runningAround: (block.info.flags & running) != 0 && !(block.info.flags & MovementFlags.walkMode),
+            alive: values_.get!UNIT_FIELD_HEALTH != 0);
+    }
+
     /// The public fields used to check relations against a unit on another node.
     Relating unitRelations(const ClientData client) const
     {

@@ -325,13 +325,13 @@ private struct Entity
     Idler idler;                // the object, if it can say how long it will idle
     uint[] viewers;             // the players (slots) whose clients have it
     ushort[] replicatedTo;      // the peers holding a replica of it (an own object, a player here)
+    ulong[] interest;           // cells a local player or fighting creature needs to observe
 
     // A player's own.
     bool ghost;                 // released, as of its last `updateVisibility` (which each death and life runs)
     bool farSeeing;             // it sees from `eye`, not where it stands (Far Sight, Eagle Eye, Mind Vision)
     Position eye;               // where it sees from, while `farSeeing`
     SlotBits known;             // the slots its client has: players and objects
-    ulong[] interest;           // the cells it is near
     ulong[] lingering;          // guids its client has that this map does not hold yet
 }
 
@@ -407,7 +407,7 @@ final class Map : CombatWorld, GameObjectWorld
 
         // Replication.
         bool[ushort][ulong] peerCells;     // cell key -> peers that want what this node simulates there
-        uint[ulong] localInterest;         // cell key -> local players near it
+        uint[ulong] localInterest;         // cell key -> local players and fighting creatures near it
         bool[ulong] interestAdded, interestRemoved; // changes since `takeInterest`
 
         // Players arriving from another node: see `Entity.lingering`; forgotten after `lingerFor`.
@@ -579,6 +579,7 @@ final class Map : CombatWorld, GameObjectWorld
     /// The entity in `slot` goes: nobody's client has it any more, and it has nothing.
     private void dropEntity(uint slot)
     {
+        clearInterest(slot);
         foreach (v; at(slot).viewers.dup)
             unsee(v, slot);
         foreach (k; knownOf(slot, true) ~ knownOf(slot, false))
@@ -1149,8 +1150,8 @@ final class Map : CombatWorld, GameObjectWorld
     }
 
     /**
-     * A player's simulation leaves for node `next`: it goes without a destroy packet, and players here
-     * who saw it go on seeing a replica of it (the next node's replica replaces it), in its slot.
+     * A player's simulation leaves for node `next`. Its replica takes the same slot while the cell is
+     * observed for combat or a client still sees it. An update from the next owner replaces the replica.
      */
     void removeForMigration(Inhabitant who, ushort next)
     {
@@ -1159,13 +1160,11 @@ final class Map : CombatWorld, GameObjectWorld
         auto placeholder = new Replica(guid, next, encodePlayerState(who.character, serverTime()));
         foreach (k; knownOf(slot, true) ~ knownOf(slot, false))
             unsee(slot, k);
-        foreach (cell; at(slot).interest)
-            dropInterest(cell);
-        at(slot).interest = null;
+        clearInterest(slot);
         at(slot).replicatedTo = null; // the next node's replica replaces those elsewhere
         at(slot).lingering = null;
         lingerUntil.remove(guid);
-        if (at(slot).viewers.length == 0)
+        if (at(slot).viewers.length == 0 && (replicator is null || at(slot).cell !in localInterest))
             return dropEntity(slot);
         takeFromCell(slot);
         dropValue(players, slot);
@@ -1389,6 +1388,8 @@ final class Map : CombatWorld, GameObjectWorld
             takeFromCell(slot);
             putInCell(slot, key);
             replicate(slot, key);
+            if (at(slot).interest.length)
+                updateInterest(slot, position);
         }
         if (distanceSquared(at(slot).visibilityAt, position) < settings.relocationLimit ^^ 2)
             return;
@@ -1457,6 +1458,7 @@ final class Map : CombatWorld, GameObjectWorld
         if (onObjectGone !is null)
             onObjectGone(object); // its state is in the migrant: what it held here goes
         migrant.home = home;
+        clearInterest(slot);
         at(slot).home = noCell;
         at(slot).replicatedTo = null;
         if (auto source = cast(Replicable) object)
@@ -1699,7 +1701,7 @@ final class Map : CombatWorld, GameObjectWorld
             forget([guid]);
     }
 
-    /// The cells this map's players became near and stopped being near since the last call.
+    /// The cells this map started or stopped observing since the last call.
     void takeInterest(out ulong[] added, out ulong[] removed)
     {
         foreach (cell, _; interestAdded)
@@ -1710,7 +1712,7 @@ final class Map : CombatWorld, GameObjectWorld
         interestRemoved = null;
     }
 
-    /// Every cell this map's players are near, for a node that just linked.
+    /// Every cell this map observes, for a node that just linked.
     ulong[] interestCells() const
     {
         return localInterest.keys;
@@ -1834,6 +1836,21 @@ final class Map : CombatWorld, GameObjectWorld
 
     /// A player's damage aura ticked on a creature here after the caster left this map.
     void delegate(UnitRef victim, imported!"dmangos.world.auras".Aura aura, size_t effect) remotePeriodicTick;
+
+    /// Sends a due melee swing from a creature here to the observed player's node.
+    bool delegate(Creature attacker, UnitRef target) remoteCreatureSwing;
+
+    /// Keep player replicas near this creature while it has an active fight, even without a local player.
+    package void trackCreatureCombat(Creature creature, bool fighting)
+    {
+        const slot = objectSlot(creature);
+        if (slot == uint.max)
+            return;
+        if (fighting && replicator !is null)
+            updateInterest(slot, creature.position);
+        else
+            clearInterest(slot);
+    }
 
     /// Told what linked creatures follow (`WorldContext`: `dmangos.world.creaturelinking`).
     void delegate(Map map, Creature source, LinkEvent event, ulong enemy) onLinked;
@@ -2211,9 +2228,7 @@ final class Map : CombatWorld, GameObjectWorld
     {
         const guid = who.character.guid;
         const slot = slotFor(guid);
-        foreach (cell; at(slot).interest)
-            dropInterest(cell);
-        at(slot).interest = null;
+        clearInterest(slot);
         foreach (peer; at(slot).replicatedTo)
             replicator.remove(peer, id, guid);
         at(slot).replicatedTo = null;
@@ -2508,7 +2523,7 @@ private:
         return replica.owner == owner ? replica : null;
     }
 
-    /// The cells a local player is near now; the map's interest follows.
+    /// The cells a local player or fighting creature is near now; the map's interest follows.
     void updateInterest(uint slot, Position position)
     {
         ulong[] near;
@@ -2526,6 +2541,13 @@ private:
             if (!near.canFind(cell))
                 dropInterest(cell);
         at(slot).interest = near;
+    }
+
+    private void clearInterest(uint slot)
+    {
+        foreach (cell; at(slot).interest)
+            dropInterest(cell);
+        at(slot).interest = null;
     }
 
     void dropInterest(ulong cell)

@@ -523,6 +523,14 @@ bool canReachWithMelee(const Fighter self, const Fighter target) pure nothrow @n
     return dx * dx + dy * dy < reach * reach;
 }
 
+/// Whether the creature can swing at its target from here.
+bool creatureSwingInReach(const Fighter self, const Fighter target) pure nothrow @nogc @safe
+{
+    import std.math : PI;
+
+    return target.alive && canReachWithMelee(self, target) && hasInArc(self.position, target.position, 2 * PI / 3);
+}
+
 // ---------------------------------------------------------------------------
 // Chances (in percent)
 // ---------------------------------------------------------------------------

@@ -160,7 +160,7 @@ The cluster messages include:
 | Sessions | `SessionClaim`, `SessionGrant`, `SessionEvict`, `SessionReleased` |
 | Replication | `InterestUpdate`, `ReplicaCreate`, `ReplicaValues`, `ReplicaMove`, `ReplicaRemove`, `InRange` |
 | Players | `PlayerMessage` (to the owner, to the home, arrival, departure, a move to a third node), `Presence`, `DeliverTo`, `Whisper` |
-| Gameplay across nodes | `StockRequest`, `StockReply`, `StockRelease`, `GroupCommand`, `GroupState`, `MemberStatsRequest`, `ToEveryone`, `GmRemote`, `KillShare`, `GroupLootRoll`, `LootCoinShare`, `QuestLootCheck`, `PartyHeal`, `AreaDamage`, `ScriptSignal`, `DungeonEntryRequest`, `DungeonEntryReply`, `FriendStatusChange`, `GuildReload`, `GuildBroadcast`, `GuildInvitation` |
+| Gameplay across nodes | `StockRequest`, `StockReply`, `StockRelease`, `GroupCommand`, `GroupState`, `MemberStatsRequest`, `ToEveryone`, `GmRemote`, `KillShare`, `GroupLootRoll`, `LootCoinShare`, `QuestLootCheck`, `PartyHeal`, `AreaDamage`, `CreatureSwing`, `ScriptSignal`, `DungeonEntryRequest`, `DungeonEntryReply`, `FriendStatusChange`, `GuildReload`, `GuildBroadcast`, `GuildInvitation` |
 | Services | `ServiceCall`, `ServiceReply` (docs/SERVICES.md) |
 
 On the world server's side, `ClusterBridge` implements the handlers `ClusterNode` calls, and
@@ -461,6 +461,11 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   hands off. Creature ticks keep the caster's threat and tap, and a lethal tick settles loot on
   the creature's node. Solo kill and quest credit, or honor for a PvP kill, go to the node
   simulating the caster. Group rewards still use their existing proximity checks.
+* **Creature melee.** An NPC keeps threat on a player it can still see after the player's
+  handoff. The fight keeps nearby replicas available even when the last local player leaves.
+  The creature's node selects its target, chases it and runs the weapon timer. The
+  player's node verifies the source replica and the target's current eligibility, reach and
+  facing. It rolls the attack table, applies armor and absorbs, and reports each swing once.
 * **Spell procs.** A hostile hit can trigger auras on both actors. Self effects run with the
   actor, and supported direct damage, healing and single-effect aura procs reach a named target
   on its node. A remote proc effect does not start a second cross-node proc chain.
@@ -650,8 +655,8 @@ services line (`ServiceHost.describe`). Every log line of the cluster code start
 
 ## Not yet
 
-* Creature swings and regular AI spell attacks against players on another node. Spell threat is
-  recorded on the creature's node and participates in victim selection when the player is local.
+* Regular creature AI spell attacks across nodes, including spells that replace a melee swing.
+  Player-controlled creature melee and damage shield retaliation still require a local target.
 * Proc spells with projectiles, channels or multiple targeted effects across nodes. Caster-side
   periodic procs and leech effects still need the caster on the target's map.
 * Surviving an owner's loss without disconnecting the client: the home could take its player back

@@ -143,7 +143,7 @@ struct UnitRef
     {
         final switch (kind)
         {
-        case UnitKind.none: return Fighter.init;
+        case UnitKind.none: return replica is null ? Fighter.init : replica.meleeGeometry();
         case UnitKind.player: return session.fighter;
         case UnitKind.creature: return creature.fighter;
         }

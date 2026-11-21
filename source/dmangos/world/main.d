@@ -208,6 +208,7 @@ private int run(WorldConfig config, string configPath)
         context.sendQuestLootCheck = &bridge.sendQuestLootCheck;
         context.sendPartyHeal = &bridge.sendPartyHeal;
         context.sendAreaDamage = &bridge.sendAreaDamage;
+        context.sendCreatureSwing = &bridge.sendCreatureSwing;
         context.signalElsewhere = &bridge.sendScriptSignal;
         context.askDungeonEntry = &bridge.askDungeonEntry;
         context.announceFriendElsewhere = &bridge.announceFriend;

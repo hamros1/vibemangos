@@ -541,6 +541,8 @@ final class CreatureAI : Scripted, CreatureHost
     void died(CombatWorld world)
     {
         world_ = world;
+        if (auto map = cast(imported!"dmangos.world.map".Map) world)
+            map.trackCreatureCombat(me, false);
         if (world !is null)
             interruptCast();
         casting_ = nextSwing = null;
@@ -871,7 +873,10 @@ private:
         reaction.put(me.guid);
         reaction.put(aiReactionHostile);
         world.sendToObservers(me.guid, Opcode.SMSG_AI_REACTION, reaction.data);
-        addThreat(who, 0);
+        if (who.replica is null)
+            addThreat(who, 0);
+        else
+            addRemoteThreat(guid, 0);
         if (!inCombat_)
         {
             enterCombat(world);
@@ -1030,6 +1035,8 @@ private:
     void enterCombat(CombatWorld world)
     {
         inCombat_ = true;
+        if (auto map = remoteMeleeMap(world))
+            map.trackCreatureCombat(me, true);
         combatStart = me.position;
         triggerCombatTimer();
         combatTick = combatManagerTick;
@@ -1077,7 +1084,7 @@ private:
         combatTick -= combatManagerTick;
         // The pursuit time is not looked at in dungeons (CMaNGOS: "disabled in instances").
         if (combatTimer == 0 && victim && !inDungeon)
-            if (auto target = world.unit(victim))
+            if (auto target = combatTarget(world, victim))
             {
                 const at = target.position;
                 const dx = at.x - lastRefresh.x, dy = at.y - lastRefresh.y;
@@ -1129,30 +1136,26 @@ private:
      */
     void updateAI(CombatWorld world)
     {
-        import dmangos.world.map : Map;
-        import dmangos.world.replication : Replica;
-        import dmangos.world.updatefields : TypeId;
-
+        const canSwingRemotely = remoteMeleeMap(world) !is null;
         ulong[] gone;
         foreach (guid, _; threat)
         {
             auto who = world.unit(guid);
-            if (guid in remoteThreat)
+            if (who)
             {
-                if (who)
-                {
-                    remoteThreat.remove(guid);
+                if (remoteThreat.remove(guid))
                     who.threatAdded(me.guid);
-                }
-                else if (victim || combatTimer > 0)
-                    if (auto map = cast(Map) world)
-                        if (auto copy = cast(Replica) map.findObject(guid))
-                            if (copy.fields.type == TypeId.player && copy.fields.get!UNIT_FIELD_HEALTH
-                                && canAttack(relating, copy.unitRelations(me.client), me.client))
-                                continue;
+                if (who.alive && !who.untouchable && canAttack(relating, who.relating, me.client))
+                    continue;
             }
-            if (!who || !who.alive || who.untouchable || !canAttack(relating, who.relating, me.client))
-                gone ~= guid;
+            else if ((canSwingRemotely || guid in remoteThreat) && (victim || combatTimer > 0))
+                if (auto copy = livingPlayerReplica(world, guid))
+                    if (canAttack(relating, copy.unitRelations(me.client), me.client))
+                    {
+                        remoteThreat[guid] = true;
+                        continue;
+                    }
+            gone ~= guid;
         }
         foreach (guid; gone)
         {
@@ -1162,7 +1165,7 @@ private:
         }
         if (threat.length == 0)
             return enterEvadeMode(world);
-        auto target = world.unit(selectNextVictim(world));
+        auto target = combatTarget(world, selectNextVictim(world));
         if (!target)
         {
             if (victim)
@@ -1186,6 +1189,37 @@ private:
         meleeAttackIfReady(target, world);
     }
 
+    private imported!"dmangos.world.map".Map remoteMeleeMap(CombatWorld world)
+    {
+        import dmangos.world.map : Map;
+
+        auto map = cast(Map) world;
+        return map !is null && map.remoteCreatureSwing !is null && !relating.playerControlled ? map : null;
+    }
+
+    private imported!"dmangos.world.replication".Replica livingPlayerReplica(CombatWorld world, ulong guid)
+    {
+        import dmangos.world.map : Map;
+        import dmangos.world.replication : Replica;
+
+        if (auto map = cast(Map) world)
+            if (auto copy = cast(Replica) map.findObject(guid))
+                if (copy.fields.type == TypeId.player && copy.fields.get!UNIT_FIELD_HEALTH)
+                    return copy;
+        return null;
+    }
+
+    private UnitRef combatTarget(CombatWorld world, ulong guid)
+    {
+        auto local = world.unit(guid);
+        if (local || !guid)
+            return local;
+        if (auto map = remoteMeleeMap(world))
+            if (auto copy = livingPlayerReplica(world, guid))
+                return UnitRef.observed(copy, map);
+        return UnitRef.init;
+    }
+
     /**
      * The next victim: the most hated, but the current victim keeps its place
      * unless another has more than 110% of its threat in melee reach, or 130% anywhere.
@@ -1198,8 +1232,9 @@ private:
         if (const taunter = tauntedBy())
             return taunter;
         ulong[] order;
+        const canSwingRemotely = remoteMeleeMap(world) !is null;
         foreach (guid, _; threat)
-            if (guid !in remoteThreat)
+            if (guid !in remoteThreat || canSwingRemotely)
                 order ~= guid;
         if (!order.length)
             return 0;
@@ -1213,7 +1248,7 @@ private:
             if ((order[0] in suppressed) is null && (victim in suppressed) !is null)
                 return order[0];
         }
-        const current = victim in remoteThreat ? null : victim in threat;
+        const current = !canSwingRemotely && victim in remoteThreat ? null : victim in threat;
         if (current is null)
             return order[0];
         const self = me.fighter;
@@ -1224,7 +1259,7 @@ private:
             const t = threat[guid];
             if (t <= 1.1f * *current)
                 return victim;
-            auto who = world.unit(guid);
+            auto who = combatTarget(world, guid);
             const inMelee = cast(bool) who && canReachWithMelee(self, who.fighter);
             if (t > 1.3f * *current || (t > 1.1f * *current && inMelee))
                 return guid;
@@ -1448,18 +1483,15 @@ private:
     /// A creature's melee: a swing whenever it is ready and can.
     void meleeAttackIfReady(UnitRef target, CombatWorld world)
     {
-        import std.math : PI;
-
         if (!meleeAttacking || attackTimer || !meleeEnabled || (me.values.get!UNIT_FIELD_FLAGS & UnitFlags.pacified))
             return;
-        const self = me.fighter, other = target.fighter;
-        if (!canReachWithMelee(self, other) || !hasInArc(self.position, other.position, 2 * PI / 3) || !other.alive)
+        if (!creatureSwingInReach(me.fighter, target.fighter))
         {
             attackTimer = 100; // delaying a weapon that is not ready would make it ready sooner
             return;
         }
         attackTimer = me.values.get!UNIT_FIELD_BASEATTACKTIME;
-        if (swingSpell(target))
+        if (target.replica is null && swingSpell(target))
             return;
         swing(target, world);
         // The extra swings it is owed (Thrash, Sword Specialization: `SPELL_EFFECT_ADD_EXTRA_ATTACKS`), at once; they
@@ -1479,6 +1511,12 @@ private:
     /// One swing at `target`.
     private void swing(UnitRef target, CombatWorld world)
     {
+        if (target.replica !is null)
+        {
+            if (auto map = remoteMeleeMap(world))
+                map.remoteCreatureSwing(me, target);
+            return;
+        }
         const self = me.fighter, other = target.fighter;
         auto d = calculateMeleeDamage(self, other, AttackType.mainHand, world.random);
         if ((d.absorbed = target.absorb(d.school, d.damage)) != 0)
@@ -1487,16 +1525,28 @@ private:
         if (d.damage)
             triggerCombatTimer(); // direct damage either way
         target.meleeHitBy(me.guid, d);
-        {
-            import dmangos.world.aurahandlers : ProcFlag;
-            import dmangos.world.procs : procExOfSwing, ProcHit;
+        swingEffects(target, d.outcome, d.damage);
+    }
 
-            procAuras(ProcFlag.dealMeleeSwing, target, ProcHit(null, procExOfSwing(d.outcome), d.damage, 0,
-                d.damage != 0)); // a pet's (Frenzy at a crit, Intimidation at a hit)
-        }
-        if (!target.alive && script !is null)
+    /// A remote player's node applied our swing and returned its result.
+    package void remoteSwingFinished(UnitRef target, MeleeHitOutcome outcome, uint damage, bool killed)
+    {
+        if (inCombat_ && damage)
+            triggerCombatTimer();
+        swingEffects(target, outcome, damage, killed);
+    }
+
+    private void swingEffects(UnitRef target, MeleeHitOutcome outcome, uint damage, bool killed = false)
+    {
+        import dmangos.world.aurahandlers : ProcFlag;
+        import dmangos.world.procs : procExOfSwing, ProcHit;
+
+        procAuras(ProcFlag.dealMeleeSwing, target, ProcHit(null, procExOfSwing(outcome), damage, 0, damage != 0));
+        if (target.replica is null)
+            killed = !target.alive;
+        if (killed && script !is null)
             script.killed(this, target.combatGuid); // `KilledUnit`
-        if (!target.alive)
+        if (killed)
             raiseScript(KilledUnit(EntityRef(target.combatGuid)));
     }
 
@@ -1507,6 +1557,8 @@ private:
     void enterEvadeMode(CombatWorld world)
     {
         const wasFighting = inCombat_;
+        if (auto map = cast(imported!"dmangos.world.map".Map) world)
+            map.trackCreatureCombat(me, false);
         world_ = world;
         spellListTimers = null; // its list's timers start again in its next fight
         if (rootedForFight)
