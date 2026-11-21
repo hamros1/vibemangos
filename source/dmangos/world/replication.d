@@ -6,7 +6,7 @@
  * object's state (`encodeState`: its fields as everyone sees them, and its movement), then what
  * changes (fields, walks), then its removal, through a `Replicator`. The other node keeps a `Replica`:
  * a map object its players see like any other, which follows its spline so it stays where the real
- * one is, but runs no AI and is never saved. Quest loot visibility is sent separately from public fields.
+ * one is, but runs no AI and is never saved. Personalized loot visibility is sent separately from public fields.
  */
 module dmangos.world.replication;
 
@@ -124,24 +124,24 @@ SlotValue[] decodeSlots(ref ByteReader r)
     return slots;
 }
 
-private void putQuestLooters(ref ByteWriter w, const(Creature) creature)
+private void putLooters(ref ByteWriter w, const(Creature) creature)
 {
-    auto looters = creature.loot is null ? null : creature.loot.remoteQuestLooters();
+    auto looters = creature.loot is null ? null : creature.loot.replicaLooters();
     w.put(cast(ubyte) looters.length);
     foreach (guid; looters)
         w.put(guid);
 }
 
-/// A replica field update carrying only quest loot visibility.
-const(ubyte)[] encodeQuestLootView(const(Creature) creature)
+/// A replica field update carrying only personalized loot visibility.
+const(ubyte)[] encodeLootView(const(Creature) creature)
 {
     ByteWriter w;
     w.put(ushort(0)); // no public fields changed
-    putQuestLooters(w, creature);
+    putLooters(w, creature);
     return w.data;
 }
 
-/// The type of a replica's fields, its movement, public fields and any quest loot visibility.
+/// The type of a replica's fields, its movement, public fields and any personalized loot visibility.
 const(ubyte)[] encodeState(Replicable object, uint serverTime)
 {
     ByteWriter w;
@@ -151,8 +151,8 @@ const(ubyte)[] encodeState(Replicable object, uint serverTime)
     w.putBytes(motion);
     w.putBytes(encodeSlots(object.fields.publicSlots));
     if (auto creature = cast(Creature) object)
-        if (creature.loot !is null && creature.loot.hasRemoteQuestDrops)
-            putQuestLooters(w, creature);
+        if (creature.loot !is null && creature.loot.replicatesLootView)
+            putLooters(w, creature);
     return w.data;
 }
 
@@ -178,7 +178,7 @@ final class Replica : Replicable, Moving, PerViewer
         UpdateValues values_;
         MovementBlock block;
         MoveSpline spline;
-        ulong[] questLooters;
+        ulong[] looters;
     }
 
     /// A replica of `guid` owned by node `owner`, from `encodeState`'s bytes.
@@ -192,11 +192,11 @@ final class Replica : Replicable, Moving, PerViewer
         foreach (s; decodeSlots(r))
             values_.setSlot(s.slot, s.value);
         if (!r.empty)
-            readQuestLooters(r);
+            readLooters(r);
         values_.clearChanges();
     }
 
-    /// Applies public fields and returns whether personalized quest loot visibility was sent.
+    /// Applies public fields and returns whether personalized loot visibility was sent.
     bool applySlots(const(ubyte)[] bytes)
     {
         auto r = ByteReader(bytes);
@@ -205,18 +205,18 @@ final class Replica : Replicable, Moving, PerViewer
                 values_.setSlot(s.slot, s.value);
         if (r.empty)
             return false;
-        readQuestLooters(r);
+        readLooters(r);
         return true;
     }
 
-    private void readQuestLooters(ref ByteReader r)
+    private void readLooters(ref ByteReader r)
     {
-        questLooters = new ulong[r.read!ubyte];
-        foreach (ref guid; questLooters)
+        looters = new ulong[r.read!ubyte];
+        foreach (ref guid; looters)
             guid = r.read!ulong;
     }
 
-    bool personalized() const { return questLooters.length != 0; }
+    bool personalized() const { return looters.length != 0; }
 
     const(size_t)[] personalSlots() const
     {
@@ -228,7 +228,7 @@ final class Replica : Replicable, Moving, PerViewer
     {
         import std.algorithm.searching : canFind;
 
-        if (slot == UNIT_DYNAMIC_FLAGS && questLooters.canFind(viewer))
+        if (slot == UNIT_DYNAMIC_FLAGS && looters.canFind(viewer))
             return value | Creature.dynLootable;
         return value;
     }

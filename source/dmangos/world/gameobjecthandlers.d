@@ -406,6 +406,7 @@ mixin template GameObjectHandlers()
             if (auto other = lootOf(lootTarget))
                 other.release(this);
         recheckQuestLoot(go.loot);
+        recheckRemoteMasterLoot(go.loot);
         go.loot.showContentTo(this);
     }
 

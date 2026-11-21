@@ -383,7 +383,8 @@ final class Loot
     bool remoteTurns;            /// remote members can claim ordinary shared items
     private long turnUntil;      /// while the authoritative turn is outstanding
     ulong masterLooter;
-    bool[ulong] owners;          /// who may loot at all
+    bool masterStartsRemote;     /// the eligible master was on another node when the loot was made
+    bool[ulong] owners;          /// members with local loot rights, including a master who may move here
     bool[ulong] looking;         /// whose window is open
     bool fake;                   /// an empty window, shown once
     bool[ulong] opened;          /// who has opened it
@@ -444,6 +445,8 @@ final class Loot
                 item.underThreshold = true;
             else if (rule == LootRule.masterLoot)
             {
+                if (masterStartsRemote)
+                    item.allowed[masterLooter] = true; // check any condition once the master arrives
                 if (masterLooter == 0 || masterLooter !in item.allowed)
                     item.blocked = true;
             }
@@ -454,6 +457,21 @@ final class Loot
                     item.allowed[guid] = true;
             item.currentLooterPass = currentLooter != 0 && currentLooter !in item.allowed;
         }
+    }
+
+    /// Check the rights reserved for a master who started on another node.
+    void checkMasterConditions(scope bool delegate(uint) meets)
+    {
+        bool removed;
+        foreach (item; items)
+            if (item.condition && item.slotTypeFor(masterLooter, this) == LootSlotType.master && !meets(item.condition))
+            {
+                item.allowed.remove(masterLooter);
+                item.blocked = true;
+                removed = true;
+            }
+        if (removed && changed !is null)
+            changed();
     }
 
     /// Seed provisional rights before sending any checks. A check can only remove a right.
@@ -719,6 +737,8 @@ final class Loot
     /// Whether nothing is left for any of the owners still here.
     bool lootedForEveryone()
     {
+        if (masterStartsRemote && canLoot(masterLooter))
+            return false;
         foreach (item; items)
         {
             if (item.quest && hasRemoteQuestDrops)
@@ -774,18 +794,31 @@ final class Loot
         return (status & LootStatus.containReleasedItems) || player == currentLooter;
     }
 
-    /// The quest loot cursor is personalized on replicas as well as on the corpse owner.
-    ulong[] remoteQuestLooters() const
+    /// Whether the corpse can have personalized loot visibility on replicas.
+    bool replicatesLootView() const
+    {
+        return hasRemoteQuestDrops || masterStartsRemote;
+    }
+
+    /// Who sees a loot cursor on a replica for quest loot or for opening as the master.
+    ulong[] replicaLooters() const
     {
         ulong[] eligible;
+        const includeMaster = masterStartsRemote && canLoot(masterLooter);
+        if (includeMaster)
+            eligible ~= masterLooter;
         if (hasRemoteQuestDrops)
             foreach (guid, _; remoteMembers)
+            {
+                if (includeMaster && guid == masterLooter)
+                    continue;
                 foreach (item; items)
                     if (item.quest && item.slotTypeFor(guid, this) == LootSlotType.normal)
                     {
                         eligible ~= guid;
                         break;
                     }
+            }
         return eligible;
     }
 
@@ -809,7 +842,12 @@ final class Loot
         if (items.length && !canLoot(guid))
             return sendReleaseFor(looter);
         opened[guid] = true;
-        if (rule != LootRule.notGroup && !checked)
+        if (rule == LootRule.masterLoot)
+        {
+            if (guid == masterLooter)
+                sendMasterList(looter);
+        }
+        else if (rule != LootRule.notGroup && !checked)
             groupCheck();
         looking[guid] = true;
         looter.lootWindow(target, true);
@@ -1067,42 +1105,42 @@ final class Loot
     // Rolls and the master
     // -------------------------------------------------------------------
 
-    /// The rolls for the blocked items start; the master is told who may receive.
+    /// The rolls for the blocked items start on the first open.
     void groupCheck()
     {
         checked = true;
-        Looter master;
-        ulong[] present;
         foreach (guid, _; owners)
         {
-            auto owner = find(guid);
-            if (owner is null)
+            if (find(guid) is null)
                 continue;
-            present ~= guid;
-            if (rule == LootRule.masterLoot && guid == masterLooter)
-                master = owner;
             foreach (item; items)
             {
                 if (!item.blocked || item.slot in rolls || guid !in item.allowed)
                     continue;
-                if (rule == LootRule.masterLoot && masterLooter in owners)
-                    continue; // the master hands it out
                 auto roll = new LootRoll(this, item);
                 rolls[item.slot] = roll;
                 if (!roll.tryToStart(nowSeconds()))
                     rolls.remove(item.slot);
             }
         }
-        if (master !is null)
-        {
-            if (sendRemoteRoll !is null)
-                present ~= remoteMembers.keys;
-            ByteWriter w;
-            w.put(cast(ubyte) present.length);
-            foreach (guid; present)
-                w.put(guid);
-            master.deliver(Opcode.SMSG_LOOT_MASTER_LIST, w.data);
-        }
+    }
+
+    /// The master can arrive after another member opened the loot, or reopen it after a handoff.
+    private void sendMasterList(Looter master)
+    {
+        ulong[] present;
+        foreach (guid, _; owners)
+            if (find(guid) !is null)
+                present ~= guid;
+        if (sendRemoteRoll !is null)
+            foreach (guid, _; remoteMembers)
+                if (guid !in owners || find(guid) is null)
+                    present ~= guid;
+        ByteWriter w;
+        w.put(cast(ubyte) present.length);
+        foreach (guid; present)
+            w.put(guid);
+        master.deliver(Opcode.SMSG_LOOT_MASTER_LIST, w.data);
     }
 
     /// The clock rolls time out by (Unix seconds); replaceable for tests.

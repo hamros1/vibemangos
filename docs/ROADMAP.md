@@ -135,8 +135,9 @@ The largest area. In order:
    hand), corpses of a player on another node of a cluster (a corpse is put on
    the map its player's node simulates; a node that does not own the cell keeps it anyway).
 4. **Experience and loot: done** (`experience.d`, `loot.d`, `loothandlers.d`; README's "Experience
-   and loot"). Quest drops, skinning, pickpocketing and random
-   properties: done. Not yet: loot of a creature another node of a cluster simulates.
+   and loot"). Quest drops, skinning, pickpocketing and random properties are implemented. A cluster
+   supports group loot rolls, coin splits, round-robin pickup, quest drops and Master Loot across
+   nodes (docs/CLUSTER.md).
 5. Spells, cooldowns and auras. **Casting and auras: done** (`spellcast.d`, `spellhandlers.d`,
    `auras.d`, `aurahandlers.d`; README's "Spells" and "Auras"); creatures' spells come with their
    scripts (above), talents with milestone 7. Channelled spells, area, cone, party and chain targets, persistent area auras, missiles' flight, items'

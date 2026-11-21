@@ -233,6 +233,7 @@ private:
                 other.release(this);
         interruptAuras(AuraInterrupt.looting); // CMaNGOS's `DoLoot`
         recheckQuestLoot(creature.loot);
+        recheckRemoteMasterLoot(creature.loot);
         creature.loot.showContentTo(this);
         creature.inspectingLoot();
     }
@@ -260,7 +261,9 @@ private:
         }
         if (item.quest)
             recheckQuestLoot(loot);
-        if (item.blocked || item.slotTypeFor(player.guid, loot) == LootSlotType.none)
+        const type = item.slotTypeFor(player.guid, loot);
+        if (item.blocked || type == LootSlotType.none
+            || (type == LootSlotType.master && item.condition && !conditionMet(item.condition)))
             return loot.release(this);
         loot.sendItem(this, item);
     }
@@ -279,6 +282,13 @@ private:
             loot.changed();
     }
 
+    /// The master's item conditions can be checked locally once their simulation arrives.
+    void recheckRemoteMasterLoot(Loot loot)
+    {
+        if (loot.masterStartsRemote && player.guid == loot.masterLooter)
+            loot.checkMasterConditions(&conditionMet);
+    }
+
     /// The client closes the loot window.
     @Handles(Opcode.CMSG_LOOT_RELEASE, WorldState.inWorld)
     void handleLootRelease(const ClientGuid request)
@@ -293,6 +303,8 @@ private:
     @Handles(Opcode.CMSG_LOOT_MASTER_GIVE, WorldState.inWorld)
     void handleLootMasterGive(const ClientLootMasterGive request)
     {
+        import dmangos.world.character : Character;
+
         auto loot = lootOf(request.loot);
         if (loot is null)
             return;
@@ -301,14 +313,19 @@ private:
         auto item = loot.itemInSlot(request.slot);
         if (item is null)
             return sendEquipError(InventoryResult.itemNotFound);
-        if (item.remoteAward || item.slotTypeFor(player.guid, loot) != LootSlotType.master)
+        if (item.remoteAward || item.slotTypeFor(player.guid, loot) != LootSlotType.master
+            || (item.condition && !conditionMet(item.condition)))
             return sendLootError(request.loot, LootError.masterOther);
-        if (request.target in loot.owners && request.target in item.allowed)
-            if (auto target = loot.find(request.target))
+        if (auto target = cast(Character) loot.find(request.target))
+        {
+            if ((request.target in item.allowed || request.target in loot.remoteMembers)
+                && (!item.condition || target.conditionMet(item.condition)))
             {
                 item.blocked = false;
                 return loot.notifyMasterAwardError(loot.sendItem(target, item, false));
             }
+            return sendLootError(request.loot, LootError.masterOther);
+        }
         if (!loot.sendRemoteMasterAward(request.target, item))
             sendLootError(request.loot, LootError.masterOther);
     }
@@ -654,8 +671,8 @@ private:
         victim.loot = loot;
         loot.changed = () {
             theMap.refreshViewers(victim);
-            if (loot.hasRemoteQuestDrops)
-                theMap.refreshReplicaQuestLoot(victim);
+            if (loot.replicatesLootView)
+                theMap.refreshReplicaLootView(victim);
         };
         loot.lootedForAll = () {
             victim.lootedOut();
@@ -665,6 +682,8 @@ private:
         loot.beginQuestLootChecks(theMap.id, &context.nextLootSequence, context.sendQuestLootCheck);
         if (victim.loot !is null && loot.lootedForEveryone())
             lootedOutNow(victim);
+        else if (loot.masterStartsRemote)
+            theMap.refreshReplicaLootView(victim);
     }
 
     /// Nothing (more) to loot from `victim`: skinnable if it has a skin, its viewers told.
@@ -718,7 +737,16 @@ private:
             if (looter.atGroupRewardDistance(map, at) || fought(guid))
                 loot.owners[guid] = true;
         }
-        const remoteMasterAwards = crossNodeMaster && group.looter in loot.owners && loot.remoteMembers.length;
+        if (loot.rule == LootRule.masterLoot)
+        {
+            loot.masterLooter = group.looter;
+            loot.masterStartsRemote = crossNodeMaster && group.looter in loot.remoteMembers;
+            if (loot.masterStartsRemote)
+                loot.owners[group.looter] = true;
+            if (group.looter !in loot.owners)
+                loot.rule = LootRule.groupLoot;
+        }
+        const remoteMasterAwards = crossNodeMaster && loot.rule == LootRule.masterLoot && loot.remoteMembers.length;
         if (loot.remoteMembers.length && (crossNodeRolls || remoteMasterAwards))
         {
             loot.rollMap = map.id;
@@ -745,12 +773,6 @@ private:
                 const message = LootCoinShare(context.nextLootSequence(), guid, theMap.id, copper);
                 return context.sendRemoteLootCoins(node, message);
             };
-        }
-        if (loot.rule == LootRule.masterLoot)
-        {
-            loot.masterLooter = group.looter;
-            if (group.looter !in loot.owners)
-                loot.rule = LootRule.groupLoot;
         }
         if (rotates)
         {
@@ -899,14 +921,33 @@ version (unittest)
     import dmangos.world.creature : Creature;
     import dmangos.world.context : WorldContext;
     import dmangos.world.defines : UnitFlags;
+    import dmangos.world.map : Map;
     import dmangos.world.movement : Position;
     import dmangos.world.objects : HighGuid, makeGuid;
     import dmangos.world.opcodes;
     import dmangos.world.packets : ClientGuid;
+    import dmangos.world.replication : Replicator;
     import dmangos.world.teleport : moveTo;
     import dmangos.world.testclient;
     import dmangos.world.testdata;
     import dmangos.world.updatefields;
+
+    /// Replicates loot sources from the owner (node 2) to the player's node.
+    final class LootReplicaLink : Replicator
+    {
+        Map viewer;
+        void create(ushort, uint, ulong cell, ulong guid, const(ubyte)[] state)
+        {
+            viewer.replicaCreated(2, cell, guid, state);
+        }
+        void values(ushort, uint, ulong guid, const(ubyte)[] slots) { viewer.replicaValues(2, guid, slots); }
+        void move(ushort, uint, ulong guid, ushort opcode, const(ubyte)[] body_, const(ubyte)[] motion)
+        {
+            viewer.replicaMoved(2, guid, opcode, body_, motion);
+        }
+        void remove(ushort, uint, ulong guid) { viewer.replicaRemoved(2, guid); }
+        void inRange(ushort, uint, Position, float, ushort, const(ubyte)[]) {}
+    }
 
     /// The innkeeper made a level 1 creature of 30 health that drops 10 copper and jerky.
     Creature lootableInnkeeper(WorldContext context, uint condition = 0)
@@ -1227,25 +1268,8 @@ unittest
     import dmangos.world.grid : cellKeyAt;
     import dmangos.world.group : LootMethod;
     import dmangos.world.loot : itemFlagMultiDrop, lootRow, LootStores;
-    import dmangos.world.map : Map;
     import dmangos.world.quests : Quest, QuestState, QuestStatus;
-    import dmangos.world.replication : encodePlayerState, Replicator;
-
-    static final class CorpseReplicas : Replicator
-    {
-        Map viewer;
-        void create(ushort, uint, ulong cell, ulong guid, const(ubyte)[] state)
-        {
-            viewer.replicaCreated(2, cell, guid, state);
-        }
-        void values(ushort, uint, ulong guid, const(ubyte)[] slots) { viewer.replicaValues(2, guid, slots); }
-        void move(ushort, uint, ulong guid, ushort opcode, const(ubyte)[] body_, const(ubyte)[] motion)
-        {
-            viewer.replicaMoved(2, guid, opcode, body_, motion);
-        }
-        void remove(ushort, uint, ulong guid) { viewer.replicaRemoved(2, guid); }
-        void inRange(ushort, uint, Position, float, ushort, const(ubyte)[]) {}
-    }
+    import dmangos.world.replication : encodePlayerState;
 
     enum Scenario { sharedTurn, sharedFallback, sharedAlreadyTaken, personal, noQuest, abandoned }
     foreach (scenario; [Scenario.sharedTurn, Scenario.sharedFallback, Scenario.sharedAlreadyTaken,
@@ -1281,7 +1305,7 @@ unittest
         });
         auto source = corpseNode.map(0);
         source.replicaCreated(1, cellKeyAt(start.x, start.y), 8, encodePlayerState(jaina.session.character, 0));
-        auto wire = new CorpseReplicas;
+        auto wire = new LootReplicaLink;
         wire.viewer = memberNode.map(0);
         source.replicator = wire;
         if (scenario == Scenario.sharedTurn)
@@ -1487,6 +1511,202 @@ unittest
                 assert(db.itemOwners[guid] == recipient);
             }
         assert(saved == 1, "exactly one item is saved, for the chosen eligible recipient");
+    }
+}
+
+// Master Loot survives the designated master's handoff, even if another member opened the loot first.
+unittest
+{
+    import std.algorithm.sorting : sort;
+    import dmangos.bytes : ByteReader, ByteWriter;
+    import dmangos.cluster.protocol : GroupLootRoll;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.characterdb : GroupRecord, GroupMemberRecord;
+    import dmangos.world.clientdata : lockFormat;
+    import dmangos.world.gameobject : GameObjectSpawn, GameObjectTemplate, GameObjectType;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.group : LootMethod;
+    import dmangos.world.loot : Loot, LootRule, LootSlotType, RollVote, lootRow;
+    import dmangos.world.player : CharacterData;
+    import dmangos.world.playercreate : NewSkill, NewSpell;
+    import dmangos.world.replication : encodePlayerState, encodeState;
+    import dmangos.world.spellcast : SpellTargets, TargetFlags;
+    import dmangos.world.spellhandlers : testSpell;
+
+    enum Scenario { localRecipient, remoteRecipient, outOfRange, chest, masterFailsCondition }
+    foreach (scenario; [Scenario.localRecipient, Scenario.remoteRecipient, Scenario.outOfRange,
+        Scenario.chest, Scenario.masterFailsCondition])
+    {
+        auto db = newDatabase();
+        GroupRecord party;
+        party.id = 1;
+        party.leader = 7;
+        party.leaderName = "Anduin";
+        party.looter = 8;
+        party.lootMethod = LootMethod.masterLoot;
+        party.lootThreshold = 2;
+        party.members = [GroupMemberRecord(7, "Anduin"), GroupMemberRecord(8, "Jaina"),
+            GroupMemberRecord(9, "Khadgar")];
+        db.groups[party.id] = party;
+        auto masterNode = newCreationContext(db), lootNode = newCreationContext(db);
+        auto relay = new TestPlayerRelay(masterNode, lootNode);
+        masterNode.ownsCell = (uint, ulong) => false;
+        auto now = MonoTime.currTime;
+        masterNode.clock = lootNode.clock = () => now;
+        const start = Position(-8949.95f, -132.49f, 83.53f, 1.97f);
+        Position masterAt = start;
+        if (scenario == Scenario.outOfRange)
+            masterAt.x += 80;
+
+        enum uint gather = 2366, herbalism = 182, lock = 99;
+        if (scenario == Scenario.chest)
+        {
+            auto lockRow = new uint[lockFormat.length];
+            lockRow[0] = lock;
+            lockRow[1] = 2; // skill key
+            lockRow[9] = 2; // herbalism
+            lootNode.client.locks = typeof(lootNode.client.locks).parse(buildDbc(lockFormat, [lockRow]), "Lock.dbc");
+            auto spell = testSpell(gather, 33, 26, 0);
+            spell.miscValue[0] = 2;
+            spell.casting.realPointsPerLevel[0] = 5;
+            lootNode.data.spells.spells[gather] = spell;
+            masterNode.data.spells.spells[gather] = spell;
+        }
+        void teachGathering(ref CharacterData c)
+        {
+            if (scenario == Scenario.chest)
+            {
+                c.skills = [NewSkill(herbalism, 1, 75)];
+                c.spells = [NewSpell(gather, true)];
+            }
+        }
+        auto anduin = loggedIn(lootNode, db, 7, "Anduin", start,
+            characterLevel: scenario == Scenario.masterFailsCondition ? 10 : 1, setup: &teachGathering);
+        auto jaina = loggedIn(masterNode, db, 8, "Jaina", masterAt, setup: &teachGathering);
+        const recipientIsRemote = scenario == Scenario.remoteRecipient;
+        auto khadgar = loggedIn(recipientIsRemote ? masterNode : lootNode, db, 9, "Khadgar", start);
+        auto source = lootNode.map(0);
+        source.replicaCreated(1, cellKeyAt(masterAt.x, masterAt.y), 8, encodePlayerState(jaina.session.character, 0));
+        if (recipientIsRemote)
+            source.replicaCreated(1, cellKeyAt(start.x, start.y), 9, encodePlayerState(khadgar.session.character, 0));
+        auto wire = new LootReplicaLink;
+        wire.viewer = masterNode.map(0);
+        source.replicator = wire;
+
+        GroupLootRoll award;
+        lootNode.sendRemoteGroupLoot = (ushort peer, const ref GroupLootRoll message) {
+            assert(peer == 1 && message.action == GroupLootRoll.Action.masterAward);
+            award = message;
+            masterNode.groupLootRollArrived(2, message);
+            return true;
+        };
+        masterNode.sendRemoteGroupLoot = (ushort peer, const ref GroupLootRoll message) {
+            assert(peer == 2 && message.action == GroupLootRoll.Action.result);
+            lootNode.groupLootRollArrived(1, message);
+            return true;
+        };
+        lootNode.data.items.edit(itemJerky).details.quality = 2;
+
+        Loot loot;
+        ulong target;
+        ubyte[] openChest;
+        if (scenario == Scenario.chest)
+        {
+            enum uint chestEntry = 9002, spawnId = 90002, lootId = 500;
+            GameObjectTemplate template_ = {entry: chestEntry, type: GameObjectType.chest, displayId: 2, name: "Chest"};
+            template_.data[0] = lock;
+            template_.data[1] = lootId;
+            lootNode.data.gameObjectTemplates[chestEntry] = template_;
+            lootNode.data.gameObjectSpawns ~= GameObjectSpawn(spawnId, chestEntry, 0, start.x, start.y, start.z);
+            lootNode.data.loot.gameObject.add(lootId, lootRow(itemJerky, 100, 0, 1, 1, 0));
+            auto chest = lootNode.makeGameObject(&lootNode.data.gameObjectSpawns[$ - 1]);
+            source.addObject(chest);
+            target = chest.guid;
+            wire.viewer.replicaCreated(2, cellKeyAt(start.x, start.y), target, encodeState(chest, 0));
+            ByteWriter packet;
+            packet.put(gather);
+            auto targets = SpellTargets(TargetFlags.gameObject);
+            targets.gameObject = target;
+            targets.write(packet);
+            openChest = packet.data.dup;
+            anduin.write(Opcode.CMSG_CAST_SPELL, openChest);
+            loot = chest.loot;
+        }
+        else
+        {
+            auto victim = lootableInnkeeper(lootNode, scenario == Scenario.masterFailsCondition ? 50 : 0);
+            source.peerInterest(1, [cellKeyAt(victim.position.x, victim.position.y)], null);
+            killIt(anduin, victim, now);
+            target = victim.guid;
+            loot = victim.loot;
+            jaina.read();
+            if (scenario != Scenario.outOfRange)
+                assert(jaina.view.fields[target].get(UNIT_DYNAMIC_FLAGS, 0) & Creature.dynLootable,
+                    "the master sees the cursor on the corpse replica");
+            anduin.write(Opcode.CMSG_LOOT, ClientGuid(target));
+        }
+        assert(loot !is null);
+        auto item = loot.itemInSlot(0);
+        const localOpen = anduin.read();
+        if (scenario == Scenario.outOfRange)
+        {
+            assert(loot.rule == LootRule.groupLoot && !loot.canLoot(8));
+            assert(bodyOf(localOpen, Opcode.SMSG_LOOT_START_ROLL).length != 0);
+            anduin.write(Opcode.CMSG_LOOT_ROLL, ClientLootRoll(target, 0, RollVote.greed));
+            khadgar.write(Opcode.CMSG_LOOT_ROLL, ClientLootRoll(target, 0, RollVote.need));
+            assert(khadgar.session.character.inventory.count(itemJerky) == 1 && award.roll == 0);
+            continue;
+        }
+        assert(loot.rule == LootRule.masterLoot && loot.masterStartsRemote && loot.canLoot(8));
+        assert(item.slotTypeFor(8, loot) == LootSlotType.master && loot.rolls.length == 0);
+        assert(bodyOf(localOpen, Opcode.SMSG_LOOT_MASTER_LIST).length == 0);
+        anduin.write(Opcode.CMSG_LOOT_MASTER_GIVE, ClientLootMasterGive(target, 0, 7));
+        assert(anduin.session.character.inventory.count(itemJerky) == 0);
+        if (scenario == Scenario.localRecipient || scenario == Scenario.remoteRecipient)
+        {
+            anduin.write(Opcode.CMSG_LOOT_MONEY, null);
+            assert(!loot.gold && !loot.lootedForEveryone(), "the item waits for the master after the coins are taken");
+        }
+
+        if (scenario == Scenario.chest)
+            jaina.write(Opcode.CMSG_CAST_SPELL, openChest);
+        else
+            jaina.write(Opcode.CMSG_LOOT, ClientGuid(target));
+        assert(jaina.session.inWorld is null && relay.remote !is null);
+        relay.remote.update(50.msecs);
+        const packets = jaina.read();
+        auto roster = ByteReader(bodyOf(packets, Opcode.SMSG_LOOT_MASTER_LIST));
+        ulong[] recipients;
+        foreach (_; 0 .. roster.read!ubyte)
+            recipients ~= roster.read!ulong;
+        recipients.sort();
+        assert(recipients == [7UL, 8UL, 9UL], "the recipient list arrives on opening, with no duplicate master");
+        const assignment = ClientLootMasterGive(target, 0, 9);
+        jaina.write(Opcode.CMSG_LOOT_MASTER_GIVE, assignment);
+        if (scenario == Scenario.masterFailsCondition)
+        {
+            assert(item.slotTypeFor(8, loot) == LootSlotType.none && item.blocked);
+            assert(khadgar.session.character.inventory.count(itemJerky) == 0);
+            continue;
+        }
+        jaina.write(Opcode.CMSG_LOOT_MASTER_GIVE, assignment);
+        if (recipientIsRemote)
+        {
+            assert(award.player == 9);
+            masterNode.groupLootRollArrived(2, award);
+        }
+        assert(item.allowed.length == 0);
+        assert(anduin.session.character.inventory.count(itemJerky) == 0);
+        assert(relay.remote.character.inventory.count(itemJerky) == 0);
+        assert(khadgar.session.character.inventory.count(itemJerky) == 1);
+        size_t saved;
+        foreach (guid, ref row; db.itemRows)
+            if (row.entry == itemJerky)
+            {
+                assert(db.itemOwners[guid] == 9);
+                saved += row.count;
+            }
+        assert(saved == 1);
     }
 }
 
