@@ -862,6 +862,7 @@ unittest
 /// The creature keeps a player's threat across a handoff; only the player's owner rolls and applies each swing.
 unittest
 {
+    import core.time : msecs, MonoTime;
     import std.algorithm.searching : canFind, count;
     import std.math : isClose, PI;
     import dmangos.cluster.protocol : AreaDamage, CreatureSwing, decode;
@@ -871,9 +872,9 @@ unittest
     import dmangos.world.aurahandlers : ProcFlag;
     import dmangos.world.auras : AuraType, makeAura;
     import dmangos.world.classspells : SpellFamily;
-    import dmangos.world.clientdata : factionTemplateFormat, spellCastTimesFormat, spellRangeFormat;
+    import dmangos.world.clientdata : factionTemplateFormat, spellCastTimesFormat, spellRadiusFormat, spellRangeFormat;
     import dmangos.world.combat : armorReducedDamage, MeleeHitOutcome;
-    import dmangos.world.creature : CreatureSpawn;
+    import dmangos.world.creature : CreatureSpawn, CreatureTemplate;
     import dmangos.world.defines : equipmentSlotOffhand, inventorySlotBag0, InventoryType, UnitFlags;
     import dmangos.world.eventai : castTriggered;
     import dmangos.world.grid : cellKeyAt;
@@ -1060,6 +1061,41 @@ unittest
     weaponUser.ai.update(from, 2000);
     assert(requests.length == 2 && requests[1].spell == 0 && weaponUser.values.get!UNIT_FIELD_POWER1 == 80 - manaCost);
 
+    // One Cleave hits an enemy on each node and ignores another eligible enemy past its two-target cap.
+    enum cleave = 91_068, ally = 91_069;
+    auto cleaveInfo = cast(SpellInfo) *source.data.spells.spell(weaponSpell);
+    cleaveInfo.id = cleave;
+    cleaveInfo.casting.chainTarget[0] = 2;
+    foreach (node; [source, owner])
+        node.data.spells.spells[cleave] = cleaveInfo;
+    auto enemyTemplate = cast(CreatureTemplate) source.data.creatureTemplates[creatureInnkeeper];
+    enemyTemplate.entry = ally;
+    enemyTemplate.faction = humanFaction;
+    source.data.creatureTemplates[ally] = enemyTemplate;
+    auto extraSpawn = CreatureSpawn(91_068, ally, from.id, near.x, near.y + 0.5f, near.z);
+    auto extra = source.makeCreature(&extraSpawn);
+    from.addObject(extra);
+    extra.values.set!UNIT_FIELD_HEALTH(200u);
+    ++extraSpawn.guid;
+    extraSpawn.y += 1;
+    auto outsideCap = source.makeCreature(&extraSpawn);
+    from.addObject(outsideCap);
+    outsideCap.values.set!UNIT_FIELD_HEALTH(200u);
+    const beforeCleave = victim.player.values.get!UNIT_FIELD_HEALTH;
+    victim.player.values.setByte!UNIT_FIELD_BYTES_1(0, 1);
+    from.random.seed(20_261_121);
+    to.random.seed(20_261_121);
+    assert(weaponUser.ai.castSpell(source.data.spells.spell(cleave), playerGuid, 0));
+    weaponUser.ai.update(from, 2000);
+    assert(requests.length == 3 && requests[2].spell == cleave && requests[2].target == playerGuid);
+    assert(requests[2].secondary && weaponUser.values.get!UNIT_FIELD_POWER1 == 80 - 2 * manaCost);
+    owner.creatureSwingArrived(1, requests[2]);
+    owner.creatureSwingArrived(1, requests[2]);
+    assert(replies.length == 2 && victim.player.values.get!UNIT_FIELD_HEALTH == beforeCleave - specialDamage);
+    assert(extra.values.get!UNIT_FIELD_HEALTH < 200 && outsideCap.values.get!UNIT_FIELD_HEALTH == 200);
+    from.removeObject(extra.guid);
+    from.removeObject(outsideCap.guid);
+
     // Queue again with a remote victim, then hand the attacker off before it gets its next swing.
     assert(weaponUser.ai.castSpell(source.data.spells.spell(weaponSpell), playerGuid, 0));
     owner.data.creatureSpawns ~= weaponSpawn;
@@ -1067,12 +1103,12 @@ unittest
     assert(moved.length && from.isReplica(weaponUser.guid));
     to.migrateIn(moved, &owner.restoreMigrant);
     auto arrived = to.creatureAt(weaponUser.guid);
-    assert(arrived !is null && arrived.values.get!UNIT_FIELD_POWER1 == 80 - manaCost);
+    assert(arrived !is null && arrived.values.get!UNIT_FIELD_POWER1 == 80 - 2 * manaCost);
     victim.player.values.setByte!UNIT_FIELD_BYTES_1(0, 1);
     to.random.seed(20_261_121);
     client.read();
     arrived.ai.update(to, 2000);
-    assert(arrived.values.get!UNIT_FIELD_POWER1 == 80 - 2 * manaCost);
+    assert(arrived.values.get!UNIT_FIELD_POWER1 == 80 - 3 * manaCost);
     const local = opcodesOf(client.read());
     assert(local.count(Opcode.SMSG_SPELL_GO) == 1 && local.count(Opcode.SMSG_SPELLNONMELEEDAMAGELOG) == 1
         && !local.canFind(Opcode.SMSG_ATTACKERSTATEUPDATE));
@@ -1170,7 +1206,7 @@ unittest
         return true;
     };
     owner.sendAreaDamage = (ushort peer, const ref AreaDamage hit) {
-        assert(peer == 1 && hit.creatureCast && hit.reply);
+        assert(peer == 1 && (hit.creatureCast || hit.triggered) && hit.reply);
         castReplies ~= cast(AreaDamage) hit;
         return true;
     };
@@ -1215,6 +1251,55 @@ unittest
     const applied = victim.player.auras.find(curse);
     assert(applied !is null && applied.effects == 3 && applied.stacks == 1);
     assert(applied.amount[0] == 4 && applied.amount[1] == 9);
+
+    enum breath = 91_074, bolt = 91_075;
+    foreach (node; [source, owner])
+    {
+        const float tenYards = 10;
+        node.client.spellRadii = typeof(node.client.spellRadii).parse(buildDbc(spellRadiusFormat,
+            [[1u, *cast(const uint*) &tenYards, 0u, 0u]]), "SpellRadius.dbc");
+        auto cone = testSpell(breath, SpellEffect.schoolDamage, ImplicitTarget.enemiesInCone, 6, 1);
+        cone.casting.school = 1;
+        cone.casting.radiusIndex[0] = 1;
+        cone.casting.attributesEx3 |= spellAttrEx3AlwaysHit;
+        cone.attributesEx2 |= spellAttrEx2CantCrit;
+        node.data.spells.spells[breath] = cone;
+        auto mixed = testSpell(bolt, SpellEffect.schoolDamage, ImplicitTarget.enemy, 7, 1);
+        mixed.casting.school = 1;
+        mixed.casting.speed = 2; // two yards, one second to impact
+        mixed.casting.attributesEx3 |= spellAttrEx3AlwaysHit;
+        mixed.attributesEx2 |= spellAttrEx2CantCrit;
+        mixed.effect[1] = SpellEffect.applyAura;
+        mixed.implicitTargetA[1] = ImplicitTarget.enemy;
+        mixed.casting.applyAuraName[1] = AuraType.modStat;
+        mixed.basePoints[1] = 4;
+        mixed.baseDice[1] = 1;
+        node.data.spells.spells[bolt] = mixed;
+    }
+    victim.player.values.set!UNIT_FIELD_HEALTH(100u);
+    assert(creature.ai.castSpell(source.data.spells.spell(breath), creature.guid, castTriggered));
+    assert(casts.length == 4 && casts[3].creatureArea && casts[3].target == playerGuid);
+    owner.areaDamageArrived(1, casts[3]);
+    owner.areaDamageArrived(1, casts[3]);
+    assert(victim.player.values.get!UNIT_FIELD_HEALTH == 94);
+
+    auto now = MonoTime.currTime;
+    source.clock = () => now;
+    assert(creature.ai.castSpell(source.data.spells.spell(bolt), playerGuid, castTriggered));
+    assert(casts.length == 4 && !victim.hasAuraOf(bolt));
+    now += 999.msecs;
+    source.update(now);
+    assert(casts.length == 4);
+    now += 1.msecs;
+    source.update(now);
+    assert(casts.length == 6 && casts[4].effect == 0 && casts[5].effect == 1);
+    owner.areaDamageArrived(1, casts[4]);
+    owner.areaDamageArrived(1, casts[4]);
+    assert(victim.player.values.get!UNIT_FIELD_HEALTH == 87);
+    owner.areaDamageArrived(1, casts[5]);
+    owner.areaDamageArrived(1, casts[5]);
+    auto projectileAura = victim.player.auras.find(bolt);
+    assert(projectileAura !is null && projectileAura.effects == 2 && projectileAura.stacks == 1);
 
     enum holyShield = 20925, sanctuary = 20911, offhand = 91_065, holySchool = 1;
     auto shieldItem = ItemTemplate.display(1, InventoryType.shield);

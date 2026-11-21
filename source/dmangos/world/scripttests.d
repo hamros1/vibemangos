@@ -704,7 +704,7 @@ unittest
     PeriodicResult[] ticks;
     source.sendPeriodicResult = (ushort node, const ref PeriodicResult tick) {
         assert(node == 2);
-        ticks ~= tick;
+        ticks ~= cast(PeriodicResult) tick;
     };
     drained.updateAuras(map, period);
     assert(drained.values.get!UNIT_FIELD_HEALTH == 40 && drained.values.get!UNIT_FIELD_POWER1(Power.mana) == 0);
@@ -719,6 +719,73 @@ unittest
     }
     assert(moved.player.values.get!UNIT_FIELD_HEALTH == 60 && moved.player.values.get!UNIT_FIELD_POWER1(Power.mana) == 16);
     assert(procEffect.charges == 1 && moved.hasAuraOf(procBuff));
+
+    // A remote channel leeches only while the caster's node says it is aimed at this victim.
+    import dmangos.cluster.protocol : AreaDamage;
+    import dmangos.world.clientdata : factionTemplateFormat, spellRangeFormat;
+    import dmangos.world.replication : encodePlayerState;
+    import dmangos.world.spellcast : spellAttrEx3AlwaysHit, SpellCastResult, SpellTargets, TargetFlags;
+    import dmangos.world.spellids : ImplicitTarget;
+
+    enum uint channelled = 91_076;
+    enum uint hostile = 14;
+    auto channel = cast(SpellInfo) *source.data.spells.spell(leechLife);
+    channel.id = channelled;
+    channel.attributesEx |= 0x04;
+    channel.casting.durationIndex = 1;
+    channel.casting.rangeIndex = 1;
+    channel.casting.attributesEx3 |= spellAttrEx3AlwaysHit;
+    channel.implicitTargetA[0] = ImplicitTarget.enemy;
+    channel.basePoints[0] = 19;
+    channel.baseDice[0] = 1;
+    const ownFaction = moved.player.values.get!UNIT_FIELD_FACTIONTEMPLATE;
+    const float thirtyYards = 30;
+    uint[spellRangeFormat.length] spellRange;
+    spellRange[0] = 1;
+    spellRange[2] = *cast(const uint*) &thirtyYards;
+    foreach (node; [source, destination])
+    {
+        node.data.spells.spells[channelled] = channel;
+        node.client.spellRanges = typeof(node.client.spellRanges).parse(buildDbc(spellRangeFormat, [spellRange[]]),
+            "SpellRange.dbc");
+        node.client.factionTemplates = typeof(node.client.factionTemplates).parse(buildDbc(factionTemplateFormat,
+            [[ownFaction, 1, 0, 3, 2, 8, 0, 0, 0, 0, 0, 0, 0, 0],
+            [hostile, 14u, 0, 8, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]]), "FactionTemplate.dbc");
+    }
+    drained.values.set!UNIT_FIELD_FACTIONTEMPLATE(hostile);
+    drained.factionTemplate = source.client.factionTemplates.lookup(hostile);
+    destination.map(map.id).replicaCreated(1, cellKeyAt(drained.position.x, drained.position.y), drained.guid,
+        encodeState(drained, 0));
+    auto defend = proc;
+    defend.casting.procFlags = ProcFlag.takeHarmfulPeriodic;
+    source.data.spells.spells[procBuff] = buff;
+    source.data.spells.spells[procAura] = defend;
+    auto victimProc = makeAura(source.data.spells.spell(procAura), drained.guid, 20, -1, true, [0, 0, 0]);
+    drained.receiveAura(victimProc, map, isNew);
+    drained.ai.bind(map);
+    const casterCell = cellKeyAt(moved.player.position.x, moved.player.position.y);
+    destination.sendAreaDamage = (ushort node, const ref AreaDamage hit) {
+        assert(node == 1 && hit.channelled && hit.target == drained.guid);
+        map.replicaCreated(2, casterCell, guid, encodePlayerState(moved.player, 0));
+        source.areaDamageArrived(2, hit);
+        source.areaDamageArrived(2, hit);
+        return true;
+    };
+    assert(moved.castSpell(destination.data.spells.spell(channelled), SpellTargets(TargetFlags.unit, drained.guid),
+        false, 0) == SpellCastResult.ok);
+    auto drainAura = drained.auras.find(channelled);
+    assert(drainAura !is null && drainAura.stacks == 1 && drainAura.amount[0] == 20);
+    drained.updateAuras(map, period);
+    assert(ticks.length == 3 && ticks[2].drained == 20 && drained.values.get!UNIT_FIELD_HEALTH == 20);
+    assert(victimProc.charges == 1 && drained.auras.find(procBuff) !is null);
+    destination.periodicResultArrived(1, ticks[2]);
+    destination.periodicResultArrived(1, ticks[2]);
+    assert(moved.player.values.get!UNIT_FIELD_HEALTH == 70);
+    moved.endChannel(true);
+    assert(drained.auras.find(channelled) is null);
+    map.replicaCreated(2, casterCell, guid, encodePlayerState(moved.player, 0));
+    drained.updateAuras(map, period);
+    assert(ticks.length == 3 && drained.values.get!UNIT_FIELD_HEALTH == 20 && victimProc.charges == 1);
 }
 
 /// Hate to Zero (`spell_hate_to_zero`), a creature's spell: its target's threat on it is gone.

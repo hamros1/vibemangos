@@ -158,11 +158,14 @@ uint spellDamage(ref Caster caster, const(SpellInfo)* spell, UnitRef victim, uin
 
 private bool isDirectMagicDamageEffect(const ref SpellInfo spell, size_t i)
 {
-    enum uint channels = 0x04 | 0x40;
     return i < spell.effect.length && spell.effect[i] == SpellEffect.schoolDamage
-        && !(spell.attributesEx & channels) && spell.casting.speed <= 0
         && spell.casting.school > 0 && spell.casting.school < 7
         && (spell.casting.dmgClass == DamageClass.magic || spell.casting.dmgClass == DamageClass.none);
+}
+
+private bool instantaneous(const ref SpellInfo spell)
+{
+    return !(spell.attributesEx & (0x04 | 0x40)) && spell.casting.speed <= 0;
 }
 
 /// The instant magical area effects that can be split between nodes.
@@ -170,7 +173,7 @@ bool isHostileAreaEffect(const ref SpellInfo spell, size_t i)
 {
     import std.algorithm.searching : count;
 
-    if (!isDirectMagicDamageEffect(spell, i) || spell.effect[].count(SpellEffect.schoolDamage) != 1
+    if (!instantaneous(spell) || !isDirectMagicDamageEffect(spell, i) || spell.effect[].count(SpellEffect.schoolDamage) != 1
         || spell.casting.chainTarget[i] > 1)
         return false;
     const a = spell.implicitTargetA[i], b = spell.casting.implicitTargetB[i];
@@ -183,7 +186,8 @@ bool isHostileChainEffect(const ref SpellInfo spell, size_t i)
 {
     import std.algorithm.searching : count;
 
-    return isDirectMagicDamageEffect(spell, i) && spell.effect[].count(SpellEffect.none) == spell.effect.length - 1
+    return instantaneous(spell) && isDirectMagicDamageEffect(spell, i)
+        && spell.effect[].count(SpellEffect.none) == spell.effect.length - 1
         && spell.implicitTargetA[i] == ImplicitTarget.enemy && spell.casting.implicitTargetB[i] == ImplicitTarget.none
         && spell.casting.chainTarget[i] > 1;
 }
@@ -191,11 +195,8 @@ bool isHostileChainEffect(const ref SpellInfo spell, size_t i)
 /// The explicit target of a proc sent to the node that simulates it.
 bool isTargetedProcEffect(const ref SpellInfo spell, size_t i)
 {
-    import std.algorithm.searching : count;
-
-    enum uint channels = 0x04 | 0x40;
-    if (i >= spell.effect.length || spell.casting.speed > 0 || (spell.attributesEx & channels)
-        || spell.casting.implicitTargetB[i] != ImplicitTarget.none || spell.casting.chainTarget[i] > 1)
+    if (i >= spell.effect.length || spell.casting.implicitTargetB[i] != ImplicitTarget.none
+        || spell.casting.chainTarget[i] > 1)
         return false;
     const target = spell.implicitTargetA[i];
     if (target != ImplicitTarget.enemy && target != ImplicitTarget.friend && target != ImplicitTarget.unit
@@ -207,23 +208,22 @@ bool isTargetedProcEffect(const ref SpellInfo spell, size_t i)
         const mask = remoteTargetAuraEffects(spell, i);
         return mask && (mask & ((1 << i) - 1)) == 0;
     }
-    return spell.effect[].count(SpellEffect.none) == spell.effect.length - 1
-        && (effect == SpellEffect.heal || isDirectMagicDamageEffect(spell, i));
+    return effect == SpellEffect.heal || isDirectMagicDamageEffect(spell, i);
 }
 
 /// Aura effects sharing a single explicit target and therefore one duration, slot and application.
 ubyte remoteTargetAuraEffects(const ref SpellInfo spell, size_t first)
 {
     const target = spell.implicitTargetA[first];
+    const secondary = spell.casting.implicitTargetB[first];
     ubyte mask;
     foreach (i, effect; spell.effect)
     {
-        if (effect == SpellEffect.none)
+        if (effect != SpellEffect.applyAura || spell.implicitTargetA[i] != target
+            || spell.casting.implicitTargetB[i] != secondary || spell.casting.chainTarget[i] > 1)
             continue;
         const aura = spell.casting.applyAuraName[i];
-        if (effect != SpellEffect.applyAura || spell.implicitTargetA[i] != target
-            || spell.casting.implicitTargetB[i] != ImplicitTarget.none || spell.casting.chainTarget[i] > 1
-            || aura == AuraType.modPossess || aura == AuraType.modPossessPet || aura == AuraType.modCharm)
+        if (aura == AuraType.modPossess || aura == AuraType.modPossessPet || aura == AuraType.modCharm)
             return 0;
         mask |= cast(ubyte)(1 << i);
     }
@@ -235,6 +235,51 @@ bool isCreatureTargetEffect(const ref SpellInfo spell, size_t i)
 {
     return isTargetedProcEffect(spell, i) && (spell.implicitTargetA[i] == ImplicitTarget.enemy
         || spell.effect[i] == SpellEffect.schoolDamage) && spell.effect[i] != SpellEffect.heal;
+}
+
+/// Drains whose entire channel aura can run on one hostile target.
+package bool isRemoteLeechChannel(const ref SpellInfo spell)
+{
+    if (!(spell.attributesEx & (0x04 | 0x40)) || spell.casting.speed > 0)
+        return false;
+    bool drains;
+    foreach (i, effect; spell.effect)
+    {
+        if (effect == SpellEffect.none)
+            continue;
+        const aura = spell.casting.applyAuraName[i];
+        if (effect != SpellEffect.applyAura || spell.implicitTargetA[i] != ImplicitTarget.enemy
+            || spell.casting.implicitTargetB[i] != ImplicitTarget.none || spell.casting.chainTarget[i] > 1
+            || (aura != AuraType.periodicLeech && aura != AuraType.periodicManaLeech))
+            return false;
+        drains = true;
+    }
+    return drains;
+}
+
+package ImplicitTarget creatureAreaShape(const ref SpellInfo spell, size_t i)
+{
+    import std.algorithm.comparison : among;
+
+    if (i >= spell.effect.length || spell.casting.chainTarget[i] > 1)
+        return ImplicitTarget.none;
+    const a = spell.implicitTargetA[i], b = spell.casting.implicitTargetB[i];
+    with (ImplicitTarget)
+    {
+        const shape = b.among(enemiesAroundSource, enemiesAroundDest) ? b
+            : a.among(enemiesAroundSource, enemiesAroundDest, enemiesInCone) ? a : none;
+        if (shape == none)
+            return none;
+        if (isDirectMagicDamageEffect(spell, i))
+            return shape;
+        if (spell.effect[i] == SpellEffect.applyAura)
+        {
+            const effects = remoteTargetAuraEffects(spell, i);
+            if (effects && !(effects & ((1 << i) - 1)))
+                return shape;
+        }
+        return none;
+    }
 }
 
 /// Creature spell range includes both units' combat reaches at its outer edge.

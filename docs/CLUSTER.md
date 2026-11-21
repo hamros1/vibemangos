@@ -463,9 +463,10 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   hands off. Creature ticks keep the caster's threat and tap, and a lethal tick settles loot on
   the creature's node. Solo kill and quest credit, or honor for a PvP kill, go to the node
   simulating the caster. Group rewards still use their existing proximity checks.
-  A resolved health or mana leech that persists independently of a channel sends the amount
-  drained to the caster's current node. A damaging tick also lets the caster run periodic procs
-  when it can still observe the victim.
+  Health and mana drains send the amount actually drained to the caster's current node.
+  For a targeted channel, the caster stays on its node and the target's node verifies the
+  active channel before each tick. Cancellation and pushback update the remote aura.
+  The victim's node runs periodic reactions and returns caster benefits such as Vampiric Embrace.
 * **Creature melee.** An NPC keeps threat on a player it can still see after the player's
   handoff. The fight keeps nearby replicas available even when the last local player leaves.
   A pet, charmed creature or guardian can melee nearby players and creatures across the
@@ -480,19 +481,21 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   strike the creature on its node using the swing reply. The defender's node spends the
   Holy Shield charge when it resolves the block. The creature's node applies the damage
   and threat and sends the corresponding combat log once.
-  A queued single-target weapon ability, such as Maul, can replace the next swing against
-  a target on another node. The attacker spends any applicable mana when it sends the swing.
-  The target's node rolls the weapon hit and applies damage once. A fighting creature carries
-  its queued ability through a region handoff. If the target moves again after dispatch, the
-  old node can discard the swing under the same ownership checks as ordinary melee.
-* **Creature casts.** An NPC can cast single-target magical damage and hostile aura spells
-  on a player across the boundary. The creature holds the cast timer, mana and spell-list
-  cooldown. The player's node rechecks eligibility, range and line of sight at completion.
-  Cast damage or a debuff is applied once, and an interrupt before completion cancels the cast.
+  A queued weapon ability such as Maul or Cleave replaces one swing. Cleave shares its
+  target cap across local and remote enemies, and the attacker spends any applicable mana
+  once. Each target's node resolves that target's weapon hit. A fighting creature carries
+  its queued ability through a region handoff. An old owner can discard a swing sent before
+  the target's handoff.
+* **Creature casts.** Direct magical damage and hostile auras can reach targets across
+  nodes, including caster-centered areas, target-centered areas and forward cones.
+  The creature holds the cast timer, mana and spell-list cooldown. The target's node
+  rechecks eligibility and the spell's geometry. An interrupt before completion cancels
+  the cast.
 * **Spell procs.** A hostile hit can trigger auras on both actors. Self effects run with the
-  actor, and supported direct damage, healing and aura procs reach a named target on its node.
-  Aura effects with the same explicit target share one application. A remote proc effect does
-  not start a second cross-node proc chain.
+  actor, and supported direct damage, healing and aura effects of the same proc can
+  reach a named target on its node. Aura effects with the same target share one
+  application. Projectiles dispatch on impact, and triggered channel missiles can be
+  aimed at a remote target. Proc results are applied once.
 * **Trades** between nearby players move the requester to the other player's node, where the usual
   trade checks and exchange run. Both stay there until the trade ends. A forced move cancels any
   open trade before the player leaves.
@@ -743,11 +746,11 @@ Every `metrics_interval_seconds` each node logs, besides its tick and GC figures
 coordinator, the cost each node carries; each link's round trip and the duplicates it dropped) and its
 services line (`ServiceHost.describe`). Every log line of the cluster code starts with `cluster:`.
 
-## Not yet
+## Spell routing limits
 
-* Creature spells with broader target shapes or effects, including multi-target swing replacements such as Cleave.
-* Proc spells with projectiles, channels or mixed targeted effects across nodes, channelled
-  leeches, and additional victim-side periodic effects.
+Cross-node spell routing is effect-specific. Script-selected targets, persistent ground effects
+and arbitrary spell scripts still use their local paths. A projectile is dispatched while its
+launching node still simulates the caster and can route to the target's current replica.
 
 ## Testing
 

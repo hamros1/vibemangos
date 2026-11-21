@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 57; // 57: cross-node creature next-swing abilities
+enum ushort protocolVersion = 58; // 58: cross-node spell targets
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -130,6 +130,8 @@ struct PeriodicResult
     uint drained; /// actual health or power taken by a leech
     bool targetAlive;
     bool forwarded;
+    bool detached; /// a triggered aura does not have a caster channel to maintain
+    @LengthPrefix!ubyte RemoteSpellBenefit[] benefits;
 }
 
 /// A creature's main-hand swing addressed to the node that owned its target.
@@ -148,6 +150,7 @@ struct CreatureSwing
     uint spell; /// zero for an ordinary swing
     int spellValue; /// the attacker's roll for its weapon effect
     float spellThreat = 1;
+    bool secondary; /// another target of the same weapon cast will announce it
 
     // The target's node returns the outcome of an accepted swing.
     bool reply;
@@ -187,6 +190,10 @@ struct AreaDamage
     bool alwaysHits;
     bool triggered; /// a targeted proc instead of an area or chain hit
     bool creatureCast; /// a regular cast aimed at a player by a creature on another node
+    bool creatureArea; /// hostile area or cone of a creature spell
+    bool channelled;   /// a player started a channel on its own node
+    bool channelUpdate; /// the channel's remote aura is shortened, or removed for auraMs zero
+    float facing;      /// the creature's orientation at completion
     bool auraAbsent; /// the caster asked to apply this aura only if it is absent
     bool suppressProcs;
     int auraMs;
@@ -1218,7 +1225,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 57, recordedFingerprint = 0xf95cc20820d22318UL;
+private enum recordedVersion = 58, recordedFingerprint = 0x7a9ba15f676ecadcUL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

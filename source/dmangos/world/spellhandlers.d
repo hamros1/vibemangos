@@ -154,6 +154,11 @@ private:
                 if (replica.fields.type == TypeId.player && context.onlinePlayer(targets.unit) is null
                     && isPlayerHandoffSpell(*spell))
                     return handoffPlayerSpell(spell, targets, replica);
+                if (remoteLeechTarget(spell, targets.unit) !is null)
+                {
+                    castSpell(spell, targets, false, 0);
+                    return;
+                }
                 if (actAtReplica(targets.unit, ArrivalAction(0, id, targets.unit)))
                     return;
             }
@@ -544,7 +549,8 @@ private:
             return startAutoRepeat(spell, targets);
         if (targets.mask == TargetFlags.self)
             targets.unit = player.guid;
-        const result = checkCast(spell, targets, triggered, itemEntry, true, null, playerHandoff);
+        auto drain = !triggered ? remoteLeechTarget(spell, targets.unit) : null;
+        const result = checkCast(spell, targets, triggered, itemEntry, true, drain, playerHandoff || drain !is null);
         if (result != SpellCastResult.ok)
         {
             if (!triggered)
@@ -592,6 +598,16 @@ private:
             return go(c);
         generic = c;
         return SpellCastResult.ok;
+    }
+
+    private Replica remoteLeechTarget(const(SpellInfo)* spell, ulong target)
+    {
+        import dmangos.world.spelldamage : isRemoteLeechChannel;
+
+        if (context.sendAreaDamage is null || !target || map.unit(target) || !isRemoteLeechChannel(*spell))
+            return null;
+        auto copy = cast(Replica) map.findObject(target);
+        return copy !is null && (copy.fields.type == TypeId.player || copy.fields.type == TypeId.unit) ? copy : null;
     }
 
     /// The countdown of a cast in progress: it goes when its time is up.
@@ -731,6 +747,8 @@ private:
     private void shortenChannelAuras(int delay)
     {
         const spell = channelSpell;
+        if (auto copy = remoteLeechTarget(spell, channelTarget))
+            return updateReplicaChannel(spell, copy, max(1, channelTimer));
         if (auto creature = cast(Creature) map.findObject(channelTarget))
         {
             if (auto aura = creature.auras.find(spell.id))
@@ -801,6 +819,11 @@ private:
     package ulong channelledAt(const(SpellInfo)* spell)
     {
         return spell !is null && (channelSpell is spell || lastChannelSpell is spell) ? channelTarget : 0;
+    }
+
+    package bool channelActiveAt(const(SpellInfo)* spell, ulong target)
+    {
+        return channelSpell is spell && channelTarget == target;
     }
 
     private const(SpellInfo)* lastChannelSpell; // the channel that ended last (`channelledAt`)
@@ -879,7 +902,7 @@ private:
      * The channel ends, at its time or cut short (`cancelled`: moving,
      * `CMSG_CANCEL_CHANNELLING`, another cast), when its auras on the target go with it.
      */
-    void endChannel(bool cancelled)
+    package void endChannel(bool cancelled)
     {
         if (channelSpell is null)
             return;
@@ -899,6 +922,8 @@ private:
                         }
         if (cancelled)
         {
+            if (auto copy = remoteLeechTarget(spell, channelTarget))
+                updateReplicaChannel(spell, copy, 0);
             if (auto creature = cast(Creature) map.findObject(channelTarget))
             {
                 if (auto aura = creature.auras.find(spell.id))
@@ -1863,7 +1888,9 @@ private:
         // `Targets` that let the client name a unit.
         enum uint unitTargetFlags = 0x0002 | 0x0080 | 0x0100 | 0x0200 | 0x0400 | 0x8000;
         const spell = c.spell;
-        const result = checkCast(spell, c.targets, c.triggered, c.castItemEntry, false, null, c.playerHandoff);
+        auto drain = !c.triggered ? remoteLeechTarget(spell, c.targets.unit) : null;
+        const result = checkCast(spell, c.targets, c.triggered, c.castItemEntry, false, drain,
+            c.playerHandoff || drain !is null);
         if (result != SpellCastResult.ok)
         {
             if (!c.triggered)
@@ -1928,6 +1955,8 @@ private:
         {
             if (spell.effect[i] == 0)
                 continue;
+            if (drain !is null)
+                continue; // The channel's aura is installed on its target after the caster starts the channel.
             const a = spell.implicitTargetA[i];
             ulong[] targets;
             const remoteArea = !c.castTime && context.sendAreaDamage !is null
@@ -2068,6 +2097,8 @@ private:
             deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, SpellCastResult.ok));
         }
         auto displayedResults = results;
+        if (drain !is null)
+            displayedResults ~= TargetResult(drain.guid, SpellMissInfo.none);
         if (spellChain.length && (remoteHeals.length || remoteDamage.length))
         {
             displayedResults = null;
@@ -2142,6 +2173,8 @@ private:
                 // aimed at: Arcane Missiles' aura is on its caster)
             if (paid > 0 && spell.casting.powerType == Power.mana && channelSpell is spell)
                 player.manaSpent(channelTimer); // the five-second rule: as long as the channel, if longer
+            if (drain !is null && channelSpell is spell)
+                castProcAtReplica(spell, drain, c.custom, true);
         }
         channelFailed = false;
         // `SpellHit` for the creatures hit (their scripts).
@@ -2274,7 +2307,6 @@ private:
             if (copy.fields.type == TypeId.unit)
                 if (const proto = copy.fields.get!OBJECT_FIELD_ENTRY in context.data.creatureTemplates)
                     creatureType = proto.creatureType;
-        hit.sequence = context.nextGameplaySequence();
         hit.casterLevel = player.data.level;
         const versus = creatureType < creatureTypes ? player.damageMods.versus[creatureType] : 1;
         hit.amount = damage * player.damageMods.school[school] * versus;
@@ -2287,12 +2319,12 @@ private:
         hit.suppressProcs = c.custom.by !is null;
         hit.critBonusFlat = spellMod(SpellModOp.critDamageBonus, spell, 0.0f);
         hit.critBonusFactor = spellMod(SpellModOp.critDamageBonus, spell, 1.0f) - hit.critBonusFlat;
-        context.sendAreaDamage(remote.peer, *hit);
+        context.sendReplicaSpell(map, remote.peer, spell, *hit);
     }
 
     /// A proc's effects on a named target are applied where that target is simulated.
     package void castProcAtReplica(const(SpellInfo)* spell, Replica target,
-        imported!"dmangos.world.classspells".CustomValues custom)
+        imported!"dmangos.world.classspells".CustomValues custom, bool channelled = false)
     {
         import dmangos.world.caster : Caster;
         import dmangos.world.spellauras : auraCast;
@@ -2301,22 +2333,38 @@ private:
         if (context.sendAreaDamage is null || target.owner == context.nodeId)
             return;
         const at = player.position;
+        Casting local;
+        local.spell = spell;
+        local.custom = custom;
+        local.triggered = true;
+        local.targets = SpellTargets(TargetFlags.unit, player.guid);
+        foreach (i, effect; spell.effect)
+            if (effect == SpellEffect.applyAura && spell.implicitTargetA[i] == ImplicitTarget.caster
+                && spell.casting.implicitTargetB[i] == ImplicitTarget.none)
+                local.auraEffects[player.guid] |= cast(ubyte)(1 << i);
         foreach (i, effect; spell.effect)
         {
+            if (effect && spell.implicitTargetA[i] == ImplicitTarget.caster
+                && spell.casting.implicitTargetB[i] == ImplicitTarget.none)
+            {
+                doEffect(spell, i, player.guid, local);
+                continue;
+            }
             if (!isTargetedProcEffect(*spell, i))
                 continue;
-            const within = range(*spell, context.client)[1];
+            const within = spellMod(SpellModOp.range, spell, range(*spell, context.client)[1]);
             auto hit = AreaDamage(caster: player.guid, target: target.guid, spell: spell.id, effect: cast(ubyte) i,
                 map: map.id, instance: map.instanceId, x: at.x, y: at.y, z: at.z,
                 radius: within > 0 ? within : context.config.visibilityDistance, casterLevel: player.data.level,
-                hitBonus: spellHitBonusOf(spell), alwaysHits: custom.alwaysHits, triggered: true);
+                hitBonus: spellHitBonusOf(spell), alwaysHits: custom.alwaysHits, triggered: !channelled,
+                channelled: channelled);
             if (effect == SpellEffect.schoolDamage)
             {
                 auto remote = RemoteAreaDamage(target.owner, hit);
                 Casting cast_;
                 cast_.custom = custom;
                 sendRolledAreaDamage(spell, cast_, remote);
-                return;
+                continue;
             }
             const outer = effectCustom;
             effectCustom = custom;
@@ -2345,10 +2393,15 @@ private:
                 if (amount > 0)
                     hit.amount = rollHealing(me, spell, amount, hit.critical);
             }
-            hit.sequence = context.nextGameplaySequence();
-            context.sendAreaDamage(target.owner, hit);
-            return;
+            context.sendReplicaSpell(map, target.owner, spell, hit);
         }
+    }
+
+    private void updateReplicaChannel(const(SpellInfo)* spell, Replica target, int remaining)
+    {
+        auto hit = AreaDamage(caster: player.guid, target: target.guid, spell: spell.id, map: map.id,
+            instance: map.instanceId, channelled: true, channelUpdate: true, auraMs: remaining);
+        context.sendReplicaSpell(map, target.owner, spell, hit);
     }
 
     private void collectPartyHeals(const(SpellInfo)* spell, size_t i, ref RemotePartyHeal[] found)

@@ -445,7 +445,7 @@ private:
     }
 
     /// `SMSG_UPDATE_AURA_DURATION`: how long the aura in its slot lasts, for the client's buff bar.
-    void sendAuraDuration(const Aura aura)
+    package void sendAuraDuration(const Aura aura)
     {
         if (aura.slot == noSlot || aura.passive)
             return;
@@ -970,7 +970,15 @@ private:
                 // A channel's ticks (Arcane Missiles' missiles) go at what it is channelled at.
                 const channelled = aura.caster == player.guid ? channelledAt(aura.spell) : 0;
                 if (channelled && channelled != player.guid)
-                    castSpell(spell, SpellTargets(TargetFlags.unit, channelled), true, 0);
+                {
+                    import dmangos.world.classspells : CustomValues;
+                    import dmangos.world.replication : Replica;
+
+                    if (auto replica = cast(Replica) map.findObject(channelled))
+                        castProcAtReplica(spell, replica, CustomValues.init);
+                    else
+                        castSpell(spell, SpellTargets(TargetFlags.unit, channelled), true, 0);
+                }
                 else
                     castSpell(spell, SpellTargets(TargetFlags.self, player.guid), true, 0);
             }

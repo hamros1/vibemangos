@@ -1841,7 +1841,8 @@ final class Map : CombatWorld, GameObjectWorld
     void delegate(UnitRef victim, imported!"dmangos.world.auras".Aura aura, size_t effect) remotePeriodicTick;
 
     /// Sends a due melee swing from a creature here to its target's node.
-    bool delegate(Creature attacker, UnitRef target, uint spell, int spellValue, float spellThreat) remoteCreatureSwing;
+    bool delegate(Creature attacker, UnitRef target, uint spell, int spellValue, float spellThreat, bool secondary)
+        remoteCreatureSwing;
 
     /// Keep player replicas near this creature while it has an active fight, even without a local player.
     package void trackCreatureCombat(Creature creature, bool fighting)

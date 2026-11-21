@@ -28,6 +28,7 @@ mixin template CreatureProcs()
         import std.random : uniform01;
         import dmangos.world.auras : Aura;
         import dmangos.world.context : WorldContext;
+        import dmangos.world.spellids : ImplicitTarget;
         import dmangos.world.spellmods : SpellModOp;
 
         if (inCreatureProc || !me.alive || world_ is null || me.auras.list.length == 0)
@@ -82,20 +83,23 @@ mixin template CreatureProcs()
                 me.loseAura(aura, world_);
         foreach (c; casts)
             if (me.alive)
-                if (other.replica is null || c.target != other.combatGuid || !sendCreatureProc(context, c.spell, other))
-                    castSpell(c.spell, c.target, castTriggered);
+            {
+                import std.range : iota;
+                import std.algorithm.searching : all;
+
+                const self = iota(c.spell.effect.length).all!(i => !c.spell.effect[i]
+                    || (c.spell.implicitTargetA[i] == ImplicitTarget.caster
+                        && c.spell.casting.implicitTargetB[i] == ImplicitTarget.none));
+                castSpell(c.spell, self ? me.guid : c.target, castTriggered);
+            }
         if (spent.length || casts.length)
             world_.flushCreature(me);
     }
 
-    private bool sendCreatureProc(imported!"dmangos.world.context".WorldContext context,
-        const(SpellInfo)* spell, UnitRef other)
-    {
-        return sendCreatureTargetSpell(context, spell, other, true, false);
-    }
-
     private bool sendCreatureTargetSpell(imported!"dmangos.world.context".WorldContext context,
-        const(SpellInfo)* spell, UnitRef other, bool triggered, bool auraAbsent)
+        const(SpellInfo)* spell, UnitRef other, bool triggered, bool auraAbsent, int areaEffect = -1,
+        imported!"dmangos.world.movement".Position center = imported!"dmangos.world.movement".Position.init,
+        float areaRadius = 0)
     {
         import std.algorithm.comparison : max;
         import dmangos.cluster.protocol : AreaDamage;
@@ -112,16 +116,20 @@ mixin template CreatureProcs()
             return false;
         auto source = Caster.of(me, other.map, context);
         const at = me.position;
+        bool sent;
         foreach (i, effect; spell.effect)
         {
-            if (triggered ? !isTargetedProcEffect(*spell, i) : !isCreatureTargetEffect(*spell, i))
+            if (areaEffect >= 0 ? i != areaEffect
+                : triggered ? !isTargetedProcEffect(*spell, i) : !isCreatureTargetEffect(*spell, i))
                 continue;
             const within = range(*spell, context.client)[1];
-            auto hit = AreaDamage(sequence: context.nextGameplaySequence(), caster: me.guid, target: other.combatGuid,
+            const origin = areaEffect >= 0 ? center : at;
+            auto hit = AreaDamage(caster: me.guid, target: other.combatGuid,
                 spell: spell.id, effect: cast(ubyte) i, map: other.map.id, instance: other.map.instanceId,
-                x: at.x, y: at.y, z: at.z, radius: within > 0 ? within : context.config.visibilityDistance,
+                x: origin.x, y: origin.y, z: origin.z, facing: at.orientation,
+                radius: areaEffect >= 0 ? areaRadius : within > 0 ? within : context.config.visibilityDistance,
                 casterLevel: source.level, hitBonus: source.hitBonus(spell), triggered: triggered,
-                creatureCast: !triggered, auraAbsent: auraAbsent);
+                creatureCast: !triggered, auraAbsent: auraAbsent, creatureArea: areaEffect >= 0);
             if (effect == SpellEffect.applyAura)
             {
                 const aura = auraCast(source, spell, remoteTargetAuraEffects(*spell, i));
@@ -144,8 +152,8 @@ mixin template CreatureProcs()
                 hit.critBonusFactor = source.spellMod(SpellModOp.critDamageBonus, spell, 1.0f);
                 hit.resistanceModifier = source.auras.totalByMiscMask(AuraType.modTargetResistance, 1 << school);
             }
-            return context.sendAreaDamage(other.replica.owner, hit);
+            sent |= context.sendReplicaSpell(other.map, other.replica.owner, spell, hit);
         }
-        return false;
+        return sent;
     }
 }

@@ -217,6 +217,7 @@ final class Aura
     float periodicThreat = 1;  /// school and spell threat modifiers when cast, used while the caster is remote
     int periodicResistanceMod;
     bool periodicCasterPvP;
+    bool detachedChannel;     /// a triggered spell's aura runs without a caster channel
     ubyte slot = noSlot;
     int duration;             /// milliseconds left; -1: until cancelled
     int maxDuration;
@@ -302,6 +303,7 @@ struct AuraSet
                 existing.periodicThreat = aura.periodicThreat;
                 existing.periodicResistanceMod = aura.periodicResistanceMod;
                 existing.periodicCasterPvP = aura.periodicCasterPvP;
+                existing.detachedChannel = aura.detachedChannel;
                 existing.duration = existing.maxDuration = aura.maxDuration;
                 if (existing.stacks < (aura.spell.casting.stackAmount ? aura.spell.casting.stackAmount : 1))
                     ++existing.stacks;

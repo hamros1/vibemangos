@@ -1582,7 +1582,7 @@ private:
         if (target.replica !is null)
         {
             if (auto map = remoteMeleeMap(world))
-                map.remoteCreatureSwing(me, target, 0, 0, 1);
+                map.remoteCreatureSwing(me, target, 0, 0, 1, false);
             return;
         }
         const self = me.fighter, other = target.fighter;

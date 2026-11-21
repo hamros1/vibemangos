@@ -20,8 +20,8 @@ import dmangos.world.combat : MeleeDamage, MeleeHitOutcome, VictimState;
 import dmangos.world.spellcast : isNextMeleeSwingSpell, SpellMissInfo;
 import dmangos.world.spells : SpellInfo;
 
-/// The weapon effect of a next-swing spell that can resolve entirely on one explicit enemy.
-package int singleTargetSwingEffect(const ref SpellInfo spell)
+/// A next-swing spell with one weapon effect, aimed at one enemy or a chain of enemies.
+package int nextWeaponSwingEffect(const ref SpellInfo spell)
 {
     import std.algorithm.comparison : among;
 
@@ -35,7 +35,7 @@ package int singleTargetSwingEffect(const ref SpellInfo spell)
         if (weapon >= 0 || !effect.among(SpellEffect.weaponDamageNoschool, SpellEffect.weaponDamage,
                 SpellEffect.weaponPercentDamage, SpellEffect.normalizedWeaponDmg)
             || spell.implicitTargetA[i] != ImplicitTarget.enemy
-            || spell.casting.implicitTargetB[i] != ImplicitTarget.none || spell.casting.chainTarget[i] > 1)
+            || spell.casting.implicitTargetB[i] != ImplicitTarget.none)
             return -1;
         weapon = cast(int) i;
     }
@@ -75,7 +75,7 @@ mixin template CreatureCasting()
     import dmangos.bytes : ByteWriter;
     import dmangos.world.auras : makeAura;
     import dmangos.world.combat : AttackType, calculateMeleeDamage, hasInArc, MeleeDamage, MeleeHitOutcome;
-    import dmangos.world.creaturecasting : creatureWeaponSpellDamage, singleTargetSwingEffect, weaponSpellMiss;
+    import dmangos.world.creaturecasting : creatureWeaponSpellDamage, nextWeaponSwingEffect, weaponSpellMiss;
     import dmangos.world.eventai;
     import dmangos.world.motion : launch, stopMoving;
     import dmangos.world.opcodes : ChatType, Language, Opcode;
@@ -202,7 +202,7 @@ mixin template CreatureCasting()
     bool castSpell(const(SpellInfo)* spell, ulong target, uint flags)
     {
         import dmangos.world.spellcast : SpellCastResult;
-        import dmangos.world.spelldamage : creatureTargetInRange, isCreatureTargetEffect;
+        import dmangos.world.spelldamage : creatureAreaShape, creatureTargetInRange, isCreatureTargetEffect;
 
         // Why it could not, for a pet's owner (`castRefusal`).
         bool refuse(SpellCastResult why)
@@ -230,7 +230,7 @@ mixin template CreatureCasting()
             return refuse(SpellCastResult.badTargets);
         if (target == 0)
             target = victim ? victim : me.guid;
-        auto other = combatTarget(world_, target);
+        auto other = spellTarget(target);
         if (target != me.guid)
         {
             if (other)
@@ -245,8 +245,9 @@ mixin template CreatureCasting()
                     import std.range : iota;
 
                     if (isNextMeleeSwingSpell(*spell) && !triggered
-                        ? singleTargetSwingEffect(*spell) < 0
-                        : !iota(spell.effect.length).any!(i => isCreatureTargetEffect(*spell, i)))
+                        ? nextWeaponSwingEffect(*spell) < 0
+                        : !iota(spell.effect.length).any!(i => isCreatureTargetEffect(*spell, i)
+                            || creatureAreaShape(*spell, i) != ImplicitTarget.none))
                         return refuse(SpellCastResult.badTargets);
                 }
             }
@@ -466,6 +467,24 @@ mixin template CreatureCasting()
         return sqrt(dx * dx + dy * dy + dz * dz);
     }
 
+    /// A spell can reach observed units even on a map with no remote melee link.
+    private UnitRef spellTarget(ulong guid)
+    {
+        import dmangos.world.context : WorldContext;
+        import dmangos.world.map : Map;
+        import dmangos.world.replication : Replica;
+
+        if (auto visible = combatTarget(world_, guid))
+            return visible;
+        if (auto map = cast(Map) world_)
+            if (auto context = cast(WorldContext) lore)
+                if (context.sendAreaDamage !is null)
+                    if (auto copy = cast(Replica) map.findObject(guid))
+                        if (copy.fields.type == TypeId.unit || copy.fields.type == TypeId.player)
+                            return UnitRef.observed(copy, map);
+        return UnitRef.init;
+    }
+
     private SpellTargets targetsOf(ulong target)
     {
         SpellTargets t;
@@ -481,6 +500,14 @@ mixin template CreatureCasting()
     private ulong[] targetsFor(const(SpellInfo)* spell, size_t i, ulong target)
     {
         const a = spell.implicitTargetA[i], b = spell.casting.implicitTargetB[i];
+        if (spell.casting.chainTarget[i] > 1 && nextWeaponSwingEffect(*spell) == i)
+            if (auto primary = world_.unit(target))
+            {
+                ulong[] targets;
+                foreach (other; swingTargets(primary, spell.casting.chainTarget[i], false))
+                    targets ~= other.combatGuid;
+                return targets;
+            }
         const area = a == ImplicitTarget.enemiesAroundSource || a == ImplicitTarget.enemiesAroundDest || b == ImplicitTarget.enemiesAroundSource || b == ImplicitTarget.enemiesAroundDest;
         if (area || a == ImplicitTarget.enemiesInCone)
         {
@@ -574,29 +601,38 @@ mixin template CreatureCasting()
      * The spell goes off (`SMSG_SPELL_GO` with who it hit and missed) and its effects
      * happen to each target; its mana is spent.
      */
-    private void go(const(SpellInfo)* spell, ulong target, bool takeMana, bool auraAbsent = false)
+    private void go(const(SpellInfo)* spell, ulong target, bool takeMana, bool auraAbsent = false,
+        ulong[] selectedWeaponTargets = null)
     {
         import dmangos.world.context : WorldContext;
         import dmangos.world.spellcast : spellFailurePacket, SpellCastResult;
         import dmangos.world.spelldamage : creatureTargetInRange;
 
-        if (auto other = combatTarget(world_, target))
+        bool remotePrimary, sentArea;
+        if (selectedWeaponTargets is null)
+        if (auto other = spellTarget(target))
             if (other.replica !is null)
             {
+                remotePrimary = true;
                 auto context = cast(WorldContext) lore;
+                bool sentTarget;
                 if (context !is null && context.canWrite()
-                    && creatureTargetInRange(spell, me.fighter, other.fighter, lore.clientData)
-                    && world_.inLineOfSight(me.position, other.position)
-                    && sendCreatureTargetSpell(context, spell, other, !takeMana, auraAbsent))
+                    && (!takeMana || (creatureTargetInRange(spell, me.fighter, other.fighter, lore.clientData)
+                        && world_.inLineOfSight(me.position, other.position))))
+                {
+                    sentTarget = sendCreatureTargetSpell(context, spell, other, !takeMana, auraAbsent);
+                    sentArea = sendCreatureAreaEffects(spell, target, !takeMana, auraAbsent);
+                }
+                if (!sentTarget && !sentArea)
                 {
                     if (takeMana)
-                        spendSpellMana(spell);
+                        world_.sendToObservers(me.guid, Opcode.SMSG_SPELL_FAILURE,
+                            spellFailurePacket(me.guid, spell.id, SpellCastResult.outOfRange));
+                    return;
                 }
-                else if (takeMana)
-                    world_.sendToObservers(me.guid, Opcode.SMSG_SPELL_FAILURE,
-                        spellFailurePacket(me.guid, spell.id, SpellCastResult.outOfRange));
-                return;
             }
+        if (!remotePrimary && selectedWeaponTargets is null)
+            sentArea = sendCreatureAreaEffects(spell, target, !takeMana, auraAbsent);
         if (takeMana)
             spendSpellMana(spell);
         const level = me.values.get!UNIT_FIELD_LEVEL;
@@ -607,9 +643,10 @@ mixin template CreatureCasting()
         foreach (i; 0 .. 3)
             if (spell.effect[i])
             {
-                reached[i] = scriptPicked(spell, i, targetsFor(spell, i, target));
+                reached[i] = scriptPicked(spell, i, selectedWeaponTargets is null
+                    ? targetsFor(spell, i, target) : selectedWeaponTargets);
                 foreach (guid; reached[i])
-                    if (guid !in all)
+                    if ((!remotePrimary || guid != target) && guid !in all)
                     {
                         all[guid] = true;
                         inOrder ~= guid;
@@ -671,7 +708,8 @@ mixin template CreatureCasting()
         foreach (other; resistedBy)
             other.session.spellResistedBy(spell, world_.unit(me.guid));
         auto targets = targetsOf(target);
-        world_.sendToObservers(me.guid, Opcode.SMSG_SPELL_GO, spellGoPacket(me.guid, spell.id, results, targets));
+        if (results.length || !remotePrimary || sentArea)
+            world_.sendToObservers(me.guid, Opcode.SMSG_SPELL_GO, spellGoPacket(me.guid, spell.id, results, targets));
         foreach (r; results) // the combat log's line for each miss, as for a player's spell
             if (r.miss != SpellMissInfo.none)
                 world_.sendToObservers(me.guid, Opcode.SMSG_SPELLLOGMISS, spellMissLog(spell.id, me.guid, r.guid, r.miss));
@@ -715,7 +753,7 @@ mixin template CreatureCasting()
                 continue;
             foreach (guid; reached[i])
             {
-                if (guid in missed)
+                if (guid in missed || (remotePrimary && guid == target))
                     continue;
                 if (!me.alive)
                     return;
@@ -728,6 +766,44 @@ mixin template CreatureCasting()
         world_.flushCreature(me);
     }
 
+    private bool sendCreatureAreaEffects(const(SpellInfo)* spell, ulong target, bool triggered, bool auraAbsent)
+    {
+        import dmangos.world.context : WorldContext;
+        import dmangos.world.map : Map;
+        import dmangos.world.replication : Replica;
+        import dmangos.world.spelldamage : creatureAreaShape;
+        import dmangos.world.unit : combatRelations;
+
+        auto context = cast(WorldContext) lore;
+        auto map = cast(Map) world_;
+        if (context is null || map is null || context.sendAreaDamage is null)
+            return false;
+        bool sent;
+        foreach (i; 0 .. spell.effect.length)
+        {
+            const shape = creatureAreaShape(*spell, i);
+            if (shape == ImplicitTarget.none)
+                continue;
+            auto at = me.position;
+            if (shape == ImplicitTarget.enemiesAroundDest)
+                if (auto primary = spellTarget(target))
+                    at = primary.position;
+            const reach = radius(*spell, i, lore.clientData);
+            if (!(reach > 0))
+                continue;
+            foreach (object; map.objectsNear(at, reach))
+                if (auto copy = cast(Replica) object)
+                    if (copy.fields.type == TypeId.player || copy.fields.type == TypeId.unit)
+                    {
+                        auto other = UnitRef.observed(copy, map);
+                        if (other.alive && canAttack(relating, other.combatRelations(me.client), me.client)
+                            && (shape != ImplicitTarget.enemiesInCone || hasInArc(me.position, other.position, PI / 2)))
+                            sent |= sendCreatureTargetSpell(context, spell, other, triggered, auraAbsent,
+                                cast(int) i, at, reach);
+                    }
+        }
+        return sent;
+    }
     /// It as a spell's caster (`dmangos.world.caster`): its map is the world's only `CombatWorld`, its lore the
     /// `WorldContext`.
     package imported!"dmangos.world.caster".Caster spellCaster(CombatWorld world = null)
@@ -952,33 +1028,93 @@ mixin template CreatureCasting()
         if (nextSwing is null)
             return false;
         auto spell = nextSwing;
-        if (target.replica !is null)
-        {
-            import dmangos.world.spellmods : SpellModOp;
-
-            const effect = singleTargetSwingEffect(*spell);
-            if (effect < 0)
-                return false;
-            if (paysMana(spell) && manaCost(spell) > me.values.get!UNIT_FIELD_POWER1)
-            {
-                nextSwing = null;
-                return false;
-            }
-            auto caster = spellCaster();
+        const effect = nextWeaponSwingEffect(*spell);
+        if (effect >= 0)
             if (auto map = remoteMeleeMap(world_))
-                if (map.remoteCreatureSwing(me, target, spell.id, effectAmount(spell, effect),
-                    caster.spellMod(SpellModOp.threat, spell, 1.0f)))
-                {
-                    nextSwing = null;
-                    spendSpellMana(spell);
-                    world_.flushCreature(me);
-                    return true;
-                }
-            attackTimer = 100; // The request did not leave this node. Keep the ability queued.
-            return true;
-        }
+                return distributedWeaponSwing(spell, effect, target, map);
+        if (target.replica !is null)
+            return false;
         nextSwing = null;
         go(spell, target.combatGuid, true);
+        return true;
+    }
+
+    private UnitRef[] swingTargets(UnitRef primary, uint cap, bool includeReplicas)
+    {
+        import std.algorithm.sorting : sort;
+        import dmangos.world.combat : creatureSwingInReach;
+        import dmangos.world.map : Map;
+        import dmangos.world.replication : Replica;
+        import dmangos.world.spelldamage : spellJumpRadius;
+        import dmangos.world.unit : UnitKind, combatRelations;
+
+        if (cap <= 1)
+            return [primary];
+        const center = primary.position;
+        const attacker = me.fighter;
+        UnitRef[] nearby;
+        void consider(UnitRef candidate)
+        {
+            if (!candidate.alive || candidate.combatGuid == me.guid || candidate.combatGuid == primary.combatGuid
+                || candidate.untouchable || !canAttack(relating, candidate.combatRelations(me.client), me.client)
+                || !creatureSwingInReach(attacker, candidate.fighter)
+                || !world_.inLineOfSight(attacker.position, candidate.position)
+                || (candidate.kind == UnitKind.player && candidate.session.transferring))
+                return;
+            nearby ~= candidate;
+        }
+        foreach (player; world_.playersNear(center, spellJumpRadius))
+            consider(player);
+        foreach (creature; world_.creaturesNear(center, spellJumpRadius))
+            if (creature.ai !is null)
+                consider(world_.unitOf(creature));
+        if (includeReplicas)
+            if (auto map = cast(Map) world_)
+                foreach (object; map.objectsNear(center, spellJumpRadius))
+                    if (auto replica = cast(Replica) object)
+                        if (replica.fields.type == TypeId.player
+                            || replica.fields.type == TypeId.unit && (me.meleeController || replica.meleeController))
+                            consider(UnitRef.observed(replica, map));
+        float distance(UnitRef other) { return moved(center, other.position); }
+        nearby.sort!((a, b) => distance(a) < distance(b)
+            || (distance(a) == distance(b) && a.combatGuid < b.combatGuid));
+        if (nearby.length >= cap)
+            nearby = nearby[0 .. cap - 1];
+        return [primary] ~ nearby;
+    }
+
+    private bool distributedWeaponSwing(const(SpellInfo)* spell, size_t effect, UnitRef primary,
+        imported!"dmangos.world.map".Map map)
+    {
+        import dmangos.world.spellmods : SpellModOp;
+
+        if (primary.replica !is null && paysMana(spell) && manaCost(spell) > me.values.get!UNIT_FIELD_POWER1)
+        {
+            nextSwing = null;
+            return false;
+        }
+        auto targets = swingTargets(primary, spell.casting.chainTarget[effect], true);
+        auto caster = spellCaster();
+        const threat = caster.spellMod(SpellModOp.threat, spell, 1.0f);
+        ulong[] local;
+        foreach (target; targets)
+            if (target.replica is null)
+                local ~= target.combatGuid;
+        foreach (i, target; targets)
+            if (target.replica !is null && !map.remoteCreatureSwing(me, target, spell.id,
+                effectAmount(spell, effect), threat, i != 0 || local.length != 0) && i == 0)
+            {
+                attackTimer = 100;
+                return true; // The primary request did not leave. Nothing else has been committed.
+            }
+        nextSwing = null;
+        if (local.length)
+            go(spell, primary.combatGuid, true, false, local);
+        else
+        {
+            spendSpellMana(spell);
+            world_.flushCreature(me);
+        }
         return true;
     }
 
