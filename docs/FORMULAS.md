@@ -818,3 +818,39 @@ CMaNGOS's `Rate.Auction.*` and `Auction.Deposit.Min`) multiply the deposit and t
 set a least deposit; their defaults (1, 1, 1, none) are the client's numbers. **Second opinion (CMaNGOS-classic,
 `AuctionHouseMgr::GetAuctionDeposit`, `AuctionEntry::GetAuctionCut`):** the same formula and order (the least deposit
 before the rate).
+
+## Alterac Valley's turn-ins
+
+**What:** what the battle's repeatable quests bring about (world/alterac.d).
+
+**Source: the data.** The quests (`quest_template`, zone 2597) take 20 Armor Scraps (17422: Murgot Deepforge's 7223,
+6781; Smith Regzar's 7224, 6741), one or five Storm Crystals (17423: Arch Druid Renferal's 6881, 7386) or Stormpike
+Soldier's Blood (17306: Primalist Thurloga's 6801, 7385). Each graveyard's defenders are spawned by battleground events
+(`creature_battleground`: event1 15 + the node, event2 the side * 4 + the kind): Stormpike Defenders and Frostwolf
+Guardians, then Seasoned, Veteran and Champion ones, four of each kind at each graveyard. General's Warcry (28418,
+28419, 28420) is 10%, 20%, 30% more damage done (aura 79) for two minutes (`SpellDuration.dbc` 4). The lords are
+`creature_template` 13419 and 13256, with their own EventAI.
+
+**Documented research** (warcraft.wiki.gg "Alterac Valley (original)"): "Each upgrade costs 500 Armor Scraps, or 1,500
+for all three"; only the stationary troops (the graveyards') are upgraded; since 1.11 an upgrade also gives the general
+"a periodic melee and spell damage buff: 10% at Seasoned, 20% at Veteran, and 30% at Champion"; 200 Storm Crystals or
+Stormpike Soldier's Blood, "turned in in batches of 1 or 5", summon Ivus or Lokholar, who "fight on the Field of
+Strife". The same page gives the cavalry (25 tamed mounts and 25 hides, Honored to launch), the fleets (120, 60, 30 of
+the soldiers', lieutenants' and commanders' medals or flesh, Revered for the beacons) and the ground assault (280
+supplies of one's own mine, 70 of the other's, Honored).
+
+**Interpretations (no source found):**
+
+- The upgrade comes when the scraps reach it (the wiki has an Honored player ask the blacksmith; the database's
+  blacksmiths have no such gossip, only "How many more supplies are needed for the next upgrade?", without an answer).
+- The general cries the warcry at each upgrade and every two minutes after (its duration): "periodic".
+- The lord comes at once, on the Field of Strife, halfway between the graveyards where its summoner would stop
+  (`WorldSafeLocs.dbc` 729 and 169 for Ivus, 169 and 749 for Lokholar); once a battle. The wiki's escort and its ten
+  players at a circle are not done (the Circle of Calling, `gameobject_template` 178670, needs ten; it has no spawn),
+  nor the lord's march on the enemy base.
+- The turn-in that calls a lord is a "secondary unit activated" on the scoreboard.
+
+**Second opinion (vmangos, `BattleGroundAV::HandleQuestComplete`, `UpgradeArmor`):** 20 scraps a turn-in, upgrades at
+500, 1000 and 1500 with 28418 .. 28420 (its automatic call is commented out); its lords, cavalry and fleets only count.
+CMaNGOS-classic does nothing with the turn-ins.
+

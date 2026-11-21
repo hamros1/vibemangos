@@ -19,8 +19,15 @@
  * At the end each side earns honor and reputation for its towers still standing, its captain if alive, and
  * the graveyards and mines it holds. All as CMaNGOS has it (`BattleGroundAV`), whose world states, events
  * and texts the database's spawns use; the herald's lines are the battleground's messages here, as Arathi
- * Basin's are, and the quests' turn-ins (armor scraps upgrading the graveyards' defenders, the fleets) do
- * nothing yet, as there.
+ * Basin's are.
+ *
+ * The turn-ins (docs/FORMULAS.md, "Alterac Valley's turn-ins"): each side's armor scraps, twenty a turn-in, upgrade its
+ * graveyards' defenders at 500, 1000 and 1500 (seasoned, veteran, champion: the defenders' events' second numbers
+ * 1 to 3), and from the first upgrade its general cries General's Warcry (28418 .. 28420, a rank an upgrade) every two
+ * minutes; 200 Storm Crystals (the Alliance's) or Stormpike Soldier's Blood (the Horde's), one or five a turn-in, call
+ * the side's elemental lord, Ivus the Forest Lord or Lokholar the Ice Lord, onto the Field of Strife, once a battle,
+ * the turn-in that calls it a secondary objective on the scoreboard. The cavalry, the fleets and the mines' ground
+ * assault are not yet: their commanders' orders have no gossip in the database.
  *
  * Events (the map's battleground spawns): a node's banner and defenders are event1 = the node, event2 = its
  * owner * 2 + its state (0 assaulted, 1 held; owner 0 the Alliance, 1 the Horde, 2 neutral); a graveyard's
@@ -128,6 +135,31 @@ enum uint soundTowerDefended = 8192, soundNearLose = 8456;
 /// The area triggers out of the valley: the Alliance's two, the Horde's.
 enum uint triggerAllianceExit1 = 95, triggerAllianceExit2 = 2608, triggerHordeExit = 2606;
 
+/// The armor scraps quests (twenty scraps each), the Alliance's then the Horde's (Murgot Deepforge's, Smith Regzar's).
+immutable uint[2][2] questsScraps = [[7223, 6781], [7224, 6741]];
+/// Scraps a turn-in, and an upgrade's (each of the three).
+enum uint scrapsPerTurnIn = 20, scrapsPerUpgrade = 500, maxUpgrades = 3;
+/// The general's cry, a rank an upgrade (10%, 20%, 30% more damage), and how often it is cried (its duration).
+immutable uint[maxUpgrades] spellsGeneralsWarcry = [28_418, 28_419, 28_420];
+/// ditto
+enum Duration warcryEvery = 2.minutes;
+/// The generals, by side.
+immutable uint[2] generals = [npcVanndar, npcDrekThar];
+
+/// The elemental lords' offerings (Arch Druid Renferal's Storm Crystals, Primalist Thurloga's Stormpike Soldier's
+/// Blood): the quests taking one, and five; the lord each side calls; how many call it.
+immutable uint[2] questsOfferOne = [6881, 6801], questsOfferFive = [7386, 7385];
+/// ditto
+immutable uint[2] lords = [13_419, 13_256];
+/// ditto
+enum uint offeringsToCall = 200;
+/**
+ * Where each side's lord comes, on the Field of Strife: where its summoner stops (warcraft.wiki.gg "Alterac Valley
+ * (original)": Renferal "west of Stonehearth Bunker", Thurloga "south of Snowfall Graveyard and north of Iceblood"),
+ * taken as halfway between the graveyards there (`WorldSafeLocs.dbc` 729 and 169; 169 and 749).
+ */
+immutable float[4][2] lordsAt = [[-42.0f, -232.6f, 62.9f, 3.1f], [-344.3f, -187.0f, 63.3f, 0.0f]];
+
 /// The scoreboard's columns (`WorldStateUI.dbc`'s, map 30, in order): "Graveyards Assaulted", "Graveyards Defended",
 /// "Towers Assaulted", "Towers Defended", "Mines Captured" ("Number of times a deathblow was dealt to the lieutenant of
 /// an enemy mine"), "Leaders Killed" ("Number of enemy NPC officers you have killed"), "Secondary Objectives" ("Number
@@ -184,6 +216,11 @@ final class AlteracRules : BattlegroundRules
     bool[2] captainDead;
     /// Whether a player may open a banner: alive; tests stand in for it.
     bool delegate(ulong) alive;
+    uint[2] scraps;                 /// armor scraps turned in, by side
+    ubyte[2] upgrades;              /// the graveyards' defenders' upgrades, by side (0 to 3)
+    Duration[2] warcryLeft;         /// until the general cries again
+    uint[2] offerings;              /// the lords' offerings, by side
+    bool[2] lordCalled;             /// once a battle
 
     override void reset(Battleground copy)
     {
@@ -210,7 +247,7 @@ final class AlteracRules : BattlegroundRules
             copy.activeEvents[n] = eventOf(owner, stateHeld);
             if (!isTower(n))
             {
-                copy.activeEvents[cast(ubyte)(eventGraveDefenders + n)] = cast(ubyte)(owner * 4);
+                copy.activeEvents[cast(ubyte)(eventGraveDefenders + n)] = defendersOf(owner);
                 copy.graveyardTeams[nodeGraveyards[n]] = linkOf(owner);
             }
         }
@@ -254,6 +291,37 @@ final class AlteracRules : BattlegroundRules
                 if (nodes[n].left <= Duration.zero)
                     destroyed(copy, n);
             }
+        foreach (ubyte side; 0 .. 2)
+            if (upgrades[side])
+            {
+                warcryLeft[side] -= elapsed;
+                if (warcryLeft[side] <= Duration.zero)
+                    warcry(copy, side);
+            }
+    }
+
+    /// The turn-ins: armor scraps upgrade the defenders; the offerings call the lord.
+    override void questRewarded(Battleground copy, ulong who, uint quest)
+    {
+        import dmangos.world.bgqueue : BattlegroundStatus;
+
+        if (copy.status != BattlegroundStatus.inProgress || who !in copy.members)
+            return;
+        foreach (ubyte side; 0 .. 2)
+        {
+            if (quest == questsScraps[side][0] || quest == questsScraps[side][1])
+            {
+                scraps[side] += scrapsPerTurnIn;
+                while (upgrades[side] < maxUpgrades && scraps[side] >= (upgrades[side] + 1) * scrapsPerUpgrade)
+                    upgrade(copy, side);
+            }
+            else if (quest == questsOfferOne[side] || quest == questsOfferFive[side])
+            {
+                offerings[side] += quest == questsOfferFive[side] ? 5 : 1;
+                if (!lordCalled[side] && offerings[side] >= offeringsToCall)
+                    callLord(copy, side, who);
+            }
+        }
     }
 
     /// A player's death costs its side one.
@@ -384,6 +452,12 @@ final class AlteracRules : BattlegroundRules
         }
     }
 
+    /// The event2 of a graveyard's defenders held by `owner`: its side's, at its upgrades.
+    ubyte defendersOf(ubyte owner) const pure nothrow @nogc @safe
+    {
+        return cast(ubyte)(owner * 4 + (owner < 2 ? upgrades[owner] : 0));
+    }
+
     /// A node's event2 for its owner and state.
     static ubyte eventOf(ubyte owner, ubyte state) pure nothrow @nogc @safe
     {
@@ -447,11 +521,40 @@ private:
         {
             const defenders = cast(ubyte)(eventGraveDefenders + n);
             if (node.state == stateHeld)
-                copy.spawnEvent(defenders, cast(ubyte)(node.owner * 4), true);
+                copy.spawnEvent(defenders, defendersOf(node.owner), true);
             else if (node.previousOwner != ownerNeutral)
-                copy.spawnEvent(defenders, cast(ubyte)(node.previousOwner * 4), false);
+                copy.spawnEvent(defenders, defendersOf(node.previousOwner), false);
         }
         copy.spawnEvent(n, eventOf(node.owner, node.state), true);
+    }
+
+    /**
+     * `side`'s armor scraps reached an upgrade: the defenders of each graveyard it holds are the next kind (their
+     * event's second number one up), and its general cries the next rank of General's Warcry, then every two minutes.
+     */
+    void upgrade(Battleground copy, ubyte side)
+    {
+        ++upgrades[side];
+        foreach (ubyte n; 0 .. nodeCount)
+            if (!isTower(n) && nodes[n].owner == side && nodes[n].state == stateHeld)
+                copy.spawnEvent(cast(ubyte)(eventGraveDefenders + n), defendersOf(side), true);
+        warcry(copy, side);
+    }
+
+    /// `side`'s general cries General's Warcry of its upgrades' rank.
+    void warcry(Battleground copy, ubyte side)
+    {
+        warcryLeft[side] = warcryEvery;
+        copy.creaturesCast(generals[side], spellsGeneralsWarcry[upgrades[side] - 1]);
+    }
+
+    /// `side`'s offerings are enough: its lord comes onto the Field of Strife; `who`'s turn-in a secondary objective.
+    void callLord(Battleground copy, ubyte side, ulong who)
+    {
+        lordCalled[side] = true;
+        const at = lordsAt[side];
+        copy.summonAt(lords[side], at[0], at[1], at[2], at[3]);
+        copy.addScore(who, scoreSecondary);
     }
 
     /// `ProcessPlayerAssaultsPoint`
@@ -690,7 +793,59 @@ unittest
         }
     }
     assert(db.pvpStatsRows.length == 1 && db.pvpStatsRows[0].winner == winnerAlliance);
+    assert(db.pvpStatsRows.length == 1, "kept once");
     assert(db.pvpStatsRows[0].type == BattlegroundType.alteracValley && db.pvpStatsPlayerRows[0].length == 2);
     foreach (p; db.pvpStatsPlayerRows[0])
         assert(p.attr[] == copy.members[p.guid].extra[0 .. 5] && p.deaths == copy.members[p.guid].deaths);
+}
+
+// The turn-ins: armor scraps upgrade a side's graveyards' defenders three times (and its general cries); the
+// offerings call its lord once, at 200, a secondary objective for the one whose turn-in did.
+unittest
+{
+    import core.time : MonoTime, seconds;
+    import dmangos.world.bgqueue : BattlegroundType;
+    import dmangos.world.testclient;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    auto copy = context.battlegrounds.open(780, BattlegroundType.alteracValley);
+    auto rules = cast(AlteracRules) copy.rules;
+    copy.testing = true;
+    copy.members[7] = Battleground.Member(0);
+    copy.members[8] = Battleground.Member(1);
+    const allianceDefenders = cast(ubyte)(eventGraveDefenders + nodeStormpikeGrave),
+        hordeDefenders = cast(ubyte)(eventGraveDefenders + nodeFrostwolfGrave);
+    rules.questRewarded(copy, 7, questsScraps[ownerAlliance][0]);
+    assert(rules.scraps[ownerAlliance] == 0, "before the battle: nothing");
+    copy.start();
+
+    foreach (i; 0 .. 24)
+        rules.questRewarded(copy, 7, questsScraps[ownerAlliance][i % 2]);
+    assert(rules.scraps[ownerAlliance] == 480 && rules.upgrades[ownerAlliance] == 0
+        && copy.activeEvents[allianceDefenders] == 0);
+    rules.questRewarded(copy, 7, questsScraps[ownerAlliance][0]);
+    assert(rules.upgrades[ownerAlliance] == 1 && copy.activeEvents[allianceDefenders] == 1, "seasoned defenders");
+    assert(copy.activeEvents[hordeDefenders] == 4, "the Horde's are as they were");
+    assert(rules.warcryLeft[ownerAlliance] == warcryEvery);
+    copy.tick(30.seconds);
+    assert(rules.warcryLeft[ownerAlliance] == warcryEvery - 30.seconds && rules.warcryLeft[ownerHorde] == Duration.zero);
+    foreach (i; 0 .. 100)
+        rules.questRewarded(copy, 7, questsScraps[ownerAlliance][1]);
+    assert(rules.upgrades[ownerAlliance] == maxUpgrades && copy.activeEvents[allianceDefenders] == 3, "champions");
+    // A graveyard taken by the Horde gets the Horde's defenders as they are (none upgraded).
+    assert(rules.defendersOf(ownerHorde) == 4 && rules.defendersOf(ownerAlliance) == 3);
+
+    // Thirty-nine offerings of five and four of one: 199; then one more calls Lokholar, once.
+    foreach (_; 0 .. 39)
+        rules.questRewarded(copy, 8, questsOfferFive[ownerHorde]);
+    foreach (_; 0 .. 4)
+        rules.questRewarded(copy, 8, questsOfferOne[ownerHorde]);
+    assert(rules.offerings[ownerHorde] == 199 && !rules.lordCalled[ownerHorde]);
+    rules.questRewarded(copy, 8, questsOfferOne[ownerHorde]);
+    assert(rules.lordCalled[ownerHorde] && copy.members[8].extra[scoreSecondary] == 1);
+    rules.questRewarded(copy, 8, questsOfferFive[ownerHorde]);
+    assert(copy.members[8].extra[scoreSecondary] == 1 && !rules.lordCalled[ownerAlliance], "once a battle");
 }

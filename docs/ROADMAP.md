@@ -178,7 +178,9 @@ The largest area. In order:
    * Milestone D, Arathi Basin: **done** (`arathi.d`): five bases, claims, assaults, defences, resources,
      2000 to win.
    * Milestone E, Alterac Valley: **done** (`alterac.d`): reinforcements, graveyards and towers, mines,
-     captains and generals; the turn-in quests' events not yet.
+     captains and generals; the turn-ins: armor scraps upgrading the defenders (and the general's warcry), the
+     elemental lords called. Not yet: the cavalry, the fleets, the ground assault (no gossip for their orders in
+     the database), the lords' summoning rituals and march.
    * The scoreboard's columns, `WorldStateUI.dbc`'s (Alterac Valley's mines captured and leaders killed too), and
      the scores kept (`pvpstats_*`, `battleground_score_statistics`): done.
    * Not yet:

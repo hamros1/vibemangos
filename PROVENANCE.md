@@ -659,7 +659,9 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions: `BattleGroundAV::Reset`, `Update`, `HandleKillPlayer`, `HandleKillUnit`, `HandlePlayerClickedOnFlag`, `ProcessPlayerAssaultsPoint`, `ProcessPlayerDefendsPoint`, `ProcessPlayerDestroyedPoint`, `ChangeMineOwner`, `UpdateScore`, `EndBattleGround`, `GetPrematureWinner`, `HandleAreaTrigger`
 * Not from an emulator: the bonus honor units of the general, captain and towers (Wowpedia "Honor system (pre-2.0 formulas)");
   the scoreboard's columns and what each counts (`WorldStateUI.dbc`'s names and tooltips), the officers (the database's
-  templates by name and faction)
+  templates by name and faction); the turn-ins (warcraft.wiki.gg "Alterac Valley (original)", the quests', spells' and
+  spawns' data; docs/FORMULAS.md, "Alterac Valley's turn-ins"); vmangos's `BattleGroundAV::HandleQuestComplete`
+  (20 scraps a turn-in, 500 an upgrade, 28418 .. 28420) compared afterwards
 
 ## world/auctionhandlers.d
 

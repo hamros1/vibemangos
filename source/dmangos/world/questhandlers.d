@@ -996,6 +996,9 @@ private:
 
     void rewardQuest(const ref Quest quest, uint reward)
     {
+        scope (success) // a battleground's turn-ins (Alterac Valley's armor scraps, its offerings)
+            if (auto copy = currentBattleground())
+                copy.rules.questRewarded(copy, player.guid, quest.id);
         questObjectsStale = true;
         foreach (i; 0 .. questObjectives)
             if (quest.reqItemId[i])

@@ -789,8 +789,12 @@ What works now:
       100 per captain, 75 per tower; graveyards and towers assaulted from their banners and taken (a
       tower destroyed, its marshal gone) four minutes later unless defended; two mines taken by killing
       their bosses, a reinforcement every 45 seconds for 20 minutes; a general's death wins; honor and
-      reputation for towers, captains, graveyards and mines at the end. Not yet: the quests' turn-in
-      events (as in CMaNGOS), the herald speaking (its lines are battleground messages).
+      reputation for towers, captains, graveyards and mines at the end. The turn-ins: every 500 armor
+      scraps (three times) upgrade a side's graveyards' defenders (seasoned, veteran, champion) and its
+      general cries General's Warcry; 200 Storm Crystals or Stormpike Soldier's Blood call Ivus the Forest
+      Lord or Lokholar the Ice Lord onto the Field of Strife. Not yet: the cavalry, the fleets and the
+      ground assault (their commanders' orders have no gossip in the database), the lords' march and
+      their summoning rituals, the herald speaking (its lines are battleground messages).
     * The players of a team who came alone are in one raid in the copy (its raid frames), made as the
     second arrives and left as they leave; those who came with a group stay in it.
     * Taking an objective (a flag, a banner, a capture) ends Stealth, Divine Shield and the like

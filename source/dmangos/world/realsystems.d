@@ -169,3 +169,88 @@ unittest
     assert(me.player.inventory.equipped(15) is null, "put away");
     assert(me.player.auras.find(effect001) is null && scarletCrusade !in me.forcedReactions);
 }
+
+/**
+ * Alterac Valley's turn-ins on the real data: the quests take what the rules count (20 Armor Scraps; one or five
+ * Storm Crystals or Stormpike Soldier's Blood); every graveyard has four kinds of defenders a side (Stormpike
+ * Defender, Seasoned, Veteran, Champion; the Frostwolf Guardians alike) for the upgrades to spawn; General's Warcry is
+ * 10%, 20%, 30% more damage; a general cries it, and a lord comes onto the Field of Strife.
+ */
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import dmangos.world.alterac;
+    import dmangos.world.bgqueue : BattlegroundType;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.movement : Position;
+    import dmangos.world.spellids : AuraType;
+
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    enum uint armorScraps = 17_422, stormCrystal = 17_423, soldiersBlood = 17_306;
+    foreach (side; 0 .. 2)
+    {
+        foreach (q; questsScraps[side])
+        {
+            const quest = w.context.data.quests.quest(q);
+            assert(quest.reqItemId[0] == armorScraps && quest.reqItemCount[0] == scrapsPerTurnIn);
+        }
+        const offering = side == ownerAlliance ? stormCrystal : soldiersBlood;
+        assert(w.context.data.quests.quest(questsOfferOne[side]).reqItemId[0] == offering
+            && w.context.data.quests.quest(questsOfferOne[side]).reqItemCount[0] == 1);
+        assert(w.context.data.quests.quest(questsOfferFive[side]).reqItemId[0] == offering
+            && w.context.data.quests.quest(questsOfferFive[side]).reqItemCount[0] == 5);
+        assert(lords[side] in w.context.data.creatureTemplates);
+    }
+
+    // The defenders of each kind, by the spawns' battleground events.
+    uint[ubyte][ubyte] spawned; // event1 -> event2 -> spawns
+    string[ubyte] kind;         // event2 -> a name
+    uint[uint] entryOf;
+    foreach (ref s; w.context.data.creatureSpawns)
+        entryOf[s.guid] = s.entry;
+    foreach (guid, e; w.context.data.creatureBattleEvents)
+        if (e[0] >= eventGraveDefenders && e[0] < eventGraveDefenders + 7)
+        {
+            ++spawned.require(e[0], null).require(e[1], 0);
+            if (const entry = guid in entryOf)
+                kind[e[1]] = w.context.data.creatureTemplates[*entry].name;
+        }
+    foreach (ubyte n; 0 .. nodeCount)
+        if (!isTower(n))
+            foreach (ubyte e2; 0 .. 8)
+                assert(spawned[cast(ubyte)(eventGraveDefenders + n)].get(e2, 0) > 0, "defenders of every kind");
+    assert(kind[1] == "Seasoned Defender" && kind[2] == "Veteran Defender" && kind[3] == "Champion Defender");
+    assert(kind[5] == "Seasoned Guardian" && kind[6] == "Veteran Guardian" && kind[7] == "Champion Guardian");
+
+    foreach (i, spell; spellsGeneralsWarcry)
+    {
+        const s = w.context.data.spells.spell(spell);
+        assert(s !is null && s.casting.applyAuraName[0] == AuraType.modDamagePercentDone);
+        assert(s.basePoints[0] + 1 == 10 * (i + 1), "10%, 20%, 30%");
+    }
+
+    // On the valley's map: Vanndar cries the first rank once the Alliance has upgraded; Ivus comes onto the field.
+    auto copy = w.context.battlegrounds.open(901, BattlegroundType.alteracValley);
+    auto rules = cast(AlteracRules) copy.rules;
+    auto map = w.context.map(30, 901);
+    const vanndar = copy.summonAt(npcVanndar, 722.43f, -10.998f, 50.70f, 0);
+    assert(vanndar);
+    copy.testing = true;
+    copy.members[7] = imported!"dmangos.world.battleground".Battleground.Member(0);
+    copy.start();
+    foreach (_; 0 .. 25)
+        rules.questRewarded(copy, 7, questsScraps[ownerAlliance][0]);
+    assert(rules.upgrades[ownerAlliance] == 1);
+    auto general = cast(Creature) map.findObject(vanndar);
+    assert(general.auras.find(spellsGeneralsWarcry[0]) !is null, "Vanndar cries General's Warcry");
+    foreach (_; 0 .. 40)
+        rules.questRewarded(copy, 7, questsOfferFive[ownerAlliance]);
+    assert(rules.lordCalled[ownerAlliance]);
+    const at = lordsAt[ownerAlliance];
+    bool ivus;
+    foreach (c; map.creaturesNear(Position(at[0], at[1], at[2], 0), 20))
+        ivus = ivus || c.template_.entry == lords[ownerAlliance];
+    assert(ivus, "Ivus the Forest Lord on the Field of Strife");
+}
