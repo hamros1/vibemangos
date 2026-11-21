@@ -2,7 +2,7 @@
  * Static data off the scanned heap (docs/DESIGN.md, step 7).
  *
  * The tables loaded at start-up (items, spells, creature templates, quests, ...) are read for as long
- * as the server runs and change only by a GM's `.reload`. In the collector's heap they cost every
+ * as the server runs. A few rows change in place, such as when a GM uses `.fixscale`. On the heap they cost every
  * collection the time to mark them: about 18 ms of a collection that, without them, takes 2.
  *
  * This module keeps them where the collector does not look:
@@ -19,7 +19,8 @@
  * A value read from a frozen map whose type has pointers (a string, an array) is `const`: written to
  * in the arena, it could be given a pointer into the collector's heap that the collector does not see.
  * `edit` gives a mutable one, in place, and registers it with the collector, which scans it from then
- * on (a GM command or a test changes a few). Keys added after freezing go into an associative array.
+ * on. Only the row's own bytes are registered, so separately allocated arrays can only hold
+ * elements without indirections. Keys added after freezing go into an associative array.
  */
 module dmangos.frozen;
 
@@ -49,7 +50,7 @@ private shared size_t placed;    // bytes handed out
 private shared size_t reserved;  // bytes taken from malloc
 
 /// `size` bytes in the arena, aligned to `alignment`; never freed.
-void[] arenaAllocate(size_t size, size_t alignment) @trusted
+private void[] arenaAllocate(size_t size, size_t alignment) @trusted
 {
     import core.atomic : atomicOp;
 
@@ -116,7 +117,7 @@ if (isPlainData!T)
  * A copy of `value` whose arrays and strings, at every depth, are in the arena: nothing of it is in the
  * collector's heap.
  */
-Unqual!T frozenCopy(T)(const ref T value) @trusted
+private Unqual!T frozenCopy(T)(const ref T value) @trusted
 if (isPlainData!T)
 {
     alias U = Unqual!T;
@@ -186,6 +187,25 @@ unittest
 // StaticMap
 // ---------------------------------------------------------------------------------------------------
 
+// Every descriptor an edit can replace must lie within the row's registered range.
+private template canFreezeEditable(T)
+{
+    alias U = Unqual!T;
+    static if (isDynamicArray!U)
+        enum canFreezeEditable = !hasIndirections!(typeof(U.init[0]));
+    else static if (isStaticArray!U)
+        enum canFreezeEditable = canFreezeEditable!(typeof(U.init[0]));
+    else static if (is(U == struct))
+        enum canFreezeEditable = () {
+            static foreach (F; typeof(U.tupleof))
+                static if (!canFreezeEditable!F)
+                    return false;
+            return true;
+        }();
+    else
+        enum canFreezeEditable = !hasIndirections!U;
+}
+
 /**
  * A table read far more than it is changed: an associative array until `freeze`, then a table in the
  * arena. See the module documentation.
@@ -218,6 +238,7 @@ if (isPlainData!K && isPlainData!V)
     /// Moves it into the arena.
     void freeze() @trusted
     {
+        static assert(canFreezeEditable!V, V.stringof ~ " contains array elements with indirections outside the frozen row");
         if (frozen)
             return;
         const count = building.length;
@@ -518,4 +539,13 @@ unittest
     static assert(is(typeof(withArrays.get(1, null)) == const(uint[])));
     static assert(is(typeof(withArrays[1]) == const(uint[])));
     static assert(is(typeof(plain.get(1, 0)) == uint));
+}
+
+unittest
+{
+    static struct Child { string name; }
+    static struct Inline { Child[2] children; uint[] ids; }
+    static struct Separate { Child[] children; }
+    static assert(__traits(compiles, { StaticMap!(uint, Inline) map; map.freeze(); }));
+    static assert(!__traits(compiles, { StaticMap!(uint, Separate) map; map.freeze(); }));
 }
