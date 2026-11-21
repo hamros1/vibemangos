@@ -145,7 +145,7 @@ interface CreatureLore
     void signalWorldMap(CombatWorld world, EntityRef from, uint id, int value);
 
     /// The waypoint path a creature of `entry` (spawn `guid`) walks by default; none if it has none.
-    const(imported!"dmangos.world.motion".WaypointNode)[] creaturePath(uint entry, uint guid);
+    const(imported!"dmangos.world.motion".WaypointNode)[] creaturePath(uint entry, uint guid, uint pathId = 0);
 
     /// A creature's base damage at `level` for its class (`creature_template_classlevelstats`); 0 if none.
     float creatureBaseDamage(uint level, uint unitClass);

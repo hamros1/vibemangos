@@ -1445,11 +1445,11 @@ mixin template CreatureScripting()
         }
     }
 
-    void hostWalkPath()
+    void hostWalkPath(uint pathId)
     {
         import dmangos.world.motion : WaypointMovement;
 
-        const path = lore is null ? null : lore.creaturePath(me.spawn.entry, me.spawn.guid);
+        const path = lore is null ? null : lore.creaturePath(me.spawn.entry, me.spawn.guid, pathId);
         if (path.length == 0)
             return;
         auto next = new WaypointMovement(path, false);

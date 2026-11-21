@@ -187,7 +187,7 @@ final class TestCreature : CreatureHost
     void hostUnlearnSpell(EntityRef, uint) {}
     void hostOpenWindow(EntityRef, NpcWindow) {}
     void hostZoneUnderAttack(EntityRef) {}
-    void hostWalkPath() {}
+    void hostWalkPath(uint pathId) {}
     ActionResult hostSendHome(EntityRef) { return ActionResult.ok; }
     void hostWarEffortHandIn(uint, uint) {}
     void hostWarEffortColossus(uint) {}

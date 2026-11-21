@@ -121,7 +121,7 @@ code) what is not here or not allowed. Nothing a script keeps can dangle.
 | Kind | UDA | Bound by | Events (implemented / planned) |
 |---|---|---|---|
 | Creature | `@creature` | `creature_template.ScriptName` | spawned, reset, entered combat, damaged, killed a unit, died, evaded, spell hit, signal, steps, movement done, gossip hello and select, quest accepted and rewarded, a creature it summoned died (or went) or arrived where it sent it, a player in sight, a text emote at it, an aura of its gone (`AuraRemoved`: run out, dispelled, cancelled or taken away); *summoned* |
-| Dungeon | `@instance` | `instance_template.ScriptName` | creature or object loaded (summons too), creature died, signal, a creature engaged or evaded (an encounter's start and wipe), scripted event (`scripted_event_id`: a spell's or a goober's event), a player entered, an object used, a question asked (`Asked`, answered with `answer`), steps of its own schedules |
+| Dungeon | `@instance` | `instance_template.ScriptName` | creature or object loaded (summons too), creature died, signal, a creature engaged or evaded (an encounter's start and wipe), scripted event (`scripted_event_id`: a spell's or a goober's event), a player entered, an object used, a question asked (`Asked`, answered with `answer`), its state read back after a restart (`Restored`), steps of its own schedules |
 | Game object | `@gameObject` | `gameobject_template.ScriptName` | used, signal, spawned (put in the world), a quest accepted from it, its trap set off (`TrapSprung`, refusable), steps of its own schedules; *state changed* |
 | Area trigger | `@areaTrigger` | `scripted_areatrigger` | entered |
 | Scripted event | `@scriptedEvent` | `scripted_event_id` | started (`EventStarted`: a player's or a creature's `SEND_EVENT` spell, a goober's event), around the player who started it or is its target; then the dungeon's `EventHappened`, then `dbscripts_on_event` |
@@ -189,6 +189,14 @@ signal to it too (its field the signal's id), so a dungeon script keeps the numb
 database scripts spawn in the copy (a ritual's bell, a trap) as for those its cells load, and
 `CreatureLoaded` for linked creatures a boss's wipe brings back (`creature_linking`'s respawn flags work
 in copies too).
+
+A copy's script made again from `instance.data` (the server restarted, or the copy was unloaded and is
+entered again) hears `Restored` once, before any of its creatures or objects load. What was under way
+when it was saved is not any more: its summons, its creatures' fights and its timers went with the old
+world. The handler puts back what ScriptDev's `Load` does (an encounter `IN_PROGRESS` becomes
+`NOT_STARTED`): an event half done can be begun again, a door it shut opens. Each dungeon's real-data
+tests restart a copy in the middle of its events and do them again. A copy that moves to another node
+with its creatures does not hear it: its fights go on there.
 
 ### Gossip menus of a script's own
 

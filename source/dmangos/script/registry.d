@@ -210,7 +210,7 @@ template KindInfo(ScriptKind kind)
     {
         alias Context = InstanceContext;
         alias Events = AliasSeq!(CreatureLoaded, ObjectLoaded, CreatureDied, Signal, CreatureEngaged, CreatureEvaded,
-            EventHappened, /* Raid scripts: */ Asked, PlayerEntered, ObjectUsedHere);
+            EventHappened, /* Raid scripts: */ Asked, PlayerEntered, ObjectUsedHere, /* Dungeons round 2: */ Restored);
         alias Attribute = .instance;
     }
 }

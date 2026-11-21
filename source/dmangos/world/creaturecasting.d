@@ -456,6 +456,33 @@ mixin template CreatureCasting()
         // Explosion, an instant kill at the tunnel's `spell_target_position`, killed Emi herself.)
         if (b == ImplicitTarget.enumUnitsScriptAoeAtDestLoc && !named.length)
             return null;
+        // (Dungeons round 2, a small fix: `TARGET_UNIT_SCRIPT_NEAR_CASTER` is the nearest living creature
+        // `spell_script_target` names within the spell's range, as a player's cast has it: a Nightmare
+        // Suppressor's Suppression reaches the Shade of Hakkar, not itself. None near, the caster as before.)
+        if (a == ImplicitTarget.unitScriptNearCaster && named.length)
+        {
+            import std.algorithm.searching : canFind;
+            import dmangos.world.spellcast : range;
+
+            auto r = range(*spell, lore.clientData)[1];
+            if (r < 5)
+                r = 5;
+            ulong best;
+            float bestDistance = float.max;
+            foreach (other; world_.creaturesNear(me.position, r))
+                if (other !is me && other.alive && named.canFind(other.spawn.entry))
+                {
+                    const q = other.position;
+                    const d = (q.x - me.position.x) ^^ 2 + (q.y - me.position.y) ^^ 2 + (q.z - me.position.z) ^^ 2;
+                    if (d < bestDistance)
+                    {
+                        bestDistance = d;
+                        best = other.guid;
+                    }
+                }
+            if (best)
+                return [best];
+        }
         // Its master (`TARGET_UNIT_CASTER_MASTER`: a voidwalker's Sacrifice shields its warlock).
         if (a == ImplicitTarget.unitCasterMaster)
         {

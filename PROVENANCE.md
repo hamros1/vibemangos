@@ -399,6 +399,9 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/sunken_temple/sunken_temple.cpp`, `sunken_templeScripts.cpp`, `sunken_temple.h`
 * Functions/ScriptNames: `instance_sunken_temple` (`ProcessStatueEvent`, `DoSpawnAtalarionIfCan`, `Update`), `event_antalarion_statue_activation`, `event_avatar_of_hakkar`, `go_eternal_flame`, `at_shade_of_eranikus`, `npc_malfurion_stormrage`, `spell_summon_hakkar`,
   `spell_hex_of_jammalan` (`HexOfJammalanAura::OnApply`)
+* Dungeons round 2: `instance_sunken_temple::Load` (what is not done starts again), `SetData(TYPE_AVATAR, SPECIAL)` and
+  `Update`'s `m_suppressionTimer` (a suppressor's Suppression 12623 on the Shade fails the ritual after 20 s), the
+  suppressors' `MoveWaypoint` by door; `TYPE_MALFURION` not kept
 
 ## scripts/swamp.d
 
@@ -436,6 +439,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/uldaman/instance_uldaman.cpp`, `boss_archaedas.cpp`, `uldaman.h`
 * Functions/ScriptNames: `instance_uldaman` (`StartEvent`, `Update`, `GetClosestDwarfNotInCombat`), `event_spell_altar_boss_aggro`, `boss_archaedas`, `spell_awaken_vault_warder`, `spell_awaken_earthen_archaedas`
+* Dungeons round 2: `instance_uldaman::Load` (`IN_PROGRESS` to `NOT_STARTED`: the keepers and Archaedas asleep again)
 
 ## scripts/ungoro.d
 
@@ -930,6 +934,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Constants: `CreatureStaticFlags::NO_MELEE_FLEE`, `CONFIG_UINT32_CREATURE_FAMILY_FLEE_DELAY`, `ORDER_CRITTER_FLEE`, `ACTION_T_FLEE_FOR_ASSIST`, `CAST_FORCE_TARGET_SELF`, `EVENT_T_FRIENDLY_HP`, `SMSG_SPELL_FAILURE`, `SMSG_SPELL_GO`, `SPELL_EFFECT_APPLY_AURA`, `SPELL_EFFECT_HEAL`, `TEMPSPAWN_TIMED_OOC_DESPAWN`, `TEMPSPAWN_TIMED_OOC_OR_DEAD_DESPAWN`, `UNIT_STAT_NO_COMBAT_MOVEMENT`
 * Also: `Spell::EffectSendEvent` (a creature's `SPELL_EFFECT_SEND_EVENT`), `Unit::RemoveAura` (its script told, `AuraRemoved`)
 * Also: `TARGET_ENUM_UNITS_SCRIPT_AOE_AT_SRC_LOC` (`Spell::SetTargetMap`, `SPELL_TARGETS_ALL`), `Spell::OnCheckTarget`
+* Dungeons round 2: `TARGET_UNIT_SCRIPT_NEAR_CASTER` (`Spell::SetTargetMap`: the nearest `spell_script_target` creature in range)
 * Also: `Creature::DoFleeToGetAssistance` (`SPELL_AURA_PREVENTS_FLEEING`)
 * Not from an emulator: a pet's spells by its owner's spell modifiers (`petModOwner`: effects, damage, cast time, duration), its own damage done on its spells, its area auras on itself, the threat effect on a creature, `TARGET_UNIT_CASTER_MASTER`
 * Also: vmangos's `Spell::CheckPower` (a creature without a mana pool casts its mana spells; no creature pays another power)

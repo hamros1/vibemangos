@@ -208,7 +208,7 @@ final class TestCreature : CreatureHost
     void hostUnlearnSpell(EntityRef, uint) {}
     void hostOpenWindow(EntityRef, NpcWindow) {}
     void hostZoneUnderAttack(EntityRef) {}
-    void hostWalkPath() {}
+    void hostWalkPath(uint pathId) {}
     ActionResult hostSendHome(EntityRef) { return ActionResult.ok; }
     void hostWarEffortHandIn(uint, uint) {}
     void hostWarEffortColossus(uint) {}
@@ -320,6 +320,13 @@ final class TestInstance : InstanceHost
     ActionResult hostZoneCombat(EntityRef) { return ActionResult.ok; }
     EntityRef hostSummonObject(uint, Location, uint) { return EntityRef.init; }
     size_t hostCreaturesNear(Location, uint, float, EntityRef[]) { return 0; }
+    bool[ulong] aurasOn; /// creatures `hasAura` finds an aura on (any spell)
+    bool hostHasAura(EntityRef c, uint) { return (c.guid in aurasOn) !is null; }
+    ActionResult hostWalkPath(EntityRef c, uint path)
+    {
+        did ~= format("path %s %s", c.entry, path);
+        return ActionResult.ok;
+    }
 }
 
 /// A script of module `M` with its fake, run as the server runs it (through a `ScriptRuntime`).

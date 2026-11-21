@@ -4,8 +4,9 @@
  * whose deaths lower Jammal'an's barrier (and make him, Ogom and then the Shade of Eranikus open to
  * attack), the summoning of the Avatar of Hakkar (the Egg of Hakkar used at the altar calls his
  * Shade; while the four Eternal Flames are put out with the Hakkari blood, minions and blood keepers
- * pour out of the evil circles and suppressors come through the doors; the fourth flame brings the
- * Avatar), and Malfurion Stormrage's appearance before Eranikus for "Eranikus, Tyrant of the Dream".
+ * pour out of the evil circles and suppressors come through the doors, each walking to the Shade to
+ * suppress it: one left alive twenty seconds ends the ritual; the fourth flame brings the Avatar), and
+ * Malfurion Stormrage's appearance before Eranikus for "Eranikus, Tyrant of the Dream".
  */
 module dmangos.scripts.sunkentemple;
 
@@ -76,8 +77,35 @@ struct SunkenTemple
     @transient EntityRef[2] doors;
     @transient EntityRef[4] flames;
 
-    enum Step : ubyte { wave, suppressor }
-    Schedule!(Step, 2) steps;
+    /// The waves, the next suppressor, and the time a suppressor's Suppression (12623) on the Shade gives the
+    /// players to kill it before the ritual fails.
+    enum Step : ubyte { wave, suppressor, suppression }
+    Schedule!(Step, 4) steps;
+
+    /// What the Shade of Hakkar's EventAI tells the temple when a suppressor's Suppression hits it
+    /// (`creature_ai_scripts` 844004: CMaNGOS's `SetData(TYPE_AVATAR, SPECIAL)`).
+    enum uint typeAvatar = 4, avatarSpecial = 4;
+    enum uint suppression = 12623;
+
+    /**
+     * A restart: what was under way is not (ScriptDev's `Load` keeps only what is done). The statues' order
+     * starts again if Atal'alarion is not dead, the Avatar's ritual may be begun anew, and Malfurion called
+     * again (he was a summon).
+     */
+    void on(ref InstanceContext st, const ref Restored e)
+    {
+        if (atalarionFight != Fight.done)
+        {
+            atalarionFight = Fight.notStarted;
+            statuesDone = 0;
+        }
+        if (avatar != Fight.done)
+            avatar = Fight.notStarted;
+        flamesOut = 0;
+        shade = EntityRef.init;
+        steps.clear();
+        malfurionCalled = false;
+    }
 
     void on(ref InstanceContext st, const ref ObjectLoaded e)
     {
@@ -204,7 +232,14 @@ struct SunkenTemple
 
     void on(ref InstanceContext st, const ref Signal e)
     {
-        if (e.id == Signals.flameOut && avatar == Fight.inProgress)
+        if (e.id == typeAvatar && e.value == avatarSpecial)
+        {
+            // A suppressor reached the Shade: twenty seconds to kill it, or the ritual fails. (Its spell hit is
+            // told before its aura is on the Shade: the aura is looked for when the time is up.)
+            if (avatar == Fight.inProgress && shade && !steps.pending(Step.suppression))
+                steps.after(Step.suppression, 20.seconds);
+        }
+        else if (e.id == Signals.flameOut && avatar == Fight.inProgress)
         {
             if (e.from)
                 st.objectFlags(e.from, ObjectFlag.noInteract);
@@ -215,10 +250,11 @@ struct SunkenTemple
             {
                 // The Avatar comes in the Shade's place.
                 steps.clear();
-                Location at = shadePlace;
+                Location at = shadePlace, there;
                 if (shade)
                 {
-                    st.locationOf(shade, at);
+                    if (st.locationOf(shade, there))
+                        at = there;
                     st.despawn(shade);
                 }
                 if (const him = st.summon(avatarOfHakkar, at))
@@ -242,6 +278,10 @@ struct SunkenTemple
             return;
         final switch (step)
         {
+        case Step.suppression:
+            if (shade && st.hasAura(shade, suppression))
+                failAvatar(st);
+            break;
         case Step.wave:
             if (firstWave)
             {
@@ -270,8 +310,10 @@ struct SunkenTemple
             const door = st.random(2);
             if (const who = st.summon(suppressor, doorPlaces[door]))
             {
+                // Its door's path (`creature_movement_template` 8497, path 0 or 1): at its end it casts
+                // Suppression on the Shade (`dbscripts_on_creature_movement` 849701).
                 st.say(who, saySuppressor1 - cast(int) st.random(4));
-                st.moveTo(who, shadePlace, 0, true);
+                st.walkPath(who, door);
             }
             break;
         }

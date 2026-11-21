@@ -249,7 +249,7 @@ final class RecordingCreature : CreatureHost
     }
     void hostOpenWindow(EntityRef, NpcWindow window) { note(window == NpcWindow.vendor ? "vendor" : "trainer"); }
     void hostZoneUnderAttack(EntityRef) { note("zone under attack"); }
-    void hostWalkPath() { note("path"); }
+    void hostWalkPath(uint pathId) { note(pathId ? "path " ~ imported!"std.conv".to!string(pathId) : "path"); }
     ActionResult hostSendHome(EntityRef c)
     {
         note(c == self_ ? "home" : "home " ~ c.entry.to!string);
