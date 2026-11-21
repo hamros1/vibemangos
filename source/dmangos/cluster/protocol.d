@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 54; // 54: cross-node pet melee
+enum ushort protocolVersion = 55; // 55: cross-node melee for charms and guardians
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -138,6 +138,7 @@ struct CreatureSwing
     enum type = MessageType.creatureSwing;
 
     ulong sequence, attacker, target;
+    ulong controller; /// the controlling player at the time of the swing, or zero for a wild creature
     uint map, instance;
     ushort destination;
     float facing;
@@ -1212,7 +1213,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 54, recordedFingerprint = 0xa97e047c031c6f71UL;
+private enum recordedVersion = 55, recordedFingerprint = 0xff42de1f97e809c7UL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

@@ -182,6 +182,7 @@ mixin template GuardianSummons()
         v.set!UNIT_FIELD_CREATEDBY(player.guid);
         v.setByte!UNIT_FIELD_BYTES_2(1, guardianMiscFlags);
         g.guardianOwner = player.guid;
+        g.controllerPlayerFlags = player.values.get!PLAYER_FLAGS;
         g.generator = new FollowMovement(player.guid, guardianFollowDistance, guardianFollowAngle);
         map.flushObjectChanges(g);
         guardians_ ~= g.guid;
@@ -217,15 +218,18 @@ mixin template GuardianSummons()
     /// The owner fights `enemy`: each guardian not fighting yet joins in (`GuardianAI::UpdateAI`).
     package void guardiansAssist(ulong enemy)
     {
-        auto foe = map.unit(enemy);
-        if (!foe)
-            if (auto creature = map.creatureAt(enemy))
-                foe = map.unitOf(creature);
-        if (!foe)
-            return;
+        import dmangos.world.relations : canAttack;
+        import dmangos.world.unit : combatRelations;
+
         foreach (g; ownGuardians())
-            if (g.ai !is null && !g.ai.inCombat)
+        {
+            if (g.ai is null || g.ai.inCombat)
+                continue;
+            auto foe = g.ai.combatTarget(map, enemy);
+            if (foe.alive && (foe.replica is null
+                || canAttack(g.ai.relatingOf, foe.combatRelations(context.client), context.client)))
                 g.ai.attackedBy(foe, map); // out of a fight: it starts one (`AttackStart`)
+        }
     }
 
     /// `SPELL_EFFECT_SUMMON_OBJECT_WILD` by this player (`dmangos.world.spellsummons.summonWildObject`).

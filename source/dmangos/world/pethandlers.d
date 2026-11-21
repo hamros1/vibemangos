@@ -1002,10 +1002,13 @@ mixin template PetHandlers()
                         state.learn(entry.spell, info.isPassive, isAutocastable(*info));
             creature.petOwner = player.guid;
             creature.petData = state;
+            creature.charmSequence = context.nextGameplaySequence();
             const faction = player.values.get!UNIT_FIELD_FACTIONTEMPLATE;
             creature.values.set!UNIT_FIELD_FACTIONTEMPLATE(faction);
             creature.factionTemplate = context.client.factionTemplates.lookup(faction);
-            creature.values.set!UNIT_FIELD_FLAGS(charmedFlags | UnitFlags.playerControlled);
+            creature.values.set!UNIT_FIELD_FLAGS((charmedFlags & ~UnitFlags.pvp) | UnitFlags.playerControlled
+                | (player.values.get!UNIT_FIELD_FLAGS & UnitFlags.pvp));
+            creature.controllerPlayerFlags = player.values.get!PLAYER_FLAGS;
             creature.ai.react = ReactState.defensive;
             pet_ = creature;
         }

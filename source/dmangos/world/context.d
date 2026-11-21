@@ -676,7 +676,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         const damageVersus = targetType < fighter.damageVersus.length ? fighter.damageVersus[targetType] : 1;
         const critVersus = targetType < fighter.critVersus.length ? fighter.critVersus[targetType] : 0;
         const request = CreatureSwing(sequence: nextGameplaySequence(), attacker: attacker.guid,
-            target: target.combatGuid, map: target.map.id, instance: target.map.instanceId,
+            target: target.combatGuid, controller: attacker.meleeController, map: target.map.id, instance: target.map.instanceId,
             destination: target.replica.owner,
             facing: fighter.position.orientation, running: fighter.runningAround, school: fighter.damageSchool[0],
             armorIgnored: fighter.armorIgnored, minDamage: fighter.damage[0][0], maxDamage: fighter.damage[0][1],
@@ -693,7 +693,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             HitInfo;
         import dmangos.world.defines : UnitFlags;
         import dmangos.world.honor : HonorVictim;
-        import dmangos.world.objects : highGuidOf;
         import dmangos.world.relations : canAttackNow;
         import dmangos.world.unit : Blow, combatRelations, dealDamage;
         import dmangos.world.updatefields : OBJECT_FIELD_ENTRY, TypeId;
@@ -724,10 +723,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return;
         auto source = UnitRef.observed(copy, map_);
         const relation = source.combatRelations(client);
-        const controller = copy.playerPet && relation.playerControlled && relation.playerOwned ? relation.controller : 0;
+        const controller = copy.meleeController;
         enum disabled = UnitFlags.pacified | UnitFlags.stunned | UnitFlags.confused | UnitFlags.fleeing;
-        if ((!controller && (relation.playerControlled
-                || (victim.kind == UnitKind.creature && highGuidOf(request.target) != HighGuid.pet)))
+        if (request.controller != controller
+            || (!controller && (relation.playerControlled
+                || (victim.kind == UnitKind.creature && !victim.creature.meleeController)))
             || (controller && victim.kind == UnitKind.player && victim.session.duelingWith(controller))
             || (relation.unitFlags & disabled) || !canAttackNow(relation, victim.relating(), client))
             return;
@@ -802,11 +802,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (map_ is null || map_.id != reply.map || map_.instanceId != reply.instance)
             return;
         auto attacker = map_.creatureAt(reply.attacker);
-        if (attacker is null || !attacker.alive || attacker.ai is null)
+        if (attacker is null || !attacker.alive || attacker.ai is null
+            || attacker.meleeController != reply.controller || reply.sequence <= attacker.charmSequence)
             return;
         auto target = attacker.ai.combatTarget(map_, reply.target);
-        if (reply.targetPvP && attacker.petOwner)
-            if (auto owner = cast(Character) onlinePlayer(attacker.petOwner))
+        if (reply.targetPvP && reply.controller)
+            if (auto owner = cast(Character) onlinePlayer(reply.controller))
                 owner.attackedFlaggedPlayer();
         auto blow = Blow.spell();
         if (highGuidOf(reply.target) == HighGuid.player)
@@ -3817,8 +3818,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         ByteWriter w;
         if (auto creature = cast(Creature) object)
         {
-            if (creature.petOwner)
-                return Migrant.init; // a pet stays with its owner, and moves with it (`petsOnLeave`)
+            if (creature.meleeController)
+                return Migrant.init; // controlled creatures stay with their player (`petsOnLeave`)
             creature.saveState(w);
             return Migrant(MigrantKind.creature, creature.spawn.guid, 0, w.data);
         }

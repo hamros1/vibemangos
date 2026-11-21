@@ -11,7 +11,7 @@
  *        guards (`FACTION_TEMPLATE_FLAG_ATTACK_PVP_ACTIVE_PLAYERS`) attack the player meanwhile.)
  *   $(LI `PLAYER_FLAGS_FFA_PVP` is set in the free-for-all arenas (areas with `AREA_FLAG_ARENA`, the
  *        Gurubashi Arena), and on a free-for-all realm everywhere but where the player rests.)
- *   $(LI The player's pet carries its flags.)
+ *   $(LI The player's pets, charmed creatures and guardians carry its flags.)
  *   $(LI Arriving by teleport or by flight in an enforced area, the player is an Honorless Target
  *        (spell 2479) for a while: a kill of it gives no honor.)
  * )
@@ -142,33 +142,38 @@ mixin template PvPHandlers()
     {
         const flags = player.values.get!PLAYER_FLAGS;
         player.values.set!PLAYER_FLAGS(on ? flags | flag : flags & ~flag);
-        pvpFlagsToPet();
+        pvpFlagsToCreatures();
     }
 
-    /// The flag on the player and on its pet; its group hears.
+    /// The flag on the player and its controlled creatures; its group hears.
     void setPvP(bool on)
     {
         const flags = player.values.get!UNIT_FIELD_FLAGS;
         player.values.set!UNIT_FIELD_FLAGS(on ? flags | UnitFlags.pvp : flags & ~UnitFlags.pvp);
-        pvpFlagsToPet();
+        pvpFlagsToCreatures();
         if (auto group = context.groups.of(player.guid))
             group.updatePlayerOutOfRange(this, GroupUpdate.status);
     }
 
-    /// The pet carries its owner's PvP flag and the player flags the relations read.
-    private void pvpFlagsToPet()
+    /// Controlled creatures carry the player's PvP flag and the player flags the relations read.
+    private void pvpFlagsToCreatures()
     {
-        if (auto pet = ownPet)
+        const on = isPvP;
+        const playerFlags = player.values.get!PLAYER_FLAGS;
+        void update(imported!"dmangos.world.creature".Creature creature)
         {
-            const flags = pet.values.get!UNIT_FIELD_FLAGS;
-            const on = isPvP;
+            const flags = creature.values.get!UNIT_FIELD_FLAGS;
             if (((flags & UnitFlags.pvp) != 0) != on)
             {
-                pet.values.set!UNIT_FIELD_FLAGS(on ? flags | UnitFlags.pvp : flags & ~UnitFlags.pvp);
-                map.flushObjectChanges(pet);
+                creature.values.set!UNIT_FIELD_FLAGS(on ? flags | UnitFlags.pvp : flags & ~UnitFlags.pvp);
+                map.flushObjectChanges(creature);
             }
-            pet.controllerPlayerFlags = player.values.get!PLAYER_FLAGS;
+            creature.controllerPlayerFlags = playerFlags;
         }
+        if (auto pet = ownPet)
+            update(pet);
+        foreach (guardian; ownGuardians())
+            update(guardian);
     }
 
     /**

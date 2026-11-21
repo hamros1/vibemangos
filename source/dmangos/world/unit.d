@@ -444,7 +444,7 @@ struct UnitRef
     }
 }
 
-/// Use observed fields for a remote unit, including a pet's controller flags when visible.
+/// Use observed fields for a remote unit, including its melee controller's player flags when visible.
 package Relating combatRelations(UnitRef unit, const imported!"dmangos.world.clientdata".ClientData client)
 {
     import dmangos.world.replication : Replica;
@@ -453,7 +453,7 @@ package Relating combatRelations(UnitRef unit, const imported!"dmangos.world.cli
     if (unit.replica is null)
         return unit.relating();
     auto relation = unit.replica.unitRelations(client);
-    if (unit.replica.playerPet && relation.playerOwned)
+    if (unit.replica.meleeController)
     {
         auto controller = unit.map.unit(relation.controller);
         if (controller.kind == UnitKind.player)

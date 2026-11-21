@@ -638,13 +638,20 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     ulong petOwner;
     ulong totemOwner;           /// a totem's owner (0: not a totem)
     ulong guardianOwner;        /// a guardian's owner (`dmangos.world.guardians`; 0: not a guardian)
+    ulong charmSequence;        /// replies to swings sent before this charm no longer apply
     uint totemSpell;            /// what a totem casts: its aura, or (active) at enemies
     bool totemActive;           /// it casts its spell at enemies (its spell has a cast time); else it holds an aura
     ushort eventShape;          /// the game event whose `game_event_creature_data` it was made with (0: none)
-    /// A pet's owner's `PLAYER_FLAGS` (free-for-all, contested), for the relations (`dmangos.world.pvp`).
+    /// The controller's `PLAYER_FLAGS` (free-for-all, contested), for the relations (`dmangos.world.pvp`).
     uint controllerPlayerFlags;
     /// The pet's own state (`dmangos.world.pet`); null for any other creature.
     PetState petData;
+
+    /// The player in control of its melee, if it is a pet, charmed creature or guardian.
+    package @property ulong meleeController() const
+    {
+        return petOwner ? petOwner : guardianOwner;
+    }
 
     /// The dungeon instance it lives in (0: none): it does not respawn there, and is not saved.
     uint instanceId;

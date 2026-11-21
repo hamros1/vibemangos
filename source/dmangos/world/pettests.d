@@ -666,6 +666,194 @@ unittest
     assert(hunter.isPvP && hunter.isPvPContested, "the pet's owner receives the PvP flag and contested status");
 }
 
+/// Controlled creatures fight across a handoff, and swings from an expired control or summon are rejected.
+unittest
+{
+    import dmangos.cluster.protocol : CreatureSwing, KillShare, SwingShieldHit, decode;
+    import dmangos.serialization : serialize;
+    import dmangos.world.creature : CreatureSpawn;
+    import dmangos.world.defines : UnitFlags;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.replication : encodePlayerState, encodeState;
+    import dmangos.world.spellcast : SpellTargets;
+    import dmangos.world.spellids : SpellEffect;
+
+    foreach (charm; [true, false])
+    {
+        auto db = newDatabase();
+        auto home = newCreationContext(db), first = newCreationContext(db), second = newCreationContext(db);
+        home.nodeId = 1;
+        first.nodeId = 2;
+        second.nodeId = 3;
+        CreatureSwing[] swings, replies, counters, counterReplies;
+        home.sendCreatureSwing = (ushort peer, const ref CreatureSwing swing) {
+            if (swing.reply)
+            {
+                counterReplies ~= cast(CreatureSwing) swing;
+                return true;
+            }
+            assert(peer == swing.destination);
+            ByteWriter payload;
+            serialize(payload, swing);
+            swings ~= decode!CreatureSwing(payload.data);
+            return true;
+        };
+        foreach (context; [first, second])
+            context.sendCreatureSwing = (ushort peer, const ref CreatureSwing swing) {
+                assert(peer == home.nodeId);
+                if (swing.reply)
+                    replies ~= cast(CreatureSwing) swing;
+                else
+                    counters ~= cast(CreatureSwing) swing;
+                return true;
+            };
+        KillShare[] rewards;
+        second.killShareElsewhere = (ushort peer, const ref KillShare share) {
+            assert(peer == home.nodeId);
+            rewards ~= share;
+        };
+
+        const start = Position(-8949.95f, -132.49f, 83.53f, 0);
+        auto client = loggedIn(home, db, 7, "Rexxar", start, AccountLevel.player, raceOrc);
+        foreach (context; [home, first, second])
+            addPetData(&client, context);
+        auto player = client.session.inWorld;
+        auto here = home.map(0), oldRegion = first.map(0), newRegion = second.map(0);
+        auto control = effectSpell(91_095, cast(uint) SpellEffect.summonGuardian, wolf);
+        Creature attacker;
+        if (charm)
+        {
+            attacker = home.summonCreature(here, wolf, start, TempSpawnType.dead, 0, 0);
+            player.takeCharm(attacker, &control, false);
+            assert(player.charmed is attacker);
+        }
+        else
+        {
+            const targets = SpellTargets.init;
+            player.summonGuardianEffect(&control, 0, 1, targets, false, 0, false);
+            attacker = player.ownGuardians()[0];
+            client.write(Opcode.CMSG_TOGGLE_PVP, cast(const(ubyte)[]) [1]);
+            assert(attacker.values.get!UNIT_FIELD_FLAGS & UnitFlags.pvp);
+        }
+        const controller = player.player.guid;
+        assert(attacker.meleeController == controller && highGuidOf(attacker.guid) == HighGuid.unit);
+        attacker.values.set!UNIT_FIELD_MINDAMAGE(8.0f);
+        attacker.values.set!UNIT_FIELD_MAXDAMAGE(8.0f);
+        attacker.values.set!UNIT_FIELD_POWER1(4, 500_000u);
+        auto at = attacker.position;
+        at.x += 2;
+        const cell = cellKeyAt(at.x, at.y);
+        const spawn = CreatureSpawn(91_096, boar, 0, at.x, at.y, at.z, 0);
+        second.data.creatureSpawns ~= spawn;
+        auto target = first.makeCreature(&spawn);
+        target.values.set!UNIT_FIELD_HEALTH(24u);
+        target.values.set!UNIT_FIELD_RESISTANCES(0, 0u);
+        oldRegion.addObject(target);
+        const guid = target.guid;
+        const attackCell = cellKeyAt(attacker.position.x, attacker.position.y);
+        foreach (remote; [oldRegion, newRegion])
+            remote.replicaCreated(home.nodeId, attackCell, attacker.guid, encodeState(attacker, 0));
+        newRegion.replicaCreated(home.nodeId, cellKeyAt(start.x, start.y), controller, encodePlayerState(player.player, 0));
+        here.replicaCreated(first.nodeId, cell, guid, encodeState(target, 0));
+
+        void commandAttack(ulong enemy)
+        {
+            ByteWriter command;
+            command.put(attacker.guid);
+            command.put(actionButton(CommandState.attack, ActiveState.command));
+            command.put(enemy);
+            client.write(Opcode.CMSG_PET_ACTION, command.data);
+        }
+        if (charm)
+            commandAttack(guid);
+        else
+            player.petAssistAgainst(guid);
+        assert(attacker.ai.currentVictim == guid);
+        attacker.ai.update(here, 50);
+        assert(swings.length == 1 && swings[0].controller == controller && swings[0].destination == first.nodeId);
+        oldRegion.random.seed(20_261_121);
+        first.creatureSwingArrived(home.nodeId, swings[0]);
+        first.creatureSwingArrived(home.nodeId, swings[0]);
+        assert(target.values.get!UNIT_FIELD_HEALTH == 16 && replies.length == 1);
+        assert(target.ai.currentVictim == attacker.guid && target.ai.threatOf(attacker.guid) == 8
+            && target.ai.threatOf(controller) == 0 && target.lootRecipient == controller);
+        target.ai.update(oldRegion, 50);
+        assert(counters.length == 1 && counters[0].controller == 0 && counters[0].target == attacker.guid);
+        here.random.seed(20_261_121);
+        const beforeCounter = attacker.values.get!UNIT_FIELD_HEALTH;
+        home.creatureSwingArrived(first.nodeId, counters[0]);
+        home.creatureSwingArrived(first.nodeId, counters[0]);
+        assert(counterReplies.length == 1 && attacker.values.get!UNIT_FIELD_HEALTH < beforeCounter);
+
+        attacker.ai.update(here, 2000);
+        assert(swings.length == 2);
+        const bundle = oldRegion.migrateOut((ulong key) => key == cell, second.nodeId, &first.saveMigrant);
+        assert(oldRegion.isReplica(guid));
+        newRegion.migrateIn(bundle, &second.restoreMigrant);
+        auto arrived = newRegion.creatureAt(guid);
+        assert(arrived !is null && arrived.ai.currentVictim == attacker.guid
+            && arrived.ai.threatOf(attacker.guid) == 8 && arrived.lootRecipient == controller);
+        first.creatureSwingArrived(home.nodeId, swings[1]);
+        second.creatureSwingArrived(home.nodeId, swings[1]);
+        assert(arrived.values.get!UNIT_FIELD_HEALTH == 16 && replies.length == 1);
+
+        here.replicaRemoved(first.nodeId, guid);
+        attacker.ai.update(here, 100);
+        assert(attacker.ai.currentVictim == guid && swings.length == 2);
+        here.replicaCreated(second.nodeId, cell, guid, encodeState(arrived, 0));
+        attacker.ai.update(here, 2000);
+        assert(swings.length == 3 && swings[2].destination == second.nodeId);
+        newRegion.random.seed(20_261_121);
+        second.creatureSwingArrived(home.nodeId, swings[2]);
+        second.creatureSwingArrived(home.nodeId, swings[2]);
+        assert(arrived.values.get!UNIT_FIELD_HEALTH == 8 && replies.length == 2);
+        attacker.ai.update(here, 2000);
+        assert(swings.length == 4);
+        newRegion.random.seed(20_261_121);
+        second.creatureSwingArrived(home.nodeId, swings[3]);
+        assert(!arrived.alive && rewards.length == 1 && rewards[0].target == controller && rewards[0].victim == guid);
+
+        auto opponent = loggedIn(second, db, 9, "Anduin", at);
+        opponent.write(Opcode.CMSG_TOGGLE_PVP, cast(const(ubyte)[]) [1]);
+        auto enemy = opponent.session.inWorld;
+        const enemyGuid = enemy.player.guid;
+        here.replicaCreated(second.nodeId, cell, enemyGuid, encodePlayerState(enemy.player, 0));
+        if (charm)
+            commandAttack(enemyGuid);
+        else
+        {
+            // The replica of the last target is still alive on the attacker's node.
+            here.replicaRemoved(second.nodeId, guid);
+            attacker.ai.update(here, 2100);
+            player.petAssistAgainst(enemyGuid);
+        }
+        attacker.ai.update(here, 2000);
+        assert(swings.length == 5 && swings[4].target == enemyGuid);
+        if (charm)
+        {
+            player.endCharm();
+            assert(!attacker.meleeController && attacker.ai.currentVictim != enemyGuid);
+            newRegion.replicaCreated(home.nodeId, attackCell, attacker.guid, encodeState(attacker, 0));
+            // An old accepted reply must also stay invalid if the same player starts a new charm.
+            player.takeCharm(attacker, &control, false);
+            auto late = replies[$ - 1];
+            late.shieldHits = [SwingShieldHit(5, 0)];
+            const health = attacker.values.get!UNIT_FIELD_HEALTH;
+            home.creatureSwingArrived(second.nodeId, late);
+            assert(attacker.values.get!UNIT_FIELD_HEALTH == health);
+        }
+        else
+        {
+            player.removeGuardians(true);
+            assert(here.findObject(attacker.guid) is null);
+            newRegion.replicaRemoved(home.nodeId, attacker.guid);
+        }
+        const health = enemy.player.values.get!UNIT_FIELD_HEALTH;
+        second.creatureSwingArrived(home.nodeId, swings[4]);
+        assert(enemy.player.values.get!UNIT_FIELD_HEALTH == health && replies.length == 3);
+    }
+}
+
 /**
  * Totems: one summoned stands beside its owner with the owner's level and its health; a passive one's aura reaches
  * its owner; a second of the same element replaces the first; they go when their owner dies.

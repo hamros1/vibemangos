@@ -246,11 +246,21 @@ final class Replica : Replicable, Moving, PerViewer
         return guid_;
     }
 
-    package @property bool playerPet() const
+    /// The controller of a pet, charmed creature or guardian, from its replicated fields.
+    package @property ulong meleeController() const
     {
+        import dmangos.world.defines : UnitFlags;
+        import dmangos.world.guardians : guardianMiscFlags;
         import dmangos.world.objects : HighGuid, highGuidOf;
+        import dmangos.world.updatefields;
 
-        return values_.type == TypeId.unit && highGuidOf(guid_) == HighGuid.pet;
+        if (values_.type != TypeId.unit || !(values_.get!UNIT_FIELD_FLAGS & UnitFlags.playerControlled))
+            return 0;
+        auto controller = values_.get!UNIT_FIELD_CHARMEDBY;
+        if (!controller && (highGuidOf(guid_) == HighGuid.pet
+            || values_.getByte!UNIT_FIELD_BYTES_2(1) == guardianMiscFlags))
+            controller = values_.get!UNIT_FIELD_SUMMONEDBY;
+        return controller <= uint.max ? controller : 0;
     }
 
     @property Position position() const

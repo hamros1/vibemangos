@@ -743,8 +743,8 @@ private:
     @property Relating relating() const
     {
         Relating r = Relating(me.values.get!UNIT_FIELD_FLAGS, me.factionTemplate, false, 0, 0, me.alive);
-        r.playerOwned = me.petOwner != 0 || me.guardianOwner != 0;
-        r.controller = me.petOwner ? me.petOwner : me.guardianOwner;
+        r.controller = me.meleeController;
+        r.playerOwned = r.controller != 0;
         r.playerFlags = me.controllerPlayerFlags;
         return r;
     }
@@ -1223,6 +1223,8 @@ private:
         auto target = combatTarget(world, selectNextVictim(world));
         if (!target)
         {
+            if (me.guardianOwner && restoringThreat)
+                return;
             if (victim)
             {
                 meleeStop(world);
@@ -1232,6 +1234,8 @@ private:
             }
             return;
         }
+        if (me.guardianOwner && canSwingRemotely)
+            restoringThreat = 2000; // The target's replica can briefly disappear during a handoff.
         if (target.combatGuid != victim)
             attackStart(target, world);
         if (casting_ !is null)
@@ -1250,14 +1254,7 @@ private:
 
         auto map = cast(Map) world;
         return map !is null && map.remoteCreatureSwing !is null
-            && (!relating.playerControlled || (isMeleePet && meleeEnabled)) ? map : null;
-    }
-
-    private bool isMeleePet() const
-    {
-        import dmangos.world.objects : HighGuid, highGuidOf;
-
-        return me.petOwner && highGuidOf(me.guid) == HighGuid.pet;
+            && (!relating.playerControlled || (me.meleeController && meleeEnabled)) ? map : null;
     }
 
     private imported!"dmangos.world.replication".Replica meleeReplica(CombatWorld world, ulong guid)
@@ -1268,7 +1265,7 @@ private:
         if (auto map = cast(Map) world)
             if (auto copy = cast(Replica) map.findObject(guid))
                 if (copy.fields.type == TypeId.player
-                    || copy.fields.type == TypeId.unit && (copy.playerPet || isMeleePet))
+                    || copy.fields.type == TypeId.unit && (copy.meleeController || me.meleeController))
                     return copy;
         return null;
     }
@@ -1593,7 +1590,7 @@ private:
         swingEffects(target, d.outcome, d.damage);
     }
 
-    /// A remote player's node applied our swing and returned its result.
+    /// The target's node applied our swing and returned its result.
     package void remoteSwingFinished(UnitRef target, MeleeHitOutcome outcome, uint damage, bool killed)
     {
         if (inCombat_ && damage)

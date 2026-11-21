@@ -468,13 +468,15 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   when it can still observe the victim.
 * **Creature melee.** An NPC keeps threat on a player it can still see after the player's
   handoff. The fight keeps nearby replicas available even when the last local player leaves.
-  A hunter or warlock pet can melee nearby players and creatures across the boundary, and
-  nearby NPCs can fight it back. The attacker's node chases and runs the weapon timer. Each
-  swing is addressed to the target's owner, which verifies eligibility, reach and facing,
-  then rolls damage and applies armor and absorbs. The pet holds the threat and its owner
-  receives the loot tap and kill credit. When a creature's region moves, its health, combat
-  state, threat and tap go with it, and the pet directs its next swing to the new owner.
-  Damage shields such as Thorns strike the creature on its node using the same swing reply.
+  A pet, charmed creature or guardian can melee nearby players and creatures across the
+  boundary, and nearby NPCs can fight it back. The attacker's node chases and runs the
+  weapon timer. The target's node checks the attacker's current replica and controller,
+  eligibility, reach and facing, then rolls damage and applies armor and absorbs once.
+  The creature holds the threat and its controller receives the loot tap and kill credit.
+  When a target creature's region moves, its health, combat state, threat and tap go with
+  it, and the attacker directs its next swing to the new owner. Requests from a previous
+  charm or a despawned guardian are discarded once the target node sees the change. Damage
+  shields such as Thorns strike the creature on its node using the same swing reply.
 * **Creature casts.** An NPC can cast single-target magical damage and hostile aura spells
   on a player across the boundary. The creature holds the cast timer, mana and spell-list
   cooldown. The player's node rechecks eligibility, range and line of sight at completion.
@@ -736,7 +738,7 @@ services line (`ServiceHost.describe`). Every log line of the cluster code start
 ## Not yet
 
 * Creature spells with broader target shapes or effects, including spells that replace a melee
-  swing. Cross-node melee for charmed creatures and guardians, and block-triggered damage such as Holy Shield.
+  swing, and block-triggered damage such as Holy Shield.
 * Proc spells with projectiles, channels or mixed targeted effects across nodes, channelled
   leeches, and additional victim-side periodic effects.
 
