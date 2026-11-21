@@ -88,15 +88,45 @@ void encode(T)(ref ubyte[] bytes, const ref T value) @trusted
         static assert(false, "cannot queue a " ~ T.stringof);
 }
 
+// Minimum encoded size, excluding native struct padding.
+private template minimumEncodedSize(T)
+{
+    alias U = Unqual!T;
+    static if (is(U == enum))
+        enum minimumEncodedSize = minimumEncodedSize!(OriginalType!U);
+    else static if (isStaticArray!U)
+        enum minimumEncodedSize = U.length * minimumEncodedSize!(typeof(U.init[0]));
+    else static if (isDynamicArray!U)
+        enum minimumEncodedSize = uint.sizeof; // even an empty array has a length
+    else static if (is(U == struct))
+        enum minimumEncodedSize = () {
+            size_t size;
+            static foreach (F; typeof(U.tupleof))
+                size += minimumEncodedSize!F;
+            return size;
+        }();
+    else
+        enum minimumEncodedSize = U.sizeof;
+}
+
 /// Reads back what `encode` wrote, from the front of `bytes`.
-void decode(T)(ref const(ubyte)[] bytes, ref T value) @trusted
+void decode(T)(ref const(ubyte)[] bytes, ref T value) @safe
+if (isPlainData!T && __traits(compiles, value = T.init))
+{
+    T decoded;
+    decodeFresh(bytes, decoded);
+    value = decoded;
+}
+
+// The caller owns fresh storage. Qualified fields are initialized before publication.
+private void decodeFresh(T)(ref const(ubyte)[] bytes, ref T value) @trusted
 {
     import std.exception : enforce;
 
     alias U = Unqual!T;
     auto target = cast(U*) &value;
     static if (is(U == enum))
-        decode(bytes, *cast(OriginalType!U*) target);
+        decodeFresh(bytes, *cast(OriginalType!U*) target);
     else static if (isIntegral!U || isFloatingPoint!U || isSomeChar!U || is(U == bool))
     {
         enforce(bytes.length >= U.sizeof, "a queued write ends early");
@@ -106,23 +136,25 @@ void decode(T)(ref const(ubyte)[] bytes, ref T value) @trusted
     else static if (isStaticArray!U)
     {
         foreach (ref element; *target)
-            decode(bytes, element);
+            decodeFresh(bytes, element);
     }
     else static if (isDynamicArray!U)
     {
         uint count;
-        decode(bytes, count);
-        enforce(count <= bytes.length, "a queued write ends early");
+        decodeFresh(bytes, count);
         alias E = Unqual!(typeof(U.init[0]));
+        // Keep the existing one-byte-per-element bound for zero-width encodings.
+        enum width = minimumEncodedSize!E ? minimumEncodedSize!E : 1;
+        enforce(count <= bytes.length / width, "a queued write ends early");
         auto elements = new E[count];
         foreach (ref element; elements)
-            decode(bytes, element);
+            decodeFresh(bytes, element);
         *target = cast(U) elements;
     }
     else static if (is(U == struct))
     {
         static foreach (i; 0 .. U.tupleof.length)
-            decode(bytes, target.tupleof[i]);
+            decodeFresh(bytes, target.tupleof[i]);
     }
 }
 
@@ -139,4 +171,23 @@ unittest
     Outer after;
     decode(rest, after);
     assert(after == before && rest.length == 0);
+}
+
+unittest
+{
+    import std.exception : assertThrown;
+
+    static assert(!__traits(compiles, {
+        const(ubyte)[] bytes;
+        immutable uint target = 0;
+        decode(bytes, target);
+    }));
+
+    ubyte[] bytes;
+    const uint[] source = [7u, 8u];
+    encode(bytes, source);
+    const(ubyte)[] rest = bytes[0 .. $ - 1];
+    uint[] target = [42u];
+    assertThrown(decode(rest, target));
+    assert(target == [42u]);
 }
