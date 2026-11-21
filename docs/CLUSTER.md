@@ -160,7 +160,7 @@ There are 47 message types. They fall into:
 | Sessions | `SessionClaim`, `SessionGrant`, `SessionEvict`, `SessionReleased` |
 | Replication | `InterestUpdate`, `ReplicaCreate`, `ReplicaValues`, `ReplicaMove`, `ReplicaRemove`, `InRange` |
 | Players | `PlayerMessage` (to the owner, to the home, arrival, departure, a move to a third node), `Presence`, `DeliverTo`, `Whisper` |
-| Gameplay across nodes | `StockRequest`, `StockReply`, `StockRelease`, `GroupCommand`, `GroupState`, `MemberStatsRequest`, `ToEveryone`, `GmRemote`, `KillShare`, `GroupLootRoll`, `LootCoinShare`, `ScriptSignal`, `DungeonEntryRequest`, `DungeonEntryReply`, `FriendStatusChange`, `GuildReload`, `GuildBroadcast`, `GuildInvitation` |
+| Gameplay across nodes | `StockRequest`, `StockReply`, `StockRelease`, `GroupCommand`, `GroupState`, `MemberStatsRequest`, `ToEveryone`, `GmRemote`, `KillShare`, `GroupLootRoll`, `LootCoinShare`, `QuestLootCheck`, `ScriptSignal`, `DungeonEntryRequest`, `DungeonEntryReply`, `FriendStatusChange`, `GuildReload`, `GuildBroadcast`, `GuildInvitation` |
 | Services | `ServiceCall`, `ServiceReply` (docs/SERVICES.md) |
 
 On the world server's side, `ClusterBridge` implements the handlers `ClusterNode` calls, and
@@ -475,8 +475,16 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   consecutive drops come from different nodes. The designated member may click the corpse or
   chest and claim the item on its owner's node. The round-robin slot waits for the coordinator's
   reply while coins and rolls remain available. If the reply times out, the item stays with the
-  player who created the drop. The cursor resets when the coordinator reloads the party. Quest,
-  conditioned, and personal drops keep their local pickup rules.
+  player who created the drop. The cursor resets when the coordinator reloads the party. Conditioned
+  and personal non-quest drops keep their local pickup rules.
+* **Quest drops.** At a kill or chest opening, the loot's node asks each eligible remote member's
+  node which quest drops that character needs. Eligible members see the corpse's loot cursor on
+  replicas. Clicking the corpse or chest moves the player to the loot's node, where the player's
+  quest is checked again before pickup. A shared slot goes to one player and follows the group's
+  loot turn when the loot method uses one. A multi-drop slot gives each eligible member one claim.
+  The loot's node records each claim, including when the player leaves and returns. A quest check
+  that goes unanswered for five seconds releases its provisional rights. If the corpse's own
+  region changes hands, that corpse expires with its remaining loot.
 * **Script signals** to a creature another node simulates go there (`ScriptSignal`), applied once
   (its origin and sequence number drop a resend), and are passed on, at most three times, if the
   creature has moved again (docs/SCRIPTING.md).
@@ -602,7 +610,7 @@ services line (`ServiceHost.describe`). Every log line of the cluster code start
 
 ## Not yet
 
-* Cross-node quest drops and keeping Master Loot active when the designated master starts on another node.
+* Keeping Master Loot active when the designated master starts on another node.
 * A player's spells at another node's player.
 * Surviving an owner's loss without disconnecting the client: the home could take its player back
   from the last save, which is worth having only with gateways and much more frequent player saves.

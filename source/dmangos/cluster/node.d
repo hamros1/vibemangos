@@ -71,6 +71,7 @@ interface ReplicationHandler
     void killShare(ushort peer, const ref KillShare message);
     void groupLootRoll(ushort peer, const ref GroupLootRoll message);
     void lootCoinShare(ushort peer, const ref LootCoinShare message);
+    void questLootCheck(ushort peer, const ref QuestLootCheck message);
 
     /// A script's signal for a creature this node simulates.
     void scriptSignal(ushort peer, const ref ScriptSignal message);
@@ -773,6 +774,15 @@ final class ClusterNode : LinkOwner
             {
                 const m = decode!LootCoinShare(payload);
                 replication.lootCoinShare(peer, m);
+            }
+            return;
+        }
+        if (type == MessageType.questLootCheck)
+        {
+            if (replication !is null)
+            {
+                const m = decode!QuestLootCheck(payload);
+                replication.questLootCheck(peer, m);
             }
             return;
         }

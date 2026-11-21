@@ -232,6 +232,7 @@ private:
             if (auto other = lootOf(lootTarget))
                 other.release(this);
         interruptAuras(AuraInterrupt.looting); // CMaNGOS's `DoLoot`
+        recheckQuestLoot(creature.loot);
         creature.loot.showContentTo(this);
         creature.inspectingLoot();
     }
@@ -257,9 +258,25 @@ private:
             sendEquipError(InventoryResult.itemNotFound);
             return loot.release(this);
         }
+        if (item.quest)
+            recheckQuestLoot(loot);
         if (item.blocked || item.slotTypeFor(player.guid, loot) == LootSlotType.none)
             return loot.release(this);
         loot.sendItem(this, item);
+    }
+
+    /// At the corpse, the player's current quest log is authoritative, even after a handoff.
+    void recheckQuestLoot(Loot loot)
+    {
+        import dmangos.world.character : Character;
+
+        bool changed = loot.recheckQuestLooter(player.guid, (const LootItem item) => hasQuestForItem(item.itemId));
+        if (loot.currentLooter && loot.currentLooter != player.guid)
+            if (auto current = cast(Character) loot.find(loot.currentLooter))
+                changed |= loot.recheckQuestLooter(current.looterGuid,
+                    (const LootItem item) => current.hasQuestForItem(item.itemId));
+        if (changed && loot.changed !is null)
+            loot.changed();
     }
 
     /// The client closes the loot window.
@@ -634,15 +651,20 @@ private:
             loot.fill(template_, context.data.loot, context.data.items, map.random, &meets, &allowed);
         }
         loot.generateMoney(t.minLootGold, t.maxLootGold, map.random);
-        if (loot.lootedForEveryone())
-            return lootedOutNow(victim);
         victim.loot = loot;
-        loot.changed = () => theMap.refreshViewers(victim);
+        loot.changed = () {
+            theMap.refreshViewers(victim);
+            if (loot.hasRemoteQuestDrops)
+                theMap.refreshReplicaQuestLoot(victim);
+        };
         loot.lootedForAll = () {
             victim.lootedOut();
             theMap.flushObjectChanges(victim);
             theMap.refreshViewers(victim);
         };
+        loot.beginQuestLootChecks(theMap.id, &context.nextLootSequence, context.sendQuestLootCheck);
+        if (victim.loot !is null && loot.lootedForEveryone())
+            lootedOutNow(victim);
     }
 
     /// Nothing (more) to loot from `victim`: skinnable if it has a skin, its viewers told.
@@ -682,7 +704,7 @@ private:
             auto looter = cast(Character) context.onlinePlayer(guid);
             if (looter is null)
             {
-                if (rotates || crossNodeCoins || crossNodeMaster)
+                if (rotates || crossNodeCoins || crossNodeMaster || context.sendQuestLootCheck !is null)
                     if (auto remote = cast(Replica) map.findObject(guid))
                     {
                         const b = remote.position;
@@ -1194,6 +1216,145 @@ unittest
                 assert(db.itemOwners[guid] == (remoteWins ? 8 : 7));
             }
         assert(saved == 1, "exactly one item is saved, for the winner");
+    }
+}
+
+// Quest loot survives the player's handoff, with one claim for a shared slot or for each multi-drop recipient.
+unittest
+{
+    import dmangos.cluster.protocol : QuestLootCheck;
+    import dmangos.world.characterdb : GroupRecord, GroupMemberRecord;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.group : LootMethod;
+    import dmangos.world.loot : itemFlagMultiDrop, lootRow, LootStores;
+    import dmangos.world.map : Map;
+    import dmangos.world.quests : Quest, QuestState, QuestStatus;
+    import dmangos.world.replication : encodePlayerState, Replicator;
+
+    static final class CorpseReplicas : Replicator
+    {
+        Map viewer;
+        void create(ushort, uint, ulong cell, ulong guid, const(ubyte)[] state)
+        {
+            viewer.replicaCreated(2, cell, guid, state);
+        }
+        void values(ushort, uint, ulong guid, const(ubyte)[] slots) { viewer.replicaValues(2, guid, slots); }
+        void move(ushort, uint, ulong guid, ushort opcode, const(ubyte)[] body_, const(ubyte)[] motion)
+        {
+            viewer.replicaMoved(2, guid, opcode, body_, motion);
+        }
+        void remove(ushort, uint, ulong guid) { viewer.replicaRemoved(2, guid); }
+        void inRange(ushort, uint, Position, float, ushort, const(ubyte)[]) {}
+    }
+
+    enum Scenario { sharedTurn, sharedFallback, sharedAlreadyTaken, personal, noQuest, abandoned }
+    foreach (scenario; [Scenario.sharedTurn, Scenario.sharedFallback, Scenario.sharedAlreadyTaken,
+        Scenario.personal, Scenario.noQuest, Scenario.abandoned])
+    {
+        const localNeeds = scenario != Scenario.sharedFallback && scenario != Scenario.abandoned;
+        auto db = newDatabase();
+        GroupRecord party;
+        party.id = 1;
+        party.leader = 7;
+        party.leaderName = "Anduin";
+        party.lootMethod = LootMethod.roundRobin;
+        party.members = [GroupMemberRecord(7, "Anduin"), GroupMemberRecord(8, "Jaina")];
+        db.groups[party.id] = party;
+        auto memberNode = newCreationContext(db), corpseNode = newCreationContext(db);
+        auto relay = new TestPlayerRelay(memberNode, corpseNode);
+        memberNode.ownsCell = (uint, ulong) => false;
+        auto now = MonoTime.currTime;
+        corpseNode.clock = memberNode.clock = () => now;
+        Quest quest;
+        quest.id = 9300;
+        quest.reqItemId[0] = itemJerky;
+        quest.reqItemCount[0] = 3; // taking one still leaves both players eligible for a different drop
+        corpseNode.data.quests.quests[quest.id] = memberNode.data.quests.quests[quest.id] = quest;
+        const start = Position(-8949.95f, -132.49f, 83.53f, 1.97f);
+        auto anduin = loggedIn(corpseNode, db, 7, "Anduin", start, setup: (ref c) {
+            if (localNeeds)
+                c.quests = [QuestStatus(quest.id, QuestState.incomplete)];
+        });
+        auto jaina = loggedIn(memberNode, db, 8, "Jaina", start, setup: (ref c) {
+            if (scenario != Scenario.noQuest)
+                c.quests = [QuestStatus(quest.id, QuestState.incomplete)];
+        });
+        auto source = corpseNode.map(0);
+        source.replicaCreated(1, cellKeyAt(start.x, start.y), 8, encodePlayerState(jaina.session.character, 0));
+        auto wire = new CorpseReplicas;
+        wire.viewer = memberNode.map(0);
+        source.replicator = wire;
+        if (scenario == Scenario.sharedTurn)
+            corpseNode.groups.of(7).nextLooter = 8;
+
+        QuestLootCheck request, reply;
+        corpseNode.sendQuestLootCheck = (ushort peer, const ref QuestLootCheck check) {
+            assert(peer == 1 && !check.reply);
+            request = QuestLootCheck(check.map, check.loot, check.player, check.sequence, false, 0, check.items.dup);
+            return true;
+        };
+        memberNode.sendQuestLootCheck = (ushort peer, const ref QuestLootCheck check) {
+            assert(peer == 2 && check.reply);
+            reply = QuestLootCheck(check.map, check.loot, check.player, check.sequence, true, check.eligible);
+            return true;
+        };
+        auto victim = lootableInnkeeper(corpseNode);
+        corpseNode.data.loot = LootStores.create();
+        corpseNode.data.loot.creature.add(99, lootRow(itemJerky, -100, 0, 1, 1, 0));
+        if (scenario == Scenario.personal)
+            corpseNode.data.items.edit(itemJerky).flags |= itemFlagMultiDrop;
+        if (scenario != Scenario.sharedAlreadyTaken)
+            corpseNode.data.creatureTemplates.edit(creatureInnkeeper).minLootGold =
+                corpseNode.data.creatureTemplates.edit(creatureInnkeeper).maxLootGold = 0;
+        const cell = cellKeyAt(victim.position.x, victim.position.y);
+        source.peerInterest(1, [cell], null);
+        jaina.read();
+
+        killIt(anduin, victim, now);
+        auto loot = victim.loot;
+        assert(loot !is null && request.player == 8 && request.items[0] == itemJerky);
+        assert(!loot.canLoot(8), "a pending quest check cannot expose a loot slot");
+        if (scenario == Scenario.sharedTurn)
+            assert(loot.currentLooter == 8 && !loot.canLoot(7), "the remote player's turn is reserved");
+
+        const corpse = ClientGuid(victim.guid);
+        if (scenario == Scenario.personal || scenario == Scenario.sharedAlreadyTaken)
+        {
+            anduin.write(Opcode.CMSG_LOOT, corpse);
+            anduin.write(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, ClientLootSlot(0));
+            assert(anduin.session.character.inventory.count(itemJerky) == 1);
+        }
+        memberNode.questLootCheckArrived(2, request);
+        assert(reply.eligible == (scenario == Scenario.noQuest ? 0 : 1));
+        corpseNode.questLootCheckArrived(3, reply);
+        assert(!loot.canLoot(8), "only the checked player's node can confirm eligibility");
+        corpseNode.questLootCheckArrived(1, reply);
+        const remoteCanOpen = scenario != Scenario.noQuest && scenario != Scenario.sharedAlreadyTaken;
+        assert(loot.canLoot(8) == remoteCanOpen);
+        jaina.read();
+        assert(((jaina.view.fields[victim.guid].get(UNIT_DYNAMIC_FLAGS, 0) & Creature.dynLootable) != 0)
+            == remoteCanOpen, "the replica shows the quest loot cursor to eligible players");
+
+        jaina.write(Opcode.CMSG_LOOT, corpse);
+        assert(relay.remote !is null && jaina.session.inWorld is null);
+        relay.remote.update(50.msecs);
+        assert((bodyOf(jaina.read(), Opcode.SMSG_LOOT_RESPONSE).length != 0) == remoteCanOpen);
+        if (scenario == Scenario.abandoned)
+            jaina.write(Opcode.CMSG_QUESTLOG_REMOVE_QUEST, [ubyte(0)]);
+        jaina.write(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, ClientLootSlot(0));
+        const expectedRemote = remoteCanOpen && scenario != Scenario.abandoned ? 1 : 0;
+        assert(relay.remote.character.inventory.count(itemJerky) == expectedRemote);
+        corpseNode.questLootCheckArrived(1, reply);
+        jaina.write(Opcode.CMSG_LOOT, corpse);
+        jaina.write(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, ClientLootSlot(0));
+        assert(relay.remote.character.inventory.count(itemJerky) == expectedRemote);
+
+        size_t[uint] saved;
+        foreach (guid, ref row; db.itemRows)
+            if (row.entry == itemJerky)
+                saved[db.itemOwners[guid]] += row.count;
+        assert(saved.get(7, 0) == ((scenario == Scenario.personal || scenario == Scenario.sharedAlreadyTaken) ? 1 : 0));
+        assert(saved.get(8, 0) == expectedRemote);
     }
 }
 

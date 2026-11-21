@@ -67,7 +67,9 @@ import dmangos.vmap.maptree : ModelCache;
 import dmangos.world.terrain : Terrain;
 import dmangos.world.group : GroupDirectory, Groups, memberStatus, MemberStatus;
 import dmangos.world.groupservice : groupCommand, GroupOp, GroupService;
-import dmangos.cluster.protocol : CreatureLoan, GmRemote, GroupCommand, GroupLootRoll, KillShare, LootCoinShare, ScriptSignal;
+import dmangos.cluster.protocol : CreatureLoan, GmRemote, GroupCommand, GroupLootRoll, KillShare, LootCoinShare,
+    QuestLootCheck, ScriptSignal;
+import dmangos.world.loot : Loot, maxLootItems;
 import dmangos.world.map : Inhabitant, Map, MapObject, MapSettings, VisibilityFacts;
 import dmangos.world.online : OnlinePlayer;
 import dmangos.world.playercreate : CreationSettings;
@@ -421,6 +423,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     bool delegate(ushort, const ref GroupLootRoll) sendRemoteGroupLoot;
     bool delegate(ushort) canSendLootCoins;
     bool delegate(ushort, const ref LootCoinShare) sendRemoteLootCoins;
+    bool delegate(ushort, const ref QuestLootCheck) sendQuestLootCheck;
     private ulong lootSequence;
     private ulong[ushort] lastLootCoinShare;
     private ulong[ushort] lastMasterLootAward;
@@ -437,7 +440,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     void groupLootRollArrived(ushort peer, const ref GroupLootRoll message)
     {
         import dmangos.world.character : Character;
-        import dmangos.world.loot : Loot, maxLootItems;
 
         if (!peer || !message.roll || message.slot >= maxLootItems || !canWrite())
             return;
@@ -459,15 +461,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return;
         case GroupLootRoll.Action.vote:
         case GroupLootRoll.Action.result:
-            auto map_ = existingMap(message.map);
-            if (map_ is null)
-                return;
-            Loot loot;
-            auto object = map_.findObject(message.loot);
-            if (auto creature = cast(Creature) object)
-                loot = creature.loot;
-            else if (auto go = cast(GameObject) object)
-                loot = go.loot;
+            auto loot = lootOnMap(message.map, message.loot);
             if (loot is null)
                 return;
             if (message.action == GroupLootRoll.Action.vote)
@@ -476,6 +470,43 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 loot.remoteAwardResult(peer, message);
             return;
         }
+    }
+
+    private Loot lootOnMap(uint mapId, ulong target)
+    {
+        auto map_ = existingMap(mapId);
+        if (map_ is null)
+            return null;
+        auto object = map_.findObject(target);
+        if (auto creature = cast(Creature) object)
+            return creature.loot;
+        if (auto go = cast(GameObject) object)
+            return go.loot;
+        return null;
+    }
+
+    void questLootCheckArrived(ushort peer, const ref QuestLootCheck message)
+    {
+        import dmangos.world.character : Character;
+
+        if (!peer || !message.sequence || !canWrite())
+            return;
+        if (message.reply)
+        {
+            if (auto loot = lootOnMap(message.map, message.loot))
+                loot.acceptQuestLootCheck(peer, message);
+            return;
+        }
+        if (sendQuestLootCheck is null || message.items.length == 0 || message.items.length > maxLootItems)
+            return;
+        auto player = cast(Character) onlinePlayer(message.player);
+        if (player is null || player.character is null || player.transferring || player.currentMap.id != message.map)
+            return;
+        auto reply = QuestLootCheck(message.map, message.loot, message.player, message.sequence, true);
+        foreach (slot, entry; message.items)
+            if (entry && player.hasQuestForItem(entry))
+                reply.eligible |= cast(ushort)(1u << slot);
+        sendQuestLootCheck(peer, reply);
     }
 
     private void receiveMasterLootAward(ushort peer, const ref GroupLootRoll message)

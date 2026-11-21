@@ -20,7 +20,7 @@ import dmangos.world.enchantments : RandomEnchantment;
 import dmangos.frozen : StaticMap;
 import std.random : Random, uniform, uniform01;
 import dmangos.bytes : ByteWriter;
-import dmangos.cluster.protocol : GroupLootRoll;
+import dmangos.cluster.protocol : GroupLootRoll, QuestLootCheck;
 import dmangos.world.opcodes : Opcode;
 import dmangos.world.worlddata : ItemTemplate;
 
@@ -303,7 +303,7 @@ final class LootItem
     /// How `player` sees this item in the loot window, by the loot method: may take, may only view, or not at all.
     LootSlotType slotTypeFor(ulong player, const Loot loot) const
     {
-        if (player !in allowed)
+        if (player !in allowed || (quest && player in loot.pendingQuestLoot))
             return LootSlotType.none;
         if (winner)
             return blocked ? LootSlotType.view : LootSlotType.normal;
@@ -390,6 +390,10 @@ final class Loot
     bool haveItemOverThreshold;
     LootRoll[ubyte] rolls;
     ushort[ulong] remoteMembers;  /// nearby party members simulated on other nodes
+    bool hasRemoteQuestDrops;
+    private bool[ulong] pendingQuestLoot;
+    private ulong questCheckSequence;
+    private long questCheckUntil;
     uint rollMap;
     ulong delegate() nextRoll;
     bool delegate(ushort, const ref GroupLootRoll) sendRemoteRoll;
@@ -420,7 +424,7 @@ final class Loot
 
     /**
      * Rolls the template's entries and groups into items; `allowedFor` says whether
-     * an owner may have an item (conditions; quest drops never), `meets` whether the owner or its
+     * an owner may have an item, `meets` whether the owner or its
      * group meets a condition while rolling.
      */
     void fill(const LootTemplate template_, const LootStores stores, const ref StaticMap!(uint, ItemTemplate) protos,
@@ -452,6 +456,75 @@ final class Loot
         }
     }
 
+    /// Seed provisional rights before sending any checks. A check can only remove a right.
+    void beginQuestLootChecks(uint map, ulong delegate() nextSequence,
+        bool delegate(ushort, const ref QuestLootCheck) send)
+    {
+        if (!remoteMembers.length || send is null)
+            return;
+        uint[maxLootItems] entries;
+        foreach (item; items)
+            if (item.quest)
+            {
+                entries[item.slot] = item.itemId;
+                hasRemoteQuestDrops = true;
+                foreach (guid, _; remoteMembers)
+                    item.allowed[guid] = true;
+                item.currentLooterPass = currentLooter !in item.allowed;
+            }
+        if (!hasRemoteQuestDrops)
+            return;
+        questCheckSequence = nextSequence();
+        questCheckUntil = nowSeconds() + 5;
+        foreach (guid, _; remoteMembers)
+            pendingQuestLoot[guid] = true;
+        foreach (guid, peer; remoteMembers)
+        {
+            const message = QuestLootCheck(map, target, guid, questCheckSequence, false, 0, entries[]);
+            if (!send(peer, message))
+                recheckQuestLooter(guid, (const LootItem) => false);
+        }
+    }
+
+    /// Validate rights against a player's current quest log without restoring a consumed slot.
+    bool recheckQuestLooter(ulong guid, scope bool delegate(const LootItem) needs)
+    {
+        bool changed = pendingQuestLoot.remove(guid);
+        foreach (item; items)
+            if (item.quest && guid in item.allowed && !needs(item))
+            {
+                item.allowed.remove(guid);
+                if (currentLooter == guid)
+                    item.currentLooterPass = true;
+                changed = true;
+            }
+        return changed;
+    }
+
+    void acceptQuestLootCheck(ushort peer, const ref QuestLootCheck reply)
+    {
+        if (reply.sequence != questCheckSequence || reply.player !in pendingQuestLoot
+            || remoteMembers.get(reply.player, 0) != peer)
+            return;
+        const eligible = reply.eligible;
+        if (recheckQuestLooter(reply.player, (const LootItem item) => (eligible & (1u << item.slot)) != 0))
+            refreshQuestLoot();
+    }
+
+    private void refreshQuestLoot()
+    {
+        if (lootedForEveryone())
+        {
+            sendReleaseForAll();
+            if (lootedForAll !is null)
+                lootedForAll();
+        }
+        else
+            refreshOpenWindows();
+        if (changed !is null)
+            changed();
+    }
+
     /// Ordinary slots stay locked while the coordinator picks their looter.
     void waitForTurn(ulong fallback)
     {
@@ -470,6 +543,13 @@ final class Loot
             currentLooter = selected;
         foreach (item; items)
             item.currentLooterPass = currentLooter !in item.allowed;
+        refreshOpenWindows();
+        if (changed !is null)
+            changed();
+    }
+
+    private void refreshOpenWindows()
+    {
         foreach (guid; looking.keys)
             if (auto looter = find(guid))
             {
@@ -478,8 +558,6 @@ final class Loot
                 else
                     sendReleaseFor(looter);
             }
-        if (changed !is null)
-            changed();
     }
 
     /// Rolls a template's entries and groups, following references `maxcount` times.
@@ -643,6 +721,10 @@ final class Loot
     {
         foreach (item; items)
         {
+            if (item.quest && hasRemoteQuestDrops)
+                foreach (guid, _; remoteMembers)
+                    if (guid in item.allowed)
+                        return false;
             if (item.remoteMasterTarget)
                 return false;
             if (item.winner && item.winner in item.allowed)
@@ -667,8 +749,12 @@ final class Loot
     bool canLoot(ulong player) const
     {
         foreach (item; items)
+        {
             if (item.winner == player && !item.blocked && player in item.allowed)
                 return true;
+            if (item.quest && item.slotTypeFor(player, this) == LootSlotType.normal)
+                return true;
+        }
         if (player !in owners && !(remoteTurns && player in remoteMembers))
             return false;
         const status = statusFor(player);
@@ -686,6 +772,21 @@ final class Loot
                 return true;
         }
         return (status & LootStatus.containReleasedItems) || player == currentLooter;
+    }
+
+    /// The quest loot cursor is personalized on replicas as well as on the corpse owner.
+    ulong[] remoteQuestLooters() const
+    {
+        ulong[] eligible;
+        if (hasRemoteQuestDrops)
+            foreach (guid, _; remoteMembers)
+                foreach (item; items)
+                    if (item.quest && item.slotTypeFor(guid, this) == LootSlotType.normal)
+                    {
+                        eligible ~= guid;
+                        break;
+                    }
+        return eligible;
     }
 
     /// The item in window slot `slot`; null if none.
@@ -1020,6 +1121,12 @@ final class Loot
         const now = nowSeconds();
         if (turnUntil && now >= turnUntil)
             finishTurn(0);
+        if (pendingQuestLoot.length && now >= questCheckUntil)
+        {
+            foreach (guid; pendingQuestLoot.keys)
+                recheckQuestLooter(guid, (const LootItem) => false);
+            refreshQuestLoot();
+        }
         foreach (slot; rolls.keys)
             if (rolls[slot].update(now))
                 rolls.remove(slot);

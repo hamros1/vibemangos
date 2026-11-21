@@ -5,7 +5,7 @@
  */
 module dmangos.world.clusterbridge;
 
-import dmangos.cluster.protocol : GroupLootRoll, LootCoinShare;
+import dmangos.cluster.protocol : GroupLootRoll, LootCoinShare, QuestLootCheck;
 
 import core.time : Duration, MonoTime, msecs;
 
@@ -352,6 +352,17 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
     void lootCoinShare(ushort peer, const ref LootCoinShare message)
     {
         context.lootCoinShareArrived(peer, message);
+    }
+
+    bool sendQuestLootCheck(ushort peer, const ref QuestLootCheck message)
+    {
+        auto link = node.linkTo(peer);
+        return link !is null && !link.wantsClose && node.sendTo(peer, message);
+    }
+
+    void questLootCheck(ushort peer, const ref QuestLootCheck message)
+    {
+        context.questLootCheckArrived(peer, message);
     }
 
     /// For the context: guild news for every other node.

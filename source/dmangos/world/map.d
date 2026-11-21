@@ -720,6 +720,19 @@ final class Map : CombatWorld, GameObjectWorld
             personalize(at(v).player, object, true);
     }
 
+    /// A corpse's quest loot rights changed without any change to its public fields.
+    void refreshReplicaQuestLoot(Creature corpse)
+    {
+        import dmangos.world.replication : encodeQuestLootView;
+
+        const slot = objectSlot(corpse);
+        if (replicator is null || slot == uint.max || !at(slot).replicatedTo.length)
+            return;
+        const view = encodeQuestLootView(corpse);
+        foreach (peer; at(slot).replicatedTo)
+            replicator.values(peer, id, corpse.guid, view);
+    }
+
     /// After `object`'s create block: `who`'s own view of its personal fields, if it differs (or `always`).
     private void personalize(Inhabitant who, MapObject object, bool always = false)
     {
@@ -1657,8 +1670,10 @@ final class Map : CombatWorld, GameObjectWorld
         {
             const isPlayer = replica.fieldsOf.type == TypeId.player;
             const before = isPlayer ? viewOf(guid, replica.fieldsOf) : PlayerView.init;
-            replica.applySlots(slots);
+            const questLootChanged = replica.applySlots(slots);
             flushObjectChanges(replica);
+            if (questLootChanged)
+                refreshViewers(replica);
             // Another node's player died, released or came back: who sees it may change (`playerSees`).
             if (isPlayer && viewOf(guid, replica.fieldsOf) != before)
                 updateObjectVisibility(replica);

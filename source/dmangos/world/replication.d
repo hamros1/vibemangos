@@ -6,18 +6,19 @@
  * object's state (`encodeState`: its fields as everyone sees them, and its movement), then what
  * changes (fields, walks), then its removal, through a `Replicator`. The other node keeps a `Replica`:
  * a map object its players see like any other, which follows its spline so it stays where the real
- * one is, but runs no AI and is never saved. Only what a stranger may see is replicated.
+ * one is, but runs no AI and is never saved. Quest loot visibility is sent separately from public fields.
  */
 module dmangos.world.replication;
 
 import dmangos.bytes : ByteReader, ByteWriter;
-import dmangos.world.map : MapObject, Moving;
+import dmangos.world.creature : Creature;
+import dmangos.world.map : MapObject, Moving, PerViewer;
 import dmangos.world.motion : MotionWorld;
 import dmangos.world.movement : MovementFlags, MovementInfo, MoveType, Position;
 import dmangos.world.objects;
 import dmangos.world.player : Player;
 import dmangos.world.spline : MoveSpline;
-import dmangos.world.updatefields : TypeId;
+import dmangos.world.updatefields : TypeId, UNIT_DYNAMIC_FLAGS;
 
 /// Sends replicas of a map's own objects to the nodes that want them.
 interface Replicator
@@ -123,7 +124,24 @@ SlotValue[] decodeSlots(ref ByteReader r)
     return slots;
 }
 
-/// What a replica starts from: the type of its fields, its movement and its public fields.
+private void putQuestLooters(ref ByteWriter w, const(Creature) creature)
+{
+    auto looters = creature.loot is null ? null : creature.loot.remoteQuestLooters();
+    w.put(cast(ubyte) looters.length);
+    foreach (guid; looters)
+        w.put(guid);
+}
+
+/// A replica field update carrying only quest loot visibility.
+const(ubyte)[] encodeQuestLootView(const(Creature) creature)
+{
+    ByteWriter w;
+    w.put(ushort(0)); // no public fields changed
+    putQuestLooters(w, creature);
+    return w.data;
+}
+
+/// The type of a replica's fields, its movement, public fields and any quest loot visibility.
 const(ubyte)[] encodeState(Replicable object, uint serverTime)
 {
     ByteWriter w;
@@ -132,6 +150,9 @@ const(ubyte)[] encodeState(Replicable object, uint serverTime)
     w.put(cast(uint) motion.length);
     w.putBytes(motion);
     w.putBytes(encodeSlots(object.fields.publicSlots));
+    if (auto creature = cast(Creature) object)
+        if (creature.loot !is null && creature.loot.hasRemoteQuestDrops)
+            putQuestLooters(w, creature);
     return w.data;
 }
 
@@ -148,7 +169,7 @@ const(ubyte)[] encodePlayerState(const Player player, uint serverTime)
 }
 
 /// See the module documentation.
-final class Replica : Replicable, Moving
+final class Replica : Replicable, Moving, PerViewer
 {
     immutable ulong guid_;
     immutable ushort owner;     /// the node that simulates the real object
@@ -157,6 +178,7 @@ final class Replica : Replicable, Moving
         UpdateValues values_;
         MovementBlock block;
         MoveSpline spline;
+        ulong[] questLooters;
     }
 
     /// A replica of `guid` owned by node `owner`, from `encodeState`'s bytes.
@@ -169,16 +191,46 @@ final class Replica : Replicable, Moving
         block = decodeMotion(r.readBytes(r.read!uint), spline);
         foreach (s; decodeSlots(r))
             values_.setSlot(s.slot, s.value);
+        if (!r.empty)
+            readQuestLooters(r);
         values_.clearChanges();
     }
 
-    /// Fields changed on the owner (`encodeSlots`); `Map.flushObjectChanges` sends them on.
-    void applySlots(const(ubyte)[] bytes)
+    /// Applies public fields and returns whether personalized quest loot visibility was sent.
+    bool applySlots(const(ubyte)[] bytes)
     {
         auto r = ByteReader(bytes);
         foreach (s; decodeSlots(r))
             if (s.slot < values_.length)
                 values_.setSlot(s.slot, s.value);
+        if (r.empty)
+            return false;
+        readQuestLooters(r);
+        return true;
+    }
+
+    private void readQuestLooters(ref ByteReader r)
+    {
+        questLooters = new ulong[r.read!ubyte];
+        foreach (ref guid; questLooters)
+            guid = r.read!ulong;
+    }
+
+    bool personalized() const { return questLooters.length != 0; }
+
+    const(size_t)[] personalSlots() const
+    {
+        static immutable size_t[1] slots = [UNIT_DYNAMIC_FLAGS];
+        return slots[];
+    }
+
+    uint fieldFor(ulong viewer, uint viewerGroup, size_t slot, uint value) const
+    {
+        import std.algorithm.searching : canFind;
+
+        if (slot == UNIT_DYNAMIC_FLAGS && questLooters.canFind(viewer))
+            return value | Creature.dynLootable;
+        return value;
     }
 
     /// The owner's object moved (`encodeMotion`).
