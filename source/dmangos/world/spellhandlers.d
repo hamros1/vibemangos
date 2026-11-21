@@ -126,7 +126,7 @@ private:
         // Not known or passive: a cheat, ignored.
         if (spell is null || !player.knowsSpell(id) || spell.isPassive)
             return;
-        if (hasPendingPlayerAssist())
+        if (hasPendingPlayerSpell())
             return deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(id, SpellCastResult.spellInProgress, spell));
         if (spell.hasEffect(SpellEffect.duel))
         {
@@ -145,51 +145,67 @@ private:
             castSpell(spell, targets, false, 0);
             return;
         }
-        if (targets.unit && targets.unit != player.guid && isPlayerAssistSpell(*spell))
+        if (targets.unit && targets.unit != player.guid)
             if (auto replica = cast(Replica) map.findObject(targets.unit))
-                if (replica.fields.type == TypeId.player && context.onlinePlayer(targets.unit) is null)
-                    return handoffPlayerAssist(spell, targets, replica);
-        // At another node's creature: cast there.
-        if (targets.unit && targets.unit != player.guid && actAtReplica(targets.unit, ArrivalAction(0, id, targets.unit)))
-            return;
+            {
+                if (replica.fields.type == TypeId.player && context.onlinePlayer(targets.unit) is null
+                    && isPlayerHandoffSpell(*spell))
+                    return handoffPlayerSpell(spell, targets, replica);
+                if (actAtReplica(targets.unit, ArrivalAction(0, id, targets.unit)))
+                    return;
+            }
         // At another node's game object (a lock): opened there.
         if (targets.gameObject && actAtReplica(targets.gameObject, ArrivalAction(0, id, 0, 0, 0, targets.gameObject)))
             return;
         castSpell(spell, targets, false, 0);
     }
 
-    /// A spell with only direct heals or friendly auras on the named unit.
-    static bool isPlayerAssistSpell(const ref SpellInfo spell)
+    /// A direct heal, buff, damage spell or debuff whose effects all target one named unit.
+    static bool isPlayerHandoffSpell(const ref SpellInfo spell)
     {
+        import std.algorithm.comparison : among;
+
         enum uint channels = 0x04 | 0x40;
         if ((spell.attributesEx & channels) || isNextMeleeSwingSpell(spell) || autoRepeats(&spell))
             return false;
-        bool hasEffect;
+        bool friendly, hostile;
         foreach (i, effect; spell.effect)
         {
             if (!effect)
                 continue;
-            hasEffect = true;
             if (spell.casting.implicitTargetB[i] != ImplicitTarget.none || spell.casting.chainTarget[i] > 1)
                 return false;
             const target = spell.implicitTargetA[i];
-            const friendly = target == ImplicitTarget.friend || target == ImplicitTarget.unitRaid
+            if (target == ImplicitTarget.enemy)
+            {
+                if (!effect.among(SpellEffect.schoolDamage, SpellEffect.applyAura, SpellEffect.healthLeech,
+                    SpellEffect.weaponDamageNoschool, SpellEffect.weaponPercentDamage, SpellEffect.weaponDamage,
+                    SpellEffect.powerDrain, SpellEffect.powerBurn, SpellEffect.interruptCast))
+                    return false;
+                hostile = true;
+                continue;
+            }
+            const friendlyTarget = target == ImplicitTarget.friend || target == ImplicitTarget.unitRaid
                 || target == ImplicitTarget.unitFriendChainHeal;
             if (effect == SpellEffect.heal || effect == SpellEffect.healMaxHealth)
             {
-                if (!friendly && target != ImplicitTarget.unit)
+                if (!friendlyTarget && target != ImplicitTarget.unit)
                     return false;
             }
-            else if (effect != SpellEffect.applyAura || !friendly)
+            else if (effect != SpellEffect.applyAura || !friendlyTarget)
                 return false;
+            friendly = true;
         }
-        return hasEffect;
+        return friendly != hostile;
     }
 
-    private void handoffPlayerAssist(const(SpellInfo)* spell, const ref SpellTargets targets, const(Replica) replica)
+    private void handoffPlayerSpell(const(SpellInfo)* spell, const ref SpellTargets targets, const(Replica) replica)
     {
+        import std.algorithm.comparison : among;
+
         SpellCastResult result;
-        if (targets.mask != TargetFlags.unit && targets.mask != (TargetFlags.unit | TargetFlags.unitAlly))
+        if (!targets.mask.among(TargetFlags.unit, TargetFlags.unitEnemy, TargetFlags.unit | TargetFlags.unitAlly,
+            TargetFlags.unit | TargetFlags.unitEnemy))
             result = SpellCastResult.badTargets;
         else if (inCombat)
             result = SpellCastResult.affectingCombat;
@@ -216,7 +232,7 @@ private:
     void handleCancelCast(ref ByteReader reader)
     {
         const id = reader.read!uint;
-        if (cancelPendingPlayerAssist(id))
+        if (cancelPendingPlayerSpell(id))
             return deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(id, SpellCastResult.interrupted));
         if (generic.active && generic.spell.id == id)
             interruptCast(SpellCastResult.interrupted);
@@ -492,14 +508,14 @@ private:
     }
 
     package SpellCastResult castSpell(const(SpellInfo)* spell, SpellTargets targets, bool triggered, uint itemEntry,
-        bool playerAssist = false)
+        bool playerHandoff = false)
     {
         // Auto Shot and the like: from now on, at each of their times.
         if (!triggered && autoRepeats(spell))
             return startAutoRepeat(spell, targets);
         if (targets.mask == TargetFlags.self)
             targets.unit = player.guid;
-        const result = checkCast(spell, targets, triggered, itemEntry, true, null, playerAssist);
+        const result = checkCast(spell, targets, triggered, itemEntry, true, null, playerHandoff);
         if (result != SpellCastResult.ok)
         {
             if (!triggered)
@@ -507,7 +523,7 @@ private:
             return result;
         }
         auto c = Casting(spell, targets, 0, itemEntry, triggered, true);
-        c.playerAssist = playerAssist;
+        c.playerHandoff = playerHandoff;
         c.castItemGuid = itemEntry ? usingItemGuid : 0;
         c.custom = pendingCustom; // a cast with amounts of its own (`castCustom`)
         pendingCustom = typeof(pendingCustom).init;
@@ -1293,11 +1309,11 @@ private:
     }
 
     SpellCastResult checkCast(const(SpellInfo)* spell, const ref SpellTargets targets, bool triggered, uint itemEntry,
-        bool start, const(Replica) targetReplica = null, bool playerAssist = false)
+        bool start, const(Replica) targetReplica = null, bool playerHandoff = false)
     {
         enum uint castableWhileSitting = 0x08000000; // SPELL_ATTR_CASTABLE_WHILE_SITTING
         const now = context.clock();
-        const replicaAssist = playerAssist && targetReplica !is null;
+        const preflight = playerHandoff && targetReplica !is null;
         // A finishing move needs combo points on its target (Slice and Dice, cast on oneself: on anyone).
         if (!triggered && usesComboPoints(*spell)
                 && (comboPoints == 0 || (targets.unit && targets.unit != player.guid && targets.unit != comboTarget)))
@@ -1367,10 +1383,10 @@ private:
                 return petResult;
         }
         // The target the effects need (a triggered spell's at any range: the range check is not for it).
-        const result = checkTarget(spell, targets, triggered, targetReplica, playerAssist);
+        const result = checkTarget(spell, targets, triggered, targetReplica, playerHandoff);
         if (result != SpellCastResult.ok)
             return result;
-        if (!triggered && !replicaAssist)
+        if (!triggered && !preflight)
         {
             const classResult = classCastCheck(spell, targets); // `dmangos.world.classspells`
             if (classResult != SpellCastResult.ok)
@@ -1423,7 +1439,7 @@ private:
                 return toolResult;
         }
         // The spell's script needs the authoritative target and runs on its node after the handoff.
-        if (replicaAssist)
+        if (preflight)
             return SpellCastResult.ok;
         // Last, the spell's script may refuse it (CMaNGOS's `OnCheckCast`): a capture's creature, a camera's turtle.
         {
@@ -1695,7 +1711,7 @@ private:
 
     /// Whether the effects' implicit targets have what they need: an enemy, a friend, any unit, in range and sight.
     SpellCastResult checkTarget(const(SpellInfo)* spell, const ref SpellTargets targets, bool triggered = false,
-        const(Replica) targetReplica = null, bool playerAssist = false)
+        const(Replica) targetReplica = null, bool playerHandoff = false)
     {
         bool needsEnemy, needsUnit;
         foreach (i; 0 .. 3)
@@ -1735,7 +1751,7 @@ private:
         float reach;
         if (creature !is null)
         {
-            if (playerAssist)
+            if (playerHandoff)
                 return SpellCastResult.badTargets;
             if (!creature.alive && !spell.hasEffect(SpellEffect.skinning))
                 return SpellCastResult.targetsDead;
@@ -1748,11 +1764,11 @@ private:
         {
             if (other.map !is map || other.player is null)
                 return SpellCastResult.badTargets;
-            if (playerAssist)
+            if (playerHandoff)
             {
                 if (other.transferring)
                     return SpellCastResult.badTargets;
-                if (!isFriend(relatingNow(), other.relatingNow(), context.client))
+                if (!needsEnemy && !isFriend(relatingNow(), other.relatingNow(), context.client))
                     return SpellCastResult.targetEnemy;
             }
             if (needsEnemy && !canAttack(relatingNow(), other.relatingNow(), context.client))
@@ -1771,14 +1787,16 @@ private:
         {
             const fields = &targetReplica.fieldsOf();
             if (!fields.get!UNIT_FIELD_HEALTH)
-                return playerAssist ? SpellCastResult.targetsDead : SpellCastResult.badTargets;
-            if (playerAssist)
+                return playerHandoff ? SpellCastResult.targetsDead : SpellCastResult.badTargets;
+            if (playerHandoff)
             {
                 Relating other = {player: true, controller: guid, unitFlags: fields.get!UNIT_FIELD_FLAGS,
                     template_: context.client.factionTemplates.lookup(fields.get!UNIT_FIELD_FACTIONTEMPLATE),
                     duelArbiter: fields.get!PLAYER_DUEL_ARBITER, duelTeam: fields.get!PLAYER_DUEL_TEAM,
                     playerFlags: fields.get!PLAYER_FLAGS};
-                if (!isFriend(relatingNow(), other, context.client))
+                if (needsEnemy && !canAttack(relatingNow(), other, context.client))
+                    return SpellCastResult.targetFriendly;
+                if (!needsEnemy && !isFriend(relatingNow(), other, context.client))
                     return SpellCastResult.targetEnemy;
             }
             else if (fields.get!PLAYER_DUEL_ARBITER)
@@ -1817,7 +1835,7 @@ private:
         // `Targets` that let the client name a unit.
         enum uint unitTargetFlags = 0x0002 | 0x0080 | 0x0100 | 0x0200 | 0x0400 | 0x8000;
         const spell = c.spell;
-        const result = checkCast(spell, c.targets, c.triggered, c.castItemEntry, false, null, c.playerAssist);
+        const result = checkCast(spell, c.targets, c.triggered, c.castItemEntry, false, null, c.playerHandoff);
         if (result != SpellCastResult.ok)
         {
             if (!c.triggered)
@@ -3300,10 +3318,11 @@ version (unittest)
     }
 }
 
-// Cross-node player assists validate on both nodes and use the normal cast, cost and cooldown once.
+// Cross-node player spells validate on both nodes and use the normal cast, cost and cooldown once.
 unittest
 {
     import core.time : MonoTime, msecs;
+    import std.algorithm.comparison : among;
     import std.algorithm.searching : count;
     import std.file : rmdirRecurse, tempDir;
     import std.format : format;
@@ -3319,6 +3338,8 @@ unittest
     import dmangos.world.opcodes : Opcode;
     import dmangos.world.player : Player;
     import dmangos.world.playercreate : NewSpell;
+    import dmangos.world.pvp : pvpFlagMs;
+    import dmangos.world.relations : PlayerFlagsPvP;
     import dmangos.world.replication : encodePlayerState;
     import dmangos.world.spellcast;
     import dmangos.world.terrain : writeTestHouseVmaps;
@@ -3337,21 +3358,34 @@ unittest
         return Position(point.x, point.y, point.z);
     }
     uint bits(float f) { return *cast(uint*) &f; }
-    enum Scenario { heal, buff, farBefore, wallBefore, enemy, combat, farOnArrival, wallOnArrival, wallDuringCast, cancel }
-    foreach (scenario; [Scenario.heal, Scenario.buff, Scenario.farBefore, Scenario.wallBefore, Scenario.enemy,
-        Scenario.combat, Scenario.farOnArrival, Scenario.wallOnArrival, Scenario.wallDuringCast, Scenario.cancel])
+    enum Scenario
+    {
+        heal, buff, farBefore, wallBefore, enemy, combat, farOnArrival, wallOnArrival, wallDuringCast, cancel,
+        damage, debuff, unflagged, friendly, flagExpiresOnArrival, immuneDuringCast, hostileWallOnArrival, freeForAll,
+        hostileCancel
+    }
+    import std.traits : EnumMembers;
+
+    foreach (scenario; [EnumMembers!Scenario])
     {
         auto db = newDatabase();
         void configure(ref WorldConfig config)
         {
             config.dataDir = directory;
             config.rateHealth = config.rateMana = 0;
+            if (scenario == Scenario.freeForAll)
+                config.gameType = 16;
         }
         auto origin = newCreationContext(db, &configure), owner = newCreationContext(db, &configure);
         auto relay = new TestPlayerRelay(origin, owner);
         auto now = MonoTime.currTime;
         origin.clock = owner.clock = () => now;
-        enum uint heal = 55001, buff = 55002, cost = 12, recovery = 4_000;
+        enum uint heal = 55001, buff = 55002, damage = 55003, debuff = 55004, cost = 12, recovery = 4_000;
+        const hostile = scenario.among(Scenario.damage, Scenario.debuff, Scenario.unflagged, Scenario.friendly,
+            Scenario.flagExpiresOnArrival, Scenario.immuneDuringCast, Scenario.hostileWallOnArrival, Scenario.freeForAll,
+            Scenario.hostileCancel) != 0;
+        const otherFaction = scenario == Scenario.enemy
+            || (hostile && scenario != Scenario.friendly && scenario != Scenario.freeForAll);
         uint[chrRacesFormat.length] human, orc;
         human[0] = raceHuman;
         human[2] = human[8] = 7; // faction template and team
@@ -3378,7 +3412,15 @@ unittest
             auto statBuff = testSpell(buff, SpellEffect.applyAura, ImplicitTarget.unitRaid, 5);
             statBuff.casting.applyAuraName[0] = AuraType.modStat;
             statBuff.casting.durationIndex = 1;
-            foreach (spell; [directHeal, statBuff])
+            auto firebolt = testSpell(damage, SpellEffect.schoolDamage, ImplicitTarget.enemy, 20, 1);
+            firebolt.attributesEx2 |= spellAttrEx2CantCrit;
+            firebolt.casting.attributesEx3 |= spellAttrEx3AlwaysHit;
+            firebolt.casting.school = 2;
+            auto slow = testSpell(debuff, SpellEffect.applyAura, ImplicitTarget.enemy, -30);
+            slow.casting.attributesEx3 |= spellAttrEx3AlwaysHit;
+            slow.casting.applyAuraName[0] = AuraType.modDecreaseSpeed;
+            slow.casting.durationIndex = 1;
+            foreach (spell; [directHeal, statBuff, firebolt, slow])
             {
                 spell.casting.manaCost = cost;
                 spell.casting.powerType = Power.mana;
@@ -3396,58 +3438,88 @@ unittest
         auto caster = loggedIn(origin, db, 7, "Anduin", casterAt, setup: (ref c) {
             c.classId = classMage;
             c.power[Power.mana] = 80;
-            c.spells = [NewSpell(heal, true), NewSpell(buff, true)];
+            c.spells = [NewSpell(heal, true), NewSpell(buff, true), NewSpell(damage, true), NewSpell(debuff, true)];
         });
-        auto target = loggedIn(owner, db, 8, "Jaina", targetAt,
-            race: scenario == Scenario.enemy ? raceOrc : raceHuman);
+        if (scenario == Scenario.heal)
+        {
+            caster.write(Opcode.CMSG_TOGGLE_PVP, [ubyte(1)]);
+            caster.write(Opcode.CMSG_TOGGLE_PVP, [ubyte(0)]);
+            caster.session.inWorld.updatePvPTimers(pvpFlagMs - 500);
+        }
+        auto target = loggedIn(owner, db, 8, "Jaina", targetAt, race: otherFaction ? raceOrc : raceHuman);
         if (scenario == Scenario.combat)
         {
             auto me = cast(Player) caster.session.character;
             me.values.set!UNIT_FIELD_FLAGS(me.values.get!UNIT_FIELD_FLAGS | UnitFlags.inCombat);
         }
-        auto ally = cast(Player) target.session.character;
-        ally.values.set!UNIT_FIELD_HEALTH(10u);
+        auto recipient = cast(Player) target.session.character;
+        const startingHealth = hostile ? 40u : 10u;
+        recipient.values.set!UNIT_FIELD_HEALTH(startingHealth);
+        if (scenario == Scenario.freeForAll)
+        {
+            auto me = cast(Player) caster.session.character;
+            me.values.set!PLAYER_FLAGS(me.values.get!PLAYER_FLAGS | PlayerFlagsPvP.freeForAll);
+            recipient.values.set!PLAYER_FLAGS(recipient.values.get!PLAYER_FLAGS | PlayerFlagsPvP.freeForAll);
+        }
+        else if (hostile && scenario != Scenario.unflagged)
+            target.write(Opcode.CMSG_TOGGLE_PVP, [ubyte(1)]);
         const mana = caster.session.character.values.get!UNIT_FIELD_POWER1(Power.mana);
         assert(mana >= cost);
         const targetCell = cellKeyAt(targetAt.x, targetAt.y);
-        origin.map(0).replicaCreated(2, targetCell, ally.guid, encodePlayerState(ally, 0));
+        origin.map(0).replicaCreated(2, targetCell, recipient.guid, encodePlayerState(recipient, 0));
         assert(origin.map(0).inLineOfSight(casterAt, targetAt) == (scenario != Scenario.wallBefore));
 
-        const id = scenario == Scenario.buff ? buff : heal;
+        const id = hostile ? (scenario == Scenario.debuff ? debuff : damage) : (scenario == Scenario.buff ? buff : heal);
         ByteWriter request;
         request.put(id);
-        SpellTargets(TargetFlags.unit, ally.guid).write(request);
+        request.put(cast(ushort)(hostile ? TargetFlags.unitEnemy : TargetFlags.unit));
+        request.putPackedGuid(recipient.guid);
         caster.write(Opcode.CMSG_CAST_SPELL, request.data);
         const initialPackets = caster.read();
         const refusedAtSource = scenario == Scenario.farBefore || scenario == Scenario.wallBefore
-            || scenario == Scenario.enemy || scenario == Scenario.combat;
+            || scenario == Scenario.enemy || scenario == Scenario.combat || scenario == Scenario.friendly
+            || scenario == Scenario.unflagged;
         if (refusedAtSource)
         {
             const result = scenario == Scenario.farBefore ? SpellCastResult.outOfRange
                 : scenario == Scenario.wallBefore ? SpellCastResult.lineOfSight
-                : scenario == Scenario.enemy ? SpellCastResult.targetEnemy : SpellCastResult.affectingCombat;
+                : scenario == Scenario.enemy ? SpellCastResult.targetEnemy
+                : scenario == Scenario.combat ? SpellCastResult.affectingCombat : SpellCastResult.targetFriendly;
             assert(relay.remote is null && caster.session.inWorld !is null);
             assert(bodyOf(initialPackets, Opcode.SMSG_CAST_RESULT) == castResultPacket(id, result));
             assert(caster.session.character.values.get!UNIT_FIELD_POWER1(Power.mana) == mana);
+            assert(recipient.values.get!UNIT_FIELD_HEALTH == startingHealth);
             continue;
         }
 
         assert(relay.remote !is null && caster.session.inWorld is null,
             format!"%s did not hand off: %s"(scenario, bodyOf(initialPackets, Opcode.SMSG_CAST_RESULT)));
         assert(relay.remote.character.values.get!UNIT_FIELD_POWER1(Power.mana) == mana);
-        if (scenario == Scenario.farOnArrival || scenario == Scenario.wallOnArrival)
+        if (scenario == Scenario.heal)
+            assert(relay.remote.character.values.get!UNIT_FIELD_FLAGS & UnitFlags.pvp,
+                "the caster keeps their timed PvP flag during handoff");
+        if (scenario == Scenario.freeForAll)
+            assert(relay.remote.character.values.get!PLAYER_FLAGS & PlayerFlagsPvP.freeForAll,
+                "the caster keeps their free-for-all eligibility");
+        if (scenario == Scenario.farOnArrival || scenario == Scenario.wallOnArrival || scenario == Scenario.hostileWallOnArrival)
         {
-            ally.movement.position = scenario == Scenario.farOnArrival ? far : behindWall;
+            recipient.movement.position = scenario == Scenario.farOnArrival ? far : behindWall;
             owner.map(0).relocated(target.session.inWorld);
         }
-        if (scenario == Scenario.cancel)
+        if (scenario == Scenario.flagExpiresOnArrival)
+        {
+            target.write(Opcode.CMSG_TOGGLE_PVP, [ubyte(0)]);
+            target.session.inWorld.updatePvPTimers(pvpFlagMs);
+            assert(!(recipient.values.get!UNIT_FIELD_FLAGS & UnitFlags.pvp));
+        }
+        if (scenario == Scenario.cancel || scenario == Scenario.hostileCancel)
         {
             ByteWriter cancel;
             cancel.put(id);
             caster.write(Opcode.CMSG_CANCEL_CAST, cancel.data);
             assert(bodyOf(caster.read(), Opcode.SMSG_CAST_RESULT) == castResultPacket(id, SpellCastResult.interrupted));
         }
-        if (scenario == Scenario.heal)
+        if (scenario == Scenario.heal || scenario == Scenario.damage)
         {
             caster.write(Opcode.CMSG_CAST_SPELL, request.data);
             assert(bodyOf(caster.read(), Opcode.SMSG_CAST_RESULT) == castResultPacket(id, SpellCastResult.spellInProgress));
@@ -3456,21 +3528,37 @@ unittest
         if (scenario == Scenario.wallDuringCast)
         {
             assert(opcodesOf(caster.read()).count(Opcode.SMSG_SPELL_START) == 1);
-            ally.movement.position = behindWall;
+            recipient.movement.position = behindWall;
             owner.map(0).relocated(target.session.inWorld);
+        }
+        if (scenario == Scenario.immuneDuringCast)
+        {
+            assert(opcodesOf(caster.read()).count(Opcode.SMSG_SPELL_START) == 1);
+            recipient.values.set!UNIT_FIELD_FLAGS(recipient.values.get!UNIT_FIELD_FLAGS | UnitFlags.immuneToPlayer);
         }
         now += 1_500.msecs;
         relay.remote.update(1_500.msecs);
         const packets = caster.read();
-        const succeeded = scenario == Scenario.heal || scenario == Scenario.buff;
+        const damaged = scenario == Scenario.damage || scenario == Scenario.freeForAll;
+        const succeeded = scenario == Scenario.heal || scenario == Scenario.buff || damaged || scenario == Scenario.debuff;
         assert(opcodesOf(packets).count(Opcode.SMSG_SPELL_GO) == (succeeded ? 1 : 0));
-        if (scenario == Scenario.farOnArrival || scenario == Scenario.wallOnArrival || scenario == Scenario.wallDuringCast)
+        if (!succeeded && scenario != Scenario.cancel && scenario != Scenario.hostileCancel)
         {
-            const result = scenario == Scenario.farOnArrival ? SpellCastResult.outOfRange : SpellCastResult.lineOfSight;
+            const result = scenario == Scenario.farOnArrival ? SpellCastResult.outOfRange
+                : scenario == Scenario.flagExpiresOnArrival || scenario == Scenario.immuneDuringCast
+                    ? SpellCastResult.targetFriendly : SpellCastResult.lineOfSight;
             assert(bodyOf(packets, Opcode.SMSG_CAST_RESULT) == castResultPacket(id, result));
         }
-        assert(ally.values.get!UNIT_FIELD_HEALTH == (scenario == Scenario.heal ? 30u : 10u));
-        assert((ally.auras.find(buff) !is null) == (scenario == Scenario.buff));
+        const expectedHealth = scenario == Scenario.heal ? startingHealth + 20 : damaged ? startingHealth - 20 : startingHealth;
+        assert(recipient.values.get!UNIT_FIELD_HEALTH == expectedHealth);
+        if (scenario == Scenario.heal)
+            assert(!(relay.remote.character.values.get!UNIT_FIELD_FLAGS & UnitFlags.pvp),
+                "the flag expires when its remaining time runs out");
+        assert((recipient.auras.find(buff) !is null) == (scenario == Scenario.buff));
+        auto slow = recipient.auras.find(debuff);
+        assert((slow !is null) == (scenario == Scenario.debuff));
+        if (slow !is null)
+            assert(!slow.positive && slow.amount[0] == -30);
         assert(relay.remote.character.values.get!UNIT_FIELD_POWER1(Power.mana) == (succeeded ? mana - cost : mana));
         const cooldowns = relay.remote.inWorld.initialCooldowns();
         assert(cooldowns.length == (succeeded ? 1 : 0));

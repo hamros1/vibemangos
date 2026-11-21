@@ -87,7 +87,7 @@ unittest
 /// The PvP flag on the player's side: `Character` mixes it in.
 mixin template PvPHandlers()
 {
-    import dmangos.bytes : ByteReader;
+    import dmangos.bytes : ByteReader, ByteWriter;
     import dmangos.world.clientdata : Team;
     import dmangos.world.defines : UnitFlags;
     import dmangos.world.group : GroupUpdate;
@@ -232,6 +232,30 @@ mixin template PvPHandlers()
     {
         pvpInCombat = false;
     }
+
+    /// Keep the PvP state of the live character as its simulation changes nodes.
+    void writePvPHandoff(ref ByteWriter w)
+    {
+        w.put(isPvP);
+        w.put(player.values.get!PLAYER_FLAGS & handoffPvPFlags);
+        w.put(pvpTimer);
+        w.put(pvpContestedTimer);
+        w.put(pvpEnforcedArea);
+        w.put(pvpArrivedFar);
+    }
+
+    void readPvPHandoff(ref ByteReader r)
+    {
+        const flags = player.values.get!UNIT_FIELD_FLAGS;
+        player.values.set!UNIT_FIELD_FLAGS(r.read!bool ? flags | UnitFlags.pvp : flags & ~UnitFlags.pvp);
+        player.values.set!PLAYER_FLAGS((player.values.get!PLAYER_FLAGS & ~handoffPvPFlags) | r.read!uint);
+        pvpTimer = r.read!int;
+        pvpContestedTimer = r.read!int;
+        pvpEnforcedArea = r.read!bool;
+        pvpArrivedFar = r.read!bool;
+    }
+
+    private enum handoffPvPFlags = PlayerFlagsPvP.desired | PlayerFlagsPvP.contested | PlayerFlagsPvP.freeForAll;
 
     /**
      * The zone changed: an enforced area flags the player. Arriving there by teleport or

@@ -197,9 +197,9 @@ private:
             if (const spell = context.data.spells.spell(action.spell))
                 if (player.knowsSpell(action.spell))
                 {
-                    const playerAssist = action.spellTarget != 0 && action.spellTarget <= uint.max
-                        && isPlayerAssistSpell(*spell);
-                    castSpell(spell, SpellTargets(TargetFlags.unit, action.spellTarget), false, 0, playerAssist);
+                    const playerHandoff = action.spellTarget != 0 && action.spellTarget <= uint.max
+                        && isPlayerHandoffSpell(*spell);
+                    castSpell(spell, SpellTargets(TargetFlags.unit, action.spellTarget), false, 0, playerHandoff);
                 }
         if (action.loot)
             handleLoot(ClientGuid(action.loot));
@@ -216,18 +216,18 @@ private:
                 }
     }
 
-    bool hasPendingPlayerAssist()
+    bool hasPendingPlayerSpell()
     {
         if (!pendingArrival.spell || !pendingArrival.spellTarget || pendingArrival.spellTarget > uint.max)
             return false;
         const spell = context.data.spells.spell(pendingArrival.spell);
-        return spell !is null && isPlayerAssistSpell(*spell);
+        return spell !is null && isPlayerHandoffSpell(*spell);
     }
 
-    /// A cancel relayed before the first tick can still stop a heal or buff from starting.
-    bool cancelPendingPlayerAssist(uint id)
+    /// A cancel relayed before the first tick can still stop the pending spell from starting.
+    bool cancelPendingPlayerSpell(uint id)
     {
-        if (pendingArrival.spell != id || !hasPendingPlayerAssist())
+        if (pendingArrival.spell != id || !hasPendingPlayerSpell())
             return false;
         pendingArrival = ArrivalAction.init;
         return true;
@@ -319,6 +319,7 @@ private:
         w.put(moveOrderCounter);
         foreach (speed; player.speeds)
             w.put(speed);
+        writePvPHandoff(w);
         w.put(homeNode); // last: `migrationHome` reads it there
 
         info!"%s: '%s' moves to node %s (at map %s %.1f %.1f)"(remoteAddress, player.data.name, target,
@@ -414,6 +415,7 @@ private:
         player = makePlayer(character, false);
         player.movement = movement;
         player.speeds = speeds; // as the client has them; auras loaded below change them as they did there
+        readPvPHandoff(r);
         saveTimer = IntervalTimer(context.config.playerSaveInterval.seconds);
         regenTimer.reset();
         enteredWorld = context.clock();
