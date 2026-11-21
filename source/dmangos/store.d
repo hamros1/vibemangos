@@ -55,7 +55,7 @@ struct Store(T)
     /// The value `r` refers to; null if it is gone (or `r` refers to nothing).
     inout(T)* opIndex(Ref!T r) inout pure nothrow @nogc @trusted
     {
-        return r.slot < items.length && generations[r.slot] == r.generation ? &items[r.slot] : null;
+        return holds(r.slot) && generations[r.slot] == r.generation ? &items[r.slot] : null;
     }
 
     /// The value in `slot`, which must hold one.
@@ -268,6 +268,10 @@ unittest
     assert(store[a].value == 1 && store[b].value == 2 && store.length == 2);
     store.remove(a);
     assert(store[a] is null && store.length == 1, "gone");
+    const freeSlot = Ref!Thing(a.slot, a.generation + 1);
+    assert(store[freeSlot] is null);
+    store.remove(freeSlot);
+    assert(store.length == 1);
     const c = store.add(Thing(3));
     assert(c.slot == a.slot && c.generation != a.generation, "the slot is reused under a new generation");
     assert(store[a] is null && store[c].value == 3, "the old reference does not find the new value");
