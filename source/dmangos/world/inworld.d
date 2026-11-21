@@ -167,8 +167,8 @@ private:
     }
 
     /**
-     * What a player moved to the node simulating a creature does there at once: what it asked for
-     * against the creature's replica on the node it came from (an attack, a spell, its loot).
+     * What a player moved to an object's or player's node does there at once: the action it asked
+     * for on the node it came from (an attack, a spell, its loot).
      */
     void performArrivalAction(const ArrivalAction action)
     {
@@ -196,7 +196,11 @@ private:
         if (action.spell)
             if (const spell = context.data.spells.spell(action.spell))
                 if (player.knowsSpell(action.spell))
-                    castSpell(spell, SpellTargets(TargetFlags.unit, action.spellTarget), false, 0);
+                {
+                    const playerAssist = action.spellTarget != 0 && action.spellTarget <= uint.max
+                        && isPlayerAssistSpell(*spell);
+                    castSpell(spell, SpellTargets(TargetFlags.unit, action.spellTarget), false, 0, playerAssist);
+                }
         if (action.loot)
             handleLoot(ClientGuid(action.loot));
         if (action.useObject)
@@ -210,6 +214,23 @@ private:
                     t.gameObject = action.castObject;
                     castSpell(spell, t, false, 0);
                 }
+    }
+
+    bool hasPendingPlayerAssist()
+    {
+        if (!pendingArrival.spell || !pendingArrival.spellTarget || pendingArrival.spellTarget > uint.max)
+            return false;
+        const spell = context.data.spells.spell(pendingArrival.spell);
+        return spell !is null && isPlayerAssistSpell(*spell);
+    }
+
+    /// A cancel relayed before the first tick can still stop a heal or buff from starting.
+    bool cancelPendingPlayerAssist(uint id)
+    {
+        if (pendingArrival.spell != id || !hasPendingPlayerAssist())
+            return false;
+        pendingArrival = ArrivalAction.init;
+        return true;
     }
 
     /**

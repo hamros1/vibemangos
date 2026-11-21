@@ -427,6 +427,11 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
 * **Duels** can be requested against a nearby player simulated on another node. The challenger
   moves to the opponent's node and the cast is checked there again. Both stay on that node while
   the challenge is pending or the duel is active. A forced move, such as a drain, ends the duel.
+* **Single-target heals and buffs** follow a friendly player to their node. The caster's node
+  checks the spell against the target's replica before moving the caster. The target's node
+  repeats the checks against the real player at the start and end of the cast, then charges its
+  normal cost and cooldown. The handoff requires the caster to be out of combat and free to move.
+  A cancel received before the cast starts discards the pending action.
 * **Trades** between nearby players move the requester to the other player's node, where the usual
   trade checks and exchange run. Both stay there until the trade ends. A forced move cancels any
   open trade before the player leaves.
@@ -613,7 +618,7 @@ services line (`ServiceHost.describe`). Every log line of the cluster code start
 
 ## Not yet
 
-* A player's spells at another node's player.
+* Dedicated cross-node casting support for hostile and multi-target player spells.
 * Surviving an owner's loss without disconnecting the client: the home could take its player back
   from the last save, which is worth having only with gateways and much more frequent player saves.
 * More than one standby, and a quorum of coordinators.

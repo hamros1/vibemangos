@@ -34,6 +34,7 @@ struct SpellCast
     ubyte[ulong] auraEffects;
     /// A creature's weapon spell: the melee roll against each target (its hit roll).
     MeleeDamage[ulong] weaponRolls;
+    bool playerAssist; /// recheck friendship for a cast that followed its player target across nodes
 
     /// Whether effect `i` is to be done once this cast (the first target), and marks it done.
     bool once(size_t i)

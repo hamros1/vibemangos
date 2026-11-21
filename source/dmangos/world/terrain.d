@@ -904,19 +904,17 @@ unittest
     assert(terrain.tile(p[0], p[1]) is null && terrain.height(p[0], p[1]) == invalidHeightValue, "no file");
 }
 
-/// Buildings: the extractor's raw house, assembled into vmaps, stands on the map with its floor, roof and wall.
-unittest
+/// Builds a 10 x 10 house with a wall across its middle, for collision tests.
+version (unittest)
+void writeTestHouseVmaps(string dir)
 {
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.file : mkdirRecurse, write;
     import dmangos.bytes : ByteWriter;
     import dmangos.extractor.assembler : assembleVmaps;
     import dmangos.vmap.math : putBox, putVector, Vector3, AABox;
     import dmangos.vmap.model : modHasBound, putTag, rawVmapMagic;
     import dmangos.world.testdata;
 
-    const dir = buildPath(tempDir, "dmangos-vmap-test");
-    scope (exit)
-        rmdirRecurse(dir);
     mkdirRecurse(buildPath(dir, "Buildings"));
 
     // A 10 x 10 house, 5 high: a floor, a roof, and a wall across its middle at x = 5. Indoors (0x2000).
@@ -968,7 +966,18 @@ unittest
 
     const report = assembleVmaps(dir);
     assert(report.maps == 1 && report.tiles == 1 && report.models == 1 && report.problems.length == 0);
+}
 
+/// Buildings: the extractor's raw house, assembled into vmaps, stands on the map with its floor, roof and wall.
+unittest
+{
+    import std.file : rmdirRecurse, tempDir;
+    import dmangos.world.testdata;
+
+    const dir = buildPath(tempDir, "dmangos-vmap-test");
+    scope (exit)
+        rmdirRecurse(dir);
+    writeTestHouseVmaps(dir);
     const client = testClientData();
     auto terrain = new Terrain(mapEasternKingdoms, dir, client, new ModelCache(buildPath(dir, "vmaps")));
     assert(terrain.hasVmaps);
