@@ -768,6 +768,13 @@ except where said.
 - After a race is won both counts start again at 0. Cenarion Favor also holds at the Gates of Ahn'Qiraj (a zone of its
   own in Silithus).
 - A lost tower takes its flight master and its side's squad away.
+- Silithus's announcers are the camps' quest givers, Marshal Bluewall (17080) and General Kirika (17079): the data's
+  texts 13479 .. 13481 and 13476 .. 13478 (male and female, as the two are) say "one quarter", "half" and "almost all";
+  they are said (the rows' `ChatTypeID` 0) at 50, 100 and 150 of 200, and 13470, 13469 ("Victory ...") at the win, as
+  vmangos's `DoSilithystYell` does; the win is also "The Alliance (Horde) has collected 200 silithyst!" in the zone's
+  defense channel (`mangos_string` 1636, 1635, as CMaNGOS sends it). A carrier who leaves the world (a logout, a lost
+  connection) drops a mound where it was, as one who dies does: the aura ends on leaving the world (its
+  `AuraInterruptFlags`), and the dust must not vanish with the carrier.
 
 **Second opinion (CMaNGOS-classic, `OutdoorPvP/OutdoorPvPEP.cpp`, `OutdoorPvPSI.cpp`, `GameObject::TickCapturePoint`),
 compared after the implementation:** it agrees on the capture's rate, its taking at the progress events and losing in
@@ -788,3 +795,62 @@ shrines, the flight master's and the squads' removal, the 200 and the reset of b
 
 dmangos's first implementation took a tower only at the slider's end, with "Progressing" for a tower nobody held; the
 progress events' scripts and the map's banners showed otherwise, and the comparison agreed: changed before commit.
+
+## Auction houses
+
+**What:** the deposit and the cut of each auction house, and how the duration counts (world/auctionhouse.d).
+
+**Source: the 1.12.1 client's data.** `AuctionHouse.dbc` gives each house a deposit percentage and a cut: the six
+factions' houses (Stormwind, Alliance, Darnassus, Undercity, Thunder Bluff, Horde) 5 and 5, the goblins' Blackwater house (7)
+25 and 15. The client shows the deposit from the same row (`CalculateAuctionDeposit`), so the server must charge what
+it shows: the item's sell price times the stack, times the house's percentage, for each 2 hours of the 2, 8 or 24 the
+client offers (1, 4 or 12 times). A faction's house so takes 5%, 20% and 60% of the sell price, the goblins' five times
+that (25%, 100%, 300%); the cut is the house's share of the winning bid (5%, 15%). Tested on the real file
+(world/realsystems.d).
+
+**Documented research** agrees: the Classic Era guides give 5%, 20% and 60% at a faction's house and "five times that"
+at a neutral one; the cut 5% and 15% (warcraft.wiki.gg "Auction House" for the cut, the deposit refunded with a sale
+and kept when an auction expires or is cancelled). One guide's neutral 75% and 150% for 2 and 8 hours matches neither
+the data nor its own "five times"; the data is taken.
+
+**The server's own rates** (`rate_auction_deposit`, `rate_auction_cut`, `rate_auction_time`, `auction_deposit_min`:
+CMaNGOS's `Rate.Auction.*` and `Auction.Deposit.Min`) multiply the deposit and the cut, stretch an auction's time and
+set a least deposit; their defaults (1, 1, 1, none) are the client's numbers. **Second opinion (CMaNGOS-classic,
+`AuctionHouseMgr::GetAuctionDeposit`, `AuctionEntry::GetAuctionCut`):** the same formula and order (the least deposit
+before the rate).
+
+## Alterac Valley's turn-ins
+
+**What:** what the battle's repeatable quests bring about (world/alterac.d).
+
+**Source: the data.** The quests (`quest_template`, zone 2597) take 20 Armor Scraps (17422: Murgot Deepforge's 7223,
+6781; Smith Regzar's 7224, 6741), one or five Storm Crystals (17423: Arch Druid Renferal's 6881, 7386) or Stormpike
+Soldier's Blood (17306: Primalist Thurloga's 6801, 7385). Each graveyard's defenders are spawned by battleground events
+(`creature_battleground`: event1 15 + the node, event2 the side * 4 + the kind): Stormpike Defenders and Frostwolf
+Guardians, then Seasoned, Veteran and Champion ones, four of each kind at each graveyard. General's Warcry (28418,
+28419, 28420) is 10%, 20%, 30% more damage done (aura 79) for two minutes (`SpellDuration.dbc` 4). The lords are
+`creature_template` 13419 and 13256, with their own EventAI.
+
+**Documented research** (warcraft.wiki.gg "Alterac Valley (original)"): "Each upgrade costs 500 Armor Scraps, or 1,500
+for all three"; only the stationary troops (the graveyards') are upgraded; since 1.11 an upgrade also gives the general
+"a periodic melee and spell damage buff: 10% at Seasoned, 20% at Veteran, and 30% at Champion"; 200 Storm Crystals or
+Stormpike Soldier's Blood, "turned in in batches of 1 or 5", summon Ivus or Lokholar, who "fight on the Field of
+Strife". The same page gives the cavalry (25 tamed mounts and 25 hides, Honored to launch), the fleets (120, 60, 30 of
+the soldiers', lieutenants' and commanders' medals or flesh, Revered for the beacons) and the ground assault (280
+supplies of one's own mine, 70 of the other's, Honored).
+
+**Interpretations (no source found):**
+
+- The upgrade comes when the scraps reach it (the wiki has an Honored player ask the blacksmith; the database's
+  blacksmiths have no such gossip, only "How many more supplies are needed for the next upgrade?", without an answer).
+- The general cries the warcry at each upgrade and every two minutes after (its duration): "periodic".
+- The lord comes at once, on the Field of Strife, halfway between the graveyards where its summoner would stop
+  (`WorldSafeLocs.dbc` 729 and 169 for Ivus, 169 and 749 for Lokholar); once a battle. The wiki's escort and its ten
+  players at a circle are not done (the Circle of Calling, `gameobject_template` 178670, needs ten; it has no spawn),
+  nor the lord's march on the enemy base.
+- The turn-in that calls a lord is a "secondary unit activated" on the scoreboard.
+
+**Second opinion (vmangos, `BattleGroundAV::HandleQuestComplete`, `UpgradeArmor`):** 20 scraps a turn-in, upgrades at
+500, 1000 and 1500 with 28418 .. 28420 (its automatic call is commented out); its lords, cavalry and fleets only count.
+CMaNGOS-classic does nothing with the turn-ins.
+

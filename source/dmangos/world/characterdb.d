@@ -18,7 +18,7 @@ import dmangos.mysql : Column, MySqlConnection;
 import dmangos.world.inventory : ItemChange, ItemRecord, ItemState;
 import dmangos.world.player : CharacterData, CharacterProgress, HomeBind, tutorialFields;
 import dmangos.world.playercreate : NewCharacter, NewSkill, NewSpell, maxEnchantmentSlot;
-import dmangos.world.database : AuraRecord, TicketRecord, BattlegroundData, HonorColumns, HonorPointRecord, HonorRecord, CooldownRecord, PetRecord, PetSpellRecord, GuildMemberRecord, GuildRankRecord, GuildRecord,
+import dmangos.world.database : AuraRecord, TicketRecord, BattlegroundData, PvpStatsBattleground, PvpStatsPlayer, HonorColumns, HonorPointRecord, HonorRecord, CooldownRecord, PetRecord, PetSpellRecord, GuildEventRecord, GuildMemberRecord, GuildRankRecord, GuildRecord,
     PetitionRecord, SocialRow, CorpseRecord, InstanceBindRecord, InstanceRecord, InstanceRecords,
     InstanceRespawnRecord, MailRecord;
 import dmangos.world.reputation : ReputationRecord;
@@ -460,6 +460,11 @@ final class CharacterStatements
             g.members ~= GuildMemberRecord(row.get!uint(0), row.get!uint(1), row.get!string(2), row.get!string(3),
                 row.get!string(4), cast(ubyte) row.get!uint(5), cast(ubyte) row.get!uint(6), row.get!uint(7),
                 row.get!long(8), row.get!uint(9));
+        // The newest 100 events, put oldest first (`LoadGuildEventLogFromDB`).
+        foreach_reverse (row; characters.query!("SELECT LogGuid, EventType, PlayerGuid1, PlayerGuid2, NewRank, "
+                ~ "TimeStamp FROM guild_eventlog WHERE guildid = ? ORDER BY TimeStamp DESC, LogGuid DESC LIMIT 100")(id))
+            g.events ~= GuildEventRecord(row.get!uint(0), cast(ubyte) row.get!uint(1), row.get!uint(2), row.get!uint(3),
+                cast(ubyte) row.get!uint(4), row.get!long(5));
         return nullable(g);
     }
 
@@ -500,6 +505,17 @@ final class CharacterStatements
     void deleteGuildMember(uint member)
     {
         characters.execute!"DELETE FROM guild_member WHERE guid = ?"(member);
+    }
+
+    /// See `WorldDatabase.saveGuildEvent`.
+    void saveGuildEvent(uint guild, const ref GuildEventRecord e)
+    {
+        characters.transaction({
+            characters.execute!"DELETE FROM guild_eventlog WHERE guildid = ? AND LogGuid = ?"(guild, e.logGuid);
+            characters.execute!("INSERT INTO guild_eventlog (guildid, LogGuid, EventType, PlayerGuid1, PlayerGuid2, "
+                ~ "NewRank, TimeStamp) VALUES (?, ?, ?, ?, ?, ?, ?)")(guild, e.logGuid, uint(e.type), e.player1,
+                e.player2, uint(e.newRank), e.time);
+        });
     }
 
     /// See `WorldDatabase.deleteGuild`.
@@ -796,6 +812,22 @@ final class CharacterStatements
     }
 
     /// See `WorldDatabase.saveBattlegroundData`.
+    /// See `WorldDatabase.savePvpStats`: the battle's id is the table's next (`LAST_INSERT_ID`, this connection's), so
+    /// two nodes ending battles at once cannot take one id.
+    void savePvpStats(const PvpStatsBattleground b, const(PvpStatsPlayer)[] players)
+    {
+        characters.transaction({
+            characters.execute!("INSERT INTO pvpstats_battlegrounds (winner_team, bracket_id, type, date) "
+                ~ "VALUES (?, ?, ?, NOW())")(uint(b.winner), uint(b.bracket), uint(b.type));
+            foreach (ref p; players)
+                characters.execute!("INSERT INTO pvpstats_players (battleground_id, character_guid, score_killing_blows, "
+                    ~ "score_deaths, score_honorable_kills, score_bonus_honor, score_damage_done, score_healing_done, attr_1, "
+                    ~ "attr_2, attr_3, attr_4, attr_5) VALUES (LAST_INSERT_ID(), ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?)")(p.guid,
+                    p.killingBlows, p.deaths, p.honorableKills, p.bonusHonor, p.attr[0], p.attr[1], p.attr[2], p.attr[3],
+                    p.attr[4]);
+        });
+    }
+
     void saveBattlegroundData(uint player, const BattlegroundData d)
     {
         characters.transaction({

@@ -128,6 +128,9 @@ class BattlegroundRules
     /// `who` lost the aura of `spell` (cancelled, purged by an immunity, dispelled).
     void auraLost(Battleground copy, ulong who, uint spell) {}
 
+    /// `who` was rewarded for `quest` in the copy (a turn-in).
+    void questRewarded(Battleground copy, ulong who, uint quest) {}
+
     /// `who` walked into `trigger`; true if the trigger is the battleground's (handled).
     bool areaTrigger(Battleground copy, ulong who, uint trigger) { return false; }
 
@@ -406,6 +409,8 @@ final class Battleground
             message(stringAllianceWins, ChatType.CHAT_MSG_BG_SYSTEM_NEUTRAL);
         else if (winner == winnerHorde)
             message(stringHordeWins, ChatType.CHAT_MSG_BG_SYSTEM_NEUTRAL);
+        if (context.config.battlegroundScoreStatistics)
+            keepScores();
         const board = scoreboard();
         foreach (guid, ref m; members)
             if (auto who = context.onlinePlayer(guid))
@@ -416,6 +421,36 @@ final class Battleground
             }
         info!"battleground: %s (copy %s) is over, won by %s"(type, instance,
             winner == winnerAlliance ? "the Alliance" : winner == winnerHorde ? "the Horde" : "nobody");
+    }
+
+    /**
+     * The scoreboard kept (`Battleground.ScoreStatistics`, CMaNGOS's `EndBattleGround`): the battle (the winner as the
+     * scoreboard says it, the bracket's lowest level / 10, the type), and each player still in it (not one logged out),
+     * its first five columns of the battleground's own.
+     */
+    private void keepScores()
+    {
+        import dmangos.world.bgqueue : bracketOf;
+        import dmangos.world.database : PvpStatsBattleground, PvpStatsPlayer;
+
+        const t = template_;
+        PvpStatsPlayer[] rows;
+        uint level;
+        foreach (guid, ref m; members)
+        {
+            if (m.offlineSince != MonoTime.init)
+                continue;
+            PvpStatsPlayer p = {guid: cast(uint) guid, killingBlows: m.killingBlows, deaths: m.deaths,
+                honorableKills: m.honorableKills, bonusHonor: m.bonusHonor};
+            p.attr = m.extra[0 .. 5];
+            rows ~= p;
+            if (auto who = context.onlinePlayer(guid))
+                level = who.character.data.level;
+        }
+        ubyte bracket;
+        if (t !is null)
+            bracket = cast(ubyte)((t.minLevel + 10 * (level ? bracketOf(*t, level) : 0)) / 10);
+        context.database.savePvpStats(PvpStatsBattleground(winner, bracket, cast(ubyte) type), rows);
     }
 
     /// Whether `team` (0 the Alliance) is `winner`.
@@ -649,6 +684,50 @@ final class Battleground
 
         if (auto c = cast(Character) onlinePlayerOf(guid))
             c.battlegroundLeave(true);
+    }
+
+    /**
+     * A creature of `entry` summoned at `x`, `y` (on the ground there, looking `o`) on the copy's map, staying until
+     * it dies or the copy goes; its guid, 0 if it could not be.
+     */
+    ulong summonAt(uint entry, float x, float y, float z, float o)
+    {
+        import dmangos.world.creature : TempSpawnType;
+        import dmangos.world.movement : Position;
+
+        auto map = context.existingMap(mapId, instance);
+        if (map is null)
+            return 0;
+        const ground = map.groundHeight(x, y, z + 10, false);
+        auto made = context.summonCreature(map, entry, Position(x, y, ground > -100_000 ? ground : z, o),
+            TempSpawnType.dead, 0, 0);
+        return made is null ? 0 : made.guid;
+    }
+
+    /// Each creature of `entry` on the copy's map casts `spell` on itself (triggered); how many did.
+    uint creaturesCast(uint entry, uint spell)
+    {
+        import dmangos.world.creature : Creature;
+        import dmangos.world.map : MapObject;
+
+        auto map = context.existingMap(mapId, instance);
+        if (map is null)
+            return 0;
+        Creature[] casters;
+        map.forEachObject((MapObject o) {
+            if (auto c = cast(Creature) o)
+                if (c.template_.entry == entry && c.alive && c.ai !is null)
+                    casters ~= c;
+        });
+        uint cast_;
+        foreach (c; casters)
+        {
+            import dmangos.script.api : ActionResult;
+
+            if (c.ai.castFor(map, spell, c.guid, true) == ActionResult.ok)
+                ++cast_;
+        }
+        return cast_;
     }
 
     /**

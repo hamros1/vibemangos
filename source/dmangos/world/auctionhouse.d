@@ -85,10 +85,10 @@ struct AuctionRecord
         return outbid ? outbid : 1;
     }
 
-    /// The house's share of the bid.
-    uint cut(const ref AuctionHouseEntry house) const pure nothrow @nogc @safe
+    /// The house's share of the bid: its `cutPercent`, times the server's cut rate (`AuctionRates.cut`).
+    uint cut(const ref AuctionHouseEntry house, float rate = 1) const pure nothrow @nogc @safe
     {
-        return cast(uint)(house.cutPercent * cast(ulong) bid / 100.0f);
+        return cast(uint)(house.cutPercent * cast(ulong) bid * rate / 100.0f);
     }
 
     /**
@@ -114,11 +114,36 @@ struct AuctionRecord
     }
 }
 
-/// The deposit: the sell price of the stack for each 2 hours, the house's percentage of it.
-uint auctionDeposit(const ref AuctionHouseEntry house, uint seconds, uint sellPrice, uint count) pure nothrow @nogc @safe
+/**
+ * The server's own rates over the houses' (`AuctionHouse.dbc`'s) percentages, as CMaNGOS's `Rate.Auction.Deposit`,
+ * `Rate.Auction.Cut`, `Rate.Auction.Time` and `Auction.Deposit.Min`: 1, 1, 1 and none are the client's own numbers.
+ */
+struct AuctionRates
 {
-    const deposit = float(sellPrice) * count * (seconds / minAuctionTime) * house.depositPercent / 100.0f;
-    return cast(uint) deposit;
+    float deposit = 1; /// the deposit, times this
+    float cut = 1;     /// the cut, times this
+    float time = 1;    /// how long an auction lasts, times this (the deposit is still the chosen duration's)
+    uint depositMin;   /// the least deposit, in copper (before the deposit rate)
+}
+
+/**
+ * The deposit: the sell price of the stack for each 2 hours (1, 4 or 12 times for 2, 8 or 24 hours), the house's
+ * percentage of it (`AuctionHouse.dbc`: 5 in the factions' houses, 25 in the goblins'), at least `rates.depositMin`,
+ * times `rates.deposit`. docs/FORMULAS.md, "Auction houses".
+ */
+uint auctionDeposit(const ref AuctionHouseEntry house, uint seconds, uint sellPrice, uint count,
+    const AuctionRates rates = AuctionRates.init) pure nothrow @nogc @safe
+{
+    float deposit = float(sellPrice) * count * (seconds / minAuctionTime) * house.depositPercent / 100.0f;
+    if (deposit < rates.depositMin)
+        deposit = rates.depositMin;
+    return cast(uint)(deposit * rates.deposit);
+}
+
+/// How long an auction put up for `seconds` lasts, by the time rate.
+uint auctionDuration(uint seconds, const AuctionRates rates = AuctionRates.init) pure nothrow @nogc @safe
+{
+    return cast(uint)(seconds * rates.time);
 }
 
 /**
@@ -207,4 +232,12 @@ unittest
     assert(auctionHouseFor(12, 0) == 1 && auctionHouseFor(29, 0) == 6 && auctionHouseFor(120, 0) == 7);
     assert(auctionHouseFor(1, 2) == 1 && auctionHouseFor(2, 4) == 6 && auctionHouseFor(3, 0) == 7);
     assert(auctionMailSubject(a, AuctionMail.won) == "2589:0:1");
+
+    // The server's rates: a doubled cut, a deposit at least 100 copper then halved, auctions half as long.
+    const rates = AuctionRates(deposit: 0.5f, cut: 2, time: 0.5f, depositMin: 100);
+    a.bid = 1000;
+    assert(a.cut(stormwind, rates.cut) == 100);
+    assert(auctionDeposit(stormwind, 8 * 60 * 60, 13, 20, rates) == 78, "156 halved");
+    assert(auctionDeposit(stormwind, 2 * 60 * 60, 1, 1, rates) == 50, "the least deposit, then halved");
+    assert(auctionDuration(24 * 60 * 60, rates) == 12 * 60 * 60 && auctionDuration(7200) == 7200);
 }

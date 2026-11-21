@@ -296,6 +296,31 @@ immutable uint[2] stateSilithystCollected = [2313, 2314];
 /// ditto
 enum uint stateSilithystGoal = 2317;
 
+/**
+ * The camps' announcers (`creature` 43205 Marshal Bluewall, 43204 General Kirika: "Scouring the Desert"'s givers), by
+ * team, and where they stand; what each says as its side's count reaches a quarter, half and three quarters of the goal
+ * (`broadcast_text` 13479 .. 13481 the Alliance's, 13476 .. 13478 the Horde's) and when it wins (13470, 13469).
+ */
+immutable uint[2] silithusAnnouncers = [17_080, 17_079];
+/// ditto
+immutable float[3][2] silithusAnnouncerAt = [[-7144.34f, 1377.83f, 3.26f], [-7573.79f, 769.70f, -17.66f]];
+/// ditto
+immutable uint[3][2] silithystProgressTexts = [[13_479, 13_480, 13_481], [13_476, 13_477, 13_478]];
+/// ditto
+immutable uint[2] silithystVictoryTexts = [13_470, 13_469];
+/// "The Alliance (Horde) has collected 200 silithyst!" (`mangos_string` 1636, 1635: CMaNGOS's `LANG_OPVP_SI_CAPTURE_*`),
+/// in Silithus's defense channel, by team.
+immutable uint[2] silithystCapturedStrings = [1636, 1635];
+
+/// Which of `silithystProgressTexts` a count of `collected` calls for (0 .. 2), or -1: a quarter, half, three quarters.
+int silithystProgress(uint collected) pure nothrow @nogc @safe
+{
+    foreach (i, at; [silithystGoal / 4, silithystGoal / 2, silithystGoal - silithystGoal / 4])
+        if (collected == at)
+            return cast(int) i;
+    return -1;
+}
+
 /// Silithus's race.
 struct SilithusState
 {
@@ -809,6 +834,44 @@ final class WorldPvpFollower
             dressBanners();
             context.worldPvpSpawnsChanged();
         }
+        if (!first)
+            silithystNews(before.silithus, now.silithus);
+    }
+
+    /**
+     * Silithus's count changed: at a quarter, half and three quarters of the goal the side's announcer says so; when a
+     * side wins, its announcer cheers and the zone is told (`SMSG_DEFENSE_MESSAGE`), as vmangos's `DoSilithystYell` and
+     * CMaNGOS's capture message have it. Each node does it with what it simulates (the announcer, the zone's players).
+     */
+    private void silithystNews(const ref SilithusState before, const ref SilithusState now)
+    {
+        if (now.races != before.races)
+        {
+            if (now.favored == Holder.none)
+                return;
+            const winner = teamOf(now.favored);
+            announcerSays(winner, silithystVictoryTexts[winner]);
+            zoneDefenseNotice(zoneSilithus, context.data.serverStrings.get(silithystCapturedStrings[winner], null));
+            return;
+        }
+        foreach (team; [PvpTeam.alliance, PvpTeam.horde])
+            if (now.collected[team] > before.collected[team])
+                if (const i = silithystProgress(now.collected[team]) + 1)
+                    announcerSays(team, silithystProgressTexts[team][i - 1]);
+    }
+
+    /// The camp's announcer of `team`, where this node simulates it, says `broadcast_text` `text`.
+    private void announcerSays(PvpTeam team, uint text)
+    {
+        import dmangos.world.movement : Position;
+
+        auto map = context.existingMap(silithusMap);
+        if (map is null)
+            return;
+        const at = silithusAnnouncerAt[team];
+        foreach (c; map.creaturesNear(Position(at[0], at[1], at[2], 0), 10))
+            if (c.template_.entry == silithusAnnouncers[team] && c.ai !is null)
+                return c.ai.sayFor(map, text, 0);
     }
 
     /// Asks the service how it stands (a cluster node starting).
@@ -977,25 +1040,33 @@ final class WorldPvpFollower
             dismiss(eastwallSquads[team][], Position(2850, -4417, 90, 0), 600);
     }
 
-    /// `broadcast_text` row `text` in the Eastern Plaguelands' defense channel (`SMSG_DEFENSE_MESSAGE`: the zone, the
-    /// text's length with its end, the text), to this node's players in the zone.
+    /// `broadcast_text` row `text` in the Eastern Plaguelands' defense channel, to this node's players in the zone.
     private void defenseNotice(uint text)
     {
-        import dmangos.bytes : ByteWriter;
         import dmangos.world.npcdata : BroadcastText;
-        import dmangos.world.opcodes : Opcode;
 
         const said = context.data.npcs.broadcastTexts.get(text, BroadcastText.init);
         if (said.maleText.length == 0 && said.femaleText.length == 0)
             return;
-        const words = said.text(false);
+        zoneDefenseNotice(zoneEasternPlaguelands, said.text(false));
+    }
+
+    /// `words` in `zone`'s defense channel (`SMSG_DEFENSE_MESSAGE`: the zone, the text's length with its end, the
+    /// text), to this node's players in the zone.
+    private void zoneDefenseNotice(uint zone, string words)
+    {
+        import dmangos.bytes : ByteWriter;
+        import dmangos.world.opcodes : Opcode;
+
+        if (words.length == 0)
+            return;
         ByteWriter w;
-        w.put(zoneEasternPlaguelands);
+        w.put(zone);
         w.put(cast(uint)(words.length + 1));
         w.putCString(words);
         const body_ = w.data.idup;
         foreach (session; players)
-            if (session.character.data.map == towersMap && session.character.data.zone == zoneEasternPlaguelands)
+            if (session.character.data.zone == zone)
                 session.deliver(Opcode.SMSG_DEFENSE_MESSAGE, body_);
     }
 }
@@ -1241,6 +1312,19 @@ mixin template WorldPvpHandlers()
         flushPlayerChanges();
         context.services.call!(WorldPvpHost.silithyst)(SilithystTurnIn(team));
         return true;
+    }
+
+    /**
+     * The player leaves the world (logging out, or its connection lost) carrying Silithyst: it falls where the player
+     * was, a mound for anyone, and goes from the player (its aura ends on leaving the world: `AuraInterruptFlags`
+     * 0x80000; a lost connection must not keep it either).
+     */
+    package void worldPvpLeaving()
+    {
+        if (player is null || player.auras.find(spellSilithyst) is null)
+            return;
+        dropSilithyst();
+        battlegroundRemoveAuraHere(spellSilithyst);
     }
 
     /// The player dies (before its auras go): its Silithyst falls where it does.

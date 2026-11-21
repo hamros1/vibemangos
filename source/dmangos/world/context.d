@@ -4527,7 +4527,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.opcodes : Opcode;
 
         const house = auctionHouse(a.houseId);
-        const cut = house is null ? 0 : a.cut(*house);
+        const cut = house is null ? 0 : a.cut(*house, config.rateAuctionCut);
         deliverTo(a.owner, Opcode.SMSG_AUCTION_OWNER_NOTIFICATION, ownerNotification(a, true));
         auctionMail(a.owner, a, AuctionMail.successful, a.bid + a.deposit - cut, false,
             format!"%16x:%s:%s:%s:%s"(a.bidder, a.bid, a.buyout, a.deposit, cut));

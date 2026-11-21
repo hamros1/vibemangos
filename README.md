@@ -227,8 +227,9 @@ What works now:
     waiting alone for one dungeon make a party of the first two, which then fills like any other. A
     party of five is complete and leaves the queue; one still waiting is told so every five minutes; a
     new leader, a raid or a disband takes it out. The rules are vmangos's. In a cluster the queue is
-    the coordinator's, beside the groups. Not yet: talent-based roles, and players who log out are not
-    kept in the queue for their return.
+    the coordinator's, beside the groups. A player alone who logs out keeps its place, matched with nobody
+    until it is back (its stone window asks at login), its time waited kept. Roles are by class: 1.12 has
+    no roles to choose, and the talent-based roles of vmangos's own option are not Blizzard's.
   * **Guilds:** a guild charter
     bought from a guild master for 10 silver, signed by nine others of the faction (once an account)
     and turned in founds the guild with five ranks; invitations (of the faction unless
@@ -238,7 +239,9 @@ What works now:
     leaving master's best-ranked member takes over), the message of the day, the guild information,
     public and officer notes, ranks' names and rights (5 to 10 ranks), the tabard (10 gold, the
     master's, at a tabard designer), guild and officer chat by rank rights, and members signing on
-    and off. Saved in `guild`, `guild_member`, `guild_rank`, `petition` and `petition_sign`. The
+    and off. Saved in `guild`, `guild_member`, `guild_rank`, `petition` and `petition_sign`; the event log
+    (invitations, joining, promotions, demotions, removals, leaving: the newest 100) in `guild_eventlog`, as
+    CMaNGOS keeps it (the 1.12 client has no window for it, `MSG_GUILD_EVENT_LOG_QUERY` came with 2.0). The
     client's `/gcreate` (`CMSG_GUILD_CREATE`) founds a guild for game masters only.
   * **Pets:** a hunter tames a beast of its level or
     lower (Tame Beast's twenty-second channel), dismisses it, calls it back and revives it; a warlock
@@ -291,7 +294,8 @@ What works now:
     ranks and professions), innkeepers binding the hearthstone, bankers, and vendors.
   * **Items:** moving, stacking, splitting, equipping, bags, the bank and
     its bag slots, the keyring, destroying, ammo; buying (with limited stock), selling, buyback and
-    repairs. Every change is saved to `character_inventory` and `item_instance` as it happens.
+    repairs. Every change is saved to `character_inventory` and `item_instance` as it happens. A two-hander put
+    on with no room left for the off hand sends the off hand by mail (the "problems with equipping" letter).
     Items asking for a reputation (`RequiredReputationFaction`/`Rank`) are worn by the player's real rank.
     Using an item checks it may be used (worn if it is to be worn, class, skill, reputation, out-of-combat
     spells) and binds one that binds on use. Charges count down (`ITEM_FIELD_SPELL_CHARGES`): out of them,
@@ -706,10 +710,11 @@ What works now:
   * **Auctions:** auctioneers open
     their city's house (`AuctionHouse.dbc`; the goblins' for the neutral towns; one for both
     factions with `allow_two_side_interaction_auction`). An item that may be traded is put up for 2,
-    8 or 24 hours for a deposit (the house's share of its sell price for each 2 hours); bids start
+    8 or 24 hours for a deposit (the house's share of its sell price for each 2 hours: 5% at the factions'
+    houses, 25% at the goblins'; docs/FORMULAS.md, "Auction houses"); bids start
     at the start bid and rise by 5% at least, not on one's own auctions or another character's of the
     account; a bid at the buyout buys it. The buyer gets the item by mail, the seller the price and
-    the deposit less the house's cut, an outbid bidder the money back, each told if online; a seller
+    the deposit less the house's cut (5%, the goblins' 15%), an outbid bidder the money back, each told if online; a seller
     may take an auction back (paying the cut of a bid) and gets the item by mail. When the time is up
     the highest bid buys it, or the item goes back. Searches filter by name, level, slot, class,
     sub-class, quality and usability, 50 at a time; sellers and bidders list theirs. The `auction`
@@ -724,7 +729,8 @@ What works now:
     scales them. A faction gained with shows in the client's list; falling to hostile is war, rising
     to neutral peace, and the client sets war (where allowed), inactive and the watched faction.
     Creatures react to a player by its standing and its wars; honored and above get 10% off at
-    vendors, trainers and repairs; items, conditions and quests that ask for a rank check it.
+    vendors, trainers and repairs; items, conditions and quests that ask for a rank check it. Auras may force a
+    faction's reaction (`SMSG_SET_FORCED_REACTIONS`): disguises, the Corrupted Ashbringer (the Scarlet Crusade friendly).
   * **Weather:** a zone with a `game_weather` row has rain, snow or
     storms by the season's chances, changing every 10 minutes (better, worse, or anew) while players
     are in it; they see it (`SMSG_WEATHER`) on entering the zone and when it changes, and fine
@@ -769,10 +775,13 @@ What works now:
       queues at once; invitations last 80 seconds. The queues are a cluster service.
     * **A copy of the battleground** is made when enough of both sides wait, and runs on the node
       hosting its map. It counts down two minutes; then its doors open and its objectives spawn.
-    * **During the battle:** kills, deaths and objectives count on the scoreboard; spirit guides
-      resurrect every 30 seconds.
-    * **The end:** a winner, marks of honor, bonus honor and reputation; everyone is sent back two
-      minutes later.
+    * **During the battle:** kills, deaths and objectives count on the scoreboard (`MSG_PVP_LOG_DATA`, asked
+      for at any time; its columns `WorldStateUI.dbc`'s: Warsong Gulch's flags captured and returned, Arathi
+      Basin's bases assaulted and defended, Alterac Valley's graveyards and towers assaulted and defended,
+      mines captured, leaders killed and secondary objectives); spirit guides resurrect every 30 seconds.
+    * **The end:** a winner, marks of honor, bonus honor and reputation, the scoreboard shown (and kept in
+      `pvpstats_battlegrounds` and `pvpstats_players` with `battleground_score_statistics`); everyone is sent
+      back two minutes later.
     * **Leaving early** gives Deserter (15 minutes without queueing). A side short of players for five
       minutes loses.
     * **Warsong Gulch:** three flag captures win. **Arathi Basin:** five bases and their resources;
@@ -780,8 +789,12 @@ What works now:
       100 per captain, 75 per tower; graveyards and towers assaulted from their banners and taken (a
       tower destroyed, its marshal gone) four minutes later unless defended; two mines taken by killing
       their bosses, a reinforcement every 45 seconds for 20 minutes; a general's death wins; honor and
-      reputation for towers, captains, graveyards and mines at the end. Not yet: the quests' turn-in
-      events (as in CMaNGOS), the herald speaking (its lines are battleground messages).
+      reputation for towers, captains, graveyards and mines at the end. The turn-ins: every 500 armor
+      scraps (three times) upgrade a side's graveyards' defenders (seasoned, veteran, champion) and its
+      general cries General's Warcry; 200 Storm Crystals or Stormpike Soldier's Blood call Ivus the Forest
+      Lord or Lokholar the Ice Lord onto the Field of Strife. Not yet: the cavalry, the fleets and the
+      ground assault (their commanders' orders have no gossip in the database), the lords' march and
+      their summoning rituals, the herald speaking (its lines are battleground messages).
     * The players of a team who came alone are in one raid in the copy (its raid frames), made as the
     second arrives and left as they leave; those who came with a group stay in it.
     * Taking an objective (a flag, a banner, a capture) ends Stealth, Divine Shield and the like
@@ -824,6 +837,7 @@ database at the same time; a cluster's nodes take their ids in blocks from its c
 | `allow_two_side_interaction_chat` | whispers between factions | `false` |
 | `allow_two_side_interaction_channel`, `allow_two_side_interaction_group` | one set of channels for both factions; groups across factions | `false`, `false` |
 | `allow_two_side_interaction_auction` | one auction house for both factions | `false` |
+| `rate_auction_deposit`, `rate_auction_cut`, `rate_auction_time`, `auction_deposit_min` | the auction houses' deposits, cuts and auction times, times these; the least deposit in copper | `1`, `1`, `1`, `0` |
 | `allow_two_side_add_friend` | friends of the other faction | `false` |
 | `allow_two_side_interaction_guild` | guilds of both factions | `false` |
 | `chat_restricted_raid_warnings` | raid warnings only in raids | `false` |
@@ -837,6 +851,7 @@ database at the same time; a cluster's nodes take their ids in blocks from its c
 | `honor_maintenance_day`, `min_honor_kills` | the day the honor week turns (0 Sunday); honorable kills needed for a place in the standing | `3`, `15` |
 | `creature_pickpocket_restock_delay` | seconds before an emptied creature's pockets hold something again | `600` |
 | `battleground_cast_deserter`, `battleground_premature_finish` | Deserter for leaving a battleground early; seconds a side may be short of players before it loses (0 never) | `true`, `300` |
+| `battleground_score_statistics` | each battle's scoreboard kept in `pvpstats_battlegrounds` and `pvpstats_players` | `false` |
 | `max_pending_output_kb` | a client with more than this not yet sent to it (it is not reading) is disconnected; 0 no limit | `4096` |
 | `mmaps` | creatures find their way over `data_dir/mmaps`, where there are movement maps | `true` |
 | `write_log` | where writes wait, flushed to disk, until MySQL has them; written again at start-up (skipping what `dmangos_write_applied` says MySQL has); refused writes go to `<write_log>.failed`; empty for none | `"writes.log"` (`"writes-<node_id>.log"` in a cluster) |
@@ -886,6 +901,7 @@ Times the old files give in milliseconds are seconds here.
 | `GM.InWhoList.Level`, `MaxWhoListReturns`, `GM.StartLevel` | `gm_level_in_who_list`, `max_who_list_returns`, `start_gm_level` |
 | `Compression`, `mmap.enabled`, `PlayerSave.Interval` (ms) | `compression`, `mmaps`, `player_save_interval` |
 | `MaintenanceDay`, `MinHonorKills`, `Battleground.CastDeserter`, `BattleGround.PrematureFinishTimer` (ms) | `honor_maintenance_day`, `min_honor_kills`, `battleground_cast_deserter`, `battleground_premature_finish` |
+| `Battleground.ScoreStatistics` | `battleground_score_statistics` |
 | `Rate.Health`, `.Mana`, `.Rage.Loss`, `.Energy`, `Rate.Rest.*`, `Rate.XP.Explore`, `Rate.Reputation.Gain`, `.LowLevel.Kill`, `.LowLevel.Quest` | `rate_health`, `rate_mana`, `rate_rage_loss`, `rate_energy`, `rate_rest_*`, `rate_xp_explore`, `rate_reputation_gain`, `rate_reputation_lowlevel_kill`, `rate_reputation_lowlevel_quest` |
 | `MaxPlayerLevel`, `StartPlayerLevel`, `StartPlayerMoney`, `MaxPrimaryTradeSkill`, `TradeSkill.GMIgnore.MaxPrimarySkillsCount` | `max_player_level`, `start_player_level`, `start_player_money`, `max_primary_trade_skill`, `trade_skill_gm_ignore_max_primary` |
 | `StrictPlayerNames`, `MinPlayerName`, `CharDelete.Method`, `CharDelete.MinLevel`, `MailDeliveryDelay` | `strict_player_names`, `min_player_name`, `char_delete_method`, `char_delete_min_level`, `mail_delivery_delay` |

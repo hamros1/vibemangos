@@ -91,6 +91,9 @@ struct WorldConfig
     @JsonName("allow_two_side_interaction_chat") bool allowTwoSideInteractionChat = false;
     /// `AllowTwoSide.Interaction.Channel`: one set of chat channels for both factions.
     @JsonName("allow_two_side_interaction_channel") bool allowTwoSideInteractionChannel = false;
+    /// `Battleground.ScoreStatistics`: each battle's scoreboard kept, at its end, in `pvpstats_battlegrounds` and
+    /// `pvpstats_players`.
+    @JsonName("battleground_score_statistics") bool battlegroundScoreStatistics = false;
     /// `Battleground.CastDeserter`: leaving a battleground before it is over gives Deserter.
     @JsonName("battleground_cast_deserter") bool battlegroundCastDeserter = true;
     /// Seconds before a creature whose pockets were emptied has something in them again.
@@ -105,6 +108,19 @@ struct WorldConfig
     @JsonName("allow_two_side_interaction_group") bool allowTwoSideInteractionGroup = false;
     /// `AllowTwoSide.Interaction.Auction`: one auction house (the Alliance's) for both factions.
     @JsonName("allow_two_side_interaction_auction") bool allowTwoSideInteractionAuction = false;
+    /// `Rate.Auction.Deposit`, `Rate.Auction.Cut`, `Rate.Auction.Time`, `Auction.Deposit.Min`: the auction houses'
+    /// deposits, cuts and durations over `AuctionHouse.dbc`'s (`dmangos.world.auctionhouse.AuctionRates`).
+    @JsonName("rate_auction_deposit") float rateAuctionDeposit = 1;
+    @JsonName("rate_auction_cut") float rateAuctionCut = 1;   /// ditto
+    @JsonName("rate_auction_time") float rateAuctionTime = 1; /// ditto
+    @JsonName("auction_deposit_min") uint auctionDepositMin = 0; /// ditto
+
+    /// The auction rates above, as `dmangos.world.auctionhouse` takes them.
+    imported!"dmangos.world.auctionhouse".AuctionRates auctionRates() const pure nothrow @nogc @safe
+    {
+        return typeof(return)(rateAuctionDeposit, rateAuctionCut, rateAuctionTime, auctionDepositMin);
+    }
+
     /// `AllowTwoSide.Interaction.Guild`: guilds of both factions.
     @JsonName("allow_two_side_interaction_guild") bool allowTwoSideInteractionGuild = false;
     /// `AllowTwoSide.AddFriend`: a character of the other faction may be befriended.

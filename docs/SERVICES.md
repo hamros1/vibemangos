@@ -227,7 +227,9 @@ map's tower states, the towers held, the capture bar, the counts) and buffs (Ech
 Cenarion Favor), the banners' art kits, Crown Guard's graveyard, Northpass's shrine (a spawn present or not, as the
 war effort's piles). A tower taken (its `taken` count went up) rewards that node's players counted there and tells
 its players in the zone; the node that simulates the tower's capture point runs the capture's event script (the
-flight master, the squad), and a lost tower's are taken away there. A node hearing the state for the first time
+flight master, the squad), and a lost tower's are taken away there. A Silithyst count reaching a quarter, half or three
+quarters of the goal has the side's camp announcer say so where a node simulates it, and a race won has it cheer and
+the node's players in Silithus told in the defense channel. A node hearing the state for the first time
 follows it without the rewards and events, which happened before it listened.
 
 **Not saved.** 1.12 kept neither zone's state over a restart ("A server reboot will reset the battle", of Silithus),

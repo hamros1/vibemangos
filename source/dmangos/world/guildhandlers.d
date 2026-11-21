@@ -88,6 +88,13 @@ mixin template GuildHandlers()
             context.guildBroadcastElsewhere(g.id, right, cast(ushort) opcode, body_);
     }
 
+    /// An event for the guild's log (`LogGuildEvent`), saved; the other nodes read it with the guild.
+    private void logGuildEvent(Guild g, GuildEventLogType type, uint player1, uint player2 = 0, uint newRank = 0)
+    {
+        const e = g.logEvent(type, player1, player2, cast(ubyte) newRank, context.unixTime);
+        context.database.saveGuildEvent(g.id, e);
+    }
+
     /// A guild changed: saved, its members' fields here brought up to date, the other nodes told.
     package void guildChanged(Guild g)
     {
@@ -539,6 +546,8 @@ mixin template GuildHandlers()
         }
         else if (context.guildInviteElsewhere !is null)
             context.guildInviteElsewhere(node, guid, g.id, player.guid, player.data.name, g.name);
+        logGuildEvent(g, GuildEventLogType.invitePlayer, player.data.guid, low);
+        guildChanged(g); // the other nodes' copies hold the log too
         guildResult(GuildCommand.invite, realName, GuildError.noMoreInGuild); // `ERR_PLAYER_NO_MORE_IN_GUILD`: 0, "invited"
     }
 
@@ -565,6 +574,7 @@ mixin template GuildHandlers()
         guildInvited = 0;
         if (g is null)
             return;
+        logGuildEvent(g, GuildEventLogType.joinGuild, player.data.guid);
         addGuildMember(g, player.data.guid, g.lowestRank);
         guildEvent(g, GuildEvent.joined, [player.data.name], player.guid);
     }
@@ -643,6 +653,7 @@ mixin template GuildHandlers()
         if (g.leader == player.data.guid)
             return disbandGuild(g);
         guildResult(GuildCommand.quit, g.name, GuildError.noMoreInGuild);
+        logGuildEvent(g, GuildEventLogType.leaveGuild, player.data.guid);
         removeGuildMember(g, player.data.guid);
         guildEvent(g, GuildEvent.left, [player.data.name], player.guid);
     }
@@ -664,6 +675,7 @@ mixin template GuildHandlers()
         if (ownRank() >= m.rank)
             return guildResult(GuildCommand.quit, name, GuildError.rankTooHighS);
         const removedName = m.name;
+        logGuildEvent(g, GuildEventLogType.uninvitePlayer, player.data.guid, m.guid);
         removeGuildMember(g, m.guid);
         guildEvent(g, GuildEvent.removed, [removedName, player.data.name]);
     }
@@ -701,6 +713,8 @@ mixin template GuildHandlers()
             return guildResult(GuildCommand.invite, name, GuildError.rankTooLowS);
         m.rank = promote ? m.rank - 1 : m.rank + 1;
         context.database.saveGuildMember(g.id, m.guid, m.rank, m.publicNote, m.officerNote);
+        logGuildEvent(g, promote ? GuildEventLogType.promotePlayer : GuildEventLogType.demotePlayer, player.data.guid,
+            m.guid, m.rank);
         guildEvent(g, promote ? GuildEvent.promotion : GuildEvent.demotion, [player.data.name, m.name,
             g.ranks[m.rank].name]);
         guildChanged(g);
@@ -1043,6 +1057,23 @@ unittest
     jaina.write(Opcode.CMSG_GUILD_LEAVE, null);
     assert(g.member(8) is null && context.guilds.of(8) is null && jaina.session.character.values.get!PLAYER_GUILDID == 0);
     assert(db.loadGuild(g.id).get.members.length == 1, "saved");
+
+    // The event log (`guild_eventlog`): the invitation, the joining, a promotion, a demotion (the second one refused,
+    // not logged), the leaving; each in the place after the last, saved, and read back with the guild.
+    with (GuildEventLogType)
+    {
+        import std.algorithm.iteration : map;
+        import std.array : array;
+
+        const log = db.loadGuild(g.id).get.events;
+        assert(log.map!(e => cast(GuildEventLogType) e.type).array == [invitePlayer, joinGuild, promotePlayer, demotePlayer,
+            leaveGuild]);
+        assert(log.map!(e => e.logGuid).array == [1, 2, 3, 4, 5]);
+        assert(log[0].player1 == 7 && log[0].player2 == 8 && log[1].player1 == 8 && log[1].player2 == 0);
+        assert(log[2].player1 == 7 && log[2].player2 == 8 && log[2].newRank == GuildRank.member);
+        assert(log[3].newRank == GuildRank.initiate && log[4].player1 == 8 && log[0].time == context.unixTime);
+        assert(g.events == log && g.inviterOf(8) == 7 && g.inviterOf(7) == 0);
+    }
     // The master alone leaves: the guild is disbanded.
     anduin.write(Opcode.CMSG_GUILD_LEAVE, null);
     assert(context.guilds.count == 0 && db.loadGuild(g.id).isNull);

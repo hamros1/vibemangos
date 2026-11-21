@@ -699,6 +699,11 @@ final class Inventory
     Item[] justEquipped;
     /// Items with a duration (`ITEM_FIELD_DURATION`) that came into the inventory since the owner last looked.
     Item[] newlyTimed;
+    /// Whether an item with no room left may go by mail (`toMail`): a character in the world; not one being made.
+    bool canMail;
+    /// Items out of the inventory, their rows deleted, that the owner mails to itself once its changes are saved
+    /// (the off hand with no room next to a two-hander): their rows as they were.
+    ItemRecord[] toMail;
 
     /// `nextGuid` numbers new items; `fields` are the owner's.
     this(const WorldData world, InventoryOwner owner, UpdateValues* fields, uint delegate() nextGuid)
@@ -1809,8 +1814,9 @@ final class Inventory
     }
 
     /**
-     * With a two-hander in the main hand, the off hand goes into
-     * `bag`, or anywhere carried. With no room it stays worn, until there is mail to send it by.
+     * With a two-hander in the main hand, the off hand goes into `bag`, or anywhere carried. With no room it is
+     * mailed to the owner (`toMail`, `AutoUnequipOffhandIfNeed`); where there is no mail (`canMail` off: a character
+     * being made) it stays worn.
      */
     void autoUnequipOffhand(ubyte bag = nullBag)
     {
@@ -1824,8 +1830,16 @@ final class Inventory
             remove(inventorySlotBag0, equipmentSlotOffhand);
             store(dest, offhand);
         }
+        else if (canMail)
+        {
+            auto record = offhand.record;
+            record.bag = 0;
+            record.slot = 0;
+            destroy(inventorySlotBag0, equipmentSlotOffhand);
+            toMail ~= record;
+        }
         else
-            warning!"no room for off-hand item %s of %s next to a two-handed weapon; it stays worn until mail exists"(
+            warning!"no room for off-hand item %s of %s next to a two-handed weapon; it stays worn"(
                 offhand.entry, owner.ownerGuid);
     }
 

@@ -1426,3 +1426,62 @@ unittest
     }
     assert(escaped > 0 && caught > 0, "some of each");
 }
+
+/**
+ * A two-hander put on by the server with no room for the off hand: the off hand comes off and is mailed to the
+ * player (`AutoUnequipOffhandIfNeed`), its row the letter's. (The player's own moves never get there: a two-hander
+ * with no room for the off hand is refused first, as CMaNGOS's `CanEquipItem` refuses it.)
+ */
+unittest
+{
+    import dmangos.auth.accounts : AccountLevel;
+    import dmangos.world.inventory : ItemRecord;
+    import dmangos.world.defines : equipmentSlotMainhand, equipmentSlotOffhand, inventorySlotBag0;
+    import dmangos.world.inventory : itemPos;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.player : CharacterData;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.worlddata : ItemTemplate;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    enum uint itemBuckler = 2129;
+    ItemTemplate buckler = cast() context.data.items[itemShirt];
+    buckler.entry = itemBuckler;
+    buckler.itemClass = 4;
+    buckler.subClass = 6;
+    buckler.inventoryType = 14; // a shield
+    context.data.items[itemBuckler] = buckler;
+    context.data.serverStrings[706] = "This item(s) has problems with equipping/storing to inventory.";
+    void setup(ref CharacterData c)
+    {
+        c.items = [ItemRecord(0, equipmentSlotOffhand, 501, itemBuckler, 0, 0, 1, 0, "", 0, "", 0, 0)];
+        foreach (ubyte s; 23 .. 39) // the backpack full
+            c.items ~= ItemRecord(0, s, 503 + s, itemHearthstone, 0, 0, 1, 0, "", 0, "", 0, 0);
+    }
+
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.player,
+        raceHuman, 0, 1, &setup);
+    anduin.read();
+    enum ubyte bag0 = inventorySlotBag0;
+    auto me = anduin.session.inWorld;
+    auto inventory = me.player.inventory;
+    assert(inventory.equipped(equipmentSlotOffhand).guid == 501);
+
+    // A staff put in the main hand: the buckler has no room.
+    auto staff = inventory.equipNew(itemPos(bag0, equipmentSlotMainhand), itemStaff);
+    inventory.autoUnequipOffhand();
+    me.flushInventory();
+    anduin.read();
+    assert(inventory.equipped(equipmentSlotMainhand) is staff);
+    assert(inventory.equipped(equipmentSlotOffhand) is null, "the off hand came off");
+    assert(inventory.byGuid(makeGuid(HighGuid.item, 501)) is null && inventory.toMail.length == 0);
+    assert(db.mails.length == 1, "a letter");
+    const mail = db.mails.byValue.front;
+    assert(mail.receiver == 7 && mail.sender == 7 && mail.itemGuid == 501 && mail.itemEntry == itemBuckler);
+    assert(mail.subject == "This item(s) has problems with equipping/storing to inventory." && mail.stationery == 61);
+    assert(mail.deliverTime <= context.unixTime, "at once");
+    assert(!db.looseItem(501).isNull && db.looseItem(501).get.entry == itemBuckler, "its row the letter's");
+}

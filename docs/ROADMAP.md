@@ -54,8 +54,8 @@
   (the client hides an ignored player's other chat itself).
   LocalDefense and WorldDefense need PvP ranks, which do not exist, so WorldDefense is read-only.
   The GM tag and `.gm allowwhispers` are not kept between logins (as the GM contract specifies).
-* **Inventory:** an off-hand item with no room left when a two-hander is put on stays worn; it should
-  be mailed to the player (not yet).
+* **Inventory:** an off-hand item with no room left when a two-hander is put on is mailed to the player
+  (`AutoUnequipOffhandIfNeed`'s letter); at character creation, where there is no mail, it stays worn.
   * Random properties are done, and so are enchantments' stats, resistances, weapon damage and equip
     spells.
   * Enchanting is done: permanent enchantments, and temporary ones (stones, oils, poisons) that
@@ -178,9 +178,12 @@ The largest area. In order:
    * Milestone D, Arathi Basin: **done** (`arathi.d`): five bases, claims, assaults, defences, resources,
      2000 to win.
    * Milestone E, Alterac Valley: **done** (`alterac.d`): reinforcements, graveyards and towers, mines,
-     captains and generals; the turn-in quests' events not yet.
+     captains and generals; the turn-ins: armor scraps upgrading the defenders (and the general's warcry), the
+     elemental lords called. Not yet: the cavalry, the fleets, the ground assault (no gossip for their orders in
+     the database), the lords' summoning rituals and march.
+   * The scoreboard's columns, `WorldStateUI.dbc`'s (Alterac Valley's mines captured and leaders killed too), and
+     the scores kept (`pvpstats_*`, `battleground_score_statistics`): done.
    * Not yet:
-     * pvpstats.
      * A queue service that moves to another node starts empty.
 
 * Spell casting with effects, auras (feeding `stats.d`), cooldowns and the attack swing loop.
@@ -207,15 +210,15 @@ the cast check, cast start, aura heartbeat, aura end, tick end and target check 
 creatures' mana drains on players; and 32 item and holiday spells CMaNGOS's core scripts by id (`@spellIds`:
 the Deviate Fish, the engineers' gadgets, the costumes, ...). Of the spell scripts, not yet: those needing
 creatures to cast as they die (the tribal deaths), summons and destinations a script shapes (the Lunar
-Festival's fireworks, which need players' game object summons too), auras forcing reactions (the
-Ashbringer), effect chances (the silithid egg), and the raids'. Not yet
+Festival's fireworks, which need players' game object summons too), effect chances (the silithid egg), and the raids'. Not yet
 (about 20 names, each module's documentation and SCRIPTING.md say why): what needs stealth detection
 (Venture Co. lookouts, Gallywix), the Scourge Invasion, caravans,
 the Eastern Kingdoms' world map script, and the mechanics the raids approximate (possession, mind
 control, Heigan's floor).
 Reputation is done (`reputation.d`, `reputationhandlers.d`; README's "Reputation"): kills, quests,
-spillover, war and peace, discounts, requirements. Not yet: `SMSG_SET_FORCED_REACTIONS` (spells force
-none yet). Reputation from spells (effect 103) and the PvP rank's discount: done.
+spillover, war and peace, discounts, requirements, reactions forced by auras (`SMSG_SET_FORCED_REACTIONS`: the
+disguises, the Corrupted Ashbringer's Scarlet Crusade). Reputation from spells (effect 103) and the PvP rank's
+discount: done.
 
 ### Talents
 
@@ -241,14 +244,16 @@ classic database's TBC rows is sent).
 ### Auctions
 
 **Done** (`auctionhouse.d`, `auctionhandlers.d`; README's "Auctions"): selling, searching, bidding,
-buyouts, cancelling, expiry, the mails. Not yet: auction rates, an auction bot. There is no `.auction` command (the
+buyouts, cancelling, expiry, the mails, the houses' rates (`AuctionHouse.dbc`'s, and the server's own over them;
+docs/FORMULAS.md). Not yet: an auction bot. There is no `.auction` command (the
 GM command set has none).
 
 ### 7. Social and progression
 
-* Friends and ignore lists (`social.d`) and guilds (`guild.d`, `guildhandlers.d`): done. Not yet:
-  the guild event log (`guild_eventlog`), guild-named tabards in the shop list. Like
-  `grouphandlers.d` (mail, auctions and trade are done).
+* Friends and ignore lists (`social.d`) and guilds (`guild.d`, `guildhandlers.d`), the guild event log
+  (`guild_eventlog`, kept for the server: the 1.12 client cannot ask for it): done. Like `grouphandlers.d`
+  (mail, auctions and trade are done). The guild tabard needs nothing of the server: the client draws the
+  wearer's guild's emblem (`SMSG_GUILD_QUERY_RESPONSE`), and the vendors' Guild Tabard (5976) is one item for all.
 * Pets (`pet.d`, `petai.d`, `pethandlers.d`): taming, summoning, calling,
   dismissing, reviving, the bar and its commands, following and fighting, experience, renaming,
   abandoning, stables, saving. Loyalty and happiness over time and Feed Pet: done. The `.pet` GM commands and pet training (teaching spells, training points, the hunter

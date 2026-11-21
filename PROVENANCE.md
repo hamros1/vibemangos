@@ -519,7 +519,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
   `spell_gameobject_call_for_help_on_usage` (`OnSuccessfulStart`), `spell_hate_to_half`, `spell_random_aggro`,
   `spell_arcane_cloaking`, `spell_stoned` (with `Spell::EffectDummy`'s 10254, Stone Dwarf Awaken Visual),
   `spell_banish_exile`, `spell_orb_of_deception` (`GetAuraScriptCustomizationValue`), `spell_scourge_strike`,
-  `spell_communique_trigger`, `spell_despawner_self`
+  `spell_communique_trigger`, `spell_despawner_self`, `spell_ashbringer_item` (`AshbringerItemAura`)
 * Constants: `SPELL_VISUAL_KIT_FOOD`, `SPELL_VISUAL_KIT_DRINK`, `SPELL_COMMUNIQUE_CAMP_TO_RELAY`, `SPELL_SPIRIT_SPAWN_OUT`
 
 ## scripts/itemeffects.d
@@ -661,7 +661,11 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Files: `BattleGroundAV.cpp`, `BattleGroundAV.h`
 * Functions: `BattleGroundAV::Reset`, `Update`, `HandleKillPlayer`, `HandleKillUnit`, `HandlePlayerClickedOnFlag`, `ProcessPlayerAssaultsPoint`, `ProcessPlayerDefendsPoint`, `ProcessPlayerDestroyedPoint`, `ChangeMineOwner`, `UpdateScore`, `EndBattleGround`, `GetPrematureWinner`, `HandleAreaTrigger`
-* Not from an emulator: the bonus honor units of the general, captain and towers (Wowpedia "Honor system (pre-2.0 formulas)")
+* Not from an emulator: the bonus honor units of the general, captain and towers (Wowpedia "Honor system (pre-2.0 formulas)");
+  the scoreboard's columns and what each counts (`WorldStateUI.dbc`'s names and tooltips), the officers (the database's
+  templates by name and faction); the turn-ins (warcraft.wiki.gg "Alterac Valley (original)", the quests', spells' and
+  spawns' data; docs/FORMULAS.md, "Alterac Valley's turn-ins"); vmangos's `BattleGroundAV::HandleQuestComplete`
+  (20 scraps a turn-in, 500 an upgrade, 28418 .. 28420) compared afterwards
 
 ## world/auctionhandlers.d
 
@@ -672,7 +676,8 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `AuctionHouseMgr.cpp`
-* Functions: `AuctionHouseMgr::GetAuctionHouseEntry`
+* Functions: `AuctionHouseMgr::GetAuctionHouseEntry`, `AuctionHouseMgr::GetAuctionDeposit`, `AuctionEntry::GetAuctionCut`
+* Configuration: `Rate.Auction.Deposit`, `Rate.Auction.Cut`, `Rate.Auction.Time`, `Auction.Deposit.Min`
 * Constants: `MAX_AUCTION_ITEMS_CLIENT_UI_PAGE`, `MIN_AUCTION_TIME`, `SMSG_AUCTION_BIDDER_NOTIFICATION`, `SMSG_AUCTION_OWNER_NOTIFICATION`, `SMSG_AUCTION_REMOVED_NOTIFICATION`
 
 ## world/aurahandlers.d
@@ -713,6 +718,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `BattleGroundHandler.cpp`
 * Functions: `BattleGround::AddPlayer`, `BattleGround::EndBattleGround`, `BattleGround::EventPlayerLoggedOut`, `BattleGround::HandleKillPlayer`, `BattleGround::RemovePlayerAtLeave`, `BattleGround::SendMessageToAll`, `BattleGround::Update`, `BattleGroundMap::Update`, `BattleGroundMgr::BuildPvpLogDataPacket`, `BattleGroundMgr::SendBattleGroundList`, `BattleGroundMgr::SendToBattleGround`, `BattleGroundMgr::ToggleTesting`, `CBattleground::Close`, `Creature::CanInteractWithBattleMaster`, `Group::CanJoinBattleGroundQueue`, `Player::CanJoinToBattleground`, `Player::LeaveBattleground`, `Player::LoadFromDB`, `Player::TeleportToBGEntryPoint`, `Player::_LoadBGData`, `Player::_SaveBGData`, `WorldSession::LogoutPlayer`
 * Constants: `BG_EVENT_DOOR`, `BG_EVENT_NONE`, `CHAT_MSG_BATTLEGROUND`, `CMSG_AREA_SPIRIT_HEALER_QUEUE`, `CMSG_BATTLEFIELD_PORT`, `MAX_OFFLINE_TIME`, `MSG_BATTLEGROUND_PLAYER_POSITIONS`, `MSG_PVP_LOG_DATA`, `SMSG_AREA_SPIRIT_HEALER_TIME`, `SMSG_GROUP_JOINED_BATTLEGROUND`, `SMSG_INIT_WORLD_STATES`, `SMSG_MESSAGECHAT`, `SOUND_BG_START`, `SPELL_ID_BATTLEGROUND_DESERTER`, `TEAM_INVALID`, `TIME_TO_AUTOREMOVE`
+* Configuration: `Battleground.ScoreStatistics` (`EndBattleGround`'s `pvpstats_battlegrounds`, `pvpstats_players`)
 * Not from an emulator: `bonusHonor`, a bonus honor unit by the player's bracket (Wowpedia "Honor system (pre-2.0 formulas)"; docs/FORMULAS.md, "Honor"); the units of Warsong Gulch (warsong.d) and Arathi Basin (arathi.d) from the same page
 
 ## world/bgqueue.d
@@ -1132,7 +1138,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: vmangos
 * Files: `LFG/LFGDefines.h`, `LFG/LFGMgr.cpp`, `LFG/LFGQueue.cpp`, `Group/Group.cpp`, `Server/Packets/Misc.cpp`
-* Functions: `LFGMgr::CalculateRoles`, `LFGMgr::GetPriority`, `LFGQueue::Update`, `LFGQueue::FindRoleToGroup`, `Group::CalculateLFGRoles`, `Group::FillPremadeLFG`
+* Functions: `LFGMgr::CalculateRoles`, `LFGMgr::GetPriority`, `LFGQueue::Update`, `LFGQueue::FindRoleToGroup`, `LFGQueue::RestoreOfflinePlayer`, `WorldSession::HandleMeetingStoneInfoOpcode`, `Group::CalculateLFGRoles`, `Group::FillPremadeLFG`
 
 ## world/guardians.d
 
@@ -1172,14 +1178,15 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 ## world/guild.d
 
 * Projects: CMaNGOS
-* Functions: `Guild::HasRankRight`, `Guild::Query`
+* Functions: `Guild::HasRankRight`, `Guild::Query`, `Guild::LogGuildEvent`, `Guild::GetGuildInviter`, `Guild::LoadGuildEventLogFromDB`
+* Constants: `GuildEventLogTypes`, `GUILD_EVENTLOG_MAX_RECORDS`
 * Constants: `GUILD_RANKS_MAX_COUNT`, `GUILD_RANKS_MIN_COUNT`, `SMSG_GUILD_COMMAND_RESULT`, `SMSG_GUILD_EVENT`, `SMSG_GUILD_QUERY_RESPONSE`
 
 ## world/guildhandlers.d
 
 * Projects: CMaNGOS
 * Files: `GuildHandler.cpp`, `PetitionsHandler.cpp`
-* Functions: `Guild::AddMember`, `Guild::BroadcastPacket`, `Guild::Create`, `Guild::DelMember`, `Guild::Disband`, `Guild::Roster`
+* Functions: `Guild::AddMember`, `Guild::BroadcastPacket`, `Guild::Create`, `Guild::DelMember`, `Guild::Disband`, `Guild::Roster`, `Guild::LogGuildEvent` (its callers in `GuildHandler.cpp`)
 * Constants: `CHARTER_DISPLAY_ID`, `CHAT_MSG_GUILD`, `CHAT_MSG_OFFICER`, `CMSG_GUILD_CREATE`, `CONFIG_UINT32_MIN_PETITION_SIGNS`, `ERR_GUILD_RANK_IN_USE`, `ERR_PLAYER_NO_MORE_IN_GUILD`, `GUILD_CHARTER`, `GUILD_CHARTER_COST`, `MSG_TABARDVENDOR_ACTIVATE`
 
 ## world/honor.d
@@ -1214,7 +1221,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: ArcEmu, CMaNGOS
 * Files: `ItemHandler.cpp`, `NPCHandler.cpp`
 * Functions: `Player::BuyItemFromVendor`, `Player::DurabilityRepairAll`, `Player::DurabilityRepair`, `Player::SendBuyError`, `Player::SendEquipError`, `Player::SendNewItem`, `Player::SendSellError`, `Player::SetAmmo`, `Player::_ApplyAmmoBonuses`, `WorldSession::HandleAutoBankItemOpcode`, `WorldSession::HandleAutoEquipItemOpcode`, `WorldSession::HandleAutoEquipItemSlotOpcode`, `WorldSession::HandleAutoStoreBagItemOpcode`, `WorldSession::HandleAutoStoreBankItemOpcode`, `WorldSession::HandleBuyBankSlotOpcode`, `WorldSession::HandleBuyItemInSlotOpcode`, `WorldSession::HandleBuyItemOpcode`, `WorldSession::HandleBuybackItem`, `WorldSession::HandleDestroyItemOpcode`, `WorldSession::HandleRepairItemOpcode`, `WorldSession::HandleSellItemOpcode`, `WorldSession::HandleSetAmmoOpcode`, `WorldSession::HandleSplitItemOpcode`, `WorldSession::HandleSwapInvItemOpcode`, `WorldSession::HandleSwapItem`
-* Constants: `RANK_REQUIRE`
+* Constants: `RANK_REQUIRE`, `LANG_NOT_EQUIPPED_ITEM`, `MAIL_STATIONERY_GM`
 
 ## world/loot.d
 
@@ -1467,6 +1474,10 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
   on the client's DBC files and the classic world database: `quest_template`, `script_waypoint` and
   `waypoint_path`, `script_texts`; CMaNGOS ScriptDev's escort AI (`MAX_PLAYER_DISTANCE`) as a second opinion.
 
+## world/realsystems.d
+
+* Projects: none (the 1.12.1 client's data and the world database; docs/FORMULAS.md)
+
 ## world/realspellsweep.d
 
 * Projects: CMaNGOS (cross-checked against)
@@ -1700,7 +1711,9 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
   `AreaTrigger.dbc`, `WorldSafeLocs.dbc`, `SpellIcon.dbc`, `FactionTemplate.dbc`), the world database (the capture
   points' `gameobject_template` data, `dbscripts_on_event`, `quest_template`, `broadcast_text`, `spell_template`) and
   warcraft.wiki.gg (docs/FORMULAS.md, "World PvP"); CMaNGOS-classic's `OutdoorPvP/OutdoorPvPEP.cpp` and
-  `OutdoorPvPSI.cpp` were compared afterwards only.
+  `OutdoorPvPSI.cpp` were compared afterwards only. The announcers' texts and when they are said: vmangos's
+  `OutdoorPvPSI::DoSilithystYell` (second opinion; the texts and speakers are the database's); the win's defense message:
+  CMaNGOS's `LANG_OPVP_SI_CAPTURE_A`, `_H` (`World::SendDefenseMessage`).
 
 ## world/weather.d
 
