@@ -348,6 +348,15 @@ private final class NpcSweeper
         NpcOutcome last;
         foreach (attempt; 0 .. 5) // a miss, a dodge, a resist: again (a fault fails every time)
         {
+            // Its own rolls, whatever was swept before it: the same result at every run.
+            {
+                import std.random : rndGen;
+
+                const seed = sp.id * 8u + attempt;
+                foreach (map; w.context.allMaps)
+                    map.random.seed(seed);
+                rndGen.seed(seed);
+            }
             try
                 last = once(sp);
             catch (Throwable t)

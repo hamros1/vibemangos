@@ -208,3 +208,4 @@
 31725: Summon Nightmare: no caster: no creature casts it in the data
 31726: Summon Holy Mount Visual: no caster: no creature casts it in the data
 32309: Slime Bolt: aura periodicDamage: not on the player (effect 1)
+25174: aura modResistance: not on the player (effect 1): Sundering Cleave (weapon damage + armor aura, both at the target): the aura never lands, at every seeded attempt (sent to the spell pipeline work)
