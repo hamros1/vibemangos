@@ -993,7 +993,10 @@ private:
             if (aura.type(i) != AuraType.periodicLeech)
             {
                 periodicLog(player.guid, aura, i, damage, 0, absorbed);
-                return dealDamage(map.unit(aura.caster), unit, damage, Blow.periodic());
+                auto attacker = map.unit(aura.caster);
+                if (!attacker && aura.caster && aura.caster <= uint.max)
+                    return context.dealRemotePeriodicDamage(unit, aura, damage);
+                return dealDamage(attacker, unit, damage, Blow.periodic());
             }
             // A creature's drain: the periodic damage log (as CMaNGOS's leech sends), and its health back.
             import dmangos.world.spellcast : nonMeleeDamageLog;

@@ -2328,6 +2328,12 @@ private:
                 const aura = auraCast(me, spell, cast(ubyte)(1 << i));
                 hit.auraMs = aura.ms;
                 hit.auraValue = aura.values[i];
+                const school = spell.casting.school;
+                if (spell.casting.applyAuraName[i] == AuraType.periodicDamage && school < 7)
+                {
+                    hit.threatFactor = player.damageMods.threat[school] * spellMod(SpellModOp.threat, spell, 1.0f);
+                    hit.resistanceModifier = player.auras.totalByMiscMask(AuraType.modTargetResistance, 1 << school);
+                }
             }
             else
             {

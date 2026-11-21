@@ -526,6 +526,11 @@ mixin template HonorHandlers()
 
     package void playerKilledByMe(const HonorVictim victim)
     {
+        playerKilledByMe(victim, map.id, map.instanceId);
+    }
+
+    package void playerKilledByMe(const HonorVictim victim, uint mapId, uint instance)
+    {
         import dmangos.world.experience : groupXpDistance;
 
         auto group = context.groups.of(player.guid);
@@ -535,7 +540,8 @@ mixin template HonorHandlers()
         const v = victim.position;
         foreach (ref slot; group.members)
             if (auto member = cast(typeof(this)) context.onlinePlayer(slot.guid))
-                if (member.player !is null && member.map is map)
+                if (member.player !is null && member.map !is null && member.map.id == mapId
+                    && member.map.instanceId == instance)
                 {
                     const p = member.player.position;
                     if ((p.x - v.x) ^^ 2 + (p.y - v.y) ^^ 2 + (p.z - v.z) ^^ 2 <= groupXpDistance ^^ 2

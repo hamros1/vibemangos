@@ -100,6 +100,13 @@ void applyAura(ref Caster caster, const(SpellInfo)* spell, size_t i, UnitRef tar
             aura.charges = caster.spellMod(SpellModOp.charges, spell, aura.charges);
         if (effects)
             aura.effects &= effects;
+        const school = spell.casting.school;
+        if (p !is null && school < 7 && aura.has(AuraType.periodicDamage))
+        {
+            aura.periodicThreat = p.player.damageMods.threat[school] * caster.spellMod(SpellModOp.threat, spell, 1.0f);
+            aura.periodicResistanceMod = caster.auras.totalByMiscMask(AuraType.modTargetResistance, 1 << school);
+            aura.periodicCasterPvP = p.isPvP;
+        }
         if (hostile)
             aura.setHeartbeatResist(heartbeatResistChance(caster.fighter, target.fighter, *spell,
                 caster.targetResistance(target.resistance(spell.casting.school), spell.casting.school),
@@ -216,8 +223,16 @@ private void transformLook(ref Caster caster, Aura aura, imported!"dmangos.world
 void periodicLog(ref Caster caster, ulong target, const Aura aura, size_t i, uint amount, uint powerOrSchool,
     uint absorbed = 0, float gainMultiplier = 0)
 {
-    import dmangos.bytes : ByteWriter;
     import dmangos.world.opcodes : Opcode;
+
+    caster.tellAround(target, Opcode.SMSG_PERIODICAURALOG,
+        periodicLogPacket(target, aura, i, amount, powerOrSchool, absorbed, gainMultiplier));
+}
+
+private const(ubyte)[] periodicLogPacket(ulong target, const Aura aura, size_t i, uint amount, uint powerOrSchool,
+    uint absorbed = 0, float gainMultiplier = 0)
+{
+    import dmangos.bytes : ByteWriter;
 
     ByteWriter w;
     w.putPackedGuid(target);
@@ -246,7 +261,50 @@ void periodicLog(ref Caster caster, ulong target, const Aura aura, size_t i, uin
         w.put(amount);
         break;
     }
-    caster.tellAround(target, Opcode.SMSG_PERIODICAURALOG, w.data);
+    return w.data;
+}
+
+/// The target's node resolves a player's damage tick when the caster is no longer on this map.
+package void remotePeriodicCreatureTick(imported!"dmangos.world.context".WorldContext context, UnitRef victim,
+    Aura aura, size_t i)
+{
+    import std.algorithm.comparison : max;
+    import dmangos.script.api : AuraTicked, EntityRef, SpellContext;
+    import dmangos.world.opcodes : Opcode;
+
+    int amount = aura.amount[i];
+    if (aura.period[i] > 0 && aura.maxDuration > 0)
+        if (auto handle = context.spellScript(aura.spell.id))
+        {
+            // AuraTicked's amount calculation (Curse of Agony) needs only the tick and original caster ID.
+            SpellContext tick;
+            context.scripts.raise(handle, tick, AuraTicked(EntityRef(aura.caster), EntityRef(victim.combatGuid),
+                cast(ubyte) i, (aura.maxDuration - aura.duration) / aura.period[i], aura.maxDuration / aura.period[i],
+                amount));
+            if (tick.amountChanged)
+                amount = tick.amount;
+        }
+    const school = aura.spell.casting.school;
+    const damage = creaturePeriodicDamage(victim, aura.spell, aura.casterLevel, cast(uint) max(0, amount),
+        max(0, victim.resistance(school) + aura.periodicResistanceMod));
+    victim.map.sendToObservers(victim.combatGuid, Opcode.SMSG_PERIODICAURALOG,
+        periodicLogPacket(victim.combatGuid, aura, i, damage, school));
+    context.dealRemotePeriodicDamage(victim, aura, damage);
+}
+
+private uint creaturePeriodicDamage(UnitRef victim, const(SpellInfo)* spell, uint level, uint amount, int resistance)
+{
+    import std.random : uniform;
+    import dmangos.world.combat : armorReducedDamage, partiallyResisted;
+    import dmangos.world.spellcast : isBinarySpell;
+
+    const school = spell.casting.school;
+    if (school == 0)
+        return cast(uint) armorReducedDamage(level, victim.fighter.armor, amount);
+    if (school == 1)
+        return amount;
+    return partiallyResisted(amount, resistance, level, victim.fighter, isBinarySpell(*spell),
+        uniform!"[]"(1u, 10000u, victim.map.random)).damage;
 }
 
 /**
@@ -257,11 +315,7 @@ void periodicLog(ref Caster caster, ulong target, const Aura aura, size_t i, uin
  */
 void periodicTick(ref Caster caster, imported!"dmangos.world.creature".Creature target, Aura aura, size_t i)
 {
-    import std.random : uniform;
-    import dmangos.world.combat : armorReducedDamage, partiallyResisted;
-    import dmangos.world.spellcast : isBinarySpell;
     import dmangos.world.unit : Blow, dealDamage;
-    import dmangos.world.updatefields : UNIT_FIELD_RESISTANCES;
 
     if (!target.alive || !caster)
         return;
@@ -280,13 +334,9 @@ void periodicTick(ref Caster caster, imported!"dmangos.world.creature".Creature 
             p.hunterHealTick(aura, victim);
         break;
     case AuraType.periodicDamage, AuraType.periodicLeech:
-        uint damage = amount;
         const school = aura.spell.casting.school;
-        if (school == 0)
-            damage = cast(uint) armorReducedDamage(caster.level, target.fighter.armor, damage);
-        else if (school != 1)
-            damage = partiallyResisted(damage, caster.targetResistance(cast(int) target.values.get!UNIT_FIELD_RESISTANCES(school),
-                school), caster.level, target.fighter, isBinarySpell(*aura.spell), uniform!"[]"(1u, 10000u, map.random)).damage;
+        const damage = creaturePeriodicDamage(victim, aura.spell, caster.level, amount,
+            caster.targetResistance(victim.resistance(school), school));
         if (aura.type(i) == AuraType.periodicLeech)
             return leechTick(caster, victim, aura, i, damage);
         periodicLog(caster, target.guid, aura, i, damage, school);

@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 47; // 47: remote spell combat; 46: Chain Lightning bounces across nodes
+enum ushort protocolVersion = 48; // 48: periodic PvP kill credit; 47: remote spell combat
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -732,20 +732,26 @@ struct GmRemote
 }
 
 /**
- * A group member's share of a kill on the sender, for the receiver, which simulates that member
- * (the group's kill reward, shared across nodes): the kill credit, the experience and the reputation.
+ * A player's share of a kill on the sender, for the node simulating that player.
+ * Creature kills carry quest credit, experience and reputation. Periodic PvP kills carry the honor victim.
  */
 struct KillShare
 {
     enum type = MessageType.killShare;
 
-    ulong target;          /// the member
-    ulong victim;          /// the creature killed
-    uint entry;            /// its entry
+    ulong target;          /// the player receiving credit
+    ulong victim;          /// the creature or player killed
+    uint entry;            /// the creature's entry; 0 for a PvP kill
     uint level;            /// its level
     uint xp;               /// the member's experience (0: none)
     float rate;            /// the group rate the experience came with
     float reputationRate;  /// the share of the kill's reputation (0: none)
+    uint map, instance;    /// PvP victim's map and position for group reward range
+    float x, y, z;
+    ubyte race, rank;
+    byte visualRank;
+    bool honorless;
+    bool forwarded;        /// the recipient's old node passed the credit to its new owner
 }
 
 /**
@@ -1095,7 +1101,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 47, recordedFingerprint = 0x3715db2ef439c637UL;
+private enum recordedVersion = 48, recordedFingerprint = 0x96859cca05bd9b95UL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

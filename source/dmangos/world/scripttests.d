@@ -538,6 +538,122 @@ unittest
     assert(dealt == [3, 3, 3, 3, 7, 7, 7, 7, 11, 11, 11, 11], "a ramp, 84 in all");
 }
 
+/// A caster's handoff leaves periodic damage and its rewards with the original caster.
+unittest
+{
+    import dmangos.cluster.protocol : decode, KillShare, PresenceEntry;
+    import dmangos.dbc : buildDbc;
+    import dmangos.serialization : serialize;
+    import dmangos.world.auras : AuraType, makeAura;
+    import dmangos.world.caster : Caster;
+    import dmangos.world.clientdata : spellDurationFormat;
+    import dmangos.world.fencing : FencedDatabase;
+    import dmangos.world.inworld : ArrivalAction;
+    import dmangos.world.quests : Quest, QuestState, QuestStatus;
+    import dmangos.world.replication : encodeState;
+    import dmangos.world.spellauras : applyAura;
+    import dmangos.world.spells : SpellInfo;
+
+    auto db = newDatabase();
+    auto source = newCreationContext(db), destination = newCreationContext(db), pvpOwner = newCreationContext(db);
+    auto relay = new TestPlayerRelay(source, destination);
+    pvpOwner.nodeId = 3;
+    enum agonyId = 980, duration = 24_000, period = 2000;
+    auto agony = SpellInfo(agonyId);
+    agony.effect[0] = SpellEffect.applyAura;
+    agony.casting.applyAuraName[0] = AuraType.periodicDamage;
+    agony.casting.amplitude[0] = period;
+    agony.casting.school = 1; // holy here for deterministic damage
+    agony.casting.durationIndex = 1;
+    agony.basePoints[0] = 6;
+    agony.baseDice[0] = 1;
+    Quest quest;
+    quest.id = 5801;
+    quest.reqCreatureOrGoId[0] = creatureInnkeeper;
+    quest.reqCreatureOrGoCount[0] = 2; // repeated credit would also count
+    foreach (node; [source, destination, pvpOwner])
+    {
+        node.client.spellDurations = typeof(node.client.spellDurations).parse(buildDbc(spellDurationFormat,
+            [[1u, duration, 0, duration]]), "SpellDuration.dbc");
+        node.data.spells.spells[agonyId] = agony;
+        node.data.spellScriptNames[agonyId] = "spell_curse_of_agony";
+        node.data.quests.quests[quest.id] = quest;
+        node.data.quests.link();
+    }
+
+    const at = Position(100, 100, 40);
+    auto warlock = loggedIn(source, db, 7, "Warlock", at, AccountLevel.player, raceOrc, mapEasternKingdoms, 20,
+        setup: (ref c) { c.quests = [QuestStatus(quest.id, QuestState.incomplete)]; });
+    auto session = warlock.session.inWorld;
+    const guid = session.player.guid;
+    auto map = source.map(mapEasternKingdoms);
+    auto innkeeper = source.data.creatureTemplates.edit(creatureInnkeeper);
+    innkeeper.minLootGold = innkeeper.maxLootGold = 1;
+    auto spawn = CreatureSpawn(91_001, creatureInnkeeper, map.id, at.x + 1, at.y, at.z);
+    auto mob = source.makeCreature(&spawn);
+    map.addObject(mob);
+    mob.values.set!UNIT_FIELD_LEVEL(20u);
+    mob.values.set!UNIT_FIELD_MAXHEALTH(100u);
+    mob.values.set!UNIT_FIELD_HEALTH(84u);
+    session.player.damageMods.threat[1] = 2;
+    auto caster = Caster.of(session);
+    const spell = source.data.spells.spell(agonyId);
+    applyAura(caster, spell, 0, map.unitOf(mob), 1);
+    mob.updateAuras(map, period);
+    assert(mob.values.get!UNIT_FIELD_HEALTH == 81 && mob.lootRecipient == guid);
+
+    auto humanClient = loggedIn(pvpOwner, db, 8, "Human", Position(500, 500, at.z), AccountLevel.player, raceHuman,
+        mapEasternKingdoms, 20);
+    auto human = humanClient.session.inWorld;
+    human.player.values.set!UNIT_FIELD_MAXHEALTH(7u);
+    human.player.values.set!UNIT_FIELD_HEALTH(7u);
+    human.addAura(makeAura(pvpOwner.data.spells.spell(agonyId), guid, 20, duration, false, [7, 0, 0]));
+    KillShare[] shares;
+    source.killShareElsewhere = (ushort node, const ref KillShare share) {
+        assert(node == 2 && share.target == guid);
+        shares ~= share;
+        ByteWriter payload;
+        serialize(payload, share);
+        const decoded = decode!KillShare(payload.data);
+        destination.killShareArrived(decoded);
+    };
+    pvpOwner.presence(1, true, [PresenceEntry(guid: guid, level: 20)], null);
+    pvpOwner.killShareElsewhere = (ushort node, const ref KillShare share) {
+        assert(node == 1 && !share.forwarded);
+        source.killShareArrived(share);
+    };
+    auto acrossSpawn = CreatureSpawn(91_002, creatureInnkeeper, map.id, at.x + 4, at.y, at.z);
+    auto across = destination.makeCreature(&acrossSpawn);
+    map.replicaCreated(2, cellKeyAt(across.position.x, across.position.y), across.guid, encodeState(across, 0));
+    assert(session.actAtReplica(across.guid, ArrivalAction.init));
+    auto moved = relay.remote.inWorld;
+    assert(moved.player.guid == guid && !map.unit(guid) && map.findObject(guid) is null);
+
+    bool holdsLease;
+    pvpOwner.database = new FencedDatabase(db, () => holdsLease);
+    humanClient.session.update(period.msecs);
+    assert(human.player.values.get!UNIT_FIELD_HEALTH == 7 && !shares.length,
+        "a target owner whose lease expired cannot deal damage or award the kill");
+    holdsLease = true;
+    humanClient.session.update(period.msecs); // the victim's node still knows only the caster's old owner
+    humanClient.session.update(period.msecs);
+    assert(!human.player.alive && shares.length == 1 && shares[0].victim == human.player.guid && shares[0].forwarded);
+    assert(moved.player.values.get!PLAYER_FIELD_LIFETIME_HONORBALE_KILLS == 1);
+
+    source.presence(2, true, [PresenceEntry(guid: guid, level: 20)], null);
+    const threat = mob.ai.threatOf(guid);
+    mob.updateAuras(map, period);
+    assert(mob.values.get!UNIT_FIELD_HEALTH == 78 && mob.ai.threatOf(guid) == threat + 6);
+    foreach (tick; 3 .. 12)
+        mob.updateAuras(map, period);
+    assert(mob.values.get!UNIT_FIELD_HEALTH == 11 && shares.length == 1);
+    mob.updateAuras(map, period); // the final tick still uses Curse of Agony's ramp
+    mob.updateAuras(map, period);
+    assert(!mob.alive && mob.lootRecipient == guid && mob.loot !is null && mob.loot.currentLooter == guid);
+    assert(shares.length == 2 && shares[1].victim == mob.guid && shares[1].xp > 0 && !shares[1].forwarded);
+    assert(moved.player.questStatus[quest.id].mobCount[0] == 1);
+}
+
 /// Hate to Zero (`spell_hate_to_zero`), a creature's spell: its target's threat on it is gone.
 unittest
 {

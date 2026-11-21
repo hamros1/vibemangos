@@ -619,8 +619,9 @@ sums stats and speeds are made of. Players and creatures each have one. A cast's
 (`auraEffects`: stats through `StatInputs.auras` and `refreshEquipmentStats`, speeds, roots, forms,
 mounts; its own ticks; the interrupt flags), `Creature.receiveAura` and `refreshLook` for a creature (its
 transform), and `Creature.refreshAuraMovement` (its slows, roots and stuns, on its next tick). An aura's
-periodic damage on a creature is its caster's doing (`UnitRef.auraTick`, `spellauras.periodicTick`), so it
-taps and kills like any spell, a creature's own too. A player's shields absorb damage before it lands
+periodic damage on a creature taps and kills like any spell (`UnitRef.auraTick`, `spellauras.periodicTick`).
+When a player caster hands off, the target's node keeps ticking the aura with its original caster GUID
+and settles the kill there. A player's shields absorb damage before it lands
 (`absorbDamage`); damage shields strike back at melee attackers (`damageShields`); `procAuras` fires the
 auras that trigger a spell on an event (`ProcFlag`), and a spell a proc casts sets off no procs.
 
@@ -716,7 +717,7 @@ for points and ranks.
 * **Days** are stored as `(year - 1900) << 16 | day of the year`, the schema's format. Arithmetic on
   them goes through the calendar, because subtracting 7 from such a number breaks across a new year.
 * **Not yet:**
-  * honour for group members simulated on another cluster node (kill shares carry experience only);
+  * sharing PvP honour with group members on nodes other than the killer's;
   * Honorless Target's own effects beyond its presence.
 
 ## Reputation

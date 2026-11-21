@@ -142,7 +142,7 @@ no lock of its own.
   * acknowledges the highest sequence number the sender has received.
 
   Those sent to the coordinator are echoed, which is what renews a node's lease.
-* **Protocol version.** `protocolVersion` (32) changes whenever a message changes. Nodes speaking
+* **Protocol version.** `protocolVersion` changes whenever a message changes. Nodes speaking
   another version are refused at the handshake, so a cluster runs one build throughout. The compiler
   enforces it: a fingerprint of every message's layout (fields, length prefixes, enum members) is
   recorded with the version, and a message changed without both being updated does not compile. It
@@ -457,6 +457,10 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   the next jump. Local and remote enemies share the target cap and 30% damage falloff per jump.
   The receiving node rechecks range from the previous target's captured position, PvP
   eligibility and immunities. Damage and kill credit are applied once for each hit.
+* **Damage over time.** The target's node advances player-cast damage auras after the caster
+  hands off. Creature ticks keep the caster's threat and tap, and a lethal tick settles loot on
+  the creature's node. Solo kill and quest credit, or honor for a PvP kill, go to the node
+  simulating the caster. Group rewards still use their existing proximity checks.
 * **Spell procs.** A hostile hit can trigger auras on both actors. Self effects run with the
   actor, and supported direct damage, healing and single-effect aura procs reach a named target
   on its node. A remote proc effect does not start a second cross-node proc chain.
@@ -648,8 +652,8 @@ services line (`ServiceHost.describe`). Every log line of the cluster code start
 
 * Creature swings and regular AI spell attacks against players on another node. Spell threat is
   recorded on the creature's node and participates in victim selection when the player is local.
-* Proc spells with projectiles, channels or multiple targeted effects across nodes, and remote
-  caster attribution for damage-over-time ticks.
+* Proc spells with projectiles, channels or multiple targeted effects across nodes. Caster-side
+  periodic procs and leech effects still need the caster on the target's map.
 * Surviving an owner's loss without disconnecting the client: the home could take its player back
   from the last save, which is worth having only with gateways and much more frequent player saves.
 * More than one standby, and a quorum of coordinators.

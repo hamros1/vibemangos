@@ -20,7 +20,7 @@ import core.time : Duration, minutes, MonoTime, msecs, seconds;
 
 import std.path : buildPath;
 import std.random : Random, unpredictableSeed;
-import std.typecons : Nullable;
+import std.typecons : Nullable, Tuple;
 
 import dmangos.auth.accounts : AccountLevel;
 import dmangos.auth.database : LoginDatabase, MemoryLoginDatabase;
@@ -315,8 +315,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         ushort node;
         MonoTime at;
+        uint level;  // known if the player just migrated from this node
     }
-    private Heard[ulong] lastHeard;   // players of other nodes by the node their last command came from
+    private Heard[ulong] lastHeard;   // temporary routing until presence catches up with a player
     private enum presenceGrace = 3.seconds; // presence says where a player is within a second or two
 
 
@@ -399,6 +400,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.worlddata : toLowerName;
 
         mapOf(who).removeForMigration(who, next);
+        lastHeard[who.character.guid] = Heard(next, MonoTime.currTime, who.character.data.level);
         online.remove(who.character.guid);
         onlineByName.remove(toLowerName(who.character.data.name));
     }
@@ -662,7 +664,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.spelldamage : isHostileAreaEffect, isHostileChainEffect, isTargetedProcEffect,
             rollRemoteAreaDamage, spellJumpRadius;
         import dmangos.world.spellids : ImplicitTarget, SpellEffect;
-        import dmangos.world.unit : Blow, dealDamage, UnitKind, UnitRef;
+        import dmangos.world.unit : Blow, UnitKind, UnitRef;
         import dmangos.world.updatefields : TypeId, UNIT_FIELD_LEVEL;
 
         if (!peer || !message.sequence || !canWrite())
@@ -707,7 +709,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 && hostile)
                 return;
             if (effect != SpellEffect.schoolDamage)
-                return remoteProcEffect(peer, message, spell, victim, hostile);
+                return remoteProcEffect(peer, message, spell, victim, hostile, attacker.hasFlag(UnitFlags.pvp));
         }
         else if (!hostile)
             return;
@@ -730,14 +732,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             blow.remotePlayer = attacker.player ? message.caster : 0;
             blow.remotePlayerPvP = attacker.hasFlag(UnitFlags.pvp);
             blow.threat = message.threatFactor;
-            if (attacker.player && victim.kind == UnitKind.creature && result.damage && !victim.creature.petOwner
-                && !victim.creature.lootRecipient)
-            {
-                auto group = groups.of(message.caster);
-                victim.creature.setLootRecipient(message.caster, group is null ? 0 : group.id);
-            }
-            dealDamage(UnitRef.init, victim, result.damage, blow);
-            result.killed = !victim.alive;
+            result.killed = dealRemoteDamage(victim, result.damage, blow);
             if (victim.kind == UnitKind.player)
             {
                 result.targetPvP = victim.session.isPvP;
@@ -754,14 +749,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 }
             }
             else if (attacker.player && result.killed && !victim.creature.petOwner)
-            {
-                import dmangos.world.dbscripts : DbScriptType;
-
                 result.targetLevel = victim.fields.get!UNIT_FIELD_LEVEL;
-                Character.rewardCreatureKillFor(this, map_, victim.creature, victim.creature.lootRecipient);
-                startScript(DbScriptType.creatureDeath, victim.creature.template_.entry, map_, victim.combatGuid,
-                    message.caster);
-            }
             if (!message.triggered && !message.suppressProcs && victim.alive && result.damage)
             {
                 const hit = ProcHit(spell, result.critical ? ProcEx.criticalHit : ProcEx.normalHit, result.damage);
@@ -778,8 +766,115 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             sendAreaDamage(peer, result);
     }
 
+    /// Apply damage only at the target's authority. A lethal creature hit settles its tap once here.
+    private bool dealRemoteDamage(UnitRef victim, uint damage, const ref imported!"dmangos.world.unit".Blow blow)
+    {
+        import dmangos.world.character : Character;
+        import dmangos.world.dbscripts : DbScriptType;
+        import dmangos.world.unit : dealDamage;
+
+        if (!victim.alive)
+            return false;
+        auto creature = victim.creature;
+        if (blow.remotePlayer && damage && creature !is null && !creature.petOwner && !creature.lootRecipient)
+        {
+            auto group = groups.of(blow.remotePlayer);
+            creature.setLootRecipient(blow.remotePlayer, group is null ? 0 : group.id);
+        }
+        dealDamage(UnitRef.init, victim, damage, blow);
+        if (victim.alive)
+            return false;
+        if (blow.remotePlayer && creature !is null && !creature.petOwner)
+        {
+            Character.rewardCreatureKillFor(this, victim.map, creature, creature.lootRecipient);
+            startScript(DbScriptType.creatureDeath, creature.template_.entry, victim.map, creature.guid,
+                blow.remotePlayer);
+        }
+        return true;
+    }
+
+    /// A damage aura keeps the player who applied it as its source after their handoff.
+    package void dealRemotePeriodicDamage(UnitRef victim, imported!"dmangos.world.auras".Aura aura, uint damage)
+    {
+        import dmangos.world.defines : UnitFlags;
+        import dmangos.world.honor : HonorVictim;
+        import dmangos.world.unit : Blow;
+        import dmangos.world.updatefields : TypeId, UNIT_FIELD_FLAGS;
+
+        if (!victim.alive || !canWrite())
+            return;
+        auto blow = Blow.periodic(aura.spell.casting.school);
+        blow.remotePlayer = aura.caster;
+        blow.remotePlayerPvP = aura.periodicCasterPvP;
+        blow.threat = aura.periodicThreat;
+        auto copy = cast(Replica) victim.map.findObject(aura.caster);
+        if (copy !is null && copy.fields.type == TypeId.player)
+            blow.remotePlayerPvP = (copy.fields.get!UNIT_FIELD_FLAGS & UnitFlags.pvp) != 0;
+        const honor = victim.kind == UnitKind.player ? victim.session.describeHonorVictim() : HonorVictim.init;
+        if (!dealRemoteDamage(victim, damage, blow) || victim.kind != UnitKind.player)
+            return;
+        const share = KillShare(target: aura.caster, victim: honor.guid, level: honor.level,
+            map: victim.map.id, instance: victim.map.instanceId, x: honor.position.x, y: honor.position.y,
+            z: honor.position.z, race: honor.race, rank: honor.rank, visualRank: honor.visualRank,
+            honorless: honor.honorless);
+        if (onlinePlayer(aura.caster) !is null)
+            killShareArrived(share);
+        else if (killShareElsewhere !is null)
+            if (const owner = remoteKillRecipient(aura.caster, victim.map).node)
+                killShareElsewhere(owner, share);
+    }
+
+    /// Find a remote solo recipient even when it has no replica near the victim.
+    package Tuple!(ushort, "node", uint, "level") remoteKillRecipient(ulong guid, Map map_)
+    {
+        import dmangos.world.updatefields : TypeId, UNIT_FIELD_LEVEL;
+
+        alias Route = typeof(return);
+        if (const hint = recentHandoff(guid))
+            return Route(hint.node, hint.level);
+        if (const owner = remotePlayer(guid))
+            return Route(owner.node, owner.entry.level);
+        if (auto copy = cast(Replica) map_.findObject(guid))
+            if (copy.fields.type == TypeId.player)
+                return Route(copy.owner, copy.fields.get!UNIT_FIELD_LEVEL);
+        return Route.init;
+    }
+
+    private const(Heard)* recentHandoff(ulong guid)
+    {
+        if (const hint = guid in lastHeard)
+            if (hint.level && MonoTime.currTime - hint.at < presenceGrace)
+                return hint;
+        return null;
+    }
+
+    package void killShareArrived(const ref KillShare share)
+    {
+        import dmangos.world.character : Character;
+        import dmangos.world.honor : HonorVictim;
+
+        auto player = cast(Character) onlinePlayer(share.target);
+        if (player is null || player.character is null)
+        {
+            // A peer sent the credit before its presence caught up with our handoff.
+            if (!share.forwarded && killShareElsewhere !is null)
+                if (const hint = recentHandoff(share.target))
+                {
+                    auto onward = cast(KillShare) share;
+                    onward.forwarded = true;
+                    killShareElsewhere(hint.node, onward);
+                }
+            return;
+        }
+        if (share.entry)
+            return player.killShared(share.entry, share.victim, share.level, share.xp, share.rate, share.reputationRate);
+        if (share.victim && share.victim <= uint.max && share.victim != share.target)
+            player.playerKilledByMe(HonorVictim(share.victim, share.level, share.race, share.rank, share.visualRank,
+                share.honorless, Position(share.x, share.y, share.z)), share.map, share.instance);
+    }
+
     private void remoteProcEffect(ushort peer, const ref AreaDamage message, const(SpellInfo)* spell,
-        imported!"dmangos.world.unit".UnitRef victim, bool hostile)
+        UnitRef victim, bool hostile, bool casterPvP)
     {
         import std.algorithm.comparison : max;
         import dmangos.world.auras : makeAura;
@@ -831,6 +926,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         amounts[i] = message.auraValue;
         auto aura = makeAura(spell, message.caster, message.casterLevel, lasts, !hostile, amounts);
         aura.effects = cast(ubyte)(1 << i);
+        if (aura.has(imported!"dmangos.world.auras".AuraType.periodicDamage))
+        {
+            aura.periodicThreat = message.threatFactor;
+            aura.periodicResistanceMod = message.resistanceModifier;
+            aura.periodicCasterPvP = casterPvP;
+        }
         if (victim.kind == UnitKind.player)
             victim.session.addAura(aura);
         else
@@ -2179,6 +2280,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 if (auto copy = battlegrounds.find(instance))
                     if (copy.mapId == id)
                         copy.rules.creatureKilled(copy, c.template_.entry, killer);
+        };
+        created.remotePeriodicTick = (UnitRef victim, imported!"dmangos.world.auras".Aura aura, size_t effect) {
+            imported!"dmangos.world.spellauras".remotePeriodicCreatureTick(this, victim, aura, effect);
         };
         created.onLinked = &linkedEvent;
         if (instance)

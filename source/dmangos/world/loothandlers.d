@@ -507,13 +507,15 @@ private:
                 return local.giveXP(xp, victim.guid, 1.0f);
             }
             if (context.killShareElsewhere !is null)
-                if (auto copy = cast(Replica) map.findObject(tapper))
-                    if (copy.fields.type == TypeId.player)
-                    {
-                        const share = KillShare(tapper, victim.guid, victim.template_.entry, value.level,
-                            killGain(copy.fields.get!UNIT_FIELD_LEVEL, value), 1, 1);
-                        context.killShareElsewhere(copy.owner, share);
-                    }
+            {
+                const owner = context.remoteKillRecipient(tapper, map);
+                if (owner.node)
+                {
+                    const share = KillShare(tapper, victim.guid, victim.template_.entry, value.level,
+                        killGain(owner.level, value), 1, 1);
+                    context.killShareElsewhere(owner.node, share);
+                }
+            }
             return;
         }
         // The members near the kill: here, or (in a cluster) simulated by another node whose replica is here.
@@ -757,13 +759,13 @@ private:
             loot.owners[tapper] = true;
             loot.currentLooter = tapper;
             loot.rule = LootRule.notGroup;
-            if (auto remote = cast(Replica) map.findObject(tapper))
-                if (remote.fields.type == TypeId.player && remote.owner != context.nodeId)
-                {
-                    loot.remoteTapper = tapper;
-                    if (context.sendQuestLootCheck !is null)
-                        loot.remoteMembers[tapper] = remote.owner;
-                }
+            const owner = context.remoteKillRecipient(tapper, map).node;
+            if (owner && owner != context.nodeId)
+            {
+                loot.remoteTapper = tapper;
+                if (context.sendQuestLootCheck !is null)
+                    loot.remoteMembers[tapper] = owner;
+            }
             return;
         }
         loot.rule = cast(LootRule) group.lootMethod;

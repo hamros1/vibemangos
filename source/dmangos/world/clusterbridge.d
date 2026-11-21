@@ -319,12 +319,10 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         node.sendTo(target, share);
     }
 
-    /// A share of another node's kill, for a group member here.
+    /// A share of another node's kill, for a player here.
     void killShare(ushort peer, const ref KillShare m)
     {
-        if (auto session = cast(Character) context.onlinePlayer(m.target))
-            if (session.character !is null)
-                session.killShared(m.entry, m.victim, m.level, m.xp, m.rate, m.reputationRate);
+        context.killShareArrived(m);
     }
 
     bool sendGroupLootRoll(ushort peer, const ref GroupLootRoll message)

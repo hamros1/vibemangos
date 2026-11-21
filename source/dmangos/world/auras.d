@@ -214,6 +214,9 @@ final class Aura
     const(SpellInfo)* spell;
     ulong caster;
     uint casterLevel;
+    float periodicThreat = 1;  /// school and spell threat modifiers when cast, used while the caster is remote
+    int periodicResistanceMod;
+    bool periodicCasterPvP;
     ubyte slot = noSlot;
     int duration;             /// milliseconds left; -1: until cancelled
     int maxDuration;
@@ -295,6 +298,10 @@ struct AuraSet
             if (existing.spell.id == aura.spell.id && (existing.caster == aura.caster || (shared_ && !existing.passive)))
             {
                 existing.caster = aura.caster;
+                existing.casterLevel = aura.casterLevel;
+                existing.periodicThreat = aura.periodicThreat;
+                existing.periodicResistanceMod = aura.periodicResistanceMod;
+                existing.periodicCasterPvP = aura.periodicCasterPvP;
                 existing.duration = existing.maxDuration = aura.maxDuration;
                 if (existing.stacks < (aura.spell.casting.stackAmount ? aura.spell.casting.stackAmount : 1))
                     ++existing.stacks;

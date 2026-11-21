@@ -906,6 +906,13 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             selfTick(world, tick.aura, tick.effect); // what heals or gives it power, whoever cast it
             if (auto caster = world.unit(tick.aura.caster)) // (and its caster's rules: Improved Mend Pet)
                 caster.auraTick(this, tick.aura, tick.effect);
+            else if (tick.aura.caster && tick.aura.caster <= uint.max
+                && tick.aura.type(tick.effect) == AuraType.periodicDamage)
+            {
+                auto victim = world.unitOf(this);
+                if (victim.map.remotePeriodicTick !is null)
+                    victim.map.remotePeriodicTick(victim, tick.aura, tick.effect);
+            }
         }
         // Crowd control breaking early (`SPELL_ATTR_HEARTBEAT_RESIST`).
         foreach (aura; heartbeats)
