@@ -706,10 +706,11 @@ What works now:
   * **Auctions:** auctioneers open
     their city's house (`AuctionHouse.dbc`; the goblins' for the neutral towns; one for both
     factions with `allow_two_side_interaction_auction`). An item that may be traded is put up for 2,
-    8 or 24 hours for a deposit (the house's share of its sell price for each 2 hours); bids start
+    8 or 24 hours for a deposit (the house's share of its sell price for each 2 hours: 5% at the factions'
+    houses, 25% at the goblins'; docs/FORMULAS.md, "Auction houses"); bids start
     at the start bid and rise by 5% at least, not on one's own auctions or another character's of the
     account; a bid at the buyout buys it. The buyer gets the item by mail, the seller the price and
-    the deposit less the house's cut, an outbid bidder the money back, each told if online; a seller
+    the deposit less the house's cut (5%, the goblins' 15%), an outbid bidder the money back, each told if online; a seller
     may take an auction back (paying the cut of a bid) and gets the item by mail. When the time is up
     the highest bid buys it, or the item goes back. Searches filter by name, level, slot, class,
     sub-class, quality and usability, 50 at a time; sellers and bidders list theirs. The `auction`
@@ -824,6 +825,7 @@ database at the same time; a cluster's nodes take their ids in blocks from its c
 | `allow_two_side_interaction_chat` | whispers between factions | `false` |
 | `allow_two_side_interaction_channel`, `allow_two_side_interaction_group` | one set of channels for both factions; groups across factions | `false`, `false` |
 | `allow_two_side_interaction_auction` | one auction house for both factions | `false` |
+| `rate_auction_deposit`, `rate_auction_cut`, `rate_auction_time`, `auction_deposit_min` | the auction houses' deposits, cuts and auction times, times these; the least deposit in copper | `1`, `1`, `1`, `0` |
 | `allow_two_side_add_friend` | friends of the other faction | `false` |
 | `allow_two_side_interaction_guild` | guilds of both factions | `false` |
 | `chat_restricted_raid_warnings` | raid warnings only in raids | `false` |

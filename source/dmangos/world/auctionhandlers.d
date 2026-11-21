@@ -110,7 +110,8 @@ mixin template AuctionHandlers()
         const proto = item.entry in context.data.items;
         if (proto is null || (proto.flags & itemFlagConjured) || item.values[ITEM_FIELD_DURATION])
             return sendAuctionResult(0, AuctionAction.started, AuctionError.inventory, InventoryResult.itemNotFound);
-        const deposit = Copper(auctionDeposit(*house, seconds, proto.details.sellPrice, item.count));
+        const deposit = Copper(auctionDeposit(*house, seconds, proto.details.sellPrice, item.count,
+            context.config.auctionRates));
         if (!player.canAfford(deposit))
             return sendAuctionResult(0, AuctionAction.started, AuctionError.notEnoughMoney);
 
@@ -127,7 +128,7 @@ mixin template AuctionHandlers()
         a.owner = player.data.guid;
         a.startBid = bid;
         a.buyout = buyout;
-        a.expireTime = context.unixTime + seconds;
+        a.expireTime = context.unixTime + auctionDuration(seconds, context.config.auctionRates);
         a.deposit = deposit.amount; // the row keeps the plain number
         player.inventory.destroy(item.bagSlot, item.slot);
         flushInventory(true);
@@ -210,7 +211,7 @@ mixin template AuctionHandlers()
         if (found.isNull || found.get.owner != player.data.guid)
             return sendAuctionResult(0, AuctionAction.removed, AuctionError.database);
         const a = found.get;
-        const cut = Copper(a.bid ? a.cut(*house) : 0);
+        const cut = Copper(a.bid ? a.cut(*house, context.config.rateAuctionCut) : 0);
         if (!player.canAfford(cut))
             return;
         if (!context.database.deleteAuction(a.id, a.bid))

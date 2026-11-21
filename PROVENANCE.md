@@ -668,7 +668,8 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `AuctionHouseMgr.cpp`
-* Functions: `AuctionHouseMgr::GetAuctionHouseEntry`
+* Functions: `AuctionHouseMgr::GetAuctionHouseEntry`, `AuctionHouseMgr::GetAuctionDeposit`, `AuctionEntry::GetAuctionCut`
+* Configuration: `Rate.Auction.Deposit`, `Rate.Auction.Cut`, `Rate.Auction.Time`, `Auction.Deposit.Min`
 * Constants: `MAX_AUCTION_ITEMS_CLIENT_UI_PAGE`, `MIN_AUCTION_TIME`, `SMSG_AUCTION_BIDDER_NOTIFICATION`, `SMSG_AUCTION_OWNER_NOTIFICATION`, `SMSG_AUCTION_REMOVED_NOTIFICATION`
 
 ## world/aurahandlers.d
@@ -1461,6 +1462,10 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Not from an emulator: tests of the world's scripts (the escort quests the scripts start, found in their sources)
   on the client's DBC files and the classic world database: `quest_template`, `script_waypoint` and
   `waypoint_path`, `script_texts`; CMaNGOS ScriptDev's escort AI (`MAX_PLAYER_DISTANCE`) as a second opinion.
+
+## world/realsystems.d
+
+* Projects: none (the 1.12.1 client's data and the world database; docs/FORMULAS.md)
 
 ## world/realspellsweep.d
 

@@ -241,7 +241,8 @@ classic database's TBC rows is sent).
 ### Auctions
 
 **Done** (`auctionhouse.d`, `auctionhandlers.d`; README's "Auctions"): selling, searching, bidding,
-buyouts, cancelling, expiry, the mails. Not yet: auction rates, an auction bot. There is no `.auction` command (the
+buyouts, cancelling, expiry, the mails, the houses' rates (`AuctionHouse.dbc`'s, and the server's own over them;
+docs/FORMULAS.md). Not yet: an auction bot. There is no `.auction` command (the
 GM command set has none).
 
 ### 7. Social and progression

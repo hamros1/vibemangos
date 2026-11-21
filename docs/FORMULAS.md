@@ -788,3 +788,26 @@ shrines, the flight master's and the squads' removal, the 200 and the reset of b
 
 dmangos's first implementation took a tower only at the slider's end, with "Progressing" for a tower nobody held; the
 progress events' scripts and the map's banners showed otherwise, and the comparison agreed: changed before commit.
+
+## Auction houses
+
+**What:** the deposit and the cut of each auction house, and how the duration counts (world/auctionhouse.d).
+
+**Source: the 1.12.1 client's data.** `AuctionHouse.dbc` gives each house a deposit percentage and a cut: the six
+factions' houses (Stormwind, Alliance, Darnassus, Undercity, Thunder Bluff, Horde) 5 and 5, the goblins' Blackwater house (7)
+25 and 15. The client shows the deposit from the same row (`CalculateAuctionDeposit`), so the server must charge what
+it shows: the item's sell price times the stack, times the house's percentage, for each 2 hours of the 2, 8 or 24 the
+client offers (1, 4 or 12 times). A faction's house so takes 5%, 20% and 60% of the sell price, the goblins' five times
+that (25%, 100%, 300%); the cut is the house's share of the winning bid (5%, 15%). Tested on the real file
+(world/realsystems.d).
+
+**Documented research** agrees: the Classic Era guides give 5%, 20% and 60% at a faction's house and "five times that"
+at a neutral one; the cut 5% and 15% (warcraft.wiki.gg "Auction House" for the cut, the deposit refunded with a sale
+and kept when an auction expires or is cancelled). One guide's neutral 75% and 150% for 2 and 8 hours matches neither
+the data nor its own "five times"; the data is taken.
+
+**The server's own rates** (`rate_auction_deposit`, `rate_auction_cut`, `rate_auction_time`, `auction_deposit_min`:
+CMaNGOS's `Rate.Auction.*` and `Auction.Deposit.Min`) multiply the deposit and the cut, stretch an auction's time and
+set a least deposit; their defaults (1, 1, 1, none) are the client's numbers. **Second opinion (CMaNGOS-classic,
+`AuctionHouseMgr::GetAuctionDeposit`, `AuctionEntry::GetAuctionCut`):** the same formula and order (the least deposit
+before the rate).
