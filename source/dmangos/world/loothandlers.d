@@ -679,7 +679,7 @@ private:
             theMap.flushObjectChanges(victim);
             theMap.refreshViewers(victim);
         };
-        loot.beginQuestLootChecks(theMap.id, &context.nextLootSequence, context.sendQuestLootCheck);
+        loot.beginQuestLootChecks(theMap.id, &context.nextGameplaySequence, context.sendQuestLootCheck);
         if (victim.loot !is null && loot.lootedForEveryone())
             lootedOutNow(victim);
         else if (loot.masterStartsRemote)
@@ -750,7 +750,7 @@ private:
         if (loot.remoteMembers.length && (crossNodeRolls || remoteMasterAwards))
         {
             loot.rollMap = map.id;
-            loot.nextRoll = &context.nextLootSequence;
+            loot.nextRoll = &context.nextGameplaySequence;
             loot.sendRemoteRoll = context.sendRemoteGroupLoot;
         }
         if (loot.remoteMembers.length && crossNodeRolls)
@@ -770,7 +770,7 @@ private:
                 return ushort(0);
             };
             loot.payRemoteCoins = (ushort node, ulong guid, uint copper) {
-                const message = LootCoinShare(context.nextLootSequence(), guid, theMap.id, copper);
+                const message = LootCoinShare(context.nextGameplaySequence(), guid, theMap.id, copper);
                 return context.sendRemoteLootCoins(node, message);
             };
         }

@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 42; // 42: PvP state in player handoffs; 41: quest loot and replica visibility
+enum ushort protocolVersion = 43; // 43: party heals across nodes; 42: PvP state in player handoffs
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -89,6 +89,29 @@ enum MessageType : ushort
     groupLootRoll = 50,
     lootCoinShare = 51,
     questLootCheck = 52,
+    partyHeal = 53,
+}
+
+/// A single party member's heal, prepared by the caster's node and applied by the recipient's node.
+struct PartyHeal
+{
+    enum type = MessageType.partyHeal;
+
+    ulong sequence;
+    ulong caster;
+    ulong target;
+    uint spell;
+    ubyte effect;
+    uint map;
+    uint instance;
+    uint group;
+    float x, y, z, radius;
+    uint amount; /// before the target's modifiers on request, the logged heal on reply
+    bool critical;
+    bool landed;
+    bool pvp;
+    bool contested;
+    bool inPvPCombat;
 }
 
 /// Checks which quest loot slots a remote group member needs. Zero entries are not quest items.
@@ -1023,7 +1046,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 42, recordedFingerprint = 0x7e1a0ceecd7d50a4UL;
+private enum recordedVersion = 43, recordedFingerprint = 0x952d1b28085e20bdUL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

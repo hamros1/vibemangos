@@ -160,7 +160,7 @@ There are 47 message types. They fall into:
 | Sessions | `SessionClaim`, `SessionGrant`, `SessionEvict`, `SessionReleased` |
 | Replication | `InterestUpdate`, `ReplicaCreate`, `ReplicaValues`, `ReplicaMove`, `ReplicaRemove`, `InRange` |
 | Players | `PlayerMessage` (to the owner, to the home, arrival, departure, a move to a third node), `Presence`, `DeliverTo`, `Whisper` |
-| Gameplay across nodes | `StockRequest`, `StockReply`, `StockRelease`, `GroupCommand`, `GroupState`, `MemberStatsRequest`, `ToEveryone`, `GmRemote`, `KillShare`, `GroupLootRoll`, `LootCoinShare`, `QuestLootCheck`, `ScriptSignal`, `DungeonEntryRequest`, `DungeonEntryReply`, `FriendStatusChange`, `GuildReload`, `GuildBroadcast`, `GuildInvitation` |
+| Gameplay across nodes | `StockRequest`, `StockReply`, `StockRelease`, `GroupCommand`, `GroupState`, `MemberStatsRequest`, `ToEveryone`, `GmRemote`, `KillShare`, `GroupLootRoll`, `LootCoinShare`, `QuestLootCheck`, `PartyHeal`, `ScriptSignal`, `DungeonEntryRequest`, `DungeonEntryReply`, `FriendStatusChange`, `GuildReload`, `GuildBroadcast`, `GuildInvitation` |
 | Services | `ServiceCall`, `ServiceReply` (docs/SERVICES.md) |
 
 On the world server's side, `ClusterBridge` implements the handlers `ClusterNode` calls, and
@@ -434,6 +434,11 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   pays its normal cost and starts its cooldown. The caster must be out of combat and free to
   move. Their PvP flags and expiry timers travel with them. A cancel received before the cast
   starts discards the pending action.
+* **Instant party heals.** One cast on the caster's node pays the usual cost and starts the
+  cooldown. Each recipient's node rechecks range, map, and party or raid subgroup before
+  applying the heal with that recipient's healing modifiers. A repeated delivery has no effect.
+  The caster's node logs confirmed heals and applies PvP assist flags while it still
+  simulates the caster.
 * **Trades** between nearby players move the requester to the other player's node, where the usual
   trade checks and exchange run. Both stay there until the trade ends. A forced move cancels any
   open trade before the player leaves.
@@ -620,7 +625,8 @@ services line (`ServiceHost.describe`). Every log line of the cluster code start
 
 ## Not yet
 
-* Dedicated cross-node casting support for multi-target player spells, including area and chain spells.
+* Cross-node hostile area spells, chain spells, and cast-time party heals.
+* Healing threat and caster procs for remote party-heal recipients.
 * Surviving an owner's loss without disconnecting the client: the home could take its player back
   from the last save, which is worth having only with gateways and much more frequent player saves.
 * More than one standby, and a quorum of coordinators.

@@ -8,7 +8,9 @@
  */
 module dmangos.world.spelldamage;
 
+import dmangos.cluster.protocol : PartyHeal;
 import dmangos.world.caster : Caster;
+import dmangos.world.movement : Position;
 import dmangos.world.spellids;
 import dmangos.world.spells : SpellInfo;
 import dmangos.world.unit : UnitKind, UnitRef;
@@ -135,6 +137,59 @@ struct SpellHeal
     bool plain; /// no healing power, no crit, no class rules, procs nor threat: a leech's (CMaNGOS's `DealHeal`)
 }
 
+/// An instant party heal is centered on the caster and selects their own party or raid subgroup.
+bool isPartyHealEffect(const ref SpellInfo spell, size_t i)
+{
+    import std.algorithm.comparison : among;
+    import dmangos.world.spellids : ImplicitTarget, SpellEffect;
+
+    enum uint channels = 0x04 | 0x40;
+    if (i >= spell.effect.length || spell.effect[i] != SpellEffect.heal || (spell.attributesEx & channels)
+        || spell.casting.speed > 0 || spell.casting.chainTarget[i] > 1)
+        return false;
+    with (ImplicitTarget)
+    {
+        const a = spell.implicitTargetA[i], b = spell.casting.implicitTargetB[i];
+        return b.among(partyAroundSource, partyInRange, party)
+            || (b == none && a.among(partyAroundSource, partyInRange, party));
+    }
+}
+
+bool withinPartyHealRadius(const ref PartyHeal heal, Position target)
+{
+    return heal.radius > 0
+        && ((target.x - heal.x) ^^ 2 + (target.y - heal.y) ^^ 2 + (target.z - heal.z) ^^ 2 <= heal.radius ^^ 2);
+}
+
+/// Roll the caster's part of a heal, before the recipient's own modifiers and health cap.
+uint rollHealing(ref Caster caster, const(SpellInfo)* spell, int value, out bool critical)
+{
+    import std.random : uniform01;
+    import dmangos.world.auras : AuraType;
+
+    value += healingBonus(caster, spell);
+    value = cast(int)(value * caster.auras.multiplier(AuraType.modHealingDonePercent));
+    critical = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(caster.map.random) * 100 < caster.spellCritChance(spell);
+    return cast(uint)(critical ? value * 3 / 2 : value);
+}
+
+/// Apply the recipient's healing modifiers and health cap. Returns the amount for the heal log.
+uint applyHealAmount(const(SpellInfo)* spell, UnitRef target, uint amount, out uint restored)
+{
+    import std.algorithm.comparison : min;
+    import dmangos.world.updatefields : UNIT_FIELD_HEALTH, UNIT_FIELD_MAXHEALTH;
+
+    const taken = target.auraSet.healingTaken(amount, spell.casting.school);
+    auto fields = target.fields;
+    const health = fields.get!UNIT_FIELD_HEALTH, maxHealth = fields.get!UNIT_FIELD_MAXHEALTH;
+    if (health < maxHealth)
+    {
+        restored = min(taken, maxHealth - health);
+        fields.set!UNIT_FIELD_HEALTH(health + restored);
+    }
+    return taken;
+}
+
 /**
  * `value` of health back to `target` from `caster`'s `spell`: the caster's class rules (a player's: Swiftmend,
  * Blessing of Light), its healing power and `MOD_HEALING_DONE_PERCENT`, a crit half again, what heals the target
@@ -143,8 +198,6 @@ struct SpellHeal
  */
 uint spellHeal(ref Caster caster, const(SpellInfo)* spell, UnitRef target, int value, SpellHeal how = SpellHeal.init)
 {
-    import std.random : uniform01;
-    import dmangos.world.auras : AuraType;
     import dmangos.world.opcodes : Opcode;
     import dmangos.world.spellcast : healLog;
     import dmangos.world.spellmods : SpellModOp;
@@ -159,20 +212,17 @@ uint spellHeal(ref Caster caster, const(SpellInfo)* spell, UnitRef target, int v
     const self = target.combatGuid == caster.guid;
     auto p = caster.character;
     bool crit;
+    uint rolled = cast(uint) value;
     if (!how.plain)
     {
         if (p !is null && target.kind == UnitKind.player && !self)
             p.pvpAssisted(target.session);
         if (p !is null)
             value = p.classHeal(spell, target, value); // Swiftmend, Blessing of Light, Healing Way
-        value += healingBonus(caster, spell);
-        value = cast(int)(value * caster.auras.multiplier(AuraType.modHealingDonePercent)); // the healer's
-        crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(caster.map.random) * 100 < caster.spellCritChance(spell);
+        rolled = rollHealing(caster, spell, value, crit);
     }
-    const amount = auras.healingTaken(cast(uint)(crit ? value * 3 / 2 : value), spell.casting.school);
-    const health = fields.get!UNIT_FIELD_HEALTH, maxHealth = fields.get!UNIT_FIELD_MAXHEALTH;
-    const healed = health + amount > maxHealth ? maxHealth - health : amount;
-    fields.set!UNIT_FIELD_HEALTH(health + healed);
+    uint healed;
+    const amount = applyHealAmount(spell, target, rolled, healed);
     caster.sendAround(Opcode.SMSG_SPELLHEALLOG, healLog(target: target.combatGuid, caster: caster.guid, spell.id, amount,
         crit));
     flushUnit(caster, target);

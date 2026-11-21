@@ -68,7 +68,7 @@ import dmangos.world.terrain : Terrain;
 import dmangos.world.group : GroupDirectory, Groups, memberStatus, MemberStatus;
 import dmangos.world.groupservice : groupCommand, GroupOp, GroupService;
 import dmangos.cluster.protocol : CreatureLoan, GmRemote, GroupCommand, GroupLootRoll, KillShare, LootCoinShare,
-    QuestLootCheck, ScriptSignal;
+    PartyHeal, QuestLootCheck, ScriptSignal;
 import dmangos.world.loot : Loot, maxLootItems;
 import dmangos.world.map : Inhabitant, Map, MapObject, MapSettings, VisibilityFacts;
 import dmangos.world.online : OnlinePlayer;
@@ -424,17 +424,17 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     bool delegate(ushort) canSendLootCoins;
     bool delegate(ushort, const ref LootCoinShare) sendRemoteLootCoins;
     bool delegate(ushort, const ref QuestLootCheck) sendQuestLootCheck;
-    private ulong lootSequence;
+    private ulong gameplaySequence;
     private ulong[ushort] lastLootCoinShare;
     private ulong[ushort] lastMasterLootAward;
 
-    ulong nextLootSequence()
+    ulong nextGameplaySequence()
     {
         import std.datetime.systime : Clock;
 
-        if (!lootSequence)
-            lootSequence = cast(ulong) Clock.currStdTime;
-        return ++lootSequence;
+        if (!gameplaySequence)
+            gameplaySequence = cast(ulong) Clock.currStdTime;
+        return ++gameplaySequence;
     }
 
     void groupLootRollArrived(ushort peer, const ref GroupLootRoll message)
@@ -546,6 +546,70 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (auto player = cast(Character) onlinePlayer(message.player))
             if (player.character !is null && player.character.data.map == message.map)
                 grantLootCoinShare(player, message.copper);
+    }
+
+    bool delegate(ushort, const ref PartyHeal) sendPartyHeal;
+    private ulong[ushort] lastPartyHeal, lastPartyHealReply;
+
+    void partyHealArrived(ushort peer, const ref PartyHeal message)
+    {
+        import dmangos.world.character : Character;
+        import dmangos.world.spelldamage : applyHealAmount, isPartyHealEffect, withinPartyHealRadius;
+        import dmangos.world.spellids : SpellEffect;
+
+        if (!peer || !message.sequence || !canWrite())
+            return;
+        if (message.landed)
+            return partyHealLanded(peer, message);
+        if (message.sequence <= lastPartyHeal.get(peer, 0))
+            return;
+        // Record refused deliveries too: a recipient moving or rejoining cannot revive an old heal.
+        lastPartyHeal[peer] = message.sequence;
+        auto target = cast(Character) onlinePlayer(message.target);
+        if (target is null || target.player is null || !target.player.alive || target.transferring
+            || target.currentMap.id != message.map || target.currentMap.instanceId != message.instance
+            || !withinPartyHealRadius(message, target.player.position))
+            return;
+        auto group = groups.of(message.caster);
+        if (group is null || group.id != message.group || !group.isMember(message.target)
+            || group.subGroupOf(message.caster) != group.subGroupOf(message.target) || message.caster == message.target)
+            return;
+        const spell = data.spells.spell(message.spell);
+        if (spell is null || !isPartyHealEffect(*spell, message.effect) || !message.amount)
+            return;
+        enum uint noImmunities = 0x20000000;
+        const immune = target.unit.fighter.immune;
+        if (!(spell.attributes & noImmunities) && immune.any && immune.toEffect(SpellEffect.heal,
+            spell.casting.effectMechanic[message.effect], spell.casting.applyAuraName[message.effect]))
+            return;
+        PartyHeal result = message;
+        uint restored;
+        result.amount = applyHealAmount(spell, target.unit, message.amount, restored);
+        target.flushPlayerChanges();
+        result.landed = true;
+        result.pvp = target.isPvP;
+        result.contested = target.isPvPContested;
+        result.inPvPCombat = target.inPvPCombat;
+        if (sendPartyHeal !is null)
+            sendPartyHeal(peer, result);
+    }
+
+    private void partyHealLanded(ushort peer, const ref PartyHeal message)
+    {
+        import dmangos.world.character : Character;
+        import dmangos.world.spellcast : healLog;
+
+        if (message.sequence <= lastPartyHealReply.get(peer, 0))
+            return;
+        lastPartyHealReply[peer] = message.sequence;
+        auto caster = cast(Character) onlinePlayer(message.caster);
+        if (caster is null || caster.player is null || caster.transferring
+            || caster.currentMap.id != message.map || caster.currentMap.instanceId != message.instance)
+            return;
+        caster.pvpAssisted(message.pvp, message.contested, message.inPvPCombat);
+        caster.flushPlayerChanges();
+        caster.currentMap.sendToWatchers(caster, Opcode.SMSG_SPELLHEALLOG,
+            healLog(message.target, message.caster, message.spell, message.amount, message.critical), true);
     }
 
     /// What node `node` said of its players: all of them (`full`), or what changed and who left.

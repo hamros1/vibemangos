@@ -398,7 +398,7 @@ mixin template GameObjectHandlers()
             go.loot = makeGameObjectLoot(go);
             go.lootState = GoLootState.activated;
             map.wake(go.guid);
-            go.loot.beginQuestLootChecks(map.id, &context.nextLootSequence, context.sendQuestLootCheck);
+            go.loot.beginQuestLootChecks(map.id, &context.nextGameplaySequence, context.sendQuestLootCheck);
             if (go.loot is null)
                 return;
         }

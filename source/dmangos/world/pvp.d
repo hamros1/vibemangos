@@ -116,13 +116,13 @@ mixin template PvPHandlers()
     }
 
     /// Whether the player has the PvP flag.
-    @property bool isPvP() const
+    package @property bool isPvP() const
     {
         return (player.values.get!UNIT_FIELD_FLAGS & UnitFlags.pvp) != 0;
     }
 
     /// Whether the player has the contested flag.
-    @property bool isPvPContested() const
+    package @property bool isPvPContested() const
     {
         return hasPlayerFlag(PlayerFlagsPvP.contested);
     }
@@ -333,12 +333,23 @@ mixin template PvPHandlers()
     /// flagged player, your flag will go up", WoWWiki "PvP flag", 2006-10; docs/FORMULAS.md "The PvP flag").
     package void pvpAssisted(typeof(this) other)
     {
-        if (other is null || other is this || !other.isPvP)
+        if (other !is null && other !is this)
+            pvpAssisted(other.isPvP, other.isPvPContested, other.pvpInCombat);
+    }
+
+    package @property bool inPvPCombat() const
+    {
+        return pvpInCombat;
+    }
+
+    package void pvpAssisted(bool flagged, bool contested, bool fighting)
+    {
+        if (!flagged)
             return;
-        if (other.pvpInCombat)
+        if (fighting)
             pvpInCombat = true;
         updatePvP(true);
-        if (other.isPvPContested)
+        if (contested)
             updatePvPContested(true);
     }
 }
