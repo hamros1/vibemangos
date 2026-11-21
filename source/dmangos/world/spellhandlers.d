@@ -42,6 +42,7 @@ mixin template SpellHandlers()
     import dmangos.world.opcodes;
     import dmangos.world.player : DeathState;
     import dmangos.world.relations : canAttack, isEnemy, isFriend;
+    import dmangos.world.replication : Replica;
     import dmangos.world.spellcast;
     import dmangos.world.spells : SpellEffect, SpellInfo;
     import dmangos.world.updatefields;
@@ -125,6 +126,23 @@ private:
         // Not known or passive: a cheat, ignored.
         if (spell is null || !player.knowsSpell(id) || spell.isPassive)
             return;
+        if (spell.hasEffect(SpellEffect.duel))
+        {
+            if (auto replica = cast(Replica) map.findObject(targets.unit))
+                if (replica.fields.type == TypeId.player && context.onlinePlayer(targets.unit) is null)
+                {
+                    const result = duel is null && !inCombat && !flying
+                        ? checkCast(spell, targets, false, 0, true, replica) : SpellCastResult.badTargets;
+                    if (result == SpellCastResult.ok
+                        && actAtReplica(targets.unit, ArrivalAction(0, id, targets.unit)))
+                        return;
+                    deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(id,
+                        result == SpellCastResult.ok ? SpellCastResult.badTargets : result, spell));
+                    return;
+                }
+            castSpell(spell, targets, false, 0);
+            return;
+        }
         // At another node's creature: cast there.
         if (targets.unit && targets.unit != player.guid && actAtReplica(targets.unit, ArrivalAction(0, id, targets.unit)))
             return;
@@ -1212,7 +1230,7 @@ private:
     }
 
     SpellCastResult checkCast(const(SpellInfo)* spell, const ref SpellTargets targets, bool triggered, uint itemEntry,
-        bool start)
+        bool start, const(Replica) duelTarget = null)
     {
         enum uint castableWhileSitting = 0x08000000; // SPELL_ATTR_CASTABLE_WHILE_SITTING
         const now = context.clock();
@@ -1285,7 +1303,7 @@ private:
                 return petResult;
         }
         // The target the effects need (a triggered spell's at any range: the range check is not for it).
-        const result = checkTarget(spell, targets, triggered);
+        const result = checkTarget(spell, targets, triggered, duelTarget);
         if (result != SpellCastResult.ok)
             return result;
         if (!triggered)
@@ -1609,7 +1627,8 @@ private:
     }
 
     /// Whether the effects' implicit targets have what they need: an enemy, a friend, any unit, in range and sight.
-    SpellCastResult checkTarget(const(SpellInfo)* spell, const ref SpellTargets targets, bool triggered = false)
+    SpellCastResult checkTarget(const(SpellInfo)* spell, const ref SpellTargets targets, bool triggered = false,
+        const(Replica) duelTarget = null)
     {
         bool needsEnemy, needsUnit;
         foreach (i; 0 .. 3)
@@ -1671,6 +1690,13 @@ private:
                 return SpellCastResult.targetsDead;
             at = atCorpse ? corpseAt : other.player.position;
             reach = other.player.values.get!UNIT_FIELD_COMBATREACH;
+        }
+        else if (duelTarget !is null)
+        {
+            if (!duelTarget.fieldsOf.get!UNIT_FIELD_HEALTH || duelTarget.fieldsOf.get!PLAYER_DUEL_ARBITER)
+                return SpellCastResult.badTargets;
+            at = duelTarget.position;
+            reach = duelTarget.fieldsOf.get!UNIT_FIELD_COMBATREACH;
         }
         else
             return SpellCastResult.badTargets;

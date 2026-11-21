@@ -135,10 +135,10 @@ private:
     /**
      * The node this player's simulation should move to now, or 0. It moves when it stands well inside
      * another node's ground (`migrationMargin` all round: no going back and forth along a border), not
-     * within ten seconds of its last move, nor while teleporting or logging out. Away from home, it
+     * within ten seconds of its last move, nor while dueling, teleporting or logging out. Away from home, it
      * goes straight on to a third node, its home told.
      */
-    ushort migrationTarget()
+    package ushort migrationTarget()
     {
         import core.time : seconds;
 
@@ -157,7 +157,7 @@ private:
             return 0;
         // A fight stays on the node it is on: the creatures it is with are simulated here. A flight too: the node
         // that flies it lands it (its state is not carried), and the player moves on from the ground.
-        if (inCombat || flying)
+        if (inCombat || flying || duel !is null)
             return 0;
         const owner = context.regionOwnerAround(player.data.map, player.position, migrationMargin);
         if (owner == 0 || owner == context.nodeId)
@@ -220,7 +220,7 @@ private:
         auto replica = cast(Replica) map.findObject(target);
         if (replica is null || replica.owner == context.nodeId || context.playerRelay is null || !context.canWrite())
             return false;
-        if (teleporting != Teleport.none || loggingOut || transferring)
+        if (teleporting != Teleport.none || loggingOut || transferring || duel !is null)
             return false;
         info!"%s: '%s' acts at %s, which node %s simulates: moving there"(remoteAddress, player.data.name,
             target & 0xFFFF_FFFF, replica.owner);
@@ -237,6 +237,7 @@ private:
     {
         if (!context.canWrite())
             return;
+        duelComplete(DuelEnd.fled); // a forced move (such as draining) ends it for both players
         petsOnLeave(); // saved, to come out again there
         flushPlayerChanges();
         const progress = player.progress(secondsInWorld());

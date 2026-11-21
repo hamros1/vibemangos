@@ -259,12 +259,24 @@ private:
  */
 unittest
 {
+    testDuel(false);
+    testDuel(true);
+}
+
+version (unittest)
+private void testDuel(bool crossNode)
+{
     import core.time : MonoTime, msecs, seconds;
     import std.algorithm.searching : canFind;
     import dmangos.bytes : ByteWriter;
     import dmangos.dbc : buildDbc;
     import dmangos.world.clientdata : spellCastTimesFormat, spellRangeFormat;
+    import dmangos.world.context : PlayerRelay, WorldContext;
+    import dmangos.world.grid : cellKeyAt;
     import dmangos.world.movement : Position;
+    import dmangos.world.playercreate : NewSpell;
+    import dmangos.world.replication : encodePlayerState;
+    import dmangos.world.session : WorldSession;
     import dmangos.world.opcodes;
     import dmangos.world.packets : ClientGuid;
     import dmangos.world.player : DeathState, Player;
@@ -276,29 +288,85 @@ unittest
 
     auto db = newDatabase();
     auto context = newCreationContext(db);
+    auto home = crossNode ? newCreationContext(db) : context;
     auto now = MonoTime.currTime;
-    context.clock = () => now;
     uint bits(float f) { return *cast(uint*) &f; }
-    context.client.spellCastTimes = typeof(context.client.spellCastTimes).parse(buildDbc(spellCastTimesFormat,
-        [[1u, 0, 0, 0]]), "SpellCastTimes.dbc");
-    context.client.spellRanges = typeof(context.client.spellRanges).parse(buildDbc(spellRangeFormat,
-        [[1u, bits(0), bits(30), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]), "SpellRange.dbc");
     enum uint duelSpell = 7266;
-    context.data.spells.spells[duelSpell] = testSpell(duelSpell, 83, 25, 0);
-    context.data.spells.spells.edit(duelSpell).miscValue[0] = duelFlagEntry;
+    foreach (node; crossNode ? [home, context] : [context])
+    {
+        node.clock = () => now;
+        node.client.spellCastTimes = typeof(node.client.spellCastTimes).parse(buildDbc(spellCastTimesFormat,
+            [[1u, 0, 0, 0]]), "SpellCastTimes.dbc");
+        node.client.spellRanges = typeof(node.client.spellRanges).parse(buildDbc(spellRangeFormat,
+            [[1u, bits(0), bits(30), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]), "SpellRange.dbc");
+        node.data.spells.spells[duelSpell] = testSpell(duelSpell, 83, 25, 0);
+        node.data.spells.spells.edit(duelSpell).miscValue[0] = duelFlagEntry;
+    }
+
+    static final class Relay : PlayerRelay
+    {
+        WorldContext home, owner;
+        WorldSession remote;
+
+        void migrate(ushort target, uint, const(ubyte)[] state)
+        {
+            import dmangos.world.character : Character;
+
+            assert(target == owner.nodeId && remote is null);
+            remote = new WorldSession(owner, Character.migrationAccount(state), home.nodeId);
+            assert(remote.arrive(state));
+        }
+
+        void toHome(ushort, uint account, ushort opcode, const(ubyte)[] body_)
+        {
+            (cast(WorldSession) home.sessionOf(account)).fromOwner(opcode, body_);
+        }
+
+        void toOwner(ushort, uint, ushort opcode, const(ubyte)[] body_) { remote.fromHome(opcode, body_); }
+        void disconnect(ushort, uint) { remote.clientGone(); }
+        void left(ushort, uint, bool) {}
+        void remoteDone(uint) {}
+        void moved(ushort, uint, ushort) {}
+    }
+
+    auto relay = new Relay;
+    if (crossNode)
+    {
+        home.nodeId = 1;
+        context.nodeId = 2;
+        relay.home = home;
+        relay.owner = context;
+        home.playerRelay = context.playerRelay = relay;
+    }
 
     // Facing each other, two yards apart.
-    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 0));
+    auto anduin = loggedIn(home, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 0),
+        setup: (ref c) { c.spells ~= NewSpell(duelSpell, true, false); });
     auto jaina = loggedIn(context, db, 8, "Jaina", Position(-8948.0f, -132.49f, 83.53f, 3.14159f));
     anduin.read();
     jaina.read();
-    auto a = cast(Player) anduin.session.character, j = cast(Player) jaina.session.character;
-    a.spells ~= duelSpell;
+    auto j = cast(Player) jaina.session.character;
+    if (crossNode)
+    {
+        context.regionOwnerAround = (uint, Position, float) => ushort(1);
+        home.map(0).replicaCreated(context.nodeId, cellKeyAt(j.position.x, j.position.y), j.guid, encodePlayerState(j, 0));
+    }
 
     ByteWriter cast_;
     cast_.put(duelSpell);
     SpellTargets(TargetFlags.unit, j.guid).write(cast_);
     anduin.write(Opcode.CMSG_CAST_SPELL, cast_.data);
+    auto challenger = anduin.session;
+    if (crossNode)
+    {
+        assert(relay.remote !is null && challenger.inWorld is null);
+        challenger = relay.remote;
+        challenger.update(50.msecs);
+        now += 11.seconds;
+        assert(challenger.inWorld.migrationTarget() == 0, "a pending challenge pins the challenger");
+        assert(jaina.session.inWorld.migrationTarget() == 0, "a pending challenge pins the opponent");
+    }
+    auto a = cast(Player) challenger.character;
     assert(opcodesOf(jaina.read()).canFind(Opcode.SMSG_DUEL_REQUESTED), "Jaina is challenged");
     const flag = a.values.get!PLAYER_DUEL_ARBITER;
     assert(flag != 0 && j.values.get!PLAYER_DUEL_ARBITER == flag);
@@ -312,7 +380,7 @@ unittest
     jaina.write(Opcode.CMSG_DUEL_ACCEPTED, accept.data);
     assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_DUEL_COUNTDOWN));
     now += 3.seconds;
-    anduin.session.update(50.msecs);
+    challenger.update(50.msecs);
     assert(a.values.get!PLAYER_DUEL_TEAM == 1 && j.values.get!PLAYER_DUEL_TEAM == 2, "it has begun");
 
     // Now he may attack her; at 3 health her fall ends the duel instead.
@@ -322,7 +390,7 @@ unittest
     foreach (_; 0 .. 40)
     {
         now += 2.seconds;
-        anduin.session.update(2000.msecs);
+        challenger.update(2000.msecs);
         jaina.session.update(50.msecs);
         if (a.values.get!PLAYER_DUEL_TEAM == 0)
             break;
@@ -331,4 +399,13 @@ unittest
     assert(j.values.get!UNIT_FIELD_HEALTH == 1 && j.deathState == DeathState.alive, "she lost, and lives");
     const heard = opcodesOf(jaina.read());
     assert(heard.canFind(Opcode.SMSG_DUEL_WINNER) && heard.canFind(Opcode.SMSG_DUEL_COMPLETE));
+    if (crossNode)
+    {
+        auto regionOwner = context.regionOwnerAround;
+        context.regionOwnerAround = null; // keep the test on this node while the combat flag wears off
+        now += 10.seconds;
+        challenger.update(50.msecs);
+        context.regionOwnerAround = regionOwner;
+        assert(challenger.inWorld.migrationTarget() == 1, "normal placement resumes after the duel");
+    }
 }

@@ -410,6 +410,9 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
 * **The who list** shows the node's own players and those presence reports, through the same filters
   (team, account level, level range, class, race, zones, name, guild and zone-name parts) and caps.
 * **Chat channels** and **battleground queues** are cluster services (docs/SERVICES.md).
+* **Duels** can be requested against a nearby player simulated on another node. The challenger
+  moves to the opponent's node and the cast is checked there again. Both stay on that node while
+  the challenge is pending or the duel is active. A forced move, such as a drain, ends the duel.
 * **Groups** are changed in one place, the coordinator's `Groups`, loaded from and saved to `groups`
   and `group_member`. What changes a group (invitations, accepting and declining, kicks, the leader,
   leaving and disbanding, loot settings, icons, raids, sub-groups, assistants, logging out) is a
@@ -560,8 +563,7 @@ services line (`ServiceHost.describe`). Every log line of the cluster code start
 
 ## Not yet
 
-* Trades and duels between players on two nodes. When written, the player who asks will move to the
-  other's node first, through the same migration, and stay until it ends.
+* Trades between players on two nodes.
 * A creature answering a call for help from another node's creature; loot rights counting members on
   other nodes; a player's spells at another node's player.
 * Surviving an owner's loss without disconnecting the client: the home could take its player back
