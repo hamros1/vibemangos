@@ -160,7 +160,7 @@ The cluster messages include:
 | Sessions | `SessionClaim`, `SessionGrant`, `SessionEvict`, `SessionReleased` |
 | Replication | `InterestUpdate`, `ReplicaCreate`, `ReplicaValues`, `ReplicaMove`, `ReplicaRemove`, `InRange` |
 | Players | `PlayerMessage` (to the owner, to the home, arrival, departure, a move to a third node), `Presence`, `DeliverTo`, `Whisper` |
-| Gameplay across nodes | `StockRequest`, `StockReply`, `StockRelease`, `GroupCommand`, `GroupState`, `MemberStatsRequest`, `ToEveryone`, `GmRemote`, `KillShare`, `GroupLootRoll`, `LootCoinShare`, `QuestLootCheck`, `PartyHeal`, `AreaDamage`, `CreatureSwing`, `ScriptSignal`, `DungeonEntryRequest`, `DungeonEntryReply`, `FriendStatusChange`, `GuildReload`, `GuildBroadcast`, `GuildInvitation` |
+| Gameplay across nodes | `StockRequest`, `StockReply`, `StockRelease`, `GroupCommand`, `GroupState`, `MemberStatsRequest`, `ToEveryone`, `GmRemote`, `KillShare`, `GroupLootRoll`, `LootCoinShare`, `QuestLootCheck`, `PartyHeal`, `AreaDamage`, `CreatureSwing`, `PeriodicResult`, `ScriptSignal`, `DungeonEntryRequest`, `DungeonEntryReply`, `FriendStatusChange`, `GuildReload`, `GuildBroadcast`, `GuildInvitation` |
 | Services | `ServiceCall`, `ServiceReply` (docs/SERVICES.md) |
 
 On the world server's side, `ClusterBridge` implements the handlers `ClusterNode` calls, and
@@ -461,14 +461,23 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   hands off. Creature ticks keep the caster's threat and tap, and a lethal tick settles loot on
   the creature's node. Solo kill and quest credit, or honor for a PvP kill, go to the node
   simulating the caster. Group rewards still use their existing proximity checks.
+  A resolved health or mana leech that persists independently of a channel sends the amount
+  drained to the caster's current node. A damaging tick also lets the caster run periodic procs
+  when it can still observe the victim.
 * **Creature melee.** An NPC keeps threat on a player it can still see after the player's
   handoff. The fight keeps nearby replicas available even when the last local player leaves.
   The creature's node selects its target, chases it and runs the weapon timer. The
   player's node verifies the source replica and the target's current eligibility, reach and
   facing. It rolls the attack table, applies armor and absorbs, and reports each swing once.
+  Damage shields such as Thorns strike the creature on its node using the same swing reply.
+* **Creature casts.** An NPC can cast single-target magical damage and hostile aura spells
+  on a player across the boundary. The creature holds the cast timer, mana and spell-list
+  cooldown. The player's node rechecks eligibility, range and line of sight at completion.
+  Cast damage or a debuff is applied once, and an interrupt before completion cancels the cast.
 * **Spell procs.** A hostile hit can trigger auras on both actors. Self effects run with the
-  actor, and supported direct damage, healing and single-effect aura procs reach a named target
-  on its node. A remote proc effect does not start a second cross-node proc chain.
+  actor, and supported direct damage, healing and aura procs reach a named target on its node.
+  Aura effects with the same explicit target share one application. A remote proc effect does
+  not start a second cross-node proc chain.
 * **Trades** between nearby players move the requester to the other player's node, where the usual
   trade checks and exchange run. Both stay there until the trade ends. A forced move cancels any
   open trade before the player leaves.
@@ -655,13 +664,19 @@ services line (`ServiceHost.describe`). Every log line of the cluster code start
 
 ## Not yet
 
-* Regular creature AI spell attacks across nodes, including spells that replace a melee swing.
-  Player-controlled creature melee and damage shield retaliation still require a local target.
-* Proc spells with projectiles, channels or multiple targeted effects across nodes. Caster-side
-  periodic procs and leech effects still need the caster on the target's map.
-* Surviving an owner's loss without disconnecting the client: the home could take its player back
-  from the last save, which is worth having only with gateways and much more frequent player saves.
-* More than one standby, and a quorum of coordinators.
+* Creature spells with broader target shapes or effects, including spells that replace a melee
+  swing. Player-controlled creature melee and block-triggered damage such as Holy Shield.
+* Proc spells with projectiles, channels or mixed targeted effects across nodes, channelled
+  leeches, and additional victim-side periodic effects.
+* Gateway session recovery. A gateway needs an authoritative record of the current simulation
+  owner and confirmation that the former owner can no longer write. The replacement can then
+  load a durable checkpoint and resynchronize the live client. Tests need to cover an owner
+  crash as well as a gateway-to-owner link failure while the owner remains connected to the
+  coordinator.
+* Multiple standby coordinators with quorum. An election must keep its votes and terms across
+  restarts and fence the former coordinator before another can renew worker leases or grant
+  ownership. A partition test needs to show that only one side can grant regions and that
+  isolated nodes stop when their leases expire.
 
 ## Testing
 

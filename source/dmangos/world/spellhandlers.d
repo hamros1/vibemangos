@@ -2296,7 +2296,7 @@ private:
     {
         import dmangos.world.caster : Caster;
         import dmangos.world.spellauras : auraCast;
-        import dmangos.world.spelldamage : isTargetedProcEffect, rollHealing;
+        import dmangos.world.spelldamage : isTargetedProcEffect, remoteTargetAuraEffects, rollHealing;
 
         if (context.sendAreaDamage is null || target.owner == context.nodeId)
             return;
@@ -2325,14 +2325,18 @@ private:
             auto me = Caster.of(this);
             if (effect == SpellEffect.applyAura)
             {
-                const aura = auraCast(me, spell, cast(ubyte)(1 << i));
+                const mask = remoteTargetAuraEffects(*spell, i);
+                const aura = auraCast(me, spell, mask);
                 hit.auraMs = aura.ms;
-                hit.auraValue = aura.values[i];
+                hit.auraValues = aura.values;
                 const school = spell.casting.school;
-                if (spell.casting.applyAuraName[i] == AuraType.periodicDamage && school < 7)
+                foreach (j, type; spell.casting.applyAuraName)
+                    if ((mask & (1 << j)) && (type == AuraType.periodicDamage || type == AuraType.periodicLeech)
+                        && school < 7)
                 {
                     hit.threatFactor = player.damageMods.threat[school] * spellMod(SpellModOp.threat, spell, 1.0f);
                     hit.resistanceModifier = player.auras.totalByMiscMask(AuraType.modTargetResistance, 1 << school);
+                    break;
                 }
             }
             else

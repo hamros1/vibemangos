@@ -303,7 +303,7 @@ private:
      * A melee swing of `attacker`'s hit this player: each damage shield (Thorns) hurts the attacker by its
      * amount, in its spell's school (`SMSG_SPELLDAMAGESHIELD`).
      */
-    package void damageShields(UnitRef attacker)
+    package void damageShields(UnitRef attacker, scope void delegate(uint damage, uint school) reply = null)
     {
         import dmangos.bytes : ByteWriter;
         import dmangos.world.unit : Blow, dealDamage;
@@ -319,6 +319,11 @@ private:
         {
             if (!attacker.alive)
                 return;
+            if (reply !is null)
+            {
+                reply(hit[0], hit[1]);
+                continue;
+            }
             ByteWriter w;
             w.put(player.guid);
             w.put(attacker.combatGuid);
@@ -977,7 +982,11 @@ private:
                         return aura.type(i) == AuraType.periodicLeech ? caster.leechTick(unit, aura, i, amount)
                             : caster.manaLeechTick(unit, aura, i, amount);
             if (aura.type(i) == AuraType.periodicManaLeech)
+            {
+                if (aura.caster && aura.caster != player.guid && aura.caster <= uint.max)
+                    return imported!"dmangos.world.spellauras".remoteManaLeechTick(context, unit, aura, i);
                 return creatureManaLeechTick(aura, i, amount);
+            }
             goto case AuraType.periodicDamage; // a creature's: damage over time
         case AuraType.periodicDamage:
         {
@@ -987,15 +996,17 @@ private:
             uint damage = amount;
             if (aura.spell.casting.school == 0)
                 damage = cast(uint) armorReducedDamage(aura.casterLevel, player.fighter.armor, damage);
+            auto attacker = map.unit(aura.caster);
+            if (aura.type(i) == AuraType.periodicLeech && !attacker && aura.caster && aura.caster <= uint.max)
+                return imported!"dmangos.world.spellauras".remoteLeechTick(context, unit, aura, i, damage);
             const absorbed = absorbIncoming(aura.spell.casting.school, damage);
             import dmangos.world.unit : Blow, dealDamage;
 
             if (aura.type(i) != AuraType.periodicLeech)
             {
                 periodicLog(player.guid, aura, i, damage, 0, absorbed);
-                auto attacker = map.unit(aura.caster);
                 if (!attacker && aura.caster && aura.caster <= uint.max)
-                    return context.dealRemotePeriodicDamage(unit, aura, damage);
+                    return context.dealRemotePeriodicDamage(unit, aura, damage, i);
                 return dealDamage(attacker, unit, damage, Blow.periodic());
             }
             // A creature's drain: the periodic damage log (as CMaNGOS's leech sends), and its health back.
@@ -1005,7 +1016,7 @@ private:
             tellAround(player.guid, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(player.guid, aura.caster,
                 aura.spell.id, damage, school, absorbed, 0, true, 0, false));
             const dealt = damage < v.get!UNIT_FIELD_HEALTH ? damage : v.get!UNIT_FIELD_HEALTH;
-            dealDamage(map.unit(aura.caster), unit, damage, Blow.periodic(school));
+            dealDamage(attacker, unit, damage, Blow.periodic(school));
             if (auto drainer = cast(Creature) map.findObject(aura.caster))
                 if (drainer.alive)
                 {

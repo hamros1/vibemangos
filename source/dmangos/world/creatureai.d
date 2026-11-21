@@ -1458,8 +1458,8 @@ private:
             const nonTank = id == 101 || id == 108 || id == 110 || id == 120;
             ulong[] players;
             foreach (guid, _; threat)
-                if (auto who = world.unit(guid))
-                    if (who.kind == imported!"dmangos.world.unit".UnitKind.player && who.alive && (!nonTank || guid != victim))
+                if (auto who = combatTarget(world, guid))
+                    if ((who.kind == UnitKind.player || who.replica !is null) && who.alive && (!nonTank || guid != victim))
                         players ~= guid;
             if (players.length == 0)
                 return nonTank ? victim : 0;

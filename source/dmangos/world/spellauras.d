@@ -101,7 +101,7 @@ void applyAura(ref Caster caster, const(SpellInfo)* spell, size_t i, UnitRef tar
         if (effects)
             aura.effects &= effects;
         const school = spell.casting.school;
-        if (p !is null && school < 7 && aura.has(AuraType.periodicDamage))
+        if (p !is null && school < 7 && (aura.has(AuraType.periodicDamage) || aura.has(AuraType.periodicLeech)))
         {
             aura.periodicThreat = p.player.damageMods.threat[school] * caster.spellMod(SpellModOp.threat, spell, 1.0f);
             aura.periodicResistanceMod = caster.auras.totalByMiscMask(AuraType.modTargetResistance, 1 << school);
@@ -272,6 +272,10 @@ package void remotePeriodicCreatureTick(imported!"dmangos.world.context".WorldCo
     import dmangos.script.api : AuraTicked, EntityRef, SpellContext;
     import dmangos.world.opcodes : Opcode;
 
+    if (!context.canWrite())
+        return;
+    if (aura.type(i) == AuraType.periodicManaLeech)
+        return remoteManaLeechTick(context, victim, aura, i);
     int amount = aura.amount[i];
     if (aura.period[i] > 0 && aura.maxDuration > 0)
         if (auto handle = context.spellScript(aura.spell.id))
@@ -287,9 +291,78 @@ package void remotePeriodicCreatureTick(imported!"dmangos.world.context".WorldCo
     const school = aura.spell.casting.school;
     const damage = creaturePeriodicDamage(victim, aura.spell, aura.casterLevel, cast(uint) max(0, amount),
         max(0, victim.resistance(school) + aura.periodicResistanceMod));
+    if (aura.type(i) == AuraType.periodicLeech)
+        return remoteLeechTick(context, victim, aura, i, damage);
     victim.map.sendToObservers(victim.combatGuid, Opcode.SMSG_PERIODICAURALOG,
         periodicLogPacket(victim.combatGuid, aura, i, damage, school));
-    context.dealRemotePeriodicDamage(victim, aura, damage);
+    context.dealRemotePeriodicDamage(victim, aura, damage, i);
+}
+
+package void remoteLeechTick(imported!"dmangos.world.context".WorldContext context, UnitRef victim, Aura aura,
+    size_t i, uint damage)
+{
+    import std.algorithm.comparison : min;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.spellcast : nonMeleeDamageLog;
+
+    enum channels = 0x04 | 0x40;
+    if ((aura.spell.attributesEx & channels) || !victim.alive || !context.canWrite())
+        return;
+    const school = aura.spell.casting.school;
+    const absorbed = victim.absorb(school, damage);
+    const log = nonMeleeDamageLog(victim.combatGuid, aura.caster, aura.spell.id, damage, school, absorbed, 0,
+        true, 0, false);
+    if (victim.kind == UnitKind.player)
+        victim.session.tellAround(victim.combatGuid, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, log);
+    else
+        victim.map.sendToObservers(victim.combatGuid, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, log);
+    context.dealRemotePeriodicDamage(victim, aura, damage, i, min(damage, victim.health));
+}
+
+package void remoteManaLeechTick(imported!"dmangos.world.context".WorldContext context, UnitRef victim, Aura aura,
+    size_t i)
+{
+    import std.algorithm.comparison : min;
+    import dmangos.world.character : Character;
+    import dmangos.world.defines : Power;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.replication : Replica;
+    import dmangos.world.spelldamage : changeUnitPower, unitPower;
+    import dmangos.world.updatefields : UNIT_FIELD_HEALTH;
+
+    enum channels = 0x04 | 0x40;
+    const kind = aura.misc(i);
+    if ((aura.spell.attributesEx & channels) || !context.canWrite() || aura.amount[i] <= 0
+        || kind < 0 || kind > Power.happiness)
+        return;
+    if (auto caster = cast(Character) context.onlinePlayer(aura.caster))
+    {
+        if (caster.player is null || !caster.player.alive)
+            return;
+    }
+    else if (!context.remoteKillRecipient(aura.caster, victim.map).node)
+        return;
+    if (auto copy = cast(Replica) victim.map.findObject(aura.caster))
+        if (!copy.fieldsOf.get!UNIT_FIELD_HEALTH)
+            return;
+    uint available;
+    const power = cast(Power) kind;
+    if (!unitPower(victim, power, available))
+        return;
+    const drained = min(cast(uint) aura.amount[i], available);
+    Caster absent;
+    changeUnitPower(absent, victim, power, -cast(int) drained);
+    const factor = aura.spell.casting.multipleValue[i];
+    const log = periodicLogPacket(victim.combatGuid, aura, i, drained, power, 0, factor);
+    if (victim.kind == UnitKind.player)
+        victim.session.tellAround(victim.combatGuid, Opcode.SMSG_PERIODICAURALOG, log);
+    else
+    {
+        victim.map.sendToObservers(victim.combatGuid, Opcode.SMSG_PERIODICAURALOG, log);
+        if (victim.creature.ai !is null && drained && factor > 0)
+            victim.creature.ai.addRemoteThreat(aura.caster, drained * factor * 0.5f);
+    }
+    context.reportPeriodicResult(victim, aura, i, 0, drained);
 }
 
 private uint creaturePeriodicDamage(UnitRef victim, const(SpellInfo)* spell, uint level, uint amount, int resistance)

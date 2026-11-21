@@ -190,8 +190,7 @@ bool isTargetedProcEffect(const ref SpellInfo spell, size_t i)
     import std.algorithm.searching : count;
 
     enum uint channels = 0x04 | 0x40;
-    if (i >= spell.effect.length || spell.effect[].count(SpellEffect.none) != spell.effect.length - 1
-        || spell.casting.speed > 0 || (spell.attributesEx & channels)
+    if (i >= spell.effect.length || spell.casting.speed > 0 || (spell.attributesEx & channels)
         || spell.casting.implicitTargetB[i] != ImplicitTarget.none || spell.casting.chainTarget[i] > 1)
         return false;
     const target = spell.implicitTargetA[i];
@@ -201,10 +200,49 @@ bool isTargetedProcEffect(const ref SpellInfo spell, size_t i)
     const effect = spell.effect[i];
     if (effect == SpellEffect.applyAura)
     {
-        const aura = spell.casting.applyAuraName[i];
-        return aura != AuraType.modPossess && aura != AuraType.modPossessPet && aura != AuraType.modCharm;
+        const mask = remoteTargetAuraEffects(spell, i);
+        return mask && (mask & ((1 << i) - 1)) == 0;
     }
-    return effect == SpellEffect.heal || isDirectMagicDamageEffect(spell, i);
+    return spell.effect[].count(SpellEffect.none) == spell.effect.length - 1
+        && (effect == SpellEffect.heal || isDirectMagicDamageEffect(spell, i));
+}
+
+/// Aura effects sharing a single explicit target and therefore one duration, slot and application.
+ubyte remoteTargetAuraEffects(const ref SpellInfo spell, size_t first)
+{
+    const target = spell.implicitTargetA[first];
+    ubyte mask;
+    foreach (i, effect; spell.effect)
+    {
+        if (effect == SpellEffect.none)
+            continue;
+        const aura = spell.casting.applyAuraName[i];
+        if (effect != SpellEffect.applyAura || spell.implicitTargetA[i] != target
+            || spell.casting.implicitTargetB[i] != ImplicitTarget.none || spell.casting.chainTarget[i] > 1
+            || aura == AuraType.modPossess || aura == AuraType.modPossessPet || aura == AuraType.modCharm)
+            return 0;
+        mask |= cast(ubyte)(1 << i);
+    }
+    return mask;
+}
+
+/// The hostile effect of a regular remote creature cast.
+bool isCreatureTargetEffect(const ref SpellInfo spell, size_t i)
+{
+    return isTargetedProcEffect(spell, i) && (spell.implicitTargetA[i] == ImplicitTarget.enemy
+        || spell.effect[i] == SpellEffect.schoolDamage) && spell.effect[i] != SpellEffect.heal;
+}
+
+/// Creature spell range includes both units' combat reaches at its outer edge.
+bool creatureTargetInRange(const(SpellInfo)* spell, const imported!"dmangos.world.combat".Fighter caster,
+    const imported!"dmangos.world.combat".Fighter target, const imported!"dmangos.world.clientdata".ClientData client)
+{
+    import dmangos.world.spellcast : range;
+
+    const r = range(*spell, client);
+    const a = caster.position, b = target.position;
+    const distanceSquared = (a.x - b.x) ^^ 2 + (a.y - b.y) ^^ 2 + (a.z - b.z) ^^ 2;
+    return distanceSquared >= r[0] ^^ 2 && distanceSquared <= (r[1] + caster.combatReach + target.combatReach) ^^ 2;
 }
 
 /// Resolve a remote hit using the recipient's current combat stats and auras.
@@ -407,7 +445,7 @@ private void flushUnit(ref Caster caster, UnitRef unit)
     case UnitKind.player:
         return unit.session.flushPlayerChanges();
     case UnitKind.creature:
-        return caster.map.flushCreature(unit.creature);
+        return unit.map.flushCreature(unit.creature);
     }
 }
 

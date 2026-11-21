@@ -48,6 +48,7 @@ mixin template CreatureCasting()
         const(SpellInfo)* casting_;    // the spell being cast
         ulong castTarget;
         int castTimer;                 // until it goes off
+        bool castAuraMustBeAbsent;
         const(SpellInfo)* nextSwing;   // a spell on its next swing
         bool combatMovement_ = true;   // it chases its victim
         bool rangedModeSet;            // its script keeps it at a distance to cast
@@ -152,6 +153,7 @@ mixin template CreatureCasting()
     bool castSpell(const(SpellInfo)* spell, ulong target, uint flags)
     {
         import dmangos.world.spellcast : SpellCastResult;
+        import dmangos.world.spelldamage : creatureTargetInRange, isCreatureTargetEffect;
 
         // Why it could not, for a pet's owner (`castRefusal`).
         bool refuse(SpellCastResult why)
@@ -179,14 +181,23 @@ mixin template CreatureCasting()
             return refuse(SpellCastResult.badTargets);
         if (target == 0)
             target = victim ? victim : me.guid;
+        auto other = combatTarget(world_, target);
         if (target != me.guid)
         {
-            if (auto other = world_.unit(target))
+            if (other)
             {
                 if (!other.alive)
                     return refuse(SpellCastResult.targetsDead);
                 if ((flags & castAuraNotPresent) && other.hasAuraOf(spell.id))
                     return refuse(SpellCastResult.dontReport);
+                if (other.replica !is null)
+                {
+                    import std.algorithm.searching : any;
+                    import std.range : iota;
+
+                    if (!iota(spell.effect.length).any!(i => isCreatureTargetEffect(*spell, i)))
+                        return refuse(SpellCastResult.badTargets);
+                }
             }
             else if (auto friend = world_.creatureAt(target))
             {
@@ -203,7 +214,10 @@ mixin template CreatureCasting()
             return refuse(SpellCastResult.dontReport);
         if (!(flags & (castForceCast | castForceTargetSelf)) && !triggered)
         {
-            if (!inRangeFor(spell, target))
+            if (other.replica !is null
+                ? !creatureTargetInRange(spell, me.fighter, other.fighter, lore.clientData)
+                    || !world_.inLineOfSight(me.position, other.position)
+                : !inRangeFor(spell, target))
                 return refuse(SpellCastResult.outOfRange);
             if (paysMana(spell) && manaCost(spell) > me.values.get!UNIT_FIELD_POWER1)
             {
@@ -231,12 +245,13 @@ mixin template CreatureCasting()
             }
         if (time <= 0)
         {
-            go(spell, target, !triggered);
+            go(spell, target, !triggered, (flags & castAuraNotPresent) != 0);
             return true;
         }
         casting_ = spell;
         castTarget = target;
         castTimer = time;
+        castAuraMustBeAbsent = (flags & castAuraNotPresent) != 0;
         if (!me.spline.finalized)
             stopMoving(me, world_);
         auto targets = targetsOf(target);
@@ -266,7 +281,7 @@ mixin template CreatureCasting()
             return;
         if (castTarget != me.guid)
         {
-            auto other = world_.unit(castTarget);
+            auto other = combatTarget(world_, castTarget);
             auto friend = !other ? world_.creatureAt(castTarget) : null;
             if ((!other || !other.alive) && (friend is null || !friend.alive))
                 return interruptCast();
@@ -276,7 +291,7 @@ mixin template CreatureCasting()
             return;
         auto spell = casting_;
         casting_ = null;
-        go(spell, castTarget, true);
+        go(spell, castTarget, true, castAuraMustBeAbsent);
     }
 
     private int[7] schoolLockMs; /// each school's lockout left (an interrupt's), in milliseconds
@@ -498,13 +513,35 @@ mixin template CreatureCasting()
      * The spell goes off (`SMSG_SPELL_GO` with who it hit and missed) and its effects
      * happen to each target; its mana is spent.
      */
-    private void go(const(SpellInfo)* spell, ulong target, bool takeMana)
+    private void go(const(SpellInfo)* spell, ulong target, bool takeMana, bool auraAbsent = false)
     {
-        if (takeMana && paysMana(spell))
+        import dmangos.world.context : WorldContext;
+        import dmangos.world.spellcast : spellFailurePacket, SpellCastResult;
+        import dmangos.world.spelldamage : creatureTargetInRange;
+
+        void spendMana()
         {
-            const cost = manaCost(spell), mana = me.values.get!UNIT_FIELD_POWER1;
-            me.values.set!UNIT_FIELD_POWER1(cost >= mana ? 0 : mana - cost);
+            if (takeMana && paysMana(spell))
+            {
+                const cost = manaCost(spell), mana = me.values.get!UNIT_FIELD_POWER1;
+                me.values.set!UNIT_FIELD_POWER1(cost >= mana ? 0 : mana - cost);
+            }
         }
+        if (auto other = combatTarget(world_, target))
+            if (other.replica !is null)
+            {
+                auto context = cast(WorldContext) lore;
+                if (context !is null && context.canWrite()
+                    && creatureTargetInRange(spell, me.fighter, other.fighter, lore.clientData)
+                    && world_.inLineOfSight(me.position, other.position)
+                    && sendCreatureTargetSpell(context, spell, other, !takeMana, auraAbsent))
+                    spendMana();
+                else if (takeMana)
+                    world_.sendToObservers(me.guid, Opcode.SMSG_SPELL_FAILURE,
+                        spellFailurePacket(me.guid, spell.id, SpellCastResult.outOfRange));
+                return;
+            }
+        spendMana();
         const level = me.values.get!UNIT_FIELD_LEVEL;
         // Who each effect reaches; a hostile target rolls once to be hit.
         ulong[][3] reached;
@@ -790,9 +827,24 @@ mixin template CreatureCasting()
                 : ProcEx.normalHit, damage, 0, damage != 0));
         if (victim.alive)
             return;
+        spellKilled(victim.combatGuid);
+    }
+
+    package void remoteSpellDamageDealt(const(SpellInfo)* spell, UnitRef victim, bool crit, uint damage, bool killed)
+    {
+        if (inCombat_ && damage)
+            triggerCombatTimer();
+        if (killed)
+            spellKilled(victim.combatGuid);
+        else if (victim.alive)
+            spellDamageDealt(spell, victim, crit, damage);
+    }
+
+    private void spellKilled(ulong guid)
+    {
         if (script !is null)
-            script.killed(this, victim.combatGuid);
-        raiseScript(KilledUnit(EntityRef(victim.combatGuid)));
+            script.killed(this, guid);
+        raiseScript(KilledUnit(EntityRef(guid)));
     }
 
     /// `SPELL_EFFECT_APPLY_AURA` by it at `guid` (`dmangos.world.spellauras.applyAura`).

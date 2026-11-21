@@ -907,7 +907,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             if (auto caster = world.unit(tick.aura.caster)) // (and its caster's rules: Improved Mend Pet)
                 caster.auraTick(this, tick.aura, tick.effect);
             else if (tick.aura.caster && tick.aura.caster <= uint.max
-                && tick.aura.type(tick.effect) == AuraType.periodicDamage)
+                && tick.aura.type(tick.effect).among(AuraType.periodicDamage, AuraType.periodicLeech, AuraType.periodicManaLeech))
             {
                 auto victim = world.unitOf(this);
                 if (victim.map.remotePeriodicTick !is null)

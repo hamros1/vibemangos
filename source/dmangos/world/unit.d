@@ -50,6 +50,7 @@ struct Blow
     bool crit;         /// a spell's crit (Eye for an Eye's)
     ulong remotePlayer; /// a spell's caster, when simulated by another node
     bool remotePlayerPvP;
+    void delegate(uint damage, uint school) shieldHit; /// sends damage shields back to a remote attacker
 
     ///
     static Blow swing(const ref MeleeDamage d)
@@ -180,9 +181,17 @@ struct UnitRef
     /// Whether it has an aura of `spell`.
     bool hasAuraOf(uint spell)
     {
+        import dmangos.world.auras : maxAuras;
+        import dmangos.world.updatefields : UNIT_FIELD_AURA;
+
         final switch (kind)
         {
-        case UnitKind.none: return false;
+        case UnitKind.none:
+            if (replica !is null)
+                foreach (slot; 0 .. maxAuras)
+                    if (replica.fieldsOf.get!UNIT_FIELD_AURA(slot) == spell)
+                        return true;
+            return false;
         case UnitKind.player: return session.hasAuraOf(spell);
         case UnitKind.creature: return creature.auras.find(spell) !is null;
         }

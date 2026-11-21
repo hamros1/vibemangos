@@ -541,13 +541,15 @@ unittest
 /// A caster's handoff leaves periodic damage and its rewards with the original caster.
 unittest
 {
-    import dmangos.cluster.protocol : decode, KillShare, PresenceEntry;
+    import dmangos.cluster.protocol : decode, KillShare, PeriodicResult, PresenceEntry;
     import dmangos.dbc : buildDbc;
     import dmangos.serialization : serialize;
+    import dmangos.world.aurahandlers : ProcFlag;
     import dmangos.world.auras : AuraType, makeAura;
     import dmangos.world.caster : Caster;
     import dmangos.world.clientdata : spellDurationFormat;
     import dmangos.world.fencing : FencedDatabase;
+    import dmangos.world.defines : Power;
     import dmangos.world.inworld : ArrivalAction;
     import dmangos.world.quests : Quest, QuestState, QuestStatus;
     import dmangos.world.replication : encodeState;
@@ -652,6 +654,71 @@ unittest
     assert(!mob.alive && mob.lootRecipient == guid && mob.loot !is null && mob.loot.currentLooter == guid);
     assert(shares.length == 2 && shares[1].victim == mob.guid && shares[1].xp > 0 && !shares[1].forwarded);
     assert(moved.player.questStatus[quest.id].mobCount[0] == 1);
+
+    enum uint leechLife = 91_070, leechMana = 91_071, procAura = 91_072, procBuff = 91_073;
+    foreach (node; [source, destination])
+    {
+        foreach (id, type; [leechLife: AuraType.periodicLeech, leechMana: AuraType.periodicManaLeech])
+        {
+            auto leech = SpellInfo(id);
+            leech.effect[0] = SpellEffect.applyAura;
+            leech.casting.applyAuraName[0] = type;
+            leech.casting.amplitude[0] = period;
+            leech.casting.school = 1;
+            leech.casting.multipleValue[0] = id == leechLife ? 0.5f : 1;
+            leech.miscValue[0] = Power.mana;
+            node.data.spells.spells[id] = leech;
+        }
+    }
+    auto buff = SpellInfo(procBuff);
+    buff.effect[0] = SpellEffect.applyAura;
+    buff.implicitTargetA[0] = ImplicitTarget.caster;
+    buff.casting.applyAuraName[0] = AuraType.modStat;
+    destination.data.spells.spells[procBuff] = buff;
+    auto proc = SpellInfo(procAura);
+    proc.effect[0] = SpellEffect.applyAura;
+    proc.casting.applyAuraName[0] = AuraType.procTriggerSpell;
+    proc.casting.procFlags = ProcFlag.dealHarmfulPeriodic;
+    proc.casting.procChance = 100;
+    proc.casting.procCharges = 2;
+    proc.triggerSpell[0] = procBuff;
+    destination.data.spells.spells[procAura] = proc;
+    auto procEffect = makeAura(destination.data.spells.spell(procAura), guid, 20, -1, true, [0, 0, 0]);
+    moved.addAura(procEffect);
+    moved.player.values.set!UNIT_FIELD_MAXHEALTH(100u);
+    moved.player.values.set!UNIT_FIELD_HEALTH(50u);
+    moved.player.values.set!UNIT_FIELD_MAXPOWER1(Power.mana, 100u);
+    moved.player.values.set!UNIT_FIELD_POWER1(Power.mana, 10u);
+
+    spawn.guid = 91_003;
+    auto drained = source.makeCreature(&spawn);
+    map.addObject(drained);
+    drained.values.set!UNIT_FIELD_HEALTH(60u);
+    drained.values.setByte!UNIT_FIELD_BYTES_0(3, Power.mana);
+    drained.values.set!UNIT_FIELD_POWER1(Power.mana, 6u);
+    destination.map(map.id).replicaCreated(1, cellKeyAt(drained.position.x, drained.position.y), drained.guid,
+        encodeState(drained, 0));
+    bool isNew;
+    drained.receiveAura(makeAura(source.data.spells.spell(leechLife), guid, 20, period, false, [20, 0, 0]), map, isNew);
+    drained.receiveAura(makeAura(source.data.spells.spell(leechMana), guid, 20, period, false, [12, 0, 0]), map, isNew);
+    PeriodicResult[] ticks;
+    source.sendPeriodicResult = (ushort node, const ref PeriodicResult tick) {
+        assert(node == 2);
+        ticks ~= tick;
+    };
+    drained.updateAuras(map, period);
+    assert(drained.values.get!UNIT_FIELD_HEALTH == 40 && drained.values.get!UNIT_FIELD_POWER1(Power.mana) == 0);
+    assert(ticks.length == 2 && ticks[0].drained == 20 && ticks[1].drained == 6);
+    foreach (tick; ticks)
+    {
+        ByteWriter payload;
+        serialize(payload, tick);
+        const decoded = decode!PeriodicResult(payload.data);
+        destination.periodicResultArrived(1, decoded);
+        destination.periodicResultArrived(1, decoded);
+    }
+    assert(moved.player.values.get!UNIT_FIELD_HEALTH == 60 && moved.player.values.get!UNIT_FIELD_POWER1(Power.mana) == 16);
+    assert(procEffect.charges == 1 && moved.hasAuraOf(procBuff));
 }
 
 /// Hate to Zero (`spell_hate_to_zero`), a creature's spell: its target's threat on it is gone.

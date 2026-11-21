@@ -91,14 +91,21 @@ mixin template CreatureProcs()
     private bool sendCreatureProc(imported!"dmangos.world.context".WorldContext context,
         const(SpellInfo)* spell, UnitRef other)
     {
+        return sendCreatureTargetSpell(context, spell, other, true, false);
+    }
+
+    private bool sendCreatureTargetSpell(imported!"dmangos.world.context".WorldContext context,
+        const(SpellInfo)* spell, UnitRef other, bool triggered, bool auraAbsent)
+    {
         import std.algorithm.comparison : max;
         import dmangos.cluster.protocol : AreaDamage;
         import dmangos.world.caster : Caster;
         import dmangos.world.combat : Fighter;
         import dmangos.world.spellauras : auraCast;
         import dmangos.world.spellcast : range;
-        import dmangos.world.spelldamage : isTargetedProcEffect, rollHealing, spellDamageBonus;
-        import dmangos.world.spellids : SpellEffect;
+        import dmangos.world.spelldamage : isCreatureTargetEffect, isTargetedProcEffect, remoteTargetAuraEffects,
+            rollHealing, spellDamageBonus;
+        import dmangos.world.spellids : AuraType, SpellEffect;
         import dmangos.world.spellmods : SpellModOp;
 
         if (context.sendAreaDamage is null)
@@ -107,18 +114,19 @@ mixin template CreatureProcs()
         const at = me.position;
         foreach (i, effect; spell.effect)
         {
-            if (!isTargetedProcEffect(*spell, i))
+            if (triggered ? !isTargetedProcEffect(*spell, i) : !isCreatureTargetEffect(*spell, i))
                 continue;
             const within = range(*spell, context.client)[1];
             auto hit = AreaDamage(sequence: context.nextGameplaySequence(), caster: me.guid, target: other.combatGuid,
                 spell: spell.id, effect: cast(ubyte) i, map: other.map.id, instance: other.map.instanceId,
                 x: at.x, y: at.y, z: at.z, radius: within > 0 ? within : context.config.visibilityDistance,
-                casterLevel: source.level, hitBonus: source.hitBonus(spell), triggered: true);
+                casterLevel: source.level, hitBonus: source.hitBonus(spell), triggered: triggered,
+                creatureCast: !triggered, auraAbsent: auraAbsent);
             if (effect == SpellEffect.applyAura)
             {
-                const aura = auraCast(source, spell, cast(ubyte)(1 << i));
+                const aura = auraCast(source, spell, remoteTargetAuraEffects(*spell, i));
                 hit.auraMs = aura.ms;
-                hit.auraValue = aura.values[i];
+                hit.auraValues = aura.values;
             }
             else if (effect == SpellEffect.heal)
             {
@@ -134,10 +142,9 @@ mixin template CreatureProcs()
                 hit.amount = source.damageFactors(source.spellMod(SpellModOp.damage, spell, value), school, neutral);
                 hit.critChance = source.spellCritChance(spell);
                 hit.critBonusFactor = source.spellMod(SpellModOp.critDamageBonus, spell, 1.0f);
-                hit.resistanceModifier = source.targetResistance(0, school);
+                hit.resistanceModifier = source.auras.totalByMiscMask(AuraType.modTargetResistance, 1 << school);
             }
-            context.sendAreaDamage(other.replica.owner, hit);
-            return true;
+            return context.sendAreaDamage(other.replica.owner, hit);
         }
         return false;
     }

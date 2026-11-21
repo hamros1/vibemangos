@@ -863,22 +863,25 @@ unittest
 unittest
 {
     import std.algorithm.searching : canFind, count;
-    import dmangos.cluster.protocol : CreatureSwing, decode;
+    import dmangos.cluster.protocol : AreaDamage, CreatureSwing, decode;
     import dmangos.dbc : buildDbc;
     import dmangos.serialization : serialize;
     import dmangos.bytes : ByteWriter;
     import dmangos.world.auras : AuraType, makeAura;
-    import dmangos.world.clientdata : factionTemplateFormat;
+    import dmangos.world.clientdata : factionTemplateFormat, spellCastTimesFormat, spellRangeFormat;
     import dmangos.world.combat : armorReducedDamage;
     import dmangos.world.creature : CreatureSpawn;
     import dmangos.world.defines : UnitFlags;
+    import dmangos.world.eventai : castTriggered;
     import dmangos.world.grid : cellKeyAt;
     import dmangos.world.inworld : ArrivalAction;
     import dmangos.world.map : Map;
     import dmangos.world.movement : Position;
     import dmangos.world.opcodes : Opcode;
     import dmangos.world.replication : Replicator;
-    import dmangos.world.spellids : SpellEffect;
+    import dmangos.world.spellcast : spellAttrEx2CantCrit, spellAttrEx3AlwaysHit, SpellMissInfo;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.spellids : ImplicitTarget, SpellEffect;
     import dmangos.world.spells : SpellInfo;
     import dmangos.world.testclient;
     import dmangos.world.testdata;
@@ -917,12 +920,12 @@ unittest
     CreatureSwing[] requests, replies;
     source.sendCreatureSwing = (ushort peer, const ref CreatureSwing swing) {
         assert(peer == 2 && !swing.reply);
-        requests ~= swing;
+        requests ~= cast(CreatureSwing) swing;
         return true;
     };
     owner.sendCreatureSwing = (ushort peer, const ref CreatureSwing swing) {
         assert(peer == 1 && swing.reply);
-        replies ~= swing;
+        replies ~= cast(CreatureSwing) swing;
         return true;
     };
 
@@ -953,6 +956,8 @@ unittest
     creature.values.set!UNIT_FIELD_MINDAMAGE(20f);
     creature.values.set!UNIT_FIELD_MAXDAMAGE(20f);
     creature.values.set!UNIT_FIELD_BASEATTACKTIME(2000u);
+    creature.values.set!UNIT_FIELD_MAXHEALTH(120u);
+    creature.values.set!UNIT_FIELD_HEALTH(120u);
     creature.ai.attackedBy(previous.unit, from);
     creature.ai.damageTaken(previous.unit, 42);
     assert(creature.ai.currentVictim == playerGuid && creature.ai.threatOf(playerGuid) == 42);
@@ -975,8 +980,9 @@ unittest
     from.peerInterest(2, added, removed);
     assert(to.isReplica(creature.guid));
 
-    enum hitChance = 91_060, shield = 91_061;
-    foreach (id, type; [hitChance: AuraType.modAttackerMeleeHitChance, shield: AuraType.schoolAbsorb])
+    enum hitChance = 91_060, shield = 91_061, thorns = 91_063;
+    foreach (id, type; [hitChance: AuraType.modAttackerMeleeHitChance, shield: AuraType.schoolAbsorb,
+        thorns: AuraType.damageShield])
     {
         auto spell = SpellInfo(id);
         spell.effect[0] = SpellEffect.applyAura;
@@ -986,6 +992,7 @@ unittest
     }
     victim.addAura(makeAura(hitChance in owner.data.spells.spells, playerGuid, 20, -1, true, [100, 0, 0]));
     victim.addAura(makeAura(shield in owner.data.spells.spells, playerGuid, 20, -1, true, [7, 0, 0]));
+    victim.addAura(makeAura(thorns in owner.data.spells.spells, playerGuid, 20, -1, true, [9, 0, 0]));
     victim.player.values.set!UNIT_FIELD_MAXHEALTH(100u);
     victim.player.values.set!UNIT_FIELD_HEALTH(100u);
     victim.player.stats.resistances[0] = 1000;
@@ -1010,11 +1017,12 @@ unittest
     owner.creatureSwingArrived(1, first);
     owner.creatureSwingArrived(1, first);
     assert(victim.player.values.get!UNIT_FIELD_HEALTH == afterFirst && victim.inCombat && !victim.hasAuraOf(shield));
-    assert(replies.length == 1 && replies[0].damage == damage - 7);
+    assert(replies.length == 1 && replies[0].damage == damage - 7 && replies[0].shieldHits.length == 1);
     assert(opcodesOf(client.read()).count(Opcode.SMSG_ATTACKERSTATEUPDATE) == 1);
     const confirmation = throughWire(replies[0]);
     source.creatureSwingArrived(2, confirmation);
     source.creatureSwingArrived(2, confirmation);
+    assert(creature.values.get!UNIT_FIELD_HEALTH == 111, "Thorns struck the authoritative creature once");
 
     creature.ai.update(from, 50);
     assert(requests.length == 1, "the creature still sets the weapon timer");
@@ -1032,6 +1040,89 @@ unittest
     victim.player.values.setByte!UNIT_FIELD_BYTES_1(0, 1);
     owner.creatureSwingArrived(1, requests[2]);
     assert(victim.player.values.get!UNIT_FIELD_HEALTH == afterFirst - damage && replies.length == 2);
+
+    enum smite = 91_062, curse = 91_064, castMs = 1500, cost = 12, damagePerCast = 15;
+    const float rangeMax = 20;
+    uint[spellRangeFormat.length] rangeRow;
+    rangeRow[0] = 1;
+    rangeRow[2] = *cast(const uint*) &rangeMax;
+    foreach (node; [source, owner])
+    {
+        node.client.spellCastTimes = typeof(node.client.spellCastTimes).parse(buildDbc(spellCastTimesFormat,
+            [[1u, castMs, 0, castMs]]), "SpellCastTimes.dbc");
+        node.client.spellRanges = typeof(node.client.spellRanges).parse(buildDbc(spellRangeFormat, [rangeRow[]]),
+            "SpellRange.dbc");
+        auto spell = testSpell(smite, SpellEffect.schoolDamage, ImplicitTarget.enemy, damagePerCast, 1);
+        spell.casting.school = 1;
+        spell.casting.manaCost = cost;
+        spell.attributesEx2 |= spellAttrEx2CantCrit;
+        spell.casting.attributesEx3 |= spellAttrEx3AlwaysHit;
+        node.data.spells.spells[smite] = spell;
+        auto debuff = testSpell(curse, SpellEffect.applyAura, ImplicitTarget.enemy, 4);
+        debuff.casting.applyAuraName[0] = AuraType.modStat;
+        debuff.effect[1] = SpellEffect.applyAura;
+        debuff.implicitTargetA[1] = ImplicitTarget.enemy;
+        debuff.casting.applyAuraName[1] = AuraType.modDamageTaken;
+        debuff.basePoints[1] = 8;
+        debuff.baseDice[1] = 1;
+        debuff.casting.stackAmount = 2;
+        debuff.casting.school = 1;
+        debuff.casting.attributesEx3 |= spellAttrEx3AlwaysHit;
+        node.data.spells.spells[curse] = debuff;
+    }
+    AreaDamage[] casts, castReplies;
+    source.sendAreaDamage = (ushort peer, const ref AreaDamage hit) {
+        assert(peer == 2 && hit.creatureCast != hit.triggered && !hit.reply);
+        casts ~= cast(AreaDamage) hit;
+        return true;
+    };
+    owner.sendAreaDamage = (ushort peer, const ref AreaDamage hit) {
+        assert(peer == 1 && hit.creatureCast && hit.reply);
+        castReplies ~= cast(AreaDamage) hit;
+        return true;
+    };
+    creature.values.set!UNIT_FIELD_MAXPOWER1(80u);
+    creature.values.set!UNIT_FIELD_POWER1(80u);
+    const health = victim.player.values.get!UNIT_FIELD_HEALTH;
+    const spell = source.data.spells.spell(smite);
+
+    assert(creature.ai.castSpell(spell, playerGuid, 0) && creature.ai.castingNow);
+    creature.ai.update(from, castMs - 1);
+    assert(casts.length == 0 && creature.values.get!UNIT_FIELD_POWER1 == 80);
+    creature.ai.crowdControlBegan(false);
+    creature.ai.update(from, 1);
+    assert(!creature.ai.castingNow && casts.length == 0 && creature.values.get!UNIT_FIELD_POWER1 == 80);
+
+    assert(creature.ai.castSpell(spell, playerGuid, 0));
+    creature.ai.update(from, castMs);
+    assert(casts.length == 1 && creature.values.get!UNIT_FIELD_POWER1 == 80 - cost);
+    owner.areaDamageArrived(1, casts[0]);
+    owner.areaDamageArrived(1, casts[0]);
+    assert(castReplies.length == 1 && castReplies[0].damage == damagePerCast);
+    assert(victim.player.values.get!UNIT_FIELD_HEALTH == health - damagePerCast);
+    client.read();
+    source.areaDamageArrived(2, castReplies[0]);
+    source.areaDamageArrived(2, castReplies[0]);
+    assert(opcodesOf(client.read()).count(Opcode.SMSG_SPELL_GO) == 1);
+
+    assert(creature.ai.castSpell(spell, playerGuid, 0));
+    creature.ai.update(from, castMs);
+    assert(casts.length == 2);
+    victim.player.movement.position.x += 30;
+    owner.areaDamageArrived(1, casts[1]);
+    victim.player.movement.position = near;
+    owner.areaDamageArrived(1, casts[1]);
+    assert(castReplies.length == 2 && castReplies[1].miss == SpellMissInfo.evade);
+    assert(victim.player.values.get!UNIT_FIELD_HEALTH == health - damagePerCast);
+
+    assert(creature.ai.castSpell(source.data.spells.spell(curse), playerGuid, castTriggered));
+    assert(casts.length == 3 && casts[2].triggered);
+    owner.areaDamageArrived(1, casts[2]);
+    owner.areaDamageArrived(1, casts[2]);
+    const applied = victim.player.auras.find(curse);
+    assert(applied !is null && applied.effects == 3 && applied.stacks == 1);
+    assert(applied.amount[0] == 4 && applied.amount[1] == 9);
+
     victim.player.values.set!UNIT_FIELD_FLAGS(victim.player.values.get!UNIT_FIELD_FLAGS | UnitFlags.taxiFlight);
     victim.flushPlayerChanges();
     creature.ai.update(from, 50);

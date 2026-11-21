@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 49; // 49: cross-node creature melee; 48: periodic PvP kill credit
+enum ushort protocolVersion = 50; // 50: cross-node creature casts; 49: cross-node creature melee
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -92,6 +92,21 @@ enum MessageType : ushort
     partyHeal = 53,
     areaDamage = 54,
     creatureSwing = 55,
+    periodicResult = 56,
+}
+
+/// The target's node reports a resolved tick to the caster's node.
+struct PeriodicResult
+{
+    enum type = MessageType.periodicResult;
+
+    ulong sequence, caster, target;
+    uint map, instance, spell;
+    ubyte effect;
+    uint damage; /// resolved damage before capping it by health
+    uint drained; /// actual health or power taken by a leech
+    bool targetAlive;
+    bool forwarded;
 }
 
 /// A creature's main-hand swing against a player on another node.
@@ -111,6 +126,13 @@ struct CreatureSwing
     ubyte outcome;
     uint damage;
     bool killed;
+    @LengthPrefix!ubyte SwingShieldHit[] shieldHits;
+}
+
+/// A damage shield on the player that struck back at the creature.
+struct SwingShieldHit
+{
+    uint damage, school;
 }
 
 /// One target's share of a hostile area or chain cast, with the caster's spell modifiers.
@@ -134,9 +156,11 @@ struct AreaDamage
     int resistanceModifier;
     bool alwaysHits;
     bool triggered; /// a targeted proc instead of an area or chain hit
+    bool creatureCast; /// a regular cast aimed at a player by a creature on another node
+    bool auraAbsent; /// the caster asked to apply this aura only if it is absent
     bool suppressProcs;
     int auraMs;
-    int auraValue;
+    int[3] auraValues;
 
     // The target node fills these after checking eligibility and rolling the hit.
     bool reply;
@@ -1121,7 +1145,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 49, recordedFingerprint = 0x8776e47496f8f1d7UL;
+private enum recordedVersion = 50, recordedFingerprint = 0xb55682490988f558UL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

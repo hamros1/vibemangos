@@ -75,6 +75,7 @@ interface ReplicationHandler
     void partyHeal(ushort peer, const ref PartyHeal message);
     void areaDamage(ushort peer, const ref AreaDamage message);
     void creatureSwing(ushort peer, const ref CreatureSwing message);
+    void periodicResult(ushort peer, const ref PeriodicResult message);
 
     /// A script's signal for a creature this node simulates.
     void scriptSignal(ushort peer, const ref ScriptSignal message);
@@ -813,6 +814,15 @@ final class ClusterNode : LinkOwner
             {
                 const m = decode!CreatureSwing(payload);
                 replication.creatureSwing(peer, m);
+            }
+            return;
+        }
+        if (type == MessageType.periodicResult)
+        {
+            if (replication !is null)
+            {
+                const m = decode!PeriodicResult(payload);
+                replication.periodicResult(peer, m);
             }
             return;
         }
