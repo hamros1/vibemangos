@@ -78,10 +78,25 @@ final class InstanceScript : InstanceHost
         {
             auto bytes = fromHex(data[instanceDataPrefix.length .. $]);
             auto r = ByteReader(bytes);
-            if (!runtime.load(script.handle, r))
+            if (runtime.load(script.handle, r))
+                script.fromSave = true;
+            else
                 info!"instance %s: the saved state of script %s has another layout; it starts afresh"(id, name);
         }
         return script;
+    }
+
+    /// Whether its state was read from `instance.data` (and `restored` has not been called since).
+    bool fromSave;
+
+    /// The copy's map made, nothing of it loaded yet: `Restored`, if its state came from `instance.data`
+    /// (the server restarted, the copy was unloaded), so what was under way when it was saved starts again.
+    void restored()
+    {
+        if (!fromSave)
+            return;
+        fromSave = false;
+        raise(Restored());
     }
 
     /// Open-world round 2: the script `name` (`world_template.ScriptName`) of continent `mapId`; null if none serves it.
@@ -526,6 +541,21 @@ final class InstanceScript : InstanceHost
             if (c.alive && (entry == 0 || c.spawn.entry == entry) && n < into.length)
                 into[n++] = EntityRef(c.guid);
         return n;
+    }
+
+    ActionResult hostWalkPath(EntityRef creature, uint pathId)
+    {
+        auto c = creatureOf(creature);
+        if (c is null || !c.alive)
+            return ActionResult.notHere;
+        c.ai.hostWalkPath(pathId);
+        return ActionResult.ok;
+    }
+
+    bool hostHasAura(EntityRef creature, uint spell)
+    {
+        auto c = creatureOf(creature);
+        return c !is null && c.alive && c.auras.find(spell) !is null;
     }
 
     ActionResult hostZoneCombat(EntityRef creature)

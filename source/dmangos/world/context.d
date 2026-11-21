@@ -1680,6 +1680,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     script.respawnObjectOf = &respawnObjectOfEntry;
                     script.summonObjectAt = &summonGameObjectAt;
                     instanceScripts[instance] = script;
+                    if (!copyArriving) // a copy from another node brings its creatures: their fights go on
+                        script.restored();
                     created.onPlayerAdded = (Inhabitant who) {
                         import dmangos.script.api : PlayerEntered;
 
@@ -2075,6 +2077,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return w.data;
     }
 
+    /// A copy being made for `dungeonCopiesIn` (its script's `Restored` is not raised: its creatures come along).
+    private bool copyArriving;
+
     /// What `dungeonCopiesOut` sent: each copy made here and its objects as they were.
     private void dungeonCopiesIn(uint mapId, const(ubyte)[] copies)
     {
@@ -2092,7 +2097,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             const bundle = r.readBytes(r.read!uint);
             if (id !in instances)
                 continue; // reset meanwhile
+            copyArriving = true;
             auto m = map(mapId, id);
+            copyArriving = false;
             const before = m.objectCount - m.replicaCount;
             m.migrateIn(bundle, (const ref Migrant migrant) {
                 auto object = restoreMigrant(migrant);
@@ -4197,9 +4204,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /// Open-world round 2: see `CreatureLore.creaturePath`.
-    const(imported!"dmangos.world.motion".WaypointNode)[] creaturePath(uint entry, uint guid)
+    const(imported!"dmangos.world.motion".WaypointNode)[] creaturePath(uint entry, uint guid, uint pathId = 0)
     {
-        return data.waypoints is null ? null : data.waypoints.defaultPath(entry, guid);
+        return data.waypoints is null ? null : data.waypoints.pathFor(entry, guid, pathId, false);
     }
 
     /// Open-world round 2: see `CreatureLore.zoneUnderAttack`.

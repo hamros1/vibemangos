@@ -219,6 +219,20 @@ final class Dungeon
         player(i).questStatus[quest] = QuestStatus(quest, QuestState.complete, true);
     }
 
+    /// Character `i` is given `count` of item `item` (in its bags, as a quest's reward would put them); how many went in.
+    uint give(uint item, uint count = 1, size_t i = 0)
+    {
+        const got = party[i].session.inWorld.scriptGiveItem(item, count);
+        collect();
+        return got;
+    }
+
+    /// How many of item `item` character `i` has.
+    uint itemCount(uint item, size_t i = 0)
+    {
+        return player(i).inventory.count(item);
+    }
+
     /// Where character `i` stands with quest `quest`.
     imported!"dmangos.script.api".QuestProgress questStatus(uint quest, size_t i = 0)
     {

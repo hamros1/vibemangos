@@ -51,6 +51,17 @@ struct Uldaman
     enum Step : ubyte { wakeKeeper }
     Schedule!Step steps;
 
+    /// A restart: the keepers woken stand in stone again (their altar may be used anew), Archaedas sleeps.
+    void on(ref InstanceContext ulda, const ref Restored e)
+    {
+        if (keepers == Fight.inProgress)
+            keepers = Fight.notStarted;
+        keeperWoken[] = false;
+        steps.clear();
+        if (archaedasFight == Fight.inProgress || archaedasFight == Fight.waking)
+            archaedasFight = Fight.notStarted;
+    }
+
     void on(ref InstanceContext ulda, const ref ObjectLoaded e)
     {
         switch (e.object.entry)

@@ -446,7 +446,7 @@ interface CreatureHost
     void hostUnlearnSpell(EntityRef player, uint spell);
     void hostOpenWindow(EntityRef player, NpcWindow window);
     void hostZoneUnderAttack(EntityRef attacker);
-    void hostWalkPath();
+    void hostWalkPath(uint pathId);
     ActionResult hostSendHome(EntityRef creature);
 
     // The war effort:
@@ -876,8 +876,9 @@ struct CreatureContext
     void zoneUnderAttack(EntityRef attacker) { host.hostZoneUnderAttack(attacker); }
 
     /// Walks its waypoint path (`creature_movement`, or its entry's `creature_movement_template`), as a
-    /// creature spawned to do so does (`MoveWaypoint`); nothing if it has none.
-    void walkPath() { host.hostWalkPath(); }
+    /// creature spawned to do so does (`MoveWaypoint`); nothing if it has none. `pathId`: its entry's
+    /// path of that id instead (`creature_movement_template.PathId`).
+    void walkPath(uint pathId = 0) { host.hostWalkPath(pathId); }
 
     /// It (or another creature here) not fighting goes back where it belongs, and moves as it did
     /// before (`EnterEvadeMode` out of a fight, `MoveTargetedHome`).
@@ -1146,6 +1147,18 @@ struct EventHappened
     EntityRef target;
 }
 
+/**
+ * The copy's script was made again from its saved state (`instance.data`): the server restarted, or
+ * the copy was unloaded and is entered again. Raised once, before any of its creatures or objects
+ * load. What was under way when the state was saved is not any more (its creatures, summons and
+ * timers went with the old world): an encounter in progress starts again from the beginning, as
+ * ScriptDev's `Load` turns `IN_PROGRESS` into `NOT_STARTED`. Not raised for a copy that arrives
+ * from another node with its creatures (their fights go on there).
+ */
+struct Restored
+{
+}
+
 /// The core's side of a dungeon script's context.
 interface InstanceHost
 {
@@ -1182,6 +1195,9 @@ interface InstanceHost
     ActionResult hostZoneCombat(EntityRef creature);
     EntityRef hostSummonObject(uint entry, Location at, uint seconds);
     size_t hostCreaturesNear(Location at, uint entry, float range, EntityRef[] into);
+    // Dungeons round 2:
+    ActionResult hostWalkPath(EntityRef creature, uint pathId);
+    bool hostHasAura(EntityRef creature, uint spell);
 }
 
 /// `GameObjectFlags`, as dungeon scripts set and clear them (`InstanceContext.objectFlags`).
@@ -1353,6 +1369,13 @@ struct InstanceContext
     {
         return host.hostCreaturesNear(at, entry, range, into);
     }
+
+    /// A creature of the copy walks its entry's waypoint path `pathId` (`creature_movement_template`), its
+    /// points' scripts run as it reaches them (`MoveWaypoint`: a suppressor from its door to the shade).
+    ActionResult walkPath(EntityRef creature, uint pathId) { return host.hostWalkPath(creature, pathId); }
+
+    /// Whether a creature of the copy has an aura of `spell` (false if it is not here).
+    bool hasAura(EntityRef creature, uint spell) { return host.hostHasAura(creature, spell); }
 }
 
 unittest

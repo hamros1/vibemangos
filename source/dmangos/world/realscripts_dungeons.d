@@ -777,6 +777,67 @@ unittest
     assert(Dungeon.isOpen(d.objectOf(upper)), "open after a restart");
 }
 
+/**
+ * Uldaman restarted in the middle of its events: the Stone Keepers' waking stops (those left stand in stone, nobody
+ * wakes them), and the altar used again does it all; Archaedas, woken, sleeps again after the restart and his altar
+ * wakes him anew.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.script.api : EntityRef, EventHappened;
+
+    enum uint keeper = 4857, stoned = 10255, upper = 124367, archaedas = 2748;
+    auto d = Dungeon.enter(70, 45);
+    d.spawned(keeper, 0, 20);
+    void altar(uint event)
+    {
+        d.w.context.instanceScript(d.instanceId).raise(EventHappened(event, EntityRef(d.player.guid)));
+    }
+    Creature awake()
+    {
+        foreach (k; d.all(keeper))
+            if (k.auras.find(stoned) is null)
+                return k;
+        return null;
+    }
+    altar(2228);
+    d.run(7.seconds);
+    auto first = awake();
+    assert(first !is null);
+    d.kill(first);
+    d.run(2.seconds);
+    d.restart();
+    d.spawned(keeper, 0, 20);
+    d.run(15.seconds);
+    assert(awake() is null, "nobody wakes them after the restart");
+    altar(2228);
+    bool open()
+    {
+        if (auto k = awake())
+            d.kill(k);
+        return Dungeon.isOpen(d.objectOf(upper));
+    }
+    assert(d.runUntil(&open, 200.seconds), "the event done again after the restart\n" ~ d.story);
+
+    auto boss = d.spawned(archaedas, 0, 25);
+    altar(2268);
+    d.goTo(Position(boss.position.x + 5, boss.position.y, boss.position.z));
+    d.run(8.seconds);
+    assert(boss.ai.inCombat, "Archaedas fights");
+    d.goTo(Position(boss.position.x + 150, boss.position.y, boss.position.z));
+    d.restart();
+    d.forget();
+    boss = d.spawned(archaedas, 0, 25);
+    d.run(2.seconds);
+    assert(!boss.ai.inCombat && !d.heard(-1070001), "asleep after the restart");
+    altar(2268);
+    d.goTo(Position(boss.position.x + 5, boss.position.y, boss.position.z));
+    d.run(8.seconds);
+    assert(d.heard(-1070005) && boss.ai.inCombat, "his altar wakes him again\n" ~ d.story);
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Zul'Farrak (209)
 // ---------------------------------------------------------------------------------------------------------------
@@ -971,6 +1032,147 @@ unittest
     }
     assert(d.summoned(atalarion) == 1, "Atal'alarion\n" ~ d.story);
     assert(d.loadedObject(idol) !is null, "the idol");
+}
+
+/// The statues half done when the server restarts: their order starts again from the first (their lights went).
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint atalarion = 8580;
+    static immutable uint[6] statues = [148830, 148831, 148832, 148833, 148834, 148835];
+    auto d = Dungeon.enter(109, 50);
+    foreach (statue; statues[0 .. 3])
+    {
+        d.use(d.objectOf(statue));
+        d.run(2.seconds);
+    }
+    d.restart();
+    foreach (statue; statues[3 .. $])
+    {
+        d.use(d.objectOf(statue));
+        d.run(2.seconds);
+    }
+    assert(d.summoned(atalarion) == 0, "the last three alone do not call him after the restart\n" ~ d.story);
+    foreach (statue; statues)
+    {
+        d.use(d.objectOf(statue));
+        d.run(2.seconds);
+    }
+    assert(d.summoned(atalarion) == 1, "Atal'alarion after the restart\n" ~ d.story);
+}
+
+/**
+ * The Avatar of Hakkar: the Egg of Hakkar's event (8502) calls the Shade of Hakkar (8440), shuts the doors (149432,
+ * 149433) and sends minions (8437) and a bloodkeeper (8438) out of the circles; each Eternal Flame (148418 ..)
+ * doused with the Hakkari Blood (10460) brings a line (-1109006 ..) and, some seconds later, a Nightmare Suppressor
+ * (8497) through a door, who walks its path to the Shade and casts Suppression (12623) on it: left alive twenty
+ * seconds, the ritual fails (-1109015, the Shade gone, the doors open). Begun again, with each suppressor killed in
+ * time, the fourth flame brings the Avatar (8443); dead, the doors open. A restart in the middle of the ritual ends it,
+ * and the egg begins it again.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint shade = 8440, avatar = 8443, suppressor = 8497, hakkariBlood = 10460, door1 = 149432;
+    static immutable uint[4] flames = [148418, 148419, 148420, 148421];
+    auto d = Dungeon.enter(109, 55);
+    d.give(hakkariBlood, 10);
+    d.goTo(Position(-466.8673f, 262.31204f, -90.7441f));
+    d.event(8502);
+    d.run(5.seconds);
+    assert(d.summoned(shade) == 1, "the Shade\n" ~ d.story);
+    assert(!Dungeon.isOpen(d.objectOf(door1)), "the doors shut");
+    assert(d.summoned(8437) >= 8 && d.summoned(8438) >= 1, "the first wave\n" ~ d.story);
+    d.killSummons([8437u, 8438]);
+    d.use(d.objectOf(flames[0]));
+    d.run(1.seconds);
+    assert(d.heard(-1109006), "the first flame\n" ~ d.story);
+    // Its suppressor left to suppress the Shade.
+    bool suppressed() { d.killSummons([8437u, 8438]); return d.cast_(12623, suppressor); }
+    assert(d.runUntil(&suppressed, 90.seconds), "a suppressor reaches the Shade\n" ~ d.story);
+    bool failed() { d.killSummons([8437u, 8438]); return d.heard(-1109015); }
+    assert(d.runUntil(&failed, 25.seconds), "twenty seconds of suppression: the ritual fails\n" ~ d.story);
+    d.run(2.seconds);
+    assert(Dungeon.isOpen(d.objectOf(door1)), "the doors open again");
+    d.killSummons();
+
+    // Begun again: each suppressor killed as it comes.
+    d.forget();
+    d.goTo(Position(-466.8673f, 262.31204f, -90.7441f));
+    d.event(8502);
+    d.run(5.seconds);
+    assert(d.summoned(shade) == 1, "the Shade again\n" ~ d.story);
+    foreach (flame; flames)
+    {
+        d.killSummons([8437u, 8438]);
+        d.use(d.objectOf(flame));
+        d.run(1.seconds);
+        if (flame != flames[$ - 1])
+        {
+            bool came() { d.killSummons([8437u, 8438]); return d.find(suppressor) !is null && d.find(suppressor).alive; }
+            assert(d.runUntil(&came, 60.seconds), "a suppressor\n" ~ d.story);
+            d.run(3.seconds);
+            d.killSummons([suppressor]);
+        }
+    }
+    d.run(2.seconds);
+    assert(!d.heard(-1109015), "not failed\n" ~ d.story);
+    assert(d.summoned(avatar) == 1, "the Avatar\n" ~ d.story);
+    d.kill(d.find(avatar));
+    d.run(2.seconds);
+    assert(Dungeon.isOpen(d.objectOf(door1)), "his death opens the doors");
+}
+
+/// The Avatar's ritual cut by a restart: the egg begins it again.
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint shade = 8440;
+    auto d = Dungeon.enter(109, 55);
+    d.goTo(Position(-466.8673f, 262.31204f, -90.7441f));
+    d.event(8502);
+    d.run(5.seconds);
+    assert(d.summoned(shade) == 1);
+    d.killSummons([8437u, 8438]); // nothing fights (what would give up its fight as the party leaves)
+    d.run(1.seconds);
+    d.restart();
+    d.forget();
+    d.run(10.seconds);
+    assert(d.summoned(8437) == 0, "no waves after the restart\n" ~ d.story);
+    d.event(8502);
+    d.run(5.seconds);
+    assert(d.summoned(shade) == 1, "the Shade comes again\n" ~ d.story);
+}
+
+/**
+ * Malfurion Stormrage (15362): one who has done "The Charge of the Dragonflights" (8555) and not "Eranikus, Tyrant of
+ * the Dream" (8733) comes before the Shade of Eranikus (area trigger 4016): he appears (-1109000) and speaks his four
+ * lines (-1109001 .. -1109004), once a copy; after a restart (he went with it) he comes again.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint malfurion = 15362;
+    auto d = Dungeon.enter(109, 55);
+    d.questDone(8555);
+    d.trigger(4016);
+    d.run(50.seconds);
+    assert(d.summoned(malfurion) == 1, "he comes\n" ~ d.story);
+    foreach (line; [-1109000, -1109001, -1109002, -1109003, -1109004])
+        assert(d.heard(line), format!"line %s\n%s"(line, d.story));
+    d.trigger(4016);
+    d.run(2.seconds);
+    assert(d.summoned(malfurion) == 1, "once\n" ~ d.story);
+    d.restart();
+    d.forget();
+    d.questDone(8555);
+    d.trigger(4016);
+    d.run(5.seconds);
+    assert(d.summoned(malfurion) == 1, "again after the restart\n" ~ d.story);
 }
 
 /**
