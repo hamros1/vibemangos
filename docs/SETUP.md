@@ -1,14 +1,12 @@
 # Set up dmangos
 
-This guide installs a fresh two-node realm on one computer. The commands use Bash and the
-package names on Ubuntu and Linux Mint on x86-64. Run commands from the dmangos checkout
-unless a step says otherwise. Gather these files before you start.
+This guide starts with a clean Ubuntu or Linux Mint computer (x86-64) and ends with a
+two-node realm you can log into. You need a user with `sudo` access, an internet
+connection, and the folder containing your own World of Warcraft 1.12.x client.
+The supported builds are 5875, 6005 and 6141. If you play on another computer,
+copy the client folder to the server for extraction.
 
-- The dmangos repository.
-- `classicmangos.sql.gz` from the source machine. It has world data. It is kept outside Git,
-  so a new clone needs a copy.
-- Extracted `dbc/` and `maps/` folders, or your own 1.12.x client to extract them from. The
-  SQL archive and the client data are separate.
+The commands use Bash. After cloning, run them from the dmangos checkout.
 
 ## 1. Install dependencies and build
 
@@ -21,8 +19,8 @@ sudo apt install build-essential ca-certificates curl git gnupg xz-utils python3
 sudo systemctl start mariadb
 ```
 
-If you already have a checkout, open it and skip the clone. If GitHub prompts for access,
-use an account that can read the repository.
+Clone the repository and enter the new directory. If you already cloned it, just enter
+your existing checkout.
 
 ```bash
 git clone https://github.com/hamros1/vibemangos.git "$HOME/dmangos"
@@ -49,34 +47,30 @@ Check that the build produced all three files.
 ls -lh bin/authserver bin/worldserver bin/extractor
 ```
 
-## 2. Prepare the data
+## 2. Download the world database and extract client data
 
-Make the destination folders.
+Get the world database from [CMaNGOS Classic-DB on GitHub](https://github.com/cmangos/classic-db).
+This command downloads the tested [ClassicDB 1.12.1 z2815 archive](https://github.com/cmangos/classic-db/blob/13e933726f386399d9820138fbd1123e7cda86c8/Full_DB/ClassicDB_1_12_1_z2815.sql.gz)
+and saves it under the filename the setup script expects. Leave it compressed.
 
 ```bash
 mkdir -p sql/local data
+curl -fL --retry 3 -o sql/local/classicmangos.sql.gz \
+  https://raw.githubusercontent.com/cmangos/classic-db/13e933726f386399d9820138fbd1123e7cda86c8/Full_DB/ClassicDB_1_12_1_z2815.sql.gz
 ```
 
-1. Copy the source machine's `sql/local/classicmangos.sql.gz` into `sql/local/` on this
-   computer. Keep it compressed. If the source has no archive, [export it first](#export-the-world-database).
-2. Copy the source machine's extracted `dbc/` and `maps/` directories into `data/`.
-   Copy `vmaps/` and `mmaps/` too if available. Copy the optional `coefficients.csv`,
-   `procs.csv`, and `instance-resets.csv` into `data/` if you want the same server data
-   files as the source.
-3. If you skipped the copy of the extracted directories, change the quoted input path below
-   to your client folder, the folder containing `Data/`. The extraction writes `data/dbc/`
-   and `data/maps/`. [Extra extraction modes](CLIENT-DATA.md) cover buildings and navigation.
-
-   ```bash
-   ./bin/extractor -i "/path/to/your/WoW folder" -o data
-   ```
-
-Before moving on, check that these three paths exist. If the last two are missing, check for
-an extra folder level such as `data/data/dbc/`.
+Next, run the extractor. At the prompt, paste the full path to the folder containing
+`Data/`, usually next to `WoW.exe`, then press Enter. For example, enter `/home/alex/Games/World of Warcraft`
+without quotes. The extractor writes the `dbc/` and `maps/` folders into `data/` in the
+checkout. [Extra extraction modes](CLIENT-DATA.md) cover buildings and navigation.
 
 ```bash
+read -r -p 'Path to your World of Warcraft folder: ' client_dir
+./bin/extractor -i "$client_dir" -o data
 ls -ld sql/local/classicmangos.sql.gz data/dbc/ data/maps/
 ```
+
+Continue once all three paths are listed.
 
 ## 3. Import the database and write the configs
 
@@ -153,29 +147,9 @@ startup for the coordinator and login server to publish the new realm address.
 | Symptom | Check |
 |---|---|
 | `mariadb` cannot connect | Run `sudo systemctl status mariadb`. Verify it is running and listening on TCP 3306 for the game servers. |
-| Missing SQL archive | Copy the original `classicmangos.sql.gz` to `sql/local/`. A clone does not contain it. |
+| Missing or corrupt SQL archive | Rerun the Classic-DB download in [step 2](#2-download-the-world-database-and-extract-client-data). Keep the file at `sql/local/classicmangos.sql.gz`. |
 | Existing database or user | This setup is for a new installation. Back up an existing installation before making changes. The [configuration reference](CONFIGURATION.md) covers connecting to existing databases. |
 | Missing DBC files | Look for `data/dbc/ChrRaces.dbc`. Run the extractor against the folder containing `Data/`, with `-o data`. |
 | `Address already in use` | Run `ss -ltnp` and check 3724, 8085, 8086, 9000 and 9001 for an existing process. Stop the earlier server before starting another. |
 | The client cannot reach the realm | Verify the client build, realm address, and that both the login and world server logs show listening ports. For a LAN client, check that both nodes advertise the LAN address. |
 | Login succeeds but entering the world hangs | Check the world node terminals first. They should show a view with both nodes and no database or DBC startup errors. |
-
-## Export the world database
-
-Run this on the source machine if you need a fresh archive. Pass the same connection options
-you use with MariaDB. For a local MariaDB administrator using the default socket:
-
-```bash
-sudo tools/database.sh export-world sql/local/classicmangos.sql.gz
-```
-
-For a private local setup, pass its socket path and run as the user who can read that
-database. Export takes read locks while it dumps the world tables.
-
-```bash
-tools/database.sh export-world sql/local/classicmangos.sql.gz --socket=/path/to/mysql.sock
-```
-
-Copy the resulting archive to the destination, where the setup imports it alongside the
-empty account and character schemas. The source world data comes from
-[CMaNGOS Classic-DB](https://github.com/cmangos/classic-db) and local world database changes.

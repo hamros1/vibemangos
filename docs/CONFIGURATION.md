@@ -134,6 +134,26 @@ or `ip`. The login server can be running while you make these changes.
 ./bin/authserver ip unban ADDRESS
 ```
 
+## Move an existing world database
+
+To preserve custom world data when moving an existing installation, export the world database
+on the old host. The export uses `mariadb-dump` and takes read locks on the world tables.
+
+```bash
+sudo tools/database.sh export-world sql/local/classicmangos.sql.gz
+```
+
+For a MariaDB instance using a custom Unix socket, pass its socket path and use a database
+account with read and lock permissions.
+
+```bash
+tools/database.sh export-world sql/local/classicmangos.sql.gz --socket=/path/to/mysql.sock
+```
+
+Use the exported archive in [step 2 of setup](SETUP.md#2-download-the-world-database-and-extract-client-data)
+in place of the public download. The archive transfers world data. Accounts and characters
+stay in their separate databases.
+
 ## Protocol notes
 
 * Supported builds: 5875 (1.12.1), 6005 (1.12.2), 6141 (1.12.3). A failed logon proof is

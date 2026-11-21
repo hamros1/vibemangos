@@ -4,9 +4,9 @@ A World of Warcraft 1.12.x server written in D. It supports client builds 5875 (
 6005 (1.12.2) and 6141 (1.12.3). The default setup runs two world server nodes that share
 one realm and its databases.
 
-**Installing on another computer?** Follow the [setup guide](docs/SETUP.md) from prerequisites
-through your first login. Bring the world SQL archive and extracted client data from the
-source machine, or extract the client data from your own client.
+**Installing dmangos?** The [setup guide](docs/SETUP.md) takes you from a fresh checkout to
+your first login. Download the world database from [CMaNGOS Classic-DB on GitHub](https://github.com/cmangos/classic-db)
+and extract the client data from your own 1.12.x client.
 
 ## Using the server
 

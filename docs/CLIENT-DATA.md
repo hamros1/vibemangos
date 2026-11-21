@@ -1,8 +1,8 @@
 # Client data reference
 
-Start with [Prepare the data](SETUP.md#2-prepare-the-data) for the directories needed by
-a local server. The extractor takes the client directory containing `Data/` and a separate
-output directory. Existing CMaNGOS-format files can also be used.
+Start with the [setup extraction step](SETUP.md#2-download-the-world-database-and-extract-client-data).
+The extractor takes the client directory containing `Data/` and a separate output directory.
+Existing CMaNGOS-format files can also be used.
 
 ```sh
 ./bin/extractor -i "/path/to/WoW 1.12.1" -o /path/to/data   # writes data/dbc/*.dbc and data/maps/*.map

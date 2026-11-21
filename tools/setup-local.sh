@@ -15,7 +15,7 @@ for program in mariadb openssl python3 sudo; do
 done
 
 if [ ! -r sql/local/classicmangos.sql.gz ]; then
-    echo 'Copy the world archive to sql/local/classicmangos.sql.gz. See docs/SETUP.md.' >&2
+    echo 'Download the Classic-DB archive to sql/local/classicmangos.sql.gz. See step 2 in docs/SETUP.md.' >&2
     exit 1
 fi
 if [ ! -f data/dbc/ChrRaces.dbc ] || [ ! -d data/maps ]; then
