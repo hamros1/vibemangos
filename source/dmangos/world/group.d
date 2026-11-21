@@ -263,6 +263,33 @@ final class Group
     ubyte lootThreshold = 2;      /// uncommon (green) quality
     ulong[targetIconCount] targetIcons;
 
+    /// Chooses an eligible member in party order and advances to the next eligible member.
+    ulong takeLootTurn(const(ulong)[] eligible)
+    {
+        import std.algorithm.searching : canFind;
+
+        if (!slots.length)
+            return 0;
+        size_t start;
+        foreach (i, ref slot; slots)
+            if (slot.guid == nextLooter)
+                start = i;
+        ulong first;
+        foreach (offset; 0 .. slots.length)
+        {
+            const guid = slots[(start + offset) % slots.length].guid;
+            if (!eligible.canFind(guid))
+                continue;
+            if (first)
+            {
+                nextLooter = guid;
+                return first;
+            }
+            first = guid;
+        }
+        return first;
+    }
+
     private
     {
         Groups owner;

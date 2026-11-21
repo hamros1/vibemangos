@@ -241,7 +241,15 @@ private int run(WorldConfig config, string configPath)
             import dmangos.cluster.services : serviceMap, ServiceKind;
 
             context.services.self = cluster.id;
-            context.services.placement = (ServiceKind kind) => cluster.regions.ownerAt(serviceMap(kind), 0);
+            context.services.peerIncarnation = (ushort peer) {
+                if (auto link = cluster.linkTo(peer))
+                    return link.peer.incarnation;
+                return 0UL;
+            };
+            context.services.placement = (ServiceKind kind) => kind == ServiceKind.lootTurns
+                ? cluster.coordinatorNode : cluster.regions.ownerAt(serviceMap(kind), 0);
+            if (cluster.isCoordinator)
+                context.services.start(ServiceKind.lootTurns);
             context.services.sendCall = (ushort node, const ref ServiceCall c) => cluster.sendTo(node, c);
             context.services.sendReply = (ushort node, const ref ServiceReply r) => cluster.sendTo(node, r);
             cluster.onServiceCall = (ushort peer, const ref ServiceCall c) { context.services.receiveCall(peer, c); };
@@ -272,9 +280,12 @@ private int run(WorldConfig config, string configPath)
         }
         // Phase 7: the standby, become the coordinator, takes up the coordinator's part of the world server.
         cluster.onPromoted = () {
+            import dmangos.cluster.services : ServiceKind;
+
             context.forwardGroup = null;
             context.groups.clear();        // the groups too, from the database the old coordinator kept them in
             context.groups.load(context.database.loadGroups());
+            context.services.start(ServiceKind.lootTurns);
             context.groups.changes = &bridge.groupChanged;
             context.groups.removed = &bridge.groupRemoved;
             bridge.broadcastGroups();

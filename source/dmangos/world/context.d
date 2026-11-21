@@ -631,6 +631,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         loadInstances();
         loadCommandOverrides();
         // The cluster services this node can run (docs/SERVICES.md); standalone it runs them all at once.
+        import dmangos.world.groupservice : LootTurnHost;
+
+        services.provide!LootTurnHost((const(ubyte)[]) => LootTurnHost(groups));
         services.provide!BattlegroundQueueHost((const(ubyte)[] state) =>
             BattlegroundQueueHost(newBattlegroundQueue(), state));
         battlegrounds = new Battlegrounds(this);

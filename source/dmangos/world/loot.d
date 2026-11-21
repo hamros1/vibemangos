@@ -298,6 +298,8 @@ final class LootItem
             return blocked ? LootSlotType.view : LootSlotType.normal;
         if (freeForAll)
             return LootSlotType.normal;
+        if (loot.turnUntil && usesTurn(loot.rule))
+            return LootSlotType.none;
         if (condition && !quest)
         {
             final switch (loot.rule)
@@ -340,6 +342,12 @@ final class LootItem
                 : LootSlotType.none;
         }
     }
+
+    bool usesTurn(LootRule rule) const
+    {
+        return !freeForAll && (rule == LootRule.roundRobin
+            || (underThreshold && (rule == LootRule.groupLoot || rule == LootRule.needBeforeGreed)));
+    }
 }
 
 /// `LootStatus`
@@ -361,6 +369,8 @@ final class Loot
     LootRule rule = LootRule.notGroup;
     ubyte threshold = 2;         /// uncommon (green)
     ulong currentLooter;         /// round robin's (and below the threshold) turn
+    bool remoteTurns;            /// remote members can claim ordinary shared items
+    private long turnUntil;      /// while the authoritative turn is outstanding
     ulong masterLooter;
     bool[ulong] owners;          /// who may loot at all
     bool[ulong] looking;         /// whose window is open
@@ -411,8 +421,6 @@ final class Loot
             {
                 if (allowedFor is null || allowedFor(owner, item))
                     item.allowed[owner] = true;
-                else if (owner == currentLooter)
-                    item.currentLooterPass = true;
             }
         // Which items wait for a roll or the master.
         foreach (item; items)
@@ -426,7 +434,41 @@ final class Loot
             }
             else if (rule == LootRule.groupLoot || rule == LootRule.needBeforeGreed)
                 item.blocked = true;
+            if (remoteTurns && item.usesTurn(rule) && !item.quest && !item.condition)
+                foreach (guid, _; remoteMembers)
+                    item.allowed[guid] = true;
+            item.currentLooterPass = currentLooter != 0 && currentLooter !in item.allowed;
         }
+    }
+
+    /// Ordinary slots stay locked while the coordinator picks their looter.
+    void waitForTurn(ulong fallback)
+    {
+        import dmangos.cluster.services : ServiceHost;
+
+        currentLooter = fallback;
+        turnUntil = nowSeconds() + ServiceHost.giveUpAfter.total!"seconds";
+    }
+
+    void finishTurn(ulong selected)
+    {
+        if (!turnUntil)
+            return; // a stale answer cannot change who may take an already visible item
+        turnUntil = 0;
+        if (selected)
+            currentLooter = selected;
+        foreach (item; items)
+            item.currentLooterPass = currentLooter !in item.allowed;
+        foreach (guid; looking.keys)
+            if (auto looter = find(guid))
+            {
+                if (canLoot(guid))
+                    looter.deliver(Opcode.SMSG_LOOT_RESPONSE, contentFor(guid));
+                else
+                    sendReleaseFor(looter);
+            }
+        if (changed !is null)
+            changed();
     }
 
     /// Rolls a template's entries and groups, following references `maxcount` times.
@@ -589,8 +631,19 @@ final class Loot
     bool lootedForEveryone()
     {
         foreach (item; items)
+        {
             if (item.winner && item.winner in item.allowed)
                 return false;
+            if (item.usesTurn(rule))
+            {
+                if (turnUntil && item.allowed.length)
+                    return false;
+                if (remoteTurns)
+                    foreach (guid, _; remoteMembers)
+                        if (item.slotTypeFor(guid, this) == LootSlotType.normal)
+                            return false;
+            }
+        }
         foreach (owner, _; owners)
             if (find(owner) !is null && !lootedFor(owner))
                 return false;
@@ -603,7 +656,7 @@ final class Loot
         foreach (item; items)
             if (item.winner == player && !item.blocked && player in item.allowed)
                 return true;
-        if (player !in owners)
+        if (player !in owners && !(remoteTurns && player in remoteMembers))
             return false;
         const status = statusFor(player);
         if (status == 0)
@@ -722,7 +775,8 @@ final class Loot
         if (result != 0)
         {
             item.blocked = false;
-            currentLooter = guid;
+            if (!item.winner)
+                currentLooter = guid;
             item.released = false;
             return result;
         }
@@ -840,7 +894,7 @@ final class Loot
         const guid = looter.looterGuid;
         if (guid == currentLooter)
             foreach (item; items)
-                if (!item.blocked && !item.released && !item.winner)
+                if (!item.blocked && !item.released && !item.winner && !(turnUntil && item.usesTurn(rule)))
                     item.released = true;
         if (guid in looking)
             sendReleaseFor(looter);
@@ -910,6 +964,8 @@ final class Loot
     void update()
     {
         const now = nowSeconds();
+        if (turnUntil && now >= turnUntil)
+            finishTurn(0);
         foreach (slot; rolls.keys)
             if (rolls[slot].update(now))
                 rolls.remove(slot);

@@ -446,6 +446,11 @@ final class ClusterNode : LinkOwner
         return links.get(node, null);
     }
 
+    @property ushort coordinatorNode() const
+    {
+        return isCoordinator ? id : coordinatorId;
+    }
+
     /// A new connection from another node (the cluster listener's session factory).
     NetSession accept(string remoteAddress)
     {

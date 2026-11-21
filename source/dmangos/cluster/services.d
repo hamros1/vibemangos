@@ -45,6 +45,7 @@ enum ServiceKind : ushort
     battlegroundQueue = 2,  /// the battleground queues
     warEffort = 3,          /// the Ahn'Qiraj war effort (`dmangos.world.wareffort`)
     worldPvp = 4,           /// the Eastern Plaguelands' towers and Silithus's Silithyst (`dmangos.world.worldpvp`)
+    lootTurns = 5,          /// the coordinator's group loot rotation
     example = 0xFFFF,       /// for tests
 }
 
@@ -393,8 +394,16 @@ final class ServiceHost
 
     private Pending[ulong] pending;   // by sequence
     private ulong nextSequence = 1;
-    private ubyte[][ulong] answered;  // (origin, sequence) -> reply: a resent call is answered again, not run again
-    private ulong[] answeredOrder;    // the oldest first, to forget them
+    private struct AnswerKey
+    {
+        ushort origin;
+        ulong incarnation;
+        ulong sequence;
+    }
+    /// An incarnation distinguishes a reconnect from a new caller numbering its calls from one.
+    ulong delegate(ushort) peerIncarnation;
+    private ubyte[][AnswerKey] answered;
+    private AnswerKey[] answeredOrder; // the oldest first, to forget them
     enum size_t answersKept = 4096;
 
     /**
@@ -485,7 +494,7 @@ final class ServiceHost
     void receiveCall(ushort from, const ref ServiceCall call)
     {
         auto reply = ServiceReply(call.kind, call.sequence, ServiceStatus.ok, null);
-        const key = cast(ulong) call.origin << 48 | (call.sequence & 0xFFFF_FFFF_FFFF);
+        const key = AnswerKey(call.origin, peerIncarnation is null ? 0 : peerIncarnation(from), call.sequence);
         if (auto earlier = key in answered)
         {
             reply.reply = *earlier;

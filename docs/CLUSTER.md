@@ -465,6 +465,13 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   node credits and saves its share once. A share that cannot be sent stays with the looter.
   Once queued to a peer, a share is never reassigned. If the peer dies before it saves the credit,
   the share can be lost.
+* **Round-robin item pickup.** The coordinator chooses the turn for ordinary shared drops under
+  Round Robin, Group Loot, and Need Before Greed. The turn advances once for the party even when
+  consecutive drops come from different nodes. The designated member may click the corpse or
+  chest and claim the item on its owner's node. The round-robin slot waits for the coordinator's
+  reply while coins and rolls remain available. If the reply times out, the item stays with the
+  player who created the drop. The cursor resets when the coordinator reloads the party. Quest,
+  conditioned, and personal drops keep their local pickup rules.
 * **Script signals** to a creature another node simulates go there (`ScriptSignal`), applied once
   (its origin and sequence number drop a resend), and are passed on, at most three times, if the
   creature has moved again (docs/SCRIPTING.md).
@@ -590,7 +597,7 @@ services line (`ServiceHost.describe`). Every log line of the cluster code start
 
 ## Not yet
 
-* Cross-node quest drops, round-robin item pickup, and master loot.
+* Cross-node quest drops and master loot.
 * A player's spells at another node's player.
 * Surviving an owner's loss without disconnecting the client: the home could take its player back
   from the last save, which is worth having only with gateways and much more frequent player saves.

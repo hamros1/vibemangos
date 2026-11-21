@@ -664,6 +664,7 @@ private:
     {
         import dmangos.world.character : Character;
         import dmangos.cluster.protocol : LootCoinShare;
+        import dmangos.world.groupservice : LootTurnHost, LootTurnReply, LootTurnRequest;
         import dmangos.world.replication : Replica;
 
         auto group = context.groups.of(player.guid);
@@ -679,26 +680,15 @@ private:
         const crossNodeRolls = context.sendRemoteGroupLoot !is null && context.deliverRemote !is null
             && (loot.rule == LootRule.groupLoot || loot.rule == LootRule.needBeforeGreed);
         const crossNodeCoins = context.sendRemoteLootCoins !is null && context.canSendLootCoins !is null;
-        const members = group.members;
-        // From the member after the current looter around: the next looter is the first eligible.
-        size_t current = members.length;
-        foreach (i, ref slot; members)
-            if (slot.guid == group.nextLooter)
-                current = i;
-        if (current == members.length)
+        const rotates = loot.rule == LootRule.roundRobin || loot.rule == LootRule.groupLoot
+            || loot.rule == LootRule.needBeforeGreed;
+        foreach (ref member; group.members)
         {
-            current = 0;
-            group.nextLooter = members[0].guid;
-        }
-        const currentGuid = group.nextLooter;
-        ulong[] ordered;
-        foreach (step; 1 .. members.length + 1)
-        {
-            const guid = members[(current + step) % members.length].guid;
+            const guid = member.guid;
             auto looter = cast(Character) context.onlinePlayer(guid);
             if (looter is null)
             {
-                if (crossNodeRolls || crossNodeCoins)
+                if (rotates || crossNodeCoins)
                     if (auto remote = cast(Replica) map.findObject(guid))
                     {
                         const b = remote.position;
@@ -710,10 +700,7 @@ private:
                 continue;
             }
             if (looter.atGroupRewardDistance(map, at) || fought(guid))
-            {
                 loot.owners[guid] = true;
-                ordered ~= guid;
-            }
         }
         if (loot.remoteMembers.length && crossNodeRolls)
         {
@@ -745,24 +732,26 @@ private:
             if (group.looter !in loot.owners)
                 loot.rule = LootRule.groupLoot;
         }
-        if (ordered.length > 1 && loot.rule != LootRule.freeForAll)
+        if (rotates)
         {
-            if (currentGuid !in loot.owners)
+            auto eligible = loot.owners.keys ~ loot.remoteMembers.keys;
+            if (eligible.length > 1)
             {
-                loot.currentLooter = ordered[0];
-                group.nextLooter = ordered[1];
+                loot.remoteTurns = loot.remoteMembers.length != 0;
+                loot.waitForTurn(player.guid);
+                context.services.call!(LootTurnHost.take)(LootTurnRequest(group.id, player.guid, eligible),
+                    (LootTurnReply turn) { loot.finishTurn(turn.looter); });
+                return;
             }
-            else
-            {
-                loot.currentLooter = currentGuid;
-                group.nextLooter = ordered[0];
-            }
+        }
+        else if (loot.owners.length > 1 && loot.rule != LootRule.freeForAll)
+        {
+            loot.currentLooter = group.takeLootTurn(loot.owners.keys);
             return;
         }
         loot.currentLooter = player.guid;
         loot.owners[player.guid] = true;
-        if (!loot.remoteMembers.length || !crossNodeRolls)
-            loot.rule = LootRule.notGroup;
+        loot.rule = LootRule.notGroup;
     }
 
     /// Whether the condition `condition` holds for this player (no source).
@@ -1287,5 +1276,111 @@ unittest
             memberNode.lootCoinShareArrived(1, paid);
             assert(jaina.session.character.money == otherBefore + Copper(5));
         }
+    }
+}
+
+// Two corpses made on different nodes share the coordinator's rotation.
+unittest
+{
+    import dmangos.cluster.protocol : ServiceCall, ServiceReply;
+    import dmangos.cluster.services : ServiceKind;
+    import dmangos.world.characterdb : GroupRecord, GroupMemberRecord;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.group : LootMethod;
+    import dmangos.world.loot : LootSlotType;
+    import dmangos.world.replication : encodePlayerState, encodeState;
+
+    foreach (method; [LootMethod.roundRobin, LootMethod.groupLoot])
+    {
+        auto db = newDatabase();
+        GroupRecord party;
+        party.id = 1;
+        party.leader = 7;
+        party.leaderName = "Anduin";
+        party.lootMethod = method;
+        party.lootThreshold = 2;
+        party.members = [GroupMemberRecord(7, "Anduin"), GroupMemberRecord(8, "Jaina")];
+        db.groups[party.id] = party;
+        auto coordinator = newCreationContext(db), member = newCreationContext(db);
+        auto now = MonoTime.currTime;
+        coordinator.clock = member.clock = () => now;
+        auto relay = new TestPlayerRelay(coordinator, member);
+        coordinator.services.self = 1;
+        member.services.self = 2;
+        ulong callerIncarnation = 1;
+        coordinator.services.peerIncarnation = (ushort) => callerIncarnation;
+        member.services.release(ServiceKind.lootTurns);
+        member.services.placement = (ServiceKind kind) => kind == ServiceKind.lootTurns ? ushort(1) : ushort(0);
+        ServiceCall[] pending;
+        member.services.sendCall = (ushort node, const ref ServiceCall call) {
+            assert(node == 1);
+            pending ~= ServiceCall(call.kind, call.call, call.origin, call.sequence, call.request.dup);
+            return true;
+        };
+        coordinator.services.sendReply = (ushort node, const ref ServiceReply reply) {
+            assert(node == 2);
+            member.services.receiveReply(1, reply);
+            return true;
+        };
+
+        const start = Position(-8949.95f, -132.49f, 83.53f, 1.97f);
+        auto anduin = loggedIn(coordinator, db, 7, "Anduin", start);
+        auto jaina = loggedIn(member, db, 8, "Jaina", start);
+        const cell = cellKeyAt(start.x, start.y);
+        coordinator.map(0).replicaCreated(2, cell, 8, encodePlayerState(jaina.session.character, 0));
+        member.map(0).replicaCreated(1, cell, 7, encodePlayerState(anduin.session.character, 0));
+
+        auto first = lootableInnkeeper(member);
+        killIt(jaina, first, now);
+        auto loot = first.loot;
+        assert(pending.length == 1 && loot !is null);
+        assert(loot.itemInSlot(0).slotTypeFor(7, loot) == LootSlotType.none
+            && loot.itemInSlot(0).slotTypeFor(8, loot) == LootSlotType.none, "the item waits for the coordinator");
+        // The local player can open for copper, but closing that window must not release the pending item.
+        jaina.write(Opcode.CMSG_LOOT, ClientGuid(first.guid));
+        jaina.write(Opcode.CMSG_LOOT_RELEASE, ClientGuid(first.guid));
+        coordinator.services.receiveCall(2, pending[0]);
+        coordinator.services.receiveCall(2, pending[0]); // a retry must not advance the cursor twice
+        assert(loot.currentLooter == 7 && coordinator.groups.of(7).nextLooter == 8);
+        assert(loot.itemInSlot(0).slotTypeFor(8, loot) == LootSlotType.none);
+
+        // The next drop is made on the coordinator itself, with Jaina still simulated by node 2.
+        lootableInnkeeper(coordinator); // gives the coordinator a loot template for the trainer too
+        auto trainer = cast(Creature) coordinator.map(0).findObject(makeGuid(HighGuid.unit, creatureTrainer, trainerSpawn));
+        coordinator.data.creatureTemplates.edit(creatureTrainer).lootId = 99;
+        trainer.values.set!UNIT_FIELD_HEALTH(0u);
+        anduin.session.inWorld.prepareBodyLoot(trainer);
+        assert(trainer.loot.currentLooter == 8 && coordinator.groups.of(7).nextLooter == 7);
+        assert(trainer.loot.itemInSlot(0).slotTypeFor(7, trainer.loot) == LootSlotType.none);
+        assert(trainer.loot.itemInSlot(0).slotTypeFor(8, trainer.loot) == LootSlotType.normal);
+
+        // Jaina cannot put Anduin's first drop in her bag, even by sending its slot directly.
+        jaina.write(Opcode.CMSG_LOOT, ClientGuid(first.guid));
+        import dmangos.world.loothandlers : ClientLootSlot;
+        jaina.write(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, ClientLootSlot(0));
+        assert(jaina.session.character.inventory.count(itemJerky) == 0 && 7UL in loot.itemInSlot(0).allowed);
+
+        // Anduin clicks the corpse replica and loots on its owner, via the normal migration path.
+        auto homeMap = coordinator.map(0);
+        homeMap.removeObject(first.guid);
+        homeMap.replicaCreated(2, cell, first.guid, encodeState(first, 0));
+        anduin.write(Opcode.CMSG_LOOT, ClientGuid(first.guid));
+        assert(relay.remote !is null && anduin.session.inWorld is null);
+        relay.remote.update(50.msecs);
+        assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_LOOT_RESPONSE));
+        anduin.write(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, ClientLootSlot(0));
+        assert(relay.remote.character.inventory.count(itemJerky) == 1);
+        assert(jaina.session.character.inventory.count(itemJerky) == 0 && loot.itemInSlot(0).allowed.length == 0);
+        size_t saved;
+        foreach (guid, ref row; db.itemRows)
+            if (row.entry == itemJerky)
+            {
+                ++saved;
+                assert(db.itemOwners[guid] == 7);
+            }
+        assert(saved == 1);
+        ++callerIncarnation;
+        coordinator.services.receiveCall(2, pending[0]); // a restarted node can reuse a call number
+        assert(coordinator.groups.of(7).nextLooter == 8);
     }
 }

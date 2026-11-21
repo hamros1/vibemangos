@@ -14,6 +14,7 @@ module dmangos.world.groupservice;
 public import dmangos.cluster.protocol : GroupOp; // a cluster message's field
 
 import dmangos.cluster.protocol : GroupCommand;
+import dmangos.cluster.services : Call, Service, ServiceKind;
 import dmangos.world.context : WorldContext;
 import dmangos.world.group;
 import dmangos.world.map : packetBody;
@@ -23,6 +24,32 @@ import dmangos.world.online : OnlinePlayer;
 import dmangos.world.opcodes : Opcode;
 import dmangos.world.packets;
 
+struct LootTurnRequest
+{
+    uint group;
+    ulong recipient;
+    ulong[] eligible;
+}
+
+struct LootTurnReply
+{
+    ulong looter;
+}
+
+/// The cursor belongs to the coordinator's real group, wherever the drop was made.
+@Service(ServiceKind.lootTurns)
+struct LootTurnHost
+{
+    Groups groups;
+
+    @Call LootTurnReply take(const ref LootTurnRequest request)
+    {
+        auto group = groups.of(request.recipient);
+        if (group is null || group.id != request.group)
+            return LootTurnReply.init;
+        return LootTurnReply(group.takeLootTurn(request.eligible));
+    }
+}
 
 /// `op` by `who`.
 GroupCommand groupCommand(const OnlinePlayer who, GroupOp op, ulong target = 0, string text = null,
