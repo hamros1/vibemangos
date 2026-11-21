@@ -788,3 +788,89 @@ shrines, the flight master's and the squads' removal, the 200 and the reset of b
 
 dmangos's first implementation took a tower only at the slider's end, with "Progressing" for a tower nobody held; the
 progress events' scripts and the map's banners showed otherwise, and the comparison agreed: changed before commit.
+
+## Health and mana from spirit
+
+**What:** out of combat a player regenerates health from spirit every two-second tick (world/player.d
+`healthRegenPerTick`, a second half of it); mana from spirit too, in and out of combat, but none for five seconds after
+mana is spent (`spiritManaPerSecond`, `manaSpent`).
+
+**Sources: documented 1.x research**, read at warcraft.wiki.gg, which keeps WoWWiki's history (the last revisions
+before patch 2.0.1, 2006-12-05, unless said).
+
+- Health, a tick (WoWWiki "Health regeneration", revision 1723894, 2007-11, its table marked "Pre-BC" for warriors,
+  unchanged since the 1.x measurements): druid spirit × 0.09 + 6.5, hunter × 0.25 + 6, mage × 0.10 + ?, paladin × 0.25
+  + ?, priest × 0.10 + ?, rogue × 0.50 + 2 ("Confirmed at level 60 patch 1.09"), shaman × 0.11 + 7, warlock × 0.07 + 6,
+  warrior × 0.80 + 6. "There is 1 tick of regeneration every 2 seconds" (revision 1723817, 2006-08-25). The talk page
+  (Talk:Health regeneration/Archive01) holds the measurements of 2006: a level 60 warrior "with 58 spirit gained 53
+  health a tick" and "With 44 spirit he gained 41/42"; a level 48 warlock "With 173 spirit I gained 17 health a tick
+  and with 101 spirit I gained 13".
+- Sitting: "Health Regeneration is increased by 33% while sitting" (same revision; added 2007-02, so after 2.0; a
+  Classic Era player in 2020: "close to 30% but i'm not sure").
+- Mana, a tick (WoWWiki "Mana regeneration", revision 1569850, 2006-03): druid, hunter, warlock spirit / 5 + 15;
+  mage, priest / 4 + 12.5; shaman / 5 + 17. Its paladin line (/ 4 + 8) disagrees with the same page's comparison of
+  2006-06 ("1.6 spi for 1 mana/5 for priests and mages, and 2 spi for all others", that is / 4 for those two and / 5
+  for the rest) and with the 2.x Armory fits (paladin 0.5 a point of spirit every 5 seconds, / 5 a tick).
+- The five-second rule (WoWWiki "Five second rule", revision 3630837, 2006-11-03; "Mana regeneration", 2006-11-09):
+  "After expending mana to cast a spell, a character does not regenerate mana for 5 seconds"; spells that cost no
+  mana (Clearcasting, Inner Focus, Nature's Swiftness) do not start it; "Channeled spells ... The five second rule
+  starts when the spell's channeling starts; i.e. when you pay the mana for it. The rule continues for at least five
+  seconds, and longer if the spell is channeled for more than five seconds ... Tranquility channels for 10 seconds and
+  interrupts your regeneration for the full 10 seconds"; Mod Power Regen effects (water, Anathema) and periodic
+  energize effects are not subject to it.
+
+**Rule:** health a tick by the table; a mage's (spirit × 0.11 + 1), a paladin's (× 0.25) and a priest's (× 0.15 + 1.4)
+lines, whose constants were never found, stay CMaNGOS's (the paladin's agrees with the 1.x slope). A third more not
+standing. Mana by the table (the paladin's / 5 + 15). Mana spent pauses spirit's mana for 5 seconds, or for the
+channel's length if longer.
+
+**What changed (2026-11-21):** health came from CMaNGOS's `OCTRegenHPPerSpirit` lines (e.g. warrior spirit × 1.26 −
+22.6), taken as a second, so a tick gave twice the line: a level 60 warrior with 58 spirit regenerated 101 a tick, the
+1.x warrior 53 (the table: 52). Sitting gave half again. A channel paused the regeneration for five seconds from its
+start whatever its length.
+
+**Left:** the tick's dependence on the level. A Classic Era warrior of level 15 with 30 spirit was shown "21 hp per
+tick" (Blizzard forums, "Passive health regeneration (warrior)", 2020-04-01), the table's 30, CMaNGOS's 30; a level 37
+warrior of 2006 measured 0.83 a point of spirit, the level 60 ones 0.9. That looks like a per-level rate (as 2.0's
+game tables have), but too few points were found to fit one.
+
+**Second opinion (CMaNGOS-classic, `Unit::OCTRegenHPPerSpirit`, `Player::RegenerateHealth`), compared afterwards:** the
+lines above, applied as health a second (`ModifyHealth(addvalue * diff / 1000)`); × 1.5 sitting; the mana table as
+dmangos has it (paladin / 5 + 15, its comment "the above addvalue are given per tick"). No channel rule.
+
+## Spell crit from intellect
+
+**What:** a player's spell crit, base + intellect / (a + b × level) by class (world/spellhandlers.d `spellCrit`).
+
+**Source: Blizzard's statement** (the community manager Tseric, 2006, quoted on WoWWiki "Attributes (pre-6.0)",
+revision 462389, 2006-11-13; the post: forums.worldofwarcraft.com thread 8532806): "exact figures at level 60 for
+spell crit": warlock 60.6 intellect a percent, druid 60.0, shaman 59.5, mage 59.5, priest 59.2. The paladin's was not
+given; Classic Era's guides give 54.
+
+**Rule:** at level 60 a, b give those figures: CMaNGOS's fit already does for the priest (59.23), shaman (59.51),
+warlock (60.5), druid (59.81) and paladin (53.77). The mage's row was the paladin's (53.77); it is now 14.673 + 0.7471
+× level (59.5 at 60, the old row's 15.42 at level 1). The bases (3.70 a mage, 2.97 a priest, ...) and the slope by
+level have no source (no 1.12 table; gtChanceToSpellCrit starts in 2.0): CMaNGOS's, its comment "from mangos 3462 for
+1.12 MUST BE CHECKED". A Classic Era mage of level 34 with 164 intellect saw 2.76% (Blizzard forums, "About Mage
+Stats"), where the formula gives 8.1%: the bases are likely too high, but nothing gives better ones.
+
+## Attack power, crit and dodge from agility
+
+**Sources: Blizzard's statements**, quoted on WoWWiki "Attributes (pre-6.0)" (revision 462389, 2006-11-13, "From the
+Developers"): "For most level 60 character classes, approximately 20 points of AGI will increase your critical hit
+chance by approximately 1%. Rogues require 29 AGI ... and Hunters require 53 AGI"; dodge: "approximately 20 points ...
+Rogues only require 14.5 AGI ... Hunters require 26.5 AGI". Base dodge (WoWWiki "Dodge", revision 3537383,
+2006-11-30): druid 0.75%, hunter 0.64%, mage 3.25%, paladin 0.75%, priest 3%, rogue 0%, shaman 1.75%, warlock 2%,
+warrior 0%. Attack power: "Attack Power increases your base DPS by 1 for every 14 attack power" and strength gives 2
+melee attack power, rogues and hunters 1 and 1 per agility (WoWWiki "Attack power", revision 781971, 2006-11-30);
+"Before patch 2.0.1, hunters received 2 Ranged AP per agility" (warcraft.wiki.gg "Attack power"); the level terms (3 a
+level for warriors and paladins, 2 for rogues, hunters and shamans; ranged 1 a level for warriors and rogues, 2 for
+hunters) are the 2008 WoWWiki table (revision 1317844), whose non-druid rows 2.0 did not change; a druid has none (see
+"A druid's attack power").
+
+**Rule:** all as dmangos had it (world/stats.d `meleeChances`, `meleeAttackPower`, `rangedAttackPower`,
+`weaponDamage`): the level 60 figures agree. The ratios below 60 are CMaNGOS's straight line from a level 1 figure,
+with no source. One disagreement left: the same Attributes revision says "Warriors, Hunters and Rogues gain 2 ranged
+attack power for each point of agility", where dmangos (and the 2008 table) give warriors and rogues 1; Blizzard's
+2.0 hunter notes name only hunters' change, so 1 stays. Health 10 a point of stamina, mana 15 a point of intellect
+(the same revision); the first 20 points giving 1 each has no source found.

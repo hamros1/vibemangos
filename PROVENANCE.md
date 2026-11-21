@@ -1346,6 +1346,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions: `Aura::HandleAuraModStat`, `Group::_updateMembersOnRosterChanged`, `Object::BuildValuesUpdate`, `Player::BuildCreateUpdateBlockForPlayer`, `Player::CanDualWield`, `Player::ComputeRest`, `Player::ExploreArea`, `Player::GetChatTag`, `Player::GiveLevel`, `Player::HasItemCount`, `Player::HasSpell`, `Player::LoadFromDB`, `Player::ModifyMoney`, `Player::RegenerateAll`, `Player::SaveToDB`, `Player::SendInitialPacketsBeforeAddToMap`, `Player::SetRestBonus`, `Player::SetRestType`, `Player::SetSkill`, `Player::UpdateFreeTalentPoints`, `Player::UpdateSkillsForLevel`, `Player::_ApplyItemMods`, `Player::_LoadInventory`, `Player::autoReplyMsg`, `Player::bGMTagOn`, `Player::m_areaUpdateId`, `Spell::EffectDualWield`, `Spell::EffectProficiency`, `Unit::GetPowerType`, `Unit::HandleEmoteState`, `Unit::OCTRegenHPPerSpirit`, `Unit::OCTRegenMPPerSpirit`, `Unit::SetStandState`, `Unit::SetStunned`, `Unit::SetTargetGuid`, `Unit::m_speed_rate`
 * Constants: `CORPSE`, `DEAD`, `MAX_MONEY_AMOUNT`, `PLAYER_EXPLORED_ZONES_1`, `PLAYER_FIELD_COINAGE`, `SKILL_FLAG_MAXIMIZED`, `SMSG_ACTION_BUTTONS`, `SMSG_LEVELUP_INFO`, `SMSG_SET_PROFICIENCY`, `SPELL_EFFECT_DUAL_WIELD`
 * Also: `Player::RegenerateHealth` (`SPELL_AURA_MOD_REGEN_DURING_COMBAT`, `SPELL_AURA_MOD_HEALTH_REGEN_PERCENT`, `SPELL_AURA_MOD_HEALTH_REGEN_IN_COMBAT`), `Player::Regenerate` and `Player::UpdateManaRegen` (`SPELL_AURA_MOD_POWER_REGEN_PERCENT`), `Aura::HandleInterruptRegen` (`SetInDummyCombatState`, spells 5229 and 29131)
+* Not from an emulator: health from spirit a two-second tick (the 1.x research table; a mage's, paladin's and priest's lines stay `OCTRegenHPPerSpirit`'s), a third more sitting, the five-second rule as long as a channel (docs/FORMULAS.md "Health and mana from spirit")
 
 ## world/playercreate.d
 
@@ -1432,6 +1433,11 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 ## world/realclassspelltests.d
 
 * Projects: CMaNGOS (the client's DBC files and its classic world database, as the server runs on them)
+
+## world/realrules_world2.d
+
+* Not from an emulator: tests of the stats and regeneration rules, loot, the economy and the timers of docs/FORMULAS.md
+  on the client's DBC files and the classic world database.
 
 ## world/realrules_combat.d
 
@@ -1555,7 +1561,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions: `GameObject::Use`, `Player::ClearCooldownForSpell`, `Player::ClearCooldownsOnLine`, `Player::HasItemFitToSpellReqirements`, `Player::_LoadSpellCooldowns`, `Player::_SaveSpellCooldowns`, `Spell::CheckCast`, `Spell::CheckItems`, `Spell::EffectEnergize`, `Spell::EffectHeal`, `Spell::EffectInstaKill`, `Spell::EffectPersistentAA`, `Spell::EffectTeleportUnits`, `Spell::EffectTransmitted`, `Spell::EffectWeaponDmg`, `Spell::SendChannelStart`, `Spell::SendChannelUpdate`, `Spell::SetTargetMap`, `Spell::SpellStart`, `Spell::cancel`, `Spell::cast`, `Spell::m_delayMoment`, `Spell::update`, `Unit::AttackerStateUpdate`, `Unit::CalculateSpellDamage`, `Unit::SpellDamageBonusDone`, `Unit::SpellHealingBonusDone`, `Unit::SpellHitResult`
 * Constants: `CMSG_CANCEL_CHANNELLING`, `CURRENT_CHANNELED_SPELL`, `CURRENT_GENERIC_SPELL`, `CURRENT_MELEE_SPELL`, `FISHING_BOBBER_READY_TIME`, `MSG_CHANNEL_START`, `MSG_CHANNEL_UPDATE`, `SMSG_CLEAR_COOLDOWN`, `SMSG_FISH_NOT_HOOKED`, `SMSG_INITIAL_SPELLS`, `SMSG_SPELLINSTAKILLLOG`, `SMSG_SPELL_GO`, `SMSG_SPELL_START`, `SPELL_ATTR_EX_IS_CHANNELED`, `SPELL_AURA_MOD_DAMAGE_DONE`, `SPELL_AURA_MOD_HEALING_DONE`, `SPELL_AURA_PERIODIC_DAMAGE`, `SPELL_EFFECT_APPLY_AURA`, `SPELL_FAILED_EQUIPPED_ITEM_CLASS`, `SPELL_INTERRUPT_FLAG_MOVEMENT`, `TARGET_ALL_ENEMY_IN_AREA`, `TARGET_CASTER_COORDINATES`, `TRIGGERED_OLD_TRIGGERED`
 * Also: `TARGET_UNIT_SCRIPT_NEAR_CASTER`, `Spell::CheckScriptTargeting` (`spell_script_target`), `TARGET_UNIT_FRIEND_AND_PARTY`
-* Not from an emulator: fishing's skill-ups (only on a catch, by the measured catches a point) and skinning's required skill (one formula, Wowpedia "Skinning") (docs/FORMULAS.md)
+* Not from an emulator: fishing's skill-ups (only on a catch, by the measured catches a point) and skinning's required skill (one formula, Wowpedia "Skinning") (docs/FORMULAS.md); a mage's spell crit from intellect at level 60 (Blizzard's 59.5 a percent; docs/FORMULAS.md "Spell crit from intellect"), the other rows `Player::GetSpellCritFromIntellect`'s
 * Also: `Spell::OnCheckCast` (a script's refusal last of `CheckCast`), `Spell::OnSuccessfulStart` (in `Spell::Prepare`),
   `TARGET_UNIT_RAID`
 * Not from an emulator: the spell data's `CasterAuraState` and `TargetAuraState` refused at the cast (Revenge,

@@ -112,7 +112,7 @@ not on wago.tools). These are the measured values of emulator projects, with no 
    research). **Spell hit and resistance**: spellcast.d `spellMissChance`, combat.d `partialResistRows`, `effectiveResistPercent`,
    `fullResistChance`. Source: Wowpedia "Spell hit" and "Resistance" (verify which version they describe). The
    101×5 partial-resist table is an emulator fit; the binary-DoT "1/10 resist per tick" rule looks emulator-only.
-6. **Base stats → derived stats**: stats.d `agilityPerPercent` (a linear lvl 1→60 fit per class),
+6. **Done** as far as the sources go (FORMULAS.md "Health and mana from spirit", "Spell crit from intellect", "Attack power, crit and dodge from agility": health regen was doubled, the mage's spell crit the paladin's; below level 60 no source). **Base stats → derived stats**: stats.d `agilityPerPercent` (a linear lvl 1→60 fit per class),
    spellhandlers.d `spellCrit` (an INT fit), player.d `healthRegenPerSecond`, `spiritManaPerSecond`.
    No 1.12 data exists. Source: Classic Era's character sheet (measured), and Wowpedia "Spirit" (page exists) for the
    per-class 1.12 regen table.
@@ -343,19 +343,19 @@ risk.
 
 | where | what | emulator origin | primary source | risk |
 |---|---|---|---|---|
-| stats.d:healthBonusFromStamina / manaBonusFromIntellect | First 20 STA = 1 HP each, then 10; first 20 INT = 1 mana, then 15 | GetHealthBonusFromStamina, GetManaBonusFromIntellect | Wowpedia "Stamina", "Intellect" (verify) | H: every player |
-| stats.d:meleeAttackPower | War/Pal/Dru 3L+2STR−20; Rog/Hun 2L+STR+AGI−20; Sha 2L+2STR−20; casters STR−10 | UpdateAttackPowerAndDamage | Wowpedia "Attack power" (verify; classic table) | H: every melee hit |
-| stats.d:rangedAttackPower | Hunter 2L+2AGI−10; Rogue/Warrior L+AGI−10; others AGI−10 | UpdateAttackPowerAndDamage | Wowpedia "Attack power" (verify) | H |
-| stats.d:weaponDamage | + AP/14 × base weapon speed; ammo DPS × speed if ammo fits | CalculateMinMaxDamage | Wowpedia "Attack power" (verify) | H |
-| stats.d:agilityPerPercent | AGI per 1% crit/dodge interpolated linearly lvl 1→60 per class (e.g. Rogue 2.2→29, Hunter 3.5→53, others →20) | GetMeleeCritFromAgility | none in 1.12 data (gtChanceToMeleeCrit is 2.0+); Classic Era measured (character sheet) | H: emulator-fitted linear table, wrong at mid levels likely |
-| stats.d:meleeChances | Base dodge per class (War 0, Pal .75, Hun .64, Rog 0, Pri 3, Sha 1.75, Mag 3.25, Wlk 2, Dru .75); parry/block 5%; skill ×0.04; block value STR/20−1 | UpdateCritPercentage | Classic Era character sheet (measured); Wowpedia "Dodge" (verify) | H |
-| spellhandlers.d:spellCrit | Spell crit = base + INT/(a + b×level) per-class fitted table | fit replacing gtChanceToSpellCrit | none in 1.12 data; Classic Era character sheet (measured) | H |
+| stats.d:healthBonusFromStamina / manaBonusFromIntellect | First 20 STA = 1 HP each, then 10; first 20 INT = 1 mana, then 15 | GetHealthBonusFromStamina, GetManaBonusFromIntellect | Wowpedia "Stamina", "Intellect" (verify) | H: every player. **Done:** 10 and 15 a point are Blizzard's; the first 20 at 1 has no source (FORMULAS.md "Attack power, crit and dodge from agility") |
+| stats.d:meleeAttackPower | War/Pal/Dru 3L+2STR−20; Rog/Hun 2L+STR+AGI−20; Sha 2L+2STR−20; casters STR−10 | UpdateAttackPowerAndDamage | Wowpedia "Attack power" (verify; classic table) | H: every melee hit. **Done:** agrees with the 1.x and 2008 WoWWiki tables (FORMULAS.md "Attack power, crit and dodge from agility") |
+| stats.d:rangedAttackPower | Hunter 2L+2AGI−10; Rogue/Warrior L+AGI−10; others AGI−10 | UpdateAttackPowerAndDamage | Wowpedia "Attack power" (verify) | H. **Done:** agrees (hunters 2 a point before 2.0.1); one 2006 page's 2 a point for warriors and rogues left documented |
+| stats.d:weaponDamage | + AP/14 × base weapon speed; ammo DPS × speed if ammo fits | CalculateMinMaxDamage | Wowpedia "Attack power" (verify) | H. **Done:** AP/14 a second agrees |
+| stats.d:agilityPerPercent | AGI per 1% crit/dodge interpolated linearly lvl 1→60 per class (e.g. Rogue 2.2→29, Hunter 3.5→53, others →20) | GetMeleeCritFromAgility | none in 1.12 data (gtChanceToMeleeCrit is 2.0+); Classic Era measured (character sheet) | H: emulator-fitted linear table, wrong at mid levels likely. **Done** at level 60 (Blizzard's 20/29/53 and 20/14.5/26.5 agree); below 60 the straight line stays, no source |
+| stats.d:meleeChances | Base dodge per class (War 0, Pal .75, Hun .64, Rog 0, Pri 3, Sha 1.75, Mag 3.25, Wlk 2, Dru .75); parry/block 5%; skill ×0.04; block value STR/20−1 | UpdateCritPercentage | Classic Era character sheet (measured); Wowpedia "Dodge" (verify) | H. **Done:** the base dodge agrees with WoWWiki "Dodge" (2006-11) |
+| spellhandlers.d:spellCrit | Spell crit = base + INT/(a + b×level) per-class fitted table | fit replacing gtChanceToSpellCrit | none in 1.12 data; Classic Era character sheet (measured) | H. **Done** at level 60 (Tseric's figures; the mage's row was the paladin's, fixed); bases and slope no source (FORMULAS.md "Spell crit from intellect") |
 | creatureai.d:regenerate | OOC: +1/3 max health and mana every 5 s (pets too) | Creature::RegenerateAll | none found | H: tick length emulator guess |
 | creature.d:selectLevel | HP/mana/armor = classlevelstats base × multipliers; weapon (baseDamage×variance + AP/14)×atkTime×mult, max ×1.5; AP added again; off hand 50% | Creature::SelectLevel, UpdateDamagePhysical | none found for 1.12 (ExpectedStat absent from Classic Era DB2); creature_template_classlevelstats is emulator-collected | H: all creature damage/armor/HP; AP counted twice |
-| player.d:healthRegenPerSecond | OOC HP/s from spirit per class (e.g. warrior 1.26s−22.6, rogue 0.84s−13) | OCTRegenHPPerSpirit | none in 1.12 data (gt tables 2.0+); Wowpedia "Spirit" (page exists; verify 1.12 section) | H: every player |
-| player.d:healthRegenNow | No regen in combat except % auras; ×1.5 sitting | RegenerateHealth | Wowpedia "Spirit" (verify) | H |
-| player.d:spiritManaPerSecond | Mana per 2 s tick: s/5+15 (druid/hunter/paladin/warlock), s/4+12.5 (mage/priest), s/5+17 (shaman) | OCTRegenMPPerSpirit | Wowpedia "Spirit" (verify; the 1.12 per-class table is widely cited) | H |
-| player.d:manaSpent / manaRegenPerSecond | Five-second rule: 5 s no spirit regen after mana spend | Player::Regenerate | Wowpedia "Five second rule" (verify) | H |
+| player.d:healthRegenPerSecond | OOC HP/s from spirit per class (e.g. warrior 1.26s−22.6, rogue 0.84s−13) | OCTRegenHPPerSpirit | none in 1.12 data (gt tables 2.0+); Wowpedia "Spirit" (page exists; verify 1.12 section) | H: every player. **Done:** the 1.x per-tick table, a tick every 2 s (it was CMaNGOS's per-tick lines taken a second: twice); mage/paladin/priest constants none found (FORMULAS.md "Health and mana from spirit") |
+| player.d:healthRegenNow | No regen in combat except % auras; ×1.5 sitting | RegenerateHealth | Wowpedia "Spirit" (verify) | H. **Done:** a third more sitting (was half again) |
+| player.d:spiritManaPerSecond | Mana per 2 s tick: s/5+15 (druid/hunter/paladin/warlock), s/4+12.5 (mage/priest), s/5+17 (shaman) | OCTRegenMPPerSpirit | Wowpedia "Spirit" (verify; the 1.12 per-class table is widely cited) | H. **Done:** agrees (paladin / 5 + 15, by the 2006 item comparison) |
+| player.d:manaSpent / manaRegenPerSecond | Five-second rule: 5 s no spirit regen after mana spend | Player::Regenerate | Wowpedia "Five second rule" (verify) | H. **Done:** a channel paid at its start pauses it as long as it channels, if longer than 5 s |
 | stats.d:computeStats (base) | Unarmed 2000 ms, 1–2 dmg; off hand ×0.5 | CalculateMinMaxDamage | Wowpedia "Dual wield" (verify) | M |
 | stats.d:computeStats (stacking) | Flat stats, then % stat, then total %; armor += 2×AGI | _ApplyItemBonuses, UpdateArmor | Wowpedia "Agility" (verify) | M |
 | auras.d:multiplier / total | % auras multiply, flat amounts add | TOTAL_PCT | none found | M |

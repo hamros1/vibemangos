@@ -1,0 +1,103 @@
+/**
+ * The rules of docs/FORMULAS.md for stats and regeneration, loot, the economy and the timers of death and PvP,
+ * tested on the real data (the client's DBC files, the world database's level stats, spells and items), asserting
+ * the sourced numbers. Run only where `DMANGOS_REAL_DATA` names the data (`dmangos.world.realspelltests`).
+ */
+module dmangos.world.realrules_world2;
+
+version (unittest):
+
+import std.math : isClose;
+import dmangos.world.defines : PlayerClass, Stat;
+import dmangos.world.player : Player;
+import dmangos.world.realspelltests : haveRealData, RealWorld;
+import dmangos.world.updatefields;
+
+private enum ubyte raceNightElf = 4, raceDwarf = 3;
+
+/// Health from spirit, a two-second tick out of combat (docs/FORMULAS.md "Health and mana from spirit"): a
+/// warrior's spirit × 0.8 + 6, a rogue's × 0.5 + 2; a third more sitting. (It was CMaNGOS's per-tick lines taken
+/// a second: twice as much, 1.26 × spirit − 22.6 a second for a warrior.)
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    uint tick(ubyte classId, uint guid, bool sitting)
+    {
+        auto c = w.character(guid, "Regen", classId, 60, []);
+        auto me = cast(Player) c.session.character;
+        me.values.set!UNIT_FIELD_HEALTH(1u);
+        if (sitting)
+            me.values.setByte!UNIT_FIELD_BYTES_1(0, 1);
+        me.regenerate(2000, 1, 1, 1, 1);
+        return me.values.get!UNIT_FIELD_HEALTH - 1;
+    }
+    auto warrior = w.character(1, "Spirited", PlayerClass.warrior, 60, []);
+    const spirit = float((cast(Player) warrior.session.character).values.get!UNIT_FIELD_STAT0(Stat.spirit));
+    assert(spirit > 20, "the real level 60 stats");
+    assert(tick(PlayerClass.warrior, 2, false) == cast(uint)(spirit * 0.8f + 6));
+    assert(tick(PlayerClass.warrior, 3, true) == cast(uint)((spirit * 0.8f + 6) * 4 / 3), "sitting: a third more");
+    auto rogue = w.character(4, "Sly", PlayerClass.rogue, 60, []);
+    const rogueSpirit = float((cast(Player) rogue.session.character).values.get!UNIT_FIELD_STAT0(Stat.spirit));
+    assert(tick(PlayerClass.rogue, 5, false) == cast(uint)(rogueSpirit * 0.5f + 2));
+}
+
+/// The five-second rule after a channel paid at its start: as long as it channels (Tranquility, 10 seconds), five
+/// seconds after one that is shorter; mana from spirit, a tick, spirit / 5 + 15 for a druid.
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    enum uint tranquility = 9862, moonfire = 8921;
+    auto c = w.character(1, "Malfurion", PlayerClass.druid, 60, [tranquility, moonfire], raceNightElf);
+    auto me = cast(Player) c.session.character;
+    const spirit = float(me.values.get!UNIT_FIELD_STAT0(Stat.spirit));
+    assert(isClose(me.manaRegenPerSecond() * 2, spirit / 5 + 15), "mana a tick");
+    assert(w.cast_(c, tranquility) == imported!"dmangos.world.spellcast".SpellCastResult.ok);
+    assert(me.spiritPaused == 10_000, "the whole channel");
+    me.regenerate(6000, 1, 1, 1, 1);
+    assert(me.spiritPaused == 4000 && me.manaRegenPerSecond() == 0, "still channelling past five seconds");
+}
+
+/// Spell crit from intellect at level 60: 59.5 intellect a percent for a mage (Blizzard's figure; it was a
+/// paladin's 53.77); the other classes' figures as Blizzard gave them.
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    float perPercent(ubyte classId, uint guid, ubyte race)
+    {
+        auto c = w.character(guid, "Caster", classId, 60, [], race);
+        auto me = c.session.inWorld;
+        const frostbolt = w.context.data.spells.spell(116);
+        const before = me.spellCritOf(frostbolt);
+        me.player.values.set!UNIT_FIELD_STAT0(Stat.intellect, me.player.values.get!UNIT_FIELD_STAT0(Stat.intellect) + 595);
+        return 595 / (me.spellCritOf(frostbolt) - before);
+    }
+    assert(isClose(perPercent(PlayerClass.mage, 1, 1), 59.5f, 1e-3), "a mage: 59.5");
+    assert(isClose(perPercent(PlayerClass.priest, 2, 1), 59.2f, 1e-2), "a priest: 59.2");
+    assert(isClose(perPercent(PlayerClass.warlock, 3, 1), 60.5f, 2e-3), "a warlock: 60.6");
+    assert(isClose(perPercent(PlayerClass.druid, 4, raceNightElf), 60.0f, 5e-3), "a druid: 60.0");
+    assert(isClose(perPercent(PlayerClass.shaman, 5, 2), 59.5f, 1e-3), "a shaman: 59.5");
+}
+
+/// Crit and dodge from agility at level 60, as Blizzard gave them: 20 agility a percent of each for most classes,
+/// a rogue 29 and 14.5, a hunter 53 and 26.5.
+unittest
+{
+    import dmangos.world.stats : ChanceInputs, meleeChances;
+
+    void check(ubyte classId, float crit, float dodge)
+    {
+        auto at = (float agility) => meleeChances(ChanceInputs(classId, 60, agility, 0, 300, 300, 300));
+        assert(isClose(at(crit * 10).crit - at(0).crit, 10, 1e-4) && isClose(at(dodge * 10).dodge - at(0).dodge, 10, 1e-4));
+    }
+    check(PlayerClass.warrior, 20, 20);
+    check(PlayerClass.paladin, 20, 20);
+    check(PlayerClass.mage, 20, 20);
+    check(PlayerClass.rogue, 29, 14.5f);
+    check(PlayerClass.hunter, 53, 26.5f);
+}

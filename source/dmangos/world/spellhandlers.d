@@ -1892,8 +1892,12 @@ private:
         // A channelled spell goes on (`SPELL_ATTR_EX_IS_CHANNELED`, `_IS_SELF_CHANNELED`).
         enum uint channeled = 0x04, selfChanneled = 0x40;
         if ((spell.attributesEx & (channeled | selfChanneled)) && !c.triggered && !channelFailed)
+        {
             startChannel(spell, c.targets.unit ? c.targets.unit : results.length ? results[0].guid : 0); // (what it is
                 // aimed at: Arcane Missiles' aura is on its caster)
+            if (paid > 0 && spell.casting.powerType == Power.mana && channelSpell is spell)
+                player.manaSpent(channelTimer); // the five-second rule: as long as the channel, if longer
+        }
         channelFailed = false;
         // `SpellHit` for the creatures hit (their scripts).
         foreach (r; results)
@@ -2528,8 +2532,11 @@ private:
     /// The crit chance of this player's spells, from its intellect by class and level.
     float spellCrit()
     {
+        // Intellect per percent at level 60 (14.77 + 60 × 0.65 = 53.77 a paladin's, 59.5 a mage's, 59.2 a priest's,
+        // 59.5 a shaman's, 60.6 a warlock's, 60.0 a druid's) is Blizzard's (Tseric, docs/FORMULAS.md "Spell crit
+        // from intellect"); the base and the slope by level are CMaNGOS's fit.
         static immutable float[3][12] table = [[0, 0, 10], [0, 0, 10], [3.70f, 14.77f, 0.65f], [0, 0, 10],
-            [0, 0, 10], [2.97f, 10.03f, 0.82f], [0, 0, 10], [3.54f, 11.51f, 0.80f], [3.70f, 14.77f, 0.65f],
+            [0, 0, 10], [2.97f, 10.03f, 0.82f], [0, 0, 10], [3.54f, 11.51f, 0.80f], [3.70f, 14.673f, 0.7471f],
             [3.18f, 11.30f, 0.82f], [0, 0, 10], [3.33f, 12.41f, 0.79f]];
         const row = table[player.data.classId < table.length ? player.data.classId : 0];
         const intellect = player.values.get!UNIT_FIELD_STAT0(Stat.intellect);
