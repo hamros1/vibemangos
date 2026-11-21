@@ -70,6 +70,7 @@ private:
     {
         // The map it is on: `deathOnLogout` may put its saved place at a graveyard of another map.
         auto leaving = map;
+        worldPvpLeaving(); // a Silithyst carrier's falls here
         if (loggingOut)
             interruptAuras(AuraInterrupt.leaveWorld);
         releaseLootOnLeave();

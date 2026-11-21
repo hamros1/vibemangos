@@ -1701,7 +1701,9 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
   `AreaTrigger.dbc`, `WorldSafeLocs.dbc`, `SpellIcon.dbc`, `FactionTemplate.dbc`), the world database (the capture
   points' `gameobject_template` data, `dbscripts_on_event`, `quest_template`, `broadcast_text`, `spell_template`) and
   warcraft.wiki.gg (docs/FORMULAS.md, "World PvP"); CMaNGOS-classic's `OutdoorPvP/OutdoorPvPEP.cpp` and
-  `OutdoorPvPSI.cpp` were compared afterwards only.
+  `OutdoorPvPSI.cpp` were compared afterwards only. The announcers' texts and when they are said: vmangos's
+  `OutdoorPvPSI::DoSilithystYell` (second opinion; the texts and speakers are the database's); the win's defense message:
+  CMaNGOS's `LANG_OPVP_SI_CAPTURE_A`, `_H` (`World::SendDefenseMessage`).
 
 ## world/weather.d
 

@@ -768,6 +768,13 @@ except where said.
 - After a race is won both counts start again at 0. Cenarion Favor also holds at the Gates of Ahn'Qiraj (a zone of its
   own in Silithus).
 - A lost tower takes its flight master and its side's squad away.
+- Silithus's announcers are the camps' quest givers, Marshal Bluewall (17080) and General Kirika (17079): the data's
+  texts 13479 .. 13481 and 13476 .. 13478 (male and female, as the two are) say "one quarter", "half" and "almost all";
+  they are said (the rows' `ChatTypeID` 0) at 50, 100 and 150 of 200, and 13470, 13469 ("Victory ...") at the win, as
+  vmangos's `DoSilithystYell` does; the win is also "The Alliance (Horde) has collected 200 silithyst!" in the zone's
+  defense channel (`mangos_string` 1636, 1635, as CMaNGOS sends it). A carrier who leaves the world (a logout, a lost
+  connection) drops a mound where it was, as one who dies does: the aura ends on leaving the world (its
+  `AuraInterruptFlags`), and the dust must not vanish with the carrier.
 
 **Second opinion (CMaNGOS-classic, `OutdoorPvP/OutdoorPvPEP.cpp`, `OutdoorPvPSI.cpp`, `GameObject::TickCapturePoint`),
 compared after the implementation:** it agrees on the capture's rate, its taking at the progress events and losing in

@@ -49,6 +49,7 @@ struct Told
     uint[uint] states;
     uint honor;
     string[] notices;
+    string[] said; /// what creatures said or yelled
 }
 
 /// ditto
@@ -70,8 +71,23 @@ Told told(ref TestClient c)
         else if (p.opcode == Opcode.SMSG_DEFENSE_MESSAGE)
         {
             const zone = r.read!uint, length = r.read!uint;
-            assert(zone == zoneEasternPlaguelands && length == p.body_.length - 8 && p.body_[$ - 1] == 0);
+            assert((zone == zoneEasternPlaguelands || zone == zoneSilithus) && length == p.body_.length - 8
+                && p.body_[$ - 1] == 0);
             t.notices ~= cast(string) p.body_[8 .. $ - 1].idup;
+        }
+        else if (p.opcode == Opcode.SMSG_MESSAGECHAT)
+        {
+            import dmangos.world.opcodes : ChatType;
+
+            const type = cast(ChatType) r.read!ubyte;
+            if (type != ChatType.CHAT_MSG_MONSTER_SAY && type != ChatType.CHAT_MSG_MONSTER_YELL)
+                continue;
+            r.read!uint; // language
+            r.read!ulong; // the speaker
+            r.readBytes(r.read!uint); // its name
+            r.read!ulong; // the target
+            const text = r.readBytes(r.read!uint);
+            t.said ~= cast(string) text[0 .. $ - 1].idup;
         }
     }
     return t;
@@ -352,4 +368,64 @@ unittest
     w.pass(2);
     assert(a.has(spellCenarionFavor) && !h.has(spellCenarionFavor));
     assert(!a.has(spellSilithyst));
+}
+
+/**
+ * The camps' announcers: Marshal Bluewall says the Alliance has a quarter, half, three quarters of the 200
+ * (`broadcast_text` 13479 .. 13481) as its count reaches 50, 100 and 150, and cheers the win (13470), the zone told
+ * "The Alliance has collected 200 silithyst!" (`mangos_string` 1636). A carrier who logs out drops a mound.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    const camp = w.context.client.areaTriggers.lookup(turnInTriggers[PvpTeam.alliance]);
+    auto a = player(w, 1, "Anduin", raceHuman, silithusMap, zoneSilithus, Position(camp.x, camp.y, camp.z, 0));
+    w.pass(1);
+    bool bluewallHere;
+    foreach (c; w.context.map(silithusMap).creaturesNear(Position(camp.x, camp.y, camp.z, 0), 60))
+        bluewallHere = bluewallHere || c.template_.entry == silithusAnnouncers[PvpTeam.alliance];
+    assert(bluewallHere, "Marshal Bluewall at the Alliance's camp");
+    told(a);
+
+    void turnIn()
+    {
+        me(a).battlegroundCastHere(spellSilithyst);
+        a.write(Opcode.CMSG_AREATRIGGER, imported!"dmangos.world.packets".ClientAreaTrigger(turnInTriggers[PvpTeam.alliance]));
+    }
+
+    w.served.silithus.collected = [48, 0];
+    w.context.services.local!WorldPvpHost().start();
+    told(a);
+    turnIn();
+    assert(told(a).said.length == 0, "49: nothing to say");
+    turnIn();
+    auto t = told(a);
+    assert(t.said == ["We haveone quarter of the needed silithyst! Keep it up!"], "50 of 200 (13479, as the data has it)");
+    w.served.silithus.collected = [99, 0];
+    turnIn();
+    assert(told(a).said == ["We have half of our needed silithyst.  We can do it!"]);
+    w.served.silithus.collected = [149, 0];
+    turnIn();
+    assert(told(a).said == ["We have almost all the silithyst we need!  Don't stop now!"]);
+    w.served.silithus.collected = [199, 0];
+    turnIn();
+    t = told(a);
+    assert(t.said == ["We've done it!  Victory to the Alliance!"]);
+    assert(t.notices == ["|cffffff00The Alliance has collected 200 silithyst!|r"]);
+
+    // A carrier logging out: the Silithyst falls where it stood, and does not go with it.
+    auto anduin = cast(Player) a.session.character;
+    anduin.movement.position = Position(-7135, 780, 7.3f, 0);
+    me(a).battlegroundCastHere(spellSilithyst);
+    assert(a.has(spellSilithyst));
+    a.write(Opcode.CMSG_LOGOUT_REQUEST, null); // at once: the test world's logout delay is 0
+    assert(w.objects(silithusMap, Position(-7135, 780, 7.3f, 0), 6, silithystMound).length == 1, "a mound");
+    assert(!w.db.auraRows.get(1, null).length || {
+        foreach (r; w.db.auraRows[1])
+            if (r.spell == spellSilithyst)
+                return false;
+        return true;
+    }(), "not saved with the character");
 }
