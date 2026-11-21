@@ -1876,10 +1876,16 @@ final class Map : CombatWorld, GameObjectWorld
     Inhabitant[] playersNow()
     {
         Inhabitant[] found;
-        found.reserve(players.length);
-        foreach (slot; players)
-            found ~= at(slot).player;
+        snapshotPlayers(found);
         return found;
+    }
+
+    /// Copies the current player list into caller-owned storage.
+    package void snapshotPlayers(ref Inhabitant[] found)
+    {
+        found.length = players.length;
+        foreach (i, slot; players)
+            found[i] = at(slot).player;
     }
 
     /// See `CombatWorld.inLineOfSight`: at eye height, through the vmaps; anything goes without terrain.

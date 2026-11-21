@@ -6252,7 +6252,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         // Each player and each map apart: one that throws does not stop the others (it is logged and counted).
         void tickMap(Map map_)
         {
-            foreach (who; map_.playersNow())
+            map_.snapshotPlayers(mapTickPlayers);
+            scope (exit) clearTickSnapshot(mapTickPlayers);
+            foreach (who; mapTickPlayers)
                 if (auto player = cast(OnlinePlayer) who)
                     if (player.character !is null && player.character.guid !in updatedPlayers)
                     {
@@ -6261,11 +6263,18 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     }
             isolated(map_, () => map_.update(elapsed));
         }
-        foreach (map_; maps.values)
-            tickMap(map_);
-        foreach (map_; instanceMaps.values)
-            tickMap(map_);
-        foreach (player; online.values) // a copy: an update may log a player out
+        void tickMaps(Key)(Map[Key] active)
+        {
+            snapshotValues(active, tickMapsNow);
+            scope (exit) clearTickSnapshot(tickMapsNow);
+            foreach (map_; tickMapsNow)
+                tickMap(map_);
+        }
+        tickMaps(maps);
+        tickMaps(instanceMaps);
+        snapshotValues(online, tickPlayersNow);
+        scope (exit) clearTickSnapshot(tickPlayersNow);
+        foreach (player; tickPlayersNow) // an update may log a player out
             if (player.character !is null && player.character.guid !in updatedPlayers)
                 isolated(player, () => player.update(elapsed));
     }
@@ -6371,6 +6380,25 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     private bool[ulong] updatedPlayers; // the players the maps phase has updated this tick
+    private Map[] tickMapsNow;
+    private Inhabitant[] mapTickPlayers;
+    private OnlinePlayer[] tickPlayersNow;
+
+    private static void snapshotValues(T, Key)(T[Key] source, ref T[] snapshot)
+    {
+        snapshot.length = source.length;
+        size_t i;
+        foreach (value; source)
+            snapshot[i++] = value;
+    }
+
+    private static void clearTickSnapshot(T)(ref T[] snapshot)
+    {
+        // Release the objects while keeping capacity for the next snapshot.
+        snapshot[] = null;
+        snapshot.length = 0;
+        snapshot.assumeSafeAppend();
+    }
 
     /// `secsToTimeString`: "1h 2m 3s", as the shutdown message shows it.
     static string durationText(long seconds) pure @safe
