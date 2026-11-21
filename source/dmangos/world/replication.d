@@ -246,6 +246,13 @@ final class Replica : Replicable, Moving, PerViewer
         return guid_;
     }
 
+    package @property bool playerPet() const
+    {
+        import dmangos.world.objects : HighGuid, highGuidOf;
+
+        return values_.type == TypeId.unit && highGuidOf(guid_) == HighGuid.pet;
+    }
+
     @property Position position() const
     {
         return block.flags & UpdateFlags.living ? block.info.position : block.position;

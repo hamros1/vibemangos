@@ -444,6 +444,27 @@ struct UnitRef
     }
 }
 
+/// Use observed fields for a remote unit, including a pet's controller flags when visible.
+package Relating combatRelations(UnitRef unit, const imported!"dmangos.world.clientdata".ClientData client)
+{
+    import dmangos.world.replication : Replica;
+    import dmangos.world.updatefields : TypeId;
+
+    if (unit.replica is null)
+        return unit.relating();
+    auto relation = unit.replica.unitRelations(client);
+    if (unit.replica.playerPet && relation.playerOwned)
+    {
+        auto controller = unit.map.unit(relation.controller);
+        if (controller.kind == UnitKind.player)
+            relation.playerFlags = controller.relating().playerFlags;
+        else if (auto owner = cast(Replica) unit.map.findObject(relation.controller))
+            if (owner.fields.type == TypeId.player)
+                relation.playerFlags = owner.unitRelations(client).playerFlags;
+    }
+    return relation;
+}
+
 /// The player who owns `unit`'s kills and taps: itself, or a pet's owner (if on the map); null otherwise.
 Character creditedPlayer(UnitRef unit)
 {

@@ -1519,6 +1519,9 @@ final class Map : CombatWorld, GameObjectWorld
         }
         if (at(slot).mover !is null)
             startTicking(slot);
+        if (auto creature = cast(Creature) object)
+            if (creature.ai !is null && creature.ai.inCombat)
+                trackCreatureCombat(creature, true);
         replicate(slot, at_);
         updateObjectVisibility(object);
     }
@@ -1837,7 +1840,7 @@ final class Map : CombatWorld, GameObjectWorld
     /// A player's damage aura ticked on a creature here after the caster left this map.
     void delegate(UnitRef victim, imported!"dmangos.world.auras".Aura aura, size_t effect) remotePeriodicTick;
 
-    /// Sends a due melee swing from a creature here to the observed player's node.
+    /// Sends a due melee swing from a creature here to its target's node.
     bool delegate(Creature attacker, UnitRef target) remoteCreatureSwing;
 
     /// Keep player replicas near this creature while it has an active fight, even without a local player.

@@ -660,35 +660,49 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private bool queueCreatureSwing(Creature attacker, UnitRef target)
     {
         import dmangos.world.combat : creatureTypeHumanoid;
+        import dmangos.world.updatefields : OBJECT_FIELD_ENTRY, TypeId;
 
         if (!canWrite() || target.replica.owner == nodeId)
             return false;
+        uint targetType = creatureTypeHumanoid;
+        if (target.replica.fields.type == TypeId.unit)
+        {
+            const template_ = target.replica.fields.get!OBJECT_FIELD_ENTRY in data.creatureTemplates;
+            if (template_ is null)
+                return false;
+            targetType = template_.creatureType;
+        }
         const fighter = attacker.fighter;
+        const damageVersus = targetType < fighter.damageVersus.length ? fighter.damageVersus[targetType] : 1;
+        const critVersus = targetType < fighter.critVersus.length ? fighter.critVersus[targetType] : 0;
         const request = CreatureSwing(sequence: nextGameplaySequence(), attacker: attacker.guid,
             target: target.combatGuid, map: target.map.id, instance: target.map.instanceId,
+            destination: target.replica.owner,
             facing: fighter.position.orientation, running: fighter.runningAround, school: fighter.damageSchool[0],
             armorIgnored: fighter.armorIgnored, minDamage: fighter.damage[0][0], maxDamage: fighter.damage[0][1],
-            damageFactor: fighter.damageDone[0] * fighter.damageVersus[creatureTypeHumanoid], crit: fighter.crit,
-            critVersus: fighter.critVersus[creatureTypeHumanoid], hitBonus: fighter.hitBonus);
-        return sendCreatureSwing(target.replica.owner, request);
+            damageFactor: fighter.damageDone[0] * damageVersus, crit: fighter.crit,
+            critVersus: critVersus, hitBonus: fighter.hitBonus);
+        return sendCreatureSwing(request.destination, request);
     }
 
-    /// The player's node resolves the attack table, armor and absorbs against the player it simulates now.
+    /// The target's node resolves the attack table, armor and absorbs against the unit it simulates now.
     void creatureSwingArrived(ushort peer, const ref CreatureSwing request)
     {
         import std.math : isFinite;
         import dmangos.world.combat : attackerStateUpdate, AttackType, calculateMeleeDamage, creatureSwingInReach,
             HitInfo;
         import dmangos.world.defines : UnitFlags;
+        import dmangos.world.honor : HonorVictim;
+        import dmangos.world.objects : highGuidOf;
         import dmangos.world.relations : canAttackNow;
-        import dmangos.world.unit : Blow, dealDamage;
+        import dmangos.world.unit : Blow, combatRelations, dealDamage;
         import dmangos.world.updatefields : OBJECT_FIELD_ENTRY, TypeId;
 
         if (!peer || !request.sequence || !canWrite())
             return;
         if (request.reply)
             return creatureSwingReply(peer, request);
-        if (request.sequence <= lastCreatureSwing.get(peer, 0))
+        if (request.destination != nodeId || request.sequence <= lastCreatureSwing.get(peer, 0))
             return;
         lastCreatureSwing[peer] = request.sequence;
         if (request.shieldHits.length)
@@ -702,14 +716,20 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (map_ is null || map_.id != request.map || map_.instanceId != request.instance)
             return;
         auto victim = map_.unit(request.target);
-        if (victim.kind != UnitKind.player || !victim.alive || victim.untouchable || victim.session.transferring)
+        if (!victim.alive || victim.untouchable || (victim.kind == UnitKind.player && victim.session.transferring)
+            || (victim.kind == UnitKind.creature && victim.creature.ai is null))
             return;
         auto copy = cast(Replica) map_.findObject(request.attacker);
         if (copy is null || copy.owner != peer || copy.fields.type != TypeId.unit)
             return;
-        const relation = copy.unitRelations(client);
+        auto source = UnitRef.observed(copy, map_);
+        const relation = source.combatRelations(client);
+        const controller = copy.playerPet && relation.playerControlled && relation.playerOwned ? relation.controller : 0;
         enum disabled = UnitFlags.pacified | UnitFlags.stunned | UnitFlags.confused | UnitFlags.fleeing;
-        if (relation.playerControlled || (relation.unitFlags & disabled) || !canAttackNow(relation, victim.relating(), client))
+        if ((!controller && (relation.playerControlled
+                || (victim.kind == UnitKind.creature && highGuidOf(request.target) != HighGuid.pet)))
+            || (controller && victim.kind == UnitKind.player && victim.session.duelingWith(controller))
+            || (relation.unitFlags & disabled) || !canAttackNow(relation, victim.relating(), client))
             return;
         const template_ = copy.fields.get!OBJECT_FIELD_ENTRY in data.creatureTemplates;
         if (template_ is null)
@@ -726,17 +746,31 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         attacker.damageSchool[0] = request.school;
         attacker.damageDone[0] = request.damageFactor;
         attacker.crit = request.crit;
-        attacker.critVersus[defender.creatureType] = request.critVersus;
+        if (defender.creatureType < attacker.critVersus.length)
+            attacker.critVersus[defender.creatureType] = request.critVersus;
         attacker.hitBonus = request.hitBonus;
 
         auto hit = calculateMeleeDamage(attacker, defender, AttackType.mainHand, map_.random);
         if ((hit.absorbed = victim.absorb(hit.school, hit.damage)) != 0)
             hit.hitInfo |= HitInfo.absorb;
-        map_.sendToWatchers(victim.session, Opcode.SMSG_ATTACKERSTATEUPDATE, attackerStateUpdate(hit), true);
+        const packet = attackerStateUpdate(hit);
+        if (victim.kind == UnitKind.player)
+            map_.sendToWatchers(victim.session, Opcode.SMSG_ATTACKERSTATEUPDATE, packet, true);
+        else
+            map_.sendToObservers(request.target, Opcode.SMSG_ATTACKERSTATEUPDATE, packet);
         auto blow = Blow.swing(hit);
+        blow.remotePlayer = controller;
+        blow.remotePlayerPvP = relation.hasFlag(UnitFlags.pvp);
         SwingShieldHit[] shieldHits;
         blow.shieldHit = (uint damage, uint school) { shieldHits ~= SwingShieldHit(damage, school); };
-        dealDamage(UnitRef.observed(copy, map_), victim, hit.damage, blow);
+        const honor = controller && victim.kind == UnitKind.player ? victim.session.describeHonorVictim() : HonorVictim.init;
+        if (controller)
+        {
+            if (dealRemoteDamage(source, victim, hit.damage, blow) && honor.guid)
+                reportRemotePlayerKill(controller, honor, map_);
+        }
+        else
+            dealDamage(source, victim, hit.damage, blow);
 
         if (sendCreatureSwing !is null)
         {
@@ -744,7 +778,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             result.reply = true;
             result.outcome = cast(ubyte) hit.outcome;
             result.damage = hit.damage;
-            result.killed = victim.session.character !is null && !victim.alive;
+            result.killed = !victim.alive;
+            result.targetPvP = victim.kind == UnitKind.player && victim.session.character !is null && victim.session.isPvP;
             result.shieldHits = shieldHits;
             sendCreatureSwing(peer, result);
         }
@@ -754,22 +789,28 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         import dmangos.bytes : ByteWriter;
         import dmangos.world.combat : MeleeHitOutcome;
+        import dmangos.world.character : Character;
+        import dmangos.world.objects : highGuidOf;
         import dmangos.world.unit : Blow;
         import dmangos.world.updatefields : TypeId;
 
-        if (reply.sequence <= lastCreatureSwingReply.get(peer, 0) || reply.outcome > MeleeHitOutcome.max)
+        if (reply.destination != peer || reply.sequence <= lastCreatureSwingReply.get(peer, 0)
+            || reply.outcome > MeleeHitOutcome.max)
             return;
         lastCreatureSwingReply[peer] = reply.sequence;
         auto map_ = existingMap(reply.map, reply.instance);
         if (map_ is null || map_.id != reply.map || map_.instanceId != reply.instance)
             return;
         auto attacker = map_.creatureAt(reply.attacker);
-        auto target = cast(Replica) map_.findObject(reply.target);
-        if (attacker is null || !attacker.alive || attacker.ai is null || target is null
-            || target.owner != peer || target.fields.type != TypeId.player)
+        if (attacker is null || !attacker.alive || attacker.ai is null)
             return;
+        auto target = attacker.ai.combatTarget(map_, reply.target);
+        if (reply.targetPvP && attacker.petOwner)
+            if (auto owner = cast(Character) onlinePlayer(attacker.petOwner))
+                owner.attackedFlaggedPlayer();
         auto blow = Blow.spell();
-        blow.remotePlayer = reply.target;
+        if (highGuidOf(reply.target) == HighGuid.player)
+            blow.remotePlayer = reply.target;
         foreach (ref shield; reply.shieldHits)
         {
             if (!shield.damage || shield.school >= 7)
@@ -783,8 +824,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if (dealRemoteDamage(map_.unitOf(attacker), shield.damage, blow))
                 return;
         }
-        attacker.ai.remoteSwingFinished(UnitRef.observed(target, map_), cast(MeleeHitOutcome) reply.outcome,
-            reply.damage, reply.killed);
+        if (target)
+            attacker.ai.remoteSwingFinished(target, cast(MeleeHitOutcome) reply.outcome, reply.damage, reply.killed);
     }
 
     void areaDamageArrived(ushort peer, const ref AreaDamage message)
@@ -928,6 +969,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// Apply damage only at the target's authority. A lethal creature hit settles its tap once here.
     private bool dealRemoteDamage(UnitRef victim, uint damage, const ref imported!"dmangos.world.unit".Blow blow)
     {
+        return dealRemoteDamage(UnitRef.init, victim, damage, blow);
+    }
+
+    private bool dealRemoteDamage(UnitRef attacker, UnitRef victim, uint damage,
+        const ref imported!"dmangos.world.unit".Blow blow)
+    {
         import dmangos.world.character : Character;
         import dmangos.world.dbscripts : DbScriptType;
         import dmangos.world.unit : dealDamage;
@@ -940,7 +987,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             auto group = groups.of(blow.remotePlayer);
             creature.setLootRecipient(blow.remotePlayer, group is null ? 0 : group.id);
         }
-        dealDamage(UnitRef.init, victim, damage, blow);
+        dealDamage(attacker, victim, damage, blow);
         if (victim.alive)
             return false;
         if (blow.remotePlayer && creature !is null && !creature.petOwner)
@@ -979,14 +1026,19 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         reportPeriodicResult(victim, aura, effect, damage, drained);
         if (!killed || victim.kind != UnitKind.player)
             return;
-        const share = KillShare(target: aura.caster, victim: honor.guid, level: honor.level,
-            map: victim.map.id, instance: victim.map.instanceId, x: honor.position.x, y: honor.position.y,
+        reportRemotePlayerKill(aura.caster, honor, victim.map);
+    }
+
+    private void reportRemotePlayerKill(ulong attacker, const ref imported!"dmangos.world.honor".HonorVictim honor, Map map_)
+    {
+        const share = KillShare(target: attacker, victim: honor.guid, level: honor.level,
+            map: map_.id, instance: map_.instanceId, x: honor.position.x, y: honor.position.y,
             z: honor.position.z, race: honor.race, rank: honor.rank, visualRank: honor.visualRank,
             honorless: honor.honorless);
-        if (onlinePlayer(aura.caster) !is null)
+        if (onlinePlayer(attacker) !is null)
             killShareArrived(share);
         else if (killShareElsewhere !is null)
-            if (const owner = remoteKillRecipient(aura.caster, victim.map).node)
+            if (const owner = remoteKillRecipient(attacker, map_).node)
                 killShareElsewhere(owner, share);
     }
 

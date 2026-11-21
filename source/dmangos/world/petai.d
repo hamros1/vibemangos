@@ -52,6 +52,7 @@ mixin template PetBehaviour()
     import dmangos.world.petai : isAutocastable, petFollowAngle, petFollowDistance;
     import dmangos.world.relations : canAttack;
     import dmangos.world.spells : SpellInfo;
+    import dmangos.world.unit : combatRelations;
 
     /// Its spells' cooldowns left, in milliseconds (saved with the pet).
     int[uint] petCooldowns;
@@ -69,6 +70,7 @@ mixin template PetBehaviour()
     {
         Position followedTo;        // where the owner was when it last set off after it
         int lookTimer;              // until an aggressive pet next looks around
+        int missingVictim;          // a tracked target may briefly disappear during a node handoff
     }
 
     /// The imp's way: it casts from `distance` and never melees.
@@ -102,6 +104,7 @@ mixin template PetBehaviour()
         if (victim)
             meleeStop(world);
         victim = who.combatGuid;
+        missingVictim = 0;
         me.values.set!UNIT_FIELD_TARGET(victim);
         if (!inCombat_)
         {
@@ -125,6 +128,7 @@ mixin template PetBehaviour()
         interruptCast();
         meleeStop(world);
         victim = 0;
+        missingVictim = 0;
         inCombat_ = false;
         me.values.set!UNIT_FIELD_TARGET(0UL);
         me.values.set!UNIT_FIELD_FLAGS(me.values.get!UNIT_FIELD_FLAGS & ~UnitFlags.inCombat);
@@ -138,7 +142,7 @@ mixin template PetBehaviour()
     {
         if (react == ReactState.passive || victim || !me.alive || !enemy)
             return;
-        if (!enemy.alive || !canAttack(relating, enemy.relating, me.client))
+        if (!enemy.alive || !canAttack(relating, enemy.combatRelations(me.client), me.client))
             return;
         petAttack(enemy, world);
     }
@@ -159,18 +163,22 @@ mixin template PetBehaviour()
             return;
         if (victim)
         {
-            auto target = world.unit(victim);
+            auto target = combatTarget(world, victim);
+            if (!target && remoteMeleeMap(world) !is null && (missingVictim += diff) < 2000)
+                return;
             if (!target || !target.alive || target.untouchable
-                || !canAttack(relating, target.relating, me.client))
+                || !canAttack(relating, target.combatRelations(me.client), me.client))
                 petStopAttack(world);
             else
             {
+                missingVictim = 0;
                 if (casting_ !is null)
                 {
                     me.movement.position.orientation = angleTo(me.position, target.position);
                     return;
                 }
-                petAutocast(world);
+                if (target.replica is null)
+                    petAutocast(world);
                 if (casting_ !is null)
                     return;
                 chase(target, world);

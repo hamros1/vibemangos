@@ -525,6 +525,147 @@ unittest
     assert(boar.ai.currentVictim == pet.guid, "the boar goes for the pet");
 }
 
+/// A pet keeps its victim across a region handoff. Damage and threat belong to the pet, rewards to its owner.
+unittest
+{
+    import dmangos.cluster.protocol : CreatureSwing, KillShare, decode;
+    import dmangos.serialization : serialize;
+    import dmangos.world.creature : CreatureSpawn;
+    import dmangos.world.defines : UnitFlags;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.replication : encodePlayerState, encodeState;
+
+    auto db = newDatabase();
+    auto home = newCreationContext(db), first = newCreationContext(db), second = newCreationContext(db);
+    home.nodeId = 1;
+    first.nodeId = 2;
+    second.nodeId = 3;
+    CreatureSwing[] swings, replies;
+    home.sendCreatureSwing = (ushort peer, const ref CreatureSwing swing) {
+        assert(peer == swing.destination && !swing.reply);
+        ByteWriter payload;
+        serialize(payload, swing);
+        swings ~= decode!CreatureSwing(payload.data);
+        return true;
+    };
+    foreach (context; [first, second])
+        context.sendCreatureSwing = (ushort peer, const ref CreatureSwing swing) {
+            assert(peer == home.nodeId && swing.reply);
+            replies ~= cast(CreatureSwing) swing;
+            return true;
+        };
+    KillShare[] rewards;
+    second.killShareElsewhere = (ushort peer, const ref KillShare share) {
+        assert(peer == home.nodeId);
+        rewards ~= share;
+    };
+
+    const start = Position(-8949.95f, -132.49f, 83.53f, 0);
+    auto rexxar = loggedIn(home, db, 7, "Rexxar", start, AccountLevel.player, raceOrc);
+    foreach (context; [home, first, second])
+        addPetData(&rexxar, context);
+    auto hunter = rexxar.session.inWorld;
+    auto here = home.map(0), oldRegion = first.map(0), newRegion = second.map(0);
+    auto beast = home.summonCreature(here, wolf, start, TempSpawnType.dead, 0, 0);
+    auto tame = effectSpell(spellTameBeastDone, 55);
+    hunter.tameCreature(&tame, beast.guid);
+    auto pet = hunter.ownPet;
+    assert(pet !is null);
+    pet.values.set!UNIT_FIELD_MINDAMAGE(8.0f);
+    pet.values.set!UNIT_FIELD_MAXDAMAGE(8.0f);
+    pet.values.set!UNIT_FIELD_POWER1(4, 500_000u);
+
+    auto at = pet.position;
+    at.x += 2;
+    const cell = cellKeyAt(at.x, at.y);
+    const spawn = CreatureSpawn(91_090, boar, 0, at.x, at.y, at.z, 0);
+    second.data.creatureSpawns ~= spawn;
+    auto target = first.makeCreature(&spawn);
+    target.values.set!UNIT_FIELD_HEALTH(16u);
+    target.values.set!UNIT_FIELD_RESISTANCES(0, 0u);
+    oldRegion.addObject(target);
+    const guid = target.guid;
+    const petCell = cellKeyAt(pet.position.x, pet.position.y);
+    foreach (map; [oldRegion, newRegion])
+        map.replicaCreated(home.nodeId, petCell, pet.guid, encodeState(pet, 0));
+    const playerGuid = hunter.player.guid;
+    newRegion.replicaCreated(home.nodeId, cellKeyAt(start.x, start.y), playerGuid, encodePlayerState(hunter.player, 0));
+    here.replicaCreated(first.nodeId, cell, guid, encodeState(target, 0));
+
+    ByteWriter command;
+    command.put(pet.guid);
+    command.put(actionButton(CommandState.attack, ActiveState.command));
+    command.put(guid);
+    rexxar.write(Opcode.CMSG_PET_ACTION, command.data);
+    assert(pet.ai.currentVictim == guid);
+    pet.ai.update(here, 50);
+    assert(swings.length == 1 && swings[0].destination == first.nodeId);
+    oldRegion.random.seed(20_261_121);
+    first.creatureSwingArrived(home.nodeId, swings[0]);
+    first.creatureSwingArrived(home.nodeId, swings[0]);
+    assert(target.values.get!UNIT_FIELD_HEALTH == 8 && replies.length == 1);
+    assert(target.ai.threatOf(pet.guid) == 8 && target.ai.threatOf(playerGuid) == 0
+        && target.ai.currentVictim == pet.guid && target.lootRecipient == playerGuid);
+
+    pet.ai.update(here, 2000);
+    assert(swings.length == 2 && swings[1].destination == first.nodeId);
+    const bundle = oldRegion.releaseCreatureLoan(guid, second.nodeId, &first.saveMigrant);
+    assert(bundle.length && oldRegion.isReplica(guid));
+    newRegion.migrateIn(bundle, &second.restoreMigrant);
+    auto arrived = newRegion.creatureAt(guid);
+    assert(arrived !is null && arrived.values.get!UNIT_FIELD_HEALTH == 8);
+    assert(arrived.ai.threatOf(pet.guid) == 8 && arrived.ai.currentVictim == pet.guid
+        && arrived.lootRecipient == playerGuid);
+    first.creatureSwingArrived(home.nodeId, swings[1]);
+    second.creatureSwingArrived(home.nodeId, swings[0]);
+    second.creatureSwingArrived(home.nodeId, swings[1]);
+    assert(arrived.values.get!UNIT_FIELD_HEALTH == 8 && replies.length == 1);
+
+    here.replicaRemoved(first.nodeId, guid);
+    pet.ai.update(here, 100);
+    assert(pet.ai.currentVictim == guid && swings.length == 2);
+    here.replicaCreated(second.nodeId, cell, guid, encodeState(arrived, 0));
+    home.creatureSwingArrived(first.nodeId, replies[0]); // the already accepted first swing can still reply
+    pet.ai.update(here, 2000);
+    assert(swings.length == 3 && swings[2].destination == second.nodeId);
+    newRegion.random.seed(20_261_121);
+    second.creatureSwingArrived(home.nodeId, swings[2]);
+    second.creatureSwingArrived(home.nodeId, swings[2]);
+    assert(!arrived.alive && replies.length == 2 && rewards.length == 1);
+    assert(rewards[0].target == playerGuid && rewards[0].victim == guid && rewards[0].xp > 0);
+
+    auto opponent = loggedIn(second, db, 9, "Anduin", at);
+    auto defender = opponent.session.inWorld;
+    const enemy = defender.player.guid;
+    const flags = defender.player.values.get!UNIT_FIELD_FLAGS;
+    defender.player.values.set!UNIT_FIELD_FLAGS(flags | UnitFlags.pvp);
+    here.replicaCreated(second.nodeId, cell, enemy, encodePlayerState(defender.player, 0));
+    defender.player.values.set!UNIT_FIELD_FLAGS(flags & ~UnitFlags.pvp); // the pet's node still sees the flag
+    defender.player.values.set!UNIT_FIELD_MAXHEALTH(100u);
+    defender.player.values.set!UNIT_FIELD_HEALTH(100u);
+    defender.player.stats.resistances[0] = 0;
+    command.clear();
+    command.put(pet.guid);
+    command.put(actionButton(CommandState.attack, ActiveState.command));
+    command.put(enemy);
+    rexxar.write(Opcode.CMSG_PET_ACTION, command.data);
+    pet.ai.update(here, 2000);
+    assert(swings.length == 4 && swings[3].target == enemy);
+    second.creatureSwingArrived(home.nodeId, swings[3]);
+    assert(defender.player.values.get!UNIT_FIELD_HEALTH == 100 && replies.length == 2);
+
+    defender.player.values.set!UNIT_FIELD_FLAGS(flags | UnitFlags.pvp);
+    defender.player.values.setByte!UNIT_FIELD_BYTES_1(0, 1);
+    pet.ai.update(here, 2000);
+    assert(swings.length == 5);
+    newRegion.random.seed(20_261_121);
+    second.creatureSwingArrived(home.nodeId, swings[4]);
+    second.creatureSwingArrived(home.nodeId, swings[4]);
+    assert(defender.player.values.get!UNIT_FIELD_HEALTH == 84 && replies.length == 3 && replies[2].targetPvP);
+    home.creatureSwingArrived(second.nodeId, replies[2]);
+    assert(hunter.isPvP && hunter.isPvPContested, "the pet's owner receives the PvP flag and contested status");
+}
+
 /**
  * Totems: one summoned stands beside its owner with the owner's level and its health; a passive one's aura reaches
  * its owner; a second of the same element replaces the first; they go when their owner dies.

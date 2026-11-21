@@ -34,7 +34,7 @@ import dmangos.script.registry : ScriptHandle, ScriptRuntime;
 import dmangos.script.api : ActionResult, MenuOption, QuestProgress, Waypoint, CreatureHost, Damaged, Died, EnteredCombat, EntityRef, Evaded, KilledUnit, Reset, UnitInSight;
 import dmangos.world.updatefields;
 import dmangos.vmap.math : Vector3;
-import dmangos.world.unit : UnitKind, UnitRef;
+import dmangos.world.unit : combatRelations, UnitKind, UnitRef;
 
 
 /**
@@ -325,6 +325,7 @@ final class CreatureAI : Scripted, CreatureHost
         int attackTimer;           // until the next swing
         int combatTimer;           // the pursuit time left
         int combatTick;            // until the next leash check
+        int restoringThreat;       // allow replicas to arrive after their target's region handoff
         int regenTimer;
         Position lastRefresh;      // where it was when its combat timer last started
         Position combatStart;      // where the fight began: it goes back there
@@ -591,6 +592,7 @@ final class CreatureAI : Scripted, CreatureHost
         }
         if (me.petOwner)
             return petUpdate(world, diff);
+        restoringThreat = restoringThreat > diff ? restoringThreat - diff : 0;
         attackTimer = attackTimer > diff ? attackTimer - diff : 0;
         updateCasting(diff);
         if (!me.alive)
@@ -653,6 +655,53 @@ final class CreatureAI : Scripted, CreatureHost
     const(float[ulong]) threatList() const
     {
         return threat;
+    }
+
+    /// Combat state that must follow a live creature when its region moves.
+    package void saveCombat(ref imported!"dmangos.bytes".ByteWriter writer) const
+    {
+        import dmangos.serialization : serialize;
+
+        writer.put(inCombat_);
+        if (!inCombat_)
+            return;
+        writer.put(victim);
+        writer.put(meleeAttacking);
+        writer.put(attackTimer);
+        writer.put(combatTimer);
+        writer.put(calledAssistance);
+        serialize(writer, combatStart);
+        serialize(writer, lastRefresh);
+        writer.put(cast(uint) threat.length);
+        foreach (guid, amount; threat)
+        {
+            writer.put(guid);
+            writer.put(amount);
+        }
+    }
+
+    package void loadCombat(ref imported!"dmangos.bytes".ByteReader reader)
+    {
+        import dmangos.serialization : deserialize;
+
+        inCombat_ = reader.read!bool;
+        if (!inCombat_)
+            return;
+        victim = reader.read!ulong;
+        meleeAttacking = reader.read!bool;
+        attackTimer = reader.read!int;
+        combatTimer = reader.read!int;
+        calledAssistance = reader.read!bool;
+        combatStart = deserialize!Position(reader);
+        lastRefresh = deserialize!Position(reader);
+        foreach (_; 0 .. reader.read!uint)
+        {
+            const guid = reader.read!ulong;
+            addRemoteThreat(guid, reader.read!float);
+        }
+        outOfCombat = me.generator;
+        me.generator = new IdleMovement;
+        restoringThreat = 2000;
     }
 
     /// Its aggro radius against `target`, in yards.
@@ -808,6 +857,8 @@ private:
     package void addThreat(UnitRef who, float amount)
     {
         const guid = who.combatGuid;
+        if (who.replica !is null)
+            return addRemoteThreat(guid, amount);
         if (auto t = guid in threat)
         {
             *t += amount;
@@ -873,10 +924,7 @@ private:
         reaction.put(me.guid);
         reaction.put(aiReactionHostile);
         world.sendToObservers(me.guid, Opcode.SMSG_AI_REACTION, reaction.data);
-        if (who.replica is null)
-            addThreat(who, 0);
-        else
-            addRemoteThreat(guid, 0);
+        addThreat(who, 0);
         if (!inCombat_)
         {
             enterCombat(world);
@@ -1148,13 +1196,20 @@ private:
                 if (who.alive && !who.untouchable && canAttack(relating, who.relating, me.client))
                     continue;
             }
-            else if ((canSwingRemotely || guid in remoteThreat) && (victim || combatTimer > 0))
-                if (auto copy = livingPlayerReplica(world, guid))
-                    if (canAttack(relating, copy.unitRelations(me.client), me.client))
+            else if ((canSwingRemotely || guid in remoteThreat) && (victim || combatTimer > 0 || restoringThreat))
+            {
+                if (auto copy = meleeReplica(world, guid))
+                {
+                    auto target = UnitRef.observed(copy, cast(imported!"dmangos.world.map".Map) world);
+                    if (target.alive && canAttack(relating, target.combatRelations(me.client), me.client))
                     {
                         remoteThreat[guid] = true;
                         continue;
                     }
+                }
+                else if (restoringThreat)
+                    continue;
+            }
             gone ~= guid;
         }
         foreach (guid; gone)
@@ -1194,28 +1249,37 @@ private:
         import dmangos.world.map : Map;
 
         auto map = cast(Map) world;
-        return map !is null && map.remoteCreatureSwing !is null && !relating.playerControlled ? map : null;
+        return map !is null && map.remoteCreatureSwing !is null
+            && (!relating.playerControlled || (isMeleePet && meleeEnabled)) ? map : null;
     }
 
-    private imported!"dmangos.world.replication".Replica livingPlayerReplica(CombatWorld world, ulong guid)
+    private bool isMeleePet() const
+    {
+        import dmangos.world.objects : HighGuid, highGuidOf;
+
+        return me.petOwner && highGuidOf(me.guid) == HighGuid.pet;
+    }
+
+    private imported!"dmangos.world.replication".Replica meleeReplica(CombatWorld world, ulong guid)
     {
         import dmangos.world.map : Map;
         import dmangos.world.replication : Replica;
 
         if (auto map = cast(Map) world)
             if (auto copy = cast(Replica) map.findObject(guid))
-                if (copy.fields.type == TypeId.player && copy.fields.get!UNIT_FIELD_HEALTH)
+                if (copy.fields.type == TypeId.player
+                    || copy.fields.type == TypeId.unit && (copy.playerPet || isMeleePet))
                     return copy;
         return null;
     }
 
-    private UnitRef combatTarget(CombatWorld world, ulong guid)
+    package UnitRef combatTarget(CombatWorld world, ulong guid)
     {
         auto local = world.unit(guid);
         if (local || !guid)
             return local;
         if (auto map = remoteMeleeMap(world))
-            if (auto copy = livingPlayerReplica(world, guid))
+            if (auto copy = meleeReplica(world, guid))
                 return UnitRef.observed(copy, map);
         return UnitRef.init;
     }
@@ -1459,7 +1523,8 @@ private:
             ulong[] players;
             foreach (guid, _; threat)
                 if (auto who = combatTarget(world, guid))
-                    if ((who.kind == UnitKind.player || who.replica !is null) && who.alive && (!nonTank || guid != victim))
+                    if ((who.kind == UnitKind.player || who.replica !is null && who.replica.fields.type == TypeId.player)
+                        && who.alive && (!nonTank || guid != victim))
                         players ~= guid;
             if (players.length == 0)
                 return nonTank ? victim : 0;

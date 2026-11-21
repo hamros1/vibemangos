@@ -1303,6 +1303,9 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             w.put(stock.lastIncrement);
         }
         (cast() ai).saveBehaviour(w); // its script's state (docs/SCRIPTING.md)
+        w.put(lootRecipient);
+        w.put(lootGroupRecipient);
+        ai.saveCombat(w);
     }
 
     /**
@@ -1344,6 +1347,9 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             vendorStock.items[item] = VendorStocks.Stock(r.read!uint, r.read!long);
         }
         ai.loadBehaviour(r);
+        lootRecipient = r.read!ulong;
+        lootGroupRecipient = r.read!uint;
+        ai.loadCombat(r);
         // A corpse handed over: its time is not carried; it goes at the next tick, and respawns from then.
         corpseTimer = 0;
     }

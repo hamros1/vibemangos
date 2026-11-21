@@ -1360,6 +1360,7 @@ mixin template PetHandlers()
     void handlePetAction(ref ByteReader reader)
     {
         import dmangos.world.relations : canAttack;
+        import dmangos.world.unit : combatRelations;
 
         const guid = reader.read!ulong;
         const data = reader.read!uint;
@@ -1388,18 +1389,11 @@ mixin template PetHandlers()
                 break;
             case CommandState.attack:
             {
-                UnitRef target;
-                if (targetGuid)
-                {
-                    target = map.unit(targetGuid);
-                    if (!target)
-                        if (auto creature = map.creatureAt(targetGuid))
-                            target = map.unitOf(creature);
-                }
+                auto target = pet.ai.combatTarget(map, targetGuid);
                 if (!target)
                     return sendPetFeedback(PetFeedback.nothingToAttack);
                 if (target.combatGuid == pet.guid || !target.alive
-                    || !canAttack(pet.ai.relatingOf, target.relating, context.client))
+                    || !canAttack(pet.ai.relatingOf, target.combatRelations(context.client), context.client))
                     return sendPetFeedback(PetFeedback.cantAttackTarget);
                 if (pet.ai.currentVictim != target.combatGuid)
                 {

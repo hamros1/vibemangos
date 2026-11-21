@@ -468,9 +468,12 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   when it can still observe the victim.
 * **Creature melee.** An NPC keeps threat on a player it can still see after the player's
   handoff. The fight keeps nearby replicas available even when the last local player leaves.
-  The creature's node selects its target, chases it and runs the weapon timer. The
-  player's node verifies the source replica and the target's current eligibility, reach and
-  facing. It rolls the attack table, applies armor and absorbs, and reports each swing once.
+  A hunter or warlock pet can melee nearby players and creatures across the boundary, and
+  nearby NPCs can fight it back. The attacker's node chases and runs the weapon timer. Each
+  swing is addressed to the target's owner, which verifies eligibility, reach and facing,
+  then rolls damage and applies armor and absorbs. The pet holds the threat and its owner
+  receives the loot tap and kill credit. When a creature's region moves, its health, combat
+  state, threat and tap go with it, and the pet directs its next swing to the new owner.
   Damage shields such as Thorns strike the creature on its node using the same swing reply.
 * **Creature casts.** An NPC can cast single-target magical damage and hostile aura spells
   on a player across the boundary. The creature holds the cast timer, mana and spell-list
@@ -733,7 +736,7 @@ services line (`ServiceHost.describe`). Every log line of the cluster code start
 ## Not yet
 
 * Creature spells with broader target shapes or effects, including spells that replace a melee
-  swing. Player-controlled creature melee and block-triggered damage such as Holy Shield.
+  swing. Cross-node melee for charmed creatures and guardians, and block-triggered damage such as Holy Shield.
 * Proc spells with projectiles, channels or mixed targeted effects across nodes, channelled
   leeches, and additional victim-side periodic effects.
 
