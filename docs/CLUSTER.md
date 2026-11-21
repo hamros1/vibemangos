@@ -439,6 +439,11 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   applying the heal with that recipient's healing modifiers. A repeated delivery has no effect.
   The caster's node logs confirmed heals and applies PvP assist flags while it still
   simulates the caster.
+* **Chain Heal.** A cast that starts on a party or raid member on the caster's node can bounce
+  to injured members across nodes. Each bounce searches around the previous recipient's
+  position at cast completion, shares the spell's target cap, and reduces the heal by the
+  spell's normal falloff. The receiving node checks current group membership and range from
+  the captured position and applies the heal once. The cast spends mana once on the caster's node.
 * **Instant hostile area damage.** A caster-centered magic hit can reach player targets on
   another node. The caster's node charges once and applies the spell's cap to the combined
   list of local targets and remote players. A remote player's node rechecks range, PvP
@@ -631,7 +636,7 @@ services line (`ServiceHost.describe`). Every log line of the cluster code start
 
 ## Not yet
 
-* Remote creature targets and procs for hostile area spells, chain spells, and cast-time party heals.
+* Remote creature targets and procs for hostile area spells, hostile chain spells, and cast-time party area heals.
 * Healing threat and caster procs for remote party-heal recipients.
 * Surviving an owner's loss without disconnecting the client: the home could take its player back
   from the last save, which is worth having only with gateways and much more frequent player saves.

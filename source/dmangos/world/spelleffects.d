@@ -134,7 +134,7 @@ private void notDone(ref Caster caster, const(SpellInfo)* spell, size_t i)
  * Effect `i` of `c`'s spell, cast by `caster`, on `target` (a guid: a unit, or the caster, or a game object the
  * cast was aimed at), which it reached: what it does.
  */
-void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong target, ref SpellCast c)
+void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong target, ref SpellCast c, float healFactor = 1)
 {
     import dmangos.world.creature : Creature;
     import dmangos.world.movement : Position;
@@ -365,10 +365,11 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         break;
     case SpellEffect.heal: // SPELL_EFFECT_HEAL
     {
-        import dmangos.world.spelldamage : spellHeal;
+        import dmangos.world.spelldamage : spellHeal, SpellHeal;
         import dmangos.world.spellmods : SpellModOp;
 
-        spellHeal(caster, spell, map.unit(target), caster.spellMod(SpellModOp.damage, spell, value));
+        spellHeal(caster, spell, map.unit(target), caster.spellMod(SpellModOp.damage, spell, value),
+            SpellHeal(factor: healFactor));
         break;
     }
     case SpellEffect.summonCritter: // SPELL_EFFECT_SUMMON_CRITTER: a companion; the same again sends it away

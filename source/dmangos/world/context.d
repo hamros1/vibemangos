@@ -554,7 +554,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     void partyHealArrived(ushort peer, const ref PartyHeal message)
     {
         import dmangos.world.character : Character;
-        import dmangos.world.spelldamage : applyHealAmount, isPartyHealEffect, withinPartyHealRadius;
+        import dmangos.world.spelldamage : applyHealAmount, chainHealJumpRadius, isChainHealEffect, isPartyHealEffect,
+            withinPartyHealRadius;
         import dmangos.world.spellids : SpellEffect;
 
         if (!peer || !message.sequence || !canWrite())
@@ -572,10 +573,20 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return;
         auto group = groups.of(message.caster);
         if (group is null || group.id != message.group || !group.isMember(message.target)
-            || group.subGroupOf(message.caster) != group.subGroupOf(message.target) || message.caster == message.target)
+            || message.caster == message.target)
             return;
         const spell = data.spells.spell(message.spell);
-        if (spell is null || !isPartyHealEffect(*spell, message.effect) || !message.amount)
+        if (spell is null || !message.amount)
+            return;
+        if (message.previous)
+        {
+            if (!isChainHealEffect(*spell, message.effect) || message.radius != chainHealJumpRadius
+                || message.previous == message.target || !group.isMember(message.previous)
+                || target.duelingWith(message.caster))
+                return;
+        }
+        else if (!isPartyHealEffect(*spell, message.effect)
+            || group.subGroupOf(message.caster) != group.subGroupOf(message.target))
             return;
         enum uint noImmunities = 0x20000000;
         const immune = target.unit.fighter.immune;

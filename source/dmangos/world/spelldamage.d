@@ -202,6 +202,22 @@ void rollRemoteAreaDamage(ref AreaDamage hit, const(SpellInfo)* spell, UnitRef v
 struct SpellHeal
 {
     bool plain; /// no healing power, no crit, no class rules, procs nor threat: a leech's (CMaNGOS's `DealHeal`)
+    float factor = 1; /// the share of the heal left after its bounces
+}
+
+enum float chainHealJumpRadius = 10;
+
+/// A direct heal that selects successive friendly targets, as Chain Heal does.
+bool isChainHealEffect(const ref SpellInfo spell, size_t i)
+{
+    import std.algorithm.searching : count;
+
+    enum uint channels = 0x04 | 0x40;
+    return i < spell.effect.length && spell.effect[i] == SpellEffect.heal
+        && spell.effect[].count(SpellEffect.none) == spell.effect.length - 1
+        && spell.implicitTargetA[i] == ImplicitTarget.unitFriendChainHeal
+        && spell.casting.implicitTargetB[i] == ImplicitTarget.none && spell.casting.chainTarget[i] > 1
+        && spell.casting.speed == 0 && !(spell.attributesEx & channels);
 }
 
 /// An instant party heal is centered on the caster and selects their own party or raid subgroup.
@@ -229,7 +245,7 @@ bool withinPartyHealRadius(const ref PartyHeal heal, Position target)
 }
 
 /// Roll the caster's part of a heal, before the recipient's own modifiers and health cap.
-uint rollHealing(ref Caster caster, const(SpellInfo)* spell, int value, out bool critical)
+uint rollHealing(ref Caster caster, const(SpellInfo)* spell, int value, out bool critical, float factor = 1)
 {
     import std.random : uniform01;
     import dmangos.world.auras : AuraType;
@@ -237,7 +253,8 @@ uint rollHealing(ref Caster caster, const(SpellInfo)* spell, int value, out bool
     value += healingBonus(caster, spell);
     value = cast(int)(value * caster.auras.multiplier(AuraType.modHealingDonePercent));
     critical = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(caster.map.random) * 100 < caster.spellCritChance(spell);
-    return cast(uint)(critical ? value * 3 / 2 : value);
+    const amount = critical ? value * 3 / 2 : value;
+    return factor == 1 ? cast(uint) amount : cast(uint)(amount * factor);
 }
 
 /// Apply the recipient's healing modifiers and health cap. Returns the amount for the heal log.
@@ -286,7 +303,7 @@ uint spellHeal(ref Caster caster, const(SpellInfo)* spell, UnitRef target, int v
             p.pvpAssisted(target.session);
         if (p !is null)
             value = p.classHeal(spell, target, value); // Swiftmend, Blessing of Light, Healing Way
-        rolled = rollHealing(caster, spell, value, crit);
+        rolled = rollHealing(caster, spell, value, crit, how.factor);
     }
     uint healed;
     const amount = applyHealAmount(spell, target, rolled, healed);
