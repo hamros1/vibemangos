@@ -1210,7 +1210,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: ArcEmu, CMaNGOS
 * Files: `ItemHandler.cpp`, `NPCHandler.cpp`
 * Functions: `Player::BuyItemFromVendor`, `Player::DurabilityRepairAll`, `Player::DurabilityRepair`, `Player::SendBuyError`, `Player::SendEquipError`, `Player::SendNewItem`, `Player::SendSellError`, `Player::SetAmmo`, `Player::_ApplyAmmoBonuses`, `WorldSession::HandleAutoBankItemOpcode`, `WorldSession::HandleAutoEquipItemOpcode`, `WorldSession::HandleAutoEquipItemSlotOpcode`, `WorldSession::HandleAutoStoreBagItemOpcode`, `WorldSession::HandleAutoStoreBankItemOpcode`, `WorldSession::HandleBuyBankSlotOpcode`, `WorldSession::HandleBuyItemInSlotOpcode`, `WorldSession::HandleBuyItemOpcode`, `WorldSession::HandleBuybackItem`, `WorldSession::HandleDestroyItemOpcode`, `WorldSession::HandleRepairItemOpcode`, `WorldSession::HandleSellItemOpcode`, `WorldSession::HandleSetAmmoOpcode`, `WorldSession::HandleSplitItemOpcode`, `WorldSession::HandleSwapInvItemOpcode`, `WorldSession::HandleSwapItem`
-* Constants: `RANK_REQUIRE`
+* Constants: `RANK_REQUIRE`, `LANG_NOT_EQUIPPED_ITEM`, `MAIL_STATIONERY_GM`
 
 ## world/loot.d
 

@@ -54,8 +54,8 @@
   (the client hides an ignored player's other chat itself).
   LocalDefense and WorldDefense need PvP ranks, which do not exist, so WorldDefense is read-only.
   The GM tag and `.gm allowwhispers` are not kept between logins (as the GM contract specifies).
-* **Inventory:** an off-hand item with no room left when a two-hander is put on stays worn; it should
-  be mailed to the player (not yet).
+* **Inventory:** an off-hand item with no room left when a two-hander is put on is mailed to the player
+  (`AutoUnequipOffhandIfNeed`'s letter); at character creation, where there is no mail, it stays worn.
   * Random properties are done, and so are enchantments' stats, resistances, weapon damage and equip
     spells.
   * Enchanting is done: permanent enchantments, and temporary ones (stones, oils, poisons) that

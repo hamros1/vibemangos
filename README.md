@@ -291,7 +291,8 @@ What works now:
     ranks and professions), innkeepers binding the hearthstone, bankers, and vendors.
   * **Items:** moving, stacking, splitting, equipping, bags, the bank and
     its bag slots, the keyring, destroying, ammo; buying (with limited stock), selling, buyback and
-    repairs. Every change is saved to `character_inventory` and `item_instance` as it happens.
+    repairs. Every change is saved to `character_inventory` and `item_instance` as it happens. A two-hander put
+    on with no room left for the off hand sends the off hand by mail (the "problems with equipping" letter).
     Items asking for a reputation (`RequiredReputationFaction`/`Rank`) are worn by the player's real rank.
     Using an item checks it may be used (worn if it is to be worn, class, skill, reputation, out-of-combat
     spells) and binds one that binds on use. Charges count down (`ITEM_FIELD_SPELL_CHARGES`): out of them,

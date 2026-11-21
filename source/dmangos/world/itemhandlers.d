@@ -117,6 +117,39 @@ private:
         flushPlayerChanges(false);
         if (changes.length || moneyChanged)
             context.database.saveInventory(player.data.guid, player.money.amount, player.values[PLAYER_BYTES_2], changes);
+        mailItemsAway();
+    }
+
+    /**
+     * Items the inventory had no room for (`Inventory.toMail`: the off hand next to a two-hander), their rows now
+     * deleted, are mailed to the player by itself, as CMaNGOS's `AutoUnequipOffhandIfNeed` does: "This item(s) has
+     * problems with equipping/storing to inventory." (`mangos_string` 706), on the GM's stationery, at once.
+     */
+    void mailItemsAway()
+    {
+        import dmangos.log : info;
+        import dmangos.world.database : MailRecord;
+
+        enum uint stringNotEquipped = 706;
+        enum ubyte stationeryGm = 61;
+        enum uint mailCopied = 0x04;
+        auto pending = inventory.toMail;
+        inventory.toMail = null;
+        foreach (record; pending)
+        {
+            context.database.saveLooseItem(record, player.data.guid);
+            MailRecord mail;
+            mail.stationery = stationeryGm;
+            mail.sender = player.data.guid;
+            mail.receiver = player.data.guid;
+            mail.subject = context.data.serverStrings.get(stringNotEquipped, "");
+            mail.checked = mailCopied;
+            mail.itemGuid = record.guid;
+            mail.itemEntry = record.entry;
+            context.postMail(mail, 0);
+            info!"%s: '%s' had no room for item %s (guid %s); it was mailed"(remoteAddress, player.data.name,
+                record.entry, record.guid);
+        }
     }
 
     // -----------------------------------------------------------------------

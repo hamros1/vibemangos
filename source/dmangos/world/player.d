@@ -224,6 +224,7 @@ final class Player : InventoryOwner
         movement.position = character.position;
         values = UpdateValues(TypeId.player);
         inventory = new Inventory(world, this, &values, nextItemGuid);
+        inventory.canMail = true; // an off hand with no room goes by mail (`Inventory.toMail`)
 
         loadItems();
         values.set!PLAYER_AMMO_ID(character.ammoId); // its damage counts in the ranged damage
