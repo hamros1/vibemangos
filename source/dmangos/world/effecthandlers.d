@@ -375,7 +375,8 @@ mixin template EffectHandlers()
      * chance and hurts the attacker by its amount in its spell's school (`SMSG_SPELLNONMELEEDAMAGELOG`), a charge
      * used (CMaNGOS's `HandleProcTriggerDamageAuraProc`).
      */
-    package void blockDamageProcs(UnitRef attacker)
+    package void blockDamageProcs(UnitRef attacker,
+        scope imported!"dmangos.world.unit".SwingRetaliationReply reply = null)
     {
         import std.random : uniform01;
         import dmangos.world.aurahandlers : ProcFlag;
@@ -400,13 +401,21 @@ mixin template EffectHandlers()
                     continue;
                 const school = aura.spell.casting.school;
                 const damage = cast(uint) aura.amount[i];
-                tellAround(attacker.combatGuid, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(
-                    attacker.combatGuid, player.guid, aura.spell.id, damage, school, 0, 0, false, 0, false));
                 auto blow = Blow.spell(school);
                 // Holy Shield: its damage causes 20% more threat (its tooltip; spell_threat's flat 20 to 40 is not it).
                 if (ofFamily(aura.spell, SpellFamily.paladin) && aura.spell.casting.spellIconId == holyShieldIcon)
                     blow.threat = 1.2f;
-                dealDamage(unit, attacker, damage, blow);
+                if (reply !is null)
+                {
+                    const threat = school < 7 ? player.damageMods.threat[school] : 1;
+                    reply(damage, school, aura.spell.id, blow.threat * threat);
+                }
+                else
+                {
+                    tellAround(attacker.combatGuid, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(
+                        attacker.combatGuid, player.guid, aura.spell.id, damage, school, 0, 0, false, 0, false));
+                    dealDamage(unit, attacker, damage, blow);
+                }
                 if (aura.charges && --aura.charges == 0)
                     spent ~= aura;
             }

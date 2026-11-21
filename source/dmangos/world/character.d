@@ -346,10 +346,11 @@ final class Character : OnlinePlayer, Looter
 
             const landed = blow.melee.outcome != MeleeHitOutcome.miss && blow.melee.outcome != MeleeHitOutcome.dodge
                 && blow.melee.outcome != MeleeHitOutcome.parry;
-            if (landed && (attacker.replica is null || blow.shieldHit !is null))
-                damageShields(attacker, blow.shieldHit);
-            if (blow.melee.outcome == MeleeHitOutcome.block && attacker.replica is null)
-                blockDamageProcs(attacker); // Holy Shield
+            const canRetaliate = attacker.replica is null || blow.retaliate !is null;
+            if (landed && canRetaliate)
+                damageShields(attacker, blow.retaliate);
+            if (blow.melee.outcome == MeleeHitOutcome.block && canRetaliate)
+                blockDamageProcs(attacker, blow.retaliate);
             if (player !is null && player.alive)
                 procAuras(ProcFlag.takeMeleeSwing, attacker, ProcHit(null, procExOfSwing(blow.melee.outcome), damage,
                     cast(ubyte) blow.melee.type, damage != 0));

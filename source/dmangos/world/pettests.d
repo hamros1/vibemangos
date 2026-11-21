@@ -669,7 +669,7 @@ unittest
 /// Controlled creatures fight across a handoff, and swings from an expired control or summon are rejected.
 unittest
 {
-    import dmangos.cluster.protocol : CreatureSwing, KillShare, SwingShieldHit, decode;
+    import dmangos.cluster.protocol : CreatureSwing, KillShare, SwingRetaliation, decode;
     import dmangos.serialization : serialize;
     import dmangos.world.creature : CreatureSpawn;
     import dmangos.world.defines : UnitFlags;
@@ -837,7 +837,7 @@ unittest
             // An old accepted reply must also stay invalid if the same player starts a new charm.
             player.takeCharm(attacker, &control, false);
             auto late = replies[$ - 1];
-            late.shieldHits = [SwingShieldHit(5, 0)];
+            late.retaliation = [SwingRetaliation(5, 0)];
             const health = attacker.values.get!UNIT_FIELD_HEALTH;
             home.creatureSwingArrived(second.nodeId, late);
             assert(attacker.values.get!UNIT_FIELD_HEALTH == health);

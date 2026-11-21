@@ -68,7 +68,7 @@ import dmangos.world.terrain : Terrain;
 import dmangos.world.group : GroupDirectory, Groups, memberStatus, MemberStatus;
 import dmangos.world.groupservice : groupCommand, GroupOp, GroupService;
 import dmangos.cluster.protocol : AreaDamage, CreatureLoan, CreatureSwing, GmRemote, GroupCommand, GroupLootRoll,
-    KillShare, LootCoinShare, PartyHeal, PeriodicResult, QuestLootCheck, ScriptSignal, SwingShieldHit;
+    KillShare, LootCoinShare, PartyHeal, PeriodicResult, QuestLootCheck, ScriptSignal, SwingRetaliation;
 import dmangos.world.loot : Loot, maxLootItems;
 import dmangos.world.map : Inhabitant, Map, MapObject, MapSettings, VisibilityFacts;
 import dmangos.world.online : OnlinePlayer;
@@ -704,7 +704,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (request.destination != nodeId || request.sequence <= lastCreatureSwing.get(peer, 0))
             return;
         lastCreatureSwing[peer] = request.sequence;
-        if (request.shieldHits.length)
+        if (request.retaliation.length)
             return;
         if (request.school >= 7 || !isFinite(request.facing) || !isFinite(request.minDamage)
             || !isFinite(request.maxDamage) || !isFinite(request.damageFactor) || !isFinite(request.crit)
@@ -761,8 +761,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         auto blow = Blow.swing(hit);
         blow.remotePlayer = controller;
         blow.remotePlayerPvP = relation.hasFlag(UnitFlags.pvp);
-        SwingShieldHit[] shieldHits;
-        blow.shieldHit = (uint damage, uint school) { shieldHits ~= SwingShieldHit(damage, school); };
+        SwingRetaliation[] retaliation;
+        blow.retaliate = (uint damage, uint school, uint spell, float threatFactor) {
+            retaliation ~= SwingRetaliation(damage, school, spell, threatFactor);
+        };
         const honor = controller && victim.kind == UnitKind.player ? victim.session.describeHonorVictim() : HonorVictim.init;
         if (controller)
         {
@@ -780,19 +782,20 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             result.damage = hit.damage;
             result.killed = !victim.alive;
             result.targetPvP = victim.kind == UnitKind.player && victim.session.character !is null && victim.session.isPvP;
-            result.shieldHits = shieldHits;
+            result.retaliation = retaliation;
             sendCreatureSwing(peer, result);
         }
     }
 
     private void creatureSwingReply(ushort peer, const ref CreatureSwing reply)
     {
+        import std.math : isFinite;
         import dmangos.bytes : ByteWriter;
         import dmangos.world.combat : MeleeHitOutcome;
         import dmangos.world.character : Character;
         import dmangos.world.objects : highGuidOf;
+        import dmangos.world.spellcast : nonMeleeDamageLog;
         import dmangos.world.unit : Blow;
-        import dmangos.world.updatefields : TypeId;
 
         if (reply.destination != peer || reply.sequence <= lastCreatureSwingReply.get(peer, 0)
             || reply.outcome > MeleeHitOutcome.max)
@@ -809,20 +812,29 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (reply.targetPvP && reply.controller)
             if (auto owner = cast(Character) onlinePlayer(reply.controller))
                 owner.attackedFlaggedPlayer();
-        auto blow = Blow.spell();
-        if (highGuidOf(reply.target) == HighGuid.player)
-            blow.remotePlayer = reply.target;
-        foreach (ref shield; reply.shieldHits)
+        foreach (ref hit; reply.retaliation)
         {
-            if (!shield.damage || shield.school >= 7)
+            if (!hit.damage || hit.school >= 7 || !isFinite(hit.threatFactor) || hit.threatFactor < 0
+                || (hit.spell && reply.outcome != MeleeHitOutcome.block))
                 continue;
-            ByteWriter log;
-            log.put(reply.target);
-            log.put(reply.attacker);
-            log.put(shield.damage);
-            log.put(shield.school);
-            map_.sendToObservers(reply.attacker, Opcode.SMSG_SPELLDAMAGESHIELD, log.data);
-            if (dealRemoteDamage(map_.unitOf(attacker), shield.damage, blow))
+            if (hit.spell)
+                map_.sendToObservers(reply.attacker, Opcode.SMSG_SPELLNONMELEEDAMAGELOG,
+                    nonMeleeDamageLog(reply.attacker, reply.target, hit.spell, hit.damage, hit.school,
+                        0, 0, false, 0, false));
+            else
+            {
+                ByteWriter log;
+                log.put(reply.target);
+                log.put(reply.attacker);
+                log.put(hit.damage);
+                log.put(hit.school);
+                map_.sendToObservers(reply.attacker, Opcode.SMSG_SPELLDAMAGESHIELD, log.data);
+            }
+            auto blow = Blow.spell(hit.spell ? hit.school : 0); // Thorns uses the same damage path as on one node.
+            if (highGuidOf(reply.target) == HighGuid.player)
+                blow.remotePlayer = reply.target;
+            blow.threat = hit.threatFactor;
+            if (dealRemoteDamage(map_.unitOf(attacker), hit.damage, blow))
                 return;
         }
         if (target)

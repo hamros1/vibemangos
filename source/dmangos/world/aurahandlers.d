@@ -303,7 +303,8 @@ private:
      * A melee swing of `attacker`'s hit this player: each damage shield (Thorns) hurts the attacker by its
      * amount, in its spell's school (`SMSG_SPELLDAMAGESHIELD`).
      */
-    package void damageShields(UnitRef attacker, scope void delegate(uint damage, uint school) reply = null)
+    package void damageShields(UnitRef attacker,
+        scope imported!"dmangos.world.unit".SwingRetaliationReply reply = null)
     {
         import dmangos.bytes : ByteWriter;
         import dmangos.world.unit : Blow, dealDamage;
@@ -321,7 +322,7 @@ private:
                 return;
             if (reply !is null)
             {
-                reply(hit[0], hit[1]);
+                reply(hit[0], hit[1], 0, 1);
                 continue;
             }
             ByteWriter w;

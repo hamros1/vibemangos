@@ -40,6 +40,9 @@ enum BlowKind : ubyte
     periodic, /// an aura's tick (damage over time)
 }
 
+/// Returns a defensive proc to the attacker's node. Spell zero selects a damage shield such as Thorns.
+alias SwingRetaliationReply = void delegate(uint damage, uint school, uint spell, float threatFactor);
+
 /// The circumstances of damage: its kind, and for a swing its roll.
 struct Blow
 {
@@ -50,7 +53,7 @@ struct Blow
     bool crit;         /// a spell's crit (Eye for an Eye's)
     ulong remotePlayer; /// a spell's caster, when simulated by another node
     bool remotePlayerPvP;
-    void delegate(uint damage, uint school) shieldHit; /// sends damage shields back to a remote attacker
+    SwingRetaliationReply retaliate; /// sends defensive damage back to a remote attacker
 
     ///
     static Blow swing(const ref MeleeDamage d)

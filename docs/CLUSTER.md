@@ -476,7 +476,10 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   When a target creature's region moves, its health, combat state, threat and tap go with
   it, and the attacker directs its next swing to the new owner. Requests from a previous
   charm or a despawned guardian are discarded once the target node sees the change. Damage
-  shields such as Thorns strike the creature on its node using the same swing reply.
+  shields such as Thorns and block retaliation from Holy Shield or Blessing of Sanctuary
+  strike the creature on its node using the swing reply. The defender's node spends the
+  Holy Shield charge when it resolves the block. The creature's node applies the damage
+  and threat and sends the corresponding combat log once.
 * **Creature casts.** An NPC can cast single-target magical damage and hostile aura spells
   on a player across the boundary. The creature holds the cast timer, mana and spell-list
   cooldown. The player's node rechecks eligibility, range and line of sight at completion.
@@ -737,8 +740,7 @@ services line (`ServiceHost.describe`). Every log line of the cluster code start
 
 ## Not yet
 
-* Creature spells with broader target shapes or effects, including spells that replace a melee
-  swing, and block-triggered damage such as Holy Shield.
+* Creature spells with broader target shapes or effects, including spells that replace a melee swing.
 * Proc spells with projectiles, channels or mixed targeted effects across nodes, channelled
   leeches, and additional victim-side periodic effects.
 

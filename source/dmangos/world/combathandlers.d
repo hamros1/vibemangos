@@ -863,18 +863,22 @@ unittest
 unittest
 {
     import std.algorithm.searching : canFind, count;
+    import std.math : isClose, PI;
     import dmangos.cluster.protocol : AreaDamage, CreatureSwing, decode;
     import dmangos.dbc : buildDbc;
     import dmangos.serialization : serialize;
-    import dmangos.bytes : ByteWriter;
+    import dmangos.bytes : ByteReader, ByteWriter;
+    import dmangos.world.aurahandlers : ProcFlag;
     import dmangos.world.auras : AuraType, makeAura;
+    import dmangos.world.classspells : SpellFamily;
     import dmangos.world.clientdata : factionTemplateFormat, spellCastTimesFormat, spellRangeFormat;
-    import dmangos.world.combat : armorReducedDamage;
+    import dmangos.world.combat : armorReducedDamage, MeleeHitOutcome;
     import dmangos.world.creature : CreatureSpawn;
-    import dmangos.world.defines : UnitFlags;
+    import dmangos.world.defines : equipmentSlotOffhand, inventorySlotBag0, InventoryType, UnitFlags;
     import dmangos.world.eventai : castTriggered;
     import dmangos.world.grid : cellKeyAt;
     import dmangos.world.inworld : ArrivalAction;
+    import dmangos.world.inventory : itemPos, ItemPosCount;
     import dmangos.world.map : Map;
     import dmangos.world.movement : Position;
     import dmangos.world.opcodes : Opcode;
@@ -886,6 +890,7 @@ unittest
     import dmangos.world.testclient;
     import dmangos.world.testdata;
     import dmangos.world.updatefields;
+    import dmangos.world.worlddata : ItemTemplate;
 
     auto db = newDatabase();
     auto source = newCreationContext(db), owner = newCreationContext(db);
@@ -1017,7 +1022,7 @@ unittest
     owner.creatureSwingArrived(1, first);
     owner.creatureSwingArrived(1, first);
     assert(victim.player.values.get!UNIT_FIELD_HEALTH == afterFirst && victim.inCombat && !victim.hasAuraOf(shield));
-    assert(replies.length == 1 && replies[0].damage == damage - 7 && replies[0].shieldHits.length == 1);
+    assert(replies.length == 1 && replies[0].damage == damage - 7 && replies[0].retaliation.length == 1);
     assert(opcodesOf(client.read()).count(Opcode.SMSG_ATTACKERSTATEUPDATE) == 1);
     const confirmation = throughWire(replies[0]);
     source.creatureSwingArrived(2, confirmation);
@@ -1122,6 +1127,76 @@ unittest
     const applied = victim.player.auras.find(curse);
     assert(applied !is null && applied.effects == 3 && applied.stacks == 1);
     assert(applied.amount[0] == 4 && applied.amount[1] == 9);
+
+    enum holyShield = 20925, sanctuary = 20911, offhand = 91_065, holySchool = 1;
+    auto shieldItem = ItemTemplate.display(1, InventoryType.shield);
+    shieldItem.entry = offhand;
+    shieldItem.details.block = 100;
+    owner.data.items[offhand] = shieldItem;
+    auto inventory = victim.player.inventory;
+    inventory.store([ItemPosCount(itemPos(inventorySlotBag0, equipmentSlotOffhand), 1)], inventory.create(offhand, 1));
+    foreach (id, amount; [holyShield: 65, sanctuary: 14])
+    {
+        auto retaliation = testSpell(id, SpellEffect.applyAura, ImplicitTarget.caster, amount);
+        retaliation.casting.applyAuraName[0] = AuraType.procTriggerDamage;
+        retaliation.casting.procFlags = ProcFlag.takeMeleeSwing;
+        retaliation.casting.procChance = 100;
+        retaliation.casting.school = holySchool;
+        retaliation.casting.spellFamilyName = SpellFamily.paladin;
+        if (id == holyShield)
+        {
+            retaliation.casting.spellIconId = 453;
+            retaliation.casting.procCharges = 4;
+        }
+        owner.data.spells.spells[id] = retaliation;
+        victim.addAura(makeAura(id in owner.data.spells.spells, playerGuid, 20, -1, true, [amount, 0, 0]));
+    }
+    creature.values.set!UNIT_FIELD_MAXHEALTH(500u);
+    creature.values.set!UNIT_FIELD_HEALTH(500u);
+    victim.player.values.set!UNIT_FIELD_HEALTH(100u);
+    victim.player.movement.position.orientation = PI; // faces the creature to the west
+    foreach (swing; 0 .. 6)
+    {
+        const block = swing != 0;
+        const holy = block && swing <= 4;
+        victim.player.values.setByte!UNIT_FIELD_BYTES_1(0, block ? 0 : 1);
+        victim.player.chances.canBlock = true;
+        victim.player.chances.block = 100;
+        victim.player.chances.parry = victim.player.chances.dodge = 0;
+        victim.player.chances.shieldBlock = 100;
+        victim.player.damageMods.threat[holySchool] = 0.5f;
+        to.random.seed(20_261_121);
+        creature.ai.update(from, 2000);
+        const sent = throughWire(requests[$ - 1]);
+        const replyCount = replies.length;
+        client.read();
+        owner.creatureSwingArrived(1, sent);
+        owner.creatureSwingArrived(1, sent);
+        assert(replies.length == replyCount + 1);
+        const result = throughWire(replies[$ - 1]);
+        assert((result.outcome == MeleeHitOutcome.block) == block);
+        assert(result.retaliation.length == 1 + cast(uint) block + cast(uint) holy);
+        const aura = victim.player.auras.find(holyShield);
+        assert(swing < 4 ? aura !is null && aura.charges == 4 - swing : aura is null);
+        assert(victim.player.auras.find(sanctuary).charges == 0);
+
+        const beforeHealth = creature.values.get!UNIT_FIELD_HEALTH;
+        const beforeThreat = creature.ai.threatOf(playerGuid);
+        source.creatureSwingArrived(2, result);
+        source.creatureSwingArrived(2, result);
+        assert(creature.values.get!UNIT_FIELD_HEALTH == beforeHealth - 9 - (block ? 14 : 0) - (holy ? 65 : 0));
+        assert(isClose(creature.ai.threatOf(playerGuid) - beforeThreat, 9 + (block ? 7 : 0) + (holy ? 39 : 0)));
+        uint[] loggedSpells;
+        foreach (packet; client.read())
+            if (packet.opcode == Opcode.SMSG_SPELLNONMELEEDAMAGELOG)
+            {
+                auto reader = ByteReader(packet.body_);
+                assert(reader.readPackedGuid() == creature.guid && reader.readPackedGuid() == playerGuid);
+                loggedSpells ~= reader.read!uint;
+            }
+        assert(loggedSpells.length == cast(uint) block + cast(uint) holy);
+        assert(loggedSpells.canFind(holyShield) == holy && loggedSpells.canFind(sanctuary) == block);
+    }
 
     victim.player.values.set!UNIT_FIELD_FLAGS(victim.player.values.get!UNIT_FIELD_FLAGS | UnitFlags.taxiFlight);
     victim.flushPlayerChanges();
