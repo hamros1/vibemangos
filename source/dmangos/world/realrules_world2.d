@@ -101,3 +101,57 @@ unittest
     check(PlayerClass.rogue, 29, 14.5f);
     check(PlayerClass.hunter, 53, 26.5f);
 }
+
+/// Auction deposits by AuctionHouse.dbc (a city's 5%, Blackwater's 25%): the two hours' copper rounded down, then
+/// times the spans. A Frayed Cloak (1376, sells for 4) is free to list for a day in a city (it cost 2: 4 × 12 × 5%).
+unittest
+{
+    import dmangos.world.auctionhouse : auctionDeposit;
+
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    const city = w.context.client.auctionHouses.lookup(1), goblins = w.context.client.auctionHouses.lookup(7);
+    assert(city.depositPercent == 5 && city.cutPercent == 5 && goblins.depositPercent == 25 && goblins.cutPercent == 15);
+    const cloak = 1376 in w.context.data.items, linen = 2589 in w.context.data.items;
+    assert(cloak.details.sellPrice == 4 && linen.details.sellPrice == 13);
+    enum uint day = 24 * 60 * 60, eight = 8 * 60 * 60;
+    assert(auctionDeposit(*city, day, cloak.details.sellPrice, 1) == 0);
+    assert(auctionDeposit(*goblins, day, cloak.details.sellPrice, 1) == 12);
+    assert(auctionDeposit(*city, eight, linen.details.sellPrice, 20) == 52);
+}
+
+/// Need before greed on the real items and characters: a mage is passed for the mail Stormwind Guard Leggings (6084),
+/// with no roll window; the warrior, who can wear mail, rolls for it.
+unittest
+{
+    import dmangos.world.loot : Loot, LootItem, LootRoll, LootRule, Looter;
+    import dmangos.world.opcodes : Opcode;
+    import std.algorithm.searching : canFind;
+
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto warrior = w.character(1, "Tank", PlayerClass.warrior, 60, []);
+    auto mage = w.character(2, "Robe", PlayerClass.mage, 60, []);
+    auto tankSession = warrior.session.inWorld, robeSession = mage.session.inWorld;
+    const tank = tankSession.player.guid, robe = robeSession.player.guid;
+    auto loot = new Loot(9, (ulong guid) => guid == tank ? cast(Looter) tankSession
+        : guid == robe ? cast(Looter) robeSession : null);
+    loot.rule = LootRule.needBeforeGreed;
+    loot.owners[tank] = true;
+    loot.owners[robe] = true;
+    auto item = new LootItem;
+    item.itemId = 6084;
+    item.quality = 2;
+    item.allowed[tank] = true;
+    item.allowed[robe] = true;
+    loot.items ~= item;
+    warrior.read();
+    mage.read();
+    assert(new LootRoll(loot, item).tryToStart(0));
+    assert(warrior.read().canFind!(p => p.opcode == Opcode.SMSG_LOOT_START_ROLL), "the warrior chooses");
+    const seen = mage.read();
+    assert(!seen.canFind!(p => p.opcode == Opcode.SMSG_LOOT_START_ROLL), "the mage has no window");
+    assert(seen.canFind!(p => p.opcode == Opcode.SMSG_LOOT_ROLL && p.body_[$ - 1] == 1), "but its automatic pass");
+}

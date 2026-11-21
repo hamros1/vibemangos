@@ -413,7 +413,7 @@ unittest
     anduin.write(Opcode.MSG_AUCTION_HELLO, hello.data);
     assert(opcodesOf(anduin.read()) == [Opcode.MSG_AUCTION_HELLO]);
 
-    // The sword (sold for 7) for 8 hours: a deposit of 15% of 4 times 7 (4 copper).
+    // The sword (sold for 7) for 8 hours: 15% of 7, 1 copper rounded down, for each 2 hours (4 copper).
     import dmangos.world.inventory : Item;
 
     Item sword;

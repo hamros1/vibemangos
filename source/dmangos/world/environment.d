@@ -802,8 +802,10 @@ mixin template EnvironmentHandlers()
         {
             if (auto copy = currentBattleground())
                 copy.playerKilled(victim: player.guid, killer: 0);
-            // Only a fall to death costs durability (the self-inflicted damage of the others does not).
-            playerDied(type == EnvironmentalDamage.fall);
+            // Dying costs a tenth of what it wears but killed by a player or by itself (WoWWiki "Death", 2006-07: the
+            // exceptions PvP and "self-inflicted death"; a ghost dying of fatigue loses it too): drowning, fatigue and
+            // lava cost it as a fall does (docs/FORMULAS.md "Durability"). Not a fall through the world.
+            playerDied(type != EnvironmentalDamage.fallToVoid);
         }
         return damage;
     }
@@ -1056,6 +1058,12 @@ unittest
     const died = anduin.read();
     assert(hurt(died) == [[2, fall]] && player.deathState == DeathState.corpse);
     assert(opcodesOf(died).canFind(Opcode.SMSG_DURABILITY_DAMAGE_DEATH));
+
+    // Drowned: the same tenth (it cost none; WoWWiki "Death": only PvP and self-inflicted deaths are free).
+    me.bringBack(1);
+    anduin.read();
+    me.environmentalDamage(EnvironmentalDamage.drowning, 10_000);
+    assert(player.deathState == DeathState.corpse && opcodesOf(anduin.read()).canFind(Opcode.SMSG_DURABILITY_DAMAGE_DEATH));
 
     // Back to life, then under the world: dead at once (shown as a fall), and a ghost.
     me.bringBack(1);

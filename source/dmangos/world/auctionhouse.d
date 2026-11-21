@@ -117,8 +117,10 @@ struct AuctionRecord
 /// The deposit: the sell price of the stack for each 2 hours, the house's percentage of it.
 uint auctionDeposit(const ref AuctionHouseEntry house, uint seconds, uint sellPrice, uint count) pure nothrow @nogc @safe
 {
-    const deposit = float(sellPrice) * count * (seconds / minAuctionTime) * house.depositPercent / 100.0f;
-    return cast(uint) deposit;
+    // "the base deposit is rounded first, and then multiplied" (WoWWiki "Auction House", 2006-10): the two hours'
+    // whole copper, times the two-hour spans (docs/FORMULAS.md "Auctions").
+    const base = cast(ulong) sellPrice * count * house.depositPercent / 100;
+    return cast(uint)(base * (seconds / minAuctionTime));
 }
 
 /**
@@ -197,13 +199,15 @@ string auctionMailSubject(const ref AuctionRecord a, AuctionMail what)
 
 unittest
 {
-    const stormwind = AuctionHouseEntry(1, 12, 15, 5);
+    const stormwind = AuctionHouseEntry(1, 12, 5, 5); // AuctionHouse.dbc: 5% deposit, 5% cut
     AuctionRecord a = {itemEntry: 2589, itemCount: 20, bid: 1000, buyout: 5000};
     assert(a.outBid == 50 && a.cut(stormwind) == 50);
     a.bid = 10;
     assert(a.outBid == 1, "a copper at least");
-    // 20 linen at 13 copper for 8 hours: 4 times 260, 15% of it.
-    assert(auctionDeposit(stormwind, 8 * 60 * 60, 13, 20) == 156);
+    // 20 linen at 13 copper for 8 hours: 5% of 260 for each 2 hours.
+    assert(auctionDeposit(stormwind, 8 * 60 * 60, 13, 20) == 52);
+    // One fish at 4 copper: 0.2 copper for two hours is none, so none for 24 (WoWWiki's example).
+    assert(auctionDeposit(stormwind, 24 * 60 * 60, 4, 1) == 0 && auctionDeposit(stormwind, 24 * 60 * 60, 4, 20) == 48);
     assert(auctionHouseFor(12, 0) == 1 && auctionHouseFor(29, 0) == 6 && auctionHouseFor(120, 0) == 7);
     assert(auctionHouseFor(1, 2) == 1 && auctionHouseFor(2, 4) == 6 && auctionHouseFor(3, 0) == 7);
     assert(auctionMailSubject(a, AuctionMail.won) == "2589:0:1");
