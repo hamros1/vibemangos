@@ -313,6 +313,8 @@ private int run(WorldConfig config, string configPath)
             config.maxConnections, config.updateIntervalMs.msecs),
         (string address) => cast(NetSession) new WorldSession(context, address),
         (MonoTime now) {
+            if (bridge !is null)
+                bridge.fenceGatewaySimulations();
             if (context.update(now))
                 requestShutdown();
             if (cluster !is null)

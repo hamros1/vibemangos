@@ -35,6 +35,7 @@ import std.algorithm.searching : canFind;
 import std.bitmanip : bigEndianToNative, littleEndianToNative, nativeToLittleEndian;
 
 import dmangos.auth.accounts : AccountLevel;
+import dmangos.cluster.protocol : SimulationOwner;
 import dmangos.bytes;
 import dmangos.timer : IntervalTimer;
 import dmangos.crypto.hash : constantTimeEqual, sha1;
@@ -49,7 +50,7 @@ import dmangos.world.crypt : clientHeaderLength, HeaderCrypt;
 import dmangos.world.database : WorldAccount;
 import dmangos.world.objects : UpdateData, UpdatePacket;
 import dmangos.world.map : deliverUpdate, Inhabitant, Map;
-import dmangos.world.player : DeathState, Player, PlayerFlags, Viewer;
+import dmangos.world.player : CharacterData, DeathState, Player, PlayerFlags, Viewer;
 import dmangos.world.opcodes;
 import dmangos.world.packets;
 import dmangos.world.character : Character;
@@ -85,6 +86,11 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
     package ushort ownerNode;              // home: the node simulating this session's player; 0: here
     package ushort homeNode;               // owner: the node holding this session's client; 0: here
     package bool releaseWhenBack;          // home: the client left while elsewhere; release once the owner saved
+    package bool gatewayPaused;            // home: keep the socket alive while its owner is unreachable
+    package SimulationOwner gatewayHome;   // owner: the gateway's incarnation
+    package uint gatewayCharacter;         // owner: the simulated character, including while loading
+    package ulong gatewayToken;            // owner: the coordinator's route for this simulation
+    private CharacterData recovery;        // owner: durable state awaiting the client's worldport acknowledgement
 
     /// The character in the world (docs/DESIGN.md, step 3); null at the character screen.
     package Character playing;
@@ -231,11 +237,53 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
         return arriving.arrive(state); // it becomes `playing` as it enters the world
     }
 
+    /// Prepares the replacement world. Gameplay resumes with the existing client's worldport acknowledgement.
+    package bool beginGatewayRecovery(uint guid, uint clientBuild)
+    {
+        auto loaded = context.database.loadCharacter(guid);
+        if (loaded.isNull || loaded.get.account != account.id || !loaded.get.position.isFinite
+            || context.data.createInfo(loaded.get.race, loaded.get.classId) is null
+            || !ownsRecoveryPosition(loaded.get))
+            return false;
+        build = clientBuild;
+        gatewayCharacter = guid;
+        recovery = loaded.get;
+        const at = recovery.position;
+        send(ServerTransferPending(recovery.map));
+        send(ServerNewWorld(recovery.map, at.x, at.y, at.z, at.orientation));
+        return true;
+    }
+
+    private bool ownsRecoveryPosition(const ref CharacterData saved)
+    {
+        import dmangos.world.grid : cellKeyAt;
+
+        return context.canWrite() && context.ownsCell !is null
+            && context.ownsCell(saved.map, cellKeyAt(saved.position.x, saved.position.y))
+            && context.onlinePlayer(saved.guid) is null;
+    }
+
+    private void finishGatewayRecovery()
+    {
+        if (!ownsRecoveryPosition(recovery))
+            return clientGone();
+        auto saved = recovery;
+        recovery = CharacterData.init;
+        auto entering = new Character(this, context);
+        entering.enterWorldAtLogin(saved, true);
+    }
+
     /// Owner: the client is gone; the player leaves the world here, saved.
     void clientGone()
     {
         if (playing !is null)
             playing.leave("disconnected", false);
+        else if (recovery.guid)
+        {
+            recovery = CharacterData.init;
+            context.playerRelay.left(homeNode, account.id, false);
+            context.playerRelay.remoteDone(account.id);
+        }
         state_ = WorldState.closed;
     }
 
@@ -420,6 +468,8 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
             state_ = WorldState.closed;
             return;
         }
+        if (releaseWhenBack)
+            return;
         if (playing !is null)
             playing.leave("disconnected", false);
         if (registered)
@@ -450,11 +500,19 @@ package:
     void handle(Opcode opcode, ref ByteReader reader)
     {
         // Playing on another node: everything the client says goes there.
-        if (state_ == WorldState.elsewhere)
+        if (state_ == WorldState.elsewhere && !gatewayPaused)
             return context.relayToOwner(ownerNode, account.id, cast(ushort) opcode, reader.readBytes(reader.remaining));
         DispatchResult result;
         try
         {
+            if (gatewayPaused || recovery.guid)
+            {
+                if (recovery.guid && opcode == Opcode.MSG_MOVE_WORLDPORT_ACK && reader.empty)
+                    finishGatewayRecovery();
+                else if (opcode == Opcode.CMSG_PING)
+                    dispatchPacket(opcode, WorldState.characterScreen, reader);
+                return;
+            }
             result = dispatchPacket(opcode, state_, reader);
             // A packet of the player in the world: its character's.
             if (result == DispatchResult.unhandled && playing !is null)
@@ -503,6 +561,11 @@ package:
 
     void disconnect()
     {
+        if (state_ == WorldState.elsewhere && context.config.cluster.gateway)
+        {
+            context.relayDisconnect(ownerNode, account.id);
+            releaseWhenBack = true;
+        }
         if (playing !is null)
             playing.leave("disconnected", false);
         state_ = WorldState.closed;

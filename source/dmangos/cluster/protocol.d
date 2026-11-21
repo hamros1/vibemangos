@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 50; // 50: cross-node creature casts; 49: cross-node creature melee
+enum ushort protocolVersion = 51; // 51: gateway recovery; 50: cross-node creature casts
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -93,6 +93,7 @@ enum MessageType : ushort
     areaDamage = 54,
     creatureSwing = 55,
     periodicResult = 56,
+    sessionRoute = 57,
 }
 
 /// The target's node reports a resolved tick to the caster's node.
@@ -495,6 +496,29 @@ struct SessionReleased
     ulong serial;
 }
 
+/// The exact process that may simulate a gateway's character.
+struct SimulationOwner
+{
+    ushort node;
+    ulong incarnation;
+}
+
+enum SessionRouteKind : ubyte { move, recover, observe, stopped }
+enum SessionRouteResult : ubyte { retry, denied, granted }
+
+/// The gateway asks the coordinator to record and fence changes to the simulation owner.
+struct SessionRoute
+{
+    enum type = MessageType.sessionRoute;
+
+    SessionRouteKind kind;
+    uint account, character;
+    ulong serial, token;
+    SimulationOwner previous, next;
+    bool reply;
+    SessionRouteResult result;
+}
+
 /// What a `PlayerMessage` is (a player simulated on another node than its client's).
 enum PlayerMessageKind : ubyte
 {
@@ -504,6 +528,9 @@ enum PlayerMessageKind : ubyte
     left = 4,        /// the player left the world on the owner (`opcode` 1: to the character screen)
     disconnect = 5,  /// the client is gone: the owner saves the player and says `left`
     moved = 6,       /// to the home: the player's simulation moved on to node `opcode`
+    gatewayMove = 7, /// the old owner saved and stopped; the gateway is to route the state to `opcode`
+    gatewayArrival = 8, /// a migration forwarded by the gateway after the coordinator recorded the route
+    gatewayRecover = 9, /// resume the saved character after the coordinator fenced the old owner
 }
 
 /// See `PlayerMessageKind`. Players are known by their account: one session per account in the cluster.
@@ -1145,7 +1172,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 50, recordedFingerprint = 0xb55682490988f558UL;
+private enum recordedVersion = 51, recordedFingerprint = 0xef14607fafbafa61UL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

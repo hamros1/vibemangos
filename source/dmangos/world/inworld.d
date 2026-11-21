@@ -261,6 +261,8 @@ private:
     {
         if (!context.canWrite())
             return;
+        if (connection.gatewayHome.node && (context.gatewayReachable is null || !context.gatewayReachable(homeNode)))
+            return;
         duelComplete(DuelEnd.fled); // a forced move (such as draining) ends it for both players
         cancelTrade(true);
         petsOnLeave(); // saved, to come out again there
@@ -275,7 +277,8 @@ private:
         saveBattleground();
         saveEnchantmentTimes();
         saveItemDurations();
-        context.settleWrites(); // in the database before the next node loads it
+        if (!context.settleWrites() && (context.config.cluster.gateway || connection.gatewayHome.node))
+            return; // a gateway handoff needs a durable checkpoint before the old owner stops
 
         ByteWriter w;
         w.put(account.id);
@@ -325,6 +328,7 @@ private:
         info!"%s: '%s' moves to node %s (at map %s %.1f %.1f)"(remoteAddress, player.data.name, target,
             player.data.map, player.position.x, player.position.y);
         context.leaveWorldForMigration(this, target);
+        connection.gatewayCharacter = player.data.guid;
         player = null;
         migratedAt = context.clock();
         if (homeNode == 0)
@@ -356,6 +360,16 @@ private:
         a.level = cast(AccountLevel) r.read!ubyte;
         a.muteTime = r.read!long;
         return a;
+    }
+
+    package static uint migrationCharacter(const(ubyte)[] state)
+    {
+        auto r = ByteReader(state);
+        r.read!uint;
+        r.readString(r.read!uint);
+        r.read!ubyte;
+        r.read!long;
+        return r.read!uint;
     }
 
     /// The node holding the client of a `migrateTo` state; 0 if it is the node that sent it.
@@ -416,7 +430,7 @@ private:
         player.movement = movement;
         player.speeds = speeds; // as the client has them; auras loaded below change them as they did there
         readPvPHandoff(r);
-        saveTimer = IntervalTimer(context.config.playerSaveInterval.seconds);
+        saveTimer = IntervalTimer(sessionSaveInterval());
         regenTimer.reset();
         enteredWorld = context.clock();
         migratedAt = context.clock();

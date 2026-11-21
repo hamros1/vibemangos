@@ -311,20 +311,20 @@ mixin template CharacterLogin()
             }
     }
 
-    package void enterWorldAtLogin(CharacterData character)
+    package void enterWorldAtLogin(CharacterData character, bool recovered = false)
     {
         const guid = character.guid;
-        player = makePlayer(character, true);
+        player = makePlayer(character, !recovered);
         loadCooldowns(); // before the spellbook is sent: it shows them
         loadTalentReset();
         loadSocial();
-        saveTimer = IntervalTimer(context.config.playerSaveInterval.seconds);
+        saveTimer = IntervalTimer(sessionSaveInterval());
         regenTimer.reset();
         enteredWorld = context.clock();
         state_ = WorldState.inWorld;
         connection.playing = this; // in the world from here on
         instanceId_ = context.instanceFor(player.guid, player.data.map); // a dungeon: its group's copy, or its own
-        sendLoginPackets();
+        sendLoginPackets(recovered);
         context.enterWorld(this, true); // after the player's own create block: now others see it, and it sees them
         context.database.setOnline(guid, account.id, true, context.config.realmId);
         resetMovementCheck();
@@ -358,6 +358,14 @@ mixin template CharacterLogin()
             migrateTo(target);
     }
 
+    private auto sessionSaveInterval()
+    {
+        import std.algorithm.comparison : min;
+
+        const configured = context.config.playerSaveInterval;
+        return (connection.gatewayHome.node ? min(configured, 15u) : configured).seconds;
+    }
+
     /**
      * The player of a loaded character: its spells and skills, and its rested
      * XP, with what the time offline earned if `offlineRest` (not for a player arriving from another
@@ -383,15 +391,18 @@ mixin template CharacterLogin()
     }
 
     /// The login packets, from `SMSG_LOGIN_VERIFY_WORLD` to the player's create packet.
-    void sendLoginPackets()
+    void sendLoginPackets(bool recovered = false)
     {
         const c = &player.data;
-        send(ServerLoginVerifyWorld(c.map, player.movement.position.x, player.movement.position.y,
-            player.movement.position.z, player.movement.position.orientation));
-        send(ServerAccountDataTimes());
-        send(ServerExpectedSpamRecords());
-        foreach (line; motdLines(context.config.motd))
-            sendSystemMessage(line);
+        if (!recovered)
+        {
+            send(ServerLoginVerifyWorld(c.map, player.movement.position.x, player.movement.position.y,
+                player.movement.position.z, player.movement.position.orientation));
+            send(ServerAccountDataTimes());
+            send(ServerExpectedSpamRecords());
+            foreach (line; motdLines(context.config.motd))
+                sendSystemMessage(line);
+        }
         // GMs, and with `send_stats_on_join` everyone, are told the population (a GM system message).
         if (context.config.sendStatsOnJoin || hasGMPermissions)
         {
@@ -407,7 +418,7 @@ mixin template CharacterLogin()
         send(ServerSetProficiency(4, player.proficiency[1])); // ITEM_CLASS_ARMOR
 
         // The race's intro, the first time; not for GMs (as the GM system requires).
-        if (c.cinematic == 0)
+        if (!recovered && c.cinematic == 0)
         {
             player.data.cinematic = 1;
             if (!hasGMPermissions)

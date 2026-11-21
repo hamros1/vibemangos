@@ -356,6 +356,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     ushort nodeId;
     ushort delegate(uint map, Position at, float radius) regionOwnerAround;
     PlayerRelay playerRelay; /// ditto
+    bool delegate(ushort) gatewayReachable; /// whether a gateway can receive a saved handoff
 
     void relayToHome(ushort home, uint account, ushort opcode, const(ubyte)[] body_)
     {
@@ -6148,6 +6149,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     @property size_t sessionCount() const
     {
         return sessions.length;
+    }
+
+    /// The coordinator's serial for this particular login, even if a replacement is waiting.
+    package ulong sessionSerial(Kickable session)
+    {
+        return serials.get(session, 0);
     }
 
     /// Registers an authenticated session, kicking any earlier one of the same account.

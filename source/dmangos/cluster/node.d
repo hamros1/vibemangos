@@ -96,6 +96,7 @@ interface ReplicationHandler
 interface PlayerHandler
 {
     void player(ushort peer, PlayerMessageKind kind, uint account, ushort opcode, const(ubyte)[] data);
+    void sessionRouteResult(const ref SessionRoute route);
 }
 
 /// What a node does with session decisions: the world server implements it.
@@ -298,7 +299,7 @@ final class ClusterNode : LinkOwner
     void claimSession(uint account, ulong serial)
     {
         if (isCoordinator)
-            return act(directory.claim(account, SessionRef(id, serial)));
+            return act(directory.claim(account, SessionRef(id, serial, incarnation)));
         if (auto link = coordinatorId in links)
             link.send(SessionClaim(account, serial));
         else
@@ -309,11 +310,56 @@ final class ClusterNode : LinkOwner
     void releaseSession(uint account, ulong serial)
     {
         if (isCoordinator)
-            return act(directory.released(account, SessionRef(id, serial)));
+            return act(directory.released(account, SessionRef(id, serial, incarnation)));
         if (auto link = coordinatorId in links)
             link.send(SessionReleased(account, serial));
         else
             releasesWaiting ~= SessionReleased(account, serial);
+    }
+
+    /// The incarnation in the coordinator's latest view, including this process.
+    SimulationOwner simulationOwner(ushort node) const
+    {
+        if (node == id)
+            return SimulationOwner(id, incarnation);
+        if (const member = find(node))
+            return SimulationOwner(member.nodeId, member.incarnation);
+        return SimulationOwner.init;
+    }
+
+    bool requestSessionRoute(const ref SessionRoute route)
+    {
+        auto link = linkTo(coordinatorId);
+        if (link is null || link.wantsClose)
+            return false;
+        link.send(route);
+        return true;
+    }
+
+    /// Queues a gateway packet for the same process, including during a direct-link outage.
+    void sendToGateway(SimulationOwner gateway, const ref PlayerMessage message)
+    {
+        import dmangos.bytes : ByteWriter;
+
+        if (auto link = linkTo(gateway.node))
+            if (link.peer.incarnation == gateway.incarnation && !link.wantsClose)
+                return link.send(message);
+        if (auto stream = sequences.get(gateway.node, null))
+            if (stream.incarnation == gateway.incarnation)
+            {
+                ByteWriter frame;
+                const sequence = stream.nextSend++;
+                putMessage(frame, sequence, message);
+                stream.retain(sequence, frame.data);
+            }
+    }
+
+    void simulationStopped(uint account, uint character, ulong token)
+    {
+        if (isCoordinator)
+            return directory.stopped(account, character, token, simulationOwner(id));
+        sendToCoordinator(SessionRoute(kind: SessionRouteKind.stopped, account: account, character: character,
+            token: token));
     }
 
     /**
@@ -540,6 +586,8 @@ final class ClusterNode : LinkOwner
             if (const known = hello.nodeId in highestIncarnation)
                 if (hello.incarnation < *known)
                     return RejectReason.staleIncarnation;
+            if (!directory.mayAdmit(SimulationOwner(hello.nodeId, hello.incarnation)))
+                return RejectReason.staleIncarnation;
         }
         else if (!link.dialed)
         {
@@ -571,7 +619,15 @@ final class ClusterNode : LinkOwner
             handshaking = handshaking.remove(at);
         if (auto old = peer in links)
             if (*old !is link)
+            {
+                if (isCoordinator && (*old).peer.incarnation != link.peer.incarnation)
+                {
+                    authority.lost(peer, (*old).lastHeard);
+                    directory.lost(peer, (*old).lastHeard + config.leaseMs.msecs + leaseMargin,
+                        (*old).peer.incarnation);
+                }
                 old.close("replaced by a newer link");
+            }
         links[peer] = link;
         foreach (ref dial; dials)
             if (dial.pending is link)
@@ -585,7 +641,7 @@ final class ClusterNode : LinkOwner
         if (replication !is null)
             replication.peerLinked(peer);
         if (isCoordinator)
-            directory.back(peer);
+            directory.back(peer, link.peer.incarnation);
         else if (link.peer.coordinator)
             coordinatorLinked(link);
 
@@ -908,6 +964,28 @@ final class ClusterNode : LinkOwner
         }
         if (type >= MessageType.sessionClaim && type <= MessageType.sessionReleased)
             return session(peer, link, type, payload);
+        if (type == MessageType.sessionRoute)
+        {
+            const m = decode!SessionRoute(payload);
+            if (isCoordinator && !m.reply)
+            {
+                if (m.kind == SessionRouteKind.stopped)
+                    directory.stopped(m.account, m.character, m.token, SimulationOwner(peer, link.peer.incarnation));
+                else if (link.peer.gateway)
+                {
+                    auto reply = cast(SessionRoute) m;
+                    reply.reply = true;
+                    const destination = linkTo(m.next.node);
+                    const canRoute = simulationOwner(m.next.node) == m.next && (m.next.node == id
+                        || (destination !is null && !destination.peer.gateway && !destination.wantsClose));
+                    reply.result = directory.route(SessionRef(peer, m.serial, link.peer.incarnation), m, clock(), canRoute);
+                    sendTo(peer, reply);
+                }
+            }
+            else if (m.reply && peer == coordinatorId && players !is null)
+                players.sessionRouteResult(m);
+            return;
+        }
         if (type >= MessageType.interestUpdate && type <= MessageType.replicaRemove)
             return replicate(peer, type, payload);
         if (type == MessageType.takeover)
@@ -1054,7 +1132,7 @@ final class ClusterNode : LinkOwner
         {
             dropMember(peer);
             authority.lost(peer, link.lastHeard);
-            directory.lost(peer, link.lastHeard + config.leaseMs.msecs + leaseMargin);
+            directory.lost(peer, link.lastHeard + config.leaseMs.msecs + leaseMargin, link.peer.incarnation);
             idRequests.remove(peer);
         }
     }
@@ -1068,12 +1146,12 @@ private:
             if (type == MessageType.sessionClaim)
             {
                 const m = decode!SessionClaim(payload);
-                act(directory.claim(m.account, SessionRef(peer, m.serial)));
+                act(directory.claim(m.account, SessionRef(peer, m.serial, link.peer.incarnation)));
             }
             else if (type == MessageType.sessionReleased)
             {
                 const m = decode!SessionReleased(payload);
-                act(directory.released(m.account, SessionRef(peer, m.serial)));
+                act(directory.released(m.account, SessionRef(peer, m.serial, link.peer.incarnation)));
             }
             return;
         }
@@ -1111,6 +1189,8 @@ private:
     {
         foreach (a; actions)
         {
+            if (simulationOwner(a.session.node) != a.session.process)
+                continue;
             if (a.kind == SessionAction.Kind.evict)
                 info!"cluster: account %s logged in again; its session on node %s is ended, and the new one waits for it"(
                     a.account, a.session.node);
@@ -1368,6 +1448,7 @@ version (unittest)
         ClusterNode[string] listening;      // by advertised address
         bool[string] down;                  // addresses that refuse connections
         bool[ClusterNode] isolated;         // nodes cut off from the network: their bytes are lost
+        bool[uint] cutLinks;               // a direct link can fail while both nodes still reach the coordinator
         static struct Wire { Link a, b; ClusterNode from, to; }
         Wire[] wires;
 
@@ -1397,12 +1478,30 @@ version (unittest)
             auto link = cast(Link) session;
             const address = format!"%s:%s"(host, port);
             auto target = listening.get(address, null);
-            if (target is null || address in down || from in isolated || target in isolated)
+            if (target is null || address in down || from in isolated || target in isolated
+                || linkKey(from, target) in cutLinks)
             {
                 link.disconnected();
                 return;
             }
             wires ~= Wire(link, cast(Link) target.accept("peer"), from, target);
+        }
+
+        private static uint linkKey(ClusterNode a, ClusterNode b)
+        {
+            return a.id < b.id ? (uint(a.id) << 16) | b.id : (uint(b.id) << 16) | a.id;
+        }
+
+        void cut(ClusterNode a, ClusterNode b)
+        {
+            cutLinks[linkKey(a, b)] = true;
+            a.linkTo(b.id).close("test direct link failure");
+            pump();
+        }
+
+        void restore(ClusterNode a, ClusterNode b)
+        {
+            cutLinks.remove(linkKey(a, b));
         }
 
         /// Moves bytes until nothing moves, then closes what wants closing (as the server does).
@@ -1932,6 +2031,142 @@ unittest
     assert(gateway.regions.ownedRegions.length == 0, "a gateway simulates nothing");
     assert(coordinator.regions.ownedRegions.length + member.regions.ownedRegions.length == 4);
     assert(coordinator.leastBusyClientAddress() == "127.0.0.1:8003", "clients go to the gateway");
+}
+
+// A gateway keeps its client's socket through a direct-link fault and a separately verified owner crash.
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import dmangos.world.character : Character;
+    import dmangos.world.clusterbridge : ClusterBridge;
+    import dmangos.world.config : WorldConfig;
+    import dmangos.world.fencing : FencedDatabase;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.packets : ClientPing;
+    import dmangos.world.player : Player;
+    import dmangos.world.session : WorldState;
+    import dmangos.world.testclient;
+
+    enum uint guid = 7;
+    auto cluster = new TestCluster;
+    auto coordinator = cluster.add(1, 9000, 1, CoordinatorSetup([
+        Region(1, 0, CellRect(-256, -256, 0, 256), 3, 10, RegionState.granted),
+        Region(2, 0, CellRect(0, -256, 256, 256), 1, 11, RegionState.granted)],
+        [1u: 10UL, 2u: 10UL], new TestCounters));
+    auto gateway = cluster.add(2, 9001, 1, CoordinatorSetup.init, false, true);
+    auto owner = cluster.add(3, 9002);
+    auto db = newDatabase();
+    WorldContext[ushort] worlds;
+    ClusterBridge[ushort] bridges;
+    void connect(ClusterNode bound, bool isGateway)
+    {
+        auto world = newCreationContext(db, (ref WorldConfig settings) { settings.cluster.gateway = isGateway; });
+        world.clock = () => cluster.now;
+        world.nodeId = bound.id;
+        world.ownsCell = (uint map, ulong cell) => bound.regions.ownsCell(map, cell);
+        world.database = new FencedDatabase(db, () => bound.regions.leaseHolds(cluster.now));
+        bound.onOwnership = &world.regionsChanged;
+        auto bridge = new ClusterBridge(bound, world, 5000);
+        bound.sessions = world;
+        bound.players = bridge;
+        bound.replication = bridge;
+        world.replicator = bridge;
+        world.playerRelay = bridge;
+        world.releaseSession = &bound.releaseSession;
+        worlds[bound.id] = world;
+        bridges[bound.id] = bridge;
+    }
+    connect(coordinator, false);
+    connect(gateway, true);
+    connect(owner, false);
+    void ticks(int ms, ClusterNode[] active...)
+    {
+        foreach (_; 0 .. ms / 50)
+        {
+            cluster.run(50, active);
+            foreach (n; active)
+            {
+                worlds[n.id].update(cluster.now);
+                bridges[n.id].tick();
+            }
+            cluster.pump();
+        }
+    }
+
+    ticks(8000, coordinator, gateway, owner);
+    const at = Position(-8949.95f, -132.49f, 83.53f, 1.97f);
+    const cell = cellKeyAt(at.x, at.y);
+    assert(gateway.regions.ownerAt(0, cell) == owner.id);
+    auto client = loggedIn(worlds[gateway.id], db, guid, "Anduin", at);
+    const account = db.loadable[guid].account;
+    gateway.claimSession(account, 1);
+    ticks(150, coordinator, gateway, owner);
+    auto originalSocket = client.session;
+    worlds[gateway.id].regionOwnerAround = (uint map, Position p, float) =>
+        gateway.regions.ownerAt(map, cellKeyAt(p.x, p.y));
+    originalSocket.update(1100.msecs);
+    ticks(300, coordinator, gateway, owner);
+    auto simulated = cast(Character) worlds[owner.id].onlinePlayer(guid);
+    assert(simulated !is null && originalSocket.state == WorldState.elsewhere && originalSocket.owner == owner.id);
+    client.read();
+
+    cluster.cut(gateway, owner);
+    simulated.deliver(Opcode.SMSG_NOTIFICATION, cast(const(ubyte)[]) "Buffered during the link outage.\0");
+    ticks(6500, coordinator, gateway, owner);
+    assert(coordinator.simulationOwner(owner.id).node == owner.id && originalSocket.owner == owner.id);
+    assert(!originalSocket.wantsClose && worlds[owner.id].onlinePlayer(guid) is simulated);
+    client.write(Opcode.CMSG_PING, ClientPing(7, 0));
+    assert(opcodesOf(client.read()).canFind(Opcode.SMSG_PONG), "the gateway answers while the owner link is down");
+    cluster.restore(gateway, owner);
+    ticks(8000, coordinator, gateway, owner);
+    assert(gateway.linkTo(owner.id) !is null && worlds[owner.id].onlinePlayer(guid) is simulated);
+    auto resumed = opcodesOf(client.read());
+    assert(resumed.canFind(Opcode.SMSG_NOTIFICATION) && !resumed.canFind(Opcode.SMSG_NEW_WORLD));
+
+    // A subsequent handoff goes through the gateway too. The directory's crash proof must follow it.
+    worlds[owner.id].regionOwnerAround = (uint, Position, float) => coordinator.id;
+    ticks(1800, coordinator, gateway, owner);
+    assert(originalSocket.owner == coordinator.id && worlds[owner.id].onlinePlayer(guid) is null);
+    worlds[owner.id].regionOwnerAround = null;
+    worlds[coordinator.id].regionOwnerAround = (uint, Position, float) => owner.id;
+    ticks(11500, coordinator, gateway, owner);
+    worlds[coordinator.id].regionOwnerAround = null;
+    simulated = cast(Character) worlds[owner.id].onlinePlayer(guid);
+    assert(simulated !is null && originalSocket.owner == owner.id
+        && worlds[coordinator.id].onlinePlayer(guid) is null);
+
+    auto oldPlayer = cast(Player) simulated.character;
+    oldPlayer.movement.position.x += 5;
+    ticks(15500, coordinator, gateway, owner);
+    const checkpoint = db.progressSaves[$ - 1].position;
+    assert(checkpoint.x == at.x + 5, "gateway-hosted players periodically checkpoint");
+    db.loadable[guid].position = checkpoint; // the in-memory database records writes separately from reads
+    oldPlayer.movement.position.x += 5;
+    client.read();
+    cluster.kill(owner);
+    ticks(3500, coordinator, gateway);
+    assert(worlds[coordinator.id].onlinePlayer(guid) is null && !originalSocket.wantsClose);
+    assert(!opcodesOf(client.read()).canFind(Opcode.SMSG_NEW_WORLD), "no recovery before the lease expires");
+
+    ticks(4000, coordinator, gateway);
+    bridges[owner.id].fenceGatewaySimulations();
+    assert(worlds[owner.id].onlinePlayer(guid) is null, "the former worker cannot keep simulating with an expired lease");
+    assert(gateway.regions.ownerAt(0, cell) == coordinator.id);
+    assert(client.session is originalSocket && !originalSocket.wantsClose && originalSocket.owner == coordinator.id);
+    const transfer = opcodesOf(client.read());
+    assert(transfer.canFind(Opcode.SMSG_TRANSFER_PENDING) && transfer.canFind(Opcode.SMSG_NEW_WORLD));
+    assert(worlds[coordinator.id].onlinePlayer(guid) is null, "wait for the client to load the map");
+    client.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
+    ticks(250, coordinator, gateway);
+    auto restored = worlds[coordinator.id].onlinePlayer(guid);
+    assert(restored !is null && restored.character.position == checkpoint);
+    assert(!opcodesOf(client.read()).canFind(Opcode.SMSG_LOGIN_VERIFY_WORLD));
+
+    auto stale = cluster.add(owner.id, 9002, owner.incarnation);
+    cluster.run(1000, coordinator, gateway, stale);
+    assert(stale.fenced && coordinator.simulationOwner(stale.id).node == 0, "the old process cannot renew its lease");
 }
 
 // An assistance loan survives a change of home owner and recovers after either participant is lost.

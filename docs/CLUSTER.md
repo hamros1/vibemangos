@@ -157,7 +157,7 @@ The cluster messages include:
 | Membership | `Hello`, `Reject`, `Heartbeat`, `View` |
 | Ownership | `RegionTable`, `RegionReleased`, `RegionHandover`, `RegionLoads`, `Drain`, `Takeover`, `TakeoverAccepted` |
 | Ids | `IdRequest`, `IdGrant`, `IdReport` |
-| Sessions | `SessionClaim`, `SessionGrant`, `SessionEvict`, `SessionReleased` |
+| Sessions | `SessionClaim`, `SessionGrant`, `SessionEvict`, `SessionReleased`, `SessionRoute` |
 | Replication | `InterestUpdate`, `ReplicaCreate`, `ReplicaValues`, `ReplicaMove`, `ReplicaRemove`, `InRange` |
 | Players | `PlayerMessage` (to the owner, to the home, arrival, departure, a move to a third node), `Presence`, `DeliverTo`, `Whisper` |
 | Gameplay across nodes | `StockRequest`, `StockReply`, `StockRelease`, `GroupCommand`, `GroupState`, `MemberStatsRequest`, `ToEveryone`, `GmRemote`, `KillShare`, `GroupLootRoll`, `LootCoinShare`, `QuestLootCheck`, `PartyHeal`, `AreaDamage`, `CreatureSwing`, `PeriodicResult`, `ScriptSignal`, `DungeonEntryRequest`, `DungeonEntryReply`, `FriendStatusChange`, `GuildReload`, `GuildBroadcast`, `GuildInvitation` |
@@ -585,8 +585,9 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
 | What fails | What happens |
 |---|---|
 | **A member** | Its links close (at once if the process died, after `failure_timeout_ms` if it hangs) and the coordinator drops it from the view. Its replicas vanish from the other nodes at once. After its lease and the margin, the coordinator deals its regions and services out again; they spawn afresh. Its accounts are freed at the same time. |
-| **A player's owner** | The home disconnects the client at once and releases the account after the owner's lease. The character comes back as last saved, at the latest at the handover to that owner. |
-| **A player's home** | The owner logs the player out, saved, before the coordinator frees the account at the home's lease. |
+| **A player's owner** | A gateway keeps the client connected and reloads its saved character once the coordinator has fenced the old process. A regular home disconnects the client, who can log in again after the owner's lease. |
+| **A gateway's direct link to an owner** | The gateway pauses client gameplay and answers pings. The owner keeps the character and buffers packets while both nodes remain in the coordinator's view. |
+| **A player's home** | The owner logs the player out, saved. For a gateway, the coordinator waits for the simulation to stop or be fenced before it grants the account again. |
 | **The coordinator, with a standby** | The standby takes over (below). |
 | **The link to the coordinator** | A member keeps simulating until its lease lapses. Then it ends every session, writes nothing more (its saves are dropped and logged as not saved), and gives up its regions. When it reaches a coordinator again it re-claims its sessions, reports its ids, and is granted regions again. |
 | **A restarted process** | It joins with a new incarnation, which fences out the old one; queued writes from before its lease lapsed are dropped on replay. |
@@ -604,6 +605,23 @@ A node must never write over a character that has since played elsewhere.
   lease lapsed therefore never writes over the regions' new owner.
 * Before an account is released to the coordinator and before a player moves to another node, the node
   waits until everything queued has been written: the next node loads the character from the database.
+
+### Gateway recovery
+
+The gateway routes a saved handoff only after the coordinator records the new simulation owner's
+node and incarnation under that login. It holds later gameplay packets during the handoff. A
+gateway-to-owner outage leaves the recorded owner active while that worker still reaches the
+coordinator. The ordered relay retains outgoing packets for the gateway's same incarnation.
+
+If the coordinator loses the owner, it waits for the old write lease and margin before approving
+a replacement. The former incarnation cannot reconnect to renew its lease. The surviving worker
+that owns the saved position loads the latest database checkpoint and sends a world transfer
+over the gateway's existing client connection. The character enters the replacement's map
+after the client acknowledges the transfer. Gateway-hosted characters use a checkpoint
+interval capped at 15 seconds. Work since the latest durable save can be lost in a crash.
+
+This path covers a simulation owner failing while a coordinator retains the route and lease
+history. Recovery across concurrent coordinator loss remains part of coordinator failover.
 
 ### The standby coordinator
 
@@ -668,11 +686,7 @@ services line (`ServiceHost.describe`). Every log line of the cluster code start
   swing. Player-controlled creature melee and block-triggered damage such as Holy Shield.
 * Proc spells with projectiles, channels or mixed targeted effects across nodes, channelled
   leeches, and additional victim-side periodic effects.
-* Gateway session recovery. A gateway needs an authoritative record of the current simulation
-  owner and confirmation that the former owner can no longer write. The replacement can then
-  load a durable checkpoint and resynchronize the live client. Tests need to cover an owner
-  crash as well as a gateway-to-owner link failure while the owner remains connected to the
-  coordinator.
+* Gateway session recovery across simultaneous loss of the simulation owner and its coordinator.
 * Multiple standby coordinators with quorum. An election must keep its votes and terms across
   restarts and fence the former coordinator before another can renew worker leases or grant
   ownership. A partition test needs to show that only one side can grant regions and that

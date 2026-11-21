@@ -28,6 +28,9 @@ import dmangos.world.session : WorldSession, WorldState;
 /// See the module documentation. Also relays players simulated away from their client.
 final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerHandler
 {
+    import dmangos.world.gatewaysessions : GatewaySessions;
+    mixin GatewaySessions;
+
     private ClusterNode node;
     private WorldContext context;
     private WorldSession[uint] remote;         // owner: sessions whose client is on another node, by account
@@ -50,12 +53,14 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
     {
         this.node = node;
         this.context = context;
+        context.gatewayReachable = (ushort home) => linkedOwner(home).node != 0;
     }
 
     /// Sends what each map's players became near and left since the last tick, and once a second what changed of them.
     void tick()
     {
-        const now = MonoTime.currTime;
+        const now = context.clock();
+        gatewayTick(now);
         if (now >= nextPresence)
         {
             nextPresence = now + 1000.msecs;
@@ -80,6 +85,19 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
             if (added.length || removed.length)
                 node.broadcast(InterestUpdate(map.id, added, removed));
         }
+    }
+
+    /// Run before processing world ticks so an expired worker cannot keep a gateway's simulation alive.
+    void fenceGatewaySimulations()
+    {
+        if (context.canWrite())
+            return;
+        WorldSession[] expired;
+        foreach (session; remote)
+            if (session.gatewayHome.node)
+                expired ~= session;
+        foreach (session; expired)
+            session.clientGone();
     }
 
     // Replicator: this node's objects, to the nodes that want them.
@@ -129,7 +147,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         // Players it held the clients of: they leave the world here, saved (it cannot say they did).
         WorldSession[] orphans;
         foreach (account, session; remote)
-            if (session.home == peer)
+            if (session.home == peer && !session.gatewayHome.node)
                 orphans ~= session;
         foreach (session; orphans)
             session.clientGone();
@@ -138,9 +156,22 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
             if (auto session = cast(WorldSession) k)
                 if (session.state == WorldState.elsewhere && session.owner == peer)
                 {
+                    if (accountGatewayPaused(session))
+                        continue;
                     session.kick("the server simulating this character was lost");
-                    releaseAt[session] = MonoTime.currTime + (leaseMs + 500).msecs;
+                    releaseAt[session] = context.clock() + (leaseMs + 500).msecs;
                 }
+    }
+
+    private bool accountGatewayPaused(WorldSession session)
+    {
+        if (auto route = gatewayRoutes.get(session.account.id, null))
+            if (route.client is session)
+            {
+                session.gatewayPaused = true;
+                return true;
+            }
+        return false;
     }
 
     void inRange(ushort peer, uint map, float x, float y, float z, float range, ushort opcode, const(ubyte)[] body_)
@@ -664,7 +695,15 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
 
     void toHome(ushort home, uint account, ushort opcode, const(ubyte)[] body_)
     {
-        node.sendTo(home, PlayerMessage(PlayerMessageKind.toHome, account, opcode, cast(ubyte[]) body_));
+        const message = PlayerMessage(PlayerMessageKind.toHome, account, opcode, cast(ubyte[]) body_);
+        if (auto session = remote.get(account, null))
+            if (session.gatewayHome.node)
+            {
+                if (context.canWrite())
+                    node.sendToGateway(session.gatewayHome, message);
+                return;
+            }
+        node.sendTo(home, message);
     }
 
     void toOwner(ushort owner, uint account, ushort opcode, const(ubyte)[] body_)
@@ -674,11 +713,27 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
 
     void disconnect(ushort owner, uint account)
     {
+        if (auto route = gatewayRoutes.get(account, null))
+        {
+            route.closing = true;
+            if (!route.pending.token)
+                sendGatewayDisconnect(route, account);
+            return;
+        }
         node.sendTo(owner, PlayerMessage(PlayerMessageKind.disconnect, account, 0, null));
     }
 
     void migrate(ushort target, uint account, const(ubyte)[] state)
     {
+        if (context.config.cluster.gateway)
+            return startGatewayMove(account, target, state, node.id);
+        if (auto session = remote.get(account, null))
+            if (session.gatewayHome.node)
+            {
+                node.sendTo(session.home, PlayerMessage(PlayerMessageKind.gatewayMove, account, target,
+                    cast(ubyte[]) state));
+                return;
+            }
         node.sendTo(target, PlayerMessage(PlayerMessageKind.migrate, account, 0, cast(ubyte[]) state));
         if (account in remote)
             movedOn[account] = MovedOn(target, MonoTime.currTime); // the client's packets still on their way
@@ -686,6 +741,9 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
 
     void moved(ushort home, uint account, ushort next)
     {
+        if (auto session = remote.get(account, null))
+            if (session.gatewayHome.node)
+                return; // the saved handoff goes through the gateway
         node.sendTo(home, PlayerMessage(PlayerMessageKind.moved, account, next, null));
     }
 
@@ -713,7 +771,16 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
 
     void left(ushort home, uint account, bool toCharacterScreen)
     {
-        node.sendTo(home, PlayerMessage(PlayerMessageKind.left, account, toCharacterScreen ? 1 : 0, null));
+        const message = PlayerMessage(PlayerMessageKind.left, account, toCharacterScreen ? 1 : 0, null);
+        if (auto session = remote.get(account, null))
+            if (session.gatewayHome.node)
+            {
+                if (!context.canWrite() || !context.settleWrites())
+                    return;
+                node.simulationStopped(account, session.gatewayCharacter, session.gatewayToken);
+                return node.sendToGateway(session.gatewayHome, message);
+            }
+        node.sendTo(home, message);
     }
 
     void remoteDone(uint account)
@@ -751,11 +818,21 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
             return;
         case PlayerMessageKind.toOwner:
             if (auto session = account in remote)
-                session.fromHome(opcode, data);
+            {
+                if (!session.gatewayHome.node || session.gatewayHome == linkedOwner(peer, true))
+                    session.fromHome(opcode, data);
+            }
             else if (const next = movedOnTo(account))
                 toOwner(next, account, opcode, data); // sent before its home heard it moved on
             return;
         case PlayerMessageKind.toHome:
+            if (auto route = gatewayRoutes.get(account, null))
+            {
+                if (route.owner == linkedOwner(peer, true) && node.simulationOwner(peer) == route.owner
+                    && !route.pending.token)
+                    route.client.fromOwner(opcode, data);
+                return;
+            }
             if (auto session = cast(WorldSession) context.sessionOf(account))
             {
                 if (session.state == WorldState.elsewhere && session.owner != peer)
@@ -764,22 +841,91 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
             }
             return;
         case PlayerMessageKind.left:
+            if (auto route = gatewayRoutes.get(account, null))
+            {
+                if (route.owner == linkedOwner(peer, true) && !route.pending.token)
+                    finishGatewayRoute(account, opcode == 1);
+                return;
+            }
             if (auto session = cast(WorldSession) context.sessionOf(account))
                 if (session.state == WorldState.elsewhere || session.owner == peer)
                     session.ownerLeft(opcode == 1);
             return;
         case PlayerMessageKind.disconnect:
             if (auto session = account in remote)
-                session.clientGone();
+            {
+                if (!session.gatewayHome.node || session.gatewayHome == linkedOwner(peer, true))
+                    session.clientGone();
+            }
             else if (const next = movedOnTo(account))
                 disconnect(next, account);
             return;
         case PlayerMessageKind.moved:
+            if (account in gatewayRoutes)
+                return;
             if (auto session = cast(WorldSession) context.sessionOf(account))
                 if (session.owner == peer)
                     session.ownerMoved(opcode);
             return;
+        case PlayerMessageKind.gatewayMove:
+            if (context.config.cluster.gateway)
+                startGatewayMove(account, opcode, data, peer);
+            return;
+        case PlayerMessageKind.gatewayArrival, PlayerMessageKind.gatewayRecover:
+            return receiveGatewayPlayer(peer, kind, account, data);
         }
+    }
+
+    private void receiveGatewayPlayer(ushort peer, PlayerMessageKind kind, uint account, const(ubyte)[] data)
+    {
+        import dmangos.auth.accounts : AccountLevel;
+        import dmangos.bytes : ByteReader;
+        import dmangos.world.database : WorldAccount;
+
+        const home = linkedOwner(peer);
+        auto link = node.linkTo(peer);
+        if (!home.node || link is null || !link.peer.gateway || account in remote)
+            return;
+        auto r = ByteReader(data);
+        const token = r.read!ulong;
+        if (!token)
+            return;
+        WorldSession session;
+        if (kind == PlayerMessageKind.gatewayArrival)
+        {
+            const state = r.readBytes(r.remaining);
+            const auth = Character.migrationAccount(state);
+            const original = Character.migrationHome(state);
+            if (auth.id != account || (original && original != peer))
+                return;
+            session = new WorldSession(context, auth, peer);
+            session.gatewayHome = home;
+            session.gatewayToken = token;
+            session.gatewayCharacter = Character.migrationCharacter(state);
+            remote[account] = session;
+            if (session.arrive(state))
+                return;
+        }
+        else
+        {
+            WorldAccount auth;
+            auth.id = account;
+            auth.username = r.readString(r.read!uint).idup;
+            auth.level = cast(AccountLevel) r.read!ubyte;
+            auth.muteTime = r.read!long;
+            const clientBuild = r.read!uint, character = r.read!uint;
+            if (!r.empty)
+                return;
+            session = new WorldSession(context, auth, peer);
+            session.gatewayHome = home;
+            session.gatewayToken = token;
+            session.gatewayCharacter = character;
+            remote[account] = session;
+            if (session.beginGatewayRecovery(character, clientBuild))
+                return;
+        }
+        left(peer, account, false);
+        remote.remove(account);
     }
 
     void interest(ushort peer, uint map, const(ulong)[] added, const(ulong)[] removed)
