@@ -177,7 +177,7 @@ The largest area. In order:
      win, the exit portals.
    * Milestone D, Arathi Basin: **done** (`arathi.d`): five bases, claims, assaults, defences, resources,
      2000 to win.
-   * Milestone E, Alterac Valley: **done** (`alterac.d`): reinforcements, graveyards and towers, mines,
+   * Milestone E, Alterac Valley: **done** (`alterac.d`, as 1.12: no reinforcements, those are 2.3.0's): graveyards and towers, mines,
      captains and generals; the turn-ins: armor scraps upgrading the defenders (and the general's warcry), the
      elemental lords called. Not yet: the cavalry, the fleets, the ground assault (no gossip for their orders in
      the database), the lords' summoning rituals and march.

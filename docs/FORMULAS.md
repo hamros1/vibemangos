@@ -1080,10 +1080,10 @@ enemy land only on PvP realms or in capitals, as dmangos had; a heal flags only 
 **Rule:** Arathi Basin's reputation every 200 resources (150 on the holiday); Alterac Valley's nodes fall five
 minutes after an assault. **What changed (2026-11-21):** 160 and 120; four minutes (2.3.0's).
 
-**Left (reported, not changed):** Alterac Valley's reinforcements (600 each, deaths, towers and captains costing them,
-the mines' +1) and its end-of-match honor for surviving towers and captains are 2.3.0's design; in 1.12 the general's
-death ends the battle and there is no count. Removing them reshapes alterac.d, a battleground module another
-pass owns. Arathi Basin's ticks for one and two nodes: the 1.x page measured 11 s and 10 s where dmangos (and
+**Done (2026-11-21):** Alterac Valley's reinforcements (600 each, deaths, towers and captains costing them, the mines'
++1) and its end-of-match honor for surviving towers and captains are 2.3.0's design (its notes, 13 November 2007; the
+1.12.1 client's WorldStateUI.dbc has no reinforcement counter for the valley): removed. The general's death ends the
+battle; with too few players, the side with more towers standing wins. Arathi Basin's ticks for one and two nodes: the 1.x page measured 11 s and 10 s where dmangos (and
 CMaNGOS) have 12 s and 9 s; the page's per-second column (0.9, 1.0) is rounded, so the difference may be measurement;
 unchanged. Warsong Gulch's flag times (10 s on the ground, 23 s to respawn) have no source.
 

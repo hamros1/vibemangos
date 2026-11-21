@@ -785,11 +785,11 @@ What works now:
     * **Leaving early** gives Deserter (15 minutes without queueing). A side short of players for five
       minutes loses.
     * **Warsong Gulch:** three flag captures win. **Arathi Basin:** five bases and their resources;
-      2000 resources win. **Alterac Valley** (`alterac.d`): 600 reinforcements a side, one lost per death,
-      100 per captain, 75 per tower; graveyards and towers assaulted from their banners and taken (a
-      tower destroyed, its marshal gone) four minutes later unless defended; two mines taken by killing
-      their bosses, a reinforcement every 45 seconds for 20 minutes; a general's death wins; honor and
-      reputation for towers, captains, graveyards and mines at the end. The turn-ins: every 500 armor
+      2000 resources win. **Alterac Valley** (`alterac.d`), as 1.12 had it (reinforcements came with patch 2.3.0): a
+      general's death wins, the only way to; graveyards and towers assaulted from their banners and taken (a
+      tower destroyed, its marshal gone) five minutes later unless defended; two mines taken by killing
+      their bosses, held for 20 minutes; honor and reputation for towers destroyed and captains killed, and
+      reputation for graveyards and mines held at the end. The turn-ins: every 500 armor
       scraps (three times) upgrade a side's graveyards' defenders (seasoned, veteran, champion) and its
       general cries General's Warcry; 200 Storm Crystals or Stormpike Soldier's Blood call Ivus the Forest
       Lord or Lokholar the Ice Lord onto the Field of Strife. Not yet: the cavalry, the fleets and the

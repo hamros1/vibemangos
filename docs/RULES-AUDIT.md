@@ -597,10 +597,10 @@ risk.
 | bgqueue.d:bracketOf | 10-level brackets from template minLevel; AV 51–60 | GetBattleGroundBracketIdFromLevel | PVPDifficulty (DB2: MapID, MinLevel, MaxLevel) | M |
 | bgqueue.d:inviteTime | Invitation 80 s; reminder 60 s | INVITE_ACCEPT_WAIT_TIME | none found | M |
 | bgqueue.d:update | Fill running copies first; minPerTeam to start | BattleGroundQueueItem::Update | BattlemasterList MinPlayers/MaxPlayers (DB2) | M |
-| alterac.d:reinforcements | 600 each; death −1, captain −100, tower −75 | UpdateScore | Wowpedia "Alterac Valley" (verify; changed by 1.x patches) | M. **Left, reported:** reinforcements came with patch 2.3.0; 1.12 had none (FORMULAS.md "Battlegrounds") |
+| alterac.d:reinforcements | 600 each; death −1, captain −100, tower −75 | UpdateScore | Wowpedia "Alterac Valley" (verify; changed by 1.x patches) | M. **Left, reported:** reinforcements came with patch 2.3.0; 1.12 had none (FORMULAS.md "Battlegrounds") **Done:** reinforcements removed (patch 2.3.0's), docs/FORMULAS.md "Battlegrounds". |
 | alterac.d:generals / captains | General ends BG; honor/rep values | HandleKillUnit | Wowpedia "Alterac Valley" (verify) | M; **Done: the honor units; not the reputation** (FORMULAS.md "Honor") |
 | alterac.d:assault / defend / destroyed | Node falls 4 min after assault (Snowfall 5) | ProcessPlayerAssaultsPoint | Wowpedia "Alterac Valley" (verify) | M. **Done:** five minutes (2.3.0 cut it to four) |
-| alterac.d:mines | +1 reinforcement per 45 s; revert after 20 min | ChangeMineOwner | Wowpedia "Alterac Valley" (verify) | M |
+| alterac.d:mines | +1 reinforcement per 45 s; revert after 20 min | ChangeMineOwner | Wowpedia "Alterac Valley" (verify) | M **Done:** reinforcements removed (patch 2.3.0's), docs/FORMULAS.md "Battlegrounds". |
 | alterac.d:ending | End-of-match honor/rep per surviving tower/captain/node/mine | EndBattleGround | Wowpedia "Alterac Valley" (verify) | M. **Left, reported:** the end-of-match honor for towers/captains is 2.3.0's |
 | warsong.d:capture / ending | 3 captures; honor and rep per capture | EventPlayerCapturedFlag | Wowpedia "Warsong Gulch" (verify) | M; **Done: the honor units; not the reputation** (FORMULAS.md "Honor"). **Done: the reputation** 35, 45 on the holiday, agrees (WoWWiki "Warsong Gulch" 2006-11) |
 | warsong.d:tick / flags | Dropped flag returns after 10 s; respawn 23 s | BG_WS_FLAG_DROP_TIME | Wowpedia "Warsong Gulch" (verify) | M |
@@ -621,7 +621,7 @@ risk.
 | battleground.d:ctor weekend | Call to Arms holidays switch reward tables | CMaNGOS BG weekend | Holidays (verify) | L |
 | battleground.d:portIn | Dead player entering BG revived | SendToBattleGround | none found | L |
 | bgqueue.d:queueSlots / averageWait | 3 queues; average of last 10 | PLAYER_MAX_BATTLEGROUND_QUEUES | none found | L |
-| alterac.d:prematureWinner | More reinforcements wins | GetPrematureWinner | none found | L |
+| alterac.d:prematureWinner | More reinforcements wins | GetPrematureWinner | none found | L **Done:** reinforcements removed (patch 2.3.0's), docs/FORMULAS.md "Battlegrounds". |
 | teleport.d:lockStatus | Instance entry requirements; Halls need rank 6 | GetAreaTriggerLockStatus | Map.dbc; areatrigger_teleport is emulator data | L |
 | teleport.d:teleportTo (max players) | Copy full at instance_template max players | InstanceMap::CanEnter | MapDifficulty.MaxPlayers (DB2) / Map.dbc | L |
 | teleport.d:updateRaidReset | Raid reset warnings 60/15/5/1 min | RAID_INSTANCE_MESSAGE | none found | L |

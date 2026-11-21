@@ -1,9 +1,9 @@
 /**
- * Alterac Valley's rules: reinforcements, graveyards and towers, mines, captains and generals.
+ * Alterac Valley's rules as patch 1.12 had them: graveyards and towers, mines, captains and generals.
  *
- * Each side starts with 600 reinforcements; the first to none loses, and killing the other side's general
- * (Vanndar Stormpike, Drek'Thar) wins at once. A player's death costs its side one, a captain's a hundred, a
- * tower destroyed seventy-five.
+ * Killing the other side's general (Vanndar Stormpike, Drek'Thar) wins: the only way to. Reinforcements (600 a side,
+ * lost by deaths, towers and captains) and the end's honor for towers and captains still standing came with patch
+ * 2.3.0 (13 November 2007): the 1.12.1 client's WorldStateUI.dbc has no reinforcement counter for the valley either.
  *
  * Fifteen nodes: seven graveyards (Snowfall in the middle starts neutral) and eight towers, four a side. A
  * player who opens an enemy (or neutral) node's banner assaults it: five minutes later (as for Snowfall's
@@ -13,11 +13,9 @@
  * graveyard serves nobody.
  *
  * Two mines, Irondeep in the north and Coldtooth in the south, start neutral: killing the mine's boss gives it
- * to the killer's side, whose reinforcements grow by one every 45 seconds while it holds it; twenty minutes
- * later its old owners take it back (it is neutral again).
+ * to the killer's side; twenty minutes later its old owners take it back (it is neutral again).
  *
- * At the end each side earns honor and reputation for its towers still standing, its captain if alive, and
- * the graveyards and mines it holds. All as CMaNGOS has it (`BattleGroundAV`), whose world states, events
+ * At the end each side earns reputation for the graveyards and mines it holds. All as CMaNGOS has it (`BattleGroundAV`), whose world states, events
  * and texts the database's spawns use; the herald's lines are the battleground's messages here, as Arathi
  * Basin's are.
  *
@@ -57,18 +55,13 @@ enum ubyte ownerAlliance = 0, ownerHorde = 1, ownerNeutral = 2;
 enum ubyte stateAssaulted = 0, stateHeld = 1;
 
 /// Reinforcements: at the start, the warning, and what a captain and a tower cost.
-enum int initialReinforcements = 600, nearLose = 120, captainCost = 100, towerCost = 75;
 
 /// How long an assault takes; Snowfall's first, from neutral: five minutes each in 1.12 (patch 2.3.0: "Towers and
 /// Graveyards in Alterac Valley are now captured in 4 minutes (down from 5)"; docs/FORMULAS.md "Battlegrounds").
 enum Duration captureTime = 5.minutes, snowfallFirstCapture = 5.minutes;
 /// A mine's tick, and how long a side holds it.
-enum Duration mineTick = 45.seconds, mineHeld = 20.minutes;
+enum Duration mineHeld = 20.minutes;
 
-/// The world states: each side's reinforcements, and whether they are shown.
-enum uint stateScoreAlliance = 3127, stateScoreHorde = 3128, stateShowHorde = 3133, stateShowAlliance = 3134;
-/// ditto, by side
-immutable uint[2] scoreStates = [stateScoreAlliance, stateScoreHorde];
 /// Snowfall's neutral icon.
 enum uint stateSnowfallNeutral = 1966;
 /// Each node's icon: the Alliance's, its assault's (grey); the Horde's, its assault's.
@@ -108,10 +101,10 @@ enum uint spellGeneralDead = 23658;
 /// Honor (in bonus honor units) and reputation: a general, a captain, a tower; surviving ones at the end; graves and
 /// mines held at the end. The second of each pair is a Call to Arms weekend's. The honor: Wowpedia "Honor system
 /// (pre-2.0 formulas)", Alterac Valley's table (the general 4, the others 1).
-enum uint honorBoss = 4, honorCaptain = 1, honorTower = 1, honorSurvivingTower = 1, honorSurvivingCaptain = 1;
+enum uint honorBoss = 4, honorCaptain = 1, honorTower = 1;
 /// ditto
-immutable int[2] repBoss = [350, 525], repCaptain = [125, 185], repTower = [12, 18], repSurvivingTower = [12, 18],
-    repSurvivingCaptain = [125, 175], repOwnedGrave = [12, 18], repOwnedMine = [24, 36];
+immutable int[2] repBoss = [350, 525], repCaptain = [125, 185], repTower = [12, 18], repOwnedGrave = [12, 18],
+    repOwnedMine = [24, 36];
 /// ditto: the battle's completion, to both sides.
 immutable uint[2] honorMapComplete = [0, 4];
 
@@ -124,14 +117,14 @@ immutable uint[2] stringMines = [766, 767];
 /// ditto
 immutable uint[nodeCount] stringNodes = [768, 771, 773, 775, 777, 779, 782, 769, 770, 772, 774, 776, 778, 780, 781];
 /// ditto
-immutable uint[2] stringNearLose = [787, 788], stringGeneralDead = [790, 789], stringSides = [650, 651];
+immutable uint[2] stringGeneralDead = [790, 789], stringSides = [650, 651];
 /// "Only the Alliance (the Horde) can use that portal"
 enum uint stringOnlyAlliancePortal = 752, stringOnlyHordePortal = 753;
 
 /// The sounds: an assault by a side, a side's good news, a tower defended, near losing.
 immutable uint[2] soundAssaults = [8212, 8174], soundGood = [8173, 8213];
 /// ditto
-enum uint soundTowerDefended = 8192, soundNearLose = 8456;
+enum uint soundTowerDefended = 8192;
 
 /// The area triggers out of the valley: the Alliance's two, the Horde's.
 enum uint triggerAllianceExit1 = 95, triggerAllianceExit2 = 2608, triggerHordeExit = 2606;
@@ -211,9 +204,8 @@ final class AlteracRules : BattlegroundRules
 {
     Node[nodeCount] nodes;
     ubyte[2] mineOwner = [ownerNeutral, ownerNeutral];
-    Duration[2] mineTickLeft, mineHeldLeft;
+    Duration[2] mineHeldLeft;
     ubyte[2] homeTowers = [4, 4];   /// each side's towers still standing
-    bool[2] warned;                 /// near losing said
     bool[2] captainDead;
     /// Whether a player may open a banner: alive; tests stand in for it.
     bool delegate(ulong) alive;
@@ -227,15 +219,12 @@ final class AlteracRules : BattlegroundRules
     {
         foreach (side; 0 .. 2)
         {
-            copy.setWorldState(scoreStates[side], initialReinforcements);
             copy.graveyardTeams[sideGraveyards[side]] = side == 0 ? teamAllianceLink : teamHordeLink;
             foreach (owner; 0 .. 3)
                 copy.setWorldState(mineIcons[side][owner], owner == ownerNeutral);
             copy.activeEvents[cast(ubyte)(eventMine + side)] = ownerNeutral;
             copy.activeEvents[cast(ubyte)(eventMineBosses + side)] = ownerNeutral;
         }
-        copy.setWorldState(stateShowAlliance, 0);
-        copy.setWorldState(stateShowHorde, 0);
         foreach (n; 0 .. nodeCount)
             foreach (icon; nodeIcons[n])
                 copy.setWorldState(icon, 0);
@@ -258,12 +247,6 @@ final class AlteracRules : BattlegroundRules
             copy.activeEvents[cast(ubyte)(eventMarshals + i)] = 0;
     }
 
-    override void started(Battleground copy)
-    {
-        copy.setWorldState(stateShowAlliance, 1);
-        copy.setWorldState(stateShowHorde, 1);
-    }
-
     override void tick(Battleground copy, Duration elapsed)
     {
         import dmangos.world.bgqueue : BattlegroundStatus;
@@ -275,12 +258,6 @@ final class AlteracRules : BattlegroundRules
             const owner = mineOwner[mine];
             if (owner == ownerNeutral)
                 continue;
-            mineTickLeft[mine] -= elapsed;
-            if (mineTickLeft[mine] <= Duration.zero)
-            {
-                mineTickLeft[mine] += mineTick;
-                reinforce(copy, owner, 1);
-            }
             mineHeldLeft[mine] -= elapsed;
             if (mineHeldLeft[mine] <= Duration.zero)
                 changeMineOwner(copy, mine, ownerNeutral);
@@ -325,16 +302,6 @@ final class AlteracRules : BattlegroundRules
         }
     }
 
-    /// A player's death costs its side one.
-    override void playerKilled(Battleground copy, ulong victim, ulong killer)
-    {
-        import dmangos.world.bgqueue : BattlegroundStatus;
-
-        if (copy.status != BattlegroundStatus.inProgress)
-            return;
-        if (auto m = victim in copy.members)
-            reinforce(copy, m.team, -1);
-    }
 
     /// `HandleKillUnit`: the generals, the captains, the mines' bosses.
     override void creatureKilled(Battleground copy, uint entry, ulong killer)
@@ -360,7 +327,6 @@ final class AlteracRules : BattlegroundRules
             captainDead[loser] = true;
             copy.rewardReputationToTeam(factions[winner], repCaptain[weekend], winner);
             copy.rewardHonorToTeam(honorCaptain, winner);
-            reinforce(copy, loser, -captainCost);
             copy.spawnEvent(loser == ownerAlliance ? eventCaptainDeadAlliance : eventCaptainDeadHorde, 0, true);
             return;
         default:
@@ -417,11 +383,12 @@ final class AlteracRules : BattlegroundRules
 
     override ubyte prematureWinner(Battleground copy)
     {
-        const a = copy.worldStates.get(stateScoreAlliance, 0), h = copy.worldStates.get(stateScoreHorde, 0);
-        return a > h ? winnerAlliance : h > a ? winnerHorde : winnerNone;
+        // No reinforcements to compare in 1.12: the towers each side still has.
+        return homeTowers[0] > homeTowers[1] ? winnerAlliance : homeTowers[1] > homeTowers[0] ? winnerHorde : winnerNone;
     }
 
-    /// `EndBattleGround`: surviving towers and captains, graveyards and mines held, the battle's completion.
+    /// The end: the graveyards and mines held, the battle's completion (no reward for towers and captains standing:
+    /// that came with patch 2.3.0).
     override void ending(Battleground copy, ubyte winner)
     {
         const weekend = copy.weekend ? 1 : 0;
@@ -434,20 +401,10 @@ final class AlteracRules : BattlegroundRules
                 ++mines[owner];
         foreach (ubyte side; 0 .. 2)
         {
-            if (homeTowers[side])
-            {
-                copy.rewardReputationToTeam(factions[side], homeTowers[side] * repSurvivingTower[weekend], side);
-                copy.rewardHonorToTeam(homeTowers[side] * honorSurvivingTower, side);
-            }
             if (graves[side])
                 copy.rewardReputationToTeam(factions[side], graves[side] * repOwnedGrave[weekend], side);
             if (mines[side])
                 copy.rewardReputationToTeam(factions[side], mines[side] * repOwnedMine[weekend], side);
-            if (!captainDead[side])
-            {
-                copy.rewardReputationToTeam(factions[side], repSurvivingCaptain[weekend], side);
-                copy.rewardHonorToTeam(honorSurvivingCaptain, side);
-            }
             if (honorMapComplete[weekend])
                 copy.rewardHonorToTeam(honorMapComplete[weekend], side);
         }
@@ -474,25 +431,6 @@ private:
     static ChatType chatOf(ubyte side) pure nothrow @nogc @safe
     {
         return side == ownerAlliance ? ChatType.CHAT_MSG_BG_SYSTEM_ALLIANCE : ChatType.CHAT_MSG_BG_SYSTEM_HORDE;
-    }
-
-    /// `UpdateScore`: a side's reinforcements change; none left, it loses.
-    void reinforce(Battleground copy, ubyte side, int by)
-    {
-        int value = cast(int) copy.worldStates.get(scoreStates[side], 0) + by;
-        if (value < 0)
-            value = 0;
-        copy.setWorldState(scoreStates[side], value);
-        if (by >= 0)
-            return;
-        if (value < 1)
-            copy.end(side == ownerAlliance ? winnerHorde : winnerAlliance);
-        else if (!warned[side] && value < nearLose)
-        {
-            copy.message(stringNearLose[side], ChatType.CHAT_MSG_BG_SYSTEM_NEUTRAL);
-            copy.playSound(soundNearLose);
-            warned[side] = true;
-        }
     }
 
     /// `killer` killed an enemy officer: "Leaders Killed" goes up.
@@ -622,7 +560,6 @@ private:
         if (isTower(n))
         {
             copy.spawnEvent(cast(ubyte)(eventMarshals + n - nodeDunBaldarSouth), 0, false);
-            reinforce(copy, other, -towerCost);
             copy.rewardReputationToTeam(factions[side], repTower[weekend], side);
             copy.rewardHonorToTeam(honorTower, side);
             copy.message(stringTowerTaken, chatOf(side), 0,
@@ -651,7 +588,6 @@ private:
         if (owner == ownerNeutral)
             return;
         mineHeldLeft[mine] = mineHeld;
-        mineTickLeft[mine] = mineTick;
         copy.message(stringMineTaken, chatOf(owner), 0,
             [copy.serverString(stringSides[owner]), copy.serverString(stringMines[mine])]);
         copy.playSound(soundGood[owner]);
@@ -678,7 +614,7 @@ unittest
     auto copy = context.battlegrounds.open(778, BattlegroundType.alteracValley);
     auto rules = cast(AlteracRules) copy.rules;
     assert(rules !is null);
-    assert(copy.worldStates[stateScoreAlliance] == 600 && copy.worldStates[stateScoreHorde] == 600);
+    assert(3127 !in copy.worldStates && 3128 !in copy.worldStates, "no reinforcements in 1.12");
     assert(copy.worldStates[stateSnowfallNeutral] == 1 && copy.graveyardTeams[nodeGraveyards[nodeIcebloodGrave]] == teamHordeLink);
     assert(copy.activeEvents[nodeIcebloodTower] == 3 && copy.activeEvents[eventMarshals + 4] == 0);
     copy.testing = true;
@@ -710,7 +646,7 @@ unittest
     assert(rules.objectUsed(copy, 7, held));
     copy.tick(5.minutes + 1.seconds);
     assert(rules.nodes[nodeIcebloodTower].totalOwner == ownerAlliance, "destroyed");
-    assert(copy.worldStates[stateScoreHorde] == 600 - towerCost && rules.homeTowers[ownerHorde] == 3);
+    assert(rules.homeTowers[ownerHorde] == 3);
     assert((eventMarshals + 4) !in copy.activeEvents, "its warmaster went");
     assert(!rules.objectUsed(copy, 8, assaulted) || rules.nodes[nodeIcebloodTower].owner == ownerAlliance,
         "and it cannot be taken back");
@@ -724,7 +660,7 @@ unittest
     assert(copy.activeEvents[eventGraveDefenders + nodeIcebloodGrave] == ownerAlliance * 4, "its defenders");
 }
 
-// Reinforcements: deaths, a captain, a mine; a general's death ends it.
+// A captain, a mine; deaths cost nothing (no reinforcements in 1.12); a general's death ends it, the only way.
 unittest
 {
     import core.time : MonoTime, seconds;
@@ -742,18 +678,17 @@ unittest
     copy.members[8] = Battleground.Member(1);
     copy.start();
 
-    rules.playerKilled(copy, 7, 8);
-    assert(copy.worldStates[stateScoreAlliance] == 599);
+    foreach (_; 0 .. 700)
+        rules.playerKilled(copy, 7, 8);
+    assert(copy.status == BattlegroundStatus.inProgress, "700 deaths: still on");
     rules.creatureKilled(copy, npcCaptainGalvangar, 7);
-    assert(copy.worldStates[stateScoreHorde] == 500 && rules.captainDead[ownerHorde]);
+    assert(rules.captainDead[ownerHorde] && copy.status == BattlegroundStatus.inProgress);
     assert(copy.activeEvents[eventCaptainDeadHorde] == 0);
 
-    // The Horde kills Irondeep's boss: its mine, a reinforcement every 45 s.
+    // The Horde kills Irondeep's boss: its mine.
     rules.creatureKilled(copy, mineBosses[0][0], 8);
     assert(rules.mineOwner[0] == ownerHorde && copy.worldStates[mineIcons[0][ownerHorde]] == 1);
     assert(copy.activeEvents[eventMine] == ownerHorde);
-    copy.tick(46.seconds);
-    assert(copy.worldStates[stateScoreHorde] == 501);
 
     // The scoreboard's columns: the mine's deathblow (its own mine's boss again: nothing), the officers killed (the
     // captain above, a Horde lieutenant; an Alliance one by the Alliance: nothing).
@@ -765,10 +700,6 @@ unittest
     rules.creatureKilled(copy, 14764, 8); // the Icewing Marshal, by the Horde
     assert(copy.members[7].extra[scoreLeaders] == 2 && copy.members[8].extra[scoreLeaders] == 1);
 
-    // Near losing is said once; none left, the side loses.
-    copy.setWorldState(stateScoreAlliance, 120);
-    rules.playerKilled(copy, 7, 8);
-    assert(rules.warned[ownerAlliance]);
     context.config.battlegroundScoreStatistics = true;
     rules.creatureKilled(copy, npcDrekThar, 7);
     assert(copy.status == BattlegroundStatus.waitLeave && copy.winner == winnerAlliance, "Drek'Thar dead: the Alliance");
