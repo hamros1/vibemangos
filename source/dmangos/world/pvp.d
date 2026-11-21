@@ -50,7 +50,9 @@ enum uint spellHonorlessTarget = 2479;
 
 /**
  * Whether a zone enforces PvP: whether it flags a player of `alliance` (or the
- * Horde) for PvP, on a realm of `gameType`.
+ * Horde) for PvP, on a realm of `gameType`. The other side's land does on every realm, contested land on PvP
+ * realms (WoWWiki "PvP flag", 2006-10: "You enter a territory that is one of the beginning zones for the opposite
+ * faction", "Only applies to PvP Realms: You enter a contested territory"; docs/FORMULAS.md "The PvP flag").
  */
 bool enforcedPvPZone(uint zoneTeam, uint zoneFlags, bool alliance, uint gameType, bool inBattleground = false)
     pure nothrow @nogc @safe
@@ -58,9 +60,9 @@ bool enforcedPvPZone(uint zoneTeam, uint zoneFlags, bool alliance, uint gameType
     switch (zoneTeam)
     {
     case AreaTeam.alliance:
-        return !alliance && (isPvPRealm(gameType) || (zoneFlags & areaFlagCapital));
+        return !alliance;
     case AreaTeam.horde:
-        return alliance && (isPvPRealm(gameType) || (zoneFlags & areaFlagCapital));
+        return alliance;
     case AreaTeam.none:
         return isPvPRealm(gameType) || inBattleground;
     default:
@@ -72,7 +74,7 @@ unittest
 {
     enum normal = 0, pvp = 1;
     assert(enforcedPvPZone(AreaTeam.horde, areaFlagCapital, true, normal), "an enemy capital, on any realm");
-    assert(!enforcedPvPZone(AreaTeam.horde, 0, true, normal), "enemy land, on a normal realm");
+    assert(enforcedPvPZone(AreaTeam.horde, 0, true, normal), "enemy land, on a normal realm too");
     assert(enforcedPvPZone(AreaTeam.horde, 0, true, pvp) && enforcedPvPZone(AreaTeam.none, 0, false, pvp),
         "enemy and contested land, on a PvP realm");
     assert(!enforcedPvPZone(AreaTeam.alliance, areaFlagCapital, true, pvp), "never at home");
@@ -293,10 +295,11 @@ mixin template PvPHandlers()
         }
     }
 
-    /// Healing or buffing a flagged player in combat flags the helper.
+    /// Healing a flagged player flags the helper, in combat or not ("If you cast a healing spell or resurrect a
+    /// flagged player, your flag will go up", WoWWiki "PvP flag", 2006-10; docs/FORMULAS.md "The PvP flag").
     package void pvpAssisted(typeof(this) other)
     {
-        if (other is null || other is this || !other.isPvP || !other.inCombat)
+        if (other is null || other is this || !other.isPvP)
             return;
         if (other.pvpInCombat)
             pvpInCombat = true;

@@ -6,7 +6,7 @@
  * minute, then the side's. Opening one's own side's banner on a base the other side contests (one
  * that was one's own) defends it at once. Each side's bases bring resources at a pace set by how many
  * it holds (10 every 12, 9, 6 or 3 seconds for one to four; 30 a second for all five); every 330
- * resources (200 on its holiday) bring the side a bonus honor unit and every 160, 10 reputation (the League of
+ * resources (200 on its holiday) bring the side a bonus honor unit and every 200 (150 on its holiday), 10 reputation (the League of
  * Arathor, the Defilers). The first to 2000 wins, and a unit more; at 1800 everyone is told it is near.
  *
  * A base's banners are the map's battleground events: event1 is the base, event2 its state (0
@@ -38,9 +38,11 @@ enum uint maxResources = 2000, nearVictory = 1800;
 
 /// Resources each `honorInterval` bring a bonus honor unit (Wowpedia "Honor system (pre-2.0 formulas)": "every time
 /// your team collects a multiple of 330 resource", 200 on the holiday); each `reputationInterval`, `reputationGain`.
-enum uint honorInterval = 330, reputationInterval = 160;
+/// The reputation: WoWWiki "Arathi Basin" (2006-11): "Collecting multiples of 200 resources ... = 10 rep (total 100 rep if
+/// you win)", "on the Battlegrounds Holiday weekend ... multiples of 150" (docs/FORMULAS.md "Battlegrounds").
+enum uint honorInterval = 330, reputationInterval = 200;
 /// The same on a Call to Arms weekend.
-enum uint weekendHonorInterval = 200, weekendReputationInterval = 120;
+enum uint weekendHonorInterval = 200, weekendReputationInterval = 150;
 /// ditto
 enum int reputationGain = 10;
 

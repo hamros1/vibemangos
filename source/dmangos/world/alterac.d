@@ -6,7 +6,7 @@
  * tower destroyed seventy-five.
  *
  * Fifteen nodes: seven graveyards (Snowfall in the middle starts neutral) and eight towers, four a side. A
- * player who opens an enemy (or neutral) node's banner assaults it: four minutes later (five for Snowfall's
+ * player who opens an enemy (or neutral) node's banner assaults it: five minutes later (as for Snowfall's
  * first capture) it falls. A graveyard then is the assaulting side's; a tower is destroyed, for good, and the
  * marshal (or warmaster) it sheltered near the general goes. A side that opens its own banner on a node the
  * other side assaults defends it; a node whose assault was finished cannot be taken back. An assaulted
@@ -52,8 +52,9 @@ enum ubyte stateAssaulted = 0, stateHeld = 1;
 /// Reinforcements: at the start, the warning, and what a captain and a tower cost.
 enum int initialReinforcements = 600, nearLose = 120, captainCost = 100, towerCost = 75;
 
-/// How long an assault takes; Snowfall's first, from neutral.
-enum Duration captureTime = 4.minutes, snowfallFirstCapture = 5.minutes;
+/// How long an assault takes; Snowfall's first, from neutral: five minutes each in 1.12 (patch 2.3.0: "Towers and
+/// Graveyards in Alterac Valley are now captured in 4 minutes (down from 5)"; docs/FORMULAS.md "Battlegrounds").
+enum Duration captureTime = 5.minutes, snowfallFirstCapture = 5.minutes;
 /// A mine's tick, and how long a side holds it.
 enum Duration mineTick = 45.seconds, mineHeld = 20.minutes;
 
@@ -564,7 +565,7 @@ unittest
     assert(rules.nodes[nodeIcebloodTower].owner == ownerHorde && rules.nodes[nodeIcebloodTower].state == stateHeld);
     assert(copy.members[8].extra[scoreTowersDefended] == 1);
     assert(rules.objectUsed(copy, 7, held));
-    copy.tick(4.minutes + 1.seconds);
+    copy.tick(5.minutes + 1.seconds);
     assert(rules.nodes[nodeIcebloodTower].totalOwner == ownerAlliance, "destroyed");
     assert(copy.worldStates[stateScoreHorde] == 600 - towerCost && rules.homeTowers[ownerHorde] == 3);
     assert((eventMarshals + 4) !in copy.activeEvents, "its warmaster went");
@@ -575,7 +576,7 @@ unittest
     auto grave = banner(96002, nodeIcebloodGrave, AlteracRules.eventOf(ownerHorde, stateHeld));
     assert(rules.objectUsed(copy, 7, grave));
     assert(copy.graveyardTeams[nodeGraveyards[nodeIcebloodGrave]] == teamInvalidLink);
-    copy.tick(4.minutes + 1.seconds);
+    copy.tick(5.minutes + 1.seconds);
     assert(copy.graveyardTeams[nodeGraveyards[nodeIcebloodGrave]] == teamAllianceLink);
     assert(copy.activeEvents[eventGraveDefenders + nodeIcebloodGrave] == ownerAlliance * 4, "its defenders");
 }
