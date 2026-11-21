@@ -739,7 +739,7 @@ unittest
     auto now = MonoTime.currTime;
     context.clock = () => now;
     // One graveyard for the whole map, 60 yards west of Goldshire's inn.
-    uint bits(float f) { return *cast(uint*) &f; }
+    import dmangos.bytes : bits = floatBits;
     context.client.worldSafeLocs = typeof(context.client.worldSafeLocs).parse(buildDbc(worldSafeLocsFormat,
         [[7u, 0, bits(-9010), bits(-132), bits(83.5f), 0, 0, 0, 0, 0, 0, 0, 0, 0]]), "WorldSafeLocs.dbc");
     context.data.graveyards[graveyardLinkKey(0, 1)] = [GraveyardLink(7, 0)];

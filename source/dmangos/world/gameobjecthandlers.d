@@ -758,7 +758,7 @@ unittest
     GameObject[3] gos;
     foreach (i; 0 .. 3)
     {
-        gos[i] = context.makeGameObject(&context.data.gameObjectSpawns[$ - 3 + i]);
+        gos[i] = context.makeGameObject(context.data.gameObjectSpawns[$ - 3 + i]);
         map.addObject(gos[i]);
     }
     anduin.read();
@@ -816,7 +816,7 @@ unittest
         vein.data[0] = thoriumLock;
         context.data.gameObjectTemplates[9004] = vein;
         context.data.gameObjectSpawns ~= GameObjectSpawn(90004, 9004, 0, -8950, -132, 83.53f);
-        auto go = context.makeGameObject(&context.data.gameObjectSpawns[$ - 1]);
+        auto go = context.makeGameObject(context.data.gameObjectSpawns[$ - 1]);
         map.addObject(go);
         anduin.read();
         me.setSkill(mining, 1, 75);
@@ -882,7 +882,7 @@ unittest
     GameObjectTemplate poster = {entry: 9004, type: GameObjectType.questGiver, displayId: 4, name: "Wanted!"};
     context.data.gameObjectTemplates[9004] = poster;
     context.data.gameObjectSpawns ~= GameObjectSpawn(90004, 9004, 0, -8950, -131, 83.53f);
-    auto board = context.makeGameObject(&context.data.gameObjectSpawns[$ - 1]);
+    auto board = context.makeGameObject(context.data.gameObjectSpawns[$ - 1]);
     map.addObject(board);
     Quest bounty = {id: 9200, method: 2, maxLevel: 60, title: "Bounty"};
     context.data.quests.quests[9200] = bounty;
@@ -910,7 +910,7 @@ unittest
         plaque.data[3] = 9300;
         context.data.gameObjectTemplates[9005] = plaque;
         context.data.gameObjectSpawns ~= GameObjectSpawn(90005, 9005, 0, -8949, -133, 83.53f);
-        auto stone = context.makeGameObject(&context.data.gameObjectSpawns[$ - 1]);
+        auto stone = context.makeGameObject(context.data.gameObjectSpawns[$ - 1]);
         map.addObject(stone);
         anduin.read();
         anduin.write(Opcode.CMSG_GAMEOBJ_USE, ClientGuid(stone.guid));
@@ -955,7 +955,7 @@ unittest
     context.data.gameObjectSpawns ~= GameObjectSpawn(90020, 9020, 0, -8945, -132, 83.53f, 0, [0, 0, 0, 0], 60);
     auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
     auto map = context.map(0);
-    auto go = context.makeGameObject(&context.data.gameObjectSpawns[$ - 1]);
+    auto go = context.makeGameObject(context.data.gameObjectSpawns[$ - 1]);
     map.addObject(go);
     anduin.read();
 
@@ -983,7 +983,7 @@ unittest
     GameObject[3] linked;
     foreach (i; 0 .. 3)
     {
-        linked[i] = context.makeGameObject(&context.data.gameObjectSpawns[$ - 3 + i]);
+        linked[i] = context.makeGameObject(context.data.gameObjectSpawns[$ - 3 + i]);
         map.addObject(linked[i]);
     }
     anduin.read();

@@ -1160,7 +1160,7 @@ unittest
     auto context = newCreationContext(db);
     auto now = MonoTime.currTime;
     context.clock = () => now;
-    uint bits(float f) { return *cast(uint*) &f; }
+    import dmangos.bytes : bits = floatBits;
     context.client.spellCastTimes = typeof(context.client.spellCastTimes).parse(buildDbc(spellCastTimesFormat,
         [[1u, 0, 0, 0]]), "SpellCastTimes.dbc");
     context.client.spellRanges = typeof(context.client.spellRanges).parse(buildDbc(spellRangeFormat,
@@ -1378,7 +1378,7 @@ unittest
 
     auto db = newDatabase();
     auto context = newCreationContext(db);
-    uint bits(float f) { return *cast(uint*) &f; }
+    import dmangos.bytes : bits = floatBits;
     context.client.spellRadii = typeof(context.client.spellRadii).parse(buildDbc(spellRadiusFormat,
         [[1u, bits(30), 0, 0]]), "SpellRadius.dbc");
     auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));

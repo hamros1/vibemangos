@@ -59,8 +59,15 @@ int dmnav_build_tile(const dmBuildConfig* c, const float* verts, int nverts, con
     const int border = c->walkableRadius + 3;
     const int tileCells = int((bmax[0] - bmin[0]) / c->cellSize + 0.5f);
     const int pieces = (tileCells + c->subTileCells - 1) / c->subTileCells;
-    rcPolyMesh** meshes = new rcPolyMesh*[pieces * pieces]();
-    rcPolyMeshDetail** details = new rcPolyMeshDetail*[pieces * pieces]();
+    rcPolyMesh** meshes = new (std::nothrow) rcPolyMesh*[pieces * pieces]();
+    rcPolyMeshDetail** details = new (std::nothrow) rcPolyMeshDetail*[pieces * pieces]();
+    if (!meshes || !details)
+    {
+        delete[] meshes;
+        delete[] details;
+        delete[] walkable;
+        return -1;
+    }
     int built = 0;
     int result = 0;
 

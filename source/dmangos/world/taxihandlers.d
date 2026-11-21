@@ -375,7 +375,7 @@ unittest
     auto context = newCreationContext(db);
     auto now = MonoTime.currTime;
     context.clock = () => now;
-    uint bits(float f) { return *cast(uint*) &f; }
+    import dmangos.bytes : bits = floatBits;
     // Node 2 by the trainer, node 5 320 yards east; the mount is the innkeeper's model.
     uint[] node(uint id, float x, float y, float z)
     {
@@ -475,7 +475,7 @@ unittest
     auto context = newCreationContext(db);
     auto now = MonoTime.currTime;
     context.clock = () => now;
-    uint bits(float f) { return *cast(uint*) &f; }
+    import dmangos.bytes : bits = floatBits;
     uint[] node(uint id, float x, float y, float z)
     {
         auto row = new uint[taxiNodesFormat.length];

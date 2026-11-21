@@ -612,7 +612,8 @@ final class Loot
     }
 
     /// Rolls a group: one of its entries, or none.
-    private const(LootStoreItem)* rollGroup(ref const LootGroup group, ref Random random, bool delegate(uint) meets)
+    private const(LootStoreItem)* rollGroup(return scope ref const LootGroup group, ref Random random,
+        bool delegate(uint) meets)
     {
         import std.random : randomShuffle;
 

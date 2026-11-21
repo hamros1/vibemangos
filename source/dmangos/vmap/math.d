@@ -8,6 +8,8 @@
  */
 module dmangos.vmap.math;
 
+public import dmangos.bytes : bitsFloat, floatBits;
+
 import std.math : abs, asin, atan2, cos, sin, sqrt;
 
 @safe: // the compiler checks every function here
@@ -322,20 +324,6 @@ struct Ray
             }
         return (location - origin).magnitude();
     }
-}
-
-/// `floatToRawIntBits`
-uint floatBits(float f) pure nothrow @nogc @safe
-{
-    union Bits { float f; uint u; }
-    return Bits(f).u;
-}
-
-/// `intBitsToFloat`
-float bitsFloat(uint i) pure nothrow @nogc @safe
-{
-    union Bits { uint u; float f; }
-    return Bits(i).f;
 }
 
 unittest

@@ -1064,7 +1064,7 @@ unittest
     GameObjectTemplate door = {entry: 9001, type: GameObjectType.door, displayId: 1, name: "Door"};
     context.data.gameObjectTemplates[9001] = door;
     context.data.gameObjectSpawns ~= GameObjectSpawn(90001, 9001, 0, -8949, -131, 83.53f);
-    auto go = context.makeGameObject(&context.data.gameObjectSpawns[$ - 1]);
+    auto go = context.makeGameObject(context.data.gameObjectSpawns[$ - 1]);
     context.map(0).addObject(go);
     gm.read();
 

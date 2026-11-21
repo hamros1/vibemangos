@@ -313,13 +313,14 @@ final class TcpServer
             }
 
             immutable received = MonoTime.currTime;
-            if (maintenance !is null && now - lastMaintenance >= options.tickInterval)
+            if (now - lastMaintenance >= options.tickInterval)
             {
                 lastMaintenance = now;
-                try
-                    maintenance(now);
-                catch (Exception e)
-                    error!"periodic maintenance failed: %s"(e.msg);
+                if (maintenance !is null)
+                    try
+                        maintenance(now);
+                    catch (Exception e)
+                        error!"periodic maintenance failed: %s"(e.msg);
             }
             immutable ticked = MonoTime.currTime;
             // A session may have been given packets by another one (a chat message, a move it sees) or by the

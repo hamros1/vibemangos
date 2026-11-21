@@ -14,6 +14,8 @@
  */
 module dmangos.world.objects;
 
+import dmangos.bytes : bitsFloat, floatBits;
+
 import dmangos.world.spline : SplineFlags;
 import std.algorithm.searching : all, any;
 import std.zlib : compress;
@@ -407,16 +409,6 @@ private immutable(Visibility)[] visibilityOf(TypeId type) pure nothrow @nogc @sa
 }
 
 private alias typeName(FieldType type) = __traits(getMember, FieldType, __traits(allMembers, FieldType)[type]);
-
-private uint floatBits(float value) pure nothrow @nogc @trusted
-{
-    return *cast(uint*)&value;
-}
-
-private float bitsFloat(uint bits) pure nothrow @nogc @trusted
-{
-    return *cast(float*)&bits;
-}
 
 /// The kind of an update block.
 enum UpdateType : ubyte

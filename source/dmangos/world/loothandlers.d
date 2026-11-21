@@ -1678,7 +1678,7 @@ unittest
             lootNode.data.gameObjectTemplates[chestEntry] = template_;
             lootNode.data.gameObjectSpawns ~= GameObjectSpawn(spawnId, chestEntry, 0, start.x, start.y, start.z);
             lootNode.data.loot.gameObject.add(lootId, lootRow(itemJerky, 100, 0, 1, 1, 0));
-            auto chest = lootNode.makeGameObject(&lootNode.data.gameObjectSpawns[$ - 1]);
+            auto chest = lootNode.makeGameObject(lootNode.data.gameObjectSpawns[$ - 1]);
             source.addObject(chest);
             target = chest.guid;
             wire.viewer.replicaCreated(2, cellKeyAt(start.x, start.y), target, encodeState(chest, 0));

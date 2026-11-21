@@ -751,9 +751,14 @@ private:
         enum valueFormat = is(T == float) ? "%.1f" : "%d";
         enum logFormat = is(T == float) ? "%f" : "%s";
         const shown = hasMax ? format!(valueFormat ~ "/" ~ valueFormat)(av, mv) : format!valueFormat(av);
-        static uint raw(T number) @trusted
+        static uint raw(T number)
         {
-            return *cast(uint*) &number; // a float's bits, or the integer itself
+            import dmangos.bytes : floatBits;
+
+            static if (is(T == float))
+                return floatBits(number);
+            else
+                return number;
         }
 
         const slot = fieldSlot(field);

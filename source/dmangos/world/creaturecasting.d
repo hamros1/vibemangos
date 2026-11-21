@@ -1795,7 +1795,7 @@ unittest
     auto context = newCreationContext(db);
     auto now = MonoTime.currTime;
     context.clock = () => now;
-    uint bits(float f) { return *cast(uint*) &f; }
+    import dmangos.bytes : bits = floatBits;
     context.client.spellCastTimes = typeof(context.client.spellCastTimes).parse(buildDbc(spellCastTimesFormat,
         [[1u, 0, 0, 0], [2u, 1500, 0, 1500]]), "SpellCastTimes.dbc");
     context.client.spellRanges = typeof(context.client.spellRanges).parse(buildDbc(spellRangeFormat,
@@ -1966,7 +1966,7 @@ unittest
     auto context = newCreationContext(db);
     auto now = MonoTime.currTime;
     context.clock = () => now;
-    uint bits(float f) { return *cast(uint*) &f; }
+    import dmangos.bytes : bits = floatBits;
     context.client.spellCastTimes = typeof(context.client.spellCastTimes).parse(buildDbc(spellCastTimesFormat,
         [[1u, 0, 0, 0]]), "SpellCastTimes.dbc");
     context.client.spellRanges = typeof(context.client.spellRanges).parse(buildDbc(spellRangeFormat,
@@ -2090,7 +2090,7 @@ unittest
     auto context = newCreationContext(db);
     auto now = MonoTime.currTime;
     context.clock = () => now;
-    uint bits(float f) { return *cast(uint*) &f; }
+    import dmangos.bytes : bits = floatBits;
     context.client.spellRanges = typeof(context.client.spellRanges).parse(buildDbc(spellRangeFormat,
         [[1u, bits(0), bits(30), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]), "SpellRange.dbc");
     enum uint pierce = 95301;
@@ -2147,7 +2147,7 @@ unittest
     auto context = newCreationContext(db);
     auto now = MonoTime.currTime;
     context.clock = () => now;
-    uint bits(float f) { return *cast(uint*) &f; }
+    import dmangos.bytes : bits = floatBits;
     context.client.spellRanges = typeof(context.client.spellRanges).parse(buildDbc(spellRangeFormat,
         [[1u, bits(0), bits(30), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]), "SpellRange.dbc");
     enum uint call = 95301, shove = 95302, drain = 95303;

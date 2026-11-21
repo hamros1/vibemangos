@@ -873,7 +873,7 @@ unittest
 
     auto db = newDatabase();
     auto context = newCreationContext(db);
-    uint bits(float f) { return *cast(uint*) &f; }
+    import dmangos.bytes : bits = floatBits;
     context.client.spellRadii = typeof(context.client.spellRadii).parse(buildDbc(spellRadiusFormat,
         [[1u, bits(30), 0, 0]]), "SpellRadius.dbc");
     context.client.spellDurations = typeof(context.client.spellDurations).parse(buildDbc(spellDurationFormat,

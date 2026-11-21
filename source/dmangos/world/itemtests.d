@@ -93,11 +93,11 @@ unittest
     context.data.gameObjectTemplates[9101] = anvil;
     auto map = context.map(0);
     context.data.gameObjectSpawns ~= GameObjectSpawn(91001, 9101, 0, -8949.95f + 12, -132.49f, 83.53f);
-    map.addObject(context.makeGameObject(&context.data.gameObjectSpawns[$ - 1]));
+    map.addObject(context.makeGameObject(context.data.gameObjectSpawns[$ - 1]));
     smithy.write(Opcode.CMSG_CAST_SPELL, castAt(smith, self));
     assert(castReason(smithy.read(), extra) == SpellCastResult.requiresSpellFocus, "too far");
     context.data.gameObjectSpawns ~= GameObjectSpawn(91002, 9101, 0, -8949.95f + 8, -132.49f, 83.53f);
-    map.addObject(context.makeGameObject(&context.data.gameObjectSpawns[$ - 1]));
+    map.addObject(context.makeGameObject(context.data.gameObjectSpawns[$ - 1]));
 
     smithy.write(Opcode.CMSG_CAST_SPELL, castAt(smith, self));
     assert(castReason(smithy.read(), extra) == SpellCastResult.totems && extra == itemSword, "no hammer");

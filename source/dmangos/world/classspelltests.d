@@ -54,7 +54,7 @@ private final class Arena
         context = newCreationContext(db);
         now = MonoTime.currTime;
         context.clock = () => now;
-        static uint bits(float f) { return *cast(uint*) &f; }
+        import dmangos.bytes : bits = floatBits;
         context.client.spellCastTimes = typeof(context.client.spellCastTimes).parse(buildDbc(spellCastTimesFormat,
             [[1u, 0, 0, 0]]), "SpellCastTimes.dbc");
         context.client.spellRanges = typeof(context.client.spellRanges).parse(buildDbc(spellRangeFormat,

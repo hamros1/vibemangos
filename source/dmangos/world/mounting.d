@@ -185,8 +185,8 @@ unittest
     auto me = anduin.session.inWorld;
     me.player.spells ~= [bolt, banner];
     auto map = context.map(0);
-    auto loot = context.makeGameObject(&context.data.gameObjectSpawns[$ - 2]);
-    auto box = context.makeGameObject(&context.data.gameObjectSpawns[$ - 1]);
+    auto loot = context.makeGameObject(context.data.gameObjectSpawns[$ - 2]);
+    auto box = context.makeGameObject(context.data.gameObjectSpawns[$ - 1]);
     map.addObject(loot);
     map.addObject(box);
     anduin.read();

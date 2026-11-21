@@ -30,6 +30,20 @@ class IncompletePacketException : PacketException
 enum isWireScalar(T) = !is(T == enum)
     && (isIntegral!T || isFloatingPoint!T || isSomeChar!T || is(T == bool));
 
+/// The raw bits of a float.
+uint floatBits(float f) pure nothrow @nogc @safe
+{
+    union Bits { float f; uint u; }
+    return Bits(f).u;
+}
+
+/// The float with these raw bits.
+float bitsFloat(uint i) pure nothrow @nogc @safe
+{
+    union Bits { uint u; float f; }
+    return Bits(i).f;
+}
+
 /// Builds a packet by appending little-endian values.
 struct ByteWriter
 {

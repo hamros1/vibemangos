@@ -16,6 +16,7 @@ module dmangos.world.context;
 
 import dmangos.cluster.services : ServiceHost;
 import dmangos.world.writebehind : Writer;
+static import dmangos.world.updatefields;
 import core.time : Duration, minutes, MonoTime, msecs, seconds;
 
 import std.path : buildPath;
@@ -227,9 +228,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 continue;
             w.timer = typeof(*w).init.timer;
             bool anyone;
-            foreach (player; online.values)
+            foreach (player; online)
                 if (player.character !is null && player.character.data.zone == zone)
+                {
                     anyone = true;
+                    break;
+                }
             if (!anyone)
             {
                 weathers.remove(zone);
@@ -2355,7 +2359,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                                 || (spawn.respawnSeconds < 0 && !WorldPvp.follows(spawn.guid))
                                 || !upInPool(PoolMember.Kind.gameObject, spawn.guid))
                                 continue;
-                            auto go = makeGameObject(spawn);
+                            auto go = makeGameObject(*spawn);
                             if (go.guid in present)
                                 continue;
                             go.instanceId = m.instanceId;
@@ -3379,7 +3383,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 const event = spawn.guid in data.gameObjectBattleEvents;
                 if (copy !is null && !copy.spawnAllowed(event))
                     continue;
-                auto go = makeGameObject(spawn);
+                auto go = makeGameObject(*spawn);
                 go.instanceId = instance;
                 if (copy !is null && event !is null && (*event)[0] == 254 && copy.doorsOpen)
                     go.setDoorOpen(true); // a door loading after the start is open
@@ -3740,10 +3744,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// `IdCounters.take`: a block of ids for a cluster member, from this server's counters.
     uint take(IdKind kind, uint count)
     {
-        auto counter = counterOf(kind);
-        const first = *counter;
-        *counter += count;
-        return first;
+        uint takeFrom(ref uint counter)
+        {
+            const first = counter;
+            counter += count;
+            return first;
+        }
+        return takeFrom(counterOf(kind));
     }
 
     /**
@@ -3767,21 +3774,21 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// `IdCounters.raise`: a member holds ids up to `atLeast`; they are not handed out again.
     void raise(IdKind kind, uint atLeast)
     {
-        auto counter = counterOf(kind);
-        if (*counter < atLeast)
-            *counter = atLeast;
+        import std.algorithm.comparison : max;
+
+        counterOf(kind) = max(counterOf(kind), atLeast);
     }
 
-    private uint* counterOf(IdKind kind) return
+    private ref uint counterOf(IdKind kind) return
     {
         final switch (kind)
         {
-        case IdKind.character: return &next.character;
-        case IdKind.item: return &next.item;
-        case IdKind.mail: return &next.mail;
-        case IdKind.group: return &groups.nextId; // the groups keep their own counter
-        case IdKind.instance: return &next.instance;
-        case IdKind.pet: return &next.pet;
+        case IdKind.character: return next.character;
+        case IdKind.item: return next.item;
+        case IdKind.mail: return next.mail;
+        case IdKind.group: return groups.nextId; // the groups keep their own counter
+        case IdKind.instance: return next.instance;
+        case IdKind.pet: return next.pet;
         }
     }
 
@@ -3818,7 +3825,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                         || !gameObjectInEvents(spawn.guid)
                         || !upInPool(PoolMember.Kind.gameObject, spawn.guid))
                     continue;
-                spawned ~= makeGameObject(spawn);
+                spawned ~= makeGameObject(*spawn);
             }
         return spawned;
     }
@@ -4091,7 +4098,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             warning!"migration: game object spawn %s is not known here"(m.spawn);
             return null;
         }
-        auto gameObject = makeGameObject(&data.gameObjectSpawns[*at]);
+        auto gameObject = makeGameObject(data.gameObjectSpawns[*at]);
         gameObject.loadState(r);
         return gameObject;
     }
@@ -4693,7 +4700,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             gameObjectSpawnIndex[spawn.guid] = index;
         if (save)
             database.insertGameObjectSpawn(spawn);
-        auto go = makeGameObject(&data.gameObjectSpawns[index]);
+        auto go = makeGameObject(data.gameObjectSpawns[index]);
         go.instanceId = map.instanceId;
         map.addObject(go);
         return go;
@@ -4732,7 +4739,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         database.deleteGameObjectSpawn(changed.guid);
         database.insertGameObjectSpawn(changed);
         map.removeObject(go.guid);
-        auto made = makeGameObject(&data.gameObjectSpawns[*at]);
+        auto made = makeGameObject(data.gameObjectSpawns[*at]);
         made.instanceId = map.instanceId;
         map.addObject(made);
         return made;
@@ -5508,8 +5515,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             foreach (ref s; data.gameObjectSpawns)
                 if (s.guid > lastGameObjectSpawn)
                     lastGameObjectSpawn = s.guid;
-        auto spawn = new GameObjectSpawn;
-        *spawn = GameObjectSpawn(++lastGameObjectSpawn, entry, map.id, at.x, at.y, at.z);
+        auto spawn = GameObjectSpawn(++lastGameObjectSpawn, entry, map.id, at.x, at.y, at.z);
         spawn.orientation = at.orientation;
         spawn.rotation = [0, 0, sin(at.orientation / 2), cos(at.orientation / 2)];
         auto go = makeGameObject(spawn);
@@ -5748,11 +5754,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private long[uint] gameObjectRespawnAt;
 
     /// A game object from its spawn, with what it needs to show players their quests' objects.
-    GameObject makeGameObject(const(GameObjectSpawn)* spawn)
+    GameObject makeGameObject(scope const ref GameObjectSpawn spawn)
     {
         import dmangos.world.character : Character;
 
-        auto go = new GameObject(*spawn, spawn.entry in data.gameObjectTemplates);
+        auto go = new GameObject(spawn, spawn.entry in data.gameObjectTemplates);
         if (const kit = worldPvp is null ? 0 : worldPvp.artKitOf(spawn.entry, spawn.x, spawn.y, spawn.z))
         {
             import dmangos.world.updatefields : GAMEOBJECT_ARTKIT;
@@ -5843,7 +5849,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 continue;
             auto there = existingMap(spawn.map);
             if (there !is null && there.cellLoaded(cellKeyAt(spawn.x, spawn.y)))
-                there.addObject(makeGameObject(spawn));
+                there.addObject(makeGameObject(*spawn));
         }
     }
 
@@ -6388,8 +6394,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         if (idPool !is null)
             return idPool.take(kind, id);
-        auto counter = counterOf(kind);
-        id = (*counter)++;
+        id = counterOf(kind)++;
         return true;
     }
 

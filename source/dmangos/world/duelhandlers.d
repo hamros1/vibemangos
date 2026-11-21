@@ -288,7 +288,7 @@ private void testDuel(bool crossNode)
     auto context = newCreationContext(db);
     auto home = crossNode ? newCreationContext(db) : context;
     auto now = MonoTime.currTime;
-    uint bits(float f) { return *cast(uint*) &f; }
+    import dmangos.bytes : bits = floatBits;
     enum uint duelSpell = 7266;
     foreach (node; crossNode ? [home, context] : [context])
     {

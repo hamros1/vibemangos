@@ -610,7 +610,7 @@ mixin template DbScriptRunner()
         const spawn = &data.gameObjectSpawns[*index];
         if (spawn.map != map.id || map.findObject(makeGuid(HighGuid.gameObject, spawn.entry, spawn.guid)) !is null)
             return;
-        auto made = makeGameObject(spawn);
+        auto made = makeGameObject(*spawn);
         made.instanceId = map.instanceId;
         if (made is null || made.type == GameObjectType.door)
             return;

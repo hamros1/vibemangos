@@ -112,7 +112,7 @@ struct ModelInstance
      * The building group the point is in, and
      * the world height of its floor below; buildings only.
      */
-    bool locate(const Vector3 p, ref LocationInfo info) const
+    private bool locate(const Vector3 p, ref LocationInfo info) const
     {
         if (model is null || (spawn.flags & modM2) || !spawn.bound.contains(p))
             return false;

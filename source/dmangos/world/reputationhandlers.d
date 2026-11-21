@@ -426,7 +426,7 @@ unittest
 
     auto db = newDatabase();
     auto context = newCreationContext(db);
-    uint bits(float f) { return *cast(uint*) &f; }
+    import dmangos.bytes : bits = floatBits;
     context.client.spellRanges = typeof(context.client.spellRanges).parse(buildDbc(spellRangeFormat,
         [[1u, bits(0), bits(30), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]), "SpellRange.dbc");
     enum uint armorsmiths = 72;

@@ -237,7 +237,7 @@ unittest
     import dmangos.dbc : buildDbc;
     import dmangos.world.clientdata : taxiNodesFormat, taxiPathFormat, taxiPathNodeFormat;
 
-    uint bits(float f) { return *cast(uint*) &f; }
+    import dmangos.bytes : bits = floatBits;
     uint[] node(uint id, float x, float y, uint alliance)
     {
         auto row = new uint[taxiNodesFormat.length];

@@ -7,6 +7,8 @@
  */
 module dmangos.world.testdata;
 
+import dmangos.bytes : floatBits;
+
 version (unittest):
 
 import dmangos.dbc : buildDbc;
@@ -156,11 +158,6 @@ ClientData testClientData()
 
 /// The building of the vmap tests: its WMO root and group ids and its placement's name set.
 enum int testHouseRoot = 500, testHouseGroup = 600, testHouseNameSet = 3;
-
-private uint floatBits(float value) @trusted
-{
-    return *cast(uint*)&value;
-}
 
 /// Item guids for tests: 1000, 1001, ...
 uint delegate() testItemGuids()

@@ -1088,14 +1088,15 @@ unittest
     assert(takeFrame(input, header, payload) && decode!IdGrant(payload) == IdGrant(IdKind.mail, 1000, 500));
 
     // Rubbish is refused.
-    ubyte[frameHeaderSize] bad;
+    auto bad = new ubyte[frameHeaderSize];
+    const(ubyte)[] badInput = bad;
+    const(ubyte)[] badPayload;
     bad[4] = 99; // type
-    input = bad[];
-    assertThrown!PacketException(takeFrame(input, header, payload));
+    assertThrown!PacketException(takeFrame(badInput, header, badPayload));
     bad[4] = 3;
     bad[3] = 0x7F; // length
-    input = bad[];
-    assertThrown!PacketException(takeFrame(input, header, payload));
+    badInput = bad;
+    assertThrown!PacketException(takeFrame(badInput, header, badPayload));
     assertThrown!PacketException(decode!Heartbeat(new ubyte[37]));
 }
 

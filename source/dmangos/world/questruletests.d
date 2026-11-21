@@ -188,7 +188,7 @@ unittest
     auto context = newCreationContext(db);
     auto now = MonoTime.currTime;
     context.clock = () => now;
-    uint bits(float f) { return *cast(uint*) &f; }
+    import dmangos.bytes : bits = floatBits;
     context.client.worldSafeLocs = typeof(context.client.worldSafeLocs).parse(buildDbc(worldSafeLocsFormat,
         [[7u, 0, bits(-9010), bits(-132), bits(83.5f), 0, 0, 0, 0, 0, 0, 0, 0, 0]]), "WorldSafeLocs.dbc");
     context.data.graveyards[graveyardLinkKey(0, 1)] = [GraveyardLink(7, 0)];

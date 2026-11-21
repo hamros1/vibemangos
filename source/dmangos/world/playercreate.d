@@ -1314,7 +1314,7 @@ version (unittest)
         return character;
     }
 
-    private const(NewItem)* itemOf(const ref NewCharacter character, uint entry)
+    private const(NewItem)* itemOf(return scope const ref NewCharacter character, uint entry)
     {
         foreach (ref item; character.items)
             if (item.entry == entry)

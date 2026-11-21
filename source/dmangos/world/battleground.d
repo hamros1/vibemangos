@@ -1204,7 +1204,7 @@ final class Battlegrounds
             }
         foreach (index; eventObjects.get(eventKey(mapId, pair), null))
         {
-            auto go = context.makeGameObject(&context.data.gameObjectSpawns[index]);
+            auto go = context.makeGameObject(context.data.gameObjectSpawns[index]);
             go.instanceId = instance;
             made ~= go;
         }
@@ -2213,7 +2213,7 @@ unittest
     import dmangos.dbc : buildDbc;
     import dmangos.world.clientdata : worldSafeLocsFormat;
 
-    uint bits(float f) { return *cast(uint*) &f; }
+    import dmangos.bytes : bits = floatBits;
     context.client.worldSafeLocs = typeof(context.client.worldSafeLocs).parse(buildDbc(worldSafeLocsFormat,
         [[769u, mapWarsongGulch, bits(1400), bits(1500), bits(350), 0, 0, 0, 0, 0, 0, 0, 0, 0],
          [771u, mapWarsongGulch, bits(1000), bits(1500), bits(350), 0, 0, 0, 0, 0, 0, 0, 0, 0]]), "WorldSafeLocs.dbc");
