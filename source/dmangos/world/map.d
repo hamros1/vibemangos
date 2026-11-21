@@ -1948,6 +1948,8 @@ final class Map : CombatWorld, GameObjectWorld
         knownInto(slot, false, known);
         foreach (k; known)
         {
+            if (who.character is null)
+                return; // a notice can move the player to another node
             if (!entities.holds(k) || at(k).object is null)
                 continue; // gone as an earlier one acted
             auto object = at(k).object;

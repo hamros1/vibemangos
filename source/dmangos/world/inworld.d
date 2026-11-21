@@ -666,6 +666,8 @@ private:
     {
         const p = movement.position;
         map.relocated(this);
+        if (player is null)
+            return; // a replica noticed the player and the new node owns it
 
         // Group members who do not see the player follow it on their map.
         if (distance2d(groupPositionAt, p) >= context.config.visibilityRelocationLimit)

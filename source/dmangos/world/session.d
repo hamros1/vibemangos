@@ -1306,10 +1306,14 @@ unittest
     nodes[1].map(0).removeObject(innkeeper);
     nodes[1].map(0).replicaCreated(owner: 2, cell: cell, guid: innkeeper, encodeState(owned, 0));
     assert(cast(Replica) nodes[1].map(0).findObject(innkeeper) !is null);
+    const second = makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn + 1);
+    nodes[1].map(0).replicaCreated(owner: 2, cell: cell, guid: second, encodeState(owned, 0));
 
     // The player moves near it: node 1 judges the creature would notice it, and it moves to node 2.
-    nodes[1].map(0).refreshVisibility(client.session.inWorld); // it sees the replica
-    nodes[1].map(0).relocated(client.session.inWorld);
+    auto moving = client.session.inWorld;
+    nodes[1].map(0).refreshVisibility(moving);
+    const movement = moving.character.movement;
+    moving.movedOn(movement, Opcode.MSG_MOVE_HEARTBEAT);
     assert(mesh.log == ["migrate 1->2"], "moved to the creature's node");
     auto there = mesh.remotes[2][c.account];
     there.update(50.msecs);

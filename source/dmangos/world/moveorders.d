@@ -317,6 +317,8 @@ mixin template MovementOrders()
         speed.put(answer.speed);
         relayMovement(speedOpcodes[type][2], ack.movement, speed.data);
         movedOn(ack.movement, opcode);
+        if (player is null)
+            return;
         if (pendingSpeedAcks[type] > 0 && --pendingSpeedAcks[type] > 0)
             return;
         if (!ack.movement.has(MovementFlags.onTransport) && abs(player.speeds[type] - answer.speed) > 0.01f)
