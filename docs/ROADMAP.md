@@ -179,8 +179,9 @@ The largest area. In order:
      2000 to win.
    * Milestone E, Alterac Valley: **done** (`alterac.d`): reinforcements, graveyards and towers, mines,
      captains and generals; the turn-in quests' events not yet.
+   * The scoreboard's columns, `WorldStateUI.dbc`'s (Alterac Valley's mines captured and leaders killed too), and
+     the scores kept (`pvpstats_*`, `battleground_score_statistics`): done.
    * Not yet:
-     * pvpstats.
      * A queue service that moves to another node starts empty.
 
 * Spell casting with effects, auras (feeding `stats.d`), cooldowns and the attack swing loop.

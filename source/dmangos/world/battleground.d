@@ -406,6 +406,8 @@ final class Battleground
             message(stringAllianceWins, ChatType.CHAT_MSG_BG_SYSTEM_NEUTRAL);
         else if (winner == winnerHorde)
             message(stringHordeWins, ChatType.CHAT_MSG_BG_SYSTEM_NEUTRAL);
+        if (context.config.battlegroundScoreStatistics)
+            keepScores();
         const board = scoreboard();
         foreach (guid, ref m; members)
             if (auto who = context.onlinePlayer(guid))
@@ -416,6 +418,36 @@ final class Battleground
             }
         info!"battleground: %s (copy %s) is over, won by %s"(type, instance,
             winner == winnerAlliance ? "the Alliance" : winner == winnerHorde ? "the Horde" : "nobody");
+    }
+
+    /**
+     * The scoreboard kept (`Battleground.ScoreStatistics`, CMaNGOS's `EndBattleGround`): the battle (the winner as the
+     * scoreboard says it, the bracket's lowest level / 10, the type), and each player still in it (not one logged out),
+     * its first five columns of the battleground's own.
+     */
+    private void keepScores()
+    {
+        import dmangos.world.bgqueue : bracketOf;
+        import dmangos.world.database : PvpStatsBattleground, PvpStatsPlayer;
+
+        const t = template_;
+        PvpStatsPlayer[] rows;
+        uint level;
+        foreach (guid, ref m; members)
+        {
+            if (m.offlineSince != MonoTime.init)
+                continue;
+            PvpStatsPlayer p = {guid: cast(uint) guid, killingBlows: m.killingBlows, deaths: m.deaths,
+                honorableKills: m.honorableKills, bonusHonor: m.bonusHonor};
+            p.attr = m.extra[0 .. 5];
+            rows ~= p;
+            if (auto who = context.onlinePlayer(guid))
+                level = who.character.data.level;
+        }
+        ubyte bracket;
+        if (t !is null)
+            bracket = cast(ubyte)((t.minLevel + 10 * (level ? bracketOf(*t, level) : 0)) / 10);
+        context.database.savePvpStats(PvpStatsBattleground(winner, bracket, cast(ubyte) type), rows);
     }
 
     /// Whether `team` (0 the Alliance) is `winner`.

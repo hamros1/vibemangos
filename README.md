@@ -775,10 +775,13 @@ What works now:
       queues at once; invitations last 80 seconds. The queues are a cluster service.
     * **A copy of the battleground** is made when enough of both sides wait, and runs on the node
       hosting its map. It counts down two minutes; then its doors open and its objectives spawn.
-    * **During the battle:** kills, deaths and objectives count on the scoreboard; spirit guides
-      resurrect every 30 seconds.
-    * **The end:** a winner, marks of honor, bonus honor and reputation; everyone is sent back two
-      minutes later.
+    * **During the battle:** kills, deaths and objectives count on the scoreboard (`MSG_PVP_LOG_DATA`, asked
+      for at any time; its columns `WorldStateUI.dbc`'s: Warsong Gulch's flags captured and returned, Arathi
+      Basin's bases assaulted and defended, Alterac Valley's graveyards and towers assaulted and defended,
+      mines captured, leaders killed and secondary objectives); spirit guides resurrect every 30 seconds.
+    * **The end:** a winner, marks of honor, bonus honor and reputation, the scoreboard shown (and kept in
+      `pvpstats_battlegrounds` and `pvpstats_players` with `battleground_score_statistics`); everyone is sent
+      back two minutes later.
     * **Leaving early** gives Deserter (15 minutes without queueing). A side short of players for five
       minutes loses.
     * **Warsong Gulch:** three flag captures win. **Arathi Basin:** five bases and their resources;
@@ -844,6 +847,7 @@ database at the same time; a cluster's nodes take their ids in blocks from its c
 | `honor_maintenance_day`, `min_honor_kills` | the day the honor week turns (0 Sunday); honorable kills needed for a place in the standing | `3`, `15` |
 | `creature_pickpocket_restock_delay` | seconds before an emptied creature's pockets hold something again | `600` |
 | `battleground_cast_deserter`, `battleground_premature_finish` | Deserter for leaving a battleground early; seconds a side may be short of players before it loses (0 never) | `true`, `300` |
+| `battleground_score_statistics` | each battle's scoreboard kept in `pvpstats_battlegrounds` and `pvpstats_players` | `false` |
 | `max_pending_output_kb` | a client with more than this not yet sent to it (it is not reading) is disconnected; 0 no limit | `4096` |
 | `mmaps` | creatures find their way over `data_dir/mmaps`, where there are movement maps | `true` |
 | `write_log` | where writes wait, flushed to disk, until MySQL has them; written again at start-up (skipping what `dmangos_write_applied` says MySQL has); refused writes go to `<write_log>.failed`; empty for none | `"writes.log"` (`"writes-<node_id>.log"` in a cluster) |
@@ -893,6 +897,7 @@ Times the old files give in milliseconds are seconds here.
 | `GM.InWhoList.Level`, `MaxWhoListReturns`, `GM.StartLevel` | `gm_level_in_who_list`, `max_who_list_returns`, `start_gm_level` |
 | `Compression`, `mmap.enabled`, `PlayerSave.Interval` (ms) | `compression`, `mmaps`, `player_save_interval` |
 | `MaintenanceDay`, `MinHonorKills`, `Battleground.CastDeserter`, `BattleGround.PrematureFinishTimer` (ms) | `honor_maintenance_day`, `min_honor_kills`, `battleground_cast_deserter`, `battleground_premature_finish` |
+| `Battleground.ScoreStatistics` | `battleground_score_statistics` |
 | `Rate.Health`, `.Mana`, `.Rage.Loss`, `.Energy`, `Rate.Rest.*`, `Rate.XP.Explore`, `Rate.Reputation.Gain`, `.LowLevel.Kill`, `.LowLevel.Quest` | `rate_health`, `rate_mana`, `rate_rage_loss`, `rate_energy`, `rate_rest_*`, `rate_xp_explore`, `rate_reputation_gain`, `rate_reputation_lowlevel_kill`, `rate_reputation_lowlevel_quest` |
 | `MaxPlayerLevel`, `StartPlayerLevel`, `StartPlayerMoney`, `MaxPrimaryTradeSkill`, `TradeSkill.GMIgnore.MaxPrimarySkillsCount` | `max_player_level`, `start_player_level`, `start_player_money`, `max_primary_trade_skill`, `trade_skill_gm_ignore_max_primary` |
 | `StrictPlayerNames`, `MinPlayerName`, `CharDelete.Method`, `CharDelete.MinLevel`, `MailDeliveryDelay` | `strict_player_names`, `min_player_name`, `char_delete_method`, `char_delete_min_level`, `mail_delivery_delay` |

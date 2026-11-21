@@ -128,9 +128,33 @@ enum uint soundTowerDefended = 8192, soundNearLose = 8456;
 /// The area triggers out of the valley: the Alliance's two, the Horde's.
 enum uint triggerAllianceExit1 = 95, triggerAllianceExit2 = 2608, triggerHordeExit = 2606;
 
-/// The scoreboard's columns.
+/// The scoreboard's columns (`WorldStateUI.dbc`'s, map 30, in order): "Graveyards Assaulted", "Graveyards Defended",
+/// "Towers Assaulted", "Towers Defended", "Mines Captured" ("Number of times a deathblow was dealt to the lieutenant of
+/// an enemy mine"), "Leaders Killed" ("Number of enemy NPC officers you have killed"), "Secondary Objectives" ("Number
+/// of secondary units activated").
 enum size_t scoreGravesAssaulted = 0, scoreGravesDefended = 1, scoreTowersAssaulted = 2, scoreTowersDefended = 3,
-    scoreSecondary = 4;
+    scoreMines = 4, scoreLeaders = 5, scoreSecondary = 6;
+
+/**
+ * The sides' officers ("enemy NPC officers"), the Alliance's then the Horde's: the generals, the captains, the
+ * lieutenants and commanders (`creature_template` 13137 .. 13154, 13296 .. 13320 by faction: 1216 the Stormpike's,
+ * 1214 the Frostwolf's), and the towers' marshals and warmasters (14762 .. 14777).
+ */
+immutable uint[][2] officers = [
+    [11948, 11949, 13138, 13139, 13296, 13297, 13298, 13299, 13300, 13318, 13319, 13320,
+        14762, 14763, 14764, 14765, 14766, 14767, 14768, 14769],
+    [11946, 11947, 13137, 13140, 13143, 13144, 13145, 13146, 13147, 13152, 13153, 13154,
+        14770, 14771, 14772, 14773, 14774, 14775, 14776, 14777]];
+
+/// The side whose officer `entry` is, or `ownerNeutral` for none.
+ubyte officerSide(uint entry) pure nothrow @nogc @safe
+{
+    foreach (ubyte side; 0 .. 2)
+        foreach (e; officers[side])
+            if (e == entry)
+                return side;
+    return ownerNeutral;
+}
 
 /// A node (`AVNodeInfo`).
 struct Node
@@ -251,6 +275,7 @@ final class AlteracRules : BattlegroundRules
         if (copy.status != BattlegroundStatus.inProgress)
             return;
         const weekend = copy.weekend ? 1 : 0;
+        creditLeader(copy, entry, killer);
         switch (entry)
         {
         case npcVanndar, npcDrekThar:
@@ -274,7 +299,11 @@ final class AlteracRules : BattlegroundRules
                 foreach (boss; mineBosses[mine])
                     if (entry == boss)
                         if (auto m = killer in copy.members)
+                        {
+                            if (mineOwner[mine] != m.team) // an enemy (or neutral) mine's: the deathblow counts
+                                copy.addScore(killer, scoreMines);
                             changeMineOwner(copy, mine, m.team);
+                        }
         }
     }
 
@@ -389,6 +418,17 @@ private:
             copy.playSound(soundNearLose);
             warned[side] = true;
         }
+    }
+
+    /// `killer` killed an enemy officer: "Leaders Killed" goes up.
+    static void creditLeader(Battleground copy, uint entry, ulong killer)
+    {
+        const side = officerSide(entry);
+        if (side == ownerNeutral)
+            return;
+        if (auto m = killer in copy.members)
+            if (m.team != side)
+                copy.addScore(killer, scoreLeaders);
     }
 
     /// The node's icon is now `icon`.
@@ -611,10 +651,46 @@ unittest
     copy.tick(46.seconds);
     assert(copy.worldStates[stateScoreHorde] == 501);
 
+    // The scoreboard's columns: the mine's deathblow (its own mine's boss again: nothing), the officers killed (the
+    // captain above, a Horde lieutenant; an Alliance one by the Alliance: nothing).
+    assert(copy.members[8].extra[scoreMines] == 1 && copy.members[7].extra[scoreLeaders] == 1);
+    rules.creatureKilled(copy, mineBosses[0][2], 8);
+    assert(copy.members[8].extra[scoreMines] == 1, "its own mine");
+    rules.creatureKilled(copy, 13145, 7); // Lieutenant Grummus, the Frostwolf's
+    rules.creatureKilled(copy, 13138, 7); // Lieutenant Spencer, the Stormpike's own
+    rules.creatureKilled(copy, 14764, 8); // the Icewing Marshal, by the Horde
+    assert(copy.members[7].extra[scoreLeaders] == 2 && copy.members[8].extra[scoreLeaders] == 1);
+
     // Near losing is said once; none left, the side loses.
     copy.setWorldState(stateScoreAlliance, 120);
     rules.playerKilled(copy, 7, 8);
     assert(rules.warned[ownerAlliance]);
+    context.config.battlegroundScoreStatistics = true;
     rules.creatureKilled(copy, npcDrekThar, 7);
     assert(copy.status == BattlegroundStatus.waitLeave && copy.winner == winnerAlliance, "Drek'Thar dead: the Alliance");
+    assert(copy.members[7].extra[scoreLeaders] == 3, "the general an officer too");
+
+    // Its seven columns on the scoreboard, and kept (`Battleground.ScoreStatistics`).
+    {
+        import dmangos.bytes : ByteReader;
+
+        auto r = ByteReader(copy.scoreboard());
+        assert(r.read!ubyte == 1 && r.read!ubyte == winnerAlliance && r.read!uint == 2);
+        foreach (i; 0 .. 2)
+        {
+            const guid = r.read!ulong;
+            r.read!uint; // rank
+            foreach (_; 0 .. 4)
+                r.read!uint;
+            assert(r.read!uint == 7);
+            uint[7] columns;
+            foreach (ref c; columns)
+                c = r.read!uint;
+            assert(columns == copy.members[guid].extra);
+        }
+    }
+    assert(db.pvpStatsRows.length == 1 && db.pvpStatsRows[0].winner == winnerAlliance);
+    assert(db.pvpStatsRows[0].type == BattlegroundType.alteracValley && db.pvpStatsPlayerRows[0].length == 2);
+    foreach (p; db.pvpStatsPlayerRows[0])
+        assert(p.attr[] == copy.members[p.guid].extra[0 .. 5] && p.deaths == copy.members[p.guid].deaths);
 }

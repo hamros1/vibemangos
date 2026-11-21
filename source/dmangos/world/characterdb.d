@@ -18,7 +18,7 @@ import dmangos.mysql : Column, MySqlConnection;
 import dmangos.world.inventory : ItemChange, ItemRecord, ItemState;
 import dmangos.world.player : CharacterData, CharacterProgress, HomeBind, tutorialFields;
 import dmangos.world.playercreate : NewCharacter, NewSkill, NewSpell, maxEnchantmentSlot;
-import dmangos.world.database : AuraRecord, TicketRecord, BattlegroundData, HonorColumns, HonorPointRecord, HonorRecord, CooldownRecord, PetRecord, PetSpellRecord, GuildEventRecord, GuildMemberRecord, GuildRankRecord, GuildRecord,
+import dmangos.world.database : AuraRecord, TicketRecord, BattlegroundData, PvpStatsBattleground, PvpStatsPlayer, HonorColumns, HonorPointRecord, HonorRecord, CooldownRecord, PetRecord, PetSpellRecord, GuildEventRecord, GuildMemberRecord, GuildRankRecord, GuildRecord,
     PetitionRecord, SocialRow, CorpseRecord, InstanceBindRecord, InstanceRecord, InstanceRecords,
     InstanceRespawnRecord, MailRecord;
 import dmangos.world.reputation : ReputationRecord;
@@ -812,6 +812,22 @@ final class CharacterStatements
     }
 
     /// See `WorldDatabase.saveBattlegroundData`.
+    /// See `WorldDatabase.savePvpStats`: the battle's id is the table's next (`LAST_INSERT_ID`, this connection's), so
+    /// two nodes ending battles at once cannot take one id.
+    void savePvpStats(const PvpStatsBattleground b, const(PvpStatsPlayer)[] players)
+    {
+        characters.transaction({
+            characters.execute!("INSERT INTO pvpstats_battlegrounds (winner_team, bracket_id, type, date) "
+                ~ "VALUES (?, ?, ?, NOW())")(uint(b.winner), uint(b.bracket), uint(b.type));
+            foreach (ref p; players)
+                characters.execute!("INSERT INTO pvpstats_players (battleground_id, character_guid, score_killing_blows, "
+                    ~ "score_deaths, score_honorable_kills, score_bonus_honor, score_damage_done, score_healing_done, attr_1, "
+                    ~ "attr_2, attr_3, attr_4, attr_5) VALUES (LAST_INSERT_ID(), ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?)")(p.guid,
+                    p.killingBlows, p.deaths, p.honorableKills, p.bonusHonor, p.attr[0], p.attr[1], p.attr[2], p.attr[3],
+                    p.attr[4]);
+        });
+    }
+
     void saveBattlegroundData(uint player, const BattlegroundData d)
     {
         characters.transaction({

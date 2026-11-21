@@ -91,6 +91,9 @@ struct WorldConfig
     @JsonName("allow_two_side_interaction_chat") bool allowTwoSideInteractionChat = false;
     /// `AllowTwoSide.Interaction.Channel`: one set of chat channels for both factions.
     @JsonName("allow_two_side_interaction_channel") bool allowTwoSideInteractionChannel = false;
+    /// `Battleground.ScoreStatistics`: each battle's scoreboard kept, at its end, in `pvpstats_battlegrounds` and
+    /// `pvpstats_players`.
+    @JsonName("battleground_score_statistics") bool battlegroundScoreStatistics = false;
     /// `Battleground.CastDeserter`: leaving a battleground before it is over gives Deserter.
     @JsonName("battleground_cast_deserter") bool battlegroundCastDeserter = true;
     /// Seconds before a creature whose pockets were emptied has something in them again.

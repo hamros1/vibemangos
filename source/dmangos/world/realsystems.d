@@ -9,6 +9,81 @@ version (unittest):
 
 import dmangos.world.realspelltests : haveRealData, RealWorld;
 
+/// The scoreboard columns `WorldStateUI.dbc` gives map `map` (rows whose type, field 24, is 2), in the file's order:
+/// their names (field 4).
+private string[] scoreColumns(uint map)
+{
+    import std.array : split;
+    import std.file : read;
+    import std.process : environment;
+    import std.string : fromStringz;
+
+    const bytes = cast(const(ubyte)[]) read(environment["DMANGOS_REAL_DATA"].split("|")[0] ~ "/dbc/WorldStateUI.dbc");
+    uint at(size_t offset) { return *cast(const uint*) &bytes[offset]; }
+    const rows = at(4), fields = at(8), size = at(12);
+    const strings = 20 + rows * size;
+    string[] names;
+    foreach (i; 0 .. rows)
+    {
+        const row = 20 + i * size;
+        if (at(row + 4) == map && at(row + 24 * 4) == 2)
+            names ~= fromStringz(cast(const(char)*) &bytes[strings + at(row + 4 * 4)]).idup;
+    }
+    assert(fields == 39);
+    return names;
+}
+
+/// The scoreboard's own columns of each battleground are the client's (`WorldStateUI.dbc`): as many as
+/// `MSG_PVP_LOG_DATA` sends (`extraScores`), in the order the rules count them.
+unittest
+{
+    import dmangos.world.alterac : scoreGravesAssaulted, scoreGravesDefended, scoreLeaders, scoreMines, scoreSecondary,
+        scoreTowersAssaulted, scoreTowersDefended;
+    import dmangos.world.arathi : scoreAssaulted, scoreDefended;
+    import dmangos.world.battleground : extraScores;
+    import dmangos.world.bgqueue : BattlegroundType;
+    import dmangos.world.warsong : scoreCaptures, scoreReturns;
+
+    if (!haveRealData())
+        return;
+    const av = scoreColumns(30);
+    assert(av.length == extraScores[BattlegroundType.alteracValley]);
+    assert(av[scoreGravesAssaulted] == "Graveyards Assaulted" && av[scoreGravesDefended] == "Graveyards Defended");
+    assert(av[scoreTowersAssaulted] == "Towers Assaulted" && av[scoreTowersDefended] == "Towers Defended");
+    assert(av[scoreMines] == "Mines Captured" && av[scoreLeaders] == "Leaders Killed"
+        && av[scoreSecondary] == "Secondary Objectives");
+    const wsg = scoreColumns(489);
+    assert(wsg.length == extraScores[BattlegroundType.warsongGulch]);
+    assert(wsg[scoreCaptures] == "Flag Captures" && wsg[scoreReturns] == "Flag Returns");
+    const ab = scoreColumns(529);
+    assert(ab.length == extraScores[BattlegroundType.arathiBasin]);
+    assert(ab[scoreAssaulted] == "Bases Assaulted" && ab[scoreDefended] == "Bases Defended");
+}
+
+/// Alterac Valley's officers ("Leaders Killed") are the database's lieutenants, commanders, marshals, warmasters,
+/// captains and generals, each of its side's faction (1216, 1534 the Stormpike's; 1214 the Frostwolf's).
+unittest
+{
+    import dmangos.world.alterac : officers;
+
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    static immutable uint[][2] factionsOf = [[1216, 1534, 1597, 1334], [1214, 1335]];
+    foreach (side; 0 .. 2)
+        foreach (entry; officers[side])
+        {
+            const t = entry in w.context.data.creatureTemplates;
+            assert(t !is null, "an officer the database has");
+            bool ofSide;
+            foreach (f; factionsOf[side])
+                ofSide = ofSide || t.faction == f;
+            import std.conv : to;
+
+            assert(ofSide, "of its side: " ~ entry.to!string ~ " faction " ~ t.faction.to!string);
+        }
+}
+
 /// The auction houses' rates are AuctionHouse.dbc's: the factions' houses 5% deposit (for each 2 hours) and 5% cut,
 /// the goblins' (Blackwater, 7) 25% and 15%; so 2, 8 and 24 hours cost 5%, 20% and 60% of the sell price at a
 /// faction's house, five times that at the goblins'. docs/FORMULAS.md, "Auction houses".

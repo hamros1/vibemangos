@@ -279,6 +279,23 @@ struct BattlegroundData
     float joinX = 0, joinY = 0, joinZ = 0, joinO = 0;
 }
 
+/// A `pvpstats_battlegrounds` row: a battle over (`winner` as the scoreboard says it: 0 the Horde, 1 the Alliance,
+/// 2 nobody; `bracket` the bracket's lowest level / 10; `type` the `BattlegroundType`); its id is the table's own.
+struct PvpStatsBattleground
+{
+    ubyte winner;
+    ubyte bracket;
+    ubyte type;
+}
+
+/// A `pvpstats_players` row: one player's score in it (`attr` the battleground's own columns, the first five).
+struct PvpStatsPlayer
+{
+    uint guid;
+    uint killingBlows, deaths, honorableKills, bonusHonor;
+    uint[5] attr;
+}
+
 /// What `loadHonor` gives.
 struct HonorRecord
 {
@@ -509,6 +526,8 @@ interface WorldDatabase
 
     /// The player's `character_battleground_data` row replaced (deleted if the player is in no copy and came from nowhere).
     void saveBattlegroundData(uint player, const BattlegroundData data);
+    /// A battle's scoreboard kept (`Battleground.ScoreStatistics`): its row, and each player's under its id.
+    void savePvpStats(const PvpStatsBattleground battle, const(PvpStatsPlayer)[] players);
 
     /**
      * The player's honor: the columns, and the honor gained since the
@@ -919,6 +938,10 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     HonorRecord loadHonor(uint player) { return statements.loadHonor(player); }
     BattlegroundData loadBattlegroundData(uint player) { return statements.loadBattlegroundData(player); }
     void saveBattlegroundData(uint player, const BattlegroundData data) { statements.saveBattlegroundData(player, data); }
+    void savePvpStats(const PvpStatsBattleground battle, const(PvpStatsPlayer)[] players)
+    {
+        statements.savePvpStats(battle, players);
+    }
     void saveHonor(uint player, const HonorColumns columns, const(HonorPointRecord)[] added)
     {
         statements.saveHonor(player, columns, added);
@@ -1593,6 +1616,13 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
     ReputationRecord[uint][uint] reputationRows; /// `character_reputation`: by player, then faction
     HonorRecord[uint] honorRows;                 /// the honor columns and `character_honor_cp`, by player
     BattlegroundData[uint] battlegroundRows;     /// `character_battleground_data`, by player
+    PvpStatsBattleground[] pvpStatsRows;         /// `pvpstats_battlegrounds`, in order (the id: the index + 1)
+    PvpStatsPlayer[][] pvpStatsPlayerRows;       /// `pvpstats_players`, by battle (ditto)
+    void savePvpStats(const PvpStatsBattleground battle, const(PvpStatsPlayer)[] players)
+    {
+        pvpStatsRows ~= battle;
+        pvpStatsPlayerRows ~= players.dup;
+    }
     uint nextMaintenance;                        /// `saved_variables.NextMaintenanceDate`
 
     void saveCorpse(const ref CorpseRecord c) { corpses[c.player] = c; }
