@@ -204,6 +204,37 @@ final class ClusterNode : LinkOwner
         return false;
     }
 
+    /// A world node requests a loan, return, or retirement from the coordinator.
+    void creatureLoan(CreatureLoan request)
+    {
+        if (isCoordinator)
+            applyCreatureLoan(id, request);
+        else
+            sendToCoordinator(request);
+    }
+
+    private void applyCreatureLoan(ushort peer, const ref CreatureLoan request)
+    {
+        if (auto link = peer in links)
+            if (link.peer.gateway)
+                return;
+        final switch (request.action)
+        {
+        case CreatureLoan.Action.lend:
+            authority.lendCreature(peer, request.spawn, request.map, request.cell, request.caller, request.enemy);
+            break;
+        case CreatureLoan.Action.returnHome:
+            authority.returnCreature(peer, request.spawn, request.epoch);
+            break;
+        case CreatureLoan.Action.retire:
+            authority.retireCreature(peer, request.spawn, request.epoch);
+            break;
+        }
+    }
+
+    /// Initial creature loan releases have no earlier grant to the creature's home node.
+    ubyte[] delegate(const ref Region) onCreatureRelease;
+
     /// What this node's regions cost it lately, for the coordinator's balancing.
     void reportLoads(RegionLoad[] loads)
     {
@@ -859,8 +890,12 @@ final class ClusterNode : LinkOwner
             {
             case MessageType.regionReleased:
                 const release = decode!RegionReleased(payload);
-                authority.released(peer, release.region, release.epoch);
-                return handOver(release.region, release.objects);
+                if (authority.released(peer, release.region, release.epoch))
+                    handOver(release.region, release.objects);
+                return;
+            case MessageType.creatureLoan:
+                const request = decode!CreatureLoan(payload);
+                return applyCreatureLoan(peer, request);
             case MessageType.idRequest:
                 idRequests[peer] ~= decode!IdRequest(payload);
                 return;
@@ -1083,6 +1118,11 @@ private:
 
         Region[] gained, lost;
         regions_.refresh(now, gained, lost);
+        auto releases = regions_.releases();
+        if (onCreatureRelease !is null)
+            foreach (ref r; releases)
+                if (r.creature.spawn && r.id !in leaving && regions_.leaseHolds(now))
+                    leaving[r.id] = onCreatureRelease(r);
         if (gained.length || lost.length)
         {
             info!"cluster: regions gained %s, lost %s; this node owns %s"(regionIds(gained), regionIds(lost),
@@ -1097,13 +1137,13 @@ private:
             if (onOwnership !is null)
                 onOwnership(gained, lost, arrived, leaving);
         }
-        foreach (ref r; regions_.releases())
+        foreach (ref r; releases)
         {
             auto objects = leaving.get(r.id, null);
             if (isCoordinator)
             {
-                authority.released(id, r.id, r.epoch);
-                handOver(r.id, objects);
+                if (authority.released(id, r.id, r.epoch))
+                    handOver(r.id, objects);
             }
             else if (auto link = coordinatorId in links)
                 link.send(RegionReleased(r.id, r.epoch, objects));
@@ -1817,4 +1857,122 @@ unittest
     assert(gateway.regions.ownedRegions.length == 0, "a gateway simulates nothing");
     assert(coordinator.regions.ownedRegions.length + member.regions.ownedRegions.length == 4);
     assert(coordinator.leastBusyClientAddress() == "127.0.0.1:8003", "clients go to the gateway");
+}
+
+// An assistance loan survives a change of home owner and recovers after either participant is lost.
+unittest
+{
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.clientdata : factionTemplateFormat;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.replication : encodeState;
+    import dmangos.world.testclient;
+    import dmangos.world.updatefields : UNIT_FIELD_FACTIONTEMPLATE;
+
+    foreach (scenario; 0 .. 3)
+    {
+        enum uint worldMap = 0;
+        const homeCell = cellKeyAt(-8948, -134);
+        const callerGuid = makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn);
+        const helperGuid = makeGuid(HighGuid.unit, creatureTrainer, trainerSpawn);
+        auto cluster = new TestCluster;
+        auto coordinator = cluster.add(1, 9000, 1, CoordinatorSetup([
+            Region(1, worldMap, CellRect(-256, -256, 0, -2), 3, 10, RegionState.granted),
+            Region(2, worldMap, CellRect(-256, -2, 0, 0), 2, 11, RegionState.granted),
+            Region(3, worldMap, CellRect(0, -256, 256, 256), 1, 12, RegionState.granted)],
+            [1u: 10UL, 2u: 10UL, 3u: 1UL], new TestCounters));
+        auto borrower = cluster.add(2, 9001), original = cluster.add(3, 9002);
+        auto db = newDatabase();
+        WorldContext[ushort] worlds;
+        foreach (node; [coordinator, borrower, original])
+        {
+            auto world = newCreationContext(db);
+            worlds[node.id] = world;
+            world.clock = () => cluster.now;
+            world.nodeId = node.id;
+            // Capture this node in its own activation record.
+            void connect(ClusterNode bound, WorldContext context)
+            {
+                context.ownsCell = (uint map, ulong cell) => bound.regions.ownsCell(map, cell);
+                context.creatureLease = &bound.regions.creatureRegion;
+                context.sendCreatureLoan = &bound.creatureLoan;
+                bound.onCreatureRelease = &context.releaseCreatureLoan;
+                bound.onOwnership = &context.regionsChanged;
+            }
+            connect(node, world);
+            foreach (ref spawn; world.data.creatureSpawns)
+                if (spawn.guid == trainerSpawn)
+                    spawn.y = -134;
+            world.data.creatureCells[worldMap] = null;
+            foreach (i, ref spawn; world.data.creatureSpawns)
+                world.data.creatureCells.require(worldMap, null).require(cellKeyAt(spawn.x, spawn.y), null) ~= i;
+            world.data.creatureTemplates.edit(creatureTrainer).faction = 14;
+            world.data.creatureTemplates.edit(creatureTrainer).detection = 0;
+            world.data.creatureTemplates.edit(creatureInnkeeper).faction = 14;
+        }
+
+        cluster.run(8000, coordinator, borrower, original);
+        auto battlefield = worlds[2];
+        auto client = loggedIn(battlefield, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
+        const humans = client.session.character.values.get!UNIT_FIELD_FACTIONTEMPLATE;
+        foreach (world; worlds)
+            world.client.factionTemplates = typeof(world.client.factionTemplates).parse(buildDbc(factionTemplateFormat,
+                [[humans, 1, 0, 3, 2, 8, 0, 0, 0, 0, 0, 0, 0, 0], [14u, 14, 1, 8, 8, 1, 0, 0,
+                0, 0, 0, 0, 0, 0]]), "FactionTemplate.dbc");
+        auto homeMap = worlds[3].map(worldMap);
+        homeMap.peerInterest(2, [homeCell], null);
+        auto helper = homeMap.creatureAt(helperGuid);
+        auto field = battlefield.map(worldMap);
+        auto caller = field.creatureAt(callerGuid);
+        assert(helper !is null, "helper starts under its physical home owner");
+        assert(caller !is null, "caller starts on the borrower's side of the border");
+        caller.factionTemplate = battlefield.client.factionTemplates.lookup(14);
+        field.replicaCreated(3, homeCell, helperGuid, encodeState(helper, 0));
+
+        client.write(Opcode.CMSG_ATTACKSWING, ClientGuid(callerGuid));
+        foreach (_; 0 .. 40)
+        {
+            battlefield.update(cluster.now);
+            cluster.run(50, coordinator, borrower, original);
+        }
+        assert(borrower.regions.creatureRegion(trainerSpawn).owner == 2);
+        assert(homeMap.creatureAt(helperGuid) is null);
+        helper = field.creatureAt(helperGuid);
+        assert(helper !is null && helper.ai.inCombat && helper.ai.currentVictim == 7);
+
+        if (scenario == 0)
+            coordinator.authority.drain(original.id);
+        else if (scenario == 1)
+            cluster.isolated[original] = true; // its process still ticks until its lease expires
+        else
+            cluster.isolated[borrower] = true;
+        if (scenario != 2)
+        {
+            cluster.run(12000, coordinator, borrower, original);
+            const newHome = coordinator.regions.ownerAt(worldMap, homeCell);
+            assert(newHome == coordinator.id, "the home moved to the third node while the loan stayed on node 2");
+            assert(borrower.regions.creatureRegion(trainerSpawn).owner == 2);
+            auto newHomeMap = worlds[newHome].map(worldMap);
+            newHomeMap.peerInterest(2, [homeCell], null);
+            assert(newHomeMap.creatureAt(helperGuid) is null, "the moved home cannot spawn an active loan");
+            client.session.clientGone();
+        }
+
+        foreach (_; 0 .. 480)
+        {
+            cluster.run(50, coordinator, borrower, original);
+            foreach (world; worlds)
+                world.update(cluster.now);
+            size_t copies;
+            foreach (world; worlds)
+                copies += world.map(worldMap).creatureAt(helperGuid) !is null;
+            assert(copies <= 1, "at most one node may simulate the helper");
+            if (!coordinator.regions.creatureRegion(trainerSpawn).creature.spawn)
+                break;
+        }
+        const home = coordinator.regions.ownerAt(worldMap, homeCell);
+        assert(home && worlds[home].map(worldMap).creatureAt(helperGuid) !is null, "the creature returned home");
+        assert(!coordinator.regions.creatureRegion(trainerSpawn).creature.spawn, "the temporary lease was retired");
+    }
 }

@@ -28,13 +28,13 @@ import dmangos.cluster.node : SessionHandler;
 import dmangos.cluster.ownership : IdCounters, IdKind, IdPool;
 import dmangos.cluster.protocol : PresenceEntry;
 import dmangos.world.whisper : WhisperFrom;
-import dmangos.cluster.regions : Region;
+import dmangos.cluster.regions : Region, RegionState;
 import dmangos.world.creature : Creature, CreatureParts, CreatureSpawn, CreatureTemplate, Npc, NpcStandIn, TempSpawn, TempSpawnType, VirtualItem;
 import dmangos.world.gameobject : GameObject, GameObjectSpawn;
 import dmangos.world.auctionhouse;
 import dmangos.world.database : MailRecord;
 import dmangos.world.movement : Position;
-import dmangos.world.migration : Migrant;
+import dmangos.world.migration : Migrant, encodeBundle;
 import dmangos.world.replication : Replica, Replicator;
 import dmangos.world.channel : ChannelSettings;
 import dmangos.world.grid : cellKeyAt;
@@ -44,7 +44,7 @@ import dmangos.world.gameevents : GameEvents, scheduleFor;
 import dmangos.world.creaturelinking : CreatureLink, inLinkRange, LinkFlag;
 import dmangos.world.creatureai : LinkEvent;
 import dmangos.world.objects : HighGuid, makeGuid;
-import dmangos.world.unit : UnitKind;
+import dmangos.world.unit : UnitKind, UnitRef;
 import dmangos.world.bgqueue : battlegroundOfMap, BattlegroundQueue, BattlegroundQueueHost;
 import dmangos.world.wareffort : WarEffort, WarEffortHost;
 import dmangos.world.worldpvp : WorldPvp, WorldPvpFollower, WorldPvpHost;
@@ -67,7 +67,7 @@ import dmangos.vmap.maptree : ModelCache;
 import dmangos.world.terrain : Terrain;
 import dmangos.world.group : GroupDirectory, Groups, memberStatus, MemberStatus;
 import dmangos.world.groupservice : groupCommand, GroupOp, GroupService;
-import dmangos.cluster.protocol : GmRemote, GroupCommand, KillShare, ScriptSignal;
+import dmangos.cluster.protocol : CreatureLoan, GmRemote, GroupCommand, KillShare, ScriptSignal;
 import dmangos.world.map : Inhabitant, Map, MapObject, MapSettings, VisibilityFacts;
 import dmangos.world.online : OnlinePlayer;
 import dmangos.world.playercreate : CreationSettings;
@@ -1149,7 +1149,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                             if (spawn.guid !in data.creatureGameEvents || !creatureInEvents(spawn.guid)
                                     || !upInPool(PoolMember.Kind.creature, spawn.guid))
                                 continue;
-                            if (awaitingRespawn(spawn.guid))
+                            if (awaitingRespawn(spawn.guid) || creatureOnLoan(spawn.guid))
                                 continue;
                             auto c = makeCreature(spawn);
                             if (c is null || c.guid in present)
@@ -1638,6 +1638,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         created.visibilityFacts = (ulong viewer, ulong seen, Position seenAt) => visibilityFacts(created, viewer,
             seen, seenAt);
         created.onReplicaNoticing = &replicaNoticing;
+        if (!instance && sendCreatureLoan !is null)
+            created.remoteAssistance = (Creature caller, UnitRef enemy, float radius) {
+                askCreatureLoans(created, caller, enemy, radius);
+            };
         created.onTrap = (Inhabitant who, GameObject trap) { trapSprung(created, who, trap); };
         created.onWaypointScript = (Creature creature, uint scriptId) {
             import dmangos.world.dbscripts : DbScriptType;
@@ -2465,6 +2469,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.cluster.services : isServiceMap, serviceOfMap;
         import std.format : format;
 
+        // Retire a returned creature before handing over any newly revoked physical home region.
+        foreach (ref r; lost)
+            if (r.creature.spawn)
+                creatureLoanLost(r);
+
         // A service's region (docs/SERVICES.md): it stops here, its state going along with it, or starts.
         foreach (ref r; lost)
             if (isServiceMap(r.map))
@@ -2515,13 +2524,16 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         foreach (ref r; gained)
             if (auto objects = r.id in arriving)
             {
-                if (instanceable(r.map))
+                if (r.creature.spawn || instanceable(r.map))
                     continue; // its copies' bundles, read above
                 auto m = map(r.map);
                 const before = m.objectCount - m.replicaCount;
                 m.migrateIn(*objects, &restoreMigrant);
                 info!"migration: region %s arrived with %s objects"(r.id, m.objectCount - m.replicaCount - before);
             }
+        foreach (ref r; gained)
+            if (r.creature.spawn)
+                creatureLoanGained(r, arriving.get(r.id, null));
         bool[uint] looked;
         foreach (ref r; gained)
             if (r.map !in looked)
@@ -2592,7 +2604,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (auto cells = mapId in data.creatureCells)
             foreach (index; (*cells).get(cell, null))
             {
-                if (awaitingRespawn(data.creatureSpawns[index].guid))
+                if (awaitingRespawn(data.creatureSpawns[index].guid) || creatureOnLoan(data.creatureSpawns[index].guid))
                     continue; // dead: it comes back when its time is up
                 if (!creatureInEvents(data.creatureSpawns[index].guid))
                     continue; // its game event says it is away
@@ -2867,13 +2879,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.gameobject : GameObject;
         import dmangos.world.migration : MigrantKind;
 
-        if (spawnIndex is null)
-        {
-            foreach (i, ref s; data.creatureSpawns)
-                spawnIndex[s.guid] = i;
-            foreach (i, ref s; data.gameObjectSpawns)
-                gameObjectSpawnIndex[s.guid] = i;
-        }
+        indexSpawns();
         auto r = ByteReader(m.state);
         if (m.kind == MigrantKind.creature)
         {
@@ -2898,6 +2904,199 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     private size_t[uint] spawnIndex, gameObjectSpawnIndex; // spawn guid -> its place in the world data
+    private size_t indexedCreatureSpawns, indexedGameObjectSpawns;
+
+    private void indexSpawns()
+    {
+        foreach (i; indexedCreatureSpawns .. data.creatureSpawns.length)
+            spawnIndex[data.creatureSpawns[i].guid] = i;
+        foreach (i; indexedGameObjectSpawns .. data.gameObjectSpawns.length)
+            gameObjectSpawnIndex[data.gameObjectSpawns[i].guid] = i;
+        indexedCreatureSpawns = data.creatureSpawns.length;
+        indexedGameObjectSpawns = data.gameObjectSpawns.length;
+    }
+
+    /// The coordinator owns the loan lifecycle. A table entry reserves its spawn on every node.
+    void delegate(CreatureLoan) sendCreatureLoan;
+    Region delegate(uint) creatureLease;
+    private Region[uint] localCreatureLoans;
+    private MonoTime nextCreatureLoanCheck;
+
+    private bool creatureOnLoan(uint spawn)
+    {
+        return creatureLease !is null && creatureLease(spawn).creature.spawn != 0;
+    }
+
+    private const(CreatureSpawn)* loanSpawn(uint spawn, uint mapId)
+    {
+        indexSpawns();
+        if (const at = spawn in spawnIndex)
+            if (data.creatureSpawns[*at].map == mapId)
+                return &data.creatureSpawns[*at];
+        return null;
+    }
+
+    private void askCreatureLoans(Map map_, Creature caller, UnitRef enemy, float radius)
+    {
+        import dmangos.world.grid : cellKeyAt;
+        import dmangos.world.defines : UnitFlags;
+        import dmangos.world.objects : counterOf;
+        import dmangos.world.relations : reactionTo, Relating, ReputationRank;
+        import dmangos.world.updatefields;
+
+        foreach (replica; map_.creatureReplicasNear(caller.position, radius))
+        {
+            const spawn = counterOf(replica.guid);
+            // Event spawns can disappear or change their template and GUID during the loan.
+            if (creatureLease(spawn).creature.spawn || replica.owner == nodeId
+                || spawn in data.creatureGameEvents || spawn in data.eventCreatures)
+                continue;
+            const values = &replica.fields();
+            const flags = values.get!UNIT_FIELD_FLAGS;
+            if (!values.get!UNIT_FIELD_HEALTH || flags & (UnitFlags.inCombat | UnitFlags.spawning | UnitFlags.uninteractible))
+                continue;
+            const faction = client.factionTemplates.lookup(values.get!UNIT_FIELD_FACTIONTEMPLATE);
+            if (reactionTo(Relating(flags, faction, false, 0, 0, true), caller.ai.relatingOf(), client)
+                < ReputationRank.friendly || !map_.inLineOfSight(caller.position, replica.position))
+                continue;
+            const row = loanSpawn(spawn, map_.id);
+            if (row !is null && loanGuid(row) == replica.guid)
+                sendCreatureLoan(CreatureLoan(CreatureLoan.Action.lend, spawn, map_.id, cellKeyAt(row.x, row.y),
+                    caller.guid, enemy.combatGuid));
+        }
+    }
+
+    private ulong loanGuid(const(CreatureSpawn)* spawn)
+    {
+        import dmangos.world.objects : HighGuid, makeGuid;
+
+        return makeGuid(HighGuid.unit, spawn.entry, spawn.guid);
+    }
+
+    ubyte[] releaseCreatureLoan(const ref Region r)
+    {
+        import dmangos.bytes : ByteWriter;
+
+        const spawn = loanSpawn(r.creature.spawn, r.creature.homeMap);
+        if (spawn is null)
+            return null;
+        auto map_ = existingMap(spawn.map);
+        if (map_ is null)
+            return null;
+        const guid = loanGuid(spawn);
+        if (r.id !in localCreatureLoans)
+        {
+            // The initial release can be refused if the creature became busy in transit.
+            auto creature = map_.creatureAt(guid);
+            if (creature is null || !creature.alive || creature.ai is null || creature.ai.inCombat
+                || creature.ai.evading || creature.petOwner)
+                return null;
+        }
+        const bundle = map_.releaseCreatureLoan(guid, r.next, &saveMigrant);
+        if (!bundle.length && r.id !in localCreatureLoans)
+            return null;
+        ByteWriter state;
+        state.put(respawnAt.get(spawn.guid, 0L));
+        state.putBytes(bundle);
+        return cast(ubyte[]) state.data;
+    }
+
+    private void creatureLoanGained(const ref Region r, const(ubyte)[] state)
+    {
+        import dmangos.bytes : ByteReader;
+        import dmangos.world.grid : cellKey;
+        import dmangos.world.migration : decodeBundle;
+
+        localCreatureLoans[r.id] = r;
+        const spawn = loanSpawn(r.creature.spawn, r.creature.homeMap);
+        if (spawn is null)
+            return;
+        auto map_ = map(spawn.map);
+        const guid = loanGuid(spawn);
+        auto reader = ByteReader(state);
+        const until = state.length ? reader.read!long : 0L;
+        const bundle = reader.readBytes(reader.remaining);
+        if (until > unixTime)
+            respawnAt[spawn.guid] = until;
+        if (bundle.length)
+        {
+            ulong[] cells;
+            Migrant[] migrants;
+            decodeBundle(bundle, cells, migrants);
+            foreach (ref migrant; migrants)
+                migrant.home = ulong.max; // physical ownership stays reserved until the lease is retired
+            map_.migrateIn(encodeBundle(null, migrants), &restoreMigrant);
+        }
+        else if (r.creature.returning && ownsCell(spawn.map, cellKey(r.rect.x0, r.rect.y0))
+            && map_.creatureAt(guid) is null)
+        {
+            // A crashed borrower left no state. Re-read saved deaths before rebuilding its spawn.
+            if (!state.length)
+            {
+                const saved = database.loadCreatureRespawns().get(spawn.guid, 0);
+                if (saved > unixTime)
+                    respawnAt[spawn.guid] = saved;
+            }
+            if (!awaitingRespawn(spawn.guid) && creatureInEvents(spawn.guid)
+                && upInPool(PoolMember.Kind.creature, spawn.guid))
+                if (auto creature = makeCreature(spawn))
+                    map_.addObject(creature);
+        }
+        if (!r.creature.returning && bundle.length)
+            if (auto helper = map_.creatureAt(guid))
+                if (helper.ai !is null)
+                    helper.ai.answerRemoteAssistance(map_.creatureAt(r.creature.caller), map_.unit(r.creature.enemy), map_);
+    }
+
+    private void creatureLoanLost(const ref Region r)
+    {
+        import dmangos.world.grid : cellKey;
+
+        const local = localCreatureLoans.get(r.id, Region.init);
+        if (!localCreatureLoans.remove(r.id))
+            return;
+        const spawn = loanSpawn(r.creature.spawn, r.creature.homeMap);
+        if (spawn is null)
+            return;
+        if (auto map_ = existingMap(spawn.map))
+        {
+            const guid = loanGuid(spawn);
+            if (!creatureLease(spawn.guid).creature.spawn && local.creature.returning && canWrite())
+                map_.giveCreatureHome(guid, cellKey(r.rect.x0, r.rect.y0));
+            else if (map_.creatureAt(guid) !is null)
+                map_.removeObject(guid); // lease expired without a clean release
+        }
+    }
+
+    private void updateCreatureLoans(MonoTime now)
+    {
+        import dmangos.world.grid : cellKey;
+
+        if (!localCreatureLoans.length || now < nextCreatureLoanCheck || !canWrite())
+            return;
+        nextCreatureLoanCheck = now + 1.seconds;
+        foreach (ref local; localCreatureLoans)
+        {
+            const r = creatureLease(local.creature.spawn);
+            if (r.owner != nodeId || r.state != RegionState.granted || r.epoch != local.epoch)
+                continue;
+            const spawn = loanSpawn(r.creature.spawn, r.creature.homeMap);
+            auto map_ = existingMap(r.creature.homeMap);
+            auto creature = map_ is null || spawn is null ? null : map_.creatureAt(loanGuid(spawn));
+            if (r.creature.returning && ownsCell(r.creature.homeMap, cellKey(r.rect.x0, r.rect.y0)))
+            {
+                // Load the other spawns while this creature's reservation still suppresses its row.
+                if (map_ !is null)
+                    map_.loadCell(cellKey(r.rect.x0, r.rect.y0));
+                local.creature.returning = true;
+                sendCreatureLoan(CreatureLoan(CreatureLoan.Action.retire, r.creature.spawn, epoch: r.epoch));
+            }
+            // A defeated helper's corpse stays available to loot on the fight's node.
+            else if (creature is null || (creature.alive && (creature.ai is null
+                || (!creature.ai.inCombat && !creature.ai.evading))))
+                sendCreatureLoan(CreatureLoan(CreatureLoan.Action.returnHome, r.creature.spawn, epoch: r.epoch));
+        }
+    }
 
     /// Puts a player in the world: on its map and in the lists of who is online.
     void enterWorld(OnlinePlayer who, bool shipsShown = false)
@@ -4629,13 +4828,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         const time = unixTime;
         uint[] due;
         foreach (guid, at; respawnAt)
-            if (at <= time)
+            if (at <= time && !creatureOnLoan(guid))
                 due ~= guid;
         if (due.length == 0)
             return;
-        if (spawnIndex is null)
-            foreach (i, ref spawn; data.creatureSpawns)
-                spawnIndex[spawn.guid] = i;
+        indexSpawns();
         foreach (guid; due)
         {
             respawnAt.remove(guid);
@@ -4796,9 +4993,17 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             isolated(phase, run); // one phase's fault does not skip the others
             spent[phase] += MonoTime.currTime - before;
         }
-        timed(TickPhase.maps, () => mapsPhase(elapsed));
+        timed(TickPhase.maps, () {
+            // Ownership notifications run after the world tick. A stalled borrower can resume
+            // after its lease expires, so fence its combat before ticking borrowed creatures.
+            if (!localCreatureLoans.length || canWrite())
+                mapsPhase(elapsed);
+        });
         timed(TickPhase.deaths, () => deathsPhase());
-        timed(TickPhase.world, () => worldPhase(now, elapsed));
+        timed(TickPhase.world, () {
+            updateCreatureLoans(now);
+            worldPhase(now, elapsed);
+        });
         // A slow tick says where its time went (net/server.d warns about it).
         if (MonoTime.currTime - started > 500.msecs)
         {

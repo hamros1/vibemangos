@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 35; // 35: a trade request in player migration; 34: services' news (the war effort)
+enum ushort protocolVersion = 36; // 36: creature leases; 35: a trade request in player migration
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -85,6 +85,21 @@ enum MessageType : ushort
     serviceCall = 46,
     serviceReply = 47,
     serviceNews = 48,
+    creatureLoan = 49,
+}
+
+struct CreatureLoan
+{
+    enum type = MessageType.creatureLoan;
+
+    enum Action : ubyte { lend, returnHome, retire }
+    Action action;
+    uint spawn;
+    uint map;
+    ulong cell;
+    ulong caller;
+    ulong enemy;
+    ulong epoch;
 }
 
 /// Why a hello was refused.
@@ -958,7 +973,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 35, recordedFingerprint = 0xf5d2513321652ed4UL;
+private enum recordedVersion = 36, recordedFingerprint = 0xd8f0558038c42382UL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

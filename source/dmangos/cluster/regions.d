@@ -63,7 +63,20 @@ struct Region
     ulong epoch;         /// increases whenever the region is granted anew: a fencing token
     RegionState state;
     ushort next;         /// while revoking: the node it goes to, which the owner sends its objects to
+    CreatureLease creature;
 }
+
+/// A temporary region containing one creature. Its rectangle identifies the creature's home cell.
+struct CreatureLease
+{
+    uint spawn;
+    uint homeMap;
+    ulong caller;
+    ulong enemy;
+    bool returning;
+}
+
+enum uint creatureLeaseMap = 0xFFFE_0000;
 
 /// Spawns (or other cost) per cell: map -> cell key -> cost.
 alias CellCosts = uint[ulong][uint];

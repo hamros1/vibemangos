@@ -25,6 +25,7 @@ import core.time : Duration, MonoTime, msecs, seconds;
 import std.algorithm.comparison : max;
 
 import dmangos.cluster.regions;
+import dmangos.world.grid : cellKey;
 import dmangos.log;
 
 /// The margin added to a lease for clocks that do not run at quite the same rate.
@@ -85,10 +86,12 @@ final class RegionAuthority
         MonoTime delegate() clock)
     {
         regions_ = regions;
-        partitionSize = regions.length;
         foreach (ref r; regions)
-            if (r.id > partitionLastId)
-                partitionLastId = r.id;
+            if (!r.creature.spawn)
+            {
+                ++partitionSize;
+                partitionLastId = max(partitionLastId, r.id);
+            }
         this.cost = cost;
         this.self = self;
         epochBase = incarnation << 20;
@@ -243,6 +246,12 @@ final class RegionAuthority
                 if (load[n] < load[to])
                     to = n;
             load[to] += cost.get(r.id, 0);
+            if (r.creature.spawn)
+            {
+                r.creature.returning = true;
+                if (const home = creatureHome(r))
+                    to = home;
+            }
             r.state = RegionState.revoking;
             r.next = to;
             movingTo[r.id] = to;
@@ -256,14 +265,106 @@ final class RegionAuthority
         return (node in draining) !is null;
     }
 
+    private ushort creatureHome(const ref Region loan) const
+    {
+        const cell = cellKey(loan.rect.x0, loan.rect.y0);
+        foreach (ref r; regions_)
+            if (r.map == loan.creature.homeMap && r.state == RegionState.granted && r.rect.containsKey(cell)
+                && !isDraining(r.owner))
+                return r.owner;
+        return 0;
+    }
+
+    /// Reserve a spawn before asking the home owner to stop simulating it.
+    void lendCreature(ushort borrower, uint spawn, uint map, ulong cell, ulong caller, ulong enemy)
+    {
+        if (!spawn || !caller || !enemy || borrower !in members || isDraining(borrower))
+            return;
+        uint nextId = 0x8000_0000 | (epochCount + 1);
+        size_t loans;
+        foreach (ref r; regions_)
+        {
+            if (r.creature.spawn == spawn)
+                return;
+            if (r.creature.spawn)
+            {
+                ++loans;
+                nextId = max(nextId, r.id + 1);
+            }
+        }
+        if (loans >= 1024)
+            return;
+        const x = cast(int)(cell >> 32), y = cast(int)cell;
+        auto loan = Region(nextId, creatureLeaseMap, CellRect(x, y, x + 1, y + 1));
+        loan.creature = CreatureLease(spawn, map, caller, enemy);
+        const home = creatureHome(loan);
+        if (!home || home == borrower)
+            return;
+        loan.owner = home;
+        loan.epoch = epochBase + ++epochCount;
+        loan.state = RegionState.revoking;
+        loan.next = borrower;
+        movingTo[loan.id] = borrower;
+        regions_ ~= loan;
+        touch();
+    }
+
+    void returnCreature(ushort owner, uint spawn, ulong epoch)
+    {
+        foreach (ref r; regions_)
+            if (r.creature.spawn == spawn && r.owner == owner && r.epoch == epoch && r.state == RegionState.granted)
+            {
+                const home = creatureHome(r);
+                if (!home)
+                    return;
+                if (home == owner)
+                {
+                    if (!r.creature.returning)
+                    {
+                        r.creature.returning = true;
+                        touch();
+                    }
+                    return;
+                }
+                r.creature.returning = true;
+                r.state = RegionState.revoking;
+                r.next = home;
+                movingTo[r.id] = home;
+                touch();
+                return;
+            }
+    }
+
+    void retireCreature(ushort owner, uint spawn, ulong epoch)
+    {
+        import std.algorithm.mutation : remove;
+
+        foreach (i, ref r; regions_)
+            if (r.creature.spawn == spawn && r.owner == owner && r.epoch == epoch && r.state == RegionState.granted
+                && r.creature.returning && creatureHome(r) == owner)
+            {
+                cost.remove(r.id);
+                regions_ = regions_.remove(i);
+                touch();
+                return;
+            }
+    }
+
     /// `node` has stopped simulating a region it was asked to give up.
-    void released(ushort node, uint region, ulong epoch)
+    bool released(ushort node, uint region, ulong epoch)
     {
         foreach (ref r; regions_)
             if (r.id == region && r.owner == node && r.epoch == epoch && r.state == RegionState.revoking)
             {
-                const target = movingTo.get(r.id, 0);
+                auto target = movingTo.get(r.id, 0);
                 movingTo.remove(r.id);
+                if (r.creature.spawn && (r.creature.returning || target == 0))
+                {
+                    r.creature.returning = true;
+                    const home = creatureHome(r);
+                    if (home || target == 0)
+                        target = home ? home : node;
+                }
                 if (target && target in members)
                     grant(r, target);
                 else
@@ -273,7 +374,9 @@ final class RegionAuthority
                     r.next = 0;
                     touch();
                 }
+                return true;
             }
+        return false;
     }
 
     /// Where a region released by `node` at `epoch` was granted; 0 if nowhere (asked after `released`).
@@ -300,6 +403,17 @@ final class RegionAuthority
         bool[uint] held;
         foreach (id, _; heldUntil)
             held[id] = true;
+        foreach (ref r; regions_)
+            if (r.creature.spawn && r.state == RegionState.unowned)
+            {
+                if (r.id !in held)
+                    if (const home = creatureHome(r))
+                    {
+                        r.creature.returning = true;
+                        grant(r, home);
+                    }
+                held[r.id] = true; // a lost loan recovers only on the current home owner
+            }
         foreach (id; assign(regions_, cost, memberList, held))
             foreach (ref r; regions_)
                 if (r.id == id)
@@ -333,6 +447,9 @@ final class RegionAuthority
         foreach (id, at; movedAt)
             if (now - at < balancing.cooldown)
                 frozen[id] = true;
+        foreach (ref r; regions_)
+            if (r.creature.spawn)
+                frozen[r.id] = true;
         const moves = rebalance(regions_, cost, nodes, balancing.tolerance, frozen, balancing.maxMoves);
         splitHot(load, now);
         foreach (move; moves)
@@ -382,7 +499,7 @@ final class RegionAuthority
             return;
         Region* hottest;
         foreach (ref r; regions_)
-            if (r.owner == busiest && r.state == RegionState.granted && r.map !in wholeMaps
+            if (r.owner == busiest && r.state == RegionState.granted && r.map !in wholeMaps && !r.creature.spawn
                 && (r.id !in splitAt || now - splitAt[r.id] >= balancing.interval) // measured since
                 && (hottest is null || cost.get(r.id, 0) > cost.get(hottest.id, 0)))
                 hottest = &r;
@@ -394,7 +511,7 @@ final class RegionAuthority
             return;
         uint next;
         foreach (ref r; regions_)
-            if (r.id > next)
+            if (!r.creature.spawn && r.id > next)
                 next = r.id;
         ++next;
         const whole = cost.get(hottest.id, 0), id = hottest.id, map = hottest.map;
@@ -435,7 +552,7 @@ final class RegionAuthority
 
         foreach (i, ref a; regions_)
         {
-            if (a.state != RegionState.granted || recent(a.id))
+            if (a.state != RegionState.granted || recent(a.id) || a.creature.spawn)
                 continue;
             foreach (j, ref b; regions_)
             {
@@ -488,7 +605,11 @@ private:
 
     void balance()
     {
-        foreach (move; rebalance(regions_, cost, memberList))
+        bool[uint] frozen;
+        foreach (ref r; regions_)
+            if (r.creature.spawn)
+                frozen[r.id] = true;
+        foreach (move; rebalance(regions_, cost, memberList, 0.25, frozen))
             foreach (ref r; regions_)
                 if (r.id == move.region && r.state == RegionState.granted)
                 {
@@ -526,6 +647,7 @@ final class RegionView
         ulong tableCoordinator;
         ulong tableVersion;
         Region[] table;
+        Region[uint] creatureRegions;
         MonoTime confirmed;
         Region[uint] owned;           // regions this node treats as its own, as they were granted
         ulong[uint] releaseSent;      // region id -> epoch whose release went out
@@ -579,6 +701,10 @@ final class RegionView
         tableCoordinator = coordinator;
         tableVersion = version_;
         table = regions;
+        creatureRegions = null;
+        foreach (ref r; table)
+            if (r.creature.spawn)
+                creatureRegions[r.creature.spawn] = r;
         return true;
     }
 
@@ -637,7 +763,7 @@ final class RegionView
             {
                 // Merged into another region this node still owns (the id gone from the table, its
                 // cells inside the other's rectangle): nothing is lost.
-                bool merged = holds;
+                bool merged = holds && !r.creature.spawn;
                 foreach (ref t; table)
                     if (t.id == id)
                         merged = false;
@@ -699,6 +825,11 @@ final class RegionView
             if (r.map == map && r.state == RegionState.granted && r.rect.containsKey(cell))
                 return r.owner;
         return 0;
+    }
+
+    Region creatureRegion(uint spawn) const
+    {
+        return creatureRegions.get(spawn, Region.init);
     }
 
     /// The regions this node owns, as of the last `refresh`.

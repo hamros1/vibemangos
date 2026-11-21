@@ -828,13 +828,17 @@ final class Map : CombatWorld, GameObjectWorld
     }
 
     /// Loads one cell: its spawns, once.
-    private void loadCell(ulong key)
+    package void loadCell(ulong key)
     {
         if (spawner is null || key in loadedCells || (owns !is null && !owns(key)))
             return;
         loadedCells[key] = true;
         foreach (object; spawner(id, key))
-            hold(object, key);
+        {
+            const slot = slotFor(object.guid);
+            if (slot == uint.max || at(slot).replica)
+                hold(object, key);
+        }
     }
 
     /// How often `update` looks for idle cells.
@@ -1416,28 +1420,9 @@ final class Map : CombatWorld, GameObjectWorld
         {
             if (!entities.holds(slot))
                 continue;
-            auto object = at(slot).object;
-            const home = at(slot).home;
-            auto migrant = save(object);
-            if (migrant.kind == MigrantKind.none)
-                continue; // not carried (a player's corpse, a pet): it stays here
-            if (onObjectGone !is null)
-                onObjectGone(object); // its state is in the migrant: what it held here goes
-            migrant.home = home;
-            migrants ~= migrant;
-            at(slot).home = noCell;
-            at(slot).replicatedTo = null;
-            if (auto source = cast(Replicable) object)
-            {
-                auto replica = new Replica(object.guid, next, encodeState(source, serverTime()));
-                auto e = &at(slot);
-                e.object = replica;
-                e.mover = replica;
-                e.replica = true;
-                ++replicaCount_;
-                e.visibilityAt = replica.position;
-                startTicking(slot);
-            }
+            auto migrant = moveObjectOut(slot, next, save);
+            if (migrant.kind != MigrantKind.none)
+                migrants ~= migrant;
         }
         ulong[] cells;
         foreach (cell, _; loadedCells)
@@ -1446,6 +1431,33 @@ final class Map : CombatWorld, GameObjectWorld
         foreach (cell; cells)
             loadedCells.remove(cell);
         return encodeBundle(cells, migrants);
+    }
+
+    /// Captures one object and replaces its local simulation with a replica of the new owner.
+    private Migrant moveObjectOut(uint slot, ushort next, scope Migrant delegate(MapObject) save)
+    {
+        auto object = at(slot).object;
+        const home = at(slot).home;
+        auto migrant = save(object);
+        if (migrant.kind == MigrantKind.none)
+            return migrant; // a player's corpse or pet stays here
+        if (onObjectGone !is null)
+            onObjectGone(object); // its state is in the migrant: what it held here goes
+        migrant.home = home;
+        at(slot).home = noCell;
+        at(slot).replicatedTo = null;
+        if (auto source = cast(Replicable) object)
+        {
+            auto replica = new Replica(object.guid, next, encodeState(source, serverTime()));
+            auto e = &at(slot);
+            e.object = replica;
+            e.mover = replica;
+            e.replica = true;
+            ++replicaCount_;
+            e.visibilityAt = replica.position;
+            startTicking(slot);
+        }
+        return migrant;
     }
 
     /**
@@ -1461,35 +1473,81 @@ final class Map : CombatWorld, GameObjectWorld
         foreach (cell; cells)
             loadedCells[cell] = true;
         foreach (ref m; migrants)
-        {
-            auto object = restore(m);
-            if (object is null)
-                continue;
-            const guid = object.guid;
-            const at_ = cellKeyAt(object.position.x, object.position.y);
-            auto slot = slotFor(guid);
-            if (slot != uint.max && at(slot).replica)
-                becomeOwn(slot, object, m.home, at_);
-            else
-            {
-                if (slot != uint.max)
-                {
-                    // Spawned afresh here a moment ago (a gained cell loaded before its bundle was applied): the
-                    // migrant is the newer state. Its viewers see it go and come back as it really is.
-                    import dmangos.log : warning;
+            moveObjectIn(m, restore);
+    }
 
-                    warning!"migration: object %016X was spawned here afresh; the migrated one replaces it"(guid);
-                    forget([guid]);
-                }
-                slot = newEntity(Entity(guid, null, object, cast(Moving) object, false, noCell, 0, m.home,
-                    object.position));
-                putInCell(slot, at_);
+    /// Restores one object, retaining the slot and viewers of any existing replica.
+    private void moveObjectIn(const ref Migrant m, scope MapObject delegate(const ref Migrant) restore)
+    {
+        auto object = restore(m);
+        if (object is null)
+            return;
+        const guid = object.guid;
+        const at_ = cellKeyAt(object.position.x, object.position.y);
+        auto slot = slotFor(guid);
+        if (slot != uint.max && at(slot).replica)
+            becomeOwn(slot, object, m.home, at_);
+        else
+        {
+            if (slot != uint.max)
+            {
+                // Spawned afresh here a moment ago (a gained cell loaded before its bundle was applied): the
+                // migrant is the newer state. Its viewers see it go and come back as it really is.
+                import dmangos.log : warning;
+
+                warning!"migration: object %016X was spawned here afresh; the migrated one replaces it"(guid);
+                forget([guid]);
             }
-            if (at(slot).mover !is null)
-                startTicking(slot);
-            replicate(slot, at_);
-            updateObjectVisibility(object);
+            slot = newEntity(Entity(guid, null, object, cast(Moving) object, false, noCell, 0, m.home,
+                object.position));
+            putInCell(slot, at_);
         }
+        if (at(slot).mover !is null)
+            startTicking(slot);
+        replicate(slot, at_);
+        updateObjectVisibility(object);
+    }
+
+    /// A creature lease moves one spawn independently of the region containing its home.
+    ubyte[] releaseCreatureLoan(ulong guid, ushort next, scope Migrant delegate(MapObject) save)
+    {
+        const slot = slotFor(guid);
+        if (slot == uint.max || at(slot).replica)
+            return null;
+        auto migrant = moveObjectOut(slot, next, save);
+        if (migrant.kind == MigrantKind.none)
+            return null;
+        if (!next)
+            forget([guid]);
+        return cast(ubyte[]) encodeBundle(null, [migrant]);
+    }
+
+    void giveCreatureHome(ulong guid, ulong cell)
+    {
+        const slot = slotFor(guid);
+        if (slot != uint.max && !at(slot).replica)
+            at(slot).home = cell;
+    }
+
+    /// Known unit replicas within the caller's assistance radius.
+    Replica[] creatureReplicasNear(Position center, float range)
+    {
+        Replica[] result;
+        foreach (slot; objectSlotsNear(center, range))
+            if (auto replica = cast(Replica) at(slot).object)
+                if (replica.fields.type == TypeId.unit)
+                    result ~= replica;
+        return result;
+    }
+
+    void delegate(Creature, UnitRef, float) remoteAssistance;
+
+    bool mayAskRemoteAssistance() const { return remoteAssistance !is null; }
+
+    void askRemoteAssistance(Creature caller, UnitRef enemy, float radius)
+    {
+        if (remoteAssistance !is null)
+            remoteAssistance(caller, enemy, radius);
     }
 
     /// Cells were gained: every player looks around again, so those near them load, and so do cells other nodes want.

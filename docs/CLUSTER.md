@@ -355,6 +355,20 @@ creature arrives hurt; a boss arrives in the same phase with the same timers.
 * **Summoned creatures** are not handed over: they are dropped with their cell. A player's corpse
   stays where it is.
 
+### Creature assistance
+
+An open-world creature calling for help can borrow a nearby allied spawn from another node. Event
+spawns stay with their home region because an event can replace or remove them. After
+the usual assistance delay, the coordinator reserves the helper's spawn in the region table and
+uses a separate lease to move that creature to the fight's node. That node checks the caller,
+victim, faction and line of sight again before the helper joins. A defeated helper stays where it
+fell until its corpse expires.
+
+The reservation follows the creature even if its home cell changes owners. The current owner of
+the home cell skips that spawn until the helper comes home and the lease retires. If the borrower
+is lost, the coordinator waits for its lease to expire and recovers the spawn on the current home
+owner. Recovery uses the saved respawn time if the creature died.
+
 ### Dungeons and battlegrounds
 
 A dungeon or battleground is one region, and its node hosts every copy. It alone chooses which copy a
@@ -566,8 +580,7 @@ services line (`ServiceHost.describe`). Every log line of the cluster code start
 
 ## Not yet
 
-* A creature answering a call for help from another node's creature; loot rights counting members on
-  other nodes; a player's spells at another node's player.
+* Loot rights counting members on other nodes and a player's spells at another node's player.
 * Surviving an owner's loss without disconnecting the client: the home could take its player back
   from the last save, which is worth having only with gateways and much more frequent player saves.
 * More than one standby, and a quorum of coordinators.

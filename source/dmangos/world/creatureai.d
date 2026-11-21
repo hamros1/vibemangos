@@ -187,6 +187,9 @@ interface CombatWorld : MotionWorld
     /// The creatures within `range` yards of `center` here.
     Creature[] creaturesNear(Position center, float range);
 
+    bool mayAskRemoteAssistance() const;
+    void askRemoteAssistance(Creature caller, UnitRef enemy, float radius);
+
     /// The players within `range` yards of `center` here, as units.
     UnitRef[] playersNear(Position center, float range);
 
@@ -605,7 +608,7 @@ final class CreatureAI : Scripted, CreatureHost
             }
             if (inCombat_)
                 updateReachability(world, diff);
-            if (inCombat_ && assistanceReceivers.length)
+            if (inCombat_ && assistanceTimer > 0)
             {
                 assistanceTimer -= diff;
                 if (assistanceTimer <= 0)
@@ -873,7 +876,7 @@ private:
             if (other !is me && other.ai !is null && other.ai.canAssistAgainst(me, enemy)
                 && world.inLineOfSight(me.position, other.position))
                 receivers ~= other;
-        if (receivers.length == 0)
+        if (receivers.length == 0 && !world.mayAskRemoteAssistance())
             return;
         assistanceReceivers = receivers;
         assistanceEnemy = enemy.combatGuid;
@@ -944,6 +947,19 @@ private:
                 if (other.ai.answersCallsForHelp)
                     other.ai.joinFightAgainst(enemy, world);
             }
+        const radius = me.template_.callForHelp ? float(me.template_.callForHelp) : assistanceRadius;
+        world.askRemoteAssistance(me, enemy, radius);
+    }
+
+    /// A borrowed creature answers once the caller and enemy are authoritative on this map.
+    package void answerRemoteAssistance(Creature caller, UnitRef enemy, CombatWorld world)
+    {
+        if (enemy && caller !is null && caller.ai !is null && caller.ai.inCombat && caller.ai.currentVictim == enemy.combatGuid
+            && canAssistAgainst(caller, enemy) && answersCallsForHelp && world.inLineOfSight(me.position, caller.position))
+        {
+            calledAssistance = true;
+            joinFightAgainst(enemy, world);
+        }
     }
 
     /// Attacks `enemy`, or (fighting already, in a dungeon) adds it to those it fights.
@@ -1451,6 +1467,7 @@ private:
         me.setLootRecipient(0, 0); // its loot is nobody's any more
         calledAssistance = false;  // the next fight calls again
         assistanceReceivers = null;
+        assistanceTimer = 0;
         me.values.set!UNIT_FIELD_TARGET(0UL);
         me.values.set!UNIT_FIELD_FLAGS(me.values.get!UNIT_FIELD_FLAGS & ~UnitFlags.inCombat);
         removeAurasOnEvade(world);

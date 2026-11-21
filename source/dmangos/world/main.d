@@ -185,6 +185,9 @@ private int run(WorldConfig config, string configPath)
         // The world simulates only what this node owns: maps ask, and are told of changes.
         context.ownsCell = (uint map, ulong cell) => cluster.regions.ownsCell(map, cell);
         cluster.onOwnership = &context.regionsChanged;
+        cluster.onCreatureRelease = &context.releaseCreatureLoan;
+        context.sendCreatureLoan = &cluster.creatureLoan;
+        context.creatureLease = &cluster.regions.creatureRegion;
         // Replicas go both ways between nodes.
         bridge = new ClusterBridge(cluster, context, config.cluster.leaseMs);
         cluster.replication = bridge;
