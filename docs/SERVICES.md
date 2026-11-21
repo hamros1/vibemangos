@@ -182,8 +182,10 @@ made, or room in a running one filled, as players join; the service's `tick` rem
 invitations and expires them after 80 seconds. What the queue tells a player goes to the player's node.
 
 A battleground map, like a dungeon, is one region, so one node runs every copy of it. A player
-accepting an invitation moves to that node, as for a dungeon. After the service moves, the queues
-start empty: invitations are lost and running copies are not refilled.
+accepting an invitation moves to that node, as for a dungeon. A planned service move carries the
+queue order, groups, player slots, invitations, wait averages and running copies. Timers resume with
+their remaining time on the new host's clock. If the old host is lost before it can hand off, the
+service starts with empty queues.
 
 ### The Ahn'Qiraj war effort
 

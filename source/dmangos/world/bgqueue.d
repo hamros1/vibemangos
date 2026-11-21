@@ -15,12 +15,12 @@
  *
  * A player may wait in up to three queues (`queueSlots`), each a slot the client
  * shows; the queue keeps them, and what it tells a player (`SMSG_BATTLEFIELD_STATUS`,
- * `SMSG_BATTLEFIELD_LIST`) goes to the player's node. If the service moves to another node, the
- * queues there start empty (and running copies are not refilled).
+ * `SMSG_BATTLEFIELD_LIST`) goes to the player's node. On a planned move the queue state follows
+ * the service, including its running copies and pending invitations.
  */
 module dmangos.world.bgqueue;
 
-import core.time : Duration, MonoTime, msecs, seconds;
+import core.time : Duration, MonoTime, hnsecs, msecs, seconds;
 
 import dmangos.bytes : ByteWriter;
 import dmangos.cluster.services : Call, Service, ServiceKind;
@@ -191,6 +191,138 @@ final class BattlegroundQueue
         Running[uint] running;
         uint[waitSamples][bracketCount][2][4] waitTimes; // [type][team][bracket]
         uint[bracketCount][2][4] waitNext;
+    }
+
+    // Group references in tickets become one-based indexes into the ordered group list.
+    private static struct SavedGroup
+    {
+        ulong[] players;
+        ubyte team;
+        BattlegroundType type;
+        ubyte bracket;
+        uint desired;
+        long joined;
+        uint invitedTo;
+        long inviteEnds;
+        bool reminded;
+    }
+
+    private static struct SavedTicket
+    {
+        BattlegroundType type;
+        Stage stage;
+        uint instance;
+        uint group;
+    }
+
+    private static struct SavedPlayer
+    {
+        ulong guid;
+        ushort node;
+        SavedTicket[queueSlots] slots;
+    }
+
+    private static struct SavedCopy
+    {
+        uint instance;
+        BattlegroundType type;
+        ubyte bracket;
+        uint clientId;
+        uint[2] invited;
+        BattlegroundStatus status;
+        long made;
+    }
+
+    private static struct SavedQueue
+    {
+        SavedGroup[] groups;
+        SavedPlayer[] players;
+        SavedCopy[] copies;
+        typeof(waitTimes) waitTimes_;
+        typeof(waitNext) waitNext_;
+        bool testing;
+    }
+
+    /// Capture the queue for a handoff. Times are offsets in 100 ns units from this node's clock.
+    private ubyte[] saveState() const
+    {
+        import dmangos.plaindata : encode;
+
+        const now = clock();
+        SavedQueue state;
+        uint[const(Waiting)] groupIds;
+        foreach (ref byBracket; waiting)
+            foreach (ref byTeam; byBracket)
+                foreach (list; byTeam)
+                    foreach (g; list)
+                    {
+                        state.groups ~= SavedGroup(g.players.dup, g.team, g.type, g.bracket, g.desired,
+                            (g.joined - now).total!"hnsecs", g.invitedTo,
+                            g.invitedTo ? (g.inviteEnds - now).total!"hnsecs" : 0, g.reminded);
+                        groupIds[g] = cast(uint) state.groups.length;
+                    }
+        foreach (guid, ref slots; tickets)
+        {
+            SavedPlayer player;
+            player.guid = guid;
+            player.node = nodes.get(guid, 0);
+            foreach (i, ref slot; slots)
+                player.slots[i] = SavedTicket(slot.type, slot.stage, slot.instance,
+                    slot.group is null ? 0 : groupIds[slot.group]);
+            state.players ~= player;
+        }
+        foreach (ref copy; running)
+            state.copies ~= SavedCopy(copy.instance, copy.type, copy.bracket, copy.clientId, copy.invited,
+                copy.status, (copy.made - now).total!"hnsecs");
+        state.waitTimes_ = waitTimes;
+        state.waitNext_ = waitNext;
+        state.testing = testing;
+        ubyte[] bytes;
+        encode(bytes, state);
+        return bytes;
+    }
+
+    /// Restore a fresh queue using this node's clock, templates and callbacks.
+    private void restoreState(const(ubyte)[] bytes)
+    {
+        import dmangos.plaindata : decode;
+
+        if (!bytes.length)
+            return;
+        SavedQueue state;
+        decode(bytes, state);
+        const now = clock();
+        auto groups = new Waiting[state.groups.length + 1];
+        foreach (i, ref saved; state.groups)
+        {
+            auto g = new Waiting;
+            g.players = saved.players;
+            g.team = saved.team;
+            g.type = saved.type;
+            g.bracket = saved.bracket;
+            g.desired = saved.desired;
+            g.joined = now + saved.joined.hnsecs;
+            g.invitedTo = saved.invitedTo;
+            if (g.invitedTo)
+                g.inviteEnds = now + saved.inviteEnds.hnsecs;
+            g.reminded = saved.reminded;
+            waiting[g.type][g.bracket][g.team] ~= g;
+            groups[i + 1] = g;
+        }
+        foreach (ref player; state.players)
+        {
+            Ticket[queueSlots] slots;
+            foreach (i, ref slot; player.slots)
+                slots[i] = Ticket(slot.type, slot.stage, slot.instance, groups[slot.group]);
+            tickets[player.guid] = slots;
+            nodes[player.guid] = player.node;
+        }
+        foreach (ref copy; state.copies)
+            running[copy.instance] = Running(copy.instance, copy.type, copy.bracket, copy.clientId, copy.invited,
+                copy.status, now + copy.made.hnsecs);
+        waitTimes = state.waitTimes_;
+        waitNext = state.waitNext_;
+        testing = state.testing;
     }
 
     /// Players waiting or invited in all queues.
@@ -819,6 +951,17 @@ struct BattlegroundQueueHost
 {
     BattlegroundQueue queue;
 
+    this(BattlegroundQueue queue, const(ubyte)[] state)
+    {
+        this.queue = queue;
+        queue.restoreState(state);
+    }
+
+    ubyte[] saveState() const
+    {
+        return queue.saveState();
+    }
+
     ///
     @Call void join(const ref BattlegroundJoin r)
     {
@@ -1004,6 +1147,80 @@ unittest
     assert(q.ticketsOf(2).length == 3 && q.queuedPlayers == 3);
     q.logout(2);
     assert(q.ticketsOf(2) is null && q.queuedPlayers == 0);
+}
+
+// Hand a live queue to a service host with a different monotonic clock.
+unittest
+{
+    import dmangos.bytes : ByteReader;
+    import dmangos.cluster.services : ServiceHost;
+
+    auto now = MonoTime.currTime;
+    auto otherNow = now + 3600.seconds;
+    Sent[] sent;
+    alias WS = BattlegroundType.warsongGulch;
+    alias AV = BattlegroundType.alteracValley;
+    alias Stage = BattlegroundQueue.Stage;
+    enum kind = ServiceKind.battlegroundQueue;
+    auto from = new ServiceHost;
+    auto to = new ServiceHost;
+    auto q = testQueue(now, sent);
+    q.templates[AV] = BattlegroundTemplate(1, 20, 40, 51, 60);
+    from.host(BattlegroundQueueHost(q, null));
+    to.provide!BattlegroundQueueHost((const(ubyte)[] state) {
+        auto destination = testQueue(otherNow, sent);
+        destination.templates[AV] = q.templates[AV];
+        return BattlegroundQueueHost(destination, state);
+    });
+
+    q.join(2, 2, 0, 60, AV, 0);
+    q.joinGroup([1UL, 2], [1, 2], 0, 60, WS, 0);
+    now += 10.seconds;
+    q.joinGroup([3UL, 4], [2, 2], 1, 60, WS, 0);
+    const inside = q.port(1, 1, WS, true);
+    assert(inside.enter);
+    q.join(5, 2, 0, 60, WS, 0);
+    q.joinGroup([6UL, 7], [1, 2], 0, 60, WS, 1);
+    q.joinGroup([8UL, 9], [2, 1], 0, 60, WS, 1);
+    q.changed(inside.instance, BattlegroundStatus.inProgress);
+    now += 61.seconds;
+    q.tick();
+    assert(q.invited(inside.instance) == 4);
+
+    const state = from.stop(kind);
+    sent = null;
+    assert(!from.hosts(kind) && to.start(kind, state));
+    auto moved = to.local!BattlegroundQueueHost().queue;
+    assert(sent.length == 0);
+    assert(moved.ticketsOf(1)[0].stage == Stage.inside);
+    assert(moved.ticketsOf(2)[0].type == AV && moved.ticketsOf(2)[1].stage == Stage.invited);
+    assert(moved.ticketsOf(6)[0].group is moved.ticketsOf(7)[0].group);
+    assert(moved.nodes[7] == 2);
+    assert(moved.waitTimes == q.waitTimes && moved.waitNext == q.waitNext);
+    assert(moved.copies[inside.instance].status == BattlegroundStatus.inProgress);
+    assert(moved.copies[inside.instance].invited == [3, 2]);
+    assert(moved.sinceMs(moved.copies[inside.instance].made) == 61_000);
+    assert(moved.invited(inside.instance) == 4);
+
+    moved.tick();
+    assert(sent.length == 0, "already-sent reminders stay sent");
+    moved.status(2, 2);
+    auto invite = ByteReader(sent[$ - 1].body_);
+    assert(invite.read!uint == 1, "the invitation stays in the same client slot");
+    invite.skip(13);
+    assert(invite.read!uint == 19_000, "the client sees the invitation time remaining");
+    const accepted = moved.port(2, 2, WS, true);
+    assert(accepted.enter && accepted.instance == inside.instance && accepted.team == 0);
+
+    otherNow += 18.seconds;
+    moved.tick();
+    assert(moved.invited(inside.instance) == 3, "invitations still valid before the deadline");
+    otherNow += 1.seconds;
+    moved.tick();
+    assert(moved.invited(inside.instance) == 0, "invitations expire at the original remaining time");
+    moved.left(inside.instance, 1, 0);
+    assert(moved.ticketsOf(6)[0].stage == Stage.invited && moved.ticketsOf(7)[0].stage == Stage.invited);
+    assert(moved.ticketsOf(8)[0].stage == Stage.queued, "the first waiting group refills the running copy");
 }
 
 // The battlemaster's list: the copies of the player's bracket, by the numbers players see.

@@ -560,7 +560,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         loadInstances();
         loadCommandOverrides();
         // The cluster services this node can run (docs/SERVICES.md); standalone it runs them all at once.
-        services.provide!BattlegroundQueueHost((const(ubyte)[]) => BattlegroundQueueHost(newBattlegroundQueue()));
+        services.provide!BattlegroundQueueHost((const(ubyte)[] state) =>
+            BattlegroundQueueHost(newBattlegroundQueue(), state));
         battlegrounds = new Battlegrounds(this);
         gameEvents = new GameEvents;
         data.npcs.conditions.eventActive = (uint id) => gameEvents.isActive(id);

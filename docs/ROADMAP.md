@@ -183,8 +183,8 @@ The largest area. In order:
      the database), the lords' summoning rituals and march.
    * The scoreboard's columns, `WorldStateUI.dbc`'s (Alterac Valley's mines captured and leaders killed too), and
      the scores kept (`pvpstats_*`, `battleground_score_statistics`): done.
-   * Not yet:
-     * A queue service that moves to another node starts empty.
+   * Planned queue service moves preserve queues and invitations, and running copies can still be
+     refilled. Losing the queue host without a handoff starts the service empty.
 
 * Spell casting with effects, auras (feeding `stats.d`), cooldowns and the attack swing loop.
 * Creature AI, threat, death, loot, XP and level-up (stats recomputed for the new level).
