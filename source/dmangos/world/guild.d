@@ -13,7 +13,7 @@ module dmangos.world.guild;
 import std.uni : toLower;
 
 import dmangos.bytes : ByteWriter;
-import dmangos.world.database : GuildMemberRecord, GuildRankRecord, GuildRecord;
+import dmangos.world.database : GuildEventRecord, GuildMemberRecord, GuildRankRecord, GuildRecord;
 
 /// The fewest and the most ranks a guild has.
 enum uint minRanks = 5, maxRanks = 10;
@@ -78,6 +78,22 @@ enum GuildError : uint
     rankTooLowS = 0x0E,
 }
 
+/// What a guild's event log records (`GuildEventLogTypes`). The 1.12 client has no way to ask for it: it is the
+/// server's, kept in `guild_eventlog` as CMaNGOS keeps it (who invited whom, joined, was promoted or demoted, removed, left).
+enum GuildEventLogType : ubyte
+{
+    invitePlayer = 1,
+    joinGuild = 2,
+    promotePlayer = 3,
+    demotePlayer = 4,
+    uninvitePlayer = 5,
+    leaveGuild = 6,
+}
+
+/// The events a guild's log keeps (`GUILD_EVENTLOG_MAX_RECORDS`, and `Guild.EventLogRecordsCount`'s only value): the
+/// rows are a ring of so many places.
+enum uint guildEventLogMax = 100;
+
 /// The events of `SMSG_GUILD_EVENT`.
 enum GuildEvent : ubyte
 {
@@ -139,6 +155,39 @@ final class Guild
     @property uint lowestRank() const
     {
         return record.ranks.length ? cast(uint) record.ranks.length - 1 : GuildRank.initiate;
+    }
+
+    /**
+     * An event for its log (`LogGuildEvent`): in the place after the newest one's (a ring of `guildEventLogMax`), the
+     * oldest dropped once there are that many. The caller saves it (`WorldDatabase.saveGuildEvent`).
+     */
+    GuildEventRecord logEvent(GuildEventLogType type, uint player1, uint player2, ubyte newRank, long now)
+    {
+        const last = record.events.length ? record.events[$ - 1].logGuid : 0;
+        auto e = GuildEventRecord((last + 1) % guildEventLogMax, type, player1, player2, newRank, now);
+        if (record.events.length >= guildEventLogMax)
+            record.events = record.events[1 .. $];
+        record.events ~= e;
+        return e;
+    }
+
+    /// Who last invited `player` (low guid), by the log (`GetGuildInviter`); 0 if nobody did.
+    uint inviterOf(uint player) const
+    {
+        foreach_reverse (ref e; record.events)
+            if (e.type == GuildEventLogType.invitePlayer && e.player2 == player)
+                return e.player1;
+        return 0;
+    }
+
+    unittest
+    {
+        // The ring: after the 99th place the 0th, the oldest event dropped past 100.
+        auto g = new Guild(GuildRecord.init);
+        foreach (i; 0 .. 150)
+            g.logEvent(GuildEventLogType.joinGuild, i, 0, 0, i);
+        assert(g.events.length == guildEventLogMax && g.events[0].player1 == 50 && g.events[$ - 1].player1 == 149);
+        assert(g.events[$ - 1].logGuid == 150 % 100 && g.events[49].logGuid == 0);
     }
 
     /// How many accounts its members belong to.

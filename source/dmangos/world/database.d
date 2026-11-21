@@ -128,6 +128,17 @@ struct GuildMemberRecord
     uint account;
 }
 
+/// A `guild_eventlog` row (CMaNGOS's `GuildEventLogEntry`): who did what to whom, and when.
+struct GuildEventRecord
+{
+    uint logGuid;   /// its place in the guild's ring of rows (1 to 99, then 0)
+    ubyte type;     /// `GuildEventLogType`
+    uint player1;   /// who did it (low guid)
+    uint player2;   /// to whom (0: nobody)
+    ubyte newRank;  /// a promotion's or demotion's new rank
+    long time;      /// Unix time
+}
+
 /// A `guild` row with its ranks and members.
 struct GuildRecord
 {
@@ -139,6 +150,7 @@ struct GuildRecord
     long created;
     GuildRankRecord[] ranks;
     GuildMemberRecord[] members;
+    GuildEventRecord[] events; /// its event log, the oldest first (the newest 100)
 }
 
 /// A `petition` (a guild charter) and its `petition_sign`s.
@@ -431,6 +443,8 @@ interface WorldDatabase
     void saveGuildMember(uint guild, uint member, uint rank, string publicNote, string officerNote);
     /// A member gone.
     void deleteGuildMember(uint member);
+    /// An event of the guild's log, in its place (`logGuid`: the row there before goes).
+    void saveGuildEvent(uint guild, const ref GuildEventRecord event);
     /// A guild gone: its rows, ranks, members and log.
     void deleteGuild(uint guild);
 
@@ -878,6 +892,7 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
         statements.saveGuildMember(guild, member, rank, publicNote, officerNote);
     }
     void deleteGuildMember(uint member) { statements.deleteGuildMember(member); }
+    void saveGuildEvent(uint guild, const ref GuildEventRecord event) { statements.saveGuildEvent(guild, event); }
     void deleteGuild(uint guild) { statements.deleteGuild(guild); }
     Nullable!PetitionRecord loadPetition(uint petition) { return statements.loadPetition(petition); }
     void createPetition(uint owner, uint petition, string name) { statements.createPetition(owner, petition, name); }
@@ -1593,6 +1608,7 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
             GuildRecord copy = *g;
             copy.ranks = g.ranks.dup;
             copy.members = g.members.dup;
+            copy.events = g.events.dup;
             foreach (ref m; copy.members)
                 if (auto c = m.guid in loadable)
                 {
@@ -1616,10 +1632,11 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
     void saveGuild(const ref GuildRecord guild)
     {
         auto g = &guildRows.require(guild.id, GuildRecord.init);
-        auto ranks = g.ranks, members = g.members;
+        auto ranks = g.ranks, members = g.members, events = g.events;
         *g = cast(GuildRecord) guild;
         g.ranks = ranks;
         g.members = members;
+        g.events = events;
     }
     void saveGuildRanks(uint guild, const(GuildRankRecord)[] ranks)
     {
@@ -1641,6 +1658,14 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
             g.members = g.members.filter!(m => m.guid != member).array;
     }
     void deleteGuild(uint guild) { guildRows.remove(guild); }
+    void saveGuildEvent(uint guild, const ref GuildEventRecord event)
+    {
+        import std.algorithm.iteration : filter;
+        import std.array : array;
+
+        if (auto g = guild in guildRows)
+            g.events = g.events.filter!(e => e.logGuid != event.logGuid).array ~ event;
+    }
     PetitionRecord[uint] petitionRows; /// by charter item
     uint[uint][uint] petitionAccounts; /// petition -> signer -> account
     Nullable!PetitionRecord loadPetition(uint petition)

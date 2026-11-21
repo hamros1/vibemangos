@@ -1168,14 +1168,15 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 ## world/guild.d
 
 * Projects: CMaNGOS
-* Functions: `Guild::HasRankRight`, `Guild::Query`
+* Functions: `Guild::HasRankRight`, `Guild::Query`, `Guild::LogGuildEvent`, `Guild::GetGuildInviter`, `Guild::LoadGuildEventLogFromDB`
+* Constants: `GuildEventLogTypes`, `GUILD_EVENTLOG_MAX_RECORDS`
 * Constants: `GUILD_RANKS_MAX_COUNT`, `GUILD_RANKS_MIN_COUNT`, `SMSG_GUILD_COMMAND_RESULT`, `SMSG_GUILD_EVENT`, `SMSG_GUILD_QUERY_RESPONSE`
 
 ## world/guildhandlers.d
 
 * Projects: CMaNGOS
 * Files: `GuildHandler.cpp`, `PetitionsHandler.cpp`
-* Functions: `Guild::AddMember`, `Guild::BroadcastPacket`, `Guild::Create`, `Guild::DelMember`, `Guild::Disband`, `Guild::Roster`
+* Functions: `Guild::AddMember`, `Guild::BroadcastPacket`, `Guild::Create`, `Guild::DelMember`, `Guild::Disband`, `Guild::Roster`, `Guild::LogGuildEvent` (its callers in `GuildHandler.cpp`)
 * Constants: `CHARTER_DISPLAY_ID`, `CHAT_MSG_GUILD`, `CHAT_MSG_OFFICER`, `CMSG_GUILD_CREATE`, `CONFIG_UINT32_MIN_PETITION_SIGNS`, `ERR_GUILD_RANK_IN_USE`, `ERR_PLAYER_NO_MORE_IN_GUILD`, `GUILD_CHARTER`, `GUILD_CHARTER_COST`, `MSG_TABARDVENDOR_ACTIVATE`
 
 ## world/honor.d

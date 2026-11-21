@@ -238,7 +238,9 @@ What works now:
     leaving master's best-ranked member takes over), the message of the day, the guild information,
     public and officer notes, ranks' names and rights (5 to 10 ranks), the tabard (10 gold, the
     master's, at a tabard designer), guild and officer chat by rank rights, and members signing on
-    and off. Saved in `guild`, `guild_member`, `guild_rank`, `petition` and `petition_sign`. The
+    and off. Saved in `guild`, `guild_member`, `guild_rank`, `petition` and `petition_sign`; the event log
+    (invitations, joining, promotions, demotions, removals, leaving: the newest 100) in `guild_eventlog`, as
+    CMaNGOS keeps it (the 1.12 client has no window for it, `MSG_GUILD_EVENT_LOG_QUERY` came with 2.0). The
     client's `/gcreate` (`CMSG_GUILD_CREATE`) founds a guild for game masters only.
   * **Pets:** a hunter tames a beast of its level or
     lower (Tame Beast's twenty-second channel), dismisses it, calls it back and revives it; a warlock

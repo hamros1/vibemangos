@@ -247,9 +247,10 @@ GM command set has none).
 
 ### 7. Social and progression
 
-* Friends and ignore lists (`social.d`) and guilds (`guild.d`, `guildhandlers.d`): done. Not yet:
-  the guild event log (`guild_eventlog`), guild-named tabards in the shop list. Like
-  `grouphandlers.d` (mail, auctions and trade are done).
+* Friends and ignore lists (`social.d`) and guilds (`guild.d`, `guildhandlers.d`), the guild event log
+  (`guild_eventlog`, kept for the server: the 1.12 client cannot ask for it): done. Like `grouphandlers.d`
+  (mail, auctions and trade are done). The guild tabard needs nothing of the server: the client draws the
+  wearer's guild's emblem (`SMSG_GUILD_QUERY_RESPONSE`), and the vendors' Guild Tabard (5976) is one item for all.
 * Pets (`pet.d`, `petai.d`, `pethandlers.d`): taming, summoning, calling,
   dismissing, reviving, the bar and its commands, following and fighting, experience, renaming,
   abandoning, stables, saving. Loyalty and happiness over time and Feed Pet: done. The `.pet` GM commands and pet training (teaching spells, training points, the hunter
