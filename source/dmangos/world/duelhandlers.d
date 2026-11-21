@@ -271,12 +271,10 @@ private void testDuel(bool crossNode)
     import dmangos.bytes : ByteWriter;
     import dmangos.dbc : buildDbc;
     import dmangos.world.clientdata : spellCastTimesFormat, spellRangeFormat;
-    import dmangos.world.context : PlayerRelay, WorldContext;
     import dmangos.world.grid : cellKeyAt;
     import dmangos.world.movement : Position;
     import dmangos.world.playercreate : NewSpell;
     import dmangos.world.replication : encodePlayerState;
-    import dmangos.world.session : WorldSession;
     import dmangos.world.opcodes;
     import dmangos.world.packets : ClientGuid;
     import dmangos.world.player : DeathState, Player;
@@ -303,41 +301,7 @@ private void testDuel(bool crossNode)
         node.data.spells.spells.edit(duelSpell).miscValue[0] = duelFlagEntry;
     }
 
-    static final class Relay : PlayerRelay
-    {
-        WorldContext home, owner;
-        WorldSession remote;
-
-        void migrate(ushort target, uint, const(ubyte)[] state)
-        {
-            import dmangos.world.character : Character;
-
-            assert(target == owner.nodeId && remote is null);
-            remote = new WorldSession(owner, Character.migrationAccount(state), home.nodeId);
-            assert(remote.arrive(state));
-        }
-
-        void toHome(ushort, uint account, ushort opcode, const(ubyte)[] body_)
-        {
-            (cast(WorldSession) home.sessionOf(account)).fromOwner(opcode, body_);
-        }
-
-        void toOwner(ushort, uint, ushort opcode, const(ubyte)[] body_) { remote.fromHome(opcode, body_); }
-        void disconnect(ushort, uint) { remote.clientGone(); }
-        void left(ushort, uint, bool) {}
-        void remoteDone(uint) {}
-        void moved(ushort, uint, ushort) {}
-    }
-
-    auto relay = new Relay;
-    if (crossNode)
-    {
-        home.nodeId = 1;
-        context.nodeId = 2;
-        relay.home = home;
-        relay.owner = context;
-        home.playerRelay = context.playerRelay = relay;
-    }
+    auto relay = crossNode ? new TestPlayerRelay(home, context) : null;
 
     // Facing each other, two yards apart.
     auto anduin = loggedIn(home, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 0),

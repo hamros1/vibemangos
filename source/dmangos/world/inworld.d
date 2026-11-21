@@ -27,6 +27,7 @@ struct ArrivalAction
     uint teleportMap = uint.max; /// a far teleport into a dungeon this node hosts (uint.max: none) ...
     Position teleportTo;         /// ... to here ...
     uint teleportInstance = uint.max; /// ... into this copy (uint.max: the player's own), its checks passed
+    ulong tradeTarget; /// a player to ask to trade
 }
 
 mixin template InWorldHandlers()
@@ -135,7 +136,7 @@ private:
     /**
      * The node this player's simulation should move to now, or 0. It moves when it stands well inside
      * another node's ground (`migrationMargin` all round: no going back and forth along a border), not
-     * within ten seconds of its last move, nor while dueling, teleporting or logging out. Away from home, it
+     * within ten seconds of its last move, nor while dueling, trading, teleporting or logging out. Away from home, it
      * goes straight on to a third node, its home told.
      */
     package ushort migrationTarget()
@@ -157,7 +158,7 @@ private:
             return 0;
         // A fight stays on the node it is on: the creatures it is with are simulated here. A flight too: the node
         // that flies it lands it (its state is not carried), and the player moves on from the ground.
-        if (inCombat || flying || duel !is null)
+        if (inCombat || flying || duel !is null || tradeSide !is null)
             return 0;
         const owner = context.regionOwnerAround(player.data.map, player.position, migrationMargin);
         if (owner == 0 || owner == context.nodeId)
@@ -186,6 +187,8 @@ private:
 
         if (action.attack)
             handleAttackSwing(ClientGuid(action.attack));
+        if (action.tradeTarget)
+            initiateTrade(action.tradeTarget, false);
         if (action.noticedBy)
             if (auto creature = cast(Creature) map.findObject(action.noticedBy))
                 if (creature.ai !is null && creature.ai.mayNotice)
@@ -220,7 +223,7 @@ private:
         auto replica = cast(Replica) map.findObject(target);
         if (replica is null || replica.owner == context.nodeId || context.playerRelay is null || !context.canWrite())
             return false;
-        if (teleporting != Teleport.none || loggingOut || transferring || duel !is null)
+        if (teleporting != Teleport.none || loggingOut || transferring || duel !is null || tradeSide !is null)
             return false;
         info!"%s: '%s' acts at %s, which node %s simulates: moving there"(remoteAddress, player.data.name,
             target & 0xFFFF_FFFF, replica.owner);
@@ -238,6 +241,7 @@ private:
         if (!context.canWrite())
             return;
         duelComplete(DuelEnd.fled); // a forced move (such as draining) ends it for both players
+        cancelTrade(true);
         petsOnLeave(); // saved, to come out again there
         flushPlayerChanges();
         const progress = player.progress(secondsInWorld());
@@ -277,6 +281,7 @@ private:
         w.put(action.teleportTo.z);
         w.put(action.teleportTo.orientation);
         w.put(action.teleportInstance);
+        w.put(action.tradeTarget);
         // The dungeon copy it is in, and where it came into it from (`.instance exit`).
         w.put(instanceId_);
         w.put(entryMap);
@@ -363,6 +368,7 @@ private:
         action.teleportMap = r.read!uint;
         action.teleportTo = Position(r.read!float, r.read!float, r.read!float, r.read!float);
         action.teleportInstance = r.read!uint;
+        action.tradeTarget = r.read!ulong;
         instanceId_ = r.read!uint;
         entryMap = r.read!uint;
         entryPoint = Position(r.read!float, r.read!float, r.read!float, r.read!float);

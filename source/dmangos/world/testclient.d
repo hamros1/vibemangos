@@ -29,9 +29,49 @@ import dmangos.crypto.hash : sha1;
 import dmangos.log;
 import dmangos.world.addons : ClientAddon, makeAddonBlock, standardAddonCrc;
 import dmangos.world.crypt : CipherState;
+import dmangos.world.context : PlayerRelay;
 import dmangos.world.database : WorldAccount;
 import dmangos.world.worlddata : ItemTemplate, PlayerInfo, WorldData;
 import dmangos.world.player : CharacterData;
+
+/// An in-memory link for a test that moves one player from its home to another node.
+final class TestPlayerRelay : PlayerRelay
+{
+    WorldContext home, owner;
+    WorldSession remote;
+
+    this(WorldContext home, WorldContext owner)
+    {
+        this.home = home;
+        this.owner = owner;
+        home.nodeId = 1;
+        owner.nodeId = 2;
+        home.playerRelay = owner.playerRelay = this;
+    }
+
+    void migrate(ushort target, uint, const(ubyte)[] state)
+    {
+        import dmangos.world.character : Character;
+
+        assert(target == owner.nodeId && remote is null);
+        remote = new WorldSession(owner, Character.migrationAccount(state), home.nodeId);
+        assert(remote.arrive(state));
+    }
+
+    void toHome(ushort, uint account, ushort opcode, const(ubyte)[] body_)
+    {
+        (cast(WorldSession) home.sessionOf(account)).fromOwner(opcode, body_);
+    }
+
+    void toOwner(ushort, uint, ushort opcode, const(ubyte)[] body_) { remote.fromHome(opcode, body_); }
+    void disconnect(ushort, uint) { remote.clientGone(); }
+    void left(ushort, uint account, bool toCharacterScreen)
+    {
+        (cast(WorldSession) home.sessionOf(account)).ownerLeft(toCharacterScreen);
+    }
+    void remoteDone(uint) {}
+    void moved(ushort, uint, ushort) {}
+}
 
 struct ServerPacketRead
 {

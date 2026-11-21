@@ -209,7 +209,11 @@ private:
     @Handles(Opcode.CMSG_INITIATE_TRADE, WorldState.inWorld)
     void handleInitiateTrade(ref ByteReader reader)
     {
-        const target = reader.read!ulong;
+        initiateTrade(reader.read!ulong, true);
+    }
+
+    void initiateTrade(ulong target, bool mayMigrate)
+    {
         if (tradeSide !is null)
             return;
         if (player.deathState != DeathState.alive)
@@ -219,6 +223,8 @@ private:
         if (loggingOut)
             return sendTradeStatus(TradeStatus.youLogout);
         auto other = cast(typeof(this)) context.onlinePlayer(target);
+        if (other is null && mayMigrate)
+            return initiateTradeAtReplica(target);
         if (other is null || other.player is null || other.map !is map)
             return sendTradeStatus(TradeStatus.noTarget);
         if (other is this || other.tradeSide !is null)
@@ -239,6 +245,31 @@ private:
         other.tradeSide = new TradeSide;
         other.tradeSide.trader = player.guid;
         other.sendTradeStatus(TradeStatus.beginTrade, player.guid);
+    }
+
+    /// Check what the local replica can tell us before moving. The owner checks the live player.
+    void initiateTradeAtReplica(ulong target)
+    {
+        import dmangos.world.inworld : ArrivalAction;
+        import dmangos.world.replication : Replica;
+
+        auto replica = cast(Replica) map.findObject(target);
+        if (replica is null || replica.fields.type != TypeId.player)
+            return sendTradeStatus(TradeStatus.noTarget);
+        if (!replica.fields.get!UNIT_FIELD_HEALTH)
+            return sendTradeStatus(TradeStatus.targetDead);
+        if (replica.fields.get!UNIT_FIELD_FLAGS & UnitFlags.stunned)
+            return sendTradeStatus(TradeStatus.targetStunned);
+        if (context.client.teamForRace(player.data.race)
+            != context.client.teamForRace(replica.fields.getByte!UNIT_FIELD_BYTES_0(0)))
+            return sendTradeStatus(TradeStatus.wrongFaction);
+        const a = player.position, b = replica.position;
+        if ((a.x - b.x) ^^ 2 + (a.y - b.y) ^^ 2 + (a.z - b.z) ^^ 2 > tradeDistance ^^ 2)
+            return sendTradeStatus(TradeStatus.targetTooFar);
+        ArrivalAction action;
+        action.tradeTarget = target;
+        if (inCombat || flying || !actAtReplica(target, action))
+            sendTradeStatus(TradeStatus.busy);
     }
 
     /// The asked one's client agrees; both windows open.
@@ -627,6 +658,87 @@ unittest
     assert(a.money == Copper(70) && j.money == Copper(130));
     assert(jerky.guid in db.itemRows, "saved again under its taker");
     assert(opcodesOf(jaina.read()).canFind(Opcode.SMSG_TRADE_STATUS));
+}
+
+/// A trade requested across nodes uses the ordinary trade there, including cancellation and disconnect.
+unittest
+{
+    import core.time : MonoTime, msecs, seconds;
+    import dmangos.world.defines : inventorySlotBag0;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.inventory : ItemRecord;
+    import dmangos.world.player : Player;
+    import dmangos.world.replication : encodePlayerState;
+    import dmangos.world.testclient;
+
+    auto db = newDatabase();
+    auto home = newCreationContext(db), owner = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    home.clock = owner.clock = () => now;
+    auto relay = new TestPlayerRelay(home, owner);
+    const item = ItemRecord(0, 23, 500, itemJerky, 0, 0, 5);
+    auto anduin = loggedIn(home, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f),
+        setup: (ref c) { c.money = 100; c.items = [item]; });
+    auto jaina = loggedIn(owner, db, 8, "Jaina", Position(-8945, -132, 83.5f),
+        setup: (ref c) { c.money = 100; });
+    auto j = cast(Player) jaina.session.character;
+    home.map(0).replicaCreated(owner.nodeId, cellKeyAt(j.position.x, j.position.y), j.guid, encodePlayerState(j, 0));
+    owner.regionOwnerAround = (uint, Position, float) => ushort(1);
+    db.itemRows[item.guid] = item;
+    db.itemOwners[item.guid] = 7;
+
+    bool received(ref TestClient client, TradeStatus status)
+    {
+        foreach (packet; client.read())
+            if (packet.opcode == Opcode.SMSG_TRADE_STATUS && ByteReader(packet.body_).read!uint == status)
+                return true;
+        return false;
+    }
+
+    ByteWriter target, fifty, twenty, accept;
+    target.put(j.guid);
+    fifty.put(50u);
+    twenty.put(20u);
+    accept.put(1u);
+    anduin.write(Opcode.CMSG_INITIATE_TRADE, target.data);
+    assert(relay.remote !is null && anduin.session.inWorld is null, "the requester moved");
+    relay.remote.update(50.msecs);
+    auto a = cast(Player) relay.remote.character;
+    assert(received(jaina, TradeStatus.beginTrade));
+    now += 11.seconds;
+    assert(relay.remote.inWorld.migrationTarget() == 0 && jaina.session.inWorld.migrationTarget() == 0);
+    jaina.write(Opcode.CMSG_BEGIN_TRADE, null);
+    assert(received(anduin, TradeStatus.openWindow));
+    anduin.write(Opcode.CMSG_SET_TRADE_ITEM, [ubyte(0), inventorySlotBag0, ubyte(23)]);
+    anduin.write(Opcode.CMSG_SET_TRADE_GOLD, fifty.data);
+    anduin.write(Opcode.CMSG_ACCEPT_TRADE, accept.data);
+    jaina.write(Opcode.CMSG_CANCEL_TRADE, null);
+    assert(received(anduin, TradeStatus.tradeCanceled));
+    assert(a.money == Copper(100) && j.money == Copper(100) && db.itemOwners[item.guid] == 7);
+    assert(a.inventory.count(itemJerky) == 5 && j.inventory.count(itemJerky) == 0);
+    assert(relay.remote.inWorld.migrationTarget() == home.nodeId);
+
+    anduin.write(Opcode.CMSG_INITIATE_TRADE, target.data);
+    assert(received(jaina, TradeStatus.beginTrade));
+    jaina.write(Opcode.CMSG_BEGIN_TRADE, null);
+    anduin.write(Opcode.CMSG_SET_TRADE_ITEM, [ubyte(0), inventorySlotBag0, ubyte(23)]);
+    anduin.write(Opcode.CMSG_SET_TRADE_GOLD, fifty.data);
+    jaina.write(Opcode.CMSG_SET_TRADE_GOLD, twenty.data);
+    anduin.write(Opcode.CMSG_ACCEPT_TRADE, accept.data);
+    jaina.write(Opcode.CMSG_ACCEPT_TRADE, accept.data);
+    assert(received(anduin, TradeStatus.tradeComplete) && received(jaina, TradeStatus.tradeComplete));
+    assert(a.inventory.count(itemJerky) == 0 && j.inventory.count(itemJerky) == 5);
+    assert(a.money == Copper(70) && j.money == Copper(130));
+    assert(db.itemOwners[item.guid] == 8 && db.moneySaves[7][0] == 70 && db.moneySaves[8][0] == 130);
+
+    anduin.write(Opcode.CMSG_INITIATE_TRADE, target.data);
+    assert(received(jaina, TradeStatus.beginTrade));
+    jaina.write(Opcode.CMSG_BEGIN_TRADE, null);
+    anduin.write(Opcode.CMSG_SET_TRADE_GOLD, fifty.data);
+    anduin.write(Opcode.CMSG_ACCEPT_TRADE, accept.data);
+    jaina.session.clientGone();
+    assert(received(anduin, TradeStatus.targetLogout));
+    assert(a.money == Copper(70) && db.itemOwners[item.guid] == 8 && db.moneySaves[8][0] == 130);
 }
 
 /**
