@@ -160,7 +160,9 @@ private:
         // that flies it lands it (its state is not carried), and the player moves on from the ground.
         if (inCombat || flying || duel !is null || tradeSide !is null)
             return 0;
-        const owner = context.regionOwnerAround(player.data.map, player.position, migrationMargin);
+        // A gateway owns no ground, including the edge between two world nodes.
+        const margin = context.config.cluster.gateway ? 0 : migrationMargin;
+        const owner = context.regionOwnerAround(player.data.map, player.position, margin);
         if (owner == 0 || owner == context.nodeId)
             return 0;
         return owner;

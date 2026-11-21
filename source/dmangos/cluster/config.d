@@ -9,6 +9,12 @@ import std.format : format;
 
 import dmangos.json : JsonName;
 
+struct ClusterVoter
+{
+    @JsonName("node_id") ushort nodeId;
+    string address;
+}
+
 /// See the module documentation.
 struct ClusterConfig
 {
@@ -67,6 +73,40 @@ struct ClusterConfig
      */
     @JsonName("gateway") bool gateway;
 
+    /// Fixed voting membership, identical on every node. Empty selects the original cluster mode.
+    ClusterVoter[] voters;
+    /// Each voter keeps its election state here across restarts.
+    @JsonName("vote_file") string voteFile;
+
+    @property bool quorum() const pure nothrow @nogc @safe
+    {
+        return voters.length != 0;
+    }
+
+    const(ClusterVoter)* voter(ushort id) const pure nothrow @nogc @safe
+    {
+        foreach (index, ref member; voters)
+            if (member.nodeId == id)
+                return &voters[index];
+        return null;
+    }
+
+    /// Order-independent identity of this fixed voting membership and its lease settings.
+    ulong quorumId() const @safe
+    {
+        import std.algorithm.sorting : sort;
+
+        if (!quorum)
+            return 0;
+        auto roster = voters.dup;
+        roster.sort!((a, b) => a.nodeId < b.nodeId);
+        const description = format!"%s/%s/%s"(leaseMs, heartbeatMs, roster);
+        ulong hash = 0xcbf29ce484222325UL;
+        foreach (ubyte byte_; cast(const(ubyte)[]) description)
+            hash = (hash ^ byte_) * 0x100000001b3UL;
+        return hash ? hash : 1;
+    }
+
     /// Whether the server is part of a cluster.
     @property bool enabled() const pure nothrow @nogc @safe
     {
@@ -82,7 +122,7 @@ struct ClusterConfig
     /// Whether this node is the coordinator.
     @property bool isCoordinator() const pure @safe
     {
-        return coordinator == advertised;
+        return !quorum && coordinator == advertised;
     }
 
     /// Throws if the settings cannot work together.
@@ -99,6 +139,28 @@ struct ClusterConfig
         enforce(failureTimeoutMs >= 3 * heartbeatMs, "cluster.failure_timeout_ms must be at least three heartbeats");
         enforce(leaseMs > failureTimeoutMs, "cluster.lease_ms must be longer than cluster.failure_timeout_ms");
         enforce(regionCount >= 1 && idBlock >= 1, "cluster.region_count and cluster.id_block must be at least 1");
+        if (quorum)
+        {
+            version (linux) {}
+            else enforce(false, "quorum mode needs the Linux boot-time clock");
+            enforce(voters.length >= 3 && voters.length % 2 == 1, "cluster.voters needs an odd count of at least three");
+            enforce(!standby, "cluster.standby is for clusters without a voter list");
+            bool[ushort] ids;
+            bool[string] addresses;
+            foreach (const member; voters)
+            {
+                splitAddress(member.address);
+                enforce(member.nodeId && member.nodeId !in ids && member.address !in addresses,
+                    "cluster.voters needs unique nonzero ids and addresses");
+                ids[member.nodeId] = true;
+                addresses[member.address] = true;
+                if (member.nodeId == nodeId)
+                    enforce(!gateway && member.address == advertised && voteFile.length,
+                        "a voter must advertise its configured address, simulate the world and set cluster.vote_file");
+                else
+                    enforce(member.address != advertised, "this node's address belongs to a different voter id");
+            }
+        }
     }
 }
 

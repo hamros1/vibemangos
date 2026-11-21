@@ -16,6 +16,7 @@ package mixin template GatewaySessions()
         WorldSession client;
         uint character;
         ulong ownerToken;
+        ulong ownerTerm, requestedTerm;
         SimulationOwner owner, coordinator;
         SessionRoute pending;
         const(ubyte)[] state;
@@ -31,7 +32,7 @@ package mixin template GatewaySessions()
         foreach (account, route; gatewayRoutes)
             if (route.ownerToken)
                 saved ~= GatewaySessionRoute(account, route.character, context.sessionSerial(route.client),
-                    route.ownerToken, route.owner);
+                    route.ownerToken, route.owner, route.ownerTerm);
         return saved;
     }
 
@@ -68,6 +69,7 @@ package mixin template GatewaySessions()
     private void setGatewayRoute(GatewayRoute route, uint account, SessionRouteKind kind, SimulationOwner target)
     {
         route.client.gatewayPaused = true;
+        route.requestedTerm = node.messageTerm();
         route.pending = SessionRoute(kind: kind, account: account, character: route.character,
             serial: context.sessionSerial(route.client), token: context.nextGameplaySequence(), previous: route.owner,
             next: target);
@@ -88,6 +90,7 @@ package mixin template GatewaySessions()
         {
             route.owner = result.next;
             route.ownerToken = result.token;
+            route.ownerTerm = node.messageTerm();
             route.coordinator = node.simulationOwner(node.coordinatorNode);
             route.client.ownerMoved(route.owner.node);
             route.granted = true;
@@ -100,7 +103,7 @@ package mixin template GatewaySessions()
             finishGatewayRoute(result.account, false);
         }
         else if (result.kind == SessionRouteKind.recover
-            && node.simulationOwner(route.owner.node) == route.owner)
+            && route.ownerTerm == node.messageTerm() && node.simulationOwner(route.owner.node) == route.owner)
         {
             // The coordinator still recognizes the former process. Let it resume on the same route.
             route.pending = SessionRoute.init;
@@ -162,9 +165,24 @@ package mixin template GatewaySessions()
     {
         const coordinator = node.simulationOwner(node.coordinatorNode);
         if (!coordinator.node || !context.canWrite() || !node.version_)
+        {
+            if (context.config.cluster.quorum)
+                foreach (route; gatewayRoutes)
+                    route.client.gatewayPaused = true;
             return;
+        }
+        const term = node.messageTerm();
         foreach (account, route; gatewayRoutes)
         {
+            const recoveringTerm = route.ownerToken && route.ownerTerm != term;
+            if (recoveringTerm && route.requestedTerm != term)
+            {
+                route.requestedTerm = term;
+                route.granted = false;
+                route.state = null;
+                route.pending = SessionRoute.init;
+                route.sendAt = MonoTime.init;
+            }
             if (route.granted)
             {
                 if (node.simulationOwner(route.owner.node) == route.owner)
@@ -178,7 +196,7 @@ package mixin template GatewaySessions()
             }
             if (!route.pending.token)
             {
-                if (node.simulationOwner(route.owner.node) == route.owner)
+                if (!recoveringTerm && node.simulationOwner(route.owner.node) == route.owner)
                 {
                     if (route.coordinator != coordinator)
                     {
@@ -199,7 +217,7 @@ package mixin template GatewaySessions()
                 if (now < route.sendAt)
                     continue;
                 const destination = checkpointOwner(route, account);
-                if (!destination.node || destination == route.owner)
+                if (!destination.node || (!recoveringTerm && destination == route.owner))
                 {
                     route.sendAt = now + 1.seconds;
                     continue;
@@ -212,7 +230,7 @@ package mixin template GatewaySessions()
             if (!route.pending.next.node)
             {
                 const destination = checkpointOwner(route, account);
-                if (!destination.node || destination == route.owner)
+                if (!destination.node || (!recoveringTerm && destination == route.owner))
                     continue;
                 route.pending.token = context.nextGameplaySequence();
                 route.pending.next = destination;

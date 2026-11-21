@@ -80,6 +80,8 @@ The `cluster` object of `worldserver.json` (`cluster/config.d`):
 | `region_cooldown_seconds` | How long a region that moved or was split stays put | `120` |
 | `standby` | This member is the standby coordinator | `false` |
 | `gateway` | This member is a gateway | `false` |
+| `voters` | The fixed list of voting nodes for quorum mode, identical on every node | empty |
+| `vote_file` | Durable path for this voter's election term and vote | required on voters |
 
 A node in a cluster writes its write-ahead log to `writes-<node_id>.log` unless `write_log` says
 otherwise.
@@ -626,7 +628,51 @@ login claim before processing new claims. For a worker missing at takeover, it a
 write lease plus the margin from promotion before assigning the saved character to another
 process. This also covers the former coordinator hosting the character.
 
-### The standby coordinator
+### Quorum-based failover
+
+Quorum mode runs on Linux. Configure the same list of voting node IDs and cluster addresses on every
+node, including gateways.
+Use an odd number of voters, starting with three. The voters also simulate regions. Give each voter a
+distinct `vote_file` on persistent local storage, in an existing writable directory. Keep the file
+across process restarts. For example, on voter 2:
+
+```json
+{
+    "node_id": 2,
+    "listen_port": 9001,
+    "voters": [
+        {"node_id": 1, "address": "127.0.0.1:9000"},
+        {"node_id": 2, "address": "127.0.0.1:9001"},
+        {"node_id": 3, "address": "127.0.0.1:9002"}
+    ],
+    "vote_file": "run/node2.vote"
+}
+```
+
+In quorum mode the election picks the coordinator. Each voter records its term and one candidate
+incarnation for that term before acknowledging it. A successful round gives the coordinator a lease
+only through the round's original send time plus `lease_ms`. Voters promise the candidate their votes
+for a lease and margin measured from receipt. A restarted voter waits out any outstanding promise
+before voting for a different candidate. The cluster uses monotonic clocks that include host suspend
+and uses the lease margin for timing differences.
+
+Coordinator heartbeats still measure liveness. Separately, a worker's lease challenge returns only the
+coordinator's remaining authority, measured from when that worker sent its request. A partitioned
+coordinator therefore stops granting ownership and renewing workers even if its workers can still reach
+it. Once their own leases end, those workers stop simulating and writing. The majority can elect a
+successor, and the former coordinator can rejoin it as a member.
+
+Views, regions and replayed gameplay traffic carry the elected term. A worker clears its old
+simulation before accepting a new term. Gateways keep the client socket and report their previous
+routes so the new coordinator can restore characters from their saved checkpoints, even when the same
+worker takes the character in the new term. Clients connected directly to a worker can log in again
+after its lease expires.
+
+The voter list is fixed for the life of this cluster. To change it, stop every node and start the new
+configuration with separate vote files. The single-standby mode below is available when the voter
+list is empty.
+
+### The single standby coordinator
 
 When the coordinator dies, everything it keeps is needed within a lease, because without lease
 renewals every member stops after `lease_ms`. The standby (`cluster.standby`) computes the
@@ -690,10 +736,6 @@ services line (`ServiceHost.describe`). Every log line of the cluster code start
   swing. Player-controlled creature melee and block-triggered damage such as Holy Shield.
 * Proc spells with projectiles, channels or mixed targeted effects across nodes, channelled
   leeches, and additional victim-side periodic effects.
-* Multiple standby coordinators with quorum. An election must keep its votes and terms across
-  restarts and fence the former coordinator before another can renew worker leases or grant
-  ownership. A partition test needs to show that only one side can grant regions and that
-  isolated nodes stop when their leases expire.
 
 ## Testing
 

@@ -19,13 +19,14 @@
  */
 module dmangos.cluster.node;
 
-import core.time : Duration, MonoTime, msecs, seconds;
+import core.time : Duration, MonoTime, msecs, seconds, usecs;
 
 import dmangos.cluster.config : ClusterConfig, splitAddress;
 import dmangos.cluster.link;
 import dmangos.cluster.ownership;
 import std.exception : enforce;
 import dmangos.cluster.protocol;
+import dmangos.cluster.quorum : QuorumElection;
 import dmangos.cluster.regions;
 import dmangos.cluster.sessions;
 import dmangos.log;
@@ -146,6 +147,12 @@ final class ClusterNode : LinkOwner
         Dial[ushort] dials;                // peers this node dials, and the coordinator (`coordinatorKey`)
         ushort coordinatorId;              // members: the coordinator's id, once known
         bool fenced_;
+        QuorumElection election;
+        ulong quorumId, electedTerm;
+        SimulationOwner termLeader;
+        MonoTime nextWorkerLease;
+        ulong appliedOwnership;
+        ulong[ushort] readyOwnership;
 
         // Phase 7: the coordinator role can move to the standby.
         bool coordinatorNow;               // whether this node is the coordinator now
@@ -192,6 +199,10 @@ final class ClusterNode : LinkOwner
 
     /// Phase 7: this node, the standby, has just become the coordinator; the world server takes up its part.
     void delegate() onPromoted;
+    /// Quorum authority ended. The node can follow a subsequently elected coordinator.
+    void delegate() onDemoted;
+    /// The previous term's writes and local simulation must end before following a new one.
+    void delegate() onTermChanged;
 
     /// A cluster service's call or reply from a peer (docs/SERVICES.md).
     void delegate(ushort peer, const ref ServiceCall call) onServiceCall;
@@ -353,7 +364,7 @@ final class ClusterNode : LinkOwner
             {
                 ByteWriter frame;
                 const sequence = stream.nextSend++;
-                putMessage(frame, sequence, message);
+                putMessage(frame, sequence, message, electedTerm);
                 stream.retain(sequence, frame.data);
             }
     }
@@ -421,14 +432,15 @@ final class ClusterNode : LinkOwner
         this.clock = clock;
         this.dialer = dialer;
         this.load = load;
+        quorumId = config.quorumId();
         coordinatorNow = config.isCoordinator;
         own = Hello(protocolVersion, config.name, id, incarnation, config.advertised, config.clientAddress,
-            config.isCoordinator, 0, config.gateway);
+            config.isCoordinator, 0, config.gateway, quorumId);
         enforce(!config.gateway || (!config.isCoordinator && !config.standby),
             "cluster: a gateway can be neither the coordinator nor the standby");
         const lease = config.leaseMs.msecs;
         regions_ = new RegionView(id, isCoordinator, lease);
-        if (config.standby && !isCoordinator)
+        if (config.standby || config.voter(id) !is null)
             standbySetup = setup;
         if (isCoordinator)
         {
@@ -446,8 +458,24 @@ final class ClusterNode : LinkOwner
         }
         else
         {
-            dials[coordinatorKey] = Dial(config.coordinator, 0, clock());
             pool_ = new IdPool(config.idBlock);
+            if (quorumId)
+            {
+                size_t rank;
+                const voting = config.voter(id) !is null;
+                foreach (const voter; config.voters)
+                {
+                    if (voter.nodeId < id)
+                        ++rank;
+                    if (voting ? voter.nodeId > id : voter.nodeId != id)
+                        dials[voter.nodeId] = Dial(voter.address, voter.nodeId, clock());
+                }
+                if (voting)
+                    election = new QuorumElection(SimulationOwner(id, incarnation), config.voters.length, rank,
+                        lease, config.heartbeatMs.msecs, clock(), config.voteFile, quorumId);
+            }
+            else
+                dials[coordinatorKey] = Dial(config.coordinator, 0, clock());
         }
     }
 
@@ -472,10 +500,12 @@ final class ClusterNode : LinkOwner
     }
 
     /// Whether this node is the coordinator (the configured one, or the standby since it took over).
-    @property bool isCoordinator() const @safe
+    @property bool isCoordinator() const
     {
-        return coordinatorNow;
+        return coordinatorNow && (!quorumId || election.term(clock()) == electedTerm);
     }
+
+    ulong messageTerm() { return electedTerm; }
 
     /// Whether the coordinator refused this node as an older start of itself.
     @property bool fenced() const pure nothrow @nogc @safe
@@ -523,10 +553,12 @@ final class ClusterNode : LinkOwner
             link.tick(now, report);
         foreach (link; handshaking)
             link.tick(now, report);
+        if (quorumId)
+            tickQuorum(now);
         updateOwnership(now);
         if (fenced_)
             return;
-        if (config.standby && !isCoordinator && lostCoordinator && coordinatorId == 0
+        if (!quorumId && config.standby && !isCoordinator && lostCoordinator && coordinatorId == 0
             && now - lostCoordinatorAt >= standbyGrace)
             promote(now);
         if (isCoordinator && takeoverPending.length && now - lastTakeoverSent >= 1.seconds)
@@ -585,6 +617,9 @@ final class ClusterNode : LinkOwner
     {
         if (hello.nodeId == id || hello.nodeId == 0)
             return RejectReason.duplicateNode;
+        const voter = config.voter(hello.nodeId);
+        if (voter !is null && (hello.address != voter.address || hello.gateway))
+            return RejectReason.notInView;
         if (isCoordinator)
         {
             if (takeoverGateways.length && hello.nodeId !in links)
@@ -594,6 +629,14 @@ final class ClusterNode : LinkOwner
                     return RejectReason.staleIncarnation;
             if (!directory.mayAdmit(SimulationOwner(hello.nodeId, hello.incarnation)))
                 return RejectReason.staleIncarnation;
+        }
+        else if (quorumId && (voter !is null || election !is null))
+        {
+            if (hello.expected != id && !link.dialed)
+                return RejectReason.unexpectedNode;
+            if (const previous = hello.nodeId in highestIncarnation)
+                if (hello.incarnation < *previous)
+                    return RejectReason.staleIncarnation;
         }
         else if (!link.dialed)
         {
@@ -631,27 +674,41 @@ final class ClusterNode : LinkOwner
                 old.close("replaced by a newer link");
             }
         links[peer] = link;
+        if (quorumId)
+        {
+            highestIncarnation[peer] = link.peer.incarnation;
+            link.markCoordinator(peer == coordinatorId);
+        }
         foreach (ref dial; dials)
             if (dial.pending is link)
             {
                 dial.pending = null;
                 dial.backoff = firstBackoff;
             }
-        if (link.peer.coordinator)
+        if (!quorumId && link.peer.coordinator)
             coordinatorId = peer;
         info!"cluster: linked to node %s at %s (incarnation %s)"(peer, link.peer.address, link.peer.incarnation);
         if (replication !is null)
             replication.peerLinked(peer);
         if (isCoordinator)
             directory.back(peer, link.peer.incarnation);
-        else if (link.peer.coordinator)
+        else if (!quorumId && link.peer.coordinator)
             coordinatorLinked(link);
+        else if (quorumId && peer == coordinatorId)
+            link.markCoordinator();
 
         if (isCoordinator)
         {
             highestIncarnation[peer] = link.peer.incarnation;
             setMember(ViewMember(peer, link.peer.incarnation, link.peer.address, false));
-            link.send(RegionTable(incarnation, authority.version_, authority.regions.dup));
+            if (quorumId)
+            {
+                takeoverPending[peer] = true;
+                if (link.peer.gateway)
+                    takeoverGateways[peer] = true;
+                link.send(Takeover(incarnation));
+            }
+            link.send(RegionTable(viewCoordinator, authority.version_, authority.regions.dup));
             if (!link.peer.gateway) // a gateway simulates nothing: no regions, no services
                 authority.joined(peer);
         }
@@ -674,6 +731,136 @@ final class ClusterNode : LinkOwner
         pool_.reset();
     }
 
+    private void tickQuorum(MonoTime now)
+    {
+        if (election !is null)
+        {
+            if (coordinatorNow && !isCoordinator)
+            {
+                coordinatorNow = own.coordinator = false;
+                regions_.revokeLease();
+                takeoverPending = null;
+                takeoverGateways = null;
+                deferredSessionChanges = null;
+                idRequests = null;
+                if (onDemoted !is null)
+                    onDemoted();
+                warning!"cluster: node %s lost its majority lease for term %s"(id, electedTerm);
+            }
+            const vote = election.tick(now);
+            if (vote.term)
+                foreach (const voter; config.voters)
+                    if (auto link = linkTo(voter.nodeId))
+                        link.sendQuorum(vote);
+            const term = election.term(now);
+            if (term > electedTerm)
+            {
+                advanceTerm(term, SimulationOwner(id, incarnation));
+                promote(now);
+            }
+            if (isCoordinator)
+            {
+                regions_.grantUntil(election.validUntil(now));
+                return;
+            }
+        }
+        if (auto link = linkTo(coordinatorId))
+            if (electedTerm && now >= nextWorkerLease)
+            {
+                nextWorkerLease = now + config.heartbeatMs.msecs;
+                const stamp = cast(ulong)(now - MonoTime.init).total!"usecs";
+                const applied = regions_.leaseHolds(now) ? appliedOwnership : 0;
+                link.sendQuorum(QuorumWorkerLease(electedTerm, stamp, 0, false, applied));
+            }
+    }
+
+    private void quorumVoteReceived(Link link, const QuorumVote message)
+    {
+        const peer = link.peer.nodeId;
+        if (election is null || config.voter(peer) is null || linkTo(peer) !is link)
+            return;
+        if (message.reply)
+            election.reply(peer, message, clock());
+        else
+        {
+            const answer = election.request(SimulationOwner(peer, link.peer.incarnation), message, clock());
+            link.sendQuorum(answer);
+        }
+    }
+
+    private void quorumLeaseReceived(Link link, const QuorumWorkerLease message)
+    {
+        if (!message.term || message.term != electedTerm || !message.stamp)
+            return;
+        const now = clock();
+        if (!message.reply)
+        {
+            if (isCoordinator && linkTo(link.peer.nodeId) is link)
+            {
+                readyOwnership[link.peer.nodeId] = message.appliedVersion;
+                const remaining = (election.validUntil(now) - now).total!"msecs";
+                if (remaining > 0)
+                    link.sendQuorum(QuorumWorkerLease(electedTerm, message.stamp, cast(uint) remaining, true));
+            }
+        }
+        else if (linkTo(coordinatorId) is link && regions_.coordinator == electedTerm
+            && message.remainingMs && message.remainingMs <= config.leaseMs)
+        {
+            const sent = MonoTime.init + usecs(cast(long) message.stamp);
+            const until = sent + message.remainingMs.msecs;
+            if (sent <= now && now < until)
+            {
+                regions_.grantUntil(until);
+                if (election !is null)
+                    election.follow(electedTerm, until);
+            }
+        }
+    }
+
+    private void followQuorumLeader(Link link, ulong term, const Takeover message)
+    {
+        const peer = link.peer.nodeId;
+        const leader = SimulationOwner(peer, link.peer.incarnation);
+        if (!term || term < electedTerm || config.voter(peer) is null || linkTo(peer) !is link
+            || message.incarnation != leader.incarnation || isCoordinator
+            || (term == electedTerm && leader != termLeader))
+            return;
+        if (term > electedTerm)
+            advanceTerm(term, leader);
+        if (coordinatorId != peer)
+        {
+            coordinatorId = peer;
+            link.markCoordinator();
+            info!"cluster: node %s leads quorum term %s"(peer, term);
+            sendTakeoverAccepted(link);
+            coordinatorLinked(link);
+        }
+        else
+            sendTakeoverAccepted(link);
+    }
+
+    private void advanceTerm(ulong term, SimulationOwner leader)
+    {
+        if (auto former = linkTo(coordinatorId))
+            former.markCoordinator(false);
+        coordinatorId = 0;
+        coordinatorNow = own.coordinator = false;
+        regions_.revokeLease();
+        if (electedTerm)
+        {
+            if (onTermChanged !is null)
+                onTermChanged();
+            updateOwnership(clock());
+        }
+        arriving = null;
+        leaving = null;
+        electedTerm = term;
+        termLeader = leader;
+        nextWorkerLease = MonoTime.init;
+        appliedOwnership = 0;
+        readyOwnership = null;
+    }
+
     /**
      * Phase 7: the standby has had no coordinator for `standbyGrace` after losing it, and takes over:
      * the table it had stands, the members it is linked to are the view, and they are told
@@ -681,14 +868,17 @@ final class ClusterNode : LinkOwner
      */
     private void promote(MonoTime now)
     {
-        const old = lostCoordinator;
-        warning!"cluster: the coordinator (node %s) is gone: node %s, the standby, takes over"(old, id);
+        const old = quorumId ? 0 : lostCoordinator;
+        if (quorumId)
+            warning!"cluster: node %s elected coordinator for term %s"(id, electedTerm);
+        else
+            warning!"cluster: the coordinator (node %s) is gone: node %s, the standby, takes over"(old, id);
         coordinatorNow = true;
         own.coordinator = true;
         promotedAt = now;
         dials.remove(coordinatorKey);
         // The view and table go on from the old coordinator's versions: newer than anything members have.
-        viewCoordinator = incarnation;
+        viewCoordinator = quorumId ? electedTerm : incarnation;
         ++viewVersion;
         members = [self];
         ushort[] live = [id];
@@ -703,32 +893,61 @@ final class ClusterNode : LinkOwner
             takeoverPending[peer] = true;
         }
         const lease = config.leaseMs.msecs;
-        authority = RegionAuthority.adopt(regions_.latestTable, regions_.latestVersion, standbySetup.cost.dup, id,
-            live, old, lostCoordinatorHeard, lease, clock);
+        if (quorumId && !regions_.latestTable.length)
+        {
+            authority = new RegionAuthority(standbySetup.regions.dup, standbySetup.cost.dup, id, electedTerm,
+                lease, clock);
+            foreach (peer; live)
+                authority.joined(peer);
+        }
+        else
+            authority = RegionAuthority.adopt(regions_.latestTable, regions_.latestVersion, standbySetup.cost.dup, id,
+                live, cast(ushort) old, lostCoordinatorHeard, lease, clock);
         authority.wholeMaps = standbySetup.whole;
         authority.balancing.interval = config.balanceIntervalSeconds.seconds;
         authority.balancing.minLoadUs = config.balanceMinLoadUs;
         authority.balancing.cooldown = config.regionCooldownSeconds.seconds;
-        regions_.promote();
+        if (quorumId)
+        {
+            regions_.take(viewCoordinator, authority.version_, authority.regions.dup);
+            regions_.grantUntil(election.validUntil(clock()));
+        }
+        else
+            regions_.promote();
         directory = new SessionDirectory;
         ids = standbySetup.ids;
         idGrantsFrom = now + lease + leaseMargin;
-        if (sessions !is null)
-            sessions.claimAll();
         if (onPromoted !is null)
             onPromoted();
         if (ids !is null && pool_ !is null)
             foreach (kind; [IdKind.character, IdKind.item, IdKind.mail, IdKind.group, IdKind.instance, IdKind.pet])
                 ids.raise(kind, pool_.highest(kind));
+        if (sessions !is null)
+            sessions.claimAll();
         lastTakeoverSent = now;
         foreach (peer, _; takeoverPending)
             sendTo(peer, Takeover(incarnation));
         publish();
     }
 
-    void received(Link link, MessageType type, const(ubyte)[] payload)
+    void received(Link link, MessageType type, ulong term, const(ubyte)[] payload)
     {
         const peer = link.peer.nodeId;
+        if (quorumId)
+        {
+            if (type == MessageType.quorumVote)
+                return quorumVoteReceived(link, decode!QuorumVote(payload));
+            if (type == MessageType.quorumWorkerLease)
+                return quorumLeaseReceived(link, decode!QuorumWorkerLease(payload));
+            if (type == MessageType.takeover)
+                return followQuorumLeader(link, term, decode!Takeover(payload));
+            if (!term || term != electedTerm)
+                return;
+            if (type == MessageType.player && !regions_.leaseHolds(clock()))
+                return;
+        }
+        else if (term)
+            return;
         if (type >= MessageType.stockRequest && type <= MessageType.stockRelease)
         {
             if (replication is null)
@@ -984,7 +1203,8 @@ final class ClusterNode : LinkOwner
                     reply.reply = true;
                     const destination = linkTo(m.next.node);
                     const canRoute = simulationOwner(m.next.node) == m.next && (m.next.node == id
-                        || (destination !is null && !destination.peer.gateway && !destination.wantsClose));
+                        || (destination !is null && !destination.peer.gateway && !destination.wantsClose
+                            && (!quorumId || readyOwnership.get(m.next.node, 0) == authority.version_)));
                     reply.result = takeoverGateways.length ? SessionRouteResult.retry
                         : directory.route(SessionRef(peer, m.serial, link.peer.incarnation), m, clock(), canRoute);
                     sendTo(peer, reply);
@@ -1027,15 +1247,18 @@ final class ClusterNode : LinkOwner
                 {
                     const gateway = SimulationOwner(peer, m.incarnation);
                     foreach (ref route; m.gatewayRoutes)
-                        if (directory.restoreGatewayRoute(gateway, route)
-                            && simulationOwner(route.owner.node) != route.owner)
+                    {
+                        const oldTerm = quorumId && route.term < electedTerm;
+                        if (directory.restoreGatewayRoute(gateway, route, oldTerm)
+                            && !oldTerm && simulationOwner(route.owner.node) != route.owner)
                             directory.lost(route.owner.node, promotedAt + config.leaseMs.msecs + leaseMargin,
                                 route.owner.incarnation);
+                    }
                     finishTakeoverSessions();
                 }
                 // It ignored what came before it took this node as its coordinator: the view and table again.
                 link.send(View(viewCoordinator, viewVersion, members));
-                link.send(RegionTable(incarnation, authority.version_, authority.regions.dup));
+                link.send(RegionTable(viewCoordinator, authority.version_, authority.regions.dup));
             }
             return;
         }
@@ -1046,7 +1269,8 @@ final class ClusterNode : LinkOwner
                 return takeView(decode!View(payload));
             case MessageType.regionTable:
                 auto table = decode!RegionTable(payload);
-                if (table.coordinatorIncarnation == link.peer.incarnation)
+                if ((quorumId ? electedTerm : link.peer.incarnation) == table.coordinatorIncarnation
+                    && (!quorumId || peer == coordinatorId))
                     regions_.take(table.coordinatorIncarnation, table.version_, table.regions);
                 return;
             case MessageType.idGrant:
@@ -1143,7 +1367,8 @@ final class ClusterNode : LinkOwner
         if (peer == coordinatorId)
         {
             coordinatorId = 0;
-            dials[coordinatorKey].due = now + dials[coordinatorKey].backoff;
+            if (auto dial = coordinatorKey in dials)
+                dial.due = now + dial.backoff;
             lostCoordinator = peer;
             lostCoordinatorAt = now;
             lostCoordinatorHeard = link.lastHeard;
@@ -1171,6 +1396,7 @@ private:
         import std.algorithm.comparison : max;
 
         const lastHeard = max(link.lastHeard, promotedAt);
+        readyOwnership.remove(link.peer.nodeId);
         authority.lost(link.peer.nodeId, lastHeard);
         directory.lost(link.peer.nodeId, lastHeard + config.leaseMs.msecs + leaseMargin, link.peer.incarnation);
     }
@@ -1316,11 +1542,13 @@ private:
             authority.tick();
             if (authority.takeChanged())
             {
-                const table = RegionTable(incarnation, authority.version_, authority.regions.dup);
-                regions_.take(incarnation, table.version_, table.regions.dup);
+                const table = RegionTable(viewCoordinator, authority.version_, authority.regions.dup);
+                regions_.take(viewCoordinator, table.version_, table.regions.dup);
                 foreach (link; links)
                     link.send(table);
             }
+            if (quorumId)
+                regions_.grantUntil(election.validUntil(now));
             if (now >= idGrantsFrom && ids !is null)
             {
                 foreach (peer, requests; idRequests)
@@ -1330,7 +1558,7 @@ private:
                 idRequests = null;
             }
         }
-        else if (coordinatorId)
+        else if (!quorumId && coordinatorId)
             if (auto link = coordinatorId in links)
                 if (link.peer.incarnation == regions_.coordinator)
                     regions_.confirm(link.confirmedAt);
@@ -1375,6 +1603,8 @@ private:
         if (!isCoordinator && coordinatorId in links)
             foreach (kind; pool_.wanted())
                 links[coordinatorId].send(IdRequest(kind, config.idBlock));
+        if (quorumId)
+            appliedOwnership = regions_.leaseHolds(now) ? regions_.latestVersion : 0;
     }
 
     /// Region ids for the log; with where they are, when there are only a few.
@@ -1469,6 +1699,8 @@ private:
         {
             if (link.peer.coordinator)
                 continue;
+            if (quorumId && (election !is null || config.voter(peer) !is null))
+                continue;
             const member = find(peer);
             if (member is null || member.incarnation != link.peer.incarnation)
                 link.close("no longer in the view");
@@ -1476,14 +1708,14 @@ private:
         // Peers with a higher id are dialed; dials to nodes that left are dropped.
         const now = clock();
         foreach (ref m; members)
-            if (!m.coordinator && m.nodeId > id)
+            if (!m.coordinator && m.nodeId > id && (!quorumId || (election is null && config.voter(m.nodeId) is null)))
             {
                 auto dial = &dials.require(m.nodeId, Dial(m.address, m.nodeId, now));
                 dial.address = m.address;
             }
         ushort[] gone;
         foreach (key, ref dial; dials)
-            if (key != coordinatorKey && find(key) is null)
+            if (key != coordinatorKey && (!quorumId || config.voter(key) is null) && find(key) is null)
                 gone ~= key;
         foreach (key; gone)
             dials.remove(key);
@@ -1517,7 +1749,8 @@ version (unittest)
         Wire[] wires;
 
         ClusterNode add(ushort id, ushort port, ulong incarnation = 1, CoordinatorSetup setup = CoordinatorSetup.init,
-            bool standby = false, bool gateway = false, ushort coordinatorPort = 9000)
+            bool standby = false, bool gateway = false, ushort coordinatorPort = 9000,
+            void delegate(ref ClusterConfig) customize = null)
         {
             import std.format : format;
 
@@ -1528,6 +1761,8 @@ version (unittest)
             c.standby = standby;
             c.gateway = gateway;
             c.clientAddress = format!"127.0.0.1:%s"(8000 + id);
+            if (customize !is null)
+                customize(c);
             ClusterNode node;
             node = new ClusterNode(c, incarnation, () => now, (h, p, s) => dial(node, h, p, s), null, setup);
             listening[c.advertised] = node;
@@ -1559,7 +1794,8 @@ version (unittest)
         void cut(ClusterNode a, ClusterNode b)
         {
             cutLinks[linkKey(a, b)] = true;
-            a.linkTo(b.id).close("test direct link failure");
+            if (auto link = a.linkTo(b.id))
+                link.close("test direct link failure");
             pump();
         }
 
@@ -2168,8 +2404,8 @@ unittest
     gateway.claimSession(account, 1);
     ticks(150, coordinator, gateway, owner);
     auto originalSocket = client.session;
-    worlds[gateway.id].regionOwnerAround = (uint map, Position p, float) =>
-        gateway.regions.ownerAt(map, cellKeyAt(p.x, p.y));
+    worlds[gateway.id].regionOwnerAround = (uint map, Position p, float radius) =>
+        radius == 0 ? gateway.regions.ownerAt(map, cellKeyAt(p.x, p.y)) : ushort.init;
     originalSocket.update(1100.msecs);
     ticks(300, coordinator, gateway, owner);
     auto simulated = cast(Character) worlds[owner.id].onlinePlayer(guid);
@@ -2231,6 +2467,151 @@ unittest
     auto stale = cluster.add(owner.id, 9002, owner.incarnation);
     cluster.run(1000, coordinator, gateway, stale);
     assert(stale.fenced && coordinator.simulationOwner(stale.id).node == 0, "the old process cannot renew its lease");
+}
+
+// The old coordinator remains connected to a worker, but loses permission to renew either lease.
+version (linux) unittest
+{
+    import dmangos.cluster.config : ClusterVoter;
+    import dmangos.world.clusterbridge : ClusterBridge;
+    import dmangos.world.config : WorldConfig;
+    import dmangos.world.fencing : FencedDatabase;
+    import dmangos.world.grid : cellKey, cellKeyAt;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.testclient;
+    import std.algorithm.searching : canFind, count;
+    import std.conv : to;
+    import std.file : mkdir, rmdirRecurse, tempDir;
+    import std.path : buildPath;
+    import std.uuid : randomUUID;
+
+    const path = buildPath(tempDir(), "dmangos-quorum-" ~ randomUUID().to!string);
+    mkdir(path);
+    scope (exit) rmdirRecurse(path);
+    auto cluster = new TestCluster;
+    auto regions = new Region[12];
+    ulong[uint] cost;
+    foreach (i, ref region; regions)
+    {
+        const x = -200 + cast(int) i * 10;
+        region = Region(cast(uint) i + 1, 0, CellRect(x, -256, x + 10, 256));
+        cost[region.id] = 10;
+    }
+    void configure(ref ClusterConfig settings)
+    {
+        settings.voters = [ClusterVoter(1, "127.0.0.1:9000"), ClusterVoter(2, "127.0.0.1:9001"),
+            ClusterVoter(3, "127.0.0.1:9002")];
+        settings.voteFile = buildPath(path, settings.nodeId.to!string);
+        settings.validate();
+    }
+    ClusterNode voter(ushort id, ushort port)
+    {
+        return cluster.add(id, port, id, CoordinatorSetup(regions.dup, cost.dup, new TestCounters),
+            false, false, 9000, &configure);
+    }
+    auto primary = voter(1, 9000);
+    auto second = voter(2, 9001);
+    auto third = voter(3, 9002);
+    auto isolatedWorker = cluster.add(4, 9003, 4, CoordinatorSetup.init, false, false, 9000, &configure);
+    auto gateway = cluster.add(5, 9004, 5, CoordinatorSetup.init, false, true, 9000, &configure);
+    auto nodes = [primary, second, third, isolatedWorker, gateway];
+    auto db = newDatabase();
+    WorldContext[ushort] worlds;
+    ClusterBridge[ushort] bridges;
+    void connect(ClusterNode node)
+    {
+        auto world = newCreationContext(db, (ref WorldConfig settings) { settings.cluster = node.config; });
+        world.clock = () => cluster.now;
+        world.nodeId = node.id;
+        world.ownsCell = (uint map, ulong cell) => node.regions.ownsCell(map, cell);
+        world.database = new FencedDatabase(db, () => node.regions.leaseHolds(cluster.now));
+        node.onOwnership = &world.regionsChanged;
+        auto bridge = new ClusterBridge(node, world, 5000);
+        node.onTermChanged = &bridge.fenceGatewaySimulations;
+        node.sessions = world;
+        node.players = bridge;
+        node.replication = bridge;
+        world.replicator = bridge;
+        world.playerRelay = bridge;
+        world.releaseSession = &node.releaseSession;
+        worlds[node.id] = world;
+        bridges[node.id] = bridge;
+    }
+    foreach (node; nodes)
+        connect(node);
+
+    void run(int milliseconds)
+    {
+        foreach (_; 0 .. milliseconds / 50)
+        {
+            cluster.run(50, nodes);
+            foreach (node; nodes)
+            {
+                bridges[node.id].fenceGatewaySimulations();
+                worlds[node.id].update(cluster.now);
+                bridges[node.id].tick();
+            }
+            cluster.pump();
+            assert(nodes.count!(n => n.isCoordinator) <= 1, "only one coordinator may hold authority");
+            foreach (ref region; regions)
+            {
+                const cell = cellKey(region.rect.x0, region.rect.y0);
+                assert(nodes.count!(n => n.regions.leaseHolds(cluster.now) && n.regions.ownsCell(0, cell)) <= 1,
+                    "no cell may have two owners across election terms");
+            }
+        }
+    }
+
+    run(8000);
+    assert(primary.isCoordinator && !primary.regions.ownedRegions.length);
+    primary.reportLoads([]);
+    isolatedWorker.reportLoads([]);
+    run(6000);
+    assert(primary.isCoordinator && primary.messageTerm() && isolatedWorker.regions.ownedRegions.length);
+    assert(isolatedWorker.coordinatorNode == primary.id && gateway.coordinatorNode == primary.id);
+    enum uint guid = 7;
+    const at = Position(-8949.95f, -132.49f, 83.53f, 1.97f);
+    const cell = cellKeyAt(at.x, at.y);
+    assert(gateway.regions.ownerAt(0, cell) == third.id);
+    auto client = loggedIn(worlds[gateway.id], db, guid, "Anduin", at);
+    auto socket = client.session;
+    gateway.claimSession(db.loadable[guid].account, 1);
+    run(150);
+    worlds[gateway.id].regionOwnerAround = (uint map, Position p, float) =>
+        gateway.regions.ownerAt(map, cellKeyAt(p.x, p.y));
+    socket.update(1100.msecs);
+    run(300);
+    auto before = worlds[third.id].onlinePlayer(guid);
+    assert(before !is null && socket.owner == third.id);
+    client.read();
+
+    const term = primary.messageTerm();
+    foreach (isolated; [primary, isolatedWorker])
+        foreach (remaining; [second, third, gateway])
+            cluster.cut(isolated, remaining);
+
+    run(7000);
+    assert(primary.linkTo(isolatedWorker.id) !is null, "the isolated coordinator still reaches its worker");
+    assert(!primary.isCoordinator && !primary.regions.leaseHolds(cluster.now)
+        && !isolatedWorker.regions.leaseHolds(cluster.now) && !isolatedWorker.regions.ownedRegions.length);
+    run(9000);
+    auto leader = second.isCoordinator ? second : third;
+    assert(leader.isCoordinator && leader.messageTerm() > term && gateway.coordinatorNode == leader.id);
+    assert(leader.regions.ownedRegions.length && gateway.regions.leaseHolds(cluster.now));
+    assert(gateway.regions.ownerAt(0, cell) == third.id && worlds[third.id].onlinePlayer(guid) is null);
+    assert(opcodesOf(client.read()).canFind(Opcode.SMSG_NEW_WORLD),
+        "the old simulation expired even though its worker stayed in the majority");
+    client.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
+    run(300);
+    auto after = worlds[third.id].onlinePlayer(guid);
+    assert(after !is null && after !is before && !socket.wantsClose && client.session is socket);
+    foreach (isolated; [primary, isolatedWorker])
+        foreach (remaining; [second, third, gateway])
+            cluster.restore(isolated, remaining);
+    run(12000);
+    assert(leader.isCoordinator && !primary.isCoordinator && primary.coordinatorNode == leader.id);
+    assert(isolatedWorker.coordinatorNode == leader.id && isolatedWorker.regions.leaseHolds(cluster.now));
 }
 
 // Gateway recovery during takeover with the worker missing before or after the old coordinator.

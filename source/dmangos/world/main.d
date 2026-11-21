@@ -142,6 +142,11 @@ private int run(WorldConfig config, string configPath)
     // Every node serves clients (docs/CLUSTER.md); only a standalone server or a cluster's coordinator speaks
     // for the realm: its row in the realm list, and marking everyone offline at start.
     bool speaksForRealm = !config.cluster.enabled || config.cluster.isCoordinator; // the standby may take it over
+    ClusterNode cluster;
+    bool ownsRealm()
+    {
+        return speaksForRealm && (cluster is null || cluster.isCoordinator);
+    }
     context.keepsHonorWeek = speaksForRealm; // the honor week is reckoned once, by the realm's speaker
     if (speaksForRealm)
         context.database.markAllOffline(config.realmId); // nobody is online after a restart
@@ -152,7 +157,7 @@ private int run(WorldConfig config, string configPath)
     if (speaksForRealm)
         realm.markOnline(config.allowedBuilds, config.gameType, config.realmZone);
     scope (exit)
-        if (speaksForRealm)
+        if (ownsRealm())
             realm.markOffline();
     string realmAddress;     // where the realm list sends clients now (a cluster's coordinator chooses)
     auto lastSteering = MonoTime.currTime;
@@ -167,18 +172,41 @@ private int run(WorldConfig config, string configPath)
     double tickAverageUs = 0; // a moving average, for the cluster's load reports
 
     TcpServer server;
-    ClusterNode cluster;
     ClusterBridge bridge;
     bool leaseHeld;
+    MonoTime clusterClock()
+    {
+        version (linux)
+            if (config.cluster.quorum)
+            {
+                import core.time : ClockType, MonoTimeImpl;
+
+                alias BootTime = MonoTimeImpl!(ClockType.bootTime);
+                return MonoTime.init + (BootTime.currTime - BootTime.init);
+            }
+        return MonoTime.currTime;
+    }
+    void loseWorldLease()
+    {
+        writer.leaseLapsed(imported!"std.datetime.systime".Clock.currStdTime);
+        if (config.cluster.quorum && config.cluster.gateway)
+            warning!"cluster: the gateway's lease lapsed: holding client connections for the next coordinator"();
+        else
+        {
+            error!"cluster: this node's lease lapsed: every session ends, and nothing more is written"();
+            context.kickAll("this server lost contact with the rest of the realm");
+        }
+        leaseHeld = false;
+    }
     if (config.cluster.enabled)
         context.services.stopAll(); // in a cluster, only those whose regions it is granted (docs/SERVICES.md)
     if (config.cluster.enabled)
     {
         const linkIdle = (2 * config.cluster.failureTimeoutMs).msecs; // the links time out first, on heartbeats
         CoordinatorSetup setup;
-        if (config.cluster.isCoordinator || config.cluster.standby) // the standby keeps it for a takeover
+        if (config.cluster.isCoordinator || config.cluster.standby || config.cluster.voter(config.cluster.nodeId))
             setup = coordinatorSetup(config.cluster.regionCount, data, client, context);
-        cluster = new ClusterNode(config.cluster, ClusterNode.newIncarnation(), () => MonoTime.currTime,
+        cluster = new ClusterNode(config.cluster, ClusterNode.newIncarnation(), &clusterClock,
             (host, port, session) => server.connect(host, port, session, linkIdle),
             () => LoadReport(cast(uint) tickAverageUs, cast(uint) context.sessionCount, cast(uint) context.objectCount),
             setup);
@@ -239,7 +267,7 @@ private int run(WorldConfig config, string configPath)
         };
         // A node whose lease lapsed writes nothing: by the time its accounts and regions go elsewhere it has
         // certainly stopped, and writes after that could overwrite theirs.
-        context.database = new FencedDatabase(context.database, () => cluster.regions.leaseHolds(MonoTime.currTime));
+        context.database = new FencedDatabase(context.database, () => cluster.regions.leaseHolds(clusterClock()));
         // Cluster services (docs/SERVICES.md): where each runs is in the region table; calls go over the links.
         {
             import dmangos.cluster.protocol : ServiceCall, ServiceNews, ServiceReply;
@@ -268,7 +296,7 @@ private int run(WorldConfig config, string configPath)
         behind.writableUntil = () {
             import std.datetime.systime : Clock;
 
-            const ends = cluster.regions.leaseEnds, at = MonoTime.currTime;
+            const ends = cluster.regions.leaseEnds, at = clusterClock();
             if (ends == MonoTime.max)
                 return long.max;
             return Clock.currStdTime + (ends > at ? (ends - at).total!"hnsecs" : -1);
@@ -300,6 +328,22 @@ private int run(WorldConfig config, string configPath)
             realm.markOnline(config.allowedBuilds, config.gameType, config.realmZone);
             info!"cluster: this node is the coordinator now: groups, channels, ids and the realm are kept here"();
         };
+        cluster.onDemoted = () {
+            import dmangos.cluster.services : ServiceKind;
+
+            speaksForRealm = false;
+            context.keepsHonorWeek = false;
+            context.forwardGroup = &bridge.forwardGroup;
+            context.groups.changes = null;
+            context.groups.removed = null;
+            context.idPool = cluster.pool;
+            context.services.stop(ServiceKind.lootTurns);
+        };
+        cluster.onTermChanged = () {
+            bridge.fenceGatewaySimulations();
+            if (leaseHeld)
+                loseWorldLease();
+        };
         info!"cluster: node %s, incarnation %s, %s; clients at %s"(cluster.id, cluster.incarnation,
             cluster.isCoordinator ? "coordinator" : "member of " ~ config.cluster.coordinator,
             config.cluster.clientAddress);
@@ -321,14 +365,10 @@ private int run(WorldConfig config, string configPath)
             {
                 bridge.tick();
                 cluster.tick();
-                // A lapsed lease ends every session; their characters are not saved (the database is fenced).
-                const holds = cluster.regions.leaseHolds(MonoTime.currTime);
+                // Queued writes from an expired lease cannot follow a new grant.
+                const holds = cluster.regions.leaseHolds(clusterClock());
                 if (leaseHeld && !holds)
-                {
-                    error!"cluster: this node's lease lapsed: every session ends, and nothing more is written"();
-                    writer.leaseLapsed(imported!"std.datetime.systime".Clock.currStdTime); // what was queued before is never written
-                    context.kickAll("this server lost contact with the rest of the realm");
-                }
+                    loseWorldLease();
                 else if (holds)
                     writer.renewLease(behind.writableUntil()); // a write waiting for the database stays writable
                 leaseHeld = holds;
@@ -378,12 +418,12 @@ private int run(WorldConfig config, string configPath)
             }
             // Timed before the call: while the login database is unavailable, tried again at the interval,
             // not at every tick.
-            if (speaksForRealm && now - lastPopulation >= 1.minutes)
+            if (ownsRealm() && now - lastPopulation >= 1.minutes)
             {
                 lastPopulation = now;
                 realm.updatePopulation(context.sessionCount, config.playerLimit);
             }
-            if (speaksForRealm && now - lastUptime >= uptimeInterval)
+            if (ownsRealm() && now - lastUptime >= uptimeInterval)
             {
                 lastUptime = now;
                 realm.updateUptime(cast(uint) context.peakSessions);
@@ -426,7 +466,7 @@ private int run(WorldConfig config, string configPath)
         server.addListener(config.cluster.listenAddress, config.cluster.listenPort,
             (string address) => cluster.accept(address), (2 * config.cluster.failureTimeoutMs).msecs);
     server.run();
-    if (speaksForRealm)
+    if (ownsRealm())
         realm.updateUptime(cast(uint) context.peakSessions);
     return context.restartRequested ? restartExitCode : 0;
 }

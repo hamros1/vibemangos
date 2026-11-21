@@ -54,6 +54,7 @@ final class SessionDirectory
         MonoTime[SimulationOwner] lostUntil; // lost process -> when its sessions may be given away
         SessionRoute[uint] routes;    // account -> latest route of a gateway's session
         bool[uint] stoppedSimulations;
+        bool[uint] endedRouteTerms;
         MonoTime[SimulationOwner] lostOwners;
         ulong[ushort] retiredOwners;  // these processes may no longer renew a lease
     }
@@ -87,6 +88,7 @@ final class SessionDirectory
                 holders.remove(account);
                 routes.remove(account);
                 stoppedSimulations.remove(account);
+                endedRouteTerms.remove(account);
                 if (auto next = account in waiting)
                 {
                     const granted = *next;
@@ -136,7 +138,7 @@ final class SessionDirectory
     }
 
     /// Restore a route from the gateway holding the original client before admitting competing logins.
-    bool restoreGatewayRoute(SimulationOwner gateway, const ref GatewaySessionRoute saved)
+    bool restoreGatewayRoute(SimulationOwner gateway, const ref GatewaySessionRoute saved, bool oldTerm = false)
     {
         if (!saved.account || !saved.serial || !saved.character || !saved.token || !saved.owner.node
             || !saved.owner.incarnation || saved.owner.node == gateway.node || saved.account in holders)
@@ -145,6 +147,8 @@ final class SessionDirectory
         routes[saved.account] = SessionRoute(kind: SessionRouteKind.observe, account: saved.account,
             character: saved.character, serial: saved.serial, token: saved.token, previous: saved.owner,
             next: saved.owner);
+        if (oldTerm)
+            endedRouteTerms[saved.account] = true;
         return true;
     }
 
@@ -178,9 +182,10 @@ final class SessionDirectory
             return Result.retry;
         if (request.kind == SessionRouteKind.recover)
         {
-            if (request.previous == request.next || request.previous.node == home.node)
+            const oldTerm = request.account in endedRouteTerms;
+            if ((!oldTerm && request.previous == request.next) || request.previous.node == home.node)
                 return Result.denied;
-            if (!retired(request.previous))
+            if (!oldTerm && !retired(request.previous))
             {
                 const until = request.previous in lostOwners;
                 if (until is null || now < *until)
@@ -190,6 +195,7 @@ final class SessionDirectory
         }
         routes[request.account] = request;
         stoppedSimulations.remove(request.account);
+        endedRouteTerms.remove(request.account);
         return Result.granted;
     }
 
@@ -211,7 +217,7 @@ final class SessionDirectory
 
     private bool stoppedOrFenced(uint account, MonoTime now)
     {
-        if (account in stoppedSimulations)
+        if (account in stoppedSimulations || account in endedRouteTerms)
             return true;
         if (const current = account in routes)
         {

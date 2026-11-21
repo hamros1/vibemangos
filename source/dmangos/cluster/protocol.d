@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 52; // 52: gateway recovery during takeover
+enum ushort protocolVersion = 53; // 53: quorum elections and term-bound leases
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -94,6 +94,28 @@ enum MessageType : ushort
     creatureSwing = 55,
     periodicResult = 56,
     sessionRoute = 57,
+    quorumVote = 58,
+    quorumWorkerLease = 59,
+}
+
+/// A candidate's lease round, or a voter's reply with its latest durable term.
+struct QuorumVote
+{
+    enum type = MessageType.quorumVote;
+
+    ulong term, round, seenTerm;
+    bool reply, granted;
+}
+
+/// A worker's fresh challenge and the remaining authority granted in its reply.
+struct QuorumWorkerLease
+{
+    enum type = MessageType.quorumWorkerLease;
+
+    ulong term, stamp;
+    uint remainingMs;
+    bool reply;
+    ulong appliedVersion; /// the ownership table the requesting worker has applied under this term's lease
 }
 
 /// The target's node reports a resolved tick to the caster's node.
@@ -290,6 +312,8 @@ struct FrameHeader
     ulong sequence;
 }
 
+enum ushort termFrame = 1; // the payload starts with the elected term
+
 /// The first message each way on a link: who the sender is.
 struct Hello
 {
@@ -304,6 +328,7 @@ struct Hello
     bool coordinator;       /// whether the sender is the coordinator
     ushort expected;        /// the node the dialer meant to reach; 0 for the coordinator
     bool gateway;           /// a gateway (docs/SERVICES.md): clients' connections, no regions or services
+    ulong quorum;           /// fixed voter roster and lease identity, or zero for the original mode
 }
 
 /// The reply to a hello that is refused; the link closes after it.
@@ -342,7 +367,7 @@ struct View
 {
     enum type = MessageType.view;
 
-    ulong coordinatorIncarnation; /// versions compare only within one coordinator start
+    ulong coordinatorIncarnation; /// elected term in quorum mode, coordinator incarnation otherwise
     ulong version_;
     @LengthPrefix!ushort ViewMember[] members;
 }
@@ -352,7 +377,7 @@ struct RegionTable
 {
     enum type = MessageType.regionTable;
 
-    ulong coordinatorIncarnation; /// versions compare only within one coordinator start
+    ulong coordinatorIncarnation; /// elected term in quorum mode, coordinator incarnation otherwise
     ulong version_;
     @LengthPrefix!ushort Region[] regions;
 }
@@ -954,16 +979,19 @@ struct GatewaySessionRoute
     uint account, character;
     ulong serial, token;
     SimulationOwner owner;
+    ulong term;
 }
 
 /// Appends a framed message to `writer`.
-void putMessage(M)(ref ByteWriter writer, ulong sequence, auto ref const M message)
+void putMessage(M)(ref ByteWriter writer, ulong sequence, auto ref const M message, ulong term = 0)
 {
     const start = writer.length;
     writer.put(uint(0));
     writer.put(cast(ushort) M.type);
-    writer.put(ushort(0));
+    writer.put(term ? termFrame : ushort(0));
     writer.put(sequence);
+    if (term)
+        writer.put(term);
     serialize(writer, message);
     const length = writer.length - start - frameHeaderSize;
     enforce(length <= maxPayload, "cluster message too large");
@@ -982,6 +1010,8 @@ bool takeFrame(ref const(ubyte)[] input, out FrameHeader header, out const(ubyte
     header.length = r.read!uint;
     const type = r.read!ushort;
     header.flags = r.read!ushort;
+    if (header.flags & ~termFrame)
+        throw new PacketException("unknown cluster frame flags");
     header.sequence = r.read!ulong;
     if (header.length > maxPayload)
         throw new PacketException("cluster frame too large");
@@ -1181,7 +1211,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 52, recordedFingerprint = 0xb26964121f30c1c4UL;
+private enum recordedVersion = 53, recordedFingerprint = 0x057dabc34e795789UL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

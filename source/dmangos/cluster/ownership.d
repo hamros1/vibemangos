@@ -121,7 +121,8 @@ final class RegionAuthority
         a.tableVersion = tableVersion; // its tables follow the old coordinator's
         foreach (m; members)
             a.members[m] = true;
-        a.members[lostCoordinator] = true;
+        if (lostCoordinator)
+            a.members[lostCoordinator] = true;
         bool[ushort] missing;
         foreach (ref r; a.regions_)
         {
@@ -135,7 +136,8 @@ final class RegionAuthority
         const now = clock();
         foreach (node, _; missing)
             a.lost(node, now); // this standby cannot know when the old coordinator last confirmed its lease
-        a.lost(lostCoordinator, lostHeard);
+        if (lostCoordinator)
+            a.lost(lostCoordinator, lostHeard);
         a.touch();
         return a;
     }
@@ -176,6 +178,12 @@ final class RegionAuthority
     {
         if (!measured_)
         {
+            // A coordinator may still be waiting out its predecessor's lease. Keep the
+            // configured spawn costs until a node reports measurements for a grant it holds.
+            import std.algorithm.searching : any;
+
+            if (!regions_.any!(r => r.owner == node && r.state != RegionState.unowned && r.id in busyUs))
+                return;
             measured_ = true;
             foreach (ref c; cost)
                 c = 0;
@@ -659,6 +667,7 @@ final class RegionView
         Region[] table;
         Region[uint] creatureRegions;
         MonoTime confirmed;
+        MonoTime quorumUntil;
         Region[uint] owned;           // regions this node treats as its own, as they were granted
         ulong[uint] releaseSent;      // region id -> epoch whose release went out
     }
@@ -707,7 +716,10 @@ final class RegionView
         if (coordinator == tableCoordinator && version_ <= tableVersion)
             return false;
         if (coordinator != tableCoordinator)
-            confirmed = MonoTime.init; // a lease from another coordinator counts for nothing
+        {
+            revokeLease(); // a lease from another coordinator counts for nothing
+            releaseSent = null;
+        }
         tableCoordinator = coordinator;
         tableVersion = version_;
         table = regions;
@@ -724,20 +736,28 @@ final class RegionView
         confirmed = max(confirmed, sentAt);
     }
 
+    void grantUntil(MonoTime until)
+    {
+        quorumUntil = max(quorumUntil, until);
+    }
+
+    void revokeLease()
+    {
+        confirmed = quorumUntil = MonoTime.init;
+    }
+
     /// Until when this node's lease holds as it stands (`MonoTime.max`: always; `MonoTime.init`: it never held).
     MonoTime leaseEnds() const
     {
         if (authority)
             return MonoTime.max;
-        if (confirmed == MonoTime.init)
-            return MonoTime.init;
-        return confirmed + lease;
+        return max(quorumUntil, confirmed == MonoTime.init ? MonoTime.init : confirmed + lease);
     }
 
     /// Whether this node's lease holds at `now`.
     bool leaseHolds(MonoTime now) const
     {
-        return authority || (confirmed != MonoTime.init && now < confirmed + lease);
+        return now < leaseEnds();
     }
 
     /**

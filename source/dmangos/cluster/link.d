@@ -168,7 +168,10 @@ interface LinkOwner
     void opened(Link link);
 
     /// A message other than the handshake and heartbeats.
-    void received(Link link, MessageType type, const(ubyte)[] payload);
+    void received(Link link, MessageType type, ulong term, const(ubyte)[] payload);
+
+    /// Elected term for newly written frames, or zero for the original cluster mode.
+    ulong messageTerm();
 
     /// The link is closed, whatever the reason; called once.
     void closed(Link link);
@@ -250,9 +253,9 @@ final class Link : NetSession
 
     /// The peer's hello, once open.
     /// The peer has become the coordinator (the standby took over).
-    void markCoordinator() pure nothrow @nogc @safe
+    void markCoordinator(bool present = true) pure nothrow @nogc @safe
     {
-        peer_.coordinator = true;
+        peer_.coordinator = present;
     }
 
     @property ref const(Hello) peer() const pure nothrow @nogc @safe
@@ -307,10 +310,18 @@ final class Link : NetSession
             return;
         const sequence = sequences.nextSend++;
         const start = outbox.length;
-        write(message, sequence);
+        putMessage(outbox, sequence, message, owner.messageTerm());
         sequences.retain(sequence, outbox.data[start .. $]);
         if (resyncing) // not yet: it goes out, in order, once the peer says what it has
             outbox.truncate(start);
+    }
+
+    /// Elections and lease challenges measure fresh replies, without replay across a new link.
+    void sendQuorum(M)(auto ref const M message)
+    {
+        static assert(M.type == MessageType.quorumVote || M.type == MessageType.quorumWorkerLease);
+        if (!closing && state_ == State.open)
+            write(message, 0);
     }
 
     /// Closes the link once what was written has gone out.
@@ -431,8 +442,13 @@ private:
         if (state_ == State.handshaking)
             return handshake(header, payload);
 
-        if (header.type == MessageType.heartbeat && header.sequence == 0)
-            return heartbeatReceived(decode!Heartbeat(payload));
+        if (header.sequence == 0)
+        {
+            if (header.type == MessageType.heartbeat)
+                return heartbeatReceived(decode!Heartbeat(payload));
+            if (header.type == MessageType.quorumVote || header.type == MessageType.quorumWorkerLease)
+                return owner.received(this, header.type, 0, payload);
+        }
         if (header.sequence <= sequences.lastReceived)
         {
             ++sequences.duplicates;
@@ -456,7 +472,17 @@ private:
             close("handshake message on an open link");
             break;
         default:
-            owner.received(this, header.type, payload);
+            ulong term;
+            auto body_ = payload;
+            if (header.flags & termFrame)
+            {
+                import dmangos.bytes : ByteReader;
+
+                auto reader = ByteReader(payload);
+                term = reader.read!ulong;
+                body_ = reader.readBytes(reader.remaining);
+            }
+            owner.received(this, header.type, term, body_);
         }
     }
 
@@ -490,7 +516,7 @@ private:
         const hello = decode!Hello(payload);
 
         RejectReason reason;
-        if (hello.cluster != own.cluster)
+        if (hello.cluster != own.cluster || hello.quorum != own.quorum)
             reason = RejectReason.wrongCluster;
         else if (hello.protocol != protocolVersion)
             reason = RejectReason.wrongProtocol;
@@ -535,7 +561,9 @@ unittest
         this() { sequences = new PeerSequences; }
         RejectReason admit(Link, const ref Hello, out PeerSequences s) { s = sequences; return RejectReason.none; }
         void opened(Link) {}
-        void received(Link, MessageType type, const(ubyte)[] payload)
+        ulong messageTerm() { return 0; }
+
+        void received(Link, MessageType type, ulong, const(ubyte)[] payload)
         {
             if (type == MessageType.serviceCall)
                 got ~= decode!ServiceCall(payload).sequence;
