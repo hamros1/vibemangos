@@ -882,8 +882,8 @@ unittest
     import dmangos.world.map : Map;
     import dmangos.world.movement : Position;
     import dmangos.world.opcodes : Opcode;
-    import dmangos.world.replication : Replicator;
-    import dmangos.world.spellcast : spellAttrEx2CantCrit, spellAttrEx3AlwaysHit, SpellMissInfo;
+    import dmangos.world.replication : encodePlayerState, Replicator;
+    import dmangos.world.spellcast : spellAttrEx2CantCrit, spellAttrEx3AlwaysHit, spellAttrOnNextSwing1, SpellMissInfo;
     import dmangos.world.spellhandlers : testSpell;
     import dmangos.world.spellids : ImplicitTarget, SpellEffect;
     import dmangos.world.spells : SpellInfo;
@@ -923,8 +923,11 @@ unittest
     source.replicator = fromSender;
     owner.replicator = toSender;
     CreatureSwing[] requests, replies;
+    bool swingLinkUp = true;
     source.sendCreatureSwing = (ushort peer, const ref CreatureSwing swing) {
         assert(peer == 2 && !swing.reply);
+        if (!swingLinkUp)
+            return false;
         requests ~= cast(CreatureSwing) swing;
         return true;
     };
@@ -967,6 +970,32 @@ unittest
     creature.ai.damageTaken(previous.unit, 42);
     assert(creature.ai.currentVictim == playerGuid && creature.ai.threatOf(playerGuid) == 42);
 
+    enum weaponSpell = 91_067, manaCost = 12, weaponBonus = 13;
+    uint[spellRangeFormat.length] meleeRange;
+    meleeRange[0] = 1;
+    const float fiveYards = 5;
+    meleeRange[2] = *cast(const uint*) &fiveYards;
+    foreach (node; [source, owner])
+    {
+        node.client.spellRanges = typeof(node.client.spellRanges).parse(buildDbc(spellRangeFormat, [meleeRange[]]),
+            "SpellRange.dbc");
+        auto spell = testSpell(weaponSpell, SpellEffect.weaponDamageNoschool, ImplicitTarget.enemy, weaponBonus, 1);
+        spell.attributes |= spellAttrOnNextSwing1;
+        spell.casting.manaCost = manaCost;
+        node.data.spells.spells[weaponSpell] = spell;
+    }
+    auto weaponSpawn = CreatureSpawn(91_067, creatureInnkeeper, from.id, at.x, at.y, at.z);
+    auto weaponUser = source.makeCreature(&weaponSpawn);
+    from.addObject(weaponUser);
+    weaponUser.values.set!UNIT_FIELD_MINDAMAGE(20f);
+    weaponUser.values.set!UNIT_FIELD_MAXDAMAGE(20f);
+    weaponUser.values.set!UNIT_FIELD_BASEATTACKTIME(2000u);
+    weaponUser.values.set!UNIT_FIELD_MAXPOWER1(80u);
+    weaponUser.values.set!UNIT_FIELD_POWER1(80u);
+    weaponUser.ai.attackedBy(previous.unit, from);
+    assert(weaponUser.ai.castSpell(source.data.spells.spell(weaponSpell), playerGuid, 0));
+    assert(weaponUser.values.get!UNIT_FIELD_POWER1 == 80 && requests.length == 0, "only queued on the old owner");
+
     auto otherSpawn = CreatureSpawn(91_061, creatureInnkeeper, to.id, near.x, near.y, near.z);
     auto other = owner.makeCreature(&otherSpawn);
     to.addObject(other);
@@ -984,6 +1013,72 @@ unittest
     to.takeInterest(added, removed);
     from.peerInterest(2, added, removed);
     assert(to.isReplica(creature.guid));
+
+    CreatureSwing throughWire(const ref CreatureSwing swing)
+    {
+        ByteWriter payload;
+        serialize(payload, swing);
+        return decode!CreatureSwing(payload.data);
+    }
+
+    victim.player.values.set!UNIT_FIELD_MAXHEALTH(200u);
+    victim.player.values.set!UNIT_FIELD_HEALTH(200u);
+    victim.player.stats.resistances[0] = 1000;
+    victim.player.values.setByte!UNIT_FIELD_BYTES_1(0, 1); // sitting lets the weapon roll crit deterministically
+    client.read();
+    from.replicaRemoved(owner.nodeId, playerGuid);
+    weaponUser.ai.update(from, 50);
+    assert(weaponUser.ai.currentVictim == playerGuid && requests.length == 0);
+    from.replicaCreated(owner.nodeId, targetCell, playerGuid, encodePlayerState(victim.player, 0));
+    swingLinkUp = false;
+    weaponUser.ai.update(from, 50);
+    assert(requests.length == 0 && weaponUser.values.get!UNIT_FIELD_POWER1 == 80);
+    swingLinkUp = true;
+    weaponUser.ai.update(from, 100);
+    assert(requests.length == 1 && requests[0].spell == weaponSpell && requests[0].target == playerGuid
+        && requests[0].destination == owner.nodeId);
+    assert(weaponUser.values.get!UNIT_FIELD_POWER1 == 80 - manaCost);
+    const queued = throughWire(requests[0]);
+    const armor = victim.fighter.armor;
+    const specialDamage = 2 * cast(uint) armorReducedDamage(20, armor, 20)
+        + cast(uint) armorReducedDamage(20, armor, weaponBonus);
+    to.random.seed(20_261_121);
+    owner.creatureSwingArrived(1, queued);
+    owner.creatureSwingArrived(1, queued);
+    assert(replies.length == 1 && replies[0].spellMiss == SpellMissInfo.none && replies[0].damage == specialDamage);
+    assert(victim.player.values.get!UNIT_FIELD_HEALTH == 200 - specialDamage);
+    const resolved = throughWire(replies[0]);
+    source.creatureSwingArrived(2, resolved);
+    source.creatureSwingArrived(2, resolved);
+    const logs = client.read();
+    const codes = opcodesOf(logs);
+    assert(codes.count(Opcode.SMSG_SPELL_GO) == 1 && codes.count(Opcode.SMSG_SPELLNONMELEEDAMAGELOG) == 1
+        && !codes.canFind(Opcode.SMSG_ATTACKERSTATEUPDATE));
+    auto log = ByteReader(bodyOf(logs, Opcode.SMSG_SPELLNONMELEEDAMAGELOG));
+    assert(log.readPackedGuid() == playerGuid && log.readPackedGuid() == weaponUser.guid
+        && log.read!uint == weaponSpell && log.read!uint == specialDamage);
+    weaponUser.ai.update(from, 2000);
+    assert(requests.length == 2 && requests[1].spell == 0 && weaponUser.values.get!UNIT_FIELD_POWER1 == 80 - manaCost);
+
+    // Queue again with a remote victim, then hand the attacker off before it gets its next swing.
+    assert(weaponUser.ai.castSpell(source.data.spells.spell(weaponSpell), playerGuid, 0));
+    owner.data.creatureSpawns ~= weaponSpawn;
+    const moved = from.releaseCreatureLoan(weaponUser.guid, owner.nodeId, &source.saveMigrant);
+    assert(moved.length && from.isReplica(weaponUser.guid));
+    to.migrateIn(moved, &owner.restoreMigrant);
+    auto arrived = to.creatureAt(weaponUser.guid);
+    assert(arrived !is null && arrived.values.get!UNIT_FIELD_POWER1 == 80 - manaCost);
+    victim.player.values.setByte!UNIT_FIELD_BYTES_1(0, 1);
+    to.random.seed(20_261_121);
+    client.read();
+    arrived.ai.update(to, 2000);
+    assert(arrived.values.get!UNIT_FIELD_POWER1 == 80 - 2 * manaCost);
+    const local = opcodesOf(client.read());
+    assert(local.count(Opcode.SMSG_SPELL_GO) == 1 && local.count(Opcode.SMSG_SPELLNONMELEEDAMAGELOG) == 1
+        && !local.canFind(Opcode.SMSG_ATTACKERSTATEUPDATE));
+    to.removeObject(weaponUser.guid);
+    from.replicaRemoved(owner.nodeId, weaponUser.guid);
+    requests = replies = null;
 
     enum hitChance = 91_060, shield = 91_061, thorns = 91_063;
     foreach (id, type; [hitChance: AuraType.modAttackerMeleeHitChance, shield: AuraType.schoolAbsorb,
@@ -1005,13 +1100,6 @@ unittest
     const damage = cast(uint) armorReducedDamage(creature.fighter.level, victim.fighter.armor, 20) * 2;
     const afterFirst = 100 - (damage - 7);
     client.read();
-
-    CreatureSwing throughWire(const ref CreatureSwing swing)
-    {
-        ByteWriter payload;
-        serialize(payload, swing);
-        return decode!CreatureSwing(payload.data);
-    }
 
     creature.ai.update(from, 50);
     assert(requests.length == 1 && requests[0].target == playerGuid);

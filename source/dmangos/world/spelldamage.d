@@ -10,6 +10,7 @@ module dmangos.world.spelldamage;
 
 import dmangos.cluster.protocol : AreaDamage, PartyHeal;
 import dmangos.world.caster : Caster;
+import dmangos.world.combat : Fighter;
 import dmangos.world.movement : Position;
 import dmangos.world.spellids;
 import dmangos.world.spells : SpellInfo;
@@ -87,6 +88,12 @@ float spellCritTaken(A)(const ref A auras, uint school)
     return school < 7 ? auras.totalByMiscMask(AuraType.modAttackerSpellCritChance, 1 << school) : 0;
 }
 
+/// The victim's spell damage multiplier for a weapon ability that has already rolled its attack.
+package uint weaponRolledAmount(uint damage, uint school, const ref Fighter target)
+{
+    return school < 7 ? cast(uint)(damage * target.damageTaken[school]) : damage;
+}
+
 /**
  * `damage` of `school` (an index) from `caster`'s `spell` to `victim`, as `how` says it comes: the caster's spell
  * power and modifiers, the auras of both, a crit, armor (physical) or a partial resist (not holy, not a binary spell),
@@ -115,10 +122,7 @@ uint spellDamage(ref Caster caster, const(SpellInfo)* spell, UnitRef victim, uin
     bool crit;
     uint resisted;
     if (how.weaponRolled)
-    {
-        if (school < 7) // (what the victim takes; the rest came with the roll)
-            damage = cast(uint)(damage * target.damageTaken[school]);
-    }
+        damage = weaponRolledAmount(damage, school, target);
     else
     {
         damage = caster.damageFactors(damage, school, target);

@@ -16,6 +16,55 @@
 module dmangos.world.creaturecasting;
 
 import dmangos.world.spellids;
+import dmangos.world.combat : MeleeDamage, MeleeHitOutcome, VictimState;
+import dmangos.world.spellcast : isNextMeleeSwingSpell, SpellMissInfo;
+import dmangos.world.spells : SpellInfo;
+
+/// The weapon effect of a next-swing spell that can resolve entirely on one explicit enemy.
+package int singleTargetSwingEffect(const ref SpellInfo spell)
+{
+    import std.algorithm.comparison : among;
+
+    if (!isNextMeleeSwingSpell(spell))
+        return -1;
+    int weapon = -1;
+    foreach (i, effect; spell.effect)
+    {
+        if (effect == SpellEffect.none)
+            continue;
+        if (weapon >= 0 || !effect.among(SpellEffect.weaponDamageNoschool, SpellEffect.weaponDamage,
+                SpellEffect.weaponPercentDamage, SpellEffect.normalizedWeaponDmg)
+            || spell.implicitTargetA[i] != ImplicitTarget.enemy
+            || spell.casting.implicitTargetB[i] != ImplicitTarget.none || spell.casting.chainTarget[i] > 1)
+            return -1;
+        weapon = cast(int) i;
+    }
+    return weapon;
+}
+
+package SpellMissInfo weaponSpellMiss(const ref MeleeDamage hit)
+{
+    if (hit.targetState == VictimState.isImmune)
+        return SpellMissInfo.immune;
+    switch (hit.outcome)
+    {
+    case MeleeHitOutcome.miss: return SpellMissInfo.miss;
+    case MeleeHitOutcome.dodge: return SpellMissInfo.dodge;
+    case MeleeHitOutcome.parry: return SpellMissInfo.parry;
+    case MeleeHitOutcome.evade: return SpellMissInfo.evade;
+    default: return SpellMissInfo.none;
+    }
+}
+
+/// A creature's rolled weapon damage, plus the effect's bonus or as a percentage of the roll.
+package uint creatureWeaponSpellDamage(SpellEffect effect, uint damage, int value, uint level, uint armor)
+{
+    import dmangos.world.combat : armorReducedDamage;
+
+    if (effect == SpellEffect.weaponPercentDamage)
+        return cast(uint)(damage * (value > 0 ? value : 0) / 100.0f);
+    return damage + (value > 0 ? cast(uint) armorReducedDamage(level, armor, value) : 0);
+}
 
 /// See the module documentation.
 mixin template CreatureCasting()
@@ -25,8 +74,8 @@ mixin template CreatureCasting()
     import std.random : uniform, uniform01;
     import dmangos.bytes : ByteWriter;
     import dmangos.world.auras : makeAura;
-    import dmangos.world.combat : AttackType, armorReducedDamage, calculateMeleeDamage, hasInArc, MeleeDamage,
-        MeleeHitOutcome;
+    import dmangos.world.combat : AttackType, calculateMeleeDamage, hasInArc, MeleeDamage, MeleeHitOutcome;
+    import dmangos.world.creaturecasting : creatureWeaponSpellDamage, singleTargetSwingEffect, weaponSpellMiss;
     import dmangos.world.eventai;
     import dmangos.world.motion : launch, stopMoving;
     import dmangos.world.opcodes : ChatType, Language, Opcode;
@@ -195,7 +244,9 @@ mixin template CreatureCasting()
                     import std.algorithm.searching : any;
                     import std.range : iota;
 
-                    if (!iota(spell.effect.length).any!(i => isCreatureTargetEffect(*spell, i)))
+                    if (isNextMeleeSwingSpell(*spell) && !triggered
+                        ? singleTargetSwingEffect(*spell) < 0
+                        : !iota(spell.effect.length).any!(i => isCreatureTargetEffect(*spell, i)))
                         return refuse(SpellCastResult.badTargets);
                 }
             }
@@ -232,6 +283,8 @@ mixin template CreatureCasting()
         if (!triggered && isNextMeleeSwingSpell(*spell))
         {
             nextSwing = spell;
+            if (remoteMeleeMap(world_) !is null)
+                restoringThreat = combatHandoffGraceMs;
             return true;
         }
         int time = triggered ? 0 : cast(int)(castTime(*spell, lore.clientData, me.values.get!UNIT_FIELD_LEVEL)
@@ -378,6 +431,14 @@ mixin template CreatureCasting()
             ? levelScaledCost(cost, spell.spellLevel, me.values.get!UNIT_FIELD_LEVEL) : cost;
     }
 
+    private void spendSpellMana(const(SpellInfo)* spell)
+    {
+        if (!paysMana(spell))
+            return;
+        const cost = manaCost(spell), mana = me.values.get!UNIT_FIELD_POWER1;
+        me.values.set!UNIT_FIELD_POWER1(cost >= mana ? 0 : mana - cost);
+    }
+
     /// Within the spell's range of its target (and out of its minimum).
     private bool inRangeFor(const(SpellInfo)* spell, ulong target)
     {
@@ -519,14 +580,6 @@ mixin template CreatureCasting()
         import dmangos.world.spellcast : spellFailurePacket, SpellCastResult;
         import dmangos.world.spelldamage : creatureTargetInRange;
 
-        void spendMana()
-        {
-            if (takeMana && paysMana(spell))
-            {
-                const cost = manaCost(spell), mana = me.values.get!UNIT_FIELD_POWER1;
-                me.values.set!UNIT_FIELD_POWER1(cost >= mana ? 0 : mana - cost);
-            }
-        }
         if (auto other = combatTarget(world_, target))
             if (other.replica !is null)
             {
@@ -535,13 +588,17 @@ mixin template CreatureCasting()
                     && creatureTargetInRange(spell, me.fighter, other.fighter, lore.clientData)
                     && world_.inLineOfSight(me.position, other.position)
                     && sendCreatureTargetSpell(context, spell, other, !takeMana, auraAbsent))
-                    spendMana();
+                {
+                    if (takeMana)
+                        spendSpellMana(spell);
+                }
                 else if (takeMana)
                     world_.sendToObservers(me.guid, Opcode.SMSG_SPELL_FAILURE,
                         spellFailurePacket(me.guid, spell.id, SpellCastResult.outOfRange));
                 return;
             }
-        spendMana();
+        if (takeMana)
+            spendSpellMana(spell);
         const level = me.values.get!UNIT_FIELD_LEVEL;
         // Who each effect reaches; a hostile target rolls once to be hit.
         ulong[][3] reached;
@@ -582,16 +639,9 @@ mixin template CreatureCasting()
                     const f = other.fighter;
                     if (weapon)
                     {
-                        auto d = calculateMeleeDamage(me.fighter, f, AttackType.mainHand, world_.random);
+                        const d = calculateMeleeDamage(me.fighter, f, AttackType.mainHand, world_.random);
                         weaponRolls[guid] = d;
-                        switch (d.outcome)
-                        {
-                        case MeleeHitOutcome.miss: miss = SpellMissInfo.miss; break;
-                        case MeleeHitOutcome.dodge: miss = SpellMissInfo.dodge; break;
-                        case MeleeHitOutcome.parry: miss = SpellMissInfo.parry; break;
-                        case MeleeHitOutcome.evade: miss = SpellMissInfo.evade; break;
-                        default: break;
-                        }
+                        miss = weaponSpellMiss(d);
                     }
                     else
                     {
@@ -785,20 +835,29 @@ mixin template CreatureCasting()
     /// A weapon spell's damage to `guid`, its melee roll `d` made at the hit roll: the effect's bonus (or percentage).
     package void weaponSpellDamage(const(SpellInfo)* spell, size_t i, ulong guid, MeleeDamage d, int value)
     {
-        uint damage = d.damage;
-        if (spell.effect[i] == SpellEffect.weaponPercentDamage)
-            damage = cast(uint)(damage * (value > 0 ? value : 0) / 100.0f);
-        else if (value > 0)
-            damage += cast(uint) armorReducedDamage(me.values.get!UNIT_FIELD_LEVEL,
-                world_.unit(guid) ? world_.unit(guid).fighter.armor : 0, value);
+        auto target = world_.unit(guid);
+        const damage = creatureWeaponSpellDamage(spell.effect[i], d.damage, value, me.values.get!UNIT_FIELD_LEVEL,
+            target ? target.fighter.armor : 0);
         spellDamageTo(spell, guid, damage, -1);
-        if (auto other = world_.unit(guid)) // a pet's procs (`dmangos.world.creatureprocs`)
-        {
-            import dmangos.world.procs : procExOfSwing, ProcHit, spellProcFlags;
+        if (auto other = world_.unit(guid))
+            weaponSpellProcs(spell, other, d.outcome, damage);
+    }
 
-            procAuras(spellProcFlags(*spell, false, false), other, ProcHit(spell, procExOfSwing(d.outcome), damage, 0,
-                damage != 0));
-        }
+    private void weaponSpellProcs(const(SpellInfo)* spell, UnitRef target, MeleeHitOutcome outcome, uint damage)
+    {
+        import dmangos.world.procs : procExOfSwing, ProcHit, spellProcFlags;
+
+        procAuras(spellProcFlags(*spell, false, false), target, ProcHit(spell, procExOfSwing(outcome), damage, 0,
+            damage != 0));
+    }
+
+    package void remoteWeaponSpellFinished(const(SpellInfo)* spell, UnitRef target, MeleeHitOutcome outcome,
+        uint damage, bool killed)
+    {
+        remoteSpellDamageDealt(spell, target, false, damage, killed);
+        weaponSpellProcs(spell, target, outcome, damage);
+        if (script !is null && me.alive)
+            script.spellHitTarget(this, target.combatGuid, spell.id, 1u << spell.casting.school);
     }
 
 
@@ -893,6 +952,31 @@ mixin template CreatureCasting()
         if (nextSwing is null)
             return false;
         auto spell = nextSwing;
+        if (target.replica !is null)
+        {
+            import dmangos.world.spellmods : SpellModOp;
+
+            const effect = singleTargetSwingEffect(*spell);
+            if (effect < 0)
+                return false;
+            if (paysMana(spell) && manaCost(spell) > me.values.get!UNIT_FIELD_POWER1)
+            {
+                nextSwing = null;
+                return false;
+            }
+            auto caster = spellCaster();
+            if (auto map = remoteMeleeMap(world_))
+                if (map.remoteCreatureSwing(me, target, spell.id, effectAmount(spell, effect),
+                    caster.spellMod(SpellModOp.threat, spell, 1.0f)))
+                {
+                    nextSwing = null;
+                    spendSpellMana(spell);
+                    world_.flushCreature(me);
+                    return true;
+                }
+            attackTimer = 100; // The request did not leave this node. Keep the ability queued.
+            return true;
+        }
         nextSwing = null;
         go(spell, target.combatGuid, true);
         return true;

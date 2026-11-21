@@ -657,7 +657,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     bool delegate(ushort, const ref CreatureSwing) sendCreatureSwing;
     private ulong[ushort] lastCreatureSwing, lastCreatureSwingReply;
 
-    private bool queueCreatureSwing(Creature attacker, UnitRef target)
+    private bool queueCreatureSwing(Creature attacker, UnitRef target, uint spell, int spellValue, float spellThreat)
     {
         import dmangos.world.combat : creatureTypeHumanoid;
         import dmangos.world.updatefields : OBJECT_FIELD_ENTRY, TypeId;
@@ -681,7 +681,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             facing: fighter.position.orientation, running: fighter.runningAround, school: fighter.damageSchool[0],
             armorIgnored: fighter.armorIgnored, minDamage: fighter.damage[0][0], maxDamage: fighter.damage[0][1],
             damageFactor: fighter.damageDone[0] * damageVersus, crit: fighter.crit,
-            critVersus: critVersus, hitBonus: fighter.hitBonus);
+            critVersus: critVersus, hitBonus: fighter.hitBonus, spell: spell, spellValue: spellValue, spellThreat: spellThreat);
         return sendCreatureSwing(request.destination, request);
     }
 
@@ -691,9 +691,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import std.math : isFinite;
         import dmangos.world.combat : attackerStateUpdate, AttackType, calculateMeleeDamage, creatureSwingInReach,
             HitInfo;
+        import dmangos.world.creaturecasting : creatureWeaponSpellDamage, singleTargetSwingEffect, weaponSpellMiss;
         import dmangos.world.defines : UnitFlags;
         import dmangos.world.honor : HonorVictim;
         import dmangos.world.relations : canAttackNow;
+        import dmangos.world.spelldamage : creatureTargetInRange, weaponRolledAmount;
         import dmangos.world.unit : Blow, combatRelations, dealDamage;
         import dmangos.world.updatefields : OBJECT_FIELD_ENTRY, TypeId;
 
@@ -740,6 +742,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         auto defender = victim.fighter;
         if (!creatureSwingInReach(attacker, defender))
             return;
+        const spell = request.spell ? data.spells.spell(request.spell) : null;
+        const weaponEffect = spell is null ? -1 : singleTargetSwingEffect(*spell);
+        if (request.spell && (weaponEffect < 0 || !isFinite(request.spellThreat) || request.spellThreat < 0
+            || !creatureTargetInRange(spell, attacker, defender, client)
+            || !map_.inLineOfSight(attacker.position, defender.position)))
+            return;
         attacker.worldBoss = template_.rank == 3;
         attacker.armorIgnored = request.armorIgnored;
         attacker.damage[0] = [request.minDamage, request.maxDamage];
@@ -751,35 +759,64 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         attacker.hitBonus = request.hitBonus;
 
         auto hit = calculateMeleeDamage(attacker, defender, AttackType.mainHand, map_.random);
-        if ((hit.absorbed = victim.absorb(hit.school, hit.damage)) != 0)
-            hit.hitInfo |= HitInfo.absorb;
-        const packet = attackerStateUpdate(hit);
-        if (victim.kind == UnitKind.player)
-            map_.sendToWatchers(victim.session, Opcode.SMSG_ATTACKERSTATEUPDATE, packet, true);
-        else
-            map_.sendToObservers(request.target, Opcode.SMSG_ATTACKERSTATEUPDATE, packet);
-        auto blow = Blow.swing(hit);
-        blow.remotePlayer = controller;
-        blow.remotePlayerPvP = relation.hasFlag(UnitFlags.pvp);
+        auto result = cast(CreatureSwing) request;
+        result.reply = true;
+        result.spellMiss = 0;
+        Blow blow;
         SwingRetaliation[] retaliation;
-        blow.retaliate = (uint damage, uint school, uint spell, float threatFactor) {
-            retaliation ~= SwingRetaliation(damage, school, spell, threatFactor);
-        };
-        const honor = controller && victim.kind == UnitKind.player ? victim.session.describeHonorVictim() : HonorVictim.init;
-        if (controller)
+        if (spell is null)
         {
-            if (dealRemoteDamage(source, victim, hit.damage, blow) && honor.guid)
-                reportRemotePlayerKill(controller, honor, map_);
+            if ((hit.absorbed = victim.absorb(hit.school, hit.damage)) != 0)
+                hit.hitInfo |= HitInfo.absorb;
+            const packet = attackerStateUpdate(hit);
+            if (victim.kind == UnitKind.player)
+                map_.sendToWatchers(victim.session, Opcode.SMSG_ATTACKERSTATEUPDATE, packet, true);
+            else
+                map_.sendToObservers(request.target, Opcode.SMSG_ATTACKERSTATEUPDATE, packet);
+            blow = Blow.swing(hit);
+            blow.retaliate = (uint damage, uint school, uint procSpell, float threatFactor) {
+                retaliation ~= SwingRetaliation(damage, school, procSpell, threatFactor);
+            };
         }
         else
-            dealDamage(source, victim, hit.damage, blow);
+        {
+            result.spellMiss = cast(ubyte) weaponSpellMiss(hit);
+            if (!result.spellMiss)
+            {
+                if (victim.kind == UnitKind.creature)
+                    victim.creature.ai.spellHitBy(request.attacker, spell.id, 1u << spell.casting.school, map_);
+                victim.hostileSpellLanded();
+                const current = victim.fighter;
+                hit.damage = creatureWeaponSpellDamage(spell.effect[weaponEffect], hit.damage, request.spellValue,
+                    attacker.level, current.armor);
+                hit.damage = weaponRolledAmount(hit.damage, 0, current);
+                hit.absorbed = victim.absorb(0, hit.damage);
+                blow = Blow.spell();
+                blow.threat = request.spellThreat;
+            }
+            else
+                hit.damage = 0;
+        }
+        if (!result.spellMiss)
+        {
+            blow.remotePlayer = controller;
+            blow.remotePlayerPvP = relation.hasFlag(UnitFlags.pvp);
+            const honor = controller && victim.kind == UnitKind.player ? victim.session.describeHonorVictim()
+                : HonorVictim.init;
+            if (controller)
+            {
+                if (dealRemoteDamage(source, victim, hit.damage, blow) && honor.guid)
+                    reportRemotePlayerKill(controller, honor, map_);
+            }
+            else
+                dealDamage(source, victim, hit.damage, blow);
+        }
 
         if (sendCreatureSwing !is null)
         {
-            auto result = cast(CreatureSwing) request;
-            result.reply = true;
             result.outcome = cast(ubyte) hit.outcome;
             result.damage = hit.damage;
+            result.absorbed = hit.absorbed;
             result.killed = !victim.alive;
             result.targetPvP = victim.kind == UnitKind.player && victim.session.character !is null && victim.session.isPvP;
             result.retaliation = retaliation;
@@ -794,7 +831,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.combat : MeleeHitOutcome;
         import dmangos.world.character : Character;
         import dmangos.world.objects : highGuidOf;
-        import dmangos.world.spellcast : nonMeleeDamageLog;
+        import dmangos.world.spellcast : nonMeleeDamageLog, spellGoPacket, spellMissLog, SpellMissInfo, SpellTargets,
+            TargetFlags, TargetResult;
         import dmangos.world.unit : Blow;
 
         if (reply.destination != peer || reply.sequence <= lastCreatureSwingReply.get(peer, 0)
@@ -812,6 +850,29 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (reply.targetPvP && reply.controller)
             if (auto owner = cast(Character) onlinePlayer(reply.controller))
                 owner.attackedFlaggedPlayer();
+        if (reply.spell)
+        {
+            const spell = data.spells.spell(reply.spell);
+            if (spell is null || reply.spellMiss > SpellMissInfo.reflect)
+                return;
+            const miss = cast(SpellMissInfo) reply.spellMiss;
+            const targets = SpellTargets(TargetFlags.unit, reply.target);
+            map_.sendToObservers(reply.attacker, Opcode.SMSG_SPELL_GO,
+                spellGoPacket(reply.attacker, reply.spell, [TargetResult(reply.target, miss)], targets));
+            if (miss)
+                map_.sendToObservers(reply.attacker, Opcode.SMSG_SPELLLOGMISS,
+                    spellMissLog(reply.spell, reply.attacker, reply.target, miss));
+            else
+            {
+                map_.sendToObservers(reply.attacker, Opcode.SMSG_SPELLNONMELEEDAMAGELOG,
+                    nonMeleeDamageLog(reply.target, reply.attacker, reply.spell, reply.damage, 0, reply.absorbed,
+                        0, false, 0, false));
+                if (target)
+                    attacker.ai.remoteWeaponSpellFinished(spell, target, cast(MeleeHitOutcome) reply.outcome,
+                        reply.damage, reply.killed);
+            }
+            return;
+        }
         foreach (ref hit; reply.retaliation)
         {
             if (!hit.damage || hit.school >= 7 || !isFinite(hit.threatFactor) || hit.threatFactor < 0

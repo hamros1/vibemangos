@@ -480,6 +480,11 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   strike the creature on its node using the swing reply. The defender's node spends the
   Holy Shield charge when it resolves the block. The creature's node applies the damage
   and threat and sends the corresponding combat log once.
+  A queued single-target weapon ability, such as Maul, can replace the next swing against
+  a target on another node. The attacker spends any applicable mana when it sends the swing.
+  The target's node rolls the weapon hit and applies damage once. A fighting creature carries
+  its queued ability through a region handoff. If the target moves again after dispatch, the
+  old node can discard the swing under the same ownership checks as ordinary melee.
 * **Creature casts.** An NPC can cast single-target magical damage and hostile aura spells
   on a player across the boundary. The creature holds the cast timer, mana and spell-list
   cooldown. The player's node rechecks eligibility, range and line of sight at completion.
@@ -740,7 +745,7 @@ services line (`ServiceHost.describe`). Every log line of the cluster code start
 
 ## Not yet
 
-* Creature spells with broader target shapes or effects, including spells that replace a melee swing.
+* Creature spells with broader target shapes or effects, including multi-target swing replacements such as Cleave.
 * Proc spells with projectiles, channels or mixed targeted effects across nodes, channelled
   leeches, and additional victim-side periodic effects.
 

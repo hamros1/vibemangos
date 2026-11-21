@@ -668,6 +668,7 @@ final class CreatureAI : Scripted, CreatureHost
         writer.put(victim);
         writer.put(meleeAttacking);
         writer.put(attackTimer);
+        writer.put(nextSwing is null ? 0u : nextSwing.id);
         writer.put(combatTimer);
         writer.put(calledAssistance);
         serialize(writer, combatStart);
@@ -690,6 +691,8 @@ final class CreatureAI : Scripted, CreatureHost
         victim = reader.read!ulong;
         meleeAttacking = reader.read!bool;
         attackTimer = reader.read!int;
+        const swingSpellId = reader.read!uint;
+        nextSwing = swingSpellId && lore !is null ? lore.spellInfo(swingSpellId) : null;
         combatTimer = reader.read!int;
         calledAssistance = reader.read!bool;
         combatStart = deserialize!Position(reader);
@@ -701,8 +704,10 @@ final class CreatureAI : Scripted, CreatureHost
         }
         outOfCombat = me.generator;
         me.generator = new IdleMovement;
-        restoringThreat = 2000;
+        restoringThreat = combatHandoffGraceMs;
     }
+
+    private enum int combatHandoffGraceMs = 2000;
 
     /// Its aggro radius against `target`, in yards.
     float attackDistanceTo(const Fighter target) const
@@ -1185,6 +1190,7 @@ private:
     void updateAI(CombatWorld world)
     {
         const canSwingRemotely = remoteMeleeMap(world) !is null;
+        const waitsForTargetHandoff = canSwingRemotely && (me.guardianOwner || nextSwing !is null);
         ulong[] gone;
         foreach (guid, _; threat)
         {
@@ -1223,7 +1229,7 @@ private:
         auto target = combatTarget(world, selectNextVictim(world));
         if (!target)
         {
-            if (me.guardianOwner && restoringThreat)
+            if (waitsForTargetHandoff && restoringThreat)
                 return;
             if (victim)
             {
@@ -1234,8 +1240,8 @@ private:
             }
             return;
         }
-        if (me.guardianOwner && canSwingRemotely)
-            restoringThreat = 2000; // The target's replica can briefly disappear during a handoff.
+        if (waitsForTargetHandoff)
+            restoringThreat = combatHandoffGraceMs;
         if (target.combatGuid != victim)
             attackStart(target, world);
         if (casting_ !is null)
@@ -1553,7 +1559,7 @@ private:
             return;
         }
         attackTimer = me.values.get!UNIT_FIELD_BASEATTACKTIME;
-        if (target.replica is null && swingSpell(target))
+        if (swingSpell(target))
             return;
         swing(target, world);
         // The extra swings it is owed (Thrash, Sword Specialization: `SPELL_EFFECT_ADD_EXTRA_ATTACKS`), at once; they
@@ -1576,7 +1582,7 @@ private:
         if (target.replica !is null)
         {
             if (auto map = remoteMeleeMap(world))
-                map.remoteCreatureSwing(me, target);
+                map.remoteCreatureSwing(me, target, 0, 0, 1);
             return;
         }
         const self = me.fighter, other = target.fighter;
