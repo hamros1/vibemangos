@@ -515,7 +515,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
   `spell_gameobject_call_for_help_on_usage` (`OnSuccessfulStart`), `spell_hate_to_half`, `spell_random_aggro`,
   `spell_arcane_cloaking`, `spell_stoned` (with `Spell::EffectDummy`'s 10254, Stone Dwarf Awaken Visual),
   `spell_banish_exile`, `spell_orb_of_deception` (`GetAuraScriptCustomizationValue`), `spell_scourge_strike`,
-  `spell_communique_trigger`, `spell_despawner_self`
+  `spell_communique_trigger`, `spell_despawner_self`, `spell_ashbringer_item` (`AshbringerItemAura`)
 * Constants: `SPELL_VISUAL_KIT_FOOD`, `SPELL_VISUAL_KIT_DRINK`, `SPELL_COMMUNIQUE_CAMP_TO_RELAY`, `SPELL_SPIRIT_SPAWN_OUT`
 
 ## scripts/itemeffects.d

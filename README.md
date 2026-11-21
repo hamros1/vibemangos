@@ -726,7 +726,8 @@ What works now:
     scales them. A faction gained with shows in the client's list; falling to hostile is war, rising
     to neutral peace, and the client sets war (where allowed), inactive and the watched faction.
     Creatures react to a player by its standing and its wars; honored and above get 10% off at
-    vendors, trainers and repairs; items, conditions and quests that ask for a rank check it.
+    vendors, trainers and repairs; items, conditions and quests that ask for a rank check it. Auras may force a
+    faction's reaction (`SMSG_SET_FORCED_REACTIONS`): disguises, the Corrupted Ashbringer (the Scarlet Crusade friendly).
   * **Weather:** a zone with a `game_weather` row has rain, snow or
     storms by the season's chances, changing every 10 minutes (better, worse, or anew) while players
     are in it; they see it (`SMSG_WEATHER`) on entering the zone and when it changes, and fine

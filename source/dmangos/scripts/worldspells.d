@@ -222,3 +222,26 @@ struct OrbOfDeception
             it.transformModel(e.target, model);
     }
 }
+
+/**
+ * The Corrupted Ashbringer's aura (28282, worn): its bearer is friendly to the Scarlet Crusade, by AB Effect 001
+ * (28442, `SPELL_AURA_FORCE_REACTION` on faction 56, cast with the friendly rank as its amount); taken off, that
+ * goes too (`AshbringerItemAura`).
+ */
+@spell("spell_ashbringer_item")
+struct AshbringerItem
+{
+    enum uint effect001 = 28442;
+
+    void on(ref SpellContext it, const ref AuraApplied e)
+    {
+        if (e.effect == 0 && e.target.isPlayer)
+            it.castCustom(e.target, effect001, e.target, [int(Standing.friendly), 0, 0]);
+    }
+
+    void on(ref SpellContext it, const ref AuraEnded e)
+    {
+        if (e.effect == 0 && e.target.isPlayer)
+            it.removeAura(e.target, effect001);
+    }
+}

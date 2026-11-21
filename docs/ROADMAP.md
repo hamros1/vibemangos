@@ -207,15 +207,15 @@ the cast check, cast start, aura heartbeat, aura end, tick end and target check 
 creatures' mana drains on players; and 32 item and holiday spells CMaNGOS's core scripts by id (`@spellIds`:
 the Deviate Fish, the engineers' gadgets, the costumes, ...). Of the spell scripts, not yet: those needing
 creatures to cast as they die (the tribal deaths), summons and destinations a script shapes (the Lunar
-Festival's fireworks, which need players' game object summons too), auras forcing reactions (the
-Ashbringer), effect chances (the silithid egg), and the raids'. Not yet
+Festival's fireworks, which need players' game object summons too), effect chances (the silithid egg), and the raids'. Not yet
 (about 20 names, each module's documentation and SCRIPTING.md say why): what needs stealth detection
 (Venture Co. lookouts, Gallywix), the Scourge Invasion, caravans,
 the Eastern Kingdoms' world map script, and the mechanics the raids approximate (possession, mind
 control, Heigan's floor).
 Reputation is done (`reputation.d`, `reputationhandlers.d`; README's "Reputation"): kills, quests,
-spillover, war and peace, discounts, requirements. Not yet: `SMSG_SET_FORCED_REACTIONS` (spells force
-none yet). Reputation from spells (effect 103) and the PvP rank's discount: done.
+spillover, war and peace, discounts, requirements, reactions forced by auras (`SMSG_SET_FORCED_REACTIONS`: the
+disguises, the Corrupted Ashbringer's Scarlet Crusade). Reputation from spells (effect 103) and the PvP rank's
+discount: done.
 
 ### Talents
 
