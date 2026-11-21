@@ -329,7 +329,8 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
 
     bool sendGroupLootRoll(ushort peer, const ref GroupLootRoll message)
     {
-        return node.sendTo(peer, message);
+        auto link = node.linkTo(peer);
+        return link !is null && !link.wantsClose && node.sendTo(peer, message);
     }
 
     void groupLootRoll(ushort peer, const ref GroupLootRoll message)

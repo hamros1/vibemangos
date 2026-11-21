@@ -460,6 +460,11 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   node checks loot conditions and whether they can use the item for Need Before Greed. The winning
   player's node stores the item and confirms the award. A failed store leaves it
   reserved for the winner. An award whose outcome is unknown stays locked until the loot expires.
+* **Master loot.** When the designated master is on the loot's node at the kill or chest opening,
+  the master can assign shared items at or above the loot threshold to eligible party members on other nodes.
+  The recipient's node checks item conditions and saves the award once. A rejected award leaves
+  the item available for reassignment and reports the error to the master. A pending award locks
+  the slot until confirmation or loot expiry.
 * **Party coin splits.** The loot's node divides the drop among eligible, reachable members,
   with the extra copper going to the looter first and then in GUID order. Each remote member's
   node credits and saves its share once. A share that cannot be sent stays with the looter.
@@ -597,7 +602,7 @@ services line (`ServiceHost.describe`). Every log line of the cluster code start
 
 ## Not yet
 
-* Cross-node quest drops and master loot.
+* Cross-node quest drops and keeping Master Loot active when the designated master starts on another node.
 * A player's spells at another node's player.
 * Surviving an owner's loss without disconnecting the client: the home could take its player back
   from the last save, which is worth having only with gateways and much more frequent player saves.

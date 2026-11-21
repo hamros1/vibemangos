@@ -180,11 +180,7 @@ private:
     /// `SMSG_LOOT_RESPONSE` with an error: the window does not open.
     void sendLootError(ulong guid, LootError error)
     {
-        ByteWriter w;
-        w.put(guid);
-        w.put(ubyte(0));
-        w.put(cast(ubyte) error);
-        deliver(Opcode.SMSG_LOOT_RESPONSE, w.data);
+        deliver(Opcode.SMSG_LOOT_RESPONSE, lootErrorPacket(guid, error));
     }
 
     /// The client loots: the window opens on a corpse in reach, if there is something for this player.
@@ -283,23 +279,20 @@ private:
         auto loot = lootOf(request.loot);
         if (loot is null)
             return;
-        if (player.guid != loot.masterLooter)
+        if (loot.rule != LootRule.masterLoot || player.guid != loot.masterLooter)
             return sendLootError(request.loot, LootError.didntKill);
-        auto target = loot.find(request.target);
-        if (target is null || request.target !in loot.owners)
-            return sendLootError(request.loot, LootError.masterOther);
         auto item = loot.itemInSlot(request.slot);
         if (item is null)
             return sendEquipError(InventoryResult.itemNotFound);
-        if (item.slotTypeFor(player.guid, loot) == LootSlotType.none || request.target !in item.allowed)
+        if (item.remoteAward || item.slotTypeFor(player.guid, loot) != LootSlotType.master)
             return sendLootError(request.loot, LootError.masterOther);
-        item.blocked = false; // the master's to give
-        const result = loot.sendItem(target, item, false);
-        if (result == InventoryResult.cantCarryMoreOfThis)
-            sendLootError(request.loot, LootError.masterUniqueItem);
-        else if (result == InventoryResult.inventoryFull)
-            sendLootError(request.loot, LootError.masterInvFull);
-        else if (result != 0)
+        if (request.target in loot.owners && request.target in item.allowed)
+            if (auto target = loot.find(request.target))
+            {
+                item.blocked = false;
+                return loot.notifyMasterAwardError(loot.sendItem(target, item, false));
+            }
+        if (!loot.sendRemoteMasterAward(request.target, item))
             sendLootError(request.loot, LootError.masterOther);
     }
 
@@ -679,6 +672,7 @@ private:
         loot.threshold = group.lootThreshold;
         const crossNodeRolls = context.sendRemoteGroupLoot !is null && context.deliverRemote !is null
             && (loot.rule == LootRule.groupLoot || loot.rule == LootRule.needBeforeGreed);
+        const crossNodeMaster = loot.rule == LootRule.masterLoot && context.sendRemoteGroupLoot !is null;
         const crossNodeCoins = context.sendRemoteLootCoins !is null && context.canSendLootCoins !is null;
         const rotates = loot.rule == LootRule.roundRobin || loot.rule == LootRule.groupLoot
             || loot.rule == LootRule.needBeforeGreed;
@@ -688,7 +682,7 @@ private:
             auto looter = cast(Character) context.onlinePlayer(guid);
             if (looter is null)
             {
-                if (rotates || crossNodeCoins)
+                if (rotates || crossNodeCoins || crossNodeMaster)
                     if (auto remote = cast(Replica) map.findObject(guid))
                     {
                         const b = remote.position;
@@ -702,11 +696,15 @@ private:
             if (looter.atGroupRewardDistance(map, at) || fought(guid))
                 loot.owners[guid] = true;
         }
-        if (loot.remoteMembers.length && crossNodeRolls)
+        const remoteMasterAwards = crossNodeMaster && group.looter in loot.owners && loot.remoteMembers.length;
+        if (loot.remoteMembers.length && (crossNodeRolls || remoteMasterAwards))
         {
             loot.rollMap = map.id;
             loot.nextRoll = &context.nextLootSequence;
             loot.sendRemoteRoll = context.sendRemoteGroupLoot;
+        }
+        if (loot.remoteMembers.length && crossNodeRolls)
+        {
             loot.tellRemoteRoller = (ushort node, ulong guid, Opcode opcode, const(ubyte)[] body_) {
                 context.deliverRemote(node, guid, cast(ushort) opcode, body_);
             };
@@ -747,6 +745,11 @@ private:
         else if (loot.owners.length > 1 && loot.rule != LootRule.freeForAll)
         {
             loot.currentLooter = group.takeLootTurn(loot.owners.keys);
+            return;
+        }
+        else if (remoteMasterAwards)
+        {
+            loot.currentLooter = loot.masterLooter;
             return;
         }
         loot.currentLooter = player.guid;
@@ -1191,6 +1194,138 @@ unittest
                 assert(db.itemOwners[guid] == (remoteWins ? 8 : 7));
             }
         assert(saved == 1, "exactly one item is saved, for the winner");
+    }
+}
+
+// The master sees the remote recipient and can assign a shared slot exactly once.
+unittest
+{
+    import dmangos.bytes : ByteReader;
+    import dmangos.cluster.protocol : GroupLootRoll;
+    import dmangos.world.characterdb : GroupRecord, GroupMemberRecord;
+    import dmangos.world.defines : inventorySlotBag0, inventorySlotItemStart, inventorySlotItemEnd;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.group : LootMethod;
+    import dmangos.world.inventory : ItemRecord;
+    import dmangos.world.loot : LootError, LootSlotType, lootErrorPacket;
+    import dmangos.world.packets : ClientDestroyItem;
+    import dmangos.world.replication : encodePlayerState;
+
+    enum Case { success, full, conditioned, belowThreshold }
+    foreach (scenario; [Case.success, Case.full, Case.conditioned, Case.belowThreshold])
+    {
+        auto db = newDatabase();
+        GroupRecord party;
+        party.id = 1;
+        party.leader = party.looter = 7;
+        party.leaderName = "Anduin";
+        party.lootMethod = LootMethod.masterLoot;
+        party.lootThreshold = 2;
+        party.members = [GroupMemberRecord(7, "Anduin"), GroupMemberRecord(8, "Jaina")];
+        db.groups[party.id] = party;
+        auto corpseNode = newCreationContext(db), otherNode = newCreationContext(db);
+        corpseNode.nodeId = 1;
+        otherNode.nodeId = 2;
+        otherNode.ownsCell = (uint, ulong) => false;
+        auto now = MonoTime.currTime;
+        corpseNode.clock = otherNode.clock = () => now;
+        auto anduin = loggedIn(corpseNode, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f),
+            characterLevel: scenario == Case.conditioned ? 10 : 1);
+        const nearCorpse = Position(-8945, -132, 83.5f);
+        auto jaina = loggedIn(otherNode, db, 8, "Jaina", nearCorpse, setup: (ref character) {
+            if (scenario == Case.full)
+                foreach (ubyte slot; inventorySlotItemStart .. inventorySlotItemEnd)
+                    character.items ~= ItemRecord(0, slot, 100u + slot, itemShirt, 0, 0, 1);
+        });
+        corpseNode.map(0).replicaCreated(2, cellKeyAt(nearCorpse.x, nearCorpse.y), 8,
+            encodePlayerState(jaina.session.character, 0));
+
+        GroupLootRoll[] awards, results;
+        corpseNode.sendRemoteGroupLoot = (ushort node, const ref GroupLootRoll message) {
+            assert(node == 2 && message.action == GroupLootRoll.Action.masterAward);
+            awards ~= message;
+            return true;
+        };
+        otherNode.sendRemoteGroupLoot = (ushort node, const ref GroupLootRoll message) {
+            assert(node == 1 && message.action == GroupLootRoll.Action.result);
+            results ~= message;
+            return true;
+        };
+
+        if (scenario != Case.belowThreshold)
+            corpseNode.data.items.edit(itemJerky).details.quality = 2;
+        auto victim = lootableInnkeeper(corpseNode, scenario == Case.conditioned ? 50 : 0);
+        killIt(anduin, victim, now);
+        auto loot = victim.loot;
+        auto item = loot.itemInSlot(0);
+        anduin.write(Opcode.CMSG_LOOT, ClientGuid(victim.guid));
+        auto roster = ByteReader(bodyOf(anduin.read(), Opcode.SMSG_LOOT_MASTER_LIST));
+        assert(roster.read!ubyte == 2 && roster.read!ulong == 7 && roster.read!ulong == 8);
+        anduin.write(Opcode.CMSG_LOOT_MASTER_GIVE, ClientLootMasterGive(victim.guid, 0, 9));
+        assert(awards.length == 0, "a non-member cannot receive the item");
+
+        const assignment = ClientLootMasterGive(victim.guid, 0, 8);
+        anduin.write(Opcode.CMSG_LOOT_MASTER_GIVE, assignment);
+        if (scenario == Case.belowThreshold)
+        {
+            assert(awards.length == 0 && item.slotTypeFor(7, loot) == LootSlotType.normal);
+            continue;
+        }
+        assert(awards.length == 1 && item.blocked && item.remoteMasterTarget == 8);
+        anduin.write(Opcode.CMSG_LOOT_MASTER_GIVE, ClientLootMasterGive(victim.guid, 0, 7));
+        anduin.write(Opcode.CMSG_LOOT_MASTER_GIVE, assignment);
+        assert(awards.length == 1 && anduin.session.character.inventory.count(itemJerky) == 0,
+            "the pending slot cannot be assigned again");
+        anduin.read();
+
+        otherNode.groupLootRollArrived(1, awards[0]);
+        otherNode.groupLootRollArrived(1, awards[0]);
+        assert(results.length == 1);
+        corpseNode.groupLootRollArrived(3, results[0]);
+        assert(item.blocked, "only the recipient's node can confirm the award");
+        corpseNode.groupLootRollArrived(2, results[0]);
+        assert(!item.remoteAward && !item.blocked);
+
+        if (scenario == Case.full || scenario == Case.conditioned)
+        {
+            assert(!results[0].stored && jaina.session.character.inventory.count(itemJerky) == 0);
+            assert(item.slotTypeFor(7, loot) == LootSlotType.master, "a failed award leaves the item assignable");
+            const error = scenario == Case.full ? LootError.masterInvFull : LootError.masterOther;
+            assert(bodyOf(anduin.read(), Opcode.SMSG_LOOT_RESPONSE) == lootErrorPacket(victim.guid, error));
+            if (scenario == Case.full)
+            {
+                jaina.write(Opcode.CMSG_DESTROYITEM, ClientDestroyItem(inventorySlotBag0, inventorySlotItemStart,
+                    0, [0, 0, 0]));
+                otherNode.groupLootRollArrived(1, awards[0]);
+                assert(results.length == 1 && jaina.session.character.inventory.count(itemJerky) == 0,
+                    "replaying a rejected award after freeing a slot cannot grant an item");
+                anduin.write(Opcode.CMSG_LOOT_MASTER_GIVE, assignment);
+                assert(awards.length == 2 && awards[1].roll > awards[0].roll);
+                corpseNode.groupLootRollArrived(2, results[0]);
+                assert(item.blocked, "a previous rejection cannot unlock a new award");
+                otherNode.groupLootRollArrived(1, awards[1]);
+                assert(results.length == 2 && results[1].stored);
+                corpseNode.groupLootRollArrived(2, results[1]);
+            }
+            else
+                anduin.write(Opcode.CMSG_LOOT_MASTER_GIVE, ClientLootMasterGive(victim.guid, 0, 7));
+        }
+
+        anduin.write(Opcode.CMSG_LOOT_MASTER_GIVE, assignment);
+        corpseNode.groupLootRollArrived(2, results[$ - 1]);
+        assert(awards.length == (scenario == Case.full ? 2 : 1) && item.allowed.length == 0);
+        const recipient = scenario == Case.conditioned ? 7 : 8;
+        assert(anduin.session.character.inventory.count(itemJerky) == (recipient == 7 ? 1 : 0));
+        assert(jaina.session.character.inventory.count(itemJerky) == (recipient == 8 ? 1 : 0));
+        assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_LOOT_REMOVED));
+        size_t saved;
+        foreach (guid, ref row; db.itemRows)
+            if (row.entry == itemJerky)
+            {
+                ++saved;
+                assert(db.itemOwners[guid] == recipient);
+            }
+        assert(saved == 1, "exactly one item is saved, for the chosen eligible recipient");
     }
 }
 

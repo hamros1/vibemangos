@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 39; // 39: authoritative loot turns; 38: party coin shares
+enum ushort protocolVersion = 40; // 40: remote master loot awards; 39: authoritative loot turns
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -105,7 +105,7 @@ struct LootCoinShare
 struct GroupLootRoll
 {
     enum type = MessageType.groupLootRoll;
-    enum Action : ubyte { offer, vote, award, result }
+    enum Action : ubyte { offer, vote, award, result, masterAward }
 
     Action action;
     uint map;
@@ -120,6 +120,7 @@ struct GroupLootRoll
     bool needBeforeGreed;
     ubyte choice;
     bool stored;
+    ubyte inventoryError; /// InventoryResult for a rejected master award
 }
 
 struct CreatureLoan
@@ -1007,7 +1008,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 39, recordedFingerprint = 0xe68344dc9e09164dUL;
+private enum recordedVersion = 40, recordedFingerprint = 0x8733b1d297b510d8UL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

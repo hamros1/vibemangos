@@ -423,6 +423,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     bool delegate(ushort, const ref LootCoinShare) sendRemoteLootCoins;
     private ulong lootSequence;
     private ulong[ushort] lastLootCoinShare;
+    private ulong[ushort] lastMasterLootAward;
 
     ulong nextLootSequence()
     {
@@ -453,6 +454,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                         player.awardRemoteLoot(peer, message);
                 }
             return;
+        case GroupLootRoll.Action.masterAward:
+            receiveMasterLootAward(peer, message);
+            return;
         case GroupLootRoll.Action.vote:
         case GroupLootRoll.Action.result:
             auto map_ = existingMap(message.map);
@@ -472,6 +476,31 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 loot.remoteAwardResult(peer, message);
             return;
         }
+    }
+
+    private void receiveMasterLootAward(ushort peer, const ref GroupLootRoll message)
+    {
+        import dmangos.world.character : Character;
+        import dmangos.world.inventory : InventoryResult;
+
+        // Awards arrive in sequence on the peer link. Record it before trying to change inventory.
+        if (sendRemoteGroupLoot is null || message.roll <= lastMasterLootAward.get(peer, 0))
+            return;
+        lastMasterLootAward[peer] = message.roll;
+        GroupLootRoll result = message;
+        result.action = GroupLootRoll.Action.result;
+        result.stored = false;
+        result.inventoryError = InventoryResult.itemNotFound;
+        if (auto player = cast(Character) onlinePlayer(message.player))
+            if (player.character !is null && !player.transferring && player.currentMap.id == message.map
+                && (!message.condition || player.conditionMet(message.condition)))
+            {
+                result.inventoryError = cast(ubyte) player.storeLoot(message.item, message.count,
+                    message.randomProperty, false);
+                result.stored = result.inventoryError == InventoryResult.ok;
+            }
+        if (!result.stored || settleWrites())
+            sendRemoteGroupLoot(peer, result);
     }
 
     /// Loot shares arrive in sequence over a peer link, even when it resumes after a disconnect.

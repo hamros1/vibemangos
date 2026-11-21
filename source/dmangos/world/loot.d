@@ -221,6 +221,16 @@ enum LootError : ubyte
     masterOther = 14,
 }
 
+/// `SMSG_LOOT_RESPONSE` with an error.
+const(ubyte)[] lootErrorPacket(ulong target, LootError error)
+{
+    ByteWriter w;
+    w.put(target);
+    w.put(ubyte(0));
+    w.put(cast(ubyte) error);
+    return w.data;
+}
+
 /// `RollVote`
 enum RollVote : ubyte
 {
@@ -287,6 +297,7 @@ final class LootItem
     bool currentLooterPass;   /// the current looter may not take it, so others may
     ulong winner;             /// an awarded item that only its winner may claim
     ulong remoteAward;        /// an outstanding award, locked until the receiver answers
+    ulong remoteMasterTarget; /// selected recipient of an outstanding master award
     bool[ulong] allowed;      /// who may still take it
 
     /// How `player` sees this item in the loot window, by the loot method: may take, may only view, or not at all.
@@ -632,6 +643,8 @@ final class Loot
     {
         foreach (item; items)
         {
+            if (item.remoteMasterTarget)
+                return false;
             if (item.winner && item.winner in item.allowed)
                 return false;
             if (item.usesTurn(rule))
@@ -798,19 +811,56 @@ final class Loot
         return 0;
     }
 
-    /// The receiving node confirms storage, or leaves the item for the winner to claim in person.
+    /// Give a master loot slot to an eligible member whose inventory is on another node.
+    bool sendRemoteMasterAward(ulong recipient, LootItem item)
+    {
+        const node = remoteMembers.get(recipient, 0);
+        if (!node || sendRemoteRoll is null)
+            return false;
+        const message = GroupLootRoll(GroupLootRoll.Action.masterAward, rollMap, target, recipient,
+            nextRoll(), item.slot, item.itemId, item.count, item.randomPropertyId, item.condition);
+        item.remoteAward = message.roll;
+        item.remoteMasterTarget = recipient;
+        item.blocked = true;
+        if (sendRemoteRoll(node, message))
+            return true;
+        item.remoteAward = 0;
+        item.remoteMasterTarget = 0;
+        item.blocked = false;
+        return false;
+    }
+
+    /// Show the master why an assignment was rejected.
+    void notifyMasterAwardError(uint result)
+    {
+        import dmangos.world.inventory : InventoryResult;
+
+        if (result)
+            if (auto master = find(masterLooter))
+            {
+                const error = result == InventoryResult.inventoryFull ? LootError.masterInvFull
+                    : result == InventoryResult.cantCarryMoreOfThis ? LootError.masterUniqueItem : LootError.masterOther;
+                master.deliver(Opcode.SMSG_LOOT_RESPONSE, lootErrorPacket(target, error));
+            }
+    }
+
+    /// The receiving node confirms storage or unlocks the item following a definitive failure.
     void remoteAwardResult(ushort peer, const ref GroupLootRoll message)
     {
         auto item = itemInSlot(message.slot);
         if (item is null || !item.remoteAward || item.remoteAward != message.roll
-            || item.winner != message.player || remoteMembers.get(message.player, 0) != peer)
+            || remoteMembers.get(message.player, 0) != peer)
+            return;
+        const masterAward = item.remoteMasterTarget != 0;
+        if (message.player != (masterAward ? item.remoteMasterTarget : item.winner))
             return;
         item.remoteAward = 0;
+        item.remoteMasterTarget = 0;
         item.blocked = false;
         if (message.stored)
         {
             item.allowed = null;
-            notifyItemRemoved(item, null); // a rolled item is never free-for-all
+            notifyItemRemoved(item, null); // a remote award is never free-for-all
             if (lootedForEveryone())
             {
                 sendReleaseForAll();
@@ -818,6 +868,8 @@ final class Loot
                     lootedForAll();
             }
         }
+        else if (masterAward)
+            notifyMasterAwardError(message.inventoryError);
         if (changed !is null)
             changed();
     }
@@ -942,6 +994,8 @@ final class Loot
         }
         if (master !is null)
         {
+            if (sendRemoteRoll !is null)
+                present ~= remoteMembers.keys;
             ByteWriter w;
             w.put(cast(ubyte) present.length);
             foreach (guid; present)
