@@ -434,27 +434,32 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   pays its normal cost and starts its cooldown. The caster must be out of combat and free to
   move. Their PvP flags and expiry timers travel with them. A cancel received before the cast
   starts discards the pending action.
-* **Instant party heals.** One cast on the caster's node pays the usual cost and starts the
-  cooldown. Each recipient's node rechecks range, map, and party or raid subgroup before
-  applying the heal with that recipient's healing modifiers. A repeated delivery has no effect.
-  The caster's node logs confirmed heals and applies PvP assist flags while it still
-  simulates the caster.
+* **Direct party heals.** At cast completion, one cast on the caster's node pays the usual cost
+  and starts the cooldown. This includes cast-time spells such as Prayer of Healing. Each
+  recipient's node rechecks range, map, and party or raid subgroup before applying the heal
+  with that recipient's healing modifiers. It adds threat from health actually restored to
+  creatures fighting the recipient. The caster's node logs and runs caster procs for confirmed
+  heals while it still simulates the caster. Repeated deliveries and confirmations have no effect.
 * **Chain Heal.** A cast that starts on a party or raid member on the caster's node can bounce
   to injured members across nodes. Each bounce searches around the previous recipient's
   position at cast completion, shares the spell's target cap, and reduces the heal by the
   spell's normal falloff. The receiving node checks current group membership and range from
   the captured position and applies the heal once. The cast spends mana once on the caster's node.
-* **Instant hostile area damage.** A caster-centered magic hit can reach player targets on
+* **Instant hostile area damage.** A caster-centered magic hit can reach players and creatures on
   another node. The caster's node charges once and applies the spell's cap to the combined
-  list of local targets and remote players. A remote player's node rechecks range, PvP
-  eligibility and immunity, then resolves hit chance, damage, resistance and shields. The
+  list of local and remote targets. The receiving node rechecks range, attack eligibility
+  and immunity, then resolves hit chance, damage, resistance and shields. The
   caster's node records confirmed damage and PvP kill credit while it still simulates the
-  caster. Each hit and its confirmation are processed once.
+  caster. The creature's node applies damage, threat, tapping, death and loot. Each hit and
+  its confirmation are processed once.
 * **Chain Lightning.** A cast that starts on a target on the caster's node can bounce to PvP
-  opponents on other nodes. The nearest eligible enemy to the previous target gets the next
-  jump. Local enemies and remote players share the target cap and 30% damage falloff per jump.
+  opponents and creatures on other nodes. The nearest eligible enemy to the previous target gets
+  the next jump. Local and remote enemies share the target cap and 30% damage falloff per jump.
   The receiving node rechecks range from the previous target's captured position, PvP
   eligibility and immunities. Damage and kill credit are applied once for each hit.
+* **Spell procs.** A hostile hit can trigger auras on both actors. Self effects run with the
+  actor, and supported direct damage, healing and single-effect aura procs reach a named target
+  on its node. A remote proc effect does not start a second cross-node proc chain.
 * **Trades** between nearby players move the requester to the other player's node, where the usual
   trade checks and exchange run. Both stay there until the trade ends. A forced move cancels any
   open trade before the player leaves.
@@ -641,8 +646,10 @@ services line (`ServiceHost.describe`). Every log line of the cluster code start
 
 ## Not yet
 
-* Remote creature targets and procs for hostile area and chain spells, and cast-time party area heals.
-* Healing threat and caster procs for remote party-heal recipients.
+* Creature swings and regular AI spell attacks against players on another node. Spell threat is
+  recorded on the creature's node and participates in victim selection when the player is local.
+* Proc spells with projectiles, channels or multiple targeted effects across nodes, and remote
+  caster attribution for damage-over-time ticks.
 * Surviving an owner's loss without disconnecting the client: the home could take its player back
   from the last save, which is worth having only with gateways and much more frequent player saves.
 * More than one standby, and a quorum of coordinators.

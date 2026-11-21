@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 46; // 46: Chain Lightning bounces across nodes; 45: Chain Heal bounces across nodes
+enum ushort protocolVersion = 47; // 47: remote spell combat; 46: Chain Lightning bounces across nodes
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -93,7 +93,7 @@ enum MessageType : ushort
     areaDamage = 54,
 }
 
-/// A player target's share of a hostile area or chain cast, with the caster's spell modifiers.
+/// One target's share of a hostile area or chain cast, with the caster's spell modifiers.
 struct AreaDamage
 {
     enum type = MessageType.areaDamage;
@@ -109,9 +109,14 @@ struct AreaDamage
     float x, y, z, radius;
     uint casterLevel;
     float amount;
+    float threatFactor = 1;
     float hitBonus, critChance, frozenCritBonus, critBonusFactor, critBonusFlat;
     int resistanceModifier;
     bool alwaysHits;
+    bool triggered; /// a targeted proc instead of an area or chain hit
+    bool suppressProcs;
+    int auraMs;
+    int auraValue;
 
     // The target node fills these after checking eligibility and rolling the hit.
     bool reply;
@@ -121,6 +126,14 @@ struct AreaDamage
     ubyte targetRace, targetRank;
     byte targetVisualRank;
     uint targetLevel;
+    @LengthPrefix!ubyte RemoteSpellBenefit[] benefits;
+}
+
+/// A proc on the victim's aura that benefits the original caster.
+struct RemoteSpellBenefit
+{
+    uint spell;
+    int amount;
 }
 
 /// A single party member's heal, prepared by the caster's node and applied by the recipient's node.
@@ -139,11 +152,15 @@ struct PartyHeal
     ulong previous; /// the previous Chain Heal target, or zero for a caster-centered party heal
     float x, y, z, radius;
     uint amount; /// before the target's modifiers on request, the logged heal on reply
+    float threatFactor = 1;
+    float threatFlat;
     bool critical;
     bool landed;
     bool pvp;
     bool contested;
     bool inPvPCombat;
+    bool causedThreat;
+    bool suppressProcs;
 }
 
 /// Checks which quest loot slots a remote group member needs. Zero entries are not quest items.
@@ -1078,7 +1095,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 46, recordedFingerprint = 0xc552edd8c321ae1cUL;
+private enum recordedVersion = 47, recordedFingerprint = 0x3715db2ef439c637UL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

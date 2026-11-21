@@ -384,6 +384,7 @@ final class Loot
     private long turnUntil;      /// while the authoritative turn is outstanding
     ulong masterLooter;
     bool masterStartsRemote;     /// the eligible master was on another node when the loot was made
+    ulong remoteTapper;         /// the solo owner was on another node when the loot was made
     bool[ulong] owners;          /// members with local loot rights, including a master who may move here
     bool[ulong] looking;         /// whose window is open
     bool fake;                   /// an empty window, shown once
@@ -737,7 +738,7 @@ final class Loot
     /// Whether nothing is left for any of the owners still here.
     bool lootedForEveryone()
     {
-        if (masterStartsRemote && canLoot(masterLooter))
+        if ((masterStartsRemote && canLoot(masterLooter)) || (remoteTapper && canLoot(remoteTapper)))
             return false;
         foreach (item; items)
         {
@@ -797,20 +798,23 @@ final class Loot
     /// Whether the corpse can have personalized loot visibility on replicas.
     bool replicatesLootView() const
     {
-        return hasRemoteQuestDrops || masterStartsRemote;
+        return hasRemoteQuestDrops || masterStartsRemote || remoteTapper != 0;
     }
 
-    /// Who sees a loot cursor on a replica for quest loot or for opening as the master.
+    /// Who sees a loot cursor on a replica before moving to the corpse's node.
     ulong[] replicaLooters() const
     {
         ulong[] eligible;
         const includeMaster = masterStartsRemote && canLoot(masterLooter);
         if (includeMaster)
             eligible ~= masterLooter;
+        const includeTapper = remoteTapper != 0 && canLoot(remoteTapper);
+        if (includeTapper)
+            eligible ~= remoteTapper;
         if (hasRemoteQuestDrops)
             foreach (guid, _; remoteMembers)
             {
-                if (includeMaster && guid == masterLooter)
+                if ((includeMaster && guid == masterLooter) || (includeTapper && guid == remoteTapper))
                     continue;
                 foreach (item; items)
                     if (item.quest && item.slotTypeFor(guid, this) == LootSlotType.normal)

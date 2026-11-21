@@ -891,7 +891,7 @@ mixin template ClassSpells()
      * Improved Scorch, Shadow Weaving, Relentless Strikes, Initiative) may cast its spell at each target hit, by its
      * amount as a chance (and its points a combo point).
      */
-    package void targetTriggers(const(SpellInfo)* spell, const(ulong)[] hit)
+    package void targetTriggers(const(SpellInfo)* spell, const(ulong)[] hit, UnitRef remote = UnitRef.init)
     {
         import dmangos.world.spellmods : affects;
 
@@ -910,12 +910,20 @@ mixin template ClassSpells()
                     if (target == player.guid && hit.canFind!(t => t != player.guid))
                         continue;
                     auto unit = target == player.guid ? UnitRef.of(this) : map.unit(target);
+                    if (!unit && target == remote.combatGuid)
+                        unit = remote;
                     if (unit && unit.alive && uniform01(map.random) * 100 < chance)
                         casts ~= ProcCast(aura.spell.triggerSpell[k], target);
                 }
             }
         foreach (c; casts)
-            castCustom(c.spell, c.target, c.custom);
+            if (remote.replica !is null && c.target == remote.combatGuid)
+            {
+                if (const trigger = context.data.spells.spell(c.spell))
+                    castProcAtReplica(trigger, remote.replica, c.custom);
+            }
+            else
+                castCustom(c.spell, c.target, c.custom);
     }
 
     /**
@@ -1761,12 +1769,20 @@ mixin template ClassSpells()
      */
     package void victimAuraProcs(UnitRef victim, uint flags, const ref ProcHit hit)
     {
-        auto set = aurasOf(victim);
+        foreach (benefit; benefitsFromVictim(victim, player.guid, flags, hit))
+            applySpellBenefit(benefit);
+    }
+
+    package static imported!"dmangos.cluster.protocol".RemoteSpellBenefit[] benefitsFromVictim(UnitRef victim,
+        ulong caster, uint flags, const ref ProcHit hit)
+    {
+        import dmangos.cluster.protocol : RemoteSpellBenefit;
+
+        auto set = victim.auraSet;
         if (set is null || !victim.alive)
-            return;
+            return null;
         const taken = flags << 1; // what the victim took: each taken flag is the dealt one's next bit
-        ProcCast[] casts;
-        Aura[] spent;
+        RemoteSpellBenefit[] casts;
         enum uint vampiricEmbrace = 15286, vampiricHeal = 15290;
         foreach (aura; set.list)
         {
@@ -1777,17 +1793,21 @@ mixin template ClassSpells()
                 auto heal = rankSpell(judgementOfLightHeal, aura.spell.id);
                 if (!heal)
                     heal = rankSpell(judgementOfWisdomMana, aura.spell.id);
-                if (heal && uniform01(map.random) * 100 < aura.spell.casting.procChance)
-                    casts ~= ProcCast(heal, player.guid);
+                if (heal && uniform01(victim.map.random) * 100 < aura.spell.casting.procChance)
+                    casts ~= RemoteSpellBenefit(heal);
             }
-            if (aura.spell.id == vampiricEmbrace && aura.caster == player.guid && hit.spell !is null
+            if (aura.spell.id == vampiricEmbrace && aura.caster == caster && hit.spell !is null
                     && hit.spell.casting.school == 5 && hit.damage)
-                casts ~= ProcCast(vampiricHeal, player.guid, CustomValues.first(cast(int)(hit.damage * aura.amount[0] / 100)));
+                casts ~= RemoteSpellBenefit(vampiricHeal, cast(int)(hit.damage * aura.amount[0] / 100));
         }
-        foreach (aura; spent)
-            takeAuraFrom(victim, aura);
-        foreach (c; casts)
-            castCustom(c.spell, c.target, c.custom);
+        return casts;
+    }
+
+    package void applySpellBenefit(const ref imported!"dmangos.cluster.protocol".RemoteSpellBenefit benefit)
+    {
+        enum vampiricHeal = 15290;
+        castCustom(benefit.spell, player.guid,
+            benefit.spell == vampiricHeal ? CustomValues.first(benefit.amount) : CustomValues.init);
     }
 
     // -----------------------------------------------------------------------

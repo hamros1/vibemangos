@@ -363,8 +363,27 @@ mixin template ProcHandlers()
                     procAuraSpell = null;
                 auto custom = c.custom;
                 custom.by = c.by;
-                castCustom(spell, SpellTargets(TargetFlags.unit, c.target ? c.target : player.guid), custom);
+                if (other.replica !is null && c.target == other.combatGuid && !map.unit(c.target))
+                {
+                    if (procTargetsCaster(*spell))
+                        castCustom(spell, SpellTargets(TargetFlags.unit, player.guid), custom);
+                    else
+                        castProcAtReplica(spell, other.replica, custom);
+                }
+                else
+                    castCustom(spell, SpellTargets(TargetFlags.unit, c.target ? c.target : player.guid), custom);
             }
+    }
+
+    private bool procTargetsCaster(const ref SpellInfo spell)
+    {
+        import dmangos.world.spellids : ImplicitTarget;
+
+        foreach (i, effect; spell.effect)
+            if (effect && (spell.implicitTargetA[i] != ImplicitTarget.caster
+                || spell.casting.implicitTargetB[i] != ImplicitTarget.none))
+                return false;
+        return true;
     }
 
     /**

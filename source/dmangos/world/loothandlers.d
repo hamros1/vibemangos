@@ -17,6 +17,7 @@ mixin template LootHandlers()
     import dmangos.world.money : Copper;
     import std.algorithm.comparison : max;
     import dmangos.log : info;
+    import dmangos.world.context : WorldContext;
     import dmangos.world.creature : Creature;
     import dmangos.world.defines : ItemClass, nullBag, nullSlot, UnitFlags;
     import dmangos.world.experience;
@@ -435,6 +436,14 @@ private:
     {
         import dmangos.world.character : Character;
 
+        if (victim.lootRecipient && context.onlinePlayer(victim.lootRecipient) is null
+            && context.killShareElsewhere !is null)
+        {
+            import dmangos.world.replication : Replica;
+
+            if (cast(Replica) map.findObject(victim.lootRecipient))
+                return rewardCreatureKillFor(context, map, victim, victim.lootRecipient);
+        }
         auto tapper = cast(Character) context.onlinePlayer(victim.lootRecipient);
         if (tapper is null || tapper.map !is map)
             tapper = this;
@@ -467,20 +476,45 @@ private:
     /// The experience of a kill, for the player alone or shared by its group.
     package void rewardAtKill(Creature victim)
     {
+        rewardCreatureExperience(context, map, victim, player.guid);
+    }
+
+    package static void rewardCreatureKillFor(WorldContext context, Map map, Creature victim, ulong tapper)
+    {
+        rewardCreatureExperience(context, map, victim, tapper);
+        prepareBodyLootFor(context, map, victim, tapper);
+        map.flushObjectChanges(victim);
+        map.refreshViewers(victim);
+    }
+
+    private static void rewardCreatureExperience(WorldContext context, Map map, Creature victim, ulong tapper)
+    {
         import dmangos.cluster.protocol : KillShare;
         import dmangos.world.replication : Replica;
         import dmangos.world.character : Character;
 
-        const value = killValue(victim);
-        auto group = context.groups.of(player.guid);
+        const value = killValueAt(context, map, victim);
+        auto group = context.groups.of(tapper);
         if (group is null)
         {
-            rewardKillReputation(victim, 1);
-            rewardHonorForCreature(victim);
-            killedMonster(victim.template_.entry, victim.guid);
-            const xp = killGain(player.data.level, value);
-            petGainsXp(xp); // the pet's share, before its owner perhaps passes its level
-            return giveXP(xp, victim.guid, 1.0f);
+            if (auto local = cast(Character) context.onlinePlayer(tapper))
+            {
+                local.rewardKillReputation(victim, 1);
+                local.rewardHonorForCreature(victim);
+                local.killedMonster(victim.template_.entry, victim.guid);
+                const xp = killGain(local.player.data.level, value);
+                local.petGainsXp(xp); // the pet's share, before its owner perhaps passes its level
+                return local.giveXP(xp, victim.guid, 1.0f);
+            }
+            if (context.killShareElsewhere !is null)
+                if (auto copy = cast(Replica) map.findObject(tapper))
+                    if (copy.fields.type == TypeId.player)
+                    {
+                        const share = KillShare(tapper, victim.guid, victim.template_.entry, value.level,
+                            killGain(copy.fields.get!UNIT_FIELD_LEVEL, value), 1, 1);
+                        context.killShareElsewhere(copy.owner, share);
+                    }
+            return;
         }
         // The members near the kill: here, or (in a cluster) simulated by another node whose replica is here.
         static struct Near
@@ -589,6 +623,11 @@ private:
     /// What the experience of a kill needs to know of `victim`.
     KillValue killValue(const Creature victim)
     {
+        return killValueAt(context, map, victim);
+    }
+
+    private static KillValue killValueAt(WorldContext context, Map map, const Creature victim)
+    {
         enum uint critter = 8, noXp = 0x2; // the critter creature type; the static flag for no experience
         enum uint rankNormal = 0, rankRare = 4;
         const t = victim.template_;
@@ -627,28 +666,33 @@ private:
      */
     package void prepareBodyLoot(Creature victim)
     {
+        prepareBodyLootFor(context, map, victim, player.guid);
+    }
+
+    private static void prepareBodyLootFor(WorldContext context, Map map, Creature victim, ulong tapper)
+    {
         import dmangos.world.character : Character;
 
         enum uint noLoot = 0x4; // the static flag for no loot
         const t = victim.template_;
         if (t.staticFlags1 & noLoot)
-            return lootedOutNow(victim);
+            return lootedOutNow(map, victim);
         auto theMap = map;
         auto loot = new Loot(victim.guid, (ulong guid) {
             auto session = cast(Character) context.onlinePlayer(guid);
             return session is null || session.map !is theMap ? null : cast(Looter) session;
         });
         loot.clock = () => context.unixTime;
-        setLootRights(loot, victim.position, (ulong guid) => victim.ai.threatOf(guid) > 0);
+        setLootRightsFor(context, map, tapper, loot, victim.position, (ulong guid) => victim.ai.threatOf(guid) > 0);
 
         const(LootTemplate) template_ = t.lootId ? context.data.loot.creature[t.lootId] : null;
         if (template_ is null && t.maxLootGold == 0)
-            return lootedOutNow(victim);
+            return lootedOutNow(map, victim);
         if (template_ !is null)
         {
             bool meets(uint condition)
             {
-                return conditionMet(condition);
+                return context.conditionMet(condition, tapper);
             }
 
             bool allowed(ulong guid, const LootItem item)
@@ -681,13 +725,13 @@ private:
         };
         loot.beginQuestLootChecks(theMap.id, &context.nextGameplaySequence, context.sendQuestLootCheck);
         if (victim.loot !is null && loot.lootedForEveryone())
-            lootedOutNow(victim);
-        else if (loot.masterStartsRemote)
+            lootedOutNow(map, victim);
+        else if (loot.replicatesLootView)
             theMap.refreshReplicaLootView(victim);
     }
 
     /// Nothing (more) to loot from `victim`: skinnable if it has a skin, its viewers told.
-    void lootedOutNow(Creature victim)
+    static void lootedOutNow(Map map, Creature victim)
     {
         victim.lootedOut();
         map.flushObjectChanges(victim);
@@ -696,17 +740,30 @@ private:
     /// Who may loot: for loot at `at`; `fought` says who fought for it (a creature's threat list).
     package void setLootRights(Loot loot, Position at, scope bool delegate(ulong guid) fought)
     {
+        setLootRightsFor(context, map, player.guid, loot, at, fought);
+    }
+
+    private static void setLootRightsFor(WorldContext context, Map map, ulong tapper, Loot loot,
+        Position at, scope bool delegate(ulong guid) fought)
+    {
         import dmangos.world.character : Character;
         import dmangos.cluster.protocol : LootCoinShare;
         import dmangos.world.groupservice : LootTurnHost, LootTurnReply, LootTurnRequest;
         import dmangos.world.replication : Replica;
 
-        auto group = context.groups.of(player.guid);
+        auto group = context.groups.of(tapper);
         if (group is null)
         {
-            loot.owners[player.guid] = true;
-            loot.currentLooter = player.guid;
+            loot.owners[tapper] = true;
+            loot.currentLooter = tapper;
             loot.rule = LootRule.notGroup;
+            if (auto remote = cast(Replica) map.findObject(tapper))
+                if (remote.fields.type == TypeId.player && remote.owner != context.nodeId)
+                {
+                    loot.remoteTapper = tapper;
+                    if (context.sendQuestLootCheck !is null)
+                        loot.remoteMembers[tapper] = remote.owner;
+                }
             return;
         }
         loot.rule = cast(LootRule) group.lootMethod;
@@ -780,8 +837,8 @@ private:
             if (eligible.length > 1)
             {
                 loot.remoteTurns = loot.remoteMembers.length != 0;
-                loot.waitForTurn(player.guid);
-                context.services.call!(LootTurnHost.take)(LootTurnRequest(group.id, player.guid, eligible),
+                loot.waitForTurn(tapper);
+                context.services.call!(LootTurnHost.take)(LootTurnRequest(group.id, tapper, eligible),
                     (LootTurnReply turn) { loot.finishTurn(turn.looter); });
                 return;
             }
@@ -796,8 +853,8 @@ private:
             loot.currentLooter = loot.masterLooter;
             return;
         }
-        loot.currentLooter = player.guid;
-        loot.owners[player.guid] = true;
+        loot.currentLooter = tapper;
+        loot.owners[tapper] = true;
         loot.rule = LootRule.notGroup;
     }
 

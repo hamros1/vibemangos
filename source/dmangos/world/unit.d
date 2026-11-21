@@ -77,6 +77,7 @@ struct UnitRef
     Character session; /// a player's
     Creature creature;    /// a creature's
     Map map;              /// where it is
+    imported!"dmangos.world.replication".Replica replica; /// observed across a node boundary, for proc targets
 
     /// The player of `session`, on its map.
     static UnitRef of(Character session)
@@ -92,10 +93,16 @@ struct UnitRef
         return creature is null ? UnitRef.init : UnitRef(UnitKind.creature, null, creature, map);
     }
 
+    /// A read-only proc target. The replica supplies identity, position and health.
+    static UnitRef observed(typeof(replica) replica, Map map)
+    {
+        return UnitRef(UnitKind.none, null, null, map, replica);
+    }
+
     /// Whether it is a unit at all.
     bool opCast(B : bool)() const
     {
-        return kind != UnitKind.none;
+        return kind != UnitKind.none || replica !is null;
     }
 
     /// Its guid.
@@ -103,7 +110,7 @@ struct UnitRef
     {
         final switch (kind)
         {
-        case UnitKind.none: return 0;
+        case UnitKind.none: return replica is null ? 0 : replica.guid;
         case UnitKind.player: return session.combatGuid;
         case UnitKind.creature: return creature.guid;
         }
@@ -114,7 +121,7 @@ struct UnitRef
     {
         final switch (kind)
         {
-        case UnitKind.none: return typeof(return).init;
+        case UnitKind.none: return replica is null ? typeof(return).init : replica.position;
         case UnitKind.player: return session.player is null ? typeof(return).init : session.player.position;
         case UnitKind.creature: return creature.position;
         }
@@ -125,7 +132,7 @@ struct UnitRef
     {
         final switch (kind)
         {
-        case UnitKind.none: return false;
+        case UnitKind.none: return replica !is null && health != 0;
         case UnitKind.player: return session.player !is null && session.player.alive;
         case UnitKind.creature: return creature.alive;
         }
@@ -336,7 +343,7 @@ struct UnitRef
 
         final switch (kind)
         {
-        case UnitKind.none: return 0;
+        case UnitKind.none: return replica is null ? 0 : replica.fieldsOf.get!UNIT_FIELD_HEALTH;
         case UnitKind.player: return session.character.values.get!UNIT_FIELD_HEALTH;
         case UnitKind.creature: return creature.values.get!UNIT_FIELD_HEALTH;
         }
@@ -510,6 +517,8 @@ private void creatureDamaged(UnitRef attacker, UnitRef victim, uint damage, cons
                 threat = p.damageMods.threat[blow.school];
         creature.ai.damageTaken(attacker, damage, threat * blow.threat);
     }
+    else if (blow.remotePlayer && creature.ai !is null)
+        creature.ai.remoteDamageTaken(blow.remotePlayer, damage, blow.threat, map);
     map.wake(creature.guid);
     if (damage == 0)
         return;

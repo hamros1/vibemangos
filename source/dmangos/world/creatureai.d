@@ -504,6 +504,27 @@ final class CreatureAI : Scripted, CreatureHost
         if (!me.alive || evadingHome || me.petOwner)
             return;
         addThreat(attacker, damage * threatFactor);
+        reportDamage(attacker.combatGuid, damage);
+    }
+
+    package void remoteDamageTaken(ulong attacker, uint damage, float threatFactor, CombatWorld world)
+    {
+        if (!me.alive || evadingHome || me.petOwner)
+            return;
+        world_ = world;
+        if (!inCombat_ && react != ReactState.passive)
+        {
+            enterCombat(world);
+            if (script !is null)
+                script.combatStarted(this, attacker);
+            raiseScript(EnteredCombat(EntityRef(attacker)));
+        }
+        addRemoteThreat(attacker, damage * threatFactor);
+        reportDamage(attacker, damage);
+    }
+
+    private void reportDamage(ulong attacker, uint damage)
+    {
         if (damage)
             triggerCombatTimer();
         if (behaviour)
@@ -512,7 +533,7 @@ final class CreatureAI : Scripted, CreatureHost
             const maximum = me.values.get!UNIT_FIELD_MAXHEALTH, health = me.values.get!UNIT_FIELD_HEALTH;
             const after = health > damage ? health - damage : 0;
             const percent = (uint h) => cast(ubyte)(maximum ? (ulong(h) * 100 + maximum - 1) / maximum : 0);
-            raiseScript(Damaged(EntityRef(attacker.combatGuid), damage, percent(health), percent(after)));
+            raiseScript(Damaged(EntityRef(attacker), damage, percent(health), percent(after)));
         }
     }
 
@@ -537,6 +558,7 @@ final class CreatureAI : Scripted, CreatureHost
         foreach (guid, _; threat)
             notifyRemoved(guid, world);
         threat = null;
+        remoteThreat = null;
         // Its swing stops, as everyone watching is told (CMaNGOS's `CombatStop` for the dead).
         if (meleeAttacking && world !is null)
             world.sendToObservers(me.guid, Opcode.SMSG_ATTACKSTOP, attackStop(me.guid, victim, true));
@@ -785,7 +807,11 @@ private:
     {
         const guid = who.combatGuid;
         if (auto t = guid in threat)
+        {
             *t += amount;
+            if (remoteThreat.remove(guid))
+                who.threatAdded(me.guid);
+        }
         else
         {
             threat[guid] = amount;
@@ -793,12 +819,24 @@ private:
         }
     }
 
+    package void addRemoteThreat(ulong guid, float amount)
+    {
+        if (auto previous = guid in threat)
+            *previous += amount;
+        else
+            threat[guid] = amount;
+        remoteThreat[guid] = true;
+    }
+
+    private bool[ulong] remoteThreat;
+
     /// Forgets everyone it fought, each told it no longer threatens them (a beast tamed, gone from the world).
     package void dropThreat(CombatWorld world)
     {
         foreach (guid, _; threat)
             notifyRemoved(guid, world);
         threat = null;
+        remoteThreat = null;
     }
 
     void notifyRemoved(ulong guid, CombatWorld world)
@@ -1091,21 +1129,51 @@ private:
      */
     void updateAI(CombatWorld world)
     {
+        import dmangos.world.map : Map;
+        import dmangos.world.replication : Replica;
+        import dmangos.world.updatefields : TypeId;
+
         ulong[] gone;
         foreach (guid, _; threat)
         {
             auto who = world.unit(guid);
+            if (guid in remoteThreat)
+            {
+                if (who)
+                {
+                    remoteThreat.remove(guid);
+                    who.threatAdded(me.guid);
+                }
+                else if (victim || combatTimer > 0)
+                    if (auto map = cast(Map) world)
+                        if (auto copy = cast(Replica) map.findObject(guid))
+                            if (copy.fields.type == TypeId.player && copy.fields.get!UNIT_FIELD_HEALTH
+                                && canAttack(relating, copy.unitRelations(me.client), me.client))
+                                continue;
+            }
             if (!who || !who.alive || who.untouchable || !canAttack(relating, who.relating, me.client))
                 gone ~= guid;
         }
         foreach (guid; gone)
         {
             threat.remove(guid);
+            remoteThreat.remove(guid);
             notifyRemoved(guid, world);
         }
         if (threat.length == 0)
             return enterEvadeMode(world);
         auto target = world.unit(selectNextVictim(world));
+        if (!target)
+        {
+            if (victim)
+            {
+                meleeStop(world);
+                victim = 0;
+                me.values.set!UNIT_FIELD_TARGET(0UL);
+                stopMoving(me, world);
+            }
+            return;
+        }
         if (target.combatGuid != victim)
             attackStart(target, world);
         if (casting_ !is null)
@@ -1129,7 +1197,12 @@ private:
         // Taunted: the taunter, whatever the threat.
         if (const taunter = tauntedBy())
             return taunter;
-        auto order = threat.keys;
+        ulong[] order;
+        foreach (guid, _; threat)
+            if (guid !in remoteThreat)
+                order ~= guid;
+        if (!order.length)
+            return 0;
         order.sort!((a, b) => threat[a] > threat[b] || (threat[a] == threat[b] && a < b));
         // Those given up on come last, while there are others.
         if (suppressed.length)
@@ -1140,7 +1213,7 @@ private:
             if ((order[0] in suppressed) is null && (victim in suppressed) !is null)
                 return order[0];
         }
-        const current = victim in threat;
+        const current = victim in remoteThreat ? null : victim in threat;
         if (current is null)
             return order[0];
         const self = me.fighter;
@@ -1459,6 +1532,7 @@ private:
         foreach (guid, _; threat)
             notifyRemoved(guid, world);
         threat = null;
+        remoteThreat = null;
         victim = 0;
         inCombat_ = false;
         unreachableTimer = 0;
@@ -1560,14 +1634,14 @@ enum uint spellAttrExNoThreat = 0x00000400, spellAttrEx2NoInitialThreat = 0x0040
  * shared out among them as threat (`assistThreatEach`). A spell with `SPELL_ATTR_EX_NO_THREAT` or
  * `SPELL_ATTR_EX2_NO_INITIAL_THREAT` angers no one.
  */
-void assistThreat(CombatWorld world, const(ulong)[] fightingHelped, UnitRef helper, uint amount,
-    const ref SpellInfo spell)
+bool assistThreat(CombatWorld world, const(ulong)[] fightingHelped, UnitRef helper, uint amount,
+    const ref SpellInfo spell, const Relating* remote = null)
 {
     import dmangos.world.relations : canAttack;
 
     if (!helper || fightingHelped.length == 0 || spell.attributesEx & spellAttrExNoThreat
             || spell.attributesEx2 & spellAttrEx2NoInitialThreat)
-        return;
+        return false;
     Creature[] angered;
     foreach (guid; fightingHelped)
     {
@@ -1576,15 +1650,19 @@ void assistThreat(CombatWorld world, const(ulong)[] fightingHelped, UnitRef help
             continue;
         if (c.values.get!UNIT_FIELD_FLAGS & (UnitFlags.stunned | UnitFlags.fleeing | UnitFlags.confused))
             continue;
-        if (canAttack(c.ai.relatingOf, helper.relating, c.client))
+        if (canAttack(c.ai.relatingOf, remote is null ? helper.relating : *remote, c.client))
             angered ~= c;
     }
     const each = assistThreatEach(amount, angered.length);
     foreach (c; angered)
     {
-        c.ai.addThreat(helper, each);
+        if (remote is null)
+            c.ai.addThreat(helper, each);
+        else
+            c.ai.addRemoteThreat(helper.combatGuid, each);
         world.wake(c.guid);
     }
+    return angered.length != 0;
 }
 
 /// Each creature's threat from a heal of `amount` shared among `creatures`: half the heal, divided.

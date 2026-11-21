@@ -1944,7 +1944,7 @@ private:
                         }
                         const previous = chain[j - 1];
                         const at = previous.position;
-                        const hit = AreaDamage(caster: player.guid, target: bounce.target, spell: spell.id,
+                        auto hit = AreaDamage(caster: player.guid, target: bounce.target, spell: spell.id,
                             effect: cast(ubyte) i, map: map.id, instance: map.instanceId, previous: previous.target,
                             x: at.x, y: at.y, z: at.z, radius: spellJumpRadius);
                         remoteDamage ~= RemoteAreaDamage(bounce.peer, hit, cast(uint) j);
@@ -2009,7 +2009,7 @@ private:
                     if (auto replica = cast(Replica) map.findObject(target))
                     {
                         const center = player.position;
-                        const hit = AreaDamage(caster: player.guid, target: target, spell: spell.id,
+                        auto hit = AreaDamage(caster: player.guid, target: target, spell: spell.id,
                             effect: cast(ubyte) i, map: map.id, instance: map.instanceId, x: center.x, y: center.y,
                             z: center.z, radius: spellMod(SpellModOp.radius, spell, radius(*spell, i, context.client)));
                         remoteDamage ~= RemoteAreaDamage(replica.owner, hit);
@@ -2022,7 +2022,7 @@ private:
                     results ~= TargetResult(target, missOf[target]);
                 }
             }
-            if (!c.castTime && context.sendPartyHeal !is null)
+            if (context.sendPartyHeal !is null)
                 collectPartyHeals(spell, i, remoteHeals);
         }
         // The ammunition (or the thrown weapon) goes once the hits are rolled, as CMaNGOS's `Spell::cast` takes
@@ -2230,6 +2230,7 @@ private:
 
     private void sendRolledAreaDamage(const(SpellInfo)* spell, const ref Casting c, ref RemoteAreaDamage remote)
     {
+        import dmangos.world.combat : creatureTypes;
         import dmangos.world.spelldamage : SpellBounce;
 
         effectCustom = c.custom;
@@ -2241,17 +2242,76 @@ private:
         const base = max(0, value) + spellDamageBonus(spell, school);
         const damage = SpellBounce(spell.casting.dmgMultiplier[hit.effect], remote.bounce)
             .scale(spellMod(SpellModOp.damage, spell, base));
+        uint creatureType = creatureTypeHumanoid;
+        if (auto copy = cast(Replica) map.findObject(hit.target))
+            if (copy.fields.type == TypeId.unit)
+                if (const proto = copy.fields.get!OBJECT_FIELD_ENTRY in context.data.creatureTemplates)
+                    creatureType = proto.creatureType;
         hit.sequence = context.nextGameplaySequence();
         hit.casterLevel = player.data.level;
-        hit.amount = damage * player.damageMods.school[school] * player.damageMods.versus[creatureTypeHumanoid];
+        const versus = creatureType < creatureTypes ? player.damageMods.versus[creatureType] : 1;
+        hit.amount = damage * player.damageMods.school[school] * versus;
+        hit.threatFactor = player.damageMods.threat[school] * spellMod(SpellModOp.threat, spell, 1.0f);
         hit.hitBonus = spellHitBonusOf(spell);
         hit.critChance = spellCritOf(spell);
         hit.frozenCritBonus = frozenTargetCritBonus(spell);
         hit.resistanceModifier = player.auras.totalByMiscMask(AuraType.modTargetResistance, 1 << school);
         hit.alwaysHits = c.custom.alwaysHits;
+        hit.suppressProcs = c.custom.by !is null;
         hit.critBonusFlat = spellMod(SpellModOp.critDamageBonus, spell, 0.0f);
         hit.critBonusFactor = spellMod(SpellModOp.critDamageBonus, spell, 1.0f) - hit.critBonusFlat;
         context.sendAreaDamage(remote.peer, *hit);
+    }
+
+    /// A proc's effects on a named target are applied where that target is simulated.
+    package void castProcAtReplica(const(SpellInfo)* spell, Replica target,
+        imported!"dmangos.world.classspells".CustomValues custom)
+    {
+        import dmangos.world.caster : Caster;
+        import dmangos.world.spellauras : auraCast;
+        import dmangos.world.spelldamage : isTargetedProcEffect, rollHealing;
+
+        if (context.sendAreaDamage is null || target.owner == context.nodeId)
+            return;
+        const at = player.position;
+        foreach (i, effect; spell.effect)
+        {
+            if (!isTargetedProcEffect(*spell, i))
+                continue;
+            const within = range(*spell, context.client)[1];
+            auto hit = AreaDamage(caster: player.guid, target: target.guid, spell: spell.id, effect: cast(ubyte) i,
+                map: map.id, instance: map.instanceId, x: at.x, y: at.y, z: at.z,
+                radius: within > 0 ? within : context.config.visibilityDistance, casterLevel: player.data.level,
+                hitBonus: spellHitBonusOf(spell), alwaysHits: custom.alwaysHits, triggered: true);
+            if (effect == SpellEffect.schoolDamage)
+            {
+                auto remote = RemoteAreaDamage(target.owner, hit);
+                Casting cast_;
+                cast_.custom = custom;
+                sendRolledAreaDamage(spell, cast_, remote);
+                return;
+            }
+            const outer = effectCustom;
+            effectCustom = custom;
+            scope (exit)
+                effectCustom = outer;
+            auto me = Caster.of(this);
+            if (effect == SpellEffect.applyAura)
+            {
+                const aura = auraCast(me, spell, cast(ubyte)(1 << i));
+                hit.auraMs = aura.ms;
+                hit.auraValue = aura.values[i];
+            }
+            else
+            {
+                const amount = spellMod(SpellModOp.damage, spell, effectAmount(spell, i));
+                if (amount > 0)
+                    hit.amount = rollHealing(me, spell, amount, hit.critical);
+            }
+            hit.sequence = context.nextGameplaySequence();
+            context.sendAreaDamage(target.owner, hit);
+            return;
+        }
     }
 
     private void collectPartyHeals(const(SpellInfo)* spell, size_t i, ref RemotePartyHeal[] found)
@@ -2293,6 +2353,9 @@ private:
             auto healer = Caster.of(this);
             remote.heal.amount = rollHealing(healer, spell, value, remote.heal.critical,
                 SpellBounce(spell.casting.dmgMultiplier[remote.heal.effect], remote.bounce));
+            remote.heal.threatFlat = spellMod(SpellModOp.threat, spell, 0.0f);
+            remote.heal.threatFactor = spellMod(SpellModOp.threat, spell, 1.0f) - remote.heal.threatFlat;
+            remote.heal.suppressProcs = c.custom.by !is null;
             remote.heal.sequence = context.nextGameplaySequence();
             context.sendPartyHeal(remote.peer, remote.heal);
         }
@@ -3025,10 +3088,12 @@ private:
 
     private bool remoteEnemy(Replica target)
     {
-        if (target is null || target.owner == context.nodeId || target.fields.type != TypeId.player
-            || context.onlinePlayer(target.guid) !is null || duelingWith(target.guid))
+        if (target is null || target.owner == context.nodeId
+            || (target.fields.type != TypeId.player && target.fields.type != TypeId.unit))
             return false;
-        const other = target.playerRelations(context.client);
+        if (target.fields.type == TypeId.player && (context.onlinePlayer(target.guid) !is null || duelingWith(target.guid)))
+            return false;
+        const other = target.unitRelations(context.client);
         return other.alive && canAttack(relatingNow(), other, context.client);
     }
 
@@ -3646,12 +3711,12 @@ unittest
     AreaDamage[] requests, replies;
     origin.sendAreaDamage = (ushort peer, const ref AreaDamage hit) {
         assert(peer == 2 && !hit.reply);
-        requests ~= hit;
+        requests ~= cast(AreaDamage) hit;
         return true;
     };
     owner.sendAreaDamage = (ushort peer, const ref AreaDamage result) {
         assert(peer == 1 && result.reply);
-        replies ~= result;
+        replies ~= cast(AreaDamage) result;
         return true;
     };
     ByteWriter request;
@@ -4080,6 +4145,200 @@ unittest
         assert(replies.length == 2 && moving.values.get!UNIT_FIELD_HEALTH == 55u
             && third.session.character.values.get!UNIT_FIELD_HEALTH == 65u);
     }
+}
+
+// A cast-time heal, hostile area damage and resulting procs use the target node's combat state.
+unittest
+{
+    import core.time : MonoTime, msecs;
+    import std.format : format;
+    import dmangos.bytes : ByteWriter;
+    import dmangos.cluster.protocol : AreaDamage, KillShare, PartyHeal;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.aurahandlers : ProcFlag;
+    import dmangos.world.auras : makeAura;
+    import dmangos.world.characterdb : GroupRecord, GroupMemberRecord;
+    import dmangos.world.clientdata : spellCastTimesFormat, spellRadiusFormat;
+    import dmangos.world.creature : CreatureSpawn;
+    import dmangos.world.defines : Power;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.group : RemoveMethod;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.player : Player;
+    import dmangos.world.playercreate : NewSpell;
+    import dmangos.world.replication : encodePlayerState, encodeState;
+    import dmangos.world.spellcast;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    GroupRecord party;
+    party.id = 1;
+    party.leader = 7;
+    party.leaderName = "Anduin";
+    party.members = [GroupMemberRecord(7, "Anduin"), GroupMemberRecord(8, "Jaina")];
+    db.groups[party.id] = party;
+    auto origin = newCreationContext(db), owner = newCreationContext(db);
+    origin.nodeId = 1;
+    owner.nodeId = 2;
+    auto now = MonoTime.currTime;
+    origin.clock = owner.clock = () => now;
+    enum uint prayer = 596, blast = 55013, echo = 55014, bolt = 55015, healProc = 55016, buff = 55017,
+        retaliation = 55018;
+    enum uint cost = 12, school = 3, castMs = 1_500;
+    foreach (node; [origin, owner])
+    {
+        node.client.spellCastTimes = typeof(node.client.spellCastTimes).parse(buildDbc(spellCastTimesFormat,
+            [[1u, castMs, 0, castMs]]), "SpellCastTimes.dbc");
+        uint[spellRadiusFormat.length] radiusRow;
+        radiusRow[0] = 1;
+        const float radius = 20;
+        radiusRow[1] = *cast(const uint*) &radius;
+        node.client.spellRadii = typeof(node.client.spellRadii).parse(buildDbc(spellRadiusFormat, [radiusRow[]]),
+            "SpellRadius.dbc");
+        auto heal = testSpell(prayer, SpellEffect.heal, ImplicitTarget.partyInRange, 60, 1);
+        heal.casting.radiusIndex[0] = 1;
+        heal.casting.manaCost = cost;
+        heal.casting.powerType = Power.mana;
+        heal.attributesEx2 |= spellAttrEx2CantCrit;
+        node.data.spells.spells[prayer] = heal;
+        auto attack = testSpell(blast, SpellEffect.schoolDamage, ImplicitTarget.casterSource, 30);
+        attack.casting.radiusIndex[0] = 1;
+        attack.casting.implicitTargetB[0] = ImplicitTarget.enemiesAroundSource;
+        attack.casting.school = school;
+        attack.attributesEx2 |= spellAttrEx2CantCrit;
+        attack.casting.attributesEx3 |= spellAttrEx3AlwaysHit;
+        node.data.spells.spells[blast] = attack;
+        auto trigger = testSpell(bolt, SpellEffect.schoolDamage, ImplicitTarget.enemy, 25);
+        trigger.casting.school = school;
+        trigger.attributesEx2 |= spellAttrEx2CantCrit;
+        trigger.casting.attributesEx3 |= spellAttrEx3AlwaysHit;
+        node.data.spells.spells[bolt] = trigger;
+        auto sign = testSpell(buff, SpellEffect.applyAura, ImplicitTarget.caster, 1);
+        sign.casting.applyAuraName[0] = AuraType.modStat;
+        node.data.spells.spells[buff] = sign;
+        foreach (id, event; [echo: ProcFlag.dealHarmfulSpell, healProc: ProcFlag.dealHelpfulSpell,
+            retaliation: ProcFlag.takeHarmfulSpell])
+        {
+            auto aura = testSpell(id, SpellEffect.applyAura, ImplicitTarget.caster, 0);
+            aura.casting.applyAuraName[0] = AuraType.procTriggerSpell;
+            aura.casting.procFlags = event;
+            aura.casting.procChance = 100;
+            aura.casting.procCharges = 1;
+            aura.triggerSpell[0] = id == healProc ? buff : bolt;
+            node.data.spells.spells[id] = aura;
+        }
+    }
+
+    const at = Position(100, 100, 40);
+    auto caster = loggedIn(origin, db, 7, "Anduin", at, characterLevel: 20, setup: (ref c) {
+        c.classId = classMage;
+        c.power[Power.mana] = 80;
+        c.spells = [NewSpell(prayer, true), NewSpell(blast, true)];
+    });
+    const near = Position(at.x + 6, at.y, at.z);
+    auto target = loggedIn(owner, db, 8, "Jaina", near, characterLevel: 20);
+    auto healer = cast(Player) caster.session.character;
+    auto healed = cast(Player) target.session.character;
+    healer.values.set!UNIT_FIELD_POWER1(Power.mana, healer.values.get!UNIT_FIELD_MAXPOWER1(Power.mana));
+    healer.values.set!UNIT_FIELD_MAXHEALTH(200u);
+    healer.values.set!UNIT_FIELD_HEALTH(200u);
+    healed.values.set!UNIT_FIELD_MAXHEALTH(100u);
+    healed.values.set!UNIT_FIELD_HEALTH(80u);
+    owner.map(0).replicaCreated(1, cellKeyAt(at.x, at.y), 7, encodePlayerState(healer, 0));
+    healed.movement.position.x += 40;
+    origin.map(0).replicaCreated(2, cellKeyAt(healed.position.x, near.y), 8, encodePlayerState(healed, 0));
+    healed.movement.position = near;
+    auto proto = owner.data.creatureTemplates.edit(creatureInnkeeper);
+    proto.minLootGold = proto.maxLootGold = 1;
+    auto spawn = CreatureSpawn(91_000, creatureInnkeeper, 0, near.x + 2, near.y, near.z);
+    auto mob = owner.makeCreature(&spawn);
+    owner.map(0).addObject(mob);
+    mob.values.set!UNIT_FIELD_LEVEL(20u);
+    mob.values.set!UNIT_FIELD_RESISTANCES(school, 0u);
+    mob.values.set!UNIT_FIELD_MAXHEALTH(100u);
+    mob.values.set!UNIT_FIELD_HEALTH(50u);
+    mob.ai.attackedBy(target.session.inWorld.unit, owner.map(0));
+    origin.map(0).replicaCreated(2, cellKeyAt(mob.position.x, mob.position.y), mob.guid, encodeState(mob, 0));
+
+    PartyHeal[] heals, receipts;
+    origin.sendPartyHeal = (ushort peer, const ref PartyHeal value) { heals ~= value; return peer == 2; };
+    owner.sendPartyHeal = (ushort peer, const ref PartyHeal value) { receipts ~= value; return peer == 1; };
+    ByteWriter castPrayer;
+    castPrayer.put(prayer);
+    castPrayer.put(cast(ushort) TargetFlags.self);
+    ByteWriter cancel;
+    cancel.put(prayer);
+    const mana = healer.values.get!UNIT_FIELD_POWER1(Power.mana);
+    caster.write(Opcode.CMSG_CAST_SPELL, castPrayer.data);
+    caster.write(Opcode.CMSG_CANCEL_CAST, cancel.data);
+    caster.session.update(castMs.msecs);
+    assert(!heals.length && healer.values.get!UNIT_FIELD_POWER1(Power.mana) == mana);
+    caster.write(Opcode.CMSG_CAST_SPELL, castPrayer.data);
+    assert(!heals.length);
+    origin.map(0).replicaCreated(2, cellKeyAt(near.x, near.y), 8, encodePlayerState(healed, 0));
+    now += castMs.msecs;
+    caster.session.update(castMs.msecs);
+    assert(heals.length == 1 && healer.values.get!UNIT_FIELD_POWER1(Power.mana) == mana - cost);
+    caster.session.inWorld.addAura(makeAura(healProc in origin.data.spells.spells, 7, 20, -1, true, [0, 0, 0]));
+    owner.partyHealArrived(1, heals[0]);
+    owner.partyHealArrived(1, heals[0]);
+    assert(receipts.length == 1 && healed.values.get!UNIT_FIELD_HEALTH == 100u);
+    assert(mob.ai.threatOf(7) == 10, "threat uses restored health rather than overhealing");
+    origin.partyHealArrived(2, receipts[0]);
+    origin.partyHealArrived(2, receipts[0]);
+    assert(caster.session.inWorld.hasAuraOf(buff) && !caster.session.inWorld.hasAuraOf(healProc));
+
+    origin.groups.of(7).removeMember(8, RemoveMethod.leave);
+    owner.groups.of(7).removeMember(8, RemoveMethod.leave);
+    owner.sendQuestLootCheck = (ushort peer, const ref imported!"dmangos.cluster.protocol".QuestLootCheck check) => peer == 1;
+    AreaDamage[] hits, replies, counterattacks;
+    KillShare[] shares;
+    origin.sendAreaDamage = (ushort peer, const ref AreaDamage value) {
+        if (!value.reply)
+            hits ~= cast(AreaDamage) value;
+        return peer == 2;
+    };
+    owner.sendAreaDamage = (ushort peer, const ref AreaDamage value) {
+        if (value.reply)
+            replies ~= cast(AreaDamage) value;
+        else
+            counterattacks ~= cast(AreaDamage) value;
+        return peer == 1;
+    };
+    owner.killShareElsewhere = (ushort node, const ref KillShare share) { assert(node == 1); shares ~= share; };
+    caster.session.inWorld.addAura(makeAura(echo in origin.data.spells.spells, 7, 20, -1, true, [0, 0, 0]));
+    bool added;
+    mob.receiveAura(makeAura(retaliation in owner.data.spells.spells, mob.guid, 20, -1, true, [0, 0, 0]),
+        owner.map(0), added);
+    ByteWriter attack;
+    attack.put(blast);
+    attack.put(cast(ushort) TargetFlags.self);
+    caster.write(Opcode.CMSG_CAST_SPELL, attack.data);
+    assert(hits.length == 1 && hits[0].target == mob.guid);
+    owner.areaDamageArrived(1, hits[0]);
+    owner.areaDamageArrived(1, hits[0]);
+    assert(mob.values.get!UNIT_FIELD_HEALTH == 20u && mob.lootRecipient == 7 && mob.ai.threatOf(7) == 40,
+        format!"health %s, tapper %s, threat %s, hit %s, replies %s"(mob.values.get!UNIT_FIELD_HEALTH,
+            mob.lootRecipient, mob.ai.threatOf(7), hits[0].amount, replies));
+    assert(replies.length == 1);
+    assert(counterattacks.length == 1 && counterattacks[0].triggered && counterattacks[0].caster == mob.guid);
+    origin.areaDamageArrived(2, counterattacks[0]);
+    const after = healer.values.get!UNIT_FIELD_HEALTH;
+    assert(after < 200, "the creature's proc struck a player on another node");
+    origin.areaDamageArrived(2, counterattacks[0]);
+    assert(healer.values.get!UNIT_FIELD_HEALTH == after);
+    origin.areaDamageArrived(2, replies[0]);
+    origin.areaDamageArrived(2, replies[0]);
+    assert(hits.length == 2 && hits[1].triggered && hits[1].spell == bolt);
+    owner.areaDamageArrived(1, hits[1]);
+    owner.areaDamageArrived(1, hits[1]);
+    assert(!mob.alive && mob.loot !is null && 7UL in mob.loot.owners);
+    assert(mob.loot.canLoot(7) && mob.loot.replicaLooters() == [7UL]);
+    assert(mob.loot.remoteMembers.get(7, 0) == 1, "the solo tapper can also receive quest-loot eligibility checks");
+    assert(shares.length == 1 && shares[0].target == 7 && shares[0].victim == mob.guid);
 }
 
 // An instant party heal uses one cast and reaches each eligible local or remote member once.

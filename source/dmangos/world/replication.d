@@ -251,11 +251,19 @@ final class Replica : Replicable, Moving, PerViewer
         return block.flags & UpdateFlags.living ? block.info.position : block.position;
     }
 
-    /// The public fields used to check relations against a player on another node.
-    Relating playerRelations(const ClientData client) const
+    /// The public fields used to check relations against a unit on another node.
+    Relating unitRelations(const ClientData client) const
     {
         import dmangos.world.updatefields;
 
+        const isPlayer = values_.type == TypeId.player;
+        const owner = values_.get!UNIT_FIELD_CHARMEDBY ? values_.get!UNIT_FIELD_CHARMEDBY
+            : values_.get!UNIT_FIELD_SUMMONEDBY;
+        if (!isPlayer)
+            return Relating(values_.get!UNIT_FIELD_FLAGS,
+                client.factionTemplates.lookup(values_.get!UNIT_FIELD_FACTIONTEMPLATE),
+                alive: values_.get!UNIT_FIELD_HEALTH != 0, playerOwned: owner != 0 && owner <= uint.max,
+                controller: owner);
         const race = values_.getByte!UNIT_FIELD_BYTES_0(0);
         const classId = values_.getByte!UNIT_FIELD_BYTES_0(1);
         return Relating(values_.get!UNIT_FIELD_FLAGS,
@@ -264,6 +272,11 @@ final class Replica : Replicable, Moving, PerViewer
             classId > 0 && classId <= 32 ? 1u << (classId - 1) : 0,
             values_.get!UNIT_FIELD_HEALTH != 0, values_.get!PLAYER_DUEL_ARBITER,
             values_.get!PLAYER_DUEL_TEAM, null, values_.get!PLAYER_FLAGS, controller: guid_);
+    }
+
+    Relating playerRelations(const ClientData client) const
+    {
+        return unitRelations(client);
     }
 
     ref UpdateValues fields()

@@ -184,12 +184,34 @@ bool isHostileChainEffect(const ref SpellInfo spell, size_t i)
         && spell.casting.chainTarget[i] > 1;
 }
 
+/// The explicit target of a proc sent to the node that simulates it.
+bool isTargetedProcEffect(const ref SpellInfo spell, size_t i)
+{
+    import std.algorithm.searching : count;
+
+    enum uint channels = 0x04 | 0x40;
+    if (i >= spell.effect.length || spell.effect[].count(SpellEffect.none) != spell.effect.length - 1
+        || spell.casting.speed > 0 || (spell.attributesEx & channels)
+        || spell.casting.implicitTargetB[i] != ImplicitTarget.none || spell.casting.chainTarget[i] > 1)
+        return false;
+    const target = spell.implicitTargetA[i];
+    if (target != ImplicitTarget.enemy && target != ImplicitTarget.friend && target != ImplicitTarget.unit
+        && target != ImplicitTarget.unitRaid)
+        return false;
+    const effect = spell.effect[i];
+    if (effect == SpellEffect.applyAura)
+    {
+        const aura = spell.casting.applyAuraName[i];
+        return aura != AuraType.modPossess && aura != AuraType.modPossessPet && aura != AuraType.modCharm;
+    }
+    return effect == SpellEffect.heal || isDirectMagicDamageEffect(spell, i);
+}
+
 /// Resolve a remote hit using the recipient's current combat stats and auras.
 void rollRemoteAreaDamage(ref AreaDamage hit, const(SpellInfo)* spell, UnitRef victim)
 {
     import std.algorithm.comparison : max;
     import std.random : uniform, uniform01;
-    import dmangos.world.auras : AuraInterrupt;
     import dmangos.world.character : Character;
     import dmangos.world.combat : Fighter, partiallyResisted;
     import dmangos.world.spellcast : isBinarySpell, rollSpellHit, SpellMissInfo;
@@ -210,12 +232,13 @@ void rollRemoteAreaDamage(ref AreaDamage hit, const(SpellInfo)* spell, UnitRef v
     auto rng = &victim.map.random();
     if (!hit.alwaysHits)
     {
-        const caster = Fighter(guid: hit.caster, player: true, playerControlled: true, level: hit.casterLevel);
+        const isPlayer = hit.caster <= uint.max;
+        const caster = Fighter(guid: hit.caster, player: isPlayer, playerControlled: isPlayer, level: hit.casterLevel);
         hit.miss = rollSpellHit(caster, target, *spell, resistance, hit.hitBonus, *rng);
         if (hit.miss)
             return;
     }
-    victim.session.interruptAuras(AuraInterrupt.hostileAction);
+    victim.hostileSpellLanded();
     target = victim.fighter;
     uint damage = cast(uint) max(0, (hit.amount + target.damageTakenFlat[school]) * target.damageTaken[school]);
     const frozenBonus = Character.frozenForSpellCrit(victim) ? hit.frozenCritBonus : 0;
@@ -254,7 +277,7 @@ bool isChainHealEffect(const ref SpellInfo spell, size_t i)
         && spell.casting.speed == 0 && !(spell.attributesEx & channels);
 }
 
-/// An instant party heal is centered on the caster and selects their own party or raid subgroup.
+/// A direct party heal is centered on the caster and selects their own party or raid subgroup.
 bool isPartyHealEffect(const ref SpellInfo spell, size_t i)
 {
     import std.algorithm.comparison : among;
