@@ -21,6 +21,7 @@
 module dmangos.world.honor;
 
 import std.datetime.date : Date, DayOfWeek;
+import dmangos.world.movement : Position;
 
 // ---------------------------------------------------------------------------------------------------
 // Days
@@ -89,6 +90,17 @@ struct HonorRank
     float maxRP = 2000;
     float minRP = 0;
     bool positive = true;
+}
+
+/// What the killer needs to award honor, including when the victim died on another node.
+struct HonorVictim
+{
+    ulong guid;
+    uint level;
+    ubyte race, rank;
+    byte visualRank;
+    bool honorless;
+    Position position;
 }
 
 /// What an internal rank spans. (Rank 1's bar runs from 0 to 2000, not backwards from a minimum
@@ -461,17 +473,27 @@ mixin template HonorHandlers()
     {
         if (victim is null || victim is this || victim.player is null)
             return;
-        if (victim.player.auras.find(spellHonorlessTarget) !is null
-                || victim.player.auras.hasType(imported!"dmangos.world.spellids".AuraType.noPvpCredit))
-            return; // `SPELL_AURA_NO_PVP_CREDIT`
-        if (context.client.teamForRace(victim.player.data.race) == context.client.teamForRace(player.data.race))
+        rewardHonorForPlayer(victim.describeHonorVictim(), groupSize);
+    }
+
+    package HonorVictim describeHonorVictim()
+    {
+        const noCredit = player.auras.find(spellHonorlessTarget) !is null
+            || player.auras.hasType(imported!"dmangos.world.spellids".AuraType.noPvpCredit);
+        return HonorVictim(player.guid, player.data.level, player.data.race, honorRank.rank, honorRank.visualRank,
+            noCredit, player.position);
+    }
+
+    private void rewardHonorForPlayer(const HonorVictim victim, uint groupSize)
+    {
+        if (victim.honorless || victim.guid == player.guid
+            || context.client.teamForRace(victim.race) == context.client.teamForRace(player.data.race))
             return;
-        if (isGray(player.data.level, victim.player.data.level))
+        if (isGray(player.data.level, victim.level))
             return;
-        const points = honorableKillPoints(player.data.level, victim.player.data.level,
-            victim.honorRank.visualRank, killsTodayOf(victim.player.data.guid), groupSize);
-        addHonorPoints(points, HonorType.honorable, 4, victim.player.data.guid, victim.player.guid,
-            victim.honorRank.rank);
+        const points = honorableKillPoints(player.data.level, victim.level, victim.visualRank,
+            killsTodayOf(cast(uint) victim.guid), groupSize);
+        addHonorPoints(points, HonorType.honorable, 4, cast(uint) victim.guid, victim.guid, victim.rank);
     }
 
     /**
@@ -498,13 +520,19 @@ mixin template HonorHandlers()
      */
     package void playerKilledByMe(typeof(this) victim)
     {
+        if (victim !is null && victim !is this && victim.player !is null)
+            playerKilledByMe(victim.describeHonorVictim());
+    }
+
+    package void playerKilledByMe(const HonorVictim victim)
+    {
         import dmangos.world.experience : groupXpDistance;
 
         auto group = context.groups.of(player.guid);
         if (group is null)
             return rewardHonorForPlayer(victim, 1);
         typeof(this)[] near;
-        const v = victim.player.position;
+        const v = victim.position;
         foreach (ref slot; group.members)
             if (auto member = cast(typeof(this)) context.onlinePlayer(slot.guid))
                 if (member.player !is null && member.map is map)

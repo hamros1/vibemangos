@@ -67,7 +67,7 @@ import dmangos.vmap.maptree : ModelCache;
 import dmangos.world.terrain : Terrain;
 import dmangos.world.group : GroupDirectory, Groups, memberStatus, MemberStatus;
 import dmangos.world.groupservice : groupCommand, GroupOp, GroupService;
-import dmangos.cluster.protocol : CreatureLoan, GmRemote, GroupCommand, GroupLootRoll, KillShare, LootCoinShare,
+import dmangos.cluster.protocol : AreaDamage, CreatureLoan, GmRemote, GroupCommand, GroupLootRoll, KillShare, LootCoinShare,
     PartyHeal, QuestLootCheck, ScriptSignal;
 import dmangos.world.loot : Loot, maxLootItems;
 import dmangos.world.map : Inhabitant, Map, MapObject, MapSettings, VisibilityFacts;
@@ -610,6 +610,109 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         caster.flushPlayerChanges();
         caster.currentMap.sendToWatchers(caster, Opcode.SMSG_SPELLHEALLOG,
             healLog(message.target, message.caster, message.spell, message.amount, message.critical), true);
+    }
+
+    bool delegate(ushort, const ref AreaDamage) sendAreaDamage;
+    private ulong[ushort] lastAreaDamage, lastAreaDamageReply;
+
+    void areaDamageArrived(ushort peer, const ref AreaDamage message)
+    {
+        import dmangos.world.character : Character;
+        import dmangos.world.defines : UnitFlags;
+        import dmangos.world.relations : canAttack;
+        import dmangos.world.replication : Replica;
+        import dmangos.world.spelldamage : isHostileAreaEffect, rollRemoteAreaDamage;
+        import dmangos.world.unit : Blow, dealDamage, UnitRef;
+        import dmangos.world.updatefields : TypeId;
+
+        if (!peer || !message.sequence || !canWrite())
+            return;
+        if (message.reply)
+            return areaDamageLanded(peer, message);
+        if (message.sequence <= lastAreaDamage.get(peer, 0))
+            return;
+        lastAreaDamage[peer] = message.sequence;
+        auto target = cast(Character) onlinePlayer(message.target);
+        if (target is null || target.player is null || !target.player.alive || target.transferring
+            || target.duelingWith(message.caster)
+            || target.currentMap.id != message.map || target.currentMap.instanceId != message.instance)
+            return;
+        const p = target.player.position;
+        if (!(message.radius > 0 && (p.x - message.x) ^^ 2 + (p.y - message.y) ^^ 2 + (p.z - message.z) ^^ 2
+            <= message.radius ^^ 2))
+            return;
+        auto copy = cast(Replica) target.currentMap.findObject(message.caster);
+        if (copy is null || copy.owner != peer || copy.fields.type != TypeId.player)
+            return;
+        const attacker = copy.playerRelations(client);
+        if (!canAttack(attacker, target.relatingNow(), client))
+            return;
+        const spell = data.spells.spell(message.spell);
+        if (spell is null || !isHostileAreaEffect(*spell, message.effect))
+            return;
+
+        AreaDamage result = message;
+        result.reply = true;
+        rollRemoteAreaDamage(result, spell, target.unit);
+        if (!result.miss)
+        {
+            const victim = target.describeHonorVictim();
+            auto blow = Blow.spell(spell.casting.school, result.critical);
+            blow.remotePlayer = message.caster;
+            blow.remotePlayerPvP = attacker.hasFlag(UnitFlags.pvp);
+            dealDamage(UnitRef.init, target.unit, result.damage, blow);
+            result.targetPvP = target.isPvP;
+            result.killed = !target.player.alive;
+            if (result.killed)
+            {
+                result.honorless = victim.honorless;
+                result.targetRace = victim.race;
+                result.targetLevel = victim.level;
+                result.targetRank = victim.rank;
+                result.targetVisualRank = victim.visualRank;
+                result.x = victim.position.x;
+                result.y = victim.position.y;
+                result.z = victim.position.z;
+            }
+        }
+        if (sendAreaDamage !is null)
+            sendAreaDamage(peer, result);
+    }
+
+    private void areaDamageLanded(ushort peer, const ref AreaDamage message)
+    {
+        import dmangos.world.character : Character;
+        import dmangos.world.honor : HonorVictim;
+        import dmangos.world.spellcast : nonMeleeDamageLog, spellMissLog, SpellMissInfo;
+
+        if (message.sequence <= lastAreaDamageReply.get(peer, 0))
+            return;
+        lastAreaDamageReply[peer] = message.sequence;
+        auto caster = cast(Character) onlinePlayer(message.caster);
+        if (caster is null || caster.player is null || caster.transferring
+            || caster.currentMap.id != message.map || caster.currentMap.instanceId != message.instance)
+            return;
+        const spell = data.spells.spell(message.spell);
+        if (spell is null || message.miss > SpellMissInfo.reflect)
+            return;
+        auto map_ = caster.currentMap;
+        if (message.miss)
+            return map_.sendToWatchers(caster, Opcode.SMSG_SPELLLOGMISS,
+                spellMissLog(message.spell, message.caster, message.target, cast(SpellMissInfo) message.miss), true);
+        if (caster.player.alive)
+        {
+            caster.enterCombatFor(Character.combatLinger);
+            if (message.targetPvP)
+                caster.attackedFlaggedPlayer();
+            if (message.damage)
+                caster.wearOnHit();
+        }
+        if (message.killed)
+            caster.playerKilledByMe(HonorVictim(message.target, message.targetLevel, message.targetRace,
+                message.targetRank, message.targetVisualRank, message.honorless, Position(message.x, message.y, message.z)));
+        map_.sendToWatchers(caster, Opcode.SMSG_SPELLNONMELEEDAMAGELOG,
+            nonMeleeDamageLog(message.target, message.caster, message.spell, message.damage, spell.casting.school,
+                message.absorbed, message.resisted, false, 0, message.critical), true);
     }
 
     /// What node `node` said of its players: all of them (`full`), or what changed and who left.

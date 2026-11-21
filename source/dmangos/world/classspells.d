@@ -446,9 +446,9 @@ mixin template ClassSpells()
     }
 
     /// Whether `unit` is frozen (`Unit::isFrozen`: rooted or stunned by a frost spell: Frost Nova, Freeze).
-    private bool frozen(UnitRef unit)
+    package static bool frozenForSpellCrit(UnitRef unit)
     {
-        if (auto set = aurasOf(unit))
+        if (auto set = unit.auraSet)
             foreach (aura; set.list)
                 if (aura.spell.casting.school == 4 && (aura.has(AuraType.modRoot) || aura.has(AuraType.modStun)))
                     return true;
@@ -1417,7 +1417,12 @@ mixin template ClassSpells()
     /// The crit chance a class rule adds to `spell` against `target`: Shatter's against a frozen one.
     package float classCritBonus(const(SpellInfo)* spell, UnitRef target)
     {
-        if (spell.casting.spellFamilyName != SpellFamily.mage || !target || !frozen(target))
+        return target && frozenForSpellCrit(target) ? frozenTargetCritBonus(spell) : 0;
+    }
+
+    package float frozenTargetCritBonus(const(SpellInfo)* spell)
+    {
+        if (spell.casting.spellFamilyName != SpellFamily.mage)
             return 0;
         float bonus = 0;
         foreach (aura; player.auras.list)

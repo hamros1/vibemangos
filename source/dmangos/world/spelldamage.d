@@ -8,7 +8,7 @@
  */
 module dmangos.world.spelldamage;
 
-import dmangos.cluster.protocol : PartyHeal;
+import dmangos.cluster.protocol : AreaDamage, PartyHeal;
 import dmangos.world.caster : Caster;
 import dmangos.world.movement : Position;
 import dmangos.world.spellids;
@@ -129,6 +129,73 @@ uint spellDamage(ref Caster caster, const(SpellInfo)* spell, UnitRef victim, uin
     }
     caster.damageDealt(spell, victim, crit, damage, how.periodic);
     return damage;
+}
+
+/// The instant magical area effects that can be split between nodes.
+bool isHostileAreaEffect(const ref SpellInfo spell, size_t i)
+{
+    import std.algorithm.searching : count;
+
+    enum uint channels = 0x04 | 0x40;
+    if (i >= spell.effect.length || spell.effect[i] != SpellEffect.schoolDamage
+        || spell.effect[].count(SpellEffect.schoolDamage) != 1 || spell.casting.chainTarget[i] > 1
+        || (spell.attributesEx & channels) || spell.casting.speed > 0
+        || spell.casting.school == 0 || spell.casting.school >= 7
+        || (spell.casting.dmgClass != DamageClass.magic && spell.casting.dmgClass != DamageClass.none))
+        return false;
+    const a = spell.implicitTargetA[i], b = spell.casting.implicitTargetB[i];
+    return b == ImplicitTarget.enemiesAroundSource
+        || (b == ImplicitTarget.none && a == ImplicitTarget.enemiesAroundSource);
+}
+
+/// Resolve a remote hit using the recipient's current combat stats and auras.
+void rollRemoteAreaDamage(ref AreaDamage hit, const(SpellInfo)* spell, UnitRef victim)
+{
+    import std.algorithm.comparison : max;
+    import std.random : uniform, uniform01;
+    import dmangos.world.auras : AuraInterrupt;
+    import dmangos.world.character : Character;
+    import dmangos.world.combat : Fighter, partiallyResisted;
+    import dmangos.world.spellcast : isBinarySpell, rollSpellHit, SpellMissInfo;
+
+    enum uint noImmunities = 0x20000000;
+    const school = spell.casting.school;
+    auto target = victim.fighter;
+    const immune = target.immune;
+    if (!(spell.attributes & noImmunities)
+        && (immune.toSpell(school, spell.casting.dispel, spell.casting.mechanic)
+            || immune.toEffect(SpellEffect.schoolDamage, spell.casting.effectMechanic[hit.effect],
+                spell.casting.applyAuraName[hit.effect])))
+    {
+        hit.miss = SpellMissInfo.immune;
+        return;
+    }
+    const resistance = max(0, victim.resistance(school) + hit.resistanceModifier);
+    auto rng = &victim.map.random();
+    if (!hit.alwaysHits)
+    {
+        const caster = Fighter(guid: hit.caster, player: true, playerControlled: true, level: hit.casterLevel);
+        hit.miss = rollSpellHit(caster, target, *spell, resistance, hit.hitBonus, *rng);
+        if (hit.miss)
+            return;
+    }
+    victim.session.interruptAuras(AuraInterrupt.hostileAction);
+    target = victim.fighter;
+    uint damage = cast(uint) max(0, (hit.amount + target.damageTakenFlat[school]) * target.damageTaken[school]);
+    const frozenBonus = Character.frozenForSpellCrit(victim) ? hit.frozenCritBonus : 0;
+    hit.critical = !(spell.attributesEx2 & spellAttrEx2CantCrit)
+        && uniform01(*rng) * 100 < hit.critChance + frozenBonus + spellCritTaken(*victim.auraSet, school);
+    if (hit.critical)
+        damage += cast(uint) max(0, damage / 2 * hit.critBonusFactor + hit.critBonusFlat);
+    if (school != 1 && !isBinarySpell(*spell))
+    {
+        const reduced = partiallyResisted(damage, resistance, hit.casterLevel, target, false,
+            uniform!"[]"(1u, 10000u, *rng));
+        damage = reduced.damage;
+        hit.resisted = reduced.resisted;
+    }
+    hit.absorbed = victim.absorb(school, damage);
+    hit.damage = damage;
 }
 
 /// How a heal comes.

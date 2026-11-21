@@ -5,7 +5,7 @@
  */
 module dmangos.world.clusterbridge;
 
-import dmangos.cluster.protocol : GroupLootRoll, LootCoinShare, PartyHeal, QuestLootCheck;
+import dmangos.cluster.protocol : AreaDamage, GroupLootRoll, LootCoinShare, PartyHeal, QuestLootCheck;
 
 import core.time : Duration, MonoTime, msecs;
 
@@ -374,6 +374,17 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
     void partyHeal(ushort peer, const ref PartyHeal message)
     {
         context.partyHealArrived(peer, message);
+    }
+
+    bool sendAreaDamage(ushort peer, const ref AreaDamage message)
+    {
+        auto link = node.linkTo(peer);
+        return link !is null && !link.wantsClose && node.sendTo(peer, message);
+    }
+
+    void areaDamage(ushort peer, const ref AreaDamage message)
+    {
+        context.areaDamageArrived(peer, message);
     }
 
     /// For the context: guild news for every other node.

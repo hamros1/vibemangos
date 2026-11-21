@@ -48,6 +48,8 @@ struct Blow
     uint school;       /// a spell's or a tick's school index (a swing's is its own)
     float threat = 1;  /// its threat's factor by its spell's modifiers (`SPELLMOD_THREAT`; Holy Shield's 20% more)
     bool crit;         /// a spell's crit (Eye for an Eye's)
+    ulong remotePlayer; /// a spell's caster, when simulated by another node
+    bool remotePlayerPvP;
 
     ///
     static Blow swing(const ref MeleeDamage d)

@@ -311,22 +311,30 @@ mixin template PvPHandlers()
     {
         if (attacker is null || attacker is this || duelingWith(attacker.player.guid))
             return;
+        flagFromPvPHit(attackerFlagged);
+        if (isPvP)
+            attacker.attackedFlaggedPlayer();
+    }
+
+    package void flagFromPvPHit(bool attackerFlagged)
+    {
         if (attackerFlagged)
         {
             pvpInCombat = true;
             updatePvP(true);
         }
-        if (isPvP)
-        {
-            // Fighting a flagged player ends Stealth, Divine Shield and the like (`PVP_ACTIVE_CANCELS`).
-            import dmangos.world.auras : AuraInterrupt;
+    }
 
-            attacker.interruptAuras(AuraInterrupt.pvpActiveCancels);
-            attacker.pvpInCombat = true;
-            attacker.updatePvP(true);
-            attacker.updatePvPContested(true);
-            attacker.flushPlayerChanges();
-        }
+    package void attackedFlaggedPlayer()
+    {
+        // Fighting a flagged player ends Stealth, Divine Shield and the like (`PVP_ACTIVE_CANCELS`).
+        import dmangos.world.auras : AuraInterrupt;
+
+        interruptAuras(AuraInterrupt.pvpActiveCancels);
+        pvpInCombat = true;
+        updatePvP(true);
+        updatePvPContested(true);
+        flushPlayerChanges();
     }
 
     /// Healing a flagged player flags the helper, in combat or not ("If you cast a healing spell or resurrect a

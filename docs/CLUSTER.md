@@ -150,7 +150,7 @@ no lock of its own.
 * **Enum fields.** A field typed as an enum (a group, channel or GM operation, a service status)
   accepts only that enum's members: any other value makes the frame malformed.
 
-There are 47 message types. They fall into:
+The cluster messages include:
 
 | Group | Messages |
 |---|---|
@@ -160,7 +160,7 @@ There are 47 message types. They fall into:
 | Sessions | `SessionClaim`, `SessionGrant`, `SessionEvict`, `SessionReleased` |
 | Replication | `InterestUpdate`, `ReplicaCreate`, `ReplicaValues`, `ReplicaMove`, `ReplicaRemove`, `InRange` |
 | Players | `PlayerMessage` (to the owner, to the home, arrival, departure, a move to a third node), `Presence`, `DeliverTo`, `Whisper` |
-| Gameplay across nodes | `StockRequest`, `StockReply`, `StockRelease`, `GroupCommand`, `GroupState`, `MemberStatsRequest`, `ToEveryone`, `GmRemote`, `KillShare`, `GroupLootRoll`, `LootCoinShare`, `QuestLootCheck`, `PartyHeal`, `ScriptSignal`, `DungeonEntryRequest`, `DungeonEntryReply`, `FriendStatusChange`, `GuildReload`, `GuildBroadcast`, `GuildInvitation` |
+| Gameplay across nodes | `StockRequest`, `StockReply`, `StockRelease`, `GroupCommand`, `GroupState`, `MemberStatsRequest`, `ToEveryone`, `GmRemote`, `KillShare`, `GroupLootRoll`, `LootCoinShare`, `QuestLootCheck`, `PartyHeal`, `AreaDamage`, `ScriptSignal`, `DungeonEntryRequest`, `DungeonEntryReply`, `FriendStatusChange`, `GuildReload`, `GuildBroadcast`, `GuildInvitation` |
 | Services | `ServiceCall`, `ServiceReply` (docs/SERVICES.md) |
 
 On the world server's side, `ClusterBridge` implements the handlers `ClusterNode` calls, and
@@ -439,6 +439,12 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   applying the heal with that recipient's healing modifiers. A repeated delivery has no effect.
   The caster's node logs confirmed heals and applies PvP assist flags while it still
   simulates the caster.
+* **Instant hostile area damage.** A caster-centered magic hit can reach player targets on
+  another node. The caster's node charges once and applies the spell's cap to the combined
+  list of local targets and remote players. A remote player's node rechecks range, PvP
+  eligibility and immunity, then resolves hit chance, damage, resistance and shields. The
+  caster's node records confirmed damage and PvP kill credit while it still simulates the
+  caster. Each hit and its confirmation are processed once.
 * **Trades** between nearby players move the requester to the other player's node, where the usual
   trade checks and exchange run. Both stay there until the trade ends. A forced move cancels any
   open trade before the player leaves.
@@ -625,7 +631,7 @@ services line (`ServiceHost.describe`). Every log line of the cluster code start
 
 ## Not yet
 
-* Cross-node hostile area spells, chain spells, and cast-time party heals.
+* Remote creature targets and procs for hostile area spells, chain spells, and cast-time party heals.
 * Healing threat and caster procs for remote party-heal recipients.
 * Surviving an owner's loss without disconnecting the client: the home could take its player back
   from the last save, which is worth having only with gateways and much more frequent player saves.

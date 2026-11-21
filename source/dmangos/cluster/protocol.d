@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 43; // 43: party heals across nodes; 42: PvP state in player handoffs
+enum ushort protocolVersion = 44; // 44: hostile area damage across nodes; 43: party heals across nodes
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -90,6 +90,36 @@ enum MessageType : ushort
     lootCoinShare = 51,
     questLootCheck = 52,
     partyHeal = 53,
+    areaDamage = 54,
+}
+
+/// A player target's share of an instant hostile area cast, with the caster's spell modifiers.
+struct AreaDamage
+{
+    enum type = MessageType.areaDamage;
+
+    ulong sequence;
+    ulong caster;
+    ulong target;
+    uint spell;
+    ubyte effect;
+    uint map;
+    uint instance;
+    float x, y, z, radius;
+    uint casterLevel;
+    float amount;
+    float hitBonus, critChance, frozenCritBonus, critBonusFactor, critBonusFlat;
+    int resistanceModifier;
+    bool alwaysHits;
+
+    // The target node fills these after checking eligibility and rolling the hit.
+    bool reply;
+    ubyte miss;
+    uint damage, absorbed, resisted;
+    bool critical, targetPvP, killed, honorless;
+    ubyte targetRace, targetRank;
+    byte targetVisualRank;
+    uint targetLevel;
 }
 
 /// A single party member's heal, prepared by the caster's node and applied by the recipient's node.
@@ -1046,7 +1076,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 43, recordedFingerprint = 0x952d1b28085e20bdUL;
+private enum recordedVersion = 44, recordedFingerprint = 0xf7595db8e7ecbaaeUL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

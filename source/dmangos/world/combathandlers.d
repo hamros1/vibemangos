@@ -66,6 +66,8 @@ mixin template CombatHandlers()
         else if (attacker.kind == UnitKind.creature && attacker.creature.petOwner)
             pvpHitBy(cast(typeof(this)) context.onlinePlayer(attacker.creature.petOwner),
                 (attacker.creature.values.get!UNIT_FIELD_FLAGS & UnitFlags.pvp) != 0);
+        else if (blow.remotePlayer)
+            flagFromPvPHit(blow.remotePlayerPvP);
         if (blow.kind != BlowKind.periodic && player.values.getByte!UNIT_FIELD_BYTES_1(0) != 0)
         {
             player.values.setByte!UNIT_FIELD_BYTES_1(0, 0);
@@ -118,10 +120,11 @@ mixin template CombatHandlers()
             if (killer !is null && killer !is this)
                 killer.playerKilledByMe(this);
             if (auto copy = currentBattleground()) // the battleground counts the death and the kill
-                copy.playerKilled(victim: player.guid, killer: killer !is null && killer !is this ? killer.player.guid : 0);
+                copy.playerKilled(victim: player.guid,
+                    killer: killer !is null && killer !is this ? killer.player.guid : blow.remotePlayer);
             // Gear wears by a tenth unless a player's side killed (the player, its pet, totem or guardian), nor in
             // a battleground (`Unit::DealDamage`: `!responsiblePlayer && !InBattleGround()`).
-            const byPlayerSide = attacker.kind == UnitKind.player || (attacker.kind == UnitKind.creature
+            const byPlayerSide = blow.remotePlayer != 0 || attacker.kind == UnitKind.player || (attacker.kind == UnitKind.creature
                 && (attacker.creature.petOwner || attacker.creature.totemOwner || attacker.creature.guardianOwner));
             playerDied(!byPlayerSide && currentBattleground() is null);
         }
