@@ -219,6 +219,8 @@ unittest
     runtime.raise(h, me, Damaged(EntityRef(7), 10, 60, 45));
     runtime.raise(h, me, Died()); // not handled: nothing
     assert(host.casts == [12_345] && runtime.busy(h));
+    InstanceContext otherKind;
+    runtime.tick(h, otherKind, 100_000); // a different kind cannot advance the creature's schedule
     foreach (_; 0 .. 25)
         runtime.tick(h, me, 100);
     // State, as the pool holds it: two pulses.

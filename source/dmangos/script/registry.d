@@ -616,10 +616,17 @@ final class ScriptRuntime
         if (!h)
             return;
         const t = &types[h.script - 1];
-        if (t.tick is null)
-            return;
-        if (auto state = pools[h.script - 1].at(h.slot, h.generation))
-            t.tick(state, &context, ms);
+        static foreach (k; __traits(allMembers, ScriptKind))
+        {{
+            enum kind = __traits(getMember, ScriptKind, k);
+            static if (is(KindInfo!kind.Context == Ctx))
+            {
+                if (t.kind != kind || t.tick is null)
+                    return;
+                if (auto state = pools[h.script - 1].at(h.slot, h.generation))
+                    t.tick(state, &context, ms);
+            }
+        }}
     }
 
     /// Whether the script has steps pending (its entity must tick).
