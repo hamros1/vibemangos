@@ -553,6 +553,11 @@ final class Group
     /// The loot settings: method, master looter and threshold together.
     void setLoot(LootMethod method, ulong master, ubyte threshold)
     {
+        // The threshold "can be set to Uncommon, Rare, or Epic"; the master looter is a member (WoWWiki "Party",
+        // 2006: "set by the party leader by right-clicking on any member's portrait"). Otherwise nothing changes.
+        enum ubyte uncommon = 2, epic = 4;
+        if (threshold < uncommon || threshold > epic || (method == LootMethod.masterLoot && !isMember(master)))
+            return;
         lootMethod = method;
         looter = master;
         lootThreshold = threshold;
@@ -1144,6 +1149,16 @@ unittest
     assert(list[0] == GroupType.normal && list[2 .. 6] == [1, 0, 0, 0]);
     assert(list[6 .. 12] == "Jaina\0" && list[20] == MemberStatus.online);
     assert(list[22] == 1 && list[30] == LootMethod.groupLoot);
+
+    // The loot settings: a threshold of uncommon to epic, a master looter among the members; else unchanged.
+    group.setLoot(LootMethod.masterLoot, 2, 3);
+    assert(group.lootMethod == LootMethod.masterLoot && group.looter == 2 && group.lootThreshold == 3);
+    group.setLoot(LootMethod.groupLoot, 0, 1);
+    group.setLoot(LootMethod.groupLoot, 0, 5);
+    group.setLoot(LootMethod.masterLoot, 99, 2);
+    assert(group.lootMethod == LootMethod.masterLoot && group.looter == 2 && group.lootThreshold == 3,
+        "common, legendary, a stranger: refused");
+    group.setLoot(LootMethod.groupLoot, 0, 2);
 
     // A new leader; then a raid with an assistant in sub-group 3.
     group.changeLeader(2);

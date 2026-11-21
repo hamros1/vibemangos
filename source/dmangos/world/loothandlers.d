@@ -18,7 +18,7 @@ mixin template LootHandlers()
     import std.algorithm.comparison : max;
     import dmangos.log : info;
     import dmangos.world.creature : Creature;
-    import dmangos.world.defines : nullBag, nullSlot, UnitFlags;
+    import dmangos.world.defines : ItemClass, nullBag, nullSlot, UnitFlags;
     import dmangos.world.experience;
     import dmangos.world.inventory : EquipError, InventoryResult, Item, ItemPosCount;
     import dmangos.world.loot;
@@ -696,8 +696,16 @@ private:
     /// See `Looter.canUseItem`.
     public bool canUseItem(uint entry)
     {
+        import dmangos.world.inventory : itemSkill, itemSubclassWeaponFist, skillFistWeapons;
+
+        // Need before greed's "can't use": the item's own requirements, and its weapon or armor skill (a mage
+        // and mail; docs/FORMULAS.md "Group loot").
         const proto = entry in context.data.items;
-        return proto !is null && player.inventory.canUse(proto) == InventoryResult.ok;
+        if (proto is null || player.inventory.canUse(proto) != InventoryResult.ok)
+            return false;
+        const skill = proto.itemClass == ItemClass.weapon && proto.subClass == itemSubclassWeaponFist
+            ? skillFistWeapons : itemSkill(proto);
+        return skill == 0 || player.skillRank(skill) != 0;
     }
 
     /// See `Looter.lootWindow`: the player starts looting (`UNIT_FLAG_LOOTING`), or stops.

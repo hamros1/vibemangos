@@ -726,9 +726,14 @@ final class Loot
         return 0;
     }
 
-    /// Hands out the money, shared among the owners in a group.
+    /**
+     * Hands out the money, shared among the owners in a group "as evenly as possible" (WoWWiki "Loot", 2006): the
+     * copper left over a copper each, the looter's first, then by guid (docs/FORMULAS.md "Group loot").
+     */
     void sendGold(Looter looter)
     {
+        import std.algorithm.sorting : sort;
+
         if (gold == 0)
             return;
         foreach (guid; looking.keys)
@@ -736,10 +741,13 @@ final class Loot
                 other.deliver(Opcode.SMSG_LOOT_CLEAR_MONEY, null);
         if (rule != LootRule.notGroup)
         {
-            const share = cast(uint)(gold / owners.length);
-            foreach (guid, _; owners)
+            auto order = owners.keys;
+            const self = looter.looterGuid;
+            order.sort!((a, b) => (a == self) != (b == self) ? a == self : a < b);
+            foreach (i, guid; order)
                 if (auto owner = find(guid))
                 {
+                    const share = cast(uint)(gold / order.length + (i < gold % order.length ? 1 : 0));
                     owner.receiveMoney(share);
                     ByteWriter w;
                     w.put(share);
@@ -889,7 +897,19 @@ final class LootRoll
         }
         if (players > 1)
         {
+            // Need before greed: "'Pass' is automatically selected for party members who can't use an item"
+            // (WoWWiki "Loot", 2006-10): they get no roll window, only their pass (docs/FORMULAS.md "Group loot").
+            ulong[] autoPassed;
+            if (loot.rule == LootRule.needBeforeGreed)
+                foreach (guid, ref v; votes)
+                    if (v.vote == RollVote.notEmittedYet && !loot.find(guid).canUseItem(item.itemId))
+                    {
+                        v.vote = RollVote.pass;
+                        autoPassed ~= guid;
+                    }
             sendStartRoll();
+            foreach (guid; autoPassed)
+                sendRoll(guid, 128, 128, true);
             endTime = now + lootRollSeconds;
             started = true;
             return true;
@@ -920,20 +940,18 @@ final class LootRoll
                     looter.deliver(opcode, body_);
     }
 
-    /// `SMSG_LOOT_START_ROLL`: need is not offered for what the player could not use (need before greed).
+    /// `SMSG_LOOT_START_ROLL`, to those who choose (not those passed for them: need before greed).
     private void sendStartRoll()
     {
-        enum ubyte maskAll = 0x0F, maskNeed = 0x02;
+        enum ubyte maskAll = 0x0F;
         foreach (guid, v; votes)
         {
-            if (v.vote == RollVote.notValid)
+            if (v.vote != RollVote.notEmittedYet)
                 continue;
             auto looter = loot.find(guid);
             if (looter is null)
                 continue;
-            ubyte mask = maskAll;
-            if (loot.rule == LootRule.needBeforeGreed && !looter.canUseItem(item.itemId))
-                mask &= ~maskNeed;
+            const ubyte mask = maskAll;
             ByteWriter w;
             head(w);
             itemPart(w);
@@ -943,8 +961,8 @@ final class LootRoll
         }
     }
 
-    /// `SMSG_LOOT_ROLL`: what one player chose (and rolled).
-    private void sendRoll(ulong player, uint number, uint type)
+    /// `SMSG_LOOT_ROLL`: what one player chose (and rolled), or was passed for (`autoPass`).
+    private void sendRoll(ulong player, uint number, uint type, bool autoPass = false)
     {
         ByteWriter w;
         head(w);
@@ -952,7 +970,7 @@ final class LootRoll
         itemPart(w);
         w.put(cast(ubyte) number);
         w.put(cast(ubyte) type);
-        w.put(ubyte(0)); // auto pass
+        w.put(ubyte(autoPass)); // auto pass
         toVoters(Opcode.SMSG_LOOT_ROLL, w.data);
     }
 
@@ -962,6 +980,10 @@ final class LootRoll
         auto v = player in votes;
         if (v is null || v.vote == RollVote.notValid)
             return false;
+        if (loot.rule == LootRule.needBeforeGreed && choice != RollVote.pass)
+            if (auto looter = loot.find(player))
+                if (!looter.canUseItem(item.itemId))
+                    return false; // passed for it
         v.vote = choice;
         if (choice != RollVote.pass)
             v.number = cast(ubyte) uniform!"[]"(1, 100);
@@ -1097,6 +1119,7 @@ version (unittest)
         uint money;
         bool full;
         bool windowOpen;
+        bool cannotUse;  /// `canUseItem` says no
 
         this(ulong guid)
         {
@@ -1129,7 +1152,7 @@ version (unittest)
 
         bool canUseItem(uint item)
         {
-            return true;
+            return !cannotUse;
         }
 
         void lootWindow(ulong target, bool open)
@@ -1273,4 +1296,56 @@ unittest
     now += 61;
     loot.update();
     assert(loot.rolls.length == 0 && other.released && !other.blocked);
+}
+
+/// A group's money "as evenly as possible": 10 copper among three, 4 to the looter and 3 to each of the others; none
+/// lost (it was 3 each, a copper gone).
+unittest
+{
+    auto a = new TestLooter(1), b = new TestLooter(2), c = new TestLooter(3);
+    auto loot = new Loot(9, (ulong guid) => guid == 1 ? cast(Looter) a : guid == 2 ? b : guid == 3 ? c : null);
+    loot.rule = LootRule.groupLoot;
+    foreach (guid; [1UL, 2, 3])
+        loot.owners[guid] = true;
+    loot.currentLooter = 2;
+    loot.gold = 10;
+    loot.sendGold(b);
+    assert(b.money == 4 && a.money == 3 && c.money == 3);
+    loot.gold = 11;
+    loot.sendGold(c);
+    assert(c.money == 3 + 4 && a.money == 3 + 4 && b.money == 4 + 3, "the looter, then by guid");
+}
+
+/// Need before greed: those who cannot use the item are passed for it, with no roll window, and may not roll; the
+/// others roll.
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    auto a = new TestLooter(1), b = new TestLooter(2);
+    b.cannotUse = true;
+    auto loot = new Loot(9, (ulong guid) => guid == 1 ? cast(Looter) a : guid == 2 ? b : null);
+    long now = 1000;
+    loot.clock = () => now;
+    loot.rule = LootRule.needBeforeGreed;
+    loot.owners[1] = true;
+    loot.owners[2] = true;
+    loot.currentLooter = 1;
+    auto item = new LootItem;
+    item.itemId = 100;
+    item.quality = 2;
+    item.blocked = true;
+    item.allowed[1] = true;
+    item.allowed[2] = true;
+    loot.items ~= item;
+    auto roll = new LootRoll(loot, item);
+    assert(roll.tryToStart(now));
+    loot.rolls[0] = roll;
+    assert(a.got == [Opcode.SMSG_LOOT_START_ROLL, Opcode.SMSG_LOOT_ROLL], "a's window, and b's pass");
+    assert(!b.got.canFind(Opcode.SMSG_LOOT_START_ROLL) && b.got == [Opcode.SMSG_LOOT_ROLL]);
+    assert(b.bodies[0][$ - 1] == 1, "an automatic pass");
+    loot.vote(b, 0, RollVote.greed);
+    assert(loot.rolls.length == 1, "b's greed refused");
+    loot.vote(a, 0, RollVote.greed);
+    assert(a.stored == [100] && b.stored.length == 0 && loot.rolls.length == 0, "a's alone");
 }
