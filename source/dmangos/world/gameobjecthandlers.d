@@ -551,11 +551,11 @@ mixin template GameObjectHandlers()
 
                 loot.fill(template_, context.data.loot, context.data.items, map.random, &meets, &allowed);
             }
-        loot.changed = () => map.flushGameObject(go);
+        loot.changed = () => theMap.flushGameObject(go);
         auto self = this;
         loot.lootedForAll = () {
             // A vein that fills again (its least and most opens): ready with new loot; else done (and gone).
-            if (self.gatherAgain(go))
+            if (self.gatherAgain(go, theMap))
             {
                 go.loot = null;
                 go.lootState = GoLootState.ready;
@@ -563,7 +563,7 @@ mixin template GameObjectHandlers()
                 return;
             }
             go.lootState = GoLootState.justDeactivated;
-            map.wake(go.guid);
+            theMap.wake(go.guid);
         };
         go.despawnTimer = 5 * 60 * 1000; // gone 5 minutes after opening even if not emptied
         return loot;
@@ -574,7 +574,7 @@ mixin template GameObjectHandlers()
      * it fills again every time before its least, never at its most, and between the two by a chance falling
      * with its uses and rising with the gatherer's mining skill against the lock's.
      */
-    bool gatherAgain(GameObject go)
+    bool gatherAgain(GameObject go, Map lootMap)
     {
         import std.math : pow;
 
@@ -593,7 +593,7 @@ mixin template GameObjectHandlers()
             required = lock.skill[0];
         const skill = player is null ? 0.0f : float(player.skillValue(skillMining)[0]) / (required + 25);
         const chance = pow(0.8, 4.0 * uses / most);
-        return uniform(0.0f, 100.0f, map.random) < 100 * chance + skill;
+        return uniform(0.0f, 100.0f, lootMap.random) < 100 * chance + skill;
     }
 
     /**

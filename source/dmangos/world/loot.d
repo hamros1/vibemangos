@@ -20,6 +20,7 @@ import dmangos.world.enchantments : RandomEnchantment;
 import dmangos.frozen : StaticMap;
 import std.random : Random, uniform, uniform01;
 import dmangos.bytes : ByteWriter;
+import dmangos.cluster.protocol : GroupLootRoll;
 import dmangos.world.opcodes : Opcode;
 import dmangos.world.worlddata : ItemTemplate;
 
@@ -284,6 +285,8 @@ final class LootItem
     bool blocked;             /// being rolled for, or waiting for the master
     bool released;            /// the current looter let it go: anyone may take it
     bool currentLooterPass;   /// the current looter may not take it, so others may
+    ulong winner;             /// an awarded item that only its winner may claim
+    ulong remoteAward;        /// an outstanding award, locked until the receiver answers
     bool[ulong] allowed;      /// who may still take it
 
     /// How `player` sees this item in the loot window, by the loot method: may take, may only view, or not at all.
@@ -291,6 +294,8 @@ final class LootItem
     {
         if (player !in allowed)
             return LootSlotType.none;
+        if (winner)
+            return blocked ? LootSlotType.view : LootSlotType.normal;
         if (freeForAll)
             return LootSlotType.normal;
         if (condition && !quest)
@@ -363,6 +368,11 @@ final class Loot
     bool[ulong] opened;          /// who has opened it
     bool haveItemOverThreshold;
     LootRoll[ubyte] rolls;
+    ushort[ulong] remoteRollers;  /// nearby party members simulated on other nodes
+    uint rollMap;
+    ulong delegate() nextRoll;
+    bool delegate(ushort, const ref GroupLootRoll) sendRemoteRoll;
+    void delegate(ushort, ulong, Opcode, const(ubyte)[]) tellRemoteRoller;
     private bool checked;        // the rolls are started
 
     /// The players by guid, for packets and items.
@@ -552,7 +562,7 @@ final class Loot
         uint status;
         if (fake && opened.length == 0)
             return LootStatus.notFullyLooted; // a fake loot: shown once, empty
-        if (gold)
+        if (gold && player in owners)
             status |= LootStatus.containGold;
         foreach (item; items)
         {
@@ -576,6 +586,9 @@ final class Loot
     /// Whether nothing is left for any of the owners still here.
     bool lootedForEveryone()
     {
+        foreach (item; items)
+            if (item.winner && item.winner in item.allowed)
+                return false;
         foreach (owner, _; owners)
             if (find(owner) !is null && !lootedFor(owner))
                 return false;
@@ -585,6 +598,9 @@ final class Loot
     /// Whether `player` may open it now (the corpse sparkles for it).
     bool canLoot(ulong player) const
     {
+        foreach (item; items)
+            if (item.winner == player && !item.blocked && player in item.allowed)
+                return true;
         if (player !in owners)
             return false;
         const status = statusFor(player);
@@ -637,7 +653,7 @@ final class Loot
         ByteWriter w;
         w.put(target);
         w.put(cast(ubyte) clientType);
-        w.put(gold);
+        w.put(player in owners ? gold : 0u);
         ubyte shown;
         ByteWriter list;
         foreach (item; items)
@@ -726,6 +742,30 @@ final class Loot
         return 0;
     }
 
+    /// The receiving node confirms storage, or leaves the item for the winner to claim in person.
+    void remoteAwardResult(ushort peer, const ref GroupLootRoll message)
+    {
+        auto item = itemInSlot(message.slot);
+        if (item is null || !item.remoteAward || item.remoteAward != message.roll
+            || item.winner != message.player || remoteRollers.get(message.player, 0) != peer)
+            return;
+        item.remoteAward = 0;
+        item.blocked = false;
+        if (message.stored)
+        {
+            item.allowed = null;
+            notifyItemRemoved(item, null); // a rolled item is never free-for-all
+            if (lootedForEveryone())
+            {
+                sendReleaseForAll();
+                if (lootedForAll !is null)
+                    lootedForAll();
+            }
+        }
+        if (changed !is null)
+            changed();
+    }
+
     /**
      * Hands out the money, shared among the owners in a group "as evenly as possible" (WoWWiki "Loot", 2006): the
      * copper left over a copper each, the looter's first, then by guid (docs/FORMULAS.md "Group loot").
@@ -734,7 +774,7 @@ final class Loot
     {
         import std.algorithm.sorting : sort;
 
-        if (gold == 0)
+        if (gold == 0 || looter.looterGuid !in owners)
             return;
         foreach (guid; looking.keys)
             if (auto other = find(guid))
@@ -771,7 +811,7 @@ final class Loot
         const guid = looter.looterGuid;
         if (guid == currentLooter)
             foreach (item; items)
-                if (!item.blocked && !item.released)
+                if (!item.blocked && !item.released && !item.winner)
                     item.released = true;
         if (guid in looking)
             sendReleaseFor(looter);
@@ -812,8 +852,9 @@ final class Loot
                 if (rule == LootRule.masterLoot && masterLooter in owners)
                     continue; // the master hands it out
                 auto roll = new LootRoll(this, item);
-                if (roll.tryToStart(nowSeconds()))
-                    rolls[item.slot] = roll;
+                rolls[item.slot] = roll;
+                if (!roll.tryToStart(nowSeconds()))
+                    rolls.remove(item.slot);
             }
         }
         if (master !is null)
@@ -848,11 +889,25 @@ final class Loot
     /// `player` chose for the item in `slot`.
     void vote(Looter player, uint slot, RollVote choice)
     {
+        if (slot > ubyte.max)
+            return;
         auto roll = cast(ubyte) slot in rolls;
         if (roll is null)
             return;
         if ((*roll).vote(player.looterGuid, choice) && (*roll).update(nowSeconds()))
             rolls.remove(cast(ubyte) slot);
+    }
+
+    void remoteVote(ushort peer, const ref GroupLootRoll message)
+    {
+        if (remoteRollers.get(message.player, 0) != peer
+            || (message.choice > RollVote.greed && message.choice != RollVote.notValid))
+            return;
+        auto roll = message.slot in rolls;
+        if (roll is null || (*roll).serial != message.roll || !message.roll)
+            return;
+        if ((*roll).vote(message.player, cast(RollVote) message.choice) && (*roll).update(nowSeconds()))
+            rolls.remove(message.slot);
     }
 }
 
@@ -870,6 +925,7 @@ final class LootRoll
     private Vote[ulong] votes;
     private long endTime;
     private bool started;
+    private ulong serial;
 
     ///
     this(Loot loot, LootItem item)
@@ -895,6 +951,16 @@ final class LootRoll
             votes[guid] = Vote(RollVote.notEmittedYet);
             ++players;
         }
+        if (!item.freeForAll && loot.remoteRollers.length)
+        {
+            serial = loot.nextRoll();
+            foreach (guid, _; loot.remoteRollers)
+                if (guid !in votes)
+                {
+                    votes[guid] = Vote(RollVote.notEmittedYet);
+                    ++players;
+                }
+        }
         if (players > 1)
         {
             // Need before greed: "'Pass' is automatically selected for party members who can't use an item"
@@ -902,16 +968,18 @@ final class LootRoll
             ulong[] autoPassed;
             if (loot.rule == LootRule.needBeforeGreed)
                 foreach (guid, ref v; votes)
-                    if (v.vote == RollVote.notEmittedYet && !loot.find(guid).canUseItem(item.itemId))
-                    {
-                        v.vote = RollVote.pass;
-                        autoPassed ~= guid;
-                    }
+                    if (v.vote == RollVote.notEmittedYet)
+                        if (auto local = loot.find(guid))
+                            if (!local.canUseItem(item.itemId))
+                            {
+                                v.vote = RollVote.pass;
+                                autoPassed ~= guid;
+                            }
+            endTime = now + lootRollSeconds;
+            started = true;
             sendStartRoll();
             foreach (guid; autoPassed)
                 sendRoll(guid, 128, 128, true);
-            endTime = now + lootRollSeconds;
-            started = true;
             return true;
         }
         item.underThreshold = true;
@@ -936,29 +1004,37 @@ final class LootRoll
     {
         foreach (guid, v; votes)
             if (v.vote != RollVote.notValid)
+            {
                 if (auto looter = loot.find(guid))
                     looter.deliver(opcode, body_);
+                else if (const node = guid in loot.remoteRollers)
+                    loot.tellRemoteRoller(*node, guid, opcode, body_);
+            }
     }
 
     /// `SMSG_LOOT_START_ROLL`, to those who choose (not those passed for them: need before greed).
     private void sendStartRoll()
     {
-        enum ubyte maskAll = 0x0F;
         foreach (guid, v; votes)
         {
             if (v.vote != RollVote.notEmittedYet)
                 continue;
-            auto looter = loot.find(guid);
-            if (looter is null)
-                continue;
-            const ubyte mask = maskAll;
-            ByteWriter w;
-            head(w);
-            itemPart(w);
-            w.put(uint(lootRollSeconds * 1000));
-            w.put(mask);
-            looter.deliver(Opcode.SMSG_LOOT_START_ROLL, w.data);
+            if (auto looter = loot.find(guid))
+                looter.deliver(Opcode.SMSG_LOOT_START_ROLL, startRollPacket(loot.target, item.slot, item.itemId,
+                    item.randomPropertyId));
+            else if (const node = guid in loot.remoteRollers)
+            {
+                const message = remoteMessage(GroupLootRoll.Action.offer, guid);
+                if (!loot.sendRemoteRoll(*node, message))
+                    votes[guid].vote = RollVote.pass;
+            }
         }
+    }
+
+    private GroupLootRoll remoteMessage(GroupLootRoll.Action action, ulong guid) const
+    {
+        return GroupLootRoll(action, loot.rollMap, loot.target, guid, serial, item.slot, item.itemId, item.count,
+            item.randomPropertyId, item.condition, loot.rule == LootRule.needBeforeGreed);
     }
 
     /// `SMSG_LOOT_ROLL`: what one player chose (and rolled), or was passed for (`autoPass`).
@@ -978,8 +1054,13 @@ final class LootRoll
     bool vote(ulong player, RollVote choice)
     {
         auto v = player in votes;
-        if (v is null || v.vote == RollVote.notValid)
+        if (!started || v is null || v.vote != RollVote.notEmittedYet)
             return false;
+        if (choice == RollVote.notValid)
+        {
+            v.vote = choice; // the remote owner checked the item's condition
+            return true;
+        }
         if (loot.rule == LootRule.needBeforeGreed && choice != RollVote.pass)
             if (auto looter = loot.find(player))
                 if (!looter.canUseItem(item.itemId))
@@ -1009,7 +1090,7 @@ final class LootRoll
     {
         ulong winner;
         bool any;
-        if (allVoted(winner, any) || now >= endTime)
+        if (started && (allVoted(winner, any) || now >= endTime))
         {
             finish(winner, any);
             return true;
@@ -1092,15 +1173,41 @@ final class LootRoll
             w.put(won.number);
             w.put(cast(ubyte) won.vote);
             toVoters(Opcode.SMSG_LOOT_ROLL_WON, w.data);
+            item.winner = winner;
+            item.allowed = null;
+            item.allowed[winner] = true;
             if (auto looter = loot.find(winner))
                 loot.sendItem(looter, item);
-            else
-                item.released = true;
+            else if (const node = winner in loot.remoteRollers)
+            {
+                item.blocked = true;
+                item.remoteAward = serial;
+                const message = remoteMessage(GroupLootRoll.Action.award, winner);
+                if (!loot.sendRemoteRoll(*node, message))
+                {
+                    item.blocked = false;
+                    item.remoteAward = 0;
+                }
+            }
         }
         started = false;
         if (loot.changed !is null)
             loot.changed();
     }
+}
+
+/// The same roll prompt is sent to local and remote clients.
+ubyte[] startRollPacket(ulong target, ubyte slot, uint item, int randomProperty)
+{
+    ByteWriter w;
+    w.put(target);
+    w.put(uint(slot));
+    w.put(item);
+    w.put(0u); // random suffix
+    w.put(randomProperty);
+    w.put(uint(lootRollSeconds * 1000));
+    w.put(ubyte(0x0F));
+    return w.data.dup;
 }
 
 // ---------------------------------------------------------------------------

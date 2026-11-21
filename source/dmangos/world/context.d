@@ -67,7 +67,7 @@ import dmangos.vmap.maptree : ModelCache;
 import dmangos.world.terrain : Terrain;
 import dmangos.world.group : GroupDirectory, Groups, memberStatus, MemberStatus;
 import dmangos.world.groupservice : groupCommand, GroupOp, GroupService;
-import dmangos.cluster.protocol : CreatureLoan, GmRemote, GroupCommand, KillShare, ScriptSignal;
+import dmangos.cluster.protocol : CreatureLoan, GmRemote, GroupCommand, GroupLootRoll, KillShare, ScriptSignal;
 import dmangos.world.map : Inhabitant, Map, MapObject, MapSettings, VisibilityFacts;
 import dmangos.world.online : OnlinePlayer;
 import dmangos.world.playercreate : CreationSettings;
@@ -416,6 +416,60 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     /// Sends a whisper to a player another node simulates, which checks it there; null standalone.
     void delegate(ushort node, ulong guid, WhisperFrom from, string text) whisperRemote;
+
+    /// The corpse's node owns the roll. Only the winner's node writes the award to inventory.
+    bool delegate(ushort, const ref GroupLootRoll) sendRemoteGroupLoot;
+    private ulong groupLootSequence;
+
+    ulong nextGroupLootRoll()
+    {
+        import std.datetime.systime : Clock;
+
+        if (!groupLootSequence)
+            groupLootSequence = cast(ulong) Clock.currStdTime;
+        return ++groupLootSequence;
+    }
+
+    void groupLootRollArrived(ushort peer, const ref GroupLootRoll message)
+    {
+        import dmangos.world.character : Character;
+        import dmangos.world.loot : Loot, maxLootItems;
+
+        if (!peer || !message.roll || message.slot >= maxLootItems || !canWrite())
+            return;
+        final switch (message.action)
+        {
+        case GroupLootRoll.Action.offer:
+        case GroupLootRoll.Action.award:
+            if (auto player = cast(Character) onlinePlayer(message.player))
+                if (player.character !is null && player.currentMap.id == message.map)
+                {
+                    if (message.action == GroupLootRoll.Action.offer)
+                        player.offerRemoteLoot(peer, message);
+                    else
+                        player.awardRemoteLoot(peer, message);
+                }
+            return;
+        case GroupLootRoll.Action.vote:
+        case GroupLootRoll.Action.result:
+            auto map_ = existingMap(message.map);
+            if (map_ is null)
+                return;
+            Loot loot;
+            auto object = map_.findObject(message.loot);
+            if (auto creature = cast(Creature) object)
+                loot = creature.loot;
+            else if (auto go = cast(GameObject) object)
+                loot = go.loot;
+            if (loot is null)
+                return;
+            if (message.action == GroupLootRoll.Action.vote)
+                loot.remoteVote(peer, message);
+            else
+                loot.remoteAwardResult(peer, message);
+            return;
+        }
+    }
 
     /// What node `node` said of its players: all of them (`full`), or what changed and who left.
     void presence(ushort node, bool full, const(PresenceEntry)[] entries, const(ulong)[] gone)

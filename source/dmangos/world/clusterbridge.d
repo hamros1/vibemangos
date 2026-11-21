@@ -5,6 +5,8 @@
  */
 module dmangos.world.clusterbridge;
 
+import dmangos.cluster.protocol : GroupLootRoll;
+
 import core.time : Duration, MonoTime, msecs;
 
 import dmangos.cluster.node : ClusterNode, PlayerHandler, ReplicationHandler;
@@ -323,6 +325,16 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         if (auto session = cast(Character) context.onlinePlayer(m.target))
             if (session.character !is null)
                 session.killShared(m.entry, m.victim, m.level, m.xp, m.rate, m.reputationRate);
+    }
+
+    bool sendGroupLootRoll(ushort peer, const ref GroupLootRoll message)
+    {
+        return node.sendTo(peer, message);
+    }
+
+    void groupLootRoll(ushort peer, const ref GroupLootRoll message)
+    {
+        context.groupLootRollArrived(peer, message);
     }
 
     /// For the context: guild news for every other node.

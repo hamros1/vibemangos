@@ -160,7 +160,7 @@ There are 47 message types. They fall into:
 | Sessions | `SessionClaim`, `SessionGrant`, `SessionEvict`, `SessionReleased` |
 | Replication | `InterestUpdate`, `ReplicaCreate`, `ReplicaValues`, `ReplicaMove`, `ReplicaRemove`, `InRange` |
 | Players | `PlayerMessage` (to the owner, to the home, arrival, departure, a move to a third node), `Presence`, `DeliverTo`, `Whisper` |
-| Gameplay across nodes | `StockRequest`, `StockReply`, `StockRelease`, `GroupCommand`, `GroupState`, `MemberStatsRequest`, `ToEveryone`, `GmRemote`, `KillShare`, `ScriptSignal`, `DungeonEntryRequest`, `DungeonEntryReply`, `FriendStatusChange`, `GuildReload`, `GuildBroadcast`, `GuildInvitation` |
+| Gameplay across nodes | `StockRequest`, `StockReply`, `StockRelease`, `GroupCommand`, `GroupState`, `MemberStatsRequest`, `ToEveryone`, `GmRemote`, `KillShare`, `GroupLootRoll`, `ScriptSignal`, `DungeonEntryRequest`, `DungeonEntryReply`, `FriendStatusChange`, `GuildReload`, `GuildBroadcast`, `GuildInvitation` |
 | Services | `ServiceCall`, `ServiceReply` (docs/SERVICES.md) |
 
 On the world server's side, `ClusterBridge` implements the handlers `ClusterNode` calls, and
@@ -455,6 +455,11 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   (`ToEveryone`, with the permission filter for GM texts).
 * **Group kills.** Members near a kill whose replicas are on the killer's node count in the group's
   share; each one's part (kill credit, experience, reputation) goes to its node (`KillShare`).
+* **Group loot rolls.** Nearby party members on other nodes can roll for shared items under Group
+  Loot and Need Before Greed. The loot's node counts votes and chooses the winner. The player's own
+  node checks loot conditions and whether they can use the item for Need Before Greed. The winning
+  player's node stores the item and confirms the award. A failed store leaves it
+  reserved for the winner. An award whose outcome is unknown stays locked until the loot expires.
 * **Script signals** to a creature another node simulates go there (`ScriptSignal`), applied once
   (its origin and sequence number drop a resend), and are passed on, at most three times, if the
   creature has moved again (docs/SCRIPTING.md).
@@ -580,7 +585,8 @@ services line (`ServiceHost.describe`). Every log line of the cluster code start
 
 ## Not yet
 
-* Loot rights counting members on other nodes and a player's spells at another node's player.
+* Cross-node quest drops, coin splits, round robin, and master loot.
+* A player's spells at another node's player.
 * Surviving an owner's loss without disconnecting the client: the home could take its player back
   from the last save, which is worth having only with gateways and much more frequent player saves.
 * More than one standby, and a quorum of coordinators.

@@ -202,6 +202,7 @@ private int run(WorldConfig config, string configPath)
         context.toEveryoneElsewhere = &bridge.toEveryoneElsewhere;
         context.gmRemote = &bridge.sendGmRemote;
         context.killShareElsewhere = &bridge.sendKillShare;
+        context.sendRemoteGroupLoot = &bridge.sendGroupLootRoll;
         context.signalElsewhere = &bridge.sendScriptSignal;
         context.askDungeonEntry = &bridge.askDungeonEntry;
         context.announceFriendElsewhere = &bridge.announceFriend;
