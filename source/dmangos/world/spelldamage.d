@@ -237,6 +237,37 @@ bool isCreatureTargetEffect(const ref SpellInfo spell, size_t i)
         || spell.effect[i] == SpellEffect.schoolDamage) && spell.effect[i] != SpellEffect.heal;
 }
 
+/// One named-creature hit, heal, or group of auras can be applied on its target's node.
+package size_t namedCreatureEffect(const ref SpellInfo spell)
+{
+    if (spell.attributesEx & (0x04 | 0x40))
+        return size_t.max; // channels need their own lifetime and interrupt routing
+    size_t first = size_t.max;
+    foreach (i, effect; spell.effect)
+    {
+        if (effect == SpellEffect.none)
+            continue;
+        if (spell.implicitTargetA[i] == ImplicitTarget.caster
+            && spell.casting.implicitTargetB[i] == ImplicitTarget.none)
+            continue;
+        if (spell.implicitTargetA[i] != ImplicitTarget.unitScriptNearCaster)
+            return size_t.max;
+        if (spell.casting.implicitTargetB[i] != ImplicitTarget.none || spell.casting.chainTarget[i] > 1
+            || spell.casting.school >= 7)
+            return size_t.max;
+        if (effect == SpellEffect.applyAura)
+        {
+            if (!remoteTargetAuraEffects(spell, i) || (first != size_t.max && spell.effect[first] != effect))
+                return size_t.max;
+        }
+        else if (first != size_t.max || (effect != SpellEffect.heal && !isDirectMagicDamageEffect(spell, i)))
+            return size_t.max;
+        if (first == size_t.max)
+            first = i;
+    }
+    return first;
+}
+
 /// Drains whose entire channel aura can run on one hostile target.
 package bool isRemoteLeechChannel(const ref SpellInfo spell)
 {

@@ -1304,24 +1304,35 @@ private:
      * for the player, or in a group for each member at the group reward distance, alive or not yet released
      * (CMaNGOS `Player::RewardPlayerAndGroupAtCast`). Pets do not count.
      */
-    package void rewardPlayerAndGroupAtCast(ulong guid, uint spell)
+    package void rewardPlayerAndGroupAtCast(ulong guid, uint spell, ushort remoteOwner = 0)
     {
         import dmangos.world.character : Character;
         import dmangos.world.creature : Creature;
         import dmangos.world.gameobject : GameObject;
         import dmangos.world.movement : Position;
         import dmangos.world.player : DeathState;
+        import dmangos.world.replication : Replica;
+        import dmangos.world.updatefields : OBJECT_FIELD_ENTRY, TypeId;
 
         int target;
         Position at;
-        if (auto creature = cast(Creature) map.findObject(guid))
+        auto object = map.findObject(guid);
+        if (remoteOwner)
+        {
+            auto copy = cast(Replica) object;
+            if (copy is null || copy.owner != remoteOwner || copy.fields.type != TypeId.unit || copy.meleeController)
+                return;
+            target = cast(int) copy.fields.get!OBJECT_FIELD_ENTRY;
+            at = copy.position;
+        }
+        else if (auto creature = cast(Creature) object)
         {
             if (creature.petOwner)
                 return;
             target = cast(int) creature.template_.entry;
             at = creature.position;
         }
-        else if (auto go = cast(GameObject) map.findObject(guid))
+        else if (auto go = cast(GameObject) object)
         {
             target = -cast(int) go.template_.entry;
             at = go.position;

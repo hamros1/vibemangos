@@ -978,8 +978,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.spellareas : damagingGroundEffect, refreshGroundAura;
         import dmangos.world.spellcast : radius, SpellMissInfo;
         import dmangos.world.spelldamage : creatureAreaShape, creatureTargetInRange, isCreatureTargetEffect,
-            isHostileAreaEffect, isHostileChainEffect, isRemoteLeechChannel, isTargetedProcEffect, rollRemoteAreaDamage,
-            spellJumpRadius;
+            isHostileAreaEffect, isHostileChainEffect, isRemoteLeechChannel, isTargetedProcEffect, namedCreatureEffect,
+            rollRemoteAreaDamage, spellJumpRadius;
+        import dmangos.world.spellselection : namedCreatureRange;
         import dmangos.world.spellids : ImplicitTarget, SpellEffect;
         import dmangos.world.unit : Blow, UnitKind, UnitRef, combatRelations;
         import dmangos.world.updatefields : TypeId, UNIT_CHANNEL_SPELL, UNIT_FIELD_CHANNEL_OBJECT, UNIT_FIELD_LEVEL;
@@ -1013,12 +1014,16 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return;
         auto copy = cast(Replica) map_.findObject(message.caster);
         if (copy is null || copy.owner != peer || (copy.fields.type != TypeId.player
-            && ((!message.triggered && !message.creatureCast && !message.groundTick) || copy.fields.type != TypeId.unit)))
+            && ((!message.triggered && !message.creatureCast && !message.groundTick && !message.namedCreature)
+                || copy.fields.type != TypeId.unit)))
             return;
         const attacker = UnitRef.observed(copy, map_).combatRelations(client);
         const hostile = canAttack(attacker, victim.relating(), client);
         const spell = data.spells.spell(message.spell);
         if (spell is null)
+            return;
+        if (message.namedCreature && (message.channelled || message.groundTick || message.creatureArea
+            || message.previous))
             return;
         if (message.channelled)
         {
@@ -1042,7 +1047,23 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 return replyCreatureCast(peer, message, SpellMissInfo.evade);
             return remoteProcEffect(peer, message, spell, victim, true, attacker.hasFlag(UnitFlags.pvp));
         }
-        if (message.groundTick)
+        if (message.namedCreature)
+        {
+            import std.algorithm.searching : canFind;
+
+            if (victim.kind != UnitKind.creature || message.effect != namedCreatureEffect(*spell)
+                || !attacker.alive || message.radius != namedCreatureRange(*spell, client)
+                || !spellScriptTargets(spell.id).canFind(victim.creature.spawn.entry) || spellScript(spell.id))
+                return replyCreatureCast(peer, message, SpellMissInfo.evade);
+            if (message.auraAbsent && victim.hasAuraOf(spell.id))
+                return;
+            const effect = spell.effect[message.effect];
+            if (effect != SpellEffect.schoolDamage)
+                return remoteProcEffect(peer, message, spell, victim, hostile, attacker.hasFlag(UnitFlags.pvp));
+            if (!hostile)
+                return replyCreatureCast(peer, message, SpellMissInfo.evade);
+        }
+        else if (message.groundTick)
         {
             if (message.triggered || message.creatureCast || message.creatureArea || message.previous
                 || !validGroundTick(spell, message) || !hostile || !attacker.alive || victim.untouchable)
@@ -1157,6 +1178,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     victim.creature.ai.procAuras(flags, other, hit);
                 result.benefits = Character.benefitsFromVictim(victim, message.caster, flags >> 1, hit);
             }
+            if (message.namedCreature)
+                namedCreatureHit(victim, message, spell);
         }
         if (sendAreaDamage !is null)
             sendAreaDamage(peer, result);
@@ -1258,7 +1281,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private void replyCreatureCast(ushort peer, const ref AreaDamage message,
         imported!"dmangos.world.spellcast".SpellMissInfo miss)
     {
-        if ((!message.creatureCast && !(message.channelled && miss)) || sendAreaDamage is null)
+        if ((!message.creatureCast && !message.namedCreature && !(message.channelled && miss)) || sendAreaDamage is null)
             return;
         auto result = cast(AreaDamage) message;
         result.reply = true;
@@ -1535,6 +1558,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 victim.session.flushPlayerChanges();
             else
                 victim.map.flushObjectChanges(victim.creature);
+            if (message.namedCreature)
+                namedCreatureHit(victim, message, spell);
             if (sendAreaDamage !is null)
                 sendAreaDamage(peer, result);
             return;
@@ -1588,7 +1613,15 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             victim.creature.receiveAura(aura, victim.map, added);
             victim.map.flushObjectChanges(victim.creature);
         }
+        if (message.namedCreature)
+            namedCreatureHit(victim, message, spell);
         replyCreatureCast(peer, message, SpellMissInfo.none);
+    }
+
+    private static void namedCreatureHit(UnitRef victim, const ref AreaDamage message, const(SpellInfo)* spell)
+    {
+        if (victim.creature.alive)
+            victim.creature.ai.spellHitBy(message.caster, spell.id, 1u << spell.casting.school, victim.map);
     }
 
     private void areaDamageLanded(ushort peer, const ref AreaDamage message)
@@ -1608,7 +1641,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         lastAreaDamageReply[peer] = message.sequence;
         if (message.groundTick && message.groundRedirect)
             return retryGroundTick(peer, message);
-        if ((message.triggered || message.creatureCast || message.groundTick) && message.caster > uint.max)
+        if ((message.triggered || message.creatureCast || message.groundTick || message.namedCreature)
+            && message.caster > uint.max)
             return creatureProcLanded(peer, message);
         auto caster = cast(Character) onlinePlayer(message.caster);
         if (caster is null || caster.player is null || caster.transferring
@@ -1628,7 +1662,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             }
             return;
         }
-        if (message.triggered && message.effect < spell.effect.length && spell.effect[message.effect] == SpellEffect.heal)
+        if (message.namedCreature && !message.miss && message.effect < spell.effect.length)
+        {
+            caster.rewardPlayerAndGroupAtCast(message.target, spell.id, peer);
+            if (spell.effect[message.effect] == SpellEffect.applyAura)
+                return;
+        }
+        if (!message.miss && (message.triggered || message.namedCreature) && message.effect < spell.effect.length
+            && spell.effect[message.effect] == SpellEffect.heal)
             return map_.sendToWatchers(caster, Opcode.SMSG_SPELLHEALLOG,
                 healLog(message.target, message.caster, message.spell, message.damage, message.critical), true);
         if (message.miss)
@@ -1695,12 +1736,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (caster is null || copy is null || copy.owner != peer || spell is null || message.effect >= spell.effect.length
             || message.miss > SpellMissInfo.reflect)
             return;
-        if (message.creatureCast && !message.creatureArea)
+        if (message.creatureCast && !message.creatureArea && !message.namedCreature)
         {
             const targets = SpellTargets(TargetFlags.unit, message.target);
             map_.sendToObservers(message.caster, Opcode.SMSG_SPELL_GO, spellGoPacket(message.caster, message.spell,
                 [TargetResult(message.target, cast(SpellMissInfo) message.miss)], targets));
         }
+        if (message.namedCreature && !message.miss && caster.ai !is null)
+            caster.ai.remoteNamedSpellHit(message.target, spell);
         if (message.miss)
             map_.sendToObservers(message.caster, Opcode.SMSG_SPELLLOGMISS,
                 spellMissLog(message.spell, message.caster, message.target, cast(SpellMissInfo) message.miss));

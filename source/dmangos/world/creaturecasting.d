@@ -195,6 +195,19 @@ mixin template CreatureCasting()
     /// Why the last `castSpell` that could not did not (`SPELL_FAILED_*`, a pet's owner told it).
     imported!"dmangos.world.spellcast".SpellCastResult castRefusal;
 
+    private size_t routableNamedCreatureEffect(const(SpellInfo)* spell)
+    {
+        import dmangos.world.context : WorldContext;
+        import dmangos.world.spelldamage : namedCreatureEffect;
+
+        const effect = namedCreatureEffect(*spell);
+        if (effect != size_t.max)
+            if (auto context = cast(WorldContext) lore)
+                if (context.sendAreaDamage !is null && !context.spellScript(spell.id))
+                    return effect;
+        return size_t.max;
+    }
+
     /**
      * Casts `spell` at `target` (itself, or a player) as `flags`
      * (`castTriggered`, ...) allow; false if it could not (`castRefusal` says why).
@@ -228,7 +241,9 @@ mixin template CreatureCasting()
         // `CAST_FORCE_TARGET_SELF`: the target casts it on itself; only it itself can be made to.
         if ((flags & castForceTargetSelf) && target != me.guid)
             return refuse(SpellCastResult.badTargets);
-        if (target == 0)
+        if (routableNamedCreatureEffect(spell) != size_t.max)
+            target = me.guid; // the actual creature is selected under the spell's own range at completion
+        else if (target == 0)
             target = victim ? victim : me.guid;
         auto other = spellTarget(target);
         if (target != me.guid)
@@ -564,27 +579,11 @@ mixin template CreatureCasting()
         // Suppressor's Suppression reaches the Shade of Hakkar, not itself. None near, the caster as before.)
         if (a == ImplicitTarget.unitScriptNearCaster && named.length)
         {
-            import std.algorithm.searching : canFind;
-            import dmangos.world.spellcast : range;
+            import dmangos.world.spellselection : namedCreatureRange, nearestNamedCreature;
 
-            auto r = range(*spell, lore.clientData)[1];
-            if (r < 5)
-                r = 5;
-            ulong best;
-            float bestDistance = float.max;
-            foreach (other; world_.creaturesNear(me.position, r))
-                if (other !is me && other.alive && named.canFind(other.spawn.entry))
-                {
-                    const q = other.position;
-                    const d = (q.x - me.position.x) ^^ 2 + (q.y - me.position.y) ^^ 2 + (q.z - me.position.z) ^^ 2;
-                    if (d < bestDistance)
-                    {
-                        bestDistance = d;
-                        best = other.guid;
-                    }
-                }
-            if (best)
-                return [best];
+            if (auto other = nearestNamedCreature(world_, me.position, namedCreatureRange(*spell, lore.clientData),
+                named, me.guid, false))
+                return [other.combatGuid];
         }
         // Its master (`TARGET_UNIT_CASTER_MASTER`: a voidwalker's Sacrifice shields its warlock).
         if (a == ImplicitTarget.unitCasterMaster)
@@ -607,6 +606,7 @@ mixin template CreatureCasting()
         import dmangos.world.context : WorldContext;
         import dmangos.world.spellcast : spellFailurePacket, SpellCastResult;
         import dmangos.world.spelldamage : creatureTargetInRange;
+        import dmangos.world.spellselection : namedCreatureRange, nearestNamedCreature;
 
         bool remotePrimary, sentArea;
         if (selectedWeaponTargets is null)
@@ -640,9 +640,23 @@ mixin template CreatureCasting()
         ulong[][3] reached;
         bool[ulong] all;
         ulong[] inOrder; // each target once, in the order the effects found them (as the packet lists them)
+        ulong remoteNamed;
+        const namedEffect = selectedWeaponTargets is null ? routableNamedCreatureEffect(spell) : size_t.max;
+        UnitRef named;
+        if (namedEffect != size_t.max)
+            named = nearestNamedCreature(world_, me.position, namedCreatureRange(*spell, lore.clientData),
+                lore.spellScriptTargets(spell.id), me.guid, true);
         foreach (i; 0 .. 3)
             if (spell.effect[i])
             {
+                if (named.replica !is null && spell.implicitTargetA[i] == ImplicitTarget.unitScriptNearCaster)
+                {
+                    if (i == namedEffect && sendCreatureTargetSpell(cast(WorldContext) lore, spell, named,
+                        !takeMana, auraAbsent, cast(int) i, me.position, namedCreatureRange(*spell, lore.clientData),
+                        true))
+                        remoteNamed = named.combatGuid;
+                    continue;
+                }
                 reached[i] = scriptPicked(spell, i, selectedWeaponTargets is null
                     ? targetsFor(spell, i, target) : selectedWeaponTargets);
                 foreach (guid; reached[i])
@@ -708,8 +722,13 @@ mixin template CreatureCasting()
         foreach (other; resistedBy)
             other.session.spellResistedBy(spell, world_.unit(me.guid));
         auto targets = targetsOf(target);
-        if (results.length || !remotePrimary || sentArea)
-            world_.sendToObservers(me.guid, Opcode.SMSG_SPELL_GO, spellGoPacket(me.guid, spell.id, results, targets));
+        if (results.length || !remotePrimary || sentArea || remoteNamed)
+        {
+            auto displayed = results;
+            if (remoteNamed)
+                displayed ~= TargetResult(remoteNamed, SpellMissInfo.none);
+            world_.sendToObservers(me.guid, Opcode.SMSG_SPELL_GO, spellGoPacket(me.guid, spell.id, displayed, targets));
+        }
         foreach (r; results) // the combat log's line for each miss, as for a player's spell
             if (r.miss != SpellMissInfo.none)
                 world_.sendToObservers(me.guid, Opcode.SMSG_SPELLLOGMISS, spellMissLog(spell.id, me.guid, r.guid, r.miss));
@@ -973,6 +992,12 @@ mixin template CreatureCasting()
             spellKilled(victim.combatGuid);
         else if (victim.alive)
             spellDamageDealt(spell, victim, crit, damage);
+    }
+
+    package void remoteNamedSpellHit(ulong victim, const(SpellInfo)* spell)
+    {
+        if (script !is null && me.alive)
+            script.spellHitTarget(this, victim, spell.id, 1u << spell.casting.school);
     }
 
     private void spellKilled(ulong guid)

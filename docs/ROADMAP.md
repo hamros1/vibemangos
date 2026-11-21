@@ -2,7 +2,7 @@
 
 ## Open work
 
-- **Clustering.** Route script-selected spell targets across nodes. See
+- **Clustering.** Extend cross-node routing to script-selected groups and scripted effects. See
   [spell routing limits](CLUSTER.md#spell-routing-limits) and the
   [cross-node feature list](CLUSTER.md#what-crosses-nodes-feature-by-feature).
 - **Terrain.** Include moving game objects such as doors and elevators in line-of-sight checks.

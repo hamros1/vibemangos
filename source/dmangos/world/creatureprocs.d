@@ -99,7 +99,7 @@ mixin template CreatureProcs()
     private bool sendCreatureTargetSpell(imported!"dmangos.world.context".WorldContext context,
         const(SpellInfo)* spell, UnitRef other, bool triggered, bool auraAbsent, int areaEffect = -1,
         imported!"dmangos.world.movement".Position center = imported!"dmangos.world.movement".Position.init,
-        float areaRadius = 0)
+        float areaRadius = 0, bool namedCreature = false)
     {
         import std.algorithm.comparison : max;
         import dmangos.cluster.protocol : AreaDamage;
@@ -129,7 +129,8 @@ mixin template CreatureProcs()
                 x: origin.x, y: origin.y, z: origin.z, facing: at.orientation,
                 radius: areaEffect >= 0 ? areaRadius : within > 0 ? within : context.config.visibilityDistance,
                 casterLevel: source.level, hitBonus: source.hitBonus(spell), triggered: triggered,
-                creatureCast: !triggered, auraAbsent: auraAbsent, creatureArea: areaEffect >= 0);
+                creatureCast: !triggered, auraAbsent: auraAbsent, creatureArea: areaEffect >= 0 && !namedCreature,
+                namedCreature: namedCreature);
             if (effect == SpellEffect.applyAura)
             {
                 const aura = auraCast(source, spell, remoteTargetAuraEffects(*spell, i));

@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 59; // 59: persistent ground effects
+enum ushort protocolVersion = 60; // 60: named creature spell targets
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -191,6 +191,7 @@ struct AreaDamage
     bool triggered; /// a targeted proc instead of an area or chain hit
     bool creatureCast; /// a regular cast aimed at a player by a creature on another node
     bool creatureArea; /// hostile area or cone of a creature spell
+    bool namedCreature; /// the spell selects a living creature by its spell_script_target entry
     bool channelled;   /// a player started a channel on its own node
     bool channelUpdate; /// the channel's remote aura is shortened, or removed for auraMs zero
     bool groundTick; /// a tick of a persistent effect centered on the spot, independent of the caster's position
@@ -1229,7 +1230,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 59, recordedFingerprint = 0xf61f26bb6dacf1ecUL;
+private enum recordedVersion = 60, recordedFingerprint = 0xdc00960a5ff410c1UL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

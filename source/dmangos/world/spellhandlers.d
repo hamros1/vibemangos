@@ -1955,6 +1955,13 @@ private:
         TargetResult[] results;
         RemotePartyHeal[] remoteHeals;
         RemoteAreaDamage[] remoteDamage;
+        import dmangos.world.spelldamage : namedCreatureEffect;
+        import dmangos.world.spellselection : namedCreatureRange;
+
+        const namedEffect = namedCreatureEffect(*spell);
+        const routeNamed = namedEffect != size_t.max && context.sendAreaDamage !is null && !context.spellScript(spell.id);
+        const namedRange = routeNamed ? namedCreatureRange(*spell, context.client) : 0;
+        const scripted = routeNamed ? scriptTargetNear(spell, true) : UnitRef.init;
         const(SpellJump)[] spellChain;
         uint[ulong] bounceOf;
         SpellMissInfo[ulong] missOf;
@@ -2060,9 +2067,19 @@ private:
             }
             else if (a == ImplicitTarget.unitScriptNearCaster)
             {
-                // Instance round 2: the nearest creature `spell_script_target` names (a banner's trigger); none
-                // near, and the caster stands in as before.
-                const near = scriptTargetNear(spell);
+                if (scripted.replica !is null)
+                {
+                    if (i == namedEffect)
+                    {
+                        const at = player.position;
+                        auto hit = AreaDamage(caster: player.guid, target: scripted.combatGuid, spell: spell.id,
+                            effect: cast(ubyte) i, map: map.id, instance: map.instanceId, x: at.x, y: at.y, z: at.z,
+                            radius: namedRange, namedCreature: true, triggered: c.triggered);
+                        remoteDamage ~= RemoteAreaDamage(scripted.replica.owner, hit);
+                    }
+                    continue;
+                }
+                const near = routeNamed ? scripted.combatGuid : scriptTargetNear(spell, false).combatGuid;
                 targets = [near ? near : player.guid];
             }
             else
@@ -2107,6 +2124,8 @@ private:
         auto displayedResults = results;
         if (drain !is null)
             displayedResults ~= TargetResult(drain.guid, SpellMissInfo.none);
+        if (scripted.replica !is null)
+            displayedResults ~= TargetResult(scripted.combatGuid, SpellMissInfo.none);
         if (spellChain.length && (remoteHeals.length || remoteDamage.length))
         {
             displayedResults = null;
@@ -2172,7 +2191,7 @@ private:
         foreach (ref remote; remoteHeals)
             sendRolledPartyHeal(spell, c, remote);
         foreach (ref remote; remoteDamage)
-            sendRolledAreaDamage(spell, c, remote);
+            sendRolledReplicaEffect(spell, c, remote);
         // A channelled spell goes on (`SPELL_ATTR_EX_IS_CHANNELED`, `_IS_SELF_CHANNELED`).
         enum uint channeled = 0x04, selfChanneled = 0x40;
         if ((spell.attributesEx & (channeled | selfChanneled)) && !c.triggered && !channelFailed)
@@ -2330,13 +2349,54 @@ private:
         context.sendReplicaSpell(map, remote.peer, spell, *hit);
     }
 
+    private void sendRolledReplicaEffect(const(SpellInfo)* spell, const ref Casting c, ref RemoteAreaDamage remote)
+    {
+        import dmangos.world.caster : Caster;
+        import dmangos.world.spellauras : auraCast;
+        import dmangos.world.spelldamage : remoteTargetAuraEffects, rollHealing;
+
+        auto hit = &remote.hit;
+        const i = hit.effect;
+        if (spell.effect[i] == SpellEffect.schoolDamage)
+            return sendRolledAreaDamage(spell, c, remote);
+
+        const outer = effectCustom;
+        effectCustom = c.custom;
+        scope (exit)
+            effectCustom = outer;
+        auto me = Caster.of(this);
+        hit.casterLevel = player.data.level;
+        hit.hitBonus = spellHitBonusOf(spell);
+        hit.alwaysHits = c.custom.alwaysHits;
+        if (spell.effect[i] == SpellEffect.applyAura)
+        {
+            const mask = remoteTargetAuraEffects(*spell, i);
+            const aura = auraCast(me, spell, mask);
+            hit.auraMs = aura.ms;
+            hit.auraValues = aura.values;
+            const school = spell.casting.school;
+            foreach (j, type; spell.casting.applyAuraName)
+                if ((mask & (1 << j)) && (type == AuraType.periodicDamage || type == AuraType.periodicLeech)
+                    && school < 7)
+                {
+                    hit.threatFactor = player.damageMods.threat[school] * spellMod(SpellModOp.threat, spell, 1.0f);
+                    hit.resistanceModifier = player.auras.totalByMiscMask(AuraType.modTargetResistance, 1 << school);
+                    break;
+                }
+        }
+        else
+        {
+            const amount = spellMod(SpellModOp.damage, spell, effectAmount(spell, i));
+            hit.amount = amount > 0 ? rollHealing(me, spell, amount, hit.critical) : 0;
+        }
+        context.sendReplicaSpell(map, remote.peer, spell, *hit);
+    }
+
     /// A proc's effects on a named target are applied where that target is simulated.
     package void castProcAtReplica(const(SpellInfo)* spell, Replica target,
         imported!"dmangos.world.classspells".CustomValues custom, bool channelled = false)
     {
-        import dmangos.world.caster : Caster;
-        import dmangos.world.spellauras : auraCast;
-        import dmangos.world.spelldamage : isTargetedProcEffect, remoteTargetAuraEffects, rollHealing;
+        import dmangos.world.spelldamage : isTargetedProcEffect;
 
         if (context.sendAreaDamage is null || target.owner == context.nodeId)
             return;
@@ -2363,45 +2423,10 @@ private:
             const within = spellMod(SpellModOp.range, spell, range(*spell, context.client)[1]);
             auto hit = AreaDamage(caster: player.guid, target: target.guid, spell: spell.id, effect: cast(ubyte) i,
                 map: map.id, instance: map.instanceId, x: at.x, y: at.y, z: at.z,
-                radius: within > 0 ? within : context.config.visibilityDistance, casterLevel: player.data.level,
-                hitBonus: spellHitBonusOf(spell), alwaysHits: custom.alwaysHits, triggered: !channelled,
+                radius: within > 0 ? within : context.config.visibilityDistance, triggered: !channelled,
                 channelled: channelled);
-            if (effect == SpellEffect.schoolDamage)
-            {
-                auto remote = RemoteAreaDamage(target.owner, hit);
-                Casting cast_;
-                cast_.custom = custom;
-                sendRolledAreaDamage(spell, cast_, remote);
-                continue;
-            }
-            const outer = effectCustom;
-            effectCustom = custom;
-            scope (exit)
-                effectCustom = outer;
-            auto me = Caster.of(this);
-            if (effect == SpellEffect.applyAura)
-            {
-                const mask = remoteTargetAuraEffects(*spell, i);
-                const aura = auraCast(me, spell, mask);
-                hit.auraMs = aura.ms;
-                hit.auraValues = aura.values;
-                const school = spell.casting.school;
-                foreach (j, type; spell.casting.applyAuraName)
-                    if ((mask & (1 << j)) && (type == AuraType.periodicDamage || type == AuraType.periodicLeech)
-                        && school < 7)
-                {
-                    hit.threatFactor = player.damageMods.threat[school] * spellMod(SpellModOp.threat, spell, 1.0f);
-                    hit.resistanceModifier = player.auras.totalByMiscMask(AuraType.modTargetResistance, 1 << school);
-                    break;
-                }
-            }
-            else
-            {
-                const amount = spellMod(SpellModOp.damage, spell, effectAmount(spell, i));
-                if (amount > 0)
-                    hit.amount = rollHealing(me, spell, amount, hit.critical);
-            }
-            context.sendReplicaSpell(map, target.owner, spell, hit);
+            auto remote = RemoteAreaDamage(target.owner, hit);
+            sendRolledReplicaEffect(spell, local, remote);
         }
     }
 
@@ -3038,37 +3063,12 @@ private:
 
     /// Instance round 2: the nearest living creature within the spell's range (at least 5 yards) of an entry
     /// `spell_script_target` gives the spell; 0 if none.
-    private ulong scriptTargetNear(const(SpellInfo)* spell)
+    private UnitRef scriptTargetNear(const(SpellInfo)* spell, bool acrossNodes)
     {
-        import dmangos.world.spellcast : range;
+        import dmangos.world.spellselection : namedCreatureRange, nearestNamedCreature;
 
-        const entries = spell.id in context.data.spellScriptTargets;
-        if (entries is null)
-            return 0;
-        auto r = range(*spell, context.client)[1];
-        if (r < 5)
-            r = 5;
-        ulong best;
-        float bestDistance = float.max;
-        const p = player.position;
-        foreach (creature; map.creaturesNear(p, r))
-        {
-            if (!creature.alive)
-                continue;
-            bool named;
-            foreach (entry; *entries)
-                named |= creature.spawn.entry == entry;
-            if (!named)
-                continue;
-            const q = creature.position;
-            const d = (q.x - p.x) ^^ 2 + (q.y - p.y) ^^ 2 + (q.z - p.z) ^^ 2;
-            if (d < bestDistance)
-            {
-                bestDistance = d;
-                best = creature.guid;
-            }
-        }
-        return best;
+        return nearestNamedCreature(map, player.position, namedCreatureRange(*spell, context.client),
+            context.spellScriptTargets(spell.id), 0, acrossNodes);
     }
 
     /**
