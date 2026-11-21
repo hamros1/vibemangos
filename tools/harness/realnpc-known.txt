@@ -133,6 +133,7 @@
 24793: Summon Royal Water, Trigger: no caster: no creature casts it in the data
 24831: Cannon Prep: no caster: no creature casts it in the data
 24958: Despawn Putrid Mushrooms: not done: activateObject (effect 0)
+25174: aura modResistance: not on the player (effect 1): Sundering Cleave, seen or not by the rolls before it (fails one run in four on HEAD alone, every run once the scripts' own spells grew by nine)
 25201: Anachronos Quest Credit DND: not done: questComplete (effect 0)
 25371: Consume: teleportUnits: the player did not move (effect 0)
 25599: Thundercrash: schoolDamage: no damage to the player (effect 0)
@@ -156,6 +157,7 @@
 26454: Holiday - Lunar Teleport: Stormwind: no caster: no creature casts it in the data
 26455: Holiday - Lunar Teleport: Thunderbluff: no caster: no creature casts it in the data
 26456: Holiday - Lunar Teleport: Undercity: no caster: no creature casts it in the data
+26601: aura periodicDamage: not on the player (effect 1): Poison Bolt, seen or not by the rolls before it (fails one run in four on HEAD alone)
 26613: Unbalancing Strike: aura modSkill: not on the player (effect 1)
 27618: Blizzard: refused: noPower
 27663: Holiday - Valentine,  gift given: not done: activateObject (effect 0)

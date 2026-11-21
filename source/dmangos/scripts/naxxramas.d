@@ -509,6 +509,15 @@ struct AnubRekhan
             break;
         }
     }
+
+    /// A guard slain frees its place. (Summoned to go when dead, it leaves the map as it dies, and `alive` of a
+    /// creature not here says yes: after four guards no more came.)
+    void on(ref CreatureContext me, const ref SummonedDied e)
+    {
+        foreach (ref g; guards)
+            if (g == e.summoned)
+                g = EntityRef.init;
+    }
 }
 
 /// Grand Widow Faerlina: Poison Bolt Volley, Rain of Fire, and an enrage every minute (her worshippers'
@@ -1630,6 +1639,15 @@ private mixin template ThaddiusAdd(uint other, uint warstompOrPull, uint aggro, 
 
     void on(ref CreatureContext me, const ref Signal e)
     {
+        if (e.id == NaxxSignal.addsDone && down)
+        {
+            // The other fell within our window and died: so do we (else we rose again beside Thaddius).
+            steps.clear();
+            me.sayText(death);
+            me.deathPrevention(false);
+            me.die();
+            return;
+        }
         if (e.id != NaxxSignal.addFell || !down)
             return;
         // Both down within the window: both die, and Thaddius wakes.
@@ -1716,6 +1734,8 @@ struct Thaddius
         {
             me.unitFlags(UnitFlag.uninteractible | UnitFlag.immuneToPlayer, true);
             me.reactState(Reaction.passive);
+            if (!me.hasAura(me.self, spawn))
+                me.castSelf(spawn, true); // waiting, stunned, till his coils' masters fall
         }
     }
 
@@ -1738,8 +1758,11 @@ struct Thaddius
         final switch (step)
         {
         case Step.wake:
+            // Thadius Spawn (28160) is the stun he waits in (ScriptDev casts it as he spawns and takes it off as
+            // the coils' lightning wakes him, with its visual, 28136, left out here); cast here, it stunned him for
+            // good.
             awake = true;
-            me.castSelf(spawn, true);
+            me.removeAura(me.self, spawn);
             me.unitFlags(UnitFlag.uninteractible | UnitFlag.immuneToPlayer, false);
             me.reactState(Reaction.aggressive);
             me.zoneCombat();

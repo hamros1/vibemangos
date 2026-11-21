@@ -150,8 +150,9 @@ struct MurkdeepBeach
         if (!at.locationOf(e.player, here))
             return;
         at.consume();
-        if (at.creatureNear(KalimdorMap.npcMurkdeep, here, 100) || at.creatureNear(KalimdorMap.npcGreymistCoastrunner, here, 60)
-                || at.creatureNear(KalimdorMap.npcGreymistWarrior, here, 60))
+        // (Not the warriors: the world database spawns four on the beach, and asking for none of them near kept the
+        // event from ever starting; ScriptDev asks only for Murkdeep and the coastrunners.)
+        if (at.creatureNear(KalimdorMap.npcMurkdeep, here, 100) || at.creatureNear(KalimdorMap.npcGreymistCoastrunner, here, 60))
             return; // the event is on
         at.signalDungeon(KalimdorSignal.murkdeepCalled);
     }

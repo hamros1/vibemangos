@@ -432,7 +432,8 @@ struct Isillien
 
     enum Step : ubyte { callTirion, mindBlast, mindFlay, manaBurn, greaterHeal }
     Schedule!Step steps;
-    Escort escort = { despawnAfterMs: 0 };
+    // His walk to the tower is an escort of the player by Taelan: kept within ScriptDev's 66 yards, as Tirion's.
+    Escort escort = { despawnAfterMs: 0, maxDistance: 66 };
     EntityRef taelan;
     bool called;
 
@@ -526,7 +527,9 @@ struct TirionFordring
 {
     enum Step : ubyte { holyCleave, holyStrike, crusaderStrike }
     Schedule!Step steps;
-    Escort escort = { despawnAfterMs: 0 };
+    // He comes 52 yards from the player at the tower: within ScriptDev's 66 (`MAX_PLAYER_DISTANCE`), beyond the
+    // component's 50, which failed his escort the moment it began and left him standing where he came.
+    Escort escort = { despawnAfterMs: 0, maxDistance: 66 };
     EntityRef taelan;
 
     void on(ref CreatureContext me, const ref Spawned e)
