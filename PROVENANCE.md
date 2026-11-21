@@ -1128,7 +1128,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: vmangos
 * Files: `LFG/LFGDefines.h`, `LFG/LFGMgr.cpp`, `LFG/LFGQueue.cpp`, `Group/Group.cpp`, `Server/Packets/Misc.cpp`
-* Functions: `LFGMgr::CalculateRoles`, `LFGMgr::GetPriority`, `LFGQueue::Update`, `LFGQueue::FindRoleToGroup`, `Group::CalculateLFGRoles`, `Group::FillPremadeLFG`
+* Functions: `LFGMgr::CalculateRoles`, `LFGMgr::GetPriority`, `LFGQueue::Update`, `LFGQueue::FindRoleToGroup`, `LFGQueue::RestoreOfflinePlayer`, `WorldSession::HandleMeetingStoneInfoOpcode`, `Group::CalculateLFGRoles`, `Group::FillPremadeLFG`
 
 ## world/guardians.d
 

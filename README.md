@@ -227,8 +227,9 @@ What works now:
     waiting alone for one dungeon make a party of the first two, which then fills like any other. A
     party of five is complete and leaves the queue; one still waiting is told so every five minutes; a
     new leader, a raid or a disband takes it out. The rules are vmangos's. In a cluster the queue is
-    the coordinator's, beside the groups. Not yet: talent-based roles, and players who log out are not
-    kept in the queue for their return.
+    the coordinator's, beside the groups. A player alone who logs out keeps its place, matched with nobody
+    until it is back (its stone window asks at login), its time waited kept. Roles are by class: 1.12 has
+    no roles to choose, and the talent-based roles of vmangos's own option are not Blizzard's.
   * **Guilds:** a guild charter
     bought from a guild master for 10 silver, signed by nine others of the faction (once an account)
     and turned in founds the guild with five ranks; invitations (of the faction unless

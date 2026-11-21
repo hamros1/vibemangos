@@ -12,7 +12,13 @@
  *        longest; after 30 minutes a player is ahead of the newer ones. A party filled to five is complete.
  *        Five players waiting for one area, and none of them taken, make a new party of the first two, which
  *        then waits like any other. A party still waiting is told so every five minutes.)
+ *   $(LI A player alone who logs out keeps its place (`offline`, as vmangos's `LFGQueue` keeps it): it is
+ *        matched with nobody while away, and back in the world (its stone window asks, `CMSG_MEETINGSTONE_INFO`)
+ *        it waits again, its time waited kept. A party's place is the group's, which stays.)
  * )
+ *
+ * Roles are by class alone. The 1.12 client has no role to choose and the queue no talents to look at: vmangos
+ * reads talents only behind its own `LFG.Matchmaking` option, off by default, which Blizzard never described.
  *
  * The queue here is plain data with no world in it: what it decides comes back as `QueueEvent`s, which the
  * group service (`dmangos.world.groupservice`, on the coordinator in a cluster) carries out on the groups
@@ -177,6 +183,7 @@ struct MeetingStoneQueue
 {
     QueuedPlayer[] players; /// in the order they came
     QueuedParty[] parties;  /// ditto
+    QueuedPlayer[] offline; /// players alone who logged out while waiting, their places kept
 
     /// The waiting player `guid`, or null.
     inout(QueuedPlayer)* player(ulong guid) inout pure nothrow @nogc @safe
@@ -203,6 +210,45 @@ struct MeetingStoneQueue
             if (p.guid == guid)
             {
                 players = players[0 .. i] ~ players[i + 1 .. $];
+                return true;
+            }
+        return false;
+    }
+
+    /// A waiting player logs out: its place is kept (`offline`), and nothing matches it; whether it was waiting.
+    bool setOffline(ulong guid) pure nothrow @safe
+    {
+        foreach (i, ref p; players)
+            if (p.guid == guid)
+            {
+                offline ~= p;
+                players = players[0 .. i] ~ players[i + 1 .. $];
+                return true;
+            }
+        return false;
+    }
+
+    /// A player back in the world (`RestoreOfflinePlayer`): it waits again where it waited; its area, or 0.
+    uint restore(ulong guid) pure nothrow @safe
+    {
+        foreach (i, ref p; offline)
+            if (p.guid == guid)
+            {
+                const area = p.area;
+                players ~= p;
+                offline = offline[0 .. i] ~ offline[i + 1 .. $];
+                return area;
+            }
+        return 0;
+    }
+
+    /// Forgets a player who logged out (it joined a group meanwhile, or asked to leave); whether it had a place.
+    bool forgetOffline(ulong guid) pure nothrow @safe
+    {
+        foreach (i, ref p; offline)
+            if (p.guid == guid)
+            {
+                offline = offline[0 .. i] ~ offline[i + 1 .. $];
                 return true;
             }
         return false;

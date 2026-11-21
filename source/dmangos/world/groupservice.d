@@ -185,8 +185,8 @@ final class GroupService
             return meetingStoneInfo(c);
         case GroupOp.logout:
             // Logging out: invitations lapse; a party (not a raid) is left
-            // when logging out normally; the meeting stone's queue is left.
-            meetingStones.removePlayer(c.guid);
+            // when logging out normally; a place in the meeting stone's queue is kept for the player's return.
+            meetingStones.setOffline(c.guid);
             groups.uninvite(c.guid);
             auto group = groups.of(c.guid);
             if (group !is null && !group.isRaid && c.number)
@@ -238,8 +238,8 @@ final class GroupService
             }
         }
         foreach (p; meetingStones.players.dup)
-            if (!online(p.guid)) // its node went away without its logout
-                meetingStones.removePlayer(p.guid);
+            if (!online(p.guid)) // its node went away without its logout: as if it logged out
+                meetingStones.setOffline(p.guid);
             else if (groups.of(p.guid) !is null)
             {
                 meetingStones.removePlayer(p.guid);
@@ -305,18 +305,20 @@ private:
                 return broadcast(group, ServerMeetingStoneSetQueue(0, QueueStatus.leftQueue));
             return send(c.guid, ServerMeetingStoneSetQueue(0, QueueStatus.none));
         }
-        send(c.guid, ServerMeetingStoneSetQueue(0,
-            meetingStones.removePlayer(c.guid) ? QueueStatus.leftQueue : QueueStatus.none));
+        const left = meetingStones.removePlayer(c.guid) || meetingStones.forgetOffline(c.guid);
+        send(c.guid, ServerMeetingStoneSetQueue(0, left ? QueueStatus.leftQueue : QueueStatus.none));
     }
 
     void meetingStoneInfo(const ref GroupCommand c)
     {
         if (auto group = context.groups.of(c.guid))
         {
+            meetingStones.forgetOffline(c.guid); // in a group now: its own place is no more
             if (const party = meetingStones.party(group.id))
                 return send(c.guid, ServerMeetingStoneSetQueue(party.area, QueueStatus.joinedQueue));
             return send(c.guid, ServerMeetingStoneSetQueue(0, QueueStatus.none));
         }
+        meetingStones.restore(c.guid); // back from a logout: waiting again
         if (const p = meetingStones.player(c.guid))
             return send(c.guid, ServerMeetingStoneSetQueue(p.area, QueueStatus.joinedQueue));
         send(c.guid, ServerMeetingStoneSetQueue(0, QueueStatus.none));
@@ -590,4 +592,29 @@ unittest
     service.run(GroupCommand(200, "Q", 1, false, GroupOp.meetingStoneJoin, 0, null, null, deadmines, 8), 2);
     service.run(GroupCommand(200, "Q", 1, false, GroupOp.meetingStoneLeave), 2);
     assert(service.meetingStones.players.length == 0);
+
+    // Logging out keeps a place: four wait, one of them away; nothing forms without it (five must wait).
+    coordinator.presence(2, true, [PresenceEntry(300, "Ra", 9, 1, 8, 20, 0, 1581, 0, 0, ""),
+        PresenceEntry(301, "Rb", 9, 1, 4, 20, 0, 1581, 0, 0, ""), PresenceEntry(302, "Rc", 9, 1, 1, 20, 0, 1581, 0, 0, ""),
+        PresenceEntry(303, "Rd", 9, 1, 5, 20, 0, 1581, 0, 0, ""), PresenceEntry(304, "Re", 9, 1, 3, 20, 0, 1581, 0, 0, "")],
+        null);
+    foreach (ubyte i; 0 .. 5)
+        service.run(GroupCommand(300 + i, "R", 1, false, GroupOp.meetingStoneJoin, 0, null, null, deadmines,
+            classes[i]), 2);
+    service.run(GroupCommand(304, "Re", 1, false, GroupOp.logout, 1), 2);
+    assert(service.meetingStones.players.length == 4 && service.meetingStones.offline.length == 1);
+    service.meetingStonesTick(1.seconds);
+    assert(coordinator.groups.of(300) is null, "four are not enough to make a party");
+    // Back, its stone window asks: it waits again, and is told so; then a party forms.
+    sent = null;
+    service.run(GroupCommand(304, "Re", 1, false, GroupOp.meetingStoneInfo), 2);
+    assert(service.meetingStones.players.length == 5 && service.meetingStones.offline.length == 0);
+    assert(sent.canFind(Sent(304, Opcode.SMSG_MEETINGSTONE_SETQUEUE)));
+    service.meetingStonesTick(1.seconds);
+    assert(coordinator.groups.of(300) !is null);
+    // Leaving while away (asked at the next login): the place is given up.
+    service.run(GroupCommand(302, "Rc", 1, false, GroupOp.logout, 0), 2);
+    assert(service.meetingStones.offline.length == 1);
+    service.run(GroupCommand(302, "Rc", 1, false, GroupOp.meetingStoneLeave), 2);
+    assert(service.meetingStones.offline.length == 0 && service.meetingStones.player(302) is null);
 }
