@@ -147,7 +147,8 @@ private:
             castSpell(spell, targets, false, 0);
             return;
         }
-        if (targets.unit && targets.unit != player.guid)
+        // The client may name its current selection even though an area cast is centered on the caster.
+        if (targets.unit && targets.unit != player.guid && !isCasterCenteredClusterSpell(*spell))
             if (auto replica = cast(Replica) map.findObject(targets.unit))
             {
                 if (replica.fields.type == TypeId.player && context.onlinePlayer(targets.unit) is null
@@ -160,6 +161,32 @@ private:
         if (targets.gameObject && actAtReplica(targets.gameObject, ArrivalAction(0, id, 0, 0, 0, targets.gameObject)))
             return;
         castSpell(spell, targets, false, 0);
+    }
+
+    /// A supported area attack or party heal whose effects are all centered on the caster.
+    private static bool isCasterCenteredClusterSpell(const ref SpellInfo spell)
+    {
+        import std.algorithm.comparison : among;
+        import dmangos.world.spelldamage : isHostileAreaEffect, isPartyHealEffect;
+
+        bool area;
+        foreach (i, effect; spell.effect)
+        {
+            if (!effect)
+                continue;
+            with (ImplicitTarget)
+            {
+                const a = spell.implicitTargetA[i], b = spell.casting.implicitTargetB[i];
+                const casterTarget = a.among(none, caster, casterSource) != 0;
+                if ((casterTarget || a == enemiesAroundSource) && isHostileAreaEffect(spell, i))
+                    area = true;
+                else if ((casterTarget || a.among(partyInRange, partyAroundSource, party)) && isPartyHealEffect(spell, i))
+                    area = true;
+                else if (!(a == caster && b == none))
+                    return false;
+            }
+        }
+        return area;
     }
 
     /// A direct heal, buff, damage spell or debuff whose effects all target one named unit.
@@ -4181,8 +4208,7 @@ unittest
     party.members = [GroupMemberRecord(7, "Anduin"), GroupMemberRecord(8, "Jaina")];
     db.groups[party.id] = party;
     auto origin = newCreationContext(db), owner = newCreationContext(db);
-    origin.nodeId = 1;
-    owner.nodeId = 2;
+    auto relay = new TestPlayerRelay(origin, owner);
     auto now = MonoTime.currTime;
     origin.clock = owner.clock = () => now;
     enum uint prayer = 596, blast = 55013, echo = 55014, bolt = 55015, healProc = 55016, buff = 55017,
@@ -4268,11 +4294,13 @@ unittest
     owner.sendPartyHeal = (ushort peer, const ref PartyHeal value) { receipts ~= value; return peer == 1; };
     ByteWriter castPrayer;
     castPrayer.put(prayer);
-    castPrayer.put(cast(ushort) TargetFlags.self);
+    castPrayer.put(cast(ushort) TargetFlags.unit);
+    castPrayer.putPackedGuid(healed.guid); // the client's selected unit is on the other node
     ByteWriter cancel;
     cancel.put(prayer);
     const mana = healer.values.get!UNIT_FIELD_POWER1(Power.mana);
     caster.write(Opcode.CMSG_CAST_SPELL, castPrayer.data);
+    assert(relay.remote is null, "a caster-centered party heal stays here even with a remote unit selected");
     caster.write(Opcode.CMSG_CANCEL_CAST, cancel.data);
     caster.session.update(castMs.msecs);
     assert(!heals.length && healer.values.get!UNIT_FIELD_POWER1(Power.mana) == mana);
@@ -4315,8 +4343,10 @@ unittest
         owner.map(0), added);
     ByteWriter attack;
     attack.put(blast);
-    attack.put(cast(ushort) TargetFlags.self);
+    attack.put(cast(ushort) TargetFlags.unit);
+    attack.putPackedGuid(mob.guid);
     caster.write(Opcode.CMSG_CAST_SPELL, attack.data);
+    assert(relay.remote is null, "a caster-centered attack stays here even with a remote unit selected");
     assert(hits.length == 1 && hits[0].target == mob.guid);
     owner.areaDamageArrived(1, hits[0]);
     owner.areaDamageArrived(1, hits[0]);
