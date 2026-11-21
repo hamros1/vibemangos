@@ -7,8 +7,8 @@ module dmangos.world.gatewaysessions;
 package mixin template GatewaySessions()
 {
     import core.time : MonoTime, seconds;
-    import dmangos.cluster.protocol : PlayerMessage, PlayerMessageKind, SessionRoute, SessionRouteKind,
-        SessionRouteResult, SimulationOwner;
+    import dmangos.cluster.protocol : GatewaySessionRoute, PlayerMessage, PlayerMessageKind, SessionRoute,
+        SessionRouteKind, SessionRouteResult, SimulationOwner;
     import dmangos.world.session : WorldSession, WorldState;
 
     private final class GatewayRoute
@@ -24,6 +24,16 @@ package mixin template GatewaySessions()
     }
 
     private GatewayRoute[uint] gatewayRoutes;
+
+    GatewaySessionRoute[] gatewaySessionRoutes()
+    {
+        GatewaySessionRoute[] saved;
+        foreach (account, route; gatewayRoutes)
+            if (route.ownerToken)
+                saved ~= GatewaySessionRoute(account, route.character, context.sessionSerial(route.client),
+                    route.ownerToken, route.owner);
+        return saved;
+    }
 
     private SimulationOwner linkedOwner(ushort id, bool allowClosing = false)
     {

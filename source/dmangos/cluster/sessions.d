@@ -14,7 +14,8 @@
 module dmangos.cluster.sessions;
 
 import core.time : MonoTime;
-import dmangos.cluster.protocol : SessionRoute, SessionRouteKind, SessionRouteResult, SimulationOwner;
+import dmangos.cluster.protocol : GatewaySessionRoute, SessionRoute, SessionRouteKind,
+    SessionRouteResult, SimulationOwner;
 
 /// A session: the node that has it and that node's number for it.
 struct SessionRef
@@ -131,6 +132,19 @@ final class SessionDirectory
             foreach (account, route; routes)
                 if (route.next == owner && account !in stoppedSimulations)
                     return false;
+        return true;
+    }
+
+    /// Restore a route from the gateway holding the original client before admitting competing logins.
+    bool restoreGatewayRoute(SimulationOwner gateway, const ref GatewaySessionRoute saved)
+    {
+        if (!saved.account || !saved.serial || !saved.character || !saved.token || !saved.owner.node
+            || !saved.owner.incarnation || saved.owner.node == gateway.node || saved.account in holders)
+            return false;
+        holders[saved.account] = SessionRef(gateway.node, saved.serial, gateway.incarnation);
+        routes[saved.account] = SessionRoute(kind: SessionRouteKind.observe, account: saved.account,
+            character: saved.character, serial: saved.serial, token: saved.token, previous: saved.owner,
+            next: saved.owner);
         return true;
     }
 

@@ -620,8 +620,11 @@ over the gateway's existing client connection. The character enters the replacem
 after the client acknowledges the transfer. Gateway-hosted characters use a checkpoint
 interval capped at 15 seconds. Work since the latest durable save can be lost in a crash.
 
-This path covers a simulation owner failing while a coordinator retains the route and lease
-history. Recovery across concurrent coordinator loss remains part of coordinator failover.
+If the worker and coordinator both fail, a gateway linked to the standby reports its last
+acknowledged simulation owner when it accepts the takeover. The standby restores the original
+login claim before processing new claims. For a worker missing at takeover, it allows a full
+write lease plus the margin from promotion before assigning the saved character to another
+process. This also covers the former coordinator hosting the character.
 
 ### The standby coordinator
 
@@ -631,17 +634,18 @@ coordinator's start-up partition and costs too and, like every member, holds the
 
 * **Taking over** (`ClusterNode.promote`). When the standby has had no link to the coordinator for
   500 ms after losing it, it becomes the coordinator. It adopts the table it has
-  (`RegionAuthority.adopt`): every grant stands with its epoch, so no member loses or reloads a region;
-  regions on their way somewhere still go there; new epochs start above every epoch in the table; and
-  the old coordinator's regions are held until its lease is surely over, then dealt out (spawned
-  afresh, as after any failure). View and table versions continue from the old ones. As after any
-  start, nothing new is granted, and no ids, for a lease.
+  (`RegionAuthority.adopt`): surviving members keep their regions and grant epochs, including
+  transfers already on their way to them. Regions of missing members are held through their lease,
+  then reassigned and spawned afresh. New epochs start above every epoch in the table. View and
+  table versions continue from the old ones. The standby waits one lease before granting new regions
+  or ids.
 * **Members follow** (`Takeover`, sent again each second until accepted). A member takes the standby
   as its coordinator once it has lost the old one itself; while its own link to the old one is alive,
   it waits. The standby's heartbeat echoes on the link they already have renew the member's lease at
   once; the member re-claims its sessions, reports its ids, and from then on dials the new
   coordinator's address. With heartbeats every 500 ms, a failure timeout of 3 s and a lease of 5 s,
-  about a second and a half is left to spare.
+  about a second and a half is left to spare. The gateways linked to the standby report their
+  confirmed routes with `TakeoverAccepted`, before re-claiming their sessions.
 * **The world server's part** (`onPromoted` in `world/main.d`). The groups are loaded from the
   database (the old coordinator saved every change) and sent to every mirror; ids come from this
   node's counters, raised to what the database holds and what members report; the node speaks for the
@@ -686,7 +690,6 @@ services line (`ServiceHost.describe`). Every log line of the cluster code start
   swing. Player-controlled creature melee and block-triggered damage such as Holy Shield.
 * Proc spells with projectiles, channels or mixed targeted effects across nodes, channelled
   leeches, and additional victim-side periodic effects.
-* Gateway session recovery across simultaneous loss of the simulation owner and its coordinator.
 * Multiple standby coordinators with quorum. An election must keep its votes and terms across
   restarts and fence the former coordinator before another can renew worker leases or grant
   ownership. A partition test needs to show that only one side can grant regions and that

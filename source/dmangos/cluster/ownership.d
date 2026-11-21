@@ -103,9 +103,9 @@ final class RegionAuthority
 
     /**
      * Phase 7: the standby takes over from a coordinator that is gone, with the last table it had.
-     * Every grant stands with its epoch, so no member loses a region; a region on its way somewhere
-     * still goes there; the old coordinator's regions are held until its lease has surely run out
-     * (`lostHeard` is when it was last heard). New epochs start above every epoch in the table. As
+     * Surviving members keep their grants and epochs. Missing participants' regions are held until
+     * their leases have surely run out (`lostHeard` is when the old coordinator was last heard).
+     * New epochs start above every epoch in the table. As
      * after any start, nothing new is granted for a lease: a grant the old coordinator made that
      * the table here does not have yet has lapsed by then.
      */
@@ -122,9 +122,19 @@ final class RegionAuthority
         foreach (m; members)
             a.members[m] = true;
         a.members[lostCoordinator] = true;
+        bool[ushort] missing;
         foreach (ref r; a.regions_)
+        {
             if (r.state == RegionState.revoking && r.next)
                 a.movingTo[r.id] = r.next;
+            if (r.owner && r.owner !in a.members)
+                missing[r.owner] = true;
+            if (r.next && r.next !in a.members)
+                missing[r.next] = true;
+        }
+        const now = clock();
+        foreach (node, _; missing)
+            a.lost(node, now); // this standby cannot know when the old coordinator last confirmed its lease
         a.lost(lostCoordinator, lostHeard);
         a.touch();
         return a;

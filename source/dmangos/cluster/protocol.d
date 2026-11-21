@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 51; // 51: gateway recovery; 50: cross-node creature casts
+enum ushort protocolVersion = 52; // 52: gateway recovery during takeover
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -945,6 +945,15 @@ struct TakeoverAccepted
     enum type = MessageType.takeoverAccepted;
 
     ulong incarnation;
+    @LengthPrefix!uint GatewaySessionRoute[] gatewayRoutes;
+}
+
+/// A gateway's last acknowledged route, including an owner that disappeared before takeover.
+struct GatewaySessionRoute
+{
+    uint account, character;
+    ulong serial, token;
+    SimulationOwner owner;
 }
 
 /// Appends a framed message to `writer`.
@@ -1172,7 +1181,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 51, recordedFingerprint = 0xef14607fafbafa61UL;
+private enum recordedVersion = 52, recordedFingerprint = 0xb26964121f30c1c4UL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "
