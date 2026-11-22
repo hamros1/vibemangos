@@ -243,7 +243,7 @@ struct WorldConfig
     @JsonName("char_delete_method") uint charDeleteMethod = 0;
     /// `CharDelete.MinLevel`: characters below this level are always deleted outright.
     @JsonName("char_delete_min_level") uint charDeleteMinLevel = 0;
-    /// `MailDeliveryDelay`, in seconds, for mail returned to another account.
+    /// `MailDeliveryDelay`, in seconds, for item mail between different accounts.
     @JsonName("mail_delivery_delay") uint mailDeliveryDelay = 3600;
 
     // -----------------------------------------------------------------------

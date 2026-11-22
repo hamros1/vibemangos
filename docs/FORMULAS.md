@@ -1011,14 +1011,15 @@ with items. Return mail arrives immediately." "Mail recieved stays in your mailb
 mail, it'll only last for 3 days. After the expiry period the mail is returned to the sender. If the mail comes from
 the Auction House, a quest NPC, or anything similar it is simply discarded".
 
-**Rule:** a player’s letter with an item comes an hour later, including mail to an alt; with money only, at once; returned, at once.
+**Original rule:** a player’s letter with an item comes an hour later, including mail to an alt. Money-only and returned mail arrive at once.
 Read, a letter has at most 3 days left. Expired, a player's letter goes back with its item or its money.
+
+**Current server:** mail between characters on the same account arrives instantly, including item attachments. Item mail to other accounts uses the configured delay. [Blizzard’s Classic Anniversary rules](https://eu.forums.blizzard.com/en/wow/t/wow-classic-20th-anniversary-realms-information-updated-18-nov/548801/1)
 
 **What changed (2026-11-21):** money alone took the hour (to another account), and so did returned mail; reading
 changed nothing; an expired letter with money only was deleted, the money lost.
 
-**Left, no source:** the 30 copper postage; the 3 days of a letter with cash on delivery; letters with items to the
-same account coming at once (no 1.12 statement either way).
+The original sources above do not establish the 30 copper postage or the three-day expiry of a letter with cash on delivery.
 
 ## Durability
 

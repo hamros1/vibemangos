@@ -189,8 +189,12 @@ unittest
 
     foreach (sameAccount; [false, true])
     {
+        import core.time : MonoTime;
+
         auto db = newDatabase();
         auto world = newCreationContext(db);
+        const now = MonoTime.currTime;
+        world.clock = () => now;
         auto sender = loggedIn(world, db, 7, "Anduin", Position(-8941, -140, 83));
         // The recipient only needs an offline character record, including its real account relationship.
         auto alt = db.loadable[7];
@@ -221,7 +225,8 @@ unittest
         const mail = db.loadMail(8);
         assert(mail.length == 1 && mail[0].itemGuid);
         const delay = mail[0].deliverTime - sent;
-        compare(delay >= 3600 && delay <= 3601, sameAccount ? "item mail to alt" : "item mail to another account",
+        const expected = sameAccount ? 0 : world.config.mailDeliveryDelay;
+        compare(delay == expected, sameAccount ? "item mail to alt" : "item mail to another account",
             format!"%s seconds"(delay));
     }
 

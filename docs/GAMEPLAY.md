@@ -641,9 +641,9 @@ See the [roadmap](ROADMAP.md) for open work, the [spell audit](SPELLS.md) for sp
 * **Mail:** at a mailbox, letters to a character of the faction
   (30 copper) with an item, money or cash on delivery; the inbox (50 letters), taking money and
   items (cash on delivery paid and mailed to the sender), reading bodies, copying them as Plain
-  Letters, returning and deleting. Items and money to another account arrive after
-  `mail_delivery_delay` (an hour), the rest at once with "you have new mail". It all lives in
-  the database (`mail`, `mail_items`, `item_text`), read each time, so a player's mail is the same
+  Letters, returning and deleting. An attached item sent to another account arrives after
+  `mail_delivery_delay` (an hour by default). Same-account mail, plain letters, and money-only mail
+  arrive at once. It all lives in the database (`mail`, `mail_items`, `item_text`), read each time, so a player's mail is the same
   on any node of a cluster. Once an hour (on one node of a cluster) letters whose time is up are
   settled: a player's letter with an item goes back to
   its sender once, every other one is deleted with its item. Auctions, quest rewards, level

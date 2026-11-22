@@ -18,7 +18,7 @@ Target: original World of Warcraft 1.12.1. Audited server revision `d6ba4e8` on 
 - The destination host admits an actual instance ID against the shared character database. Two MariaDB connections competed for the fifth slot. Exactly one succeeded, a new connection could re-enter, and a sixth became eligible at the one-hour boundary. A simulated cluster portal handoff counted the destination copy once. For the live test, use a regular player account, enter five distinct copies within an hour, cross to another node, and attempt a sixth. Expect a refusal for the sixth and successful re-entry into an existing copy. [History of the hourly limit](https://us.forums.blizzard.com/en/wow/t/361448/381)
 - With the same seed, the off hand missed 220 of 1,000 ordinary swings and 51 while Heroic Strike was queued.
 - Sitting melee crits left Enrage, Blood Craze and Reckoning inactive. A subsequent standing crit activated rank 5 Reckoning.
-- Both item mail deliveries were scheduled 3,600 seconds after sending.
+- The original 1.12 audit fix scheduled both item mail deliveries 3,600 seconds after sending. The server later adopted the Classic Anniversary rule of instant same-account delivery. The probe now checks for 0 seconds to a same-account alt and 3,600 seconds to another account. [Blizzard’s Classic Anniversary rules](https://eu.forums.blizzard.com/en/wow/t/wow-classic-20th-anniversary-realms-information-updated-18-nov/548801/1)
 
 ## Other mechanics checked
 

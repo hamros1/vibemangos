@@ -98,7 +98,7 @@ Redirected logs are plain text. Set `NO_COLOR=1` to disable colors in a terminal
 | `start_player_level`, `start_gm_level`, `start_player_money` | new characters' level; their level on moderator accounts and up; their money in copper | `1`, `1`, `0` |
 | `max_primary_trade_skill`, `trade_skill_gm_ignore_max_primary` | primary professions a character may learn; the account level from which the limit is ignored | `2`, `4` |
 | `strict_player_names`, `min_player_name` | the character name rules (0 any one script, bit 0 basic Latin, bit 1 the realm zone's script); the shortest name | `0`, `2` |
-| `char_delete_method`, `char_delete_min_level`, `mail_delivery_delay` | delete (0) or unlink (1) characters, from which level; seconds before player mail with an attached item arrives | `0`, `0`, `3600` |
+| `char_delete_method`, `char_delete_min_level`, `mail_delivery_delay` | delete (0) or unlink (1) characters, from which level; seconds before mail with an attached item arrives on a different account | `0`, `0`, `3600` |
 | `allowed_builds`, `mysql_library`, `idle_timeout`, `max_connections`, `log_level` | client builds accepted; the client library file; idle seconds; connection cap (up to 60,000 on Linux, 1,000 elsewhere); logging | |
 
 ## CMaNGOS configuration equivalents
