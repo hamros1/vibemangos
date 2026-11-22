@@ -15,6 +15,7 @@ import dmangos.world.clientdata : ClientData;
 import dmangos.world.creature : Creature;
 import dmangos.world.map : MapObject, Moving, PerViewer;
 import dmangos.world.motion : MotionWorld;
+import dmangos.world.elevators : ElevatorMotion, ElevatorPath;
 import dmangos.world.movement : MovementFlags, MovementInfo, MoveType, Position;
 import dmangos.world.objects;
 import dmangos.world.player : Player;
@@ -265,7 +266,18 @@ final class Replica : Replicable, Moving, PerViewer
 
     @property Position position() const
     {
+        if (elevator.active)
+            return elevator.position;
         return block.flags & UpdateFlags.living ? block.info.position : block.position;
+    }
+
+    private ElevatorMotion elevator;
+
+    package void setElevator(ElevatorPath path, uint delegate() clock)
+    {
+        elevator = ElevatorMotion(path, clock);
+        if (elevator.active)
+            elevator.advance(block.position);
     }
 
     /// The public geometry of a replica. The owner supplies its actual combat stats.
@@ -325,6 +337,8 @@ final class Replica : Replicable, Moving, PerViewer
         MovementBlock m = block;
         m.info.time = serverTime;
         m.spline = &spline;
+        if (elevator.active)
+            m.transportTime = elevator.clock();
         return m;
     }
 
@@ -339,12 +353,14 @@ final class Replica : Replicable, Moving, PerViewer
     /// See `Moving.resting`: a replica does something only while it walks.
     @property bool resting() const
     {
-        return spline.finalized;
+        return spline.finalized && !elevator.active;
     }
 
     /// Follows the walk, as the owner's object does; nothing else.
     void tick(MotionWorld world, int diff)
     {
+        if (elevator.active)
+            elevator.advance(block.position);
         if (spline.finalized)
             return;
         spline.update(diff);

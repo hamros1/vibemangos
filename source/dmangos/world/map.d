@@ -53,6 +53,7 @@ import dmangos.world.creatureai : LinkEvent;
 import dmangos.world.creatureai : CombatWorld;
 import dmangos.world.unit : UnitRef;
 import dmangos.world.creature : Creature;
+import dmangos.world.elevators : ElevatorPath;
 import dmangos.world.gameobject : GameObject, GameObjectWorld, goStateReady;
 import dmangos.world.gameobjectcollision : GameObjectCollision;
 import dmangos.world.motion : MotionWorld;
@@ -439,6 +440,9 @@ final class Map : CombatWorld, GameObjectWorld
 
     /// Sends replicas of this map's own objects to other nodes; null when standalone.
     Replicator replicator;
+
+    package ElevatorPath delegate(ulong guid, const ref UpdateValues fields) elevatorPath;
+    package uint delegate() elevatorClock;
 
     /// Number of creatures and game objects (replicas included) on the map.
     @property size_t objectCount() const
@@ -928,16 +932,18 @@ final class Map : CombatWorld, GameObjectWorld
      */
     private void hold(MapObject object, ulong key)
     {
+        const position = object.position;
+        const cell = cellKeyAt(position.x, position.y);
         auto slot = slotFor(object.guid);
         if (slot != uint.max && at(slot).replica)
-            becomeOwn(slot, object, key, key);
+            becomeOwn(slot, object, key, cell);
         else
             slot = newEntity(Entity(object.guid, null, object, cast(Moving) object, false, noCell, 0, key,
-                object.position));
-        putInCellIfOut(slot, key);
+                position));
+        putInCellIfOut(slot, cell);
         if (at(slot).mover !is null)
             startTicking(slot);
-        replicate(slot, key);
+        replicate(slot, cell);
         if (onObjectArrived !is null)
             onObjectArrived(object);
     }
@@ -977,7 +983,9 @@ final class Map : CombatWorld, GameObjectWorld
      */
     void addObject(MapObject object)
     {
-        const key = cellKeyAt(object.position.x, object.position.y);
+        const go = cast(GameObject) object;
+        const home = go is null ? object.position : go.stationaryPosition;
+        const key = cellKeyAt(home.x, home.y);
         loadCell(key);
         const existing = slotFor(object.guid);
         if (existing != uint.max && !at(existing).replica)
@@ -1116,7 +1124,8 @@ final class Map : CombatWorld, GameObjectWorld
             if (!entities.holds(slot) || at(slot).mover !is mover)
                 continue; // gone while it ticked
             if (mover.position != before)
-                objectRelocated(mover);
+                // Moving and Replicable can provide separate MapObject references to the same entity.
+                objectRelocated(at(slot).object);
             if (!entities.holds(slot) || at(slot).mover !is mover)
                 continue;
             if (mover.resting)
@@ -1475,13 +1484,19 @@ final class Map : CombatWorld, GameObjectWorld
         at(slot).replicatedTo = null;
         if (auto source = cast(Replicable) object)
         {
-            auto replica = new Replica(object.guid, next, encodeState(source, serverTime()));
+            auto replica = makeReplica(object.guid, next, encodeState(source, serverTime()));
             auto e = &at(slot);
             e.object = replica;
             e.mover = replica;
             e.replica = true;
             ++replicaCount_;
             e.visibilityAt = replica.position;
+            const cell = cellKeyAt(replica.position.x, replica.position.y);
+            if (e.cell != cell)
+            {
+                takeFromCell(slot);
+                putInCell(slot, cell);
+            }
             startTicking(slot);
         }
         return migrant;
@@ -1652,7 +1667,7 @@ final class Map : CombatWorld, GameObjectWorld
     /// A replica of `guid`, simulated by node `owner`, in `cell` (`encodeState`).
     void replicaCreated(ushort owner, ulong cell, ulong guid, const(ubyte)[] state)
     {
-        auto replica = new Replica(guid, owner, state);
+        auto replica = makeReplica(guid, owner, state);
         const at_ = cellKeyAt(replica.position.x, replica.position.y);
         auto slot = slotFor(guid);
         if (slot != uint.max)
@@ -1680,6 +1695,14 @@ final class Map : CombatWorld, GameObjectWorld
         }
         startTicking(slot);
         updateObjectVisibility(replica);
+    }
+
+    private Replica makeReplica(ulong guid, ushort owner, const(ubyte)[] state)
+    {
+        auto replica = new Replica(guid, owner, state);
+        if (elevatorPath !is null && elevatorClock !is null && replica.fields.type == TypeId.gameObject)
+            replica.setElevator(elevatorPath(guid, replica.fields), elevatorClock);
+        return replica;
     }
 
     /// Fields of a replica changed on its owner.

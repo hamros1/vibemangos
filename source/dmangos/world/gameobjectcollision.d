@@ -97,7 +97,8 @@ package final class GameObjectCollision
             return;
         }
         next.display = fields.get!GAMEOBJECT_DISPLAYID;
-        next.position = Vector3(at.x, at.y, at.z);
+        next.position = next.elevatorEntry ? Vector3(fields.get!GAMEOBJECT_POS_X,
+            fields.get!GAMEOBJECT_POS_Y, fields.get!GAMEOBJECT_POS_Z) : Vector3(at.x, at.y, at.z);
         next.scale = fields.get!OBJECT_FIELD_SCALE_X;
         foreach (i, ref part; next.rotation)
             part = fields.get!GAMEOBJECT_ROTATION(i);

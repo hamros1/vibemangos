@@ -19,6 +19,7 @@ uint delegate() transportClockSource;
 import std.math : cos, sin;
 
 import dmangos.bytes : ByteReader, ByteWriter;
+import dmangos.world.elevators : ElevatorMotion, ElevatorPath;
 import dmangos.world.loot : Loot;
 import dmangos.world.map : MapObject, Moving, PerViewer;
 import dmangos.world.motion : MotionWorld;
@@ -41,7 +42,7 @@ enum GameObjectType : uint
     spellFocus = 8,
     text = 9,
     goober = 10,
-    transport = 11,     /// elevators: stand in place, animated by the client
+    transport = 11,     /// elevators and other continuously animated platforms
     camera = 13,
     moTransport = 15,   /// ships and zeppelins
     fishingNode = 17,   /// the bobber
@@ -121,6 +122,7 @@ final class GameObject : Replicable, Moving, PerViewer
     const(GameObjectTemplate)* template_;
     const GameObjectSpawn spawn;
     UpdateValues values;
+    private ElevatorMotion elevator;
     GoLootState lootState = GoLootState.ready;
     Loot loot;                   /// what it holds while open (a chest)
     int restoreTimer;            /// ms until a door or button goes back, or a goober is done
@@ -266,6 +268,8 @@ final class GameObject : Replicable, Moving, PerViewer
     /// See `Moving.tick`: the loot states move on.
     void tick(MotionWorld w, int diff)
     {
+        if (elevator.active)
+            elevator.advance(stationaryPosition);
         auto world = cast(GameObjectWorld) w;
         if (world is null)
             return;
@@ -330,6 +334,8 @@ final class GameObject : Replicable, Moving, PerViewer
     /// See `Moving.resting`: nothing pending (a door that stays open waits for nothing either).
     @property bool resting() const
     {
+        if (elevator.active)
+            return false;
         if (lootState == GoLootState.activated)
             return (type == GameObjectType.door || type == GameObjectType.button) && restoreTimer <= 0;
         return lootState == GoLootState.ready || lootState == GoLootState.notReady;
@@ -356,10 +362,23 @@ final class GameObject : Replicable, Moving, PerViewer
         return value;
     }
 
-    /// Where it stands.
+    /// Where it is in the world, including an elevator's current offset.
     @property Position position() const
     {
+        return elevator.active ? elevator.position : stationaryPosition;
+    }
+
+    /// The spawn position, which the client uses as its animation origin.
+    package @property Position stationaryPosition() const
+    {
         return Position(spawn.x, spawn.y, spawn.z, spawn.orientation);
+    }
+
+    package void setElevator(ElevatorPath path, uint delegate() clock)
+    {
+        elevator = ElevatorMotion(path, clock);
+        if (elevator.active)
+            elevator.advance(stationaryPosition);
     }
 
     /// The create block for a game object: a position, no movement.
@@ -413,8 +432,9 @@ final class GameObject : Replicable, Moving, PerViewer
         block.flags = UpdateFlags.all | UpdateFlags.hasPosition;
         if (template_.type == GameObjectType.transport)
             block.flags |= UpdateFlags.transport;
-        block.position = position;
-        block.transportTime = transportClockSource !is null ? transportClockSource() : serverTime;
+        block.position = stationaryPosition;
+        block.transportTime = elevator.active ? elevator.clock()
+            : transportClockSource !is null ? transportClockSource() : serverTime;
         return block;
     }
 

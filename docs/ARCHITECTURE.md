@@ -825,6 +825,8 @@ Replicas use the same geometry, the replicated door state and the shared transpo
 While an elevator or its replica is loaded, the server uses the same animation to update its
 passengers between movement packets. The client receives the platform's stationary coordinates
 and the transport time so it can animate the platform locally.
+The map uses the animated position for visibility and selects replica recipients from the
+platform's current cell. The spawn cell still determines ownership.
 
 The extractor (`extractor/maps.d`) turns each map's ADT tiles into `.map` files (version "z1.4"),
 whose layout `mapfile.d` holds for both sides. `world/terrain.d` reads them: `GridMap` is one

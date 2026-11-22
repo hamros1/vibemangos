@@ -2,9 +2,11 @@
 module dmangos.world.elevators;
 
 import std.algorithm.comparison : max;
-import std.math : isFinite;
+import std.math : abs, isFinite;
 import dmangos.vmap.math : AABox, Matrix3, Vector3;
 import dmangos.world.clientdata : TransportAnimationEntry;
+import dmangos.world.grid : cellSize;
+import dmangos.world.movement : Position;
 
 package struct ElevatorPath
 {
@@ -69,6 +71,15 @@ package struct ElevatorPath
         return frames[0].offset;
     }
 
+    Position positionAt(Position stationary, uint clock) const
+    {
+        const offset = offsetAt(clock);
+        stationary.x += offset.x;
+        stationary.y += offset.y;
+        stationary.z += offset.z;
+        return stationary;
+    }
+
     AABox sweptBounds(AABox mesh) const
     in (valid)
     {
@@ -77,6 +88,26 @@ package struct ElevatorPath
         foreach (ref frame; frames[1 .. $])
             swept.merge(AABox(mesh.lo + frame.offset, mesh.hi + frame.offset));
         return swept;
+    }
+}
+
+/// The pose last sampled for the map's spatial index. The create packet still uses the base.
+package struct ElevatorMotion
+{
+    ElevatorPath path;
+    uint delegate() clock;
+    Position position;
+
+    @property bool active() const
+    {
+        return path.valid && clock !is null;
+    }
+
+    void advance(Position stationary)
+    {
+        enum float edge = 256 * cellSize - 0.5f;
+        const current = path.positionAt(stationary, clock());
+        position = current.isFinite && abs(current.x) <= edge && abs(current.y) <= edge ? current : stationary;
     }
 }
 
@@ -102,7 +133,7 @@ unittest
     viewer.clock = () => viewerNow;
     enum uint entry = 97_001, period = 4000;
     const rows = buildDbc(transportAnimationFormat,
-        [[0, entry, 0, 0, 0, 0, 0], [1, entry, 2000, floatBits(30), 0, floatBits(20), 0],
+        [[0, entry, 0, 0, 0, 0, 0], [1, entry, 2000, floatBits(180), 0, floatBits(20), 0],
          [2, entry, period, 0, 0, 0, 0]]);
     foreach (world; [owner, viewer])
     {
@@ -126,6 +157,8 @@ unittest
     const boardAt = Position(62, 11, 31, 0.25f);
     auto rider = loggedIn(viewer, db, 7, "Anduin", boardAt);
     auto witness = loggedIn(viewer, db, 8, "Jaina", Position(74, 14, 35));
+    loggedIn(viewer, db, 9, "Varian", Position(220, 10, 41));
+    assert(!viewer.map(0).knownTo(9).canFind(platform.guid), "the platform starts out of sight");
     rider.read();
     witness.read();
     void sendMove(MovementInfo movement)
@@ -144,14 +177,17 @@ unittest
     tickTo(50);
     tickTo(1000);
 
-    const during = Position(77, 11, 41, 0.25f);
+    const during = Position(152, 11, 41, 0.25f);
     assert(rider.session.character.position == during, "stationary rider followed the platform replica");
     assert(opcodesOf(witness.read()).canFind(Opcode.MSG_MOVE_HEARTBEAT), "the rider's position was sent to observers");
     Position localPose;
     float maxSpeed;
     assert(owner.elevatorPose(owner.map(0), platform.guid, localPose, maxSpeed));
-    assert(localPose == Position(75, 10, 40) && maxSpeed > 0);
-    assert(platform.position == Position(60, 10, 30), "the client still receives the animation's base coordinates");
+    assert(localPose == Position(150, 10, 40) && maxSpeed > 0);
+    assert(platform.position == localPose && viewer.map(0).findObject(platform.guid).position == localPose);
+    assert(viewer.map(0).knownTo(9).canFind(platform.guid), "the animated platform came into view");
+    assert(platform.motion(0).position == Position(60, 10, 30),
+        "the client still receives the animation's base coordinates");
     assert(!opcodesOf(rider.read()).canFind(Opcode.SMSG_NEW_WORLD), "the ride stayed on its map");
 
     auto dismount = MovementInfo.init;

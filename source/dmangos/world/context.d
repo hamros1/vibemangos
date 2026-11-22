@@ -44,7 +44,7 @@ import dmangos.world.battleground : Battlegrounds;
 import dmangos.world.gameevents : GameEvents, scheduleFor;
 import dmangos.world.creaturelinking : CreatureLink, inLinkRange, LinkFlag;
 import dmangos.world.creatureai : LinkEvent;
-import dmangos.world.objects : HighGuid, makeGuid;
+import dmangos.world.objects : HighGuid, makeGuid, UpdateValues;
 import dmangos.world.unit : UnitKind, UnitRef;
 import dmangos.world.bgqueue : battlegroundOfMap, BattlegroundQueue, BattlegroundQueueHost;
 import dmangos.world.wareffort : WarEffort, WarEffortHost;
@@ -66,6 +66,7 @@ import dmangos.world.config : WorldConfig;
 import dmangos.world.database : WorldDatabase;
 import dmangos.vmap.gameobjectmodels : GameObjectModels;
 import dmangos.world.gameobjectcollision : GameObjectCollision;
+import dmangos.world.elevators : ElevatorPath;
 import dmangos.vmap.maptree : ModelCache;
 import dmangos.world.terrain : Terrain;
 import dmangos.world.group : GroupDirectory, Groups, memberStatus, MemberStatus;
@@ -2887,42 +2888,49 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         uint entry;
         float[4] rotation;
-        imported!"dmangos.world.elevators".ElevatorPath path;
+        ElevatorPath path;
     }
 
     private ElevatorAnimation[ulong] elevatorAnimations;
 
-    /// The current pose of a loaded elevator (local object or replica).
-    package bool elevatorPose(Map map_, ulong guid, out Position at, out float maxSpeed)
+    private ElevatorPath elevatorPathOf(ulong guid, const ref UpdateValues fields)
     {
-        import dmangos.world.elevators : ElevatorPath;
         import dmangos.world.gameobject : GameObjectType;
         import dmangos.world.updatefields;
 
-        auto platform = map_.findObject(guid);
-        if (platform is null || platform.fields.type != TypeId.gameObject
-            || platform.fields.get!GAMEOBJECT_TYPE_ID != GameObjectType.transport
-            || platform.fields.get!GAMEOBJECT_LEVEL != 0)
-            return false;
-        const entry = platform.fields.get!OBJECT_FIELD_ENTRY;
+        if (fields.type != TypeId.gameObject || fields.get!GAMEOBJECT_TYPE_ID != GameObjectType.transport
+            || fields.get!GAMEOBJECT_LEVEL != 0)
+            return ElevatorPath.init;
+        const entry = fields.get!OBJECT_FIELD_ENTRY;
         float[4] rotation;
         foreach (i, ref component; rotation)
-            component = platform.fields.get!GAMEOBJECT_ROTATION(i);
+            component = fields.get!GAMEOBJECT_ROTATION(i);
         auto animation = guid in elevatorAnimations;
         if (animation is null || animation.entry != entry || animation.rotation != rotation)
         {
             elevatorAnimations[guid] = ElevatorAnimation(entry, rotation, ElevatorPath(client.transportFrames(entry), rotation));
             animation = guid in elevatorAnimations;
         }
-        if (!animation.path.valid)
+        return animation.path;
+    }
+
+    /// The current pose of a loaded elevator (local object or replica).
+    package bool elevatorPose(Map map_, ulong guid, out Position at, out float maxSpeed)
+    {
+        import dmangos.world.updatefields;
+
+        auto platform = map_.findObject(guid);
+        if (platform is null)
+            return false;
+        const fields = &platform.fields();
+        const path = elevatorPathOf(guid, *fields);
+        if (!path.valid)
             return false;
 
-        const offset = animation.path.offsetAt(transportNow());
-        at = platform.position;
-        at.x += offset.x;
-        at.y += offset.y;
-        at.z += offset.z;
-        maxSpeed = animation.path.maxSpeed;
+        const stationary = Position(fields.get!GAMEOBJECT_POS_X, fields.get!GAMEOBJECT_POS_Y,
+            fields.get!GAMEOBJECT_POS_Z, fields.get!GAMEOBJECT_FACING);
+        at = path.positionAt(stationary, transportNow());
+        maxSpeed = path.maxSpeed;
         return at.isFinite;
     }
 
@@ -3119,6 +3127,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             &serverTime, spawner, mapTerrain, owns, gameObjectModels is null ? null :
                 new GameObjectCollision(gameObjectModels, client, &transportNow));
         created.instanceId = instance;
+        created.elevatorPath = &elevatorPathOf;
+        created.elevatorClock = &transportNow;
         if (instance == 0) // a dungeon's copies are all on one node: nobody else needs replicas of them
             created.replicator = replicator;
         created.onCorpseRemoved = &corpseRemoved;
@@ -6053,6 +6063,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.character : Character;
 
         auto go = new GameObject(spawn, spawn.entry in data.gameObjectTemplates);
+        go.setElevator(elevatorPathOf(go.guid, go.fields), &transportNow);
         if (const kit = worldPvp is null ? 0 : worldPvp.artKitOf(spawn.entry, spawn.x, spawn.y, spawn.z))
         {
             import dmangos.world.updatefields : GAMEOBJECT_ARTKIT;
