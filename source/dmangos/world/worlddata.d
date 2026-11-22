@@ -13,7 +13,7 @@ import dmangos.frozen : StaticMap;
 import std.random : Random;
 
 import dmangos.log;
-import dmangos.mysql : Column, MySqlConnection;
+import dmangos.mysql : Column, MySqlConnection, Row;
 import dmangos.world.movement : Position;
 import dmangos.world.clientdata : ClientData, maskOf, maxSkillStep, playableClassMask, playableRaceMask;
 import dmangos.world.eventai : EventAiData;
@@ -314,6 +314,27 @@ enum areaTriggerTeleportQuery = "SELECT id, IFNULL(name, ''), required_level, re
 
 /// The columns of `GameTele`.
 enum gameTeleQuery = "SELECT position_x, position_y, position_z, orientation, map, name FROM game_tele ORDER BY id";
+
+package enum creatureSpawnQuery = "SELECT guid, id, map, position_x, position_y, position_z, orientation, "
+    ~ "spawntimesecsmin, spawndist, MovementType, spawntimesecsmax FROM creature";
+package enum gameObjectSpawnQuery = "SELECT guid, id, map, position_x, position_y, position_z, orientation, "
+    ~ "rotation0, rotation1, rotation2, rotation3, spawntimesecsmin FROM gameobject";
+
+package GameObjectSpawn gameObjectSpawnFromRow(const ref Row row)
+{
+    GameObjectSpawn spawn;
+    spawn.guid = row.get!uint(0);
+    spawn.entry = row.get!uint(1);
+    spawn.map = row.get!uint(2);
+    spawn.x = row.get!float(3);
+    spawn.y = row.get!float(4);
+    spawn.z = row.get!float(5);
+    spawn.orientation = row.get!float(6);
+    foreach (i; 0 .. 4)
+        spawn.rotation[i] = row.get!float(7 + i);
+    spawn.respawnSeconds = row.get!int(11);
+    return spawn;
+}
 
 /// See the module documentation.
 /// A graveyard (`WorldSafeLocs.dbc`) for an area, zone or map, and for which team.
@@ -912,8 +933,7 @@ final class WorldData
         foreach (row; world.query!"SELECT guid, entry FROM creature_spawn_entry"())
             spawnEntries[row.get!uint(0)] ~= row.get!uint(1);
         size_t skipped;
-        foreach (row; world.queryAs!(CreatureSpawn, "SELECT guid, id, map, position_x, position_y, position_z, "
-            ~ "orientation, spawntimesecsmin, spawndist, MovementType, spawntimesecsmax FROM creature")())
+        foreach (row; world.queryAs!(CreatureSpawn, creatureSpawnQuery)())
         {
             import std.random : uniform;
 
@@ -946,20 +966,9 @@ final class WorldData
         uint[][uint] objectSpawnEntries;
         foreach (row; world.query!"SELECT guid, entry FROM gameobject_spawn_entry"())
             objectSpawnEntries[row.get!uint(0)] ~= row.get!uint(1);
-        foreach (row; world.query!("SELECT guid, id, map, position_x, position_y, position_z, orientation, rotation0, "
-            ~ "rotation1, rotation2, rotation3, spawntimesecsmin FROM gameobject")())
+        foreach (row; world.query!gameObjectSpawnQuery())
         {
-            GameObjectSpawn s;
-            s.guid = row.get!uint(0);
-            s.entry = row.get!uint(1);
-            s.map = row.get!uint(2);
-            s.x = row.get!float(3);
-            s.y = row.get!float(4);
-            s.z = row.get!float(5);
-            s.orientation = row.get!float(6);
-            foreach (i; 0 .. 4)
-                s.rotation[i] = row.get!float(7 + i);
-            s.respawnSeconds = row.get!int(11);
+            auto s = gameObjectSpawnFromRow(row);
             if (s.guid >= 1 << 24 || !groups.spawns(1, s.guid))
                 continue;
             if (s.entry == 0)

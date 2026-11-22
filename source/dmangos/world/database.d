@@ -23,7 +23,8 @@ import dmangos.world.quests : QuestStatus;
 import dmangos.world.reputation : ReputationRecord;
 import dmangos.world.auctionhouse : AuctionRecord;
 import dmangos.world.player : CharacterData, CharacterProgress, HomeBind, tutorialFields;
-import dmangos.world.worlddata : AreaTriggerTeleport, areaTriggerTeleportQuery, GameTele, gameTeleQuery;
+import dmangos.world.worlddata : AreaTriggerTeleport, areaTriggerTeleportQuery, creatureSpawnQuery, GameTele,
+    gameObjectSpawnFromRow, gameObjectSpawnQuery, gameTeleQuery;
 import dmangos.world.playercreate : NewCharacter;
 
 /// The parts of an `account` row a world session needs.
@@ -656,6 +657,9 @@ interface WorldDatabase
     /// A saved `creature` spawn, with its ID allocated by the world database.
     @DatabaseWrite uint createCreatureSpawn(const ref CreatureSpawn spawn);
 
+    /// A saved spawn with a direct creature entry.
+    Nullable!CreatureSpawn savedCreatureSpawn(uint guid);
+
     /// An explicit spawn ID, including replays of writes queued by older releases.
     void insertCreatureSpawn(const ref CreatureSpawn spawn);
 
@@ -677,6 +681,9 @@ interface WorldDatabase
 
     /// A saved `gameobject` spawn, with its ID allocated by the world database.
     @DatabaseWrite uint createGameObjectSpawn(const ref GameObjectSpawn spawn);
+
+    /// A saved spawn with a direct game-object entry.
+    Nullable!GameObjectSpawn savedGameObjectSpawn(uint guid);
 
     /// A saved game object at its existing ID, including replays of queued writes.
     void insertGameObjectSpawn(const ref GameObjectSpawn spawn);
@@ -1014,6 +1021,12 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
         return worldSpawnId!"creature"(storeCreatureSpawn!true(s));
     }
 
+    Nullable!CreatureSpawn savedCreatureSpawn(uint guid)
+    {
+        const rows = world.queryAs!(CreatureSpawn, creatureSpawnQuery ~ " WHERE guid = ? AND id <> 0")(guid);
+        return rows.length ? nullable(cast(CreatureSpawn) rows[0]) : Nullable!CreatureSpawn.init;
+    }
+
     void insertCreatureSpawn(const ref CreatureSpawn s) { storeCreatureSpawn!false(s); }
 
     private ulong storeCreatureSpawn(bool allocate)(const ref CreatureSpawn s)
@@ -1061,6 +1074,12 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     uint createGameObjectSpawn(const ref GameObjectSpawn s)
     {
         return worldSpawnId!"gameobject"(storeGameObjectSpawn!true(s));
+    }
+
+    Nullable!GameObjectSpawn savedGameObjectSpawn(uint guid)
+    {
+        const rows = world.query!(gameObjectSpawnQuery ~ " WHERE guid = ? AND id <> 0")(guid);
+        return rows.length ? nullable(gameObjectSpawnFromRow(rows[0])) : Nullable!GameObjectSpawn.init;
     }
 
     void insertGameObjectSpawn(const ref GameObjectSpawn s) { storeGameObjectSpawn!false(s); }
@@ -2092,6 +2111,12 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
         insertCreatureSpawn(row);
         return row.guid;
     }
+    Nullable!CreatureSpawn savedCreatureSpawn(uint guid)
+    {
+        if (auto row = guid in creatureSpawnRows)
+            return nullable(*row);
+        return Nullable!CreatureSpawn.init;
+    }
     void insertCreatureSpawn(const ref CreatureSpawn s) { creatureSpawnRows[s.guid] = s; }
     void deleteCreatureSpawn(uint guid) { creatureSpawnRows.remove(guid); }
     uint[3][] questRelationRows; /// (start, entry, quest) that `insertQuestRelation` wrote and are not deleted
@@ -2119,6 +2144,12 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
         row.guid = lastGameObjectSpawn;
         insertGameObjectSpawn(row);
         return row.guid;
+    }
+    Nullable!GameObjectSpawn savedGameObjectSpawn(uint guid)
+    {
+        if (auto row = guid in gameObjectSpawnRows)
+            return nullable(*row);
+        return Nullable!GameObjectSpawn.init;
     }
     void insertGameObjectSpawn(const ref GameObjectSpawn s) { gameObjectSpawnRows[s.guid] = s; }
     void deleteGameObjectSpawn(uint guid) { gameObjectSpawnRows.remove(guid); }

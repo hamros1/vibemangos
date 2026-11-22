@@ -66,6 +66,7 @@ def run(fixture):
                       f"INSERT INTO {table} SELECT * FROM `{world_source}`.{table}", world)
     ports = available_ports(5)
     world_ports, peer_ports, auth_port = ports[:2], ports[2:4], ports[4]
+    nodes = {}
     for node in range(1, 3):
         name = f"node{node}"
         config = dict(fixture.base, realm_id=1, port=world_ports[node - 1], bind_address="127.0.0.1",
@@ -76,7 +77,7 @@ def run(fixture):
             "listen_port": peer_ports[node - 1], "coordinator": f"127.0.0.1:{peer_ports[0]}",
             "balance_min_load_us": 1_000_000_000,
         }
-        fixture.start_world(name, config)
+        nodes[node] = fixture.start_world(name, config)
     wait_for("the worker to own cluster regions",
              lambda: "this node owns [" in fixture.log("node2") and "lease holds" in fixture.log("node2"), 30)
     worker = set(map(int, re.findall(r"\d+", re.findall(r"this node owns \[([^]]+)\]", fixture.log("node2"))[-1])))
@@ -153,8 +154,20 @@ def run(fixture):
     mortars = fixture.query(f"SELECT guid FROM gameobject WHERE guid > {before['gameobject']} AND id={MORTAR}", world)
     if len(mortars.splitlines()) != 2:
         raise RuntimeError("both nodes' saved mortars should have distinct database IDs")
-    print("PASS: cross-node effects and channels reached the idle node, and both nodes saved distinct spawns",
-          flush=True)
+    nodes[2].terminate()
+    if nodes[2].wait(timeout=25) != 0 or "arrived with" not in fixture.log("node1"):
+        raise RuntimeError("the worker did not drain its live regions to the coordinator")
+    drained = client("after-drain", 1, "MORTARSPAWN", f"login:{spawner}", "listen:2", "drop")
+    for entry, kind in ((MORTAR, "game object"), (DOOR, "game object"), (RACER, "creature"), (GOLEM, "creature")):
+        expected = f"[{kind}] {entry} guid {spawned[entry] & 0xFFFFFF}:"
+        if drained.count(expected) != 1:
+            raise RuntimeError(f"expected one migrated {kind} {entry} after drain, got {drained.count(expected)}")
+    door_line = next(line for line in drained.splitlines() if f"[game object] {DOOR} " in line
+                     and f"guid {spawned[DOOR] & 0xFFFFFF}:" in line)
+    if not door_line.endswith("state 2"):
+        raise RuntimeError("the door lost its open state during the drain")
+    print("PASS: cross-node effects reached the idle node, both nodes saved distinct spawns, "
+          "and the worker's spawns retained their identity and state after drain", flush=True)
 
 
 if __name__ == "__main__":

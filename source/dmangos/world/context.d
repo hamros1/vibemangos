@@ -3958,7 +3958,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             copyArriving = false;
             const before = m.objectCount - m.replicaCount;
             m.migrateIn(bundle, (const ref Migrant migrant) {
-                auto object = restoreMigrant(migrant);
+                auto object = restoreWorldMigrant(migrant, m);
                 if (auto creature = cast(Creature) object)
                     creature.instanceId = id;
                 else if (auto go = cast(GameObject) object)
@@ -4379,7 +4379,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     continue; // its copies' bundles, read above
                 auto m = map(r.map);
                 const before = m.objectCount - m.replicaCount;
-                m.migrateIn(*objects, &restoreMigrant);
+                m.migrateIn(*objects, (const ref Migrant migrant) => restoreWorldMigrant(migrant, m));
                 info!"migration: region %s arrived with %s objects"(r.id, m.objectCount - m.replicaCount - before);
             }
         foreach (ref r; gained)
@@ -4751,6 +4751,51 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         auto gameObject = makeGameObject(data.gameObjectSpawns[*at]);
         gameObject.loadState(r, transportNow());
         return gameObject;
+    }
+
+    /// A region may bring a saved GM spawn created after this node loaded its world data.
+    private MapObject restoreWorldMigrant(const ref Migrant migrant, Map destination)
+    {
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
+        import dmangos.world.migration : MigrantKind;
+
+        indexSpawns();
+        if (migrant.spawn >= temporaryCounterStart)
+            return restoreMigrant(migrant);
+        bool atHome(uint mapId, float x, float y, float z)
+        {
+            return mapId == destination.id && client.isValidMapCoord(mapId, x, y, z) && cellKeyAt(x, y) == migrant.home;
+        }
+        try
+        {
+            if (migrant.kind == MigrantKind.creature && migrant.spawn !in spawnIndex)
+            {
+                const saved = database.savedCreatureSpawn(migrant.spawn);
+                if (saved.isNull || saved.get.entry !in data.creatureTemplates
+                    || !atHome(saved.get.map, saved.get.x, saved.get.y, saved.get.z))
+                    return null;
+                registerCreatureSpawn(saved.get);
+            }
+            else if (migrant.kind == MigrantKind.gameObject && migrant.spawn !in gameObjectSpawnIndex)
+            {
+                const saved = database.savedGameObjectSpawn(migrant.spawn);
+                if (saved.isNull || !atHome(saved.get.map, saved.get.x, saved.get.y, saved.get.z))
+                    return null;
+                const template_ = saved.get.entry in data.gameObjectTemplates;
+                if (template_ is null || template_.type == GameObjectType.moTransport)
+                    return null;
+                registerGameObjectSpawn(saved.get);
+                if (template_.type == GameObjectType.transport)
+                    refreshElevatorHomes(destination);
+            }
+        }
+        catch (DatabaseException error)
+        {
+            warning!"migration: could not load the saved spawn %s: %s"(migrant.spawn, error.msg);
+            return null;
+        }
+        return restoreMigrant(migrant);
     }
 
     private size_t[uint] spawnIndex, gameObjectSpawnIndex; // spawn guid -> its place in the world data
@@ -5287,7 +5332,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         import dmangos.log : warning;
         import dmangos.mysql : DatabaseException;
-        import dmangos.world.grid : cellKeyAt;
 
         if (!canWrite() || entry !in data.creatureTemplates)
             return null;
@@ -5302,17 +5346,24 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         }
         if (!spawn.guid)
             return null;
-        data.creatureSpawns ~= spawn;
-        const index = data.creatureSpawns.length - 1;
-        data.creatureCells.require(map.id, null).require(cellKeyAt(at.x, at.y), null) ~= index;
-        if (spawnIndex !is null)
-            spawnIndex[spawn.guid] = index;
+        // Load the other spawns first so addObject installs and returns this creature.
+        map.loadCell(cellKeyAt(spawn.x, spawn.y));
+        const index = registerCreatureSpawn(spawn);
         auto creature = makeCreature(&data.creatureSpawns[index]);
         if (creature is null)
             return null;
         creature.instanceId = map.instanceId;
         map.addObject(creature);
         return creature;
+    }
+
+    private size_t registerCreatureSpawn(const ref CreatureSpawn spawn)
+    {
+        const index = data.creatureSpawns.length;
+        data.creatureSpawns ~= spawn;
+        data.creatureCells.require(spawn.map, null).require(cellKeyAt(spawn.x, spawn.y), null) ~= index;
+        spawnIndex[spawn.guid] = index;
+        return index;
     }
 
     /// The creature's spawn deleted: gone from the map, the world data's cell and the database.
@@ -5341,7 +5392,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import std.math : cos, sin;
         import dmangos.log : warning;
         import dmangos.mysql : DatabaseException;
-        import dmangos.world.grid : cellKeyAt;
 
         if (!canWrite() || entry !in data.gameObjectTemplates)
             return null;
@@ -5364,17 +5414,23 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             spawn.guid = nextTemporaryCounter();
             unsavedGameObjectSpawns[spawn.guid] = true;
         }
-        data.gameObjectSpawns ~= spawn;
-        const index = data.gameObjectSpawns.length - 1;
-        data.gameObjectCells.require(map.id, null).require(cellKeyAt(at.x, at.y), null) ~= index;
-        if (gameObjectSpawnIndex !is null)
-            gameObjectSpawnIndex[spawn.guid] = index;
+        map.loadCell(cellKeyAt(spawn.x, spawn.y));
+        const index = registerGameObjectSpawn(spawn);
         auto go = makeGameObject(data.gameObjectSpawns[index]);
         go.instanceId = map.instanceId;
         if (go.type == GameObjectType.transport)
             refreshElevatorHomes(map);
         map.addObject(go);
         return go;
+    }
+
+    private size_t registerGameObjectSpawn(const ref GameObjectSpawn spawn)
+    {
+        const index = data.gameObjectSpawns.length;
+        data.gameObjectSpawns ~= spawn;
+        data.gameObjectCells.require(spawn.map, null).require(cellKeyAt(spawn.x, spawn.y), null) ~= index;
+        gameObjectSpawnIndex[spawn.guid] = index;
+        return index;
     }
 
     /**
@@ -7596,6 +7652,56 @@ unittest
     assert(t.mayAct(3, 0, now), "and so is 3^0");
     assert(!t.mayAct(1, 2, now + 29.seconds));
     assert(t.mayAct(1, 2, now + 31.seconds));
+}
+
+unittest
+{
+    import dmangos.cluster.regions : CellRect;
+    import dmangos.world.gameobject : GameObjectTemplate, goStateActive;
+    import dmangos.world.grid : cellCoordinate;
+    import dmangos.world.testclient : newCreationContext, newDatabase;
+    import dmangos.world.testdata : creatureInnkeeper;
+    import dmangos.world.updatefields : UNIT_FIELD_HEALTH;
+
+    auto db = newDatabase();
+    auto oldOwner = newCreationContext(db), newOwner = newCreationContext(db);
+    const at = Position(-8930, -120, 83.53f);
+    const door = GameObjectTemplate(entry: 9010, type: GameObjectType.door);
+    foreach (context; [oldOwner, newOwner])
+        context.data.gameObjectTemplates[door.entry] = door;
+    auto oldMap = oldOwner.map(0), newMap = newOwner.map(0);
+    auto creature = oldOwner.spawnCreatureAt(oldMap, creatureInnkeeper, at);
+    auto object = oldOwner.spawnGameObjectAt(oldMap, door.entry, at, true);
+    assert(oldMap.findObject(creature.guid) is creature && oldMap.findObject(object.guid) is object);
+    creature.values.set!UNIT_FIELD_HEALTH(1u);
+    object.useDoorOrButton(oldMap);
+
+    auto wrongCell = oldOwner.saveMigrant(object);
+    wrongCell.home = cellKeyAt(at.x + 100, at.y);
+    assert(newOwner.restoreWorldMigrant(wrongCell, newMap) is null);
+    assert(object.spawn.guid !in newOwner.gameObjectSpawnIndex);
+
+    const x = cellCoordinate(at.x), y = cellCoordinate(at.y);
+    auto region = Region(1, 0, CellRect(x, y, x + 1, y + 1), 1, 1, RegionState.revoking, 2);
+    ubyte[][uint] leaving, unused;
+    oldOwner.regionsChanged(null, [region], null, leaving);
+    assert(oldMap.isReplica(creature.guid) && oldMap.isReplica(object.guid));
+    region.owner = 2;
+    region.state = RegionState.granted;
+    region.next = 0;
+    newOwner.regionsChanged([region], null, [region.id: cast(const(ubyte)[]) leaving[region.id]], unused);
+    auto restoredCreature = cast(Creature) newMap.findObject(creature.guid);
+    auto restoredDoor = cast(GameObject) newMap.findObject(object.guid);
+    assert(restoredCreature !is null && restoredCreature.values.get!UNIT_FIELD_HEALTH == 1);
+    assert(restoredDoor !is null && restoredDoor.goState == goStateActive);
+    const key = cellKeyAt(at.x, at.y);
+    size_t creatureCopies, objectCopies;
+    foreach (index; newOwner.data.creatureCells[0][key])
+        creatureCopies += newOwner.data.creatureSpawns[index].guid == creature.spawn.guid;
+    foreach (index; newOwner.data.gameObjectCells[0][key])
+        objectCopies += newOwner.data.gameObjectSpawns[index].guid == object.spawn.guid;
+    assert(creatureCopies == 1 && objectCopies == 1);
+    assert(!newMap.isReplica(creature.guid) && !newMap.isReplica(object.guid));
 }
 
 // Instance round 2: in a dungeon copy too a linked creature comes back (a boss's wipe or death brings its
