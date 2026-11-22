@@ -185,6 +185,48 @@ shared static this()
     followerItems = [11218: 13536, 7774: 9189, 9999: 11804]; // horn, bell, canteen
 }
 
+/// Performs the player interactions at each of Windsor's stops in the prison.
+private void driveJailBreak(Scene scene, ref size_t next)
+{
+    import dmangos.scripts.blackrockdepths : MarshalWindsor, dughal, tobias, jaz, ograbisi, shill, crest;
+
+    struct Stop
+    {
+        int line;
+        uint door;
+        uint[2] prisoners;
+        bool free;
+    }
+    static immutable Stop[] stops = [
+        Stop(MarshalWindsor.sayDughal1, 170562, [dughal, 0], true),
+        Stop(MarshalWindsor.sayJaz1, 170568, [jaz, ograbisi]),
+        Stop(MarshalWindsor.sayShill1, 170569, [shill, 0]),
+        Stop(MarshalWindsor.sayCrest1, 170567, [crest, 0]),
+        Stop(MarshalWindsor.sayTobias1, 170566, [tobias, 0], true),
+    ];
+    if (next >= stops.length || !scene.said(stops[next].line))
+        return;
+    const stop = stops[next];
+    auto doors = scene.objects(stop.door);
+    if (!doors.length)
+        return;
+    foreach (entry; stop.prisoners)
+        if (entry && scene.find(entry) is null)
+            return;
+    scene.moveHero(0, doors[0].position);
+    scene.use(doors[0]);
+    foreach (entry; stop.prisoners)
+        if (auto prisoner = scene.find(entry))
+        {
+            scene.moveHero(0, prisoner.position);
+            if (stop.free)
+                scene.gossip(prisoner, [0u]);
+            else
+                scene.kill(prisoner);
+        }
+    ++next;
+}
+
 /// What an escort came to: "" if it did its part, else why not.
 string runEscort(const EscortCase c, bool leave, out long ms, bool only = false)
 {
@@ -194,7 +236,15 @@ string runEscort(const EscortCase c, bool leave, out long ms, bool only = false)
     const data = realData;
     auto at = spawnOnContinent(data, c.entry, mapId);
     if (mapId == 2)
-        return "no spawn on a continent";
+        foreach (const ref spawn; data.creatureSpawns)
+            if (spawn.entry == c.entry)
+            {
+                mapId = spawn.map;
+                at = Position(spawn.x, spawn.y, spawn.z, spawn.orientation);
+                break;
+            }
+    if (mapId == 2)
+        return "no static spawn";
     const q = data.quests.quest(c.quest);
     const level = clamp(max(q.minLevel, q.questLevel > 0 ? q.questLevel : 1), 1, 60);
     string why;
@@ -247,6 +297,12 @@ string runEscort(const EscortCase c, bool leave, out long ms, bool only = false)
             leadTo = spawnOnContinent(data, *target, m);
             s.stayWith = null;
         }
+        if (c.entry == 7850) // Kernobee follows the player to the clean zone door.
+        {
+            const exit = imported!"dmangos.scripts.gnomeregan".Kernobee.endPlace;
+            leadTo = Position(exit.x, exit.y, exit.z);
+            s.stayWith = null;
+        }
         enum uint questFreeCreatures = 2969, cageDoor = 143979;
         if (c.quest == questFreeCreatures)
         {
@@ -280,13 +336,17 @@ string runEscort(const EscortCase c, bool leave, out long ms, bool only = false)
         float nearest = float.infinity;
         bool[ulong] used;
         const toUse = c.entry in objectsUsed;
+        size_t jailStop;
         const over = s.runUntil(() {
+            import dmangos.scripts.blackrockdepths : MarshalWindsor;
             import dmangos.world.spellcast : SpellTargets, TargetFlags;
             import dmangos.world.updatefields : UNIT_FIELD_BYTES_1;
             import dmangos.script.api : StandState;
 
             // The marksman is part of Dorius's completion scene.
             s.killAttackers(npc, 60, c.entry == 8284 ? 8338 : 0);
+            if (c.quest == MarshalWindsor.quest)
+                driveJailBreak(s, jailStop);
             const asleep = npc.values.getByte!UNIT_FIELD_BYTES_1(0) == StandState.sleep;
             if (!asleep && leadTo.x != 0 && s.elapsedMs % 1000 == 0 && Scene.distance(s.hero.position, leadTo) > 3
                     && Scene.distance(s.hero.position, npc.position) < 20)
@@ -367,13 +427,8 @@ private immutable string[string] knownEscorts;
 shared static this()
 {
     knownEscorts = [
-        // Dungeons' escorts (their tests are the dungeons'): no spawn on a continent.
-        "npc_belnistrasz/3525": "no spawn on a continent", // Razorfen Downs
-        "npc_marshal_windsor/4322": "no spawn on a continent", // Blackrock Depths
-        "npc_willix_the_importer/1144": "no spawn on a continent", // Razorfen Kraul
-        // No spawn in this world database, and nothing summons them.
-        "npc_arei/4261": "no spawn on a continent", // Arei (9598)
-        "npc_reginald_windsor/6403": "no spawn on a continent", // Reginald Windsor (12580)
+        "npc_arei/4261": "no static spawn", // Arei (9598) is absent from this world's static spawns.
+        "npc_reginald_windsor/6403": "no static spawn", // Squire Rowe summons Reginald Windsor (12580).
         // The quest asks for neutral with the Brood of Nozdormu (`RequiredMinRepFaction` 910).
         "npc_keeper_remulos/8736": "the quest not taken",
     ];
@@ -457,7 +512,6 @@ shared static this()
 {
     knownQuestEvents = [
         // The triage quests ask for First Aid at 225 (`RequiredSkill` 129); each doctor is offered both.
-        "npc_kernobee/2904": "no spawn on a continent", // Gnomeregan
         "npc_doctor/6622": "the quest not taken",
         "npc_doctor/6624": "the quest not taken",
     ];

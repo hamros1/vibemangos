@@ -647,7 +647,7 @@ final class Scene
     // The world's scripts: characters of a race, quests, escorts (dmangos.world.realscripts_world)
     // -----------------------------------------------------------------------------------------------------------
 
-    /// One character of `race.id` (a human, an orc, ...), `classId` and `level` at `at` on continent `mapId`.
+    /// One character of the given race, class and level at `at`, in a new copy for a dungeon.
     this(uint mapId, Position at, Race race, ubyte classId = classWarrior, uint level = 60, uint seed = 20_261_120)
     {
         import dmangos.world.packets : ClientTeleportAck;
@@ -663,6 +663,7 @@ final class Scene
         else
             hero.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
         assert(me.player.data.map == mapId, "not there");
+        instance = me.instanceId;
         hero.read();
         heroes ~= hero;
         fill();

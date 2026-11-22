@@ -73,12 +73,13 @@ Flamestrike’s ground effect was missing from the hidden-debuff list. All six p
 - **Suntara Stones** now starts the marksman’s relay when the database summon specifies a spawn template with a relay. The loader corrects the stock relay’s source and target selection and directs the dummy shot to Dorius. His script awards group quest credit when it receives the shot. The real-data fixture lets the marksman act instead of treating him as a regular ambusher. [Database script command reference](https://github.com/cmangos/mangos-classic/blob/master/doc/script_commands.txt)
 - **In Dreams** now records Isillien’s defeat even if it happens before Tirion’s challenge. Tirion moves into the epilogue after the challenge in that case. A death during the duel also schedules the epilogue through the same path.
 - **Wandering Shay** and **Tooga’s Quest** pass with fixture changes. The player uses Shay’s Bell when the follower wanders, and advances toward Torta with a following distance that lets Tooga catch up. Both checks still require the actual quest script to award completion.
-
 - **The Sleeper Has Awakened** and **A Little Help From My Friends** now run through the Horn of Awakening and Spraggle’s Canteen in the fixture. The player waits within range for each cast before leading the follower onward.
 - **Freedom for All Creatures** now runs through the cage key in the player’s keyring. The fixture approaches the cage and waits for the freed sprites to complete the event.
 - **Triage** keeps the event active when the last patients have been admitted. A regression test confirms that a patient already in a bunk can still provide the last required save. The full clinic playthrough still needs verification.
+- **Extinguishing the Idol**, **Willix the Importer**, and **A Fine Mess** run in the same dungeon copy as the player. The last fixture leads Kernobee to the clean-zone door before checking quest credit.
+- **Jail Break!** runs through all five prison stops in Blackrock Depths. The player opens the cells and frees Dughal and Tobias through their gossip options. The test defeats the hostile prisoners and waits for Windsor to reach the exit and award quest credit.
 
-The sweep takes these quests through the client and checks quest state. It also verifies that the two repaired escort finales still fail the quest when a player leaves the escort behind. The outstanding sweep cases include dungeon entry and dynamic summons, professions and reputation.
+The sweep now passes 41 of 44 escort cases and 15 of 19 quest-event cases. It checks quest state and verifies the leave-behind failure path for escorted NPCs. The remaining setup gaps involve dynamic summons, First Aid and reputation.
 
 ## Reproduce
 
