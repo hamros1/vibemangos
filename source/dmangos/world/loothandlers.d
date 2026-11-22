@@ -10,6 +10,45 @@
 module dmangos.world.loothandlers;
 
 import dmangos.world.money : Copper;
+import dmangos.world.context : WorldContext;
+import dmangos.world.loot : Loot, LootRule;
+import dmangos.world.map : Map;
+import dmangos.world.opcodes : Opcode;
+
+/// Supply cluster delivery on the map that currently owns this loot.
+package void bindLootDelivery(WorldContext context, Map map, Loot loot, bool rolls, bool master)
+{
+    import dmangos.cluster.protocol : LootCoinShare;
+    import dmangos.world.replication : Replica;
+    import dmangos.world.updatefields : TypeId;
+
+    const crossNodeRolls = rolls && context.sendRemoteGroupLoot !is null && context.deliverRemote !is null;
+    const crossNodeMaster = master && context.sendRemoteGroupLoot !is null;
+    if (loot.remoteMembers.length && (crossNodeRolls || crossNodeMaster))
+    {
+        loot.rollMap = map.id;
+        loot.nextRoll = &context.nextGameplaySequence;
+        loot.sendRemoteRoll = context.sendRemoteGroupLoot;
+        if (crossNodeRolls)
+            loot.tellRemoteRoller = (ushort node, ulong guid, Opcode opcode, const(ubyte)[] body_) {
+                context.deliverRemote(node, guid, cast(ushort) opcode, body_);
+            };
+    }
+    if (context.sendRemoteLootCoins !is null && context.canSendLootCoins !is null)
+    {
+        loot.coinNode = (ulong guid) {
+            if (auto remote = cast(Replica) map.findObject(guid))
+                if (remote.fields.type == TypeId.player && remote.owner != context.nodeId
+                    && context.canSendLootCoins(remote.owner))
+                    return remote.owner;
+            return ushort(0);
+        };
+        loot.payRemoteCoins = (ushort node, ulong guid, uint copper) {
+            const message = LootCoinShare(context.nextGameplaySequence(), guid, map.id, copper);
+            return context.sendRemoteLootCoins(node, message);
+        };
+    }
+}
 
 /// See the module documentation.
 mixin template LootHandlers()
@@ -749,8 +788,8 @@ private:
         Position at, scope bool delegate(ulong guid) fought)
     {
         import dmangos.world.character : Character;
-        import dmangos.cluster.protocol : LootCoinShare;
         import dmangos.world.groupservice : LootTurnHost, LootTurnReply, LootTurnRequest;
+        import dmangos.world.loothandlers : bindLootDelivery;
         import dmangos.world.replication : Replica;
 
         auto group = context.groups.of(tapper);
@@ -806,33 +845,7 @@ private:
                 loot.rule = LootRule.groupLoot;
         }
         const remoteMasterAwards = crossNodeMaster && loot.rule == LootRule.masterLoot && loot.remoteMembers.length;
-        if (loot.remoteMembers.length && (crossNodeRolls || remoteMasterAwards))
-        {
-            loot.rollMap = map.id;
-            loot.nextRoll = &context.nextGameplaySequence;
-            loot.sendRemoteRoll = context.sendRemoteGroupLoot;
-        }
-        if (loot.remoteMembers.length && crossNodeRolls)
-        {
-            loot.tellRemoteRoller = (ushort node, ulong guid, Opcode opcode, const(ubyte)[] body_) {
-                context.deliverRemote(node, guid, cast(ushort) opcode, body_);
-            };
-        }
-        if (crossNodeCoins)
-        {
-            auto theMap = map;
-            loot.coinNode = (ulong guid) {
-                if (auto remote = cast(Replica) theMap.findObject(guid))
-                    if (remote.fields.type == TypeId.player && remote.owner != context.nodeId
-                        && context.canSendLootCoins(remote.owner))
-                        return remote.owner;
-                return ushort(0);
-            };
-            loot.payRemoteCoins = (ushort node, ulong guid, uint copper) {
-                const message = LootCoinShare(context.nextGameplaySequence(), guid, theMap.id, copper);
-                return context.sendRemoteLootCoins(node, message);
-            };
-        }
+        bindLootDelivery(context, map, loot, crossNodeRolls, remoteMasterAwards);
         if (rotates)
         {
             auto eligible = loot.owners.keys ~ loot.remoteMembers.keys;

@@ -4737,6 +4737,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         auto gameObject = cast(GameObject) object;
         if (gameObject is null)
             return Migrant.init;
+        if (gameObject.loot !is null)
+            gameObject.loot.sendReleaseForAll();
         gameObject.saveState(w, transportNow());
         return Migrant(MigrantKind.gameObject, gameObject.spawn.guid, 0, w.data);
     }
@@ -4778,18 +4780,20 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         import dmangos.log : warning;
         import dmangos.mysql : DatabaseException;
+        import dmangos.world.gameobjecthandlers : bindChestLoot;
+        import dmangos.world.loothandlers : bindLootDelivery;
+        import dmangos.world.loot : LootRule;
         import dmangos.world.migration : MigrantKind;
 
         indexSpawns();
-        if (migrant.spawn >= temporaryCounterStart)
-            return restoreMigrant(migrant);
+        const durable = migrant.spawn < temporaryCounterStart;
         bool atHome(uint mapId, float x, float y, float z)
         {
             return mapId == destination.id && client.isValidMapCoord(mapId, x, y, z) && cellKeyAt(x, y) == migrant.home;
         }
         try
         {
-            if (migrant.kind == MigrantKind.creature && migrant.spawn !in spawnIndex)
+            if (durable && migrant.kind == MigrantKind.creature && migrant.spawn !in spawnIndex)
             {
                 const saved = database.savedCreatureSpawn(migrant.spawn);
                 if (saved.isNull || saved.get.entry !in data.creatureTemplates
@@ -4797,7 +4801,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     return null;
                 registerCreatureSpawn(saved.get);
             }
-            else if (migrant.kind == MigrantKind.gameObject && migrant.spawn !in gameObjectSpawnIndex)
+            else if (durable && migrant.kind == MigrantKind.gameObject && migrant.spawn !in gameObjectSpawnIndex)
             {
                 const saved = database.savedGameObjectSpawn(migrant.spawn);
                 if (saved.isNull || !atHome(saved.get.map, saved.get.x, saved.get.y, saved.get.z))
@@ -4815,7 +4819,15 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             warning!"migration: could not load the saved spawn %s: %s"(migrant.spawn, error.msg);
             return null;
         }
-        return restoreMigrant(migrant);
+        auto restored = restoreMigrant(migrant);
+        if (auto chest = cast(GameObject) restored)
+            if (auto loot = chest.loot)
+            {
+                bindChestLoot(this, destination, chest, loot);
+                bindLootDelivery(this, destination, loot, loot.rule == LootRule.groupLoot || loot.rule == LootRule.needBeforeGreed,
+                    loot.rule == LootRule.masterLoot);
+            }
+        return restored;
     }
 
     private size_t[uint] spawnIndex, gameObjectSpawnIndex; // spawn guid -> its place in the world data
@@ -7841,6 +7853,115 @@ unittest
         objectCopies += newOwner.data.gameObjectSpawns[index].guid == object.spawn.guid;
     assert(creatureCopies == 1 && objectCopies == 1);
     assert(!newMap.isReplica(creature.guid) && !newMap.isReplica(object.guid));
+}
+
+// The same player can reopen a partially emptied chest on its new owner, without rerolling it.
+unittest
+{
+    import dmangos.cluster.regions : CellRect;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.clientdata : lockFormat;
+    import dmangos.world.gameobject : GameObjectTemplate, GoLootState;
+    import dmangos.world.grid : cellCoordinate;
+    import dmangos.world.loot : lootRow;
+    import dmangos.world.loothandlers : ClientLootSlot;
+    import dmangos.world.player : Player;
+    import dmangos.world.playercreate : NewSpell, NewSkill;
+    import dmangos.world.spellcast : SpellTargets, TargetFlags;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.spellids : DamageClass;
+    import dmangos.world.testclient;
+
+    auto db = newDatabase();
+    auto source = newCreationContext(db), destination = newCreationContext(db);
+    auto relay = new TestPlayerRelay(source, destination);
+    destination.next.item = 10_000; // distinct blocks, as on cluster workers
+    const at = Position(-8949.95f, -132.49f, 83.53f);
+    auto now = MonoTime.currTime;
+    source.clock = destination.clock = () => now;
+    source.startClock = destination.startClock = now;
+    destination.startUnixMillis = source.startUnixMillis;
+    enum uint lock = 999, gather = 2366;
+    GameObjectTemplate template_ = {entry: 9011, type: GameObjectType.chest};
+    template_.data[0] = lock;
+    template_.data[1] = 555;
+    auto lockRow = new uint[lockFormat.length];
+    lockRow[0] = lock;
+    lockRow[1] = 2;
+    lockRow[9] = 2;
+    auto opening = testSpell(gather, 33, 26, 0);
+    opening.miscValue[0] = 2;
+    opening.casting.dmgClass = DamageClass.none;
+    foreach (node; [source, destination])
+    {
+        node.data.gameObjectTemplates[template_.entry] = template_;
+        node.data.spells.spells[gather] = opening;
+        node.client.locks = typeof(node.client.locks).parse(buildDbc(lockFormat, [lockRow]), "Lock.dbc");
+    }
+    source.data.loot.gameObject.add(555, lootRow(itemJerky, 100, 0, 1, 1, 0));
+    source.data.loot.gameObject.add(555, lootRow(itemSword, 100, 0, 1, 1, 0));
+    auto client = loggedIn(source, db, 7, "Anduin", at, setup: (ref row) {
+        row.spells = [NewSpell(gather, true)];
+        row.skills = [NewSkill(182, 10, 75)];
+    });
+    auto oldMap = source.map(0), newMap = destination.map(0);
+    auto chest = source.spawnGameObjectAt(oldMap, template_.entry, at, true);
+    assert(chest !is null);
+    auto character = cast(Player) client.session.character;
+    ByteWriter open;
+    open.put(gather);
+    SpellTargets target;
+    target.mask = TargetFlags.gameObject;
+    target.gameObject = chest.guid;
+    target.write(open);
+    const jerky = character.inventory.count(itemJerky), sword = character.inventory.count(itemSword);
+    client.read();
+    client.write(Opcode.CMSG_CAST_SPELL, open.data);
+    assert(opcodesOf(client.read()).canFind(Opcode.SMSG_LOOT_RESPONSE));
+    assert(chest.loot.items.length == 2 && chest.loot.items[0].itemId == itemJerky);
+    client.write(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, ClientLootSlot(0));
+    assert(character.inventory.count(itemJerky) == jerky + 1);
+    assert(chest.loot.items[0].allowed.length == 0 && chest.loot.items[1].allowed[character.guid]);
+    chest.gatherUses = 2;
+    chest.gatherSkill = 157;
+    chest.skilledUp[character.guid] = true;
+    chest.despawnTimer = 12_000;
+    client.read();
+
+    const x = cellCoordinate(at.x), y = cellCoordinate(at.y);
+    Region region = Region(1, 0, CellRect(x, y, x + 1, y + 1), 1, 1, RegionState.revoking, 2);
+    ubyte[][uint] leaving, unused;
+    source.regionsChanged(null, [region], null, leaving);
+    assert(oldMap.isReplica(chest.guid) && opcodesOf(client.read()).canFind(Opcode.SMSG_LOOT_RELEASE_RESPONSE));
+    now += 2.seconds;
+    region.owner = 2;
+    region.state = RegionState.granted;
+    region.next = 0;
+    destination.regionsChanged([region], null, [region.id: cast(const(ubyte)[]) leaving[region.id]], unused);
+    auto restored = cast(GameObject) newMap.findObject(chest.guid);
+    assert(restored !is null && restored.loot !is null && restored.lootState == GoLootState.activated);
+    assert(restored.gatherUses == 2 && restored.gatherSkill == 157 && restored.skilledUp[character.guid]);
+    assert(restored.despawnTimer == 10_000);
+    assert(restored.loot.items[0].allowed.length == 0 && restored.loot.items[1].allowed[character.guid]);
+
+    // SQL reloads the inventory written by the previous owner. The memory fixture keeps them separately.
+    foreach (guid, ref row; db.itemRows)
+        if (db.itemOwners[guid] == character.guid)
+            db.loadable[cast(uint) character.guid].items ~= row;
+    client.write(Opcode.CMSG_CAST_SPELL, open.data);
+    assert(relay.remote !is null);
+    relay.remote.update(50.msecs);
+    assert(relay.remote.character.knowsSpell(gather));
+    assert(opcodesOf(client.read()).canFind(Opcode.SMSG_LOOT_RESPONSE));
+    client.write(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, ClientLootSlot(0));
+    assert(!opcodesOf(client.read()).canFind(Opcode.SMSG_ITEM_PUSH_RESULT));
+    client.write(Opcode.CMSG_CAST_SPELL, open.data);
+    assert(opcodesOf(client.read()).canFind(Opcode.SMSG_LOOT_RESPONSE));
+    client.write(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, ClientLootSlot(1));
+    assert(opcodesOf(client.read()).canFind(Opcode.SMSG_ITEM_PUSH_RESULT));
+    assert(relay.remote.character.inventory.count(itemJerky) == jerky + 1
+        && relay.remote.character.inventory.count(itemSword) == sword + 1);
+    assert(restored.lootState == GoLootState.justDeactivated);
 }
 
 // A lost node supplies no bundle, but its durable additions still belong to the next owner.

@@ -346,7 +346,9 @@ When a region is revoked toward a named next owner, its owner writes the state o
 homed in it (`Map.migrateOut`, `world/migration.d`): a creature's every field, its movement and exact
 spline, its movement generator, its vendor stock, its script state and the remaining time and
 ticks of its auras (`Creature.saveState`); a game object's fields and script state, including pending door and
-goober resets and a trap's cooldown and spent charges. It keeps each as a replica of
+goober resets and a trap's cooldown and spent charges. An opened chest keeps its remaining loot, claims,
+despawn timer and gathering uses. Its loot window closes during transfer and can be reopened on the receiving
+node. It keeps each object as a replica of
 the next owner's object, so its own players notice nothing.
 
 The bundle goes with the release (`RegionReleased`). The coordinator, granting the region, sends it to

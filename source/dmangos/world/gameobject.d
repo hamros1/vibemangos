@@ -169,6 +169,7 @@ final class GameObject : Replicable, Moving, PerViewer
     uint trapUses;               /// a trap's springs so far, against its charges
     uint casterUses;             /// a spell caster's (a Lightwell's) uses so far, against its charges
     uint gatherUses;             /// a vein's (or herb's) times emptied so far, against its least and most opens
+    uint gatherSkill;            /// the opener's mining skill, used if this loot refills
     int despawnTimer;            /// ms until a chest opened but not emptied goes; 0: none
     bool[ulong] skilledUp;       /// those it gave a skill-up: once until it respawns
     uint ritualSpell;            /// a summoning portal's: the spell that made it (`dmangos.world.rituals`)
@@ -487,6 +488,21 @@ final class GameObject : Replicable, Moving, PerViewer
             (cast() scripts).save(behaviour, state);
         w.put(cast(uint) state.length);
         w.putBytes(state.data);
+        if (type == GameObjectType.chest)
+        {
+            w.put(cast(ubyte) lootState);
+            w.put(despawnTimer);
+            w.put(now);
+            w.put(gatherUses);
+            w.put(gatherSkill);
+            w.put(cast(uint) skilledUp.length);
+            foreach (guid, _; skilledUp)
+                w.put(guid);
+            w.put(loot !is null);
+            if (loot !is null)
+                loot.saveHandoff(w);
+            return;
+        }
         if (type == GameObjectType.door || type == GameObjectType.button
             || type == GameObjectType.goober || type == GameObjectType.trap)
             if (lootState != GoLootState.ready || restoreTimer || trapReadyAt || trapUses)
@@ -520,6 +536,25 @@ final class GameObject : Replicable, Moving, PerViewer
         auto state = ByteReader(r.readBytes(r.read!uint));
         if (scripts !is null && state.remaining)
             scripts.load(behaviour, state);
+        if (type == GameObjectType.chest)
+        {
+            const storedLootState = r.read!ubyte;
+            if (storedLootState <= GoLootState.max)
+                lootState = cast(GoLootState) storedLootState;
+            despawnTimer = r.read!int;
+            const transit = cast(int)(now - r.read!uint);
+            if (despawnTimer > 0 && transit > 0)
+                despawnTimer = max(1, despawnTimer - transit);
+            gatherUses = r.read!uint;
+            gatherSkill = r.read!uint;
+            const skilled = r.read!uint;
+            r.ensureAvailable(cast(size_t) skilled * ulong.sizeof);
+            foreach (_; 0 .. skilled)
+                skilledUp[r.read!ulong] = true;
+            if (r.read!bool)
+                loot = Loot.loadHandoff(guid, r);
+            return;
+        }
         // The runtime tail is optional. Older senders and inactive spawns omit it.
         if (!r.remaining)
             return;

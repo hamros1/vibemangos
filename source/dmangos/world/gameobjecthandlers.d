@@ -15,6 +15,57 @@
 module dmangos.world.gameobjecthandlers;
 
 import dmangos.world.spellids;
+import dmangos.world.context : WorldContext;
+import dmangos.world.gameobject : GameObject;
+import dmangos.world.loot : Loot, Looter;
+import dmangos.world.map : Map;
+
+/// Bind the chest's loot to the map that owns it, including when it changed owners.
+package void bindChestLoot(WorldContext context, Map map, GameObject chest, Loot loot)
+{
+    import dmangos.world.character : Character;
+    import dmangos.world.gameobject : GoLootState;
+
+    loot.find = (ulong guid) {
+        auto session = cast(Character) context.onlinePlayer(guid);
+        return session is null || session.currentMap !is map ? null : cast(Looter) session;
+    };
+    loot.clock = () => context.unixTime;
+    loot.changed = () => map.flushGameObject(chest);
+    loot.lootedForAll = () {
+        if (refillVein(context, map, chest))
+        {
+            chest.loot = null;
+            chest.lootState = GoLootState.ready;
+            chest.despawnTimer = 0;
+            return;
+        }
+        chest.lootState = GoLootState.justDeactivated;
+        map.wake(chest.guid);
+    };
+}
+
+/// A vein refills until its minimum uses, then with a chance based on its uses and the opener's skill.
+private bool refillVein(WorldContext context, Map map, GameObject chest)
+{
+    import std.math : pow;
+    import std.random : uniform;
+
+    const least = chest.template_.data[4], most = chest.template_.data[5];
+    if (least == 0 || most <= least)
+        return false;
+    const uses = ++chest.gatherUses;
+    if (uses >= most)
+        return false;
+    if (uses < least)
+        return true;
+    int required = 175;
+    if (const lock = context.client.locks.lookup(chest.template_.data[0]))
+        required = lock.skill[0];
+    const skill = float(chest.gatherSkill) / (required + 25);
+    const chance = pow(0.8, 4.0 * uses / most);
+    return uniform(0.0f, 100.0f, map.random) < 100 * chance + skill;
+}
 
 /// See the module documentation.
 mixin template GameObjectHandlers()
@@ -530,13 +581,11 @@ mixin template GameObjectHandlers()
     Loot makeGameObjectLoot(GameObject go)
     {
         import dmangos.world.character : Character;
+        import dmangos.world.gameobjecthandlers : bindChestLoot;
 
-        auto theMap = map;
-        auto loot = new Loot(go.guid, (ulong guid) {
-            auto session = cast(Character) context.onlinePlayer(guid);
-            return session is null || session.map !is theMap ? null : cast(Looter) session;
-        });
-        loot.clock = () => context.unixTime;
+        auto loot = new Loot(go.guid, null);
+        go.gatherSkill = player.skillValue(skillMining)[0];
+        bindChestLoot(context, map, go, loot);
         setLootRights(loot, go.position, (ulong) => false);
         if (const id = go.lootId)
             if (const template_ = context.data.loot.gameObject[id])
@@ -556,49 +605,8 @@ mixin template GameObjectHandlers()
 
                 loot.fill(template_, context.data.loot, context.data.items, map.random, &meets, &allowed);
             }
-        loot.changed = () => theMap.flushGameObject(go);
-        auto self = this;
-        loot.lootedForAll = () {
-            // A vein that fills again (its least and most opens): ready with new loot; else done (and gone).
-            if (self.gatherAgain(go, theMap))
-            {
-                go.loot = null;
-                go.lootState = GoLootState.ready;
-                go.despawnTimer = 0;
-                return;
-            }
-            go.lootState = GoLootState.justDeactivated;
-            theMap.wake(go.guid);
-        };
         go.despawnTimer = 5 * 60 * 1000; // gone 5 minutes after opening even if not emptied
         return loot;
-    }
-
-    /**
-     * A vein (a chest with `minSuccessOpens` and `maxSuccessOpens`, data 4 and 5) emptied: another use counted;
-     * it fills again every time before its least, never at its most, and between the two by a chance falling
-     * with its uses and rising with the gatherer's mining skill against the lock's.
-     */
-    bool gatherAgain(GameObject go, Map lootMap)
-    {
-        import std.math : pow;
-
-        if (go.type != GameObjectType.chest)
-            return false;
-        const least = go.template_.data[4], most = go.template_.data[5];
-        if (least == 0 || most <= least)
-            return false;
-        const uses = ++go.gatherUses;
-        if (uses >= most)
-            return false;
-        if (uses < least)
-            return true;
-        int required = 175;
-        if (const lock = context.client.locks.lookup(go.template_.data[0]))
-            required = lock.skill[0];
-        const skill = player is null ? 0.0f : float(player.skillValue(skillMining)[0]) / (required + 25);
-        const chance = pow(0.8, 4.0 * uses / most);
-        return uniform(0.0f, 100.0f, lootMap.random) < 100 * chance + skill;
     }
 
     /**

@@ -19,8 +19,9 @@ module dmangos.world.loot;
 import dmangos.world.enchantments : RandomEnchantment;
 import dmangos.frozen : StaticMap;
 import std.random : Random, uniform, uniform01;
-import dmangos.bytes : ByteWriter;
+import dmangos.bytes : ByteReader, ByteWriter, PacketException;
 import dmangos.cluster.protocol : GroupLootRoll, QuestLootCheck;
+import dmangos.serialization : LengthPrefix;
 import dmangos.world.opcodes : Opcode;
 import dmangos.world.worlddata : ItemTemplate;
 
@@ -418,6 +419,186 @@ final class Loot
     {
         this.target = target;
         this.find = find;
+    }
+
+    // The rolled contents and rights are independent of the window open on a particular session.
+    private struct HandoffItem
+    {
+        uint itemId;
+        uint count;
+        uint displayId;
+        int randomPropertyId;
+        ubyte slot;
+        uint quality;
+        uint condition;
+        bool quest;
+        bool freeForAll;
+        bool underThreshold;
+        bool blocked;
+        bool released;
+        bool currentLooterPass;
+        ulong winner;
+        ulong remoteAward;
+        ulong remoteMasterTarget;
+        @LengthPrefix!ubyte ulong[] allowed;
+    }
+
+    private struct HandoffMember
+    {
+        ulong guid;
+        ushort node;
+    }
+
+    private struct HandoffVote
+    {
+        ulong guid;
+        RollVote vote;
+        ubyte number;
+    }
+
+    private struct HandoffRoll
+    {
+        ubyte slot;
+        long endTime;
+        bool started;
+        ulong serial;
+        @LengthPrefix!ubyte HandoffVote[] votes;
+    }
+
+    private struct HandoffState
+    {
+        ClientLootType clientType;
+        uint gold;
+        LootRule rule;
+        ubyte threshold;
+        ulong currentLooter;
+        bool remoteTurns;
+        long turnUntil;
+        ulong masterLooter;
+        bool masterStartsRemote;
+        ulong remoteTapper;
+        bool fake;
+        bool haveItemOverThreshold;
+        bool hasRemoteQuestDrops;
+        ulong questCheckSequence;
+        long questCheckUntil;
+        uint rollMap;
+        bool checked;
+        @LengthPrefix!ubyte ulong[] owners;
+        @LengthPrefix!ubyte ulong[] opened;
+        @LengthPrefix!ubyte ulong[] pendingQuestLoot;
+        @LengthPrefix!ubyte HandoffMember[] remoteMembers;
+        @LengthPrefix!ubyte HandoffItem[] items;
+        @LengthPrefix!ubyte HandoffRoll[] rolls;
+    }
+
+    package void saveHandoff(ref ByteWriter writer) const
+    {
+        import dmangos.serialization : serialize;
+
+        HandoffState state = {
+            clientType: clientType, gold: gold, rule: rule, threshold: threshold, currentLooter: currentLooter,
+            remoteTurns: remoteTurns, turnUntil: turnUntil, masterLooter: masterLooter,
+            masterStartsRemote: masterStartsRemote, remoteTapper: remoteTapper, fake: fake,
+            haveItemOverThreshold: haveItemOverThreshold, hasRemoteQuestDrops: hasRemoteQuestDrops,
+            questCheckSequence: questCheckSequence, questCheckUntil: questCheckUntil, rollMap: rollMap, checked: checked,
+            owners: owners.keys, opened: opened.keys, pendingQuestLoot: pendingQuestLoot.keys,
+        };
+        foreach (guid, node; remoteMembers)
+            state.remoteMembers ~= HandoffMember(guid, node);
+        foreach (item; items)
+        {
+            HandoffItem saved = {
+                itemId: item.itemId, count: item.count, displayId: item.displayId, randomPropertyId: item.randomPropertyId,
+                slot: item.slot, quality: item.quality, condition: item.condition, quest: item.quest,
+                freeForAll: item.freeForAll, underThreshold: item.underThreshold, blocked: item.blocked,
+                released: item.released, currentLooterPass: item.currentLooterPass, winner: item.winner,
+                remoteAward: item.remoteAward, remoteMasterTarget: item.remoteMasterTarget, allowed: item.allowed.keys,
+            };
+            state.items ~= saved;
+        }
+        foreach (slot, roll; rolls)
+        {
+            HandoffRoll saved = {slot: slot, endTime: roll.endTime, started: roll.started, serial: roll.serial};
+            foreach (guid, vote; roll.votes)
+                saved.votes ~= HandoffVote(guid, vote.vote, vote.number);
+            state.rolls ~= saved;
+        }
+        serialize(writer, state);
+    }
+
+    package static Loot loadHandoff(ulong target, ref ByteReader reader)
+    {
+        import dmangos.serialization : deserialize;
+
+        const state = deserialize!HandoffState(reader);
+        if (state.items.length > maxLootItems || state.rolls.length > maxLootItems)
+            throw new PacketException("too many loot items in a handoff");
+        auto result = new Loot(target, null);
+        result.clientType = state.clientType;
+        result.gold = state.gold;
+        result.rule = state.rule;
+        result.threshold = state.threshold;
+        result.currentLooter = state.currentLooter;
+        result.remoteTurns = state.remoteTurns;
+        result.turnUntil = state.turnUntil;
+        result.masterLooter = state.masterLooter;
+        result.masterStartsRemote = state.masterStartsRemote;
+        result.remoteTapper = state.remoteTapper;
+        result.fake = state.fake;
+        result.haveItemOverThreshold = state.haveItemOverThreshold;
+        result.hasRemoteQuestDrops = state.hasRemoteQuestDrops;
+        result.questCheckSequence = state.questCheckSequence;
+        result.questCheckUntil = state.questCheckUntil;
+        result.rollMap = state.rollMap;
+        result.checked = state.checked;
+        foreach (guid; state.owners)
+            result.owners[guid] = true;
+        foreach (guid; state.opened)
+            result.opened[guid] = true;
+        foreach (guid; state.pendingQuestLoot)
+            result.pendingQuestLoot[guid] = true;
+        foreach (ref member; state.remoteMembers)
+            result.remoteMembers[member.guid] = member.node;
+        foreach (ref saved; state.items)
+        {
+            if (saved.slot >= maxLootItems || result.itemInSlot(saved.slot) !is null)
+                throw new PacketException("invalid item slot in a loot handoff");
+            auto item = new LootItem;
+            item.itemId = saved.itemId;
+            item.count = saved.count;
+            item.displayId = saved.displayId;
+            item.randomPropertyId = saved.randomPropertyId;
+            item.slot = saved.slot;
+            item.quality = saved.quality;
+            item.condition = saved.condition;
+            item.quest = saved.quest;
+            item.freeForAll = saved.freeForAll;
+            item.underThreshold = saved.underThreshold;
+            item.blocked = saved.blocked;
+            item.released = saved.released;
+            item.currentLooterPass = saved.currentLooterPass;
+            item.winner = saved.winner;
+            item.remoteAward = saved.remoteAward;
+            item.remoteMasterTarget = saved.remoteMasterTarget;
+            foreach (guid; saved.allowed)
+                item.allowed[guid] = true;
+            result.items ~= item;
+        }
+        foreach (ref saved; state.rolls)
+        {
+            auto item = result.itemInSlot(saved.slot);
+            if (item is null || saved.slot in result.rolls)
+                throw new PacketException("invalid roll slot in a loot handoff");
+            auto roll = new LootRoll(result, item);
+            roll.endTime = saved.endTime;
+            roll.started = saved.started;
+            roll.serial = saved.serial;
+            foreach (ref vote; saved.votes)
+                roll.votes[vote.guid] = LootRoll.Vote(vote.vote, vote.number);
+            result.rolls[saved.slot] = roll;
+        }
+        return result;
     }
 
     // -------------------------------------------------------------------
@@ -1296,8 +1477,9 @@ final class LootRoll
             {
                 if (auto looter = loot.find(guid))
                     looter.deliver(opcode, body_);
-                else if (const node = guid in loot.remoteMembers)
-                    loot.tellRemoteRoller(*node, guid, opcode, body_);
+                else if (loot.tellRemoteRoller !is null)
+                    if (const node = guid in loot.remoteMembers)
+                        loot.tellRemoteRoller(*node, guid, opcode, body_);
             }
     }
 
@@ -1469,13 +1651,16 @@ final class LootRoll
                 loot.sendItem(looter, item);
             else if (const node = winner in loot.remoteMembers)
             {
-                item.blocked = true;
-                item.remoteAward = serial;
-                const message = remoteMessage(GroupLootRoll.Action.award, winner);
-                if (!loot.sendRemoteRoll(*node, message))
+                if (serial && loot.sendRemoteRoll !is null)
                 {
-                    item.blocked = false;
-                    item.remoteAward = 0;
+                    item.blocked = true;
+                    item.remoteAward = serial;
+                    const message = remoteMessage(GroupLootRoll.Action.award, winner);
+                    if (!loot.sendRemoteRoll(*node, message))
+                    {
+                        item.blocked = false;
+                        item.remoteAward = 0;
+                    }
                 }
             }
         }
@@ -1754,4 +1939,45 @@ unittest
     assert(loot.rolls.length == 1, "b's greed refused");
     loot.vote(a, 0, RollVote.greed);
     assert(a.stored == [100] && b.stored.length == 0 && loot.rolls.length == 0, "a's alone");
+}
+
+/// A handoff keeps the first vote and the original roll deadline, with one award to its winner.
+unittest
+{
+    auto a = new TestLooter(1), b = new TestLooter(2);
+    Looter find(ulong guid) { return guid == a.guid ? a : guid == b.guid ? b : null; }
+    auto loot = new Loot(9, &find);
+    long now = 1000;
+    loot.clock = () => now;
+    loot.rule = LootRule.groupLoot;
+    loot.owners[1] = loot.owners[2] = true;
+    auto item = new LootItem;
+    item.itemId = 100;
+    item.count = 1;
+    item.quality = 2;
+    item.allowed[1] = item.allowed[2] = true;
+    loot.items ~= item;
+    auto roll = new LootRoll(loot, item);
+    assert(roll.tryToStart(now));
+    loot.rolls[0] = roll;
+    loot.vote(a, 0, RollVote.need);
+    assert(a.stored.length == 0 && b.stored.length == 0);
+
+    ByteWriter writer;
+    loot.saveHandoff(writer);
+    auto reader = ByteReader(writer.data);
+    auto restored = Loot.loadHandoff(loot.target, reader);
+    restored.find = &find;
+    restored.clock = () => now;
+    assert(!reader.remaining && restored.itemInSlot(0).blocked);
+    assert(restored.rolls[0].votes[a.guid].vote == RollVote.need);
+    restored.vote(a, 0, RollVote.pass); // a duplicate vote cannot reverse the original need
+    now += lootRollSeconds - 1;
+    restored.update();
+    assert(a.stored.length == 0 && b.stored.length == 0 && restored.rolls.length == 1);
+    ++now;
+    restored.update();
+    restored.vote(b, 0, RollVote.need);
+    assert(a.stored == [100] && b.stored.length == 0 && !restored.rolls.length);
+    assert(restored.itemInSlot(0).allowed.length == 0);
 }
