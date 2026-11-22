@@ -1,12 +1,13 @@
 /// Line of sight through loaded doors and elevator platforms in one map copy.
 module dmangos.world.gameobjectcollision;
 
+import std.algorithm.comparison : clamp, max;
 import std.math : isFinite;
 import dmangos.vmap.gameobjectmodels : GameObjectModels, GameObjectShape;
 import dmangos.vmap.math : AABox, Matrix3, Ray, Vector3;
 import dmangos.world.clientdata : ClientData, TransportAnimationEntry;
 import dmangos.world.gameobject : GameObjectType;
-import dmangos.world.grid : cellCoordinate, cellKey;
+import dmangos.world.grid : cellCoordinate, cellKey, cellSize;
 import dmangos.world.movement : Position;
 import dmangos.world.objects : UpdateValues;
 import dmangos.world.updatefields;
@@ -14,14 +15,28 @@ import dmangos.world.updatefields;
 /// Cells covered by the horizontal projection of a box.
 private struct CoveredCells
 {
+    // Large rectangles are cheaper to handle with a bounds check per loaded object.
+    private enum long indexLimit = 64;
     int left, right, bottom, top;
 
     this(const ref AABox box)
     {
-        left = cellCoordinate(box.lo.x);
-        right = cellCoordinate(box.hi.x);
-        bottom = cellCoordinate(box.lo.y);
-        top = cellCoordinate(box.hi.y);
+        // The whole playable map is 512 cells across. Clamp meshes that extend beyond it.
+        enum float edge = 256 * cellSize;
+        left = cellCoordinate(clamp(box.lo.x, -edge, edge));
+        right = cellCoordinate(clamp(box.hi.x, -edge, edge));
+        bottom = cellCoordinate(clamp(box.lo.y, -edge, edge));
+        top = cellCoordinate(clamp(box.hi.y, -edge, edge));
+    }
+
+    @property bool fitsIndex() const
+    {
+        return (cast(long) right - left + 1) * (cast(long) top - bottom + 1) <= indexLimit;
+    }
+
+    ulong firstOverlap(const ref CoveredCells other) const
+    {
+        return cellKey(max(left, other.left), max(bottom, other.bottom));
     }
 
     int opApply(scope int delegate(ulong) visit) const
@@ -48,11 +63,13 @@ private ElevatorFrame[] elevatorFrames(const(TransportAnimationEntry*)[] rows, c
     auto result = new ElevatorFrame[rows.length];
     foreach (i, row; rows)
     {
-        if ((i && row.time <= rows[i - 1].time) || !isFinite(row.x) || !isFinite(row.y) || !isFinite(row.z))
+        if (i && row.time <= rows[i - 1].time)
             return null;
         // Vanilla's animation translations are row vectors, with Y flipped after the spawn rotation.
         auto offset = Vector3(row.x, row.y, row.z) * transform;
         offset.y = -offset.y;
+        if (!offset.x.isFinite || !offset.y.isFinite || !offset.z.isFinite)
+            return null;
         result[i] = ElevatorFrame(row.time, offset);
     }
     return result;
@@ -68,7 +85,7 @@ private Vector3 elevatorOffset(const ElevatorFrame[] frames, uint clock)
         {
             const previous = frames[i - 1];
             const fraction = cast(float)(time - previous.time) / (next.time - previous.time);
-            return previous.offset + (next.offset - previous.offset) * fraction;
+            return previous.offset * (1 - fraction) + next.offset * fraction;
         }
     }
     return frames[0].offset;
@@ -99,6 +116,7 @@ package final class GameObjectCollision
     private uint delegate() transportTime;
     private Collider[uint] colliders;
     private bool[uint][ulong] cells; // world cell -> slots with geometry here
+    private bool[uint] largeColliders;
 
     this(GameObjectModels models, ClientData client, uint delegate() transportTime)
     {
@@ -146,23 +164,30 @@ package final class GameObjectCollision
             foreach (ref frame; frames[1 .. $])
                 bounds.merge(AABox(shape.bounds.lo + frame.offset, shape.bounds.hi + frame.offset));
         }
+        foreach (axis; 0 .. 3)
+            if (!bounds.lo[axis].isFinite || !bounds.hi[axis].isFinite)
+                return;
         const covered = CoveredCells(bounds);
         colliders[slot] = Collider(next, shape, frames, covered);
-        foreach (key; covered)
-            cells.require(key, null)[slot] = true;
+        if (covered.fitsIndex)
+            foreach (key; covered)
+                cells.require(key, null)[slot] = true;
+        else
+            largeColliders[slot] = true;
     }
 
     void remove(uint slot)
     {
         if (const collider = slot in colliders)
         {
-            foreach (key; collider.covered)
-                if (auto bucket = key in cells)
-                {
-                    (*bucket).remove(slot);
-                    if (!bucket.length)
-                        cells.remove(key);
-                }
+            if (!largeColliders.remove(slot))
+                foreach (key; collider.covered)
+                    if (auto bucket = key in cells)
+                    {
+                        (*bucket).remove(slot);
+                        if (!bucket.length)
+                            cells.remove(key);
+                    }
             colliders.remove(slot);
         }
     }
@@ -179,18 +204,31 @@ package final class GameObjectCollision
         const ray = Ray(a, direction / length);
         const bounds = AABox(a.min(b), a.max(b));
         const clock = transportTime is null ? 0 : transportTime();
-        foreach (key; CoveredCells(bounds))
+        bool blocks(uint slot, const ref Collider collider)
+        {
+            if (!collider.frames.length)
+                return closed(slot) && collider.shape.intersects(ray, length);
+            const offset = elevatorOffset(collider.frames, clock);
+            return collider.shape.intersects(Ray(a - offset, ray.direction), length);
+        }
+
+        const covered = CoveredCells(bounds);
+        if (!covered.fitsIndex)
+        {
+            foreach (slot, ref collider; colliders)
+                if (blocks(slot, collider))
+                    return true;
+            return false;
+        }
+        foreach (slot, _; largeColliders)
+            if (blocks(slot, colliders[slot]))
+                return true;
+        foreach (key; covered)
             if (const bucket = key in cells)
                 foreach (slot, _; *bucket)
                 {
-                    const collider = colliders[slot];
-                    if (collider.frames.length)
-                    {
-                        const offset = elevatorOffset(collider.frames, clock);
-                        if (collider.shape.intersects(Ray(a - offset, ray.direction), length))
-                            return true;
-                    }
-                    else if (closed(slot) && collider.shape.intersects(ray, length))
+                    const collider = slot in colliders;
+                    if (key == covered.firstOverlap(collider.covered) && blocks(slot, *collider))
                         return true;
                 }
         return false;
@@ -261,6 +299,8 @@ unittest
     assert(local.inLineOfSight(a, b));
     local.addObject(door);
     assert(!local.inLineOfSight(a, b), "the mesh reaches the adjacent cell even though its origin is outside it");
+    assert(!local.inLineOfSight(Position(-9000, 0, 0), Position(9000, 0, 0)),
+        "a ray across many cells still sees a small indexed door");
     assert(local.lineOfSightBetween(Position(68, 0, 5), Position(72, 0, 5)), "over the mesh");
     assert(otherCopy.inLineOfSight(a, b), "another copy has its own doors");
     remote.replicaCreated(1, cellKeyAt(0, 0), door.guid, encodeState(door, 0));
@@ -301,4 +341,25 @@ unittest
     assert(!remote.inLineOfSight(midwayA, midwayB), "the collision position repeats on the shared clock");
     remote.replicaRemoved(1, elevator.guid);
     assert(remote.inLineOfSight(midwayA, midwayB));
+
+    local.removeObject(elevator.guid);
+    enum uint tramEntry = entry + 2;
+    client.transportAnimations = typeof(client.transportAnimations).parse(buildDbc(transportAnimationFormat,
+        [[0, tramEntry, 0, 0, 0, 0, 0],
+         [1, tramEntry, 1000, floatBits(5000), floatBits(5000), 0, 0],
+         [2, tramEntry, 2000, 0, 0, 0, 0]]), "test long platform animation");
+    client.buildIndexes();
+    const tramTemplate = GameObjectTemplate(entry: tramEntry, type: GameObjectType.transport,
+        displayId: display, size: 2);
+    const tramSpawn = GameObjectSpawn(guid: 4, entry: tramEntry);
+    auto tram = new GameObject(tramSpawn, &tramTemplate);
+    clock = 0;
+    local.addObject(tram);
+    assert(!local.inLineOfSight(a, b));
+    clock = 1000;
+    const farA = Position(5068, -5000, 0), farB = Position(5072, -5000, 0);
+    assert(local.inLineOfSight(a, b) && !local.inLineOfSight(farA, farB),
+        "a platform with a large swept rectangle still moves and blocks at the current offset");
+    local.removeObject(tram.guid);
+    assert(local.inLineOfSight(farA, farB));
 }

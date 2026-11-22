@@ -66,6 +66,9 @@ final class GameObjectModels
         const entry = displayId in displays;
         if (entry is null || !isFinite(scale) || scale <= 0)
             return GameObjectShape.init;
+        const inverseScale = 1.0f / scale;
+        if (!isFinite(inverseScale))
+            return GameObjectShape.init;
         foreach (axis; 0 .. 3)
             if (!isFinite(at[axis]))
                 return GameObjectShape.init;
@@ -78,7 +81,7 @@ final class GameObjectModels
         auto model = models.acquire(entry.name);
         if (model is null)
             return GameObjectShape.init;
-        auto shape = GameObjectShape(model, at, transform.inverse(), 1.0f / scale);
+        auto shape = GameObjectShape(model, at, transform.inverse(), inverseScale);
         shape.bounds = AABox(Vector3(float.infinity, float.infinity, float.infinity),
             Vector3(-float.infinity, -float.infinity, -float.infinity));
         foreach (x; [entry.bounds.lo.x, entry.bounds.hi.x])

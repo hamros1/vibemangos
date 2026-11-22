@@ -819,7 +819,8 @@ replaces another) and the rows to save.
 The map's line-of-sight check includes loaded doors and continuously animated elevators when the
 vmap directory has the extractor's game-object model list. A door's current state controls whether
 it blocks. For elevators with a path in `TransportAnimation.dbc`, the shared transport clock places
-the mesh between the current keyframes. Each map copy indexes the cells that its meshes can reach.
+the mesh between the current keyframes. Each map copy indexes small swept areas by cell and keeps
+one entry per mesh for larger sweeps. Long rays test the loaded meshes directly.
 Replicas use the same geometry, the replicated door state and the shared transport clock.
 
 The extractor (`extractor/maps.d`) turns each map's ADT tiles into `.map` files (version "z1.4"),
