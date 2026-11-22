@@ -897,10 +897,12 @@ mixin template DbScriptRunner()
                     step.datalong2 ? float(step.datalong2) : s.wanderDistance, false);
                 break;
             case MotionType.waypoint, MotionType.linearWaypoint:
-                const path = data.waypoints.pathFor(s.entry, s.guid, step.datalong2, (step.datalong3 & 2) != 0);
+                const fromTable = (step.datalong3 & 2) != 0;
+                const path = data.waypoints.pathFor(s.entry, s.guid, step.datalong2, fromTable);
                 if (path.length == 0)
                     return false;
-                creature.generator = new WaypointMovement(path, step.datalong == MotionType.linearWaypoint);
+                creature.generator = new WaypointMovement(path, step.datalong == MotionType.linearWaypoint,
+                    step.datalong2, fromTable);
                 break;
             default:
                 return false;

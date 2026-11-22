@@ -1474,7 +1474,7 @@ mixin template CreatureScripting()
         const path = lore is null ? null : lore.creaturePath(me.spawn.entry, me.spawn.guid, pathId);
         if (path.length == 0)
             return;
-        auto next = new WaypointMovement(path, false);
+        auto next = new WaypointMovement(path, false, pathId);
         if (inCombat_ || evadingHome)
         {
             outOfCombat = next; // once home from the fight

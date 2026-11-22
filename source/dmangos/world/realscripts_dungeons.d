@@ -1523,6 +1523,7 @@ unittest
         return;
     import dmangos.bytes : ByteWriter;
     import dmangos.world.loothandlers : ClientLootSlot;
+    import dmangos.world.motion : WaypointMovement;
     import dmangos.world.opcodes : Opcode;
     import dmangos.world.packets : ClientGuid;
     import dmangos.world.spellcast : SpellCastResult, TargetFlags;
@@ -1538,6 +1539,23 @@ unittest
         d.kill(d.spawned(king, 0, 25));
         assert(d.summoned(mizzle) == 1, "Mizzle comes\n" ~ d.story);
         assert(!(d.find(mizzle).values.get!UNIT_NPC_FLAGS & 1), "the coronation opens at the throne");
+        const heraldGuid = d.find(mizzle).guid;
+        if (kills == 0)
+        {
+            bool onTheWay()
+            {
+                auto herald = d.find(mizzle);
+                d.keepUp(herald);
+                auto route = cast(WaypointMovement) herald.generator;
+                return route !is null && route.lastWaypoint == 2 && herald.position.x > 730;
+            }
+            assert(d.runUntil(&onTheWay, 45.seconds), "Mizzle starts his route");
+            d.handoff();
+            auto arrived = d.find(mizzle);
+            assert(arrived !is null && arrived.guid == heraldGuid, "the same herald arrived");
+            auto route = cast(WaypointMovement) arrived.generator;
+            assert(route !is null && route.lastWaypoint == 2, "the new node resumes Mizzle's route");
+        }
         bool atThrone()
         {
             auto herald = d.find(mizzle);
@@ -1545,6 +1563,14 @@ unittest
             return herald !is null && (herald.values.get!UNIT_NPC_FLAGS & 1) && herald.position.x > 816;
         }
         assert(d.runUntil(&atThrone, 90.seconds), "Mizzle reaches the throne\n" ~ d.story);
+        if (kills == 0)
+        {
+            d.handoff();
+            auto waiting = d.find(mizzle);
+            assert(waiting !is null && waiting.guid == heraldGuid && d.summoned(mizzle) == 1, "only one herald");
+            auto route = cast(WaypointMovement) waiting.generator;
+            assert(route !is null && route.paused && route.lastWaypoint == 7, "he still waits for the tribute dialogue");
+        }
         auto herald = d.find(mizzle);
         assert(d.loadedObject(tribute) is null, "tribute awaits Mizzle's dialogue");
         d.talkTo(herald);
@@ -1555,6 +1581,12 @@ unittest
         d.choose(herald, 0); // ask about tribute
         d.choose(herald, 0); // ask to see it
         assert(d.runUntil(() => d.loadedObject(tribute) !is null, 5.seconds), "Mizzle produces the chest\n" ~ d.story);
+        size_t chests;
+        d.map.forEachObject((object) {
+            if (auto go = cast(GameObject) object)
+                chests += go.template_.entry == tribute;
+        });
+        assert(chests == 1, "Mizzle produces exactly one tribute chest");
         auto chest = d.loadedObject(tribute);
         d.goTo(chest.position);
         d.defend(herald); // any demons pulled during the run still attack after the coronation

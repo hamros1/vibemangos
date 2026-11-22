@@ -1033,16 +1033,31 @@ unittest
 
     // A creature of the copy, loaded and hurt on node 1.
     import dmangos.world.creature : CreatureSpawn;
+    import dmangos.world.motion : WaypointMovement, WaypointNode;
     import dmangos.world.updatefields : UNIT_FIELD_HEALTH;
 
     CreatureSpawn defias = {guid: 79998, entry: creatureInnkeeper, map: mapDeadmines, x: -16, y: -383, z: 61};
     a.data.creatureSpawns ~= defias;
     b.data.creatureSpawns ~= defias;
+    foreach (node; [a, b])
+        node.data.waypoints.addEntryNode(defias.entry, 1, WaypointNode(1, -10, -380, 61));
     auto inCopy = a.map(mapDeadmines, copy);
     auto hurt = a.makeCreature(&a.data.creatureSpawns[$ - 1]);
     hurt.instanceId = copy;
     hurt.values.set!UNIT_FIELD_HEALTH(7u);
     inCopy.addObject(hurt);
+    hurt.ai.bind(inCopy);
+    hurt.ai.hostWalkPath(1);
+    auto opponentSpawn = defias;
+    opponentSpawn.guid += 2;
+    opponentSpawn.x += 2;
+    a.data.creatureSpawns ~= opponentSpawn;
+    b.data.creatureSpawns ~= opponentSpawn;
+    auto opponent = a.makeCreature(&opponentSpawn);
+    opponent.instanceId = copy;
+    inCopy.addObject(opponent);
+    hurt.ai.attackedBy(inCopy.unit(opponent.guid), inCopy);
+    assert(hurt.ai.inCombat, "the route was suspended by combat");
 
     host = 2;
     ubyte[][uint] leaving;
@@ -1060,6 +1075,8 @@ unittest
     assert(there !is null, "the copy came along");
     auto same = cast(Creature) there.findObject(hurt.guid);
     assert(same !is null && same.instanceId == copy && same.values.get!UNIT_FIELD_HEALTH == 7, "as it was");
+    assert(same.ai.inCombat && cast(const WaypointMovement) same.ai.waypointBeforeCombat() !is null,
+        "combat still holds the scripted route for when the creature goes home");
     assert(b.instanceFor(7, mapDeadmines) == copy, "the bind, as saved");
     assert(b.deadInInstance(copy, 79999), "its dead stay dead");
     const another = b.instanceFor(8, mapDeadmines);

@@ -718,6 +718,18 @@ final class Dungeon
      */
     void restart()
     {
+        reconnect(false);
+    }
+
+    /// Moves the dungeon's region to a second world and reconnects the party to the transferred copy.
+    void handoff()
+    {
+        reconnect(true);
+    }
+
+    private void reconnect(bool handoff)
+    {
+        import dmangos.cluster.regions : Region;
         import dmangos.world.config : WorldConfig;
         import dmangos.world.context : WorldContext;
 
@@ -733,6 +745,23 @@ final class Dungeon
         config.logoutDelay = 0;
         auto old = w.context;
         w.context = new WorldContext(config, w.db, old.data, old.client);
+        if (handoff)
+        {
+            enum uint regionId = 40;
+            if (old.nodeId == 0)
+                old.nodeId = 1;
+            const next = cast(ushort)(old.nodeId == 1 ? 2 : 1);
+            w.context.nodeId = next;
+            old.regionOwnerAround = w.context.regionOwnerAround = (uint, Position, float) => next;
+            Region moving = Region(regionId, mapId);
+            moving.next = next;
+            ubyte[][uint] leaving;
+            old.regionsChanged(null, [moving], null, leaving);
+            const(ubyte)[][uint] arriving;
+            arriving[regionId] = leaving[regionId];
+            w.context.regionsChanged([Region(regionId, mapId)], null, arriving, leaving);
+            assert(old.instanceState(copy) is null && w.context.instanceMap(copy) !is null, "the copy changed owners");
+        }
         {
             import std.random : rndGen;
 
@@ -740,7 +769,8 @@ final class Dungeon
             rndGen.seed(20_261_120);
         }
         party = null;
-        known = null;
+        if (!handoff)
+            known = null;
         foreach (i, at; where)
         {
             party ~= w.character(cast(uint)(i + 1), format!"Delver%s"(cast(char)('a' + i)), classId, level, []);

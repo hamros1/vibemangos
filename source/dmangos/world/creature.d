@@ -26,7 +26,7 @@ import dmangos.world.clientdata : ClientData;
 import dmangos.world.map : Idler, Moving, PerViewer;
 import dmangos.world.replication : Replica, Replicable;
 import dmangos.vmap.math : Vector3;
-import dmangos.world.motion : followSpline, IdleMovement, MotionType, MotionWorld, MovementGenerator;
+import dmangos.world.motion : followSpline, IdleMovement, MotionType, MotionWorld, MovementGenerator, WaypointStore;
 import dmangos.world.movement : baseMoveSpeed, MovementFlags, MovementInfo, MoveType, Position;
 import dmangos.bytes : ByteReader, ByteWriter;
 import dmangos.world.spline : MoveSpline;
@@ -1386,9 +1386,11 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         spline.writeExact(w);
         w.put(positionTimer);
         w.put(motionStarted);
-        w.put(cast(ubyte) generator.type);
+        const route = ai.waypointBeforeCombat();
+        const savedMovement = route is null ? generator : route;
+        w.put(cast(ubyte) savedMovement.type);
         ByteWriter state;
-        generator.save(state);
+        savedMovement.save(state);
         w.put(cast(ushort) state.length);
         w.putBytes(state.data);
         w.put(cast(ushort) vendorStock.items.length);
@@ -1420,7 +1422,8 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
      * Reads what `saveState` wrote into a creature made anew from the same spawn (whose generator was
      * chosen as for any spawn): it is then the creature its last owner had, where it had it.
      */
-    void loadState(ref ByteReader r, uint now, const(SpellInfo)* delegate(uint) spell = null)
+    void loadState(ref ByteReader r, uint now, const(SpellInfo)* delegate(uint) spell = null,
+        const WaypointStore waypoints = null)
     {
         import std.algorithm.comparison : max;
 
@@ -1440,7 +1443,14 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         motionStarted = r.read!bool;
         const type = r.read!ubyte;
         auto state = ByteReader(r.readBytes(r.read!ushort));
-        if (type == generator.type)
+        if (waypoints !is null && (type == MotionType.waypoint || type == MotionType.linearWaypoint))
+        {
+            import dmangos.world.motion : WaypointMovement;
+
+            if (auto route = WaypointMovement.restore(state, waypoints, spawn, type == MotionType.linearWaypoint))
+                generator = route;
+        }
+        else if (type == generator.type)
             generator.load(state);
         else if (type == MotionType.follow) // a linked creature following its master
         {

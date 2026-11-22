@@ -660,6 +660,14 @@ final class CreatureAI : Scripted, CreatureHost, ScourgeCampHost
         return threat;
     }
 
+    /// A waypoint route suspended by combat still belongs to the creature after a handoff.
+    package const(MovementGenerator) waypointBeforeCombat() const
+    {
+        import dmangos.world.motion : WaypointMovement;
+
+        return inCombat_ ? cast(const WaypointMovement) outOfCombat : null;
+    }
+
     /// Combat state that must follow a live creature when its region moves.
     package void saveCombat(ref imported!"dmangos.bytes".ByteWriter writer) const
     {

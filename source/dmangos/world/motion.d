@@ -28,7 +28,7 @@ import std.random : Random, uniform, uniform01;
 
 import dmangos.bytes : ByteReader, ByteWriter;
 import dmangos.vmap.math : Vector3;
-import dmangos.world.creature : Creature;
+import dmangos.world.creature : Creature, CreatureSpawn;
 import dmangos.world.movement : MovementFlags, MoveType, Position;
 import dmangos.world.opcodes : Opcode;
 import dmangos.world.spline;
@@ -334,6 +334,8 @@ final class WaypointMovement : MovementGenerator
     private
     {
         WaypointNode[] path;
+        uint pathId;
+        bool fromTable;
         bool linear;
         bool drivingBack;   // `m_driveWayBack`
         size_t current;     // `m_currentWaypointNode`
@@ -350,14 +352,35 @@ final class WaypointMovement : MovementGenerator
     @property uint lastWaypoint() const { return lastReached; }
 
     /// A lone point without a wait waits five seconds.
-    this(const(WaypointNode)[] path, bool linear)
+    this(const(WaypointNode)[] path, bool linear, uint pathId = 0, bool fromTable = false)
     {
-        this.path = path.dup;
         this.linear = linear;
-        if (this.path.length == 1 && this.path[0].delay == 0)
-            this.path[0].delay = 5000;
+        this.pathId = pathId;
+        this.fromTable = fromTable;
+        setPath(path);
         if (this.path.length)
             currentPoint = this.path[0].point;
+    }
+
+    private void setPath(const(WaypointNode)[] nodes)
+    {
+        path = nodes.dup;
+        if (path.length == 1 && path[0].delay == 0)
+            path[0].delay = 5000;
+    }
+
+    /// Rebuilds the database route before resuming its saved progress, even on an idle spawn.
+    static WaypointMovement restore(ref ByteReader state, const WaypointStore waypoints,
+        const ref CreatureSpawn spawn, bool linear)
+    {
+        auto route = new WaypointMovement(null, linear);
+        route.load(state);
+        route.setPath(waypoints.pathFor(spawn.entry, spawn.guid, route.pathId, route.fromTable));
+        if (!route.path.length)
+            return null;
+        if (route.current >= route.path.length)
+            route.current = 0;
+        return route;
     }
 
     override @property MotionType type() const
@@ -378,6 +401,8 @@ final class WaypointMovement : MovementGenerator
             w.put(cast(uint) i);
         w.put(continueToWaypoint);
         w.put(paused);
+        w.put(pathId);
+        w.put(fromTable);
     }
 
     override void load(ref ByteReader r)
@@ -393,7 +418,13 @@ final class WaypointMovement : MovementGenerator
             i = r.read!uint;
         continueToWaypoint = r.read!bool;
         paused = r.read!bool;
-        if (current >= path.length) // the path changed under it: start it over
+        // Older bundles had progress only. They resolve the spawn or entry's default path.
+        if (!r.empty)
+        {
+            pathId = r.read!uint;
+            fromTable = r.read!bool;
+        }
+        if (path.length && current >= path.length) // the path changed under it: start it over
             current = 0;
     }
 
@@ -1014,7 +1045,7 @@ void allowedPositionZ(const Creature creature, MotionWorld world, ref Vector3 p)
 
 version (unittest)
 {
-    import dmangos.world.creature : CreatureParts, CreatureSpawn, CreatureTemplate;
+    import dmangos.world.creature : CreatureParts, CreatureTemplate;
 
     /// Flat ground at `ground`; records what is sent.
     private final class TestWorld : MotionWorld
@@ -1201,35 +1232,45 @@ unittest
     store.addSpawnNode(5, WaypointNode(1, 20, 0, 0));
     store.addSpawnNode(5, WaypointNode(2, 20, 20, 0, 1.0f, 3000));
     store.addSpawnNode(5, WaypointNode(3, 0, 20, 0));
+    store.addEntryNode(spawn.entry, 2, WaypointNode(1, 10, 0, 0));
+    store.addEntryNode(spawn.entry, 2, WaypointNode(2, 10, 10, 0, 1.0f, 2500));
+    store.addPathNode(29, WaypointNode(1, 15, 0, 0));
+    store.addPathNode(29, WaypointNode(2, 15, 15, 0, 1.0f, 2000));
     store.finish();
 
-    auto original = testCreature(spawn);
-    original.generator = selectMovement(original, store);
-    auto worldA = new TestWorld;
-    run(original, worldA, 5000);
-    original.values.set!UNIT_FIELD_HEALTH(17u);
-    original.values.clearChanges();
-
-    ByteWriter w;
-    original.saveState(w, 0);
-    auto copy = testCreature(spawn);
-    copy.generator = selectMovement(copy, store);
-    auto r = ByteReader(w.data);
-    copy.loadState(r, 0);
-    assert(r.empty);
-    assert(copy.position == original.position && copy.values[UNIT_FIELD_HEALTH] == 17);
-    assert(copy.spline.path == original.spline.path && copy.spline.timePassed == original.spline.timePassed);
-
-    // From here on both walk the same, send the same, and wait at the same point.
-    auto worldB = new TestWorld;
-    worldA.sent = null;
-    foreach (_; 0 .. 300)
+    foreach (uint pathId; [0, 2, 29])
     {
-        original.tick(worldA, 100);
-        copy.tick(worldB, 100);
-        assert(copy.position == original.position);
+        const fromTable = pathId == 29;
+        auto original = testCreature(spawn);
+        original.generator = new WaypointMovement(store.pathFor(spawn.entry, spawn.guid, pathId, fromTable),
+            fromTable, pathId, fromTable);
+        auto worldA = new TestWorld;
+        run(original, worldA, 5000);
+        original.values.set!UNIT_FIELD_HEALTH(17u);
+        original.values.clearChanges();
+
+        ByteWriter w;
+        original.saveState(w, 0);
+        auto copy = testCreature(spawn);
+        copy.generator = selectMovement(copy, store);
+        auto r = ByteReader(w.data);
+        copy.loadState(r, 0, null, store);
+        assert(r.empty);
+        assert(copy.generator.type == original.generator.type);
+        assert(copy.position == original.position && copy.values[UNIT_FIELD_HEALTH] == 17);
+        assert(copy.spline.path == original.spline.path && copy.spline.timePassed == original.spline.timePassed);
+
+        // Both follow the same route even when the receiving node started with a different route.
+        auto worldB = new TestWorld;
+        worldA.sent = null;
+        foreach (_; 0 .. 300)
+        {
+            original.tick(worldA, 100);
+            copy.tick(worldB, 100);
+            assert(copy.position == original.position);
+        }
+        assert(worldA.sent == worldB.sent && worldA.sent.length > 0);
     }
-    assert(worldA.sent == worldB.sent && worldA.sent.length > 0);
 }
 
 // With movement maps, a walk somewhere follows the way round what is in it: its corners, in order.

@@ -2848,7 +2848,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (f.pathId && cast(WaypointMovement) leader.generator is null && (leader.ai is null || !leader.ai.inCombat))
             if (const path = data.waypoints.path(f.pathId))
             {
-                leader.generator = new WaypointMovement(path, f.movementType == 4);
+                leader.generator = new WaypointMovement(path, f.movementType == 4, f.pathId, true);
                 m.wake(leader.guid);
             }
         uint index;
@@ -5242,7 +5242,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             auto creature = makeCreature(&data.creatureSpawns[*at]);
             if (creature is null)
                 return null;
-            creature.loadState(r, transportNow(), &spellInfo);
+            creature.loadState(r, transportNow(), &spellInfo, data.waypoints);
             return creature;
         }
         const at = m.spawn in gameObjectSpawnIndex;
@@ -5289,7 +5289,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 return null;
             restored.instanceId = destination.instanceId;
             restored.summon = summon;
-            restored.loadState(state, now, &spellInfo);
+            restored.loadState(state, now, &spellInfo, data.waypoints);
             restored.factionTemplate = client.factionTemplates.lookup(restored.values.get!UNIT_FIELD_FACTIONTEMPLATE);
             if (transit > 0)
                 restored.summon.update(restored, transit);

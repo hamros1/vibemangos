@@ -360,6 +360,10 @@ silently, and only after applying every bundle lets anything load the region's c
 creature arrives hurt; a boss arrives in the same phase with the same timers. A saved game-object
 move or rotation also updates the receiving node's spawn and cell index when the object arrives.
 
+Scripted waypoint movement carries the database path ID, its progress and any pause. The new owner
+resolves that path from its world data, including when the spawn normally stands still. A waypoint
+route suspended by combat resumes when the creature goes home.
+
 * **The same spawns everywhere.** Pools, spawn groups and spawn entries are chosen with a seed made
   from the cluster's name and the realm, so every node agrees on which creature a spawn is.
 * **After a node is lost**, the new owner loads saved respawn deadlines, discovers spawns added
