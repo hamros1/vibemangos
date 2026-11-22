@@ -2023,7 +2023,7 @@ private:
         auto creature = context.spawnCreatureAt(map, entry, at);
         if (creature is null)
         {
-            redSystemMessage("Invalid entry id.");
+            redSystemMessage("Could not spawn the creature.");
             return true;
         }
         blueSystemMessage(format!"Spawned a creature `%s` with entry %u at %f %f %f on map %u"(t.name, entry, at.x, at.y,

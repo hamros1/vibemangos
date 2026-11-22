@@ -5494,23 +5494,36 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     /**
      * The game object's spawn changed (moved, turned): its row and the world data rewritten, and the
-     * object made anew from it, so that the clients see it there. Returns the new object.
+     * object made anew from it, so that the clients see it there. Returns null if it could not save.
      */
     GameObject respawnGameObjectAs(Map map, GameObject go, GameObjectSpawn changed)
     {
         import std.algorithm.mutation : remove;
-        import dmangos.world.grid : cellKeyAt;
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
 
-        if (gameObjectSpawnIndex is null)
-            foreach (i, ref s; data.gameObjectSpawns)
-                gameObjectSpawnIndex[s.guid] = i;
+        if (!canWrite())
+            return null;
+        indexSpawns();
         const at = go.spawn.guid in gameObjectSpawnIndex;
         if (at is null)
-            return go;
+            return null;
+        if (changed.guid !in unsavedGameObjectSpawns)
+            try
+            {
+                if (!database.updateGameObjectPlacement(changed))
+                    return null;
+            }
+            catch (DatabaseException error)
+            {
+                warning!"could not save changes to game object %s: %s"(changed.guid, error.msg);
+                return null;
+            }
         const old = data.gameObjectSpawns[*at];
         const oldCell = cellKeyAt(old.x, old.y), newCell = cellKeyAt(changed.x, changed.y);
         if (oldCell != newCell)
         {
+            map.loadCell(newCell);
             if (auto cells = old.map in data.gameObjectCells)
                 if (auto list = oldCell in *cells)
                     foreach (i, index; *list)
@@ -5522,11 +5535,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             data.gameObjectCells.require(changed.map, null).require(newCell, null) ~= *at;
         }
         data.gameObjectSpawns[*at] = changed;
-        if (changed.guid !in unsavedGameObjectSpawns)
-        {
-            database.deleteGameObjectSpawn(changed.guid);
-            database.insertGameObjectSpawn(changed);
-        }
         map.removeObject(go.guid);
         auto made = makeGameObject(data.gameObjectSpawns[*at]);
         made.instanceId = map.instanceId;

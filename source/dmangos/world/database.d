@@ -685,6 +685,9 @@ interface WorldDatabase
     /// A saved `gameobject` spawn, with its ID allocated by the world database.
     @DatabaseWrite uint createGameObjectSpawn(const ref GameObjectSpawn spawn);
 
+    /// Save a game object's transform while keeping the rest of its row.
+    @DatabaseWrite bool updateGameObjectPlacement(const ref GameObjectSpawn spawn);
+
     /// A saved spawn with a direct game-object entry.
     Nullable!GameObjectSpawn savedGameObjectSpawn(uint guid);
 
@@ -1085,6 +1088,14 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     uint createGameObjectSpawn(const ref GameObjectSpawn s)
     {
         return worldSpawnId!"gameobject"(storeGameObjectSpawn!true(s));
+    }
+
+    bool updateGameObjectPlacement(const ref GameObjectSpawn s)
+    {
+        const changed = world.execute!("UPDATE gameobject SET position_x = ?, position_y = ?, position_z = ?, "
+            ~ "orientation = ?, rotation0 = ?, rotation1 = ?, rotation2 = ?, rotation3 = ? WHERE guid = ?")(
+            s.x, s.y, s.z, s.orientation, s.rotation[0], s.rotation[1], s.rotation[2], s.rotation[3], s.guid);
+        return changed != 0 || world.query!"SELECT guid FROM gameobject WHERE guid = ?"(s.guid).length != 0;
     }
 
     Nullable!GameObjectSpawn savedGameObjectSpawn(uint guid)
@@ -2171,6 +2182,18 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
         row.guid = lastGameObjectSpawn;
         insertGameObjectSpawn(row);
         return row.guid;
+    }
+    bool updateGameObjectPlacement(const ref GameObjectSpawn spawn)
+    {
+        auto row = spawn.guid in gameObjectSpawnRows;
+        if (row is null)
+            return false;
+        row.x = spawn.x;
+        row.y = spawn.y;
+        row.z = spawn.z;
+        row.orientation = spawn.orientation;
+        row.rotation = spawn.rotation;
+        return true;
     }
     Nullable!GameObjectSpawn savedGameObjectSpawn(uint guid)
     {

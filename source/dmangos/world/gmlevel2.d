@@ -322,9 +322,14 @@ private:
             systemMessage(format!"GameObject Info '%s' Not Found"(entryId));
             return true;
         }
-        systemMessage(format!"Spawning GameObject By Entry '%s'"(entryId));
         const at = player.position;
         auto go = context.spawnGameObjectAt(map, entryId, at, save > 0);
+        if (go is null)
+        {
+            redSystemMessage("Could not spawn the game object.");
+            return true;
+        }
+        systemMessage(format!"Spawning GameObject By Entry '%s'"(entryId));
         gmLog(format!"spawned gameobject %s, entry %u at %u %f %f %f%s"(go.template_.name, entryId, player.data.map, at.x,
             at.y, at.z, save > 0 ? ", saved in DB" : ""));
         return true;
@@ -413,7 +418,10 @@ private:
         changed.y = at.y;
         changed.z = at.z;
         changed.orientation = at.orientation;
-        selectedGo = context.respawnGameObjectAs(map, go, changed).guid;
+        if (auto moved = context.respawnGameObjectAs(map, go, changed))
+            selectedGo = moved.guid;
+        else
+            redSystemMessage("Could not move the game object.");
         return true;
     }
 
@@ -449,7 +457,10 @@ private:
             redSystemMessage("Invalid Axis, Please use x, y, or o.");
             return true;
         }
-        selectedGo = context.respawnGameObjectAs(map, go, changed).guid;
+        if (auto rotated = context.respawnGameObjectAs(map, go, changed))
+            selectedGo = rotated.guid;
+        else
+            redSystemMessage("Could not rotate the game object.");
         return true;
     }
 
@@ -1125,14 +1136,30 @@ unittest
     assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "Gameobject activated.|r"]);
     gm.say(".gobject animprogress 5");
     assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "Set ANIMPROGRESS to 5|r"]);
+    const chairRow = db.gameObjectSpawnRows.keys[0];
+    db.gameObjectSpawnRows[chairRow].respawnSeconds = 100; // a column that a placement edit must leave intact
     gm.say(".gobject rotate x 90");
     assert(db.gameObjectSpawnRows.values[0].rotation[0] > 1.5f, "turned and saved");
+    assert(db.gameObjectSpawnRows[chairRow].respawnSeconds == 100);
     gm.say(".gobject rotate q 90");
     assert(systemMessages(gm.read()).canFind(MSG_COLOR_LIGHTRED ~ "Invalid Axis, Please use x, y, or o.|r"));
     gm.say(".gobject move");
     assert(db.gameObjectSpawnRows.length == 1);
+    gm.read();
+    db.deleteGameObjectSpawn(chairRow);
+    gm.say(".gobject move");
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Could not move the game object.|r"]);
+    assert(db.gameObjectSpawnRows.length == 0, "a failed placement edit cannot recreate a deleted spawn");
     gm.say(".gobject delete");
     assert(db.gameObjectSpawnRows.length == 0);
+
+    import dmangos.world.fencing : FencedDatabase;
+
+    context.database = new FencedDatabase(db, () => false);
+    gm.say(".gobject spawn 9010 1");
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Could not spawn the game object.|r"]);
+    assert(db.gameObjectSpawnRows.length == 0);
+    context.database = db;
 
     // Two worlds with the same initial spawn data use one database allocator.
     auto left = newCreationContext(db), right = newCreationContext(db);

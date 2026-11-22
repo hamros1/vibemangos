@@ -162,6 +162,13 @@ def run(fixture, abrupt=False):
     mortars = fixture.query(f"SELECT guid FROM gameobject WHERE guid > {before['gameobject']} AND id={MORTAR}", world)
     if len(mortars.splitlines()) != 2:
         raise RuntimeError("both nodes' saved mortars should have distinct database IDs")
+    local_mortar = next(int(row) for row in mortars.splitlines() if int(row) != (spawned[MORTAR] & 0xFFFFFF))
+    fixture.query(f"UPDATE gameobject SET spawntimesecsmax = 987 WHERE guid = {local_mortar}", world)
+    client("edit-mortar", 1, "MORTARCASTER", f"login:{caster}", "cmd:.gobject select", "cmd:.gobject rotate x 90", "drop")
+    rotation, respawn = fixture.query(
+        f"SELECT rotation0, spawntimesecsmax FROM gameobject WHERE guid = {local_mortar}", world).split()
+    if not 1.5 < float(rotation) < 1.6 or int(respawn) != 987:
+        raise RuntimeError("rotating the mortar must keep its ID and the rest of the saved row")
     def ownership_taken():
         views = re.findall(r"this node owns \[([^]]*)\]", fixture.log("node1"))
         return views and worker.issubset(set(map(int, re.findall(r"\d+", views[-1]))))

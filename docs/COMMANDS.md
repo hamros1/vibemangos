@@ -44,7 +44,8 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
   The next owner reads newly saved rows when it takes the region. A clean handoff also preserves
   the current state of loaded spawns. `.gobject spawn ID` is temporary.
 * `.gobject scale` lasts until the object is reloaded. `.gobject move` and `.gobject rotate`
-  keep the ID of a saved spawn. Moving or rotating a temporary spawn keeps it temporary.
+  update a saved spawn's position and rotation in place. Moving or rotating a temporary spawn
+  keeps it temporary.
 * `.gobject info` shows the size as a number (ArcEmu printed a float with `%u`).
 * `.quest giver` and `.quest finisher` name a game object by its own template (ArcEmu looks its id up
   among the items); ArcEmu's quest tables are CMaNGOS's (`creature_questrelation` and the like).
