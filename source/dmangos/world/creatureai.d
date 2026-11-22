@@ -19,8 +19,8 @@ alias attackStartPacket = dmangos.world.combat.attackStart;
 import dmangos.world.creature : Creature, VirtualItem;
 import dmangos.world.gameobject : GameObject;
 import dmangos.world.defines : UnitFlags;
-import dmangos.world.motion : IdleMovement, launch, MotionWorld, MovementGenerator, stopMoving;
-import dmangos.world.movement : MovementFlags, MoveType, Position;
+import dmangos.world.motion : IdleMovement, launch, launchShoreLeg, MotionWorld, MovementGenerator, stopMoving;
+import dmangos.world.movement : MovementFlags, Position;
 import dmangos.world.opcodes : Opcode;
 import dmangos.world.relations;
 import dmangos.world.auras : Aura, AuraType;
@@ -174,9 +174,6 @@ interface CombatWorld : MotionWorld
 
     /// Whether nothing built stands between two points (at eye height).
     bool inLineOfSight(Position a, Position b);
-
-    /// Sends what changed in the creature's fields to those who see it.
-    void flushCreature(Creature creature);
 
     /// Puts a resting creature back in the tick.
     void wake(ulong guid);
@@ -1338,8 +1335,6 @@ private:
         return victim;
     }
 
-    private Vector3 lastSwimProbe = Vector3(float.nan, float.nan, float.nan);
-
     /**
      * Chasing: runs to its target until it can reach it, setting off again when the
      * target has moved on, and faces it.
@@ -1350,17 +1345,7 @@ private:
 
         const canSwim = me.canSwim && !me.scriptFlying;
         const waterOnly = me.waterOnly;
-        if (canSwim && me.spline.finalized)
-        {
-            const at = me.position;
-            const point = Vector3(at.x, at.y, at.z);
-            if (point != lastSwimProbe)
-            {
-                lastSwimProbe = point;
-                if (me.setSwimming(world.swimmableAt(point, me.collisionHeight)))
-                    world.flushCreature(me);
-            }
-        }
+        me.refreshSwimming(world);
         const self = me.fighter, other = target.fighter;
         me.movement.position.orientation = angleTo(me.position, other.position);
         if (!combatMovement_)
@@ -1416,16 +1401,7 @@ private:
         chasedTo = other.position;
         if (canSwim && self.swimming != underwater)
         {
-            const at = me.spline.finalized ? me.position : me.spline.position;
-            auto shore = world.pathToShore(Vector3(at.x, at.y, at.z), destination, me.collisionHeight, self.swimming);
-            if (!shore.length)
-            {
-                stopMoving(me, world);
-                victimReachable = false;
-                return;
-            }
-            const speed = self.swimming ? me.speeds[MoveType.swim] : float.nan;
-            victimReachable = launch(me, world, shore, !self.swimming && chaseWalking, float.nan, false, speed) > 0;
+            victimReachable = launchShoreLeg(me, world, destination, chaseWalking) > 0;
             return;
         }
         const duration = launch(me, world, [Vector3.init, destination], chaseWalking, float.nan, true);

@@ -152,6 +152,9 @@ interface MotionWorld
     /// Sends a packet to the players whose clients have the object `guid`.
     void sendToObservers(ulong guid, Opcode opcode, const(ubyte)[] body_);
 
+    /// Sends changes in a creature's public fields to those who can see it.
+    void flushCreature(Creature creature);
+
     /// The map's random numbers.
     ref Random random();
 
@@ -655,20 +658,23 @@ final class FollowMovement : MovementGenerator
             return;
         const a = at.orientation + angle;
         const x = at.x + distance * cos(a), y = at.y + distance * sin(a);
+        creature.refreshSwimming(world);
+        bool underwater;
+        const destination = followDestination(creature, world, at, x, y, underwater);
+        const vertical = underwater || creature.movement.has(MovementFlags.swimming);
         const here = creature.spline.finalized ? creature.position : creature.spline.position;
-        const off = sqrt((here.x - x) ^^ 2 + (here.y - y) ^^ 2);
+        const dz = vertical ? here.z - destination.z : 0.0f;
+        const off = sqrt((here.x - destination.x) ^^ 2 + (here.y - destination.y) ^^ 2 + dz * dz);
         if (off < 1)
             return;
         // Set off again only when the leader moved on since the last setting off.
+        const movedZ = vertical ? at.z - followedTo.z : 0.0f;
         if (following && !creature.spline.finalized
-            && (at.x - followedTo.x) ^^ 2 + (at.y - followedTo.y) ^^ 2 < 1)
+            && (at.x - followedTo.x) ^^ 2 + (at.y - followedTo.y) ^^ 2 + movedZ * movedZ < 1)
             return;
-        auto z = world.groundHeight(x, y, at.z + 2, false);
-        if (!(z > -100_000))
-            z = at.z;
         followedTo = at;
         following = true;
-        launch(creature, world, [Vector3(here.x, here.y, here.z), Vector3(x, y, z)], off < 15, at.orientation, true);
+        launchFollowPath(creature, world, destination, underwater, off < 15, at.orientation);
     }
 
     override void save(ref ByteWriter w) const
@@ -717,6 +723,61 @@ package uint nextSplineId() @safe nothrow @nogc
     import core.atomic : atomicOp;
 
     return atomicOp!"+="(splineCounter, 1) - 1;
+}
+
+/// The follow offset, above the ground or at the leader's depth.
+package Vector3 followDestination(const Creature creature, MotionWorld world, Position leader, float x, float y,
+    out bool underwater)
+{
+    const destination = Vector3(x, y, leader.z);
+    Vector3 submerged;
+    underwater = creature.canSwim && !creature.scriptFlying && (
+        world.swimmingTarget(destination, creature.collisionHeight, submerged)
+        || world.swimmingTarget(Vector3(leader.x, leader.y, leader.z), creature.collisionHeight, submerged));
+    return underwater ? submerged : destination;
+}
+
+/// When following on land, adjust the offset to the ground before starting the spline.
+package int launchFollowPath(Creature creature, MotionWorld world, Vector3 destination, bool underwater,
+    bool walk, float facing)
+{
+    if (!underwater)
+    {
+        const ground = world.groundHeight(destination.x, destination.y, destination.z + 2, false);
+        if (ground > -100_000)
+            destination.z = ground;
+    }
+    return launchHabitatPath(creature, world, destination, underwater, walk, facing);
+}
+
+/// Travel to a point in the current medium or as far as the first shoreline.
+package int launchHabitatPath(Creature creature, MotionWorld world, Vector3 destination, bool underwater,
+    bool walk, float facing = float.nan)
+{
+    const swimming = creature.movement.has(MovementFlags.swimming);
+    if (creature.waterOnly && !(swimming && underwater))
+    {
+        stopMoving(creature, world);
+        return 0;
+    }
+    if (creature.canSwim && !creature.scriptFlying && swimming != underwater)
+        return launchShoreLeg(creature, world, destination, walk);
+    return launch(creature, world, [Vector3.init, destination], walk, facing, true);
+}
+
+/// Stop just across the shoreline. The next spline takes the speed for its new medium.
+package int launchShoreLeg(Creature creature, MotionWorld world, Vector3 destination, bool walk)
+{
+    const swimming = creature.movement.has(MovementFlags.swimming);
+    const at = creature.spline.finalized ? creature.position : creature.spline.position;
+    auto path = world.pathToShore(Vector3(at.x, at.y, at.z), destination, creature.collisionHeight, swimming);
+    if (!path.length)
+    {
+        stopMoving(creature, world);
+        return 0;
+    }
+    const speed = swimming ? creature.speeds[MoveType.swim] : float.nan;
+    return launch(creature, world, path, walk && !swimming, float.nan, false, speed);
 }
 
 /**
@@ -880,6 +941,7 @@ version (unittest)
         float groundHeight(float, float, float, bool) { return ground; }
         float waterOrGroundLevel(float, float, float, float groundZ, float) { return groundZ; }
         void sendToObservers(ulong, Opcode opcode, const(ubyte)[] body_) { sent ~= opcode; bodies ~= body_; }
+        void flushCreature(Creature creature) {}
         ref Random random() { return rng; }
         uint[] scripts;
         void waypointScript(Creature, uint scriptId) { scripts ~= scriptId; }

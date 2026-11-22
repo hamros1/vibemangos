@@ -1076,8 +1076,9 @@ unittest
     import dmangos.world.clientdata : FactionTemplateEntry;
     import dmangos.world.creature : Creature, CreatureParts, CreatureSpawn, CreatureTemplate;
     import dmangos.world.map : Map, MapSettings;
-    import dmangos.world.motion : followSpline, launch;
+    import dmangos.world.motion : FollowMovement, followSpline, launch;
     import dmangos.world.movement : MovementFlags, MoveType, Position;
+    import dmangos.world.pet : PetState;
     import dmangos.world.testdata : testClientData;
     import dmangos.world.unit : UnitRef;
 
@@ -1194,4 +1195,42 @@ unittest
     followSpline(amphibian, amphibian.spline.duration + 1);
     amphibian.tick(map, 1);
     assert(!amphibian.fighter.swimming, "the creature resumes ground movement on the bank");
+
+    const linkedSpawn = CreatureSpawn(4, 101, 1, bank.x, bank.y, bank.z);
+    auto linked = new Creature(linkedSpawn, &amphibianTemplate, 1, 1, parts, client);
+    linked.generator = new FollowMovement(prey.guid, 0, 0);
+    const petSpawn = CreatureSpawn(5, 101, 1, bank.x, bank.y, bank.z);
+    auto pet = new Creature(petSpawn, &amphibianTemplate, 1, 1, parts, client, 7);
+    pet.becomePet(prey.guid, new PetState);
+    map.addObject(linked);
+    map.addObject(pet);
+    foreach (follower; [linked, pet])
+    {
+        follower.speeds[MoveType.walk] = 2.5;
+        follower.speeds[MoveType.run] = 7;
+        follower.speeds[MoveType.swim] = 4;
+        prey.movement.position = Position(above.x, above.y, above.z);
+        follower.tick(map, 1);
+        assert(!follower.spline.finalized && !follower.fighter.swimming
+            && map.swimmableAt(follower.spline.finalDestination, follower.collisionHeight),
+            "the follower approaches the water by land");
+        followSpline(follower, follower.spline.duration + 1);
+        follower.tick(map, 1);
+        assert(!follower.spline.finalized && follower.fighter.swimming
+            && follower.spline.finalDestination.z == above.z, "it swims at its leader's depth");
+        followSpline(follower, follower.spline.duration + 1);
+        prey.movement.position.z -= 3;
+        follower.tick(map, 1);
+        assert(!follower.spline.finalized && follower.spline.finalDestination.z == above.z - 3,
+            "a change in depth alone is followed");
+        followSpline(follower, follower.spline.duration + 1);
+        prey.movement.position = Position(bank.x, bank.y, bank.z);
+        follower.tick(map, 1);
+        assert(!follower.spline.finalized && follower.fighter.swimming
+            && !map.swimmableAt(follower.spline.finalDestination, follower.collisionHeight),
+            "it swims to the shoreline");
+        followSpline(follower, follower.spline.duration + 1);
+        follower.tick(map, 1);
+        assert(!follower.fighter.swimming, "it uses ground movement again");
+    }
 }

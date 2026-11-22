@@ -25,6 +25,7 @@ import std.random : Random, uniform;
 import dmangos.world.clientdata : ClientData;
 import dmangos.world.map : Idler, Moving, PerViewer;
 import dmangos.world.replication : Replica, Replicable;
+import dmangos.vmap.math : Vector3;
 import dmangos.world.motion : followSpline, IdleMovement, MotionType, MotionWorld, MovementGenerator;
 import dmangos.world.movement : baseMoveSpeed, MovementFlags, MovementInfo, MoveType, Position;
 import dmangos.bytes : ByteReader, ByteWriter;
@@ -747,6 +748,22 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             movement.flags &= ~MovementFlags.swimming;
         values.set!UNIT_FIELD_FLAGS(swimming ? flags | UnitFlags.swimming : flags & ~UnitFlags.swimming);
         return true;
+    }
+
+    private Vector3 lastSwimProbe = Vector3(float.nan, float.nan, float.nan);
+
+    /// Switch movement mode between splines when the creature reaches a shoreline.
+    package void refreshSwimming(MotionWorld world)
+    {
+        if (!canSwim || scriptFlying || !spline.finalized)
+            return;
+        const at = position;
+        const point = Vector3(at.x, at.y, at.z);
+        if (point == lastSwimProbe)
+            return;
+        lastSwimProbe = point;
+        if (setSwimming(world.swimmableAt(point, collisionHeight)))
+            world.flushCreature(this);
     }
 
     /// Rooted or stunned (or held by its script): it does not move.

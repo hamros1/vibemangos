@@ -45,9 +45,8 @@ bool isAutocastable(const ref imported!"dmangos.world.spells".SpellInfo spell) p
 mixin template PetBehaviour()
 {
     import std.math : cos, sin, PI;
-    import dmangos.world.motion : launch, stopMoving;
-    import dmangos.vmap.math : Vector3;
-    import dmangos.world.movement : Position;
+    import dmangos.world.motion : followDestination, launchFollowPath, launchHabitatPath, stopMoving;
+    import dmangos.world.movement : MovementFlags, Position;
     import dmangos.world.pet : ActiveState, CommandState, PetState;
     import dmangos.world.petai : isAutocastable, petFollowAngle, petFollowDistance;
     import dmangos.world.relations : canAttack;
@@ -319,10 +318,15 @@ mixin template PetBehaviour()
             pet.stayAt = me.position;
             return;
         }
-        if (moved(me.position, pet.stayAt) < 1 || !me.spline.finalized)
+        me.refreshSwimming(world);
+        bool underwater;
+        const at = pet.stayAt;
+        const destination = followDestination(me, world, at, at.x, at.y, underwater);
+        const vertical = underwater || me.movement.has(MovementFlags.swimming);
+        if (moved(me.position, Position(destination.x, destination.y, destination.z), vertical) < 1
+            || !me.spline.finalized)
             return;
-        Vector3[] points = [Vector3(0, 0, 0), Vector3(pet.stayAt.x, pet.stayAt.y, pet.stayAt.z)];
-        launch(me, world, points, false, float.nan, true);
+        launchHabitatPath(me, world, destination, underwater, false);
     }
 
     /// To its place beside its owner, setting off again when it moved on.
@@ -330,24 +334,24 @@ mixin template PetBehaviour()
     {
         const angle = owner.orientation + petFollowAngle;
         const x = owner.x + petFollowDistance * cos(angle), y = owner.y + petFollowDistance * sin(angle);
-        const close = moved(me.position, Position(x, y, owner.z)) < 1;
+        me.refreshSwimming(world);
+        bool underwater;
+        const destination = followDestination(me, world, owner, x, y, underwater);
+        const vertical = underwater || me.movement.has(MovementFlags.swimming);
+        const close = moved(me.position, Position(destination.x, destination.y, destination.z), vertical) < 1;
         if (close)
         {
-            if (!me.spline.finalized && moved(followedTo, owner) > 0.5f)
+            if (!me.spline.finalized && moved(followedTo, owner, vertical) > 0.5f)
                 stopMoving(me, world);
             else if (me.spline.finalized && abs(me.position.orientation - owner.orientation) > 0.1f)
                 me.movement.position.orientation = owner.orientation;
             return;
         }
-        if (!me.spline.finalized && moved(followedTo, owner) < 1)
+        if (!me.spline.finalized && moved(followedTo, owner, vertical) < 1)
             return;
-        auto z = world.groundHeight(x, y, owner.z + 2, false);
-        if (!(z > -100_000))
-            z = owner.z;
         followedTo = owner;
-        Vector3[] points = [Vector3(0, 0, 0), Vector3(x, y, z)];
         // As fast as its owner runs, to keep up.
-        launch(me, world, points, false, owner.orientation, true);
+        launchFollowPath(me, world, destination, underwater, false, owner.orientation);
     }
 
     private static float abs(float v)
