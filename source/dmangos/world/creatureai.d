@@ -19,7 +19,8 @@ alias attackStartPacket = dmangos.world.combat.attackStart;
 import dmangos.world.creature : Creature, VirtualItem;
 import dmangos.world.gameobject : GameObject;
 import dmangos.world.defines : UnitFlags;
-import dmangos.world.motion : IdleMovement, launch, launchShoreLeg, MotionWorld, MovementGenerator, stopMoving;
+import dmangos.world.motion : habitatDestination, IdleMovement, launch, launchHabitatPath, launchShoreLeg,
+    MotionWorld, MovementGenerator, stopMoving;
 import dmangos.world.movement : MovementFlags, Position;
 import dmangos.world.opcodes : Opcode;
 import dmangos.world.relations;
@@ -316,6 +317,7 @@ final class CreatureAI : Scripted, CreatureHost
         bool meleeAttacking;       // swinging at its victim
         bool inCombat_;
         bool evadingHome;          // running back, ignoring everything
+        bool evadingAcrossShore;   // another spline is needed after the shore
         int unreachableTimer;      // ms left before it gives up on its victim
         bool victimReachable = true; // its last way to the victim ended within reach
         bool[ulong] suppressed;    // given up on, while it has others to fight
@@ -610,7 +612,7 @@ final class CreatureAI : Scripted, CreatureHost
         }
         if (evadingHome)
         {
-            if (me.spline.finalized)
+            if (me.spline.finalized && (!evadingAcrossShore || !launchEvadePath(world)))
                 reachedHome(world);
         }
         else if (inCombat_)
@@ -1710,12 +1712,22 @@ private:
         world.flushCreature(me);
         evadingHome = true;
         regenTimer = 0;
+        if (!launchEvadePath(world))
+            reachedHome(world);
+    }
+
+    private bool launchEvadePath(CombatWorld world)
+    {
+        me.refreshSwimming(world);
         const home = combatStart;
-        const dx = home.x - me.position.x, dy = home.y - me.position.y;
-        if (dx * dx + dy * dy < 0.01f)
-            return reachedHome(world);
-        Vector3[] points = [Vector3(0, 0, 0), Vector3(home.x, home.y, home.z)];
-        launch(me, world, points, false, home.orientation, true);
+        bool underwater;
+        const target = habitatDestination(me, world, Vector3(home.x, home.y, home.z), underwater);
+        const vertical = underwater || me.movement.has(MovementFlags.swimming);
+        if (moved(me.position, Position(target.x, target.y, target.z), vertical) < 0.1f)
+            return false;
+        const step = launchHabitatPath(me, world, target, underwater, false, home.orientation);
+        evadingAcrossShore = step.crossesShore;
+        return step.duration != 0;
     }
 
     /**
@@ -1736,6 +1748,7 @@ private:
     void reachedHome(CombatWorld world)
     {
         evadingHome = false;
+        evadingAcrossShore = false;
         world_ = world;
         if (script !is null)
             script.reachedHome(this);

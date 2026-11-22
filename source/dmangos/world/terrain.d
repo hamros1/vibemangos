@@ -1076,7 +1076,7 @@ unittest
     import dmangos.world.clientdata : FactionTemplateEntry;
     import dmangos.world.creature : Creature, CreatureParts, CreatureSpawn, CreatureTemplate;
     import dmangos.world.map : Map, MapSettings;
-    import dmangos.world.motion : FollowMovement, followSpline, launch;
+    import dmangos.world.motion : FollowMovement, followSpline, launch, PointMovement;
     import dmangos.world.movement : MovementFlags, MoveType, Position;
     import dmangos.world.pet : PetState;
     import dmangos.world.testdata : testClientData;
@@ -1233,4 +1233,45 @@ unittest
         follower.tick(map, 1);
         assert(!follower.fighter.swimming, "it uses ground movement again");
     }
+
+    const pointSpawn = CreatureSpawn(6, 101, 1, bank.x, bank.y, bank.z);
+    auto pointMover = new Creature(pointSpawn, &amphibianTemplate, 1, 1, parts, client);
+    pointMover.speeds[MoveType.run] = 7;
+    pointMover.speeds[MoveType.swim] = 4;
+    auto movement = new PointMovement(above, 0.5f, false, null);
+    uint arrivals;
+    movement.onArrived = (Creature) { ++arrivals; };
+    pointMover.generator = movement;
+    map.addObject(pointMover);
+    pointMover.tick(map, 1);
+    assert(!pointMover.spline.finalized && !pointMover.fighter.swimming);
+    followSpline(pointMover, pointMover.spline.duration + 1);
+    pointMover.tick(map, 1);
+    assert(!arrivals && pointMover.fighter.swimming && pointMover.spline.finalDestination == above,
+        "the arrival callback waits while the creature begins its swim leg");
+    followSpline(pointMover, pointMover.spline.duration + 1);
+    pointMover.tick(map, 1);
+    assert(arrivals == 1 && pointMover.position.z == above.z);
+
+    const evadeSpawn = CreatureSpawn(7, 101, 1, bank.x, bank.y, bank.z);
+    auto evader = new Creature(evadeSpawn, &amphibianTemplate, 1, 1, parts, client);
+    evader.factionTemplate = &fishFaction;
+    evader.speeds[MoveType.run] = 7;
+    evader.speeds[MoveType.swim] = 4;
+    map.addObject(evader);
+    prey.movement.position = Position(above.x, above.y, above.z);
+    evader.ai.attackedBy(UnitRef.of(prey, map), map);
+    evader.tick(map, 1);
+    followSpline(evader, evader.spline.duration + 1);
+    evader.tick(map, 1);
+    followSpline(evader, evader.spline.duration + 1);
+    evader.ai.evadeWithLinked(map);
+    assert(evader.ai.evading && evader.fighter.swimming && !evader.spline.finalized);
+    followSpline(evader, evader.spline.duration + 1);
+    evader.tick(map, 1);
+    assert(evader.ai.evading && !evader.fighter.swimming && !evader.spline.finalized,
+        "it keeps returning home after leaving the water");
+    followSpline(evader, evader.spline.duration + 1);
+    evader.tick(map, 1);
+    assert(!evader.ai.evading && evader.position.x == bank.x && evader.position.y == bank.y);
 }

@@ -551,7 +551,7 @@ final class PointMovement : MovementGenerator
     private float facing;
     private bool walk;
     package MovementGenerator after; // what it goes back to
-    private bool launched;
+    private HabitatStep step;
     void delegate(Creature creature) onArrived; /// told once there
 
     ///
@@ -570,16 +570,20 @@ final class PointMovement : MovementGenerator
 
     override void initialize(Creature creature, MotionWorld world)
     {
-        const at = creature.spline.finalized ? creature.position : creature.spline.position;
-        launched = launch(creature, world, [Vector3(at.x, at.y, at.z), destination], walk, facing, true) > 0;
+        creature.refreshSwimming(world);
+        bool underwater;
+        const target = habitatDestination(creature, world, destination, underwater);
+        step = launchHabitatPath(creature, world, target, underwater, walk, facing);
     }
 
     override void update(Creature creature, MotionWorld world, int diff)
     {
-        if (!launched)
+        if (!step.duration)
             return initialize(creature, world);
         if (!creature.spline.finalized)
             return;
+        if (step.crossesShore)
+            return initialize(creature, world);
         // There: back to what it did before (from where it stands now).
         creature.generator = after is null ? new IdleMovement : after;
         creature.generator.initialize(creature, world);
@@ -737,8 +741,17 @@ package Vector3 followDestination(const Creature creature, MotionWorld world, Po
     return underwater ? submerged : destination;
 }
 
+/// A fixed point above the ground or at its requested depth.
+package Vector3 habitatDestination(const Creature creature, MotionWorld world, Vector3 point, out bool underwater)
+{
+    Vector3 submerged;
+    underwater = creature.canSwim && !creature.scriptFlying
+        && world.swimmingTarget(point, creature.collisionHeight, submerged);
+    return underwater ? submerged : point;
+}
+
 /// When following on land, adjust the offset to the ground before starting the spline.
-package int launchFollowPath(Creature creature, MotionWorld world, Vector3 destination, bool underwater,
+package void launchFollowPath(Creature creature, MotionWorld world, Vector3 destination, bool underwater,
     bool walk, float facing)
 {
     if (!underwater)
@@ -747,22 +760,29 @@ package int launchFollowPath(Creature creature, MotionWorld world, Vector3 desti
         if (ground > -100_000)
             destination.z = ground;
     }
-    return launchHabitatPath(creature, world, destination, underwater, walk, facing);
+    launchHabitatPath(creature, world, destination, underwater, walk, facing);
+}
+
+/// A movement spline's time and whether another leg is needed after reaching the shore.
+package struct HabitatStep
+{
+    int duration;
+    bool crossesShore;
 }
 
 /// Travel to a point in the current medium or as far as the first shoreline.
-package int launchHabitatPath(Creature creature, MotionWorld world, Vector3 destination, bool underwater,
+package HabitatStep launchHabitatPath(Creature creature, MotionWorld world, Vector3 destination, bool underwater,
     bool walk, float facing = float.nan)
 {
     const swimming = creature.movement.has(MovementFlags.swimming);
     if (creature.waterOnly && !(swimming && underwater))
     {
         stopMoving(creature, world);
-        return 0;
+        return HabitatStep.init;
     }
     if (creature.canSwim && !creature.scriptFlying && swimming != underwater)
-        return launchShoreLeg(creature, world, destination, walk);
-    return launch(creature, world, [Vector3.init, destination], walk, facing, true);
+        return HabitatStep(launchShoreLeg(creature, world, destination, walk), true);
+    return HabitatStep(launch(creature, world, [Vector3.init, destination], walk, facing, true), false);
 }
 
 /// Stop just across the shoreline. The next spline takes the speed for its new medium.
