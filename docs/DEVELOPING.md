@@ -280,6 +280,7 @@ tools/harness/check.sh --quick          # without the regression: unit tests (ea
                                         # builds at once with `-b release-fast` (no -inline: about 80 s;
                                         # 13% slower at run time, so benchmark with `dub build -b release`)
 tools/harness/regression.sh             # two nodes, 250 bots in a crowd while regions split and merge
+python3 tools/harness/quorum.py         # three voters and a gateway, with clients connected during failover
 tools/harness/bench.sh LABEL crowd 500  # one benchmark run (docs/BENCHMARKS.md), report in LABEL.md
 tools/harness/db.sh start|stop|status
 # The full check also runs tools/harness/spell-audit.py: every spell a player can learn (trainers, starting
