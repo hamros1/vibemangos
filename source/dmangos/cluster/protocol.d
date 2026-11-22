@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 80; // 80: player replicas carry missing hit points for heal targeting
+enum ushort protocolVersion = 81; // 81: group quest offers and outstanding offers in handoffs
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -97,6 +97,19 @@ enum MessageType : ushort
     quorumVote = 58,
     quorumWorkerLease = 59,
     gameObjectSpell = 60,
+    partyQuest = 61,
+}
+
+/// Group quest offers cross the same realm's ownership boundaries. The sharer authorizes acceptance.
+struct PartyQuest
+{
+    enum type = MessageType.partyQuest;
+    enum Action : ubyte { offer, escort, confirm, grant }
+    Action action;
+    ulong sharer, member;
+    uint group, quest, map, instance;
+    float x, y, z;
+    long deadline;
 }
 
 /// Request the owning node's animation of a game object named by a spell.
@@ -1247,7 +1260,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 80, recordedFingerprint = 0x54116680de918319UL;
+private enum recordedVersion = 81, recordedFingerprint = 0xde67f0a3bbbc0422UL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

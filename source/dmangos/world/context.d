@@ -14,6 +14,7 @@
  */
 module dmangos.world.context;
 
+import dmangos.cluster.protocol : PartyQuest;
 import dmangos.bytes : ByteReader, ByteWriter;
 import dmangos.cluster.services : ServiceHost;
 import dmangos.world.writebehind : Writer;
@@ -496,6 +497,28 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (auto go = cast(GameObject) object)
             return go.loot;
         return null;
+    }
+
+    bool delegate(ushort, const ref PartyQuest) sendPartyQuest;
+
+    void routePartyQuest(const ref PartyQuest message)
+    {
+        const guid = message.action == PartyQuest.Action.confirm ? message.sharer : message.member;
+        if (onlinePlayer(guid) !is null)
+            receivePartyQuest(message);
+        else if (sendPartyQuest !is null && canWrite())
+            if (const remote = remotePlayer(guid))
+                sendPartyQuest(remote.node, message);
+    }
+
+    void receivePartyQuest(const ref PartyQuest message)
+    {
+        import dmangos.world.character : Character;
+
+        const guid = message.action == PartyQuest.Action.confirm ? message.sharer : message.member;
+        auto session = cast(Character) onlinePlayer(guid);
+        if (session !is null && !session.transferring)
+            session.receivePartyQuest(message);
     }
 
     void questLootCheckArrived(ushort peer, const ref QuestLootCheck message)

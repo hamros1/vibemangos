@@ -22,6 +22,7 @@ mixin template QuestHandlers()
 {
     import dmangos.world.money : Copper;
     import dmangos.bytes : ByteReader, ByteWriter;
+    import dmangos.cluster.protocol : PartyQuest;
     import dmangos.log : info;
     import dmangos.world.creature : Npc;
     import dmangos.world.defines : nullBag, nullSlot;
@@ -671,18 +672,24 @@ private:
     @Handles(Opcode.CMSG_QUESTGIVER_ACCEPT_QUEST, WorldState.inWorld)
     void handleQuestgiverAcceptQuest(ref ByteReader reader)
     {
-        import dmangos.world.character : Character;
-
         const guid = reader.read!ulong, id = reader.read!uint;
-        QuestGiver giver;
-        bool near = questGiverNear(guid, 0x2, giver);
-        // A quest a group member shared (checked as sharable on its side).
-        auto sharer = near ? null : cast(Character) context.onlinePlayer(guid);
-        if (sharer !is null && sharer !is this && sharer.player !is null && sharer.canShareQuest(id))
+        if (pendingQuest.action == PartyQuest.Action.offer && guid && pendingQuest.sharer == guid
+            && pendingQuest.quest == id)
         {
-            giver = QuestGiver(guid, [id], null);
-            near = true;
+            auto confirm = pendingQuest;
+            confirm.action = PartyQuest.Action.confirm;
+            context.routePartyQuest(confirm);
+            return;
         }
+        acceptQuestFrom(guid, id);
+    }
+
+    private void acceptQuestFrom(ulong guid, uint id, bool fromParty = false, long deadline = 0)
+    {
+        QuestGiver giver;
+        bool near = fromParty || questGiverNear(guid, 0x2, giver);
+        if (fromParty)
+            giver = QuestGiver(guid, [id], null);
         const quest = context.data.quests.quest(id);
         deliver(Opcode.SMSG_GOSSIP_COMPLETE, null);
         if (!near || quest is null || !involves(giver, id, true, false))
@@ -695,7 +702,7 @@ private:
         }
         if (questSlot(0) >= maxQuestLogSize)
             return deliver(Opcode.SMSG_QUESTLOG_FULL, null);
-        addQuest(*quest);
+        addQuest(*quest, deadline);
         // The quest's start script, the giver the source and the player the target.
         if (quest.startScript)
         {
@@ -717,9 +724,8 @@ private:
 
             context.gameObjectQuestAccepted(go, map, EntityRef(player.guid), id);
         }
-        if (auto divider = cast(Character) context.onlinePlayer(questDivider))
-            divider.pushToPartyResponse(player.guid, QuestShare.accepted);
-        questDivider = 0;
+        if (fromParty)
+            questShareResponse(guid, QuestShare.accepted);
         // An escort for the party: each member who could take it is asked to (`SMSG_QUEST_CONFIRM_ACCEPT`).
         if (quest.questFlags & questFlagPartyAccept)
             offerToParty(*quest);
@@ -744,7 +750,7 @@ private:
     }
 
     /// Adds the quest to the log, its objectives at zero (items: what is carried), its starting item given.
-    package void addQuest(const ref Quest quest)
+    package void addQuest(const ref Quest quest, long sharedDeadline = 0)
     {
         questObjectsStale = true;
         const slot = questSlot(0);
@@ -755,7 +761,9 @@ private:
         q.itemCount = 0;
         q.changed = true;
         // A timed quest: its end, in the log and saved.
-        q.timer = (quest.specialFlags & specialTimed) ? context.unixTime + quest.limitTime : 0;
+        q.timer = 0;
+        if (quest.specialFlags & specialTimed)
+            q.timer = sharedDeadline ? sharedDeadline : context.unixTime + quest.limitTime;
         setQuestSlot(slot, quest.id, cast(uint) q.timer);
         if (quest.srcItemId && player.inventory.count(quest.srcItemId) == 0)
             giveItem(quest.srcItemId, quest.srcItemCount ? quest.srcItemCount : 1, true, false); // "You receive"
@@ -1059,28 +1067,100 @@ private:
     // Sharing
     // -----------------------------------------------------------------------
 
-    package ulong questDivider; // who shared the quest this player is offered
+    private PartyQuest pendingQuest;
 
-    /// The members of the player's group in the world who could take `quest` are asked to: `SMSG_QUEST_CONFIRM_ACCEPT`.
-    private void offerToParty(const ref Quest quest)
+    package void writeQuestOffer(ref ByteWriter w)
+    {
+        import dmangos.serialization : serialize;
+
+        serialize(w, pendingQuest);
+    }
+
+    package void readQuestOffer(ref ByteReader r)
+    {
+        import dmangos.serialization : deserialize;
+
+        pendingQuest = deserialize!PartyQuest(r);
+    }
+
+    private void offerToParty(const ref Quest quest, PartyQuest.Action action = PartyQuest.Action.escort)
     {
         auto group = context.groups.of(player.guid);
         if (group is null)
             return;
-        foreach (ref m; group.members)
+        auto status = quest.id in player.questStatus;
+        if (status is null)
+            return;
+        const at = player.position;
+        foreach (ref slot; group.members)
+            if (slot.guid != player.guid)
+            {
+                auto offer = PartyQuest(action, player.guid, slot.guid, group.id, quest.id, map.id, instanceId_,
+                    at.x, at.y, at.z, status.timer);
+                context.routePartyQuest(offer);
+            }
+    }
+
+    package void receivePartyQuest(const ref PartyQuest message)
+    {
+        auto group = context.groups.of(player.guid);
+        if (group is null || group.id != message.group || context.groups.of(message.sharer) !is group
+            || context.groups.of(message.member) !is group || (message.deadline && message.deadline <= context.unixTime))
+            return;
+        const quest = context.data.quests.quest(message.quest);
+        if (quest is null)
+            return;
+        final switch (message.action)
         {
-            if (m.guid == player.guid)
-                continue;
-            auto member = cast(typeof(this)) context.onlinePlayer(m.guid);
-            if (member is null || member.player is null || !member.canTakeQuest(quest))
-                continue;
-            member.questDivider = player.guid;
-            member.closeGossip();
+        case PartyQuest.Action.confirm:
+            if (canShareQuest(quest.id))
+            {
+                PartyQuest grant = message;
+                grant.action = PartyQuest.Action.grant;
+                grant.deadline = player.questStatus[quest.id].timer;
+                context.routePartyQuest(grant);
+            }
+            return;
+        case PartyQuest.Action.grant:
+            if (pendingQuest.action == PartyQuest.Action.offer && pendingQuest.sharer == message.sharer
+                && pendingQuest.quest == quest.id && pendingQuest.group == message.group)
+            {
+                pendingQuest = PartyQuest.init;
+                acceptQuestFrom(message.sharer, quest.id, true, message.deadline);
+            }
+            return;
+        case PartyQuest.Action.escort:
+            if (!(quest.questFlags & questFlagPartyAccept) || !canTakeQuest(*quest)
+                || (pendingQuest.sharer && pendingQuest.quest != quest.id))
+                return;
+            pendingQuest = message;
+            closeGossip();
             ByteWriter w;
             w.put(quest.id);
             w.putCString(quest.title);
-            w.put(player.guid);
-            member.deliver(Opcode.SMSG_QUEST_CONFIRM_ACCEPT, w.data);
+            w.put(message.sharer);
+            deliver(Opcode.SMSG_QUEST_CONFIRM_ACCEPT, w.data);
+            return;
+        case PartyQuest.Action.offer:
+            if (message.map != map.id || message.instance != instanceId_ || !(quest.questFlags & questFlagSharable))
+                return;
+            questShareResponse(message.sharer, QuestShare.sharing);
+            const at = player.position;
+            if ((at.x - message.x) ^^ 2 + (at.y - message.y) ^^ 2 + (at.z - message.z) ^^ 2 > 100)
+                return questShareResponse(message.sharer, QuestShare.tooFar);
+            if (!satisfyStatus(*quest))
+                return questShareResponse(message.sharer, QuestShare.haveQuest);
+            if (questState(quest.id) == QuestState.complete)
+                return questShareResponse(message.sharer, QuestShare.finished);
+            if (!canTakeQuest(*quest))
+                return questShareResponse(message.sharer, QuestShare.cantTake);
+            if (questSlot(0) >= maxQuestLogSize)
+                return questShareResponse(message.sharer, QuestShare.logFull);
+            if (pendingQuest.sharer)
+                return questShareResponse(message.sharer, QuestShare.busy);
+            pendingQuest = message;
+            sendQuestDetails(*quest, message.sharer, true);
+            return;
         }
     }
 
@@ -1093,15 +1173,17 @@ private:
     {
         const id = reader.read!uint;
         const quest = id in context.data.quests.quests;
-        if (quest is null || !(quest.questFlags & questFlagPartyAccept) || !questDivider)
+        if (quest is null || !(quest.questFlags & questFlagPartyAccept) || !pendingQuest.sharer
+            || pendingQuest.action != PartyQuest.Action.escort || pendingQuest.quest != id)
             return;
         auto group = context.groups.of(player.guid);
-        if (group is null || context.groups.of(questDivider) !is group)
+        if (group is null || pendingQuest.group != group.id || context.groups.of(pendingQuest.sharer) !is group)
             return;
-        questDivider = 0;
-        if (canTakeQuest(*quest))
+        const deadline = pendingQuest.deadline;
+        pendingQuest = PartyQuest.init;
+        if ((!deadline || deadline > context.unixTime) && canTakeQuest(*quest))
         {
-            addQuest(*quest);
+            addQuest(*quest, deadline);
             flushInventory(true); // its source item
             flushPlayerChanges();
         }
@@ -1131,87 +1213,30 @@ private:
         return q !is null && (q.status == QuestState.incomplete || (q.status == QuestState.complete && !q.rewarded));
     }
 
-    /// Tells this player what became of the sharing with `member`.
-    package void pushToPartyResponse(ulong member, QuestShare message)
+    private void questShareResponse(ulong sharer, QuestShare result)
     {
         ByteWriter w;
-        w.put(member);
-        w.put(cast(ubyte) message);
-        deliver(Opcode.MSG_QUEST_PUSH_RESULT, w.data);
+        w.put(player.guid);
+        w.put(cast(ubyte) result);
+        context.deliverTo(sharer, Opcode.MSG_QUEST_PUSH_RESULT, w.data);
     }
 
-    /// The quest offered to the group's members near (10 yards) who may take it.
     @Handles(Opcode.CMSG_PUSHQUESTTOPARTY, WorldState.inWorld)
     void handlePushQuestToParty(ref ByteReader reader)
     {
-        import dmangos.world.character : Character;
-
         const id = reader.read!uint;
-        if (!canShareQuest(id))
-            return;
-        const quest = context.data.quests.quest(id);
-        auto group = context.groups.of(player.guid);
-        if (group is null)
-            return;
-        foreach (ref slot; group.members)
-        {
-            auto member = cast(Character) context.onlinePlayer(slot.guid);
-            if (member is null || member is this || member.player is null || member.map !is map)
-                continue;
-            pushToPartyResponse(member.player.guid, QuestShare.sharing);
-            const a = player.position, b = member.player.position;
-            if ((a.x - b.x) ^^ 2 + (a.y - b.y) ^^ 2 + (a.z - b.z) ^^ 2 > 10 * 10)
-            {
-                pushToPartyResponse(member.player.guid, QuestShare.tooFar);
-                continue;
-            }
-            if (!member.satisfyStatus(*quest))
-            {
-                pushToPartyResponse(member.player.guid, QuestShare.haveQuest);
-                continue;
-            }
-            if (member.questState(id) == QuestState.complete)
-            {
-                pushToPartyResponse(member.player.guid, QuestShare.finished);
-                continue;
-            }
-            if (!member.canTakeQuest(*quest))
-            {
-                pushToPartyResponse(member.player.guid, QuestShare.cantTake);
-                continue;
-            }
-            if (member.questSlot(0) >= maxQuestLogSize)
-            {
-                pushToPartyResponse(member.player.guid, QuestShare.logFull);
-                continue;
-            }
-            if (member.questDivider)
-            {
-                pushToPartyResponse(member.player.guid, QuestShare.busy);
-                continue;
-            }
-            member.sendQuestDetails(*quest, player.guid, true);
-            member.questDivider = player.guid;
-        }
+        if (canShareQuest(id))
+            offerToParty(*context.data.quests.quest(id), PartyQuest.Action.offer);
     }
 
-    /// The member's answer, for the one who shared.
     @Handles(Opcode.MSG_QUEST_PUSH_RESULT, WorldState.inWorld)
     void handleQuestPushResult(ref ByteReader reader)
     {
-        import dmangos.world.character : Character;
-
-        const guid = reader.read!ulong;
-        const message = reader.read!ubyte;
-        if (auto sharer = cast(Character) context.onlinePlayer(questDivider))
-        {
-            ByteWriter w;
-            w.put(guid);
-            w.put(uint(message));
-            w.put(ubyte(0));
-            sharer.deliver(Opcode.MSG_QUEST_PUSH_RESULT, w.data);
-        }
-        questDivider = 0;
+        reader.read!ulong;
+        const result = reader.read!ubyte;
+        if (pendingQuest.sharer && result <= QuestShare.finished)
+            questShareResponse(pendingQuest.sharer, cast(QuestShare) result);
+        pendingQuest = PartyQuest.init;
     }
 
     /// The player closed the quest giver's window.
@@ -1818,14 +1843,15 @@ unittest
     import dmangos.world.opcodes;
     import dmangos.world.packets : ClientGroupName;
     import dmangos.world.player : Player;
-    import dmangos.world.quests : Quest, QuestState, QuestStatus, questFlagPartyAccept, questFlagSharable;
+    import dmangos.world.quests : Quest, QuestState, QuestStatus, questFlagPartyAccept, questFlagSharable, specialTimed;
     import dmangos.world.testclient;
     import dmangos.world.testdata;
 
     auto db = newDatabase();
     auto context = newCreationContext(db);
     Quest q = {id: 9310, method: 2, maxLevel: 60, questFlags: questFlagSharable | questFlagPartyAccept, title: "Escort"};
-    q.specialFlags = 0x20;
+    q.specialFlags = 0x20 | specialTimed;
+    q.limitTime = 900;
     context.data.quests.quests[9310] = q;
     auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
     auto jaina = loggedIn(context, db, 8, "Jaina", Position(-8945, -132, 83.5f));
@@ -1836,14 +1862,48 @@ unittest
     varian.write(Opcode.CMSG_GROUP_ACCEPT, null);
     auto me = cast(Player) anduin.session.character, him = cast(Player) varian.session.character;
     me.questStatus[9310] = QuestStatus(9310, QuestState.incomplete);
+    const deadline = context.unixTime + 300;
+    me.questStatus[9310].timer = deadline;
     anduin.read();
     jaina.read();
     varian.read();
+
+    // Jaina moves to a second node. Each side sees the same party and the other's presence.
+    import dmangos.cluster.protocol : PartyQuest, PresenceEntry;
+    import dmangos.world.group : Groups;
+    import core.time : seconds;
+
+    auto destination = newCreationContext(db);
+    destination.data.quests.quests[q.id] = q;
+    auto groupState = Groups.stateOf(context.groups.of(me.guid));
+    destination.groups.mirror(groupState);
+    auto relay = new TestPlayerRelay(context, destination);
+    context.regionOwnerAround = (uint, Position, float) => destination.nodeId;
+    jaina.session.update(5.seconds);
+    assert(relay.remote !is null);
+    context.presence(2, true, [PresenceEntry(guid: 8)], null);
+    destination.presence(1, true, [PresenceEntry(guid: 7), PresenceEntry(guid: 9)], null);
+    context.sendPartyQuest = (ushort node, const ref PartyQuest m) {
+        assert(node == 2);
+        destination.receivePartyQuest(m);
+        return true;
+    };
+    destination.sendPartyQuest = (ushort node, const ref PartyQuest m) {
+        assert(node == 1);
+        context.receivePartyQuest(m);
+        return true;
+    };
+    destination.deliverRemote = (ushort node, ulong guid, ushort op, const(ubyte)[] body_) {
+        assert(node == 1);
+        context.deliverTo(guid, cast(Opcode) op, body_);
+    };
+    jaina.read();
 
     // Shared with Jaina, who takes it: Varian is asked to take it as well.
     ByteWriter push;
     push.put(9310u);
     anduin.write(Opcode.CMSG_PUSHQUESTTOPARTY, push.data);
+    assert(opcodesOf(jaina.read()).canFind(Opcode.SMSG_QUESTGIVER_QUEST_DETAILS), "offered across nodes");
     varian.read();
     ByteWriter accept;
     accept.put(me.guid);
@@ -1854,4 +1914,6 @@ unittest
     confirm.put(9310u);
     varian.write(Opcode.CMSG_QUEST_CONFIRM_ACCEPT, confirm.data);
     assert(him.questStatus.get(9310, QuestStatus.init).status == QuestState.incomplete, "taken");
+    assert(relay.remote.inWorld.player.questStatus[9310].timer == deadline);
+    assert(him.questStatus[9310].timer == deadline);
 }

@@ -234,6 +234,7 @@ private int run(WorldConfig config, string configPath)
         context.sendRemoteGroupLoot = &bridge.sendGroupLootRoll;
         context.canSendLootCoins = &bridge.canSendLootCoins;
         context.sendRemoteLootCoins = &bridge.sendLootCoinShare;
+        context.sendPartyQuest = &bridge.sendPartyQuest;
         context.sendQuestLootCheck = &bridge.sendQuestLootCheck;
         context.sendPartyHeal = &bridge.sendPartyHeal;
         context.sendAreaDamage = &bridge.sendAreaDamage;
