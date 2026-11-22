@@ -669,6 +669,9 @@ interface WorldDatabase
     /// A spawn a GM deleted.
     void deleteCreatureSpawn(uint guid);
 
+    /// Confirm the world row is gone before the map drops the saved spawn.
+    @DatabaseWrite bool eraseSavedSpawn(uint guid, bool gameObject);
+
     /// A creature's quest a GM added or removed: `creature_questrelation` (`start`) or `creature_involvedrelation`.
     void insertQuestRelation(bool start, uint entry, uint quest);
     /// ditto
@@ -1058,6 +1061,14 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
             return world.execute!(prefix ~ "?" ~ remaining)(s.guid, row.expand);
     }
     void deleteCreatureSpawn(uint guid) { world.execute!"DELETE FROM creature WHERE guid = ?"(guid); }
+    bool eraseSavedSpawn(uint guid, bool gameObject)
+    {
+        if (gameObject)
+            deleteGameObjectSpawn(guid);
+        else
+            deleteCreatureSpawn(guid);
+        return true;
+    }
     void insertQuestRelation(bool start, uint entry, uint quest)
     {
         if (start)
@@ -2157,6 +2168,14 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
     }
     void insertCreatureSpawn(const ref CreatureSpawn s) { creatureSpawnRows[s.guid] = s; }
     void deleteCreatureSpawn(uint guid) { creatureSpawnRows.remove(guid); }
+    bool eraseSavedSpawn(uint guid, bool gameObject)
+    {
+        if (gameObject)
+            deleteGameObjectSpawn(guid);
+        else
+            deleteCreatureSpawn(guid);
+        return true;
+    }
     uint[3][] questRelationRows; /// (start, entry, quest) that `insertQuestRelation` wrote and are not deleted
     void insertQuestRelation(bool start, uint entry, uint quest) { questRelationRows ~= [start, entry, quest]; }
     void deleteQuestRelation(bool start, uint entry, uint quest)

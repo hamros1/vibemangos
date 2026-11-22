@@ -46,6 +46,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 * `.gobject scale` lasts until the object is reloaded. `.gobject move` and `.gobject rotate`
   update a saved spawn's position and rotation in place. Moving or rotating a temporary spawn
   keeps it temporary.
+* `.npc delete` and `.gobject delete` remove a saved spawn's database row before dropping it from the map.
 * `.gobject info` shows the size as a number (ArcEmu printed a float with `%u`).
 * `.quest giver` and `.quest finisher` name a game object by its own template (ArcEmu looks its id up
   among the items); ArcEmu's quest tables are CMaNGOS's (`creature_questrelation` and the like).

@@ -306,10 +306,14 @@ private:
             return true;
         }
         const at = unit.position;
+        if (!context.deleteCreatureSpawn(map, unit))
+        {
+            redSystemMessage("Could not delete the creature.");
+            return true;
+        }
         gmLog(format!"used npc delete, sqlid %u, creature %s, pos %f %f %f"(unit.spawn.guid, unit.template_.name, at.x, at.y,
             at.z));
         blueSystemMessage(format!"Deleted creature ID %u"(unit.spawn.guid));
-        context.deleteCreatureSpawn(map, unit);
         return true;
     }
 
@@ -343,7 +347,11 @@ private:
             redSystemMessage("No selected GameObject...");
             return true;
         }
-        context.deleteGameObjectSpawn(map, go);
+        if (!context.deleteGameObjectSpawn(map, go))
+        {
+            redSystemMessage("Could not delete the game object.");
+            return true;
+        }
         gmLog(format!"deleted gameobject %s, entry %u"(go.template_.name, go.spawn.entry));
         selectedGo = 0;
         return true;
@@ -1119,6 +1127,13 @@ unittest
     auto spawned = cast(Creature) map.findObject(makeGuidFor(row.entry, row.guid));
     assert(spawned !is null && spawned.template_.entry == 6774);
     gm.write(Opcode.CMSG_SET_SELECTION, ClientGuid(spawned.guid));
+    import dmangos.world.fencing : FencedDatabase;
+
+    context.database = new FencedDatabase(db, () => false);
+    gm.say(".npc delete");
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Could not delete the creature.|r"]);
+    assert(map.findObject(spawned.guid) is spawned && db.creatureSpawnRows.length == 1);
+    context.database = db;
     gm.say(".npc delete");
     assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "Deleted creature ID " ~ format!"%s"(row.guid) ~ "|r"]);
     assert(map.findObject(spawned.guid) is null && db.creatureSpawnRows.length == 0);
@@ -1146,14 +1161,17 @@ unittest
     gm.say(".gobject move");
     assert(db.gameObjectSpawnRows.length == 1);
     gm.read();
+    context.database = new FencedDatabase(db, () => false);
+    gm.say(".gobject delete");
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Could not delete the game object.|r"]);
+    assert(db.gameObjectSpawnRows.length == 1);
+    context.database = db;
     db.deleteGameObjectSpawn(chairRow);
     gm.say(".gobject move");
     assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Could not move the game object.|r"]);
     assert(db.gameObjectSpawnRows.length == 0, "a failed placement edit cannot recreate a deleted spawn");
     gm.say(".gobject delete");
     assert(db.gameObjectSpawnRows.length == 0);
-
-    import dmangos.world.fencing : FencedDatabase;
 
     context.database = new FencedDatabase(db, () => false);
     gm.say(".gobject spawn 9010 1");

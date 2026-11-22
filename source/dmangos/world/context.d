@@ -5435,12 +5435,17 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /// The creature's spawn deleted: gone from the map, the world data's cell and the database.
-    void deleteCreatureSpawn(Map map, Creature creature)
+    bool deleteCreatureSpawn(Map map, Creature creature)
     {
         import std.algorithm.mutation : remove;
         import dmangos.world.grid : cellKeyAt;
 
         const s = creature.spawn;
+        if (!canWrite())
+            return false;
+        indexSpawns();
+        if (s.guid in spawnIndex && !eraseSavedSpawn(s.guid, false))
+            return false;
         if (auto cells = s.map in data.creatureCells)
             if (auto list = cellKeyAt(s.x, s.y) in *cells)
                 foreach (i, index; *list)
@@ -5450,8 +5455,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                         break;
                     }
         respawnAt.remove(s.guid);
+        spawnIndex.remove(s.guid);
         map.removeObject(creature.guid);
-        database.deleteCreatureSpawn(s.guid);
+        return true;
     }
 
     /// A new `gameobject` row of `entry` at `at` (facing as it), and its object there now; null if unknown.
@@ -5554,12 +5560,17 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /// The game object's spawn deleted: gone from the map, the world data's cell and the database.
-    void deleteGameObjectSpawn(Map map, GameObject go)
+    bool deleteGameObjectSpawn(Map map, GameObject go)
     {
         import std.algorithm.mutation : remove;
         import dmangos.world.grid : cellKeyAt;
 
         const s = go.spawn;
+        if (!canWrite())
+            return false;
+        indexSpawns();
+        if (s.guid in gameObjectSpawnIndex && s.guid !in unsavedGameObjectSpawns && !eraseSavedSpawn(s.guid, true))
+            return false;
         if (auto cells = s.map in data.gameObjectCells)
             if (auto list = cellKeyAt(s.x, s.y) in *cells)
                 foreach (i, index; *list)
@@ -5569,11 +5580,26 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                         break;
                     }
         gameObjectRespawnAt.remove(s.guid);
+        gameObjectSpawnIndex.remove(s.guid);
+        unsavedGameObjectSpawns.remove(s.guid);
         map.removeObject(go.guid);
-        if (!unsavedGameObjectSpawns.remove(s.guid))
-            database.deleteGameObjectSpawn(s.guid);
         if (go.type == GameObjectType.transport)
             refreshElevatorHomes(map);
+        return true;
+    }
+
+    private bool eraseSavedSpawn(uint guid, bool gameObject)
+    {
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
+
+        try
+            return database.eraseSavedSpawn(guid, gameObject);
+        catch (DatabaseException error)
+        {
+            warning!"could not delete world spawn %s: %s"(guid, error.msg);
+            return false;
+        }
     }
 
     /**
