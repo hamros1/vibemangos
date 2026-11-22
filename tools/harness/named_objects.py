@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import math
 import os
 import re
 import subprocess
@@ -16,6 +17,9 @@ CHEER_SPELL, RACER = 7036, 4252
 REBUILD_SPELL, GOLEM = 13951, 2520
 VISUAL_CHANNEL, GUARDIAN = 9712, 2726
 NPC_CASTER = 4251
+RECOVERY_SIGN = 142339  # The Mystic Ward
+SIGN_START = (-8620, -132, 200)
+SIGN_END = (-8585, -132, 200)
 CELL = 533.3333 / 8
 
 
@@ -65,6 +69,11 @@ def run(fixture, abrupt=False):
     for table in spawn_tables:
         fixture.query(f"CREATE TABLE {table} LIKE `{world_source}`.{table}; "
                       f"INSERT INTO {table} SELECT * FROM `{world_source}`.{table}", world)
+    if abrupt:
+        # Both nodes must cache the old placement at startup.
+        x, y, z = SIGN_START
+        sign = int(fixture.query("INSERT INTO gameobject (id,map,position_x,position_y,position_z) "
+                                 f"VALUES ({RECOVERY_SIGN},0,{x},{y},{z}); SELECT LAST_INSERT_ID()", world))
     ports = available_ports(5)
     world_ports, peer_ports, auth_port = ports[:2], ports[2:4], ports[4]
     nodes = {}
@@ -88,6 +97,11 @@ def run(fixture, abrupt=False):
         regions[int(region)] = ((int(x0), int(x1)), (int(y0), int(y1)))
     source_at, target_at = adjacent_boundary(regions, worker)
     print(f"caster on node 1 at {source_at}, object on node 2 at {target_at}", flush=True)
+    if abrupt:
+        for x, y, _ in (SIGN_START, SIGN_END):
+            if not any(x0 <= math.floor(x / CELL) <= x1 and y0 <= math.floor(y / CELL) <= y1
+                       for region, ((x0, x1), (y0, y1)) in regions.items() if region in worker):
+                raise RuntimeError("the recovery sign and its destination must both be owned by the worker")
     auth_config = fixture.directory / "auth.json"
     auth_config.write_text(json.dumps(dict(login_database=login, mysql_library=fixture.base["mysql_library"],
                                            bind_address="127.0.0.1", port=auth_port, realms_state_update_delay=1)))
@@ -185,6 +199,28 @@ def run(fixture, abrupt=False):
 
     deadline = wait_for("the guardian's respawn timer to reach MariaDB", guardian_respawn, 10)
 
+    def port(map_id, position):
+        return f"worldport:{map_id}:" + ":".join(map(str, position))
+
+    def check_sign(output):
+        # Prove the probe inspected the intended sign at the new coordinates.
+        text = re.sub(r"\|c[\da-fA-F]{8}|\|r", "", output)
+        rotation = re.search(r"Rotation X:([\d.]+)", text)
+        if ("Selected GameObject [ The Mystic Ward ] which is 0.000 meters" not in text
+                or rotation is None or not math.isclose(float(rotation[1]), math.pi / 2, abs_tol=0.001)):
+            raise RuntimeError("the sign was not at its saved position and rotation")
+
+    if abrupt:
+        edited = client("edit-cached-sign", 2, "MORTARSPAWN", f"login:{spawner}",
+                        port(0, SIGN_START), "cmd:.gobject select", port(0, SIGN_END),
+                        "cmd:.gobject move", "cmd:.gobject rotate x 90", "cmd:.gobject select",
+                        "cmd:.gobject info", port(0, (*target_at, 200)), "drop")
+        check_sign(edited)
+        position_x, position_y, position_z, rotation_x = map(float, fixture.query(
+            f"SELECT position_x,position_y,position_z,rotation0 FROM gameobject WHERE guid = {sign}", world).split())
+        if (position_x, position_y, position_z) != SIGN_END or not math.isclose(rotation_x, math.pi / 2, abs_tol=0.001):
+            raise RuntimeError("the worker did not save the sign's new placement")
+
     def ownership_taken():
         views = re.findall(r"this node owns \[([^]]*)\]", fixture.log("node1"))
         return views and worker.issubset(set(map(int, re.findall(r"\d+", views[-1]))))
@@ -221,6 +257,14 @@ def run(fixture, abrupt=False):
             event = f"[creature aura] {spawned[GOLEM]:#018x} {transition} {REBUILD_SPELL}"
             if arrived.count(event) != 1:
                 raise RuntimeError(f"expected the migrated creature's aura to be {transition} once")
+    if abrupt:
+        expected = f"[game object] {RECOVERY_SIGN} guid {sign}:"
+        if arrived.count(expected) != 1:
+            raise RuntimeError(f"expected one cached sign after takeover, got {arrived.count(expected)}")
+        recovered = client("recovered-cached-sign", 1, "MORTARSPAWN", f"login:{spawner}", port(0, SIGN_END),
+                           "cmd:.gobject select", "cmd:.gobject info", "drop")
+        check_sign(recovered)
+        print("PASS: the cached sign appeared once at its saved position and rotation after the crash", flush=True)
     print("PASS: cross-node effects reached the idle node, both nodes saved distinct spawns, "
           f"and the worker's saved spawns appeared once after {'failure' if abrupt else 'drain'}", flush=True)
 

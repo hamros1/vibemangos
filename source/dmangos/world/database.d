@@ -705,6 +705,9 @@ interface WorldDatabase
     /// Direct game-object spawn rows added above a node's initial world-data snapshot.
     GameObjectSpawn[] savedGameObjectSpawnsAfter(uint guid);
 
+    /// The saved transforms on a map, including rows whose entry comes from a spawn group.
+    GameObjectSpawn[] savedGameObjectSpawnsOnMap(uint map);
+
     /// A saved game object at its existing ID, including replays of queued writes.
     void insertGameObjectSpawn(const ref GameObjectSpawn spawn);
 
@@ -1175,6 +1178,14 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     {
         GameObjectSpawn[] spawns;
         foreach (ref row; world.query!(gameObjectSpawnQuery ~ " WHERE guid > ? AND id <> 0")(guid))
+            spawns ~= gameObjectSpawnFromRow(row);
+        return spawns;
+    }
+
+    GameObjectSpawn[] savedGameObjectSpawnsOnMap(uint map)
+    {
+        GameObjectSpawn[] spawns;
+        foreach (ref row; world.query!(gameObjectSpawnQuery ~ " WHERE map = ?")(map))
             spawns ~= gameObjectSpawnFromRow(row);
         return spawns;
     }
@@ -2312,6 +2323,14 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
         GameObjectSpawn[] spawns;
         foreach (id, ref row; gameObjectSpawnRows)
             if (id > guid && row.entry)
+                spawns ~= row;
+        return spawns;
+    }
+    GameObjectSpawn[] savedGameObjectSpawnsOnMap(uint map)
+    {
+        GameObjectSpawn[] spawns;
+        foreach (ref row; gameObjectSpawnRows)
+            if (row.map == map)
                 spawns ~= row;
         return spawns;
     }

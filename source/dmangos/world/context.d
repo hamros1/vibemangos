@@ -4625,6 +4625,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 else if (r.next)
                     leaving[r.id] = cast(ubyte[]) encodeBundle(null, timers);
             }
+        const editedSpawns = refreshSavedGameObjectPlacements(gained, arriving);
         refreshRegionRespawns(gained, arriving);
         // Every arrival first: a map that looks around for gained cells would otherwise spawn afresh what is
         // still on its way in another region's bundle.
@@ -4638,6 +4639,24 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 m.migrateIn(*objects, (const ref Migrant migrant) => restoreRegionMigrant(migrant, m, r));
                 info!"migration: region %s arrived with %s objects"(r.id, m.objectCount - m.replicaCount - before);
             }
+        foreach (index; editedSpawns)
+        {
+            const spawn = &data.gameObjectSpawns[index];
+            if (auto m = existingMap(spawn.map))
+            {
+                const guid = makeGuid(HighGuid.gameObject, spawn.entry, spawn.guid);
+                if (auto live = m.gameObjectAt(guid))
+                {
+                    if (live.spawn == *spawn)
+                        continue; // a clean bundle in the same batch already restored it
+                    m.removeObject(guid);
+                }
+                const home = cellKeyAt(spawn.x, spawn.y);
+                if (m.cellLoaded(home) && (ownsCell is null || ownsCell(spawn.map, home)))
+                    if (auto object = spawnWorldGameObject(*spawn))
+                        m.addObject(object);
+            }
+        }
         foreach (ref r; gained)
             if (r.creature.spawn)
                 creatureLoanGained(r, arriving.get(r.id, null));
@@ -4654,6 +4673,65 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private bool physicalWorldRegion(const ref Region region)
     {
         return !region.creature.spawn && client.maps.lookup(region.map) !is null && !instanceable(region.map);
+    }
+
+    /// With no live bundle, refresh previously known placements before loading the gained cells.
+    private size_t[] refreshSavedGameObjectPlacements(const(Region)[] gained, const(ubyte)[][uint] arriving)
+    {
+        import std.algorithm.searching : any;
+        import dmangos.cluster.regions : CellRect;
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
+
+        CellRect[][uint] coldCells;
+        foreach (ref region; gained)
+            if (physicalWorldRegion(region) && !arriving.get(region.id, null).length)
+                coldCells.require(region.map, null) ~= region.rect;
+        if (!coldCells.length)
+            return null;
+
+        indexSpawns();
+        size_t[] edited;
+        foreach (mapId, cells; coldCells)
+        {
+            bool contains(float x, float y)
+            {
+                const key = cellKeyAt(x, y);
+                return cells.any!(cell => cell.containsKey(key));
+            }
+            bool movedElevator;
+            try
+            {
+                foreach (saved; database.savedGameObjectSpawnsOnMap(mapId))
+                {
+                    const index = saved.guid in gameObjectSpawnIndex;
+                    if (index is null || saved.guid >= temporaryCounterStart
+                        || !client.isValidMapCoord(mapId, saved.x, saved.y, saved.z, saved.orientation))
+                        continue;
+                    const old = data.gameObjectSpawns[*index];
+                    if (old.map != mapId)
+                        continue;
+                    // Only the saved transform changes. A spawn group can supply the entry.
+                    saved.entry = old.entry;
+                    saved.respawnSeconds = old.respawnSeconds;
+                    if (saved == old || (!contains(old.x, old.y) && !contains(saved.x, saved.y)))
+                        continue;
+                    replaceGameObjectSpawn(*index, saved);
+                    edited ~= *index;
+                    if (const template_ = old.entry in data.gameObjectTemplates)
+                        movedElevator |= template_.type == GameObjectType.transport;
+                }
+            }
+            catch (DatabaseException error)
+                warning!"migration: could not refresh saved game-object placements on map %s: %s"(mapId, error.msg);
+            if (movedElevator)
+            {
+                longElevatorHomes.remove(mapId);
+                if (auto m = existingMap(mapId))
+                    m.elevatorHomes = elevatorHomesFor(mapId);
+            }
+        }
+        return edited;
     }
 
     private bool timerHome(Spawn)(const ref Region region, uint guid, const(Spawn)[] spawns, const(size_t[uint]) index,
@@ -4850,16 +4928,18 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             }
         if (auto cells = mapId in data.gameObjectCells)
             foreach (index; (*cells).get(cell, null))
-            {
-                const spawn = &data.gameObjectSpawns[index];
-                // Not spawned by default (`spawntimesecs` < 0: events, scripts and world PvP spawn it), or used up.
-                if ((spawn.respawnSeconds < 0 && !eventActivatesObject(spawn.guid)) || gameObjectAwaitingRespawn(spawn.guid)
-                        || !gameObjectInEvents(spawn.guid)
-                        || !upInPool(PoolMember.Kind.gameObject, spawn.guid))
-                    continue;
-                spawned ~= makeGameObject(*spawn);
-            }
+                if (auto object = spawnWorldGameObject(data.gameObjectSpawns[index]))
+                    spawned ~= object;
         return spawned;
+    }
+
+    private GameObject spawnWorldGameObject(const ref GameObjectSpawn spawn)
+    {
+        // Negative respawn times reserve the spawn for an event, a script or world PvP.
+        if ((spawn.respawnSeconds < 0 && !eventActivatesObject(spawn.guid)) || gameObjectAwaitingRespawn(spawn.guid)
+            || !gameObjectInEvents(spawn.guid) || !upInPool(PoolMember.Kind.gameObject, spawn.guid))
+            return null;
+        return makeGameObject(spawn);
     }
 
     /**
@@ -8571,6 +8651,58 @@ unittest
     assert(destination.gameObjectAt(old.guid) is null, "there is no spawn at the old position after reloading the cell");
     destination.loadCell(newHome);
     assert(destination.gameObjectAt(old.guid).spawn == changed);
+}
+
+// A crash leaves no bundle, even when a saved object moved across cells after both nodes started.
+unittest
+{
+    import dmangos.cluster.regions : CellRect;
+    import dmangos.world.gameobject : GameObjectTemplate;
+    import dmangos.world.grid : cellCoordinate;
+    import dmangos.world.testclient : newCreationContext, newDatabase;
+
+    auto db = newDatabase();
+    const door = GameObjectTemplate(entry: 9012, type: GameObjectType.door);
+    const original = GameObjectSpawn(guid: 9_000_020, entry: door.entry, x: -8930, y: -120, z: 83.5f);
+    GameObjectSpawn row = original;
+    row.entry = 0; // the world loader picked this entry through a spawn group
+    db.insertGameObjectSpawn(row);
+    auto from = newCreationContext(db), to = newCreationContext(db);
+    foreach (world; [from, to])
+    {
+        world.data.gameObjectTemplates[door.entry] = door;
+        world.registerGameObjectSpawn(original);
+    }
+    const guid = makeGuid(HighGuid.gameObject, door.entry, original.guid);
+    const oldHome = cellKeyAt(original.x, original.y);
+    auto oldMap = from.map(0);
+    oldMap.loadCell(oldHome);
+    GameObjectSpawn changed = original;
+    changed.x += 80;
+    changed.orientation = 1.5f;
+    changed.rotation = [0, 0, 0.68f, 0.73f];
+    const newHome = cellKeyAt(changed.x, changed.y);
+    assert(from.respawnGameObjectAs(oldMap, oldMap.gameObjectAt(guid), changed) !is null);
+
+    // The replacement gets the new cell first. Its copy of the row still points into the old cell.
+    auto replacement = to.map(0);
+    bool ownsOld;
+    to.ownsCell = (uint, ulong cell) => cell == newHome || (ownsOld && cell == oldHome);
+    const x = cellCoordinate(changed.x), y = cellCoordinate(changed.y);
+    const gained = Region(1, 0, CellRect(x, y, x + 1, y + 1), 2, 2, RegionState.granted);
+    ubyte[][uint] leaving;
+    to.regionsChanged([gained], null, null, leaving);
+    replacement.loadCell(newHome);
+    auto recovered = replacement.gameObjectAt(guid);
+    assert(recovered !is null && recovered.spawn == changed && recovered.position.x == changed.x);
+
+    // Loading the former cell cannot put the object back there.
+    ownsOld = true;
+    replacement.loadCell(oldHome);
+    size_t copies;
+    replacement.forEachObject((MapObject object) { if (object.guid == guid) ++copies; });
+    assert(copies == 1 && replacement.gameObjectAt(guid) is recovered);
+    assert(to.data.gameObjectCells[0][oldHome].length == 0 && to.data.gameObjectCells[0][newHome].length == 1);
 }
 
 // Absent spawns resume their original timers after either a clean transfer or a lost owner.

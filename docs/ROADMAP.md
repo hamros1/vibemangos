@@ -3,7 +3,7 @@
 ## Open work
 
 - **Clustering.** Route the remaining script-selected channels and spell scripts that need actions on
-  more than one node. Refresh saved game-object edits during [crash takeover](CLUSTER.md#objects-moving-with-their-region).
+  more than one node.
   See
   [spell routing limits](CLUSTER.md#spell-routing-limits) and the
   [cross-node feature list](CLUSTER.md#what-crosses-nodes-feature-by-feature).

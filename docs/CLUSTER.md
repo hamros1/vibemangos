@@ -362,11 +362,11 @@ move or rotation also updates the receiving node's spawn and cell index when the
 
 * **The same spawns everywhere.** Pools, spawn groups and spawn entries are chosen with a seed made
   from the cluster's name and the realm, so every node agrees on which creature a spawn is.
-* **After a node is lost**, the new owner loads saved respawn deadlines and discovers saved
-  spawns added since startup. Placement for existing saved game objects edited after startup can
-  still come from the receiving node's cache. Clean moves carry the live placement and the running
-  deadlines for creatures and game objects that are currently absent. Only the node owning a
-  spawn's home cell clears its due respawn timer.
+* **After a node is lost**, the new owner loads saved respawn deadlines, discovers spawns added
+  since startup and refreshes saved game-object positions and rotations for gained outdoor regions.
+  A move across cell boundaries updates both cell entries before the new owner loads them. Clean
+  moves carry the live placement and the running deadlines for creatures and game objects that are
+  currently absent. Only the node owning a spawn's home cell clears its due respawn timer.
 * **Scripted summons** keep their GUID, placement, state and remaining lifetime during a clean
   handoff. A worker crash loses any summons it was simulating. Pets, guardians and totems still
   follow their owner's lifecycle. Cluster nodes reserve temporary GUID ranges in the character
