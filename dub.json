@@ -3,6 +3,8 @@
 	"description": "A World of Warcraft 1.12 (vanilla) server written in D.",
 	"license": "AGPL-3.0-or-later",
 	"targetPath": "bin",
+	"sourcePaths": ["source/dmangos/auth"],
+	"importPaths": ["source"],
 	"preBuildCommands": [
 		"make -s -C $PACKAGE_DIR/thirdparty"
 	],
@@ -26,17 +28,14 @@
 			"targetType": "executable",
 			"targetName": "authserver",
 			"mainSourceFile": "source/dmangos/auth/main.d",
-			"excludedSourceFiles": [
-				"source/dmangos/extractor/main.d",
-				"source/dmangos/loadgen/main.d",
-				"source/dmangos/world/main.d"
-			]
+			"dflags": ["-i=dmangos"]
 		},
 		{
 			"name": "worldserver",
 			"targetType": "executable",
 			"targetName": "worldserver",
 			"mainSourceFile": "source/dmangos/world/main.d",
+			"sourcePaths": ["source"],
 			"excludedSourceFiles": [
 				"source/dmangos/auth/main.d",
 				"source/dmangos/extractor/main.d",
@@ -48,19 +47,26 @@
 			"targetType": "executable",
 			"targetName": "extractor",
 			"mainSourceFile": "source/dmangos/extractor/main.d",
-			"excludedSourceFiles": [
-				"source/dmangos/auth/main.d",
-				"source/dmangos/loadgen/main.d",
-				"source/dmangos/world/main.d"
-			]
+			"sourcePaths": ["source/dmangos/extractor"],
+			"dflags": ["-i=dmangos"],
+			"excludedSourceFiles": ["source/dmangos/auth/main.d"]
 		},
 		{
 			"name": "loadgen",
 			"targetType": "executable",
 			"targetName": "loadgen",
 			"mainSourceFile": "source/dmangos/loadgen/main.d",
+			"sourcePaths": ["source/dmangos/loadgen"],
+			"dflags": ["-i=dmangos"],
+			"excludedSourceFiles": ["source/dmangos/auth/main.d"]
+		},
+		{
+			"name": "unittest",
+			"targetType": "library",
+			"sourcePaths": ["source"],
 			"excludedSourceFiles": [
 				"source/dmangos/auth/main.d",
+				"source/dmangos/loadgen/main.d",
 				"source/dmangos/world/main.d",
 				"source/dmangos/extractor/main.d"
 			]

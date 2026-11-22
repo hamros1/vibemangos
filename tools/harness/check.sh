@@ -9,6 +9,7 @@
 . "$(dirname "$0")/common.sh"
 cd "$REPO" || exit 1
 mkdir -p "$H/unittest"
+make -s -C thirdparty || { echo "FAIL: the native navigation library did not build"; exit 1; }
 echo "== unit tests"
 rm -f "$H/unittest/test"
 # Each module compiled on its own, all at once (-allinst: each emits the template instances it uses, which
@@ -30,28 +31,17 @@ grep "modules passed unittests" "$H/unittest/run.log"
 echo "== names defined twice in Character"
 python3 "$REPO/tools/harness/mixin-names.py" || { echo "FAIL: a name is defined twice in Character"; exit 1; }
 echo "== release builds"
-# `release-fast` (dub.json): optimized without -inline, which made DMD take ten minutes on context.d alone; the
-# three at once. About 13% slower at run time (docs/BENCHMARKS.md): build `-b release` to measure speed.
-# With CHECK_JOBS under 8 (other builds on the machine) one after another: three at once beside them ran out of
-# memory (dmd killed, exit -9).
-pids=""
+# `release-fast` optimizes without -inline. The world server is the only large build.
+# Build in sequence so a low-memory machine need only run one compiler here.
 failed=0
 for c in worldserver authserver loadgen; do
-    if [ "${CHECK_JOBS:-32}" -lt 8 ]; then
-        dub build -q -c $c -b release-fast > "$H/unittest/dub-$c.log" 2>&1 || failed=1
-    else
-        dub build -q -c $c -b release-fast > "$H/unittest/dub-$c.log" 2>&1 &
-        pids="$pids $!"
-    fi
+    dub build -q -c "$c" -b release-fast > "$H/unittest/dub-$c.log" 2>&1 || failed=1
 done
-# Each waited for by its pid: `$(jobs -p)` runs in a subshell, which has no jobs, so it waited for none and the
-# regression started while dub was still writing bin/worldserver ("not found").
-for pid in $pids; do wait "$pid" || failed=1; done
 if [ $failed = 1 ]; then
     for c in worldserver authserver loadgen; do grep -m 10 -E "Error|error" "$H/unittest/dub-$c.log"; done
     echo "FAIL: a release build failed"; exit 1
 fi
-# The three wrote into bin/ at once: each must be there, whole and runnable, before anything starts it.
+# Each output must exist and be runnable before the regression starts.
 for c in worldserver authserver loadgen; do
     [ -s "bin/$c" ] || { echo "FAIL: bin/$c is missing after its build"; exit 1; }
     chmod +x "bin/$c"

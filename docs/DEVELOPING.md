@@ -16,6 +16,9 @@ Detour (recastnavigation 1.6.0, vendored there) and the C interface to them
 (`thirdparty/dmnav/dmnav.cpp`) into `thirdparty/build/libdmnav.a`. A plain `dmd` build of the tests
 links it with `thirdparty/build/libdmnav.a -L-lstdc++`.
 
+The login server, extractor and load generator compile the D modules they import. The world server
+and `dub test` include the full source tree.
+
 To check movement maps by hand, `tools/navpath.d` loads a map's tiles and prints the way between two
 points (how to build it is in its header):
 
@@ -276,9 +279,8 @@ the databases (so load tests never touch a dev server's characters):
 tools/harness/setup.sh SOURCE_DATADIR   # once: copies a stopped MariaDB data directory, writes configs
 tools/harness/check.sh                  # unit tests, release builds, then the cluster regression
 tools/harness/check.sh --quick          # without the regression: unit tests (each module compiled on its
-                                        # own, in parallel, then linked: seconds), then the three release
-                                        # builds at once with `-b release-fast` (no -inline: about 80 s;
-                                        # 13% slower at run time, so benchmark with `dub build -b release`)
+                                        # own, in parallel, then linked), then the three release builds
+                                        # with `-b release-fast`. Use `dub build -b release` for benchmarks.
 tools/harness/regression.sh             # two nodes, 250 bots in a crowd while regions split and merge
 python3 tools/harness/quorum.py         # three voters and a gateway, with clients connected during failover
 python3 tools/harness/realms.py         # two clusters share a realm list and keep sessions separate
