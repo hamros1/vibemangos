@@ -64,6 +64,8 @@ in the D tests.
 Example, against the realm on the local login server's default port:
 
     python3 tools/testclient.py 3724 tester PASSWORD create:Probe:1:1 login:Probe query logout delete:Probe
+
+Set REALM to a realm name to select it from the login server's list.
 """
 import hashlib, os, socket, struct, sys, zlib
 H = lambda *p: hashlib.sha1(b"".join(p)).digest()
@@ -99,14 +101,26 @@ r = recv(s, 2); assert r[1] == 0, f"login rejected {r[1]}"
 r += recv(s, 24); assert r[2:22] == H(A, M1, K)
 s.sendall(bytes([0x10, 0, 0, 0, 0]))
 hdr = recv(s, 3); rl = recv(s, struct.unpack("<H", hdr[1:3])[0])
-name, addr, _ = rl[10:].split(b"\0", 2); flags = rl[9]
-#print(f"login OK; realm '{name.decode()}' at {addr.decode()} flags=0x{flags:02x}")
+assert hdr[0] == 0x10 and len(rl) >= 7, "invalid realm list"
+realms, pos = [], 5
+for _ in range(rl[4]):
+    flags = rl[pos + 4]
+    name_end = rl.index(b"\0", pos + 5)
+    addr_end = rl.index(b"\0", name_end + 1)
+    realms.append((rl[pos + 5:name_end].decode(), rl[name_end + 1:addr_end].decode(), flags))
+    pos = addr_end + 8  # address terminator, population float, three single-byte fields
+assert pos + 2 == len(rl), "realm list length does not match its entries"
 s.close()
+selected = os.environ.get("REALM")
+realm = next((entry for entry in realms if selected is None or entry[0] == selected), None)
+if realm is None:
+    sys.exit(f"realm {selected!r} was not listed; available: {', '.join(entry[0] for entry in realms)}")
+name, addr, flags = realm
 if flags & 0x02: print("realm is OFFLINE"); sys.exit(3)
 
 # ---- world server ----
 # WORLD=host:port picks the world server instead of the realm list (a given node of a cluster).
-host, port = os.environ.get("WORLD", addr.decode()).rsplit(":", 1)
+host, port = os.environ.get("WORLD", addr).rsplit(":", 1)
 w = socket.create_connection((host, int(port)), timeout=5)
 class Cipher:
     def __init__(self): self.i = 0; self.j = 0

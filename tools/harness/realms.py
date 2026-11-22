@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 """Run two clusters on one realm list and exercise shared login state."""
 
-from cluster_fixture import available_ports, run_test, wait_for
+import json
+import os
+import subprocess
+import sys
+
+from cluster_fixture import AUTH, REPO, available_ports, run_test, wait_for
 
 
 def run(fixture):
@@ -11,7 +16,7 @@ def run(fixture):
     fixture.query("INSERT INTO realmlist (id, name, address, port, icon, realmflags, timezone) "
                   "VALUES (2, 'Second realm', '127.0.0.1', 0, 1, 2, 1)", login)
 
-    ports = available_ports(10)
+    ports = available_ports(11)
     configs = {}
     for realm, start in ((1, 0), (2, 4)):
         for node in (1, 2):
@@ -70,7 +75,30 @@ def run(fixture):
         expected = "2" if realm == 1 else "0"
         wait_for(f"the active realm to be {expected} after logout", lambda: active_realm() == expected, 10)
 
-    print("PASS: both realms published and hosted their own characters, and a cross-realm link was rejected", flush=True)
+    # Authenticate and enter both advertised realms using the same account through the real login protocol.
+    auth_port = ports[10]
+    auth_path = fixture.directory / "auth.json"
+    auth_path.write_text(json.dumps(dict(login_database=login, mysql_library=fixture.base["mysql_library"],
+                                         bind_address="127.0.0.1", port=auth_port, realms_state_update_delay=1)))
+    auth = [AUTH, "-c", auth_path]
+    account, password = "REALMPROBE", "LOCALREALMTEST"
+    subprocess.run([*auth, "account", "create", account, password], cwd=fixture.directory, check=True, timeout=10)
+    fixture.start("auth", auth)
+    wait_for("authserver to listen", lambda: "listening on" in fixture.log("auth"), 10)
+    for realm, realm_name, character in ((1, "dmangos", "Netfirst"), (2, "Second realm", "Netsecond")):
+        env = dict(os.environ, REALM=realm_name)
+        env.pop("WORLD", None)
+        probe = subprocess.run([sys.executable, REPO / "tools/testclient.py", str(auth_port), account, password,
+                                f"create:{character}:1:1", f"login:{character}", "drop"],
+                               env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=20)
+        (fixture.directory / f"srp-realm{realm}.log").write_text(probe.stdout)
+        if probe.returncode or f"create {character}: 0x2e (success)" not in probe.stdout or "verify world:" not in probe.stdout:
+            raise RuntimeError(f"the login client could not enter {realm_name}")
+        found = fixture.query(f"SELECT name FROM characters WHERE name = '{character}'", characters[realm])
+        if found != character:
+            raise RuntimeError(f"{realm_name}'s advertised endpoint did not lead to its character database")
+
+    print("PASS: both realms hosted their own characters through SRP login, and a cross-realm link was rejected", flush=True)
 
 
 if __name__ == "__main__":

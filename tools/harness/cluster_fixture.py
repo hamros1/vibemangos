@@ -15,6 +15,7 @@ REPO = HERE.parent.parent
 HARNESS = Path(os.environ.get("DMANGOS_HARNESS", Path.home() / ".cache/dmangos-harness")).resolve()
 MARIADB = Path(os.environ.get("MARIADB_ROOT", Path.home() / "dmangos-server/mariadb")) / "usr/bin/mariadb"
 WORLD = Path(os.environ.get("WORLDSERVER", REPO / "bin/worldserver")).resolve()
+AUTH = Path(os.environ.get("AUTHSERVER", REPO / "bin/authserver")).resolve()
 LOADGEN = Path(os.environ.get("LOADGEN", REPO / "bin/loadgen")).resolve()
 
 
