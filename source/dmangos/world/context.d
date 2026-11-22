@@ -676,6 +676,38 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return effect;
     }
 
+    package size_t namedGameObjectRouting(const(SpellInfo)* spell)
+    {
+        import dmangos.world.spellselection : namedGameObjectEffect;
+
+        if (spellScript(spell.id) || !data.spellScriptObjects.get(spell.id, null).length)
+            return size_t.max;
+        return namedGameObjectEffect(*spell);
+    }
+
+    package ulong namedGameObjectTarget(Map map_, const(SpellInfo)* spell, size_t effect, Position origin)
+    {
+        import dmangos.world.spellselection : namedCreatureRange, nearestNamedGameObject;
+
+        const range = namedCreatureRange(*spell, client);
+        const entries = data.spellScriptObjects.get(spell.id, null);
+        auto object = nearestNamedGameObject(map_, origin, range, effect, entries, false);
+        return object is null ? 0 : object.guid;
+    }
+
+    package void activateNamedGameObject(Map map_, const(SpellInfo)* spell, size_t effect, ulong guid)
+    {
+        import dmangos.world.gameobject : gameObjectAnimation;
+        import dmangos.world.spellselection : namedGameObjectEntry;
+
+        if (effect != namedGameObjectRouting(spell))
+            return;
+        auto object = map_.gameObjectAt(guid);
+        if (object !is null && namedGameObjectEntry(data.spellScriptObjects.get(spell.id, null), effect, object.spawn.entry))
+            map_.sendToObservers(guid, Opcode.SMSG_GAMEOBJECT_CUSTOM_ANIM, gameObjectAnimation(guid,
+                cast(uint)(spell.miscValue[effect] - 1)));
+    }
+
     private struct ReplicaSpellImpact
     {
         MonoTime due;
@@ -5632,13 +5664,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
         void hostCustomAnim()
         {
-            import dmangos.bytes : ByteWriter;
+            import dmangos.world.gameobject : gameObjectAnimation;
             import dmangos.world.opcodes : Opcode;
 
-            ByteWriter w;
-            w.put(go.guid);
-            w.put(0u);
-            map.sendToObservers(go.guid, Opcode.SMSG_GAMEOBJECT_CUSTOM_ANIM, w.data);
+            map.sendToObservers(go.guid, Opcode.SMSG_GAMEOBJECT_CUSTOM_ANIM, gameObjectAnimation(go.guid, 0));
         }
 
         void hostPlaySound(uint sound, bool music)

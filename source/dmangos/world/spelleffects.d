@@ -55,7 +55,7 @@ private enum SpellEffect[] notDoneByAny = [SpellEffect.portalTeleport, SpellEffe
     SpellEffect.skillStep, SpellEffect.addHonor, SpellEffect.tradeSkill, SpellEffect.stealth,
     SpellEffect.forceCriticalHit, SpellEffect.guaranteeHit, SpellEffect.proficiency, SpellEffect.healthFunnel,
     SpellEffect.powerFunnel, SpellEffect.pull, SpellEffect.healMechanical, SpellEffect.createHouse,
-    SpellEffect.bindSight, SpellEffect.activateObject, SpellEffect.threatAll, SpellEffect.enchantHeldItem,
+    SpellEffect.bindSight, SpellEffect.threatAll, SpellEffect.enchantHeldItem,
     SpellEffect.summonPhantasm, SpellEffect.inebriate, SpellEffect.destroyAllTotems, SpellEffect.summonDemon,
     SpellEffect.spiritHeal, SpellEffect.skill, SpellEffect.teleportGraveyard, SpellEffect.n122, SpellEffect.sendTaxi,
     SpellEffect.pullTowards, SpellEffect.modifyThreatPercent, SpellEffect.n126, SpellEffect.n127,
@@ -93,8 +93,13 @@ private enum SpellEffect[] creaturesDo = [SpellEffect.none, SpellEffect.schoolDa
     SpellEffect.summonTotemSlot2, SpellEffect.summonTotemSlot3, SpellEffect.summonTotemSlot4];
 
 /// Whether a cast of `kind` does `effect` (the NPC sweep names what is not done by this).
-bool doneBy(UnitKind kind, SpellEffect effect) pure nothrow @nogc @safe
+bool doneBy(UnitKind kind, const ref SpellInfo spell, size_t i) pure nothrow @nogc @safe
 {
+    import dmangos.world.spellselection : namedGameObjectEffect;
+
+    const effect = spell.effect[i];
+    if (effect == SpellEffect.activateObject)
+        return kind != UnitKind.none && namedGameObjectEffect(spell) == i;
     if (effect > SpellEffect.max || undoneByAny[effect])
         return false;
     final switch (kind)
@@ -141,7 +146,7 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
     import dmangos.world.updatefields;
 
     const effect = spell.effect[i];
-    if (!doneBy(caster.kind, effect) && effect != SpellEffect.none)
+    if (!doneBy(caster.kind, *spell, i) && effect != SpellEffect.none)
         return notDone(caster, spell, i);
     auto map = caster.map;
     auto context = caster.context;
@@ -182,6 +187,10 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
             SpellDamage(true, SpellModOp.damage, bounce: SpellBounce(spell.casting.dmgMultiplier[i], bounce)));
         break;
     }
+    case SpellEffect.activateObject:
+        if (context !is null && map !is null)
+            context.activateNamedGameObject(map, spell, i, target);
+        break;
     case SpellEffect.dummy, SpellEffect.scriptEffect: // SPELL_EFFECT_DUMMY, SPELL_EFFECT_SCRIPT_EFFECT: the spell's script, then its database script
     {
         import dmangos.world.dbscripts : DbScriptType;

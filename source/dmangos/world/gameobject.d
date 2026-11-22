@@ -56,6 +56,15 @@ enum GameObjectType : uint
     flagDrop = 26,      /// a battleground's flag on the ground
 }
 
+/// The packet used by spells, scripts and fishing to play a game object's custom animation.
+package const(ubyte)[] gameObjectAnimation(ulong guid, uint slot)
+{
+    ByteWriter writer;
+    writer.put(guid);
+    writer.put(slot);
+    return writer.release();
+}
+
 /// The loot state of a game object: where it is in being used and coming back.
 enum GoLootState : ubyte
 {

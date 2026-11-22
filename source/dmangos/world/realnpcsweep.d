@@ -301,12 +301,12 @@ private uint[][string] scriptSpells(const WorldData data)
 // What a creature's cast does not do yet (`dmangos.world.spelleffects.doneBy`), to name a failure's cause
 // ---------------------------------------------------------------------------------------------------------------
 
-private bool notDoneByCreatures(SpellEffect e)
+private bool notDoneByCreatures(const ref SpellInfo spell, size_t effect)
 {
     import dmangos.world.spelleffects : doneBy;
     import dmangos.world.unit : UnitKind;
 
-    return !doneBy(UnitKind.creature, e);
+    return !doneBy(UnitKind.creature, spell, effect);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -790,11 +790,12 @@ private final class NpcSweeper
             with (SpellEffect)
                 checkedAny |= checked && (cast(bool) unit || summonsCreature(effect) || summonsObject(effect)
                     || effect.among(charge, leap, persistentAreaAura) != 0);
-            if (failed.length || (!checked && notDoneByCreatures(effect)))
+            const unsupported = notDoneByCreatures(*s, i);
+            if (failed.length || (!checked && unsupported))
             {
                 import std.algorithm.searching : startsWith;
 
-                if (notDoneByCreatures(effect))
+                if (unsupported)
                     problems ~= format!"not done: %s (effect %s%s)"(effect, i, failed.length ? ": " ~ failed : "");
                 else if (failed.startsWith("aura ") || failed.startsWith("targeting: "))
                     problems ~= format!"%s (effect %s)"(failed, i);

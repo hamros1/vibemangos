@@ -1,18 +1,75 @@
-/// Select the living creatures named by spell_script_target.
+/// Select the creatures and game objects named by spell_script_target.
 module dmangos.world.spellselection;
 
 import std.algorithm.comparison : max;
 import std.algorithm.searching : canFind;
 import dmangos.world.clientdata : ClientData;
 import dmangos.world.creatureai : CombatWorld;
-import dmangos.world.map : Map;
+import dmangos.world.map : Map, MapObject;
 import dmangos.world.movement : Position;
 import dmangos.world.spellcast : radius, range, SpellTargets, TargetFlags;
 import dmangos.world.spelldamage : namedCreatureShape;
-import dmangos.world.spellids : ImplicitTarget;
+import dmangos.world.spellids : ImplicitTarget, SpellEffect;
 import dmangos.world.spells : SpellInfo;
 import dmangos.world.unit : UnitRef;
-import dmangos.world.worlddata : SpellTarget, WorldData;
+import dmangos.world.worlddata : SpellScriptObject, SpellTarget, WorldData;
+
+/// Activate-object animation slots 0 through 3 are encoded as actions 1 through 4.
+private enum uint firstObjectAnimation = 1, lastObjectAnimation = 4;
+
+package size_t namedGameObjectEffect(const ref SpellInfo spell) pure nothrow @nogc @safe
+{
+    enum uint channels = 0x04 | 0x40;
+    if (spell.casting.speed > 0 || (spell.attributesEx & channels))
+        return size_t.max;
+    size_t chosen = size_t.max;
+    foreach (i, effect; spell.effect)
+    {
+        if (effect == SpellEffect.none)
+            continue;
+        if (chosen != size_t.max || effect != SpellEffect.activateObject
+            || spell.implicitTargetA[i] != ImplicitTarget.gameobjectScriptNearCaster
+            || spell.casting.implicitTargetB[i] != ImplicitTarget.none
+            || spell.miscValue[i] < firstObjectAnimation || spell.miscValue[i] > lastObjectAnimation)
+            return size_t.max;
+        chosen = i;
+    }
+    return chosen;
+}
+
+package bool namedGameObjectEntry(const(SpellScriptObject)[] entries, size_t effect, uint entry)
+{
+    foreach (ref row; entries)
+        if (row.entry == entry && !(row.inverseEffectMask & (1U << effect)))
+            return true;
+    return false;
+}
+
+package MapObject nearestNamedGameObject(Map map, Position center, float reach, size_t effect,
+    const(SpellScriptObject)[] entries, bool acrossNodes)
+{
+    import std.math : isFinite;
+    import dmangos.world.replication : Replica;
+    import dmangos.world.updatefields : OBJECT_FIELD_ENTRY, TypeId;
+
+    MapObject nearest;
+    if (!entries.length || !isFinite(reach) || reach <= 0)
+        return nearest;
+    float best = reach ^^ 2;
+    foreach (object; map.objectsNear(center, reach))
+    {
+        if (object.fields.type != TypeId.gameObject || (!acrossNodes && (cast(Replica) object) !is null)
+            || !namedGameObjectEntry(entries, effect, object.fields.get!OBJECT_FIELD_ENTRY))
+            continue;
+        const squared = distanceSquared(center, object.position);
+        if (squared < best || (squared == best && (nearest is null || object.guid < nearest.guid)))
+        {
+            best = squared;
+            nearest = object;
+        }
+    }
+    return nearest;
+}
 
 package float namedCreatureRange(const ref SpellInfo spell, const ClientData client)
 {
@@ -144,6 +201,68 @@ private void visitNamedCreatures(CombatWorld world, Position center, float reach
                 if (auto copy = cast(Replica) object)
                     if (copy.fields.type == TypeId.unit)
                         consider(UnitRef.observed(copy, map), copy.fields.get!OBJECT_FIELD_ENTRY);
+}
+
+/// Players and creatures cast a recorded animation on the nearest eligible game object.
+unittest
+{
+    import dmangos.bytes : ByteReader, ByteWriter;
+    import dmangos.world.creature : CreatureSpawn;
+    import dmangos.world.gameobject : GameObject, GameObjectSpawn, GameObjectTemplate, GameObjectType;
+    import dmangos.world.eventai : castTriggered;
+    import dmangos.world.player : Player;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.testclient;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto map = context.map(0);
+    const origin = Position(100, 100, 40);
+    enum uint animation = 55075, eligible = 90001, excluded = 90002;
+    auto spell = testSpell(animation, SpellEffect.activateObject, ImplicitTarget.gameobjectScriptNearCaster, 0);
+    spell.miscValue[0] = 3; // custom animation slot 2
+    context.data.spells.spells[animation] = spell;
+    context.data.spellScriptObjects[animation] = [SpellScriptObject(eligible, 0), SpellScriptObject(excluded, 1)];
+    foreach (entry; [eligible, excluded])
+        context.data.gameObjectTemplates[entry] = GameObjectTemplate(entry: entry, type: GameObjectType.door);
+    GameObject spawn(uint guid, uint entry, float x)
+    {
+        const row = GameObjectSpawn(guid: guid, entry: entry, x: x, y: origin.y, z: origin.z);
+        auto object = context.makeGameObject(row);
+        map.addObject(object);
+        return object;
+    }
+    spawn(9, eligible, 102);
+    const chosen = spawn(8, eligible, 98);
+    spawn(7, excluded, 101);
+
+    auto client = loggedIn(context, db, 7, "Anduin", origin);
+    auto player = cast(Player) client.session.character;
+    player.spells ~= animation;
+    ByteWriter packet;
+    packet.put(animation);
+    SpellTargets(TargetFlags.self, 0).write(packet);
+    client.write(Opcode.CMSG_CAST_SPELL, packet.data);
+    void checkAnimation()
+    {
+        uint played;
+        foreach (message; client.read())
+            if (message.opcode == Opcode.SMSG_GAMEOBJECT_CUSTOM_ANIM)
+            {
+                auto reader = ByteReader(message.body_);
+                assert(reader.read!ulong == chosen.guid && reader.read!uint == 2 && reader.empty);
+                ++played;
+            }
+        assert(played == 1, "one animation on the eligible object with the lower GUID");
+    }
+    checkAnimation();
+
+    const row = CreatureSpawn(91021, creatureTrainer, 0, origin.x, origin.y, origin.z);
+    auto npc = context.makeCreature(&row);
+    map.addObject(npc);
+    assert(npc.ai.spellCaster(map));
+    assert(npc.ai.castSpell(context.data.spells.spell(animation), npc.guid, castTriggered));
+    checkAnimation();
 }
 
 /// A player and an NPC choose a nearby named replica, with the effects applied only by its owner.

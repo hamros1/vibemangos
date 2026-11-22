@@ -220,12 +220,19 @@ struct SpellTarget
     Position at;
 }
 
-/// A `spell_script_target` row (Instance round 2): a creature (`type` 1) the spell's script target means.
+/// A `spell_script_target` row, including the effects excluded for this entry.
 private struct SpellScriptTargetRow
 {
     uint entry;
     ubyte type;
     uint targetEntry;
+    uint inverseEffectMask;
+}
+
+struct SpellScriptObject
+{
+    uint entry;
+    uint inverseEffectMask;
 }
 
 /// A `spell_target_position` row.
@@ -423,6 +430,7 @@ final class WorldData
     /// Instance round 2: `spell_script_target` (type 1, living creatures): the creatures of these entries a spell's
     /// `TARGET_UNIT_SCRIPT_NEAR_CASTER` means, by spell.
     uint[][uint] spellScriptTargets;
+    SpellScriptObject[][uint] spellScriptObjects; /// named game objects and their excluded effects, by spell
     bool[uint] taverns;                     /// `areatrigger_tavern`: the inns' area triggers
 
     StaticMap!(uint, CreatureTemplate) creatureTemplates;       /// by entry
@@ -1157,6 +1165,8 @@ final class WorldData
         foreach (row; world.select!(SpellScriptTargetRow, "FROM spell_script_target"))
             if (row.type == 1)
                 spellScriptTargets[row.entry] ~= row.targetEntry;
+            else if (row.type == 0)
+                spellScriptObjects[row.entry] ~= SpellScriptObject(row.targetEntry, row.inverseEffectMask);
     }
 
     private void loadSpellCones(MySqlConnection world)

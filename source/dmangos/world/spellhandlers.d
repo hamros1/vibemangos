@@ -1092,10 +1092,9 @@ private:
         {
             go.values.set!GAMEOBJECT_STATE(0u); // GO_STATE_ACTIVE
             map.flushGameObject(go);
-            ByteWriter w;
-            w.put(go.guid);
-            w.put(0u);
-            map.sendToObservers(go.guid, Opcode.SMSG_GAMEOBJECT_CUSTOM_ANIM, w.data);
+            import dmangos.world.gameobject : gameObjectAnimation;
+
+            map.sendToObservers(go.guid, Opcode.SMSG_GAMEOBJECT_CUSTOM_ANIM, gameObjectAnimation(go.guid, 0));
         }
         if (!bobberLooted && bobberAge >= bobberGone)
         {
@@ -1968,6 +1967,7 @@ private:
 
         const entries = context.spellScriptTargets(spell.id);
         const namedEffect = context.namedCreatureRouting(spell);
+        const namedObjectEffect = context.namedGameObjectRouting(spell);
         const namedShape = namedEffect != size_t.max ? namedCreatureShape(*spell, namedEffect) : ImplicitTarget.none;
         const namedRange = namedEffect != size_t.max ? namedCreatureRadius(*spell, namedEffect, context.client) : 0;
         const routeNamed = context.sendAreaDamage !is null;
@@ -2091,6 +2091,11 @@ private:
                 if (!c.targets.gameObject && !(a == ImplicitTarget.gameObjectItem && c.targets.item))
                     continue;
                 targets = [c.targets.gameObject ? c.targets.gameObject : player.guid]; // an item: the caster's own
+            }
+            else if (i == namedObjectEffect)
+            {
+                if (const guid = context.namedGameObjectTarget(map, spell, i, player.position))
+                    targets = [guid];
             }
             else if (namedShape != ImplicitTarget.none && namedCreatureShape(*spell, i) == namedShape)
             {

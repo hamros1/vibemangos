@@ -139,6 +139,9 @@ three times each on a machine with no compiler running) is the same before and a
 after; 113 to 114 KB allocated a tick both. The crowd casts few spells: the abstraction's cost there is
 `Caster` values made per effect and per hit, with no allocation of their own.
 
-Not done by a creature's cast yet (`doneBy`): activating game objects, teleports facing the caster,
-leaps, taxis, inebriation, pulls, and the effects only a player's spellbook, inventory or client make sense
-for (duels, taming, pickpocketing, enchanting, far sight...).
+Players and creatures can play a custom animation on the nearest game object named in
+`spell_script_target`. The selector honors the row's effect mask. This covers animation
+slots 0–3 for single-effect spells. Other activate-object actions remain open.
+
+Remaining creature effects include teleports facing the caster, leaps, taxis, inebriation,
+pulls and effects that require a player's spellbook, inventory or client.

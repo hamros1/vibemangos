@@ -52,7 +52,6 @@
 18163: Strength of Arko'narin: no caster: no creature casts it in the data
 18167: Holy Fire: no caster: no creature casts it in the data
 18431: Bellowing Roar: not done: activateObject (effect 1)
-18655: Mortar Animate: not done: activateObject (effect 0)
 19272: Lava Breath: schoolDamage: no damage to the player (effect 0)
 19873: Destroy Egg: not done: activateObject (effect 0)
 20220: Gnomish Engineering: no caster: no creature casts it in the data

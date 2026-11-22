@@ -247,9 +247,11 @@ mixin template CreatureCasting()
             return refuse(SpellCastResult.badTargets);
         const namedEffect = selectableNamedCreatureEffect(spell);
         auto context = cast(WorldContext) lore;
-        if (namedEffect != size_t.max && (namedCreatureShape(*spell, namedEffect) != ImplicitTarget.unitScriptNearCaster
-            || (context !is null && context.sendAreaDamage !is null)))
-            target = me.guid; // the spell selects its named creatures at completion
+        const namedObject = context !is null && context.namedGameObjectRouting(spell) != size_t.max;
+        if (namedObject || (namedEffect != size_t.max
+            && (namedCreatureShape(*spell, namedEffect) != ImplicitTarget.unitScriptNearCaster
+                || (context !is null && context.sendAreaDamage !is null))))
+            target = me.guid; // the spell selects its targets at completion
         else if (target == 0)
             target = victim ? victim : me.guid;
         auto other = spellTarget(target);
@@ -651,6 +653,8 @@ mixin template CreatureCasting()
         ulong[] inOrder; // each target once, in the order the effects found them (as the packet lists them)
         ulong[] remoteNamed;
         const namedEffect = selectedWeaponTargets is null ? selectableNamedCreatureEffect(spell) : size_t.max;
+        const namedObjectEffect = selectedWeaponTargets is null && context !is null
+            ? context.namedGameObjectRouting(spell) : size_t.max;
         const namedShape = namedEffect != size_t.max ? namedCreatureShape(*spell, namedEffect) : ImplicitTarget.none;
         const namedRange = namedEffect != size_t.max ? namedCreatureRadius(*spell, namedEffect, lore.clientData) : 0;
         const routeNamed = context !is null && context.sendAreaDamage !is null;
@@ -676,7 +680,13 @@ mixin template CreatureCasting()
         foreach (i; 0 .. 3)
             if (spell.effect[i])
             {
-                if (namedShape != ImplicitTarget.none && namedCreatureShape(*spell, i) == namedShape
+                if (i == namedObjectEffect)
+                {
+                    if (auto map = cast(Map) world_)
+                        if (const guid = context.namedGameObjectTarget(map, spell, i, me.position))
+                            reached[i] = [guid];
+                }
+                else if (namedShape != ImplicitTarget.none && namedCreatureShape(*spell, i) == namedShape
                     && (named.length || namedArea || databaseSpellEffect(spell.effect[namedEffect])))
                 {
                     foreach (other; named)
