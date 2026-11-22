@@ -200,6 +200,23 @@ struct TaelanFordring
         }
     }
 
+    bool duelIntroduced, isillienDefeated, epilogueOrdered;
+
+    private void orderEpilogue(ref CreatureContext me)
+    {
+        if (!epilogueOrdered && me.moveCreature(tirionRef, near(me), At.epilogue) == ActionResult.ok)
+            epilogueOrdered = true;
+    }
+
+    void on(ref CreatureContext me, const ref SummonedDied e)
+    {
+        if (e.summoned != isillienRef || e.gone)
+            return;
+        isillienDefeated = true;
+        if (duelIntroduced)
+            orderEpilogue(me);
+    }
+
     void on(ref CreatureContext me, const ref Signal e)
     {
         switch (e.id)
@@ -212,7 +229,7 @@ struct TaelanFordring
             me.moveCreature(tirionRef, near(me), At.tirionArrived);
             break;
         case TaelanSignal.tirionFought:
-            me.moveCreature(tirionRef, near(me), At.epilogue);
+            orderEpilogue(me);
             break;
         default:
             break;
@@ -393,8 +410,13 @@ struct TaelanFordring
             me.signal(tirionRef, TaelanSignal.startEscort, carry(player));
             break;
         case At.tirionFights:
-            me.attack(tirionRef, isillienRef);
-            me.attack(isillienRef, tirionRef);
+            duelIntroduced = true;
+            // The player can defeat Isillien during the confrontation. The epilogue
+            // still needs to run even when Tirion never has an opponent to evade from.
+            if (isillienDefeated || me.attack(tirionRef, isillienRef) == ActionResult.notHere)
+                orderEpilogue(me);
+            else
+                me.attack(isillienRef, tirionRef);
             break;
         case At.epilogueEnd:
             me.questEvent(player, questInDreams);

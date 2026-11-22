@@ -569,13 +569,22 @@ final class Scene
      */
     ubyte useItemOn(uint entry, GameObject go)
     {
-        import dmangos.bytes : ByteWriter;
-        import dmangos.world.defines : inventorySlotBag0;
         import dmangos.world.spellcast : SpellTargets, TargetFlags;
 
-        auto me = heroes[0].session.inWorld;
-        me.storeLoot(entry, 1, 0, false);
+        heroes[0].session.inWorld.storeLoot(entry, 1, 0, false);
         listen();
+        auto targets = SpellTargets(TargetFlags.gameObject);
+        targets.gameObject = go.guid;
+        return useCarriedItem(entry, targets);
+    }
+
+    /// Uses a carried item through the world client's item-use packet.
+    ubyte useCarriedItem(uint entry, const imported!"dmangos.world.spellcast".SpellTargets targets)
+    {
+        import dmangos.bytes : ByteWriter;
+        import dmangos.world.defines : inventorySlotBag0;
+
+        auto me = heroes[0].session.inWorld;
         ubyte slot = 255;
         foreach (ubyte s; 23 .. 39)
             if (const item = me.player.inventory[inventorySlotBag0, s])
@@ -586,8 +595,6 @@ final class Scene
         w.put(ubyte(inventorySlotBag0));
         w.put(slot);
         w.put(ubyte(1));
-        auto targets = SpellTargets(TargetFlags.gameObject);
-        targets.gameObject = go.guid;
         targets.write(w);
         heroes[0].write(Opcode.CMSG_USE_ITEM, w.data);
         ubyte result = 255;
@@ -726,7 +733,7 @@ final class Scene
     }
 
     /// Kills every creature within `range` of the first character fighting it or `ward` (an escort's ambushers).
-    size_t killAttackers(Creature ward, float range = 60)
+    size_t killAttackers(Creature ward, float range = 60, uint spareEntry = 0)
     {
         size_t n;
         import dmangos.world.relations : canAttack;
@@ -741,7 +748,7 @@ final class Scene
                     friends[c.guid] = true;
         }
         foreach (c; map.creaturesNear(hero.position, range))
-            if (c !is ward && c.alive && c.guid !in friends)
+            if (c !is ward && c.alive && c.guid !in friends && c.spawn.entry != spareEntry)
             {
                 auto v = c.ai.inCombat ? c.ai.hostVictim().guid : 0;
                 if (v in friends)

@@ -69,7 +69,7 @@ struct DoriusStonetender
         if (e.spell != spellMarksmanHit || shot || !(escort.active || escort.finished))
             return;
         shot = true;
-        me.questEvent(escort.player, escort.quest);
+        me.groupQuestEvent(escort.player, escort.quest);
         me.relay(relayFinished, e.caster);
         escort.active = false; // the relay script ends the scene
     }
@@ -98,5 +98,5 @@ unittest
     d.walk(82);
     assert(d.host.did("text 4354") && d.host.did("emote 25") && d.host.did("face"));
     d.raise(SpellHit(creatureRef(8338), 12198));
-    assert(d.host.did("event 3367") && d.host.did("relay 8284") && !d.host.did("fail 3367"));
+    assert(d.host.did("group event 3367") && d.host.did("relay 8284") && !d.host.did("fail 3367"));
 }

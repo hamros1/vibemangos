@@ -366,6 +366,10 @@ final class SpellData
             data.procEvents[row.get!uint(0)] = SpellProcEvent(row.get!uint(1), row.get!uint(2),
                 [row.get!ulong(3), row.get!ulong(4), row.get!ulong(5)], row.get!uint(6), row.get!uint(7),
                 row.get!float(8), row.get!float(9), row.get!uint(10));
+        // Marksman Hit is a scripted event delivered to the unit the DB relay selects.
+        if (auto shot = data.spells.edit(12198))
+            if (shot.effect[0] == SpellEffect.dummy && shot.implicitTargetA[0] == ImplicitTarget.caster)
+                shot.implicitTargetA[0] = ImplicitTarget.unit;
         const unknown = data.forgetUnknownIds();
         if (unknown)
             warning!"%s effect, aura, target or damage class ids in spell_template name nothing 1.12 has: taken as none"(

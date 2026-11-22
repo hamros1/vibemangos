@@ -137,6 +137,8 @@ final class DbScriptData
     const(DbScriptStep)[][uint][DbScriptType.max + 1] scripts; /// by table, by script id: steps in order
     uint[][uint] relayGroups;                                  /// `dbscript_random_templates` of type 1
 
+    uint[uint] summonRelays; /// spawn-data template ID -> relay started by a temporary summon
+
     /// The steps of script `id` of `type`, in the order they run.
     const(DbScriptStep)[] steps(DbScriptType type, uint id) const
     {
@@ -180,7 +182,7 @@ final class DbScriptData
         scripts[type][step.id] = list;
     }
 
-    /// Reads every `dbscripts_on_*` table and the relay groups.
+    /// Reads the `dbscripts_on_*` tables, relay groups and creature spawn relays.
     static DbScriptData load(MySqlConnection world)
     {
         import dmangos.log : info;
@@ -213,6 +215,10 @@ final class DbScriptData
                 s.z = row.get!float(16);
                 s.o = row.get!float(17);
                 s.conditionId = row.get!uint(18);
+                // The marksman is the caster. Dorius, the step's buddy, receives the scripted shot.
+                if (type == DbScriptType.relay && s.id == 8338 && s.command == ScriptCommand.castSpell
+                    && s.datalong == 12198 && s.buddyEntry == 8284 && s.dataFlags == 0)
+                    s.dataFlags = ScriptFlag.buddyAsTarget;
                 byId[s.id] ~= s;
                 ++count;
             }
@@ -221,6 +227,8 @@ final class DbScriptData
         }}
         foreach (row; world.query!"SELECT id, target_id FROM dbscript_random_templates WHERE type = 1"())
             data.relayGroups[row.get!uint(0)] ~= row.get!uint(1);
+        foreach (row; world.query!"SELECT Entry, RelayId FROM creature_spawn_data_template WHERE RelayId <> 0"())
+            data.summonRelays[row.get!uint(0)] = row.get!uint(1);
         info!"%s database script steps"(count);
         return data;
     }
@@ -767,8 +775,11 @@ mixin template DbScriptRunner()
             if (!source.exists)
                 break;
             // Where the step says (all zeros: near the source), for its time out of combat, or until it dies.
-            summonCreature(map, step.datalong, Position(step.x, step.y, step.z, step.o),
+            auto summoned = summonCreature(map, step.datalong, Position(step.x, step.y, step.z, step.o),
                 step.datalong2 ? TempSpawnType.timedOutOfCombatOrDead : TempSpawnType.dead, step.datalong2, source.guid);
+            if (summoned !is null && step.dataint[3] > 0)
+                if (const relay = cast(uint) step.dataint[3] in data.dbScripts.summonRelays)
+                    startScript(DbScriptType.relay, *relay, map, summoned.guid, target.guid);
             break;
         }
         case ScriptCommand.openDoor, ScriptCommand.closeDoor:

@@ -68,6 +68,14 @@ A separate 2020 guild observation reports that a ranged player at threat rank 3 
 
 Flamestrike’s ground effect was missing from the hidden-debuff list. All six player ranks now use the existing ground-effect cap accounting. A cast beside a target with 15 Shadow Word: Pain debuffs filled its sixteenth slot without displaying an icon and released the slot when the area expired. [Blizzard’s hidden-debuff findings](https://us.forums.blizzard.com/en/wow/t/wow-classic-era-%E2%80%9Cnot-a-bug%E2%80%9D-list-updated-april-22-2021/175887)
 
+## Quest completion
+
+- **Suntara Stones** now starts the marksman’s relay when the database summon specifies a spawn template with a relay. The loader corrects the stock relay’s source and target selection and directs the dummy shot to Dorius. His script awards group quest credit when it receives the shot. The real-data fixture lets the marksman act instead of treating him as a regular ambusher. [Database script command reference](https://github.com/cmangos/mangos-classic/blob/master/doc/script_commands.txt)
+- **In Dreams** now records Isillien’s defeat even if it happens before Tirion’s challenge. Tirion moves into the epilogue after the challenge in that case. A death during the duel also schedules the epilogue through the same path.
+- **Wandering Shay** and **Tooga’s Quest** pass with fixture changes. The player uses Shay’s Bell when the follower wanders, and advances toward Torta with a following distance that lets Tooga catch up. Both checks still require the actual quest script to award completion.
+
+The sweep takes these quests through the client and checks quest state. For the two escort scripts it also verifies failure when the player leaves the escort behind. Setting up the remaining dungeon cases, professions, reputation and follower-item interactions is separate from changing production scripts.
+
 ## Reproduce
 
 With the repository harness database and extracted client data configured, run from the project root:

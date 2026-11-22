@@ -249,14 +249,18 @@ string runEscort(const EscortCase c, bool leave, out long ms, bool only = false)
             ms = s.elapsedMs;
             return failed ? "" : format!"left 80 yards behind, the quest is %s"(s.questState(c.quest));
         }
+        enum uint shay = 7774, shaysBell = 9189;
+        if (c.entry == shay)
+            s.heroes[0].session.inWorld.storeLoot(shaysBell, 1, 0, false);
         const end = data.escortPaths.get(c.entry, null);
         float nearest = float.infinity;
         bool[ulong] used;
         const toUse = c.entry in objectsUsed;
         const over = s.runUntil(() {
-            s.killAttackers(npc);
+            // The marksman is part of Dorius's completion scene.
+            s.killAttackers(npc, 60, c.entry == 8284 ? 8338 : 0);
             if (leadTo.x != 0 && s.elapsedMs % 1000 == 0 && Scene.distance(s.hero.position, leadTo) > 3
-                    && Scene.distance(s.hero.position, npc.position) < 12)
+                    && Scene.distance(s.hero.position, npc.position) < 20)
             {
                 auto p = s.hero.position;
                 const d = Scene.distance(p, leadTo), step = d < 3 ? d : 3;
@@ -264,6 +268,14 @@ string runEscort(const EscortCase c, bool leave, out long ms, bool only = false)
                 p.y += (leadTo.y - p.y) / d * step;
                 p.z += (leadTo.z - p.z) / d * step;
                 s.moveHero(0, Position(p.x - 2, p.y, p.z)); // (`moveHero` stands two yards east of where it is told)
+            }
+            if (c.entry == shay && s.elapsedMs % 5000 == 0
+                && Scene.distance(s.hero.position, npc.position) > 8)
+            {
+                import dmangos.world.spellcast : SpellTargets, TargetFlags;
+
+                s.moveHero(0, npc.position);
+                s.useCarriedItem(shaysBell, SpellTargets(TargetFlags.unit, npc.guid));
             }
             // What the player must use on the way (a brazier to light, the fires of Elune), once each, as the escort
             // comes by it.
@@ -327,12 +339,6 @@ shared static this()
         "npc_reginald_windsor/6403": "no spawn on a continent", // Reginald Windsor (12580)
         // The quest asks for neutral with the Brood of Nozdormu (`RequiredMinRepFaction` 910).
         "npc_keeper_remulos/8736": "the quest not taken",
-        // The Dark Iron Marksman's shot (12198) is cast by its relay script on spawn (`creature_spawn_data_template`
-        // 8338, `RelayId`), which the database scripts' summon (command 10, `dataint4`) does not run here.
-        "npc_dorius_stonetender/3367": "not over in 20 minutes",
-        // Isillien struck Taelan down, Tirion came and challenged him, and their fight does not end Isillien (he
-        // heals; Tirion fights only when told): the epilogue never comes.
-        "npc_taelan_fordring/5944": "not over in 20 minutes",
     ];
 }
 
@@ -417,14 +423,10 @@ shared static this()
         "npc_kernobee/2904": "no spawn on a continent", // Gnomeregan
         "npc_doctor/6622": "the quest not taken",
         "npc_doctor/6624": "the quest not taken",
-        // The player's items: the Horn of Awakening wakes Kerlonian, the soil's water revives Ringo, Shay's Bell
-        // calls Shay back, the cage keys free Kindal's sprites (the test uses no items on the way).
+        // The player must use the Horn of Awakening or Spraggle's Canteen on the way, or the cage key for Kindal.
         "npc_kerlonian/5321": "not over in 20 minutes",
         "npc_ringo/4491": "not over in 20 minutes",
-        "npc_shay_leafrunner/2845": "failed",
         "npc_kindal_moonweaver/2969": "failed",
-        // Led to Torta, Tooga's quest does not complete (the cause not found yet).
-        "npc_tooga/1560": "not over in 20 minutes",
     ];
 }
 
