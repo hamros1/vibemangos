@@ -1,0 +1,167 @@
+/// The world translation of a continuously animated game-object transport.
+module dmangos.world.elevators;
+
+import std.algorithm.comparison : max;
+import std.math : isFinite;
+import dmangos.vmap.math : AABox, Matrix3, Vector3;
+import dmangos.world.clientdata : TransportAnimationEntry;
+
+package struct ElevatorPath
+{
+    private struct Frame
+    {
+        uint time;
+        Vector3 offset;
+    }
+
+    private Frame[] frames;
+    private float speed = 0;
+
+    this(const(TransportAnimationEntry*)[] rows, const float[4] rotation)
+    {
+        if (rows.length < 2 || rows[0].time != 0)
+            return;
+        const transform = Matrix3.fromQuaternion(rotation[0], rotation[1], rotation[2], rotation[3]);
+        auto result = new Frame[rows.length];
+        foreach (i, row; rows)
+        {
+            if (i && row.time <= rows[i - 1].time)
+                return;
+            // The client rotates the translation, then reverses Y.
+            auto offset = Vector3(row.x, row.y, row.z) * transform;
+            offset.y = -offset.y;
+            if (!offset.x.isFinite || !offset.y.isFinite || !offset.z.isFinite)
+                return;
+            result[i] = Frame(row.time, offset);
+            if (i)
+                speed = max(speed, (offset - result[i - 1].offset).magnitude * 1000
+                    / (row.time - result[i - 1].time));
+        }
+        if (speed.isFinite)
+            frames = result;
+    }
+
+    @property bool valid() const
+    {
+        return frames.length != 0;
+    }
+
+    /// The greatest movement per second between two consecutive keyframes.
+    @property float maxSpeed() const
+    {
+        return speed;
+    }
+
+    Vector3 offsetAt(uint clock) const
+    in (valid)
+    {
+        const time = clock % frames[$ - 1].time;
+        foreach (i; 1 .. frames.length)
+        {
+            const next = frames[i];
+            if (next.time > time)
+            {
+                const previous = frames[i - 1];
+                const fraction = cast(float)(time - previous.time) / (next.time - previous.time);
+                return previous.offset * (1 - fraction) + next.offset * fraction;
+            }
+        }
+        return frames[0].offset;
+    }
+
+    AABox sweptBounds(AABox mesh) const
+    in (valid)
+    {
+        const initial = frames[0].offset;
+        auto swept = AABox(mesh.lo + initial, mesh.hi + initial);
+        foreach (ref frame; frames[1 .. $])
+            swept.merge(AABox(mesh.lo + frame.offset, mesh.hi + frame.offset));
+        return swept;
+    }
+}
+
+/// Local and replica elevators carry a stationary rider between client movement packets.
+unittest
+{
+    import core.time : MonoTime, msecs;
+    import std.algorithm.searching : canFind;
+    import dmangos.bytes : ByteWriter, floatBits;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.clientdata : transportAnimationFormat;
+    import dmangos.world.gameobject : GameObjectSpawn, GameObjectTemplate, GameObjectType;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.movement : MovementFlags, MovementInfo, Position;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.replication : encodeState;
+    import dmangos.world.testclient;
+
+    auto db = newDatabase();
+    auto owner = newCreationContext(db), viewer = newCreationContext(db);
+    auto ownerNow = MonoTime.currTime, viewerNow = ownerNow;
+    owner.clock = () => ownerNow;
+    viewer.clock = () => viewerNow;
+    enum uint entry = 97_001, period = 4000;
+    const rows = buildDbc(transportAnimationFormat,
+        [[0, entry, 0, 0, 0, 0, 0], [1, entry, 2000, floatBits(30), 0, floatBits(20), 0],
+         [2, entry, period, 0, 0, 0, 0]]);
+    foreach (world; [owner, viewer])
+    {
+        world.client.transportAnimations = typeof(world.client.transportAnimations).parse(rows, "test elevator");
+        world.client.buildIndexes();
+    }
+    void tickTo(uint progress)
+    {
+        ownerNow += ((progress + period - owner.transportNow() % period) % period).msecs;
+        viewerNow += ((progress + period - viewer.transportNow() % period) % period).msecs;
+        owner.update(ownerNow);
+        viewer.update(viewerNow);
+    }
+    tickTo(0);
+    owner.data.gameObjectTemplates[entry] = GameObjectTemplate(entry: entry, type: GameObjectType.transport);
+    const spawn = GameObjectSpawn(guid: 21, entry: entry, x: 60, y: 10, z: 30);
+    auto platform = owner.makeGameObject(spawn);
+    owner.map(0).addObject(platform);
+    viewer.map(0).replicaCreated(1, cellKeyAt(spawn.x, spawn.y), platform.guid, encodeState(platform, 0));
+
+    const boardAt = Position(62, 11, 31, 0.25f);
+    auto rider = loggedIn(viewer, db, 7, "Anduin", boardAt);
+    auto witness = loggedIn(viewer, db, 8, "Jaina", Position(74, 14, 35));
+    rider.read();
+    witness.read();
+    void sendMove(MovementInfo movement)
+    {
+        ByteWriter packet;
+        movement.write(packet);
+        rider.write(Opcode.MSG_MOVE_HEARTBEAT, packet.data);
+    }
+    MovementInfo move;
+    move.flags = MovementFlags.onTransport;
+    move.position = boardAt;
+    move.transportGuid = platform.guid;
+    move.transportOffset = Position(2, 1, 1, 0.25f);
+    sendMove(move);
+    witness.read(); // discard the boarding movement
+    tickTo(50);
+    tickTo(1000);
+
+    const during = Position(77, 11, 41, 0.25f);
+    assert(rider.session.character.position == during, "stationary rider followed the platform replica");
+    assert(opcodesOf(witness.read()).canFind(Opcode.MSG_MOVE_HEARTBEAT), "the rider's position was sent to observers");
+    Position localPose;
+    float maxSpeed;
+    assert(owner.elevatorPose(owner.map(0), platform.guid, localPose, maxSpeed));
+    assert(localPose == Position(75, 10, 40) && maxSpeed > 0);
+    assert(platform.position == Position(60, 10, 30), "the client still receives the animation's base coordinates");
+    assert(!opcodesOf(rider.read()).canFind(Opcode.SMSG_NEW_WORLD), "the ride stayed on its map");
+
+    auto dismount = MovementInfo.init;
+    dismount.position = during;
+    sendMove(dismount);
+    tickTo(1500);
+    assert(rider.session.character.position == during, "the elevator does not carry a player after they step off");
+    move.position = during;
+    move.transportOffset = Position(99, 99, 99);
+    sendMove(move);
+    tickTo(1900);
+    assert(rider.session.character.position == during, "an offset inconsistent with the reported position cannot move a rider");
+}

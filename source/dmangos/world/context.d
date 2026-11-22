@@ -2883,6 +2883,49 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return transportClock(startUnixMillis + (clock() - startClock).total!"msecs");
     }
 
+    private struct ElevatorAnimation
+    {
+        uint entry;
+        float[4] rotation;
+        imported!"dmangos.world.elevators".ElevatorPath path;
+    }
+
+    private ElevatorAnimation[ulong] elevatorAnimations;
+
+    /// The current pose of a loaded elevator (local object or replica).
+    package bool elevatorPose(Map map_, ulong guid, out Position at, out float maxSpeed)
+    {
+        import dmangos.world.elevators : ElevatorPath;
+        import dmangos.world.gameobject : GameObjectType;
+        import dmangos.world.updatefields;
+
+        auto platform = map_.findObject(guid);
+        if (platform is null || platform.fields.type != TypeId.gameObject
+            || platform.fields.get!GAMEOBJECT_TYPE_ID != GameObjectType.transport
+            || platform.fields.get!GAMEOBJECT_LEVEL != 0)
+            return false;
+        const entry = platform.fields.get!OBJECT_FIELD_ENTRY;
+        float[4] rotation;
+        foreach (i, ref component; rotation)
+            component = platform.fields.get!GAMEOBJECT_ROTATION(i);
+        auto animation = guid in elevatorAnimations;
+        if (animation is null || animation.entry != entry || animation.rotation != rotation)
+        {
+            elevatorAnimations[guid] = ElevatorAnimation(entry, rotation, ElevatorPath(client.transportFrames(entry), rotation));
+            animation = guid in elevatorAnimations;
+        }
+        if (!animation.path.valid)
+            return false;
+
+        const offset = animation.path.offsetAt(transportNow());
+        at = platform.position;
+        at.x += offset.x;
+        at.y += offset.y;
+        at.z += offset.z;
+        maxSpeed = animation.path.maxSpeed;
+        return at.isFinite;
+    }
+
     /**
      * Each tick: each ship is where its schedule says. One that came to another map leaves the old one (its
      * players forget it) for the new one (its players get it), and the players aboard cross with it.

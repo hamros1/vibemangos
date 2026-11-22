@@ -5,7 +5,8 @@
 - **Clustering.** Extend cross-node routing to script-selected channels and scripted effects. See
   [spell routing limits](CLUSTER.md#spell-routing-limits) and the
   [cross-node feature list](CLUSTER.md#what-crosses-nodes-feature-by-feature).
-- **Terrain.** Track elevator passengers and handle transitions between land and swimming.
+- **Terrain.** Keep elevators and trams visible along long routes and handle transitions
+  between land and swimming.
 - **Gameplay coverage.** See the [spell audit](SPELLS.md) for gaps by class and the
   battleground notes below for remaining Alterac Valley events.
 
@@ -43,9 +44,9 @@ describes how players use the systems available today.
 * **Creatures** wander, walk their waypoints (running their scripts), fight, die and respawn. Type 3 paths (flying) are walked as waypoints; linked creatures
   (`creature_linking`) aggro together and follow their master, and formations (`spawn_group_formation`) walk their
   path with their members in place, and water creatures spawned in deep enough water swim. Conditions
-  that need world states or scripts are never met. The client animates elevator platforms. Ships
-  and zeppelins sail and carry their passengers across (`transports.d`). Elevators and ships use
-  the shared transport clock. Idle cells unload after `grid_cleanup_delay_seconds`.
+  that need world states or scripts are never met. Ships and zeppelins sail and carry their passengers
+  across (`transports.d`). A loaded elevator carries players between movement packets. Elevators and
+  ships use the shared transport clock. Idle cells unload after `grid_cleanup_delay_seconds`.
 * **Terrain:** heights put wandering creatures on the ground. Line of sight checks use
   static vmaps, closed doors and loaded elevator meshes at their animated position. Movement maps
   give creatures paths round buildings and hills. Creatures already swimming can follow submerged
@@ -111,8 +112,9 @@ implemented. See [NPCs, items and the world](GAMEPLAY.md#npcs-items-and-the-worl
 
 Done: `.map` files and vmaps, extracted and read; zones and areas, explored areas. See
 [Terrain](ARCHITECTURE.md#terrain). Movement maps provide paths around static geometry.
-Door collision uses the model at its spawn transform. Elevator line of sight follows the platform's
-animation. Elevator passenger movement and navigation remain open.
+Door collision uses the model at its spawn transform. Elevator line of sight and passenger
+movement follow the platform's animation. Visibility along long routes and movement-map
+integration remain open.
 
 ### 5. Inventory: done
 

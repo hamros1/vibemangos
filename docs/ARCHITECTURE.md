@@ -822,6 +822,9 @@ it blocks. For elevators with a path in `TransportAnimation.dbc`, the shared tra
 the mesh between the current keyframes. Each map copy indexes small swept areas by cell and keeps
 one entry per mesh for larger sweeps. Long rays test the loaded meshes directly.
 Replicas use the same geometry, the replicated door state and the shared transport clock.
+While an elevator or its replica is loaded, the server uses the same animation to update its
+passengers between movement packets. The client receives the platform's stationary coordinates
+and the transport time so it can animate the platform locally.
 
 The extractor (`extractor/maps.d`) turns each map's ADT tiles into `.map` files (version "z1.4"),
 whose layout `mapfile.d` holds for both sides. `world/terrain.d` reads them: `GridMap` is one

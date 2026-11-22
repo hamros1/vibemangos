@@ -37,6 +37,8 @@ mixin template InWorldHandlers()
 
     private ArrivalAction pendingArrival; // what a player moved here for does at its first tick
     private bool battlegroundCheckDue;    // arrived on a battleground's map: is its copy still here?
+    private ulong alignedElevator;       // the latest client position agreed with this platform
+    private MonoTime lastElevatorMotion;
     import std.format : format;
     import dmangos.auth.accounts : AccountLevel;
     import dmangos.bytes : ByteWriter;
@@ -522,6 +524,11 @@ private:
             battlegroundCheckDue = false;
             battlegroundOnLogin();
         }
+        if (player is null)
+            return;
+        updateElevatorPassenger();
+        if (player is null)
+            return;
         updateMelee(elapsed);
         if (player is null)
             return;
@@ -655,6 +662,7 @@ private:
             checkpoint = p, checkpointTime = context.clock();
         else if (!passesSpeedCheck(p))
             return false;
+        alignedElevator = 0; // a fresh client position or offset must be checked before following it
         player.movement = movement;
         spellsOnMovement(movement.flags);
 
@@ -705,6 +713,60 @@ private:
         relayed.write(relay);
         relay.putBytes(extra);
         map.sendToWatchers(this, opcode, relay.data);
+    }
+
+    /// Move a passenger between client heartbeats using the same path as the elevator's mesh.
+    private void updateElevatorPassenger()
+    {
+        import core.time : msecs;
+        import std.math : abs;
+        import dmangos.world.objects : highGuidOf, HighGuid;
+        import dmangos.world.transports : passengerPosition;
+
+        auto move = &player.movement;
+        if (map is null || teleporting != Teleport.none || !move.has(MovementFlags.onTransport)
+            || highGuidOf(move.transportGuid) != HighGuid.gameObject)
+        {
+            alignedElevator = 0;
+            return;
+        }
+
+        const offset = move.transportOffset;
+        Position elevator, current;
+        float maxSpeed;
+        if (!offset.isFinite || abs(offset.x) > 100 || abs(offset.y) > 100 || abs(offset.z) > 100
+            || !context.elevatorPose(map, move.transportGuid, elevator, maxSpeed))
+        {
+            alignedElevator = 0;
+            return;
+        }
+        passengerPosition(elevator.x, elevator.y, elevator.z, elevator.orientation,
+            offset.x, offset.y, offset.z, offset.orientation, current.x, current.y, current.z, current.orientation);
+        if (!context.client.isValidMapCoord(player.data.map, current.x, current.y, current.z, current.orientation))
+            return;
+
+        if (alignedElevator != move.transportGuid)
+        {
+            // The client may have reported the same offset from a slightly earlier phase of the path.
+            const allowance = 5.0f + 0.4f * maxSpeed;
+            const p = move.position;
+            if ((current.x - p.x) ^^ 2 + (current.y - p.y) ^^ 2 + (current.z - p.z) ^^ 2 > allowance ^^ 2)
+                return;
+            alignedElevator = move.transportGuid;
+        }
+        if (move.position == current)
+            return;
+
+        move.position = current;
+        checkpoint = current;
+        const now = context.clock();
+        checkpointTime = now;
+        if (now - lastElevatorMotion >= 250.msecs)
+        {
+            lastElevatorMotion = now;
+            relayMovement(Opcode.MSG_MOVE_HEARTBEAT, *move);
+        }
+        movedOn(*move, Opcode.MSG_MOVE_HEARTBEAT);
     }
 
     /// The second half of taking a move (see `takeMovement`): where the player is now, for the map, the group,

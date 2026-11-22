@@ -4,8 +4,9 @@ module dmangos.world.gameobjectcollision;
 import std.algorithm.comparison : clamp, max;
 import std.math : isFinite;
 import dmangos.vmap.gameobjectmodels : GameObjectModels, GameObjectShape;
-import dmangos.vmap.math : AABox, Matrix3, Ray, Vector3;
-import dmangos.world.clientdata : ClientData, TransportAnimationEntry;
+import dmangos.vmap.math : AABox, Ray, Vector3;
+import dmangos.world.clientdata : ClientData;
+import dmangos.world.elevators : ElevatorPath;
 import dmangos.world.gameobject : GameObjectType;
 import dmangos.world.grid : cellCoordinate, cellKey, cellSize;
 import dmangos.world.movement : Position;
@@ -49,48 +50,6 @@ private struct CoveredCells
     }
 }
 
-private struct ElevatorFrame
-{
-    uint time;
-    Vector3 offset;
-}
-
-private ElevatorFrame[] elevatorFrames(const(TransportAnimationEntry*)[] rows, const float[4] rotation)
-{
-    if (rows.length < 2 || rows[0].time != 0)
-        return null;
-    const transform = Matrix3.fromQuaternion(rotation[0], rotation[1], rotation[2], rotation[3]);
-    auto result = new ElevatorFrame[rows.length];
-    foreach (i, row; rows)
-    {
-        if (i && row.time <= rows[i - 1].time)
-            return null;
-        // Vanilla's animation translations are row vectors, with Y flipped after the spawn rotation.
-        auto offset = Vector3(row.x, row.y, row.z) * transform;
-        offset.y = -offset.y;
-        if (!offset.x.isFinite || !offset.y.isFinite || !offset.z.isFinite)
-            return null;
-        result[i] = ElevatorFrame(row.time, offset);
-    }
-    return result;
-}
-
-private Vector3 elevatorOffset(const ElevatorFrame[] frames, uint clock)
-{
-    const time = clock % frames[$ - 1].time;
-    foreach (i; 1 .. frames.length)
-    {
-        const next = frames[i];
-        if (next.time > time)
-        {
-            const previous = frames[i - 1];
-            const fraction = cast(float)(time - previous.time) / (next.time - previous.time);
-            return previous.offset * (1 - fraction) + next.offset * fraction;
-        }
-    }
-    return frames[0].offset;
-}
-
 /// Meshes indexed by the cells they can intersect. The map owns each slot's current door state.
 package final class GameObjectCollision
 {
@@ -107,7 +66,7 @@ package final class GameObjectCollision
     {
         Placement placement;
         GameObjectShape shape;
-        ElevatorFrame[] frames;
+        ElevatorPath elevator;
         CoveredCells covered;
     }
 
@@ -151,24 +110,20 @@ package final class GameObjectCollision
         auto shape = models.place(next.display, next.position, next.rotation, next.scale);
         if (!shape)
             return;
-        ElevatorFrame[] frames;
+        ElevatorPath elevator;
         auto bounds = shape.bounds;
         if (next.elevatorEntry)
         {
-            frames = elevatorFrames(client.transportFrames(next.elevatorEntry), next.rotation);
-            if (!frames.length)
+            elevator = ElevatorPath(client.transportFrames(next.elevatorEntry), next.rotation);
+            if (!elevator.valid)
                 return;
-            // Index every cell the platform can reach. Queries use the mesh at the current offset.
-            const initial = frames[0].offset;
-            bounds = AABox(shape.bounds.lo + initial, shape.bounds.hi + initial);
-            foreach (ref frame; frames[1 .. $])
-                bounds.merge(AABox(shape.bounds.lo + frame.offset, shape.bounds.hi + frame.offset));
+            bounds = elevator.sweptBounds(bounds);
         }
         foreach (axis; 0 .. 3)
             if (!bounds.lo[axis].isFinite || !bounds.hi[axis].isFinite)
                 return;
         const covered = CoveredCells(bounds);
-        colliders[slot] = Collider(next, shape, frames, covered);
+        colliders[slot] = Collider(next, shape, elevator, covered);
         if (covered.fitsIndex)
             foreach (key; covered)
                 cells.require(key, null)[slot] = true;
@@ -206,9 +161,9 @@ package final class GameObjectCollision
         const clock = transportTime is null ? 0 : transportTime();
         bool blocks(uint slot, const ref Collider collider)
         {
-            if (!collider.frames.length)
+            if (!collider.elevator.valid)
                 return closed(slot) && collider.shape.intersects(ray, length);
-            const offset = elevatorOffset(collider.frames, clock);
+            const offset = collider.elevator.offsetAt(clock);
             return collider.shape.intersects(Ray(a - offset, ray.direction), length);
         }
 
