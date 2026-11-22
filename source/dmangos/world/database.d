@@ -654,6 +654,10 @@ interface WorldDatabase
     /// `character_instance` (`group` false, `owner` a character) or `group_instance` (`owner` a leader).
     void saveInstanceBind(bool group, uint owner, uint instance, bool permanent);
 
+    /// Realm-wide rolling instance history, kept in the realm's shared character database.
+    bool instanceLimitReached(uint account, uint instance, long now);
+    @DatabaseWrite bool admitInstance(uint account, uint instance, long now);
+
     /// A saved `creature` spawn, with its ID allocated by the world database.
     @DatabaseWrite uint createCreatureSpawn(const ref CreatureSpawn spawn);
 
@@ -1022,6 +1026,34 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     void saveInstanceData(uint id, string data) { statements.saveInstanceData(id, data); }
     uint instanceMapOf(uint id) { return statements.instanceMapOf(id); }
     uint[uint] instanceBindsOf(uint player) { return statements.instanceBindsOf(player); }
+    bool instanceLimitReached(uint account, uint instance, long now)
+    {
+        import dmangos.world.context : InstanceEntry, tooManyInstances;
+
+        InstanceEntry[] entries;
+        foreach (row; characterDb.query!("SELECT InstanceId, ExpireTime FROM account_instances_entered "
+            ~ "WHERE AccountId = ? AND InstanceId <> 0 AND ExpireTime > ?")(account, now))
+            entries ~= InstanceEntry(row.get!uint(0), row.get!long(1) - 3600);
+        return tooManyInstances(entries, instance);
+    }
+
+    bool admitInstance(uint account, uint instance, long now)
+    {
+        assert(instance);
+        bool allowed;
+        characterDb.transaction({
+            // Copy zero is never entered. Its row serializes simultaneous admissions for this account.
+            characterDb.execute!("INSERT INTO account_instances_entered (AccountId, InstanceId, ExpireTime) "
+                ~ "VALUES (?, 0, 0) ON DUPLICATE KEY UPDATE ExpireTime = 0")(account);
+            characterDb.execute!("DELETE FROM account_instances_entered WHERE AccountId = ? AND InstanceId <> 0 "
+                ~ "AND ExpireTime <= ?")(account, now);
+            allowed = !instanceLimitReached(account, instance, now);
+            if (allowed)
+                characterDb.execute!("INSERT INTO account_instances_entered (AccountId, InstanceId, ExpireTime) "
+                    ~ "VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE ExpireTime = ExpireTime")(account, instance, now + 3600);
+        });
+        return allowed;
+    }
     void saveInstanceBind(bool group, uint owner, uint instance, bool permanent)
     {
         statements.saveInstanceBind(group, owner, instance, permanent);
@@ -2148,6 +2180,30 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
         instanceRows.instances = instanceRows.instances.filter!(r => r.id != id).array;
         instanceRows.binds = instanceRows.binds.filter!(b => b.instance != id).array;
         instanceRows.respawns = instanceRows.respawns.filter!(r => r.instance != id).array;
+    }
+    private import dmangos.world.context : InstanceEntry;
+    private InstanceEntry[][uint] instanceEntries;
+
+    bool instanceLimitReached(uint account, uint instance, long now)
+    {
+        import dmangos.world.context : tooManyInstances, withinTheHour;
+
+        return tooManyInstances(withinTheHour(instanceEntries.get(account, null), now), instance);
+    }
+
+    bool admitInstance(uint account, uint instance, long now)
+    {
+        import std.algorithm.searching : canFind;
+        import dmangos.world.context : InstanceEntry, tooManyInstances, withinTheHour;
+
+        assert(instance);
+        auto recent = withinTheHour(instanceEntries.get(account, null), now);
+        if (tooManyInstances(recent, instance))
+            return false;
+        if (!recent.canFind!(e => e.instance == instance))
+            recent ~= InstanceEntry(instance, now);
+        instanceEntries[account] = recent;
+        return true;
     }
     void saveInstanceBind(bool group, uint owner, uint instance, bool permanent)
     {

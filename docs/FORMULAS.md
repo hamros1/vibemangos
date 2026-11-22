@@ -408,8 +408,8 @@ game checks to see if they have entered 5 instances in the last hour", "across a
 came with Classic in 2020 and is not 1.12's.
 
 **Rule:** going into a copy that is not one of the account's last hour's, with five of those already, is refused;
-going back into one of them is not. Game masters aside. Kept in memory by each node: in a cluster, each node counts
-the entries made from it.
+going back into one of them is not. Game masters are exempt. The destination host records the resolved copy in the realm’s shared
+character database. Admissions for one account are serialized. Re-entry preserves the original expiry.
 
 ## Warrior, rogue and hunter rules
 
@@ -1015,7 +1015,7 @@ with items. Return mail arrives immediately." "Mail recieved stays in your mailb
 mail, it'll only last for 3 days. After the expiry period the mail is returned to the sender. If the mail comes from
 the Auction House, a quest NPC, or anything similar it is simply discarded".
 
-**Rule:** a letter with an item to another account comes an hour later; with money only, at once; returned, at once.
+**Rule:** a player’s letter with an item comes an hour later, including mail to an alt; with money only, at once; returned, at once.
 Read, a letter has at most 3 days left. Expired, a player's letter goes back with its item or its money.
 
 **What changed (2026-11-21):** money alone took the hour (to another account), and so did returned mail; reading

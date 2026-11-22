@@ -326,6 +326,12 @@ final class Character : OnlinePlayer, Looter
         import dmangos.world.aurahandlers : ProcFlag;
         import dmangos.world.combat : MeleeHitOutcome;
 
+        import dmangos.world.updatefields : UNIT_FIELD_BYTES_1;
+
+        // takeBlow stands the victim up. The sitting crit still deals critical damage,
+        // but defender procs evaluate it as an ordinary landed swing.
+        const sittingCrit = blow.kind == BlowKind.melee && blow.melee.outcome == MeleeHitOutcome.crit
+            && player !is null && player.values.getByte!UNIT_FIELD_BYTES_1(0) != 0;
         takeBlow(attacker, damage, blow);
         if (damage && player !is null && player.alive) // a hold the damage breaks (a fear, a root)
         {
@@ -352,7 +358,7 @@ final class Character : OnlinePlayer, Looter
             if (blow.melee.outcome == MeleeHitOutcome.block && canRetaliate)
                 blockDamageProcs(attacker, blow.retaliate);
             if (player !is null && player.alive)
-                procAuras(ProcFlag.takeMeleeSwing, attacker, ProcHit(null, procExOfSwing(blow.melee.outcome), damage,
+                procAuras(ProcFlag.takeMeleeSwing, attacker, ProcHit(null, procExOfSwing(sittingCrit ? MeleeHitOutcome.normal : blow.melee.outcome), damage,
                     cast(ubyte) blow.melee.type, damage != 0));
         }
         else if (blow.kind == BlowKind.spell && damage && attacker && player !is null && player.alive)

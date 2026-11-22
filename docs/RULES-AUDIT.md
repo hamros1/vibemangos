@@ -1,5 +1,7 @@
 # Rules audit
 
+For reproducible differences against original 1.12.1 behaviour, see the [gameplay fidelity audit](research/GAMEPLAY-FIDELITY.md).
+
 An inventory of the game rules dmangos took from emulators (CMaNGOS-classic, vmangos, ArcEmu), made from
 PROVENANCE.md and from reading the modules it names (2026-11-20). For each rule it names where the rule lives, what it
 does, and the best primary source found for re-deriving it: Blizzard's data (the 1.12.1 DBC files, Classic Era's DB2

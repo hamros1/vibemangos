@@ -139,18 +139,9 @@ private:
         }
 
         // Five new dungeon or raid copies an hour (`WorldContext.instanceLimitReached`), game masters aside.
-        const entersCopy = context.instanceable(mapId) && !mapEntry.isBattleground && player.data.map != mapId
+        const entersCopy = context.instanceable(mapId) && !mapEntry.isBattleground
+            && (player.data.map != mapId || (toInstance != uint.max && toInstance != instanceId_))
             && account.level < AccountLevel.gameMaster;
-        if (entersCopy && !checked)
-        {
-            const would = toInstance != uint.max ? toInstance : context.boundInstance(player.guid, mapId);
-            if (context.instanceLimitReached(account.id, would))
-            {
-                deliver(Opcode.SMSG_TRANSFER_ABORTED, [cast(ubyte) TransferAbortReason.TRANSFER_ABORT_TOO_MANY_INSTANCES]);
-                return false;
-            }
-        }
-
         if (context.instanceable(mapId) && !context.hostsDungeon(mapId))
         {
             import dmangos.world.inworld : ArrivalAction;
@@ -166,11 +157,8 @@ private:
             action.teleportMap = mapId;
             action.teleportTo = destination;
             action.teleportInstance = toInstance;
-            const counted = toInstance != uint.max ? toInstance : context.boundInstance(player.guid, mapId);
             if (context.askDungeonEntry is null)
             {
-                if (entersCopy)
-                    context.enteredInstance(account.id, counted);
                 migrateTo(host, action);
                 return true;
             }
@@ -189,8 +177,6 @@ private:
                         return deliver(Opcode.SMSG_TRANSFER_ABORTED, [abort]);
                     info!"%s: '%s' goes into map %s, which node %s hosts: moving there"(remoteAddress,
                         player.data.name, mapId, host);
-                    if (entersCopy)
-                        context.enteredInstance(account.id, counted);
                     migrateTo(host, action);
                 });
             return true;
@@ -228,20 +214,42 @@ private:
 
         // The client goes on with no movement flags. Another copy of the same dungeon is another map.
         player.movement.flags = 0;
-        const instance = toInstance != uint.max ? toInstance
-            : player.data.map == mapId ? instanceId_ : context.instanceFor(player.guid, mapId);
-        // No entering a copy of a dungeon with its most players already in (game masters aside).
-        if (instance && (player.data.map != mapId || instance != instanceId_) && account.level < AccountLevel.gameMaster)
+        uint instance = toInstance;
+        if (instance == uint.max && player.data.map == mapId)
+            instance = instanceId_;
+        uint known;
+        if (context.instanceable(mapId))
+            known = instance != uint.max ? instance : context.boundInstance(player.guid, mapId);
+        if (known && (player.data.map != mapId || known != instanceId_) && account.level < AccountLevel.gameMaster)
             if (const most = mapId in context.data.instanceMaxPlayers)
-                if (auto there = context.existingMap(mapId, instance))
+                if (auto there = context.existingMap(mapId, known))
                     if (there.population >= *most)
                     {
                         enum ubyte transferAbortMaxPlayers = 0x01;
                         deliver(Opcode.SMSG_TRANSFER_ABORTED, [transferAbortMaxPlayers]);
                         return false;
                     }
-        if (entersCopy && instance)
-            context.enteredInstance(account.id, instance);
+        bool tooManyCopies()
+        {
+            deliver(Opcode.SMSG_TRANSFER_ABORTED, [cast(ubyte) TransferAbortReason.TRANSFER_ABORT_TOO_MANY_INSTANCES]);
+            return false;
+        }
+        bool admit(uint copy)
+        {
+            if (entersCopy && !context.enteredInstance(account.id, copy))
+                return tooManyCopies();
+            return true;
+        }
+        if (instance == uint.max)
+        {
+            if (entersCopy && !known && context.instanceLimitReached(account.id, 0))
+                return tooManyCopies(); // avoid allocating an ID when all five slots are occupied
+            instance = context.instanceFor(player.guid, mapId, &admit);
+            if (entersCopy && !instance)
+                return false;
+        }
+        else if (entersCopy && (!instance || !admit(instance)))
+            return false;
         if (player.data.map == mapId && instance == instanceId_)
         {
             teleporting = Teleport.near;
@@ -943,6 +951,9 @@ unittest
     nodes[2].data.instanceMaxPlayers[mapDeadmines] = 10;
     now += 6.seconds;
 
+    // Four previous entries on node 1. The full-copy refusal consumed no slot.
+    foreach (prior; 1001u .. 1005u)
+        assert(nodes[1].enteredInstance(jainaAccount, prior));
     // Jaina is sent into Anduin's copy: she moves to node 2 and goes into that one.
     jaina.session.inWorld.commandTeleport(mapDeadmines, Position(-16, -381, 61), copy);
     auto hers = mesh.remotes[2][jainaAccount];
@@ -950,6 +961,8 @@ unittest
     jaina.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
     assert(hers.inWorld.instanceId == copy && nodes[2].instanceMap(copy).population == 2);
     assert(nodes[2].seeEachOther(7, 8));
+    assert(nodes[1].instanceLimitReached(jainaAccount, 1005) && !nodes[1].instanceLimitReached(jainaAccount, copy),
+        "the host charged the shared account exactly once for the actual destination copy");
 
     // Out: Anduin goes back where he came in from, on node 1's ground: he moves home first and is
     // teleported there.

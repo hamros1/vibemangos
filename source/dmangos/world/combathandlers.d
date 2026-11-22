@@ -321,7 +321,9 @@ private:
         // A spell for the next swing (Heroic Strike) is cast instead of it, at a player as at a creature.
         if (type == AttackType.mainHand && swingSpell(other.combatGuid))
             return;
-        auto d = calculateMeleeDamage(player.fighter, other.player.fighter, type, map.random);
+        auto attacker = player.fighter;
+        attacker.queuedMeleeSpell = nextSwing.active;
+        auto d = calculateMeleeDamage(attacker, other.player.fighter, type, map.random);
         if ((d.absorbed = other.absorbIncoming(d.school, d.damage)) != 0)
             d.hitInfo |= HitInfo.absorb;
         map.sendToWatchers(this, Opcode.SMSG_ATTACKERSTATEUPDATE, attackerStateUpdate(d), true);
@@ -557,7 +559,9 @@ private:
         // A spell for the next swing (Heroic Strike) is cast instead of it.
         if (type == AttackType.mainHand && swingSpell(victim.guid))
             return;
-        auto d = calculateMeleeDamage(player.fighter, victim.fighter, type, map.random);
+        auto attacker = player.fighter;
+        attacker.queuedMeleeSpell = nextSwing.active;
+        auto d = calculateMeleeDamage(attacker, victim.fighter, type, map.random);
         map.sendToWatchers(this, Opcode.SMSG_ATTACKERSTATEUPDATE, attackerStateUpdate(d), true);
 
         // In combat from the first swing, until a while after the last.

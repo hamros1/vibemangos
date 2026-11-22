@@ -171,7 +171,7 @@ private:
         else
             flushInventory(true);
         // "One hour delivery if items are attached"; money and words at once (WoWWiki "Mail", 2006-11).
-        const delay = item !is null && raceAccount[1] != account.id ? context.config.mailDeliveryDelay : 0;
+        const delay = item !is null ? context.config.mailDeliveryDelay : 0;
         postMail(mail, delay);
         info!"%s: '%s' mailed %s (item %s, %s copper, %s on delivery)"(remoteAddress, player.data.name, receiverName,
             mail.itemEntry, money, mail.cod);

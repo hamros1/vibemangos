@@ -209,6 +209,23 @@ unittest
     assert(stacksAcrossCasters(chill, false, false));
 }
 
+/// The six player abilities Blizzard identified as debuffs without a target icon.
+bool hiddenTargetDebuff(const ref SpellInfo spell)
+{
+    // First ranks and their spell_chain successors. Several unrelated spells share family flags.
+    switch (spell.id)
+    {
+    case 10, 6141, 8427, 10185, 10186, 10187: // Blizzard
+    case 5143, 5144, 5145, 8416, 8417, 10211, 10212, 25345: // Arcane Missiles
+    case 5740, 6219, 11677, 11678: // Rain of Fire
+    case 1510, 14294, 14295: // Volley
+    case 26573, 20116, 20922, 20923, 20924: // Consecration
+    case 14183: // Premeditation
+        return true;
+    default: return false;
+    }
+}
+
 /// One spell's aura on a unit, with each of its aura effects.
 final class Aura
 {
@@ -234,6 +251,24 @@ final class Aura
     float heartbeatChance = 0; /// percent: the chance it breaks at each heartbeat (`SPELL_ATTR_HEARTBEAT_RESIST`)
     int heartbeatInterval;     /// milliseconds between heartbeats
     int heartbeatTimer;        /// until the next
+
+    /// The low three bits select spell effects. Persist disposition alongside them so
+    /// a relog cannot turn a hostile effect into a buff and free a debuff slot.
+    enum uint savedNegative = 1 << 3, savedPositiveFlag = 1 << 4;
+    uint savedEffectMask() const { return effects | (positive ? savedPositiveFlag : savedNegative); }
+
+    static bool savedPositive(const ref SpellInfo spell, uint mask)
+    {
+        if (mask & (savedPositiveFlag | savedNegative))
+            return (mask & savedPositiveFlag) != 0;
+        // Older rows only carried effect bits. Enemy-targeted aura effects are unambiguous.
+        foreach (i; 0 .. 3)
+            if ((mask & (1 << i)) && (spell.implicitTargetA[i] == ImplicitTarget.enemy
+                || spell.implicitTargetA[i] == ImplicitTarget.enemiesAroundDest
+                || spell.implicitTargetA[i] == ImplicitTarget.enemiesAroundSource))
+                return false;
+        return true;
+    }
 
     // A region handoff keeps the individual tick timers, stacks and caster modifiers.
     private enum migrationFields = ["caster", "casterLevel", "periodicThreat", "periodicResistanceMod",
@@ -338,13 +373,19 @@ struct AuraSet
     {
         list = null;
         const count = reader.read!uint;
+        uint debuffs;
         foreach (_; 0 .. count)
         {
             auto aura = Aura.loadState(reader, lookup);
             if (aura.slot != noSlot && aura.slot >= maxAuras)
                 continue;
-            if (aura.spell !is null)
+            if (aura.spell !is null && (aura.positive || aura.passive ||
+                ((aura.slot != noSlot || hiddenTargetDebuff(*aura.spell)) && debuffs < maxAuras - maxPositiveAuras)))
+            {
+                if (!aura.positive && !aura.passive)
+                    ++debuffs;
                 list ~= aura;
+            }
             else if (aura.slot != noSlot)
                 clearSlot(values, aura.slot);
         }
@@ -381,8 +422,17 @@ struct AuraSet
                 isNew = false;
                 return existing;
             }
+        const hidden = !aura.positive && hiddenTargetDebuff(*aura.spell);
+        if (!aura.positive && !aura.passive)
+        {
+            uint debuffs;
+            foreach (existing; list)
+                debuffs += !existing.positive && !existing.passive;
+            if (debuffs >= maxAuras - maxPositiveAuras)
+                return null;
+        }
         isNew = true;
-        if (!aura.passive)
+        if (!aura.passive && !hidden)
         {
             const from = aura.positive ? 0 : maxPositiveAuras, to = aura.positive ? maxPositiveAuras : maxAuras;
             foreach (s; from .. to)
@@ -391,6 +441,11 @@ struct AuraSet
                     aura.slot = cast(ubyte) s;
                     break;
                 }
+        }
+        if (!aura.positive && !aura.passive && !hidden && aura.slot == noSlot)
+        {
+            isNew = false;
+            return null;
         }
         list ~= aura;
         ++changes;
@@ -406,12 +461,46 @@ struct AuraSet
      */
     Aura displacedBy(const Aura aura, ref UpdateValues values)
     {
-        if (aura.passive || aura.spell.casting.stackAmount)
+        if (aura.passive)
             return null;
+        Aura periodic;
+        uint debuffs;
         foreach (existing; list)
-            if (existing.spell.id == aura.spell.id && existing.caster != aura.caster && !existing.passive)
-                return stacksAcrossCasters(*aura.spell, aura.positive, playerControlled(values)) ? null : existing;
+        {
+            if (existing.spell.id == aura.spell.id)
+            {
+                if (existing.caster == aura.caster)
+                    return null; // refresh
+                if (!existing.passive && !stacksAcrossCasters(*aura.spell, aura.positive, playerControlled(values)))
+                    return aura.spell.casting.stackAmount ? null : existing;
+            }
+            if (!existing.positive && !existing.passive)
+            {
+                ++debuffs;
+                if (periodic is null && ordinaryDot(existing))
+                    periodic = existing;
+            }
+        }
+        // Periodic damage can replace a peer. Crowd control and Sunder Armor can
+        // also displace it. Prefer the oldest eligible effect in application order.
+        if (!aura.positive && periodic !is null && debuffs >= maxAuras - maxPositiveAuras)
+        {
+            const sunder = aura.spell.casting.spellFamilyName == 4 && (aura.spell.casting.spellFamilyFlags & 0x4000);
+            if (ordinaryDot(aura) || sunder || aura.has(AuraType.modFear) || aura.has(AuraType.modConfuse)
+                || aura.has(AuraType.modStun) || aura.has(AuraType.modRoot))
+                return periodic;
+        }
         return null;
+    }
+
+    private static bool ordinaryDot(const Aura aura)
+    {
+        if (!aura.effects)
+            return hiddenTargetDebuff(*aura.spell) && aura.spell.hasEffect(SpellEffect.persistentAreaAura);
+        foreach (i; 0 .. 3)
+            if ((aura.effects & (1 << i)) && aura.type(i) != AuraType.periodicDamage)
+                return false;
+        return true;
     }
 
     /// Whether the unit is a player's or a player's pet (`UNIT_FLAG_PLAYER_CONTROLLED`).

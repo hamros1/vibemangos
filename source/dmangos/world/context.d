@@ -1309,7 +1309,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.procs : ProcEx, ProcHit, spellProcFlags;
         import dmangos.world.relations : canAttack;
         import dmangos.world.replication : Replica;
-        import dmangos.world.spellareas : damagingGroundEffect, refreshGroundAura;
+        import dmangos.world.spellareas : admitGroundDamage, damagingGroundEffect, refreshGroundAura;
         import dmangos.world.spellcast : radius, SpellMissInfo;
         import dmangos.world.spelldamage : creatureAreaShape, creatureTargetInRange, databaseSpellEffect,
             isCreatureTargetEffect, isHostileAreaEffect, isHostileChainEffect, isRemoteLeechChannel, isTargetedProcEffect,
@@ -1456,6 +1456,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 }
                 return;
             }
+            if (!admitGroundDamage(victim, spell, message.caster, message.casterLevel, message.auraMs > 0 ? message.auraMs : 1))
+                return;
         }
         else if (message.creatureArea)
         {
@@ -1605,7 +1607,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private void retryGroundTick(ushort peer, const ref AreaDamage message)
     {
         import dmangos.world.caster : Caster;
-        import dmangos.world.spellareas : damagingGroundEffect, hitGroundTarget, refreshGroundAura, withinGroundArea;
+        import dmangos.world.spellareas : admitGroundDamage, damagingGroundEffect, hitGroundTarget, refreshGroundAura, withinGroundArea;
         import dmangos.world.unit : UnitKind;
 
         auto map_ = existingMap(message.map, message.instance);
@@ -1636,7 +1638,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             || !caster.hostileTo(target))
             return;
         if (damagingGroundEffect(*spell, message.effect))
-            hitGroundTarget(caster, spell, target, message.groundAmount);
+        {
+            if (admitGroundDamage(target, spell, caster.guid, caster.level, message.auraMs > 0 ? message.auraMs : 1))
+                hitGroundTarget(caster, spell, target, message.groundAmount);
+        }
         else
             refreshGroundAura(target, spell, message.effect, caster.guid, message.casterLevel,
                 message.auraMs, message.auraValues);
@@ -3689,7 +3694,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
      * 0 for a map that is not instanced, or (in a cluster) a dungeon another node hosts: the player
      * goes there (`InWorldHandlers.migrateTo`), and gets its copy there.
      */
-    uint instanceFor(ulong player, uint mapId)
+    uint instanceFor(ulong player, uint mapId, scope bool delegate(uint) admit = null)
     {
         import dmangos.cluster.ownership : IdKind;
         import dmangos.log : info, warning;
@@ -3702,7 +3707,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         auto group = groups.of(player);
         const raid = client.maps.lookup(mapId).isRaid;
         uint chosen = boundInstance(player, mapId);
-        if (!chosen)
+        const fresh = chosen == 0;
+        if (fresh)
         {
             // Ids are the cluster's (each node makes the copies of its own dungeons).
             if (!takeId(IdKind.instance, chosen) || chosen == 0)
@@ -3710,6 +3716,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 warning!"instance of map %s not made: no instance ids (the coordinator's next block has not come)"(mapId);
                 return 0;
             }
+        }
+        if (admit !is null && !admit(chosen))
+            return 0;
+        if (fresh)
+        {
             const resetAt = raid ? raidResetAt(mapId) : 0;
             instances[chosen] = InstanceState(mapId, resetAt, unixTime);
             database.saveInstance(chosen, mapId, resetAt);
@@ -3768,33 +3779,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return 0;
     }
 
-    /// The dungeon and raid copies each account went into in the last hour (`instanceLimitReached`), by account.
-    private InstanceEntry[][uint] recentInstances;
-
-    /**
-     * Whether `account` may go into no new dungeon or raid copy now (docs/FORMULAS.md, "Instances per hour"): it
-     * went into five other copies in the last hour, whichever of its characters did. `instance`: the copy it
-     * would go into (0: a new one); going back into one of those five is no new copy. Battlegrounds do not count.
-     * Kept by this node: in a cluster each node counts the entries made from it.
-     */
     bool instanceLimitReached(uint account, uint instance)
     {
-        auto recent = account in recentInstances;
-        if (recent is null)
-            return false;
-        *recent = withinTheHour(*recent, unixTime);
-        return tooManyInstances(*recent, instance);
+        return database.instanceLimitReached(account, instance, unixTime);
     }
 
-    /// `account` went into dungeon or raid copy `instance` (0: one not known here yet).
-    void enteredInstance(uint account, uint instance)
+    bool enteredInstance(uint account, uint instance)
     {
-        import std.algorithm.searching : canFind;
-
-        auto recent = withinTheHour(recentInstances.get(account, null), unixTime);
-        if (instance == 0 || !recent.canFind!(e => e.instance == instance))
-            recent ~= InstanceEntry(instance, unixTime);
-        recentInstances[account] = recent;
+        return database.admitInstance(account, instance, unixTime);
     }
 
     /// Asks the node hosting a dungeon whether a player may go in (`dungeonEntryProblem` there); null standalone.

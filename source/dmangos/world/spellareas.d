@@ -40,6 +40,29 @@ void hitGroundTarget(ref Caster caster, const(SpellInfo)* spell, UnitRef target,
         player.classAreaTick(spell, target);
 }
 
+/// Damage is delivered by the ground timer. Its hidden target aura occupies one
+/// debuff slot without scheduling a second damage tick.
+bool admitGroundDamage(UnitRef target, const(SpellInfo)* spell, ulong caster, uint level, int remaining)
+{
+    import dmangos.world.auras : hiddenTargetDebuff, makeAura;
+    import dmangos.world.unit : UnitKind;
+
+    if (!hiddenTargetDebuff(*spell))
+        return true;
+    if (auto active = target.auraSet.find(spell.id, caster))
+    {
+        active.duration = remaining;
+        return true;
+    }
+    auto marker = makeAura(spell, caster, level, remaining, false, [0, 0, 0]);
+    marker.detachedChannel = true;
+    marker.effects = 0;
+    if (target.kind == UnitKind.player)
+        return target.session.addAura(marker);
+    bool added;
+    return target.creature.receiveAura(marker, target.map, added) !is null;
+}
+
 /// A remote ground aura is renewed without adding stacks or rerunning application effects.
 bool refreshGroundAura(UnitRef victim, const(SpellInfo)* spell, size_t effect, ulong caster, uint level,
     int remaining, const int[3] values)
@@ -59,8 +82,7 @@ bool refreshGroundAura(UnitRef victim, const(SpellInfo)* spell, size_t effect, u
     auto aura = makeGroundAura(spell, effect, caster, level, remaining, values);
     if (victim.kind == UnitKind.player)
     {
-        victim.session.addAura(aura);
-        return true;
+        return victim.session.addAura(aura);
     }
     else
     {
@@ -176,7 +198,7 @@ private void tickReplicas(ref Caster caster, const ref PersistentArea area, bool
         return;
     AreaDamage tick = AreaDamage(caster: caster.guid, spell: spell.id, effect: cast(ubyte) area.effect,
         map: caster.map.id, instance: caster.map.instanceId, x: at.x, y: at.y, z: at.z,
-        radius: area.spot.radius, casterLevel: caster.level, amount: 0, groundTick: true, groundAmount: damage);
+        radius: area.spot.radius, casterLevel: caster.level, amount: 0, groundTick: true, groundAmount: damage, auraMs: holdMs);
     if (hurts)
     {
         tick.threatFactor = caster.spellMod(SpellModOp.threat, spell, 1.0f);
@@ -185,7 +207,6 @@ private void tickReplicas(ref Caster caster, const ref PersistentArea area, bool
     }
     else
     {
-        tick.auraMs = holdMs;
         tick.auraValues = areaAuraValues(caster, area);
     }
     const from = caster.relating();
@@ -252,6 +273,15 @@ void updatePersistentAreas(ref Caster caster, ref PersistentArea[] areas, int di
                     return;
                 if (hurts)
                 {
+                    import dmangos.world.auras : hiddenTargetDebuff;
+
+                    if (hiddenTargetDebuff(*area.spell))
+                    {
+                        if (!admitGroundDamage(unit, area.spell, caster.guid, caster.level, holdMs > 0 ? holdMs : 1))
+                            return;
+                        area.holding[unit.combatGuid] = true;
+                        inArea[unit.combatGuid] = true;
+                    }
                     hitGroundTarget(caster, area.spell, unit, damage);
                     return;
                 }
@@ -327,17 +357,15 @@ private void loseAreaAura(ref Caster caster, ulong guid, const(SpellInfo)* spell
     case UnitKind.none:
         return;
     case UnitKind.creature:
-        if (auto aura = unit.creature.auras.find(spell.id))
-            if (aura.caster == caster.guid)
-            {
-                unit.creature.loseAura(aura, caster.map);
-                caster.map.flushCreature(unit.creature);
-            }
+        if (auto aura = unit.creature.auras.find(spell.id, caster.guid))
+        {
+            unit.creature.loseAura(aura, caster.map);
+            caster.map.flushCreature(unit.creature);
+        }
         return;
     case UnitKind.player:
-        if (auto aura = unit.session.player.auras.find(spell.id))
-            if (aura.caster == caster.guid)
-                unit.session.removeAura(aura);
+        if (auto aura = unit.session.player.auras.find(spell.id, caster.guid))
+            unit.session.removeAura(aura);
         return;
     }
 }

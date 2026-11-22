@@ -128,6 +128,8 @@ void applyAura(ref Caster caster, const(SpellInfo)* spell, size_t i, UnitRef tar
         transformLook(caster, aura, map);
         bool isNew;
         auto applied = creature.receiveAura(aura, map, isNew);
+        if (applied is null)
+            return;
         if (p !is null)
         {
             if (isNew)
@@ -188,7 +190,8 @@ void applyAura(ref Caster caster, const(SpellInfo)* spell, size_t i, UnitRef tar
                 return; // immune for now
         }
         auto given = made(lasts);
-        who.addAura(given);
+        if (!who.addAura(given))
+            return;
         if (hostile && p !is null)
             p.scorpidStingLanded(given, target); // Improved Scorpid Sting (dmangos.world.physicalclasses)
         if (!hostile && !self) // a buff on one fighting: those it fights fight its caster too

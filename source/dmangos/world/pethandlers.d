@@ -440,7 +440,7 @@ mixin template PetHandlers()
             foreach (aura; pet_.auras.list)
                 if (!aura.passive && aura.duration != 0)
                     rows ~= AuraRecord(aura.caster, aura.spell.id, aura.stacks, aura.amount, aura.periodTimer,
-                        aura.maxDuration, aura.duration, aura.effects);
+                        aura.maxDuration, aura.duration, aura.savedEffectMask);
         context.database.savePetAuras(id, rows);
         ulong[2][] cooldowns;
         const now = context.unixTime;
@@ -453,14 +453,15 @@ mixin template PetHandlers()
     /// The pet's saved auras (with the time they had left) and cooldowns (read before it came: it is saved as it comes), on it.
     private void restorePetAurasAndCooldowns(const(AuraRecord)[] auras, const(ulong[2])[] cooldowns)
     {
-        import dmangos.world.auras : makeAura;
+        import dmangos.world.auras : Aura, makeAura;
 
         foreach (ref row; auras)
         {
             const spell = context.data.spells.spell(row.spell);
             if (spell is null || row.remaining == 0)
                 continue;
-            auto aura = makeAura(spell, row.caster, pet_.values.get!UNIT_FIELD_LEVEL, row.maxDuration, true, row.amount);
+            auto aura = makeAura(spell, row.caster, pet_.values.get!UNIT_FIELD_LEVEL, row.maxDuration,
+                Aura.savedPositive(*spell, row.effectMask), row.amount);
             aura.duration = row.remaining;
             aura.stacks = row.stacks ? row.stacks : 1;
             foreach (i; 0 .. 3)

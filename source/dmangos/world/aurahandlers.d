@@ -336,12 +336,14 @@ private:
     }
 
     /// The aura on this player: its effects begin (if new), its duration shown.
-    package void addAura(Aura aura)
+    package bool addAura(Aura aura)
     {
         bool isNew;
         if (auto displaced = player.auras.displacedBy(aura, player.values)) // another's that may not stay beside it
             removeAura(displaced);
         auto applied = player.auras.apply(aura, player.values, isNew);
+        if (applied is null)
+            return false;
         if (isNew)
             auraEffects(applied, true);
         else // one more stack (Blessing of the Claw's health): the stats of its amounts again
@@ -357,6 +359,7 @@ private:
                     spellScriptEvent(applied.spell, AuraApplied(EntityRef(applied.caster), EntityRef(player.guid),
                         cast(ubyte) i, applied.amount[i]));
         }
+        return true;
     }
 
     /**
@@ -835,7 +838,7 @@ private:
         foreach (aura; player.auras.list)
             if (!aura.passive && aura.duration != 0)
                 rows ~= AuraRecord(aura.caster, aura.spell.id, aura.stacks, aura.amount, aura.periodTimer,
-                    aura.maxDuration, aura.duration, aura.effects);
+                    aura.maxDuration, aura.duration, aura.savedEffectMask);
         context.database.saveAuras(player.data.guid, rows);
     }
 
@@ -849,7 +852,8 @@ private:
             const spell = context.data.spells.spell(row.spell);
             if (spell is null || row.remaining == 0)
                 continue;
-            auto aura = makeAura(spell, row.caster, player.data.level, row.maxDuration, true, row.amount);
+            auto aura = makeAura(spell, row.caster, player.data.level, row.maxDuration,
+                Aura.savedPositive(*spell, row.effectMask), row.amount);
             ubyte groundEffects;
             foreach (i, effect; spell.effect)
                 if (effect == SpellEffect.persistentAreaAura && (row.effectMask & (1 << i)))

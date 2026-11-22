@@ -106,6 +106,7 @@ struct Fighter
     float crit = 0;            /// its crit chance: a player's from agility; a creature's 5
     float auraCrit = 0;        /// the part of `crit` its auras give (talents, buffs, gear's crit), not its agility
     float hitBonus = 0;        /// percent less often missed (`MOD_HIT_CHANCE` auras)
+    bool queuedMeleeSpell;     /// off-hand white swings ignore the dual-wield miss penalty while queued
     bool dualWield;            /// it has an off-hand weapon to attack with
     float[3] damageDone = 1;   /// by attack type: what its auras multiply its blows by (`MOD_DAMAGE_PERCENT_DONE`)
     float[creatureTypes] damageVersus = 1; /// by the victim's creature type (`MOD_DAMAGE_DONE_VERSUS`)
@@ -587,7 +588,7 @@ float missChance(const Fighter attacker, const Fighter victim, AttackType type) 
     }
     else
         chance += gap * 0.04f;
-    if (type != AttackType.ranged && attacker.dualWield)
+    if (type != AttackType.ranged && attacker.dualWield && !(type == AttackType.offHand && attacker.queuedMeleeSpell))
         chance += 19;
     chance -= hit;
     chance -= victim.attackerHit[type == AttackType.ranged ? 1 : 0]; // Heightened Senses: less often hit
