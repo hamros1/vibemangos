@@ -5,8 +5,7 @@
 - **Clustering.** Extend cross-node routing to script-selected channels and scripted effects. See
   [spell routing limits](CLUSTER.md#spell-routing-limits) and the
   [cross-node feature list](CLUSTER.md#what-crosses-nodes-feature-by-feature).
-- **Terrain.** Extend shoreline transitions to waypoint routes. Connect moving platforms
-  to movement maps.
+- **Terrain.** Connect moving platforms to movement maps.
 - **Gameplay coverage.** See the [spell audit](SPELLS.md) for gaps by class and the
   battleground notes below for remaining Alterac Valley events.
 
@@ -52,7 +51,7 @@ describes how players use the systems available today.
   give creatures paths round buildings and hills. Creatures already swimming can follow submerged
   paths at their swim speed and approach targets at the surface. Amphibious creatures and
   pets use the movement map to cross shorelines and change speed while pursuing or following
-  a target. Scripted point movement and return trips after combat also cross shorelines.
+  a target. Scripted point movement, waypoint routes and return trips after combat also cross shorelines.
   Water-only creatures stay submerged.
 * **Movement:** the speed check assumes running speed; it must learn mounts, speed auras,
   knockbacks and taxis when those exist.

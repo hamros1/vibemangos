@@ -339,6 +339,7 @@ final class WaypointMovement : MovementGenerator
         int nextMoveTime;   // `i_nextMoveTime`: waiting while above 0
         int pathDuration;
         size_t[] nodeIndexes; // spline points that are path points, to arrive at on the way
+        bool continueToWaypoint; // the spline ended at a shoreline, or could not start
     }
 
     bool paused; /// paused by a script (`ScriptCommand.pauseWaypoints`): stands where it is until resumed
@@ -370,6 +371,8 @@ final class WaypointMovement : MovementGenerator
         w.put(cast(ushort) nodeIndexes.length);
         foreach (i; nodeIndexes)
             w.put(cast(uint) i);
+        w.put(continueToWaypoint);
+        w.put(paused);
     }
 
     override void load(ref ByteReader r)
@@ -383,6 +386,8 @@ final class WaypointMovement : MovementGenerator
         nodeIndexes = new size_t[r.read!ushort];
         foreach (ref i; nodeIndexes)
             i = r.read!uint;
+        continueToWaypoint = r.read!bool;
+        paused = r.read!bool;
         if (current >= path.length) // the path changed under it: start it over
             current = 0;
     }
@@ -426,7 +431,8 @@ final class WaypointMovement : MovementGenerator
         }
         if (creature.spline.finalized)
         {
-            arrived(creature, world);
+            if (!continueToWaypoint)
+                arrived(creature, world);
             if (nextMoveTime <= 0)
                 sendNextPath(creature, world);
             return;
@@ -498,6 +504,27 @@ private:
     void sendNextPath(Creature creature, MotionWorld world)
     {
         nodeIndexes = null;
+        const(WaypointNode)* next = &path[current];
+        if (path.length == 1)
+            lastReached = 0;
+        creature.refreshSwimming(world);
+        const habitat = creature.canSwim && !creature.scriptFlying;
+        if (habitat)
+        {
+            bool underwater;
+            const destination = habitatDestination(creature, world, Vector3(next.x, next.y, next.z), underwater);
+            if (underwater || creature.movement.has(MovementFlags.swimming) || creature.waterOnly)
+            {
+                const facing = next.delay ? next.orientation : float.nan;
+                const leg = launchHabitatPath(creature, world, destination, underwater, true, facing);
+                continueToWaypoint = leg.crossesShore || !leg.duration;
+                pathDuration = int.max; // the next leg must wait for the real endpoint
+                if (!leg.duration)
+                    nextMoveTime = 500;
+                return;
+            }
+        }
+
         const speed = creature.speeds[creature.movement.has(MovementFlags.walkMode) ? MoveType.walk : MoveType.run];
         const at = creature.spline.finalized ? creature.position : creature.spline.position;
         Vector3[] points = [Vector3(at.x, at.y, at.z)];
@@ -511,9 +538,9 @@ private:
             return time;
         }
 
-        const(WaypointNode)* next = &path[current];
         uint travelTime = travel(*next);
         bool looped;
+        bool beforeWater;
         size_t node = current;
         while (next.delay == 0 && travelTime < minimumPathTime)
         {
@@ -526,6 +553,17 @@ private:
                 if (!nodeAfter(after, true))
                     break;
             }
+            if (habitat)
+            {
+                const candidate = &path[after];
+                Vector3 submerged;
+                if (world.swimmingTarget(Vector3(candidate.x, candidate.y, candidate.z), creature.collisionHeight,
+                    submerged))
+                {
+                    beforeWater = true;
+                    break;
+                }
+            }
             nodeIndexes ~= points.length - 1;
             travelTime += travel(path[after]);
             node = after;
@@ -534,10 +572,11 @@ private:
 
         const facing = !isNaN(next.orientation) && next.delay != 0 ? next.orientation : float.nan;
         pathDuration = launch(creature, world, points, true, facing);
-        if (next.delay == 0)
+        continueToWaypoint = !pathDuration;
+        if (continueToWaypoint)
+            nextMoveTime = 500;
+        else if (next.delay == 0 && !beforeWater)
             pathDuration -= preSendTime;
-        if (path.length == 1)
-            lastReached = 0;
     }
 }
 
