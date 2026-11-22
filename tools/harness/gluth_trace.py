@@ -36,10 +36,10 @@ class Pull:
     deaths: set = field(default_factory=set)
     devoured: set = field(default_factory=set)
 
-    def row(self, now, event):
+    def row(self, now, event, marker=""):
         return (event, round((now - self.start).total_seconds(), 3), self.decimates, self.swings,
                 self.frenzies, self.wounds, len(self.observed), len(self.summoned),
-                len(self.deaths), len(self.devoured))
+                len(self.deaths), len(self.devoured), marker)
 
     def observe(self, now, fields):
         if len(fields) < 9:
@@ -65,12 +65,15 @@ class Pull:
             self.wounds += spell == "25646"
             if spell == "28239" and npc_id(target) == CHOW:
                 self.devoured.add(target)
-        if spell == "28375" and event in ("SPELL_DAMAGE", "SPELL_MISSED"):
-            # Each affected unit has a log line belonging to the same raid-wide cast.
-            if self.last is None or now - self.last > timedelta(seconds=1):
-                self.last = now
-                self.decimates += 1
-                return self.row(now, "decimate")
+        cast_marker = spell == "28374" and (
+            event == "SPELL_CAST_SUCCESS" or (event == "SPELL_AURA_APPLIED" and target == source)
+        )
+        damage_marker = spell == "28375" and event in ("SPELL_DAMAGE", "SPELL_MISSED")
+        if (cast_marker or damage_marker) and (self.last is None or now - self.last > timedelta(seconds=1)):
+            # The cast, its self-stun and each target's damage can all appear for one use.
+            self.last = now
+            self.decimates += 1
+            return self.row(now, "decimate", f"{event}:{spell}")
 
 
 def parse(lines, encounter_name="Gluth"):
@@ -114,7 +117,8 @@ def main():
     args = parser.parse_args()
     writer = csv.writer(sys.stdout)
     writer.writerow(("file", "pull", "event", "elapsed_s", "decimates", "boss_swings", "frenzy_casts",
-                     "mortal_wound_casts", "chows_seen", "chow_summons_seen", "chow_deaths_seen", "devours_seen"))
+                     "mortal_wound_casts", "chows_seen", "chow_summons_seen", "chow_deaths_seen", "devours_seen",
+                     "marker"))
     for path in args.files:
         opener = gzip.open if path.suffix == ".gz" else open
         with opener(path, "rt", encoding="utf-8-sig", errors="replace") as stream:

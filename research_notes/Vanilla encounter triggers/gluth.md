@@ -10,7 +10,9 @@ Blizzard explicitly ruled out elapsed time as the cause. The studio did not disc
 
 - Blizzard’s Naxxramas reference findings say “Gluth’s Decimate casts are not based on time, and its interaction is consistent with design.” The entry gives no positive trigger. [Blizzard’s original](https://us.forums.blizzard.com/en/wow/t/wow-classic-era-%E2%80%9Cnot-a-bug%E2%80%9D-list-updated-april-22-2021/175887)
 - A Classic raider reported a successful pull with all the zombies kited across the room at Decimate and none reaching Gluth. This is a firsthand account, with no event log attached to this observation. Another December 2020 player estimated a range of 90–100 seconds from experience. [Kiter’s account](https://www.reddit.com/r/classicwow/comments/k4u650/gluth_mage_kiting/) · [Progression players’ discussion](https://www.reddit.com/r/classicwow/comments/ki9pwe/)
-- BigWigs starts a 105-second warning at engagement, then resets it after observing spell 28375 damage or miss. DBM also observes Decimate damage and counts the casts. Those are client predictions and detections. The CMaNGOS and vMaNGOS scripts separately use a 105-second scheduling value. [BigWigs encounter source](https://github.com/BigWigsMods/BigWigs_Classic/blob/master/Naxxramas_Classic/Gluth.lua) · [DBM encounter source](https://github.com/DeadlyBossMods/DBM-Vanilla/blob/master/DBM-Raids-Vanilla/VanillaNaxx/ConstructQuarter/Gluth.lua) · [CMaNGOS encounter source](https://github.com/cmangos/mangos-classic/blob/master/src/game/AI/ScriptDevAI/scripts/eastern_kingdoms/naxxramas/boss_gluth.cpp) · [vMaNGOS encounter source](https://github.com/vmangos/core/blob/development/src/scripts/eastern_kingdoms/eastern_plaguelands/naxxramas/boss_gluth.cpp)
+- Modern BigWigs starts a 105-second warning at engagement, then resets it after observing spell 28375 damage or miss. DBM also observes Decimate damage and counts the casts. Those are client predictions and detections. The CMaNGOS and vMaNGOS scripts separately use a 105-second scheduling value. [BigWigs encounter source](https://github.com/BigWigsMods/BigWigs_Classic/blob/master/Naxxramas_Classic/Gluth.lua) · [DBM encounter source](https://github.com/DeadlyBossMods/DBM-Vanilla/blob/master/DBM-Raids-Vanilla/VanillaNaxx/ConstructQuarter/Gluth.lua) · [CMaNGOS encounter source](https://github.com/cmangos/mangos-classic/blob/master/src/game/AI/ScriptDevAI/scripts/eastern_kingdoms/naxxramas/boss_gluth.cpp) · [vMaNGOS encounter source](https://github.com/vmangos/core/blob/development/src/scripts/eastern_kingdoms/eastern_plaguelands/naxxramas/boss_gluth.cpp)
+- A BigWigs revision posted August 1, 2006 distinguishes the engagement countdown from the cast alert. At engagement it displays a 105-second bar. Its Decimate alert listens for the combat message “Gluth gains Decimate.” Independently, the installed spell table gives spell 28374 a stun aura on the caster, and duration record 27 in `SpellDuration.dbc` specifies three seconds. The cast and self-aura therefore give two more markers to search for in a complete log. [August 2006 BigWigs source](https://pastebin.ca/110785)
+
 
 ### Inferences
 
@@ -48,7 +50,7 @@ Capture multiple Blizzard Classic Era pulls lasting through Decimate, including 
 
 ### Cited Findings
 
-- Decimate’s damage or miss event 28375 is a practical observable marker. BigWigs subscribes to both and coalesces simultaneous raid-member events. [BigWigs encounter source](https://github.com/BigWigsMods/BigWigs_Classic/blob/master/Naxxramas_Classic/Gluth.lua)
+- Modern BigWigs detects damage or misses from 28375 and coalesces simultaneous raid-member events. A successful 28374 cast or its self-stun application can mark Decimate when target damage is absent. [BigWigs encounter source](https://github.com/BigWigsMods/BigWigs_Classic/blob/master/Naxxramas_Classic/Gluth.lua)
 
 ### Inferences
 
@@ -69,7 +71,7 @@ The public Era threat viewer lists **Gluth, fight 39** in the raid report from D
 
 ## Raw event exports and original footage
 
-The Git LFS archives contain **25 complete Classic Era Gluth kills**, ranging from 49.333 to 104.603 seconds. I checked each paginated encounter stream for a matching encounter start and end, a terminal page cursor, and any event with spell ID 28374 or 28375. None contained either spell. The two longest complete pulls recorded different numbers of boss melee events and Frenzy casts.
+The Git LFS archives contain **41 complete Classic Era Gluth kills** and 444,697 combat events. Kill durations range from 43.323 to 104.603 seconds. I checked each paginated encounter stream for a matching encounter start and end, a terminal page cursor, and any event with spell ID 28374 or 28375. None contained either spell. The two longest complete pulls recorded different numbers of boss melee events and Frenzy casts.
 
 | Report and fight | Duration | Boss melee events | Frenzy casts | Observed Zombie Chow instances |
 |---|---:|---:|---:|---:|
@@ -88,4 +90,4 @@ With a raw, English-language Blizzard Classic combat log, run the following from
 python3 tools/harness/gluth_trace.py WoWCombatLog*.txt > gluth-pulls.csv
 ```
 
-Each Decimate produces one row even when it hits many players. The encounter-end row includes pulls with zero Decimates. Counts are cumulative per pull and include observed boss swings, Frenzy and Mortal Wound casts, distinct chows, summons, deaths and successful devour casts. Incomplete recording or limited combat-log range can hide events. Compare pulls with different counts and durations, and check the original health and position events before inferring a cause.
+Each Decimate produces one row even when it hits many players. The `marker` column shows the first event used to count it, which can be a successful cast or self-aura from spell 28374 or damage or a miss from 28375. The encounter-end row includes pulls with zero Decimates. Counts are cumulative per pull and include observed boss swings, Frenzy and Mortal Wound casts, distinct chows, summons, deaths and successful devour casts. Incomplete recording or limited combat-log range can hide events. Compare pulls with different counts and durations, and check the original health and position events before inferring a cause.
