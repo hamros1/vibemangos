@@ -2053,7 +2053,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             uint restored;
             result.damage = applyHealAmount(spell, victim, cast(uint) max(0, message.amount), restored);
             if (victim.kind == UnitKind.player)
+            {
+                if (restored && (spell.implicitTargetA[i] == ImplicitTarget.friend
+                    || (spell.implicitTargetA[i] == ImplicitTarget.unitFriendChainHeal && spell.casting.chainTarget[i] <= 1)))
+                    victim.session.outsideQuestAid(message.caster);
                 victim.session.flushPlayerChanges();
+            }
             else
                 victim.map.flushObjectChanges(victim.creature);
             if (message.namedCreature)

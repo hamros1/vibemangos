@@ -91,6 +91,26 @@ private:
         player.values.setSlot(index, on ? value | (state << 24) : value & ~(state << 24));
     }
 
+    /// A different player directly helped this priest during Eris Havenfire's ongoing rescue.
+    package void outsideQuestAid(ulong helper)
+    {
+        import dmangos.script.api : EntityRef;
+        import dmangos.scripts.easternplaguelands : ErisHavenfire;
+
+        if (helper == player.guid || !EntityRef(helper).isPlayer || map.id != 0
+            || questState(ErisHavenfire.questBalanceOfLightAndShadow) != QuestState.incomplete)
+            return;
+        foreach (object; map.objectsNear(player.position, 100))
+        {
+            const ref_ = EntityRef(object.guid);
+            if (ref_.isCreature && ref_.entry == 14494)
+            {
+                context.signalCreature(map, EntityRef(player.guid), ref_, ErisHavenfire.outsideAid, 0);
+                return;
+            }
+        }
+    }
+
     /// The status of `id`, made if there is none.
     ref QuestStatus statusOf(uint id)
     {

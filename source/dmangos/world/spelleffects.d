@@ -386,8 +386,11 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         import dmangos.world.spelldamage : spellHeal, SpellBounce, SpellHeal;
         import dmangos.world.spellmods : SpellModOp;
 
-        spellHeal(caster, spell, map.unit(target), caster.spellMod(SpellModOp.damage, spell, value),
+        auto recipient = map.unit(target);
+        const healed = spellHeal(caster, spell, recipient, caster.spellMod(SpellModOp.damage, spell, value),
             SpellHeal(bounce: SpellBounce(spell.casting.dmgMultiplier[i], bounce)));
+        if (healed && p !is null && recipient.kind == UnitKind.player && target == c.targets.unit)
+            recipient.session.outsideQuestAid(caster.guid);
         break;
     }
     case SpellEffect.summonCritter: // SPELL_EFFECT_SUMMON_CRITTER: a companion; the same again sends it away

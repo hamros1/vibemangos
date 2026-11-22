@@ -192,6 +192,9 @@ void applyAura(ref Caster caster, const(SpellInfo)* spell, size_t i, UnitRef tar
         auto given = made(lasts);
         if (!who.addAura(given))
             return;
+        if (given.positive && !hostile && !self && p !is null && spell.effect[i] == SpellEffect.applyAura
+            && spell.implicitTargetA[i] == ImplicitTarget.friend)
+            who.outsideQuestAid(caster.guid);
         if (hostile && p !is null)
             p.scorpidStingLanded(given, target); // Improved Scorpid Sting (dmangos.world.physicalclasses)
         if (!hostile && !self) // a buff on one fighting: those it fights fight its caster too

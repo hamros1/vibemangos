@@ -690,3 +690,39 @@ unittest
                     s.questState(c.quest)));
         }
 }
+
+/// Eris accepts help for a peasant, but direct aid to the priest brings the Cleaner once.
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.world.updatefields : UNIT_FIELD_HEALTH, UNIT_FIELD_MAXHEALTH;
+
+    auto s = new Scene(0, Position(3325.02f, -2996.8f, 164.449f), [classPriest, classPriest], withTerrain: true);
+    auto eris = s.the(14494);
+    assert(s.takeQuest(eris, 7622));
+    assert(s.questState(7622) == QuestState.incomplete, "quest already complete at acceptance");
+    assert(s.runUntil(() => s.find(14484) !is null || s.find(14485) !is null, 15.seconds, 50.msecs));
+    assert(s.questState(7622) == QuestState.incomplete, "quest already complete with first wave");
+    auto peasant = s.find(14484);
+    if (peasant is null)
+        peasant = s.the(14485);
+    peasant.values.set!UNIT_FIELD_HEALTH(1);
+    auto helper = s.heroes[1].session.inWorld;
+    helper.castTriggeredAt(2054, peasant.guid);
+    assert(peasant.values.get!UNIT_FIELD_HEALTH > 1 && s.all(14503).length == 0);
+    auto priest = s.hero;
+    priest.values.set!UNIT_FIELD_HEALTH(10);
+    s.heroes[0].session.inWorld.castTriggeredAt(2054, priest.guid);
+    assert(priest.values.get!UNIT_FIELD_HEALTH > 10 && s.all(14503).length == 0);
+    priest.values.set!UNIT_FIELD_HEALTH(10);
+    helper.castTriggeredAt(2054, priest.guid);
+    assert(priest.values.get!UNIT_FIELD_HEALTH > 10, "the helper did not heal the initiating priest");
+    assert(s.questState(7622) == QuestState.failed,
+        format!"after the heal quest state %s, cleaners %s, Eris distance %s"(s.questState(7622),
+            s.all(14503).length, Scene.distance(priest.position, eris.position)));
+    auto cleaner = s.the(14503);
+    assert(cleaner.ai.inCombat && s.all(14503).length == 1);
+    helper.castTriggeredAt(2054, priest.guid);
+    assert(s.all(14503).length == 1);
+}

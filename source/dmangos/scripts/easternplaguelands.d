@@ -27,7 +27,9 @@ struct ErisHavenfire
         sayPeasantAppear1 = -1000819,
     }
     enum uint basePeasantsPerWave = 11, maxKilled = 15, maxSaved = 50, waves = 5;
-    enum uint pointSaved = 1;
+    enum uint pointSaved = 1, outsideAid = 1, cleaner = 14503;
+    @transient Location[ulong] lastSeen;
+
 
     private static immutable Location[8] archersAt = [Location(3327.42f, -3021.11f, 170.57f, 6.01f),
         Location(3335.4f, -3054.3f, 173.63f, 0.49f), Location(3351.3f, -3079.08f, 178.67f, 1.15f),
@@ -57,6 +59,7 @@ struct ErisHavenfire
         me.npcFlags(0);
         steps.after(Step.archers, 5.seconds);
         steps.every(Step.aim, 2.seconds);
+        observeProcession(me);
     }
 
     void on(ref CreatureContext me, Step step)
@@ -78,7 +81,9 @@ struct ErisHavenfire
             steps.after(Step.footsoldiers, (5000 + me.random(25_001)).msecs);
             break;
         case Step.aim:
-            aim(me);
+            observeProcession(me);
+            if (active)
+                aim(me);
             break;
         case Step.sadEnd:
             me.say(sayEventFail2);
@@ -88,6 +93,66 @@ struct ErisHavenfire
             steps.clear();
             break;
         }
+    }
+
+    void on(ref CreatureContext me, const ref Signal e)
+    {
+        if (active && e.id == outsideAid && e.from == player)
+            interference(me);
+    }
+
+    private void interference(ref CreatureContext me)
+    {
+        if (!active || steps.pending(Step.sadEnd))
+            return;
+        Location at;
+        if (!me.locationOf(player, at))
+            return;
+        active = false;
+        steps.clear();
+        me.summon(cleaner, at, 60_000, player);
+        me.failQuest(player, questBalanceOfLightAndShadow);
+        clearSummons(me, true);
+        me.despawn(5000);
+    }
+
+    // Detect crossing a live peasant's path. Stationary observers and players staying up by Eris can help.
+    private void observeProcession(ref CreatureContext me)
+    {
+        EntityRef[64] nearby;
+        Location[ulong] current;
+        foreach (observer; nearby[0 .. me.playersNear(100, nearby[])])
+        {
+            Location at;
+            if (observer == player || !me.locationOf(observer, at))
+                continue;
+            current[observer.guid] = at;
+            if (const before = observer.guid in lastSeen)
+                foreach (peasant; peasants)
+                {
+                    Location onRoad;
+                    if (me.locationOf(peasant, onRoad) && crossed(*before, at, onRoad))
+                    {
+                        interference(me);
+                        return;
+                    }
+                }
+        }
+        lastSeen = current;
+    }
+
+    private static bool crossed(Location a, Location b, Location peasant)
+    {
+        import std.algorithm.comparison : clamp;
+        const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+        const lengthSquared = dx * dx + dy * dy + dz * dz;
+        if (lengthSquared < 0.01f)
+            return false;
+        const t = clamp(((peasant.x - a.x) * dx + (peasant.y - a.y) * dy + (peasant.z - a.z) * dz)
+            / lengthSquared, 0.0f, 1.0f);
+        // Two ordinary humanoids passing within their combined melee reach.
+        return (a.x + t * dx - peasant.x) ^^ 2 + (a.y + t * dy - peasant.y) ^^ 2
+            + (a.z + t * dz - peasant.z) ^^ 2 <= 9;
     }
 
     void on(ref CreatureContext me, const ref SummonedArrived e)
@@ -152,7 +217,7 @@ struct ErisHavenfire
 
     private void end(ref CreatureContext me)
     {
-        me.questEvent(player, questBalanceOfLightAndShadow);
+        me.groupQuestEvent(player, questBalanceOfLightAndShadow);
         me.say(sayEventEnd);
         clearSummons(me, false);
         active = false;
@@ -241,4 +306,13 @@ unittest
     assert(eris.host.did("fail 7622") && eris.host.did("say -1000817"), "the fifteenth dead");
     eris.tick(4000);
     assert(eris.host.did("say -1000818") && eris.host.did("despawn"));
+}
+
+
+unittest
+{
+    const peasant = Location(10, 10, 0);
+    assert(ErisHavenfire.crossed(Location(5, 10, 0), Location(15, 10, 0), peasant));
+    assert(!ErisHavenfire.crossed(peasant, peasant, peasant));
+    assert(!ErisHavenfire.crossed(Location(5, 10, 9), Location(15, 10, 9), peasant));
 }
