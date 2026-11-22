@@ -507,13 +507,15 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
 package:
     void handle(Opcode opcode, ref ByteReader reader)
     {
-        // Playing on another node: everything the client says goes there.
-        if (state_ == WorldState.elsewhere && !gatewayPaused)
+        // Name lookups can be answered at the gateway even while the owner is changing.
+        const gatewayNameQuery = state_ == WorldState.elsewhere && context.config.cluster.gateway
+            && opcode == Opcode.CMSG_NAME_QUERY;
+        if (state_ == WorldState.elsewhere && !gatewayPaused && !gatewayNameQuery)
             return context.relayToOwner(ownerNode, account.id, cast(ushort) opcode, reader.readBytes(reader.remaining));
         DispatchResult result;
         try
         {
-            if (gatewayPaused || recovery.guid)
+            if ((gatewayPaused || recovery.guid) && !gatewayNameQuery)
             {
                 if (recovery.guid && opcode == Opcode.MSG_MOVE_WORLDPORT_ACK && reader.empty)
                     finishGatewayRecovery();
@@ -590,6 +592,30 @@ package:
     // -----------------------------------------------------------------------
     // Handlers
     // -----------------------------------------------------------------------
+
+    @Handles(Opcode.CMSG_NAME_QUERY, WorldState.inWorld, WorldState.elsewhere)
+    void handleNameQuery(const ClientNameQuery request)
+    {
+        import dmangos.world.objects : lowGuid;
+
+        if (request.guid >> 48 != 0) // only player GUIDs use this query
+            return;
+        if (const other = context.onlinePlayer(request.guid))
+        {
+            const c = other.character;
+            return send(ServerNameQueryResponse(request.guid, c.data.name, "", c.data.race, c.data.gender,
+                c.data.classId));
+        }
+        if (const remote = context.remotePlayer(request.guid))
+        {
+            const c = remote.entry;
+            return send(ServerNameQueryResponse(request.guid, c.name, "", c.race, c.gender, c.classId));
+        }
+        const found = context.database.nameInfo(lowGuid(request.guid));
+        if (!found.isNull)
+            send(ServerNameQueryResponse(request.guid, found.get.name, "", found.get.race, found.get.gender,
+                found.get.classId));
+    }
 
     @Handles(Opcode.CMSG_AUTH_SESSION, WorldState.awaitingAuth)
     void handleAuthSession(const ClientAuthSession request)
@@ -887,6 +913,7 @@ unittest
     auto db = newDatabase();
     auto home = newContext(db);
     auto owner = newContext(db);
+    home.config.cluster.gateway = true;
 
     // Two nodes joined in memory: what one relays, the other gets at once.
     static final class Pipe : PlayerRelay
@@ -944,6 +971,18 @@ unittest
     assert(pipe.log == ["migrate"] && client.session.state == WorldState.elsewhere && client.session.owner == 2);
     assert(pipe.remote.state == WorldState.inWorld && owner.onlinePlayer(makeGuid(HighGuid.player, 7)) !is null);
     assert(home.onlinePlayer(makeGuid(HighGuid.player, 7)) is null);
+
+    // The client has its create packet and can ask for its own name while the gateway waits for a route.
+    client.session.gatewayPaused = true;
+    client.write(Opcode.CMSG_NAME_QUERY, ClientNameQuery(c.guid));
+    const nameReply = client.read();
+    assert(nameReply.length == 1 && nameReply[0].opcode == Opcode.SMSG_NAME_QUERY_RESPONSE,
+        "a name query during the gateway handoff must still get a reply");
+    auto nameReader = ByteReader(nameReply[0].body_);
+    const name = deserialize!ServerNameQueryResponse(nameReader);
+    assert(name.guid == c.guid && name.name == c.name && name.race == c.race && name.gender == c.gender
+        && name.classId == c.classId);
+    client.session.gatewayPaused = false;
 
     // The client sits down: node 2 handles it, and the answer comes back to the client, encrypted for it.
     client.write(Opcode.CMSG_STANDSTATECHANGE, ClientStandStateChange(1));

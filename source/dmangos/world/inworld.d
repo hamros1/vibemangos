@@ -48,7 +48,6 @@ mixin template InWorldHandlers()
     import dmangos.world.group : GroupUpdate;
     import dmangos.world.map : packetBody;
     import dmangos.world.movement : baseMoveSpeed, MovementFlags, MovementInfo, MoveType, movingOrTurning, Position;
-    import dmangos.world.objects : lowGuid;
     import dmangos.world.opcodes;
     import dmangos.world.packets;
     import dmangos.world.auras : AuraInterrupt;
@@ -882,22 +881,6 @@ private:
     // -----------------------------------------------------------------------
     // Queries
     // -----------------------------------------------------------------------
-
-    @Handles(Opcode.CMSG_NAME_QUERY, WorldState.inWorld)
-    void handleNameQuery(const ClientNameQuery request)
-    {
-        if (const other = context.onlinePlayer(request.guid))
-        {
-            const c = other.character;
-            return send(ServerNameQueryResponse(c.guid, c.data.name, "", c.data.race, c.data.gender, c.data.classId));
-        }
-        if (request.guid >> 48 != 0) // only players have names
-            return;
-        const found = context.database.nameInfo(lowGuid(request.guid));
-        if (!found.isNull)
-            send(ServerNameQueryResponse(request.guid, found.get.name, "", found.get.race, found.get.gender,
-                found.get.classId));
-    }
 
     /// The client asks for a page (a book's, a letter's, a plaque's): it and each page after it, in turn.
     @Handles(Opcode.CMSG_PAGE_TEXT_QUERY, WorldState.inWorld)
