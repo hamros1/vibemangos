@@ -202,6 +202,14 @@ bool isTower(size_t n) pure nothrow @nogc @safe
 /// See the module documentation.
 final class AlteracRules : BattlegroundRules
 {
+    import dmangos.world.alteracassaults : ValleyAssaults;
+    mixin ValleyAssaults;
+
+    override void playerLeaving(Battleground copy, ulong who)
+    {
+        clearCaptured(copy, who);
+    }
+
     Node[nodeCount] nodes;
     ubyte[2] mineOwner = [ownerNeutral, ownerNeutral];
     Duration[2] mineHeldLeft;
@@ -260,6 +268,7 @@ final class AlteracRules : BattlegroundRules
 
         if (copy.status != BattlegroundStatus.inProgress)
             return;
+        updateAssaults(copy, elapsed);
         foreach (ubyte side; 0 .. 2)
         {
             auto trail = &processions[side];
@@ -306,6 +315,7 @@ final class AlteracRules : BattlegroundRules
 
         if (copy.status != BattlegroundStatus.inProgress || who !in copy.members)
             return;
+        provision(copy, copy.members[who].team, quest, who);
         foreach (ubyte side; 0 .. 2)
         {
             if (quest == questsScraps[side][0] || quest == questsScraps[side][1])

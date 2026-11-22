@@ -301,6 +301,18 @@ private:
     /// Whether `quest` may be turned in: complete (or completing itself), not rewarded, the items carried.
     bool canRewardQuest(const ref Quest quest)
     {
+        import dmangos.world.alterac : AlteracRules;
+        import dmangos.world.alteracassaults : groundQuest;
+        if (quest.id == groundQuest[0] || quest.id == groundQuest[1])
+        {
+            auto bg = currentBattleground();
+            if (bg is null || player.guid !in bg.members)
+                return false;
+            const side = bg.members[player.guid].team;
+            auto rules = cast(AlteracRules) bg.rules;
+            if (rules is null || groundQuest[side] != quest.id || !rules.groundReady(side))
+                return false;
+        }
         if (!quest.autoComplete && questState(quest.id) != QuestState.complete)
             return false;
         if (questRewarded(quest.id) && !quest.repeatable)

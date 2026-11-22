@@ -132,6 +132,13 @@ void applyAura(ref Caster caster, const(SpellInfo)* spell, size_t i, UnitRef tar
             return;
         if (p !is null)
         {
+            if (isNew && (spell.id == 21794 || spell.id == 21866))
+                if (auto copy = p.currentBattleground())
+                {
+                    import dmangos.world.alterac : AlteracRules;
+                    if (auto rules = cast(AlteracRules) copy.rules)
+                        rules.collar(copy, p, creature, spell.id);
+                }
             if (isNew)
                 p.classCreatureAuraApplied(creature, applied); // the sting or curse it replaces
             p.scorpidStingLanded(applied, target); // Improved Scorpid Sting (dmangos.world.physicalclasses)

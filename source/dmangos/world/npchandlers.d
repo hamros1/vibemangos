@@ -103,6 +103,8 @@ private:
     GossipItem[] gossipItems;
     uint[] scriptGossipActions; // the menu shown is a script's: its options' actions
     bool scriptGossipShown;
+    ulong assaultGossipSource;
+    enum uint assaultGossipBase = 0x10000;
 
     // -----------------------------------------------------------------------
     // Finding the NPC the player may interact with
@@ -172,6 +174,7 @@ private:
         if ((creature.npcValues.get!UNIT_NPC_FLAGS & NpcFlag.spiritGuide) && currentBattleground() !is null)
             return queueAtSpiritGuide(request.guid);
         scriptGossipShown = false;
+        assaultGossipSource = 0;
         // Its script first (`GossipHello`): it may show its own menu.
         if (auto scripted = cast(Creature) map.findObject(request.guid))
         {
@@ -181,13 +184,24 @@ private:
                 return;
         }
         prepareGossipMenu(creature, creature.npcTemplate.gossipMenuId);
+        if (auto copy = currentBattleground())
+        {
+            import dmangos.world.alterac : AlteracRules;
+            if (auto rules = cast(AlteracRules) copy.rules)
+                if (auto npc = cast(Creature) map.findObject(request.guid))
+                    foreach (choice; rules.orderChoices(copy, this, npc))
+                    {
+                        assaultGossipSource = npc.guid;
+                        gossipItems ~= GossipItem(0, choice.text, assaultGossipBase + choice.order);
+                    }
+        }
         // The menu's quests; without gossip of its own a quest giver shows them alone.
         enum uint gossipFlag = 0x1;
         questMenu = null;
         const flags = creature.npcValues.get!UNIT_NPC_FLAGS;
         if (flags & NpcFlag.questGiver)
             prepareQuestMenu(giverOf(creature));
-        if (!(flags & gossipFlag) && questMenu.length)
+        if (!(flags & gossipFlag) && questMenu.length && !assaultGossipSource)
             return sendPreparedQuest(giverOf(creature));
         sendPreparedGossip(creature);
     }
@@ -379,6 +393,18 @@ private:
         if (index >= gossipItems.length)
             return;
         const item = gossipItems[index];
+        if (item.optionId >= assaultGossipBase)
+        {
+            import dmangos.world.alterac : AlteracRules;
+            import dmangos.world.alteracassaults : ValleyOrder;
+            if (creature.guid == assaultGossipSource)
+                if (auto copy = currentBattleground())
+                    if (auto rules = cast(AlteracRules) copy.rules)
+                        if (auto npc = cast(Creature) map.findObject(creature.guid))
+                            rules.order(copy, this, npc, cast(ValleyOrder)(item.optionId - assaultGossipBase));
+            assaultGossipSource = 0;
+            return closeGossip();
+        }
         // The option's script, the NPC the source and the player the target.
         if (item.actionScript)
         {
