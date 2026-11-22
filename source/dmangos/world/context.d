@@ -49,6 +49,7 @@ import dmangos.world.creatureai : LinkEvent;
 import dmangos.world.objects : HighGuid, highGuidOf, makeGuid, temporaryCounterStart, UpdateValues;
 import dmangos.world.unit : UnitKind, UnitRef;
 import dmangos.world.bgqueue : battlegroundOfMap, BattlegroundQueue, BattlegroundQueueHost;
+import dmangos.world.scourge : InvasionHost, InvasionState;
 import dmangos.world.wareffort : WarEffort, WarEffortHost;
 import dmangos.world.worldpvp : WorldPvp, WorldPvpFollower, WorldPvpHost;
 import dmangos.cluster.protocol : ChannelCommand;
@@ -827,6 +828,28 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             applyNamedGameObject(map_, spell, effect, shape, object, origin, caster.combatGuid);
     }
 
+    private struct ObjectAnimationImpact
+    {
+        MonoTime arrives;
+        Map map;
+        GameObject object;
+        uint animation;
+    }
+    private ObjectAnimationImpact[] objectAnimations;
+
+    private void landObjectAnimations(MonoTime now)
+    {
+        import dmangos.world.gameobject : gameObjectAnimation;
+        size_t kept;
+        foreach (impact; objectAnimations)
+            if (impact.arrives > now)
+                objectAnimations[kept++] = impact;
+            else if (impact.map.gameObjectAt(impact.object.guid) is impact.object && canWrite())
+                impact.map.sendToObservers(impact.object.guid, Opcode.SMSG_GAMEOBJECT_CUSTOM_ANIM,
+                    gameObjectAnimation(impact.object.guid, impact.animation));
+        objectAnimations.length = kept;
+    }
+
     private bool applyNamedGameObject(Map map_, const(SpellInfo)* spell, size_t effect, ImplicitTarget shape,
         GameObject object, Position origin, ulong casterGuid)
     {
@@ -843,7 +866,15 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (!((at.x - center.x) ^^ 2 + (at.y - center.y) ^^ 2 + (at.z - center.z) ^^ 2 <= reach ^^ 2))
             return false;
         const animation = namedGameObjectAnimation(*spell, effect);
-        if (animation >= 0)
+        if (animation >= 0 && spell.casting.speed > 0)
+        {
+            import core.time : msecs;
+            import std.math : sqrt;
+            const distance = sqrt((at.x-origin.x) ^^ 2 + (at.y-origin.y) ^^ 2 + (at.z-origin.z) ^^ 2);
+            objectAnimations ~= ObjectAnimationImpact(clock() + (cast(int)(1000 * distance / spell.casting.speed)).msecs,
+                map_, object, cast(uint) animation);
+        }
+        else if (animation >= 0)
             map_.sendToObservers(object.guid, Opcode.SMSG_GAMEOBJECT_CUSTOM_ANIM,
                 gameObjectAnimation(object.guid, cast(uint) animation));
         else if (spell.id == 19873)
@@ -2463,6 +2494,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         updateGameEvents(clock(), true); // before any cell loads, so its spawns follow the events now
         services.provide!ChannelsHost((const(ubyte)[]) => ChannelsHost(new ChannelService(this, client,
             ChannelSettings(config.allowTwoSideInteractionChannel))));
+        services.provide!InvasionHost(&newInvasionHost);
+        services.listen!(InvasionHost, InvasionState)(&invasionHeard);
         services.provide!WarEffortHost(&newWarEffortHost);
         services.listen!(WarEffortHost, WarEffort)(&warEffortHeard); // before it starts: it tells as it does
         worldPvp = new WorldPvpFollower(this);
@@ -2852,6 +2885,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// Whether creature spawn `guid` is in the world as its game event (if any) stands.
     bool creatureInEvents(uint guid)
     {
+        if (invasionLayout !is null)
+            if (const site = guid in invasionLayout.creatures)
+                if (!site.present(invasion)) return false;
         if (const e = guid in data.creatureGameEvents)
             return gameEvents.spawnIn(*e);
         return true;
@@ -2863,6 +2899,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         import dmangos.world.wareffort : isSupplyPile;
 
+        if (invasionLayout !is null)
+            if (const site = guid in invasionLayout.objects)
+                if (!site.present(invasion)) return false;
         if (isSupplyPile(guid))
             return warEffort.pileUp(guid);
         if (WorldPvp.follows(guid))
@@ -2870,6 +2909,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (const e = guid in data.gameObjectGameEvents)
             return gameEvents.spawnIn(*e);
         return true;
+    }
+
+    private bool eventActivatesObject(uint guid)
+    {
+        return WorldPvp.follows(guid) || (invasionLayout !is null && guid in invasionLayout.objects
+            && invasionLayout.objects[guid].present(invasion));
     }
 
     /// Whether a spawn is up in its pool (`pool_*`): in none, or rolled.
@@ -3009,7 +3054,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             m.forEachObject((MapObject o) {
                 if (auto c = cast(Creature) o)
                 {
-                    if (!creatureInEvents(c.spawnId))
+                    if (!creatureInEvents(c.spawnId) || (invasionLayout !is null && c.summon.type != TempSpawnType.none
+                        && !invasionLayout.actorPresent(c.template_.entry, c.spawn, invasion)))
                         gone ~= c.guid;
                     else if (c.spawnId in data.eventCreatures && !c.petOwner && c.summon.type == TempSpawnType.none
                             && c.alive && (c.ai is null || !c.ai.inCombat) && eventShapeOf(c.spawnId) != c.eventShape)
@@ -3020,7 +3066,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                         }
                 }
                 else if (auto go = cast(GameObject) o)
-                    if (eventObject(go.spawn.guid) && !gameObjectInEvents(go.spawn.guid))
+                    if ((eventObject(go.spawn.guid) && !gameObjectInEvents(go.spawn.guid)) ||
+                        (invasionLayout !is null && go.template_.entry == 181142 &&
+                         !invasionLayout.actorPresent(16230, go.spawn, invasion)))
                         gone ~= go.guid;
             });
             foreach (guid; gone)
@@ -3058,7 +3106,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                         {
                             const spawn = &data.gameObjectSpawns[index];
                             if (!eventObject(spawn.guid) || !gameObjectInEvents(spawn.guid)
-                                || (spawn.respawnSeconds < 0 && !WorldPvp.follows(spawn.guid))
+                                || (spawn.respawnSeconds < 0 && !eventActivatesObject(spawn.guid))
                                 || !upInPool(PoolMember.Kind.gameObject, spawn.guid))
                                 continue;
                             auto go = makeGameObject(*spawn);
@@ -3080,6 +3128,60 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.wareffort : isSupplyPile;
 
         return (guid in data.gameObjectGameEvents) !is null || isSupplyPile(guid) || WorldPvp.follows(guid);
+    }
+
+    import dmangos.world.scourgelayout : InvasionLayout;
+    InvasionLayout invasionLayout;
+    InvasionState invasion;
+
+    private InvasionHost newInvasionHost(const(ubyte)[] moved)
+    {
+        import dmangos.plaindata : decode;
+        import dmangos.world.scourge : invasionSaveId;
+        InvasionHost host;
+        if (moved.length)
+            decode(moved, host.state);
+        if (!host.state.campaign)
+            host.restore(database.worldState(invasionSaveId));
+        host.clock = () => unixTime;
+        host.save = (string text) { database.saveWorldState(invasionSaveId, text); };
+        host.announce = (const ref InvasionState s) { services.announce!InvasionHost(s); };
+        return host;
+    }
+
+    void askInvasion()
+    {
+        import dmangos.world.scourge : InvasionQuery;
+        services.call!(InvasionHost.current)(InvasionQuery(nodeId), (InvasionState s) { invasionHeard(s); });
+    }
+
+    void invasionHeard(const ref InvasionState state)
+    {
+        import dmangos.world.map : packetBody;
+        import dmangos.world.packets : ServerUpdateWorldState;
+        if (state.campaign < invasion.campaign ||
+            (state.campaign == invasion.campaign && state.revision <= invasion.revision))
+            return;
+        if (state.running && invasionLayout is null) invasionLayout = new InvasionLayout(data);
+        const before = invasion;
+        invasion = state;
+        bool changed;
+        foreach (ushort id; 17 .. 100)
+            if ((id == 17 || id >= 89) && gameEvents.started(id) != state.eventOn(id))
+            {
+                gameEvents.start(id, state.eventOn(id));
+                changed = true;
+            }
+        if (changed)
+            updateGameEvents(clock(), true);
+        if (invasionLayout !is null && !changed) gameEventSpawnsChanged();
+        const previous = before.worldStates();
+        foreach (i, field; state.worldStates())
+            if (field[1] != previous[i][1])
+                foreach (player; online.values)
+                    if (player.character !is null)
+                        player.deliver(Opcode.SMSG_UPDATE_WORLD_STATE,
+                            packetBody(ServerUpdateWorldState(field[0], field[1])));
     }
 
     // -----------------------------------------------------------------------
@@ -4735,7 +4837,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             {
                 const spawn = &data.gameObjectSpawns[index];
                 // Not spawned by default (`spawntimesecs` < 0: events, scripts and world PvP spawn it), or used up.
-                if ((spawn.respawnSeconds < 0 && !WorldPvp.follows(spawn.guid)) || gameObjectAwaitingRespawn(spawn.guid)
+                if ((spawn.respawnSeconds < 0 && !eventActivatesObject(spawn.guid)) || gameObjectAwaitingRespawn(spawn.guid)
                         || !gameObjectInEvents(spawn.guid)
                         || !upInPool(PoolMember.Kind.gameObject, spawn.guid))
                     continue;
@@ -7563,6 +7665,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         services.tick(elapsed);
         worldPvp.tick(elapsed);
         battlegrounds.tick(elapsed);
+        landObjectAnimations(now);
         updateGameEvents(now);
         removeExpiredBones();
         if (forwardGroup is null) // the coordinator, or alone (not while starting: who coordinates is not known yet)

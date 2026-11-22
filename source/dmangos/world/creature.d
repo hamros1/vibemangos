@@ -109,6 +109,8 @@ struct CreatureTemplate
     uint mechanicImmuneMask;    /// `MechanicImmuneMask`: bit `mechanic - 1` for each mechanic it ignores (bosses: stuns, fear)
     uint schoolImmuneMask;      /// `SchoolImmuneMask`: the schools that cannot hurt it
 
+    uint regenerateStats = 14;   /// RegenerateStats: out-of-combat health (2) and power (8).
+
     /// Its resistance to `school` (1 holy .. 6 arcane).
     int resistance(uint school) const pure nothrow @nogc @safe
     {
@@ -142,7 +144,7 @@ enum creatureTemplateQuery = "SELECT Entry, Name, IFNULL(SubName, ''), MinLevel,
     ~ "Armor, MeleeAttackPower, RangedAttackPower, DamageSchool, Detection, Pursuit, Leash, ExperienceMultiplier, "
     ~ "LootId, MinLootGold, MaxLootGold, SkinningLootId, PickpocketLootId, StaticFlags1, CallForHelp, "
     ~ "ResistanceHoly, ResistanceFire, ResistanceNature, ResistanceFrost, ResistanceShadow, ResistanceArcane, "
-    ~ "SpellList, MechanicImmuneMask, SchoolImmuneMask FROM creature_template";
+    ~ "SpellList, MechanicImmuneMask, SchoolImmuneMask, RegenerateStats FROM creature_template";
 
 /// When a summoned creature goes (`none`: not a summon).
 enum TempSpawnType : ubyte

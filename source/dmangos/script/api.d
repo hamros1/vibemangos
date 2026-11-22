@@ -482,8 +482,30 @@ enum NpcWindow : ubyte
  * A creature script's handle on its creature and the world, for the length of one handler. It
  * cannot be copied or kept: what persists is the script's own state.
  */
+interface ScourgeCampHost
+{
+    bool hostDisruptEngineer(EntityRef player);
+    long hostInvasionCampaign(out uint generation);
+    void hostCampDefeated(long campaign, uint generation);
+}
+
 struct CreatureContext
 {
+    bool disruptEngineer(EntityRef player)
+    {
+        auto camp = cast(ScourgeCampHost) host;
+        return camp !is null && camp.hostDisruptEngineer(player);
+    }
+    long invasionCampaign(out uint generation)
+    {
+        auto camp = cast(ScourgeCampHost) host;
+        return camp is null ? 0 : camp.hostInvasionCampaign(generation);
+    }
+    void campDefeated(long campaign, uint generation)
+    {
+        if (auto camp = cast(ScourgeCampHost) host)
+            camp.hostCampDefeated(campaign, generation);
+    }
     private CreatureHost host;
     private bool consumed_;
 

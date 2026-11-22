@@ -757,6 +757,9 @@ mixin template CreatureCasting()
         import dmangos.world.spellselection : namedCreatureCenter, namedCreatureCone, namedCreatureRadius,
             namedCreatureEntry, namedCreaturesInArea, nearestNamedCreature;
 
+        // EventAI may start a triggered cast from the death callback. A living caster killed
+        // during one of its own effects still stops at that effect.
+        const castOnDeath = !me.alive && !takeMana;
         auto context = cast(WorldContext) lore;
         const channelEffect = takeMana && !me.meleeController && selectedWeaponTargets is null && context !is null
             ? context.namedCreatureChannel(spell) : size_t.max;
@@ -1005,7 +1008,7 @@ mixin template CreatureCasting()
             {
                 if (guid in missed || (remotePrimary && guid == target))
                     continue;
-                if (!me.alive)
+                if (!me.alive && !castOnDeath)
                     return;
                 applyEffect(caster, spell, i, guid, c);
             }

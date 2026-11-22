@@ -285,7 +285,9 @@ enum int combatManagerTick = 1200;
 enum uint aiReactionHostile = 2;
 
 /// See the module documentation.
-final class CreatureAI : Scripted, CreatureHost
+import dmangos.script.api : ScourgeCampHost;
+
+final class CreatureAI : Scripted, CreatureHost, ScourgeCampHost
 {
     import dmangos.world.creaturecasting : CreatureCasting;
     import dmangos.world.creaturescripting : CreatureScripting;
@@ -1766,16 +1768,17 @@ private:
     {
         const health = me.values.get!UNIT_FIELD_HEALTH, maximum = me.values.get!UNIT_FIELD_MAXHEALTH;
         const mana = me.values.get!UNIT_FIELD_POWER1, maxMana = me.values.get!UNIT_FIELD_MAXPOWER1;
-        if (health >= maximum && mana >= maxMana)
+        const flags = me.template_.regenerateStats;
+        if ((health >= maximum || !(flags & 2)) && (mana >= maxMana || !(flags & 8)))
             return;
         regenTimer += diff;
         if (regenTimer < regenInterval)
             return;
         regenTimer -= regenInterval;
         const added = health + maximum / 3;
-        me.values.set!UNIT_FIELD_HEALTH(added > maximum ? maximum : added);
+        if (flags & 2) me.values.set!UNIT_FIELD_HEALTH(added > maximum ? maximum : added);
         const addedMana = mana + maxMana / 3; // mana out of combat: a third too
-        me.values.set!UNIT_FIELD_POWER1(addedMana > maxMana ? maxMana : addedMana);
+        if (flags & 8) me.values.set!UNIT_FIELD_POWER1(addedMana > maxMana ? maxMana : addedMana);
         world.flushCreature(me);
     }
 

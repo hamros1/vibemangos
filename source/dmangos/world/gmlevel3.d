@@ -593,6 +593,22 @@ private:
         return true;
     }
 
+    bool handleScourgeCommand(string action = "status")
+    {
+        import dmangos.world.scourge : InvasionHost, InvasionControl;
+        switch (action)
+        {
+        case "status":
+            systemMessage(format!"Scourge Invasion %s. Zones defended: %s."(
+                context.invasion.running ? "active" : "inactive", context.invasion.victories));
+            return true;
+        case "start", "stop":
+            context.services.call!(InvasionHost.control)(InvasionControl(action == "start"));
+            return true;
+        default: return false;
+        }
+    }
+
     bool handleWorldPortCommand(uint mapId, float x, float y, float z)
     {
         enum float maxCoord = 17_066.666f; // _maxX, _maxY; _minX, _minY are their negatives

@@ -33,7 +33,7 @@ package ImplicitTarget namedGameObjectShape(const ref SpellInfo spell, size_t ef
 
     enum uint channels = 0x04 | 0x40;
     if (effect >= spell.effect.length || spell.effect[effect] != SpellEffect.activateObject
-        || spell.casting.speed > 0 || (spell.attributesEx & channels))
+        || (spell.casting.speed > 0 && namedGameObjectAnimation(spell, effect) < 0) || (spell.attributesEx & channels))
         return ImplicitTarget.none;
     const action = cast(GameObjectAction) spell.miscValue[effect];
     // These spells disturb a database-selected trap. Other disturb actions use different object types.

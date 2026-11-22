@@ -77,10 +77,11 @@ static import dmangos.scripts.worldmaps;
 // Spell scripts of items, quests and the world:
 static import dmangos.scripts.worldspells;
 static import dmangos.scripts.itemeffects;
+static import dmangos.scripts.scourgeinvasion;
 static import dmangos.scripts.wareffort; // the war effort
 
 /// Every module holding scripts.
-alias scriptModules = AliasSeq!(dmangos.scripts.deadmines, dmangos.scripts.westfall, dmangos.scripts.spells,
+alias scriptModules = AliasSeq!(dmangos.scripts.scourgeinvasion, dmangos.scripts.deadmines, dmangos.scripts.westfall, dmangos.scripts.spells,
     dmangos.scripts.stormwind, dmangos.scripts.ungoro, dmangos.scripts.shadowfang,
     dmangos.scripts.wailingcaverns,
     // Kalimdor scripts:

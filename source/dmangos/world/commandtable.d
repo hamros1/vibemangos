@@ -402,6 +402,7 @@ immutable ChatCommand[] commandTable = [
     ChatCommand("mount", 'm', "HandleMountCommand", "Mounts into modelid x.", null, null, null, 0),
     ChatCommand("dismount", 'h', "HandleDismountCommand", "Dismounts.", null, null, null, 0),
     ChatCommand("gps", '0', "HandleGPSCommand", "Shows Position", null, null, null, 0),
+    ChatCommand("scourge", 'z', "HandleScourgeCommand", ".scourge start|stop|status", null, null, null, 0),
     ChatCommand("worldport", 'v', "HandleWorldPortCommand", "", null, null, null, 0),
     ChatCommand("start", 'm', "HandleStartCommand", "Teleport's you to a starting location", null, null, null, 0),
     ChatCommand("invincible", 'j', "HandleInvincibleCommand", ".invincible - Toggles INVINCIBILITY (mobs won't attack you)", null, null, null, 0),

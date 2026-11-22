@@ -162,7 +162,7 @@ private:
     }
 
     /// Takes up to `count` of `entry` away, the backpack first. Returns how many.
-    uint takeItem(uint entry, uint count)
+    package uint takeItem(uint entry, uint count)
     {
         const left = player.inventory.destroyCount(entry, count);
         flushInventory();

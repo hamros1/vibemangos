@@ -708,3 +708,11 @@ See the [roadmap](ROADMAP.md) for open work, the [spell audit](SPELLS.md) for sp
   reaches `instant_logout`; it can be cancelled. It saves the position, zone, level, money, health
   and powers, rest, played time and settings. A connection that drops is saved the same way.
 * At start-up, every character and account of the realm is marked offline.
+
+## Scourge Invasion
+
+A GM can run `.scourge start` to launch the original patch 1.11 event on a realm, `.scourge status` to see its zone victories, and `.scourge stop` to end it early. Starting an active campaign preserves its progress. Each realm keeps its own progress in its character database.
+
+Look for the skulls on the world map. Kill undead around a Necrotic Shard until four Cultist Engineers appear. Bring eight Necrotic Runes to one engineer and defeat the Shadow of Doom it summons. Four Shadows can destroy the damaged shard before the engineers repair it. Clear all three camps under a necropolis to bring down the ship. Defending every ship in a zone earns one realm victory. The capital rewards change at 50, 100 and 150 victories. The 150th victory ends outdoor attacks. The event's dungeon bosses and reward vendors end three weeks after launch. [Original and Classic schedules compared by Blizzard](https://us.forums.blizzard.com/en/wow/t/naxxramas-opening-time-and-scourge-invasion-adjustments/741200/1)
+
+The later zone activation delays and hourly engineer refresh follow the CMaNGOS reconstruction. The original repair rate is uncertain. [Historical evidence and database bindings](../reports/The%20original%20Scourge%20Invasion.md)

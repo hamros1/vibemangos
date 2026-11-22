@@ -1503,6 +1503,48 @@ mixin template CreatureScripting()
             lore.zoneUnderAttack(world_, me, attacker.guid);
     }
 
+    bool hostDisruptEngineer(EntityRef who)
+    {
+        import dmangos.world.map : Map;
+        auto session = playerSession(who);
+        if (me.template_.entry != 16230 || !me.alive || session is null) return false;
+        const spell = lore.spellInfo(31315);
+        if (spell is null) return false;
+        const rune = spell.reagents[0], count = spell.casting.reagentCount[0];
+        if (rune <= 0 || !count || session.player.inventory.count(rune) < count) return false;
+        if (session.scriptCast(spell.id, me.guid, true) != ActionResult.ok) return false;
+        session.takeItem(rune, count);
+        if (auto map = cast(Map) world_)
+            if (const shield = hostObjectNearby(181142, 3))
+                map.removeObject(shield.guid);
+        return true;
+    }
+
+    long hostInvasionCampaign(out uint generation)
+    {
+        import dmangos.world.context : WorldContext;
+        auto context = cast(WorldContext) lore;
+        if (context is null || context.invasionLayout is null || world_ is null) return 0;
+        const site = context.invasionLayout.nearest(context.invasionLayout.camps, me.spawn.map, me.position);
+        if (site is null || !site.present(context.invasion)) return 0;
+        generation = context.invasion.zones[site.zone].generation;
+        return context.invasion.campaign;
+    }
+
+    void hostCampDefeated(long campaign, uint generation)
+    {
+        import dmangos.world.context : WorldContext;
+        import dmangos.world.scourge : InvasionHost;
+        auto context = cast(WorldContext) lore;
+        if (!campaign || context is null || context.invasionLayout is null) return;
+        const site = context.invasionLayout.nearest(context.invasionLayout.camps, me.spawn.map, me.position);
+        if (site is null) return;
+        auto event = site.stamp(context.invasion);
+        event.campaign = campaign;
+        event.generation = generation;
+        context.services.call!(InvasionHost.defeated)(event);
+    }
+
     // The war effort:
 
     void hostWarEffortHandIn(uint quest, uint resource)

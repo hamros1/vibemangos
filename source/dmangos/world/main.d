@@ -292,6 +292,7 @@ private int run(WorldConfig config, string configPath)
             cluster.onServiceReply = (ushort peer, const ref ServiceReply r) { context.services.receiveReply(peer, r); };
             context.services.sendNews = (const ref ServiceNews n) { cluster.broadcast(n); };
             cluster.onServiceNews = (ushort peer, const ref ServiceNews n) { context.services.receiveNews(peer, n); };
+            context.askInvasion();
             context.askWarEffort(); // how it stands, once its service is placed (and every change after)
             context.worldPvp.ask(); // the same for world PvP
         }

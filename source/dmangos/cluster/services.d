@@ -46,6 +46,7 @@ enum ServiceKind : ushort
     warEffort = 3,          /// the Ahn'Qiraj war effort (`dmangos.world.wareffort`)
     worldPvp = 4,           /// the Eastern Plaguelands' towers and Silithus's Silithyst (`dmangos.world.worldpvp`)
     lootTurns = 5,          /// the coordinator's group loot rotation
+    scourge = 6,            /// the original Scourge Invasion on this realm
     example = 0xFFFF,       /// for tests
 }
 
@@ -63,7 +64,7 @@ enum uint serviceMapBase = 0xFFFF_0000;
 
 /// The services a cluster places (not `example`, which is for tests).
 immutable ServiceKind[] clusterServiceKinds = [ServiceKind.channels, ServiceKind.battlegroundQueue,
-    ServiceKind.warEffort, ServiceKind.worldPvp];
+    ServiceKind.warEffort, ServiceKind.worldPvp, ServiceKind.scourge];
 
 /// The map a service's region is on.
 uint serviceMap(ServiceKind kind) pure nothrow @nogc @safe
