@@ -74,15 +74,15 @@ Flamestrike’s ground effect was missing from the hidden-debuff list. All six p
 - **In Dreams** now records Isillien’s defeat even if it happens before Tirion’s challenge. Tirion moves into the epilogue after the challenge in that case. A death during the duel also schedules the epilogue through the same path.
 - **Wandering Shay** and **Tooga’s Quest** pass with fixture changes. The player uses Shay’s Bell when the follower wanders, and advances toward Torta with a following distance that lets Tooga catch up. Both checks still require the actual quest script to award completion.
 - **The Sleeper Has Awakened** and **A Little Help From My Friends** now run through the Horn of Awakening and Spraggle’s Canteen in the fixture. The player waits within range for each cast before leading the follower onward.
-- **Freedom for All Creatures** now runs through the cage key in the player’s keyring. The fixture approaches the cage and waits for the freed sprites to complete the event.
-- **Triage** keeps the event active when the last patients have been admitted. A regression test confirms that a patient already in a bunk can still provide the last required save. The full clinic playthrough still needs verification.
+- **Freedom for All Creatures** now runs through the cage key in the player’s keyring. The fixture defends the freed sprites while they flee and waits for the quest credit.
+- **Triage** keeps the event active when the last patients have been admitted. A regression test confirms that a patient already in a bunk can still provide the last required save. Both clinics also pass the full quest with 225 First Aid and the seven-second bandage cast. The fixture remains beside the patient until the cast completes.
 - **Extinguishing the Idol**, **Willix the Importer**, and **A Fine Mess** run in the same dungeon copy as the player. The last fixture leads Kernobee to the clean-zone door before checking quest credit.
 - **Jail Break!** runs through all five prison stops in Blackrock Depths. The player opens the cells and frees Dughal and Tobias through their gossip options. The test defeats the hostile prisoners and waits for Windsor to reach the exit and award quest credit.
 - **The Great Masquerade** starts by asking Squire Rowe to summon Windsor. The player talks to Windsor again at Stormwind Keep and defeats Onyxia’s guards before checking quest credit.
 - **The Nightmare Manifests** starts with the required Brood of Nozdormu reputation. The player defends the village against the phantasms and wounds Eranikus so the redemption sequence can award credit.
 - **Ancient Spirit** starts by using the Flute of the Ancients at its spell focus in the Irontree Woods and approaching the summoned quest giver. [Purified! quest completion text](https://www.wowhead.com/classic/quest=4442/purified)
 
-All 44 escort cases now pass, including the leave-behind failure path. Fifteen of the 19 quest-event cases discovered by the survey pass. The other four come from pairing both Triage clinics with both quest IDs. The database gives each clinic one of those quests.
+All 44 escort cases and 17 quest events now pass. The escort cases also verify that leaving the NPC behind fails the quest. The survey uses the database’s quest-giver assignments to match each Triage clinic to its own quest.
 
 ## Reproduce
 

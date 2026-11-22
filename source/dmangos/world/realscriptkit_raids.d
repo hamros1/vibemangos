@@ -664,6 +664,7 @@ final class Scene
             hero.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
         assert(me.player.data.map == mapId, "not there");
         instance = me.instanceId;
+        map.random.seed(seed);
         hero.read();
         heroes ~= hero;
         fill();

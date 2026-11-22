@@ -101,7 +101,8 @@ EscortCase[] escortCases(const WorldData data)
                     continue;
                 foreach (scriptName; names[k])
                     foreach (entry, sn; data.creatureScriptNames)
-                        if (sn == scriptName)
+                        if (sn == scriptName && (scriptName != "npc_doctor"
+                            || data.quests.creatureStarts.get(entry, null).canFind(quest)))
                             if (!cases.canFind!(x => x.entry == entry && x.quest == quest))
                                 cases ~= EscortCase(scriptName, entry, quest, escort);
             }
@@ -225,12 +226,56 @@ private void driveJailBreak(Scene scene, ref size_t next)
     ++next;
 }
 
+/// Tracks each patient from admission to the start of its bandage cast.
+private struct TriageTreatment
+{
+    enum uint bandage = 16991;
+    enum long castMs = 7000;
+    static immutable uint[2][3] patientEntries = [[12923u, 12938], [12924u, 12936], [12925u, 12937]];
+    static immutable long[3] lifetimeMs = [26_000L, 18_000L, 12_000L];
+
+    bool[ulong] treated;
+    long[ulong] admitted;
+    long readyAt;
+
+    void bandageNext(Scene scene, Creature doctor)
+    {
+        import dmangos.world.spellcast : SpellTargets, TargetFlags;
+
+        const now = scene.elapsedMs;
+        Creature next;
+        long earliest = long.max;
+        foreach (severity, entries; patientEntries)
+            foreach (entry; entries)
+                foreach (patient; scene.all(entry))
+                    if (patient.summon.summoner == doctor.guid && patient.guid !in treated)
+                    {
+                        const deadline = admitted.require(patient.guid, now) + lifetimeMs[severity];
+                        if (now + castMs < deadline && deadline < earliest)
+                        {
+                            next = patient;
+                            earliest = deadline;
+                        }
+                    }
+        if (next is null || now < readyAt)
+            return;
+        scene.moveHero(0, next.position);
+        if (scene.useCarriedItem(bandage, SpellTargets(TargetFlags.unit, next.guid)) == 0)
+        {
+            treated[next.guid] = true;
+            readyAt = now + castMs;
+        }
+    }
+}
+
 /// What an escort came to: "" if it did its part, else why not.
 string runEscort(const EscortCase c, bool leave, out long ms, bool only = false)
 {
     import std.algorithm.comparison : clamp, max;
     import dmangos.scripts.felwood : Arei;
+    import dmangos.scripts.feralas : GrimtotemCageDoor, KindalMoonweaver;
     import dmangos.scripts.moonglade : KeeperRemulos, Eranikus;
+    import dmangos.scripts.npcs : questTriageAlliance, questTriageHorde;
     import dmangos.scripts.stormwind : ReginaldWindsor, SquireRowe, questGreatMasquerade, questStormwindRendezvous;
     import dmangos.world.quests : QuestStatus;
     import dmangos.world.spellcast : SpellTargets, TargetFlags;
@@ -260,6 +305,7 @@ string runEscort(const EscortCase c, bool leave, out long ms, bool only = false)
     if (mapId == 2)
         return "no static spawn";
     const q = data.quests.quest(c.quest);
+    const triage = c.quest == questTriageAlliance || c.quest == questTriageHorde;
     const level = clamp(max(q.minLevel, q.questLevel > 0 ? q.questLevel : 1), 1, 60);
     string why;
     foreach (horde; [false, true])
@@ -310,6 +356,8 @@ string runEscort(const EscortCase c, bool leave, out long ms, bool only = false)
             if (rep.standingWith(faction) < q.requiredMinRepValue)
                 rep.change(faction, q.requiredMinRepValue, false, null, true);
         }
+        if (triage)
+            assert(s.hero.setSkill(q.requiredSkill, cast(ushort) q.requiredSkillValue, cast(ushort) q.requiredSkillValue));
         if (!s.takeQuest(npc, c.quest))
         {
             why = format!"the quest not taken (its giver's NPC flags %#x)"(npc.values.get!UNIT_NPC_FLAGS);
@@ -328,6 +376,9 @@ string runEscort(const EscortCase c, bool leave, out long ms, bool only = false)
         s.stayWith = npc;
         s.stayWithin = 8;
         s.pressing = false;
+        // The patient can be several yards from the doctor. Stay beside the patient for the entire cast.
+        if (triage)
+            s.stayWith = null;
         // One that follows the player is led to whom it is to find, at a walk.
         Position leadTo;
         if (const target = c.entry in leadsTo)
@@ -342,7 +393,7 @@ string runEscort(const EscortCase c, bool leave, out long ms, bool only = false)
             leadTo = Position(exit.x, exit.y, exit.z);
             s.stayWith = null;
         }
-        enum uint questFreeCreatures = 2969, cageDoor = 143979;
+        enum uint questFreeCreatures = KindalMoonweaver.questFreedom, cageDoor = 143979;
         if (c.quest == questFreeCreatures)
         {
             float closest = float.infinity;
@@ -377,6 +428,7 @@ string runEscort(const EscortCase c, bool leave, out long ms, bool only = false)
         const toUse = c.entry in objectsUsed;
         size_t jailStop;
         bool readyAtKeep;
+        TriageTreatment treatment;
         enum uint eranikus = 15491;
         const over = s.runUntil(() {
             import dmangos.scripts.blackrockdepths : MarshalWindsor;
@@ -386,11 +438,16 @@ string runEscort(const EscortCase c, bool leave, out long ms, bool only = false)
             // Dorius's marksman must finish his shot. Eranikus must survive at low health.
             const spare = c.entry == 8284 ? 8338 : c.quest == KeeperRemulos.questNightmareManifests ? eranikus : 0;
             s.killAttackers(npc, 60, spare);
+            if (c.quest == questFreeCreatures)
+                foreach (darter; s.all(GrimtotemCageDoor.spriteDarter))
+                    s.killAttackers(darter);
             if (c.quest == KeeperRemulos.questNightmareManifests && s.said(Eranikus.sayAttack2))
                 if (auto dragon = s.find(eranikus))
                     s.hurtTo(dragon, 18);
             if (c.quest == MarshalWindsor.quest)
                 driveJailBreak(s, jailStop);
+            if (triage)
+                treatment.bandageNext(s, npc);
             if (needsRowe)
             {
                 if (!readyAtKeep && npc.values.get!UNIT_NPC_FLAGS & ReginaldWindsor.npcFlagGossip)
@@ -476,16 +533,13 @@ string runEscort(const EscortCase c, bool leave, out long ms, bool only = false)
     return why;
 }
 
-/**
- * Each of `cases` (escorts or the other quest events) run; it fails at one not listed in `known` (as failing as it
- * did) that does not do its part, and says which listed ones pass now.
- */
-private void sweepQuests(const EscortCase[] cases, const string[string] known, string what)
+/// Runs every case and fails if any cannot complete or leave-behind handling fails.
+private void sweepQuests(const EscortCase[] cases, string what)
 {
     import std.process : environment;
     import std.stdio : writeln;
 
-    string[] fresh, passesNow;
+    string[] failures;
     size_t done, ran;
     const only = environment.get("DMANGOS_ESCORTS_ONLY"); // script names, comma separated: those alone, said at length
     foreach (c; cases)
@@ -500,23 +554,13 @@ private void sweepQuests(const EscortCase[] cases, const string[string] known, s
         const key = format!"%s/%s"(c.script, c.quest);
         writeln(format!"realscripts_world: %s (%s, quest %s): %s in %s s"(c.script, c.entry, c.quest,
             outcome.length ? outcome : "ok", ms / 1000));
-        const knownWhy = key in known;
-        const isKnown = knownWhy !is null && outcome.canFind(*knownWhy); // known only as far as it fails as it did
         if (outcome.length == 0)
-        {
             ++done;
-            if (knownWhy !is null)
-                passesNow ~= key;
-        }
-        else if (!isKnown)
-            fresh ~= format!"%s: %s"(key, outcome);
+        else
+            failures ~= format!"%s: %s"(key, outcome);
     }
-    writeln(format!"realscripts_world: %s %s, %s do their part, %s known not to"(ran, what, done, ran - done));
-    foreach (p; passesNow)
-        writeln("realscripts_world: passes now, take it off the known list: ", p);
-    if (only !is null)
-        return;
-    assert(fresh.length == 0, format!"%s that do not do their part:\n%-(%s\n%)"(what, fresh));
+    writeln(format!"realscripts_world: %s %s, %s passed, %s failed"(ran, what, done, failures.length));
+    assert(failures.length == 0, format!"%s that do not do their part:\n%-(%s\n%)"(what, failures));
 }
 
 /// Every escort quest of the scripts: taken on, followed to the end, its quest complete; left behind, failed.
@@ -529,7 +573,7 @@ unittest
         return;
     const cases = escortCases(realData).filter!(c => c.escort).array;
     assert(cases.length >= 30, format!"only %s escorts found in the scripts"(cases.length));
-    sweepQuests(cases, null, "escorts");
+    sweepQuests(cases, "escorts");
 }
 
 /**
@@ -544,19 +588,7 @@ unittest
     if (!haveRealData())
         return;
     const cases = escortCases(realData).filter!(c => !c.escort).array;
-    sweepQuests(cases, knownQuestEvents, "quest events");
-}
-
-/// The quest events that cannot do their part on this data, and why (kept to failing as they do).
-private immutable string[string] knownQuestEvents;
-
-shared static this()
-{
-    knownQuestEvents = [
-        // The triage quests ask for First Aid at 225 (`RequiredSkill` 129); each doctor is offered both.
-        "npc_doctor/6622": "the quest not taken",
-        "npc_doctor/6624": "the quest not taken",
-    ];
+    sweepQuests(cases, "quest events");
 }
 
 // ---------------------------------------------------------------------------------------------------------------
