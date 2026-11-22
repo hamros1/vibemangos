@@ -270,8 +270,9 @@ struct ServerReconnectProof
     mixin ServerPacket!(Opcode.reconnectProof);
 
     AuthResult result = AuthResult.success;
-    ushort padding = 0;
 }
+
+static assert(wireSize!ServerReconnectProof + 1 == 2);
 
 /// One realm in the realm list, in the 1.12 layout.
 struct RealmEntry

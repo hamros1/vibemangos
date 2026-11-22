@@ -16,7 +16,8 @@
  *   $(LI banned IP: "no access"; account locked to another IP: "suspended";)
  *   $(LI unreadable `s`/`v`: "no access"; permanent ban: "banned"; temporary ban: "suspended";)
  *   $(LI unknown account: a fake but stable challenge, so names cannot be enumerated;)
- *   $(LI wrong password: "unknown account", counted toward the `WrongPass` autoban.)
+ *   $(LI wrong password: the same invalid-credentials error as an unknown account, counted toward
+ *     the `WrongPass` autoban.)
  * )
  *
  * ---
@@ -56,6 +57,7 @@ enum SessionState
     awaitingLogonProof,
     awaitingReconnectProof,
     authenticated,
+    rejected, // let the client show the rejection and close; the socket still has an idle timeout
     closed,
 }
 
@@ -75,7 +77,6 @@ final class AuthSession : NetSession
         AuthContext context;
         string remoteAddress;
         State state_ = State.awaitingChallenge;
-        bool finishing; // disconnect once the pending output has been sent
         ubyte[] input;
         ubyte[] output;
 
@@ -90,7 +91,7 @@ final class AuthSession : NetSession
 
     invariant
     {
-        assert(state_ == State.awaitingChallenge || state_ == State.closed || loginName.length > 0,
+        assert(state_ == State.awaitingChallenge || state_ == State.rejected || state_ == State.closed || loginName.length > 0,
             "past the challenge, a session always knows who is logging in");
         assert(state_ != State.authenticated || (!fakeAccount && account.sessionKey.length == sessionKeyLength),
             "an authenticated session always belongs to a real account with a session key");
@@ -117,10 +118,10 @@ final class AuthSession : NetSession
         return remoteAddress;
     }
 
-    /// True when the connection should be closed once pending output is flushed.
+    /// Whether the connection should be closed by the server.
     @property bool wantsClose() const
     {
-        return finishing || state_ == State.closed;
+        return state_ == State.closed;
     }
 
     /// Feeds bytes received from the client and processes every complete packet among them.
@@ -192,11 +193,6 @@ private:
         output ~= encode(packet);
     }
 
-    void finish()
-    {
-        finishing = true;
-    }
-
     void disconnect()
     {
         state_ = State.closed;
@@ -260,7 +256,7 @@ private:
             sendLogonProofFailure(AuthResult.failUnknownAccount);
             if (!fakeAccount)
                 registerFailedLogin();
-            finish();
+            state_ = State.rejected;
             return;
         }
 
@@ -394,7 +390,7 @@ private:
     {
         info!"%s: logon challenge for '%s' rejected (%s): %s"(remoteAddress, loginName, result, reason);
         send(ServerLogonChallengeFailure(0, result));
-        finish();
+        state_ = State.rejected;
     }
 
     void refuseReconnect(string reason)
@@ -514,7 +510,7 @@ version (unittest)
     private ubyte[] expectChallengeFailure(AuthSession session, string username)
     {
         session.receive(challengePacket(username));
-        assert(session.wantsClose);
+        assert(session.state == AuthSession.State.rejected && !session.wantsClose);
         return session.takeOutput();
     }
 
@@ -599,10 +595,10 @@ unittest
 
     auto session = new AuthSession(context, "127.0.0.2");
     assert(tryPassword(session, "nobody", "anything") == wrongPasswordReply[]);
-    assert(session.wantsClose);
+    assert(session.state == AuthSession.State.rejected && !session.wantsClose);
 }
 
-/// A wrong password fails with "unknown account"; with WrongPass.MaxCount set it leads to an IP ban.
+/// A wrong password returns the credential dialog before closing, and counts toward WrongPass.MaxCount.
 unittest
 {
     auto db = newDatabase();
@@ -610,9 +606,12 @@ unittest
 
     auto first = new AuthSession(context, "10.0.0.5");
     assert(tryPassword(first, "player", "wrong") == wrongPasswordReply[]);
+    assert(first.state == AuthSession.State.rejected && !first.wantsClose);
     assert(db.findAccount("player").get.failedLogins == 1);
     assert(db.findAccount("player").get.sessionKey.length == 0);
     assert(!db.isIpBanned("10.0.0.5"));
+    first.receive([Opcode.realmList, 0, 0, 0, 0]);
+    assert(first.wantsClose && first.takeOutput().length == 0);
 
     auto second = new AuthSession(context, "10.0.0.5");
     tryPassword(second, "player", "wrong");
@@ -698,24 +697,33 @@ unittest
     ubyte[proofLength] unused;
     tryPassword(newSession(db), "player", "secret", key, unused);
 
-    auto session = newSession(db);
-    session.receive(challengePacket("player", 5875, Opcode.reconnectChallenge));
-    auto reply = ByteReader(session.takeOutput());
-    assert(reply.read!ubyte == Opcode.reconnectChallenge);
-    const challenge = deserialize!ServerReconnectChallenge(reply);
-    assert(challenge.result == AuthResult.success);
+    foreach (client; supportedBuilds)
+    {
+        auto session = newSession(db);
+        session.receive(challengePacket("player", client.build, Opcode.reconnectChallenge));
+        auto reply = ByteReader(session.takeOutput());
+        assert(reply.read!ubyte == Opcode.reconnectChallenge);
+        const challenge = deserialize!ServerReconnectChallenge(reply);
+        assert(challenge.result == AuthResult.success);
 
-    ClientReconnectProof proof;
-    proof.proofData = secureRandom!16;
-    proof.clientProof = computeReconnectProof("PLAYER", proof.proofData, challenge.challenge, key);
-    ByteWriter packet;
-    packet.put(cast(ubyte) Opcode.reconnectProof);
-    serialize(packet, proof);
-    session.receive(packet.data);
+        ClientReconnectProof proof;
+        proof.proofData = secureRandom!16;
+        proof.clientProof = computeReconnectProof("PLAYER", proof.proofData, challenge.challenge, key);
+        ByteWriter packet;
+        packet.put(cast(ubyte) Opcode.reconnectProof);
+        serialize(packet, proof);
+        session.receive(packet.data);
 
-    const ubyte[4] success = [Opcode.reconnectProof, AuthResult.success, 0, 0];
-    assert(session.takeOutput() == success[]);
-    assert(session.state == AuthSession.State.authenticated);
+        const ubyte[2] success = [Opcode.reconnectProof, AuthResult.success];
+        assert(session.takeOutput() == success[]);
+        assert(session.state == AuthSession.State.authenticated);
+
+        session.receive([Opcode.realmList, 0, 0, 0, 0]);
+        auto realms = ByteReader(session.takeOutput());
+        assert(realms.read!ubyte == Opcode.realmList && realms.read!ushort == realms.remaining);
+        const list = deserialize!ServerRealmList(realms);
+        assert(list.realms.length == 1 && list.realms[0].name == "Test Realm");
+    }
 
     // An unknown account or a banned one cannot reconnect.
     auto stranger = newSession(db);

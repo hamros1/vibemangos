@@ -164,14 +164,15 @@ stay in their separate databases.
 ## Protocol notes
 
 * Supported builds: 5875 (1.12.1), 6005 (1.12.2), 6141 (1.12.3). A failed logon proof is
-  2 bytes for 5875/6005 and 4 bytes for 6141.
+  2 bytes for 5875/6005 and 4 bytes for 6141. A successful reconnect proof is 2 bytes.
 * SRP6 is the variant the client uses. The session key interleave strips leading zero bytes
   of the little-endian `S`, plus one more byte when that leaves an odd count.
 * Login decisions: a banned IP gets "no access"; an account
   locked to another IP, or temporarily banned, gets "suspended"; broken `s`/`v` values get
   "no access"; a permanent ban gets "banned". An unknown account gets a decoy challenge that
-  is stable per name, so names cannot be enumerated. A wrong password is answered with
-  "unknown account" and counts toward the automatic ban (`wrong_pass_max_count`).
+  is stable per name, so names cannot be enumerated. An unknown account and a wrong password
+  both return the client's invalid-credentials dialog. Wrong passwords for known accounts count
+  toward the automatic ban (`wrong_pass_max_count`).
 * The login server's database queries are synchronous. A lost database connection is
   re-established automatically.
 * Not implemented yet: client file integrity (`crcHash`), PIN/TOTP (`account.token`), patch
