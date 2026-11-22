@@ -74,7 +74,11 @@ Flamestrike’s ground effect was missing from the hidden-debuff list. All six p
 - **In Dreams** now records Isillien’s defeat even if it happens before Tirion’s challenge. Tirion moves into the epilogue after the challenge in that case. A death during the duel also schedules the epilogue through the same path.
 - **Wandering Shay** and **Tooga’s Quest** pass with fixture changes. The player uses Shay’s Bell when the follower wanders, and advances toward Torta with a following distance that lets Tooga catch up. Both checks still require the actual quest script to award completion.
 
-The sweep takes these quests through the client and checks quest state. For the two escort scripts it also verifies failure when the player leaves the escort behind. Setting up the remaining dungeon cases, professions, reputation and follower-item interactions is separate from changing production scripts.
+- **The Sleeper Has Awakened** and **A Little Help From My Friends** now run through the Horn of Awakening and Spraggle’s Canteen in the fixture. The player waits within range for each cast before leading the follower onward.
+- **Freedom for All Creatures** now runs through the cage key in the player’s keyring. The fixture approaches the cage and waits for the freed sprites to complete the event.
+- **Triage** keeps the event active when the last patients have been admitted. A regression test confirms that a patient already in a bunk can still provide the last required save. The full clinic playthrough still needs verification.
+
+The sweep takes these quests through the client and checks quest state. It also verifies that the two repaired escort finales still fail the quest when a player leaves the escort behind. The outstanding sweep cases include dungeon entry and dynamic summons, professions and reputation.
 
 ## Reproduce
 

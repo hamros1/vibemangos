@@ -145,6 +145,7 @@ shared static this()
     objectsUsed = [
         12717: [178247u],         // Muglash: the Naga Brazier
         10300: [177417u, 177404], // Ranshalla: the fires of Elune, the altar
+        7956: [143979u],         // Kindal: the bamboo cage
     ];
 }
 
@@ -174,6 +175,14 @@ shared static this()
         7774: 7765,   // Shay Leafrunner to Rockbiter
         5955: 6015,   // Tooga to Torta
     ];
+}
+
+/// Reusable items that bring a follower back or wake it.
+private immutable uint[uint] followerItems;
+
+shared static this()
+{
+    followerItems = [11218: 13536, 7774: 9189, 9999: 11804]; // horn, bell, canteen
 }
 
 /// What an escort came to: "" if it did its part, else why not.
@@ -238,6 +247,21 @@ string runEscort(const EscortCase c, bool leave, out long ms, bool only = false)
             leadTo = spawnOnContinent(data, *target, m);
             s.stayWith = null;
         }
+        enum uint questFreeCreatures = 2969, cageDoor = 143979;
+        if (c.quest == questFreeCreatures)
+        {
+            float closest = float.infinity;
+            foreach (cage; s.objects(cageDoor))
+            {
+                const away = Scene.distance(npc.position, cage.position);
+                if (away < closest)
+                {
+                    closest = away;
+                    leadTo = cage.position;
+                }
+            }
+            s.stayWith = null;
+        }
         if (leave)
         {
             s.run(3.seconds);
@@ -249,17 +273,22 @@ string runEscort(const EscortCase c, bool leave, out long ms, bool only = false)
             ms = s.elapsedMs;
             return failed ? "" : format!"left 80 yards behind, the quest is %s"(s.questState(c.quest));
         }
-        enum uint shay = 7774, shaysBell = 9189;
-        if (c.entry == shay)
-            s.heroes[0].session.inWorld.storeLoot(shaysBell, 1, 0, false);
+        const followerItem = followerItems.get(c.entry, 0);
+        if (followerItem && !s.hero.inventory.count(followerItem))
+            s.heroes[0].session.inWorld.storeLoot(followerItem, 1, 0, false);
         const end = data.escortPaths.get(c.entry, null);
         float nearest = float.infinity;
         bool[ulong] used;
         const toUse = c.entry in objectsUsed;
         const over = s.runUntil(() {
+            import dmangos.world.spellcast : SpellTargets, TargetFlags;
+            import dmangos.world.updatefields : UNIT_FIELD_BYTES_1;
+            import dmangos.script.api : StandState;
+
             // The marksman is part of Dorius's completion scene.
             s.killAttackers(npc, 60, c.entry == 8284 ? 8338 : 0);
-            if (leadTo.x != 0 && s.elapsedMs % 1000 == 0 && Scene.distance(s.hero.position, leadTo) > 3
+            const asleep = npc.values.getByte!UNIT_FIELD_BYTES_1(0) == StandState.sleep;
+            if (!asleep && leadTo.x != 0 && s.elapsedMs % 1000 == 0 && Scene.distance(s.hero.position, leadTo) > 3
                     && Scene.distance(s.hero.position, npc.position) < 20)
             {
                 auto p = s.hero.position;
@@ -269,13 +298,12 @@ string runEscort(const EscortCase c, bool leave, out long ms, bool only = false)
                 p.z += (leadTo.z - p.z) / d * step;
                 s.moveHero(0, Position(p.x - 2, p.y, p.z)); // (`moveHero` stands two yards east of where it is told)
             }
-            if (c.entry == shay && s.elapsedMs % 5000 == 0
-                && Scene.distance(s.hero.position, npc.position) > 8)
+            const distance = Scene.distance(s.hero.position, npc.position);
+            if (followerItem && s.elapsedMs % 5000 == 0 && (asleep || (c.entry == 7774 && distance > 8)))
             {
-                import dmangos.world.spellcast : SpellTargets, TargetFlags;
-
-                s.moveHero(0, npc.position);
-                s.useCarriedItem(shaysBell, SpellTargets(TargetFlags.unit, npc.guid));
+                if (distance > 4)
+                    s.moveHero(0, npc.position);
+                s.useCarriedItem(followerItem, SpellTargets(TargetFlags.unit, npc.guid));
             }
             // What the player must use on the way (a brazier to light, the fires of Elune), once each, as the escort
             // comes by it.
@@ -285,10 +313,19 @@ string runEscort(const EscortCase c, bool leave, out long ms, bool only = false)
                         if (go.guid !in used && Scene.distance(go.position, npc.position) < 20
                             && !(go.values.get!(imported!"dmangos.world.updatefields".GAMEOBJECT_FLAGS) & 0x10))
                         { // (usable: its script took its "no interaction" flag away)
+                            if (c.quest == questFreeCreatures && !s.hero.inventory.count(q.srcItemId))
+                                continue;
                             used[go.guid] = true;
                             s.moveHero(0, go.position);
                             s.run(400.msecs);
-                            s.use(go);
+                            if (c.quest == questFreeCreatures)
+                            {
+                                auto targets = SpellTargets(TargetFlags.gameObject);
+                                targets.gameObject = go.guid;
+                                s.useCarriedItem(q.srcItemId, targets);
+                            }
+                            else
+                                s.use(go);
                         }
             // One that fights the character (a challenge, a capture) is fought: a twentieth of its health a second.
             if (s.elapsedMs % 1000 == 0 && npc.alive && npc.ai.inCombat && npc.ai.hostVictim().guid == s.hero.guid)
@@ -423,10 +460,6 @@ shared static this()
         "npc_kernobee/2904": "no spawn on a continent", // Gnomeregan
         "npc_doctor/6622": "the quest not taken",
         "npc_doctor/6624": "the quest not taken",
-        // The player must use the Horn of Awakening or Spraggle's Canteen on the way, or the cage key for Kindal.
-        "npc_kerlonian/5321": "not over in 20 minutes",
-        "npc_ringo/4491": "not over in 20 minutes",
-        "npc_kindal_moonweaver/2969": "failed",
     ];
 }
 

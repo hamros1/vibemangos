@@ -582,18 +582,20 @@ final class Scene
     ubyte useCarriedItem(uint entry, const imported!"dmangos.world.spellcast".SpellTargets targets)
     {
         import dmangos.bytes : ByteWriter;
-        import dmangos.world.defines : inventorySlotBag0;
+        import dmangos.world.inventory : Item, isInventoryPos;
 
         auto me = heroes[0].session.inWorld;
-        ubyte slot = 255;
-        foreach (ubyte s; 23 .. 39)
-            if (const item = me.player.inventory[inventorySlotBag0, s])
-                if (item.entry == entry)
-                    slot = s;
-        assert(slot != 255, format!"item %s not in the backpack"(entry));
+        Item carried;
+        foreach (item; me.player.inventory.all())
+            if (item.entry == entry && isInventoryPos(item.bagSlot, item.slot))
+            {
+                carried = item;
+                break;
+            }
+        assert(carried !is null, format!"item %s not carried"(entry));
         ByteWriter w;
-        w.put(ubyte(inventorySlotBag0));
-        w.put(slot);
+        w.put(carried.bagSlot);
+        w.put(carried.slot);
         w.put(ubyte(1));
         targets.write(w);
         heroes[0].write(Opcode.CMSG_USE_ITEM, w.data);

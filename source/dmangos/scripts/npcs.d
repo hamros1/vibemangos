@@ -16,7 +16,7 @@ private enum uint npcFlagQuestGiver = 2;
 /// a patient saved by the player (`value`: the bunk).
 enum TriageSignal : uint { yourDoctor = 1, saved }
 
-/// The Triage quests: the Alliance's (Doctor Gregory Victor) and the Horde's (Doctor Gustaf VanHowzen).
+/// The Triage quests: the Alliance's Gustaf VanHowzen and the Horde's Gregory Victor.
 enum uint questTriageAlliance = 6624, questTriageHorde = 6622, doctorAlliance = 12939, doctorHorde = 12920;
 
 /**
@@ -59,10 +59,10 @@ struct TriageDoctor
 
     void on(ref CreatureContext me, Step step)
     {
-        if (!active)
+        // Stop bringing in patients at the cap. The patients still in bunks
+        // must be allowed to finish so the final save or death can settle the quest.
+        if (!active || brought >= mostPatients)
             return;
-        if (brought >= mostPatients) // the worst that can happen: five dead, fifteen saved
-            return reset(me);
         uint lying;
         foreach (p; inBunk)
             if (p)
@@ -71,6 +71,8 @@ struct TriageDoctor
         uint came;
         foreach (_; 0 .. wanted)
         {
+            if (brought + came >= mostPatients)
+                break;
             const bunk = freeBunk(me);
             if (bunk == size_t.max)
                 break;
@@ -611,6 +613,20 @@ unittest
         doc.raise(SummonedDied(creatureRef(12938, doc.host.summons)));
     }
     assert(doc.host.did("fail 6624") && !doc.host.did("event 6624"));
+
+    // The final patient already in a bunk can still finish the quest once spawning stops.
+    auto lastHost = new imported!"dmangos.scripts.testhost".TestCreature;
+    lastHost.me = creatureRef(doctorAlliance);
+    auto lastContext = CreatureContext(lastHost);
+    auto lastDoctor = TriageDoctor(active: true, player: lastHost.player, brought: TriageDoctor.mostPatients,
+        saved: TriageDoctor.saveCount - 1, died: TriageDoctor.deathCount);
+    const lastPatient = creatureRef(12938, 20);
+    lastDoctor.inBunk[0] = lastPatient;
+    lastDoctor.on(lastContext, TriageDoctor.Step.bringIn);
+    assert(lastDoctor.active && lastHost.summons == 0);
+    const savedLast = Signal(lastPatient, TriageSignal.saved, 0);
+    lastDoctor.on(lastContext, savedLast);
+    assert(lastHost.did("event 6624") && !lastDoctor.active);
 
     auto patient = Driven!zone.make("npc_injured_patient");
     patient.host.me = creatureRef(12938);
