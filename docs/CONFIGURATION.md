@@ -14,9 +14,9 @@ The servers load MariaDB Connector/C (`libmariadb3`) or `libmysqlclient` at run 
 
 ## Console logging
 
-Both servers color their severity labels when standard error goes to a supported terminal.
-Warnings are bold yellow and errors are bold red. Redirected logs are plain text.
-Set `NO_COLOR=1` to disable colors in a terminal.
+Both servers color their logs when standard error goes to a supported terminal.
+`INFO` labels and messages are green. Warning labels are bold yellow and error labels are bold red.
+Redirected logs are plain text. Set `NO_COLOR=1` to disable colors in a terminal.
 
 ## Login server settings
 

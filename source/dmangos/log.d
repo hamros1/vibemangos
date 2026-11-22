@@ -77,19 +77,13 @@ private static immutable string[] levelTags = () {
 
 static assert(levelTags[LogLevel.warning] == "WARNING");
 
-private static immutable string[] coloredLevelTags = () {
-    immutable string[LogLevel.max + 1] colors = [
-        "\x1b[2m",     // trace: dim
-        "\x1b[36m",    // verbose: cyan
-        "\x1b[32m",    // info: green
-        "\x1b[1;33m",  // warning: bold yellow
-        "\x1b[1;31m",  // error: bold red
-    ];
-    string[] tags;
-    foreach (i, color; colors)
-        tags ~= color ~ levelTags[i] ~ "\x1b[0m";
-    return tags;
-}();
+private immutable string[LogLevel.max + 1] levelColors = [
+    "\x1b[2m",     // trace: dim
+    "\x1b[36m",    // verbose: cyan
+    "\x1b[32m",    // info: green
+    "\x1b[1;33m",  // warning: bold yellow
+    "\x1b[1;31m",  // error: bold red
+];
 
 /// Writes a message at `level` if that level is enabled.
 void logMessage(LogLevel level, string fmt, Args...)(auto ref Args args)
@@ -105,8 +99,11 @@ private void emit(LogLevel level, string message) @trusted nothrow
     {
         auto now = Clock.currTime;
         now.fracSecs = Duration.zero;
-        const tag = colorConsole ? coloredLevelTags[level] : levelTags[level];
-        stderr.writefln("%s %s %s", now.toISOExtString(), tag, message);
+        const color = colorConsole ? levelColors[level] : "";
+        const reset = colorConsole ? "\x1b[0m" : "";
+        const colorMessage = level == LogLevel.info;
+        stderr.writefln("%s %s%s%s %s%s", now.toISOExtString(), color, levelTags[level],
+            colorMessage ? "" : reset, message, colorMessage ? reset : "");
     }
     catch (Exception)
     {
