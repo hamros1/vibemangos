@@ -14,6 +14,7 @@
  */
 module dmangos.world.context;
 
+import dmangos.bytes : ByteReader, ByteWriter;
 import dmangos.cluster.services : ServiceHost;
 import dmangos.world.writebehind : Writer;
 static import dmangos.world.updatefields;
@@ -679,9 +680,67 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         MonoTime due;
         AreaDamage hit;
+        MonoTime retryUntil; // after handoff: wait briefly for the target's replica to arrive here
     }
 
     private ReplicaSpellImpact[] replicaSpellImpacts;
+
+    /// Move pending named-creature impacts with a player. The impact time uses the shared node clock.
+    package void writeReplicaImpacts(ulong caster, ref ByteWriter writer)
+    {
+        import std.algorithm.comparison : max;
+        import dmangos.serialization : serialize;
+
+        uint count;
+        foreach (ref impact; replicaSpellImpacts)
+            if (impact.hit.caster == caster && impact.hit.namedCreature)
+                ++count;
+        writer.put(count);
+        if (!count)
+            return;
+
+        const now = clock();
+        const transferTime = transportNow();
+        size_t kept;
+        foreach (impact; replicaSpellImpacts)
+        {
+            if (impact.hit.caster != caster || !impact.hit.namedCreature)
+            {
+                replicaSpellImpacts[kept++] = impact;
+                continue;
+            }
+            const milliseconds = cast(uint) max(0L, (impact.due - now).total!"msecs");
+            writer.put(transferTime + milliseconds);
+            serialize(writer, impact.hit);
+        }
+        replicaSpellImpacts.length = kept;
+    }
+
+    /// Adopt named-creature impacts after the caster is installed on its new map.
+    package void readReplicaImpacts(ulong caster, Map map_, ref ByteReader reader)
+    {
+        import std.algorithm.comparison : max;
+        import dmangos.serialization : deserialize;
+
+        const count = reader.read!uint;
+        if (!count)
+            return;
+        const now = clock();
+        const arrived = transportNow();
+        ReplicaSpellImpact[] restored;
+        foreach (_; 0 .. count)
+        {
+            const deadline = reader.read!uint;
+            auto hit = deserialize!AreaDamage(reader);
+            if (hit.caster != caster || !hit.namedCreature || hit.reply || hit.benefits.length
+                || hit.map != map_.id || hit.instance != map_.instanceId)
+                continue;
+            const remaining = max(0, cast(int)(deadline - arrived));
+            const due = now + remaining.msecs;
+            restored ~= ReplicaSpellImpact(due, hit, due + 2.seconds);
+        }
+        replicaSpellImpacts ~= restored;
+    }
 
     /// Commit a cross-node effect now, or when its projectile reaches the target.
     package bool sendReplicaSpell(Map map_, ushort peer, const(SpellInfo)* spell, AreaDamage hit)
@@ -737,10 +796,16 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if (auto copy = cast(Replica) map_.findObject(impact.hit.target))
             {
                 impact.hit.sequence = nextGameplaySequence();
-                sendAreaDamage(copy.owner, impact.hit);
+                if (sendAreaDamage !is null && sendAreaDamage(copy.owner, impact.hit))
+                    continue;
             }
-            else if (impact.hit.namedCreature)
+            else if (impact.hit.namedCreature && map_.unit(impact.hit.target))
+            {
                 applyAreaDamage(0, map_, impact.hit);
+                continue;
+            }
+            if (impact.retryUntil > now)
+                replicaSpellImpacts ~= impact;
         }
     }
 

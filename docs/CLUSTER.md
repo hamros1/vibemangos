@@ -327,7 +327,8 @@ sent before its home heard are passed on by the old owner for a few seconds, and
 from a new owner before the old one's word takes it as the owner.
 
 **What travels:** the character as saved, including auras, spell cooldowns, quests and reputation;
-its movement; what its client knows; its pet (saved as out and brought out again on the next node);
+its movement; pending named-creature projectile impacts; what its client knows; its pet (saved as
+out and brought out again on the next node);
 its client's address and build; the dungeon copy it is in and where it came in from. **What does
 not:** timers that only shape timing (regeneration, rest, flood protection), `.gm allowwhispers`
 targets and `.cheat triggerpass`, which start afresh on the new node. A player in flight stays on the
@@ -784,9 +785,10 @@ services line (`ServiceHost.describe`). Every log line of the cluster code start
 
 Cross-node spell routing is effect-specific. Script-selected channels, registered spell scripts, and
 database spell steps that need the caster or another actor still use their local paths. Ground ticks
-use observed targets around the spot and require a current caster replica at the target. The launching
-node routes a projectile to the target's owner at impact. Named-creature projectiles also resolve when
-the target has become local during flight. The launching node must still simulate the caster.
+use observed targets around the spot and require a current caster replica at the target. At impact,
+the node simulating the caster routes a named-creature projectile using the target's current
+ownership. A player handoff preserves its deadline and lets the new node wait briefly to see the
+target. Other routed projectiles depend on the launching node.
 
 ## Testing
 

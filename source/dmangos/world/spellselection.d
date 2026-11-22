@@ -159,6 +159,7 @@ unittest
     import dmangos.world.creature : Creature, CreatureSpawn;
     import dmangos.world.eventai : castTriggered;
     import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.inworld : ArrivalAction;
     import dmangos.world.player : Player;
     import dmangos.world.replication : encodePlayerState, encodeState;
     import dmangos.world.spellcast : SpellMissInfo, SpellTargets, TargetFlags, spellAttrEx2CantCrit,
@@ -381,6 +382,48 @@ unittest
     source.update(now);
     assert(blocker.values.get!UNIT_FIELD_HEALTH == health - 20 && requests.length == 6);
     assert(blocker.ai.threatOf(player.guid) == 40, "use the prepared caster threat multiplier once");
+
+    const playerGuid = player.guid;
+    from.removeObject(atImpact.guid);
+    auto carried = npc(owner, 91007, creatureInnkeeper, 26);
+    auto late = npc(owner, 91008, creatureInnkeeper, 24);
+    const lateState = encodeState(late, 0);
+    to.removeObject(late.guid);
+    const impactCell = cellKeyAt(carried.position.x, carried.position.y);
+    from.replicaCreated(2, impactCell, carried.guid, encodeState(carried, 0));
+    from.replicaCreated(3, impactCell, late.guid, lateState);
+    AreaDamage[] forwarded;
+    owner.sendAreaDamage = (ushort peer, const ref AreaDamage request) {
+        assert(peer == 3 && request.caster == playerGuid && request.target == late.guid && !request.reply);
+        forwarded ~= cast(AreaDamage) request;
+        return true;
+    };
+
+    auto relay = new TestPlayerRelay(source, owner);
+    castPacket = ByteWriter.init;
+    castPacket.put(groundWard);
+    SpellTargets(TargetFlags.self, 0).write(castPacket);
+    caster.write(Opcode.CMSG_CAST_SPELL, castPacket.data);
+    now += 1.seconds;
+    source.update(now);
+    assert(caster.session.inWorld.actAtReplica(carried.guid, ArrivalAction.init));
+    assert(relay.remote !is null && relay.remote.character.guid == playerGuid);
+    now += 1.seconds;
+    owner.update(now);
+    assert(!carried.auras.find(groundWard), "handoff does not land an in-flight spell early");
+    now += 1.seconds;
+    owner.update(now);
+    source.update(now);
+    assert(carried.auras.find(groundWard).stacks == 1, "the caster's new node keeps the original impact time");
+    assert(requests.length == 6 && forwarded.length == 0);
+    to.replicaCreated(3, impactCell, late.guid, lateState);
+    now += 1.seconds;
+    owner.update(now);
+    assert(forwarded.length == 1 && carried.auras.find(groundWard).stacks == 1,
+        "a late replica is routed once after it reaches the caster's new node");
+    now += 1.seconds;
+    owner.update(now);
+    assert(forwarded.length == 1);
 }
 
 /// Direct damage and aura effects share one hit on the named creature's node.
