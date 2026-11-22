@@ -1,3 +1,2 @@
 # Gaps tools/harness/spell-audit.py knows of, each with why it is still open. Take a line off when it is done;
 # the audit fails on any gap not listed here.
-aura aurasVisible: Detect Magic shows a target's auras: the client's, nothing yet sent for it

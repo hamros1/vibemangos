@@ -148,6 +148,7 @@ enum UnitFlags : uint
     confused = 0x00400000,         /// disoriented: Polymorph, Blind, Scatter Shot
     fleeing = 0x00800000,          /// running in fear
     uninteractible = 0x02000000,
+    aurasVisible = 0x08000000,     /// reveal buffs to the classic client (Detect Magic)
     skinnable = 0x04000000,        /// a creature with a skin to take; a player dead in a battleground: its insignia
 }
 

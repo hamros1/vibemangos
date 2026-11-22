@@ -13,7 +13,7 @@ Chain Heal now ranks both local and remote allies by missing hit points. Cluster
 | Trainer spell casts, using the same input IDs as the original audit | 1,264 of 1,264 passed. The two obsolete lessons no longer enter the server's trainer inventory. |
 | Targeted spell and trainer checks | 16 of 16 passed, including the list shown by each trainer and the result of a direct purchase request. |
 | Full player spell sweep | 1,980 of 1,983 passed. The three known failures were Fishing ranks tested on dry land. |
-| Static effect and aura audit | 3,478 entries examined in the source data. Detect Magic's client-visible effect remains open. |
+| Static effect and aura audit | 3,478 entries examined in the source data. The effect and aura scan has no remaining exceptions. |
 
 The cross-node Chain Heal regression gives a local ally a lower health percentage and a smaller absolute deficit than the remote candidate. Both bounce orders (remote then local, and remote then remote) select the intended recipients. A separate replication test checks that a remote player missing 150 HP appears to strangers as 25/100.
 
@@ -34,7 +34,7 @@ Chain Heal’s target selection is specified in the original [1.12 patch notes](
 - **Warrior trainers sell Elemental Fury at level 6.** A fresh Warrior bought lesson 1229 from trainer 5479, paid 100 copper and learned 877. The effect targets the caster’s pet. The Shaman talent of the same name is 16089. Spell 877 was the trainer sweep’s one known failure.
 - **Paladin trainers sell zzOLDHip Shot III at level 8.** A fresh Paladin bought lesson 1998 from trainer 5491, paid 100 copper and learned 1973. The local client calls it obsolete. The generic sweep counted it as a successful Mage cast. These two purchases used the actual trainer opcode. Both lesson rows are also present in the installed server’s world database.
 - **Hunter Trueshot Aura ranks 2 and 3 work in the basic Hunter cast test.** The generic sweep selected a Mage for 20905 and 20906. A separate level-60 Hunter successfully cast each rank and acquired the aura. Party-wide attack power and range remain separate assertions.
-- **Mage Detect Magic remains open.** Rank 1 (2855) passed the generic aura check. The static audit lists aura type 100 as a known gap. A graphical 1.12.1 client still needs to confirm whether casting it reveals the target’s beneficial effects to the intended viewers. [Existing audit entry](../../tools/harness/spell-audit-known.txt)
+- **Mage Detect Magic.** Aura 100 now sets the target’s public aura-visibility flag until the final revealing aura expires. A graphical 1.12.1 client check remains useful for verifying the target frame. [Static audit exceptions](../../tools/harness/spell-audit-known.txt)
 
 ## Audited inventory at `15a8429`
 

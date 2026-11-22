@@ -556,6 +556,14 @@ struct AuraSet
             values.set!UNIT_DYNAMIC_FLAGS(has(type) ? flags | flag : flags & ~flag);
         }
 
+        if (aura.has(AuraType.aurasVisible))
+        {
+            import dmangos.world.defines : UnitFlags;
+
+            const flags = values.get!UNIT_FIELD_FLAGS;
+            values.set!UNIT_FIELD_FLAGS(has(AuraType.aurasVisible) ? flags | UnitFlags.aurasVisible
+                : flags & ~UnitFlags.aurasVisible);
+        }
         if (aura.has(AuraType.modStalked))
             dynamicFlag(dynTrackUnit, AuraType.modStalked);
         if (aura.has(AuraType.feignDeath))
@@ -1232,4 +1240,27 @@ unittest
     auto other = makeAura(&fortitude, 2, 60, 1_800_000, true, [54, 0, 0]);
     assert(set.displacedBy(other, values) is one, "the second priest's takes its place");
     assert(set.displacedBy(makeAura(&corruption, 3, 60, 18_000, false, [100, 0, 0]), values) is null);
+}
+
+/// Detect Magic uses a public unit flag. Keep it while any revealing aura is active.
+unittest
+{
+    import dmangos.world.defines : UnitFlags;
+    import dmangos.world.updatefields : TypeId;
+
+    auto values = UpdateValues(TypeId.unit);
+    values.set!UNIT_FIELD_FLAGS(UnitFlags.pvp);
+    SpellInfo detect;
+    detect.id = 2855;
+    detect.effect[0] = SpellEffect.applyAura;
+    detect.casting.applyAuraName[0] = AuraType.aurasVisible;
+    AuraSet set;
+    bool isNew;
+    auto first = set.apply(makeAura(&detect, 1, 60, 120_000, false, [0, 0, 0]), values, isNew);
+    auto second = set.apply(makeAura(&detect, 2, 60, 120_000, false, [0, 0, 0]), values, isNew);
+    assert(values.get!UNIT_FIELD_FLAGS == (UnitFlags.pvp | UnitFlags.aurasVisible));
+    set.remove(first, values);
+    assert(values.get!UNIT_FIELD_FLAGS & UnitFlags.aurasVisible);
+    set.remove(second, values);
+    assert(values.get!UNIT_FIELD_FLAGS == UnitFlags.pvp);
 }
