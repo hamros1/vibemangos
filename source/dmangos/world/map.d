@@ -410,6 +410,7 @@ final class Map : CombatWorld, GameObjectWorld
 
         // Replication.
         bool[ushort][ulong] peerCells;     // cell key -> peers that want what this node simulates there
+        ulong[ushort][ulong] casterReplicas; // caster guid -> peer -> deadline on clockMs
         uint[ulong] localInterest;         // cell key -> local players and fighting creatures near it
         bool[ulong] interestAdded, interestRemoved; // changes since `takeInterest`
 
@@ -590,6 +591,7 @@ final class Map : CombatWorld, GameObjectWorld
     /// The entity in `slot` goes: nobody's client has it any more, and it has nothing.
     private void dropEntity(uint slot)
     {
+        casterReplicas.remove(at(slot).guid);
         clearInterest(slot);
         foreach (v; at(slot).viewers.dup)
             unsee(v, slot);
@@ -1085,6 +1087,7 @@ final class Map : CombatWorld, GameObjectWorld
             unloadIdleCells(step);
         }
         clockMs += diff;
+        expireCasterReplicas();
         // A stealthed player is seen or lost as enemies come near it, turn and step away: who sees it is worked
         // out again once a second (stealth's detection range is a few yards, not the 10 a relocation waits for).
         // So is what a far-seeing player sees (its eye may move, and what comes near the eye is not told it).
@@ -1183,6 +1186,7 @@ final class Map : CombatWorld, GameObjectWorld
         foreach (k; knownOf(slot, true) ~ knownOf(slot, false))
             unsee(slot, k);
         clearInterest(slot);
+        releaseCasterReplicas(slot);
         at(slot).replicatedTo = null; // the next node's replica replaces those elsewhere
         at(slot).lingering = null;
         lingerUntil.remove(guid);
@@ -1483,6 +1487,7 @@ final class Map : CombatWorld, GameObjectWorld
             onObjectGone(object); // its state is in the migrant: what it held here goes
         migrant.home = home;
         clearInterest(slot);
+        releaseCasterReplicas(slot);
         at(slot).home = noCell;
         at(slot).replicatedTo = null;
         if (auto source = cast(Replicable) object)
@@ -1628,7 +1633,7 @@ final class Map : CombatWorld, GameObjectWorld
             }
             if (const list = cell in cellLists)
                 foreach (slot; list.objects ~ list.players)
-                    if (at(slot).replicatedTo.canFind(peer))
+                    if (at(slot).replicatedTo.canFind(peer) && !hasCasterReplica(at(slot).guid, peer))
                     {
                         dropValue(at(slot).replicatedTo, peer);
                         replicator.remove(peer, id, at(slot).guid);
@@ -1657,6 +1662,12 @@ final class Map : CombatWorld, GameObjectWorld
                 emptied ~= cell;
         foreach (cell; emptied)
             peerCells.remove(cell);
+        emptied.length = 0;
+        foreach (guid, ref peers; casterReplicas)
+            if (peers.remove(peer) && !peers.length)
+                emptied ~= guid;
+        foreach (guid; emptied)
+            casterReplicas.remove(guid);
         ulong[] gone;
         foreach (slot, ref e; entities)
         {
@@ -2592,7 +2603,7 @@ private:
         const guid = at(slot).guid;
         auto wanted = cell in peerCells;
         foreach (peer; at(slot).replicatedTo.dup)
-            if (wanted is null || peer !in *wanted)
+            if ((wanted is null || peer !in *wanted) && !hasCasterReplica(guid, peer))
             {
                 dropValue(at(slot).replicatedTo, peer);
                 replicator.remove(peer, id, guid);
@@ -2608,6 +2619,81 @@ private:
                 at(slot).replicatedTo ~= peer;
                 replicator.create(peer, id, cell, guid, state);
             }
+    }
+
+    /// Supply a caster's identity and combat state to a target owner without a nearby observer.
+    package void holdCasterReplica(ulong guid, ushort peer, uint milliseconds)
+    {
+        import std.algorithm.comparison : max;
+
+        if (replicator is null || instanceId || !peer || !milliseconds)
+            return;
+        const slot = slotFor(guid);
+        if (slot == uint.max || at(slot).replica || at(slot).cell == noCell)
+            return;
+        auto e = &at(slot);
+        auto source = cast(Replicable) e.object;
+        if (e.player is null && source is null)
+            return;
+        auto peers = &casterReplicas.require(guid, null);
+        auto deadline = &(*peers).require(peer, 0UL);
+        *deadline = max(*deadline, clockMs + milliseconds);
+        if (e.replicatedTo.canFind(peer))
+            return;
+        const state = e.player !is null ? encodePlayerState(e.player.character, serverTime())
+            : encodeState(source, serverTime());
+        e.replicatedTo ~= peer;
+        replicator.create(peer, id, e.cell, guid, state);
+    }
+
+    private bool hasCasterReplica(ulong guid, ushort peer) const
+    {
+        const peers = guid in casterReplicas;
+        return peers !is null && (peer in *peers) !is null;
+    }
+
+    private void expireCasterReplicas()
+    {
+        if (!casterReplicas.length)
+            return;
+        struct Pin { ulong guid; ushort peer; }
+        Pin[] expired;
+        foreach (guid, const peers; casterReplicas)
+            foreach (peer, deadline; peers)
+                if (deadline <= clockMs)
+                    expired ~= Pin(guid, peer);
+        foreach (pin; expired)
+        {
+            auto peers = pin.guid in casterReplicas;
+            (*peers).remove(pin.peer);
+            if (!(*peers).length)
+                casterReplicas.remove(pin.guid);
+            const slot = slotFor(pin.guid);
+            if (slot != uint.max && !at(slot).replica)
+                removeCasterReplicaIfUnobserved(slot, pin.peer);
+        }
+    }
+
+    private void releaseCasterReplicas(uint slot)
+    {
+        const guid = at(slot).guid;
+        if (const peers = guid in casterReplicas)
+        {
+            foreach (peer, _; *peers)
+                removeCasterReplicaIfUnobserved(slot, peer);
+            casterReplicas.remove(guid);
+        }
+    }
+
+    private void removeCasterReplicaIfUnobserved(uint slot, ushort peer)
+    {
+        auto e = &at(slot);
+        const wanted = e.cell in peerCells;
+        if ((wanted is null || peer !in *wanted) && e.replicatedTo.canFind(peer))
+        {
+            dropValue(e.replicatedTo, peer);
+            replicator.remove(peer, id, e.guid);
+        }
     }
 
     /// Objects go: the players who saw them are told, peers holding replicas of them too.

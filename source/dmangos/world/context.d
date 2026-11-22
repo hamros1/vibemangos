@@ -940,6 +940,15 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     return true;
                 }
             }
+        return sendReplicaSpellImpact(map_, peer, hit);
+    }
+
+    private bool sendReplicaSpellImpact(Map map_, ushort peer, AreaDamage hit)
+    {
+        if (sendAreaDamage is null)
+            return false;
+        if (hit.namedCreature)
+            map_.holdCasterReplica(hit.caster, peer, 5_000);
         hit.sequence = nextGameplaySequence();
         return sendAreaDamage(peer, hit);
     }
@@ -962,8 +971,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 continue;
             if (auto copy = cast(Replica) map_.findObject(impact.hit.target))
             {
-                impact.hit.sequence = nextGameplaySequence();
-                if (sendAreaDamage !is null && sendAreaDamage(copy.owner, impact.hit))
+                if (sendReplicaSpellImpact(map_, copy.owner, impact.hit))
                     continue;
             }
             else if (impact.hit.namedCreature && map_.unit(impact.hit.target))

@@ -333,6 +333,10 @@ def describe(op, p):
             elif kind == 0:
                 health = f", health {v[OBJECT_END + 0x10]}/{v.get(OBJECT_END + 0x16, '?')}" if OBJECT_END + 0x10 in v else ""
                 print(f"  [changes] {g}: fields {sorted(v)}{health}")
+                if seen_objects.get(g, (0, 0))[0] == 3:
+                    for field, spell in v.items():
+                        if 0x2F <= field < 0x5F and spell:
+                            print(f"  [creature aura] {g:#018x} received {spell}")
     elif op == 0x179:
         if len(p) <= 8:
             print("  [pet spells] none (no pet)"); return

@@ -798,7 +798,8 @@ database spell steps that need the caster or another actor still use their local
 use observed targets around the spot and require a current caster replica at the target. At impact,
 the node simulating the caster routes a named-creature projectile using the target's current
 ownership. A player handoff preserves its deadline and lets the new node wait briefly to see the
-target. Other routed projectiles depend on the launching node.
+target. For a named-creature hit, the caster's node supplies a short-lived replica even
+when the target's node has no nearby players. Other routed projectiles depend on the launching node.
 
 ## Testing
 

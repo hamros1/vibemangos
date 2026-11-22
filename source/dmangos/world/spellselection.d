@@ -482,13 +482,31 @@ unittest
     import dmangos.world.grid : cellKeyAt;
     import dmangos.world.inworld : ArrivalAction;
     import dmangos.world.player : Player;
-    import dmangos.world.replication : encodePlayerState, encodeState;
+    import dmangos.world.replication : encodeState, Replicator;
     import dmangos.world.spellcast : SpellMissInfo, SpellTargets, TargetFlags, spellAttrEx2CantCrit,
         spellAttrEx3AlwaysHit;
     import dmangos.world.spellhandlers : testSpell;
     import dmangos.world.spellids : AuraType, SpellEffect;
     import dmangos.world.testclient;
     import dmangos.world.updatefields : UNIT_FIELD_HEALTH, UNIT_FIELD_MAXHEALTH;
+
+    static final class Wire : Replicator
+    {
+        Map receiver;
+        this(Map receiver) { this.receiver = receiver; }
+        void create(ushort peer, uint, ulong cell, ulong guid, const(ubyte)[] state)
+        {
+            assert(peer == 2);
+            receiver.replicaCreated(1, cell, guid, state);
+        }
+        void values(ushort, uint, ulong guid, const(ubyte)[] slots) { receiver.replicaValues(1, guid, slots); }
+        void move(ushort, uint, ulong guid, ushort op, const(ubyte)[] body_, const(ubyte)[] motion)
+        {
+            receiver.replicaMoved(1, guid, op, body_, motion);
+        }
+        void remove(ushort, uint, ulong guid) { receiver.replicaRemoved(1, guid); }
+        void inRange(ushort, uint, Position, float, ushort, const(ubyte)[]) {}
+    }
 
     auto db = newDatabase();
     auto source = newCreationContext(db), owner = newCreationContext(db);
@@ -558,8 +576,8 @@ unittest
     auto wrong = npc(owner, 91002, creatureTrainer, 1);
     auto npcCaster = npc(source, 91003, creatureTrainer, 0);
     auto from = source.map(0), to = owner.map(0);
-    to.replicaCreated(1, cellKeyAt(at.x, at.y), player.guid, encodePlayerState(player, 0));
-    to.replicaCreated(1, cellKeyAt(at.x, at.y), npcCaster.guid, encodeState(npcCaster, 0));
+    from.replicator = new Wire(to);
+    assert(to.findObject(player.guid) is null && to.findObject(npcCaster.guid) is null);
     foreach (creature; [wrong, remote])
         from.replicaCreated(2, cellKeyAt(creature.position.x, creature.position.y), creature.guid,
             encodeState(creature, 0));
@@ -567,6 +585,7 @@ unittest
     AreaDamage[] requests, results;
     source.sendAreaDamage = (ushort peer, const ref AreaDamage request) {
         assert(peer == 2 && request.namedCreature && !request.reply);
+        assert(to.isReplica(request.caster), "the owner's link receives combat state before the cast");
         ByteWriter bytes;
         serialize(bytes, request);
         requests ~= decode!AreaDamage(bytes.data);
@@ -703,6 +722,7 @@ unittest
     source.update(now);
     assert(blocker.values.get!UNIT_FIELD_HEALTH == health - 20 && requests.length == 6);
     assert(blocker.ai.threatOf(player.guid) == 40, "use the prepared caster threat multiplier once");
+    assert(to.findObject(npcCaster.guid) is null, "the idle owner forgets the caster after the spell hold");
 
     const playerGuid = player.guid;
     from.removeObject(atImpact.guid);
