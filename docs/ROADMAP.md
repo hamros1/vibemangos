@@ -3,7 +3,8 @@
 ## Open work
 
 - **Clustering.** Route the remaining script-selected channels and spell scripts that need actions on
-  more than one node. See
+  more than one node. Refresh saved game-object edits during [crash takeover](CLUSTER.md#objects-moving-with-their-region).
+  See
   [spell routing limits](CLUSTER.md#spell-routing-limits) and the
   [cross-node feature list](CLUSTER.md#what-crosses-nodes-feature-by-feature).
 - **Terrain.** Connect longer movement-map approaches to moving platform docks.
@@ -143,8 +144,8 @@ The largest area. In order:
    Dungeon rules (no pursuit leash, those who come near join the fight, `AGGRO_ZONE`), auras lost on evade,
    creature spells scaled to the caster's level, threat from heals and buffs, pools rolled again at each
    respawn: done. Movement maps support chasing. Clusters share a seed for spawn pools and can
-   [borrow helpers across nodes](CLUSTER.md#creature-assistance). Remaining gaps include migration
-   of summoned creatures and mana regeneration in combat.
+   [borrow helpers across nodes](CLUSTER.md#creature-assistance). Scripted summons keep their
+   remaining lifetime through a clean handoff. Mana regeneration in combat remains open.
 3. **Death: done** (`death.d`, `corpse.d`), resurrection sickness and battleground
    spirit guides included, and ghosts hidden from the living. Bones (an hour where a body was, bare; CMaNGOS's
    `Death.Bones` on): done. Not yet: the ghost's own auras (applied by

@@ -17,13 +17,14 @@ enum MigrantKind : ubyte
     gameObject = 2,
     creatureRespawn = 3,   /// a timer, potentially with no live object in the bundle
     gameObjectRespawn = 4, /// ditto
+    summonedCreature = 5,  /// a temporary spawn with its own placement and lifetime
 }
 
 /// An object on its way to its next owner.
 struct Migrant
 {
     MigrantKind kind;
-    uint spawn;          /// its `creature` or `gameobject` row
+    uint spawn;          /// its saved spawn or temporary GUID counter
     ulong home;          /// the cell it spawned in
     const(ubyte)[] state;
 }

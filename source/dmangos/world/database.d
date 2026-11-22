@@ -657,6 +657,9 @@ interface WorldDatabase
     /// A saved `creature` spawn, with its ID allocated by the world database.
     @DatabaseWrite uint createCreatureSpawn(const ref CreatureSpawn spawn);
 
+    /// The first counter in a new reserved block of temporary object IDs for this realm.
+    ulong reserveTemporaryCounters(uint realm, uint count);
+
     /// A saved spawn with a direct creature entry.
     Nullable!CreatureSpawn savedCreatureSpawn(uint guid);
 
@@ -865,6 +868,7 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     private MySqlConnection characterDb;
     private MySqlConnection world;
     private CharacterStatements statements;
+    private bool temporaryCounterReady;
 
     ///
     this(MySqlConnection login, MySqlConnection characterDb, MySqlConnection world)
@@ -1031,6 +1035,25 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     uint createCreatureSpawn(const ref CreatureSpawn s)
     {
         return worldSpawnId!"creature"(storeCreatureSpawn!true(s));
+    }
+
+    ulong reserveTemporaryCounters(uint realm, uint count)
+    {
+        if (!temporaryCounterReady)
+        {
+            characterDb.execute!("CREATE TABLE IF NOT EXISTS dmangos_temporary_counter ("
+                ~ "realm INT UNSIGNED NOT NULL, next_counter BIGINT UNSIGNED NOT NULL, PRIMARY KEY (realm)"
+                ~ ") ENGINE=InnoDB")();
+            temporaryCounterReady = true;
+        }
+        ulong first;
+        characterDb.transaction({
+            characterDb.execute!("INSERT INTO dmangos_temporary_counter (realm, next_counter) VALUES (?, ?) "
+                ~ "ON DUPLICATE KEY UPDATE next_counter = next_counter + VALUES(next_counter)")(realm, count);
+            first = characterDb.query!"SELECT next_counter FROM dmangos_temporary_counter WHERE realm = ?"(realm)
+                [0].get!ulong(0) - count;
+        });
+        return first;
     }
 
     Nullable!CreatureSpawn savedCreatureSpawn(uint guid)
@@ -2144,6 +2167,7 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
     CreatureSpawn[uint] creatureSpawnRows;     /// what `insertCreatureSpawn` wrote, by guid
     GameObjectSpawn[uint] gameObjectSpawnRows; /// ditto, game objects
     private uint lastCreatureSpawn, lastGameObjectSpawn;
+    private ulong[uint] temporaryCounters;
     uint createCreatureSpawn(const ref CreatureSpawn spawn)
     {
         CreatureSpawn row = spawn;
@@ -2151,6 +2175,12 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
         row.guid = lastCreatureSpawn;
         insertCreatureSpawn(row);
         return row.guid;
+    }
+    ulong reserveTemporaryCounters(uint realm, uint count)
+    {
+        const first = temporaryCounters.get(realm, 0);
+        temporaryCounters[realm] = first + count;
+        return first;
     }
     Nullable!CreatureSpawn savedCreatureSpawn(uint guid)
     {

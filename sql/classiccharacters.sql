@@ -459,6 +459,11 @@ CREATE TABLE `creature_respawn` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8mb4 */;
+CREATE TABLE `dmangos_temporary_counter` (
+  `realm` int(10) unsigned NOT NULL,
+  `next_counter` bigint(20) unsigned NOT NULL,
+  PRIMARY KEY (`realm`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_general_ci COMMENT='dmangos: reserved temporary GUID counter';
 CREATE TABLE `dmangos_write_applied` (
   `stream` int(10) unsigned NOT NULL,
   `seq` bigint(20) unsigned NOT NULL,

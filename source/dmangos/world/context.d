@@ -4559,6 +4559,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.migration : MigrantKind;
 
         const creature = migrant.kind == MigrantKind.creatureRespawn;
+        if (migrant.kind == MigrantKind.summonedCreature && !region.rect.containsKey(migrant.home))
+            return null;
         if (!creature && migrant.kind != MigrantKind.gameObjectRespawn)
             return restoreWorldMigrant(migrant, destination);
         ulong home;
@@ -4884,20 +4886,30 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     Migrant saveMigrant(MapObject object)
     {
         import dmangos.bytes : ByteWriter;
+        import dmangos.serialization : serialize;
         import dmangos.world.gameobject : GameObject;
         import dmangos.world.migration : MigrantKind;
 
         ByteWriter w;
         if (auto creature = cast(Creature) object)
         {
-            if (creature.meleeController)
-                return Migrant.init; // controlled creatures stay with their player (`petsOnLeave`)
+            if (creature.meleeController || creature.totemOwner)
+                return Migrant.init; // controlled creatures follow their owner's rules
             if (creature.ai !is null)
                 creature.ai.finishNamedCreatureChannel(true);
             if (creature.loot !is null)
                 creature.loot.sendReleaseForAll();
-            creature.saveState(w, transportNow());
-            return Migrant(MigrantKind.creature, creature.spawn.guid, 0, w.data);
+            const now = transportNow();
+            auto kind = MigrantKind.creature;
+            if (creature.spawn.guid >= temporaryCounterStart && creature.summon.type != TempSpawnType.none)
+            {
+                kind = MigrantKind.summonedCreature;
+                serialize(w, creature.spawn);
+                serialize(w, creature.summon);
+                w.put(now);
+            }
+            creature.saveState(w, now);
+            return Migrant(kind, creature.spawn.guid, 0, w.data);
         }
         auto gameObject = cast(GameObject) object;
         if (gameObject is null)
@@ -4943,15 +4955,42 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// A region may bring a saved GM spawn created after this node loaded its world data.
     private MapObject restoreWorldMigrant(const ref Migrant migrant, Map destination)
     {
+        import dmangos.bytes : ByteReader;
         import dmangos.log : warning;
         import dmangos.mysql : DatabaseException;
+        import dmangos.serialization : deserialize;
         import dmangos.world.migration : MigrantKind;
+        import dmangos.world.updatefields : UNIT_FIELD_FACTIONTEMPLATE;
 
         indexSpawns();
         const durable = migrant.spawn < temporaryCounterStart;
         bool atHome(uint mapId, float x, float y, float z)
         {
             return mapId == destination.id && client.isValidMapCoord(mapId, x, y, z) && cellKeyAt(x, y) == migrant.home;
+        }
+        if (migrant.kind == MigrantKind.summonedCreature)
+        {
+            auto state = ByteReader(migrant.state);
+            const spawn = deserialize!CreatureSpawn(state);
+            const summon = deserialize!TempSpawn(state);
+            const now = transportNow();
+            const transit = cast(int)(now - state.read!uint);
+            if (durable || migrant.spawn > 0xFF_FFFF || spawn.guid != migrant.spawn
+                || spawn.entry !in data.creatureTemplates || summon.type > TempSpawnType.timedOutOfCombatOrCorpse
+                || !atHome(spawn.map, spawn.x, spawn.y, spawn.z)
+                || !client.isValidMapCoord(spawn.map, spawn.x, spawn.y, spawn.z, spawn.orientation))
+                return null;
+            auto restored = makeCreature(&spawn);
+            if (restored is null)
+                return null;
+            restored.instanceId = destination.instanceId;
+            restored.summon = summon;
+            restored.loadState(state, now, &spellInfo);
+            restored.factionTemplate = client.factionTemplates.lookup(restored.values.get!UNIT_FIELD_FACTIONTEMPLATE);
+            if (transit > 0)
+                restored.summon.update(restored, transit);
+            bindMigrantLoot(restored, destination);
+            return restored;
         }
         try
         {
@@ -5410,7 +5449,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         }
     }
 
-    private uint summonsMade; // the summons' guid counters: above every spawn's, 65536 for each node
+    private uint summonsMade; // standalone counters
+    private ulong nextClusterTemporary, clusterTemporaryEnd; // reserved by the realm database
 
     /// Bones lying on a map here, with when they go (`bonesLifetime` after they were left).
     private struct LyingBones
@@ -5444,10 +5484,18 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             bones_ = bones_[gone .. $].dup;
     }
 
-    /// A guid counter for an object of this run only (a summon, a fishing bobber): this node's range.
+    /// A GUID counter for a temporary object (a summon, a fishing bobber).
     uint nextTemporaryCounter()
     {
-        return temporaryCounterStart + (nodeId % 64) * 0x1_0000 + (++summonsMade & 0xFFFF);
+        if (!config.cluster.enabled)
+            return temporaryCounterStart + (++summonsMade & 0xFFFF);
+        enum uint block = 1024, count = 0x100_0000 - temporaryCounterStart;
+        if (nextClusterTemporary == clusterTemporaryEnd)
+        {
+            nextClusterTemporary = database.reserveTemporaryCounters(config.realmId, block);
+            clusterTemporaryEnd = nextClusterTemporary + block;
+        }
+        return temporaryCounterStart + cast(uint)(nextClusterTemporary++ % count);
     }
 
     /**
@@ -8092,6 +8140,69 @@ unittest
         objectCopies += newOwner.data.gameObjectSpawns[index].guid == object.spawn.guid;
     assert(creatureCopies == 1 && objectCopies == 1);
     assert(!newMap.isReplica(creature.guid) && !newMap.isReplica(object.guid));
+}
+
+// The new owner keeps a scripted summon and expires it at the original time.
+unittest
+{
+    import dmangos.cluster.regions : CellRect;
+    import dmangos.world.config : WorldConfig;
+    import dmangos.world.grid : cellCoordinate;
+    import dmangos.world.migration : MigrantKind;
+    import dmangos.world.testclient : newCreationContext, newDatabase;
+    import dmangos.world.testdata : creatureInnkeeper;
+    import dmangos.world.updatefields : UNIT_FIELD_HEALTH;
+
+    auto db = newDatabase();
+    void clustered(ref WorldConfig config) { config.cluster.nodeId = 1; }
+    auto oldOwner = newCreationContext(db, &clustered), newOwner = newCreationContext(db, &clustered);
+    auto cold = newCreationContext(db, &clustered);
+    auto now = MonoTime.currTime;
+    foreach (owner; [oldOwner, newOwner, cold])
+    {
+        owner.clock = () => now;
+        owner.startClock = now;
+        owner.startUnixMillis = oldOwner.startUnixMillis;
+    }
+    auto source = oldOwner.map(0), destination = newOwner.map(0);
+    const at = Position(-8930, -120, 83.53f);
+    auto summon = oldOwner.summonCreature(source, creatureInnkeeper, at, TempSpawnType.timed, 3000, 5);
+    assert(summon !is null && source.findObject(summon.guid) is summon);
+    summon.values.set!UNIT_FIELD_HEALTH(1u);
+    source.update(1700.msecs);
+    now += 1700.msecs;
+    assert(summon.summon.timer == 1300);
+    summon.totemOwner = 7;
+    assert(oldOwner.saveMigrant(summon).kind == MigrantKind.none, "totems use their existing owner lifecycle");
+    summon.totemOwner = 0;
+
+    auto wrongHome = oldOwner.saveMigrant(summon);
+    wrongHome.home = cellKeyAt(at.x + 100, at.y);
+    assert(newOwner.restoreWorldMigrant(wrongHome, destination) is null);
+    const x = cellCoordinate(at.x), y = cellCoordinate(at.y);
+    auto region = Region(1, 0, CellRect(x, y, x + 1, y + 1), 1, 1, RegionState.revoking, 2);
+    ubyte[][uint] leaving, unused;
+    oldOwner.regionsChanged(null, [region], null, leaving);
+    assert(source.isReplica(summon.guid));
+    now += 300.msecs;
+    region.owner = 2;
+    region.state = RegionState.granted;
+    region.next = 0;
+    newOwner.regionsChanged([region], null, [region.id: cast(const(ubyte)[]) leaving[region.id]], unused);
+    auto restored = destination.creatureAt(summon.guid);
+    assert(restored !is null && restored !is summon && !destination.isReplica(summon.guid));
+    assert(restored.spawn == summon.spawn && restored.values.get!UNIT_FIELD_HEALTH == 1);
+    assert(restored.summon == TempSpawn(TempSpawnType.timed, 1000, 3000, 5));
+    auto restarted = newCreationContext(db, &clustered);
+    assert(newOwner.nextTemporaryCounter() != summon.spawn.guid);
+    assert(restarted.nextTemporaryCounter() != summon.spawn.guid, "reusing a node ID leaves old live GUIDs reserved");
+    destination.update(999.msecs);
+    assert(destination.creatureAt(summon.guid) is restored);
+    destination.update(1.msecs);
+    assert(destination.findObject(summon.guid) is null);
+    assert(db.savedCreatureSpawn(summon.spawn.guid).isNull);
+    cold.regionsChanged([region], null, null, unused);
+    assert(cold.map(0).findObject(summon.guid) is null);
 }
 
 // The same player can reopen a partially emptied chest on its new owner, without rerolling it.
