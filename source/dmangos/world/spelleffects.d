@@ -92,7 +92,7 @@ private enum SpellEffect[] creaturesDo = [SpellEffect.none, SpellEffect.schoolDa
     SpellEffect.healMaxHealth, SpellEffect.summonObjectWild, SpellEffect.transDoor, SpellEffect.summonPet,
     SpellEffect.learnSpell, SpellEffect.createItem, SpellEffect.addComboPoints, SpellEffect.spawn, SpellEffect.detect,
     SpellEffect.attack, SpellEffect.persistentAreaAura, SpellEffect.dispel, SpellEffect.dispelMechanic,
-    SpellEffect.charge, SpellEffect.addExtraAttacks, SpellEffect.summonTotem, SpellEffect.summonTotemSlot1,
+    SpellEffect.charge, SpellEffect.leap, SpellEffect.addExtraAttacks, SpellEffect.summonTotem, SpellEffect.summonTotemSlot1,
     SpellEffect.summonTotemSlot2, SpellEffect.summonTotemSlot3, SpellEffect.summonTotemSlot4];
 
 /// Whether a cast of `kind` does `effect` (the NPC sweep names what is not done by this).
@@ -423,11 +423,6 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
                 other.session.spellReputation(cast(uint) spell.miscValue[i], value);
         break;
     case SpellEffect.teleportUnits: // SPELL_EFFECT_TELEPORT_UNITS
-        if (p !is null)
-            p.teleportUnits(spell, i, c);
-        else if (target != caster.guid) // a player to the spell's place
-            context.teleportBySpell(target, spell.id);
-        break;
     case SpellEffect.teleportUnitsFaceCaster:
     {
         import std.math : cos, sin, PI;
@@ -436,29 +431,38 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         import dmangos.world.terrain : invalidHeight;
         import dmangos.world.updatefields : UNIT_FIELD_FLAGS;
 
+        const facesCaster = effect == SpellEffect.teleportUnitsFaceCaster;
+        if (!facesCaster && p !is null)
+        {
+            p.teleportUnits(spell, i, c);
+            break;
+        }
         auto who = map.unit(target);
         if (who.kind != UnitKind.player || (who.fields.get!UNIT_FIELD_FLAGS & UnitFlags.taxiFlight))
             break;
         const a = spell.implicitTargetA[i], b = spell.casting.implicitTargetB[i];
-        if (a == ImplicitTarget.database || b == ImplicitTarget.database)
+        if (a == ImplicitTarget.database || b == ImplicitTarget.database
+            || (!facesCaster && spell.id in context.data.spellTargets))
         {
             context.teleportBySpell(target, spell.id);
             break;
         }
 
         auto at = caster.position;
-        if (a == ImplicitTarget.locationCasterFront || b == ImplicitTarget.locationCasterFront)
+        const front = a == ImplicitTarget.locationCasterFront || b == ImplicitTarget.locationCasterFront;
+        const back = a == ImplicitTarget.locationCasterBack || b == ImplicitTarget.locationCasterBack;
+        if (front || back)
         {
-            const distance = radius(*spell, i, context.client);
+            const distance = (back ? -1 : 1) * radius(*spell, i, context.client);
             at.x += distance * cos(at.orientation);
             at.y += distance * sin(at.orientation);
             const floor = map.groundHeight(at.x, at.y, at.z + 2, false);
             if (floor > invalidHeight)
                 at.z = floor;
         }
-        else if (a != ImplicitTarget.locationCasterDest && b != ImplicitTarget.locationCasterDest)
+        else if (!facesCaster || (a != ImplicitTarget.locationCasterDest && b != ImplicitTarget.locationCasterDest))
             break;
-        at.orientation = cast(float)((at.orientation + PI) % (2 * PI));
+        at.orientation = cast(float)((at.orientation + (back ? 0 : PI)) % (2 * PI));
         if (at.orientation < 0)
             at.orientation += 2 * PI;
         who.session.spellTeleport(map.id, at);
@@ -535,7 +539,19 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
             ai.chargeAt(spell, map.unit(target));
         break;
     case SpellEffect.leap: // SPELL_EFFECT_LEAP: Blink
-        p.leapEffect(spell, i);
+        if (p !is null)
+            p.leapEffect(spell, i);
+        else if (target == caster.guid)
+        {
+            import dmangos.script.api : Location;
+            import dmangos.world.spellcast : radius;
+            import dmangos.world.spellmoves : blinkEnd;
+
+            const from = caster.position;
+            const end = blinkEnd(map, from, radius(*spell, i, context.client));
+            if (end != from)
+                ai.hostTeleport(Location(end.x, end.y, end.z, end.orientation));
+        }
         break;
     case SpellEffect.stuck: // SPELL_EFFECT_STUCK: the help menu's Stuck
         p.stuckEffect();

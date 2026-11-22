@@ -6,7 +6,6 @@
 # "refused: <reason>", "crash: ...", "no caster: ..." (no creature casts it in the data).
 568: Arcane Burst: aura modDecreaseSpeed: not on the player (effect 2)
 674: Dual Wield: not done: dualWield (effect 0)
-731: Entangle: teleportUnits: the player did not move (effect 0)
 1848: Divining Chant: heal: no heal of the caster (effect 0)
 3408: Crippling Poison: not done: enchantItemTemporary (effect 0)
 4507: Target Dummy Spawn Effect: refused: dontReport
@@ -36,7 +35,6 @@
 12218: Man Down!: no caster: no creature casts it in the data
 12578: Create Oathstone of Ysera's Dragonflight: no caster: no creature casts it in the data
 13912: Princess Summons Portal: not done: portal (effect 0)
-14514: Blink: not done: leap (effect 0: the caster did not move)
 15065: Create Tablet Transcript: no caster: no creature casts it in the data
 15366: Songflower Serenade: no caster: no creature casts it in the data
 15708: Mortal Strike: aura modHealingPct: not on the player (effect 1)
@@ -54,13 +52,10 @@
 19873: Destroy Egg: not done: activateObject (effect 0)
 20220: Gnomish Engineering: no caster: no creature casts it in the data
 20221: Goblin Engineering: no caster: no creature casts it in the data
-20534: Teleport: teleportUnits: the player did not move (effect 0)
-20618: Teleport: teleportUnits: the player did not move (effect 0)
 20680: Blizzard: persistentAreaAura: no area, nothing on the player (effect 0)
 20687: Starfall: persistentAreaAura: no area, nothing on the player (effect 0)
 20733: Black Arrow: refused: outOfRange
 21066: Void Bolt: aura modDecreaseSpeed: not on the player (effect 1)
-21655: Blink: not done: leap (effect 0: the caster did not move)
 21950: Recite Words of Celebras: not done: activateObject (effect 0)
 22438: Mark of Detonation: targeting: aura procTriggerSpell at the caster, not the player (effect 0)
 22817: Fengus' Ferocity: no caster: no creature casts it in the data
@@ -70,7 +65,6 @@
 22864: Field Repair Bot 74A: no caster: no creature casts it in the data
 22910: Immolation Trap: not done: summonObjectSlot1 (effect 0: no object 164875)
 22925: Conjure Dull Flat Elven Blade DND: no caster: no creature casts it in the data
-22994: Entangle: teleportUnits: the player did not move (effect 2)
 23059: Create Thorium Brotherhood Contract DND: no caster: no creature casts it in the data
 23187: Frost Burn: aura modMeleeHaste: not on the player (effect 1)
 23331: Blast Wave: schoolDamage: no damage to the player (effect 0); aura modDecreaseSpeed: not on the player (effect 1)
@@ -126,9 +120,7 @@
 24831: Cannon Prep: no caster: no creature casts it in the data
 24958: Despawn Putrid Mushrooms: not done: activateObject (effect 0)
 25201: Anachronos Quest Credit DND: not done: questComplete (effect 0)
-25371: Consume: teleportUnits: the player did not move (effect 0)
 25599: Thundercrash: schoolDamage: no damage to the player (effect 0)
-25725: Paralyze: teleportUnits: the player did not move (effect 0)
 25756: Purge: not done: dispel (effect 1); aura modStun: not on the player (effect 2)
 26063: Ouro Submerge Visual: not done: activateObject (effect 1)
 26095: Felcloth Bag: no caster: no creature casts it in the data
@@ -190,7 +182,6 @@
 29133: Create Flame of The Undercity: no caster: no creature casts it in the data
 29181: Teleport to Twin Emps Effect DND: no caster: no creature casts it in the data
 29190: Teleport to Final Chamber Effect DND: no caster: no creature casts it in the data
-29208: Blink: not done: leap (effect 0: the caster did not move)
 29915: Flesh Rot: aura periodicDamage: not on the player (effect 1)
 29931: Flight Path: not done: sendTaxi (effect 0)
 29934: Flight Path: not done: sendTaxi (effect 0)

@@ -511,28 +511,11 @@ mixin template EffectHandlers()
      */
     package void leapEffect(const(SpellInfo)* spell, size_t i)
     {
-        import dmangos.world.effecthandlers : leapDestination;
         import dmangos.world.spellcast : radius;
-        import dmangos.world.terrain : invalidHeight;
+        import dmangos.world.spellmoves : blinkEnd;
 
         const distance = spellMod(SpellModOp.radius, spell, radius(*spell, i, context.client));
-        const p = player.position; // no heights where it stands (no map files, tests): level ground
-        const level = map.collision is null || !(map.groundHeight(p.x, p.y, p.z + 1, false) > invalidHeight);
-        float groundAt(float x, float y, float z)
-        {
-            if (level)
-                return z - 1;
-            const h = map.groundHeight(x, y, z, false);
-            return h > invalidHeight && h > z - 10 ? h : float.nan;
-        }
-
-        bool clear(Position a, Position b)
-        {
-            return map.inLineOfSight(a, b);
-        }
-
-        const end = leapDestination(player.position, distance, &groundAt, &clear);
-        commandTeleport(player.data.map, end);
+        commandTeleport(player.data.map, blinkEnd(map, player.position, distance));
     }
 
     /**

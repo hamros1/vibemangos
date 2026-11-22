@@ -393,8 +393,9 @@ private final class NpcSweeper
         auto map = context.map(0);
         const data = context.data;
         const s = data.spells.spell(sp.id);
-        const facesCaster = s.hasEffect(SpellEffect.teleportUnitsFaceCaster);
-        const destination = facesCaster ? sp.id in data.spellTargets : null;
+        const teleportsPlayer = s.hasEffect(SpellEffect.teleportUnits) || s.hasEffect(SpellEffect.teleportUnitsFaceCaster);
+        const moves = teleportsPlayer || s.hasEffect(SpellEffect.leap);
+        const destination = teleportsPlayer ? sp.id in data.spellTargets : null;
         const entry = sp.casters[0];
         const t = entry in data.creatureTemplates;
         string[] problems;
@@ -438,11 +439,11 @@ private final class NpcSweeper
                     AuraType.periodicManaLeech, AuraType.powerBurnMana) && s.miscValue[i] == 0);
         const level = clamp(t.maxLevel, 1, 60);
         const distance = r[1] <= 5 ? 2.0f : max(2.0f, min(r[0] + 3, r[1] - 1));
-        const facing = facesCaster ? PI / 4 : 0;
+        const facing = moves ? PI / 4 : 0;
         auto heroAt = spot;
         heroAt.x += distance * cos(facing);
         heroAt.y += distance * sin(facing);
-        heroAt.orientation = facesCaster ? 0 : PI;
+        heroAt.orientation = moves ? 0 : PI;
         const guid = nextGuid++;
         auto hero = player(guid, takesMana ? 8 : 1, level, heroAt);
         auto me = hero.session.inWorld;
@@ -584,7 +585,6 @@ private final class NpcSweeper
                     dispellableBefore[i] = hasDispellable(unit, s.miscValue[i]);
             }
         const casterBefore = caster.position;
-        const heroBefore = me.player.position;
         uint[Who] displayBefore;
         foreach (x; all)
             if (auto unit = unitOf(x))
@@ -630,12 +630,12 @@ private final class NpcSweeper
                 map.wake(caster.guid);
             }
             foreach (p; hero.read())
-                if (facesCaster && p.opcode == Opcode.MSG_MOVE_TELEPORT_ACK)
+                if (teleportsPlayer && p.opcode == Opcode.MSG_MOVE_TELEPORT_ACK)
                 {
                     hero.write(Opcode.MSG_MOVE_TELEPORT_ACK, ClientTeleportAck(me.player.guid, 0, 0));
                     landed = true;
                 }
-                else if (facesCaster && p.opcode == Opcode.SMSG_NEW_WORLD)
+                else if (teleportsPlayer && p.opcode == Opcode.SMSG_NEW_WORLD)
                 {
                     hero.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
                     landed = true;
@@ -785,22 +785,20 @@ private final class NpcSweeper
                 if (s.miscValue[i] > 0 && !summonSeen[i])
                     failed = format!"no object %s"(s.miscValue[i]);
                 break;
-            case charge, leap:
+            case charge:
                 const now = caster.position;
                 if (now.x == casterBefore.x && now.y == casterBefore.y && now.z == casterBefore.z)
                     failed = "the caster did not move";
                 break;
-            case teleportUnits:
-                if (x == Who.enemy)
-                {
-                    const now = me.player.position;
-                    if (me.player.data.map == 0 && now.x == heroBefore.x && now.y == heroBefore.y)
-                        failed = "the player did not move";
-                }
-                else
-                    checked = false;
+            case leap:
+                const at = caster.position;
+                const offset = radius(*s, i, context.client);
+                if (offset <= 0 || abs(at.x - casterBefore.x - offset * cos(facing)) > 0.01f
+                    || abs(at.y - casterBefore.y - offset * sin(facing)) > 0.01f
+                    || at.z != casterBefore.z || at.orientation != facing)
+                    failed = "the caster did not blink its radius forward on flat ground";
                 break;
-            case teleportUnitsFaceCaster:
+            case teleportUnits, teleportUnitsFaceCaster:
                 if (x != Who.enemy)
                 {
                     checked = false;
@@ -819,12 +817,14 @@ private final class NpcSweeper
                         failed = "the player missed the database destination or changed dungeon copies";
                     break;
                 }
-                const front = s.casting.implicitTargetB[i] == ImplicitTarget.locationCasterFront;
-                const offset = front ? radius(*s, i, context.client) : 0;
+                const shape = s.casting.implicitTargetB[i];
+                const back = shape == ImplicitTarget.locationCasterBack;
+                const offset = shape == ImplicitTarget.locationCasterFront ? radius(*s, i, context.client)
+                    : back ? -radius(*s, i, context.client) : 0;
                 if (me.player.data.map != map.id || me.instanceId != startInstance
                     || abs(at.x - casterBefore.x - offset * cos(facing)) > 0.01f
                     || abs(at.y - casterBefore.y - offset * sin(facing)) > 0.01f
-                    || abs(at.z - casterBefore.z) > 0.01f || abs(at.orientation - (facing + PI)) > 0.01f)
+                    || abs(at.z - casterBefore.z) > 0.01f || abs(at.orientation - (facing + (back ? 0 : PI))) > 0.01f)
                     failed = "the player landed at the wrong point or faced away from the caster";
                 break;
             case instantKill:
@@ -843,7 +843,7 @@ private final class NpcSweeper
             }
             with (SpellEffect)
                 checkedAny |= checked && (cast(bool) unit || summonsCreature(effect) || summonsObject(effect)
-                    || effect.among(charge, leap, persistentAreaAura, teleportUnitsFaceCaster) != 0);
+                    || effect.among(charge, leap, persistentAreaAura, teleportUnits, teleportUnitsFaceCaster) != 0);
             const unsupported = notDoneByCreatures(*s, i);
             if (failed.length || (!checked && unsupported))
             {

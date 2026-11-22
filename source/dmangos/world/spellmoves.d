@@ -1,10 +1,10 @@
 /**
- * Where a spell moves its caster, whoever it is (docs/SPELLS.md, step 4): a charge's end. How the caster gets there
- * is its kind's: a player's client is shown the run and the player is put there (`effecthandlers.d`), a creature
- * runs it as a spline (`creaturecasting.d`).
+ * Landing positions for Charge and Blink (docs/SPELLS.md, step 4). Each caster applies the movement through its
+ * own handlers so clients see it and the map tracks the new position.
  */
 module dmangos.world.spellmoves;
 
+import dmangos.world.map : Map;
 import dmangos.world.movement : Position;
 import dmangos.world.unit : UnitRef;
 
@@ -32,4 +32,27 @@ Position chargeEnd(W)(W map, Position from, UnitRef victim)
         end.z = ground;
     end.orientation = atan2(to.y - end.y, to.x - end.x);
     return end;
+}
+
+/// The last clear point a Blink can reach along the caster's facing.
+Position blinkEnd(Map map, Position from, float distance)
+{
+    import dmangos.world.effecthandlers : leapDestination;
+    import dmangos.world.terrain : invalidHeight;
+
+    const level = map.collision is null || !(map.groundHeight(from.x, from.y, from.z + 1, false) > invalidHeight);
+    float groundAt(float x, float y, float z)
+    {
+        if (level) // no loaded heights at the caster
+            return z - 1;
+        const h = map.groundHeight(x, y, z, false);
+        return h > invalidHeight && h > z - 10 ? h : float.nan;
+    }
+
+    bool clear(Position a, Position b)
+    {
+        return map.inLineOfSight(a, b);
+    }
+
+    return leapDestination(from, distance, &groundAt, &clear);
 }
