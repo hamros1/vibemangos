@@ -286,6 +286,8 @@ python3 tools/harness/quorum.py         # three voters and a gateway, with clien
 python3 tools/harness/realms.py         # sign into two clusters through one login server and check isolation
 python3 tools/harness/named_objects.py  # named spells and a clean handoff of saved spawns and a corpse
 python3 tools/harness/named_objects.py --abrupt  # kill the worker and check the original respawn deadline
+python3 tools/harness/group_loot.py     # two clients roll from separate nodes and only the winner receives the item
+python3 tools/harness/group_loot.py --migrate-member  # vote from the original prompt after moving to a third node
 tools/harness/bench.sh LABEL crowd 500  # one benchmark run (docs/BENCHMARKS.md), report in LABEL.md
 tools/harness/db.sh start|stop|status
 # The full check also runs tools/harness/spell-audit.py: every spell a player can learn (trainers, starting

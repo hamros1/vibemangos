@@ -85,9 +85,9 @@ class ClusterFixture:
             subprocess.run([*self.mysql, name], stdin=source, env=self.mysql_env, check=True)
         return f".;{self.socket};mangos;harness;{name}"
 
-    def start(self, name, args):
+    def start(self, name, args, *, env=None):
         with (self.directory / (name + ".log")).open("wb") as log:
-            process = subprocess.Popen(args, cwd=self.directory, stdout=log, stderr=subprocess.STDOUT)
+            process = subprocess.Popen(args, cwd=self.directory, env=env, stdout=log, stderr=subprocess.STDOUT)
         self.processes.append(process)
         return process
 

@@ -19,9 +19,8 @@ NPC_CASTER = 4251
 CELL = 533.3333 / 8
 
 
-def adjacent_boundary(regions, worker):
-    # Pick the closest split to Northshire where the coordinator is next to the worker.
-    hub = (-8949.95, -132.49)
+def adjacent_boundary(regions, worker, hub=(-8949.95, -132.49)):
+    # Pick the closest shared boundary to the reference position.
     candidates = []
     for region, first in regions.items():
         if region in worker:
@@ -47,7 +46,7 @@ def adjacent_boundary(regions, worker):
                 cost = sum((left - right)**2 for left, right in zip(first_at, hub))
                 candidates.append((cost, first_at, second_at))
     if not candidates:
-        raise RuntimeError("no two neighboring regions on Eastern Kingdoms")
+        raise RuntimeError("no neighboring regions for the two participants")
     return min(candidates)[1:]
 
 

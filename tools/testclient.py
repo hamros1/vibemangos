@@ -23,6 +23,9 @@ in order:
     cast:SPELL[:ENTRY]       cast a spell, optionally at a creature by entry
     cancelchannel:SPELL      cancel the specified channel
     loot                      walk to the creature last attacked, take its money and items
+    castopen:SPELL:ENTRY      cast at the nearest game object of ENTRY without taking its loot
+    rolloffer  rollvote:N     keep the next group loot prompt, then pass (0), need (1) or greed (2)
+    waitfile:PATH             keep receiving packets until another test process creates this file
     release  corpse  tocorpse  reclaim  spirithealer
                               dead: release the spirit, ask where the corpse is, go there, take it
                               back; or ask the spirit healer picked with npc:ENTRY
@@ -311,7 +314,16 @@ def describe_creature_auras(guid, fields):
 
 def describe(op, p):
     """Prints a packet that another player caused."""
-    if op in (0x0A9, 0x1F6):
+    if op == 0x2A1:  # SMSG_LOOT_START_ROLL
+        loot, slot, item = struct.unpack_from("<QII", p)
+        print(f"  [roll offer] {loot:#x} slot {slot} item {item}")
+    elif op == 0x29F:  # SMSG_LOOT_ROLL_WON
+        loot, slot, item, _, _, winner = struct.unpack_from("<QIIIIQ", p)
+        print(f"  [roll won] {loot:#x} slot {slot} item {item} by player {winner}")
+    elif op == 0x29E:  # SMSG_LOOT_ALL_PASSED
+        loot, slot, item = struct.unpack_from("<QII", p)
+        print(f"  [roll passed] {loot:#x} slot {slot} item {item}")
+    elif op in (0x0A9, 0x1F6):
         objs = parse_update(op, p); track(objs)
         for kind, g, t, v, move in objs:
             if kind in (2, 3) and t in (1, 2): print(f"  [item created] {g & 0xFFFFFFFF}: entry {v[3]} count {v.get(OBJECT_END + 8)}")
@@ -655,11 +667,11 @@ def describe(op, p):
         print(f"  [weather] {['fine', 'rain', 'snow', 'storm'][wtype] if wtype < 4 else wtype} grade {grade:.2f} sound {sound}")
     else: print(f"  [other] {OPS.get(op, hex(op))}")
 
-def expect(wanted):
-    """Reads until a packet with opcode `wanted`, describing anything else on the way."""
+def expect(*wanted):
+    """Read until one of the requested opcodes, describing anything else on the way."""
     while True:
         op, p = wrecv()
-        if op == wanted: return op, p
+        if op in wanted: return op, p
         describe(op, p)
 
 def until(last):
@@ -679,6 +691,7 @@ def movement(op, x, y, z, o=0.0, flags=0):
     wsend(op, struct.pack("<II4fI", flags, 1000, x, y, z, o, 0))
 
 npc = None  # the creature the NPC actions talk to (`npc:ENTRY`)
+pending_roll = None
 for action in actions:
     kind, *args = action.split(":")
     if kind == "login":
@@ -883,9 +896,31 @@ for action in actions:
         else:
             wsend(0x2E0, b""); print("scoreboard")
         listen_for(2)
-    elif kind in ("castgo", "usego"):
-        # castgo:SPELL:ENTRY or usego:ENTRY: walk next to the nearest game object of ENTRY, then cast at it
-        # (a lock opened: its loot taken) or use it (CMSG_GAMEOBJ_USE).
+    elif kind == "rolloffer":
+        w.settimeout(20)
+        op, prompt = expect(0x2A1)
+        pending_roll = struct.unpack_from("<QII", prompt)
+        describe(op, prompt)
+    elif kind == "rollvote":
+        if pending_roll is None:
+            raise RuntimeError("rollvote needs an earlier rolloffer")
+        loot, slot, item = pending_roll
+        wsend(0x2A0, struct.pack("<QIB", loot, slot, int(args[0])))
+        op, outcome = expect(0x29F, 0x29E)
+        if struct.unpack_from("<QII", outcome) != (loot, slot, item):
+            raise RuntimeError("the roll result did not match the prompt")
+        describe(op, outcome)
+        pending_roll = None
+    elif kind == "waitfile":
+        from pathlib import Path
+        path = Path(":".join(args))
+        deadline = time.monotonic() + 15
+        while not path.exists():
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f"{path.name} did not appear")
+            listen_for(0.2)
+    elif kind in ("castgo", "castopen", "usego"):
+        # Walk next to the nearest game object of ENTRY to cast at it or use it. castgo also takes its loot.
         import math
         entry = int(args[-1])
         found = [g for g, (t, e) in seen_objects.items() if t == 5 and e == entry and g in seen_positions]
@@ -900,6 +935,8 @@ for action in actions:
             wsend(0x0B1, struct.pack("<Q", target)); print(f"use {entry} ({target & 0xFFFFFF})"); listen_for(1.5)
             continue
         wsend(0x12E, struct.pack("<IH", int(args[0]), 0x800) + packed(target)); print(f"cast {args[0]} at {entry} ({target & 0xFFFFFF})")
+        if kind == "castopen":
+            continue
         op, p = expect(0x160)
         if len(p) <= 10:
             print(f"  loot error {p[9]}"); continue
