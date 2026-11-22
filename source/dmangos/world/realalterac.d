@@ -24,10 +24,10 @@ private class Valley
     TestClient player;
     ubyte side;
 
-    this(ubyte team)
+    this(ubyte team, bool terrain = false)
     {
         side = team;
-        w = RealWorld.make();
+        w = RealWorld.make(20261122, terrain);
         copy = w.context.battlegrounds.open(970 + side, BattlegroundType.alteracValley);
         rules = cast(AlteracRules) copy.rules;
         copy.testing = true;
@@ -100,15 +100,22 @@ private class Valley
         }
         return false;
     }
-    void testEnemy(Creature troop)
+    TestClient opponentAt(Position pos)
     {
         auto opponent = w.character(31, "Opponent", 1, 60, [], side == 0 ? 2 : 1);
         auto enemy = opponent.session.inWorld;
         enemy.enterBattleground(BattlegroundEntry(true, copy.instance, cast(ubyte)(1-side), BattlegroundType.alteracValley));
         opponent.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
         enemy.godModeCheat = true;
-        enemy.teleportTo(30, troop.position, null, copy.instance, true);
+        enemy.teleportTo(30, pos, null, copy.instance, true);
         opponent.write(Opcode.MSG_MOVE_TELEPORT_ACK, ClientTeleportAck(enemy.player.guid, 0, 0));
+        return opponent;
+    }
+
+    void testEnemy(Creature troop)
+    {
+        auto opponent = opponentAt(troop.position);
+        auto enemy = opponent.session.inWorld;
         run(3000);
         assert(troop.ai.currentVictim == enemy.player.guid,
             format!"unit %s did not attack the enemy in its path, victim %s"(troop.template_.entry, troop.ai.currentVictim));
@@ -206,5 +213,111 @@ unittest
         v.move(first.position);
         assert(v.select(first, "Advance on the enemy base!"));
         v.testEnemy(first);
+    }
+}
+
+/// A rescued commander accepts the proper spoils. The friendly beacon calls its air unit after a minute.
+unittest
+{
+    if (!haveRealData()) return;
+    import dmangos.world.alteracair : wings;
+    import dmangos.world.gameobject : GameObject;
+    import dmangos.world.defines : inventorySlotBag0, inventorySlotItemStart, inventorySlotItemEnd;
+    import dmangos.world.spellcast : SpellTargets, TargetFlags;
+    foreach (i, ref wing; wings)
+    {
+        auto v = new Valley(cast(ubyte)(i/3), true);
+        auto npc = v.meet(wing.commander);
+        auto q = v.w.context.data.quests.quest(wing.quest);
+        assert(!v.me.canTakeQuest(*q));
+        assert(v.select(npc, "Get out of here. I will cover you!"));
+        assert(!v.me.canTakeQuest(*q));
+        foreach (step; 0 .. 1600)
+        {
+            v.run(500);
+            if (v.rules.airQuestAllowed(wing.quest, v.side))
+                break;
+            if (step % 12 == 0)
+            {
+                // Defeat the guards the rescued NPC encounters. A living escort must reach home.
+                foreach (hostile; v.map.creaturesNear(npc.position, 60))
+                    if (hostile.ai.currentVictim == npc.guid && hostile !is npc)
+                    {
+                        import dmangos.world.unit : Blow, dealDamage;
+                        import dmangos.world.updatefields : UNIT_FIELD_HEALTH;
+                        dealDamage(v.me.unit, v.map.unitOf(hostile), hostile.values.get!UNIT_FIELD_HEALTH + 1, Blow.spell());
+                    }
+                v.move(npc.position);
+            }
+        }
+        assert(v.rules.airQuestAllowed(wing.quest, v.side),
+            format!"commander %s stopped at %s on return to %s, alive %s fighting %s"(wing.commander,npc.position,wing.base,npc.alive,npc.ai.inCombat));
+        v.move(npc.position);
+        foreach (_; 0 .. wing.needed - 1)
+            v.rules.questRewarded(v.copy,v.me.player.guid,wing.quest);
+        v.me.modifyReputation(factions[v.side],22000);
+        assert(!v.select(npc,"Give me a beacon for your air support."));
+        v.rules.questRewarded(v.copy,v.me.player.guid,wing.quest);
+        assert(v.select(npc,"Give me a beacon for your air support.") && v.me.player.inventory.count(wing.item) == 1);
+        ubyte slot = inventorySlotItemStart;
+        while (slot < inventorySlotItemEnd && (v.me.player.inventory[inventorySlotBag0,slot] is null
+            || v.me.player.inventory[inventorySlotBag0,slot].proto.entry != wing.item)) ++slot;
+        assert(slot < inventorySlotItemEnd);
+        ByteWriter use;
+        use.put(inventorySlotBag0); use.put(slot); use.put(ubyte(0));
+        SpellTargets(TargetFlags.self).write(use);
+        v.move(wing.field);
+        v.player.write(Opcode.CMSG_USE_ITEM,use.data);
+        v.run(12000);
+        assert(v.rules.rescues[i].beacon != 0, format!"could not plant commander %s's beacon"(wing.commander));
+        auto opponent = v.opponentAt(wing.field);
+        if (i == 0)
+        {
+            import dmangos.world.packets : ClientGuid;
+            const beacon = v.rules.rescues[i].beacon;
+            opponent.write(Opcode.CMSG_GAMEOBJ_USE, ClientGuid(beacon));
+            v.run(400);
+            assert(v.rules.rescues[i].beacon == beacon);
+            ByteWriter cancel;
+            cancel.put(8386u);
+            opponent.write(Opcode.CMSG_CANCEL_CAST, cancel.data);
+            v.run(6000);
+            assert(v.rules.rescues[i].beacon == beacon);
+            opponent.write(Opcode.CMSG_GAMEOBJ_USE, ClientGuid(beacon));
+            v.run(6000);
+            assert(!v.rules.rescues[i].beacon, "the enemy did not finish disabling the beacon");
+        }
+        v.run(60000);
+        assert(v.rules.rescues[i].beacon == 0);
+        ulong air;
+        foreach (c; v.map.creaturesNear(wing.field,90))
+            if (c.template_.entry == (v.side == 0 ? 13161 : 13178) && c.scriptFlying)
+                air = c.guid;
+        if (i == 0)
+            assert(!air, "a disabled beacon still called in aircraft");
+        else
+        {
+            assert(air, "no aircraft answered the beacon");
+            v.run(9000);
+            bool attacked;
+            foreach (packet; opponent.read())
+                if (packet.opcode == Opcode.SMSG_SPELL_GO)
+                {
+                    auto read = ByteReader(packet.body_);
+                    read.readPackedGuid();
+                    const caster = read.readPackedGuid();
+                    const spell = read.read!uint;
+                    if (caster == air && (spell == 22088 || spell == 15285 || spell == 21188))
+                        attacked = true;
+                }
+            assert(attacked, format!"aircraft %s did not attack the opposing player"(air));
+        }
+        v.move(npc.position);
+        assert(v.select(npc,"Launch an attack on the enemy base!"),format!"wing %s state %s, in map %s, alive %s in combat %s member %s rank %s, choices %s"(wing.commander, v.rules.rescues[i].state,v.map.creatureAt(npc.guid) is npc,npc.alive,npc.ai.inCombat,v.copy.status,v.me.player.reputationRank(factions[v.side]),v.rules.orderChoices(v.copy,v.me,npc)));
+        bool personal;
+        foreach (c; v.map.creaturesNear(wing.base,90))
+            if (c.template_.entry == wing.flyer && c.scriptFlying)
+                personal = true;
+        assert(personal, "the commander did not sortie");
     }
 }

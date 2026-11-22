@@ -917,7 +917,8 @@ final class Map : CombatWorld, GameObjectWorld
                 due.remove(e.home); // a corpse
                 continue;
             }
-            if (creature !is null && ((creature.ai !is null && (creature.ai.inCombat || creature.ai.evading))
+            if (creature !is null && ((creature.keepSpawnLoaded && creature.alive)
+                || (creature.ai !is null && (creature.ai.inCombat || creature.ai.evading))
                 || e.cell in localInterest || e.cell in peerCells))
             {
                 due.remove(e.home);

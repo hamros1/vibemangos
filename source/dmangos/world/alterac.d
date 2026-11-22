@@ -204,6 +204,13 @@ final class AlteracRules : BattlegroundRules
 {
     import dmangos.world.alteracassaults : ValleyAssaults;
     mixin ValleyAssaults;
+    import dmangos.world.alteracair : ValleyAir;
+    mixin ValleyAir;
+
+    override void started(Battleground copy)
+    {
+        placeFocuses(copy);
+    }
 
     override void playerLeaving(Battleground copy, ulong who)
     {
@@ -268,6 +275,7 @@ final class AlteracRules : BattlegroundRules
 
         if (copy.status != BattlegroundStatus.inProgress)
             return;
+        updateAir(copy, elapsed);
         updateAssaults(copy, elapsed);
         foreach (ubyte side; 0 .. 2)
         {
@@ -381,6 +389,8 @@ final class AlteracRules : BattlegroundRules
     {
         import dmangos.world.bgqueue : BattlegroundStatus;
 
+        if (disruptBeacon(copy, who, go))
+            return true;
         foreach (ubyte side; 0 .. 2)
             if (go.template_.entry == altars[side])
             {

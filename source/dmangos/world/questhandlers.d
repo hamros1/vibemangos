@@ -216,6 +216,14 @@ private:
     /// Whether this player may take `quest` now: every requirement met.
     package bool canTakeQuest(const ref Quest quest)
     {
+        if (auto bg = currentBattleground())
+        {
+            import dmangos.world.alterac : AlteracRules;
+            if (auto rules = cast(AlteracRules) bg.rules)
+                if (player.guid in bg.members && !rules.airQuestAllowed(quest.id, bg.members[player.guid].team))
+                    return false;
+        }
+
         return satisfyStatus(quest) && satisfyExclusiveGroup(quest) && satisfyClassRaceLevel(quest, true)
             && satisfyPrevious(quest) && satisfyQuestReputation(quest) && satisfyQuestTimed(quest)
             && questInSeason(quest);
@@ -303,6 +311,10 @@ private:
     {
         import dmangos.world.alterac : AlteracRules;
         import dmangos.world.alteracassaults : groundQuest;
+        if (auto bg = currentBattleground())
+            if (auto rules = cast(AlteracRules) bg.rules)
+                if (player.guid in bg.members && !rules.airQuestAllowed(quest.id, bg.members[player.guid].team))
+                    return false;
         if (quest.id == groundQuest[0] || quest.id == groundQuest[1])
         {
             auto bg = currentBattleground();

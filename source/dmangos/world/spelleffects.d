@@ -260,6 +260,14 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         break;
     case SpellEffect.sendEvent: // SPELL_EFFECT_SEND_EVENT: the event's script, the caster its source and a game object its target
         if (p !is null)
+            if (auto copy = p.currentBattleground())
+            {
+                import dmangos.world.alterac : AlteracRules;
+                if (auto rules = cast(AlteracRules) copy.rules)
+                    if (rules.plantBeacon(copy, p, spell.id))
+                        break;
+            }
+        if (p !is null)
             context.scriptedEvent(cast(uint) spell.miscValue[i], map, caster.guid, c.targets.gameObject);
         else if (c.once(i))
             context.scriptedEvent(cast(uint) spell.miscValue[i], map, caster.guid, target == caster.guid ? 0 : target);

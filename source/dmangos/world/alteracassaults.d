@@ -9,7 +9,7 @@ import dmangos.world.movement : Position;
 import dmangos.script.api : EntityRef, Location, QuestProgress;
 import core.time : Duration, minutes;
 
-enum ValleyOrder : uint { none, deliverMount, collectOrders, cavalry, advance }
+enum ValleyOrder : uint { none, deliverMount, collectOrders, cavalry, advance, rescue, beacon, sortie }
 struct ValleyChoice { ValleyOrder order; string text; }
 
 immutable uint[2] stableQuest = [7027, 7001], hideQuest = [7026, 7002], stableMasters = [13617, 13616],
@@ -54,6 +54,7 @@ mixin template ValleyAssaults()
 
     private void provision(Battleground copy, ubyte side, uint quest, ulong who)
     {
+        airTurnIn(quest, side);
         if (quest == stableQuest[side])
             ++mounts[side];
         if (quest == hideQuest[side])
@@ -115,6 +116,8 @@ mixin template ValleyAssaults()
         if (member is null || copy.status != BattlegroundStatus.inProgress || !who.player.alive || !npc.alive)
             return null;
         const side = member.team, entry = npc.template_.entry;
+        if (auto choices = airChoices(who, npc, side))
+            return choices;
         if (entry == stableMasters[side] && who.questStatusOf(stableQuest[side]) == QuestProgress.incomplete)
             if (auto id = who.player.guid in capturedMount)
                 if (auto beast = who.currentMap.creatureAt(*id))
@@ -144,6 +147,9 @@ mixin template ValleyAssaults()
         final switch (order)
         {
         case ValleyOrder.none: break;
+        case ValleyOrder.rescue, ValleyOrder.beacon, ValleyOrder.sortie:
+            wingOrder(copy, who, npc, order);
+            break;
         case ValleyOrder.deliverMount:
             who.questEventHappened(stableQuest[side]);
             clearCaptured(copy, who.player.guid);

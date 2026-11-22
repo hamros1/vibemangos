@@ -762,6 +762,8 @@ final class WorldData
             t.extraFlags = row.get!uint(31);
             gameObjectTemplates[t.entry] = t;
         }
+        import dmangos.world.alteracair : completeBeaconTemplates, placePrisoner;
+        completeBeaconTemplates(gameObjectTemplates);
         foreach (row; world.queryAs!(QuestRow, questQuery)())
             quests.quests[row.id] = row.toQuest();
         foreach (row; world.query!"SELECT id, quest FROM creature_questrelation"())
@@ -952,6 +954,7 @@ final class WorldData
                 else
                     row.entry = groups.entryFor(row.guid, rng);
             }
+            placePrisoner(row);
             if (row.entry !in creatureTemplates || !client.isValidMapCoord(row.map, row.x, row.y, row.z))
             {
                 ++skipped;

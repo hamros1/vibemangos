@@ -721,6 +721,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     private bool auraHeld;              /// rooted or stunned, as last told
 
     bool scriptRooted; /// held in place by its script
+    bool keepSpawnLoaded; /// A battleground escort must keep its original spawn while it is away from home.
     bool scriptFlying; /// its script has it fly: its ways go straight through the air (raid scripts)
 
     /// Its habitat and template allow it to swim, with the walk-in-water exception for creatures such as crabs.
