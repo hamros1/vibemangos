@@ -192,9 +192,10 @@ final class Battleground
     ulong[ubyte] raidLeaderOf;
     bool[ulong] inTeamRaid; /// ditto
 
+    package WorldContext context;
+
     private
     {
-        WorldContext context;
         Duration startLeft = startDelay;
         ubyte said;            // countdown messages said
         Duration endLeft;

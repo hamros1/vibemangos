@@ -23,8 +23,8 @@
  * graveyards' defenders at 500, 1000 and 1500 (seasoned, veteran, champion: the defenders' events' second numbers
  * 1 to 3), and from the first upgrade its general cries General's Warcry (28418 .. 28420, a rank an upgrade) every two
  * minutes; 200 Storm Crystals (the Alliance's) or Stormpike Soldier's Blood (the Horde's), one or five a turn-in, call
- * the side's elemental lord, Ivus the Forest Lord or Lokholar the Ice Lord, onto the Field of Strife, once a battle,
- * the turn-in that calls it a secondary objective on the scoreboard. The cavalry, the fleets and the mines' ground
+ * the summoner and guards to the Field of Strife. Ten allies channel their altar to call Ivus or Lokholar. The
+ * lord fights there for ten minutes before advancing on the enemy base. The cavalry, the fleets and the mines' ground
  * assault are not yet: their commanders' orders have no gossip in the database.
  *
  * Events (the map's battleground spawns): a node's banner and defenders are event1 = the node, event2 = its
@@ -38,6 +38,9 @@ import core.time : Duration, minutes, msecs, seconds;
 
 import dmangos.world.battleground;
 import dmangos.world.gameobject : GameObject;
+import dmangos.world.creature : Creature;
+import dmangos.world.character : Character;
+import dmangos.world.movement : Position;
 import dmangos.world.opcodes : ChatType;
 
 /// The nodes (`AVNodeIds`): graveyards 0 to 6, towers 7 to 14.
@@ -147,12 +150,9 @@ immutable uint[2] questsOfferOne = [6881, 6801], questsOfferFive = [7386, 7385];
 immutable uint[2] lords = [13_419, 13_256];
 /// ditto
 enum uint offeringsToCall = 200;
-/**
- * Where each side's lord comes, on the Field of Strife: where its summoner stops (warcraft.wiki.gg "Alterac Valley
- * (original)": Renferal "west of Stonehearth Bunker", Thurloga "south of Snowfall Graveyard and north of Iceblood"),
- * taken as halfway between the graveyards there (`WorldSafeLocs.dbc` 729 and 169; 169 and 749).
- */
-immutable float[4][2] lordsAt = [[-42.0f, -232.6f, 62.9f, 3.1f], [-344.3f, -187.0f, 63.3f, 0.0f]];
+/// The Alliance Circle of Calling and the Horde Altar of Summoning on the Field of Strife.
+immutable float[4][2] lordsAt = [[-199.993f, -343.217f, 6.77662f, 3.68265f], [-360.139f, -133.403f, 26.4856f, 4.41568f]];
+immutable uint[2] summoners = [13442, 13236], escorts = [13443, 13284], altars = [178670, 178465];
 
 /// The scoreboard's columns (`WorldStateUI.dbc`'s, map 30, in order): "Graveyards Assaulted", "Graveyards Defended",
 /// "Towers Assaulted", "Towers Defended", "Mines Captured" ("Number of times a deathblow was dealt to the lieutenant of
@@ -213,6 +213,13 @@ final class AlteracRules : BattlegroundRules
     ubyte[2] upgrades;              /// the graveyards' defenders' upgrades, by side (0 to 3)
     Duration[2] warcryLeft;         /// until the general cries again
     uint[2] offerings;              /// the lords' offerings, by side
+    private struct Procession
+    {
+        ulong leader, altar, contributor, lord;
+        Duration marchLeft;
+        Duration nextCheck;
+    }
+    Procession[2] processions;
     bool[2] lordCalled;             /// once a battle
 
     override void reset(Battleground copy)
@@ -253,6 +260,20 @@ final class AlteracRules : BattlegroundRules
 
         if (copy.status != BattlegroundStatus.inProgress)
             return;
+        foreach (ubyte side; 0 .. 2)
+        {
+            auto trail = &processions[side];
+            if (offerings[side] >= offeringsToCall && !lordCalled[side])
+                advanceProcession(copy, side, elapsed);
+            if (trail.marchLeft > Duration.zero && (trail.marchLeft -= elapsed) <= Duration.zero)
+            {
+                auto map = copy.context.existingMap(copy.mapId, copy.instance);
+                if (map !is null)
+                    if (auto lord = map.creatureAt(trail.lord))
+                        if (lord.alive)
+                            sendToEnemyBase(copy, lord, side);
+            }
+        }
         foreach (ubyte mine; 0 .. 2)
         {
             const owner = mineOwner[mine];
@@ -296,8 +317,11 @@ final class AlteracRules : BattlegroundRules
             else if (quest == questsOfferOne[side] || quest == questsOfferFive[side])
             {
                 offerings[side] += quest == questsOfferFive[side] ? 5 : 1;
-                if (!lordCalled[side] && offerings[side] >= offeringsToCall)
-                    callLord(copy, side, who);
+                if (!lordCalled[side] && offerings[side] >= offeringsToCall && !processions[side].contributor)
+                {
+                    processions[side].contributor = who;
+                    advanceProcession(copy, side, Duration.zero);
+                }
             }
         }
     }
@@ -347,6 +371,13 @@ final class AlteracRules : BattlegroundRules
     {
         import dmangos.world.bgqueue : BattlegroundStatus;
 
+        foreach (ubyte side; 0 .. 2)
+            if (go.template_.entry == altars[side])
+            {
+                if (go.guid == processions[side].altar && copy.status == BattlegroundStatus.inProgress)
+                    joinLordRitual(copy, side, go, who);
+                return true;
+            }
         const event = copy.eventOf(go);
         if (event is null || (*event)[0] >= nodeCount)
             return false;
@@ -487,12 +518,127 @@ private:
         copy.creaturesCast(generals[side], spellsGeneralsWarcry[upgrades[side] - 1]);
     }
 
-    /// `side`'s offerings are enough: its lord comes onto the Field of Strife; `who`'s turn-in a secondary objective.
-    void callLord(Battleground copy, ubyte side, ulong who)
+    private void sendToEnemyBase(Battleground copy, Creature unit, ubyte side)
     {
+        import dmangos.script.api : Location;
+        foreach (ref spawn; copy.context.data.creatureSpawns)
+            if (spawn.map == copy.mapId && spawn.entry == generals[1 - side])
+            {
+                unit.ai.hostMoveTo(Location(spawn.x, spawn.y, spawn.z, spawn.orientation), 0, true);
+                copy.context.map(copy.mapId, copy.instance).wake(unit.guid);
+                return;
+            }
+    }
+
+    private void advanceProcession(Battleground copy, ubyte side, Duration elapsed)
+    {
+        import dmangos.script.api : Location;
+        import dmangos.world.map : MapObject;
+        auto trail = &processions[side];
+        trail.nextCheck -= elapsed;
+        if (trail.nextCheck > Duration.zero)
+            return;
+        trail.nextCheck = 1.seconds;
+        auto map = copy.context.existingMap(copy.mapId, copy.instance);
+        if (map is null)
+            return;
+        auto leader = map.creatureAt(trail.leader);
+        if (trail.leader && (leader is null || !leader.alive))
+        {
+            if (trail.altar)
+                map.removeObject(trail.altar);
+            *trail = Procession.init;
+            offerings[side] = 0;
+            return;
+        }
+        if (trail.altar)
+            return;
+        const dest = lordsAt[side];
+        if (leader is null)
+        {
+            // The hand-in is at the summoner in its home camp. Use the existing NPCs, including their combat AI.
+            map.forEachObject((MapObject obj) {
+                auto c = cast(Creature) obj;
+                if (c !is null && c.alive && c.template_.entry == summoners[side])
+                    leader = c;
+            });
+            if (leader is null)
+                return;
+            trail.leader = leader.guid;
+            auto goal = Location(dest[0], dest[1], dest[2], dest[3]);
+            leader.ai.hostMoveTo(goal, 0, true);
+            map.wake(leader.guid);
+            uint rank;
+            foreach (guard; map.creaturesNear(leader.position, 45))
+                if (guard.alive && guard.template_.entry == escorts[side])
+                {
+                    auto flank = goal;
+                    flank.x += ++rank * 2;
+                    guard.ai.hostMoveTo(flank, 0, true);
+                    map.wake(guard.guid);
+                }
+            return;
+        }
+        const at = leader.position;
+        if (leader.ai.inCombat || (at.x - dest[0]) ^^ 2 + (at.y - dest[1]) ^^ 2 + (at.z - dest[2]) ^^ 2 > 25)
+            return;
+        const pos = Position(dest[0], dest[1], dest[2], dest[3]);
+        if (auto go = copy.context.summonWildGameObject(map, altars[side], pos, 0))
+        {
+            trail.altar = go.guid;
+            foreach (c; map.creaturesNear(pos, 25))
+                if (c.alive && (c is leader || c.template_.entry == escorts[side]))
+                    c.ai.castFor(map, 11206, leader.guid, true);
+        }
+    }
+
+    private void joinLordRitual(Battleground copy, ubyte side, GameObject go, ulong who)
+    {
+        import std.algorithm.searching : canFind;
+        import dmangos.world.rituals : RitualData;
+        auto map = copy.context.existingMap(copy.mapId, copy.instance);
+        if (map is null || lordCalled[side])
+            return;
+        auto leader = map.creatureAt(processions[side].leader);
+        if (leader is null || !leader.alive)
+            return;
+        Character participant(ulong guid)
+        {
+            const member = guid in copy.members;
+            if (member is null || member.team != side)
+                return null;
+            auto c = cast(Character) copy.onlinePlayerOf(guid);
+            if (c is null || c.currentMap !is map || !c.character.alive)
+                return null;
+            const p = c.character.position, at = go.position;
+            return (p.x - at.x) ^^ 2 + (p.y - at.y) ^^ 2 + (p.z - at.z) ^^ 2 <= 25 ? c : null;
+        }
+        auto newcomer = participant(who);
+        if (newcomer is null)
+            return;
+        const ritual = RitualData.of(go.template_.data[]);
+        size_t count;
+        foreach (guid; go.ritualUsers)
+            if (auto c = participant(guid))
+                if (c.channelsRitualAt(go.guid))
+                    go.ritualUsers[count++] = guid;
+        go.ritualUsers.length = count;
+        if (!go.ritualUsers.canFind(who) && newcomer.channelRitualAt(go, ritual.animSpell))
+            go.ritualUsers ~= who;
+        if (go.ritualUsers.length < ritual.participants)
+            return;
+        const at = go.position;
+        auto trail = &processions[side];
+        trail.lord = copy.summonAt(lords[side], at.x, at.y, at.z, at.orientation);
+        if (!trail.lord)
+            return;
+        trail.marchLeft = 10.minutes;
         lordCalled[side] = true;
-        const at = lordsAt[side];
-        copy.summonAt(lords[side], at[0], at[1], at[2], at[3]);
+        processions[side].altar = 0;
+        foreach (guid; go.ritualUsers)
+            if (auto c = participant(guid))
+                c.endChannel(false);
+        map.removeObject(go.guid);
         copy.addScore(who, scoreSecondary);
     }
 
@@ -777,7 +923,7 @@ unittest
         rules.questRewarded(copy, 8, questsOfferOne[ownerHorde]);
     assert(rules.offerings[ownerHorde] == 199 && !rules.lordCalled[ownerHorde]);
     rules.questRewarded(copy, 8, questsOfferOne[ownerHorde]);
-    assert(rules.lordCalled[ownerHorde] && copy.members[8].extra[scoreSecondary] == 1);
+    assert(!rules.lordCalled[ownerHorde] && rules.offerings[ownerHorde] == offeringsToCall);
     rules.questRewarded(copy, 8, questsOfferFive[ownerHorde]);
-    assert(copy.members[8].extra[scoreSecondary] == 1 && !rules.lordCalled[ownerAlliance], "once a battle");
+    assert(copy.members[8].extra[scoreSecondary] == 0 && !rules.lordCalled[ownerAlliance], "offerings alone do not summon the lord");
 }

@@ -844,11 +844,7 @@ supplies of one's own mine, 70 of the other's, Honored).
 - The upgrade comes when the scraps reach it (the wiki has an Honored player ask the blacksmith; the database's
   blacksmiths have no such gossip, only "How many more supplies are needed for the next upgrade?", without an answer).
 - The general cries the warcry at each upgrade and every two minutes after (its duration): "periodic".
-- The lord comes at once, on the Field of Strife, halfway between the graveyards where its summoner would stop
-  (`WorldSafeLocs.dbc` 729 and 169 for Ivus, 169 and 749 for Lokholar); once a battle. The wiki's escort and its ten
-  players at a circle are not done (the Circle of Calling, `gameobject_template` 178670, needs ten; it has no spawn),
-  nor the lord's march on the enemy base.
-- The turn-in that calls a lord is a "secondary unit activated" on the scoreboard.
+- The final offering starts the escort. Ten allies must channel at the altar simultaneously. The tenth earns the secondary objective. The altar templates supply the participant count and animation. The Field of Strife positions use the [VMaNGOS encounter coordinates](https://github.com/vmangos/core/blob/34aeaa8277f35fe74454d62eb2e9ed8a511922e2/src/scripts/battlegrounds/battleground_alterac.cpp#L2020). The lord spends ten minutes in the field before marching to the enemy general.
 
 **Second opinion (vmangos, `BattleGroundAV::HandleQuestComplete`, `UpgradeArmor`):** 20 scraps a turn-in, upgrades at
 500, 1000 and 1500 with 28418 .. 28420 (its automatic call is commented out); its lords, cavalry and fleets only count.

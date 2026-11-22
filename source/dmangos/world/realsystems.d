@@ -245,12 +245,118 @@ unittest
     assert(rules.upgrades[ownerAlliance] == 1);
     auto general = cast(Creature) map.findObject(vanndar);
     assert(general.auras.find(spellsGeneralsWarcry[0]) !is null, "Vanndar cries General's Warcry");
-    foreach (_; 0 .. 40)
-        rules.questRewarded(copy, 7, questsOfferFive[ownerAlliance]);
-    assert(rules.lordCalled[ownerAlliance]);
-    const at = lordsAt[ownerAlliance];
-    bool ivus;
-    foreach (c; map.creaturesNear(Position(at[0], at[1], at[2], 0), 20))
-        ivus = ivus || c.template_.entry == lords[ownerAlliance];
-    assert(ivus, "Ivus the Forest Lord on the Field of Strife");
+
+}
+
+/// Both field rituals use the original summoners and ten distinct active participants inside the same match.
+unittest
+{
+    if (!haveRealData())
+        return;
+    import core.time : msecs;
+    import std.format : format;
+    import dmangos.world.alterac;
+    import dmangos.world.bgqueue : BattlegroundEntry, BattlegroundType;
+    import dmangos.world.gameobject : GameObject;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.map : MapObject;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.packets : ClientGuid, ClientTeleportAck;
+    import dmangos.world.testclient : TestClient;
+
+    foreach (ubyte side; 0 .. 2)
+    {
+        auto w = RealWorld.make(20261122, true);
+        const instance = 950u + side;
+        auto copy = w.context.battlegrounds.open(instance, BattlegroundType.alteracValley);
+        auto rules = cast(AlteracRules) copy.rules;
+        auto map = w.context.map(30, instance);
+        copy.testing = true;
+        copy.start();
+        TestClient[] raiders;
+        void arrive(size_t i, ubyte team)
+        {
+            auto client = w.character(cast(uint)(700 + i), format!"Raid%s"(cast(char)('a' + i)), 1, 60, [], team == 0 ? 1 : 2);
+            client.session.inWorld.enterBattleground(BattlegroundEntry(true, instance, team, BattlegroundType.alteracValley));
+            client.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
+            client.session.inWorld.godModeCheat = true;
+            assert(client.session.inWorld.currentMap is map && (client.session.inWorld.player.guid in copy.members));
+            raiders ~= client;
+        }
+        void move(size_t i, Position p)
+        {
+            auto c = raiders[i].session.inWorld;
+            c.teleportTo(30, p, null, instance, true);
+            raiders[i].write(Opcode.MSG_MOVE_TELEPORT_ACK, ClientTeleportAck(c.player.guid, 0, 0));
+        }
+        arrive(0, side);
+        Position camp;
+        foreach (ref row; w.context.data.creatureSpawns)
+            if (row.map == 30 && row.entry == summoners[side])
+            {
+                camp = Position(row.x, row.y, row.z);
+                break;
+            }
+        assert(camp.x != 0);
+        move(0, camp);
+        const contributor = raiders[0].session.inWorld.player.guid;
+        foreach (_; 0 .. 40)
+            rules.questRewarded(copy, contributor, questsOfferFive[side]);
+        assert(!rules.lordCalled[side]);
+        const dest = lordsAt[side];
+        Position field = Position(dest[0], dest[1], dest[2], dest[3]);
+        GameObject altar;
+        auto findAltar = () {
+            map.forEachObject((MapObject o) {
+                auto g = cast(GameObject) o;
+                if (g !is null && g.template_.entry == altars[side])
+                    altar = g;
+            });
+        };
+        findAltar();
+        assert(altar is null && rules.processions[side].leader != 0);
+        auto leader = map.creatureAt(rules.processions[side].leader);
+        foreach (i; 0 .. 2400)
+        {
+            w.now += 500.msecs;
+            w.context.update(w.now);
+            if (i % 10 == 0)
+            {
+                raiders[0].read();
+                findAltar();
+                if (altar !is null)
+                    break;
+                // The raid accompanies the summoners through the valley.
+                move(0, leader.position);
+            }
+        }
+        assert(altar !is null, format!"side %s escort stopped at %s, target %s, alive %s"(side, leader.position, field, leader.alive));
+        foreach (i; 1 .. 11)
+            arrive(i, i == 10 ? cast(ubyte)(1 - side) : side);
+        foreach (i; 0 .. raiders.length)
+            move(i, field);
+        void use(size_t i) { raiders[i].write(Opcode.CMSG_GAMEOBJ_USE, ClientGuid(altar.guid)); }
+        foreach (i; 0 .. 9)
+            use(i);
+        use(0);
+        use(10);
+        assert(altar.ritualUsers.length == 9 && !rules.lordCalled[side], "repeated click or opposing faction counted");
+        raiders[0].session.inWorld.endChannel(true);
+        use(9);
+        assert(altar.ritualUsers.length == 9 && !rules.lordCalled[side], "cancelled participant counted");
+        use(0);
+        assert(rules.lordCalled[side] && map.findObject(altar.guid) is null && copy.members[contributor].extra[scoreSecondary] == 1);
+        use(9);
+        uint count;
+        foreach (c; map.creaturesNear(field, 20))
+            if (c.template_.entry == lords[side])
+                ++count;
+        assert(count == 1, "ten raiders call one faction lord");
+        import core.time : minutes;
+        import dmangos.world.motion : MotionType;
+        auto lord = map.creatureAt(rules.processions[side].lord);
+        rules.tick(copy, 10.minutes);
+        assert(lord.generator.type == MotionType.point, "the faction lord did not begin its march");
+    }
 }

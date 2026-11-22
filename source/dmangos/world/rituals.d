@@ -74,6 +74,23 @@ mixin template RitualSummoning()
     import dmangos.world.spells : SpellInfo;
     import dmangos.world.updatefields;
 
+    /// The ten raiders at a faction lord's ritual visibly channel the altar's own animation.
+    package bool channelRitualAt(GameObject go, uint animation)
+    {
+        if (auto spell = context.data.spells.spell(animation))
+        {
+            channelObject = go.guid;
+            startChannel(spell, go.guid);
+            return channelsRitualAt(go.guid);
+        }
+        return false;
+    }
+
+    package bool channelsRitualAt(ulong guid)
+    {
+        return channelSpell !is null && channelTarget == guid;
+    }
+
     private ulong ritualPortal; /// the portal of the ritual this player channels; 0: none
 
     /// A summons waiting for this player's answer (`Player::SetSummonPoint`).
