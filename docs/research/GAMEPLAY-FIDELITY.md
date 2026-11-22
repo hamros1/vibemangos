@@ -30,9 +30,25 @@ Target: original World of Warcraft 1.12.1. Audited server revision `d6ba4e8` on 
 | Rest and resurrection | The rest and XP paths award the rested bonus on kills and accumulate rest faster at an inn. The spirit healer path applies gear damage and level-dependent resurrection sickness. These broad rules agree with the manual. This comparison does not validate every rate, level cutoff or item slot. See `world/experience.d`, `world/charscreen.d` and `world/death.d`. [Original game manual](https://us.media.blizzard.com/manuals/wow/wow-classic-manual-enUS.pdf) |
 | Escorts and quest events | The existing world-data survey reached its expected outcome for 36 of 44 escort scenarios and 9 of 19 quest events. The remaining cases mix incomplete test setups and possible script defects. Reproduce with the correct faction, map, player interactions and end-of-quest credit before counting a defect. See `world/realscripts_world.d`. |
 
-## Two follow-up tests
+## Auto Shot timing
 
-- **Hunter Auto Shot after moving.** Blizzard describes a weapon timer that can mature while moving, followed by retries every 500 ms. In `world/spellhandlers.d`, `updateAutoRepeat` returns during movement before reducing the remaining timer. The first stationary update enforces a wind-up. Record shot timestamps after moving for longer than a whole weapon swing and stopping at different points in the retry cycle. This is a code-level discrepancy pending timed reproduction. [Blizzard’s Auto Shot explanation](https://us.forums.blizzard.com/en/wow/t/175887)
+The timed harness reproduced a paused weapon timer. A level 60 hunter fired a Worn Shortbow at a stationary target with 10 ms character updates. The stationary control fired the first shot after 510 ms and the next after another 2,300 ms. For the movement trials, scripted client packets started and stopped movement. Each sample measured the next arrow spent.
+
+| Movement began after first shot | Stopped after the next shot was normally due | Delay before the fix | Delay after the fix |
+|---:|---:|---:|---:|
+| 300 ms | 100 ms | 2,010 ms | 900 ms |
+| 300 ms | 350 ms | 2,010 ms | 650 ms |
+| 300 ms | 600 ms | 2,010 ms | 900 ms |
+| 2,000 ms | 100 ms | 510 ms | 900 ms |
+| 2,000 ms | 350 ms | 510 ms | 650 ms |
+| 2,000 ms | 600 ms | 510 ms | 900 ms |
+
+Before the fix, the remaining weapon time at movement start determined the delay. Changing when the player stopped had no effect within either group. Blizzard describes the weapon timer reaching its due time during movement, then checking every 500 ms for a stop before resuming Auto Shot. The reference description establishes when the retry check runs. The harness measures when the arrow fires, which can also include a wind-up. [Blizzard’s Auto Shot explanation](https://us.forums.blizzard.com/en/wow/t/wow-classic-era-%E2%80%9Cnot-a-bug%E2%80%9D-list-updated-april-22-2021/175887)
+
+The fix keeps the weapon timer running and schedules retries from the original due time. On a retry that finds the hunter stationary, the server starts its existing 500 ms wind-up. This preserves a server behavior whose exact duration the reference description does not establish. The harness also confirms the stationary cadence, the original due time after a short move, and cancellation of a real wand’s Shoot on movement. The wand fired again after a fresh cast.
+
+## Open encounter check
+
 - **Patchwerk’s Hateful Strike target.** The encounter script compares health *percentages* among melee threat candidates. The existing raid scenario exercises the ability, but does not distinguish a tank at 8,000/10,000 HP from one at 6,000/6,000 HP. Establish eligible threat ranks and absolute-versus-percentage health from a period log or controlled reference encounter before changing selection. See `scripts/naxxramas.d` and `world/realscripts_raids.d`. [Blizzard’s Naxxramas findings](https://us.forums.blizzard.com/en/wow/t/175887)
 
 ## Reproduce
@@ -44,4 +60,4 @@ tools/harness/check.sh --quick
 tools/harness/trainer-spells.sh --gameplay
 ```
 
-The first command builds the release binaries and runs the ordinary unit suite. The second links the opt-in comparison against those objects and runs with the harness database and synthetic player state. Search its output for `gameplay-audit`. It returns a failing exit status while any comparison differs. The controls distinguish a genuine rule difference from failure to equip weapons, fill debuff slots, deliver mail or establish a local lockout. No live character is needed.
+The first command builds the release binaries and runs the ordinary unit suite. The second links the opt-in comparison against those objects and runs with the harness database and synthetic player state. Search its output for `gameplay-audit` for the regression checks and `auto-shot` for the timing measurements. The timing probe verifies each observed delay against the expected retry and wind-up. A failed regression check returns a failing exit status. The controls distinguish a genuine rule difference from failure to equip weapons, fill debuff slots, deliver mail or establish a local lockout. No live character is needed.

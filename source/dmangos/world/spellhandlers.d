@@ -336,7 +336,8 @@ private:
 
     private const(SpellInfo)* autoRepeat; /// the spell shot again and again; null if none
     private int autoRepeatMs;             /// until the next shot
-    private bool autoRepeatWindUp;        /// moved (or just began): half a second before shooting
+    private enum AutoRepeatPhase { cycling, starting, moving, retrying }
+    private AutoRepeatPhase autoRepeatPhase;
 
     /**
      * What a shot of `spell` (a spell of the ranged slot, `SPELL_ATTR_RANGED`) uses up: with a bow, gun or
@@ -458,8 +459,9 @@ private:
             deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, result, spell));
             return result;
         }
+        if (autoRepeat !is spell || autoRepeatPhase == AutoRepeatPhase.cycling)
+            autoRepeatPhase = AutoRepeatPhase.starting;
         autoRepeat = spell;
-        autoRepeatWindUp = true;
         return SpellCastResult.ok;
     }
 
@@ -481,35 +483,55 @@ private:
 
     /**
      * Each tick: the auto-repeating spell shoots at the player's current target whenever its time comes
-     * (the ranged weapon's attack time). Moving holds it (and ends a wand's, which moving cancels); a
-     * target it may not shoot at, or a failed check, ends it.
+     * (the ranged weapon's attack time). If movement blocks the shot when due, retry every half
+     * second. Wands cancel on movement. A failed cast check also ends the repeat.
      */
     package void updateAutoRepeat(Duration elapsed)
     {
         if (autoRepeat is null || player is null)
             return;
         enum uint movingCancels = 0x08; // AURA_INTERRUPT_FLAG_MOVING
+        enum int windUpMs = 500, retryMs = 500;
         import dmangos.world.movement : MovementFlags;
 
         enum uint moving = MovementFlags.forward | MovementFlags.backward | MovementFlags.strafeLeft
             | MovementFlags.strafeRight | MovementFlags.fallingFar; // not just turning
+        const elapsedMs = cast(int) elapsed.total!"msecs";
         if (player.movement.flags & moving)
         {
             if (autoRepeat.casting.channelInterruptFlags & movingCancels)
                 return stopAutoRepeat();
-            autoRepeatWindUp = true;
+            autoRepeatMs -= elapsedMs;
+            if (autoRepeatMs <= 0)
+            {
+                // Keep the next retry aligned with the original due time even when a tick spans it.
+                autoRepeatMs = retryMs + autoRepeatMs % retryMs;
+                autoRepeatPhase = AutoRepeatPhase.retrying;
+            }
+            else if (autoRepeatPhase != AutoRepeatPhase.retrying)
+                autoRepeatPhase = AutoRepeatPhase.moving;
             return;
         }
-        if (autoRepeatWindUp)
+
+        if (autoRepeatPhase == AutoRepeatPhase.starting || autoRepeatPhase == AutoRepeatPhase.moving)
         {
-            autoRepeatWindUp = false;
-            if (autoRepeatMs < 500)
-                autoRepeatMs = 500;
+            // A stop before the first retry lets the wind-up overlap the remaining weapon time.
+            if (autoRepeatPhase == AutoRepeatPhase.moving)
+                autoRepeatMs -= elapsedMs;
+            if (autoRepeatMs < windUpMs)
+                autoRepeatMs = windUpMs;
+            autoRepeatPhase = AutoRepeatPhase.cycling;
             return;
         }
-        autoRepeatMs -= cast(int) elapsed.total!"msecs";
+        autoRepeatMs -= elapsedMs;
         if (autoRepeatMs > 0)
             return;
+        if (autoRepeatPhase == AutoRepeatPhase.retrying)
+        {
+            autoRepeatPhase = AutoRepeatPhase.cycling;
+            autoRepeatMs = windUpMs;
+            return;
+        }
         const target = player.values.get!UNIT_FIELD_TARGET;
         if (!target)
             return stopAutoRepeat();

@@ -261,3 +261,168 @@ unittest
 
     assert(!differences, "gameplay differs from the documented 1.12 rules above");
 }
+
+/// Measure Auto Shot through the normal cast, movement and character update paths.
+unittest
+{
+    import core.time : msecs;
+    import dmangos.world.defines : PlayerClass;
+
+    enum uint shot = 75, bow = 2504, arrow = 2512;
+    enum ubyte raceDwarf = 3;
+    enum uint stepMs = 10;
+
+    struct ShotTiming
+    {
+        uint firstShotMs;
+        uint nextShotDelayMs;
+    }
+
+    // Movement times are relative to the first shot. A zero stop time is the stationary control.
+    ShotTiming measure(uint moveAt, uint stopAt)
+    {
+        auto world = RealWorld.make();
+        auto hunter = world.character(61600, "Tracker", PlayerClass.hunter, 60, [shot], raceDwarf);
+        auto character = hunter.session.inWorld;
+        auto player = character.player;
+        player.setSkill(45, 300, 300); // bows
+        equipRanged(hunter, bow);
+        character.storeLoot(arrow, 20, 0, false);
+        hunter.write(Opcode.CMSG_SET_AMMO, ClientSetAmmo(arrow));
+        assert(player.values.get!PLAYER_AMMO_ID == arrow);
+        const guid = world.enemy(hunter);
+        auto target = cast(Creature) world.context.map(0).findObject(guid);
+        target.movement.position.x += 16;
+        target.values.set!UNIT_FIELD_MAXHEALTH(10000u);
+        target.values.set!UNIT_FIELD_HEALTH(10000u);
+        auto position = player.position;
+        position.orientation = 0;
+
+        uint clientTime;
+        sendMovement(hunter, Opcode.MSG_MOVE_HEARTBEAT, MovementFlags.none, position, clientTime);
+        hunter.write(Opcode.CMSG_SET_SELECTION, ClientSetSelection(guid));
+        assert(world.castAt(hunter, shot, guid) == SpellCastResult.ok);
+
+        // Each actual shot spends one arrow, whether it hits or misses.
+        uint advance(uint limitMs, bool allowShot)
+        {
+            const before = player.inventory.count(arrow);
+            foreach (step; 1 .. limitMs / stepMs + 1)
+            {
+                clientTime += stepMs;
+                world.now += stepMs.msecs;
+                character.update(stepMs.msecs);
+                hunter.read();
+                if (player.inventory.count(arrow) < before)
+                {
+                    assert(allowShot && player.inventory.count(arrow) == before - 1);
+                    return step * stepMs;
+                }
+            }
+            assert(!allowShot, "expected a shot within the measurement window");
+            return limitMs;
+        }
+
+        const first = advance(1000, true);
+        if (!stopAt)
+            return ShotTiming(first, advance(5000, true));
+
+        assert(moveAt < stopAt);
+        advance(moveAt, false);
+        sendMovement(hunter, Opcode.MSG_MOVE_START_FORWARD, MovementFlags.forward, position, clientTime);
+        advance(stopAt - moveAt, false);
+        position.x += 1;
+        sendMovement(hunter, Opcode.MSG_MOVE_STOP, MovementFlags.none, position, clientTime);
+        return ShotTiming(first, advance(5000, true));
+    }
+
+    const stationary = measure(0, 0);
+    stderr.writefln("auto-shot stationary control: first shot at %s ms, subsequent interval %s ms",
+        stationary.firstShotMs, stationary.nextShotDelayMs);
+    assert(stationary.firstShotMs == 510 && stationary.nextShotDelayMs == 2300);
+    const earlyStop = measure(300, 800);
+    assert(earlyStop.nextShotDelayMs == 1500, "stop before the weapon is due preserves the stationary schedule");
+
+    foreach (moveAt; [300u, stationary.nextShotDelayMs - 300])
+        foreach (offset; [100u, 350u, 600u])
+        {
+            const stopAt = stationary.nextShotDelayMs + offset;
+            const sample = measure(moveAt, stopAt);
+            assert(sample.firstShotMs == stationary.firstShotMs, "identical stationary lead-in");
+            enum uint retryMs = 500, windUpMs = 500;
+            const expected = retryMs - offset % retryMs + windUpMs;
+            stderr.writefln("auto-shot movement starts %s ms after shot, ends %s ms after stationary due time:"
+                ~ " next shot %s ms after stop", moveAt, offset, sample.nextShotDelayMs);
+            assert(sample.nextShotDelayMs == expected,
+                format!"stop %s ms after due: expected %s ms, got %s ms"(offset, expected, sample.nextShotDelayMs));
+        }
+}
+
+/// The real wand spell cancels as soon as the player moves and requires a new cast after stopping.
+unittest
+{
+    import core.time : msecs;
+    import dmangos.world.defines : PlayerClass;
+
+    enum uint shoot = 5019, wand = 11287;
+    auto world = RealWorld.make();
+    auto mage = world.character(61601, "Wanduser", PlayerClass.mage, 60, [shoot]);
+    auto character = mage.session.inWorld;
+    character.player.setSkill(228, 300, 300); // wands
+    equipRanged(mage, wand);
+    const guid = world.enemy(mage);
+    auto target = cast(Creature) world.context.map(0).findObject(guid);
+    target.movement.position.x += 16;
+    target.values.set!UNIT_FIELD_HEALTH(5000u);
+    auto position = character.player.position;
+    position.orientation = 0;
+    sendMovement(mage, Opcode.MSG_MOVE_HEARTBEAT, MovementFlags.none, position, 0);
+    mage.write(Opcode.CMSG_SET_SELECTION, ClientSetSelection(guid));
+    assert(world.castAt(mage, shoot, guid) == SpellCastResult.ok);
+    mage.read();
+
+    ushort[] tick(uint ms)
+    {
+        world.now += ms.msecs;
+        character.update(ms.msecs);
+        return opcodesOf(mage.read());
+    }
+
+    tick(10);
+    assert(tick(500).canFind(Opcode.SMSG_SPELL_GO), "stationary wand control fires");
+    sendMovement(mage, Opcode.MSG_MOVE_START_FORWARD, MovementFlags.forward, position, 510);
+    assert(tick(10).canFind(Opcode.SMSG_CANCEL_AUTO_REPEAT));
+    sendMovement(mage, Opcode.MSG_MOVE_STOP, MovementFlags.none, position, 520);
+    assert(!tick(3000).canFind(Opcode.SMSG_SPELL_GO), "stopping alone does not resume the wand");
+    assert(world.castAt(mage, shoot, guid) == SpellCastResult.ok);
+    mage.read();
+    tick(10);
+    assert(tick(3000).canFind(Opcode.SMSG_SPELL_GO), "a fresh wand cast fires");
+    stderr.writeln("auto-shot wand control: movement cancelled Shoot, which restarted on a fresh cast");
+}
+
+private void equipRanged(ref TestClient client, uint entry)
+{
+    import dmangos.world.defines : equipmentSlotRanged;
+
+    auto character = client.session.inWorld;
+    auto player = character.player;
+    character.storeLoot(entry, 1, 0, false);
+    foreach (ubyte slot; 23 .. 39)
+        if (const item = player.inventory[inventorySlotBag0, slot])
+            if (item.entry == entry)
+            {
+                client.write(Opcode.CMSG_AUTOEQUIP_ITEM, ClientItemPos(inventorySlotBag0, slot));
+                break;
+            }
+    const equipped = player.inventory.equipped(equipmentSlotRanged);
+    assert(equipped !is null && equipped.entry == entry);
+}
+
+private void sendMovement(ref TestClient client, uint opcode, MovementFlags flags, Position position, uint time)
+{
+    ByteWriter msg;
+    MovementInfo(flags, time, position).write(msg);
+    client.write(opcode, msg.data);
+    assert(client.session.inWorld.player.movement.flags == flags, "movement packet accepted");
+}
