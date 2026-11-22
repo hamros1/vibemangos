@@ -54,6 +54,14 @@ package struct ElevatorPath
         return speed;
     }
 
+    bool travelsAcross(float distance) const
+    {
+        foreach (ref frame; frames)
+            if (frame.offset.x ^^ 2 + frame.offset.y ^^ 2 >= distance ^^ 2)
+                return true;
+        return false;
+    }
+
     Vector3 offsetAt(uint clock) const
     in (valid)
     {
@@ -122,6 +130,7 @@ unittest
     import dmangos.world.gameobject : GameObjectSpawn, GameObjectTemplate, GameObjectType;
     import dmangos.world.grid : cellKeyAt;
     import dmangos.world.movement : MovementFlags, MovementInfo, Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
     import dmangos.world.opcodes : Opcode;
     import dmangos.world.replication : encodeState;
     import dmangos.world.testclient;
@@ -148,11 +157,25 @@ unittest
         viewer.update(viewerNow);
     }
     tickTo(0);
-    owner.data.gameObjectTemplates[entry] = GameObjectTemplate(entry: entry, type: GameObjectType.transport);
     const spawn = GameObjectSpawn(guid: 21, entry: entry, x: 60, y: 10, z: 30);
-    auto platform = owner.makeGameObject(spawn);
-    owner.map(0).addObject(platform);
-    viewer.map(0).replicaCreated(1, cellKeyAt(spawn.x, spawn.y), platform.guid, encodeState(platform, 0));
+    const home = cellKeyAt(spawn.x, spawn.y);
+    const guid = makeGuid(HighGuid.gameObject, entry, spawn.guid);
+    bool originalOwnsHome = true;
+    owner.ownsCell = (uint map, ulong cell) => cell != home || originalOwnsHome;
+    viewer.ownsCell = (uint map, ulong cell) => cell != home || !originalOwnsHome;
+    foreach (world; [owner, viewer])
+    {
+        world.data.gameObjectTemplates[entry] = GameObjectTemplate(entry: entry, type: GameObjectType.transport);
+        world.data.gameObjectCells[0][home] ~= world.data.gameObjectSpawns.length;
+        world.data.gameObjectSpawns ~= spawn;
+        assert(!world.map(0).cellLoaded(home));
+    }
+    tickTo(1);
+    assert(owner.map(0).cellLoaded(home) && !viewer.map(0).cellLoaded(home), "only the owner loads the transport home");
+    owner.map(0).unloadIdleCells(1_000_000);
+    auto platform = owner.map(0).gameObjectAt(guid);
+    assert(platform !is null && owner.map(0).cellLoaded(home), "the home remains loaded while idle");
+    viewer.map(0).replicaCreated(1, home, platform.guid, encodeState(platform, 0));
 
     const boardAt = Position(62, 11, 31, 0.25f);
     auto rider = loggedIn(viewer, db, 7, "Anduin", boardAt);
@@ -200,4 +223,11 @@ unittest
     sendMove(move);
     tickTo(1900);
     assert(rider.session.character.position == during, "an offset inconsistent with the reported position cannot move a rider");
+
+    originalOwnsHome = false;
+    owner.map(0).release((ulong cell) => cell == home);
+    tickTo(2000);
+    assert(!owner.map(0).cellLoaded(home) && owner.map(0).findObject(guid) is null);
+    assert(viewer.map(0).gameObjectAt(guid) !is null && !viewer.map(0).isReplica(guid),
+        "the new owner takes over the existing slot with one platform");
 }

@@ -31,7 +31,7 @@ import dmangos.cluster.protocol : PresenceEntry;
 import dmangos.world.whisper : WhisperFrom;
 import dmangos.cluster.regions : Region, RegionState;
 import dmangos.world.creature : Creature, CreatureParts, CreatureSpawn, CreatureTemplate, Npc, NpcStandIn, TempSpawn, TempSpawnType, VirtualItem;
-import dmangos.world.gameobject : GameObject, GameObjectSpawn;
+import dmangos.world.gameobject : GameObject, GameObjectSpawn, GameObjectType;
 import dmangos.world.auctionhouse;
 import dmangos.world.database : MailRecord;
 import dmangos.world.movement : Position;
@@ -2892,6 +2892,40 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     private ElevatorAnimation[ulong] elevatorAnimations;
+    private bool[ulong][uint] longElevatorHomes;
+
+    /// Keep routes longer than a grid cell available while this map is active.
+    private bool[ulong] elevatorHomesFor(uint mapId)
+    {
+        import dmangos.world.gameobject : GameObjectType;
+        import dmangos.world.grid : cellSize;
+
+        if (auto homes = mapId in longElevatorHomes)
+            return *homes;
+        bool[ulong] homes;
+        foreach (cell, indices; data.gameObjectCells.get(mapId, null))
+            foreach (index; indices)
+            {
+                const spawn = &data.gameObjectSpawns[index];
+                const proto = spawn.entry in data.gameObjectTemplates;
+                if (proto is null || proto.type != GameObjectType.transport || proto.data[1] || spawn.respawnSeconds < 0)
+                    continue;
+                const path = ElevatorPath(client.transportFrames(spawn.entry), spawn.worldRotation);
+                if (path.travelsAcross(cellSize))
+                {
+                    homes[cell] = true;
+                    break;
+                }
+            }
+        longElevatorHomes[mapId] = homes;
+        return homes;
+    }
+
+    private void refreshElevatorHomes(Map map_)
+    {
+        longElevatorHomes.remove(map_.id);
+        map_.elevatorHomes = elevatorHomesFor(map_.id);
+    }
 
     private ElevatorPath elevatorPathOf(ulong guid, const ref UpdateValues fields)
     {
@@ -3129,6 +3163,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         created.instanceId = instance;
         created.elevatorPath = &elevatorPathOf;
         created.elevatorClock = &transportNow;
+        created.elevatorHomes = elevatorHomesFor(id);
         if (instance == 0) // a dungeon's copies are all on one node: nobody else needs replicas of them
             created.replicator = replicator;
         created.onCorpseRemoved = &corpseRemoved;
@@ -5006,6 +5041,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             database.insertGameObjectSpawn(spawn);
         auto go = makeGameObject(data.gameObjectSpawns[index]);
         go.instanceId = map.instanceId;
+        if (go.type == GameObjectType.transport)
+            refreshElevatorHomes(map);
         map.addObject(go);
         return go;
     }
@@ -5045,6 +5082,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         map.removeObject(go.guid);
         auto made = makeGameObject(data.gameObjectSpawns[*at]);
         made.instanceId = map.instanceId;
+        if (made.type == GameObjectType.transport)
+            refreshElevatorHomes(map);
         map.addObject(made);
         return made;
     }
@@ -5067,6 +5106,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         gameObjectRespawnAt.remove(s.guid);
         map.removeObject(go.guid);
         database.deleteGameObjectSpawn(s.guid);
+        if (go.type == GameObjectType.transport)
+            refreshElevatorHomes(map);
     }
 
     /**

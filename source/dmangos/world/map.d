@@ -443,6 +443,7 @@ final class Map : CombatWorld, GameObjectWorld
 
     package ElevatorPath delegate(ulong guid, const ref UpdateValues fields) elevatorPath;
     package uint delegate() elevatorClock;
+    package bool[ulong] elevatorHomes; // spawn cells of transports that can travel far from home
 
     /// Number of creatures and game objects (replicas included) on the map.
     @property size_t objectCount() const
@@ -883,7 +884,7 @@ final class Map : CombatWorld, GameObjectWorld
         bool[ulong] due;
         foreach (cell, _; loadedCells)
         {
-            if (cell in localInterest || cell in peerCells)
+            if (cell in elevatorHomes || cell in localInterest || cell in peerCells)
             {
                 idleMs.remove(cell);
                 continue;
@@ -1075,6 +1076,8 @@ final class Map : CombatWorld, GameObjectWorld
         if (diff <= 0)
             return;
         unticked -= diff.msecs;
+        foreach (cell, _; elevatorHomes)
+            loadCell(cell);
         if (settings.unloadIdleMs && (idleCheck -= diff) <= 0)
         {
             const step = idleCheckInterval - idleCheck;

@@ -826,7 +826,9 @@ While an elevator or its replica is loaded, the server uses the same animation t
 passengers between movement packets. The client receives the platform's stationary coordinates
 and the transport time so it can animate the platform locally.
 The map uses the animated position for visibility and selects replica recipients from the
-platform's current cell. The spawn cell still determines ownership.
+platform's current cell. The spawn cell still determines ownership. On an active map, the owning
+node keeps the homes of long horizontal routes loaded so a tram can reach its other end even
+when nobody is near its spawn.
 
 The extractor (`extractor/maps.d`) turns each map's ADT tiles into `.map` files (version "z1.4"),
 whose layout `mapfile.d` holds for both sides. `world/terrain.d` reads them: `GridMap` is one

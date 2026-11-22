@@ -5,8 +5,8 @@
 - **Clustering.** Extend cross-node routing to script-selected channels and scripted effects. See
   [spell routing limits](CLUSTER.md#spell-routing-limits) and the
   [cross-node feature list](CLUSTER.md#what-crosses-nodes-feature-by-feature).
-- **Terrain.** Keep elevators and trams visible along long routes and handle transitions
-  between land and swimming.
+- **Terrain.** Handle transitions between land and swimming and connect moving platforms
+  to movement maps.
 - **Gameplay coverage.** See the [spell audit](SPELLS.md) for gaps by class and the
   battleground notes below for remaining Alterac Valley events.
 
@@ -112,9 +112,9 @@ implemented. See [NPCs, items and the world](GAMEPLAY.md#npcs-items-and-the-worl
 
 Done: `.map` files and vmaps, extracted and read; zones and areas, explored areas. See
 [Terrain](ARCHITECTURE.md#terrain). Movement maps provide paths around static geometry.
-Door collision uses the model at its spawn transform. Elevator line of sight and passenger
-movement follow the platform's animation. Visibility along long routes and movement-map
-integration remain open.
+Door collision uses the model at its spawn transform. Elevator line of sight, passenger
+movement and visibility follow the platform's animation, including long tram routes.
+Movement-map integration remains open.
 
 ### 5. Inventory: done
 

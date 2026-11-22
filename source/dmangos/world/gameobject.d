@@ -100,6 +100,18 @@ struct GameObjectSpawn
     float orientation = 0;
     float[4] rotation = 0;
     int respawnSeconds;
+
+    /// The world rotation, deriving a quaternion from the facing when the spawn has none.
+    package @property float[4] worldRotation() const
+    {
+        float[4] result = rotation;
+        if (result[2] == 0 && result[3] == 0)
+        {
+            result[2] = sin(orientation / 2);
+            result[3] = cos(orientation / 2);
+        }
+        return result;
+    }
 }
 
 /// Game object states, flags and dynamic flags.
@@ -450,14 +462,7 @@ private:
         values.set!GAMEOBJECT_POS_Y(spawn.y);
         values.set!GAMEOBJECT_POS_Z(spawn.z);
         values.set!GAMEOBJECT_FACING(spawn.orientation);
-        // Rotation: the last two parts from the facing when the spawn has none.
-        float[4] rotation = spawn.rotation;
-        if (rotation[2] == 0 && rotation[3] == 0)
-        {
-            rotation[2] = sin(spawn.orientation / 2);
-            rotation[3] = cos(spawn.orientation / 2);
-        }
-        foreach (i, part; rotation)
+        foreach (i, part; spawn.worldRotation)
             values.set!GAMEOBJECT_ROTATION(i, part);
         values.set!GAMEOBJECT_FACTION(t.faction);
         uint flags = t.flags;
