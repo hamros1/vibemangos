@@ -677,13 +677,45 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return effect;
     }
 
+    /// The first applicable effect in a shared target group, including auras when damage is excluded.
+    package size_t namedCreatureEffectFor(const(SpellInfo)* spell, size_t first, uint entry)
+    {
+        import dmangos.world.spelldamage : remoteTargetAuraEffects;
+
+        if (first == size_t.max)
+            return size_t.max;
+        const excluded = scriptTargetExclusions(spell.id, entry);
+        if (!(excluded & (1u << first)))
+            return first;
+        if (spell.effect[first] == SpellEffect.schoolDamage || spell.effect[first] == SpellEffect.applyAura)
+        {
+            const auras = remoteTargetAuraEffects(*spell, first) & ~excluded;
+            foreach (i; first + 1 .. spell.effect.length)
+                if (auras & (1u << i))
+                    return i;
+        }
+        return size_t.max;
+    }
+
+    package const(uint)[] namedCreatureEntries(const(SpellInfo)* spell, size_t first)
+    {
+        const entries = spellScriptTargets(spell.id);
+        if (spell.id !in data.spellScriptTargetMasks)
+            return entries;
+        uint[] eligible;
+        foreach (entry; entries)
+            if (namedCreatureEffectFor(spell, first, entry) != size_t.max)
+                eligible ~= entry;
+        return eligible;
+    }
+
     package size_t namedCreatureChannel(const(SpellInfo)* spell)
     {
         import dmangos.world.spellcast : duration;
         import dmangos.world.spelldamage : namedCreatureChannelEffect;
 
         const effect = namedCreatureChannelEffect(*spell);
-        return effect != size_t.max && spellScriptTargets(spell.id).length && !spellScript(spell.id)
+        return effect != size_t.max && spellScriptTargets(spell.id, effect).length && !spellScript(spell.id)
             && duration(*spell, client, spell.spellLevel) > 0
             ? effect : size_t.max;
     }
@@ -1342,7 +1374,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 || (message.namedCreature ? named == size_t.max : !isRemoteLeechChannel(*spell)))
                 return;
             if (message.namedCreature && (victim.kind != UnitKind.creature
-                || !spellScriptTargets(spell.id).canFind(victim.creature.spawn.entry)))
+                || !spellScriptTargets(spell.id, named).canFind(victim.creature.spawn.entry)))
                 return replyCreatureCast(peer, message, SpellMissInfo.evade);
             if (message.channelUpdate)
             {
@@ -1374,7 +1406,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         {
             import std.algorithm.searching : canFind;
 
-            if (victim.kind != UnitKind.creature || message.effect != namedCreatureRouting(spell)
+            if (victim.kind != UnitKind.creature
+                || message.effect != namedCreatureEffectFor(spell, namedCreatureRouting(spell), victim.creature.spawn.entry)
                 || message.radius != namedCreatureRadius(*spell, message.effect, client)
                 || !spellScriptTargets(spell.id).canFind(victim.creature.spawn.entry))
                 return replyCreatureCast(peer, message, SpellMissInfo.evade);
@@ -1525,7 +1558,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             }
             if (message.namedCreature)
             {
-                auto effects = remoteTargetAuraEffects(*spell, message.effect);
+                auto effects = cast(ubyte)(remoteTargetAuraEffects(*spell, message.effect)
+                    & ~scriptTargetExclusions(spell.id, victim.creature.spawn.entry));
                 if (effects && victim.alive)
                 {
                     const immune = victim.fighter.immune;
@@ -1972,7 +2006,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if (!lasts)
                 return;
         }
-        const effects = unblockedAuraEffects(*spell, remoteTargetAuraEffects(*spell, i), immune);
+        auto mask = remoteTargetAuraEffects(*spell, i);
+        if (message.namedCreature)
+            mask &= cast(ubyte) ~scriptTargetExclusions(spell.id, victim.creature.spawn.entry);
+        const effects = unblockedAuraEffects(*spell, mask, immune);
         if (!effects)
             return replyCreatureCast(peer, message, SpellMissInfo.immune);
         installRemoteAura(victim, message, spell, hostile, casterPvP, lasts, effects);
@@ -6583,11 +6620,23 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /// See `CreatureLore.spellScriptTargets`.
-    const(uint)[] spellScriptTargets(uint spell)
+    const(uint)[] spellScriptTargets(uint spell, size_t effect = size_t.max)
     {
-        if (const entries = spell in data.spellScriptTargets)
-            return *entries;
-        return null;
+        const entries = data.spellScriptTargets.get(spell, null);
+        if (effect >= 3 || spell !in data.spellScriptTargetMasks)
+            return entries;
+        uint[] allowed;
+        foreach (entry; entries)
+            if (!(scriptTargetExclusions(spell, entry) & (1u << effect)))
+                allowed ~= entry;
+        return allowed;
+    }
+
+    package uint scriptTargetExclusions(uint spell, uint entry) const
+    {
+        if (const mask = spell in data.spellScriptTargetMasks)
+            return (*mask).get(entry, 0);
+        return 0;
     }
 
     /// See `CreatureLore.conditionMet`.

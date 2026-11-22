@@ -1976,7 +1976,8 @@ private:
         const spell = c.spell;
         auto drain = !c.triggered ? remoteLeechTarget(spell, c.targets.unit) : null;
         const namedChannel = c.triggered ? size_t.max : context.namedCreatureChannel(spell);
-        auto recipient = namedChannel == size_t.max ? UnitRef.init : scriptTargetNear(spell, context.sendAreaDamage !is null);
+        auto recipient = namedChannel == size_t.max ? UnitRef.init
+            : scriptTargetNear(spell, namedChannel, context.sendAreaDamage !is null);
         auto remoteChannel = recipient.replica is null ? drain : recipient.replica;
         auto result = checkCast(spell, c.targets, c.triggered, c.castItemEntry, false, drain,
             c.playerHandoff || drain !is null);
@@ -2045,10 +2046,10 @@ private:
         RemoteAreaDamage[] remoteDamage;
         import dmangos.world.spelldamage : databaseSpellEffect, namedCreatureShape;
         import dmangos.world.spellselection : namedCreatureCenter, namedCreatureCone, namedCreatureRadius,
-            namedCreaturesInArea;
+            namedCreatureEntry, namedCreaturesInArea, nearestNamedCreature;
 
-        const entries = context.spellScriptTargets(spell.id);
         const namedEffect = context.namedCreatureRouting(spell);
+        const entries = context.namedCreatureEntries(spell, namedEffect);
         c.gameObjectOrigin = player.position;
         const namedShape = namedEffect != size_t.max ? namedCreatureShape(*spell, namedEffect) : ImplicitTarget.none;
         const namedRange = namedEffect != size_t.max ? namedCreatureRadius(*spell, namedEffect, context.client) : 0;
@@ -2059,7 +2060,7 @@ private:
         if (namedShape == ImplicitTarget.unitScriptNearCaster)
         {
             namedCenter = player.position;
-            if (auto near = scriptTargetNear(spell, routeNamed))
+            if (auto near = nearestNamedCreature(map, namedCenter, namedRange, entries, 0, routeNamed))
                 scripted = [near];
         }
         else if (namedShape != ImplicitTarget.none)
@@ -2193,9 +2194,12 @@ private:
             {
                 foreach (creature; scripted)
                 {
+                    const entry = namedCreatureEntry(creature);
+                    if (context.scriptTargetExclusions(spell.id, entry) & (1u << i))
+                        continue;
                     if (creature.replica is null)
                         targets ~= creature.combatGuid;
-                    else if (i == namedEffect)
+                    else if (i == context.namedCreatureEffectFor(spell, namedEffect, entry))
                     {
                         auto hit = AreaDamage(caster: player.guid, target: creature.combatGuid, spell: spell.id,
                             effect: cast(ubyte) i, map: map.id, instance: map.instanceId,
@@ -2204,13 +2208,15 @@ private:
                         remoteDamage ~= RemoteAreaDamage(creature.replica.owner, hit);
                     }
                 }
-                if (!scripted.length && namedShape == ImplicitTarget.unitScriptNearCaster
+                if (!scripted.length && entries.length && namedShape == ImplicitTarget.unitScriptNearCaster
                     && !databaseSpellEffect(spell.effect[namedEffect]))
                     targets = [player.guid];
             }
             else if (a == ImplicitTarget.unitScriptNearCaster)
             {
-                const near = scriptTargetNear(spell, false).combatGuid;
+                const near = scriptTargetNear(spell, i, false).combatGuid;
+                if (!near && context.spellScriptTargets(spell.id).length && !context.spellScriptTargets(spell.id, i).length)
+                    continue;
                 targets = [near ? near : player.guid];
             }
             else
@@ -3226,12 +3232,12 @@ private:
 
     /// Instance round 2: the nearest living creature within the spell's range (at least 5 yards) of an entry
     /// `spell_script_target` gives the spell; 0 if none.
-    private UnitRef scriptTargetNear(const(SpellInfo)* spell, bool acrossNodes)
+    private UnitRef scriptTargetNear(const(SpellInfo)* spell, size_t effect, bool acrossNodes)
     {
         import dmangos.world.spellselection : namedCreatureRange, nearestNamedCreature;
 
         return nearestNamedCreature(map, player.position, namedCreatureRange(*spell, context.client),
-            context.spellScriptTargets(spell.id), 0, acrossNodes);
+            context.spellScriptTargets(spell.id, effect), 0, acrossNodes);
     }
 
     /**

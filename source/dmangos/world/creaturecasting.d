@@ -643,6 +643,8 @@ mixin template CreatureCasting()
     /// The implicit targets the creature resolves: the caster, enemies in an area or cone, or the target.
     private ulong[] targetsFor(const(SpellInfo)* spell, size_t i, ulong target)
     {
+        import dmangos.world.spelldamage : namedCreatureShape;
+
         const a = spell.implicitTargetA[i], b = spell.casting.implicitTargetB[i];
         if (spell.casting.chainTarget[i] > 1 && nextWeaponSwingEffect(*spell) == i)
             if (auto primary = world_.unit(target))
@@ -682,7 +684,10 @@ mixin template CreatureCasting()
         // A script's area around the caster (`TARGET_ENUM_UNITS_SCRIPT_AOE_AT_SRC_LOC`): the living creatures there
         // `spell_script_target` names, or (it names none) every unit there, the caster too, which its script picks
         // from (CMaNGOS's `SPELL_TARGETS_ALL`). Without either, its target as before.
-        const named = lore.spellScriptTargets(spell.id);
+        const named = lore.spellScriptTargets(spell.id, i);
+        if (!named.length && lore.spellScriptTargets(spell.id).length
+            && namedCreatureShape(*spell, i) != ImplicitTarget.none)
+            return null;
         if ((a == ImplicitTarget.enumUnitsScriptAoeAtSrcLoc || b == ImplicitTarget.enumUnitsScriptAoeAtSrcLoc)
             && (named.length || lore.spellScript(spell.id)))
         {
@@ -737,7 +742,7 @@ mixin template CreatureCasting()
         import dmangos.world.spellcast : spellFailurePacket, SpellCastResult;
         import dmangos.world.spelldamage : creatureTargetInRange, databaseSpellEffect, namedCreatureShape;
         import dmangos.world.spellselection : namedCreatureCenter, namedCreatureCone, namedCreatureRadius,
-            namedCreaturesInArea, nearestNamedCreature;
+            namedCreatureEntry, namedCreaturesInArea, nearestNamedCreature;
 
         auto context = cast(WorldContext) lore;
         const channelEffect = takeMana && !me.meleeController && selectedWeaponTargets is null && context !is null
@@ -748,7 +753,7 @@ mixin template CreatureCasting()
             import dmangos.world.spellselection : namedCreatureRange;
 
             channelTarget = nearestNamedCreature(world_, me.position, namedCreatureRange(*spell, lore.clientData),
-                lore.spellScriptTargets(spell.id), me.guid, context.sendAreaDamage !is null);
+                lore.spellScriptTargets(spell.id, channelEffect), me.guid, context.sendAreaDamage !is null);
             if (!channelTarget || !beginNamedCreatureChannel(spell, channelTarget))
                 return;
         }
@@ -785,6 +790,7 @@ mixin template CreatureCasting()
         ulong[] inOrder; // each target once, in the order the effects found them (as the packet lists them)
         ulong[] remoteNamed;
         const namedEffect = selectedWeaponTargets is null ? selectableNamedCreatureEffect(spell) : size_t.max;
+        const namedEntries = context is null ? lore.spellScriptTargets(spell.id) : context.namedCreatureEntries(spell, namedEffect);
         const objectOrigin = me.position;
         Position objectDestination;
         bool hasObjectDestination;
@@ -802,13 +808,12 @@ mixin template CreatureCasting()
             hasNamedCenter = namedCreatureCenter(*spell, namedEffect, lore.clientData, map is null ? me.spawn.map : map.id,
                 me.position, database, null, namedCenter);
             if (hasNamedCenter)
-                named = namedCreaturesInArea(world_, namedCenter, namedRange, lore.spellScriptTargets(spell.id), routeNamed,
+                named = namedCreaturesInArea(world_, namedCenter, namedRange, namedEntries, routeNamed,
                     spell.casting.maxAffectedTargets, namedShape,
                     namedCreatureCone(context is null ? null : context.data, spell.id));
         }
         else if (namedShape == ImplicitTarget.unitScriptNearCaster)
-            if (auto nearest = nearestNamedCreature(world_, me.position, namedRange, lore.spellScriptTargets(spell.id),
-                me.guid, routeNamed))
+            if (auto nearest = nearestNamedCreature(world_, me.position, namedRange, namedEntries, me.guid, routeNamed))
                 named = [nearest];
         foreach (i; 0 .. 3)
             if (spell.effect[i])
@@ -843,14 +848,18 @@ mixin template CreatureCasting()
                     }
                 }
                 else if (namedShape != ImplicitTarget.none && namedCreatureShape(*spell, i) == namedShape
-                    && (named.length || namedArea || databaseSpellEffect(spell.effect[namedEffect])))
+                    && (named.length || namedArea || !namedEntries.length || databaseSpellEffect(spell.effect[namedEffect])))
                 {
                     foreach (other; named)
                     {
+                        const entry = namedCreatureEntry(other);
+                        if (context !is null && (context.scriptTargetExclusions(spell.id, entry) & (1u << i)))
+                            continue;
                         if (other.replica is null)
                             reached[i] ~= other.combatGuid;
-                        else if (i == namedEffect && sendCreatureTargetSpell(context, spell, other, !takeMana, auraAbsent,
-                            cast(int) i, namedCenter, namedRange, true))
+                        else if (i == context.namedCreatureEffectFor(spell, namedEffect, entry)
+                            && sendCreatureTargetSpell(context, spell, other, !takeMana, auraAbsent,
+                                cast(int) i, namedCenter, namedRange, true))
                             remoteNamed ~= other.combatGuid;
                     }
                 }

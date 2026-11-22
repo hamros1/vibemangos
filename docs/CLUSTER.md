@@ -522,6 +522,7 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   or an area around the caster or destination using `spell_script_target` entries, including replicas.
   An area's target cap is shared across nodes. Each target's node checks its entry and position again,
   resolves heals, aura groups or damage with its attached auras, and signals a successful hit to the creature's AI.
+  The database can exclude individual effects for an entry, including an attached aura or the damage itself.
   It can also run immediate database script steps that despawn the selected creature or make it cast on itself.
 * **Spell procs.** A hostile hit can trigger auras on both actors. Self effects run with the
   actor, and supported direct damage, healing and aura effects of the same proc can

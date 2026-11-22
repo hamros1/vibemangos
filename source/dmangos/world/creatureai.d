@@ -161,7 +161,7 @@ interface CreatureLore
     // Spell scripts of items, quests and the world:
 
     /// The creature entries `spell_script_target` gives spell `spell` (type 1); empty if none.
-    const(uint)[] spellScriptTargets(uint spell);
+    const(uint)[] spellScriptTargets(uint spell, size_t effect = size_t.max);
 }
 
 /// What a creature's AI needs of its map.

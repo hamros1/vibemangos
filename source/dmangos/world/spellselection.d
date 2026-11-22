@@ -176,6 +176,14 @@ package bool inNamedCreatureCone(Position origin, Position target, int degrees)
     return degrees >= 360 || hasInArc(origin, target, degrees * PI / 180);
 }
 
+/// The template used to select and validate a named creature.
+package uint namedCreatureEntry(UnitRef candidate)
+{
+    import dmangos.world.updatefields : OBJECT_FIELD_ENTRY;
+
+    return candidate.replica is null ? candidate.creature.spawn.entry : candidate.replica.fields.get!OBJECT_FIELD_ENTRY;
+}
+
 /// Select across the caster's owned and observed creatures, sharing any target limit between them.
 package UnitRef[] namedCreaturesInArea(CombatWorld world, Position center, float reach, const(uint)[] entries,
     bool acrossNodes, uint maxTargets, ImplicitTarget shape, int cone)
@@ -1031,7 +1039,7 @@ unittest
     assert(requests.length == 1 && requests[0].effect == 0 && requests[0].auraMs == 10_000);
     owner.areaDamageArrived(1, requests[0]);
     owner.areaDamageArrived(1, requests[0]);
-    const aura = target.auras.find(strike);
+    auto aura = target.auras.find(strike);
     assert(aura && aura.stacks == 1 && aura.effects == 2, "the stun-immunity filters only that aura effect");
     assert(target.values.get!UNIT_FIELD_HEALTH == health - 20);
     assert(replies.length == 1 && replies[0].miss == SpellMissInfo.none && replies[0].damage == 20);
@@ -1049,6 +1057,25 @@ unittest
     assert(requests.length == 3 && requests[2].target == rear.guid);
     owner.areaDamageArrived(1, requests[2]);
     assert(rear.values.get!UNIT_FIELD_HEALTH == health - 20 && rear.auras.find(cone));
+
+    target.auras.remove(aura, target.values);
+    foreach (node; [source, owner])
+        node.data.spellScriptTargetMasks[strike][creatureInnkeeper] = 0b110;
+    assert(caster.ai.castSpell(source.data.spells.spell(strike), caster.guid, castTriggered));
+    assert(requests.length == 4 && requests[3].effect == 0);
+    owner.areaDamageArrived(1, requests[3]);
+    assert(target.values.get!UNIT_FIELD_HEALTH == health - 40 && target.auras.find(strike) is null,
+        "the database can exclude all attached auras while retaining damage");
+
+    foreach (node; [source, owner])
+        node.data.spellScriptTargetMasks[strike][creatureInnkeeper] = 0b101;
+    assert(caster.ai.castSpell(source.data.spells.spell(strike), caster.guid, castTriggered));
+    assert(requests.length == 5 && requests[4].effect == 1, "the allowed aura becomes the routed effect");
+    owner.areaDamageArrived(1, requests[4]);
+    owner.areaDamageArrived(1, requests[4]);
+    assert(target.values.get!UNIT_FIELD_HEALTH == health - 40);
+    const allowed = target.auras.find(strike);
+    assert(allowed && allowed.effects == 0b010 && allowed.stacks == 1);
 }
 
 /// A named database script runs where the creature it acts on is simulated.

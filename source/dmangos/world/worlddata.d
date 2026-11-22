@@ -451,6 +451,7 @@ final class WorldData
     /// Instance round 2: `spell_script_target` (type 1, living creatures): the creatures of these entries a spell's
     /// `TARGET_UNIT_SCRIPT_NEAR_CASTER` means, by spell.
     uint[][uint] spellScriptTargets;
+    uint[uint][uint] spellScriptTargetMasks; /// excluded effects by spell and creature entry
     SpellScriptObject[][uint] spellScriptObjects; /// named game objects and their excluded effects, by spell
     bool[uint] taverns;                     /// `areatrigger_tavern`: the inns' area triggers
 
@@ -1173,7 +1174,11 @@ final class WorldData
         loadSpellCones(world);
         foreach (row; world.select!(SpellScriptTargetRow, "FROM spell_script_target"))
             if (row.type == 1)
+            {
                 spellScriptTargets[row.entry] ~= row.targetEntry;
+                if (row.inverseEffectMask)
+                    spellScriptTargetMasks[row.entry][row.targetEntry] = row.inverseEffectMask;
+            }
             else if (row.type == 0)
                 spellScriptObjects[row.entry] ~= SpellScriptObject(row.targetEntry, row.inverseEffectMask);
     }
