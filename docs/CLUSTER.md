@@ -558,7 +558,9 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
 * **Group loot rolls.** Nearby party members on other nodes can roll for shared items under Group
   Loot and Need Before Greed. The loot's node counts votes and chooses the winner. The player's own
   node checks loot conditions and whether they can use the item for Need Before Greed. The winning
-  player's node stores the item and confirms the award. A failed store leaves it
+  player's node stores the item and confirms the award. A remote participant can use the same roll
+  prompt after their simulation moves to another node on the same map, once the loot owner sees the
+  new player owner. A failed store leaves it
   reserved for the winner. An award whose outcome is unknown stays locked until the loot expires.
 * **Master loot.** The designated master can assign shared items at or above the loot threshold
   to eligible party members on any node. If the master is eligible and starts on another node,

@@ -30,6 +30,13 @@ package void bindLootDelivery(WorldContext context, Map map, Loot loot, bool rol
         loot.rollMap = map.id;
         loot.nextRoll = &context.nextGameplaySequence;
         loot.sendRemoteRoll = context.sendRemoteGroupLoot;
+        loot.remoteMemberNode = (ulong guid) {
+            if (auto player = cast(Replica) map.findObject(guid))
+                if (player.fields.type == TypeId.player && player.owner != context.nodeId)
+                    return player.owner;
+            const route = context.remoteKillRecipient(guid, map).node;
+            return cast(ushort)(route == context.nodeId ? 0 : route);
+        };
         if (crossNodeRolls)
             loot.tellRemoteRoller = (ushort node, ulong guid, Opcode opcode, const(ubyte)[] body_) {
                 context.deliverRemote(node, guid, cast(ushort) opcode, body_);
@@ -445,6 +452,37 @@ private:
     }
 
     RemoteLootOffer[RemoteLootKey] remoteLootOffers;
+
+    private static struct RemoteLootHandoff
+    {
+        import dmangos.serialization : LengthPrefix;
+
+        @LengthPrefix!ushort RemoteLootOffer[] offers;
+    }
+
+    void writeRemoteLootHandoff(ref ByteWriter writer)
+    {
+        import dmangos.serialization : serialize;
+
+        RemoteLootHandoff snapshot;
+        const now = context.unixTime;
+        foreach (ref offer; remoteLootOffers)
+            if (offer.expires >= now && offer.message.map == map.id)
+                snapshot.offers ~= offer;
+        serialize(writer, snapshot);
+    }
+
+    void readRemoteLootHandoff(ref ByteReader reader)
+    {
+        import dmangos.serialization : deserialize;
+
+        const snapshot = deserialize!RemoteLootHandoff(reader);
+        const now = context.unixTime;
+        foreach (ref offer; snapshot.offers)
+            if (offer.expires >= now && offer.node && offer.message.roll && offer.message.map == map.id
+                && offer.message.player == player.guid && offer.message.slot < maxLootItems)
+                remoteLootOffers[RemoteLootKey(offer.message.loot, offer.message.slot)] = offer;
+    }
 
     void voteOnRemoteLoot(ref RemoteLootOffer offer, RollVote vote)
     {
@@ -1332,13 +1370,14 @@ unittest
     import dmangos.world.loot : RollVote;
     import dmangos.world.replication : encodePlayerState;
 
-    foreach (scenario; 0 .. 5)
+    foreach (scenario; 0 .. 6)
     {
-        const conditioned = scenario >= 3;
-        const method = scenario == 0 || conditioned ? LootMethod.groupLoot : LootMethod.needBeforeGreed;
+        const moving = scenario == 5;
+        const conditioned = scenario == 3 || scenario == 4;
+        const method = scenario == 0 || conditioned || moving ? LootMethod.groupLoot : LootMethod.needBeforeGreed;
         const remoteCanUse = scenario != 2;
         const remoteMeetsCondition = scenario != 3;
-        const remoteWins = scenario == 0 || scenario == 4;
+        const remoteWins = scenario == 0 || scenario == 4 || moving;
         auto db = newDatabase();
         GroupRecord party;
         party.id = 1;
@@ -1349,36 +1388,53 @@ unittest
         party.members = [GroupMemberRecord(7, "Anduin"), GroupMemberRecord(8, "Jaina")];
         db.groups[party.id] = party;
         auto corpseNode = newCreationContext(db), otherNode = newCreationContext(db);
-        corpseNode.nodeId = 1;
+        corpseNode.nodeId = moving ? 3 : 1;
         otherNode.nodeId = 2;
         otherNode.ownsCell = (uint, ulong) => false;
         auto now = MonoTime.currTime;
         corpseNode.clock = otherNode.clock = () => now;
+        WorldContext successor;
+        TestPlayerRelay relay;
+        if (moving)
+        {
+            successor = newCreationContext(db);
+            successor.ownsCell = (uint, ulong) => false;
+            successor.clock = () => now;
+            relay = new TestPlayerRelay(otherNode, successor);
+        }
+        WorldContext currentMember = otherNode;
         auto anduin = loggedIn(corpseNode, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f),
             characterLevel: conditioned ? 10 : 1);
         auto jaina = loggedIn(otherNode, db, 8, "Jaina", Position(-8945, -132, 83.5f),
             characterLevel: conditioned && remoteMeetsCondition ? 10 : 1);
         const remote = jaina.session.character;
         const p = remote.position;
-        corpseNode.map(0).replicaCreated(2, cellKeyAt(p.x, p.y), remote.guid, encodePlayerState(remote, 0));
+        const cell = cellKeyAt(p.x, p.y);
+        corpseNode.map(0).replicaCreated(otherNode.nodeId, cell, remote.guid, encodePlayerState(remote, 0));
         assert(corpseNode.onlinePlayer(remote.guid) is null && otherNode.onlinePlayer(7) is null);
 
         GroupLootRoll award;
         corpseNode.sendRemoteGroupLoot = (ushort node, const ref GroupLootRoll message) {
-            assert(node == 2);
+            assert(node == currentMember.nodeId);
             if (message.action == GroupLootRoll.Action.award)
                 award = message;
-            otherNode.groupLootRollArrived(1, message);
+            currentMember.groupLootRollArrived(corpseNode.nodeId, message);
             return true;
         };
         otherNode.sendRemoteGroupLoot = (ushort node, const ref GroupLootRoll message) {
-            assert(node == 1);
-            corpseNode.groupLootRollArrived(2, message);
+            assert(node == corpseNode.nodeId);
+            corpseNode.groupLootRollArrived(otherNode.nodeId, message);
             return true;
         };
+        if (moving)
+            successor.sendRemoteGroupLoot = (ushort node, const ref GroupLootRoll message) {
+                assert(node == corpseNode.nodeId);
+                corpseNode.groupLootRollArrived(successor.nodeId, message);
+                return true;
+            };
         corpseNode.deliverRemote = (ushort node, ulong guid, ushort opcode, const(ubyte)[] body_) {
-            assert(node == 2);
-            if (auto player = cast(Character) otherNode.onlinePlayer(guid))
+            assert(node == currentMember.nodeId);
+            if (auto player = cast(Character) currentMember.onlinePlayer(guid))
                 player.deliver(cast(Opcode) opcode, body_);
         };
 
@@ -1388,29 +1444,42 @@ unittest
         auto victim = lootableInnkeeper(corpseNode, conditioned ? 50 : 0); // fixture condition: level 10+
         killIt(anduin, victim, now);
         auto loot = victim.loot;
-        assert(loot.remoteMembers[8] == 2 && loot.itemInSlot(0).blocked);
+        assert(loot.remoteMembers[8] == otherNode.nodeId && loot.itemInSlot(0).blocked);
         anduin.write(Opcode.CMSG_LOOT, ClientGuid(victim.guid));
         assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_LOOT_START_ROLL));
         assert(opcodesOf(jaina.read()).canFind(Opcode.SMSG_LOOT_START_ROLL) == (remoteCanUse && remoteMeetsCondition),
             "the remote node checks the loot condition and Need Before Greed usability");
 
+        if (moving)
+        {
+            otherNode.regionOwnerAround = (uint, Position, float) => successor.nodeId;
+            now += 2.seconds;
+            jaina.session.update(2000.msecs);
+            assert(relay.remote !is null && jaina.session.inWorld is null);
+            relay.remote.update(50.msecs);
+            currentMember = successor;
+            corpseNode.map(0).replicaCreated(successor.nodeId, cell, remote.guid,
+                encodePlayerState(relay.remote.character, 0));
+            assert(!opcodesOf(jaina.read()).canFind(Opcode.SMSG_LOOT_START_ROLL), "the original prompt stays open");
+        }
+        auto roller = moving ? relay.remote : jaina.session;
         jaina.write(Opcode.CMSG_LOOT_ROLL, ClientLootRoll(victim.guid, 0, remoteWins ? RollVote.need : RollVote.greed));
         jaina.write(Opcode.CMSG_LOOT_ROLL, ClientLootRoll(victim.guid, 0, RollVote.need));
         assert(loot.rolls.length == 1 && anduin.session.character.inventory.count(itemJerky) == 0
-            && jaina.session.character.inventory.count(itemJerky) == 0, "no award before both players vote");
+            && roller.character.inventory.count(itemJerky) == 0, "no award before both players vote");
 
         anduin.write(Opcode.CMSG_LOOT_ROLL, ClientLootRoll(victim.guid, 0, remoteWins ? RollVote.greed : RollVote.need));
         assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_LOOT_ROLL_WON));
         assert(opcodesOf(jaina.read()).canFind(Opcode.SMSG_LOOT_ROLL_WON) == remoteMeetsCondition);
         assert(loot.rolls.length == 0 && loot.itemInSlot(0).allowed.length == 0);
         assert(anduin.session.character.inventory.count(itemJerky) == (remoteWins ? 0 : 1));
-        assert(jaina.session.character.inventory.count(itemJerky) == (remoteWins ? 1 : 0));
+        assert(roller.character.inventory.count(itemJerky) == (remoteWins ? 1 : 0));
 
         if (remoteWins)
         {
             assert(award.player == 8);
-            otherNode.groupLootRollArrived(1, award);
-            assert(jaina.session.character.inventory.count(itemJerky) == 1, "a repeated award cannot grant a second item");
+            currentMember.groupLootRollArrived(corpseNode.nodeId, award);
+            assert(roller.character.inventory.count(itemJerky) == 1, "a repeated award cannot grant a second item");
         }
         else
             assert(!award.roll, "a local win never issues a remote award");

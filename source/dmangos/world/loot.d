@@ -299,6 +299,7 @@ final class LootItem
     ulong winner;             /// an awarded item that only its winner may claim
     ulong remoteAward;        /// an outstanding award, locked until the receiver answers
     ulong remoteMasterTarget; /// selected recipient of an outstanding master award
+    ushort remoteAwardNode;  /// the node that was sent the outstanding award
     bool[ulong] allowed;      /// who may still take it
 
     /// How `player` sees this item in the loot window, by the loot method: may take, may only view, or not at all.
@@ -400,6 +401,7 @@ final class Loot
     uint rollMap;
     ulong delegate() nextRoll;
     bool delegate(ushort, const ref GroupLootRoll) sendRemoteRoll;
+    ushort delegate(ulong) remoteMemberNode; /// current simulation of an initially eligible remote member
     void delegate(ushort, ulong, Opcode, const(ubyte)[]) tellRemoteRoller;
     ushort delegate(ulong) coinNode; /// where a remote member can receive a share now
     bool delegate(ushort, ulong, uint) payRemoteCoins;
@@ -440,6 +442,7 @@ final class Loot
         ulong winner;
         ulong remoteAward;
         ulong remoteMasterTarget;
+        ushort remoteAwardNode;
         @LengthPrefix!ubyte ulong[] allowed;
     }
 
@@ -513,7 +516,8 @@ final class Loot
                 slot: item.slot, quality: item.quality, condition: item.condition, quest: item.quest,
                 freeForAll: item.freeForAll, underThreshold: item.underThreshold, blocked: item.blocked,
                 released: item.released, currentLooterPass: item.currentLooterPass, winner: item.winner,
-                remoteAward: item.remoteAward, remoteMasterTarget: item.remoteMasterTarget, allowed: item.allowed.keys,
+                remoteAward: item.remoteAward, remoteMasterTarget: item.remoteMasterTarget,
+                remoteAwardNode: item.remoteAwardNode, allowed: item.allowed.keys,
             };
             state.items ~= saved;
         }
@@ -581,6 +585,7 @@ final class Loot
             item.winner = saved.winner;
             item.remoteAward = saved.remoteAward;
             item.remoteMasterTarget = saved.remoteMasterTarget;
+            item.remoteAwardNode = saved.remoteAwardNode;
             foreach (guid; saved.allowed)
                 item.allowed[guid] = true;
             result.items ~= item;
@@ -1139,18 +1144,20 @@ final class Loot
     /// Give a master loot slot to an eligible member whose inventory is on another node.
     bool sendRemoteMasterAward(ulong recipient, LootItem item)
     {
-        const node = remoteMembers.get(recipient, 0);
+        const node = rollMemberNode(recipient);
         if (!node || sendRemoteRoll is null)
             return false;
         const message = GroupLootRoll(GroupLootRoll.Action.masterAward, rollMap, target, recipient,
             nextRoll(), item.slot, item.itemId, item.count, item.randomPropertyId, item.condition);
         item.remoteAward = message.roll;
         item.remoteMasterTarget = recipient;
+        item.remoteAwardNode = node;
         item.blocked = true;
         if (sendRemoteRoll(node, message))
             return true;
         item.remoteAward = 0;
         item.remoteMasterTarget = 0;
+        item.remoteAwardNode = 0;
         item.blocked = false;
         return false;
     }
@@ -1173,14 +1180,14 @@ final class Loot
     void remoteAwardResult(ushort peer, const ref GroupLootRoll message)
     {
         auto item = itemInSlot(message.slot);
-        if (item is null || !item.remoteAward || item.remoteAward != message.roll
-            || remoteMembers.get(message.player, 0) != peer)
+        if (item is null || !item.remoteAward || item.remoteAward != message.roll || item.remoteAwardNode != peer)
             return;
         const masterAward = item.remoteMasterTarget != 0;
         if (message.player != (masterAward ? item.remoteMasterTarget : item.winner))
             return;
         item.remoteAward = 0;
         item.remoteMasterTarget = 0;
+        item.remoteAwardNode = 0;
         item.blocked = false;
         if (message.stored)
         {
@@ -1370,7 +1377,7 @@ final class Loot
 
     void remoteVote(ushort peer, const ref GroupLootRoll message)
     {
-        if (remoteMembers.get(message.player, 0) != peer
+        if ((remoteMembers.get(message.player, 0) != peer && rollMemberNode(message.player) != peer)
             || (message.choice > RollVote.greed && message.choice != RollVote.notValid))
             return;
         auto roll = message.slot in rolls;
@@ -1378,6 +1385,15 @@ final class Loot
             return;
         if ((*roll).vote(message.player, cast(RollVote) message.choice) && (*roll).update(nowSeconds()))
             rolls.remove(message.slot);
+    }
+
+    private ushort rollMemberNode(ulong guid)
+    {
+        const initial = remoteMembers.get(guid, 0);
+        if (initial && remoteMemberNode !is null)
+            if (const current = remoteMemberNode(guid))
+                return current;
+        return initial;
     }
 }
 
@@ -1478,8 +1494,8 @@ final class LootRoll
                 if (auto looter = loot.find(guid))
                     looter.deliver(opcode, body_);
                 else if (loot.tellRemoteRoller !is null)
-                    if (const node = guid in loot.remoteMembers)
-                        loot.tellRemoteRoller(*node, guid, opcode, body_);
+                    if (const node = loot.rollMemberNode(guid))
+                        loot.tellRemoteRoller(node, guid, opcode, body_);
             }
     }
 
@@ -1649,17 +1665,19 @@ final class LootRoll
             item.allowed[winner] = true;
             if (auto looter = loot.find(winner))
                 loot.sendItem(looter, item);
-            else if (const node = winner in loot.remoteMembers)
+            else if (const node = loot.rollMemberNode(winner))
             {
                 if (serial && loot.sendRemoteRoll !is null)
                 {
                     item.blocked = true;
                     item.remoteAward = serial;
+                    item.remoteAwardNode = node;
                     const message = remoteMessage(GroupLootRoll.Action.award, winner);
-                    if (!loot.sendRemoteRoll(*node, message))
+                    if (!loot.sendRemoteRoll(node, message))
                     {
                         item.blocked = false;
                         item.remoteAward = 0;
+                        item.remoteAwardNode = 0;
                     }
                 }
             }
