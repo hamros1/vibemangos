@@ -99,7 +99,7 @@ enum NaxxSignal : uint
     faerlinaIntro = 105, /// the copy to Faerlina: players came near
     webWrapPull = 106,  /// Maexxna to an invisible man: the player of guid `value` is thrown to you; wrap them
     clearShackles = 107, /// the copy to Kel'Thuzad: too many of his guardians are shackled
-    freezePlayer = 108, clearIceBlocks = 109,
+    freezePlayer = 108, clearIceBlocks = 109, chains = 110,
     triggerBase = 1000, /// an area trigger: `triggerBase + id`
 }
 
@@ -2045,9 +2045,19 @@ struct Sapphiron
 /**
  * Kel'Thuzad: summons the dead from his alcoves for five minutes while he channels; then fights with
  * Frostbolt, Frost Bolt Nova, Mana Detonation, Shadow Fissure and Frost Blast; below 40% the Lich King
- * sends him Guardians of Icecrown (his chains, a mind control, are not here), and from then on he breaks
+ * sends him Guardians of Icecrown. His Chains turn raiders against their allies, and he breaks
  * the shackles when more than three of them are shackled (the copy counts them).
  */
+@spell("spell_chains_kel_thuzad")
+struct ChainsOfKelthuzad
+{
+    void on(ref SpellContext it, const ref EffectHit e)
+    {
+        if (e.effect == 0 && e.caster.entry == npcKelthuzad)
+            it.signal(e.caster, NaxxSignal.chains);
+    }
+}
+
 @creature("boss_kelthuzad")
 struct Kelthuzad
 {
@@ -2069,13 +2079,58 @@ struct Kelthuzad
     enum uint sayShackles = 13_492;
 
     enum Step : ubyte { soldiers, abominations, weavers, phase2, frostBolt, nova, detonation, fissure, blast,
-        guardians, lichKing }
-    Schedule!(Step, 12) steps;
+        guardians, lichKing, chains }
+    Schedule!(Step, 13) steps;
     ubyte phase, guardiansSent;
     EntityRef[64] minions;
+    EntityRef[] chained;
+
+    private void releaseRaid(ref CreatureContext me)
+    {
+        foreach (who; chained)
+        {
+            me.removeAura(who, 28410);
+            me.removeAura(who, 28409);
+        }
+        chained = null;
+    }
+
+    private void chainRaid(ref CreatureContext me)
+    {
+        const tank = me.victim;
+        if (!tank.isPlayer || !me.alive(tank) || me.distanceTo(tank) > 100)
+            return;
+        EntityRef[40] threat;
+        EntityRef[] others;
+        foreach (who; threat[0 .. me.threatList(threat[])])
+            if (who != tank && who.isPlayer && me.alive(who) && me.distanceTo(who) <= 100)
+                others ~= who;
+        if (others.length <= 4)
+            return;
+        releaseRaid(me);
+        EntityRef[5] chosen;
+        chosen[0] = tank;
+        foreach (ref who; chosen[1 .. $])
+        {
+            const i = me.random(cast(uint) others.length);
+            who = others[i];
+            others[i] = others[$ - 1];
+            others.length--;
+        }
+        me.sayText(13017 + me.random(2));
+        foreach (who; chosen)
+            if (me.castSpell(28410, who, true) == ActionResult.ok && me.hasAura(who, 28410))
+            {
+                chained ~= who;
+                me.castAs(who, 28409, who, true);
+                me.modifyThreat(who, -100);
+            }
+    }
 
     void on(ref CreatureContext me, const ref Signal e)
     {
+        if (e.id == NaxxSignal.chains)
+            return chainRaid(me);
         if (e.id == NaxxSignal.clearShackles)
         {
             me.sayText(sayShackles);
@@ -2173,6 +2228,7 @@ struct Kelthuzad
             me.zoneCombat();
             me.sayText(aggroLines[me.random(3)]);
             steps.after(Step.frostBolt, between(me, 1000, 60_000));
+            steps.after(Step.chains, 60.seconds);
             steps.after(Step.nova, 15.seconds);
             steps.after(Step.detonation, 20.seconds);
             steps.after(Step.fissure, 25.seconds);
@@ -2203,6 +2259,9 @@ struct Kelthuzad
             else
                 steps.after(step, retry);
             break;
+        case Step.chains:
+            steps.after(step, me.castSelf(28408) == ActionResult.ok ? 60.seconds : retry);
+            break;
         case Step.lichKing:
             EntityRef[1] lichKing;
             if (me.creaturesNearby(16_980, 200, lichKing[]))
@@ -2221,6 +2280,7 @@ struct Kelthuzad
 
     void on(ref CreatureContext me, const ref Reset e)
     {
+        releaseRaid(me);
         steps.clear();
         phase = guardiansSent = 0;
         me.removeAura(me.self, channelVisual);
@@ -2238,6 +2298,7 @@ struct Kelthuzad
 
     void on(ref CreatureContext me, const ref Died e)
     {
+        releaseRaid(me);
         steps.clear();
         me.sayText(deathLine);
         me.signalDungeon(NaxxEncounter.kelthuzad, EncounterState.done);

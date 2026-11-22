@@ -478,6 +478,9 @@ private:
                 continue;
             switch (aura.type(i))
             {
+            case AuraType.aoeCharm:
+                npcCharmChanged(aura, apply);
+                break;
             case AuraType.modStat, AuraType.modPercentStat, AuraType.modResistance, AuraType.modAttackPower,
                     AuraType.modRangedAttackPower, AuraType.modIncreaseHealth, AuraType.modIncreaseEnergy,
                     AuraType.modTotalStatPercentage, AuraType.modBaseResistancePct, AuraType.modResistancePct,

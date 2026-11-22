@@ -121,7 +121,7 @@ mixin template GameObjectHandlers()
     void handleGameObjectUse(const ClientGuid request)
     {
         enum uint goFlagNoInteract = 0x10;
-        if (player.deathState != DeathState.alive || transferring)
+        if (player.deathState != DeathState.alive || transferring || npcCharmer)
             return;
         auto go = cast(GameObject) map.findObject(request.guid);
         if (go is null)

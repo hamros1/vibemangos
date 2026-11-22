@@ -35,6 +35,8 @@ mixin template CombatHandlers()
     package Relating relatingNow()
     {
         const v = &player.values;
+        if (npcCharmer)
+            return Relating(v.get!UNIT_FIELD_FLAGS, context.client.factionTemplates.lookup(v.get!UNIT_FIELD_FACTIONTEMPLATE), false, 0, 0, player.alive);
         Relating r = Relating(v.get!UNIT_FIELD_FLAGS,
             context.client.factionTemplates.lookup(v.get!UNIT_FIELD_FACTIONTEMPLATE), true, 1u << (player.data.race - 1),
             1u << (player.data.classId - 1), v.get!UNIT_FIELD_HEALTH > 0, v.get!PLAYER_DUEL_ARBITER,
@@ -187,6 +189,8 @@ private:
     @Handles(Opcode.CMSG_ATTACKSWING, WorldState.inWorld)
     void handleAttackSwing(const ClientGuid request)
     {
+        if (npcCharmer)
+            return;
         auto enemy = cast(Creature) map.findObject(request.guid);
         if (enemy is null)
         {
@@ -219,6 +223,8 @@ private:
     @Handles(Opcode.CMSG_ATTACKSTOP, WorldState.inWorld)
     void handleAttackStop()
     {
+        if (npcCharmer)
+            return;
         const meleeOn = meleeAttacking && attacking != 0;
         stopAttack(true);
         if (!meleeOn)

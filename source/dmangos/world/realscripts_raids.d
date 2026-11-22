@@ -1308,7 +1308,7 @@ unittest
     assert(fights, "Kel'Thuzad never fights");
     s.forget();
     s.run(61.seconds);
-    foreach (spell; [28_478, 28_479, 27_819, 27_810, 27_808])
+    foreach (spell; [28_478, 28_479, 27_819, 27_810, 27_808, 28_408])
         assert(s.castBy(ktEntry, spell), format!"Kel'Thuzad: %s not cast\n%s"(spell, s.seen()));
     s.hurtTo(kt, 39);
     s.run(8.seconds);
@@ -1680,4 +1680,51 @@ unittest
     assert(student.auras.find(29061) !is null);
     orderControlled(s, student, 29060, instructor.guid);
     assert(instructor.ai.currentVictim == student.guid);
+}
+
+/// Chains subjugates the tank and four other living raiders, leaving opponents to fight and returning control.
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.script.api : ActionResult;
+    import dmangos.world.relations : canAttack;
+    import dmangos.world.updatefields : UNIT_FIELD_CHARMEDBY, UNIT_FIELD_FACTIONTEMPLATE;
+    const at = spawnOf(533, 15990);
+    auto s = new Scene(533, Position(at.x, at.y, at.z),
+        [classWarrior, classWarrior, classWarrior, classWarrior, classWarrior, classWarrior]);
+    s.run(1.seconds);
+    auto kt = s.the(15990);
+    kt.values.set!UNIT_FIELD_FLAGS(kt.values.get!UNIT_FIELD_FLAGS & ~0x0200_0000u);
+    s.engage(kt);
+    s.run(1.seconds);
+    const tank = kt.ai.currentVictim;
+    const faction = s.hero(0).values.get!UNIT_FIELD_FACTIONTEMPLATE;
+    assert(tank != 0 && kt.ai.castFor(s.map, 28408, kt.guid, true) == ActionResult.ok);
+    size_t[] chained;
+    size_t free;
+    foreach (k; 0 .. s.heroes.length)
+        if (s.hero(k).auras.find(28410) !is null)
+        {
+            assert(s.hero(k).values.get!UNIT_FIELD_CHARMEDBY == kt.guid && !s.heroes[k].session.inWorld.inControl);
+            assert(s.hero(k).auras.find(28409) !is null);
+            chained ~= k;
+        }
+        else
+        {
+            assert(s.hero(k).guid != tank, "the tank escaped the Chains");
+            free = k;
+        }
+    assert(chained.length == 5, format!"expected five chained, got %s"(chained.length));
+    assert(canAttack(s.heroUnit(free).relating, s.heroUnit(chained[0]).relating, s.w.context.client));
+    s.run(2.seconds);
+    assert(s.heroes[chained[0]].session.inWorld.attacking == s.hero(free).guid,
+        "the charmed raider did not turn on the remaining ally");
+    assert(s.runUntil(() => s.hero(chained[0]).auras.find(28410) is null, 30.seconds));
+    foreach (k; chained)
+    {
+        assert(s.hero(k).values.get!UNIT_FIELD_CHARMEDBY == 0 && s.hero(k).values.get!UNIT_FIELD_FACTIONTEMPLATE == faction);
+        assert(s.heroes[k].session.inWorld.inControl && s.hero(k).auras.find(28409) is null);
+        assert(!canAttack(s.heroUnit(free).relating, s.heroUnit(k).relating, s.w.context.client));
+    }
 }

@@ -122,6 +122,8 @@ private:
     @Handles(Opcode.CMSG_CAST_SPELL, WorldState.inWorld)
     void handleCastSpell(ref ByteReader reader)
     {
+        if (npcCharmer)
+            return;
         const id = reader.read!uint;
         auto targets = SpellTargets.read(reader);
         const spell = context.data.spells.spell(id);
@@ -265,6 +267,8 @@ private:
     @Handles(Opcode.CMSG_CANCEL_CAST, WorldState.inWorld)
     void handleCancelCast(ref ByteReader reader)
     {
+        if (npcCharmer)
+            return;
         const id = reader.read!uint;
         if (cancelPendingPlayerSpell(id))
             return deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(id, SpellCastResult.interrupted));
@@ -278,6 +282,8 @@ private:
     @Handles(Opcode.CMSG_USE_ITEM, WorldState.inWorld)
     void handleUseItem(ref ByteReader reader)
     {
+        if (npcCharmer)
+            return;
         const bag = reader.read!ubyte, slot = reader.read!ubyte;
         reader.read!ubyte; // spell count
         auto targets = SpellTargets.read(reader);

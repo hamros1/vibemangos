@@ -15,7 +15,7 @@ mixin template CrowdControlHandlers()
 {
     import dmangos.bytes : ByteWriter;
     import dmangos.vmap.math : Vector3;
-    import dmangos.world.auras : AuraType;
+    import dmangos.world.auras : Aura, AuraType;
     import dmangos.world.defines : UnitFlags;
     import dmangos.world.movement : MoveType, Position;
     import dmangos.world.opcodes : Opcode;
@@ -26,6 +26,124 @@ mixin template CrowdControlHandlers()
     private bool controlLost;            // the client was told it has no control
     private uint controlledWalkId;
     private int controlledRelocate;      // until the map is next told where it is, in milliseconds
+
+    private ulong npcCharmer;
+    private uint factionBeforeCharm;
+    private int charmDecision;
+
+    private void npcCharmChanged(Aura aura, bool apply)
+    {
+        import dmangos.world.updatefields : UNIT_FIELD_CHARMEDBY, UNIT_FIELD_FACTIONTEMPLATE;
+        import dmangos.world.spellcast : SpellCastResult;
+        if (apply)
+        {
+            auto caster = map is null ? null : map.creatureAt(aura.caster);
+            if (caster is null || !caster.alive)
+                return;
+            if (!npcCharmer)
+                factionBeforeCharm = player.values.get!UNIT_FIELD_FACTIONTEMPLATE;
+            npcCharmer = caster.guid;
+            player.values.set!UNIT_FIELD_CHARMEDBY(npcCharmer);
+            player.values.set!UNIT_FIELD_FACTIONTEMPLATE(caster.values.get!UNIT_FIELD_FACTIONTEMPLATE);
+            interruptCast(SpellCastResult.interrupted);
+            stopAttack(false);
+            if (!controlLost)
+                loseControl();
+            charmDecision = 0;
+        }
+        else if (npcCharmer && npcCharmer == aura.caster)
+        {
+            npcCharmer = 0;
+            if (aura.spell.id == 28410)
+                if (auto scale = player.auras.find(28409))
+                    removeAura(scale);
+            player.values.set!UNIT_FIELD_CHARMEDBY(0UL);
+            player.values.set!UNIT_FIELD_FACTIONTEMPLATE(factionBeforeCharm);
+            stopAttack(false);
+            interruptCast(SpellCastResult.interrupted);
+            if (controlLost)
+                regainControl();
+            updateCrowdControl(0);
+        }
+    }
+
+    private void releaseNpcCharm()
+    {
+        if (npcCharmer)
+            foreach (aura; player.auras.list.dup)
+                if (aura.caster == npcCharmer && aura.has(AuraType.aoeCharm))
+                    removeAura(aura);
+    }
+
+    /// A charmed raider can use its learned direct heals on its master or attack another raider.
+    private void obeyNpc(int ms)
+    {
+        import std.math : atan2, sqrt;
+        import dmangos.world.combat : canReachWithMelee;
+        import dmangos.world.relations : canAttack;
+        import dmangos.world.spellcast : SpellTargets, TargetFlags, SpellCastResult;
+        import dmangos.world.spells : ImplicitTarget, SpellEffect, SpellInfo;
+        import dmangos.world.unit : UnitRef;
+        auto master = map.creatureAt(npcCharmer);
+        if (master is null || !master.alive)
+            return releaseNpcCharm();
+        if ((charmDecision -= ms) > 0 || castingSpell)
+            return;
+        charmDecision = 1000;
+        const flags = player.values.get!UNIT_FIELD_FLAGS;
+        if (flags & UnitFlags.stunned)
+            return;
+        UnitRef enemy;
+        float best = float.max;
+        const at = player.position;
+        foreach (who; map.playersNear(at, 100))
+        {
+            if (who.session is null || who.session is this || !who.alive || who.untouchable || !canAttack(relatingNow(), who.relating, context.client))
+                continue;
+            const d = (at.x - who.position.x) ^^ 2 + (at.y - who.position.y) ^^ 2 + (at.z - who.position.z) ^^ 2;
+            if (d < best)
+            {
+                best = d;
+                enemy = who;
+            }
+        }
+        const(SpellInfo)* heal, attack;
+        foreach (id; player.spells)
+        {
+            auto spell = context.data.spells.spell(id);
+            if (spell is null || spell.isPassive || !spell.casting.spellFamilyName)
+                continue;
+            if (spell.hasEffect(SpellEffect.heal) && spell.implicitTargetA[0] == ImplicitTarget.friend
+                && (heal is null || spell.spellLevel > heal.spellLevel))
+                heal = spell;
+            if (spell.hasEffect(SpellEffect.schoolDamage) && spell.implicitTargetA[0] == ImplicitTarget.enemy
+                && (attack is null || spell.spellLevel > attack.spellLevel))
+                attack = spell;
+        }
+        if (heal !is null && map.unitOf(master).healthPercent < 100
+            && castSpell(heal, SpellTargets(TargetFlags.unit, master.guid), false, 0) == SpellCastResult.ok)
+            return;
+        if (!enemy)
+            return;
+        auto to = enemy.position;
+        player.movement.position.orientation = atan2(to.y - at.y, to.x - at.x);
+        if (attack !is null && castSpell(attack, SpellTargets(TargetFlags.unit, enemy.combatGuid), false, 0) == SpellCastResult.ok)
+            return;
+        if (attacking != enemy.combatGuid)
+            attackPlayer(enemy.session);
+        if (canReachWithMelee(player.fighter, enemy.fighter) || player.auras.hasType(AuraType.modRoot))
+            return;
+        const speed = player.speeds[MoveType.run];
+        if (speed <= 0 || best <= 1)
+            return;
+        const distance = sqrt(best);
+        const fraction = distance <= speed ? 1 : speed / distance;
+        auto next = Vector3(at.x + fraction * (to.x - at.x), at.y + fraction * (to.y - at.y), at.z + fraction * (to.z - at.z));
+        if (!map.inLineOfSight(at, Position(next.x, next.y, next.z)))
+            return;
+        controlledWalk = MoveSpline([Vector3(at.x, at.y, at.z), next], SplineFlags.runMode, speed, ++controlledWalkId);
+        map.sendToWatchers(this, Opcode.SMSG_MONSTER_MOVE, monsterMove(player.guid, controlledWalk), true);
+    }
 
     /// Whether the client has control of its character (not feared, not disoriented).
     package @property bool inControl() const
@@ -41,7 +159,7 @@ mixin template CrowdControlHandlers()
         // Curse of Recklessness (`PREVENTS_FLEEING`) keeps a feared player in control (`HandlePreventFleeing`).
         const feared = player.auras.hasType(AuraType.modFear) && !player.auras.hasType(AuraType.preventsFleeing);
         const confused = player.auras.hasType(AuraType.modConfuse);
-        if ((!feared && !confused) || player.deathState != imported!"dmangos.world.player".DeathState.alive)
+        if ((!feared && !confused && !npcCharmer) || player.deathState != imported!"dmangos.world.player".DeathState.alive)
         {
             if (controlLost)
                 regainControl();
@@ -63,7 +181,10 @@ mixin template CrowdControlHandlers()
                 return;
             map.relocated(this);
         }
-        walkOn(feared);
+        if (feared || confused)
+            walkOn(feared);
+        else
+            obeyNpc(ms);
     }
 
     /// The client loses control: told so, its attack and cast stopped.

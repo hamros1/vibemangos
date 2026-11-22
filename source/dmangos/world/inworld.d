@@ -71,6 +71,7 @@ private:
     void leaveWorld(string why, bool loggingOut)
     {
         // The map it is on: `deathOnLogout` may put its saved place at a graveyard of another map.
+        releaseNpcCharm();
         auto leaving = map;
         worldPvpLeaving(); // a Silithyst carrier's falls here
         if (loggingOut)
@@ -272,6 +273,7 @@ private:
         flushPlayerChanges();
         const progress = player.progress(secondsInWorld());
         context.database.saveProgress(progress);
+        releaseNpcCharm();
         saveAuras(); // the next node loads them, as it loads the rest
         saveCooldowns();
         saveQuests();
