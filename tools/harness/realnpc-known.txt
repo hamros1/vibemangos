@@ -39,10 +39,8 @@
 15366: Songflower Serenade: no caster: no creature casts it in the data
 15708: Mortal Strike: aura modHealingPct: not on the player (effect 1)
 15727: Demoralizing Roar: aura modAttackPower: not on the player (effect 0)
-15746: Disturb Rookery Egg: not done: activateObject (effect 0)
 16054: Flames of the Black Flight: not done: summonObjectWild (effect 1: no object 175322); not done: activateObject (effect 2)
 16472: Wicked Milking: no caster: no creature casts it in the data
-16556: Disturb Rookery Egg (FAST): not done: activateObject (effect 0)
 16569: Health Funnel: targeting: aura periodicHeal at the caster, not the friendly creature (effect 0)
 17960: Kodo Bones Trap: no caster: no creature casts it in the data
 18163: Strength of Arko'narin: no caster: no creature casts it in the data

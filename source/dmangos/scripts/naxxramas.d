@@ -11,9 +11,7 @@
  * shackled (`event_naxxramas`, which also carries Gluth's Decimate).
  *
  * What the core cannot do is left out, and named where it would be: players mind-controlled (Faerlina's
- * worshippers, Razuvious' understudies, Kel'Thuzad's chains), carried by a spell (Heigan's platform),
- * Heigan's eruptions, and the ice blocks that shelter players from Sapphiron's frost breath (so his
- * breath is not cast; the rest of his air phase is).
+ * worshippers, Razuvious' understudies, Kel'Thuzad's chains) and carried by a spell.
  */
 module dmangos.scripts.naxxramas;
 
@@ -101,6 +99,7 @@ enum NaxxSignal : uint
     faerlinaIntro = 105, /// the copy to Faerlina: players came near
     webWrapPull = 106,  /// Maexxna to an invisible man: the player of guid `value` is thrown to you; wrap them
     clearShackles = 107, /// the copy to Kel'Thuzad: too many of his guardians are shackled
+    freezePlayer = 108, clearIceBlocks = 109,
     triggerBase = 1000, /// an area trigger: `triggerBase + id`
 }
 
@@ -208,6 +207,7 @@ struct Naxxramas
 
     @transient EntityRef[naxxDoors.length] doors;
     @transient EntityRef thaddius, kelthuzad, faerlina, sapphiron;
+    @transient EntityRef[] iceBlocks;
 
     /// The events of `event_naxxramas`: Gluth's Decimate; Kel'Thuzad's guardians counted from now; a guardian shackled.
     enum uint decimateEvent = 10_495, clearShacklesEvent = 10_536, guardianShackleEvent = 10_537;
@@ -290,6 +290,21 @@ struct Naxxramas
 
     void on(ref InstanceContext copy, const ref Signal e)
     {
+        if (e.id == NaxxSignal.freezePlayer)
+        {
+            Location at;
+            if (e.from == sapphiron && copy.locationOf(EntityRef(cast(uint) e.value), at))
+                if (const block = copy.summonObject(181247, at, 22))
+                    iceBlocks ~= block;
+            return;
+        }
+        if (e.id == NaxxSignal.clearIceBlocks)
+        {
+            foreach (block; iceBlocks)
+                copy.despawnObject(block);
+            iceBlocks = null;
+            return;
+        }
         if (e.id > NaxxSignal.triggerBase)
             return trigger(copy, e.id - NaxxSignal.triggerBase);
         if (e.id > NaxxEncounter.max)
@@ -894,7 +909,7 @@ struct Noth
 }
 
 /// Heigan the Unclean: Decrepit Fever and Mana Burn on the ground for ninety seconds, then 45 seconds on
-/// his platform channelling his plague cloud (the eruptions of his floor are not here).
+/// his platform channelling his plague cloud. The fissures erupt faster during the channel.
 @creature("boss_heigan")
 struct Heigan
 {
@@ -904,14 +919,18 @@ struct Heigan
     enum : uint { decrepitFever = 29_998, manaBurn = 29_310, plagueCloud = 29_350 }
     static immutable platform = Location(2794.61f, -3707.68f, 276.552f, 2.32f);
 
-    enum Step : ubyte { fever, burn, platformPhase, groundPhase, taunt }
+    enum Step : ubyte { fever, burn, platformPhase, groundPhase, taunt, wave }
     Schedule!Step steps;
+    size_t wave;
+    bool onPlatform;
+    static immutable uint[6] waves = [30116, 30117, 30118, 30119, 30118, 30117];
 
     mixin(encounterOf!"NaxxEncounter.heigan");
 
     void engaged(ref CreatureContext me, const ref EnteredCombat e)
     {
         groundSteps(me);
+        steps.after(Step.wave, 15.seconds);
         steps.after(Step.taunt, between(me, 25_000, 90_000));
     }
 
@@ -924,6 +943,8 @@ struct Heigan
 
     void reset(ref CreatureContext me)
     {
+        wave = 0;
+        onPlatform = false;
         me.rooted(false);
         me.melee(true);
     }
@@ -932,6 +953,12 @@ struct Heigan
     {
         final switch (step)
         {
+        case Step.wave:
+            if (const controller = me.creatureNearby(17293, 100))
+                me.castAs(controller, waves[wave], controller, true);
+            wave = (wave + 1) % waves.length;
+            steps.after(step, onPlatform ? 3.seconds : 10.seconds);
+            break;
         case Step.fever:
             steps.after(step, me.castSelf(decrepitFever) == ActionResult.ok ? between(me, 20_000, 25_000) : retry);
             break;
@@ -939,6 +966,9 @@ struct Heigan
             steps.after(step, me.castSelf(manaBurn) == ActionResult.ok ? between(me, 10_000, 15_000) : retry);
             break;
         case Step.platformPhase:
+            onPlatform = true;
+            wave = 0;
+            steps.after(Step.wave, 6.seconds);
             steps.cancel(Step.fever);
             steps.cancel(Step.burn);
             me.teleport(platform);
@@ -949,6 +979,9 @@ struct Heigan
             steps.after(Step.groundPhase, 45.seconds);
             break;
         case Step.groundPhase:
+            onPlatform = false;
+            wave = 0;
+            steps.after(Step.wave, 10.seconds);
             me.interrupt();
             me.removeAura(me.self, plagueCloud);
             me.rooted(false);
@@ -1806,8 +1839,7 @@ struct Thaddius
 
 /**
  * Sapphiron: his frost aura, Cleave, Tail Sweep, Life Drain, blizzards; above a tenth of his health he
- * takes to the air every so often, bolting five players with ice, and lands again (his frost breath,
- * against which ice blocks shelter, is not cast: the core cannot make those blocks shelter anyone).
+ * returns to the center, freezes players and breathes frost across the room before landing.
  */
 @creature("boss_sapphiron")
 struct Sapphiron
@@ -1824,13 +1856,15 @@ struct Sapphiron
         summonBlizzard = 28_560,
         dragonHover = 18_430,
         icebolt = 28_522,
-        frostBreathDummy = 30_101,
+        frostBreathDummy = 30_101, frostBreath = 28_524, iceboltImmunity = 31_800,
     }
     enum Step : ubyte { berserk, air, cleave, tail, drain, blizzard, icebolt, land, ground }
     Schedule!(Step, 12) steps;
     bool inAir;
     ubyte icebolts;
-    Location home;
+    EntityRef[] frozen;
+    EntityRef[] splashed;
+    static immutable flight = Location(3522.386f, -5236.784f, 137.709f);
 
     mixin(encounterOf!"NaxxEncounter.sapphiron");
 
@@ -1838,7 +1872,6 @@ struct Sapphiron
     {
         if (!me.hasAura(me.self, doubleAttack))
             me.castSelf(doubleAttack, true);
-        home = me.location;
         me.zoneCombat();
     }
 
@@ -1858,8 +1891,52 @@ struct Sapphiron
         steps.after(Step.blizzard, 15.seconds);
     }
 
+    private void clearIce(ref CreatureContext me)
+    {
+        foreach (target; frozen)
+        {
+            me.removeAura(target, icebolt);
+            me.removeAura(target, iceboltImmunity);
+        }
+        frozen = null;
+        splashed = null;
+        me.signalDungeon(NaxxSignal.clearIceBlocks);
+    }
+
+    void died(ref CreatureContext me) { clearIce(me); }
+
+    private void freeze(ref CreatureContext me)
+    {
+        import std.algorithm.searching : canFind;
+        EntityRef[40] raid;
+        const count = me.threatList(raid[]);
+        EntityRef[] eligible;
+        foreach (who; raid[0 .. count])
+            if (who.isPlayer && me.alive(who) && !frozen.canFind(who) && !splashed.canFind(who))
+                eligible ~= who;
+        if (!eligible.length)
+            return;
+        const target = eligible[me.random(cast(uint) eligible.length)];
+        if (me.castSpell(icebolt, target, true) != ActionResult.ok || !me.hasAura(target, icebolt))
+            return;
+        frozen ~= target;
+        me.castAs(target, iceboltImmunity, target, true);
+        me.signalDungeon(NaxxSignal.freezePlayer, cast(int) target.guid);
+        Location block;
+        if (!me.locationOf(target, block))
+            return;
+        foreach (who; raid[0 .. count])
+        {
+            Location at;
+            if (who.isPlayer && me.locationOf(who, at) && (at.x - block.x) ^^ 2
+                + (at.y - block.y) ^^ 2 + (at.z - block.z) ^^ 2 <= 100 && !splashed.canFind(who))
+                splashed ~= who;
+        }
+    }
+
     void reset(ref CreatureContext me)
     {
+        clearIce(me);
         inAir = false;
         me.flying(false);
         me.melee(true);
@@ -1885,6 +1962,7 @@ struct Sapphiron
             me.melee(false);
             me.combatMovement(false);
             me.emote(254); // EMOTE_ONESHOT_LIFTOFF
+            me.teleport(flight);
             me.flying(true);
             me.castSelf(dragonHover, true);
             icebolts = 0;
@@ -1893,8 +1971,7 @@ struct Sapphiron
         case Step.icebolt:
             if (icebolts < 5)
             {
-                if (const target = me.selectTarget(Pick.random, PickFilter.player))
-                    me.castSpell(icebolt, target, true);
+                freeze(me);
                 ++icebolts;
                 steps.after(step, 3.seconds);
             }
@@ -1902,10 +1979,12 @@ struct Sapphiron
             {
                 me.sayText(emoteBreath);
                 me.castSelf(frostBreathDummy, true);
+                me.castSelf(frostBreath);
                 steps.after(Step.land, 8.seconds);
             }
             break;
         case Step.land:
+            clearIce(me);
             me.removeAura(me.self, dragonHover);
             me.emote(293); // EMOTE_ONESHOT_LAND
             me.flying(false);

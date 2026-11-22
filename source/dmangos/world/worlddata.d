@@ -743,7 +743,7 @@ final class WorldData
             creatureTemplates[row.entry] = row;
         foreach (row; world.query!("SELECT entry, type, displayId, name, faction, flags, size, data0, data1, "
             ~ "data2, data3, data4, data5, data6, data7, data8, data9, data10, data11, data12, data13, data14, data15, "
-            ~ "data16, data17, data18, data19, data20, data21, data22, data23 FROM gameobject_template")())
+            ~ "data16, data17, data18, data19, data20, data21, data22, data23, ExtraFlags FROM gameobject_template")())
         {
             GameObjectTemplate t;
             t.entry = row.get!uint(0);
@@ -755,6 +755,7 @@ final class WorldData
             t.size = row.get!float(6);
             foreach (i; 0 .. 24)
                 t.data[i] = row.get!int(7 + i);
+            t.extraFlags = row.get!uint(31);
             gameObjectTemplates[t.entry] = t;
         }
         foreach (row; world.queryAs!(QuestRow, questQuery)())

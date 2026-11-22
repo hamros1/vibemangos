@@ -846,12 +846,58 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (animation >= 0)
             map_.sendToObservers(object.guid, Opcode.SMSG_GAMEOBJECT_CUSTOM_ANIM,
                 gameObjectAnimation(object.guid, cast(uint) animation));
+        else if (spell.miscValue[effect] == GameObjectAction.disturb)
+            return disturbEncounterTrap(map_, object);
         else
         {
             if (!object.applySpellState(map_, cast(GameObjectAction) spell.miscValue[effect]))
                 return false;
             map_.wake(object.guid);
         }
+        return true;
+    }
+
+    /// Cast a dungeon trap's spell at the trap. The egg creates a second proximity trap and each
+    /// plague fissure casts its own short-range Eruption at its location on the floor.
+    private bool disturbEncounterTrap(Map map_, GameObject object)
+    {
+        import dmangos.world.defines : UnitFlags;
+        import dmangos.world.gameobject : GoLootState, gameObjectAnimation;
+        import dmangos.world.spellcast : duration;
+        import dmangos.world.updatefields : UNIT_FIELD_FACTIONTEMPLATE, UNIT_FIELD_FLAGS;
+
+        const proto = object.template_;
+        if (proto.type != GameObjectType.trap || object.lootState != GoLootState.ready)
+            return false;
+        const spell = data.spells.spell(cast(uint) proto.data[3]);
+        if (spell is null)
+            return false;
+        if (spell.effect[0] == SpellEffect.summonObjectWild)
+        {
+            const ms = duration(*spell, client, cast(uint) proto.data[1]);
+            if (summonWildGameObject(map_, cast(uint) spell.miscValue[0], object.position,
+                    ms > 0 ? cast(uint)(ms / 1000) : 0) is null)
+                return false;
+        }
+        else
+        {
+            enum worldTrigger = 15384;
+            auto trigger = summonCreature(map_, worldTrigger, object.position, TempSpawnType.timed, 1000, 0);
+            if (trigger is null || trigger.ai is null)
+                return false;
+            trigger.factionTemplate = client.factionTemplates.lookup(proto.faction);
+            trigger.values.set!UNIT_FIELD_FACTIONTEMPLATE(proto.faction);
+            // The invisible proxy is spawning an environmental hazard that can hit players and NPCs.
+            trigger.values.set!UNIT_FIELD_FLAGS(trigger.values.get!UNIT_FIELD_FLAGS
+                & ~(UnitFlags.immuneToPlayer | UnitFlags.immuneToNpc));
+            if (trigger.ai.castFor(map_, spell.id, trigger.guid, true) != ActionResult.ok)
+                return false;
+        }
+        if (proto.extraFlags & 1)
+            map_.sendToObservers(object.guid, Opcode.SMSG_GAMEOBJECT_CUSTOM_ANIM, gameObjectAnimation(object.guid, 0));
+        object.trapReadyAt = unixTime + (proto.data[5] > 0 ? proto.data[5] : 4);
+        if (proto.data[4] > 0 && ++object.trapUses >= proto.data[4])
+            map_.gameObjectUsedUp(object);
         return true;
     }
 
@@ -6932,6 +6978,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// A game object used up: it comes back after its spawn's respawn time.
     private void gameObjectUsedUp(GameObject go)
     {
+        if (go.spawn.guid >= temporaryCounterStart)
+        {
+            scriptedGameObjects.remove(go.guid);
+            return;
+        }
         if (go.instanceId)
         {
             if (auto state = go.instanceId in instances)

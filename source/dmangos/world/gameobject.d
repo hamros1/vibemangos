@@ -95,6 +95,7 @@ struct GameObjectTemplate
     uint flags;
     float size = 1;
     int[24] data;
+    uint extraFlags;
 }
 
 /// A `gameobject` row: one spawn.
@@ -139,6 +140,7 @@ enum : uint
 /// State-changing actions of SPELL_EFFECT_ACTIVATE_OBJECT.
 package enum GameObjectAction : uint
 {
+    disturb = 5,
     unlock = 6,
     lock = 7,
     openAndUnlock = 9,

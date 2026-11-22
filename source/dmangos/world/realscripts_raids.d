@@ -1209,7 +1209,7 @@ unittest
 /**
  * Sapphiron: the Frostwyrm Lair's way open (the copy's "special"), he comes 22 s later and fights all there:
  * Frost Aura, Cleave, Tail Sweep, Life Drain, his blizzard; at 46 s he takes to the air (Icebolt) and lands. His
- * Frost Breath is left out (the ice blocks that shelter from it are not done: the script's documentation).
+ * The air phase ends in Frost Breath and the ice blocks melt.
  */
 unittest
 {
@@ -1230,6 +1230,10 @@ unittest
     s.forget();
     s.run(50.seconds);
     assert(s.castBy(sapphironEntry, 28_522), "Sapphiron: no Icebolt from the air\n" ~ s.seen());
+    assert(s.objects(181247).length, "no ice block during the air phase");
+    s.run(16.seconds);
+    assert(s.castBy(sapphironEntry, 28524), "no damaging Frost Breath");
+    assert(!s.objects(181247).length, "block remained after landing");
     s.kill(sap);
     s.run(2.seconds);
     assert(s.ask(13) == 3, "his encounter not done");
@@ -1506,4 +1510,88 @@ unittest
     assert(ayamiss >= 18, format!"Ayamiss called %s swarmers in two minutes"(ayamiss));
     const guardian = called(Boss("Anubisath Guardian", 509, 15_355), [15_537, 15_538], 100);
     assert(guardian >= 5, format!"an Anubisath Guardian called %s in 100 s"(guardian));
+}
+
+/// A hatcher disturbs a single intact egg. Its hidden spawner hatches a whelp when a player reaches it.
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.script.api : ActionResult;
+
+    auto s = new Scene(229, Position(83.95f, -325.10f, 91.43f));
+    auto eggs = s.objects(175124);
+    assert(eggs.length);
+    auto hatcher = s.summon(10683, eggs[0].position);
+    assert(hatcher.ai.castFor(s.map, 15746, hatcher.guid, true) == ActionResult.ok);
+    auto spawners = s.objects(175622);
+    assert(spawners.length == 1 && s.objects(175124).length == eggs.length - 1);
+    assert(Scene.distance(spawners[0].position, eggs[0].position) < 1);
+    const before = s.all(10161).length;
+    s.hero.movement.position = spawners[0].position;
+    s.map.relocated(s.heroes[0].session.inWorld);
+    assert(s.all(10161).length == before + 1 && s.map.findObject(spawners[0].guid) is null,
+        format!"whelps %s -> %s, old spawner present %s, all spawners %s"(before, s.all(10161).length,
+            s.map.findObject(spawners[0].guid) !is null, s.objects(175622).length));
+}
+
+/// Each wave spares one floor section and erupts in the other three.
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.script.api : ActionResult;
+
+    static immutable tiles = [Position(2803.58f, -3675.67f, 273.666f), Position(2765.45f, -3663.31f, 273.667f),
+        Position(2747.13f, -3684.35f, 274.352f), Position(2765.76f, -3718.73f, 274.317f)];
+    auto s = new Scene(533, tiles[0], 4);
+    auto wave = s.the(17293);
+    foreach (k, tile; tiles)
+        s.moveHero(k, tile);
+    foreach (i; 0 .. tiles.length)
+    {
+        foreach (k; 0 .. tiles.length)
+        {
+            s.heroes[k].session.inWorld.godModeCheat = false;
+            s.hero(k).values.set!UNIT_FIELD_MAXHEALTH(100_000);
+            s.hero(k).values.set!UNIT_FIELD_HEALTH(100_000);
+        }
+        assert(wave.ai.castFor(s.map, cast(uint)(30116 + i), wave.guid, true) == ActionResult.ok);
+        foreach (k; 0 .. tiles.length)
+            assert((s.hero(k).values.get!UNIT_FIELD_HEALTH == 100_000) == (i == k),
+                format!"wave %s section %s health %s"(i, k, s.hero(k).values.get!UNIT_FIELD_HEALTH));
+        s.run(5.seconds);
+    }
+}
+
+/// The same primary breath strikes the exposed player and passes over the player behind a real ice block.
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.script.api : ActionResult;
+    auto origin = Position(3522.386f, -5236.784f, 137.709f);
+    auto s = new Scene(533, origin, [classWarrior, classMage], withTerrain: true);
+    auto sap = s.summon(15989, origin);
+    auto blockAt = origin;
+    blockAt.x += 10;
+    auto block = s.w.context.summonWildGameObject(s.map, 181247, blockAt, 22);
+    assert(block !is null);
+    auto sheltered = blockAt;
+    sheltered.x += 5;
+    s.moveHero(0, sheltered);
+    auto exposed = sheltered;
+    exposed.y += 12;
+    s.moveHero(1, exposed);
+    assert(!s.map.inLineOfSight(origin, s.hero(0).position) && s.map.inLineOfSight(origin, s.hero(1).position),
+        "the block intercepts only the sheltered player's ray");
+    foreach (k; 0 .. 2)
+    {
+        s.heroes[k].session.inWorld.godModeCheat = false;
+        s.hero(k).values.set!UNIT_FIELD_MAXHEALTH(200_000);
+        s.hero(k).values.set!UNIT_FIELD_HEALTH(200_000);
+    }
+    assert(sap.ai.castFor(s.map, 28524, sap.guid, true) == ActionResult.ok);
+    assert(s.hero(0).values.get!UNIT_FIELD_HEALTH == 200_000);
+    assert(s.hero(1).values.get!UNIT_FIELD_HEALTH < 200_000, "exposed player took no damage from the primary breath");
 }

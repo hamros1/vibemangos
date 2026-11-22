@@ -36,7 +36,10 @@ package ImplicitTarget namedGameObjectShape(const ref SpellInfo spell, size_t ef
         || spell.casting.speed > 0 || (spell.attributesEx & channels))
         return ImplicitTarget.none;
     const action = cast(GameObjectAction) spell.miscValue[effect];
-    if (namedGameObjectAnimation(spell, effect) < 0
+    // These spells disturb a database-selected trap. Other disturb actions use different object types.
+    const disturbTrap = action == GameObjectAction.disturb
+        && (spell.id == 15746 || spell.id == 16556 || (spell.id >= 30116 && spell.id <= 30119));
+    if (!disturbTrap && namedGameObjectAnimation(spell, effect) < 0
         && !action.among(GameObjectAction.unlock, GameObjectAction.lock, GameObjectAction.openAndUnlock,
             GameObjectAction.close, GameObjectAction.destroy, GameObjectAction.rebuild, GameObjectAction.closeAndLock))
         return ImplicitTarget.none;

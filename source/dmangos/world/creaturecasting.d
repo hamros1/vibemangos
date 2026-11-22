@@ -661,12 +661,25 @@ mixin template CreatureCasting()
             if (area && a != ImplicitTarget.casterSource && a != ImplicitTarget.caster && target != me.guid)
                 if (auto other = world_.unit(target))
                     center = other.position;
+            import dmangos.world.combat : detects;
+            const frostBreath = spell.id == 28524 || spell.id == 29318;
+            if (frostBreath && a == ImplicitTarget.database)
+            {
+                import dmangos.world.context : WorldContext;
+                auto context = cast(WorldContext) lore;
+                if (context !is null)
+                    if (const fixed = spell.id in context.data.spellTargets)
+                        center = fixed.at;
+            }
             const r = radius(*spell, i, lore.clientData);
             ulong[] found;
             foreach (other; world_.playersNear(center, r))
             {
                 const f = other.fighter;
                 if (!f.alive || !canAttack(relating, other.relating, me.client))
+                    continue;
+                if (frostBreath && (!world_.inLineOfSight(center, other.position)
+                    || (f.stealthed && !detects(me.fighter, f, r))))
                     continue;
                 if (a == ImplicitTarget.enemiesInCone && !hasInArc(me.position, f.position, PI / 2))
                     continue;

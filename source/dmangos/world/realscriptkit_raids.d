@@ -75,11 +75,11 @@ final class Scene
     }
 
     /// ditto, a character of each of `classes` (the first a warrior, say, the second a mage: one with mana).
-    this(uint mapId, Position at, const(ubyte)[] classes, uint level = 60, uint seed = 20_261_120)
+    this(uint mapId, Position at, const(ubyte)[] classes, uint level = 60, uint seed = 20_261_120, bool withTerrain = false)
     {
         import dmangos.world.packets : ClientTeleportAck;
 
-        w = RealWorld.make(seed);
+        w = RealWorld.make(seed, withTerrain);
         this.mapId = mapId;
         this.seed = seed;
         foreach (k, classId; classes)
