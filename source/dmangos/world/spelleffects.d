@@ -170,7 +170,8 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
     scope (exit)
         if (p !is null)
             p.effectCustom = typeof(p.effectCustom).init;
-    const value = p !is null ? p.effectAmount(spell, i) : ai.effectAmount(spell, i);
+    const value = p !is null ? p.effectAmount(spell, i)
+        : c.custom.has(i) ? c.custom.values[i] : ai.effectAmount(spell, i);
     final switch (effect) // every effect decided: done, or listed as not done below
     {
     case SpellEffect.schoolDamage: // SPELL_EFFECT_SCHOOL_DAMAGE

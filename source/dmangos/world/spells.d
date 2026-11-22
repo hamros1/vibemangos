@@ -131,6 +131,7 @@ struct SpellCastInfo
     uint[3] effectMechanic;    /// `EffectMechanic1..3`: each effect's own mechanic (a stun on a damaging spell)
     uint[2] totems;            /// `Totem1/2`: tools that must be in the bags (a blacksmith hammer, thieves' tools)
     ulong[3] affectMask;       /// `spell_affect`: the spell family mask an effect affects, where it overrides `EffectItemType`
+    uint attributesEx4;
     uint attributesServerside; /// `AttributesServerside`: CMaNGOS's own flags (`SPELL_ATTR_SS_*`)
 }
 
@@ -183,7 +184,7 @@ enum spellCastQuery = "SELECT Id, SpellName, School, Dispel, Mechanic, Attribute
     ~ "EffectPointsPerComboPoint1, EffectPointsPerComboPoint2, EffectPointsPerComboPoint3, SpellVisual, SpellIconID, "
     ~ "ManaCostPercentage, StartRecoveryCategory, StartRecoveryTime, MaxTargetLevel, SpellFamilyName, "
     ~ "SpellFamilyFlags, MaxAffectedTargets, DmgClass, PreventionType, DmgMultiplier1, DmgMultiplier2, "
-    ~ "DmgMultiplier3, EffectMechanic1, EffectMechanic2, EffectMechanic3, Totem1, Totem2, AttributesServerside "
+    ~ "DmgMultiplier3, EffectMechanic1, EffectMechanic2, EffectMechanic3, Totem1, Totem2, AttributesServerside, AttributesEx4 "
     ~ "FROM spell_template";
 
 /// One row of `spellCastQuery` (flat, for `Row.as`).
@@ -214,7 +215,7 @@ struct SpellCastRow
     float dm1, dm2, dm3;
     uint em1, em2, em3;
     uint totem1, totem2;
-    uint attributesServerside;
+    uint attributesServerside, attributesEx4;
 
     SpellCastInfo toInfo() const
     {
@@ -225,7 +226,7 @@ struct SpellCastRow
                 "baseLevel", "durationIndex", "powerType", "manaCost", "manaCostPerLevel", "manaPerSecond",
                 "manaPerSecondPerLevel", "rangeIndex", "speed", "stackAmount", "spellVisual", "spellIconId", "manaCostPercentage",
                 "startRecoveryCategory", "startRecoveryTime", "maxTargetLevel", "spellFamilyName", "spellFamilyFlags",
-                "maxAffectedTargets", "dmgClass", "preventionType", "attributesServerside"])
+                "maxAffectedTargets", "dmgClass", "preventionType", "attributesServerside", "attributesEx4"])
             __traits(getMember, c, field) = cast(typeof(__traits(getMember, c, field))) __traits(getMember, this, field);
         c.reagentCount = [rc1, rc2, rc3, rc4, rc5, rc6, rc7, rc8];
         c.dieSides = [ds1, ds2, ds3];

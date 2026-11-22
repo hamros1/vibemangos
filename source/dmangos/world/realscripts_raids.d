@@ -1599,6 +1599,49 @@ unittest
     }
 }
 
+/// One Decimate lowers players and chows to 5%. It neither heals a low target nor hurts other NPCs.
+unittest
+{
+    if (!haveRealData()) return;
+    import dmangos.script.api : ActionResult;
+
+    const origin = Position(3300, -3100, 300);
+    auto s = new Scene(533, origin, [classWarrior, classMage, classWarrior]);
+    auto gluth = s.summon(15932, origin);
+    auto chow = s.summon(16360, origin);
+    auto bystander = s.summon(16011, origin);
+    const uint[3] initialHealth = [6_000, 400, 10_000];
+    foreach (k, health; initialHealth)
+    {
+        s.heroes[k].session.inWorld.godModeCheat = false;
+        s.hero(k).values.set!UNIT_FIELD_MAXHEALTH(10_000);
+        s.hero(k).values.set!UNIT_FIELD_HEALTH(health);
+    }
+    chow.values.set!UNIT_FIELD_MAXHEALTH(4_000);
+    chow.values.set!UNIT_FIELD_HEALTH(3_000);
+    const before = bystander.values.get!UNIT_FIELD_HEALTH;
+    assert(gluth.ai.castFor(s.map, 28374, gluth.guid, true) == ActionResult.ok);
+    assert(s.hero(0).values.get!UNIT_FIELD_HEALTH == 500,
+        format!"Decimate left player at %s HP"(s.hero(0).values.get!UNIT_FIELD_HEALTH));
+    assert(s.hero(1).values.get!UNIT_FIELD_HEALTH == 400);
+    assert(s.hero(2).values.get!UNIT_FIELD_HEALTH == 500);
+    import dmangos.bytes : ByteReader;
+    import dmangos.world.opcodes : Opcode;
+    bool logged;
+    foreach (packet; s.heroes[0].read())
+        if (packet.opcode == Opcode.SMSG_SPELLNONMELEEDAMAGELOG)
+        {
+            auto log = ByteReader(packet.body_);
+            const target = log.readPackedGuid(), caster = log.readPackedGuid();
+            if (target == s.hero(0).guid && caster == gluth.guid && log.read!uint == 28375)
+                logged = log.read!uint == 5500;
+        }
+    assert(logged, "the injured player sees 5,500 damage from Gluth's Decimate");
+    assert(chow.values.get!UNIT_FIELD_HEALTH == 200,
+        format!"Decimate left chow at %s HP"(chow.values.get!UNIT_FIELD_HEALTH));
+    assert(bystander.values.get!UNIT_FIELD_HEALTH == before);
+}
+
 /// The same primary breath strikes the exposed player and passes over the player behind a real ice block.
 unittest
 {

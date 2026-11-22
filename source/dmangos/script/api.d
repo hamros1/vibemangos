@@ -1533,6 +1533,8 @@ interface SpellHost
     ActionResult hostDamage(EntityRef target, uint amount);
     ActionResult hostEnergize(EntityRef target, ubyte power, int amount);
     uint hostHealth(EntityRef who);
+    uint hostMaxHealth(EntityRef who);
+    bool hostPlayerControlled(EntityRef who);
     void hostQuestEvent(EntityRef player, uint quest);
     void hostKillCredit(EntityRef player, uint entry);
     EntityRef hostSummonAt(uint entry, Location at, uint despawnMs, EntityRef attack);
@@ -1617,6 +1619,8 @@ struct SpellContext
 
     /// A unit's health; 0 if it is not here.
     uint health(EntityRef who) { return host.hostHealth(who); }
+    uint maxHealth(EntityRef who) { return host.hostMaxHealth(who); }
+    bool playerControlled(EntityRef who) { return host.hostPlayerControlled(who); }
 
     /// `AreaExploredOrEventHappens` for `player`.
     void questEvent(EntityRef player, uint quest) { host.hostQuestEvent(player, quest); }

@@ -156,6 +156,25 @@ ActionResult playSound(CombatWorld world, EntityRef player, uint sound)
 /// The `SpellHost` functions every host does alike; the host has `scriptWorld()`, the map it acts on.
 mixin template SpellScriptActions()
 {
+    uint hostMaxHealth(EntityRef who)
+    {
+        import dmangos.world.updatefields : UNIT_FIELD_MAXHEALTH;
+
+        auto world = scriptWorld();
+        if (world is null) return 0;
+        auto fields = world.unit(who.guid).fields;
+        return fields is null ? 0 : fields.get!UNIT_FIELD_MAXHEALTH;
+    }
+
+    bool hostPlayerControlled(EntityRef who)
+    {
+        if (who.isPlayer) return true;
+        auto world = scriptWorld();
+        if (world is null) return false;
+        auto unit = world.unit(who.guid);
+        return unit && unit.relating.playerControlled;
+    }
+
     import dmangos.script.api : ActionResult, EntityRef;
     static import dmangos.world.spellscripting;
 

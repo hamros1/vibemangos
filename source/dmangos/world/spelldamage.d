@@ -113,9 +113,13 @@ uint spellDamage(ref Caster caster, const(SpellInfo)* spell, UnitRef victim, uin
     if (!victim || !caster)
         return 0;
     auto map = caster.map;
-    if (how.withBonus)
+    // Physical, untyped damage explicitly exempt from both sides' modifiers carries the
+    // scripted amount to the target. Decimate (28375) uses this combination.
+    const fixedAmount = school == 0 && spell.casting.dmgClass == DamageClass.none
+        && (spell.casting.attributesEx3 & 0x20000000) && (spell.casting.attributesEx4 & 0x100);
+    if (how.withBonus && !fixedAmount)
         damage += spellDamageBonus(caster, spell, school);
-    if (how.modOp >= 0)
+    if (how.modOp >= 0 && !fixedAmount)
         damage = caster.spellMod(cast(SpellModOp) how.modOp, spell, damage);
     damage = how.bounce.scale(damage);
     const target = victim.fighter;
@@ -123,7 +127,7 @@ uint spellDamage(ref Caster caster, const(SpellInfo)* spell, UnitRef victim, uin
     uint resisted;
     if (how.weaponRolled)
         damage = weaponRolledAmount(damage, school, target);
-    else
+    else if (!fixedAmount)
     {
         damage = caster.damageFactors(damage, school, target);
         const victimAuras = victim.auraSet;

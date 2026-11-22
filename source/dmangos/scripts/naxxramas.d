@@ -10,8 +10,8 @@
  * wrap them there; Kel'Thuzad dispels the shackles when more than three of his Guardians of Icecrown are
  * shackled (`event_naxxramas`, which also carries Gluth's Decimate).
  *
- * What the core cannot do is left out, and named where it would be: players mind-controlled (Faerlina's
- * worshippers, Razuvious' understudies, Kel'Thuzad's chains) and carried by a spell.
+ * The encounter tests exercise player and creature control, Heigan's floor sections and ice-block shelter.
+ * Gluth's original Decimate trigger is still under investigation.
  */
 module dmangos.scripts.naxxramas;
 
@@ -1552,7 +1552,25 @@ struct Grobbulus
     }
 }
 
-/// Gluth: Mortal Wound, Terrifying Roar, frenzies, Decimate every 105 seconds (his zombie chows brought
+/// Decimate leaves living players, their controlled units and Zombie Chow at five percent of maximum health.
+/// A target already below the threshold takes no damage.
+@spell("spell_gluth_decimate")
+struct GluthDecimate
+{
+    void on(ref SpellContext it, const ref EffectHit e)
+    {
+        if (e.effect || (e.target.entry != npcZombieChow && !it.playerControlled(e.target)))
+            return;
+        const current = it.health(e.target);
+        const maximum = it.maxHealth(e.target);
+        const floor = maximum >= 20 ? maximum / 20 : 1;
+        if (current > floor)
+            it.castCustom(e.caster, 28_375, e.target, [cast(int)(current - floor), 0, 0]);
+    }
+}
+
+/// Gluth uses a 105-second approximation until a reference pull establishes the Decimate trigger.
+/// Mortal Wound, Terrifying Roar, frenzies and Decimate (his zombie chows brought
 /// low, and they crawl to him), eating the chows that reach him; zombie chows come from the doors every
 /// six seconds; berserk after six and a half minutes.
 @creature("boss_gluth")
@@ -1613,7 +1631,6 @@ struct Gluth
                 EntityRef[40] chows;
                 foreach (c; chows[0 .. me.creaturesNearby(npcZombieChow, 200, chows[])])
                 {
-                    me.setHealthPercent(5, c);
                     me.moveCreature(c, me.location, 0);
                 }
                 steps.after(step, 105.seconds);

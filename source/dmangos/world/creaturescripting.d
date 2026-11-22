@@ -394,12 +394,7 @@ mixin template CreatureScripting()
         ActionResult hostEnergize(EntityRef, ubyte, int) { return ActionResult.failed; }
         uint hostHealth(EntityRef who)
         {
-            if (who.guid == me.guid)
-                return me.values.get!UNIT_FIELD_HEALTH;
-            if (world_ !is null)
-                if (auto other = world_.creatureAt(who.guid))
-                    return other.values.get!UNIT_FIELD_HEALTH;
-            return 0;
+            return world_ is null ? 0 : world_.unit(who.guid).health;
         }
         void hostQuestEvent(EntityRef player, uint quest) { this.outer.hostQuestEvent(player, quest); }
         void hostKillCredit(EntityRef player, uint entry)
@@ -429,8 +424,15 @@ mixin template CreatureScripting()
                 }
             return ActionResult.notHere;
         }
-        // Class spells: a player's (a creature's casts take no custom amounts, power or cooldowns from a script).
-        ActionResult hostCastCustom(EntityRef, uint, EntityRef, int[3], ubyte) { return ActionResult.failed; }
+        ActionResult hostCastCustom(EntityRef caster, uint spellId, EntityRef target, int[3] values, ubyte which)
+        {
+            import dmangos.world.classspells : CustomValues;
+
+            if (world_ is null || lore is null || caster.guid != me.guid || !world_.unit(target.guid))
+                return ActionResult.notHere;
+            return castSpell(lore.spellInfo(spellId), target.guid, castTriggered, CustomValues(values, which))
+                ? ActionResult.ok : ActionResult.notAllowed;
+        }
         ActionResult hostSetPower(EntityRef, ubyte, int) { return ActionResult.failed; }
         float hostDamageMultiplier(ubyte effect) { return scriptSpell is null || effect > 2 ? 1 : scriptSpell.casting.dmgMultiplier[effect]; }
         uint hostResetCooldowns(EntityRef, uint, uint, uint) { return 0; }

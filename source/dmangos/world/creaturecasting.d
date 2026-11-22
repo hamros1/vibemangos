@@ -327,7 +327,9 @@ mixin template CreatureCasting()
      * Casts `spell` at `target` (itself, or a player) as `flags`
      * (`castTriggered`, ...) allow; false if it could not (`castRefusal` says why).
      */
-    bool castSpell(const(SpellInfo)* spell, ulong target, uint flags)
+    import dmangos.world.classspells : CustomValues;
+
+    bool castSpell(const(SpellInfo)* spell, ulong target, uint flags, CustomValues custom = CustomValues.init)
     {
         import dmangos.world.context : WorldContext;
         import dmangos.world.spellcast : SpellCastResult;
@@ -439,7 +441,7 @@ mixin template CreatureCasting()
             }
         if (time <= 0)
         {
-            go(spell, target, !triggered, (flags & castAuraNotPresent) != 0);
+            go(spell, target, !triggered, (flags & castAuraNotPresent) != 0, null, custom);
             return true;
         }
         casting_ = spell;
@@ -748,7 +750,7 @@ mixin template CreatureCasting()
      * happen to each target; its mana is spent.
      */
     private void go(const(SpellInfo)* spell, ulong target, bool takeMana, bool auraAbsent = false,
-        ulong[] selectedWeaponTargets = null)
+        ulong[] selectedWeaponTargets = null, CustomValues custom = CustomValues.init)
     {
         import dmangos.world.context : WorldContext;
         import dmangos.world.map : Map;
@@ -985,6 +987,7 @@ mixin template CreatureCasting()
         import dmangos.world.spelleffects : applyEffect, SpellCast;
 
         SpellCast c;
+        c.custom = custom;
         c.spell = spell;
         c.targets = targetsOf(target);
         c.triggered = !takeMana;
