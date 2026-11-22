@@ -64,7 +64,7 @@ import dmangos.world.packets : ServerDestroyObject;
 import dmangos.world.player : DeathState, Player;
 import dmangos.world.updatefields : GAMEOBJECT_FACING, GAMEOBJECT_STATE, TypeId, UNIT_FIELD_FLAGS;
 import dmangos.world.migration : decodeBundle, encodeBundle, Migrant, MigrantKind;
-import dmangos.world.replication : decodeSlots, encodeMotion, encodePlayerState, encodeSlots, encodeState, Replica,
+import dmangos.world.replication : decodeSlots, encodeMotion, encodePlayerSlots, encodePlayerState, encodeSlots, encodeState, Replica,
     Replicable, Replicator;
 import dmangos.world.terrain : defaultHeightSearch, defaultWaterSearch, invalidHeightValue, LiquidData,
     LiquidStatus, Terrain;
@@ -778,7 +778,7 @@ final class Map : CombatWorld, GameObjectWorld
         const slots = who.character.changedStrangerSlots;
         if (slots.length == 0)
             return;
-        const bytes = encodeSlots(slots);
+        const bytes = encodePlayerSlots(who.character, slots);
         foreach (peer; at(slot).replicatedTo)
             replicator.values(peer, id, who.character.guid, bytes);
     }
@@ -3815,6 +3815,7 @@ unittest
     two.playerChanged(bob);
     bob.player.clearChanges();
     assert(one.findObject(2).fields[UNIT_FIELD_HEALTH] == 25 && one.findObject(2).fields[UNIT_FIELD_MAXHEALTH] == 100);
+    assert((cast(Replica) one.findObject(2)).missingHealth == 150);
     const told = alice.take();
     assert(has(told, Opcode.SMSG_UPDATE_OBJECT) || has(told, Opcode.SMSG_COMPRESSED_UPDATE_OBJECT),
         "alice's client is told of the change");

@@ -10,7 +10,7 @@
  * fear (and Seduction, "considered a Fear effect", 1.4.0; Death Coil's horror "not diminished", 1.8.0); charm
  * (Gnomish Mind Control Cap "in the Charm category", 1.8.0); controlled stuns (Cheap Shot, Hammer of Justice,
  * Charge; grenades, 1.11.0), which the stuns of talents and seals that procs cast "no longer diminish or [are]
- * diminished by" (1.9.0); Freezing Trap (1.10.0). Spells the notes do not name are not diminished.
+ * diminished by" (1.9.0); Freezing Trap (1.10.0). Blizzard’s Classic Era clarifications also group Scatter Shot and Wyvern Sting with Freezing Trap.
  */
 module dmangos.world.diminishing;
 
@@ -75,7 +75,9 @@ DrCategory drCategory(const ref SpellInfo spell) pure nothrow @nogc @safe
         return spell.casting.mechanic == mechanic || spell.casting.effectMechanic[0] == mechanic
             || spell.casting.effectMechanic[1] == mechanic || spell.casting.effectMechanic[2] == mechanic;
     }
-    if (has(mechanicFreeze))
+    // Scatter Shot and the sleep ranks of Wyvern Sting share Freezing Trap's PvP timer.
+    static immutable uint[] hunterDisorients = [19503, 19386, 24132, 24133];
+    if (has(mechanicFreeze) || hunterDisorients.canFind(spell.id))
         return DrCategory.freezingTrap;
     if (has(mechanicStun))
         return procStuns.canFind(spell.id) ? DrCategory.none : DrCategory.controlledStun;

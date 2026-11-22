@@ -59,7 +59,7 @@ mixin template InWorldHandlers()
     import dmangos.world.queries : chatMessage, ClientChat, ClientWho, whoList, WhoEntry, creatureQueryResponse, gameObjectQueryResponse,
         itemQueryResponse;
     import dmangos.world.teleport : Teleport;
-    import dmangos.world.updatefields : PLAYER_FIELD_BYTES, UNIT_FIELD_BYTES_1;
+    import dmangos.world.updatefields : PLAYER_FIELD_BYTES, UNIT_FIELD_BYTES_1, UNIT_FIELD_TARGET;
     import dmangos.world.worlddata : CreateAction;
 
 private:
@@ -1350,6 +1350,12 @@ private:
     @Handles(Opcode.CMSG_SET_SELECTION, WorldState.inWorld)
     void handleSetSelection(const ClientSetSelection request)
     {
+        if (reactiveLeft[ReactiveKind.overpower] > 0 && comboTarget && request.guid != comboTarget
+                && request.guid != player.values.get!UNIT_FIELD_TARGET)
+        {
+            reactiveLeft[ReactiveKind.overpower] = 0;
+            clearComboPoints();
+        }
         player.setTarget(request.guid); // others see whom the player has targeted
         flushPlayerChanges();
     }

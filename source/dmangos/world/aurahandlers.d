@@ -883,7 +883,16 @@ private:
         const spell = reader.read!uint;
         if (auto aura = player.auras.find(spell))
             if (aura.positive && !(aura.spell.attributes & spellAttrNoAuraCancel))
+            {
+                import dmangos.world.classspells : ofFamily, SpellFamily;
+
+                const cancelledStealth = ofFamily(aura.spell, SpellFamily.rogue, 0x400000) && aura.has(AuraType.modStealth);
                 removeAura(aura);
+                if (cancelledStealth)
+                    foreach (id; [11327u, 11329u]) // Vanish's enhanced stealth, ranks 1 and 2
+                        if (auto vanish = player.auras.find(id))
+                            removeAura(vanish);
+            }
     }
 
     /// The auras' time passes: their ticks, then those that ended; drink's mana.

@@ -460,7 +460,9 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   heals while it still simulates the caster. Repeated deliveries and confirmations have no effect.
 * **Chain Heal.** A cast that starts on a party or raid member on the caster's node can bounce
   to injured members across nodes. Each bounce searches around the previous recipient's
-  position at cast completion, shares the spell's target cap, and reduces the heal by the
+  position at cast completion and prefers the eligible player missing the most hit points. Nodes
+  exchange that deficit separately from client-visible health percentages. Each cast shares
+  the spell's target cap across nodes and reduces each bounce by the
   spell's normal falloff. The receiving node checks current group membership and range from
   the captured position and applies the heal once. The cast spends mana once on the caster's node.
 * **Instant hostile area damage.** A caster-centered magic hit can reach players and creatures on

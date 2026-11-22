@@ -655,7 +655,7 @@ and Mortars now are set to use the 'Controlled Stun' mechanic".
 
 **Rule:** PvP only (a player's, or its pet's or totem's, hostile aura on a player). Categories: controlled stuns (the
 stun mechanic, but the eight proc stuns of 1.9.0), fear (the fear mechanic, and Seduction), charm (the charm mechanic),
-immobilizing (Entangling Roots, Frost Nova), slowing (Frost Shock), Freezing Trap (the freeze mechanic). Full, half, a
+immobilizing (Entangling Roots, Frost Nova), slowing (Frost Shock), Freezing Trap (the freeze mechanic, shared with Scatter Shot and Wyvern Sting). Full, half, a
 quarter, then immune until 15 s after the last one's end (its break counts as its end). Other crowd control is not
 diminished: the notes say "It is our goal to set as few spells as possible to be diminished".
 

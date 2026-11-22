@@ -515,6 +515,13 @@ final class Player : InventoryOwner
         return ChatTag.CHAT_TAG_NONE;
     }
 
+    /// Missing hit points for heal targeting. Dead and full-health players are ineligible for a bounce.
+    @property uint missingHealth() const
+    {
+        const health = values.get!UNIT_FIELD_HEALTH, maximum = values.get!UNIT_FIELD_MAXHEALTH;
+        return health && health < maximum ? maximum - health : 0;
+    }
+
     /// A field's value as a viewer outside the group sees it: health in percent of 100.
     uint strangerValue(size_t slot, uint value) const
     {

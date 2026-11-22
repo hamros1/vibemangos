@@ -109,12 +109,26 @@ MovementBlock decodeMotion(const(ubyte)[] bytes, ref MoveSpline spline)
 const(ubyte)[] encodeSlots(const(SlotValue)[] slots)
 {
     ByteWriter w;
+    putSlots(w, slots);
+    return w.data;
+}
+
+private void putSlots(ref ByteWriter w, const(SlotValue)[] slots)
+{
     w.put(cast(ushort) slots.length);
     foreach (s; slots)
     {
         w.put(s.slot);
         w.put(s.value);
     }
+}
+
+/// Public player fields followed by the server-only deficit used to rank Chain Heal targets.
+const(ubyte)[] encodePlayerSlots(const Player player, const(SlotValue)[] slots)
+{
+    ByteWriter w;
+    putSlots(w, slots);
+    w.put(player.missingHealth);
     return w.data;
 }
 
@@ -167,7 +181,7 @@ const(ubyte)[] encodePlayerState(const Player player, uint serverTime)
     const motion = encodeMotion(player.motionForOthers(serverTime));
     w.put(cast(uint) motion.length);
     w.putBytes(motion);
-    w.putBytes(encodeSlots(player.strangerSlots));
+    w.putBytes(encodePlayerSlots(player, player.strangerSlots));
     return w.data;
 }
 
@@ -182,6 +196,7 @@ final class Replica : Replicable, Moving, PerViewer
         MovementBlock block;
         MoveSpline spline;
         ulong[] looters;
+        uint missingHealth_;
     }
 
     /// A replica of `guid` owned by node `owner`, from `encodeState`'s bytes.
@@ -194,7 +209,9 @@ final class Replica : Replicable, Moving, PerViewer
         block = decodeMotion(r.readBytes(r.read!uint), spline);
         foreach (s; decodeSlots(r))
             values_.setSlot(s.slot, s.value);
-        if (!r.empty)
+        if (values_.type == TypeId.player)
+            missingHealth_ = r.read!uint;
+        else if (!r.empty)
             readLooters(r);
         values_.clearChanges();
     }
@@ -208,9 +225,16 @@ final class Replica : Replicable, Moving, PerViewer
                 values_.setSlot(s.slot, s.value);
         if (r.empty)
             return false;
+        if (values_.type == TypeId.player)
+        {
+            missingHealth_ = r.read!uint;
+            return false;
+        }
         readLooters(r);
         return true;
     }
+
+    @property uint missingHealth() const { return missingHealth_; }
 
     private void readLooters(ref ByteReader r)
     {

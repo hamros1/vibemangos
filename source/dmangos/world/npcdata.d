@@ -291,6 +291,10 @@ final class NpcData
                 if (spell.effect[i] == SpellEffect.learnSpell && spell.triggerSpell[i]
                     && (spell.implicitTargetA[i] == targetNone || spell.implicitTargetA[i] == targetUnitCaster))
                     trainerSpell.learnedSpell = spell.triggerSpell[i];
+            // Legacy Classic-DB lists teach a pet-only Elemental Fury (877) and zzOLDHip Shot III (1973).
+            // Filter the learned ID so direct and template lessons agree for both listing and purchasing.
+            if (trainerSpell.learnedSpell == 877 || trainerSpell.learnedSpell == 1973)
+                continue;
             if (!trainerSpell.reqLevel)
                 trainerSpell.reqLevel = spell.spellLevel;
             trainers[entry] ~= trainerSpell;

@@ -5,6 +5,8 @@ onto the modules, and the steps by which the server was moved to it (with what e
 continues docs/DESIGN.md's "One unit core": damage already reached every unit through one path
 (`dealDamage`); this does the same for the rest of a spell.
 
+For class trainer coverage, known gameplay discrepancies and a check for each affected rule, see the [1.12.1 trainer spell audit](research/TRAINER-SPELL-AUDIT.md).
+
 ## The problem
 
 Before this work a spell had a pipeline per kind of caster:

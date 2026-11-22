@@ -78,6 +78,7 @@ enum SpellCastResult : ubyte
     requiresSpellFocus = 0x5E, /// "Requires %s": the spell focus id follows
     totems = 0x78,             /// a tool missing: the spell's tools follow
     cantBeDisenchanted = 0x0C,
+    cantCastOnTapped = 0x0E,
     itemGone = 0x26,
     itemNotFound = 0x27,
     tryAgain = 0x7A,           /// "Failed attempt"

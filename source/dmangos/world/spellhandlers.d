@@ -3386,18 +3386,21 @@ private:
         {
             const at = chain[$ - 1].position;
             SpellJump next;
-            uint lowest = 100;
+            uint largestDeficit;
+            void consider(SpellJump candidate, uint deficit)
+            {
+                if (deficit > largestDeficit)
+                {
+                    largestDeficit = deficit;
+                    next = candidate;
+                }
+            }
             foreach (other; map.playersNear(at, spellJumpRadius))
             {
                 const guid = other.combatGuid;
                 if (guid in taken || (group !is null && !group.isMember(guid)) || !assistable(guid))
                     continue;
-                const percent = other.healthPercent;
-                if (percent < lowest)
-                {
-                    lowest = percent;
-                    next = SpellJump(guid, other.position);
-                }
+                consider(SpellJump(guid, other.position), other.session.player.missingHealth);
             }
             if (group !is null && context.sendPartyHeal !is null)
                 foreach (object; map.objectsNear(at, spellJumpRadius))
@@ -3408,16 +3411,8 @@ private:
                     const guid = replica.guid;
                     if (guid in taken || !group.isMember(guid) || context.onlinePlayer(guid) !is null || duelingWith(guid))
                         continue;
-                    const health = replica.fields.get!UNIT_FIELD_HEALTH;
-                    const maximum = replica.fields.get!UNIT_FIELD_MAXHEALTH;
-                    if (!health || !maximum)
-                        continue;
-                    const percent = cast(uint)(100UL * health / maximum);
-                    if (percent < lowest && !canAttack(caster, replica.playerRelations(context.client), context.client))
-                    {
-                        lowest = percent;
-                        next = SpellJump(guid, replica.position, replica.owner);
-                    }
+                    if (!canAttack(caster, replica.playerRelations(context.client), context.client))
+                        consider(SpellJump(guid, replica.position, replica.owner), replica.missingHealth);
                 }
             if (!next.target)
                 break;
@@ -4331,7 +4326,9 @@ unittest
         auto first = recipient(8, "Durotan", 8, 20, false);
         auto second = recipient(9, "Orgrim", 16, 35, true);
         auto third = recipient(10, "Garrosh", 24, 45, !lastIsLocal);
-        auto alternate = recipient(11, "Eitrigg", 15, 65, false);
+        auto alternate = recipient(11, "Eitrigg", 15, 5, false);
+        // Lower health percentage than either bounce recipient, but fewer missing hit points.
+        (cast(Player) alternate.session.character).values.set!UNIT_FIELD_MAXHEALTH(100u);
         auto stranger = recipient(12, "Nazgrel", 9, 2, false);
         auto remoteStranger = recipient(13, "Rexxar", 17, 1, true);
         second.session.inWorld.addAura(makeAura(reduced in owner.data.spells.spells, 9, 40, -1, false, [-50, 0, 0]));
@@ -4386,7 +4383,7 @@ unittest
         assert(replies.length == requests.length && opcodesOf(caster.read()).count(Opcode.SMSG_SPELLHEALLOG) == replies.length);
         assert(second.session.character.values.get!UNIT_FIELD_HEALTH == 55u, "the remote recipient applies its own modifier once");
         assert(third.session.character.values.get!UNIT_FIELD_HEALTH == 65u, "the second bounce uses a quarter heal on either node");
-        assert(alternate.session.character.values.get!UNIT_FIELD_HEALTH == 65u
+        assert(alternate.session.character.values.get!UNIT_FIELD_HEALTH == 5u
             && stranger.session.character.values.get!UNIT_FIELD_HEALTH == 2u
             && remoteStranger.session.character.values.get!UNIT_FIELD_HEALTH == 1u);
         caster.write(Opcode.CMSG_CAST_SPELL, request.data);

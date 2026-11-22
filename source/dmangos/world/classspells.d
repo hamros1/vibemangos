@@ -478,6 +478,14 @@ mixin template ClassSpells()
                 if (type && !(types & (1u << (type - 1))))
                     return SpellCastResult.badTargets;
             }
+        // Polymorph and the other spells bearing CANT_TARGET_TAPPED may use the caster's own party tap.
+        enum uint cantTargetTapped = 0x40;
+        if ((spell.attributesEx2 & cantTargetTapped) && target.kind == UnitKind.creature && target.creature.lootRecipient)
+        {
+            auto group = context.groups.of(player.guid);
+            if (!target.creature.tappedBy(player.guid, group is null ? 0 : group.id))
+                return SpellCastResult.cantCastOnTapped;
+        }
         // Conflagrate
         if (ofFamily(spell, SpellFamily.warlock, 0x200) && spell.hasEffect(SpellEffect.schoolDamage))
             if (familyAuraOn(target, SpellFamily.warlock, 0x4, AuraType.periodicDamage, player.guid) is null)

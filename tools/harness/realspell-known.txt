@@ -1,7 +1,6 @@
 # Spells the sweep (source/dmangos/world/realspellsweep.d) casts on the real data that do not yet do what their
 # data says, each with why: "id: reason". The sweep fails at a failure not listed here, and says which listed ones
 # pass now (take them off).
-877: Elemental Fury: not the shaman's talent (16089): no class's in the client's data (no SkillLineAbility row); taught by 1229, which the world database's warrior trainers list at level 6; its aura (10 more physical damage) is at the caster's pet (TARGET_UNIT_CASTER_PET), which the sweep's caster has none of
 7620: Fishing: the bobber needs water in front of the caster; the sweep casts in Stormwind's Trade District
 7731: Fishing: as 7620
 18248: Fishing: as 7620
