@@ -20,7 +20,7 @@ import dmangos.world.creature : Creature, VirtualItem;
 import dmangos.world.gameobject : GameObject;
 import dmangos.world.defines : UnitFlags;
 import dmangos.world.motion : IdleMovement, launch, MotionWorld, MovementGenerator, stopMoving;
-import dmangos.world.movement : MovementFlags, Position;
+import dmangos.world.movement : MovementFlags, MoveType, Position;
 import dmangos.world.opcodes : Opcode;
 import dmangos.world.relations;
 import dmangos.world.auras : Aura, AuraType;
@@ -1338,6 +1338,8 @@ private:
         return victim;
     }
 
+    private Vector3 lastSwimProbe = Vector3(float.nan, float.nan, float.nan);
+
     /**
      * Chasing: runs to its target until it can reach it, setting off again when the
      * target has moved on, and faces it.
@@ -1346,6 +1348,19 @@ private:
     {
         import std.algorithm.comparison : min;
 
+        const canSwim = me.canSwim && !me.scriptFlying;
+        const waterOnly = me.waterOnly;
+        if (canSwim && me.spline.finalized)
+        {
+            const at = me.position;
+            const point = Vector3(at.x, at.y, at.z);
+            if (point != lastSwimProbe)
+            {
+                lastSwimProbe = point;
+                if (me.setSwimming(world.swimmableAt(point, me.collisionHeight)))
+                    world.flushCreature(me);
+            }
+        }
         const self = me.fighter, other = target.fighter;
         me.movement.position.orientation = angleTo(me.position, other.position);
         if (!combatMovement_)
@@ -1377,7 +1392,7 @@ private:
         const x = other.position.x + offset * cos(angle), y = other.position.y + offset * sin(angle);
         auto destination = Vector3(x, y, other.position.z);
         bool underwater;
-        if (self.swimming)
+        if (canSwim)
         {
             Vector3 submerged;
             underwater = world.swimmingTarget(destination, me.collisionHeight, submerged)
@@ -1386,7 +1401,7 @@ private:
             if (underwater)
                 destination = submerged;
         }
-        if (me.waterOnly && !underwater)
+        if (waterOnly && !(self.swimming && underwater))
         {
             stopMoving(me, world);
             victimReachable = false;
@@ -1399,6 +1414,20 @@ private:
                 destination.z = ground;
         }
         chasedTo = other.position;
+        if (canSwim && self.swimming != underwater)
+        {
+            const at = me.spline.finalized ? me.position : me.spline.position;
+            auto shore = world.pathToShore(Vector3(at.x, at.y, at.z), destination, me.collisionHeight, self.swimming);
+            if (!shore.length)
+            {
+                stopMoving(me, world);
+                victimReachable = false;
+                return;
+            }
+            const speed = self.swimming ? me.speeds[MoveType.swim] : float.nan;
+            victimReachable = launch(me, world, shore, !self.swimming && chaseWalking, float.nan, false, speed) > 0;
+            return;
+        }
         const duration = launch(me, world, [Vector3.init, destination], chaseWalking, float.nan, true);
         if (!duration && underwater && !me.immobilized)
         {

@@ -4525,16 +4525,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if (auto ground = terrain(spawn.map))
             {
                 import dmangos.vmap.math : Vector3;
-                import dmangos.world.defines : UnitFlags;
-                import dmangos.world.movement : MovementFlags;
                 import dmangos.world.terrain : LiquidData;
-                import dmangos.world.updatefields : UNIT_FIELD_FLAGS;
 
                 LiquidData liquid;
                 if (ground.swimmingVolume(Vector3(spawn.x, spawn.y, spawn.z), creature.collisionHeight, liquid))
                 {
-                    creature.movement.flags |= MovementFlags.swimming;
-                    creature.values.set!UNIT_FIELD_FLAGS(creature.values.get!UNIT_FIELD_FLAGS | UnitFlags.swimming);
+                    creature.setSwimming(true);
                     creature.values.clearChanges();
                 }
             }

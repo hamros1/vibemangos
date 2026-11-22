@@ -170,6 +170,9 @@ interface MotionWorld
     /// A target at the surface or just above it can be approached from inside the water.
     bool swimmingTarget(Vector3 at, float minimumDepth, out Vector3 submerged);
 
+    /// The first leg of a route from land into deep water, or from water onto land.
+    Vector3[] pathToShore(Vector3 from, Vector3 to, float minimumDepth, bool swimming);
+
     /// Whether both endpoints are submerged. A null route then means they cannot be connected safely.
     bool pathInWater(Vector3 from, Vector3 to, float minimumDepth, out Vector3[] route);
 
@@ -884,6 +887,7 @@ version (unittest)
         Vector3[] pathBetween(Vector3 from, Vector3 to) { return paths is null ? null : paths(from, to); }
         bool swimmableAt(Vector3 at, float minimumDepth) { return false; }
         bool swimmingTarget(Vector3 at, float minimumDepth, out Vector3 submerged) { return false; }
+        Vector3[] pathToShore(Vector3 from, Vector3 to, float minimumDepth, bool swimming) { return null; }
         bool pathInWater(Vector3 from, Vector3 to, float minimumDepth, out Vector3[] route) { return false; }
         bool positionOf(ulong guid, out Position at) { return false; }
     }

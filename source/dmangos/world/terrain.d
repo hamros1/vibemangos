@@ -555,16 +555,17 @@ final class Terrain
      * The way from `from` to `to` over the movement maps, its corners from
      * `from` on; empty if the map has none there, or either end is off them (the caller then walks
      * straight). An unreachable end gives the way to the nearest place to it. With
-     * `waterOnly`, use only water polygons and require a complete path.
+     * `waterOnly`, use only water polygons and require a complete path. `requireComplete`
+     * also rejects partial routes on the regular ground and water polygons.
      */
-    Vector3[] pathBetween(Vector3 from, Vector3 to, bool waterOnly = false)
+    Vector3[] pathBetween(Vector3 from, Vector3 to, bool waterOnly = false, bool requireComplete = false)
     {
         if (navigation is null)
             return null;
         tile(from.x, from.y); // the tiles under both ends, loaded
         tile(to.x, to.y);
         auto way = navigation.findPath(from, to, waterOnly ? navFlag!(NavArea.water) : walkingFlags);
-        return waterOnly && way.partial ? null : way.points;
+        return (waterOnly || requireComplete) && way.partial ? null : way.points;
     }
 
     /// Whether the map has movement maps.
@@ -1164,4 +1165,33 @@ unittest
     prey.movement.position = Position(bank.x, bank.y, bank.z);
     fish.tick(map, 1);
     assert(fish.spline.finalized, "a creature whose habitat is water will not chase onto land");
+
+    const amphibianTemplate = CreatureTemplate(entry: 101, inhabitType: 3);
+    const amphibianSpawn = CreatureSpawn(3, 101, 1, bank.x, bank.y, bank.z);
+    auto amphibian = new Creature(amphibianSpawn, &amphibianTemplate, 1, 1, parts, client);
+    amphibian.factionTemplate = &fishFaction;
+    amphibian.speeds[MoveType.run] = 7;
+    amphibian.speeds[MoveType.swim] = 4;
+    map.addObject(amphibian);
+    prey.movement.position = Position(above.x, above.y, above.z);
+    amphibian.ai.attackedBy(UnitRef.of(prey, map), map);
+    amphibian.tick(map, 1);
+    const wetShore = amphibian.spline.finalDestination;
+    assert(!amphibian.spline.finalized && !amphibian.fighter.swimming && map.swimmableAt(wetShore, amphibian.collisionHeight),
+        "the land leg goes only to where the water becomes deep");
+    followSpline(amphibian, amphibian.spline.duration + 1);
+    amphibian.tick(map, 1);
+    assert(!amphibian.spline.finalized && amphibian.fighter.swimming
+        && amphibian.spline.finalDestination.z == above.z,
+        "the pursuit resumes underwater from the shore");
+    followSpline(amphibian, amphibian.spline.duration + 1);
+    prey.movement.position = Position(bank.x, bank.y, bank.z);
+    amphibian.tick(map, 1);
+    const dryShore = amphibian.spline.finalDestination;
+    assert(!amphibian.spline.finalized && amphibian.fighter.swimming
+        && !map.swimmableAt(dryShore, amphibian.collisionHeight),
+        "the swim leg ends at the far edge of deep water");
+    followSpline(amphibian, amphibian.spline.duration + 1);
+    amphibian.tick(map, 1);
+    assert(!amphibian.fighter.swimming, "the creature resumes ground movement on the bank");
 }

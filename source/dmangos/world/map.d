@@ -1900,6 +1900,81 @@ final class Map : CombatWorld, GameObjectWorld
         return true;
     }
 
+    /// Plan on the floor, and cut the route at the first change of movement medium.
+    Vector3[] pathToShore(Vector3 from, Vector3 to, float minimumDepth, bool swimming)
+    {
+        import std.algorithm.comparison : max;
+        import std.math : ceil, isFinite;
+
+        if (terrain is null)
+            return null;
+        auto floorFrom = from, floorTo = to;
+        floorFrom.z = groundHeight(from.x, from.y, from.z, true);
+        floorTo.z = groundHeight(to.x, to.y, to.z, true);
+        if (!(floorFrom.z > invalidHeightValue && floorTo.z > invalidHeightValue))
+            return null;
+        auto route = terrain.pathBetween(floorFrom, floorTo, requireComplete: true);
+        if (route.length < 2)
+            return null;
+        enum float clearance = 0.1f, maxDistance = 512.0f;
+        bool inWater(Vector3 floor)
+        {
+            floor.z += clearance;
+            return swimmableAt(floor, minimumDepth);
+        }
+        if (inWater(route[0]) != swimming)
+            return null;
+        float traveled = 0;
+        foreach (i; 1 .. route.length)
+        {
+            const first = route[i - 1], last = route[i];
+            const length = (last - first).magnitude;
+            traveled += length;
+            if (!isFinite(traveled) || traveled > maxDistance)
+                return null;
+            const steps = max(1u, cast(uint) ceil(length / 2));
+            Vector3 same = first;
+            foreach (step; 1 .. steps + 1)
+            {
+                auto at = first + (last - first) * (cast(float) step / steps);
+                if (inWater(at) == swimming)
+                {
+                    same = at;
+                    continue;
+                }
+                // Find the edge more closely. End just across it so the next spline can use the other speed.
+                foreach (_; 0 .. 7)
+                {
+                    const middle = (same + at) * 0.5f;
+                    if (inWater(middle) == swimming)
+                        same = middle;
+                    else
+                        at = middle;
+                }
+                same.z += clearance;
+                at.z += clearance;
+                if (swimming)
+                {
+                    Vector3[] waterRoute;
+                    if (!pathInWater(from, same, minimumDepth, waterRoute) || !waterRoute.length)
+                        return null;
+                    return waterRoute ~ at;
+                }
+                route.length = i;
+                route[0] = from;
+                route ~= at;
+                foreach (j; 1 .. route.length)
+                {
+                    const a = route[j - 1], b = route[j];
+                    if (!lineOfSightBetween(Position(a.x, a.y, a.z + clearance), Position(b.x, b.y, b.z + clearance)))
+                        return null;
+                }
+                return route;
+            }
+        }
+        return null;
+    }
+
     /// See `MotionWorld.waterOrGroundLevel`.
     float waterOrGroundLevel(float x, float y, float z, float groundZ, float minWaterDeep)
     {

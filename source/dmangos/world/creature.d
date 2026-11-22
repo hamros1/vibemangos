@@ -735,6 +735,20 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         return canSwim && !(template_.inhabitType & inhabitLandOrAir) && !scriptFlying;
     }
 
+    /// Change the movement mode and its public flag together.
+    package bool setSwimming(bool swimming)
+    {
+        const flags = values.get!UNIT_FIELD_FLAGS;
+        if (movement.has(MovementFlags.swimming) == swimming && ((flags & UnitFlags.swimming) != 0) == swimming)
+            return false;
+        if (swimming)
+            movement.flags |= MovementFlags.swimming;
+        else
+            movement.flags &= ~MovementFlags.swimming;
+        values.set!UNIT_FIELD_FLAGS(swimming ? flags | UnitFlags.swimming : flags & ~UnitFlags.swimming);
+        return true;
+    }
+
     /// Rooted or stunned (or held by its script): it does not move.
     @property bool immobilized() const
     {

@@ -5,8 +5,8 @@
 - **Clustering.** Extend cross-node routing to script-selected channels and scripted effects. See
   [spell routing limits](CLUSTER.md#spell-routing-limits) and the
   [cross-node feature list](CLUSTER.md#what-crosses-nodes-feature-by-feature).
-- **Terrain.** Handle transitions between land and swimming and connect moving platforms
-  to movement maps.
+- **Terrain.** Extend shoreline transitions to following and other movement modes. Connect
+  moving platforms to movement maps.
 - **Gameplay coverage.** See the [spell audit](SPELLS.md) for gaps by class and the
   battleground notes below for remaining Alterac Valley events.
 
@@ -50,8 +50,9 @@ describes how players use the systems available today.
 * **Terrain:** heights put wandering creatures on the ground. Line of sight checks use
   static vmaps, closed doors and loaded elevator meshes at their animated position. Movement maps
   give creatures paths round buildings and hills. Creatures already swimming can follow submerged
-  paths at their swim speed. A swimmer can approach a target at the surface, and a fish
-  stays in the water during pursuit. Shoreline transitions and pets entering water remain open.
+  paths at their swim speed and approach targets at the surface. In a chase, amphibious
+  creatures use the movement map to cross the shore and change speed. Water-only creatures
+  stay submerged. Following across shorelines remains open.
 * **Movement:** the speed check assumes running speed; it must learn mounts, speed auras,
   knockbacks and taxis when those exist.
 * **Environment:** the feign death timer (dying of feigning too long) is not run; mirror timers are not
