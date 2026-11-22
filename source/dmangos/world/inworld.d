@@ -1559,7 +1559,11 @@ private:
         import dmangos.world.whisper : deliverWhisper, WhisperFrom;
 
         const from = WhisperFrom(player.guid, player.data.race, hasPermissions, player.chatTag);
-        if (auto target = context.onlinePlayer(to))
+        auto target = context.onlinePlayer(to);
+        if (target is null)
+            if (auto copy = currentBattleground())
+                target = copy.alliedWhisperTarget(player.guid, to);
+        if (target !is null)
             return deliverWhisper(target, from, text, context.config.allowTwoSideInteractionChat,
                 (ulong sender) => sessionOf(target).allowsWhispersFrom(sender),
                 (ubyte race) => cast(uint) context.client.teamForRace(race), (Opcode op, const(ubyte)[] b) => deliver(op, b));

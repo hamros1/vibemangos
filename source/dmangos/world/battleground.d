@@ -73,6 +73,14 @@ enum ubyte eventDoors = 254, eventNone = 255;
 /// `mangos_string` 750, 751: the premature end's warnings (minutes, seconds).
 enum uint stringClosingMinutes = 750, stringClosingSeconds = 751;
 
+/// The original client removes spaces and tabs from realm names in chat.
+private string chatRealmName(string realm)
+{
+    import std.array : replace;
+
+    return realm.replace(" ", "").replace("\t", "");
+}
+
 /// How long a team may be short of players before it loses (the premature end).
 enum Duration prematureFinish = 5.minutes;
 
@@ -222,6 +230,45 @@ final class Battleground
         const id = member.identity;
         response = ServerNameQueryResponse(guid, id.name, realm.realmDisplayName, id.race, id.gender, id.classId);
         return true;
+    }
+
+    /// Resolves a realm-qualified whisper only among allies in this shared copy.
+    package OnlinePlayer alliedWhisperTarget(ulong sender, string address)
+    {
+        import std.string : indexOf;
+        import dmangos.world.battlegroup : battlegroupInstance;
+        import dmangos.world.worlddata : toLowerName;
+
+        const dash = address.indexOf('-');
+        if (dash <= 0 || dash + 1 == address.length || !(instance & battlegroupInstance)
+            || context.battlegroup is null)
+            return null;
+        const ally = sender in members;
+        if (ally is null || ally.offlineSince != MonoTime.init || memberSession(sender) is null)
+            return null;
+
+        const name = toLowerName(address[0 .. dash]);
+        const realmName = toLowerName(chatRealmName(address[dash + 1 .. $]));
+        if (!realmName.length)
+            return null;
+        OnlinePlayer target;
+        foreach (guid, ref member; members)
+        {
+            if (member.team != ally.team || member.offlineSince != MonoTime.init || (guid >> 32) == (sender >> 32))
+                continue;
+            if (auto who = memberSession(guid))
+            {
+                if (toLowerName(who.character.data.name) != name)
+                    continue;
+                auto realm = context.battlegroup.homeOf(guid);
+                if (toLowerName(chatRealmName(realm.realmDisplayName)) != realmName)
+                    continue;
+                if (target !is null) // realm names can become ambiguous when spaces are removed
+                    return null;
+                target = who;
+            }
+        }
+        return target;
     }
 
     private
@@ -935,7 +982,7 @@ final class Battleground
                     {
                         if (foreign is null)
                         {
-                            const realm = name.realm.replace(" ", "").replace("\t", "");
+                            const realm = chatRealmName(name.realm);
                             foreign = battlegroundMessage(chatType,
                                 formatted.replace("$n", name.name ~ "-" ~ realm), source);
                         }

@@ -89,8 +89,10 @@ def run(fixture):
         if i == 0:
             actions += ["cmd:.battleground forcestart"] * 2
         mate = ((2 - i) << 32) | int(ids[1 - i])
+        foreign_realm = realms[1 - i].replace(" ", "")
         actions += [f"waitfile:{invited}", "bgport:489:1", f"waitfile:{entered}", "pvplog:names",
-                    f"partystats:{mate}", f"waitfile:{scored}"]
+                    f"partystats:{mate}", f"whisper:Echo-{foreign_realm}:Whisper from {realms[i]}",
+                    f"waitfile:{scored}"]
         if i == 1:
             actions += ["logout", "login:Echo", "listen:2", f"partystats:{mate}"]
         actions += [f"waitfile:{rejoined}", "bgleave:489", "listen:2", "logout"]
@@ -99,10 +101,22 @@ def run(fixture):
             (at_masters, [f"[creature] {battlemaster} guid"] * 2),
             (in_queue, ["copy 0 queued"] * 2),
             (invited, [" invited ["] * 2),
-            (entered, ["[new world] map 489 "] * 2),
-            (scored, [f"[scoreboard names] ['Echo', 'Echo-{other}']" for other in reversed(realms)])):
+            (entered, ["[new world] map 489 "] * 2)):
         wait_for(marker.name, lambda: all(value in fixture.log(f"battle{i}") for i, value in enumerate(expected)), 20)
         marker.touch()
+
+    def saw_scores_and_whispers():
+        for i, other in enumerate(reversed(realms)):
+            log = fixture.log(f"battle{i}")
+            guid = ((2 - i) << 32) | int(ids[1 - i])
+            if (f"[scoreboard names] ['Echo', 'Echo-{other}']" not in log
+                    or f"[chat type 6] from {guid}: 'Whisper from {other}'" not in log
+                    or f"[chat type 7] from {guid}: 'Whisper from {realms[i]}'" not in log):
+                return False
+        return True
+
+    wait_for("both clients' realm-qualified scores and whispers", saw_scores_and_whispers, 20)
+    scored.touch()
     group_guid = (1 << 32) | int(ids[0])
     online_stats = f"[member stats] {group_guid} mask 0x7ff status 1"
 
@@ -125,7 +139,7 @@ def run(fixture):
     made = [line for line in fixture.log("battlegroup").splitlines() if "of warsongGulch made" in line]
     assert len(made) == 1, made
     assert all(fixture.query("SELECT map FROM characters WHERE name='Echo'", db) == "0" for db in characters)
-    print("PASS: two realm clusters shared scores and party stats, restored a reconnecting raid member, and returned home.")
+    print("PASS: both realms exchanged whispers, shared scores and party stats, restored a raid member, and returned home.")
 
 
 if __name__ == "__main__":

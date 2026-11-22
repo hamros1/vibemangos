@@ -161,9 +161,19 @@ unittest
     checkName(right, l, "Echo", "First");
     checkName(left, l, "Echo", "");
     checkName(right, r, "Echo", "");
+    void whisper(ref TestClient user, string address, string text)
+    {
+        user.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_WHISPER, text, address));
+    }
+    whisper(left, "Echo-SilverHand", "For the Horde?");
+    assert(bodyOf(left.read(), Opcode.SMSG_CHAT_PLAYER_NOT_FOUND).length);
+    assert(bodyOf(right.read(), Opcode.SMSG_MESSAGECHAT).length == 0);
     auto teammate = loggedIn(b, nextDb, 8, "Scout", Position(-8939, -142, 85), AccountLevel.player, 1, 0, 20);
     const scout = teammate.session.inWorld.player.guid;
     assert(pool.member(copyId, scout) is null);
+    whisper(left, "Scout-SilverHand", "Still in Stormwind?");
+    assert(bodyOf(left.read(), Opcode.SMSG_CHAT_PLAYER_NOT_FOUND).length);
+    assert(bodyOf(teammate.read(), Opcode.SMSG_MESSAGECHAT).length == 0);
     b.services.call!(BattlegroundQueueHost.join)(BattlegroundJoin(scout, 0, 0, 20, BattlegroundType.warsongGulch, 0));
     teammate.write(Opcode.CMSG_BATTLEFIELD_PORT, port.data);
     teammate.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
@@ -181,6 +191,20 @@ unittest
     auto stats = ByteReader(bodyOf(teammate.read(), Opcode.SMSG_PARTY_MEMBER_STATS_FULL));
     assert(stats.readPackedGuid() == l && (stats.read!uint & GroupUpdate.currentHealth));
     assert(stats.read!ubyte == MemberStatus.online && stats.read!ushort > 0);
+    void checkWhisper(ref TestClient user, ChatType type, ulong other, string text)
+    {
+        auto reply = ByteReader(bodyOf(user.read(), Opcode.SMSG_MESSAGECHAT));
+        assert(reply.read!ubyte == type);
+        reply.read!uint;
+        assert(reply.read!ulong == other);
+        assert(reply.read!uint == text.length + 1 && reply.readCString() == text);
+    }
+    whisper(left, "scout-silverhand", "Defend here?");
+    checkWhisper(teammate, ChatType.CHAT_MSG_WHISPER, l, "Defend here?");
+    checkWhisper(left, ChatType.CHAT_MSG_WHISPER_INFORM, scout, "Defend here?");
+    whisper(teammate, "Echo-First", "On my way");
+    checkWhisper(left, ChatType.CHAT_MSG_WHISPER, scout, "On my way");
+    checkWhisper(teammate, ChatType.CHAT_MSG_WHISPER_INFORM, l, "On my way");
     left.read();
     ByteWriter chat;
     chat.put(cast(uint) ChatType.CHAT_MSG_BATTLEGROUND);
@@ -209,6 +233,8 @@ unittest
 
     teammate.session.disconnected();
     assert(match.memberSession(scout) is null && scout in match.members);
+    whisper(left, "Scout-SilverHand", "Are you back?");
+    assert(bodyOf(left.read(), Opcode.SMSG_CHAT_PLAYER_NOT_FOUND).length);
     left.read();
     left.write(Opcode.MSG_PVP_LOG_DATA, null);
     auto board = ByteReader(bodyOf(left.read(), Opcode.MSG_PVP_LOG_DATA));

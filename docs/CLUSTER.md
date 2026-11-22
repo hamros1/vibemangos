@@ -833,7 +833,7 @@ play the match and return to their home realm. Each realm stores its own charact
 The 1.12.1 client adds ` (*)` to foreign nameplates and displays the full realm after a hyphen on
 the scoreboard. In chat the client omits spaces from realm names. To players from other realms,
 Bob from Silver Hand appears as `Bob (*)`, `Bob-Silver Hand` on the scoreboard and `Bob-SilverHand`
-in chat.
+in chat. Allies in the same match can whisper him with `/w Bob-SilverHand` and reply with `/r`.
 
 If a designated node loses its lease, its cluster reserves the battleground maps and queue for
 that node. Restart the combined process to restore service after it exits.
