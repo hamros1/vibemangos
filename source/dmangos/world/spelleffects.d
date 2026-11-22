@@ -11,6 +11,7 @@ module dmangos.world.spelleffects;
 
 import dmangos.world.caster : Caster;
 import dmangos.world.combat : MeleeDamage;
+import dmangos.world.movement : Position;
 import dmangos.world.spellcast : SpellTargets;
 import dmangos.world.spellids;
 import dmangos.world.spells : SpellInfo;
@@ -35,6 +36,7 @@ struct SpellCast
     /// A creature's weapon spell: the melee roll against each target (its hit roll).
     MeleeDamage[ulong] weaponRolls;
     bool playerHandoff; /// the cast followed its player target across nodes
+    Position gameObjectOrigin; /// where the caster completed a spell with a named game-object effect
 
     /// Whether effect `i` is to be done once this cast (the first target), and marks it done.
     bool once(size_t i)
@@ -95,11 +97,11 @@ private enum SpellEffect[] creaturesDo = [SpellEffect.none, SpellEffect.schoolDa
 /// Whether a cast of `kind` does `effect` (the NPC sweep names what is not done by this).
 bool doneBy(UnitKind kind, const ref SpellInfo spell, size_t i) pure nothrow @nogc @safe
 {
-    import dmangos.world.spellselection : namedGameObjectEffect;
+    import dmangos.world.spellselection : namedGameObjectShape;
 
     const effect = spell.effect[i];
     if (effect == SpellEffect.activateObject)
-        return kind != UnitKind.none && namedGameObjectEffect(spell) == i;
+        return kind != UnitKind.none && namedGameObjectShape(spell, i) != ImplicitTarget.none;
     if (effect > SpellEffect.max || undoneByAny[effect])
         return false;
     final switch (kind)
@@ -189,7 +191,7 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
     }
     case SpellEffect.activateObject:
         if (context !is null && map !is null)
-            context.activateNamedGameObject(caster.unit, spell, i, target, c.triggered);
+            context.activateNamedGameObject(caster.unit, spell, i, target, c.gameObjectOrigin, c.triggered);
         break;
     case SpellEffect.dummy, SpellEffect.scriptEffect: // SPELL_EFFECT_DUMMY, SPELL_EFFECT_SCRIPT_EFFECT: the spell's script, then its database script
     {

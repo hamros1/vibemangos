@@ -78,6 +78,7 @@ import dmangos.world.loot : Loot, maxLootItems;
 import dmangos.world.map : Inhabitant, Map, MapObject, MapSettings, VisibilityFacts;
 import dmangos.world.online : OnlinePlayer;
 import dmangos.world.playercreate : CreationSettings;
+import dmangos.world.spellids : ImplicitTarget, SpellEffect;
 import dmangos.world.worlddata : EventCreature, EventMail, PoolMember, Ship, SpellListEntry, WorldData;
 
 /// How a player simulated on another node than its client's talks to the other node.
@@ -676,71 +677,123 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return effect;
     }
 
-    package size_t namedGameObjectRouting(const(SpellInfo)* spell)
+    package ImplicitTarget namedGameObjectRouting(const(SpellInfo)* spell, size_t effect)
     {
-        import dmangos.world.spellselection : namedGameObjectEffect;
+        import dmangos.world.spellselection : namedGameObjectShape;
 
-        if (spellScript(spell.id) || !data.spellScriptObjects.get(spell.id, null).length)
-            return size_t.max;
-        return namedGameObjectEffect(*spell);
+        const shape = namedGameObjectShape(*spell, effect);
+        if (shape != ImplicitTarget.none && !spellScript(spell.id) && data.spellScriptObjects.get(spell.id, null).length)
+            return shape;
+        return ImplicitTarget.none;
+    }
+
+    package bool onlyNamedGameObjectEffects(const(SpellInfo)* spell)
+    {
+        bool found;
+        foreach (i, effect; spell.effect)
+        {
+            if (effect == SpellEffect.none)
+                continue;
+            if (namedGameObjectRouting(spell, i) == ImplicitTarget.none)
+                return false;
+            found = true;
+        }
+        return found;
     }
 
     bool delegate(ushort, const ref GameObjectSpell) sendGameObjectSpell;
     private ulong[ushort] lastGameObjectSpell, lastGameObjectSpellReply;
 
-    package ulong namedGameObjectTarget(Map map_, const(SpellInfo)* spell, size_t effect, Position origin)
+    private bool namedGameObjectGeometry(Map map_, const(SpellInfo)* spell, size_t effect, ImplicitTarget shape,
+        Position origin, out Position center, out float reach)
     {
-        import dmangos.world.spellselection : namedCreatureRange, nearestNamedGameObject;
+        import std.math : isFinite;
+        import dmangos.world.spellcast : radius;
+        import dmangos.world.spellselection : namedCreatureRange;
 
-        const range = namedCreatureRange(*spell, client);
-        const entries = data.spellScriptObjects.get(spell.id, null);
-        auto object = nearestNamedGameObject(map_, origin, range, effect, entries, sendGameObjectSpell !is null);
-        return object is null ? 0 : object.guid;
+        center = origin;
+        if (spell.implicitTargetA[effect] == ImplicitTarget.database)
+        {
+            const location = spell.id in data.spellTargets;
+            if (location is null || location.map != map_.id)
+                return false;
+            center = location.at;
+        }
+        reach = shape == ImplicitTarget.gameobjectScriptNearCaster
+            ? namedCreatureRange(*spell, client) : radius(*spell, effect, client);
+        return isFinite(reach) && reach > 0 && client.isValidMapCoord(map_.id, center.x, center.y, center.z);
     }
 
-    package void activateNamedGameObject(UnitRef caster, const(SpellInfo)* spell, size_t effect, ulong guid, bool triggered)
+    package ulong[] namedGameObjectTargets(Map map_, const(SpellInfo)* spell, size_t effect, ImplicitTarget shape,
+        Position origin, out Position center)
+    {
+        import dmangos.world.spellselection : namedGameObjectsInArea, nearestNamedGameObject;
+
+        float reach;
+        if (!namedGameObjectGeometry(map_, spell, effect, shape, origin, center, reach))
+            return null;
+        const entries = data.spellScriptObjects.get(spell.id, null);
+        const acrossNodes = sendGameObjectSpell !is null;
+        if (shape != ImplicitTarget.gameobjectScriptNearCaster)
+            return namedGameObjectsInArea(map_, center, reach, effect, entries, acrossNodes, spell.casting.maxAffectedTargets);
+        auto object = nearestNamedGameObject(map_, center, reach, effect, entries, acrossNodes);
+        return object is null ? null : [object.guid];
+    }
+
+    package void activateNamedGameObject(UnitRef caster, const(SpellInfo)* spell, size_t effect, ulong guid,
+        Position origin, bool triggered)
     {
         import dmangos.world.replication : Replica;
 
-        if (!canWrite() || effect != namedGameObjectRouting(spell))
+        const shape = namedGameObjectRouting(spell, effect);
+        if (!canWrite() || shape == ImplicitTarget.none)
             return;
         auto map_ = caster.map;
         if (auto copy = cast(Replica) map_.findObject(guid))
         {
             if (sendGameObjectSpell is null || copy.owner == nodeId)
                 return;
-            const at = caster.position;
             const message = GameObjectSpell(nextGameplaySequence(), caster.combatGuid, guid,
-                spell.id, map_.id, map_.instanceId, cast(ubyte) effect, at.x, at.y, at.z, triggered);
+                spell.id, map_.id, map_.instanceId, cast(ubyte) effect, origin.x, origin.y, origin.z, triggered);
             sendGameObjectSpell(copy.owner, message);
         }
         else if (auto object = map_.gameObjectAt(guid))
-            playNamedGameObject(map_, spell, effect, object);
+            playNamedGameObject(map_, spell, effect, shape, object, origin);
     }
 
-    private bool playNamedGameObject(Map map_, const(SpellInfo)* spell, size_t effect, GameObject object)
+    private bool playNamedGameObject(Map map_, const(SpellInfo)* spell, size_t effect, ImplicitTarget shape,
+        GameObject object, Position origin)
     {
         import dmangos.world.gameobject : gameObjectAnimation;
-        import dmangos.world.spellselection : namedGameObjectEntry;
+        import dmangos.world.spellselection : namedGameObjectAnimation, namedGameObjectEntry;
 
         if (!namedGameObjectEntry(data.spellScriptObjects.get(spell.id, null), effect, object.spawn.entry))
             return false;
+        Position center;
+        float reach;
+        if (!namedGameObjectGeometry(map_, spell, effect, shape, origin, center, reach))
+            return false;
+        const at = object.position;
+        if (!((at.x - center.x) ^^ 2 + (at.y - center.y) ^^ 2 + (at.z - center.z) ^^ 2 <= reach ^^ 2))
+            return false;
         map_.sendToObservers(object.guid, Opcode.SMSG_GAMEOBJECT_CUSTOM_ANIM,
-            gameObjectAnimation(object.guid, cast(uint)(spell.miscValue[effect] - 1)));
+            gameObjectAnimation(object.guid, cast(uint) namedGameObjectAnimation(*spell, effect)));
         return true;
     }
 
     void gameObjectSpellArrived(ushort peer, const ref GameObjectSpell message)
     {
         import dmangos.world.replication : Replica;
-        import dmangos.world.spellselection : namedCreatureRange;
         import dmangos.world.updatefields : TypeId;
 
         if (!peer || !message.sequence || !canWrite())
             return;
         auto map_ = existingMap(message.map, message.instance);
         const spell = data.spells.spell(message.spell);
-        if (map_ is null || map_.id != message.map || spell is null || message.effect != namedGameObjectRouting(spell))
+        if (map_ is null || map_.id != message.map || spell is null)
+            return;
+        const shape = namedGameObjectRouting(spell, message.effect);
+        if (shape == ImplicitTarget.none)
             return;
         if (message.reply)
         {
@@ -763,11 +816,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         auto object = map_.gameObjectAt(message.target);
         if (object is null || !client.isValidMapCoord(map_.id, message.x, message.y, message.z))
             return;
-        const at = object.position;
-        const maxDistance = namedCreatureRange(*spell, client);
-        if (!((at.x - message.x) ^^ 2 + (at.y - message.y) ^^ 2 + (at.z - message.z) ^^ 2 <= maxDistance ^^ 2))
-            return;
-        if (playNamedGameObject(map_, spell, message.effect, object)
+        const origin = Position(message.x, message.y, message.z);
+        if (playNamedGameObject(map_, spell, message.effect, shape, object, origin)
             && copy.fields.type == TypeId.player && sendGameObjectSpell !is null)
         {
             auto reply = cast(GameObjectSpell) message;

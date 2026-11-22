@@ -1967,7 +1967,7 @@ private:
 
         const entries = context.spellScriptTargets(spell.id);
         const namedEffect = context.namedCreatureRouting(spell);
-        const namedObjectEffect = context.namedGameObjectRouting(spell);
+        c.gameObjectOrigin = player.position;
         const namedShape = namedEffect != size_t.max ? namedCreatureShape(*spell, namedEffect) : ImplicitTarget.none;
         const namedRange = namedEffect != size_t.max ? namedCreatureRadius(*spell, namedEffect, context.client) : 0;
         const routeNamed = context.sendAreaDamage !is null;
@@ -1993,6 +1993,8 @@ private:
         uint[ulong] bounceOf;
         SpellMissInfo[ulong] missOf;
         ulong[][3] effectTargets;
+        Position objectDestination;
+        bool hasObjectDestination;
         foreach (i; 0 .. 3)
         {
             if (spell.effect[i] == 0)
@@ -2000,6 +2002,7 @@ private:
             if (drain !is null)
                 continue; // The channel's aura is installed on its target after the caster starts the channel.
             const a = spell.implicitTargetA[i];
+            const objectShape = context.namedGameObjectRouting(spell, i);
             ulong[] targets;
             const remoteArea = !c.castTime && context.sendAreaDamage !is null
                 && !(c.targets.mask & TargetFlags.sourceLocation) && isHostileAreaEffect(*spell, i);
@@ -2007,6 +2010,16 @@ private:
                 : areaTargets(spell, i, c.targets, remoteArea);
             if (spell.effect[i] == SpellEffect.persistentAreaAura) // SPELL_EFFECT_PERSISTENT_AREA_AURA: once, whoever stands there
                 targets = [player.guid];
+            else if (objectShape != ImplicitTarget.none)
+            {
+                Position center;
+                targets = context.namedGameObjectTargets(map, spell, i, objectShape, c.gameObjectOrigin, center);
+                if (objectShape == ImplicitTarget.enumGameobjectsScriptAoeAtDestLoc && targets.length)
+                {
+                    objectDestination = center;
+                    hasObjectDestination = true;
+                }
+            }
             else if (area.length || isAreaTarget(spell, i))
                 targets = area.dup; // an area, a cone, the party
             else if (a == ImplicitTarget.none && spell.casting.implicitTargetB[i] == ImplicitTarget.none
@@ -2091,11 +2104,6 @@ private:
                 if (!c.targets.gameObject && !(a == ImplicitTarget.gameObjectItem && c.targets.item))
                     continue;
                 targets = [c.targets.gameObject ? c.targets.gameObject : player.guid]; // an item: the caster's own
-            }
-            else if (i == namedObjectEffect)
-            {
-                if (const guid = context.namedGameObjectTarget(map, spell, i, player.position))
-                    targets = [guid];
             }
             else if (namedShape != ImplicitTarget.none && namedCreatureShape(*spell, i) == namedShape)
             {
@@ -2184,6 +2192,11 @@ private:
         {
             displayTargets.mask |= TargetFlags.destLocation;
             displayTargets.dest = [namedCenter.x, namedCenter.y, namedCenter.z];
+        }
+        else if (hasObjectDestination)
+        {
+            displayTargets.mask |= TargetFlags.destLocation;
+            displayTargets.dest = [objectDestination.x, objectDestination.y, objectDestination.z];
         }
         map.sendToWatchers(this, Opcode.SMSG_SPELL_GO, spellGoPacket(player.guid, spell.id, displayedResults, displayTargets),
             true);

@@ -17,24 +17,30 @@ import dmangos.world.worlddata : SpellScriptObject, SpellTarget, WorldData;
 /// Activate-object animation slots 0 through 3 are encoded as actions 1 through 4.
 private enum uint firstObjectAnimation = 1, lastObjectAnimation = 4;
 
-package size_t namedGameObjectEffect(const ref SpellInfo spell) pure nothrow @nogc @safe
+/// Onyxia's Eruption uses the disturb action to animate a crack in the floor.
+package int namedGameObjectAnimation(const ref SpellInfo spell, size_t effect) pure nothrow @nogc @safe
+{
+    const action = spell.miscValue[effect];
+    if (action >= firstObjectAnimation && action <= lastObjectAnimation)
+        return cast(int)(action - firstObjectAnimation);
+    return spell.id == 17731 && action == 5 ? 0 : -1;
+}
+
+package ImplicitTarget namedGameObjectShape(const ref SpellInfo spell, size_t effect) pure nothrow @nogc @safe
 {
     enum uint channels = 0x04 | 0x40;
-    if (spell.casting.speed > 0 || (spell.attributesEx & channels))
-        return size_t.max;
-    size_t chosen = size_t.max;
-    foreach (i, effect; spell.effect)
-    {
-        if (effect == SpellEffect.none)
-            continue;
-        if (chosen != size_t.max || effect != SpellEffect.activateObject
-            || spell.implicitTargetA[i] != ImplicitTarget.gameobjectScriptNearCaster
-            || spell.casting.implicitTargetB[i] != ImplicitTarget.none
-            || spell.miscValue[i] < firstObjectAnimation || spell.miscValue[i] > lastObjectAnimation)
-            return size_t.max;
-        chosen = i;
-    }
-    return chosen;
+    if (effect >= spell.effect.length || spell.effect[effect] != SpellEffect.activateObject
+        || spell.casting.speed > 0 || (spell.attributesEx & channels) || namedGameObjectAnimation(spell, effect) < 0)
+        return ImplicitTarget.none;
+    const a = spell.implicitTargetA[effect], b = spell.casting.implicitTargetB[effect];
+    if (a == ImplicitTarget.gameobjectScriptNearCaster && b == ImplicitTarget.none)
+        return a;
+    if (a == ImplicitTarget.casterSource && b == ImplicitTarget.enumGameobjectsScriptAoeAtSrcLoc)
+        return b;
+    if ((a == ImplicitTarget.locationCasterDest || a == ImplicitTarget.database)
+        && b == ImplicitTarget.enumGameobjectsScriptAoeAtDestLoc)
+        return b;
+    return ImplicitTarget.none;
 }
 
 package bool namedGameObjectEntry(const(SpellScriptObject)[] entries, size_t effect, uint entry)
@@ -69,6 +75,36 @@ package MapObject nearestNamedGameObject(Map map, Position center, float reach, 
         }
     }
     return nearest;
+}
+
+package ulong[] namedGameObjectsInArea(Map map, Position center, float reach, size_t effect,
+    const(SpellScriptObject)[] entries, bool acrossNodes, uint maxTargets)
+{
+    import std.algorithm.sorting : sort;
+    import std.math : isFinite;
+    import dmangos.world.replication : Replica;
+    import dmangos.world.updatefields : OBJECT_FIELD_ENTRY, TypeId;
+
+    ulong[] targets;
+    if (!entries.length || !isFinite(reach) || reach <= 0)
+        return targets;
+    MapObject[] found;
+    foreach (object; map.objectsNear(center, reach))
+        if (object.fields.type == TypeId.gameObject && (acrossNodes || (cast(Replica) object) is null)
+            && namedGameObjectEntry(entries, effect, object.fields.get!OBJECT_FIELD_ENTRY)
+            && distanceSquared(center, object.position) <= reach ^^ 2)
+            found ~= object;
+    if (maxTargets && found.length > maxTargets)
+    {
+        found.sort!((a, b) {
+            const left = distanceSquared(center, a.position), right = distanceSquared(center, b.position);
+            return left < right || (left == right && a.guid < b.guid);
+        });
+        found = found[0 .. maxTargets];
+    }
+    foreach (object; found)
+        targets ~= object.guid;
+    return targets;
 }
 
 package float namedCreatureRange(const ref SpellInfo spell, const ClientData client)
@@ -206,9 +242,11 @@ private void visitNamedCreatures(CombatWorld world, Position center, float reach
 /// Players and creatures cast a recorded animation on the nearest eligible game object.
 unittest
 {
-    import dmangos.bytes : ByteReader, ByteWriter;
+    import dmangos.bytes : ByteReader, ByteWriter, floatBits;
     import dmangos.cluster.protocol : GameObjectSpell, decode;
+    import dmangos.dbc : buildDbc;
     import dmangos.serialization : serialize;
+    import dmangos.world.clientdata : spellRadiusFormat;
     import dmangos.world.creature : CreatureSpawn;
     import dmangos.world.gameobject : GameObject, GameObjectSpawn, GameObjectTemplate, GameObjectType;
     import dmangos.world.eventai : castTriggered;
@@ -218,7 +256,7 @@ unittest
     import dmangos.world.replication : encodePlayerState, encodeState;
     import dmangos.world.spellhandlers : testSpell;
     import dmangos.world.testclient;
-    import dmangos.world.updatefields : PLAYER_QUEST_LOG_1_1;
+    import dmangos.world.updatefields : PLAYER_QUEST_LOG_1_1, UNIT_FIELD_HEALTH;
 
     auto db = newDatabase();
     auto context = newCreationContext(db);
@@ -314,14 +352,14 @@ unittest
     assert(witness.read().length == 0);
     owner.gameObjectSpellArrived(1, requests[0]);
     owner.gameObjectSpellArrived(1, requests[0]);
-    void checkRemoteAnimation()
+    void checkRemoteAnimation(uint slot = 2)
     {
         uint played;
         foreach (message; witness.read())
             if (message.opcode == Opcode.SMSG_GAMEOBJECT_CUSTOM_ANIM)
             {
                 auto reader = ByteReader(message.body_);
-                assert(reader.read!ulong == remote.guid && reader.read!uint == 2 && reader.empty);
+                assert(reader.read!ulong == remote.guid && reader.read!uint == slot && reader.empty);
                 ++played;
             }
         assert(played == 1);
@@ -342,6 +380,43 @@ unittest
     owner.gameObjectSpellArrived(1, requests[1]);
     checkRemoteAnimation();
     assert(replies.length == 1, "only a player's cast needs credit returned");
+
+    // The Eruption animation can run beside a unit effect and shares its target cap across both nodes.
+    enum uint eruption = 17731;
+    auto mixed = testSpell(eruption, SpellEffect.heal, ImplicitTarget.caster, 10);
+    mixed.effect[1] = SpellEffect.activateObject;
+    mixed.implicitTargetA[1] = ImplicitTarget.locationCasterDest;
+    mixed.casting.implicitTargetB[1] = ImplicitTarget.enumGameobjectsScriptAoeAtDestLoc;
+    mixed.casting.radiusIndex[1] = 1;
+    mixed.casting.maxAffectedTargets = 2;
+    mixed.miscValue[1] = 5;
+    foreach (node; [context, owner])
+    {
+        node.client.spellRadii = typeof(node.client.spellRadii).parse(buildDbc(spellRadiusFormat,
+            [[1u, floatBits(4), 0, 0]]), "SpellRadius.dbc");
+        node.data.spells.spells[eruption] = mixed;
+        node.data.spellScriptObjects[eruption] = [SpellScriptObject(eligible, 0), SpellScriptObject(excluded, 2)];
+    }
+    player.spells ~= eruption;
+    player.values.set!UNIT_FIELD_HEALTH(10);
+    client.read();
+    ByteWriter eruptionCast;
+    eruptionCast.put(eruption);
+    SpellTargets(TargetFlags.self, 0).write(eruptionCast);
+    client.write(Opcode.CMSG_CAST_SPELL, eruptionCast.data);
+    assert(player.values.get!UNIT_FIELD_HEALTH > 10, "the companion effect also runs");
+    uint localAnimations;
+    foreach (message; client.read())
+        if (message.opcode == Opcode.SMSG_GAMEOBJECT_CUSTOM_ANIM)
+        {
+            auto reader = ByteReader(message.body_);
+            assert(reader.read!ulong == chosen.guid && reader.read!uint == 0 && reader.empty);
+            ++localAnimations;
+        }
+    assert(localAnimations == 1 && requests.length == 3 && requests[2].target == remote.guid
+        && requests[2].effect == 1 && requests[2].spell == eruption);
+    owner.gameObjectSpellArrived(1, requests[2]);
+    checkRemoteAnimation(0);
 }
 
 /// A player and an NPC choose a nearby named replica, with the effects applied only by its owner.

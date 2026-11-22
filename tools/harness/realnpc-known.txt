@@ -14,7 +14,6 @@
 7140: Expose Weakness: aura modDamageTaken: not on the player (effect 0)
 7344: Recombobulate: no caster: no creature casts it in the data
 9220: "Plucky" Resumes Chicken Form: aura transform: on the caster, its look unchanged (effect 0)
-9735: Sapta Sight: targeting: aura modInvisibilityDetection at the friendly creature, not the caster (effect 1); not done: activateObject (effect 2)
 9738: Rift Spawn Becomes Visible: no caster: no creature casts it in the data
 10227: Beast Tracking: not done: learnSpell (effect 0); not done: skillStep (effect 1)
 10451: Implosion: aura modStun: not on the player (effect 1)
