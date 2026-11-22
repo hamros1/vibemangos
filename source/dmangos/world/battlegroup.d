@@ -106,6 +106,7 @@ unittest
 {
     import dmangos.world.bgqueue : BattlegroundType, BattlegroundQueueHost, BattlegroundJoin;
     import dmangos.world.battleground : winnerAlliance;
+    import dmangos.world.group : GroupUpdate, MemberStatus;
     import dmangos.world.opcodes : ChatType, Language;
     import dmangos.world.testclient;
     import dmangos.world.testdata : mapEasternKingdoms, mapWarsongGulch, testClientData, testWorldData;
@@ -170,6 +171,16 @@ unittest
     assert(raid !is null && raid.isRaid && raid is b.groups.of(scout) && raid.members.length == 2);
     assert(raid.isMember(l) && raid.isMember(scout) && !raid.isMember(r));
     assert(firstDb.groups.length == 0 && nextDb.groups.length == 0);
+    auto moved = left.session.inWorld.player.movement;
+    moved.position.x += 500;
+    left.session.inWorld.player.movement = moved;
+    left.session.inWorld.movedOn(moved, Opcode.MSG_MOVE_HEARTBEAT);
+    assert(!pool.seeEachOther(l, scout));
+    teammate.read();
+    teammate.write(Opcode.CMSG_REQUEST_PARTY_MEMBER_STATS, ClientGuid(l));
+    auto stats = ByteReader(bodyOf(teammate.read(), Opcode.SMSG_PARTY_MEMBER_STATS_FULL));
+    assert(stats.readPackedGuid() == l && (stats.read!uint & GroupUpdate.currentHealth));
+    assert(stats.read!ubyte == MemberStatus.online && stats.read!ushort > 0);
     left.read();
     ByteWriter chat;
     chat.put(cast(uint) ChatType.CHAT_MSG_BATTLEGROUND);
@@ -181,6 +192,20 @@ unittest
     message.read!uint;
     assert(message.read!ulong == scout, "the chat sender uses the same realm-qualified GUID as the name cache");
     checkName(left, scout, "Scout", "Silver Hand");
+
+    teammate.read();
+    a.data.serverStrings[605] = "$n captured the Horde flag!";
+    match.message(605, ChatType.CHAT_MSG_BG_SYSTEM_ALLIANCE, scout);
+    foreach (i, user; [&left, &right, &teammate])
+    {
+        auto announcement = ByteReader(bodyOf(user.read(), Opcode.SMSG_MESSAGECHAT));
+        assert(announcement.read!ubyte == ChatType.CHAT_MSG_BG_SYSTEM_ALLIANCE);
+        announcement.read!uint;
+        assert(announcement.read!ulong == scout);
+        announcement.read!uint;
+        assert(announcement.readCString() == (i == 0 ? "Scout-SilverHand captured the Horde flag!"
+            : "$n captured the Horde flag!"));
+    }
 
     teammate.session.disconnected();
     assert(match.memberSession(scout) is null && scout in match.members);

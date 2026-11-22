@@ -177,6 +177,10 @@ private:
     void handleRequestPartyMemberStats(const ClientGuid request)
     {
         auto member = context.onlinePlayer(request.guid);
+        if (member is null && context.battlegroup !is null)
+            if (auto raid = context.battlegroup.raids.of(player.guid))
+                if (raid.isMember(request.guid))
+                    member = context.battlegroup.member(instanceId_, request.guid);
         if (member is null && context.requestMemberStats !is null)
             if (auto remote = context.remotePlayer(request.guid))
                 return context.requestMemberStats(remote.node, player.guid, request.guid);

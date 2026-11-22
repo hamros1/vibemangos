@@ -39,6 +39,7 @@ in order:
     invite:NAME  accept  decline  leave  raid
                               group invitations, leaving, converting to a raid
     party:TEXT  raidsay:TEXT  party and raid chat
+    partystats:GUID            ask for a group member's full stats
     join:CHANNEL  part:CHANNEL  chan:CHANNEL:TEXT  chanlist:CHANNEL
                               chat channels
     afk:TEXT  dnd:TEXT        away and busy (an empty TEXT clears it)
@@ -615,7 +616,10 @@ def describe(op, p):
         leader = struct.unpack_from("<Q", p, pos)[0]
         print(f"  [group list] {'raid' if kind else 'party'}, leader {leader}: {', '.join(members)}")
     elif op in (0x07E, 0x2F2):
-        g, pos = packed_guid(p, 0); mask = struct.unpack_from("<I", p, pos)[0]; print(f"  [member stats] {g} mask {mask:#x}")
+        g, pos = packed_guid(p, 0)
+        mask, = struct.unpack_from("<I", p, pos)
+        status = f" status {p[pos + 4]}" if mask & 1 else ""
+        print(f"  [member stats] {g} mask {mask:#x}{status}")
     elif op == 0x099:
         end = p.index(b"\0", 1); print(f"  [channel] notice {p[0]:#04x} '{p[1:end].decode()}' {p[end + 1:].hex()}")
     elif op == 0x09B:
@@ -1106,6 +1110,9 @@ for action in actions:
         wsend(0x06E, args[0].encode() + b"\0"); print(f"invite {args[0]}")
     elif kind in ("accept", "decline", "leave", "raid"):
         wsend({"accept": 0x072, "decline": 0x073, "leave": 0x07B, "raid": 0x28E}[kind], b""); print(kind)
+    elif kind == "partystats":
+        wsend(0x27F, struct.pack("<Q", int(args[0])))
+        describe(*expect(0x2F2))
     elif kind in ("party", "raidsay"):
         wsend(0x095, struct.pack("<II", 1 if kind == "party" else 2, 7) + ":".join(args).encode() + b"\0"); print(f"{kind} '{':'.join(args)}'")
     elif kind == "join":

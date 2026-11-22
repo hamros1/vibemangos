@@ -27,7 +27,8 @@ def run(fixture):
                           port=world_ports[node-1], bind_address="127.0.0.1", write_log=tag+".writes",
                           battlegroup="Emberstorm", metrics_interval_seconds=1)
             config["cluster"] = dict(name="battlegroup-test", node_id=node, listen_address="127.0.0.1",
-                                     listen_port=peer_ports[node-1], coordinator=f"127.0.0.1:{peer_ports[0]}")
+                                     listen_port=peer_ports[node-1], coordinator=f"127.0.0.1:{peer_ports[0]}",
+                                     gateway=node == 2)
             if node == 2:
                 fixture.start_world(tag, config)
             else:
@@ -61,17 +62,17 @@ def run(fixture):
         return fixture.start(label, [sys.executable, "-u", REPO / "tools/testclient.py", str(ports[8]),
                                      accounts[i], password, *actions], env=env)
 
-    entries = (14981, 2804)  # Elfarran in Stormwind, Kurden Bloodclaw in Undercity
+    battlemaster = 14981  # Elfarran in Stormwind, both characters Alliance
     ids = []
-    for i, race in enumerate((1, 2)):
+    for i in range(2):
         label = f"create{i}"
-        creating = client(label, i, "enum", f"create:Echo:{race}:1", "drop", node=1)
+        creating = client(label, i, "enum", "create:Echo:1:1", "drop", node=1)
         if creating.wait(timeout=25) or "(success)" not in fixture.log(label):
             raise RuntimeError(fixture.log(label))
         ids.append(wait_for(f"Echo on {realms[i]} to be saved", lambda: fixture.query(
             "SELECT guid FROM characters WHERE name='Echo'", characters[i]), 10))
         x, y, z = fixture.query("SELECT position_x,position_y,position_z FROM creature "
-                                f"WHERE id={entries[i]} AND map=0 LIMIT 1", fixture.base["world_database"]).split()
+                                f"WHERE id={battlemaster} AND map=0 LIMIT 1", fixture.base["world_database"]).split()
         fixture.query(f"UPDATE characters SET level=60,map=0,position_x={x},position_y={y},position_z={z} "
                       "WHERE name='Echo'", characters[i])
     assert ids[0] == ids[1], "the two realms must have colliding local character IDs"
@@ -81,22 +82,38 @@ def run(fixture):
     invited = fixture.directory / "both-invited"
     entered = fixture.directory / "both-inside"
     scored = fixture.directory / "both-scored"
+    rejoined = fixture.directory / "raid-restored"
     clients = []
-    for i, entry in enumerate(entries):
-        actions = ["login:Echo", f"waitfile:{at_masters}", f"bgjoin:{entry}:489", f"waitfile:{in_queue}"]
+    for i in range(2):
+        actions = ["login:Echo", f"waitfile:{at_masters}", f"bgjoin:{battlemaster}:489", f"waitfile:{in_queue}"]
         if i == 0:
-            actions.append("say:.battleground forcestart")
+            actions += ["cmd:.battleground forcestart"] * 2
+        mate = ((2 - i) << 32) | int(ids[1 - i])
         actions += [f"waitfile:{invited}", "bgport:489:1", f"waitfile:{entered}", "pvplog:names",
-                    f"waitfile:{scored}", "bgleave:489", "listen:2", "logout"]
+                    f"partystats:{mate}", f"waitfile:{scored}"]
+        if i == 1:
+            actions += ["logout", "login:Echo", "listen:2", f"partystats:{mate}"]
+        actions += [f"waitfile:{rejoined}", "bgleave:489", "listen:2", "logout"]
         clients.append(client(f"battle{i}", i, *actions))
     for marker, expected in (
-            (at_masters, [f"[creature] {entry} guid" for entry in entries]),
+            (at_masters, [f"[creature] {battlemaster} guid"] * 2),
             (in_queue, ["copy 0 queued"] * 2),
             (invited, [" invited ["] * 2),
             (entered, ["[new world] map 489 "] * 2),
             (scored, [f"[scoreboard names] ['Echo', 'Echo-{other}']" for other in reversed(realms)])):
         wait_for(marker.name, lambda: all(value in fixture.log(f"battle{i}") for i, value in enumerate(expected)), 20)
         marker.touch()
+    group_guid = (1 << 32) | int(ids[0])
+    online_stats = f"[member stats] {group_guid} mask 0x7ff status 1"
+
+    def restored():
+        after_logout = fixture.log("battle1").partition("logout:")[2]
+        return (any(line.startswith("  [group list] raid,") and f"Echo ({group_guid}, status 1," in line
+                    for line in after_logout.splitlines())
+                and online_stats in after_logout)
+
+    wait_for("the reconnected character's raid list and foreign member stats", restored, 20)
+    rejoined.touch()
     for i, proc in enumerate(clients):
         if proc.wait(timeout=65):
             raise RuntimeError(fixture.log(f"battle{i}")[-1600:])
@@ -108,7 +125,7 @@ def run(fixture):
     made = [line for line in fixture.log("battlegroup").splitlines() if "of warsongGulch made" in line]
     assert len(made) == 1, made
     assert all(fixture.query("SELECT map FROM characters WHERE name='Echo'", db) == "0" for db in characters)
-    print("PASS: colliding characters from two realm clusters saw realm-qualified scores and returned home.")
+    print("PASS: two realm clusters shared scores and party stats, restored a reconnecting raid member, and returned home.")
 
 
 if __name__ == "__main__":

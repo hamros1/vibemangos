@@ -913,10 +913,37 @@ final class Battleground
     /// `mangos_string` `id` (with `args` for its `%s`s) to everyone in it.
     void message(uint id, ChatType chatType, ulong source = 0, string[] args = null)
     {
+        import std.algorithm.searching : canFind;
+        import std.array : replace;
+
         const text = id in context.data.serverStrings;
         if (text is null)
             return;
-        toAll(Opcode.SMSG_MESSAGECHAT, battlegroundMessage(chatType, formatServerString(*text, args), source));
+        const formatted = formatServerString(*text, args);
+        const local = battlegroundMessage(chatType, formatted, source);
+        if (context.battlegroup is null || !source || !formatted.canFind("$n"))
+            return toAll(Opcode.SMSG_MESSAGECHAT, local);
+
+        // The client expands $n to the bare character name in battleground system messages.
+        const(ubyte)[] foreign;
+        foreach (guid, ref member; members)
+            if (member.offlineSince == MonoTime.init)
+                if (auto who = memberSession(guid))
+                {
+                    ServerNameQueryResponse name;
+                    if (foreignName(guid, source, name) && name.realm.length)
+                    {
+                        if (foreign is null)
+                        {
+                            const realm = name.realm.replace(" ", "").replace("\t", "");
+                            foreign = battlegroundMessage(chatType,
+                                formatted.replace("$n", name.name ~ "-" ~ realm), source);
+                        }
+                        who.deliver(Opcode.SMSG_MESSAGECHAT, foreign);
+                    }
+                    else
+                        who.deliver(Opcode.SMSG_MESSAGECHAT, local);
+                }
     }
 
     /// Plays a sound to everyone in it, or to one team (`team` 0, 1; -1 all).
@@ -1585,8 +1612,20 @@ mixin template BattlegroundHandlers()
         if (battlegroundOfMap(player.data.map) == BattlegroundType.none || !context.hostsDungeon(player.data.map))
             return;
         auto copy = currentBattleground();
-        if (copy !is null && player.guid in copy.members && copy.status != BattlegroundStatus.waitLeave)
-            return copy.arrived(player, battleground_.team);
+        if (copy !is null && copy.status != BattlegroundStatus.waitLeave)
+            if (auto member = player.guid in copy.members)
+            {
+                const rejoined = member.offlineSince != MonoTime.init;
+                copy.arrived(player, battleground_.team);
+                // A gateway's login packets cannot see the temporary raid on the shared match host.
+                if (rejoined && context.battlegroup !is null)
+                    if (auto raid = context.battlegroup.raids.of(player.guid))
+                    {
+                        groupChanged();
+                        raid.updatePlayerOnlineStatus(this, true);
+                    }
+                return;
+            }
         info!"%s: '%s' is on a battleground's map, out of its copy: sent back"(remoteAddress, player.data.name);
         const back = battleground_;
         if (copy !is null)
