@@ -474,12 +474,12 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
             break;
         if (p !is null)
         {
-            if (p.giveItem(spell.itemType[i], value > 0 ? value : 1, true, true)) // "You create"
+            if (p.giveItem(spell.itemType[i], value > 0 ? value : 1, true, true, creator: p.player.guid)) // "You create"
                 p.updateCraftSkill(spell.id); // made: a chance to learn from it
         }
         else if (auto other = map.unit(target))
             if (other.kind == UnitKind.player)
-                other.session.giveItem(spell.itemType[i], value > 0 ? value : 1, true, true);
+                other.session.giveItem(spell.itemType[i], value > 0 ? value : 1, true, true, creator: target);
         break;
     case SpellEffect.feedPet: // SPELL_EFFECT_FEED_PET
         p.feedPet(c.targets.item);

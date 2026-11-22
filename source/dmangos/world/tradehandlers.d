@@ -628,6 +628,20 @@ unittest
     ItemPosCount[] dest;
     assert(a.inventory.canStoreNew(nullBag, nullSlot, dest, itemJerky, 5) == InventoryResult.ok);
     auto jerky = a.inventory.storeNew(dest, itemJerky);
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.spellids : ImplicitTarget, SpellEffect;
+    import dmangos.world.inventory : Item;
+    import dmangos.world.updatefields : ITEM_FIELD_CREATOR;
+    enum tailor = 96517;
+    context.data.spells.spells[tailor] = testSpell(tailor, SpellEffect.createItem, ImplicitTarget.caster, 1);
+    context.data.spells.spells.edit(tailor).itemType[0] = itemShirt;
+    dest = null;
+    assert(a.inventory.canStoreNew(nullBag, nullSlot, dest, itemShirt, 1) == InventoryResult.ok);
+    anduin.session.inWorld.castTriggeredAt(tailor, a.guid);
+    auto shirt = a.inventory[dest[0].pos];
+    assert(shirt !is null && shirt.values.get!ITEM_FIELD_CREATOR == a.guid);
+    anduin.read();
+    jaina.read();
     a.receive(Copper(100));
     j.receive(Copper(100));
 
@@ -639,6 +653,7 @@ unittest
     assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_TRADE_STATUS));
 
     anduin.write(Opcode.CMSG_SET_TRADE_ITEM, [ubyte(0), jerky.bagSlot, jerky.slot]);
+    anduin.write(Opcode.CMSG_SET_TRADE_ITEM, [ubyte(1), shirt.bagSlot, shirt.slot]);
     ByteWriter fifty;
     fifty.put(50u);
     anduin.write(Opcode.CMSG_SET_TRADE_GOLD, fifty.data);
@@ -657,6 +672,10 @@ unittest
     assert(a.inventory.count(itemJerky) == 0 && j.inventory.count(itemJerky) == 5, "now Jaina's");
     assert(a.money == Copper(70) && j.money == Copper(130));
     assert(jerky.guid in db.itemRows, "saved again under its taker");
+    auto received = j.inventory.byGuid(shirt.fullGuid);
+    assert(received !is null && received.values.get!ITEM_FIELD_CREATOR == a.guid);
+    auto loaded = Item.load(db.itemRows[shirt.guid], shirt.proto, j.guid);
+    assert(loaded.values.get!ITEM_FIELD_CREATOR == a.guid);
     assert(opcodesOf(jaina.read()).canFind(Opcode.SMSG_TRADE_STATUS));
 }
 

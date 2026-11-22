@@ -50,6 +50,7 @@ enum : uint
     bagFamilyEnchantingSupp = 7, bagFamilyEngineeringSupp = 8, bagFamilyKeys = 9,
     bindWhenPickedUp = 1, bindWhenEquipped = 2, bindQuestItem = 4,
     itemFlagNoUserDestroy = 0x00000020,
+    itemFlagNoCreator = 0x00020000,
     itemFlagUniqueEquippable = 0x00080000,
     itemDynFlagBound = 0x1,    /// `ITEM_DYNFLAG_BINDED`
     itemDynFlagUnlocked = 0x4, /// `ITEM_DYNFLAG_UNLOCKED`: a lockbox picked
@@ -1448,13 +1449,19 @@ final class Inventory
     // -----------------------------------------------------------------------
 
     /// A new item, as many as `dest` holds, put there.
-    Item storeNew(const(ItemPosCount)[] dest, uint entry, uint randomProperty = 0)
+    Item storeNew(const(ItemPosCount)[] dest, uint entry, uint randomProperty = 0, ulong creator = 0)
     {
         uint count;
         foreach (position; dest)
             count += position.count;
         auto item = create(entry, count, randomProperty);
-        return item is null ? null : store(dest, item);
+        if (item is null)
+            return null;
+        enum hearthstone = 6948;
+        if (creator && item.proto.stackable <= 1 && item.proto.itemClass != ItemClass.consumable
+            && item.proto.itemClass != ItemClass.quest && !(item.proto.flags & itemFlagNoCreator) && entry != hearthstone)
+            item.values.set!ITEM_FIELD_CREATOR(creator);
+        return store(dest, item);
     }
 
     /// Puts the item at `dest`, carried or banked: every position but the last gets a copy. Returns the last.
@@ -2424,12 +2431,14 @@ unittest
     assert(inventory.swap(sword.pos, itemPos(bag0, equipmentSlotOffhand)).result == InventoryResult.itemCantBeEquipped);
 
     // A shirt cannot be worn as a weapon.
-    auto shirt = inventory.storeNew([ItemPosCount(itemPos(bag0, 31), 1)], itemShirt);
+    auto shirt = inventory.storeNew([ItemPosCount(itemPos(bag0, 31), 1)], itemShirt, creator: 42);
+    assert(shirt.record.creator == 42);
     const error = inventory.swap(shirt.pos, itemPos(bag0, equipmentSlotMainhand));
     assert(error.result == InventoryResult.itemCantBeEquipped && error.item is shirt);
 
     // Splitting: some of a stack moves, all of it or more cannot.
-    auto jerky = inventory.storeNew([ItemPosCount(itemPos(bag0, 23), 20)], itemJerky);
+    auto jerky = inventory.storeNew([ItemPosCount(itemPos(bag0, 23), 20)], itemJerky, creator: 42);
+    assert(jerky.record.creator == 0);
     assert(!inventory.split(jerky.pos, itemPos(bag0, 24), 5));
     assert(jerky.count == 15 && inventory[bag0, 24].count == 5);
     assert(inventory.split(jerky.pos, itemPos(bag0, 25), 15).result == InventoryResult.couldntSplitItems);
