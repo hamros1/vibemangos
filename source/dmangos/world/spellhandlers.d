@@ -612,7 +612,7 @@ private:
 
     private Replica remoteChannelTarget(const(SpellInfo)* spell, ulong target)
     {
-        if (context.namedHealChannel(spell) != size_t.max)
+        if (context.namedCreatureChannel(spell) != size_t.max)
         {
             auto copy = cast(Replica) map.findObject(target);
             return copy !is null && copy.fields.type == TypeId.unit ? copy : null;
@@ -1930,7 +1930,7 @@ private:
         enum uint unitTargetFlags = 0x0002 | 0x0080 | 0x0100 | 0x0200 | 0x0400 | 0x8000;
         const spell = c.spell;
         auto drain = !c.triggered ? remoteLeechTarget(spell, c.targets.unit) : null;
-        const namedChannel = c.triggered ? size_t.max : context.namedHealChannel(spell);
+        const namedChannel = c.triggered ? size_t.max : context.namedCreatureChannel(spell);
         auto recipient = namedChannel == size_t.max ? UnitRef.init : scriptTargetNear(spell, context.sendAreaDamage !is null);
         auto remoteChannel = recipient.replica is null ? drain : recipient.replica;
         auto result = checkCast(spell, c.targets, c.triggered, c.castItemEntry, false, drain,
@@ -2540,7 +2540,7 @@ private:
     private void updateReplicaChannel(const(SpellInfo)* spell, Replica target, int remaining)
     {
         auto hit = AreaDamage(caster: player.guid, target: target.guid, spell: spell.id, map: map.id,
-            instance: map.instanceId, namedCreature: context.namedHealChannel(spell) != size_t.max, channelled: true,
+            instance: map.instanceId, namedCreature: context.namedCreatureChannel(spell) != size_t.max, channelled: true,
             channelUpdate: true, auraMs: remaining);
         context.sendReplicaSpell(map, target.owner, spell, hit);
     }

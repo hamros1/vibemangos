@@ -793,10 +793,11 @@ services line (`ServiceHost.describe`). Every log line of the cluster code start
 
 ## Spell routing limits
 
-Players and creatures can channel a periodic heal on a nearby creature named by the spell, including one on another
-node. The caster's node tracks the duration and sends interruptions to the creature's node. The
-creature checks the caster's active channel before healing. Only a confirmed, completed channel
-can grant quest credit. A creature's channel ends when its region moves to another node.
+Players and creatures can channel a periodic heal or a timed visual aura on a nearby creature
+named by the spell, including one on another node. The caster's node tracks the duration and
+sends interruptions to the creature's node. The target checks the caster's active channel
+before healing. Only a confirmed, completed channel can grant quest credit. A creature's
+channel ends when its region moves to another node.
 
 Cross-node spell routing is effect-specific. Other script-selected channels, registered spell scripts, and
 database spell steps that need the caster or another actor still use their local paths. Ground ticks

@@ -677,12 +677,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return effect;
     }
 
-    package size_t namedHealChannel(const(SpellInfo)* spell)
+    package size_t namedCreatureChannel(const(SpellInfo)* spell)
     {
-        import dmangos.world.spelldamage : namedHealChannelEffect;
+        import dmangos.world.spellcast : duration;
+        import dmangos.world.spelldamage : namedCreatureChannelEffect;
 
-        const effect = namedHealChannelEffect(*spell);
+        const effect = namedCreatureChannelEffect(*spell);
         return effect != size_t.max && spellScriptTargets(spell.id).length && !spellScript(spell.id)
+            && duration(*spell, client, spell.spellLevel) > 0
             ? effect : size_t.max;
     }
 
@@ -1332,7 +1334,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             import std.algorithm.searching : canFind;
             import dmangos.world.spellselection : namedCreatureRange;
 
-            const named = message.namedCreature ? namedHealChannel(spell) : size_t.max;
+            const named = message.namedCreature ? namedCreatureChannel(spell) : size_t.max;
             const actorCanChannel = attacker.player ? !message.creatureCast : message.creatureCast && message.namedCreature;
             if (!actorCanChannel || message.triggered || message.creatureArea
                 || (message.namedCreature ? named == size_t.max : !isRemoteLeechChannel(*spell)))
@@ -2134,7 +2136,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (message.channelled)
         {
             if (message.miss && caster !is null && caster.ai !is null)
-                caster.ai.namedHealChannelRejected(message.sequence);
+                caster.ai.namedCreatureChannelRejected(message.sequence);
             return;
         }
         auto target = spellImpactTarget(map_, peer, message.target);
@@ -4719,7 +4721,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if (creature.meleeController)
                 return Migrant.init; // controlled creatures stay with their player (`petsOnLeave`)
             if (creature.ai !is null)
-                creature.ai.finishNamedHealChannel(true);
+                creature.ai.finishNamedCreatureChannel(true);
             creature.saveState(w);
             return Migrant(MigrantKind.creature, creature.spawn.guid, 0, w.data);
         }

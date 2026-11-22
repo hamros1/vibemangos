@@ -329,8 +329,8 @@ package bool isRemoteLeechChannel(const ref SpellInfo spell)
     return drains;
 }
 
-/// A single periodic heal whose entire channel belongs to one named creature.
-package size_t namedHealChannelEffect(const ref SpellInfo spell)
+/// One named-target aura whose effects can run entirely on its target.
+package size_t namedCreatureChannelEffect(const ref SpellInfo spell)
 {
     if (!(spell.attributesEx & (0x04 | 0x40)) || spell.casting.speed > 0)
         return size_t.max;
@@ -340,8 +340,11 @@ package size_t namedHealChannelEffect(const ref SpellInfo spell)
         if (effect == SpellEffect.none)
             continue;
         if (first != size_t.max || effect != SpellEffect.applyAura || spell.casting.chainTarget[i] > 1
-            || namedCreatureShape(spell, i) != ImplicitTarget.unitScriptNearCaster
-            || spell.casting.applyAuraName[i] != AuraType.periodicHeal)
+            || namedCreatureShape(spell, i) != ImplicitTarget.unitScriptNearCaster)
+            return size_t.max;
+        const aura = spell.casting.applyAuraName[i];
+        if (aura != AuraType.periodicHeal && aura != AuraType.dummy
+            && (aura != AuraType.periodicTriggerSpell || spell.triggerSpell[i]))
             return size_t.max;
         first = i;
     }

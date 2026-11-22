@@ -14,6 +14,7 @@ MORTAR_SPELL, MORTAR = 18655, 176557
 DOOR_SPELL, DOOR = 11195, 146084
 CHEER_SPELL, RACER = 7036, 4252
 REBUILD_SPELL, GOLEM = 13951, 2520
+VISUAL_CHANNEL, GUARDIAN = 9712, 2726
 NPC_CASTER = 4251
 CELL = 533.3333 / 8
 
@@ -115,15 +116,17 @@ def run(fixture, abrupt=False):
             raise RuntimeError(f"could not create {character}")
         fixture.query(f"UPDATE characters SET position_x = {position[0]}, position_y = {position[1]}, "
                       f"position_z = 200 WHERE name = '{character}'", characters)
-    for spell in (MORTAR_SPELL, DOOR_SPELL, CHEER_SPELL, REBUILD_SPELL):
+    for spell in (MORTAR_SPELL, DOOR_SPELL, CHEER_SPELL, REBUILD_SPELL, VISUAL_CHANNEL):
         fixture.query(f"INSERT INTO character_spell (guid, spell) SELECT guid, {spell} FROM characters "
                       f"WHERE name = '{caster}'", characters)
     before = {table: int(fixture.query(f"SELECT MAX(guid) FROM {table}", world)) for table in spawn_tables}
     client("spawner", 2, "MORTARSPAWN", f"login:{spawner}", f"cmd:.gobject spawn {MORTAR} 1",
-           f"cmd:.gobject spawn {DOOR} 1", f"cmd:.npc spawn {RACER}", f"cmd:.npc spawn {GOLEM}", "drop")
+           f"cmd:.gobject spawn {DOOR} 1", f"cmd:.npc spawn {RACER}", f"cmd:.npc spawn {GOLEM}",
+           f"cmd:.npc spawn {GUARDIAN}", "drop")
     spawned = {}
     for entry, table, high in ((MORTAR, "gameobject", 0xF110), (DOOR, "gameobject", 0xF110),
-                               (RACER, "creature", 0xF130), (GOLEM, "creature", 0xF130)):
+                               (RACER, "creature", 0xF130), (GOLEM, "creature", 0xF130),
+                               (GUARDIAN, "creature", 0xF130)):
         row = fixture.query(f"SELECT guid FROM {table} WHERE guid > {before[table]} AND id={entry}", world)
         if not row:
             raise RuntimeError(f"the worker's GM did not spawn {table} {entry}")
@@ -133,7 +136,8 @@ def run(fixture, abrupt=False):
     output = client("caster", 1, "MORTARCASTER", f"login:{caster}", "cmd:.gm on", "listen:2",
                     f"cast:{MORTAR_SPELL}", "listen:2", f"cast:{DOOR_SPELL}", "listen:2",
                     f"cast:{CHEER_SPELL}", "listen:2", f"cast:{REBUILD_SPELL}", "listen:1",
-                    f"cancelchannel:{REBUILD_SPELL}", "listen:1", f"cmd:.gobject spawn {MORTAR} 1",
+                    f"cancelchannel:{REBUILD_SPELL}", "listen:1", f"cast:{VISUAL_CHANNEL}", "listen:1",
+                    f"cancelchannel:{VISUAL_CHANNEL}", "listen:1", f"cmd:.gobject spawn {MORTAR} 1",
                     f"cmd:.npc spawn {NPC_CASTER}",
                     f"target:{NPC_CASTER}", f"cmd:.debug castself {REBUILD_SPELL}", "listen:1", "drop")
     if f"entered the world as '{caster}'" not in fixture.log("node1"):
@@ -145,7 +149,10 @@ def run(fixture, abrupt=False):
                      f"[creature aura] {spawned[RACER]:#018x} received {CHEER_SPELL}",
                      f"[channel start] {REBUILD_SPELL} for",
                      f"[creature aura] {spawned[GOLEM]:#018x} received {REBUILD_SPELL}",
-                     f"[creature aura] {spawned[GOLEM]:#018x} ended {REBUILD_SPELL}"):
+                     f"[creature aura] {spawned[GOLEM]:#018x} ended {REBUILD_SPELL}",
+                     f"[channel start] {VISUAL_CHANNEL} for",
+                     f"[creature aura] {spawned[GUARDIAN]:#018x} received {VISUAL_CHANNEL}",
+                     f"[creature aura] {spawned[GUARDIAN]:#018x} ended {VISUAL_CHANNEL}"):
         if player_output.count(expected) != 1:
             raise RuntimeError(f"expected one '{expected}', got {player_output.count(expected)}")
     npc = fixture.query(f"SELECT guid FROM creature WHERE guid > {before['creature']} AND id={NPC_CASTER}", world)

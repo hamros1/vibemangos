@@ -524,7 +524,7 @@ final class CreatureAI : Scripted, CreatureHost
     private void reportDamage(ulong attacker, uint damage)
     {
         if (damage && namedChannelSpell !is null && (namedChannelSpell.casting.channelInterruptFlags & 0x02))
-            finishNamedHealChannel(true);
+            finishNamedCreatureChannel(true);
         if (damage)
             triggerCombatTimer();
         if (behaviour)
