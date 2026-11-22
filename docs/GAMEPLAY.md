@@ -684,12 +684,11 @@ See the [roadmap](ROADMAP.md) for open work, the [spell audit](SPELLS.md) for sp
     general's death wins, the only way to; graveyards and towers assaulted from their banners and taken (a
     tower destroyed, its marshal gone) five minutes later unless defended; two mines taken by killing
     their bosses, held for 20 minutes; honor and reputation for towers destroyed and captains killed, and
-    reputation for graveyards and mines held at the end. The turn-ins: every 500 armor
-    scraps (three times) upgrade a side's graveyards' defenders (seasoned, veteran, champion) and its
-    general cries General's Warcry; 200 Storm Crystals or Stormpike Soldier's Blood call Ivus the Forest
-    Lord or Lokholar the Ice Lord onto the Field of Strife. Not yet: the cavalry, the fleets and the
-    ground assault (their commanders' orders have no gossip in the database), the lords' march and
-    their summoning rituals, the herald speaking (its lines are battleground messages).
+    reputation for graveyards and mines held at the end. Every 500 armor scraps upgrade a side's defenders by one rank, through champion.
+    At 200 Storm Crystals or Stormpike Soldier's Blood the summoners set out. Escort them and gather
+    ten allies at their altar to call Ivus or Lokholar. Provide hides and mounts to deploy cavalry,
+    return mine supplies to order a ground assault, or rescue a Wing Commander and deliver the
+    enemy soldiers' drops to unlock air support. The herald's lines appear as battleground messages.
   * The players of a team who came alone are in one raid in the copy (its raid frames), made as the
   second arrives and left as they leave; those who came with a group stay in it.
   * Taking an objective (a flag, a banner, a capture) ends Stealth, Divine Shield and the like

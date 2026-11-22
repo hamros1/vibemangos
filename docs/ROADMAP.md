@@ -8,8 +8,8 @@
   [spell routing limits](CLUSTER.md#spell-routing-limits) and the
   [cross-node feature list](CLUSTER.md#what-crosses-nodes-feature-by-feature).
 - **Terrain.** Connect longer movement-map approaches to moving platform docks.
-- **Gameplay coverage.** See the [spell audit](SPELLS.md) for gaps by class and the
-  battleground notes below for remaining Alterac Valley events.
+- **Gameplay coverage.** See the [spell audit](SPELLS.md) for class coverage and the
+  [vanilla gameplay audit](<../reports/Remaining vanilla gameplay gaps.md>) for verified fixes and the open Gluth trigger.
 
 The rest of this page records progress and gaps by subsystem. The [gameplay reference](GAMEPLAY.md)
 describes how players use the systems available today.
@@ -195,10 +195,10 @@ The largest area. In order:
      win, the exit portals.
    * Milestone D, Arathi Basin: **done** (`arathi.d`): five bases, claims, assaults, defences, resources,
      2000 to win.
-   * Milestone E, Alterac Valley: **done** (`alterac.d`, as 1.12: no reinforcements, those are 2.3.0's): graveyards and towers, mines,
-     captains and generals; the turn-ins: armor scraps upgrading the defenders (and the general's warcry), the
-     elemental lords called. Not yet: the cavalry, the fleets, the ground assault (no gossip for their orders in
-     the database), the lords' summoning rituals and march.
+   * Alterac Valley has graveyards, towers, mines, captains, generals and defender armor upgrades.
+     Both factions can deploy cavalry, order ground assaults, rescue Wing Commanders for air support,
+     and escort their summoners to a ten-player ritual that calls Ivus or Lokholar.
+   * Realms can share battleground queues, matches and team raids. [Battlegroup setup](CLUSTER.md#cross-realm-battlegrounds)
    * The scoreboard's columns, `WorldStateUI.dbc`'s (Alterac Valley's mines captured and leaders killed too), and
      the scores kept (`pvpstats_*`, `battleground_score_statistics`): done.
    * Planned queue service moves preserve queues and invitations, and running copies can still be
@@ -230,9 +230,9 @@ the Deviate Fish, the engineers' gadgets, the costumes, ...). Of the spell scrip
 creatures to cast as they die (the tribal deaths), summons and destinations a script shapes (the Lunar
 Festival's fireworks, which need players' game object summons too), effect chances (the silithid egg), and the raids'. Not yet
 (about 20 names, each module's documentation and SCRIPTING.md say why): what needs stealth detection
-(Venture Co. lookouts, Gallywix), the Scourge Invasion, caravans,
-the Eastern Kingdoms' world map script, and the mechanics the raids approximate (possession, mind
-control, Heigan's floor).
+(Venture Co. lookouts, Gallywix), caravans and the Eastern Kingdoms' world map script.
+The original Scourge Invasion, the audited raid possession and mind-control interactions, and Heigan's floor
+have dedicated tests. Gluth's Decimate trigger still needs a reference combat log.
 Reputation is done (`reputation.d`, `reputationhandlers.d`): kills, quests,
 spillover, war and peace, discounts, requirements, reactions forced by auras (`SMSG_SET_FORCED_REACTIONS`: the
 disguises, the Corrupted Ashbringer's Scarlet Crusade). Reputation from spells (effect 103) and the PvP rank's
