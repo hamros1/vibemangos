@@ -54,6 +54,7 @@ struct Blow
     ulong remotePlayer; /// a spell's caster, when simulated by another node
     bool remotePlayerPvP;
     SwingRetaliationReply retaliate; /// sends defensive damage back to a remote attacker
+    bool threatIncludesCaster; /// a prepared strike already includes the caster's school modifier
 
     ///
     static Blow swing(const ref MeleeDamage d)
@@ -545,7 +546,7 @@ private void creatureDamaged(UnitRef attacker, UnitRef victim, uint damage, cons
         creature.ai.attackedBy(attacker, map);
         // A player's threat by its auras for the school (`MOD_THREAT`: Defiance, Subtlety).
         float threat = 1;
-        if (attacker.kind == UnitKind.player && blow.school < 7)
+        if (!blow.threatIncludesCaster && attacker.kind == UnitKind.player && blow.school < 7)
             if (const p = attacker.session.character)
                 threat = p.damageMods.threat[blow.school];
         creature.ai.damageTaken(attacker, damage, threat * blow.threat);

@@ -784,8 +784,9 @@ services line (`ServiceHost.describe`). Every log line of the cluster code start
 
 Cross-node spell routing is effect-specific. Script-selected channels, registered spell scripts, and
 database spell steps that need the caster or another actor still use their local paths. Ground ticks
-use observed targets around the spot and require a current caster replica at the target. A projectile is dispatched while its
-launching node still simulates the caster and can route to the target's current replica.
+use observed targets around the spot and require a current caster replica at the target. The launching
+node routes a projectile to the target's owner at impact. Named-creature projectiles also resolve when
+the target has become local during flight. The launching node must still simulate the caster.
 
 ## Testing
 

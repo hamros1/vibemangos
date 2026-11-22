@@ -340,6 +340,47 @@ unittest
     assert(namedCreatureCenter(aimed, 0, source.client, 0, at, null, &target, selected) && selected.x == at.x + 10);
     target.dest[0] = ground.x;
     assert(!namedCreatureCenter(aimed, 0, source.client, 0, at, null, &target, selected), "range ends at 20 yards");
+
+    caster.write(Opcode.CMSG_CAST_SPELL, castPacket.data);
+    to.removeObject(atImpact.guid);
+    from.replicaRemoved(2, atImpact.guid);
+    from.addObject(atImpact);
+    now += 1.seconds;
+    source.update(now);
+    assert(atImpact.auras.find(groundWard).stacks == 1, "ownership changes during flight");
+    now += 2.seconds;
+    source.update(now);
+    aura = atImpact.auras.find(groundWard);
+    assert(aura && aura.effects == 3 && aura.stacks == 2 && requests.length == 6,
+        "the pending projectile resolves once on the target that became local");
+    now += 1.seconds;
+    source.update(now);
+    assert(atImpact.auras.find(groundWard).stacks == 2);
+
+    enum uint bolt = 55069;
+    auto damageSpell = testSpell(bolt, SpellEffect.schoolDamage, ImplicitTarget.unitScriptNearCaster, 20);
+    damageSpell.casting.school = 1;
+    damageSpell.casting.speed = 2;
+    damageSpell.casting.attributesEx3 |= spellAttrEx3AlwaysHit;
+    damageSpell.attributesEx2 |= spellAttrEx2CantCrit;
+    source.data.spells.spells[bolt] = damageSpell;
+    source.data.spellScriptTargets[bolt] = [creatureInnkeeper];
+    player.spells ~= bolt;
+    player.damageMods.threat[1] = 2;
+    auto blocker = npc(owner, 91006, creatureInnkeeper, 2);
+    const health = blocker.values.get!UNIT_FIELD_HEALTH;
+    from.replicaCreated(2, cellKeyAt(blocker.position.x, blocker.position.y), blocker.guid, encodeState(blocker, 0));
+    castPacket = ByteWriter.init;
+    castPacket.put(bolt);
+    SpellTargets(TargetFlags.self, 0).write(castPacket);
+    caster.write(Opcode.CMSG_CAST_SPELL, castPacket.data);
+    to.removeObject(blocker.guid);
+    from.replicaRemoved(2, blocker.guid);
+    from.addObject(blocker);
+    now += 2.seconds;
+    source.update(now);
+    assert(blocker.values.get!UNIT_FIELD_HEALTH == health - 20 && requests.length == 6);
+    assert(blocker.ai.threatOf(player.guid) == 40, "use the prepared caster threat multiplier once");
 }
 
 /// Direct damage and aura effects share one hit on the named creature's node.
