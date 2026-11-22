@@ -91,7 +91,7 @@ private enum SpellEffect[] creaturesDo = [SpellEffect.none, SpellEffect.schoolDa
     SpellEffect.energize,
     SpellEffect.healMaxHealth, SpellEffect.summonObjectWild, SpellEffect.transDoor, SpellEffect.summonPet,
     SpellEffect.learnSpell, SpellEffect.createItem, SpellEffect.addComboPoints, SpellEffect.spawn, SpellEffect.detect,
-    SpellEffect.attack, SpellEffect.persistentAreaAura, SpellEffect.dispel, SpellEffect.dispelMechanic,
+    SpellEffect.attackMe, SpellEffect.attack, SpellEffect.persistentAreaAura, SpellEffect.dispel, SpellEffect.dispelMechanic,
     SpellEffect.charge, SpellEffect.leap, SpellEffect.addExtraAttacks, SpellEffect.summonTotem, SpellEffect.summonTotemSlot1,
     SpellEffect.summonTotemSlot2, SpellEffect.summonTotemSlot3, SpellEffect.summonTotemSlot4];
 
@@ -530,8 +530,18 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
                 }
         break;
     case SpellEffect.attackMe: // SPELL_EFFECT_ATTACK_ME: Growl, Taunt
-        p.attackMeEffect(spell, i, target);
+    {
+        import dmangos.world.spelldamage : logExecute;
+        import dmangos.world.spellcast : executeTarget;
+        auto victim = map.creatureAt(target);
+        if (victim !is null && victim.alive && !victim.petOwner && victim.ai !is null
+            && victim.ai.currentVictim != caster.guid)
+        {
+            victim.ai.taunt(caster.unit, map);
+            logExecute(caster, spell, i, executeTarget(target));
+        }
         break;
+    }
     case SpellEffect.sanctuary: // SPELL_EFFECT_SANCTUARY: Vanish, Divine Intervention
         p.sanctuaryEffect(spell, i, target);
         break;

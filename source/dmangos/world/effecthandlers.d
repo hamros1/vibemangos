@@ -153,20 +153,6 @@ mixin template EffectHandlers()
     }
 
     /**
-     * `SPELL_EFFECT_ATTACK_ME` (Growl, Taunt): the creature takes this player as the one it hates most
-     * (`CreatureAI.taunt`); one already attacking it is not taunted again. Its taunt aura (`MOD_TAUNT`, the
-     * spell's other effect) then keeps it on the player while it lasts.
-     */
-    package void attackMeEffect(const(SpellInfo)* spell, size_t i, ulong target)
-    {
-        auto creature = livingCreature(target);
-        if (creature is null || creature.petOwner || creature.ai.currentVictim == player.guid)
-            return;
-        creature.ai.taunt(unit, map);
-        logExecute(spell, i, executeTarget(target));
-    }
-
-    /**
      * Out of every fight at once (CMaNGOS's `CombatStop`: Vanish, Divine Intervention, a successful Feign
      * Death): the player stops attacking, every creature fighting it forgets it, and it is out of combat.
      */

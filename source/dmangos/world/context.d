@@ -824,11 +824,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             sendGameObjectSpell(copy.owner, message);
         }
         else if (auto object = map_.gameObjectAt(guid))
-            applyNamedGameObject(map_, spell, effect, shape, object, origin);
+            applyNamedGameObject(map_, spell, effect, shape, object, origin, caster.combatGuid);
     }
 
     private bool applyNamedGameObject(Map map_, const(SpellInfo)* spell, size_t effect, ImplicitTarget shape,
-        GameObject object, Position origin)
+        GameObject object, Position origin, ulong casterGuid)
     {
         import dmangos.world.gameobject : gameObjectAnimation, GameObjectAction;
         import dmangos.world.spellselection : namedGameObjectAnimation, namedGameObjectEntry;
@@ -846,6 +846,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (animation >= 0)
             map_.sendToObservers(object.guid, Opcode.SMSG_GAMEOBJECT_CUSTOM_ANIM,
                 gameObjectAnimation(object.guid, cast(uint) animation));
+        else if (spell.id == 19873)
+        {
+            auto dragon = map_.creatureAt(casterGuid);
+            if (dragon is null || dragon.spawn.entry != 12435 || !dragon.petOwner || !dragon.alive
+                || map_.id != 469 || object.spawn.entry != 177807)
+                return false;
+            gameObjectUsed(object, map_, casterGuid);
+        }
         else if (spell.miscValue[effect] == GameObjectAction.disturb)
             return disturbEncounterTrap(map_, object);
         else
@@ -946,7 +954,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (object is null || !client.isValidMapCoord(map_.id, message.x, message.y, message.z))
             return;
         const origin = Position(message.x, message.y, message.z);
-        if (applyNamedGameObject(map_, spell, message.effect, shape, object, origin)
+        if (applyNamedGameObject(map_, spell, message.effect, shape, object, origin, message.caster)
             && playerCast && sendGameObjectSpell !is null)
         {
             auto reply = cast(GameObjectSpell) message;
@@ -6199,7 +6207,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             {
                 import dmangos.script.api : ObjectUsedHere;
 
-                script.raise(ObjectUsedHere(EntityRef(go.guid), EntityRef(player)));
+                if (script.raise(ObjectUsedHere(EntityRef(go.guid), EntityRef(player))))
+                    return true;
             }
         if (!go.behaviour)
             return false;

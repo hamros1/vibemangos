@@ -1055,8 +1055,14 @@ mixin template PetHandlers()
             state.createdBySpell = spell.id;
             state.name = creature.template_.name;
             state.bar = ActionBar.initial();
-            // Its own spells on the bar (`InitCharmCreateSpells`): its spell list's.
-            if (const list = creature.template_.spellList in context.data.creatureSpellLists)
+            // The possession bar and AI rotation can contain different spells (notably in raids).
+            if (const bar = creature.spawn.entry in context.data.creatureControlSpells)
+            {
+                foreach (id; *bar)
+                    if (const info = context.data.spells.spell(id))
+                        state.learn(id, info.isPassive, isAutocastable(*info));
+            }
+            else if (const list = creature.template_.spellList in context.data.creatureSpellLists)
                 foreach (entry; *list)
                     if (const info = context.data.spells.spell(entry.spell))
                         state.learn(entry.spell, info.isPassive, isAutocastable(*info));
@@ -1121,6 +1127,8 @@ mixin template PetHandlers()
     /// The player takes control of `creature` (`TakePossessOf`): the client moves it and sees as it.
     private void possessBegins(Creature creature)
     {
+        import dmangos.world.motion : stopMoving;
+        stopMoving(creature, map);
         activeMover = creature.guid;
         ByteWriter w;
         w.putPackedGuid(creature.guid);

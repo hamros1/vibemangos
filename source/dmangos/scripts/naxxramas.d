@@ -535,8 +535,23 @@ struct AnubRekhan
     }
 }
 
-/// Grand Widow Faerlina: Poison Bolt Volley, Rain of Fire, and an enrage every minute (her worshippers'
-/// embrace, which mind control gave, is not here).
+/// A controlled worshipper can sacrifice itself beside Faerlina to suppress her poison and frenzy.
+@spell("spell_faerlina_widow_embrace")
+struct WidowsEmbrace
+{
+    void on(ref SpellContext it, const ref AuraApplied e)
+    {
+        if (e.effect == 0 && e.target.entry == 15953)
+            it.removeAura(e.target, 28798);
+    }
+
+    void on(ref SpellContext it, const ref EffectHit e)
+    {
+        if (e.effect == 1 && e.caster.entry == 16506)
+            it.castSpell(e.caster, 28748, e.caster);
+    }
+}
+
 @creature("boss_faerlina")
 struct Faerlina
 {
@@ -566,6 +581,11 @@ struct Faerlina
         final switch (step)
         {
         case Step.volley:
+            if (me.hasAura(me.self, 28732))
+            {
+                steps.after(step, 1.seconds);
+                break;
+            }
             steps.after(step, me.castSelf(poisonboltVolley) == ActionResult.ok ? between(me, 8000, 15_000) : retry);
             break;
         case Step.rain:
@@ -573,6 +593,11 @@ struct Faerlina
             steps.after(step, target && me.castSpell(rainOfFire, target) == ActionResult.ok ? between(me, 6000, 18_000) : retry);
             break;
         case Step.enrage:
+            if (me.hasAura(me.self, 28732))
+            {
+                steps.after(step, 1.seconds);
+                break;
+            }
             if (me.castSelf(enrage) == ActionResult.ok)
             {
                 me.sayText(12_857 + me.random(3));

@@ -47,7 +47,6 @@
 18167: Holy Fire: no caster: no creature casts it in the data
 18431: Bellowing Roar: not done: activateObject (effect 1)
 19272: Lava Breath: schoolDamage: no damage to the player (effect 0)
-19873: Destroy Egg: not done: activateObject (effect 0)
 20220: Gnomish Engineering: no caster: no creature casts it in the data
 20221: Goblin Engineering: no caster: no creature casts it in the data
 20680: Blizzard: persistentAreaAura: no area, nothing on the player (effect 0)
@@ -169,7 +168,6 @@
 28479: aura modDecreaseSpeed: not on the player (effect 1): Kel'Thuzad's Frostbolt, its slow seen or not by the rolls before it (main's build alone, DMANGOS_NPC_SWEEP_ONLY=28479, misses it too)
 28522: Icebolt: aura modStun: not on the player (effect 0); aura periodicTriggerSpell: not on the player (effect 2)
 28622: Web Wrap: refused: dontReport
-29060: Taunt: not done: attackMe (effect 0)
 29099: Create Flame of Darnassus: no caster: no creature casts it in the data
 29101: Create Flame of Stormwind: no caster: no creature casts it in the data
 29102: Create Flame of Ironforge: no caster: no creature casts it in the data

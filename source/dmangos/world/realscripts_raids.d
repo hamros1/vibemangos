@@ -515,8 +515,7 @@ unittest
  * generators send their defenders; every egg broken, the orb goes dark (the emotes), the defenders flee, Razorgore
  * is freed whole and fights (Cleave, Conflagration, Fireball Volley, War Stomp); his death opens the way on.
  * Brought down while an egg is whole, he does not die: the room fails (his line).
- * The original fight has a player take Razorgore through the Orb of Domination to break the eggs; the script lets
- * players break them by hand (its documentation says why).
+ * Players alternate at the Orb of Domination and order the possessed dragon to destroy the eggs.
  */
 unittest
 {
@@ -527,7 +526,7 @@ unittest
         grethok = 12557, razorgoreEntry = 12435, egg = 177807, legionnaire = 12416, mage = 12420, dragonspawn = 12422,
         gateIn = 176964, gateOut = 176965,
     }
-    auto s = new Scene(469, Position(-7612, -1024, 413), [classWarrior, classMage]);
+    auto s = new Scene(469, Position(-7612, -1024, 413), [classWarrior, classMage, classPriest]);
     s.run(1.seconds);
     auto razorgore = s.the(razorgoreEntry);
     assert(s.doorOpen(gateIn) && !s.doorOpen(gateOut), "the gates before the fight");
@@ -554,20 +553,56 @@ unittest
     foreach (guard; s.all(14456))
         s.kill(guard);
     s.run(1.seconds);
-    s.moveHero(1, Position(-7643, -1080, 409)); // the second by Nefarian's troops (their emotes are heard 25 yards off)
+    s.moveHero(2, Position(-7643, -1080, 409)); // an observer by Nefarian's troops (their emotes are heard 25 yards off)
     s.forget();
-    const eggCount = s.objects(egg).length;
-    foreach (e; s.objects(egg))
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.packets : ClientGuid;
+    auto orb = s.objects(177808)[0];
+    auto eggs = s.objects(egg);
+    const eggCount = eggs.length;
+    s.moveHero(0, eggs[0].position);
+    s.use(eggs[0]);
+    s.run(400.msecs);
+    assert(s.map.findObject(eggs[0].guid) is eggs[0], "a player cannot break an egg by clicking it");
+    size_t controller;
+    foreach (e; eggs)
     {
-        s.moveHero(0, e.position);
-        s.run(400.msecs);
-        s.use(e);
-        s.run(400.msecs);
+        for (size_t attempt; s.map.findObject(e.guid) !is null && attempt < 3; ++attempt)
+        {
+            if (s.heroes[controller].session.inWorld.charmed !is razorgore)
+            {
+                if (s.hero(controller).auras.find(23958) !is null)
+                    controller = 1 - controller;
+                s.moveHero(controller, orb.position);
+                s.heroes[controller].write(Opcode.CMSG_GAMEOBJ_USE, ClientGuid(orb.guid));
+                assert(s.heroes[controller].session.inWorld.charmed is razorgore,
+                    format!"the orb did not grant possession, raid state %s"(s.ask(0)));
+                assert(s.hero(controller).auras.find(23958) !is null && razorgore.petData.knows(19873));
+            }
+            const at = e.position;
+            auto movement = razorgore.movement;
+            movement.position = at;
+            import dmangos.bytes : ByteWriter;
+            ByteWriter move;
+            movement.write(move);
+            s.heroes[controller].write(Opcode.MSG_MOVE_HEARTBEAT, move.data);
+            const lastEgg = s.objects(egg).length == 1;
+            if (lastEgg)
+                s.hurtTo(razorgore, 50);
+            orderControlled(s, razorgore, 19873, razorgore.guid, controller);
+            if (lastEgg)
+                s.runUntil(() => s.ask(0) == 4, 10.seconds);
+            else
+                s.run(10.seconds);
+        }
+        assert(s.map.findObject(e.guid) is null,
+            format!"Destroy Egg failed at %s, dragon %s, spell result %s, controller %s, remaining %s of %s; %s"(
+                e.position, razorgore.position, razorgore.ai.castRefusal, controller, s.objects(egg).length, eggCount, s.seen()));
     }
-    s.run(2.seconds);
     assert(s.ask(0) == 4, format!"the eggs broken, but the room is %s (%s eggs left of %s)"(s.ask(0), s.objects(egg).length, eggCount));
     assert(s.said(-1_469_035) && s.said(-1_469_033), "no emotes as the orb goes dark\n" ~ s.seen());
-    assert(s.castBy(razorgoreEntry, 23040) && s.healthOf(razorgore) >= 100, "Razorgore not freed whole");
+    assert(razorgore.petOwner == 0 && s.castBy(razorgoreEntry, 23040) && s.healthOf(razorgore) > 99,
+        format!"Razorgore released %s, Warming Flames %s, health %s"(razorgore.petOwner == 0, s.castBy(razorgoreEntry, 23040), s.healthOf(razorgore)));
     // His fight.
     s.stayWith = razorgore;
     s.moveHeroes(razorgore.position);
@@ -1594,4 +1629,55 @@ unittest
     assert(sap.ai.castFor(s.map, 28524, sap.guid, true) == ActionResult.ok);
     assert(s.hero(0).values.get!UNIT_FIELD_HEALTH == 200_000);
     assert(s.hero(1).values.get!UNIT_FIELD_HEALTH < 200_000, "exposed player took no damage from the primary breath");
+}
+
+/// The priest uses the same spellbook command as the possession bar in the client.
+private void orderControlled(Scene s, Creature controlled, uint spell, ulong target, size_t owner = 0)
+{
+    import dmangos.bytes : ByteWriter;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.spellcast : SpellTargets, TargetFlags;
+
+    ByteWriter command;
+    command.put(controlled.guid);
+    command.put(spell);
+    SpellTargets(TargetFlags.unit, target).write(command);
+    s.heroes[owner].write(Opcode.CMSG_PET_CAST_SPELL, command.data);
+}
+
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.script.api : ActionResult;
+    auto s = new Scene(533, Position(3351, -3620, 261.08f), [classPriest]);
+    auto widow = s.the(15953);
+    auto worshipper = s.the(16506);
+    auto priest = s.heroes[0].session.inWorld;
+    priest.castTriggeredAt(10912, worshipper.guid);
+    assert(priest.charmed is worshipper && worshipper.petData.knows(28732));
+    assert(widow.ai.castFor(s.map, 28798, widow.guid, true) == ActionResult.ok);
+    assert(widow.auras.find(28798) !is null);
+    orderControlled(s, worshipper, 28732, worshipper.guid);
+    s.run(2.seconds);
+    assert(!worshipper.alive && widow.auras.find(28732) !is null && widow.auras.find(28798) is null,
+        format!"sacrifice dead %s, embrace %s, frenzy %s; %s"(!worshipper.alive,
+            widow.auras.find(28732) !is null, widow.auras.find(28798) !is null, s.seen()));
+}
+
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto s = new Scene(533, Position(2758.3f, -3111.9f, 267.86f), [classPriest]);
+    auto instructor = s.the(16061);
+    auto student = s.the(16803);
+    auto priest = s.heroes[0].session.inWorld;
+    priest.castTriggeredAt(10912, student.guid);
+    assert(priest.charmed is student && student.petData.knows(29060) && student.petData.knows(29061));
+    instructor.ai.attackedBy(s.heroUnit, s.map);
+    orderControlled(s, student, 29061, student.guid);
+    assert(student.auras.find(29061) !is null);
+    orderControlled(s, student, 29060, instructor.guid);
+    assert(instructor.ai.currentVictim == student.guid);
 }

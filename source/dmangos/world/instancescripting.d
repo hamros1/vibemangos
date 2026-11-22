@@ -333,6 +333,9 @@ final class InstanceScript : InstanceHost
 
     ActionResult hostCast(EntityRef caster, uint spell, EntityRef target, bool triggered)
     {
+        if (caster.isPlayer && map !is null)
+            if (auto unit = map.unit(caster.guid))
+                return unit.session.scriptCast(spell, target.guid, triggered);
         auto c = creatureOf(caster);
         if (c is null)
             return ActionResult.notHere;
@@ -554,6 +557,9 @@ final class InstanceScript : InstanceHost
 
     bool hostHasAura(EntityRef creature, uint spell)
     {
+        if (creature.isPlayer && map !is null)
+            if (auto unit = map.unit(creature.guid))
+                return unit.alive && unit.auraSet.find(spell) !is null;
         auto c = creatureOf(creature);
         return c !is null && c.alive && c.auras.find(spell) !is null;
     }

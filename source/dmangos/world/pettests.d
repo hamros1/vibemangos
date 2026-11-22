@@ -930,7 +930,7 @@ unittest
     enum uint totemEntry = 5873, totemAura = 97400, summon = 97401;
     auto t = petTemplate(totemEntry, "Stoneskin Totem", false);
     context.data.creatureTemplates[totemEntry] = t;
-    context.data.creatureFirstSpell[totemEntry] = totemAura;
+    context.data.creatureControlSpells[totemEntry] = [totemAura, 0u, 0u, 0u];
     context.data.spells.spells[totemAura] = testSpell(totemAura, 35, ImplicitTarget.caster, 10);
     context.data.spells.spells.edit(totemAura).casting.applyAuraName[0] = AuraType.modResistance;
     context.data.spells.spells.edit(totemAura).casting.radiusIndex[0] = 1;

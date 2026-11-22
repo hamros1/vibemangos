@@ -65,7 +65,7 @@ enum : uint
     goDoorChromaggusExit = 179117,
     goDoorVaelastrasz = 179364,
     goDoorLashlayer = 179365,
-    goBlackDragonEgg = 177807,
+    goBlackDragonEgg = 177807, goOrbOfDomination = 177808,
     goSuppressionDevice = 179784,
     npcOrbTrigger = 14449,
 }
@@ -136,7 +136,7 @@ struct BlackwingLair
     @transient EntityRef[2] tunnelSpawners;
     @transient EntityRef[48] drakonidsSeen;
     @transient ubyte drakonidsSlain;
-    @transient EntityRef[4] eggsToGo;
+    @transient EntityRef[] eggsToGo;
 
     enum Step : ubyte { defense, nefarian, eggsGone }
     Schedule!Step steps;
@@ -301,20 +301,28 @@ struct BlackwingLair
 
     void on(ref InstanceContext copy, const ref ObjectUsedHere e)
     {
-        if (e.object.entry != goBlackDragonEgg || encounters[BwlEncounter.razorgore] != EncounterState.inProgress)
+        import std.algorithm.searching : canFind;
+        if (e.object.entry == goBlackDragonEgg)
+            copy.consume();
+        if (encounters[BwlEncounter.razorgore] != EncounterState.inProgress)
+            return;
+        if (e.object.entry == goOrbOfDomination && e.player.isPlayer && razorgore)
+        {
+            if (!copy.hasAura(e.player, 23958) && !copy.hasAura(razorgore, 19832))
+            {
+                copy.castSpell(e.player, 19832, razorgore);
+                if (copy.hasAura(razorgore, 19832))
+                    copy.castSpell(e.player, 23958, e.player);
+            }
+            return;
+        }
+        if (e.object.entry != goBlackDragonEgg || !razorgore || e.player != razorgore || eggsToGo.canFind(e.object))
             return;
         ++eggsBroken;
         if (razorgore && copy.random(2))
             copy.say(razorgore, sayEggsBroken1 - copy.random(3));
-        foreach (ref g; eggsToGo)
-            if (!g)
-            {
-                g = e.object;
-                break;
-            }
+        eggsToGo ~= e.object;
         steps.after(Step.eggsGone, 0.msecs); // once the use is over
-        if (eggsBroken >= eggs && eggs)
-            allEggsBroken(copy);
     }
 
     /// The last egg broken: the orb goes dark, the defenders flee, and Razorgore fights.
@@ -328,7 +336,10 @@ struct BlackwingLair
             copy.say(troops, emoteTroopsFlee);
         }
         if (razorgore)
+        {
+            copy.removeAura(razorgore, 19832);
             copy.signal(razorgore, BwlSignal.eggsBroken);
+        }
         foreach (ref d; defenders)
             if (d)
             {
@@ -467,12 +478,11 @@ struct BlackwingLair
                 copy.log("Nefarian comes");
             break;
         case Step.eggsGone:
-            foreach (ref g; eggsToGo)
-                if (g)
-                {
-                    copy.despawnObject(g);
-                    g = EntityRef.init;
-                }
+            foreach (g; eggsToGo)
+                copy.despawnObject(g);
+            eggsToGo = null;
+            if (eggsBroken >= eggs && eggs && encounters[BwlEncounter.razorgore] == EncounterState.inProgress)
+                allEggsBroken(copy);
             break;
         }
     }
@@ -1496,7 +1506,7 @@ unittest
 
     // Every egg broken: Razorgore is free; the defenders go.
     foreach (i; 0 .. 3)
-        runtime.raise(h, c, ObjectUsedHere(bwlObject(goBlackDragonEgg, 20 + i), EntityRef(7)));
+        runtime.raise(h, c, ObjectUsedHere(bwlObject(goBlackDragonEgg, 20 + i), razorgore));
     runtime.tick(h, c, 100);
     assert(lair.objectsGone.length == 3);
     assert(lair.signals[$ - 1] == Signal(razorgore, BwlSignal.eggsBroken, 0));

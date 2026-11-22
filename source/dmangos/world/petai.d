@@ -158,8 +158,20 @@ mixin template PetBehaviour()
             if ((petCategoryCooldowns[category] -= diff) <= 0)
                 petCategoryCooldowns.remove(category);
         updateCasting(diff);
-        if (!me.alive)
+        // Finishing a cast can release possession (the last Black Dragon Egg).
+        if (!me.alive || me.petData is null)
             return;
+        // The client's active mover is under direct possession. Only an ordered melee swing
+        // and an already-started cast continue while the client drives the creature.
+        if (auto controller = world.unit(me.petOwner))
+            if (controller.session !is null && controller.session.activeMover == me.guid)
+            {
+                if (victim && casting_ is null)
+                    if (auto target = combatTarget(world, victim))
+                        if (target.alive && canAttack(relating, target.combatRelations(me.client), me.client))
+                            meleeAttackIfReady(target, world);
+                return;
+            }
         if (victim)
         {
             auto target = combatTarget(world, victim);

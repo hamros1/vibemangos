@@ -489,7 +489,7 @@ final class WorldData
     float[uint] enchantProcRates;
     Ship[] ships;                                   /// `transports`: the ships and zeppelins, with their schedules
     PageText[uint] pageTexts;                       /// `page_text`: books', letters' and plaques' pages, by id
-    uint[uint] creatureFirstSpell;                  /// `creature_template_spells` (set 0): a creature's first spell (a totem's)
+    uint[4][uint] creatureControlSpells;          /// The four default charm-bar spells. Totems use the first.
     SpellListEntry[][uint] creatureSpellLists;      /// `creature_spell_list`: by list, in position order                   /// `spell_proc_item_enchant`: an enchantment proc's procs a minute, by spell
     ubyte[2][uint] gameObjectBattleEvents;          /// `gameobject_battleground`: ditto
     string[uint] serverStrings;                     /// `mangos_string`'s default texts
@@ -694,9 +694,13 @@ final class WorldData
             ~ "InitialMax, RepeatMin, RepeatMax FROM creature_spell_list ORDER BY Id, Position")())
             data.creatureSpellLists[row.get!uint(0)] ~= SpellListEntry(row.get!uint(1), row.get!uint(2), row.get!int(3),
                 row.get!uint(4), row.get!uint(5), row.get!uint(6), row.get!uint(7), row.get!uint(8), row.get!uint(9));
-        foreach (row; world.query!"SELECT entry, spell1 FROM creature_template_spells WHERE setId = 0"())
-            if (row.get!uint(1))
-                data.creatureFirstSpell[row.get!uint(0)] = row.get!uint(1);
+        foreach (row; world.query!"SELECT entry, spell1, spell2, spell3, spell4 FROM creature_template_spells WHERE setId = 0"())
+        {
+            uint[4] spells;
+            foreach (i, ref spell; spells)
+                spell = row.get!uint(i + 1);
+            data.creatureControlSpells[row.get!uint(0)] = spells;
+        }
         foreach (row; world.query!"SELECT entry, text, next_page FROM page_text"())
             data.pageTexts[row.get!uint(0)] = PageText(row.get!string(1), row.get!uint(2));
         data.loadWaypoints(world);

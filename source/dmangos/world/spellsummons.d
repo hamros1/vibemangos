@@ -96,10 +96,10 @@ imported!"dmangos.world.creature".Creature summonTotem(ref Caster caster, const(
     totem.ai.react = ReactState.passive; // it stands and casts; it does not fight
     totem.ai.scriptMelee(false);
     totem.ai.scriptCombatMovement(false);
-    if (const s = entry in context.data.creatureFirstSpell)
-        if (const info = context.data.spells.spell(*s))
+    if (const s = entry in context.data.creatureControlSpells)
+        if (const info = context.data.spells.spell((*s)[0]))
         {
-            totem.totemSpell = *s;
+            totem.totemSpell = (*s)[0];
             totem.totemActive = castTime(*info, context.client, level) > 0;
             if (!totem.totemActive)
             {
