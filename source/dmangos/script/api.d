@@ -341,6 +341,8 @@ interface CreatureHost
     bool hostInCombat();
     Location hostLocation();
     uint hostHealthPercentOf(EntityRef who);
+    uint hostHealthOf(EntityRef who);
+    bool hostInMeleeReach(EntityRef who);
     ActionResult hostCast(uint spell, EntityRef target, bool triggered);
     ActionResult hostSay(int textEntry, EntityRef target);
     void hostEquip(uint mainHand, uint offHand, uint ranged);
@@ -510,6 +512,12 @@ struct CreatureContext
 
     /// Another unit's health in percent; uint.max if it is not here.
     uint healthPercentOf(EntityRef who) { return host.hostHealthPercentOf(who); }
+
+    /// Another unit's current HP. Absent units have zero HP.
+    uint healthOf(EntityRef who) { return host.hostHealthOf(who); }
+
+    /// Whether the creature can reach this unit with a melee swing.
+    bool inMeleeReach(EntityRef who) { return host.hostInMeleeReach(who); }
 
     /// Casts `spell` at `target` (by default its victim), as its spells are cast: range, line of
     /// sight, power and the spell's own rules apply. `triggered`: no cast time, no cost.

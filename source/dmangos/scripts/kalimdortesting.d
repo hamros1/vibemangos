@@ -64,6 +64,8 @@ final class RecordingCreature : CreatureHost
     bool hostInCombat() { return fighting; }
     Location hostLocation() { return Location(1, 2, 3); }
     uint hostHealthPercentOf(EntityRef) { return 100; }
+    uint hostHealthOf(EntityRef) { return 0; }
+    bool hostInMeleeReach(EntityRef) { return false; }
     ActionResult hostCast(uint spell, EntityRef, bool) { note("cast " ~ spell.to!string); return ActionResult.ok; }
     ActionResult hostSay(int entry, EntityRef) { note("say " ~ entry.to!string); return ActionResult.ok; }
     void hostEquip(uint, uint, uint) {}

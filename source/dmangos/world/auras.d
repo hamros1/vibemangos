@@ -209,7 +209,7 @@ unittest
     assert(stacksAcrossCasters(chill, false, false));
 }
 
-/// The six player abilities Blizzard identified as debuffs without a target icon.
+/// Player spells documented as debuffs without a target icon.
 bool hiddenTargetDebuff(const ref SpellInfo spell)
 {
     // First ranks and their spell_chain successors. Several unrelated spells share family flags.
@@ -218,6 +218,7 @@ bool hiddenTargetDebuff(const ref SpellInfo spell)
     case 10, 6141, 8427, 10185, 10186, 10187: // Blizzard
     case 5143, 5144, 5145, 8416, 8417, 10211, 10212, 25345: // Arcane Missiles
     case 5740, 6219, 11677, 11678: // Rain of Fire
+    case 2120, 2121, 8422, 8423, 10215, 10216: // Flamestrike
     case 1510, 14294, 14295: // Volley
     case 26573, 20116, 20922, 20923, 20924: // Consecration
     case 14183: // Premeditation

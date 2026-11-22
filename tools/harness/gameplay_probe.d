@@ -426,3 +426,164 @@ private void sendMovement(ref TestClient client, uint opcode, MovementFlags flag
     client.write(opcode, msg.data);
     assert(client.session.inWorld.player.movement.flags == flags, "movement packet accepted");
 }
+
+/// Inspect the actual Hateful Strike cast target, whether the attack lands or misses.
+unittest
+{
+    import core.time : msecs;
+    import dmangos.world.combat : canReachWithMelee;
+    import dmangos.world.realscriptkit_raids : Scene, classWarrior;
+    import dmangos.world.realscripts_raids : Boss, setUp;
+    import dmangos.world.spellcast : SpellTargets;
+
+    enum uint patchwerk = 16028, hatefulStrike = 28308;
+    enum size_t players = 6;
+    struct Sample
+    {
+        string label;
+        uint[players] health;
+        uint[players] maxHealth;
+        size_t expected; // zero-based player index
+        uint meleeMask = 0b111111;
+        bool secondPullThreat = false;
+    }
+
+    const Sample[] cases = [
+        Sample("raw HP versus percent", [4000, 8000, 6000, 5000, 4000, 3000],
+            [10000, 10000, 6000, 10000, 10000, 10000], 1),
+        Sample("active tank has highest percent", [10000, 8000, 7000, 6000, 5000, 4000],
+            [10000, 10000, 10000, 10000, 10000, 10000], 1),
+        Sample("fourth versus fifth in melee", [4000, 5000, 6000, 9000, 10000, 8000],
+            [10000, 10000, 10000, 10000, 10000, 10000], 3),
+        Sample("second in threat at range", [4000, 10000, 6000, 8000, 9000, 7000],
+            [10000, 10000, 10000, 10000, 10000, 10000], 3, 0b111101),
+        Sample("only active tank in melee", [4000, 8000, 7000, 6000, 5000, 4000],
+            [10000, 10000, 10000, 10000, 10000, 10000], 0, 0b000001),
+        Sample("active tank second on threat", [10000, 9000, 7000, 6000, 5000, 4000],
+            [10000, 10000, 10000, 10000, 10000, 10000], 1, 0b111111, true),
+    ];
+    ubyte[] classes;
+    foreach (_; 0 .. players)
+        classes ~= classWarrior;
+
+    const encounter = Boss(name: "Patchwerk", map: 533, entry: patchwerk, classes: classes);
+
+    foreach (ref sample; cases)
+    {
+        Scene scene;
+        auto boss = setUp(encounter, scene);
+        auto map = scene.map;
+        scene.godlike = false; // keep damage immunity, but stop refilling the scripted health
+        const origin = boss.position;
+        foreach (index; 0 .. players)
+        {
+            const melee = (sample.meleeMask & (1u << index)) != 0;
+            Position at = origin;
+            at.y -= index; // undo the fixture's spacing so every melee player stands at the same range
+            if (!melee)
+                at.x += 24;
+            scene.moveHero(index, at);
+            assert(canReachWithMelee(boss.fighter, scene.heroUnit(index).fighter) == melee, sample.label);
+        }
+        dealDamage(scene.heroUnit(0), map.unitOf(boss), 1, Blow.spell());
+        boss.ai.dropThreat(map);
+        foreach (index; 0 .. players)
+        {
+            const threat = sample.secondPullThreat && index == 1 ? 1050 : 1000 - 100 * index;
+            boss.ai.addThreat(scene.heroUnit(index), cast(float) threat);
+        }
+        scene.listen();
+
+        ulong chosen;
+        foreach (_; 0 .. 100)
+        {
+            foreach (index; 0 .. players)
+            {
+                auto hero = scene.hero(index);
+                hero.values.set!UNIT_FIELD_MAXHEALTH(sample.maxHealth[index]);
+                hero.values.set!UNIT_FIELD_HEALTH(sample.health[index]);
+            }
+            scene.w.now += 50.msecs;
+            scene.w.context.update(scene.w.now);
+            assert(boss.values.get!UNIT_FIELD_TARGET == scene.hero(0).guid, sample.label);
+            foreach (packet; scene.heroes[0].read())
+            {
+                if (packet.opcode != Opcode.SMSG_SPELL_GO)
+                    continue;
+                auto reader = ByteReader(packet.body_);
+                reader.readPackedGuid();
+                if (reader.readPackedGuid() != boss.guid || reader.read!uint != hatefulStrike)
+                    continue;
+                reader.read!ushort; // cast flags
+                foreach (hit; 0 .. reader.read!ubyte)
+                    reader.read!ulong;
+                foreach (miss; 0 .. reader.read!ubyte)
+                {
+                    reader.read!ulong;
+                    reader.read!ubyte;
+                }
+                chosen = SpellTargets.read(reader).unit;
+                break;
+            }
+            if (chosen)
+                break;
+        }
+        assert(chosen, sample.label ~ ": no Hateful Strike target observed");
+        size_t selected;
+        while (selected < players && scene.hero(selected).guid != chosen)
+            ++selected;
+        assert(selected < players, sample.label ~ ": target outside the fixture");
+        assert(selected == sample.expected, format!"%s: selected player %s, expected %s"(
+            sample.label, selected + 1, sample.expected + 1));
+        const rank = sample.secondPullThreat && selected < 2 ? 2 - selected : selected + 1;
+        const target = scene.hero(selected);
+        assert(target.values.get!UNIT_FIELD_HEALTH == sample.health[selected]
+            && target.values.get!UNIT_FIELD_MAXHEALTH == sample.maxHealth[selected], sample.label);
+        stderr.writefln("hateful-strike %-35s picked threat rank %s, %s/%s HP, active tank=%s",
+            sample.label, rank, sample.health[selected], sample.maxHealth[selected], selected == 0);
+    }
+}
+
+/// Flamestrike's ground damage occupies a debuff slot even though it has no target icon.
+unittest
+{
+    import core.time : seconds;
+    import dmangos.world.auras : makeAura;
+    import dmangos.world.defines : PlayerClass;
+    import dmangos.world.spellcast : SpellTargets, TargetFlags;
+
+    enum uint flamestrike = 2120;
+    auto world = RealWorld.make();
+    auto mage = world.character(61602, "Flamecaster", PlayerClass.mage, 60, [flamestrike]);
+    auto character = mage.session.inWorld;
+    const guid = world.enemy(mage);
+    auto mob = world.context.map(0).unit(guid).creature;
+    assert(mob !is null);
+    mob.values.set!UNIT_FIELD_MAXHEALTH(5000u);
+    mob.values.set!UNIT_FIELD_HEALTH(5000u);
+
+    const pain = world.context.data.spells.spell(589);
+    foreach (caster; 1u .. 16u)
+    {
+        bool added;
+        mob.receiveAura(makeAura(pain, caster, 60, 18_000, false, [7, 0, 0]), world.context.map(0), added);
+        assert(added);
+    }
+    const at = mob.position;
+    SpellTargets spot;
+    spot.mask = TargetFlags.destLocation;
+    spot.dest = [at.x, at.y, at.z];
+    const spell = world.context.data.spells.spell(flamestrike);
+    assert(character.castSpell(spell, spot, false, 0) == SpellCastResult.ok);
+    world.now += 3.seconds;
+    character.update(3.seconds);
+    world.now += 2.seconds;
+    character.update(2.seconds);
+    auto aura = mob.auras.find(flamestrike, character.player.guid);
+    assert(aura !is null && aura.slot == noSlot && mob.auras.list.length == 16);
+    assert(mob.values.get!UNIT_FIELD_HEALTH < 5000);
+    world.now += 10.seconds;
+    character.update(10.seconds);
+    assert(mob.auras.find(flamestrike, character.player.guid) is null, "expired ground effect released its slot");
+    stderr.writeln("gameplay-audit PASS  Flamestrike occupies a hidden debuff slot and releases it on expiry");
+}

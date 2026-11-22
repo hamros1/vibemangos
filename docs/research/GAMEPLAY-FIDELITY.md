@@ -47,9 +47,26 @@ Before the fix, the remaining weapon time at movement start determined the delay
 
 The fix keeps the weapon timer running and schedules retries from the original due time. On a retry that finds the hunter stationary, the server starts its existing 500 ms wind-up. This preserves a server behavior whose exact duration the reference description does not establish. The harness also confirms the stationary cadence, the original due time after a short move, and cancellation of a real wand’s Shoot on movement. The wand fired again after a fresh cast.
 
-## Open encounter check
+## Hateful Strike targeting
 
-- **Patchwerk’s Hateful Strike target.** The encounter script compares health *percentages* among melee threat candidates. The existing raid scenario exercises the ability, but does not distinguish a tank at 8,000/10,000 HP from one at 6,000/6,000 HP. Establish eligible threat ranks and absolute-versus-percentage health from a period log or controlled reference encounter before changing selection. See `scripts/naxxramas.d` and `world/realscripts_raids.d`. [Blizzard’s Naxxramas findings](https://us.forums.blizzard.com/en/wow/t/175887)
+At revision `a62fd08`, the harness loaded Patchwerk in Naxxramas and read the target from the first Hateful Strike cast packet in each six-player trial. Every tank had scripted threat and health. The active tank and melee ranges were checked in each setup. The packet gives the chosen target even if the strike misses.
+
+| Trial | Before | After |
+|---|---|---|
+| Rank 2 at 8,000/10,000 HP and rank 3 at 6,000/6,000 HP | Rank 3 at 6,000 HP | Rank 2 at 8,000 HP |
+| Active tank is rank 1 and has the highest health, with other tanks in melee | Rank 1, the active tank | Rank 2 |
+| Rank 5 has more HP than rank 4 and everyone is in melee | Rank 4 | Rank 4 |
+| Rank 2 is out of melee range and rank 5 is healthiest in melee | Rank 5 | Rank 4 |
+| Only the active tank is in melee | Rank 1, the active tank | Rank 1, the active tank |
+| The active tank is rank 2 on threat and has the highest health | Rank 2, the active tank | Rank 1 |
+
+Before the fix, the script filtered for melee players before taking four threat ranks, kept the active tank eligible, and ranked that pool by health percentage. Blizzard confirms that threat and HP both matter. A period raider account describes three secondary tanks and selection by highest HP. A 2020 raider explicitly describes highest current HP and excluding the main tank. Together these support a raw-current-HP comparison and a separate rule for the active tank. The period account is available on a wiki talk page and the 2020 account is a player report. [Blizzard’s Naxxramas findings](https://us.forums.blizzard.com/en/wow/t/wow-classic-era-%E2%80%9Cnot-a-bug%E2%80%9D-list-updated-april-22-2021/175887) · [2006 raider discussion](https://warcraft.wiki.gg/wiki/Talk%3APatchwerk) · [2020 raider report](https://www.reddit.com/r/classicwow/comments/kbi90g/patchwerk_threat/)
+
+A separate 2020 guild observation reports that a ranged player at threat rank 3 left ranks 2 and 4 as the only recipients. That favors applying a global threat cutoff before the melee filter, although the report does not provide synchronized threat and health data. The fix considers the top four living, targetable players by threat, then requires melee reach and chooses the greatest current HP among the secondary targets. When ranks and aggro differ, it prefers excluding the active victim. It keeps the active tank as a fallback when no secondary target qualifies. Those fallback and split-aggro choices lack a controlled reference test. [2020 guild observation](https://www.wowhead.com/classic/guide/patchwerk-naxxramas-raid-strategy#comments)
+
+## Flamestrike and the debuff cap
+
+Flamestrike’s ground effect was missing from the hidden-debuff list. All six player ranks now use the existing ground-effect cap accounting. A cast beside a target with 15 Shadow Word: Pain debuffs filled its sixteenth slot without displaying an icon and released the slot when the area expired. [Blizzard’s hidden-debuff findings](https://us.forums.blizzard.com/en/wow/t/wow-classic-era-%E2%80%9Cnot-a-bug%E2%80%9D-list-updated-april-22-2021/175887)
 
 ## Reproduce
 
@@ -60,4 +77,4 @@ tools/harness/check.sh --quick
 tools/harness/trainer-spells.sh --gameplay
 ```
 
-The first command builds the release binaries and runs the ordinary unit suite. The second links the opt-in comparison against those objects and runs with the harness database and synthetic player state. Search its output for `gameplay-audit` for the regression checks and `auto-shot` for the timing measurements. The timing probe verifies each observed delay against the expected retry and wind-up. A failed regression check returns a failing exit status. The controls distinguish a genuine rule difference from failure to equip weapons, fill debuff slots, deliver mail or establish a local lockout. No live character is needed.
+The first command builds the release binaries and runs the ordinary unit suite. The second links the opt-in comparison against those objects and runs with the harness database and synthetic player state. Search its output for `gameplay-audit` for the regression checks, `auto-shot` for the timing measurements, and `hateful-strike` for the encounter observations. The timing probe verifies each observed delay against the expected retry and wind-up. A failed regression check returns a failing exit status. The controls distinguish a genuine rule difference from failure to equip weapons, fill debuff slots, deliver mail or establish a local lockout. No live character is needed.

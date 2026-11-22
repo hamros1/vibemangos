@@ -199,6 +199,19 @@ mixin template CreatureScripting()
         return uint.max;
     }
 
+    uint hostHealthOf(EntityRef who)
+    {
+        return world_ is null ? 0 : world_.unit(who.guid).health;
+    }
+
+    bool hostInMeleeReach(EntityRef who)
+    {
+        if (world_ is null)
+            return false;
+        auto target = world_.unit(who.guid);
+        return target && target.alive && !target.untouchable && canReachWithMelee(me.fighter, target.fighter);
+    }
+
     ActionResult hostCast(uint spellId, EntityRef target, bool triggered)
     {
         if (lore is null || world_ is null)

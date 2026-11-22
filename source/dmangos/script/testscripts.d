@@ -78,6 +78,8 @@ final class FakeCreature : CreatureHost
     bool hostInCombat() { return fighting; }
     Location hostLocation() { return Location.init; }
     uint hostHealthPercentOf(EntityRef) { return uint.max; }
+    uint hostHealthOf(EntityRef) { return 0; }
+    bool hostInMeleeReach(EntityRef) { return false; }
     ActionResult hostCast(uint spell, EntityRef, bool) { casts ~= spell; return ActionResult.ok; }
     ActionResult hostSay(int, EntityRef) { return ActionResult.ok; }
     void hostEquip(uint, uint, uint) {}

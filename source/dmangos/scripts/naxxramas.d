@@ -1374,21 +1374,27 @@ struct Patchwerk
         final switch (step)
         {
         case Step.strike:
-            // The healthiest of the four most hated within his reach.
+            // Limit the threat ranks before checking melee range. Prefer a secondary
+            // target and keep the active tank as the fallback if no one else qualifies.
+            const tank = me.victim;
             EntityRef best;
             uint bestHealth;
             foreach (uint i; 0 .. 4)
             {
-                const t = me.selectTarget(Pick.topThreat, PickFilter.player | PickFilter.inMelee, i);
+                const t = me.selectTarget(Pick.topThreat, PickFilter.player, i);
                 if (!t)
                     break;
-                const h = me.healthPercentOf(t);
-                if (!best || h > bestHealth)
+                if (t == tank || !me.inMeleeReach(t))
+                    continue;
+                const hp = me.healthOf(t);
+                if (hp > bestHealth)
                 {
                     best = t;
-                    bestHealth = h;
+                    bestHealth = hp;
                 }
             }
+            if (!best && me.inMeleeReach(tank))
+                best = tank;
             if (best)
                 me.castSpell(hatefulStrike, best);
             steps.after(step, 1200.msecs);
