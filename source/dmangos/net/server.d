@@ -37,6 +37,11 @@ interface BoundedOutput
     @property size_t outputLimit() const;
 }
 
+/** A session that combines traffic for many clients and needs larger reads per poll. */
+interface BulkInput
+{
+}
+
 /// One client's protocol state, driven by the server.
 interface NetSession
 {
@@ -162,6 +167,7 @@ final class TcpServer
         BoundedOutput bounded; // the session, if its unsent output has a limit
         MonoTime lastActivity;
         Duration idleTimeout;
+        bool bulkInput;
         bool connecting; // an outgoing connection not yet established
         bool broken;
         bool writeWatched; // the poller reports it writable
@@ -170,6 +176,7 @@ final class TcpServer
         {
             reuses = cast(ReusesOutput) session;
             bounded = cast(BoundedOutput) session;
+            bulkInput = cast(BulkInput) session !is null;
             this.socket = socket;
             this.session = session;
             this.lastActivity = now;
@@ -466,8 +473,11 @@ private:
 
     void receiveFrom(Connection connection, MonoTime now)
     {
-        ubyte[4096] buffer = void;
-        immutable received = connection.socket.receive(buffer[]);
+        // The whole loop runs between reads. A cluster peer can carry hundreds of clients on
+        // one socket, so give it a larger allowance while keeping one read per ready socket.
+        ubyte[64 * 1024] buffer = void;
+        const limit = connection.bulkInput ? buffer.length : 4096;
+        immutable received = connection.socket.receive(buffer[0 .. limit]);
         if (received == 0)
         {
             connection.broken = true; // orderly shutdown by the peer
@@ -568,6 +578,37 @@ private:
         {
         }
         return address;
+    }
+}
+
+// The same ready event passes a larger batch to a peer and leaves the player read limit in place.
+unittest
+{
+    static class Receiver : NetSession
+    {
+        size_t received;
+        void receive(scope const(ubyte)[] data) { received += data.length; }
+        ubyte[] takeOutput() { return null; }
+        @property bool wantsClose() const { return false; }
+        @property string address() const { return "test"; }
+        void disconnected() {}
+    }
+
+    static final class Peer : Receiver, BulkInput {}
+
+    auto server = new TcpServer(ServerOptions.init, (string) => null);
+    foreach (i, session; [new Receiver, cast(Receiver) new Peer])
+    {
+        auto pair = socketPair();
+        scope (exit)
+            foreach (socket; pair)
+                socket.close();
+        ubyte[16 * 1024] input;
+        assert(pair[1].send(input[]) == input.length);
+        const now = MonoTime.currTime;
+        auto connection = new TcpServer.Connection(pair[0], session, now, 60.seconds);
+        server.receiveFrom(connection, now);
+        assert(session.received == (i == 0 ? 4096 : input.length));
     }
 }
 

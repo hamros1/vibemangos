@@ -27,7 +27,7 @@ import core.time : Duration, MonoTime, usecs;
 
 import dmangos.bytes : ByteReader, ByteWriter;
 import dmangos.cluster.protocol;
-import dmangos.net.server : NetSession;
+import dmangos.net.server : BulkInput, NetSession;
 
 /// How many bytes of unacknowledged messages a node keeps for one peer before giving the oldest up.
 enum size_t retainLimit = 64 * 1024 * 1024;
@@ -178,7 +178,7 @@ interface LinkOwner
 }
 
 /// See the module documentation.
-final class Link : NetSession
+final class Link : NetSession, BulkInput
 {
     enum State
     {

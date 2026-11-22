@@ -16,7 +16,18 @@ and 60 seconds idle. Both nodes finished each run without a logged crash.
 The 750-client run passed the harness's connectivity and balancing checks. During the active
 period, the second node lost its ownership lease and peer round trips reached nearly 12 seconds.
 The node refused writes after its lease expired, including character saves as the bots disconnected.
-This run exposed a capacity issue that the current pass criteria do not catch.
+
+### Larger reads on cluster links
+
+The server was reading up to 4 KiB from a peer socket on each pass through the event loop.
+The peer connection carried traffic for many clients, and its receive queue reached 5.9 MiB in
+a replay of the 750-client failure. That run recorded 14.83 s client ping p99 and 418 character
+saves refused by lease fencing. The updated harness now fails that run.
+
+Cluster links now read up to 64 KiB per ready socket. The 750-client retest finished with all
+clients in the world, 207 player handoffs, and no lease lapses or fenced writes. Client ping p99
+was 28.55 ms and the highest peer round trip sampled in the node logs was 14.16 ms.
+The 500-client retest also passed, with 154 player handoffs and 12.45 ms client ping p99.
 
 ## Method
 
