@@ -77,6 +77,7 @@ final class RegionAuthority
 
     /// Maps never split (dungeons: one node hosts every copy of one, so its region stays whole).
     bool[uint] wholeMaps;
+    ushort[uint] pinnedMaps;
 
     /**
      * `regions` from `partition`, with what each costs; `incarnation` is the coordinator's (epochs
@@ -259,6 +260,14 @@ final class RegionAuthority
                 }
             if (r.owner != node || r.state != RegionState.granted)
                 continue;
+            if (r.map in pinnedMaps)
+            {
+                r.state = RegionState.revoking;
+                r.next = 0;
+                movingTo[r.id] = 0;
+                touch();
+                continue;
+            }
             ushort to = others[0];
             foreach (n; others)
                 if (load[n] < load[to])
@@ -432,6 +441,14 @@ final class RegionAuthority
                     }
                 held[r.id] = true; // a lost loan recovers only on the current home owner
             }
+        foreach (ref r; regions_)
+            if (!r.creature.spawn)
+                if (const node = r.map in pinnedMaps)
+                {
+                    if (r.state == RegionState.unowned && r.id !in held && *node in members && *node !in draining)
+                        grant(r, *node);
+                    held[r.id] = true;
+                }
         foreach (id; assign(regions_, cost, memberList, held))
             foreach (ref r; regions_)
                 if (r.id == id)
@@ -466,7 +483,7 @@ final class RegionAuthority
             if (now - at < balancing.cooldown)
                 frozen[id] = true;
         foreach (ref r; regions_)
-            if (r.creature.spawn)
+            if (r.creature.spawn || r.map in pinnedMaps)
                 frozen[r.id] = true;
         const moves = rebalance(regions_, cost, nodes, balancing.tolerance, frozen, balancing.maxMoves);
         splitHot(load, now);
@@ -625,7 +642,7 @@ private:
     {
         bool[uint] frozen;
         foreach (ref r; regions_)
-            if (r.creature.spawn)
+            if (r.creature.spawn || r.map in pinnedMaps)
                 frozen[r.id] = true;
         foreach (move; rebalance(regions_, cost, memberList, 0.25, frozen))
             foreach (ref r; regions_)

@@ -415,6 +415,9 @@ private:
         with (PartyOperation) with (PartyResult)
         {
             const name = c.text;
+            auto raids = context.groups.battlegroundRaids;
+            if (raids !is null && raids.of(c.guid) !is null)
+                return result(c, PARTY_OP_INVITE, name, ERR_ALREADY_IN_GROUP_S);
             ulong recipient;
             ubyte recipientRace;
             string recipientName;

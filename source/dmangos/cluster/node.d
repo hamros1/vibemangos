@@ -41,6 +41,7 @@ struct CoordinatorSetup
     Region[] regions;     /// from `partition`
     ulong[uint] cost;     /// what each region costs, by id
     IdCounters ids;
+    ushort[uint] pinned;   /// maps that share a battlegroup host
     bool[uint] whole;     /// maps that stay one region (dungeons: one node hosts all their copies)
 }
 
@@ -451,6 +452,7 @@ final class ClusterNode : LinkOwner
             viewVersion = 1;
             authority = new RegionAuthority(setup.regions, setup.cost, id, incarnation, lease, clock);
             authority.wholeMaps = setup.whole;
+            authority.pinnedMaps = setup.pinned;
             authority.balancing.interval = config.balanceIntervalSeconds.seconds;
             authority.balancing.minLoadUs = config.balanceMinLoadUs;
             authority.balancing.cooldown = config.regionCooldownSeconds.seconds;
@@ -906,6 +908,7 @@ final class ClusterNode : LinkOwner
             authority = RegionAuthority.adopt(regions_.latestTable, regions_.latestVersion, standbySetup.cost.dup, id,
                 live, cast(ushort) old, lostCoordinatorHeard, lease, clock);
         authority.wholeMaps = standbySetup.whole;
+        authority.pinnedMaps = standbySetup.pinned;
         authority.balancing.interval = config.balanceIntervalSeconds.seconds;
         authority.balancing.minLoadUs = config.balanceMinLoadUs;
         authority.balancing.cooldown = config.regionCooldownSeconds.seconds;

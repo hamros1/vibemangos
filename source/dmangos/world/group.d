@@ -447,7 +447,8 @@ final class Group
         lootThreshold = 2;
         looter = leader;
         const row = record();
-        owner.database.createGroup(row);
+        if (owner.database !is null)
+            owner.database.createGroup(row);
         owner.byId[id] = this;
         removeInvite(leader);
         addMember(leader, leaderName);
@@ -472,7 +473,8 @@ final class Group
         owner.memberOf[guid] = this;
         if (!isRaid)
             targetIcons[] = 0;
-        owner.database.addGroupMember(id, GroupMemberRecord(lowGuid(guid), name, false, subGroup));
+        if (owner.database !is null)
+            owner.database.addGroupMember(id, GroupMemberRecord(lowGuid(guid), name, false, subGroup));
 
         sendUpdate();
         if (auto player = owner.directory.local(guid))
@@ -534,7 +536,8 @@ final class Group
         removeAllInvites();
         if (id)
         {
-            owner.database.deleteGroup(id);
+            if (owner.database !is null)
+                owner.database.deleteGroup(id);
             owner.byId.remove(id);
             if (owner.removed !is null)
                 owner.removed(id);
@@ -741,7 +744,8 @@ private:
 
         owner.memberOf.remove(guid);
         slots = slots.remove!(s => s.guid == guid);
-        owner.database.removeGroupMember(lowGuid(guid));
+        if (owner.database !is null)
+            owner.database.removeGroupMember(lowGuid(guid));
         if (leader != guid)
             return false;
         chooseLeader();
@@ -790,7 +794,7 @@ private:
 
     void save()
     {
-        if (id)
+        if (id && owner.database !is null)
         {
             const row = record();
             owner.database.updateGroup(row);
@@ -799,7 +803,8 @@ private:
 
     void saveSlot(const ref MemberSlot slot)
     {
-        owner.database.updateGroupMember(GroupMemberRecord(lowGuid(slot.guid), slot.name, slot.assistant,
+        if (owner.database !is null)
+            owner.database.updateGroupMember(GroupMemberRecord(lowGuid(slot.guid), slot.name, slot.assistant,
             slot.subGroup));
     }
 
@@ -838,6 +843,10 @@ final class Groups
         Group[ulong] invitedTo;  // player guid -> group it is invited to (or leads, before creation)
     }
 
+    /// Optional match-only groups shared by the battlegroup hosts.
+    Groups battlegroundRaids;
+    private uint realmNamespace;
+
     /// In a cluster, on the coordinator: a group changed, or was disbanded (`stateOf`, for the mirrors).
     void delegate(const Group group) changes;
     void delegate(uint id) removed; /// ditto
@@ -849,17 +858,20 @@ final class Groups
         return idSource !is null ? idSource() : nextId++;
     }
 
-    this(WorldDatabase database, GroupDirectory directory, uint nextId)
-    in (database !is null && directory !is null && nextId > 0)
+    this(WorldDatabase database, GroupDirectory directory, uint nextId, uint realmNamespace = 0)
+    in (directory !is null && nextId > 0)
     {
         this.database = database;
         this.directory = directory;
         this.nextId = nextId;
+        this.realmNamespace = realmNamespace;
     }
 
     /// The groups loaded at start-up: one whose leader is gone is disbanded, members who are gone are removed.
     void load(GroupRecord[] records)
     {
+        import dmangos.world.battlegroup : realmPlayerGuid;
+
         foreach (ref r; records)
         {
             auto group = new Group(this);
@@ -871,12 +883,12 @@ final class Groups
                 continue;
             }
             group.type = r.isRaid ? GroupType.raid : GroupType.normal;
-            group.leader = makeGuid(HighGuid.player, r.leader);
+            group.leader = realmPlayerGuid(realmNamespace, r.leader);
             group.leaderName = r.leaderName;
-            group.mainTank = r.mainTank ? makeGuid(HighGuid.player, r.mainTank) : 0;
-            group.mainAssistant = r.mainAssistant ? makeGuid(HighGuid.player, r.mainAssistant) : 0;
+            group.mainTank = r.mainTank ? realmPlayerGuid(realmNamespace, r.mainTank) : 0;
+            group.mainAssistant = r.mainAssistant ? realmPlayerGuid(realmNamespace, r.mainAssistant) : 0;
             group.lootMethod = r.lootMethod <= LootMethod.max ? cast(LootMethod) r.lootMethod : LootMethod.groupLoot;
-            group.looter = r.looter ? makeGuid(HighGuid.player, r.looter) : 0;
+            group.looter = r.looter ? realmPlayerGuid(realmNamespace, r.looter) : 0;
             group.lootThreshold = r.lootThreshold;
             group.targetIcons = r.icons;
             foreach (m; r.members)
@@ -887,7 +899,7 @@ final class Groups
                     database.removeGroupMember(m.guid);
                     continue;
                 }
-                group.slots ~= MemberSlot(makeGuid(HighGuid.player, m.guid), m.name,
+                group.slots ~= MemberSlot(realmPlayerGuid(realmNamespace, m.guid), m.name,
                     m.subGroup < maxRaidSubGroups ? m.subGroup : 0, m.assistant);
             }
             if (group.slots.length < Group.membersMinCount)
@@ -907,7 +919,9 @@ final class Groups
     /// The group the player belongs to, online or not, or null.
     Group of(ulong guid)
     {
-        return memberOf.get(guid, null);
+        if (auto group = guid in memberOf)
+            return *group;
+        return battlegroundRaids is null ? null : battlegroundRaids.of(guid);
     }
 
     /// The group the player is invited to, or null.
@@ -932,7 +946,9 @@ final class Groups
     bool sameGroup(ulong a, ulong b) const
     {
         const first = a in memberOf, second = b in memberOf;
-        return first !is null && second !is null && *first is *second;
+        if (first !is null || second !is null)
+            return first !is null && second !is null && *first is *second;
+        return battlegroundRaids !is null && battlegroundRaids.sameGroup(a, b);
     }
 
     // -----------------------------------------------------------------------

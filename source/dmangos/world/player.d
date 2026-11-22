@@ -214,13 +214,13 @@ final class Player : InventoryOwner
      * `nextItemGuid` numbers the items it will be given.
      */
     this(const ref CharacterData character, const ref KnownAbilities abilities, const WorldData world,
-        const ClientData client, uint delegate() nextItemGuid)
+        const ClientData client, uint delegate() nextItemGuid, ulong publicGuid = 0)
     in (character.guid != 0, "guid 0 is no character")
     in (character.level > 0, "levels start at 1")
     out (; values.type == TypeId.player && !values.hasChanges, "a fresh player has nothing left to send")
     {
         data = cast(CharacterData) character;
-        guid = makeGuid(HighGuid.player, character.guid);
+        guid = publicGuid ? publicGuid : makeGuid(HighGuid.player, character.guid);
         movement.position = character.position;
         values = UpdateValues(TypeId.player);
         inventory = new Inventory(world, this, &values, nextItemGuid);

@@ -2433,7 +2433,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     ///
     this(WorldConfig config, WorldDatabase database, WorldData data, ClientData client,
-        LoginDatabase accounts = null)
+        LoginDatabase accounts = null, Battlegroup sharedBattles = null)
     in (database !is null && data !is null && client !is null)
     {
         this.accounts = accounts is null ? new MemoryLoginDatabase : accounts;
@@ -2469,7 +2469,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             transportClockSource = &transportNow;
         }
         this.next = database.highestGuids();
-        this.groups = new Groups(database, this, next.group);
+        this.groups = new Groups(database, this, next.group, config.battlegroup.length ? config.realmId : 0);
         groupService = new GroupService(this);
         respawnAt = database.loadCreatureRespawns();
         gameObjectRespawnAt = database.loadGameObjectRespawns();
@@ -2486,8 +2486,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
         services.provide!LootTurnHost((const(ubyte)[]) => LootTurnHost(groups));
         services.provide!BattlegroundQueueHost((const(ubyte)[] state) =>
-            BattlegroundQueueHost(newBattlegroundQueue(), state));
+            BattlegroundQueueHost(battlegroup is null ? newBattlegroundQueue() : battlegroup.queue, state,
+                battlegroup is null || battlegroup.host is this));
         battlegrounds = new Battlegrounds(this);
+        if (sharedBattles !is null) sharedBattles.attach(this);
         gameEvents = new GameEvents;
         data.npcs.conditions.eventActive = (uint id) => gameEvents.isActive(id);
         data.npcs.conditions.holidayActive = (uint holiday) => gameEvents.holidayActive(holiday);
@@ -2506,6 +2508,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     /// The battleground copies this node runs.
     Battlegrounds battlegrounds;
+    import dmangos.world.battlegroup : Battlegroup, battlegroupInstance, realmPlayerGuid;
+    Battlegroup battlegroup;
+    string realmDisplayName;
+
+    ulong playerGuid(uint local) const
+    {
+        return realmPlayerGuid(config.battlegroup.length ? config.realmId : 0, local);
+    }
 
     // -----------------------------------------------------------------------
     // Linked creatures (`dmangos.world.creaturelinking`)
@@ -3029,7 +3039,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             foreach (lootItem; loot.items)
                 if (auto proto = lootItem.itemId in data.items)
                 {
-                    auto item = new Item(nextItemGuid(), proto, makeGuid(HighGuid.player, 0, guid));
+                    auto item = new Item(nextItemGuid(), proto, playerGuid(guid));
                     item.count = lootItem.count ? lootItem.count : 1;
                     const record = item.record;
                     database.saveLooseItem(record, guid);
@@ -3322,7 +3332,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /// The battleground queues, as the service on this node runs them (docs/SERVICES.md).
-    private BattlegroundQueue newBattlegroundQueue()
+    package BattlegroundQueue newBattlegroundQueue()
     {
         import dmangos.cluster.ownership : IdKind;
 
@@ -3331,17 +3341,19 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             q.templates[type] = t;
         q.clock = () => clock();
         q.newInstanceId = (out uint id) => takeId(IdKind.instance, id);
-        q.deliver = (ulong guid, ushort node, Opcode opcode, const(ubyte)[] body_) {
-            if (auto local = onlinePlayer(guid))
-                return local.deliver(opcode, body_);
-            if (deliverRemote is null)
-                return;
-            if (auto remote = remotePlayer(guid))
-                node = remote.node; // presence follows it between nodes
-            if (node && node != nodeId)
-                deliverRemote(node, guid, cast(ushort) opcode, body_);
-        };
+        q.deliver = &deliverQueuePacket;
         return q;
+    }
+
+    package void deliverQueuePacket(ulong guid, ushort node, Opcode opcode, const(ubyte)[] body_)
+    {
+        if (auto local = onlinePlayer(guid))
+            return local.deliver(opcode, body_);
+        if (deliverRemote is null) return;
+        if (auto remote = remotePlayer(guid))
+            node = remote.node;
+        if (node && node != nodeId)
+            deliverRemote(node, guid, cast(ushort) opcode, body_);
     }
 
     /// The battleground queue service, if it runs on this node (standalone it does).
@@ -3640,6 +3652,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// Map `id`'s instance `instance` (0: the map itself), created when its first player arrives.
     Map map(uint id, uint instance)
     {
+        if (battlegroup !is null && battlegroup.host !is this && (instance & battlegroupInstance) && battlegroundOfMap(id))
+            return battlegroup.host.map(id, instance);
         if (instance == 0)
             return map(id);
         if (auto found = instance in instanceMaps)
@@ -3822,6 +3836,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// Map `id`'s instance `instance` if it exists (0: the map itself); null otherwise.
     Map existingMap(uint id, uint instance)
     {
+        if (battlegroup !is null && battlegroup.host !is this && (instance & battlegroupInstance) && battlegroundOfMap(id))
+            return battlegroup.host.existingMap(id, instance);
         return instance ? instanceMaps.get(instance, null) : existingMap(id);
     }
 
@@ -7664,7 +7680,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         checkHonorWeek(now);
         services.tick(elapsed);
         worldPvp.tick(elapsed);
-        battlegrounds.tick(elapsed);
+        if (battlegroup is null || battlegroup.host is this) battlegrounds.tick(elapsed);
         landObjectAnimations(now);
         updateGameEvents(now);
         removeExpiredBones();

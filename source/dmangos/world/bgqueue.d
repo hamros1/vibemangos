@@ -565,12 +565,12 @@ final class BattlegroundQueue
     void left(uint instance, ulong guid, ubyte team)
     {
         auto copy = instance in running;
-        if (copy !is null && team < 2 && copy.invited[team])
-            --copy.invited[team];
         if (auto mine = guid in tickets)
             foreach (i, ref t; *mine)
                 if (t.stage == Stage.inside && t.instance == instance)
                 {
+                    if (copy !is null && team < 2 && copy.invited[team])
+                        --copy.invited[team];
                     send(guid, battlefieldStatus(cast(uint) i, t.type, 0, BattlegroundStatus.none));
                     t = Ticket.init;
                 }
@@ -951,10 +951,13 @@ struct BattlegroundQueueHost
 {
     BattlegroundQueue queue;
 
-    this(BattlegroundQueue queue, const(ubyte)[] state)
+    bool clockOwner = true;
+
+    this(BattlegroundQueue queue, const(ubyte)[] state, bool clockOwner = true)
     {
         this.queue = queue;
-        queue.restoreState(state);
+        this.clockOwner = clockOwner;
+        if (clockOwner) queue.restoreState(state);
     }
 
     ubyte[] saveState() const
@@ -1026,7 +1029,7 @@ struct BattlegroundQueueHost
 
     void tick(Duration)
     {
-        queue.tick();
+        if (clockOwner) queue.tick();
     }
 }
 
@@ -1116,6 +1119,8 @@ unittest
     // Leaving the copy frees a place too, and the slot.
     q.left(100, 1, 0);
     assert(q.ticketsOf(1) is null && q.copies[100].invited[0] == 2);
+    q.left(100, 1, 0);
+    assert(q.copies[100].invited[0] == 2, "a repeated departure cannot free another player's place");
 }
 
 // Invitations: reminded at 60 s, gone at 80 s; three slots at most; logging out leaves the queues.

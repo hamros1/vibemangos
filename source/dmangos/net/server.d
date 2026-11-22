@@ -265,7 +265,7 @@ final class TcpServer
     }
 
     /// Serves clients until `requestShutdown` is called.
-    void run()
+    void run(void delegate() cooperate = null)
     {
         raiseFileLimit(options.maxConnections + 64); // and the listeners, the database, the map files
         foreach (ref listener; listeners)
@@ -296,7 +296,7 @@ final class TcpServer
 
             // Returns nothing when a signal interrupts the wait; the loop condition then sees the shutdown flag.
             immutable wait = options.tickInterval - (MonoTime.currTime - lastMaintenance);
-            auto ready = poller.wait(wait > Duration.zero ? wait : Duration.zero);
+            auto ready = poller.wait(cooperate is null && wait > Duration.zero ? wait : Duration.zero);
             immutable now = MonoTime.currTime;
             foreach (event; ready)
             {
@@ -349,6 +349,7 @@ final class TcpServer
             reap(now);
             immutable finished = MonoTime.currTime;
             busy.record(finished - now);
+            if (cooperate !is null) cooperate();
             busyTotal += finished - now;
             if (finished - now > slowTick)
                 warning!"a loop iteration took %s ms: %s receiving, %s in the tick, %s sending (%s connections)"(

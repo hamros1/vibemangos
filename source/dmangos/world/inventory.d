@@ -386,12 +386,14 @@ final class Item
     /// The item a saved row describes.
     static Item load(const ref ItemRecord record, const(ItemTemplate)* proto, ulong owner)
     {
+        import dmangos.world.battlegroup : realmPlayerGuid;
+
         auto item = new Item(record.guid, proto, owner);
         auto v = &item.values;
         if (record.creator)
-            v.set!ITEM_FIELD_CREATOR(makeGuid(HighGuid.player, record.creator));
+            v.set!ITEM_FIELD_CREATOR(realmPlayerGuid(cast(uint)(owner >> 32), record.creator));
         if (record.giftCreator)
-            v.set!ITEM_FIELD_GIFTCREATOR(makeGuid(HighGuid.player, record.giftCreator));
+            v.set!ITEM_FIELD_GIFTCREATOR(realmPlayerGuid(cast(uint)(owner >> 32), record.giftCreator));
         v.set!ITEM_FIELD_STACK_COUNT(record.count);
         // A duration the template no longer has, or newly has, follows the template.
         v.set!ITEM_FIELD_DURATION((proto.duration == 0) != (record.duration == 0) ? proto.duration : record.duration);

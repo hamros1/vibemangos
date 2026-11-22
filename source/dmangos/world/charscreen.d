@@ -67,6 +67,7 @@ private:
                     record.name, record.race, record.classId);
                 continue;
             }
+            entry.get.guid = context.playerGuid(record.guid);
             list.characters ~= entry.get;
         }
         send(list);
@@ -187,6 +188,8 @@ private:
             deliver(Opcode.SMSG_CHAR_RENAME, w.data);
         }
         const guid = lowGuid(fullGuid);
+        if (fullGuid != context.playerGuid(guid))
+            return answer(cast(ubyte) CharacterResponse.CHAR_CREATE_ERROR);
         const owner = context.database.characterOwner(guid);
         if (!admitted || owner.isNull || owner.get.account != account.id)
             return answer(CharNameResult.CHAR_NAME_FAILURE);
@@ -210,6 +213,8 @@ private:
     void handleCharDelete(const ClientCharDelete request)
     {
         const guid = lowGuid(request.guid);
+        if (request.guid != context.playerGuid(guid))
+            return send(ServerCharDelete(CharacterResponse.CHAR_DELETE_FAILED));
         if (!admitted) // in a cluster, the character may be in the world on another node
             return send(ServerCharDelete(CharacterResponse.CHAR_DELETE_FAILED));
         if (context.database.isGuildLeader(guid))
@@ -383,7 +388,8 @@ mixin template CharacterLogin()
             &context.nextItemGuid);
         builder.loadAbilities(character.race, character.classId, character.level, account.level, character.skills,
             character.spells, abilities);
-        auto made = new Player(character, abilities, context.data, context.client, &context.nextItemGuid);
+        auto made = new Player(character, abilities, context.data, context.client, &context.nextItemGuid,
+            context.playerGuid(character.guid));
         const offline = offlineRest && character.logoutTime > 0 ? context.unixTime - character.logoutTime : 0;
         const rate = character.logoutResting ? context.config.rateRestOfflineInTavernOrCity
             : context.config.rateRestOfflineInWilderness / 4;

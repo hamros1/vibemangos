@@ -49,6 +49,10 @@ struct WorldConfig
 {
     /// `RealmID`: this server's row in `realmlist`.
     @JsonName("realm_id") uint realmId = 1;
+    /// A shared battleground pool. Empty keeps the realm's own queue.
+    @JsonName("battlegroup") string battlegroup;
+    @JsonName("battlegroup_node") ushort battlegroupNode = 1;
+
 
     /// `LoginDatabaseInfo`
     @JsonName("login_database") string loginDatabase = "127.0.0.1;3306;mangos;mangos;classicrealmd";
@@ -291,6 +295,8 @@ struct WorldConfig
     {
         import dmangos.auth.protocol : versionName;
 
+        enforce(!battlegroup.length || battlegroupNode > 0, "battlegroup_node must be positive");
+        enforce(!battlegroup.length || realmId <= ushort.max, "battlegroup realm_id exceeds 65535");
         enforce(realmId > 0, "realm_id must be at least 1");
         cluster.validate();
         enforce(compression >= 1 && compression <= 9, "compression must be between 1 and 9");

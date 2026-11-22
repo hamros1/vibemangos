@@ -92,7 +92,7 @@ mixin template SocialHandlers()
 
         social = null;
         foreach (row; context.database.loadSocial(player.data.guid))
-            social[makeGuid(HighGuid.player, row.other)] |= row.flags; // rows of older servers may split them
+            social[context.playerGuid(row.other)] |= row.flags; // rows of older servers may split them
     }
 
     /// Whether this player ignores `guid` (see also `OnlinePlayer.ignores`).
@@ -188,7 +188,7 @@ mixin template SocialHandlers()
         const low = name.length ? context.database.characterGuid(name) : 0;
         if (low == 0)
             return deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.notFound, 0));
-        const guid = makeGuid(HighGuid.player, low);
+        const guid = context.playerGuid(low);
         if (guid == player.guid)
             return deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.self, guid));
         if (befriends(guid))
@@ -225,7 +225,7 @@ mixin template SocialHandlers()
         const low = name.length ? context.database.characterGuid(name) : 0;
         if (low == 0)
             return deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.ignoreNotFound, 0));
-        const guid = makeGuid(HighGuid.player, low);
+        const guid = context.playerGuid(low);
         if (guid == player.guid)
             return deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.ignoreSelf, guid));
         if (ignores(guid))

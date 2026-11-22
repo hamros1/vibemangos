@@ -184,7 +184,7 @@ mixin template GuildHandlers()
             w.put(r.rights);
         foreach (ref m; g.members)
         {
-            const guid = makeGuid(HighGuid.player, m.guid);
+            const guid = context.playerGuid(m.guid);
             w.put(guid);
             ubyte level = m.level, classId = m.classId;
             uint zone = m.zone;
@@ -353,7 +353,7 @@ mixin template GuildHandlers()
         w.put(cast(ubyte) signers.length);
         foreach (s; signers)
         {
-            w.put(makeGuid(HighGuid.player, s));
+            w.put(context.playerGuid(s));
             w.put(uint(0));
         }
         return w.data;
@@ -368,7 +368,7 @@ mixin template GuildHandlers()
         if (p.isNull)
             return;
         deliver(Opcode.SMSG_PETITION_SHOW_SIGNATURES, signaturesPacket(request.guid,
-            makeGuid(HighGuid.player, p.get.owner), p.get.signers));
+            context.playerGuid(p.get.owner), p.get.signers));
     }
 
     /// What a charter says.
@@ -384,7 +384,7 @@ mixin template GuildHandlers()
             return;
         ByteWriter w;
         w.put(lowGuid(charter));
-        w.put(makeGuid(HighGuid.player, p.get.owner));
+        w.put(context.playerGuid(p.get.owner));
         w.putCString(p.get.name);
         w.put(ubyte(0));
         w.put(uint(1));
@@ -408,7 +408,7 @@ mixin template GuildHandlers()
         const p = context.database.loadPetition(lowGuid(charter));
         if (p.isNull)
             return;
-        const owner = makeGuid(HighGuid.player, p.get.owner);
+        const owner = context.playerGuid(p.get.owner);
         if (owner == player.guid)
             return;
         const ownerInfo = context.database.nameInfo(p.get.owner);
@@ -444,7 +444,7 @@ mixin template GuildHandlers()
             return;
         ByteWriter w;
         w.put(player.guid);
-        if (auto owner = context.onlinePlayer(makeGuid(HighGuid.player, p.get.owner)))
+        if (auto owner = context.onlinePlayer(context.playerGuid(p.get.owner)))
             owner.deliver(Opcode.MSG_PETITION_DECLINE, w.data);
     }
 
@@ -537,7 +537,7 @@ mixin template GuildHandlers()
             return guildResult(GuildCommand.invite, realName, GuildError.alreadyInGuildS);
         if (!g.hasRight(ownRank(), GuildRight.invite))
             return guildResult(GuildCommand.invite, "", GuildError.permissions);
-        const guid = makeGuid(HighGuid.player, low);
+        const guid = context.playerGuid(low);
         if (auto here = cast(typeof(this)) context.onlinePlayer(guid))
         {
             if (here.guildInvited)
@@ -622,7 +622,7 @@ mixin template GuildHandlers()
         g.members = g.members.filter!(m => m.guid != member).array;
         context.guilds.memberLeft(member);
         context.database.deleteGuildMember(member);
-        if (auto gone = cast(typeof(this)) context.onlinePlayer(makeGuid(HighGuid.player, member)))
+        if (auto gone = cast(typeof(this)) context.onlinePlayer(context.playerGuid(member)))
             gone.refreshGuildFields();
         guildChanged(g);
     }

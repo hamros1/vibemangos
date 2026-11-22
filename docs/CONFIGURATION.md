@@ -69,6 +69,7 @@ Redirected logs are plain text. Set `NO_COLOR=1` to disable colors in a terminal
 | `honor_maintenance_day`, `min_honor_kills` | the day the honor week turns (0 Sunday); honorable kills needed for a place in the standing | `3`, `15` |
 | `creature_pickpocket_restock_delay` | seconds before an emptied creature's pockets hold something again | `600` |
 | `battleground_cast_deserter`, `battleground_premature_finish` | Deserter for leaving a battleground early; seconds a side may be short of players before it loses (0 never) | `true`, `300` |
+| `battlegroup`, `battlegroup_node` | Optional shared battleground name and the node that hosts matches for this realm. [Setup](CLUSTER.md#cross-realm-battlegrounds) | Empty, `1` |
 | `battleground_score_statistics` | each battle's scoreboard kept in `pvpstats_battlegrounds` and `pvpstats_players` | `false` |
 | `max_pending_output_kb` | a client with more than this not yet sent to it (it is not reading) is disconnected; 0 no limit | `4096` |
 | `mmaps` | creatures find their way over `data_dir/mmaps`, where there are movement maps | `true` |

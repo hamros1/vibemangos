@@ -26,6 +26,7 @@ import dmangos.net.server : installShutdownHandlers, NetSession, requestShutdown
 import dmangos.world.clientdata : ClientData;
 import dmangos.world.config : loadWorldConfig, WorldConfig;
 import dmangos.world.context : WorldContext;
+import dmangos.world.battlegroup : Battlegroup;
 import dmangos.world.database : MySqlWorldDatabase;
 import dmangos.world.realm : RealmRegistration;
 import dmangos.world.session : WorldSession;
@@ -48,9 +49,11 @@ int main(string[] args)
 {
     enableConsoleLogColors();
     string configPath = "worldserver.json";
+    string[] additionalRealms;
     GetoptResult options;
     try
-        options = getopt(args, "config|c", "Configuration file (default: worldserver.json)", &configPath);
+        options = getopt(args, "config|c", "Configuration file (default: worldserver.json)", &configPath,
+            "battlegroup-realm", "Config of an additional realm sharing battlegrounds (repeatable)", &additionalRealms);
     catch (GetOptException e)
     {
         stderr.writeln(e.msg);
@@ -66,6 +69,10 @@ int main(string[] args)
     {
         auto config = loadWorldConfig(configPath);
         setLogLevel(config.logLevel);
+        if (additionalRealms.length)
+            return runBattlegroup([configPath] ~ additionalRealms);
+        if (config.battlegroup.length && (!config.cluster.enabled || config.cluster.nodeId == config.battlegroupNode))
+            throw new Exception("Start this battlegroup host with --battlegroup-realm for its other realms.");
         return run(config, configPath);
     }
     catch (Exception e)
@@ -78,7 +85,64 @@ int main(string[] args)
 /// The exit code for a restart (2, as CMaNGOS restart scripts expect), for a script that starts it again.
 private enum restartExitCode = 2;
 
-private int run(WorldConfig config, string configPath)
+/// Independent realm simulations cooperate on one thread so a battleground map has exactly one writer.
+private int runBattlegroup(string[] paths)
+{
+    import core.thread : Fiber, Thread;
+    import std.exception : enforce;
+
+    auto pool = new Battlegroup;
+    WorldConfig[] configs;
+    foreach (path; paths)
+    {
+        auto config = loadWorldConfig(path);
+        enforce(config.battlegroup.length && (!config.cluster.enabled || config.cluster.nodeId == config.battlegroupNode),
+            "Every co-hosted config must name its battlegroup and use its designated battlegroup node.");
+        foreach (other; configs)
+        {
+            enforce(config.battlegroup == other.battlegroup && config.realmId != other.realmId,
+                "Battlegroup configs must name the same group and different realm IDs.");
+            enforce(config.characterDatabase != other.characterDatabase && config.loginDatabase == other.loginDatabase,
+                "Realms must share their login database and have separate character databases.");
+            enforce(config.writeLog != other.writeLog, "Give each realm its own write_log.");
+        }
+        configs ~= config;
+    }
+    int outcome;
+    Fiber realmLoop(WorldConfig config, string path)
+    {
+        return new Fiber({
+            try
+            {
+                const code = run(config, path, pool, { Fiber.yield(); });
+                if (code) outcome = code;
+            }
+            catch (Exception e)
+            {
+                error!"realm %s: %s"(config.realmId, e.msg);
+                outcome = 1;
+            }
+            requestShutdown();
+        }, 8 * 1024 * 1024);
+    }
+    Fiber[] realms;
+    foreach (i, config; configs) realms ~= realmLoop(config, paths[i]);
+    bool active;
+    do
+    {
+        active = false;
+        foreach (realm; realms)
+            if (realm.state != Fiber.State.TERM)
+            {
+                realm.call();
+                active = true;
+            }
+        if (active) Thread.sleep(1.msecs);
+    } while (active);
+    return outcome;
+}
+
+private int run(WorldConfig config, string configPath, Battlegroup pool = null, void delegate() cooperate = null)
 {
     auto login = connect(config.loginDatabase, config.mysqlLibrary, "login");
     scope (exit)
@@ -137,7 +201,13 @@ private int run(WorldConfig config, string configPath)
             s.queued, s.written, s.replaced, s.refused, s.failed, s.retried);
     }
     auto behind = new WriteBehind(new MySqlWorldDatabase(login, characters, world), writer, null);
-    auto context = new WorldContext(config, behind, data, client, new MySqlLoginDatabase(login));
+    auto context = new WorldContext(config, behind, data, client, new MySqlLoginDatabase(login), pool);
+    if (pool !is null)
+    {
+        auto rows = login.query!"SELECT name FROM realmlist WHERE id = ?"(config.realmId);
+        foreach (row; rows) context.realmDisplayName = row.get!string(0).idup;
+        if (!context.realmDisplayName.length) throw new Exception("Missing realmlist row for battlegroup realm");
+    }
     context.writer = writer;
     context.configPath = configPath;
     // Every node serves clients (docs/CLUSTER.md); only a standalone server or a cluster's coordinator speaks
@@ -469,7 +539,7 @@ private int run(WorldConfig config, string configPath)
     if (cluster !is null)
         server.addListener(config.cluster.listenAddress, config.cluster.listenPort,
             (string address) => cluster.accept(address), (2 * config.cluster.failureTimeoutMs).msecs);
-    server.run();
+    server.run(cooperate);
     if (ownsRealm())
         realm.updateUptime(cast(uint) context.peakSessions);
     return context.restartRequested ? restartExitCode : 0;
@@ -495,6 +565,12 @@ private CoordinatorSetup coordinatorSetup(uint regionCount, WorldData data, Clie
         maps ~= entry.mapId;
         if (entry.isDungeon || entry.isBattleground)
             setup.whole[entry.mapId] = true; // one node hosts all of a dungeon's (or a battleground's) copies
+    }
+    if (context.config.battlegroup.length)
+    {
+        import dmangos.cluster.services : ServiceKind, serviceMap;
+        foreach (uint map; [30u, 489u, 529u, serviceMap(ServiceKind.battlegroundQueue)])
+            setup.pinned[map] = context.config.battlegroupNode;
     }
     setup.regions = partition(maps, costs, regionCount, setup.whole);
     foreach (ref r; setup.regions)

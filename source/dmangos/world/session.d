@@ -600,6 +600,27 @@ package:
 
         if (request.guid >> 48 != 0) // only player GUIDs use this query
             return;
+        const origin = cast(uint)(request.guid >> 32);
+        if (origin && origin != context.config.realmId)
+        {
+            if (state_ == WorldState.elsewhere && !gatewayPaused)
+            {
+                import dmangos.bytes : ByteWriter;
+                ByteWriter query;
+                query.put(request.guid);
+                return context.relayToOwner(ownerNode, account.id, cast(ushort) Opcode.CMSG_NAME_QUERY, query.data);
+            }
+            if (context.battlegroup !is null && inWorld !is null)
+                if (auto copy = inWorld.currentBattleground())
+                    if (auto other = copy.memberSession(request.guid))
+                    {
+                        const c = other.character;
+                        const realm = context.battlegroup.homeOf(request.guid);
+                        send(ServerNameQueryResponse(request.guid, c.data.name, realm.realmDisplayName,
+                            c.data.race, c.data.gender, c.data.classId));
+                    }
+            return;
+        }
         if (const other = context.onlinePlayer(request.guid))
         {
             const c = other.character;

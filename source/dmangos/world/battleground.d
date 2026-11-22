@@ -193,6 +193,13 @@ final class Battleground
     bool[ulong] inTeamRaid; /// ditto
 
     package WorldContext context;
+    package auto memberSession(ulong guid)
+    {
+        import dmangos.world.battlegroup : battlegroupInstance;
+        if (context.battlegroup !is null && (instance & battlegroupInstance))
+            return context.battlegroup.member(instance, guid);
+        return context.onlinePlayer(guid);
+    }
 
     private
     {
@@ -266,7 +273,7 @@ final class Battleground
         w.put(guid);
         toTeam(team, Opcode.SMSG_BATTLEGROUND_PLAYER_JOINED, w.data, guid);
         if (status == BattlegroundStatus.waitLeave)
-            if (auto who = context.onlinePlayer(guid))
+            if (auto who = memberSession(guid))
                 who.deliver(Opcode.MSG_PVP_LOG_DATA, scoreboard());
         info!"battleground: %s (copy %s) has %s Alliance and %s Horde players"(type, instance, count(0), count(1));
     }
@@ -282,6 +289,25 @@ final class Battleground
             return;
         rules.playerLeaving(this, guid);
         const team = m.team;
+        if (context.battlegroup !is null && guid in inTeamRaid)
+        {
+            import dmangos.world.group : RemoveMethod;
+
+            inTeamRaid.remove(guid);
+            if (auto raid = context.battlegroup.raids.of(guid))
+                raid.removeMember(guid, RemoveMethod.leave);
+            if (raidLeaderOf.get(team, 0) == guid)
+            {
+                raidLeaderOf.remove(team);
+                foreach (mate; joinOrder_)
+                    if (mate in inTeamRaid && members[mate].team == team)
+                    {
+                        auto raid = context.battlegroup.raids.of(mate);
+                        raidLeaderOf[team] = raid is null ? mate : raid.leader;
+                        break;
+                    }
+            }
+        }
         members.remove(guid);
         {
             import std.algorithm.mutation : remove;
@@ -401,7 +427,7 @@ final class Battleground
         else if (winner == winnerHorde)
             playSound(soundHordeWins, 1);
         foreach (guid, ref m; members)
-            if (auto c = cast(Character) context.onlinePlayer(guid))
+            if (auto c = cast(Character) memberSession(guid))
             {
                 const won = winner != winnerNone && teamWins(m.team, winner);
                 c.battlegroundEnded(markSpells[type][won ? 0 : 1]);
@@ -410,11 +436,11 @@ final class Battleground
             message(stringAllianceWins, ChatType.CHAT_MSG_BG_SYSTEM_NEUTRAL);
         else if (winner == winnerHorde)
             message(stringHordeWins, ChatType.CHAT_MSG_BG_SYSTEM_NEUTRAL);
-        if (context.config.battlegroundScoreStatistics)
+        if (context.config.battlegroundScoreStatistics || context.battlegroup !is null)
             keepScores();
         const board = scoreboard();
         foreach (guid, ref m; members)
-            if (auto who = context.onlinePlayer(guid))
+            if (auto who = memberSession(guid))
             {
                 who.deliver(Opcode.MSG_PVP_LOG_DATA, board);
                 who.deliver(Opcode.SMSG_BATTLEFIELD_STATUS, battlefieldStatus(0, type, 0,
@@ -435,7 +461,7 @@ final class Battleground
         import dmangos.world.database : PvpStatsBattleground, PvpStatsPlayer;
 
         const t = template_;
-        PvpStatsPlayer[] rows;
+        PvpStatsPlayer[][WorldContext] byHome;
         uint level;
         foreach (guid, ref m; members)
         {
@@ -444,14 +470,20 @@ final class Battleground
             PvpStatsPlayer p = {guid: cast(uint) guid, killingBlows: m.killingBlows, deaths: m.deaths,
                 honorableKills: m.honorableKills, bonusHonor: m.bonusHonor};
             p.attr = m.extra[0 .. 5];
-            rows ~= p;
-            if (auto who = context.onlinePlayer(guid))
+            auto home = context.battlegroup is null ? context : context.battlegroup.homeOf(guid);
+            if (home !is null && home.config.battlegroundScoreStatistics)
+                byHome[home] ~= p;
+            if (auto who = memberSession(guid))
                 level = who.character.data.level;
         }
         ubyte bracket;
         if (t !is null)
             bracket = cast(ubyte)((t.minLevel + 10 * (level ? bracketOf(*t, level) : 0)) / 10);
-        context.database.savePvpStats(PvpStatsBattleground(winner, bracket, cast(ubyte) type), rows);
+        const result = PvpStatsBattleground(winner, bracket, cast(ubyte) type);
+        if (!byHome.length && context.battlegroup is null)
+            context.database.savePvpStats(result, null);
+        foreach (home, rows; byHome)
+            home.database.savePvpStats(result, rows);
     }
 
     /// Whether `team` (0 the Alliance) is `winner`.
@@ -491,12 +523,12 @@ final class Battleground
             ++k.killingBlows;
             ++k.honorableKills;
             const team = k.team;
-            auto dead = context.onlinePlayer(victim);
+            auto dead = memberSession(victim);
             foreach (guid, ref m; members)
             {
                 if (guid == killer || m.team != team || dead is null)
                     continue;
-                if (auto mate = context.onlinePlayer(guid))
+                if (auto mate = memberSession(guid))
                 {
                     const a = mate.character.position, b = dead.character.position;
                     if ((a.x - b.x) ^^ 2 + (a.y - b.y) ^^ 2 + (a.z - b.z) ^^ 2 <= groupXpDistance ^^ 2)
@@ -506,7 +538,7 @@ final class Battleground
         }
         rules.playerKilled(this, victim: victim, killer: killer);
         // Its insignia may be taken from its body (`removedInsignia`).
-        if (auto dead = cast(imported!"dmangos.world.character".Character) context.onlinePlayer(victim))
+        if (auto dead = cast(imported!"dmangos.world.character".Character) memberSession(victim))
             if (dead.player !is null)
                 dead.markInsignia();
     }
@@ -519,7 +551,7 @@ final class Battleground
     {
         import dmangos.world.auras : AuraInterrupt;
 
-        if (auto c = cast(imported!"dmangos.world.character".Character) context.onlinePlayer(who))
+        if (auto c = cast(imported!"dmangos.world.character".Character) memberSession(who))
             c.interruptAuras(AuraInterrupt.pvpActiveCancels);
     }
 
@@ -533,7 +565,7 @@ final class Battleground
             return;
         foreach (guid, ref m; members)
             if (m.team == team && m.offlineSince == MonoTime.init)
-                if (auto c = cast(Character) context.onlinePlayer(guid))
+                if (auto c = cast(Character) memberSession(guid))
                 {
                     const honor = bonusHonor(units, *t, c.player.data.level);
                     if (c.battlegroundBonusHonor(honor))
@@ -548,7 +580,7 @@ final class Battleground
 
         foreach (guid, ref m; members)
             if (m.team == team && m.offlineSince == MonoTime.init)
-                if (auto c = cast(Character) context.onlinePlayer(guid))
+                if (auto c = cast(Character) memberSession(guid))
                     c.battlegroundReputation(faction, amount);
     }
 
@@ -559,7 +591,7 @@ final class Battleground
 
         foreach (guid, ref m; members)
             if (m.team == team && m.offlineSince == MonoTime.init)
-                if (auto c = cast(Character) context.onlinePlayer(guid))
+                if (auto c = cast(Character) memberSession(guid))
                     c.battlegroundCast(spell);
     }
 
@@ -570,7 +602,7 @@ final class Battleground
 
         foreach (guid, ref m; members)
             if (m.team == team && m.offlineSince == MonoTime.init)
-                if (auto c = cast(Character) context.onlinePlayer(guid))
+                if (auto c = cast(Character) memberSession(guid))
                     c.battlegroundKillCredit(entry);
     }
 
@@ -581,7 +613,7 @@ final class Battleground
 
         foreach (other, ref m; members)
             if (m.offlineSince == MonoTime.init && (other == guid || context.groups.sameGroup(guid, other)))
-                if (auto c = cast(Character) context.onlinePlayer(other))
+                if (auto c = cast(Character) memberSession(other))
                     c.battlegroundKillCredit(entry);
     }
 
@@ -606,7 +638,7 @@ final class Battleground
         {
             w.put(guid);
             uint rank = 4; // the honor rank shown for a player not on this node
-            if (auto who = context.onlinePlayer(guid))
+            if (auto who = memberSession(guid))
             {
                 import dmangos.world.character : Character;
 
@@ -632,7 +664,7 @@ final class Battleground
     {
         if (auto m = guid in members)
             if (m.offlineSince == MonoTime.init)
-                return context.onlinePlayer(guid);
+                return memberSession(guid);
         return null;
     }
 
@@ -659,7 +691,7 @@ final class Battleground
     {
         import dmangos.world.character : Character;
 
-        if (auto c = cast(Character) context.onlinePlayer(guid))
+        if (auto c = cast(Character) memberSession(guid))
             c.battlegroundRemoveAura(spell);
     }
 
@@ -739,7 +771,7 @@ final class Battleground
     {
         import dmangos.world.gameobject : GameObjectSpawn;
 
-        auto who = context.onlinePlayer(guid);
+        auto who = memberSession(guid);
         auto map = context.existingMap(mapId, instance);
         const t = entry in context.data.gameObjectTemplates;
         if (who is null || map is null || t is null)
@@ -877,7 +909,7 @@ final class Battleground
     {
         foreach (guid, ref m; members)
             if (m.offlineSince == MonoTime.init)
-                if (auto who = context.onlinePlayer(guid))
+                if (auto who = memberSession(guid))
                     who.deliver(opcode, body_);
     }
 
@@ -886,7 +918,7 @@ final class Battleground
     {
         foreach (guid, ref m; members)
             if (m.team == team && guid != except && m.offlineSince == MonoTime.init)
-                if (auto who = context.onlinePlayer(guid))
+                if (auto who = memberSession(guid))
                     who.deliver(opcode, body_);
     }
 
@@ -938,7 +970,7 @@ private:
         if (awaitingResurrection.length == 0)
             return;
         foreach (guid; awaitingResurrection.keys)
-            if (auto c = cast(Character) context.onlinePlayer(guid))
+            if (auto c = cast(Character) memberSession(guid))
                 c.battlegroundSpiritHealed();
         awaitingResurrection = null;
     }
@@ -1066,7 +1098,7 @@ private:
 
         foreach (guid; members.keys)
         {
-            if (auto c = cast(Character) context.onlinePlayer(guid))
+            if (auto c = cast(Character) memberSession(guid))
                 c.battlegroundLeave(true);
             removed(guid); // logged out, or not left by the above
         }
@@ -1469,7 +1501,7 @@ mixin template BattlegroundHandlers()
         const team = battleground_.team;
         const leaderGuid = copy.raidLeaderOf.get(team, 0);
         auto leader = leaderGuid && leaderGuid != player.guid && leaderGuid in copy.members
-            ? cast(typeof(this)) context.onlinePlayer(leaderGuid) : null;
+            ? cast(typeof(this)) copy.memberSession(leaderGuid) : null;
         if (leader is null || leader.player is null)
         {
             copy.raidLeaderOf[team] = player.guid;
@@ -1477,7 +1509,20 @@ mixin template BattlegroundHandlers()
             return;
         }
         copy.inTeamRaid[player.guid] = true;
-        leader.groupCommand(GroupOp.battlegroundAdd, player.guid, player.data.name);
+        if (context.battlegroup is null)
+            return leader.groupCommand(GroupOp.battlegroundAdd, player.guid, player.data.name);
+
+        auto raids = context.battlegroup.raids;
+        auto raid = raids.of(leaderGuid);
+        if (raid is null)
+        {
+            raid = raids.newGroup();
+            if (!raid.addLeaderInvite(leaderGuid, leader.player.data.name))
+                return;
+            raid.create();
+            raid.convertToRaid();
+        }
+        raid.addMember(player.guid, player.data.name);
     }
 
     /// Leaving the copy: out of its team raid; a leader's place passes to whoever leads the raid now.
@@ -1485,7 +1530,7 @@ mixin template BattlegroundHandlers()
     {
         import dmangos.world.groupservice : GroupOp;
 
-        if (player.guid !in copy.inTeamRaid)
+        if (context.battlegroup !is null || player.guid !in copy.inTeamRaid)
             return;
         copy.inTeamRaid.remove(player.guid);
         auto group = context.groups.of(player.guid);

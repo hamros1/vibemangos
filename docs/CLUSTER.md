@@ -803,6 +803,42 @@ new database. Give it distinct world ports, cluster ports and coordinator addres
 each voter its own `vote_file`. The same login server lists both realms after their coordinators
 come online.
 
+### Cross-realm battlegrounds
+
+After setting up two realms as above, you can let their players queue together for Warsong Gulch,
+Arathi Basin and Alterac Valley. Choose one node in each realm to host matches. The two designated
+nodes must run on the same machine. Give every world node in both realms the same
+`battlegroup` name. Set `battlegroup_node` to its own realm's designated node ID. For example,
+add these top-level properties in each config when node 1 hosts matches in both realms.
+
+```json
+"battlegroup": "Emberstorm",
+"battlegroup_node": 1
+```
+
+Keep the distinct ports, character databases, coordinator addresses and write logs from the
+multi-realm setup. Use matching game data for the participating realms. Stop the old world
+processes before enabling the group so that every client gets the new realm-qualified player GUIDs.
+Start both designated nodes in one worldserver process. Substitute your actual config paths.
+
+```sh
+bin/worldserver -c realm1-node1.json --battlegroup-realm realm2-node1.json
+```
+
+Start every other world node normally, each with its own config. Additional realms can join the
+same host by repeating `--battlegroup-realm`. The first config runs the shared map and matchmaking
+queue. A player can log in through any node, queue at the usual battlemaster, receive an invite,
+play the match and return to their home realm. Each realm stores its own characters and rewards.
+If a designated node loses its lease, its cluster reserves the battleground maps and queue for
+that node. Restart the combined process to restore service after it exits.
+
+The isolated end-to-end check runs two realms with two nodes each. It needs the harness database,
+client data and release binaries described in [Developing](DEVELOPING.md).
+
+```sh
+python3 tools/harness/battlegroup.py
+```
+
 ## Monitoring
 
 Every `metrics_interval_seconds` each node logs, besides its tick and GC figures, its cluster lines
