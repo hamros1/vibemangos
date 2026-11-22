@@ -277,6 +277,7 @@ final class Replica : Replicable, Moving, PerViewer
         return typeof(return)(guid: guid, level: values_.get!UNIT_FIELD_LEVEL, position: position,
             combatReach: values_.get!UNIT_FIELD_COMBATREACH,
             runningAround: (block.info.flags & running) != 0 && !(block.info.flags & MovementFlags.walkMode),
+            swimming: block.info.has(MovementFlags.swimming),
             alive: values_.get!UNIT_FIELD_HEALTH != 0);
     }
 

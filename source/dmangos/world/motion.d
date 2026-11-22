@@ -164,6 +164,12 @@ interface MotionWorld
      */
     Vector3[] pathBetween(Vector3 from, Vector3 to);
 
+    /// Whether the point is in water deep enough for a swimmer.
+    bool swimmableAt(Vector3 at, float minimumDepth);
+
+    /// Whether both endpoints are submerged. A null route then means they cannot be connected safely.
+    bool pathInWater(Vector3 from, Vector3 to, float minimumDepth, out Vector3[] route);
+
     /// Where unit `guid` is on the map; false if it is not here.
     bool positionOf(ulong guid, out Position at);
 }
@@ -556,8 +562,7 @@ final class PointMovement : MovementGenerator
     override void initialize(Creature creature, MotionWorld world)
     {
         const at = creature.spline.finalized ? creature.position : creature.spline.position;
-        launch(creature, world, [Vector3(at.x, at.y, at.z), destination], walk, facing, true);
-        launched = true;
+        launched = launch(creature, world, [Vector3(at.x, at.y, at.z), destination], walk, facing, true) > 0;
     }
 
     override void update(Creature creature, MotionWorld world, int diff)
@@ -720,10 +725,24 @@ in (points.length > 1)
 {
     const at = creature.spline.finalized ? creature.position : creature.spline.position;
     points[0] = Vector3(at.x, at.y, at.z);
-    // A walk to one point with `generatePath`: round what stands in the way, over the movement maps.
+    bool swimming;
+    // A generated route can use the underwater volume or the regular movement maps.
     if (generatePath && points.length == 2 && !creature.scriptFlying)
     {
-        auto way = world.pathBetween(points[0], points[1]);
+        Vector3[] way;
+        swimming = creature.movement.has(MovementFlags.swimming)
+            && world.pathInWater(points[0], points[1], creature.collisionHeight, way);
+        if (swimming)
+        {
+            if (!way.length)
+            {
+                stopMoving(creature, world);
+                return 0;
+            }
+            walk = false;
+        }
+        else
+            way = world.pathBetween(points[0], points[1]);
         if (way.length >= 2)
         {
             way[0] = points[0];
@@ -747,7 +766,8 @@ in (points.length > 1)
         move.flags &= ~MovementFlags.walkMode;
     move.flags |= MovementFlags.splineEnabled | MovementFlags.forward;
 
-    const velocity = isNaN(speed) ? creature.speeds[walk ? MoveType.walk : MoveType.run] : speed;
+    const moveType = swimming ? MoveType.swim : walk ? MoveType.walk : MoveType.run;
+    const velocity = isNaN(speed) ? creature.speeds[moveType] : speed;
     if (!(velocity > 0) || creature.immobilized)
         return 0; // it cannot move (rooted or stunned)
     creature.spline = MoveSpline(points, flags, velocity, nextSplineId(), angle);
@@ -859,6 +879,8 @@ version (unittest)
         void waypointScript(Creature, uint scriptId) { scripts ~= scriptId; }
         Vector3[] delegate(Vector3, Vector3) paths; // movement maps, if a test has them
         Vector3[] pathBetween(Vector3 from, Vector3 to) { return paths is null ? null : paths(from, to); }
+        bool swimmableAt(Vector3 at, float minimumDepth) { return false; }
+        bool pathInWater(Vector3 from, Vector3 to, float minimumDepth, out Vector3[] route) { return false; }
         bool positionOf(ulong guid, out Position at) { return false; }
     }
 

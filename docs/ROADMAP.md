@@ -5,7 +5,7 @@
 - **Clustering.** Extend cross-node routing to script-selected channels and scripted effects. See
   [spell routing limits](CLUSTER.md#spell-routing-limits) and the
   [cross-node feature list](CLUSTER.md#what-crosses-nodes-feature-by-feature).
-- **Terrain.** Track elevator passengers and handle underwater pathfinding.
+- **Terrain.** Track elevator passengers and handle transitions between land and swimming.
 - **Gameplay coverage.** See the [spell audit](SPELLS.md) for gaps by class and the
   battleground notes below for remaining Alterac Valley events.
 
@@ -48,7 +48,8 @@ describes how players use the systems available today.
   the shared transport clock. Idle cells unload after `grid_cleanup_delay_seconds`.
 * **Terrain:** heights put wandering creatures on the ground. Line of sight checks use
   static vmaps, closed doors and loaded elevator meshes at their animated position. Movement maps
-  give creatures paths round buildings and hills. Swimmers path over the ground under the water.
+  give creatures paths round buildings and hills. Creatures already swimming can follow submerged
+  paths at their swim speed. Shoreline transitions and pets entering water remain open.
 * **Movement:** the speed check assumes running speed; it must learn mounts, speed auras,
   knockbacks and taxis when those exist.
 * **Environment:** the feign death timer (dying of feigning too long) is not run; mirror timers are not

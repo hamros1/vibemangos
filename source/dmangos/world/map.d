@@ -1779,6 +1779,72 @@ final class Map : CombatWorld, GameObjectWorld
         return terrain.pathBetween(from, to);
     }
 
+    /// See `MotionWorld.swimmableAt`.
+    bool swimmableAt(Vector3 at, float minimumDepth)
+    {
+        LiquidData water;
+        return terrain !is null && terrain.swimmingVolume(at, minimumDepth, water);
+    }
+
+    /// See `MotionWorld.pathInWater`.
+    bool pathInWater(Vector3 from, Vector3 to, float minimumDepth, out Vector3[] route)
+    {
+        import std.algorithm.comparison : clamp, min;
+        import std.math : ceil, isFinite;
+
+        LiquidData start, end;
+        if (terrain is null || !terrain.swimmingVolume(from, minimumDepth, start)
+            || !terrain.swimmingVolume(to, minimumDepth, end))
+            return false;
+
+        bool clear(Vector3 a, Vector3 b)
+        {
+            // Sample more closely than the terrain's liquid squares (roughly 4 yards apart).
+            // Bound the work for large movements. A path that cannot be checked is not used.
+            enum maxSegment = 512.0f;
+            const length = (a - b).magnitude;
+            if (!length.isFinite || length > maxSegment)
+                return false;
+            const samples = cast(uint) ceil(length / 2);
+            foreach (i; 1 .. samples)
+                if (!swimmableAt(a + (b - a) * (cast(float) i / samples), minimumDepth))
+                    return false;
+            return lineOfSightBetween(Position(a.x, a.y, a.z), Position(b.x, b.y, b.z));
+        }
+
+        if (clear(from, to))
+        {
+            route = [from, to];
+            return true;
+        }
+
+        // The movement map marks water on the floor. Lift its corners to swim at a
+        // suitable depth, then check the resulting segments against current geometry.
+        auto way = terrain.pathBetween(Vector3(from.x, from.y, start.depthLevel),
+            Vector3(to.x, to.y, end.depthLevel), true);
+        if (way.length < 3)
+            return true;
+        const depth = min(start.level - from.z, end.level - to.z);
+        way[0] = from;
+        way[$ - 1] = to;
+        foreach (i; 1 .. way.length - 1)
+        {
+            const corner = way[i];
+            LiquidData water;
+            const status = terrain.liquidStatus(corner.x, corner.y, corner.z, 0, water);
+            enum clearance = 0.1f;
+            if (status == LiquidStatus.noWater || water.level - water.depthLevel <= minimumDepth
+                || water.level - water.depthLevel <= 2 * clearance)
+                return true;
+            way[i].z = clamp(water.level - depth, water.depthLevel + clearance, water.level - clearance);
+        }
+        foreach (i; 1 .. way.length)
+            if (!clear(way[i - 1], way[i]))
+                return true;
+        route = way;
+        return true;
+    }
+
     /// See `MotionWorld.waterOrGroundLevel`.
     float waterOrGroundLevel(float x, float y, float z, float groundZ, float minWaterDeep)
     {

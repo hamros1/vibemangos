@@ -843,6 +843,12 @@ finds the triangle of the square the point is in and solves its plane. Each of t
 `ClientData.areaByFlag` turns into the area, and the area into its zone. Liquids give a level and
 whether a point is above, in or under them.
 
+For a creature already swimming, a generated path between submerged points uses both endpoints'
+depths. The map samples the route through the liquid and checks it against static and dynamic
+geometry. If the straight route is blocked, it tries a complete path on the movement map's
+water polygons, raises the corners above the floor and checks the resulting route again.
+Swimmers use their swim speed and include height when checking melee reach.
+
 `exploration.d` uses them: the zone is the server's, checked once a second and
 after the client's `CMSG_ZONEUPDATE`; every 100 ms of movement, an area entered for the first time
 sets its `PLAYER_EXPLORED_ZONES` bit and gives experience by the area's level

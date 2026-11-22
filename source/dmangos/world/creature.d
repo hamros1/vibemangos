@@ -1062,6 +1062,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         f.position = movement.position;
         f.combatReach = values.get!UNIT_FIELD_COMBATREACH;
         f.runningAround = !spline.finalized && !(movement.flags & MovementFlags.walkMode);
+        f.swimming = movement.has(MovementFlags.swimming);
         f.alive = alive;
         f.standing = values.getByte!UNIT_FIELD_BYTES_1(0) == 0;
         f.damage = [[values.get!UNIT_FIELD_MINDAMAGE, values.get!UNIT_FIELD_MAXDAMAGE],

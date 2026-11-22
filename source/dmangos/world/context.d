@@ -4123,15 +4123,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if ((template_.inhabitType & inhabitWater) && !(template_.extraFlags & walkInWater) && !petNumber)
             if (auto ground = terrain(spawn.map))
             {
+                import dmangos.vmap.math : Vector3;
                 import dmangos.world.defines : UnitFlags;
                 import dmangos.world.movement : MovementFlags;
-                import dmangos.world.terrain : LiquidData, LiquidStatus;
+                import dmangos.world.terrain : LiquidData;
                 import dmangos.world.updatefields : UNIT_FIELD_FLAGS;
 
                 LiquidData liquid;
-                enum ubyte allLiquids = 0x0F;
-                if (ground.liquidStatus(spawn.x, spawn.y, spawn.z, allLiquids, liquid) != LiquidStatus.noWater
-                        && liquid.level - liquid.depthLevel > parts.collisionHeight)
+                if (ground.swimmingVolume(Vector3(spawn.x, spawn.y, spawn.z), creature.collisionHeight, liquid))
                 {
                     creature.movement.flags |= MovementFlags.swimming;
                     creature.values.set!UNIT_FIELD_FLAGS(creature.values.get!UNIT_FIELD_FLAGS | UnitFlags.swimming);

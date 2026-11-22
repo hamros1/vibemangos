@@ -93,6 +93,7 @@ struct Fighter
     float combatReach = 1.5f;  /// `UNIT_FIELD_COMBATREACH`
     uint armorIgnored;         /// of its victims' armor, by its physical blows (`MOD_TARGET_RESISTANCE`: Serrated Blades)
     bool runningAround;        /// moving, and not walking
+    bool swimming;             /// a swimmer measures reach in three dimensions
     bool alive = true;
     bool standing = true;      /// standing up: a player not standing is hit critically
     bool evading;              /// a creature returning home after a fight
@@ -508,14 +509,14 @@ float meleeReach(const Fighter self, const Fighter target) pure nothrow @nogc @s
     return reach < attackDistance ? attackDistance : reach;
 }
 
-/// Whether `self` reaches `target` in melee: players measure in three dimensions, creatures on the ground.
+/// Whether `self` reaches `target` in melee. Players and swimming creatures also measure height.
 bool canReachWithMelee(const Fighter self, const Fighter target) pure nothrow @nogc @safe
 {
     float reach = meleeReach(self, target);
     if (self.runningAround && target.runningAround)
         reach += meleeLeeway;
     const dx = self.position.x - target.position.x, dy = self.position.y - target.position.y;
-    if (self.playerControlled)
+    if (self.playerControlled || self.swimming)
     {
         const dz = self.position.z - target.position.z;
         return dx * dx + dy * dy + dz * dz < reach * reach;
@@ -1151,6 +1152,10 @@ unittest
     assert(!canReachWithMelee(player, wolf));
     player.runningAround = wolf.runningAround = true;
     assert(canReachWithMelee(player, wolf), "both running: the leeway");
+    player.position = Position(5.1f, 0, 12);
+    assert(canReachWithMelee(wolf, player), "a ground creature measures horizontal reach");
+    wolf.swimming = true;
+    assert(!canReachWithMelee(wolf, player), "a swimmer cannot swing at a target far above it");
 
     assert(hasInArc(Position(0, 0, 0, 0), Position(3, 1, 0), 2 * PI / 3));
     assert(!hasInArc(Position(0, 0, 0, 0), Position(-3, 0, 0), 2 * PI / 3), "behind");

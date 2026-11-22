@@ -16,7 +16,7 @@
 module dmangos.world.terrain;
 
 import core.time : Duration, MonoTime;
-import dmangos.navigation : NavMesh;
+import dmangos.navigation : NavArea, NavMesh, navFlag, walkingFlags;
 import dmangos.vmap.math : Vector3;
 import std.bitmanip : littleEndianToNative;
 import std.math : abs, isNaN;
@@ -554,15 +554,17 @@ final class Terrain
     /**
      * The way from `from` to `to` over the movement maps, its corners from
      * `from` on; empty if the map has none there, or either end is off them (the caller then walks
-     * straight). An unreachable end gives the way to the nearest place to it.
+     * straight). An unreachable end gives the way to the nearest place to it. With
+     * `waterOnly`, use only water polygons and require a complete path.
      */
-    Vector3[] pathBetween(Vector3 from, Vector3 to)
+    Vector3[] pathBetween(Vector3 from, Vector3 to, bool waterOnly = false)
     {
         if (navigation is null)
             return null;
         tile(from.x, from.y); // the tiles under both ends, loaded
         tile(to.x, to.y);
-        return navigation.findPath(from, to).points;
+        auto way = navigation.findPath(from, to, waterOnly ? navFlag!(NavArea.water) : walkingFlags);
+        return waterOnly && way.partial ? null : way.points;
     }
 
     /// Whether the map has movement maps.
@@ -695,6 +697,16 @@ final class Terrain
         tile(x2, y2);
         const from = toInternal(x1, y1, z1), to = toInternal(x2, y2, z2);
         return from == to || vmap.isInLineOfSight(from, to, ignoreM2);
+    }
+
+    /// Whether the point is inside a liquid deep enough for this creature to swim.
+    package bool swimmingVolume(Vector3 at, float minimumDepth, out LiquidData liquid)
+    {
+        if (!client.isValidMapCoord(mapId, at.x, at.y, at.z))
+            return false;
+        const status = liquidStatus(at.x, at.y, at.z, 0, liquid);
+        return (status == LiquidStatus.inWater || status == LiquidStatus.underWater)
+            && at.z >= liquid.depthLevel && liquid.level - liquid.depthLevel > minimumDepth;
     }
 
     /**
@@ -1050,4 +1062,92 @@ unittest
     assert(terrain.pathBetween(from, dest).length == 0, "not added yet: walk straight");
     assert(terrain.addPendingNavigation(Duration.zero) == 0, "at least one is added, whatever the budget");
     assert(terrain.pathBetween(from, dest).length == 2, "added: the way across");
+}
+
+/// Underwater routes retain depth, stay under the surface, and use water polygons to go round a gap.
+unittest
+{
+    import std.conv : to;
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.process : thisProcessID;
+    import dmangos.bytes : ByteWriter;
+    import dmangos.extractor.mmaps : buildGridTile;
+    import dmangos.world.clientdata : FactionTemplateEntry;
+    import dmangos.world.creature : Creature, CreatureParts, CreatureSpawn, CreatureTemplate;
+    import dmangos.world.map : Map, MapSettings;
+    import dmangos.world.motion : followSpline, launch;
+    import dmangos.world.movement : MovementFlags, MoveType;
+    import dmangos.world.testdata : testClientData;
+    import dmangos.world.unit : UnitRef;
+
+    const directory = buildPath(tempDir, "dmangos-swim-path-" ~ thisProcessID.to!string);
+    const maps = buildPath(directory, "maps"), mmaps = buildPath(directory, "mmaps");
+    mkdirRecurse(maps);
+    mkdirRecurse(mmaps);
+    scope (exit)
+        rmdirRecurse(directory);
+
+    TestTerrain lake;
+    lake.height = (float, float) => 42.0f;
+    lake.areaId = (int, int) => 0;
+    const int[2][] wetCells = [[2, 2], [2, 4], [3, 2], [3, 3], [3, 4], [5, 2]];
+    foreach (cell; wetCells)
+        lake.waterLevel[cell] = 60;
+    lake.holes[[2, 3]] = ushort.max;
+    string problem;
+    const ushort[uint] noFlags;
+    write(buildPath(maps, "0013030.map"), convertAdt(buildTestAdt(lake), noFlags, problem));
+    assert(!problem.length);
+    const mesh = buildGridTile(maps, buildPath(directory, "vmaps"), 1, 30, 30);
+    assert(mesh.length);
+    ByteWriter tile;
+    foreach (uint word; [0x4D4D4150, 7, 1, cast(uint) mesh.length, 1])
+        tile.put(word);
+    tile.putBytes(mesh);
+    write(buildPath(mmaps, "0013030.mmtile"), tile.data);
+    write(buildPath(mmaps, "001.mmap"), new ubyte[28]);
+
+    const client = testClientData();
+    auto terrain = new Terrain(1, directory, client);
+    auto map = new Map(1, MapSettings.init, () => 0, null, terrain);
+    Vector3 point(float row, float column, float z)
+    {
+        const xy = pointAt(30, 30, row, column);
+        return Vector3(xy[0], xy[1], z);
+    }
+    const from = point(20, 20, 48), above = point(20, 20, 56);
+    const across = point(20, 36, 54), isolated = point(44, 20, 54);
+    Vector3[] way;
+    assert(map.pathInWater(from, above, 2, way) && way == [from, above]);
+    assert(!map.pathInWater(from, point(20, 20, 62), 2, way), "above the surface is not a swim endpoint");
+    assert(map.pathInWater(from, across, 2, way) && !way.length, "no straight swim through the dry gap");
+    assert(terrain.addPendingNavigation(Duration.zero) == 0);
+    assert(map.pathInWater(from, across, 2, way) && way.length >= 3, "water polygons lead round the gap");
+    assert(way[0] == from && way[$ - 1] == across);
+    foreach (corner; way[1 .. $ - 1])
+        assert(corner.z == across.z && map.swimmableAt(corner, 2));
+    assert(map.pathInWater(from, isolated, 2, way) && !way.length, "the separate pool is unreachable");
+
+    const creatureTemplate = CreatureTemplate(entry: 100, inhabitType: 2);
+    const fishSpawn = CreatureSpawn(1, 100, 1, from.x, from.y, from.z);
+    const preySpawn = CreatureSpawn(2, 100, 1, above.x, above.y, above.z);
+    const CreatureParts parts;
+    auto fish = new Creature(fishSpawn, &creatureTemplate, 1, 1, parts, client);
+    auto prey = new Creature(preySpawn, &creatureTemplate, 1, 1, parts, client);
+    const fishFaction = FactionTemplateEntry(1, 1, 0, 1, 0, 2);
+    const preyFaction = FactionTemplateEntry(2, 2, 0, 2, 0, 1);
+    fish.factionTemplate = &fishFaction;
+    prey.factionTemplate = &preyFaction;
+    fish.movement.flags |= MovementFlags.swimming;
+    fish.speeds[MoveType.swim] = 4;
+    map.addObject(fish);
+    map.addObject(prey);
+    fish.ai.attackedBy(UnitRef.of(prey, map), map);
+    fish.tick(map, 1);
+    assert(fish.spline.finalDestination == above && fish.spline.duration == 2001,
+        "a swimmer pursues a target directly above it at its swim speed");
+    followSpline(fish, 999);
+    assert(isClose(fish.position.z, 52.0f, 0, 0.01));
+    assert(!launch(fish, map, [from, isolated], true, float.nan, true) && fish.spline.finalized,
+        "a blocked swim stops rather than walking straight");
 }

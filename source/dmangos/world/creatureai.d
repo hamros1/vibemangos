@@ -1340,13 +1340,15 @@ private:
      */
     void chase(UnitRef target, CombatWorld world)
     {
+        import std.algorithm.comparison : min;
+
         const self = me.fighter, other = target.fighter;
         me.movement.position.orientation = angleTo(me.position, other.position);
         if (!combatMovement_)
             return;
         // Ranged mode, or its script's distance (`ACTION_T_RANGED_MOVEMENT`): near enough, it stays (`m_attackDistance`).
         const keep = rangedMode_ ? chaseDistance_ : attackDistance_;
-        if (keep > 0 && moved(me.position, other.position) <= keep
+        if (keep > 0 && moved(me.position, other.position, self.swimming) <= keep
             && world.inLineOfSight(me.position, other.position))
         {
             if (!me.spline.finalized)
@@ -1356,29 +1358,49 @@ private:
         if (canReachWithMelee(self, other))
         {
             victimReachable = true;
-            if (!me.spline.finalized && moved(chasedTo, other.position) > 0.5f)
+            if (!me.spline.finalized && moved(chasedTo, other.position, self.swimming) > 0.5f)
                 stopMoving(me, world);
             return;
         }
-        if (!me.spline.finalized && moved(chasedTo, other.position) < 1)
+        if (!me.spline.finalized && moved(chasedTo, other.position, self.swimming) < 1)
             return;
         // To a point just within reach (or its casting distance), on the line between the two.
         const reach = keep > 0 ? keep - 1 : meleeReach(self, other) - 1;
         // At its script's angle from the way its victim faces, or on the line between the two.
         const angle = !rangedMode_ && attackDistance_ > 0 && attackAngle_ != 0
             ? other.position.orientation + attackAngle_ : angleTo(other.position, me.position);
-        const x = other.position.x + reach * cos(angle), y = other.position.y + reach * sin(angle);
-        auto z = world.groundHeight(x, y, other.position.z + 2, false);
-        if (!(z > -100_000))
-            z = other.position.z;
+        const offset = self.swimming ? min(reach, moved(me.position, other.position)) : reach;
+        const x = other.position.x + offset * cos(angle), y = other.position.y + offset * sin(angle);
+        auto destination = Vector3(x, y, other.position.z);
+        bool underwater = self.swimming && world.swimmableAt(destination, me.collisionHeight);
+        if (self.swimming && !underwater)
+        {
+            const victimAt = Vector3(other.position.x, other.position.y, other.position.z);
+            if (world.swimmableAt(victimAt, me.collisionHeight))
+            {
+                destination = victimAt;
+                underwater = true;
+            }
+        }
+        if (!underwater)
+        {
+            const ground = world.groundHeight(x, y, other.position.z + 2, false);
+            if (ground > -100_000)
+                destination.z = ground;
+        }
         chasedTo = other.position;
-        Vector3[] points = [Vector3(0, 0, 0), Vector3(x, y, z)];
-        launch(me, world, points, chaseWalking, float.nan, true);
+        const duration = launch(me, world, [Vector3.init, destination], chaseWalking, float.nan, true);
+        if (!duration && underwater && !me.immobilized)
+        {
+            victimReachable = false;
+            return;
+        }
         // Does the way end within reach of it?
         const end = me.spline.finalDestination;
         const ex = end.x - other.position.x, ey = end.y - other.position.y;
+        const ez = self.swimming ? end.z - other.position.z : 0.0f;
         const within = meleeReach(self, other);
-        victimReachable = ex * ex + ey * ey <= within * within;
+        victimReachable = ex * ex + ey * ey + ez * ez <= within * within;
     }
 
     // -----------------------------------------------------------------------
@@ -1737,10 +1759,11 @@ private:
         return a < 0 ? a + 2 * PI : a;
     }
 
-    static float moved(Position a, Position b)
+    static float moved(Position a, Position b, bool vertical = false)
     {
         const dx = a.x - b.x, dy = a.y - b.y;
-        return sqrt(dx * dx + dy * dy);
+        const dz = vertical ? a.z - b.z : 0.0f;
+        return sqrt(dx * dx + dy * dy + dz * dz);
     }
 }
 
