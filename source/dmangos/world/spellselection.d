@@ -771,13 +771,14 @@ unittest
 unittest
 {
     import core.time : msecs, seconds;
+    import dmangos.cluster.regions : CellRect, Region, RegionState;
     import dmangos.bytes : ByteWriter;
     import dmangos.cluster.protocol : AreaDamage;
     import dmangos.dbc : buildDbc;
     import dmangos.world.auras : makeAura;
     import dmangos.world.clientdata : spellDurationFormat;
-    import dmangos.world.creature : CreatureSpawn;
-    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.creature : Creature, CreatureSpawn;
+    import dmangos.world.grid : cellCoordinate, cellKeyAt;
     import dmangos.world.player : Player;
     import dmangos.world.quests : Quest, QuestState, QuestStatus, specialKillOrCast;
     import dmangos.world.replication : encodePlayerState, encodeState;
@@ -896,6 +897,50 @@ unittest
     from.migrateOut(key => key == cell, 3, &source.saveMigrant);
     assert(from.isReplica(healer.guid) && !target.auras.find(mend, healer.guid),
         "moving a caster's home region cancels the owned channel");
+
+    // This time the aura's creature moves, with the current channel still running.
+    client.write(Opcode.CMSG_CAST_SPELL, castPacket.data);
+    const token = target.auras.find(mend, player.guid).channelToken;
+    assert(token);
+    auto successor = newCreationContext(db);
+    successor.nodeId = 3;
+    successor.data.spells.spells[mend] = spell;
+    successor.data.spellScriptTargets[mend] = [creatureTrainer];
+    successor.client.spellDurations = owner.client.spellDurations;
+    db.insertCreatureSpawn(row);
+    auto destination = successor.map(0);
+    const x = cellCoordinate(row.x), y = cellCoordinate(row.y);
+    const gained = Region(7, 0, CellRect(x, y, x + 1, y + 1), 3, 2, RegionState.granted);
+    const bundle = to.migrateOut(key => key == cell, 3, &owner.saveMigrant);
+    ubyte[][uint] unused;
+    successor.regionsChanged([gained], null, [gained.id: bundle], unused);
+    auto migrated = cast(Creature) destination.findObject(target.guid);
+    assert(migrated !is null && migrated.auras.find(mend, player.guid).channelToken == token);
+    from.replicaCreated(3, cell, migrated.guid, encodeState(migrated, 0));
+    uint rebinds;
+    source.sendAreaDamage = (ushort peer, const ref AreaDamage request) {
+        assert(peer == 3 && request.channelUpdate && request.channelToken == token && request.auraMs > 0);
+        ++rebinds;
+        destination.replicaCreated(1, cell, player.guid, encodePlayerState(player, 0));
+        successor.areaDamageArrived(1, request);
+        return true;
+    };
+    successor.sendAreaDamage = (ushort peer, const ref AreaDamage reply) {
+        assert(peer == 1 && reply.reply && reply.channelToken == token);
+        source.areaDamageArrived(3, reply);
+        return true;
+    };
+    client.session.update(50.msecs);
+    assert(rebinds == 1 && player.values.get!UNIT_CHANNEL_SPELL == mend);
+    const late = AreaDamage(sequence: source.nextGameplaySequence(), caster: player.guid, target: migrated.guid,
+        spell: mend, map: 0, namedCreature: true, channelled: true, channelUpdate: true, channelToken: token - 1);
+    successor.areaDamageArrived(1, late);
+    assert(migrated.auras.find(mend, player.guid), "a cancellation from an earlier cast leaves this aura in place");
+    migrated.updateAuras(destination, 1000);
+    assert(migrated.values.get!UNIT_FIELD_HEALTH == target.values.get!UNIT_FIELD_HEALTH + 10);
+    client.session.update(2950.msecs);
+    assert(rebinds == 1 && !player.values.get!UNIT_CHANNEL_SPELL);
+    assert(player.questStatus[quest.id].mobCount[0] == 2, "the current owner's confirmation counts once");
 }
 
 /// Direct damage and aura effects share one hit on the named creature's node.

@@ -761,11 +761,11 @@ private:
     {
         const spell = channelSpell;
         if (auto copy = remoteChannelTarget(spell, channelTarget))
-            return updateReplicaChannel(spell, copy, max(1, channelTimer));
+            return updateReplicaChannel(spell, copy, max(1, channelTimer), namedChannelSequence);
         if (auto creature = cast(Creature) map.findObject(channelTarget))
         {
             if (auto aura = creature.auras.find(spell.id, player.guid))
-                if (aura.duration > 0)
+                if (aura.duration > 0 && (!namedChannelSequence || aura.channelToken == namedChannelSequence))
                     aura.duration = aura.duration > delay ? aura.duration - delay : 1;
         }
         else if (auto other = channelTarget == player.guid ? this : cast(typeof(this)) context.onlinePlayer(channelTarget))
@@ -805,6 +805,8 @@ private:
         channelSpell = spell;
         channelCreditPeer = 0;
         followingNamedCreature = context.namedCreatureChannel(spell) != size_t.max;
+        namedChannelSequence = followingNamedCreature ? context.nextGameplaySequence() : 0;
+        namedChannelConfirmed = false;
         namedChannelPeer = 0;
         missingNamedChannelTarget = 0;
         channelTarget = channelObject ? channelObject : target ? target : player.guid;
@@ -845,8 +847,11 @@ private:
 
     package void remoteChannelAccepted(const(SpellInfo)* spell, ulong target, ushort peer)
     {
-        if (channelActiveAt(spell, target))
+        if (channelActiveAt(spell, target) && namedChannelPeer == peer)
+        {
             channelCreditPeer = peer;
+            namedChannelConfirmed = true;
+        }
     }
 
     package bool namedChannelActiveAt(const(SpellInfo)* spell, ulong target, ulong sequence)
@@ -857,6 +862,7 @@ private:
     private ushort channelCreditPeer;
     private ulong namedChannelSequence;
     private bool followingNamedCreature;
+    private bool namedChannelConfirmed;
     private ushort namedChannelPeer;
     private int missingNamedChannelTarget;
     private const(SpellInfo)* lastChannelSpell; // the channel that ended last (`channelledAt`)
@@ -884,9 +890,16 @@ private:
             || !map.inLineOfSight(from, at))
             return endChannel(true);
         const ushort peer = target.replica is null ? 0 : target.replica.owner;
-        if (peer && peer != namedChannelPeer)
-            map.holdCasterReplica(player.guid, peer, cast(uint) channelTimer + 5000, true);
+        if (peer == namedChannelPeer)
+            return;
         namedChannelPeer = peer;
+        channelCreditPeer = 0;
+        namedChannelConfirmed = false;
+        if (target.replica !is null)
+            updateReplicaChannel(channelSpell, target.replica, channelTimer, namedChannelSequence);
+        else if (target.creature !is null)
+            if (auto aura = target.creature.auras.find(channelSpell.id, player.guid))
+                namedChannelConfirmed = aura.channelToken == namedChannelSequence;
     }
 
     /**
@@ -969,9 +982,12 @@ private:
             return;
         const spell = channelSpell;
         channelSpell = null;
+        const canCredit = !followingNamedCreature || namedChannelConfirmed;
         followingNamedCreature = false;
+        namedChannelConfirmed = false;
         const creditPeer = channelCreditPeer;
         channelCreditPeer = 0;
+        const channelToken = namedChannelSequence;
         namedChannelSequence = 0;
         lastChannelSpell = cancelled ? null : spell;
         // At its end, a creature it charms is let go (a charmed creature's own time does not run: Mind Control's);
@@ -988,14 +1004,15 @@ private:
         if (cancelled)
         {
             if (auto copy = remoteChannelTarget(spell, channelTarget))
-                updateReplicaChannel(spell, copy, 0);
+                updateReplicaChannel(spell, copy, 0, channelToken);
             if (auto creature = cast(Creature) map.findObject(channelTarget))
             {
                 if (auto aura = creature.auras.find(spell.id, player.guid))
-                {
-                    creature.loseAura(aura, map);
-                    map.flushCreature(creature);
-                }
+                    if (!channelToken || aura.channelToken == channelToken)
+                    {
+                        creature.loseAura(aura, map);
+                        map.flushCreature(creature);
+                    }
             }
             else if (channelTarget == player.guid)
             {
@@ -1018,7 +1035,7 @@ private:
         // Tame Beast's twenty seconds are up: the beast is tamed.
         if (!cancelled && spell.id == imported!"dmangos.world.pethandlers".spellTameBeast)
             tameBeastChannelDone(channelTarget);
-        if (!cancelled && channelTarget)
+        if (!cancelled && channelTarget && canCredit)
             rewardPlayerAndGroupAtCast(channelTarget, spell.id, creditPeer); // a channel at a quest's creature or object
         // A channel cancelled: its spots go with it.
         if (cancelled && persistentAreas.length)
@@ -2342,14 +2359,23 @@ private:
             {
                 const at = player.position;
                 namedChannelPeer = recipient.replica.owner;
-                namedChannelSequence = context.nextGameplaySequence();
-                auto hit = AreaDamage(sequence: namedChannelSequence, caster: player.guid,
+                auto hit = AreaDamage(channelToken: namedChannelSequence, caster: player.guid,
                     target: recipient.combatGuid, spell: spell.id,
                     effect: cast(ubyte) namedChannel, map: map.id, instance: map.instanceId,
                     x: at.x, y: at.y, z: at.z, radius: namedCreatureRange(*spell, context.client),
                     namedCreature: true, channelled: true);
                 auto remote = RemoteAreaDamage(recipient.replica.owner, hit);
                 if (!sendRolledReplicaEffect(spell, c, remote))
+                    endChannel(true);
+            }
+            else if (recipient.creature !is null && channelSpell is spell)
+            {
+                if (auto aura = recipient.creature.auras.find(spell.id, player.guid))
+                {
+                    aura.channelToken = namedChannelSequence;
+                    namedChannelConfirmed = true;
+                }
+                else
                     endChannel(true);
             }
             else if (drain !is null && channelSpell is spell)
@@ -2576,11 +2602,11 @@ private:
         }
     }
 
-    private void updateReplicaChannel(const(SpellInfo)* spell, Replica target, int remaining)
+    private void updateReplicaChannel(const(SpellInfo)* spell, Replica target, int remaining, ulong namedToken)
     {
         auto hit = AreaDamage(caster: player.guid, target: target.guid, spell: spell.id, map: map.id,
-            instance: map.instanceId, namedCreature: context.namedCreatureChannel(spell) != size_t.max, channelled: true,
-            channelUpdate: true, auraMs: remaining);
+            instance: map.instanceId, namedCreature: namedToken != 0, channelled: true,
+            channelUpdate: true, auraMs: remaining, channelToken: namedToken);
         context.sendReplicaSpell(map, target.owner, spell, hit);
     }
 

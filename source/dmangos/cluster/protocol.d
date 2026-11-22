@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 69; // 69: creature migrations carry active auras
+enum ushort protocolVersion = 70; // 70: named channel identity survives target ownership changes
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -226,6 +226,7 @@ struct AreaDamage
     byte targetVisualRank;
     uint targetLevel;
     @LengthPrefix!ubyte RemoteSpellBenefit[] benefits;
+    ulong channelToken; /// identifies one named channel across messages and target owners
 }
 
 /// A proc on the victim's aura that benefits the original caster.
@@ -1246,7 +1247,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 69, recordedFingerprint = 0x0f5b4a182b7f26f1UL;
+private enum recordedVersion = 70, recordedFingerprint = 0x54116680de918319UL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

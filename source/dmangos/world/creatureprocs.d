@@ -124,7 +124,7 @@ mixin template CreatureProcs()
                 continue;
             const within = range(*spell, context.client)[1];
             const origin = areaEffect >= 0 ? center : at;
-            auto hit = AreaDamage(sequence: channelSequence, caster: me.guid, target: other.combatGuid,
+            auto hit = AreaDamage(channelToken: channelSequence, caster: me.guid, target: other.combatGuid,
                 spell: spell.id, effect: cast(ubyte) i, map: other.map.id, instance: other.map.instanceId,
                 x: origin.x, y: origin.y, z: origin.z, facing: at.orientation,
                 radius: areaEffect >= 0 ? areaRadius : within > 0 ? within : context.config.visibilityDistance,

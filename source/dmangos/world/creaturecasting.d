@@ -190,6 +190,7 @@ mixin template CreatureCasting()
 
     private bool beginNamedCreatureChannel(const(SpellInfo)* spell, UnitRef target)
     {
+        import dmangos.world.context : WorldContext;
         import dmangos.world.spellcast : duration;
 
         auto caster = spellCaster();
@@ -200,6 +201,7 @@ mixin template CreatureCasting()
             stopMoving(me, world_);
         namedChannelSpell = spell;
         namedChannelTimer = ms;
+        namedChannelSequence = (cast(WorldContext) lore).nextGameplaySequence();
         namedChannelPeer = target.replica is null ? 0 : target.replica.owner;
         missingNamedChannelTarget = 0;
         me.values.set!UNIT_CHANNEL_SPELL(spell.id);
@@ -220,6 +222,7 @@ mixin template CreatureCasting()
             return;
         namedChannelSpell = null;
         namedChannelTimer = 0;
+        const channelToken = namedChannelSequence;
         namedChannelSequence = 0;
         const guid = me.values.get!UNIT_FIELD_CHANNEL_OBJECT;
         me.values.set!UNIT_CHANNEL_SPELL(0);
@@ -231,10 +234,11 @@ mixin template CreatureCasting()
             if (auto target = world_.creatureAt(guid))
             {
                 if (auto aura = target.auras.find(spell.id, me.guid))
-                {
-                    target.loseAura(aura, world_);
-                    world_.flushCreature(target);
-                }
+                    if (aura.channelToken == channelToken)
+                    {
+                        target.loseAura(aura, world_);
+                        world_.flushCreature(target);
+                    }
             }
             else if (auto target = spellTarget(guid))
                 if (target.replica !is null)
@@ -242,7 +246,7 @@ mixin template CreatureCasting()
                         context.sendReplicaSpell(target.map, target.replica.owner, spell,
                             AreaDamage(caster: me.guid, target: guid, spell: spell.id, map: target.map.id,
                                 instance: target.map.instanceId, creatureCast: true, namedCreature: true,
-                                channelled: true, channelUpdate: true));
+                                channelled: true, channelUpdate: true, channelToken: channelToken));
             world_.sendToObservers(me.guid, Opcode.SMSG_SPELL_FAILURE,
                 spellFailurePacket(me.guid, spell.id, SpellCastResult.interrupted));
         }
@@ -819,7 +823,6 @@ mixin template CreatureCasting()
                         reached[i] = [channelTarget.combatGuid];
                     else
                     {
-                        namedChannelSequence = context.nextGameplaySequence();
                         if (!sendCreatureTargetSpell(context, spell, channelTarget, false, auraAbsent, cast(int) i,
                                 me.position, namedCreatureRange(*spell, lore.clientData), true, namedChannelSequence))
                             return finishNamedCreatureChannel(true);
@@ -988,8 +991,13 @@ mixin template CreatureCasting()
         foreach (r; results) // its script hears whom it hit, once the effects are done (`SpellHitTarget`)
             if (r.miss == SpellMissInfo.none && script !is null && me.alive)
                 script.spellHitTarget(this, r.guid, spell.id, 1u << spell.casting.school);
-        if (channelTarget.creature !is null && !channelTarget.creature.auras.find(spell.id, me.guid))
-            finishNamedCreatureChannel(true);
+        if (channelTarget.creature !is null)
+        {
+            if (auto aura = channelTarget.creature.auras.find(spell.id, me.guid))
+                aura.channelToken = namedChannelSequence;
+            else
+                finishNamedCreatureChannel(true);
+        }
         world_.flushCreature(me);
     }
 

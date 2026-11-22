@@ -1329,6 +1329,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (message.namedCreature && (message.groundTick || message.creatureArea
             || message.previous))
             return;
+        if ((message.channelToken != 0) != (message.namedCreature && message.channelled))
+            return;
         if (message.channelled)
         {
             import std.algorithm.searching : canFind;
@@ -1344,7 +1346,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 return replyCreatureCast(peer, message, SpellMissInfo.evade);
             if (message.channelUpdate)
             {
-                updateRemoteChannelAura(victim, message);
+                const confirms = message.namedCreature && message.auraMs > 0;
+                if (confirms && (casterFields.get!UNIT_CHANNEL_SPELL != message.spell
+                    || casterFields.get!UNIT_FIELD_CHANNEL_OBJECT != message.target))
+                    return;
+                if (updateRemoteChannelAura(victim, message) && confirms)
+                    replyCreatureCast(peer, message, SpellMissInfo.none);
                 return;
             }
             const validEffect = message.namedCreature
@@ -1601,13 +1608,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 message.auraMs, message.auraValues);
     }
 
-    private void updateRemoteChannelAura(UnitRef victim, const ref AreaDamage message)
+    private bool updateRemoteChannelAura(UnitRef victim, const ref AreaDamage message)
     {
         if (message.auraMs < 0)
-            return;
+            return false;
         auto aura = victim.auraSet.find(message.spell, message.caster);
-        if (aura is null || aura.detachedChannel)
-            return;
+        if (aura is null || aura.detachedChannel || (message.namedCreature && aura.channelToken != message.channelToken))
+            return false;
         if (message.auraMs == 0)
         {
             if (victim.kind == UnitKind.player)
@@ -1624,6 +1631,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if (victim.kind == UnitKind.player)
                 victim.session.sendAuraDuration(aura);
         }
+        return true;
     }
 
     private void replyCreatureCast(ushort peer, const ref AreaDamage message,
@@ -1982,6 +1990,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         auto aura = makeAura(spell, message.caster, message.casterLevel, lasts, !hostile, message.auraValues);
         aura.effects = effects;
         aura.detachedChannel = message.triggered;
+        aura.channelToken = message.channelToken;
         if (aura.has(AuraType.periodicDamage) || aura.has(AuraType.periodicLeech))
         {
             aura.periodicThreat = message.threatFactor;
@@ -2042,7 +2051,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         auto map_ = caster.currentMap;
         if (message.channelled)
         {
-            if (message.namedCreature && !caster.namedChannelActiveAt(spell, message.target, message.sequence))
+            if (message.namedCreature && !caster.namedChannelActiveAt(spell, message.target, message.channelToken))
                 return;
             if (message.miss && caster.channelActiveAt(spell, message.target))
             {
@@ -2136,7 +2145,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (message.channelled)
         {
             if (message.miss && caster !is null && caster.ai !is null)
-                caster.ai.namedCreatureChannelRejected(message.sequence);
+                caster.ai.namedCreatureChannelRejected(message.channelToken);
             return;
         }
         auto target = spellImpactTarget(map_, peer, message.target);

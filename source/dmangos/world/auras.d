@@ -219,6 +219,7 @@ final class Aura
     int periodicResistanceMod;
     bool periodicCasterPvP;
     bool detachedChannel;     /// a triggered spell's aura runs without a caster channel
+    ulong channelToken;       /// the named channel that applied this aura, zero for other auras
     ubyte slot = noSlot;
     int duration;             /// milliseconds left; -1: until cancelled
     int maxDuration;
@@ -236,7 +237,7 @@ final class Aura
 
     // A region handoff keeps the individual tick timers, stacks and caster modifiers.
     private enum migrationFields = ["caster", "casterLevel", "periodicThreat", "periodicResistanceMod",
-        "periodicCasterPvP", "detachedChannel", "slot", "duration", "maxDuration", "positive", "passive",
+        "periodicCasterPvP", "detachedChannel", "channelToken", "slot", "duration", "maxDuration", "positive", "passive",
         "stacks", "charges", "effects", "amount", "period", "periodTimer", "heartbeatChance",
         "heartbeatInterval", "heartbeatTimer"];
 
@@ -370,6 +371,7 @@ struct AuraSet
                 existing.periodicResistanceMod = aura.periodicResistanceMod;
                 existing.periodicCasterPvP = aura.periodicCasterPvP;
                 existing.detachedChannel = aura.detachedChannel;
+                existing.channelToken = aura.channelToken;
                 existing.duration = existing.maxDuration = aura.maxDuration;
                 if (existing.stacks < (aura.spell.casting.stackAmount ? aura.spell.casting.stackAmount : 1))
                     ++existing.stacks;
