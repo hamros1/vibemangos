@@ -23,7 +23,7 @@ mixin template GameObjectHandlers()
     import std.random : uniform;
     import dmangos.log : info;
     import dmangos.world.clientdata : LockEntry;
-    import dmangos.world.gameobject : GameObject, GameObjectType, goStateReady, GoLootState;
+    import dmangos.world.gameobject : GameObject, GameObjectType, goFlagLocked, goStateReady, GoLootState;
     import dmangos.world.loot : Loot, LootItem, Looter, questItems;
     import dmangos.world.opcodes;
     import dmangos.world.packets : ClientGuid;
@@ -87,7 +87,8 @@ mixin template GameObjectHandlers()
         if (!withinInteraction(go, 2))
             return;
         // Never for these: generic objects are used by spells, and some may not be touched.
-        if (go.type == GameObjectType.generic || (go.values.get!GAMEOBJECT_FLAGS & goFlagNoInteract))
+        const flags = go.values.get!GAMEOBJECT_FLAGS;
+        if (go.type == GameObjectType.generic || (flags & goFlagNoInteract) || (go.doorOrButton && (flags & goFlagLocked)))
             return;
         dismountToUse(go); // by hand, off the mount unless usable mounted (`dmangos.world.mounting`)
         useGameObject(go);
@@ -210,7 +211,6 @@ mixin template GameObjectHandlers()
         {
             // A mage's portal, a Lightwell: its spell on its user, of its owner's party if it says (CMaNGOS's
             // `GAMEOBJECT_TYPE_SPELLCASTER` use); its charges spent, it is locked.
-            enum uint goFlagLocked = 0x2;
             const t = go.template_;
             if (go.values.get!GAMEOBJECT_FLAGS & goFlagLocked)
                 return;

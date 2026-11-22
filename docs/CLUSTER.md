@@ -472,12 +472,13 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   For a targeted channel, the caster stays on its node and the target's node verifies the
   active channel before each tick. Cancellation and pushback update the remote aura.
   The victim's node runs periodic reactions and returns caster benefits such as Vampiric Embrace.
-* **Spell-selected game-object animations.** A player or creature can animate eligible game objects
+* **Spell-selected game objects.** A player or creature can animate and change eligible game objects
   named for the spell, including objects on another node. Nearest-object and area effects use
   the same selection across the two nodes and share any target limit. The object's node
   checks ownership, entry, effect exclusions and range. If it observes the caster, it also
   checks that the caster's owner and state allow the cast.
-  Duplicate requests play the animation once, and a confirmed player cast can grant quest credit.
+  Object state and collision follow the owner. Duplicate requests apply an effect once, and a
+  confirmed player cast can grant quest credit.
 * **Spell foci.** A nearby anvil, forge or other spell focus can satisfy a cast from an adjacent
   node. The caster's node checks the observed focus's template and three-dimensional distance.
 * **Persistent ground effects.** The caster's node owns the spot and its tick timer. It sends

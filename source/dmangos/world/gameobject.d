@@ -128,10 +128,24 @@ enum : uint
 {
     goStateActive = 0,  // open
     goStateReady = 1,   // closed
+    goStateActiveAlternative = 2,
     goFlagInUse = 0x01,
+    goFlagLocked = 0x02,
     goDynFlagActivate = 0x01, // usable (for a quest), and it sparkles
     goFlagTransport = 0x08,
     goFlagNoDespawn = 0x20,
+}
+
+/// State-changing actions of SPELL_EFFECT_ACTIVATE_OBJECT.
+package enum GameObjectAction : uint
+{
+    unlock = 6,
+    lock = 7,
+    openAndUnlock = 9,
+    close = 10,
+    destroy = 12,
+    rebuild = 13,
+    closeAndLock = 18,
 }
 
 /// See the module documentation.
@@ -193,6 +207,11 @@ final class GameObject : Replicable, Moving, PerViewer
         return cast(GameObjectType) template_.type;
     }
 
+    package @property bool doorOrButton() const
+    {
+        return type == GameObjectType.door || type == GameObjectType.button;
+    }
+
     /// Its state: `goStateActive` (open) or `goStateReady` (closed).
     @property uint goState() const
     {
@@ -244,11 +263,11 @@ final class GameObject : Replicable, Moving, PerViewer
     }
 
     /// Open (or closed) for its time, if it is not in use already.
-    void useDoorOrButton(GameObjectWorld world, uint restoreMs = 0)
+    void useDoorOrButton(GameObjectWorld world, uint restoreMs = 0, bool alternative = false)
     {
         if (lootState != GoLootState.ready)
             return;
-        switchDoorOrButton(true);
+        switchDoorOrButton(true, alternative);
         lootState = GoLootState.activated;
         restoreTimer = restoreMs ? restoreMs : autoCloseMs;
         world.flushGameObject(this);
@@ -268,12 +287,57 @@ final class GameObject : Replicable, Moving, PerViewer
         useDoorOrButton(world, restoreMs);
     }
 
+    /// Apply a state-only spell action. No normal use event, trap, or loot is triggered.
+    package bool applySpellState(GameObjectWorld world, GameObjectAction action)
+    {
+        switch (action)
+        {
+        case GameObjectAction.unlock, GameObjectAction.lock:
+            setLocked(action == GameObjectAction.lock);
+            break;
+        case GameObjectAction.openAndUnlock:
+            if (!doorOrButton)
+                return false;
+            setLocked(false);
+            useOpenable(world, true, 0);
+            break;
+        case GameObjectAction.destroy:
+            if (!doorOrButton)
+                return false;
+            useDoorOrButton(world, 0, true);
+            break;
+        case GameObjectAction.close, GameObjectAction.rebuild, GameObjectAction.closeAndLock:
+            if (!doorOrButton)
+                return false;
+            if (lootState == GoLootState.activated)
+            {
+                switchDoorOrButton(false);
+                lootState = GoLootState.ready;
+                restoreTimer = 0;
+            }
+            if (action == GameObjectAction.closeAndLock)
+                setLocked(true);
+            break;
+        default:
+            return false;
+        }
+        world.flushGameObject(this);
+        return true;
+    }
+
+    private void setLocked(bool locked)
+    {
+        const flags = values.get!GAMEOBJECT_FLAGS;
+        values.set!GAMEOBJECT_FLAGS(locked ? flags | goFlagLocked : flags & ~goFlagLocked);
+    }
+
     /// Sets or clears the in-use flag, and the state the other way.
-    private void switchDoorOrButton(bool activate)
+    private void switchDoorOrButton(bool activate, bool alternative = false)
     {
         const flags = values.get!GAMEOBJECT_FLAGS;
         values.set!GAMEOBJECT_FLAGS(activate ? flags | goFlagInUse : flags & ~goFlagInUse);
-        values.set!GAMEOBJECT_STATE(goState == goStateReady ? goStateActive : goStateReady);
+        const active = alternative ? goStateActiveAlternative : goStateActive;
+        values.set!GAMEOBJECT_STATE(goState == goStateReady ? active : goStateReady);
     }
 
     /// The goober used (`GAMEOBJECT_TYPE_GOOBER` in `Use`): in use and open for its time.

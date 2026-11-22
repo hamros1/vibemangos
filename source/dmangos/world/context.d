@@ -758,13 +758,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             sendGameObjectSpell(copy.owner, message);
         }
         else if (auto object = map_.gameObjectAt(guid))
-            playNamedGameObject(map_, spell, effect, shape, object, origin);
+            applyNamedGameObject(map_, spell, effect, shape, object, origin);
     }
 
-    private bool playNamedGameObject(Map map_, const(SpellInfo)* spell, size_t effect, ImplicitTarget shape,
+    private bool applyNamedGameObject(Map map_, const(SpellInfo)* spell, size_t effect, ImplicitTarget shape,
         GameObject object, Position origin)
     {
-        import dmangos.world.gameobject : gameObjectAnimation;
+        import dmangos.world.gameobject : gameObjectAnimation, GameObjectAction;
         import dmangos.world.spellselection : namedGameObjectAnimation, namedGameObjectEntry;
 
         if (!namedGameObjectEntry(data.spellScriptObjects.get(spell.id, null), effect, object.spawn.entry))
@@ -776,8 +776,16 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         const at = object.position;
         if (!((at.x - center.x) ^^ 2 + (at.y - center.y) ^^ 2 + (at.z - center.z) ^^ 2 <= reach ^^ 2))
             return false;
-        map_.sendToObservers(object.guid, Opcode.SMSG_GAMEOBJECT_CUSTOM_ANIM,
-            gameObjectAnimation(object.guid, cast(uint) namedGameObjectAnimation(*spell, effect)));
+        const animation = namedGameObjectAnimation(*spell, effect);
+        if (animation >= 0)
+            map_.sendToObservers(object.guid, Opcode.SMSG_GAMEOBJECT_CUSTOM_ANIM,
+                gameObjectAnimation(object.guid, cast(uint) animation));
+        else
+        {
+            if (!object.applySpellState(map_, cast(GameObjectAction) spell.miscValue[effect]))
+                return false;
+            map_.wake(object.guid);
+        }
         return true;
     }
 
@@ -826,7 +834,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (object is null || !client.isValidMapCoord(map_.id, message.x, message.y, message.z))
             return;
         const origin = Position(message.x, message.y, message.z);
-        if (playNamedGameObject(map_, spell, message.effect, shape, object, origin)
+        if (applyNamedGameObject(map_, spell, message.effect, shape, object, origin)
             && playerCast && sendGameObjectSpell !is null)
         {
             auto reply = cast(GameObjectSpell) message;

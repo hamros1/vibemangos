@@ -5,6 +5,7 @@ import std.algorithm.comparison : max;
 import std.algorithm.searching : canFind;
 import dmangos.world.clientdata : ClientData;
 import dmangos.world.creatureai : CombatWorld;
+import dmangos.world.gameobject : GameObjectAction;
 import dmangos.world.map : Map, MapObject;
 import dmangos.world.movement : Position;
 import dmangos.world.spellcast : radius, range, SpellTargets, TargetFlags;
@@ -28,9 +29,16 @@ package int namedGameObjectAnimation(const ref SpellInfo spell, size_t effect) p
 
 package ImplicitTarget namedGameObjectShape(const ref SpellInfo spell, size_t effect) pure nothrow @nogc @safe
 {
+    import std.algorithm.comparison : among;
+
     enum uint channels = 0x04 | 0x40;
     if (effect >= spell.effect.length || spell.effect[effect] != SpellEffect.activateObject
-        || spell.casting.speed > 0 || (spell.attributesEx & channels) || namedGameObjectAnimation(spell, effect) < 0)
+        || spell.casting.speed > 0 || (spell.attributesEx & channels))
+        return ImplicitTarget.none;
+    const action = cast(GameObjectAction) spell.miscValue[effect];
+    if (namedGameObjectAnimation(spell, effect) < 0
+        && !action.among(GameObjectAction.unlock, GameObjectAction.lock, GameObjectAction.openAndUnlock,
+            GameObjectAction.close, GameObjectAction.destroy, GameObjectAction.rebuild, GameObjectAction.closeAndLock))
         return ImplicitTarget.none;
     const a = spell.implicitTargetA[effect], b = spell.casting.implicitTargetB[effect];
     if (a == ImplicitTarget.gameobjectScriptNearCaster && b == ImplicitTarget.none)
@@ -248,7 +256,8 @@ unittest
     import dmangos.serialization : serialize;
     import dmangos.world.clientdata : spellRadiusFormat;
     import dmangos.world.creature : CreatureSpawn;
-    import dmangos.world.gameobject : GameObject, GameObjectSpawn, GameObjectTemplate, GameObjectType;
+    import dmangos.world.gameobject : GameObject, GameObjectSpawn, GameObjectTemplate, GameObjectType,
+        goFlagLocked, goStateActiveAlternative, goStateReady;
     import dmangos.world.eventai : castTriggered;
     import dmangos.world.grid : cellKeyAt;
     import dmangos.world.player : Player;
@@ -256,7 +265,7 @@ unittest
     import dmangos.world.replication : encodePlayerState, encodeState;
     import dmangos.world.spellhandlers : testSpell;
     import dmangos.world.testclient;
-    import dmangos.world.updatefields : PLAYER_QUEST_LOG_1_1, UNIT_FIELD_HEALTH;
+    import dmangos.world.updatefields : GAMEOBJECT_FLAGS, PLAYER_QUEST_LOG_1_1, UNIT_FIELD_HEALTH;
 
     auto db = newDatabase();
     auto context = newCreationContext(db);
@@ -426,6 +435,36 @@ unittest
     owner.gameObjectSpellArrived(1, requests[3]);
     checkRemoteAnimation();
     assert(replies.length == 3, "the idle owner can confirm the cast without a caster replica");
+
+    // The same owner route applies state changes, including an alternate state and a locked reset.
+    enum uint blast = 11195, reset = 55079;
+    void changeDoor(uint id, GameObjectAction action)
+    {
+        auto state = spell;
+        state.id = id;
+        state.miscValue[0] = cast(int) action;
+        foreach (node; [context, owner])
+        {
+            node.data.spells.spells[id] = state;
+            node.data.spellScriptObjects[id] = [SpellScriptObject(eligible, 0)];
+        }
+        player.spells ~= id;
+        const before = requests.length;
+        ByteWriter castPacket;
+        castPacket.put(id);
+        SpellTargets(TargetFlags.self, 0).write(castPacket);
+        client.write(Opcode.CMSG_CAST_SPELL, castPacket.data);
+        assert(requests.length == before + 1 && requests[$ - 1].target == remote.guid);
+        owner.gameObjectSpellArrived(1, requests[$ - 1]);
+    }
+    changeDoor(blast, GameObjectAction.destroy);
+    assert(remote.goState == goStateActiveAlternative && chosen.goState == goStateReady);
+    changeDoor(reset, GameObjectAction.closeAndLock);
+    assert(remote.goState == goStateReady && remote.values.get!GAMEOBJECT_FLAGS & goFlagLocked);
+    ByteWriter click;
+    click.put(remote.guid);
+    witness.write(Opcode.CMSG_GAMEOBJ_USE, click.data);
+    assert(remote.goState == goStateReady, "a locked door cannot be opened by a normal click");
 }
 
 /// A player and an NPC choose a nearby named replica, with the effects applied only by its owner.

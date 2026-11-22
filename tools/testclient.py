@@ -304,6 +304,8 @@ def describe(op, p):
             if kind in (2, 3) and t in (1, 2): print(f"  [item created] {g & 0xFFFFFFFF}: entry {v[3]} count {v.get(OBJECT_END + 8)}")
             elif kind == 0 and g in item_objects: print(f"  [item changed] {g & 0xFFFFFFFF}: fields {sorted(v)}")
             elif kind == 0 and g == player_guid: print(f"  [player changed] {len(v)} fields")
+            elif kind == 0 and seen_objects.get(g, (0, 0))[0] == 5 and 0xE in v:
+                print(f"  [game object state] {g:#018x} state {v[0xE]}")
             elif kind == 4: print(f"  [out of range] {', '.join(str(x & 0xFFFFFFFF) for x in g)}")
             elif kind in (2, 3) and t == 4:
                 seen_objects[g] = (t, 0)

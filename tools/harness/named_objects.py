@@ -1,4 +1,4 @@
-"""Exercise Mortar Animate across an actual cluster boundary in disposable schemas."""
+"""Exercise game-object spells across an actual cluster boundary in disposable schemas."""
 
 import json
 import os
@@ -9,8 +9,8 @@ import sys
 from cluster_fixture import AUTH, REPO, available_ports, run_test, wait_for
 
 
-SPELL = 18655
-OBJECT = 176557
+MORTAR_SPELL, MORTAR = 18655, 176557
+DOOR_SPELL, DOOR = 11195, 146084
 CELL = 533.3333 / 8
 
 
@@ -108,23 +108,29 @@ def run(fixture):
             raise RuntimeError(f"could not create {character}")
         fixture.query(f"UPDATE characters SET position_x = {position[0]}, position_y = {position[1]}, "
                       f"position_z = 95 WHERE name = '{character}'", characters)
-    fixture.query(f"INSERT INTO character_spell (guid, spell) SELECT guid, {SPELL} FROM characters "
-                  f"WHERE name = '{caster}'", characters)
+    for spell in (MORTAR_SPELL, DOOR_SPELL):
+        fixture.query(f"INSERT INTO character_spell (guid, spell) SELECT guid, {spell} FROM characters "
+                      f"WHERE name = '{caster}'", characters)
     before = int(fixture.query("SELECT MAX(guid) FROM gameobject", world))
-    client("spawner", 2, "MORTARSPAWN", f"login:{spawner}", f"cmd:.gobject spawn {OBJECT} 1", "drop")
-    row = fixture.query(f"SELECT guid FROM gameobject WHERE guid > {before} AND id={OBJECT}", world)
-    if not row:
-        raise RuntimeError("the worker's GM did not spawn the mortar")
-    guid = (0xF110 << 48) | (OBJECT << 24) | int(row)
+    client("spawner", 2, "MORTARSPAWN", f"login:{spawner}", f"cmd:.gobject spawn {MORTAR} 1",
+           f"cmd:.gobject spawn {DOOR} 1", "drop")
+    spawned = {}
+    for entry in (MORTAR, DOOR):
+        row = fixture.query(f"SELECT guid FROM gameobject WHERE guid > {before} AND id={entry}", world)
+        if not row:
+            raise RuntimeError(f"the worker's GM did not spawn game object {entry}")
+        spawned[entry] = (0xF110 << 48) | (entry << 24) | int(row)
     wait_for("the object owner to be empty", lambda: "world: 0 players" in fixture.log("node2").split("entered the world")[-1],
              25)
-    output = client("caster", 1, "MORTARCASTER", f"login:{caster}", "listen:2", f"cast:{SPELL}", "listen:2", "drop")
+    output = client("caster", 1, "MORTARCASTER", f"login:{caster}", "listen:2", f"cast:{MORTAR_SPELL}", "listen:2",
+                    f"cast:{DOOR_SPELL}", "listen:2", "drop")
     if f"entered the world as '{caster}'" not in fixture.log("node1"):
         raise RuntimeError("the caster was not simulated on node 1")
-    expected = f"[game object animation] {guid:#018x} slot 0"
-    if output.count(expected) != 1:
-        raise RuntimeError(f"expected one animation of the worker's mortar {guid:#018x}, got {output.count(expected)}")
-    print(f"PASS: node 1's client saw the idle node 2's mortar animate exactly once ({guid:#018x})", flush=True)
+    for expected in (f"[game object animation] {spawned[MORTAR]:#018x} slot 0",
+                     f"[game object state] {spawned[DOOR]:#018x} state 2"):
+        if output.count(expected) != 1:
+            raise RuntimeError(f"expected one '{expected}', got {output.count(expected)}")
+    print("PASS: node 1's client saw the idle node 2's mortar animate and door change to state 2 once each", flush=True)
 
 
 if __name__ == "__main__":
