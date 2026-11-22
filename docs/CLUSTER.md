@@ -501,9 +501,9 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   rechecks eligibility and the spell's geometry. An interrupt before completion cancels
   the cast.
 * **Named creature targets.** A player or creature can select the nearest living creature or an area
-  around the caster or the spell's destination using `spell_script_target` entries, including replicas. An area's target cap is
-  shared across nodes. Each target's node checks its entry and position again, applies direct damage,
-  healing or a group of auras once, and signals a successful hit to the creature's AI.
+  around the caster or the spell's destination using `spell_script_target` entries, including replicas.
+  An area's target cap is shared across nodes. Each target's node checks its entry and position again,
+  resolves heals, aura groups or damage with its attached auras, and signals a successful hit to the creature's AI.
 * **Spell procs.** A hostile hit can trigger auras on both actors. Self effects run with the
   actor, and supported direct damage, healing and aura effects of the same proc can
   reach a named target on its node. Aura effects with the same target share one

@@ -131,19 +131,21 @@ mixin template CreatureProcs()
                 casterLevel: source.level, hitBonus: source.hitBonus(spell), triggered: triggered,
                 creatureCast: !triggered, auraAbsent: auraAbsent, creatureArea: areaEffect >= 0 && !namedCreature,
                 namedCreature: namedCreature);
-            if (effect == SpellEffect.applyAura)
+            const mask = effect == SpellEffect.applyAura || (namedCreature && effect == SpellEffect.schoolDamage)
+                ? remoteTargetAuraEffects(*spell, i) : 0;
+            if (mask)
             {
-                const aura = auraCast(source, spell, remoteTargetAuraEffects(*spell, i));
+                const aura = auraCast(source, spell, mask);
                 hit.auraMs = aura.ms;
                 hit.auraValues = aura.values;
             }
-            else if (effect == SpellEffect.heal)
+            if (effect == SpellEffect.heal)
             {
                 const value = source.spellMod(SpellModOp.damage, spell, source.effectAmount(spell, i));
                 if (value > 0)
                     hit.amount = rollHealing(source, spell, value, hit.critical);
             }
-            else
+            else if (effect == SpellEffect.schoolDamage)
             {
                 const school = spell.casting.school;
                 const value = max(0, source.effectAmount(spell, i)) + spellDamageBonus(source, spell, school);

@@ -992,7 +992,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.spellcast : radius, SpellMissInfo;
         import dmangos.world.spelldamage : creatureAreaShape, creatureTargetInRange, isCreatureTargetEffect,
             isHostileAreaEffect, isHostileChainEffect, isRemoteLeechChannel, isTargetedProcEffect, namedCreatureEffect,
-            namedCreatureShape, rollRemoteAreaDamage, spellJumpRadius;
+            namedCreatureShape, remoteTargetAuraEffects, rollRemoteAreaDamage, spellJumpRadius, unblockedAuraEffects;
         import dmangos.world.spellselection : namedCreatureCenter, namedCreatureRadius;
         import dmangos.world.spellids : ImplicitTarget, SpellEffect;
         import dmangos.world.unit : Blow, UnitKind, UnitRef, combatRelations;
@@ -1210,7 +1210,18 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 result.benefits = Character.benefitsFromVictim(victim, message.caster, flags >> 1, hit);
             }
             if (message.namedCreature)
+            {
+                auto effects = remoteTargetAuraEffects(*spell, message.effect);
+                if (effects && victim.alive)
+                {
+                    const immune = victim.fighter.immune;
+                    effects = unblockedAuraEffects(*spell, effects, immune);
+                    if (effects)
+                        installRemoteAura(victim, message, spell, true, attacker.hasFlag(UnitFlags.pvp), message.auraMs,
+                            effects);
+                }
                 namedCreatureHit(victim, message, spell);
+            }
         }
         if (sendAreaDamage !is null)
             sendAreaDamage(peer, result);
@@ -1562,10 +1573,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         UnitRef victim, bool hostile, bool casterPvP)
     {
         import std.algorithm.comparison : max;
-        import dmangos.world.auras : makeAura;
         import dmangos.world.combat : Fighter;
         import dmangos.world.spellcast : rollSpellHit, SpellMissInfo;
-        import dmangos.world.spelldamage : applyHealAmount, remoteTargetAuraEffects;
+        import dmangos.world.spelldamage : applyHealAmount, remoteTargetAuraEffects, unblockedAuraEffects;
         import dmangos.world.spellids : SpellEffect;
         import dmangos.world.unit : UnitKind;
 
@@ -1614,19 +1624,25 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if (!lasts)
                 return;
         }
-        ubyte effects = remoteTargetAuraEffects(*spell, i);
-        if (checksImmunity)
-            foreach (j; 0 .. spell.effect.length)
-                if ((effects & (1 << j)) && immune.toEffect(SpellEffect.applyAura, spell.casting.effectMechanic[j],
-                    spell.casting.applyAuraName[j]))
-                    effects &= cast(ubyte) ~(1 << j);
+        const effects = unblockedAuraEffects(*spell, remoteTargetAuraEffects(*spell, i), immune);
         if (!effects)
             return replyCreatureCast(peer, message, SpellMissInfo.immune);
+        installRemoteAura(victim, message, spell, hostile, casterPvP, lasts, effects);
+        if (message.namedCreature)
+            namedCreatureHit(victim, message, spell);
+        replyCreatureCast(peer, message, SpellMissInfo.none);
+    }
+
+    private static void installRemoteAura(UnitRef victim, const ref AreaDamage message, const(SpellInfo)* spell,
+        bool hostile, bool casterPvP, int lasts, ubyte effects)
+    {
+        import dmangos.world.auras : AuraType, makeAura;
+        import dmangos.world.unit : UnitKind;
+
         auto aura = makeAura(spell, message.caster, message.casterLevel, lasts, !hostile, message.auraValues);
         aura.effects = effects;
         aura.detachedChannel = message.triggered;
-        if (aura.has(imported!"dmangos.world.auras".AuraType.periodicDamage)
-            || aura.has(imported!"dmangos.world.auras".AuraType.periodicLeech))
+        if (aura.has(AuraType.periodicDamage) || aura.has(AuraType.periodicLeech))
         {
             aura.periodicThreat = message.threatFactor;
             aura.periodicResistanceMod = message.resistanceModifier;
@@ -1644,9 +1660,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             victim.creature.receiveAura(aura, victim.map, added);
             victim.map.flushObjectChanges(victim.creature);
         }
-        if (message.namedCreature)
-            namedCreatureHit(victim, message, spell);
-        replyCreatureCast(peer, message, SpellMissInfo.none);
     }
 
     private static void namedCreatureHit(UnitRef victim, const ref AreaDamage message, const(SpellInfo)* spell)

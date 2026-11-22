@@ -314,3 +314,86 @@ unittest
     target.dest[0] = ground.x;
     assert(!namedCreatureCenter(aimed, 0, source.client, 0, at, null, &target, selected), "range ends at 20 yards");
 }
+
+/// Direct damage and aura effects share one hit on the named creature's node.
+unittest
+{
+    import dmangos.cluster.protocol : AreaDamage;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.clientdata : factionTemplateFormat, spellDurationFormat;
+    import dmangos.world.context : WorldContext;
+    import dmangos.world.creature : Creature, CreatureSpawn;
+    import dmangos.world.eventai : castTriggered;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.replication : encodeState;
+    import dmangos.world.spellcast : SpellMissInfo, spellAttrEx2CantCrit, spellAttrEx3AlwaysHit;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.spellids : AuraType, SpellEffect;
+    import dmangos.world.testclient;
+    import dmangos.world.updatefields : UNIT_FIELD_HEALTH;
+
+    auto db = newDatabase();
+    auto source = newCreationContext(db), owner = newCreationContext(db);
+    source.nodeId = 1;
+    owner.nodeId = 2;
+    enum uint strike = 55064, stunMechanic = 12;
+    const at = Position(100, 100, 40);
+    foreach (node; [source, owner])
+    {
+        node.client.factionTemplates = typeof(node.client.factionTemplates).parse(buildDbc(factionTemplateFormat,
+            [[12u, 12, 0, 1, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0], [14u, 14, 0, 2, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0]]),
+            "FactionTemplate.dbc");
+        node.client.spellDurations = typeof(node.client.spellDurations).parse(buildDbc(spellDurationFormat,
+            [[1u, 10_000, 0, 10_000]]), "SpellDuration.dbc");
+        node.data.creatureTemplates.edit(creatureTrainer).faction = 14;
+        node.data.creatureTemplates.edit(creatureInnkeeper).mechanicImmuneMask = 1u << (stunMechanic - 1);
+        auto spell = testSpell(strike, SpellEffect.schoolDamage, ImplicitTarget.unitScriptNearCaster, 20);
+        spell.effect[1 .. 3] = SpellEffect.applyAura;
+        spell.implicitTargetA[1 .. 3] = ImplicitTarget.unitScriptNearCaster;
+        spell.basePoints[1 .. 3] = 9;
+        spell.baseDice[1 .. 3] = 1;
+        spell.casting.applyAuraName[1] = AuraType.modStat;
+        spell.casting.applyAuraName[2] = AuraType.modStun;
+        spell.casting.effectMechanic[2] = stunMechanic;
+        spell.casting.durationIndex = 1;
+        spell.casting.stackAmount = 3;
+        spell.casting.school = 1;
+        spell.attributesEx2 |= spellAttrEx2CantCrit;
+        spell.casting.attributesEx3 |= spellAttrEx3AlwaysHit;
+        node.data.spells.spells[strike] = spell;
+        node.data.spellScriptTargets[strike] = [creatureInnkeeper];
+    }
+    Creature npc(WorldContext world, uint id, uint entry, float x)
+    {
+        const spawn = CreatureSpawn(id, entry, 0, x, at.y, at.z);
+        auto creature = world.makeCreature(&spawn);
+        world.map(0).addObject(creature);
+        return creature;
+    }
+    auto caster = npc(source, 91010, creatureTrainer, at.x);
+    auto target = npc(owner, 91011, creatureInnkeeper, at.x + 3);
+    const health = target.values.get!UNIT_FIELD_HEALTH;
+    source.map(0).replicaCreated(2, cellKeyAt(at.x + 3, at.y), target.guid, encodeState(target, 0));
+    owner.map(0).replicaCreated(1, cellKeyAt(at.x, at.y), caster.guid, encodeState(caster, 0));
+
+    AreaDamage[] requests, replies;
+    source.sendAreaDamage = (ushort peer, const ref AreaDamage request) {
+        assert(peer == 2 && request.namedCreature && !request.reply);
+        requests ~= cast(AreaDamage) request;
+        return true;
+    };
+    owner.sendAreaDamage = (ushort peer, const ref AreaDamage reply) {
+        assert(peer == 1 && reply.reply);
+        replies ~= cast(AreaDamage) reply;
+        return true;
+    };
+    assert(caster.ai.spellCaster(source.map(0)));
+    assert(caster.ai.castSpell(source.data.spells.spell(strike), caster.guid, castTriggered));
+    assert(requests.length == 1 && requests[0].effect == 0 && requests[0].auraMs == 10_000);
+    owner.areaDamageArrived(1, requests[0]);
+    owner.areaDamageArrived(1, requests[0]);
+    const aura = target.auras.find(strike);
+    assert(aura && aura.stacks == 1 && aura.effects == 2, "the stun-immunity filters only that aura effect");
+    assert(target.values.get!UNIT_FIELD_HEALTH == health - 20);
+    assert(replies.length == 1 && replies[0].miss == SpellMissInfo.none && replies[0].damage == 20);
+}

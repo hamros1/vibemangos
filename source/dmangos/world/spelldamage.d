@@ -10,7 +10,7 @@ module dmangos.world.spelldamage;
 
 import dmangos.cluster.protocol : AreaDamage, PartyHeal;
 import dmangos.world.caster : Caster;
-import dmangos.world.combat : Fighter;
+import dmangos.world.combat : Fighter, Immunities;
 import dmangos.world.movement : Position;
 import dmangos.world.spellids;
 import dmangos.world.spells : SpellInfo;
@@ -230,6 +230,18 @@ ubyte remoteTargetAuraEffects(const ref SpellInfo spell, size_t first)
     return mask;
 }
 
+/// Keep the aura effects that the recipient can receive after the spell hits.
+package ubyte unblockedAuraEffects(const ref SpellInfo spell, ubyte effects, const ref Immunities immune)
+{
+    enum uint noImmunities = 0x20000000;
+    if (!(spell.attributes & noImmunities) && immune.any)
+        foreach (i; 0 .. spell.effect.length)
+            if ((effects & (1 << i)) && immune.toEffect(SpellEffect.applyAura, spell.casting.effectMechanic[i],
+                spell.casting.applyAuraName[i]))
+                effects &= cast(ubyte) ~(1 << i);
+    return effects;
+}
+
 /// The hostile effect of a regular remote creature cast.
 bool isCreatureTargetEffect(const ref SpellInfo spell, size_t i)
 {
@@ -253,7 +265,7 @@ package ImplicitTarget namedCreatureShape(const ref SpellInfo spell, size_t i)
     }
 }
 
-/// One named-creature hit, heal, or group of auras can be applied on each target's node.
+/// The first effect in a named creature's hit, heal, or group of auras on the target's node.
 package size_t namedCreatureEffect(const ref SpellInfo spell)
 {
     if (spell.attributesEx & (0x04 | 0x40))
@@ -276,7 +288,8 @@ package size_t namedCreatureEffect(const ref SpellInfo spell)
             return size_t.max;
         if (effect == SpellEffect.applyAura)
         {
-            if (!remoteTargetAuraEffects(spell, i) || (first != size_t.max && spell.effect[first] != effect))
+            if (!remoteTargetAuraEffects(spell, i) || (first != size_t.max
+                && spell.effect[first] != SpellEffect.applyAura && spell.effect[first] != SpellEffect.schoolDamage))
                 return size_t.max;
         }
         else if (first != size_t.max || (effect != SpellEffect.heal && !isDirectMagicDamageEffect(spell, i)))

@@ -2355,14 +2355,11 @@ private:
         uint bounce;
     }
 
-    private void sendRolledAreaDamage(const(SpellInfo)* spell, const ref Casting c, ref RemoteAreaDamage remote)
+    private void rollAreaDamage(const(SpellInfo)* spell, const ref Casting c, ref RemoteAreaDamage remote)
     {
         import dmangos.world.combat : creatureTypes;
         import dmangos.world.spelldamage : SpellBounce;
 
-        effectCustom = c.custom;
-        scope (exit)
-            effectCustom = typeof(effectCustom).init;
         const school = spell.casting.school;
         auto hit = &remote.hit;
         const value = classSchoolDamage(spell, hit.effect, hit.target, effectAmount(spell, hit.effect));
@@ -2374,19 +2371,15 @@ private:
             if (copy.fields.type == TypeId.unit)
                 if (const proto = copy.fields.get!OBJECT_FIELD_ENTRY in context.data.creatureTemplates)
                     creatureType = proto.creatureType;
-        hit.casterLevel = player.data.level;
         const versus = creatureType < creatureTypes ? player.damageMods.versus[creatureType] : 1;
         hit.amount = damage * player.damageMods.school[school] * versus;
         hit.threatFactor = player.damageMods.threat[school] * spellMod(SpellModOp.threat, spell, 1.0f);
-        hit.hitBonus = spellHitBonusOf(spell);
         hit.critChance = spellCritOf(spell);
         hit.frozenCritBonus = frozenTargetCritBonus(spell);
         hit.resistanceModifier = player.auras.totalByMiscMask(AuraType.modTargetResistance, 1 << school);
-        hit.alwaysHits = c.custom.alwaysHits;
         hit.suppressProcs = c.custom.by !is null;
         hit.critBonusFlat = spellMod(SpellModOp.critDamageBonus, spell, 0.0f);
         hit.critBonusFactor = spellMod(SpellModOp.critDamageBonus, spell, 1.0f) - hit.critBonusFlat;
-        context.sendReplicaSpell(map, remote.peer, spell, *hit);
     }
 
     private void sendRolledReplicaEffect(const(SpellInfo)* spell, const ref Casting c, ref RemoteAreaDamage remote)
@@ -2397,9 +2390,6 @@ private:
 
         auto hit = &remote.hit;
         const i = hit.effect;
-        if (spell.effect[i] == SpellEffect.schoolDamage)
-            return sendRolledAreaDamage(spell, c, remote);
-
         const outer = effectCustom;
         effectCustom = c.custom;
         scope (exit)
@@ -2408,9 +2398,13 @@ private:
         hit.casterLevel = player.data.level;
         hit.hitBonus = spellHitBonusOf(spell);
         hit.alwaysHits = c.custom.alwaysHits;
-        if (spell.effect[i] == SpellEffect.applyAura)
+        const damage = spell.effect[i] == SpellEffect.schoolDamage;
+        if (damage)
+            rollAreaDamage(spell, c, remote);
+        const mask = spell.effect[i] == SpellEffect.applyAura || (damage && hit.namedCreature)
+            ? remoteTargetAuraEffects(*spell, i) : 0;
+        if (mask)
         {
-            const mask = remoteTargetAuraEffects(*spell, i);
             const aura = auraCast(me, spell, mask);
             hit.auraMs = aura.ms;
             hit.auraValues = aura.values;
@@ -2424,7 +2418,7 @@ private:
                     break;
                 }
         }
-        else
+        else if (!damage && spell.effect[i] == SpellEffect.heal)
         {
             const amount = spellMod(SpellModOp.damage, spell, effectAmount(spell, i));
             hit.amount = amount > 0 ? rollHealing(me, spell, amount, hit.critical) : 0;
