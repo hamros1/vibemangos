@@ -816,6 +816,10 @@ unittest
     to.addObject(target);
     const cell = cellKeyAt(origin.x, origin.y);
     from.replicaCreated(2, cell, target.guid, encodeState(target, 0));
+    const healerSpawn = CreatureSpawn(91026, creatureInnkeeper, 0, origin.x, origin.y, origin.z);
+    auto healer = source.makeCreature(&healerSpawn);
+    from.addObject(healer);
+    healer.ai.spellCaster(from);
 
     Quest quest;
     quest.id = 55703;
@@ -829,7 +833,10 @@ unittest
 
     source.sendAreaDamage = (ushort peer, const ref AreaDamage request) {
         assert(peer == 2 && request.namedCreature && request.channelled && request.target == target.guid);
-        to.replicaCreated(1, cell, player.guid, encodePlayerState(player, 0));
+        if (request.creatureCast)
+            to.replicaCreated(1, cell, healer.guid, encodeState(healer, 0));
+        else
+            to.replicaCreated(1, cell, player.guid, encodePlayerState(player, 0));
         owner.areaDamageArrived(1, request);
         return true;
     };
@@ -862,6 +869,18 @@ unittest
     target.updateAuras(to, 1000);
     assert(target.values.get!UNIT_FIELD_HEALTH == 60 && !target.auras.find(mend, player.guid));
     assert(player.questStatus[quest.id].mobCount[0] == 1, "only a confirmed channel completed naturally counts");
+
+    assert(healer.ai.castSpell(source.data.spells.spell(mend), healer.guid, 0));
+    assert(healer.values.get!UNIT_FIELD_CHANNEL_OBJECT == target.guid && target.auras.find(mend, healer.guid));
+    target.updateAuras(to, 1000);
+    assert(target.values.get!UNIT_FIELD_HEALTH == 70);
+    healer.ai.interruptCast();
+    assert(!target.auras.find(mend, healer.guid) && !healer.values.get!UNIT_CHANNEL_SPELL);
+    assert(healer.ai.castSpell(source.data.spells.spell(mend), healer.guid, 0));
+    assert(target.auras.find(mend, healer.guid));
+    from.migrateOut(key => key == cell, 3, &source.saveMigrant);
+    assert(from.isReplica(healer.guid) && !target.auras.find(mend, healer.guid),
+        "moving a caster's home region cancels the owned channel");
 }
 
 /// Direct damage and aura effects share one hit on the named creature's node.

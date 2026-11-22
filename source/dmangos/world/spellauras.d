@@ -74,7 +74,7 @@ AuraCast auraCast(ref Caster caster, const(SpellInfo)* spell, ubyte effects)
  * early (`SPELL_ATTR_HEARTBEAT_RESIST`), diminished on a player by its kind before it when a player or its pet cast
  * it; and it pulls the enemy into the fight.
  */
-void applyAura(ref Caster caster, const(SpellInfo)* spell, size_t i, UnitRef target, ubyte effects)
+void applyAura(ref Caster caster, const(SpellInfo)* spell, size_t i, UnitRef target, ubyte effects, bool detached = false)
 {
     import dmangos.world.auras : makeAura;
     import dmangos.world.spellcast : heartbeatResistChance;
@@ -96,6 +96,7 @@ void applyAura(ref Caster caster, const(SpellInfo)* spell, size_t i, UnitRef tar
     Aura made(int lasts)
     {
         auto aura = makeAura(spell, caster.guid, caster.level, lasts, !hostile, a.values);
+        aura.detachedChannel = detached;
         if (aura.charges) // (`SPELLMOD_CHARGES`: Improved Shield Block)
             aura.charges = caster.spellMod(SpellModOp.charges, spell, aura.charges);
         if (effects)
@@ -366,6 +367,7 @@ package void remoteManaLeechTick(imported!"dmangos.world.context".WorldContext c
 /// A channel's caster must still be channeling it at this target.
 package bool channelAuraActive(UnitRef victim, Aura aura, bool allowFinalTick = false)
 {
+    import dmangos.world.objects : UpdateValues;
     import dmangos.world.replication : Replica;
     import dmangos.world.updatefields : TypeId, UNIT_CHANNEL_SPELL, UNIT_FIELD_CHANNEL_OBJECT, UNIT_FIELD_HEALTH;
     import dmangos.world.unit : UnitKind;
@@ -374,16 +376,18 @@ package bool channelAuraActive(UnitRef victim, Aura aura, bool allowFinalTick = 
         return true;
     if (victim.map is null)
         return false;
-    if (auto caster = victim.map.unit(aura.caster))
-        return caster.kind == UnitKind.player && caster.alive
-            && caster.session.channelledAt(aura.spell) == victim.combatGuid;
-    if (auto copy = cast(Replica) victim.map.findObject(aura.caster))
+    bool channelMatches(const UpdateValues* fields)
     {
-        const active = copy.fieldsOf.get!UNIT_CHANNEL_SPELL;
-        return copy.fieldsOf.type == TypeId.player && copy.fieldsOf.get!UNIT_FIELD_HEALTH
-            && ((active == aura.spell.id && copy.fieldsOf.get!UNIT_FIELD_CHANNEL_OBJECT == victim.combatGuid)
-                || (allowFinalTick && aura.duration <= 0 && !active));
+        const active = fields.get!UNIT_CHANNEL_SPELL;
+        return (active == aura.spell.id && fields.get!UNIT_FIELD_CHANNEL_OBJECT == victim.combatGuid)
+            || (allowFinalTick && aura.duration <= 0 && !active);
     }
+    if (auto caster = victim.map.unit(aura.caster))
+        return caster.alive && (caster.kind == UnitKind.player
+            ? caster.session.channelledAt(aura.spell) == victim.combatGuid : allowFinalTick && channelMatches(caster.fields));
+    if (auto copy = cast(Replica) victim.map.findObject(aura.caster))
+        return (copy.fieldsOf.type == TypeId.player || (allowFinalTick && copy.fieldsOf.type == TypeId.unit))
+            && copy.fieldsOf.get!UNIT_FIELD_HEALTH && channelMatches(&copy.fieldsOf());
     return false;
 }
 

@@ -463,7 +463,7 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         if (p !is null)
             p.applyAuraEffect(spell, i, target, c.auraEffects.get(target, 0));
         else
-            ai.auraOn(spell, i, target, c.auraEffects.get(target, 0));
+            ai.auraOn(spell, i, target, c.auraEffects.get(target, 0), c.triggered);
         break;
     case SpellEffect.applyAreaAuraParty: // SPELL_EFFECT_APPLY_AREA_AURA_PARTY: on the caster, and from it on its party (`updateAreaAuras`)
     case SpellEffect.applyAreaAuraPet: // SPELL_EFFECT_APPLY_AREA_AURA_PET: on the caster, and from it on its pet (`updatePetAreaAuras`)

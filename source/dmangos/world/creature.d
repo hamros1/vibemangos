@@ -912,7 +912,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         {
             if (!alive)
                 break;
-            if (tick.aura.caster && tick.aura.caster <= uint.max
+            if (tick.aura.caster
                 && namedHealChannelEffect(*tick.aura.spell) != size_t.max
                 && !channelAuraActive(world.unitOf(this), tick.aura, true))
                 continue;

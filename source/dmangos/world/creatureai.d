@@ -369,7 +369,7 @@ final class CreatureAI : Scripted, CreatureHost
     @property bool active() const
     {
         return inCombat_ || evadingHome || despawnTimer > 0 || me.values.get!UNIT_FIELD_HEALTH < me.values.get!UNIT_FIELD_MAXHEALTH
-            || me.values.get!UNIT_FIELD_POWER1 < me.values.get!UNIT_FIELD_MAXPOWER1 || casting_ !is null || fleeTimer > 0 || (script !is null && script.wantsTicks) || behaviourBusy || me.petOwner != 0
+            || me.values.get!UNIT_FIELD_POWER1 < me.values.get!UNIT_FIELD_MAXPOWER1 || castingNow || fleeTimer > 0 || (script !is null && script.wantsTicks) || behaviourBusy || me.petOwner != 0
             || persistentAreas_.length || totems_.length;
     }
 
@@ -526,6 +526,8 @@ final class CreatureAI : Scripted, CreatureHost
 
     private void reportDamage(ulong attacker, uint damage)
     {
+        if (damage && namedChannelSpell !is null && (namedChannelSpell.casting.channelInterruptFlags & 0x02))
+            finishNamedHealChannel(true);
         if (damage)
             triggerCombatTimer();
         if (behaviour)
@@ -1244,10 +1246,12 @@ private:
             restoringThreat = combatHandoffGraceMs;
         if (target.combatGuid != victim)
             attackStart(target, world);
-        if (casting_ !is null)
+        if (castingNow)
         {
             // Casting: it stands, facing its target.
-            me.movement.position.orientation = angleTo(me.position, target.position);
+            auto facing = namedChannelSpell is null ? target : spellTarget(me.values.get!UNIT_FIELD_CHANNEL_OBJECT);
+            if (facing)
+                me.movement.position.orientation = angleTo(me.position, facing.position);
             return;
         }
         chase(target, world);
@@ -1429,7 +1433,7 @@ private:
         import std.random : uniform;
 
         const listId = spellListChosen ? spellListChosen : me.template_.spellList;
-        if (lore is null || listId == 0 || casting_ !is null || !victim || me.petOwner)
+        if (lore is null || listId == 0 || castingNow || !victim || me.petOwner)
             return;
         const list = lore.spellList(listId);
         if (list.length == 0)

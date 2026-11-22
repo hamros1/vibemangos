@@ -99,7 +99,7 @@ mixin template CreatureProcs()
     private bool sendCreatureTargetSpell(imported!"dmangos.world.context".WorldContext context,
         const(SpellInfo)* spell, UnitRef other, bool triggered, bool auraAbsent, int areaEffect = -1,
         imported!"dmangos.world.movement".Position center = imported!"dmangos.world.movement".Position.init,
-        float areaRadius = 0, bool namedCreature = false)
+        float areaRadius = 0, bool namedCreature = false, ulong channelSequence = 0)
     {
         import std.algorithm.comparison : max;
         import dmangos.cluster.protocol : AreaDamage;
@@ -124,13 +124,13 @@ mixin template CreatureProcs()
                 continue;
             const within = range(*spell, context.client)[1];
             const origin = areaEffect >= 0 ? center : at;
-            auto hit = AreaDamage(caster: me.guid, target: other.combatGuid,
+            auto hit = AreaDamage(sequence: channelSequence, caster: me.guid, target: other.combatGuid,
                 spell: spell.id, effect: cast(ubyte) i, map: other.map.id, instance: other.map.instanceId,
                 x: origin.x, y: origin.y, z: origin.z, facing: at.orientation,
                 radius: areaEffect >= 0 ? areaRadius : within > 0 ? within : context.config.visibilityDistance,
                 casterLevel: source.level, hitBonus: source.hitBonus(spell), triggered: triggered,
                 creatureCast: !triggered, auraAbsent: auraAbsent, creatureArea: areaEffect >= 0 && !namedCreature,
-                namedCreature: namedCreature);
+                namedCreature: namedCreature, channelled: channelSequence != 0);
             const mask = effect == SpellEffect.applyAura || (namedCreature && effect == SpellEffect.schoolDamage)
                 ? remoteTargetAuraEffects(*spell, i) : 0;
             if (mask)

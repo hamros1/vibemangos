@@ -179,7 +179,95 @@ mixin template CreatureCasting()
     /// Whether it is casting a spell now.
     @property bool castingNow() const
     {
-        return casting_ !is null;
+        return casting_ !is null || namedChannelSpell !is null;
+    }
+
+    private const(SpellInfo)* namedChannelSpell;
+    private int namedChannelTimer;
+    private ulong namedChannelSequence;
+
+    private bool beginNamedHealChannel(const(SpellInfo)* spell, UnitRef target)
+    {
+        import dmangos.world.spellcast : duration;
+
+        auto caster = spellCaster();
+        const ms = caster.modDuration(spell, duration(*spell, lore.clientData, caster.level));
+        if (ms <= 0 || !world_.inLineOfSight(me.position, target.position))
+            return false;
+        if (!me.spline.finalized)
+            stopMoving(me, world_);
+        namedChannelSpell = spell;
+        namedChannelTimer = ms;
+        me.values.set!UNIT_CHANNEL_SPELL(spell.id);
+        me.values.set!UNIT_FIELD_CHANNEL_OBJECT(target.combatGuid);
+        world_.flushCreature(me);
+        world_.wake(me.guid);
+        return true;
+    }
+
+    package void finishNamedHealChannel(bool cancelled)
+    {
+        import dmangos.cluster.protocol : AreaDamage;
+        import dmangos.world.context : WorldContext;
+        import dmangos.world.spellcast : spellFailurePacket, SpellCastResult;
+
+        auto spell = namedChannelSpell;
+        if (spell is null)
+            return;
+        namedChannelSpell = null;
+        namedChannelTimer = 0;
+        namedChannelSequence = 0;
+        const guid = me.values.get!UNIT_FIELD_CHANNEL_OBJECT;
+        me.values.set!UNIT_CHANNEL_SPELL(0);
+        me.values.set!UNIT_FIELD_CHANNEL_OBJECT(0UL);
+        if (world_ is null)
+            return;
+        if (cancelled)
+        {
+            if (auto target = world_.creatureAt(guid))
+            {
+                if (auto aura = target.auras.find(spell.id, me.guid))
+                {
+                    target.loseAura(aura, world_);
+                    world_.flushCreature(target);
+                }
+            }
+            else if (auto target = spellTarget(guid))
+                if (target.replica !is null)
+                    if (auto context = cast(WorldContext) lore)
+                        context.sendReplicaSpell(target.map, target.replica.owner, spell,
+                            AreaDamage(caster: me.guid, target: guid, spell: spell.id, map: target.map.id,
+                                instance: target.map.instanceId, creatureCast: true, namedCreature: true,
+                                channelled: true, channelUpdate: true));
+            world_.sendToObservers(me.guid, Opcode.SMSG_SPELL_FAILURE,
+                spellFailurePacket(me.guid, spell.id, SpellCastResult.interrupted));
+        }
+        world_.flushCreature(me);
+    }
+
+    package void namedHealChannelRejected(ulong sequence)
+    {
+        if (sequence && sequence == namedChannelSequence)
+            finishNamedHealChannel(true);
+    }
+
+    private void updateNamedHealChannel(int diff)
+    {
+        import dmangos.world.spellselection : namedCreatureRange;
+
+        const spell = namedChannelSpell;
+        if (spell is null)
+            return;
+        auto target = spellTarget(me.values.get!UNIT_FIELD_CHANNEL_OBJECT);
+        if (!target.alive)
+            return finishNamedHealChannel(true);
+        const at = target.position, from = me.position;
+        const reach = namedCreatureRange(*spell, lore.clientData) + me.fighter.combatReach + target.fighter.combatReach;
+        if (!((at.x - from.x) ^^ 2 + (at.y - from.y) ^^ 2 + (at.z - from.z) ^^ 2 <= reach ^^ 2)
+            || !world_.inLineOfSight(from, at) || (!me.spline.finalized && (spell.casting.channelInterruptFlags & 0x08)))
+            finishNamedHealChannel(true);
+        else if ((namedChannelTimer -= diff) <= 0)
+            finishNamedHealChannel(false);
     }
 
     /// Whether its script wants ticks out of combat (timers, or its spawn events still to run).
@@ -236,7 +324,7 @@ mixin template CreatureCasting()
             return refuse(SpellCastResult.dontReport);
         if (!triggered && refusedByCrowdControl(spell))
             return refuse(SpellCastResult.dontReport);
-        if (casting_ !is null && !(flags & (castTriggered | castInterruptPrevious)))
+        if (castingNow && !(flags & (castTriggered | castInterruptPrevious)))
             return refuse(SpellCastResult.spellInProgress);
         // Its school locked out: only for a spell silence stops (`WorldObject::IsSpellReady`).
         if (!triggered && spell.casting.preventionType == preventionSilence && spell.casting.school < schoolLockMs.length
@@ -248,7 +336,8 @@ mixin template CreatureCasting()
         const namedEffect = selectableNamedCreatureEffect(spell);
         auto context = cast(WorldContext) lore;
         const namedObject = context !is null && context.onlyNamedGameObjectEffects(spell);
-        if (namedObject || (namedEffect != size_t.max
+        const namedHeal = !triggered && !me.meleeController && context !is null && context.namedHealChannel(spell) != size_t.max;
+        if (namedObject || namedHeal || (namedEffect != size_t.max
             && (namedCreatureShape(*spell, namedEffect) != ImplicitTarget.unitScriptNearCaster
                 || (context !is null && context.sendAreaDamage !is null))))
             target = me.guid; // the spell selects its targets at completion
@@ -305,6 +394,8 @@ mixin template CreatureCasting()
         }
         if (casting_ !is null)
             interruptCast();
+        if (namedChannelSpell !is null && (flags & castInterruptPrevious))
+            finishNamedHealChannel(true);
         if (!triggered && isNextMeleeSwingSpell(*spell))
         {
             nextSwing = spell;
@@ -340,6 +431,7 @@ mixin template CreatureCasting()
     /// The cast under way: it goes off when its time is up, or fails if its target is gone.
     private void updateCasting(int diff)
     {
+        updateNamedHealChannel(diff);
         foreach (ref t; schoolLockMs)
             if (t > 0)
                 t -= diff;
@@ -390,9 +482,8 @@ mixin template CreatureCasting()
     /// Crowd control began (`silenceOnly`: a silence): the cast under way stops if it is one that stops.
     package void crowdControlBegan(bool silenceOnly)
     {
-        if (casting_ is null)
-            return;
-        if (!silenceOnly || casting_.casting.preventionType == preventionSilence)
+        auto current = casting_ is null ? namedChannelSpell : casting_;
+        if (current !is null && (!silenceOnly || current.casting.preventionType == preventionSilence))
             interruptCast();
     }
 
@@ -402,7 +493,8 @@ mixin template CreatureCasting()
     {
         import dmangos.world.spellcast : isInterruptible;
 
-        if (casting_ !is null && isInterruptible(*casting_))
+        auto current = casting_ is null ? namedChannelSpell : casting_;
+        if (current !is null && isInterruptible(*current))
             interruptCast(lockMs);
     }
 
@@ -411,10 +503,13 @@ mixin template CreatureCasting()
     {
         import dmangos.world.spellcast : spellFailurePacket, SpellCastResult;
 
-        if (casting_ is null)
+        auto current = casting_ is null ? namedChannelSpell : casting_;
+        if (current is null)
             return;
-        if (lockMs > 0 && casting_.casting.school < schoolLockMs.length)
-            schoolLockMs[casting_.casting.school] = lockMs;
+        if (lockMs > 0 && current.casting.school < schoolLockMs.length)
+            schoolLockMs[current.casting.school] = lockMs;
+        if (namedChannelSpell !is null)
+            return finishNamedHealChannel(true);
         if (world_ !is null)
             world_.sendToObservers(me.guid, Opcode.SMSG_SPELL_FAILURE,
                 spellFailurePacket(me.guid, casting_.id, SpellCastResult.interrupted));
@@ -620,6 +715,18 @@ mixin template CreatureCasting()
             namedCreaturesInArea, nearestNamedCreature;
 
         auto context = cast(WorldContext) lore;
+        const channelEffect = takeMana && !me.meleeController && selectedWeaponTargets is null && context !is null
+            ? context.namedHealChannel(spell) : size_t.max;
+        UnitRef channelTarget;
+        if (channelEffect != size_t.max)
+        {
+            import dmangos.world.spellselection : namedCreatureRange;
+
+            channelTarget = nearestNamedCreature(world_, me.position, namedCreatureRange(*spell, lore.clientData),
+                lore.spellScriptTargets(spell.id), me.guid, context.sendAreaDamage !is null);
+            if (!channelTarget || !beginNamedHealChannel(spell, channelTarget))
+                return;
+        }
         bool remotePrimary, sentArea;
         if (selectedWeaponTargets is null)
         if (auto other = spellTarget(target))
@@ -683,7 +790,22 @@ mixin template CreatureCasting()
             {
                 const objectShape = selectedWeaponTargets is null && context !is null
                     ? context.namedGameObjectRouting(spell, i) : ImplicitTarget.none;
-                if (objectShape != ImplicitTarget.none)
+                if (i == channelEffect)
+                {
+                    import dmangos.world.spellselection : namedCreatureRange;
+
+                    if (channelTarget.replica is null)
+                        reached[i] = [channelTarget.combatGuid];
+                    else
+                    {
+                        namedChannelSequence = context.nextGameplaySequence();
+                        if (!sendCreatureTargetSpell(context, spell, channelTarget, false, auraAbsent, cast(int) i,
+                                me.position, namedCreatureRange(*spell, lore.clientData), true, namedChannelSequence))
+                            return finishNamedHealChannel(true);
+                        remoteNamed ~= channelTarget.combatGuid;
+                    }
+                }
+                else if (objectShape != ImplicitTarget.none)
                 {
                     if (auto map = cast(Map) world_)
                     {
@@ -845,6 +967,8 @@ mixin template CreatureCasting()
         foreach (r; results) // its script hears whom it hit, once the effects are done (`SpellHitTarget`)
             if (r.miss == SpellMissInfo.none && script !is null && me.alive)
                 script.spellHitTarget(this, r.guid, spell.id, 1u << spell.casting.school);
+        if (channelTarget.creature !is null && !channelTarget.creature.auras.find(spell.id, me.guid))
+            finishNamedHealChannel(true);
         world_.flushCreature(me);
     }
 
@@ -1071,12 +1195,12 @@ mixin template CreatureCasting()
     }
 
     /// `SPELL_EFFECT_APPLY_AURA` by it at `guid` (`dmangos.world.spellauras.applyAura`).
-    package void auraOn(const(SpellInfo)* spell, size_t i, ulong guid, ubyte effects = 0)
+    package void auraOn(const(SpellInfo)* spell, size_t i, ulong guid, ubyte effects = 0, bool detached = false)
     {
         import dmangos.world.spellauras : applyAura;
 
         auto caster = spellCaster();
-        applyAura(caster, spell, i, guid == me.guid ? world_.unitOf(me) : world_.unit(guid), effects);
+        applyAura(caster, spell, i, guid == me.guid ? world_.unitOf(me) : world_.unit(guid), effects, detached);
     }
 
     /// `SPELL_EFFECT_HEAL` on itself or a friend.
@@ -1795,7 +1919,7 @@ mixin template CreatureCasting()
     void critterFleeAtAggro(UnitRef enemy)
     {
         if (!(me.template_.staticFlags1 & staticFlagNoMeleeFlee) || me.values.get!UNIT_CREATED_BY_SPELL
-                || me.immobilized || fleeTimer > 0 || casting_ !is null || !enemy
+                || me.immobilized || fleeTimer > 0 || castingNow || !enemy
                 || !(enemy.kind == UnitKind.player || enemy.relating.playerOwned))
             return;
         if (panic(30_000))

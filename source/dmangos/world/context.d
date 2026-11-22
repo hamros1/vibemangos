@@ -959,7 +959,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (sendAreaDamage is null)
             return false;
         if (hit.channelled)
-            map_.holdCasterReplica(hit.caster, peer, cast(uint) max(0, hit.auraMs) + 5_000);
+            map_.holdCasterReplica(hit.caster, peer, cast(uint) max(0, hit.auraMs) + 5_000,
+                hit.creatureCast && !hit.channelUpdate);
         else if (hit.namedCreature)
             map_.holdCasterReplica(hit.caster, peer, 5_000);
         if (!hit.sequence || !hit.channelled)
@@ -1332,7 +1333,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             import dmangos.world.spellselection : namedCreatureRange;
 
             const named = message.namedCreature ? namedHealChannel(spell) : size_t.max;
-            if (!attacker.player || message.triggered || message.creatureCast || message.creatureArea
+            const actorCanChannel = attacker.player ? !message.creatureCast : message.creatureCast && message.namedCreature;
+            if (!actorCanChannel || message.triggered || message.creatureArea
                 || (message.namedCreature ? named == size_t.max : !isRemoteLeechChannel(*spell)))
                 return;
             if (message.namedCreature && (victim.kind != UnitKind.creature
@@ -2129,6 +2131,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (map_ is null || map_.id != message.map)
             return;
         auto caster = map_.creatureAt(message.caster);
+        if (message.channelled)
+        {
+            if (message.miss && caster !is null && caster.ai !is null)
+                caster.ai.namedHealChannelRejected(message.sequence);
+            return;
+        }
         auto target = spellImpactTarget(map_, peer, message.target);
         const spell = data.spells.spell(message.spell);
         if (caster is null || !target || spell is null || message.effect >= spell.effect.length
@@ -4706,6 +4714,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         {
             if (creature.meleeController)
                 return Migrant.init; // controlled creatures stay with their player (`petsOnLeave`)
+            if (creature.ai !is null)
+                creature.ai.finishNamedHealChannel(true);
             creature.saveState(w);
             return Migrant(MigrantKind.creature, creature.spawn.guid, 0, w.data);
         }

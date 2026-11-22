@@ -2622,7 +2622,7 @@ private:
     }
 
     /// Supply a caster's identity and combat state to a target owner without a nearby observer.
-    package void holdCasterReplica(ulong guid, ushort peer, uint milliseconds)
+    package void holdCasterReplica(ulong guid, ushort peer, uint milliseconds, bool refresh = false)
     {
         import std.algorithm.comparison : max;
 
@@ -2638,11 +2638,13 @@ private:
         auto peers = &casterReplicas.require(guid, null);
         auto deadline = &(*peers).require(peer, 0UL);
         *deadline = max(*deadline, clockMs + milliseconds);
-        if (e.replicatedTo.canFind(peer))
+        const known = e.replicatedTo.canFind(peer);
+        if (known && !refresh)
             return;
         const state = e.player !is null ? encodePlayerState(e.player.character, serverTime())
             : encodeState(source, serverTime());
-        e.replicatedTo ~= peer;
+        if (!known)
+            e.replicatedTo ~= peer;
         replicator.create(peer, id, e.cell, guid, state);
     }
 
