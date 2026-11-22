@@ -344,8 +344,8 @@ saved.
 
 When a region is revoked toward a named next owner, its owner writes the state of every object
 homed in it (`Map.migrateOut`, `world/migration.d`): a creature's every field, its movement and exact
-spline, its movement generator's timers and place on its path, its vendor stock and its script's
-state (`Creature.saveState`); a game object's fields and script state, including pending door and
+spline, its movement generator, its vendor stock, its script state and the remaining time and
+ticks of its auras (`Creature.saveState`); a game object's fields and script state, including pending door and
 goober resets and a trap's cooldown and spent charges. It keeps each as a replica of
 the next owner's object, so its own players notice nothing.
 

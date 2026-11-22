@@ -299,6 +299,16 @@ import select, time
 MOVES = set(range(0x0B5, 0x0C4)) | {0x0C9, 0x0CA, 0x0CB, 0x0DA, 0x0DB, 0x0EE}
 creature_auras = {}
 
+def describe_creature_auras(guid, fields):
+    auras = creature_auras.setdefault(guid, {})
+    for field, spell in fields.items():
+        if 0x2F <= field < 0x5F:
+            if spell:
+                auras[field] = spell
+                print(f"  [creature aura] {guid:#018x} received {spell}")
+            elif field in auras:
+                print(f"  [creature aura] {guid:#018x} ended {auras.pop(field)}")
+
 def describe(op, p):
     """Prints a packet that another player caused."""
     if op in (0x0A9, 0x1F6):
@@ -330,6 +340,8 @@ def describe(op, p):
                           f"display {v.get(OBJECT_END + 0x7D)}, faction {v.get(OBJECT_END + 0x1D)}, npc flags {v.get(0x93, 0)}, "
                           f"unit flags {v.get(OBJECT_END + 0x28, 0):#x}, "
                           f"at {move[0]:.1f} {move[1]:.1f} {move[2]:.1f}")
+                    creature_auras.pop(g, None)
+                    describe_creature_auras(g, v)
                 else:
                     # GAMEOBJECT_POS_X .. _Z (0xF .. 0x11) where the movement block has no position.
                     if not move and 0xF in v:
@@ -340,14 +352,7 @@ def describe(op, p):
                 health = f", health {v[OBJECT_END + 0x10]}/{v.get(OBJECT_END + 0x16, '?')}" if OBJECT_END + 0x10 in v else ""
                 print(f"  [changes] {g}: fields {sorted(v)}{health}")
                 if seen_objects.get(g, (0, 0))[0] == 3:
-                    auras = creature_auras.setdefault(g, {})
-                    for field, spell in v.items():
-                        if 0x2F <= field < 0x5F:
-                            if spell:
-                                auras[field] = spell
-                                print(f"  [creature aura] {g:#018x} received {spell}")
-                            elif field in auras:
-                                print(f"  [creature aura] {g:#018x} ended {auras.pop(field)}")
+                    describe_creature_auras(g, v)
     elif op == 0x179:
         if len(p) <= 8:
             print("  [pet spells] none (no pet)"); return

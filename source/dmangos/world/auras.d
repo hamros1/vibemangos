@@ -11,6 +11,7 @@
  */
 module dmangos.world.auras;
 
+import dmangos.bytes : ByteReader, ByteWriter;
 import dmangos.world.tooltipeffects : hiddenEffectsOf;
 import dmangos.world.spellids;
 
@@ -233,6 +234,45 @@ final class Aura
     int heartbeatInterval;     /// milliseconds between heartbeats
     int heartbeatTimer;        /// until the next
 
+    // A region handoff keeps the individual tick timers, stacks and caster modifiers.
+    private enum migrationFields = ["caster", "casterLevel", "periodicThreat", "periodicResistanceMod",
+        "periodicCasterPvP", "detachedChannel", "slot", "duration", "maxDuration", "positive", "passive",
+        "stacks", "charges", "effects", "amount", "period", "periodTimer", "heartbeatChance",
+        "heartbeatInterval", "heartbeatTimer"];
+
+    private void saveState(ref ByteWriter writer) const
+    {
+        import std.traits : isStaticArray;
+
+        writer.put(spell.id);
+        static foreach (field; migrationFields)
+        {
+            static if (isStaticArray!(typeof(__traits(getMember, this, field))))
+                foreach (value; __traits(getMember, this, field))
+                    writer.put(value);
+            else
+                writer.put(__traits(getMember, this, field));
+        }
+    }
+
+    private static Aura loadState(ref ByteReader reader, const(SpellInfo)* delegate(uint) lookup)
+    {
+        import std.traits : isStaticArray;
+
+        auto aura = new Aura;
+        const id = reader.read!uint;
+        aura.spell = lookup is null ? null : lookup(id);
+        static foreach (field; migrationFields)
+        {
+            static if (isStaticArray!(typeof(__traits(getMember, aura, field))))
+                foreach (ref value; __traits(getMember, aura, field))
+                    value = reader.read!(typeof(value));
+            else
+                __traits(getMember, aura, field) = reader.read!(typeof(__traits(getMember, aura, field)));
+        }
+        return aura;
+    }
+
     /**
      * It may break early (`SpellAuraHolder::SetHeartbeatResist`): `chance` percent at each heartbeat, more for each
      * diminishing level; the heartbeats come at its whole duration over two plus that level, at least a second apart.
@@ -283,6 +323,32 @@ struct AuraSet
     /// Counts each aura applied, refreshed or removed: what is made of the auras (a pet's stats) is made again when it
     /// changed.
     uint changes;
+
+    /// Serialize live state alongside the unit's separately saved update fields.
+    package void saveState(ref ByteWriter writer) const
+    {
+        writer.put(cast(uint) list.length);
+        foreach (aura; list)
+            aura.saveState(writer);
+    }
+
+    /// Restore the timers and slot identities without replaying application effects or scripts.
+    package void loadState(ref ByteReader reader, ref UpdateValues values, const(SpellInfo)* delegate(uint) lookup)
+    {
+        list = null;
+        const count = reader.read!uint;
+        foreach (_; 0 .. count)
+        {
+            auto aura = Aura.loadState(reader, lookup);
+            if (aura.slot != noSlot && aura.slot >= maxAuras)
+                continue;
+            if (aura.spell !is null)
+                list ~= aura;
+            else if (aura.slot != noSlot)
+                clearSlot(values, aura.slot);
+        }
+        ++changes;
+    }
 
     /**
      * Applies `aura`, or the same spell's from the same caster is
@@ -366,13 +432,18 @@ struct AuraSet
         ++changes;
         if (aura.slot != noSlot)
         {
-            values.set!UNIT_FIELD_AURA(aura.slot, 0u);
-            setBits!UNIT_FIELD_AURAFLAGS(values, aura.slot, 4, 0);
-            setBits!UNIT_FIELD_AURALEVELS(values, aura.slot, 8, 0);
-            setBits!UNIT_FIELD_AURAAPPLICATIONS(values, aura.slot, 8, 0);
+            clearSlot(values, aura.slot);
             aura.slot = noSlot;
         }
         showOnFields(aura, false, values);
+    }
+
+    private static void clearSlot(ref UpdateValues values, uint slot)
+    {
+        values.set!UNIT_FIELD_AURA(slot, 0u);
+        setBits!UNIT_FIELD_AURAFLAGS(values, slot, 4, 0);
+        setBits!UNIT_FIELD_AURALEVELS(values, slot, 8, 0);
+        setBits!UNIT_FIELD_AURAAPPLICATIONS(values, slot, 8, 0);
     }
 
     /// `UNIT_DYNFLAG_TRACK_UNIT`, `UNIT_DYNFLAG_DEAD` and `UNIT_VIS_FLAG_UNTRACKABLE` (`UNIT_FIELD_BYTES_1`'s fourth byte).

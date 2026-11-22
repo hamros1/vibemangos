@@ -181,7 +181,8 @@ def run(fixture, abrupt=False):
         nodes[2].terminate()
         if nodes[2].wait(timeout=25) != 0 or "arrived with" not in fixture.log("node1"):
             raise RuntimeError("the worker did not drain its live regions to the coordinator")
-    arrived = client("after-takeover", 1, "MORTARSPAWN", f"login:{spawner}", "listen:2", "drop")
+    arrived = client("after-takeover", 1, "MORTARSPAWN", f"login:{spawner}",
+                     "listen:2" if abrupt else "listen:22", "drop")
     for entry, kind in ((MORTAR, "game object"), (DOOR, "game object"), (RACER, "creature"), (GOLEM, "creature")):
         expected = f"[{kind}] {entry} guid {spawned[entry] & 0xFFFFFF}:"
         if arrived.count(expected) != 1:
@@ -191,6 +192,11 @@ def run(fixture, abrupt=False):
     expected_state = 1 if abrupt else 2
     if not door_line.endswith(f"state {expected_state}"):
         raise RuntimeError(f"the door should be in state {expected_state} after takeover")
+    if not abrupt:
+        for transition in ("received", "ended"):
+            event = f"[creature aura] {spawned[GOLEM]:#018x} {transition} {REBUILD_SPELL}"
+            if arrived.count(event) != 1:
+                raise RuntimeError(f"expected the migrated creature's aura to be {transition} once")
     print("PASS: cross-node effects reached the idle node, both nodes saved distinct spawns, "
           f"and the worker's saved spawns appeared once after {'failure' if abrupt else 'drain'}", flush=True)
 

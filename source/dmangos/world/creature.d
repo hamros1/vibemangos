@@ -30,6 +30,7 @@ import dmangos.world.motion : followSpline, IdleMovement, MotionType, MotionWorl
 import dmangos.world.movement : baseMoveSpeed, MovementFlags, MovementInfo, MoveType, Position;
 import dmangos.bytes : ByteReader, ByteWriter;
 import dmangos.world.spline : MoveSpline;
+import dmangos.world.spells : SpellInfo;
 import dmangos.world.objects;
 import dmangos.world.updatefields;
 
@@ -1365,13 +1366,16 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         w.put(lootRecipient);
         w.put(lootGroupRecipient);
         ai.saveCombat(w);
+        auras.saveState(w);
+        w.put(auraSpeedFactor);
+        w.put(auraHeld);
     }
 
     /**
      * Reads what `saveState` wrote into a creature made anew from the same spawn (whose generator was
      * chosen as for any spawn): it is then the creature its last owner had, where it had it.
      */
-    void loadState(ref ByteReader r)
+    void loadState(ref ByteReader r, const(SpellInfo)* delegate(uint) spell = null)
     {
         const count = r.read!ushort;
         foreach (slot; 0 .. count)
@@ -1409,6 +1413,10 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         lootRecipient = r.read!ulong;
         lootGroupRecipient = r.read!uint;
         ai.loadCombat(r);
+        auras.loadState(r, values, spell);
+        auraSpeedFactor = r.read!float;
+        auraHeld = r.read!bool;
+        values.clearChanges();
         // A corpse handed over: its time is not carried; it goes at the next tick, and respawns from then.
         corpseTimer = 0;
     }

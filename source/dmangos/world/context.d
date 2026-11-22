@@ -4750,7 +4750,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             auto creature = makeCreature(&data.creatureSpawns[*at]);
             if (creature is null)
                 return null;
-            creature.loadState(r);
+            creature.loadState(r, &spellInfo);
             return creature;
         }
         const at = m.spawn in gameObjectSpawnIndex;
@@ -7724,24 +7724,46 @@ unittest
 unittest
 {
     import dmangos.cluster.regions : CellRect;
+    import dmangos.world.auras : AuraType, makeAura;
     import dmangos.world.gameobject : GameObjectTemplate, goStateActive;
     import dmangos.world.grid : cellCoordinate;
+    import dmangos.world.movement : MoveType;
+    import dmangos.world.spellhandlers : testSpell;
     import dmangos.world.testclient : newCreationContext, newDatabase;
     import dmangos.world.testdata : creatureInnkeeper;
-    import dmangos.world.updatefields : UNIT_FIELD_HEALTH;
+    import dmangos.world.updatefields : UNIT_FIELD_AURA, UNIT_FIELD_HEALTH, UNIT_FIELD_MAXHEALTH;
 
     auto db = newDatabase();
     auto oldOwner = newCreationContext(db), newOwner = newCreationContext(db);
     const at = Position(-8930, -120, 83.53f);
     const door = GameObjectTemplate(entry: 9010, type: GameObjectType.door);
+    enum uint heal = 40001, slow = 40002;
+    auto hot = testSpell(heal, SpellEffect.applyAura, ImplicitTarget.caster, 10);
+    hot.casting.applyAuraName[0] = AuraType.periodicHeal;
+    hot.casting.amplitude[0] = 500;
+    auto snare = testSpell(slow, SpellEffect.applyAura, ImplicitTarget.caster, -50);
+    snare.casting.applyAuraName[0] = AuraType.modDecreaseSpeed;
     foreach (context; [oldOwner, newOwner])
+    {
         context.data.gameObjectTemplates[door.entry] = door;
+        context.data.spells.spells[heal] = hot;
+        context.data.spells.spells[slow] = snare;
+    }
     auto oldMap = oldOwner.map(0), newMap = newOwner.map(0);
     auto creature = oldOwner.spawnCreatureAt(oldMap, creatureInnkeeper, at);
     auto object = oldOwner.spawnGameObjectAt(oldMap, door.entry, at, true);
     assert(oldMap.findObject(creature.guid) is creature && oldMap.findObject(object.guid) is object);
+    creature.values.set!UNIT_FIELD_MAXHEALTH(100u);
     creature.values.set!UNIT_FIELD_HEALTH(1u);
     object.useDoorOrButton(oldMap);
+    bool added;
+    auto healAura = makeAura(oldOwner.spellInfo(heal), 7, 60, 1000, true, [10, 0, 0]);
+    healAura.periodTimer[0] = 125;
+    creature.receiveAura(healAura, oldMap, added);
+    const normalRun = creature.speeds[MoveType.run];
+    creature.receiveAura(makeAura(oldOwner.spellInfo(slow), 8, 60, 750, false, [-50, 0, 0]), oldMap, added);
+    creature.refreshAuraMovement(oldMap);
+    assert(creature.speeds[MoveType.run] == normalRun * 0.5f);
 
     auto wrongCell = oldOwner.saveMigrant(object);
     wrongCell.home = cellKeyAt(at.x + 100, at.y);
@@ -7761,6 +7783,21 @@ unittest
     auto restoredDoor = cast(GameObject) newMap.findObject(object.guid);
     assert(restoredCreature !is null && restoredCreature.values.get!UNIT_FIELD_HEALTH == 1);
     assert(restoredDoor !is null && restoredDoor.goState == goStateActive);
+    auto restoredAura = restoredCreature.auras.find(heal, 7);
+    assert(restoredAura !is null && restoredAura !is healAura && restoredAura.periodTimer[0] == 125
+        && restoredAura.duration == 1000 && restoredAura.slot == healAura.slot);
+    const auraSlot = restoredAura.slot;
+    assert(restoredCreature.values.get!UNIT_FIELD_AURA(auraSlot) == heal);
+    restoredCreature.refreshAuraMovement(newMap);
+    assert(restoredCreature.speeds[MoveType.run] == normalRun * 0.5f, "the snare is applied only once");
+    restoredCreature.updateAuras(newMap, 124);
+    assert(restoredCreature.values.get!UNIT_FIELD_HEALTH == 1);
+    restoredCreature.updateAuras(newMap, 1);
+    assert(restoredCreature.values.get!UNIT_FIELD_HEALTH == 11, "the next tick heals on the destination");
+    restoredCreature.updateAuras(newMap, 875);
+    restoredCreature.refreshAuraMovement(newMap);
+    assert(restoredCreature.auras.find(heal, 7) is null && !restoredCreature.values.get!UNIT_FIELD_AURA(auraSlot));
+    assert(restoredCreature.speeds[MoveType.run] == normalRun, "the snare expires on the destination");
     const key = cellKeyAt(at.x, at.y);
     size_t creatureCopies, objectCopies;
     foreach (index; newOwner.data.creatureCells[0][key])
