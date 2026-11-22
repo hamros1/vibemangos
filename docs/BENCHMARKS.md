@@ -3,6 +3,21 @@
 Measurements of the standalone world server under load: the baseline the cluster is compared
 against (docs/CLUSTER.md), and the guide to where performance work goes.
 
+## Two-node crowd regression (2026-11-22)
+
+The optimized release build at `a4a00f1` ran on two local nodes with 180 seconds of crowd activity
+and 60 seconds idle. Both nodes finished each run without a logged crash.
+
+| Clients still in world | Region splits | Region merges | Player handoffs | Client ping p99 |
+| ---: | ---: | ---: | ---: | ---: |
+| 500 of 500 | 13 | 4 | 140 | 23.11 ms |
+| 750 of 750 | 13 | 4 | 388 | 11.70 s |
+
+The 750-client run passed the harness's connectivity and balancing checks. During the active
+period, the second node lost its ownership lease and peer round trips reached nearly 12 seconds.
+The node refused writes after its lease expired, including character saves as the bots disconnected.
+This run exposed a capacity issue that the current pass criteria do not catch.
+
 ## Method
 
 * **Load:** `bin/loadgen` (`dub build -c loadgen`), many headless 1.12 clients in one process. Each
