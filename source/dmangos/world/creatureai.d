@@ -1376,15 +1376,21 @@ private:
         const offset = self.swimming ? min(reach, moved(me.position, other.position)) : reach;
         const x = other.position.x + offset * cos(angle), y = other.position.y + offset * sin(angle);
         auto destination = Vector3(x, y, other.position.z);
-        bool underwater = self.swimming && world.swimmableAt(destination, me.collisionHeight);
-        if (self.swimming && !underwater)
+        bool underwater;
+        if (self.swimming)
         {
-            const victimAt = Vector3(other.position.x, other.position.y, other.position.z);
-            if (world.swimmableAt(victimAt, me.collisionHeight))
-            {
-                destination = victimAt;
-                underwater = true;
-            }
+            Vector3 submerged;
+            underwater = world.swimmingTarget(destination, me.collisionHeight, submerged)
+                || world.swimmingTarget(Vector3(other.position.x, other.position.y, other.position.z),
+                    me.collisionHeight, submerged);
+            if (underwater)
+                destination = submerged;
+        }
+        if (me.waterOnly && !underwater)
+        {
+            stopMoving(me, world);
+            victimReachable = false;
+            return;
         }
         if (!underwater)
         {

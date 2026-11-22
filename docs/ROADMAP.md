@@ -50,7 +50,8 @@ describes how players use the systems available today.
 * **Terrain:** heights put wandering creatures on the ground. Line of sight checks use
   static vmaps, closed doors and loaded elevator meshes at their animated position. Movement maps
   give creatures paths round buildings and hills. Creatures already swimming can follow submerged
-  paths at their swim speed. Shoreline transitions and pets entering water remain open.
+  paths at their swim speed. A swimmer can approach a target at the surface, and a fish
+  stays in the water during pursuit. Shoreline transitions and pets entering water remain open.
 * **Movement:** the speed check assumes running speed; it must learn mounts, speed auras,
   knockbacks and taxis when those exist.
 * **Environment:** the feign death timer (dying of feigning too long) is not run; mirror timers are not

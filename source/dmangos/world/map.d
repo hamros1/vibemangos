@@ -1823,6 +1823,24 @@ final class Map : CombatWorld, GameObjectWorld
         return terrain !is null && terrain.swimmingVolume(at, minimumDepth, water);
     }
 
+    /// See `MotionWorld.swimmingTarget`.
+    bool swimmingTarget(Vector3 at, float minimumDepth, out Vector3 submerged)
+    {
+        import std.algorithm.comparison : min;
+        import std.math : isFinite;
+
+        if (terrain is null || !at.x.isFinite || !at.y.isFinite || !at.z.isFinite)
+            return false;
+        LiquidData water;
+        enum clearance = 0.1f;
+        if (terrain.liquidStatus(at.x, at.y, at.z, 0, water) == LiquidStatus.noWater
+            || water.level - water.depthLevel <= minimumDepth || water.level - water.depthLevel <= clearance
+            || at.z < water.depthLevel || at.z > water.level + minimumDepth)
+            return false;
+        submerged = Vector3(at.x, at.y, min(at.z, water.level - clearance));
+        return true;
+    }
+
     /// See `MotionWorld.pathInWater`.
     bool pathInWater(Vector3 from, Vector3 to, float minimumDepth, out Vector3[] route)
     {

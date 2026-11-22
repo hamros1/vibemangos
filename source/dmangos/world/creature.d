@@ -721,6 +721,20 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     bool scriptRooted; /// held in place by its script
     bool scriptFlying; /// its script has it fly: its ways go straight through the air (raid scripts)
 
+    /// Its habitat and template allow it to swim, with the walk-in-water exception for creatures such as crabs.
+    package @property bool canSwim() const
+    {
+        enum uint inhabitWater = 2, walkInWater = 0x8000;
+        return (template_.inhabitType & inhabitWater) && !(template_.extraFlags & walkInWater);
+    }
+
+    /// Its habitat is water, without land or flying movement.
+    package @property bool waterOnly() const
+    {
+        enum uint inhabitLandOrAir = 1 | 4;
+        return canSwim && !(template_.inhabitType & inhabitLandOrAir) && !scriptFlying;
+    }
+
     /// Rooted or stunned (or held by its script): it does not move.
     @property bool immobilized() const
     {

@@ -1076,7 +1076,7 @@ unittest
     import dmangos.world.creature : Creature, CreatureParts, CreatureSpawn, CreatureTemplate;
     import dmangos.world.map : Map, MapSettings;
     import dmangos.world.motion : followSpline, launch;
-    import dmangos.world.movement : MovementFlags, MoveType;
+    import dmangos.world.movement : MovementFlags, MoveType, Position;
     import dmangos.world.testdata : testClientData;
     import dmangos.world.unit : UnitRef;
 
@@ -1150,4 +1150,18 @@ unittest
     assert(isClose(fish.position.z, 52.0f, 0, 0.01));
     assert(!launch(fish, map, [from, isolated], true, float.nan, true) && fish.spline.finalized,
         "a blocked swim stops rather than walking straight");
+
+    const surface = point(20, 20, 60);
+    Vector3 approach;
+    assert(map.swimmingTarget(surface, 2, approach) && isClose(approach.z, 59.9f, 0, 0.01));
+    assert(!map.swimmingTarget(point(20, 20, 65), 2, approach), "an airborne target is beyond swim reach");
+    prey.movement.position = Position(surface.x, surface.y, surface.z);
+    fish.tick(map, 1);
+    assert(!fish.spline.finalized && isClose(fish.spline.finalDestination.z, 59.9f, 0, 0.01),
+        "a fish can pursue a target at the surface without walking along the lake floor");
+
+    const bank = point(36, 20, 42);
+    prey.movement.position = Position(bank.x, bank.y, bank.z);
+    fish.tick(map, 1);
+    assert(fish.spline.finalized, "a creature whose habitat is water will not chase onto land");
 }

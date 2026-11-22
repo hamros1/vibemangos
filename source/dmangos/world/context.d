@@ -4521,8 +4521,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (shape !is null)
             applyEventShape(creature, *shape);
         // A creature of the water spawned where it can swim swims (unless made to walk in water: crabs).
-        enum uint inhabitWater = 2, walkInWater = 0x8000;
-        if ((template_.inhabitType & inhabitWater) && !(template_.extraFlags & walkInWater) && !petNumber)
+        if (creature.canSwim && !petNumber)
             if (auto ground = terrain(spawn.map))
             {
                 import dmangos.vmap.math : Vector3;
