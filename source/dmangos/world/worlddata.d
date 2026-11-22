@@ -419,6 +419,7 @@ final class WorldData
     GameTele[] teleports;                   /// `game_tele`, in id order
     SpellTarget[uint] spellTargets;         /// `spell_target_position`: where a spell sends its target, by spell
     bool[uint] spellFacing;                 /// `spell_facing`: spells whose target must be in front of the caster
+    int[uint] spellConeDegrees;              /// `spell_cone`: signed angle by first spell rank
     /// Instance round 2: `spell_script_target` (type 1, living creatures): the creatures of these entries a spell's
     /// `TARGET_UNIT_SCRIPT_NEAR_CASTER` means, by spell.
     uint[][uint] spellScriptTargets;
@@ -1152,9 +1153,25 @@ final class WorldData
         foreach (row; world.query!"SELECT entry, facingcasterflag FROM spell_facing"())
             if (row.get!uint(1) & 1)
                 spellFacing[row.get!uint(0)] = true;
+        loadSpellCones(world);
         foreach (row; world.select!(SpellScriptTargetRow, "FROM spell_script_target"))
             if (row.type == 1)
                 spellScriptTargets[row.entry] ~= row.targetEntry;
+    }
+
+    private void loadSpellCones(MySqlConnection world)
+    {
+        import dmangos.mysql : DatabaseException;
+
+        try
+            foreach (row; world.query!"SELECT Id, ConeDegrees FROM spell_cone"())
+                spellConeDegrees[row.get!uint(0)] = row.get!int(1);
+        catch (DatabaseException e)
+        {
+            enum uint tableMissing = 1146;
+            if (e.code != tableMissing)
+                throw e;
+        }
     }
 
     /// Replaces the area trigger teleports and `.tele` places with those of these rows that are valid.

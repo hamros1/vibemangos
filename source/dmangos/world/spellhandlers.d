@@ -1963,7 +1963,8 @@ private:
         RemotePartyHeal[] remoteHeals;
         RemoteAreaDamage[] remoteDamage;
         import dmangos.world.spelldamage : namedCreatureEffect, namedCreatureShape;
-        import dmangos.world.spellselection : namedCreatureCenter, namedCreatureRadius, namedCreaturesInArea;
+        import dmangos.world.spellselection : namedCreatureCenter, namedCreatureCone, namedCreatureRadius,
+            namedCreaturesInArea;
 
         const entries = context.spellScriptTargets(spell.id);
         const namedEffect = entries.length && !context.spellScript(spell.id) ? namedCreatureEffect(*spell) : size_t.max;
@@ -1985,7 +1986,7 @@ private:
                 player.position, spell.id in context.data.spellTargets, &c.targets, namedCenter);
             if (hasNamedCenter)
                 scripted = namedCreaturesInArea(map, namedCenter, namedRange, entries, routeNamed,
-                    spell.casting.maxAffectedTargets);
+                    spell.casting.maxAffectedTargets, namedShape, namedCreatureCone(context.data, spell.id));
         }
         const namedDestination = namedShape == ImplicitTarget.enumUnitsScriptAoeAtDestLoc && hasNamedCenter;
         const(SpellJump)[] spellChain;
@@ -2102,7 +2103,7 @@ private:
                         auto hit = AreaDamage(caster: player.guid, target: creature.combatGuid, spell: spell.id,
                             effect: cast(ubyte) i, map: map.id, instance: map.instanceId,
                             x: namedCenter.x, y: namedCenter.y, z: namedCenter.z,
-                            radius: namedRange, namedCreature: true, triggered: c.triggered);
+                            radius: namedRange, facing: namedCenter.orientation, namedCreature: true, triggered: c.triggered);
                         remoteDamage ~= RemoteAreaDamage(creature.replica.owner, hit);
                     }
                 }

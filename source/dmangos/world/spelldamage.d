@@ -255,7 +255,7 @@ package ImplicitTarget namedCreatureShape(const ref SpellInfo spell, size_t i)
     const a = spell.implicitTargetA[i], b = spell.casting.implicitTargetB[i];
     with (ImplicitTarget)
     {
-        if (b == none && (a == unitScriptNearCaster || a == enumUnitsScriptAoeAtSrcLoc))
+        if (b == none && (a == unitScriptNearCaster || a == enumUnitsScriptAoeAtSrcLoc || a == enumUnitsScriptInCone60))
             return a;
         if (a == casterSource && b == enumUnitsScriptAoeAtSrcLoc)
             return b;

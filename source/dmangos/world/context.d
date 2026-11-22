@@ -993,7 +993,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.spelldamage : creatureAreaShape, creatureTargetInRange, isCreatureTargetEffect,
             isHostileAreaEffect, isHostileChainEffect, isRemoteLeechChannel, isTargetedProcEffect, namedCreatureEffect,
             namedCreatureShape, remoteTargetAuraEffects, rollRemoteAreaDamage, spellJumpRadius, unblockedAuraEffects;
-        import dmangos.world.spellselection : namedCreatureCenter, namedCreatureRadius;
+        import dmangos.world.spellselection : inNamedCreatureCone, namedCreatureCenter, namedCreatureCone,
+            namedCreatureRadius;
         import dmangos.world.spellids : ImplicitTarget, SpellEffect;
         import dmangos.world.unit : Blow, UnitKind, UnitRef, combatRelations;
         import dmangos.world.updatefields : TypeId, UNIT_CHANNEL_SPELL, UNIT_FIELD_CHANNEL_OBJECT, UNIT_FIELD_LEVEL;
@@ -1072,6 +1073,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             const shape = namedCreatureShape(*spell, message.effect);
             if (!attacker.alive && !(message.triggered && copy.fields.type == TypeId.unit
                 && shape != ImplicitTarget.unitScriptNearCaster))
+                return replyCreatureCast(peer, message, SpellMissInfo.evade);
+            if (shape == ImplicitTarget.enumUnitsScriptInCone60 && !inNamedCreatureCone(
+                Position(message.x, message.y, message.z, message.facing), p, namedCreatureCone(data, spell.id)))
                 return replyCreatureCast(peer, message, SpellMissInfo.evade);
             if (shape == ImplicitTarget.enumUnitsScriptAoeAtDestLoc)
             {

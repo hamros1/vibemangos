@@ -609,8 +609,8 @@ mixin template CreatureCasting()
         import dmangos.world.map : Map;
         import dmangos.world.spellcast : spellFailurePacket, SpellCastResult;
         import dmangos.world.spelldamage : creatureTargetInRange, namedCreatureShape;
-        import dmangos.world.spellselection : namedCreatureCenter, namedCreatureRadius, namedCreaturesInArea,
-            nearestNamedCreature;
+        import dmangos.world.spellselection : namedCreatureCenter, namedCreatureCone, namedCreatureRadius,
+            namedCreaturesInArea, nearestNamedCreature;
 
         auto context = cast(WorldContext) lore;
         bool remotePrimary, sentArea;
@@ -661,7 +661,8 @@ mixin template CreatureCasting()
                 me.position, database, null, namedCenter);
             if (hasNamedCenter)
                 named = namedCreaturesInArea(world_, namedCenter, namedRange, lore.spellScriptTargets(spell.id), routeNamed,
-                    spell.casting.maxAffectedTargets);
+                    spell.casting.maxAffectedTargets, namedShape,
+                    namedCreatureCone(context is null ? null : context.data, spell.id));
         }
         else if (namedShape == ImplicitTarget.unitScriptNearCaster)
             if (auto nearest = nearestNamedCreature(world_, me.position, namedRange, lore.spellScriptTargets(spell.id),

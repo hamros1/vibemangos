@@ -12,7 +12,7 @@ import dmangos.world.spelldamage : namedCreatureShape;
 import dmangos.world.spellids : ImplicitTarget;
 import dmangos.world.spells : SpellInfo;
 import dmangos.world.unit : UnitRef;
-import dmangos.world.worlddata : SpellTarget;
+import dmangos.world.worlddata : SpellTarget, WorldData;
 
 package float namedCreatureRange(const ref SpellInfo spell, const ClientData client)
 {
@@ -50,15 +50,42 @@ package bool namedCreatureCenter(const ref SpellInfo spell, size_t effect, const
     return client.isValidMapCoord(map, center.x, center.y, center.z, center.orientation);
 }
 
+/// The first rank can set a signed cone angle. Classic defaults to a 60-degree forward cone.
+package int namedCreatureCone(const WorldData data, uint spell)
+{
+    if (data is null)
+        return 60;
+    const rank = spell in data.spells.chains;
+    const degrees = data.spellConeDegrees.get(rank is null || !rank.first ? spell : rank.first, 60);
+    return degrees >= -360 && degrees <= 360 ? degrees : 60;
+}
+
+package bool inNamedCreatureCone(Position origin, Position target, int degrees)
+{
+    import std.math : PI;
+    import dmangos.world.combat : hasInArc;
+
+    if (!origin.isFinite)
+        return false;
+    if (degrees < 0)
+    {
+        origin.orientation += PI;
+        degrees = -degrees;
+    }
+    return degrees >= 360 || hasInArc(origin, target, degrees * PI / 180);
+}
+
 /// Select across the caster's owned and observed creatures, sharing any target limit between them.
 package UnitRef[] namedCreaturesInArea(CombatWorld world, Position center, float reach, const(uint)[] entries,
-    bool acrossNodes, uint maxTargets)
+    bool acrossNodes, uint maxTargets, ImplicitTarget shape, int cone)
 {
     import std.algorithm.sorting : sort;
 
     UnitRef[] targets;
-    visitNamedCreatures(world, center, reach, entries, 0, acrossNodes,
-        (UnitRef candidate, float) { targets ~= candidate; });
+    visitNamedCreatures(world, center, reach, entries, 0, acrossNodes, (UnitRef candidate, float) {
+        if (shape != ImplicitTarget.enumUnitsScriptInCone60 || inNamedCreatureCone(center, candidate.position, cone))
+            targets ~= candidate;
+    });
     if (maxTargets && targets.length > maxTargets)
     {
         targets.sort!((a, b) {
@@ -318,9 +345,10 @@ unittest
 /// Direct damage and aura effects share one hit on the named creature's node.
 unittest
 {
+    import dmangos.bytes : floatBits;
     import dmangos.cluster.protocol : AreaDamage;
     import dmangos.dbc : buildDbc;
-    import dmangos.world.clientdata : factionTemplateFormat, spellDurationFormat;
+    import dmangos.world.clientdata : factionTemplateFormat, spellDurationFormat, spellRadiusFormat;
     import dmangos.world.context : WorldContext;
     import dmangos.world.creature : Creature, CreatureSpawn;
     import dmangos.world.eventai : castTriggered;
@@ -329,6 +357,7 @@ unittest
     import dmangos.world.spellcast : SpellMissInfo, spellAttrEx2CantCrit, spellAttrEx3AlwaysHit;
     import dmangos.world.spellhandlers : testSpell;
     import dmangos.world.spellids : AuraType, SpellEffect;
+    import dmangos.world.spells : SpellChainNode;
     import dmangos.world.testclient;
     import dmangos.world.updatefields : UNIT_FIELD_HEALTH;
 
@@ -336,7 +365,7 @@ unittest
     auto source = newCreationContext(db), owner = newCreationContext(db);
     source.nodeId = 1;
     owner.nodeId = 2;
-    enum uint strike = 55064, stunMechanic = 12;
+    enum uint strike = 55064, cone = 55065, stunMechanic = 12;
     const at = Position(100, 100, 40);
     foreach (node; [source, owner])
     {
@@ -345,6 +374,8 @@ unittest
             "FactionTemplate.dbc");
         node.client.spellDurations = typeof(node.client.spellDurations).parse(buildDbc(spellDurationFormat,
             [[1u, 10_000, 0, 10_000]]), "SpellDuration.dbc");
+        node.client.spellRadii = typeof(node.client.spellRadii).parse(buildDbc(spellRadiusFormat,
+            [[1u, floatBits(6), 0, 0]]), "SpellRadius.dbc");
         node.data.creatureTemplates.edit(creatureTrainer).faction = 14;
         node.data.creatureTemplates.edit(creatureInnkeeper).mechanicImmuneMask = 1u << (stunMechanic - 1);
         auto spell = testSpell(strike, SpellEffect.schoolDamage, ImplicitTarget.unitScriptNearCaster, 20);
@@ -362,6 +393,13 @@ unittest
         spell.casting.attributesEx3 |= spellAttrEx3AlwaysHit;
         node.data.spells.spells[strike] = spell;
         node.data.spellScriptTargets[strike] = [creatureInnkeeper];
+        spell.id = cone;
+        spell.implicitTargetA[] = ImplicitTarget.enumUnitsScriptInCone60;
+        spell.casting.radiusIndex[] = 1;
+        node.data.spells.spells[cone] = spell;
+        node.data.spellScriptTargets[cone] = [creatureInnkeeper];
+        node.data.spells.chains[cone] = SpellChainNode(strike, strike, 2, 0);
+        node.data.spellConeDegrees[strike] = -50;
     }
     Creature npc(WorldContext world, uint id, uint entry, float x)
     {
@@ -396,4 +434,18 @@ unittest
     assert(aura && aura.stacks == 1 && aura.effects == 2, "the stun-immunity filters only that aura effect");
     assert(target.values.get!UNIT_FIELD_HEALTH == health - 20);
     assert(replies.length == 1 && replies[0].miss == SpellMissInfo.none && replies[0].damage == 20);
+
+    auto rear = npc(owner, 91012, creatureInnkeeper, at.x - 3);
+    source.map(0).replicaCreated(2, cellKeyAt(at.x - 3, at.y), rear.guid, encodeState(rear, 0));
+    assert(caster.ai.castSpell(source.data.spells.spell(cone), caster.guid, castTriggered));
+    assert(requests.length == 2 && requests[1].target == rear.guid, "the first rank sets the rear-facing cone");
+    rear.movement.position.x = at.x + 3; // still within the radius, but now outside the cone
+    owner.areaDamageArrived(1, requests[1]);
+    assert(rear.values.get!UNIT_FIELD_HEALTH == health && !rear.auras.find(cone));
+    assert(replies.length == 2 && replies[1].miss == SpellMissInfo.evade);
+    rear.movement.position.x = at.x - 3;
+    assert(caster.ai.castSpell(source.data.spells.spell(cone), caster.guid, castTriggered));
+    assert(requests.length == 3 && requests[2].target == rear.guid);
+    owner.areaDamageArrived(1, requests[2]);
+    assert(rear.values.get!UNIT_FIELD_HEALTH == health - 20 && rear.auras.find(cone));
 }
