@@ -793,7 +793,12 @@ services line (`ServiceHost.describe`). Every log line of the cluster code start
 
 ## Spell routing limits
 
-Cross-node spell routing is effect-specific. Script-selected channels, registered spell scripts, and
+Players can channel a periodic heal on a nearby creature named by the spell, including one on another
+node. The caster's node tracks the duration and sends interruptions to the creature's node. The
+creature checks the caster's active channel before healing. Only a confirmed, completed channel
+can grant quest credit.
+
+Cross-node spell routing is effect-specific. Other script-selected channels, registered spell scripts, and
 database spell steps that need the caster or another actor still use their local paths. Ground ticks
 use observed targets around the spot and require a current caster replica at the target. At impact,
 the node simulating the caster routes a named-creature projectile using the target's current

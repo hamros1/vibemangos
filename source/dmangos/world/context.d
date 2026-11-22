@@ -677,6 +677,15 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return effect;
     }
 
+    package size_t namedHealChannel(const(SpellInfo)* spell)
+    {
+        import dmangos.world.spelldamage : namedHealChannelEffect;
+
+        const effect = namedHealChannelEffect(*spell);
+        return effect != size_t.max && spellScriptTargets(spell.id).length && !spellScript(spell.id)
+            ? effect : size_t.max;
+    }
+
     package ImplicitTarget namedGameObjectRouting(const(SpellInfo)* spell, size_t effect)
     {
         import dmangos.world.spellselection : namedGameObjectShape;
@@ -945,11 +954,16 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     private bool sendReplicaSpellImpact(Map map_, ushort peer, AreaDamage hit)
     {
+        import std.algorithm.comparison : max;
+
         if (sendAreaDamage is null)
             return false;
-        if (hit.namedCreature)
+        if (hit.channelled)
+            map_.holdCasterReplica(hit.caster, peer, cast(uint) max(0, hit.auraMs) + 5_000);
+        else if (hit.namedCreature)
             map_.holdCasterReplica(hit.caster, peer, 5_000);
-        hit.sequence = nextGameplaySequence();
+        if (!hit.sequence || !hit.channelled)
+            hit.sequence = nextGameplaySequence();
         return sendAreaDamage(peer, hit);
     }
 
@@ -1309,30 +1323,41 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         const spell = data.spells.spell(message.spell);
         if (spell is null)
             return;
-        if (message.namedCreature && (message.channelled || message.groundTick || message.creatureArea
+        if (message.namedCreature && (message.groundTick || message.creatureArea
             || message.previous))
             return;
         if (message.channelled)
         {
+            import std.algorithm.searching : canFind;
+            import dmangos.world.spellselection : namedCreatureRange;
+
+            const named = message.namedCreature ? namedHealChannel(spell) : size_t.max;
             if (!attacker.player || message.triggered || message.creatureCast || message.creatureArea
-                || !isRemoteLeechChannel(*spell))
+                || (message.namedCreature ? named == size_t.max : !isRemoteLeechChannel(*spell)))
                 return;
+            if (message.namedCreature && (victim.kind != UnitKind.creature
+                || !spellScriptTargets(spell.id).canFind(victim.creature.spawn.entry)))
+                return replyCreatureCast(peer, message, SpellMissInfo.evade);
             if (message.channelUpdate)
             {
                 updateRemoteChannelAura(victim, message);
                 return;
             }
-            if (!isTargetedProcEffect(*spell, message.effect) || casterFields.get!UNIT_CHANNEL_SPELL != message.spell
+            const validEffect = message.namedCreature
+                ? message.effect == named && message.radius == namedCreatureRange(*spell, client) && message.auraMs > 0
+                : isTargetedProcEffect(*spell, message.effect);
+            if (!validEffect || casterFields.get!UNIT_CHANNEL_SPELL != message.spell
                 || casterFields.get!UNIT_FIELD_CHANNEL_OBJECT != message.target)
                 return;
             const origin = caster.fighter;
             const at = origin.position;
             const distance = sqrt((p.x - at.x) ^^ 2 + (p.y - at.y) ^^ 2 + (p.z - at.z) ^^ 2);
-            if (!hostile || !attacker.alive || victim.untouchable || !isFinite(message.radius) || message.radius <= 0
+            if ((!message.namedCreature && !hostile) || !attacker.alive || victim.untouchable
+                || !isFinite(message.radius) || message.radius <= 0
                 || distance > message.radius + origin.combatReach + victim.fighter.combatReach
                 || !map_.inLineOfSight(caster.position, victim.position))
                 return replyCreatureCast(peer, message, SpellMissInfo.evade);
-            return remoteProcEffect(peer, message, spell, victim, true, attacker.hasFlag(UnitFlags.pvp));
+            return remoteProcEffect(peer, message, spell, victim, !message.namedCreature, attacker.hasFlag(UnitFlags.pvp));
         }
         if (message.namedCreature)
         {
@@ -1576,8 +1601,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         if (message.auraMs < 0)
             return;
-        auto aura = victim.auraSet.find(message.spell);
-        if (aura is null || aura.caster != message.caster || aura.detachedChannel)
+        auto aura = victim.auraSet.find(message.spell, message.caster);
+        if (aura is null || aura.detachedChannel)
             return;
         if (message.auraMs == 0)
         {
@@ -2013,12 +2038,16 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         auto map_ = caster.currentMap;
         if (message.channelled)
         {
+            if (message.namedCreature && !caster.namedChannelActiveAt(spell, message.target, message.sequence))
+                return;
             if (message.miss && caster.channelActiveAt(spell, message.target))
             {
                 map_.sendToWatchers(caster, Opcode.SMSG_SPELLLOGMISS,
                     spellMissLog(message.spell, message.caster, message.target, cast(SpellMissInfo) message.miss), true);
                 caster.endChannel(true);
             }
+            else if (message.namedCreature && !message.miss)
+                caster.remoteChannelAccepted(spell, message.target, peer);
             return;
         }
         if (message.namedCreature && !message.miss && message.effect < spell.effect.length)

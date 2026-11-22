@@ -902,6 +902,8 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     {
         import std.algorithm.searching : canFind;
         import std.random : uniform01;
+        import dmangos.world.spellauras : channelAuraActive;
+        import dmangos.world.spelldamage : namedHealChannelEffect;
 
         AuraTick[] ticks;
         Aura[] expired, heartbeats;
@@ -910,6 +912,10 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         {
             if (!alive)
                 break;
+            if (tick.aura.caster && tick.aura.caster <= uint.max
+                && namedHealChannelEffect(*tick.aura.spell) != size_t.max
+                && !channelAuraActive(world.unitOf(this), tick.aura, true))
+                continue;
             selfTick(world, tick.aura, tick.effect); // what heals or gives it power, whoever cast it
             if (auto caster = world.unit(tick.aura.caster)) // (and its caster's rules: Improved Mend Pet)
                 caster.auraTick(this, tick.aura, tick.effect);

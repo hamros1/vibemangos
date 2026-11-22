@@ -305,7 +305,7 @@ package void remoteLeechTick(imported!"dmangos.world.context".WorldContext conte
     import dmangos.world.opcodes : Opcode;
     import dmangos.world.spellcast : nonMeleeDamageLog;
 
-    if (!victim.alive || !context.canWrite() || !remoteChannelActive(context, victim, aura))
+    if (!victim.alive || !context.canWrite() || !channelAuraActive(victim, aura))
         return;
     const school = aura.spell.casting.school;
     const absorbed = victim.absorb(school, damage);
@@ -330,7 +330,7 @@ package void remoteManaLeechTick(imported!"dmangos.world.context".WorldContext c
     import dmangos.world.updatefields : UNIT_FIELD_HEALTH;
 
     const kind = aura.misc(i);
-    if (!context.canWrite() || !remoteChannelActive(context, victim, aura) || aura.amount[i] <= 0
+    if (!context.canWrite() || !channelAuraActive(victim, aura) || aura.amount[i] <= 0
         || kind < 0 || kind > Power.happiness)
         return;
     if (auto caster = cast(Character) context.onlinePlayer(aura.caster))
@@ -363,22 +363,27 @@ package void remoteManaLeechTick(imported!"dmangos.world.context".WorldContext c
     context.reportPeriodicResult(victim, aura, i, 0, drained);
 }
 
-/// A drain's remote owner must still be channeling it at this target.
-private bool remoteChannelActive(imported!"dmangos.world.context".WorldContext context, UnitRef victim, Aura aura)
+/// A channel's caster must still be channeling it at this target.
+package bool channelAuraActive(UnitRef victim, Aura aura, bool allowFinalTick = false)
 {
-    import dmangos.world.character : Character;
     import dmangos.world.replication : Replica;
     import dmangos.world.updatefields : TypeId, UNIT_CHANNEL_SPELL, UNIT_FIELD_CHANNEL_OBJECT, UNIT_FIELD_HEALTH;
+    import dmangos.world.unit : UnitKind;
 
     if (!(aura.spell.attributesEx & (0x04 | 0x40)) || aura.detachedChannel)
         return true;
-    if (auto caster = cast(Character) context.onlinePlayer(aura.caster))
-        return caster.player !is null && caster.player.alive && caster.currentMap is victim.map
-            && caster.channelledAt(aura.spell) == victim.combatGuid;
+    if (victim.map is null)
+        return false;
+    if (auto caster = victim.map.unit(aura.caster))
+        return caster.kind == UnitKind.player && caster.alive
+            && caster.session.channelledAt(aura.spell) == victim.combatGuid;
     if (auto copy = cast(Replica) victim.map.findObject(aura.caster))
+    {
+        const active = copy.fieldsOf.get!UNIT_CHANNEL_SPELL;
         return copy.fieldsOf.type == TypeId.player && copy.fieldsOf.get!UNIT_FIELD_HEALTH
-            && copy.fieldsOf.get!UNIT_CHANNEL_SPELL == aura.spell.id
-            && copy.fieldsOf.get!UNIT_FIELD_CHANNEL_OBJECT == victim.combatGuid;
+            && ((active == aura.spell.id && copy.fieldsOf.get!UNIT_FIELD_CHANNEL_OBJECT == victim.combatGuid)
+                || (allowFinalTick && aura.duration <= 0 && !active));
+    }
     return false;
 }
 

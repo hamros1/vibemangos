@@ -767,6 +767,103 @@ unittest
     assert(forwarded.length == 1);
 }
 
+/// A named channel heals only while its caster is channeling it. It credits a quest at completion.
+unittest
+{
+    import core.time : seconds;
+    import dmangos.bytes : ByteWriter;
+    import dmangos.cluster.protocol : AreaDamage;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.auras : makeAura;
+    import dmangos.world.clientdata : spellDurationFormat;
+    import dmangos.world.creature : CreatureSpawn;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.player : Player;
+    import dmangos.world.quests : Quest, QuestState, QuestStatus, specialKillOrCast;
+    import dmangos.world.replication : encodePlayerState, encodeState;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.spellids : AuraType;
+    import dmangos.world.testclient;
+    import dmangos.world.updatefields : PLAYER_QUEST_LOG_1_1, UNIT_CHANNEL_SPELL, UNIT_FIELD_CHANNEL_OBJECT,
+        UNIT_FIELD_HEALTH, UNIT_FIELD_MAXHEALTH;
+
+    auto db = newDatabase();
+    auto source = newCreationContext(db), owner = newCreationContext(db);
+    source.nodeId = 1;
+    owner.nodeId = 2;
+    const origin = Position(100, 100, 40);
+    enum uint mend = 16637;
+    auto spell = testSpell(mend, SpellEffect.applyAura, ImplicitTarget.unitScriptNearCaster, 10);
+    spell.attributesEx = 0x04;
+    spell.casting.applyAuraName[0] = AuraType.periodicHeal;
+    spell.casting.amplitude[0] = 1000;
+    spell.casting.durationIndex = 1;
+    foreach (node; [source, owner])
+    {
+        node.client.spellDurations = typeof(node.client.spellDurations).parse(buildDbc(spellDurationFormat,
+            [[1u, 3000, 0, 3000]]), "SpellDuration.dbc");
+        node.data.spells.spells[mend] = spell;
+        node.data.spellScriptTargets[mend] = [creatureTrainer];
+    }
+    auto client = loggedIn(source, db, 7, "Anduin", origin);
+    auto player = cast(Player) client.session.character;
+    player.spells ~= mend;
+    auto from = source.map(0), to = owner.map(0);
+    const row = CreatureSpawn(91025, creatureTrainer, 0, 102, origin.y, origin.z);
+    auto target = owner.makeCreature(&row);
+    target.values.set!UNIT_FIELD_MAXHEALTH(100);
+    target.values.set!UNIT_FIELD_HEALTH(20);
+    to.addObject(target);
+    const cell = cellKeyAt(origin.x, origin.y);
+    from.replicaCreated(2, cell, target.guid, encodeState(target, 0));
+
+    Quest quest;
+    quest.id = 55703;
+    quest.specialFlags = specialKillOrCast;
+    quest.reqCreatureOrGoId[0] = creatureTrainer;
+    quest.reqCreatureOrGoCount[0] = 2;
+    quest.reqSpellCast[0] = mend;
+    source.data.quests.quests[quest.id] = quest;
+    player.values.set!PLAYER_QUEST_LOG_1_1(quest.id);
+    player.questStatus[quest.id] = QuestStatus(quest.id, QuestState.incomplete);
+
+    source.sendAreaDamage = (ushort peer, const ref AreaDamage request) {
+        assert(peer == 2 && request.namedCreature && request.channelled && request.target == target.guid);
+        to.replicaCreated(1, cell, player.guid, encodePlayerState(player, 0));
+        owner.areaDamageArrived(1, request);
+        return true;
+    };
+    owner.sendAreaDamage = (ushort peer, const ref AreaDamage reply) {
+        assert(peer == 1 && reply.reply);
+        source.areaDamageArrived(2, reply);
+        return true;
+    };
+    bool added;
+    target.receiveAura(makeAura(owner.data.spells.spell(mend), 900, 1, 3000, true, [10, 0, 0]), to, added);
+    ByteWriter castPacket;
+    castPacket.put(mend);
+    SpellTargets(TargetFlags.self, 0).write(castPacket);
+    client.write(Opcode.CMSG_CAST_SPELL, castPacket.data);
+    assert(player.values.get!UNIT_FIELD_CHANNEL_OBJECT == target.guid && target.auras.find(mend, player.guid));
+    target.updateAuras(to, 1000);
+    assert(target.values.get!UNIT_FIELD_HEALTH == 30);
+    ByteWriter cancel;
+    cancel.put(mend);
+    client.write(Opcode.CMSG_CANCEL_CHANNELLING, cancel.data);
+    assert(!target.auras.find(mend, player.guid) && target.auras.find(mend, 900));
+    target.updateAuras(to, 2000);
+    assert(target.values.get!UNIT_FIELD_HEALTH == 30 && player.questStatus[quest.id].mobCount[0] == 0);
+
+    client.write(Opcode.CMSG_CAST_SPELL, castPacket.data);
+    target.updateAuras(to, 2000);
+    client.session.update(3.seconds);
+    assert(!player.values.get!UNIT_CHANNEL_SPELL);
+    to.replicaCreated(1, cell, player.guid, encodePlayerState(player, 0));
+    target.updateAuras(to, 1000);
+    assert(target.values.get!UNIT_FIELD_HEALTH == 60 && !target.auras.find(mend, player.guid));
+    assert(player.questStatus[quest.id].mobCount[0] == 1, "only a confirmed channel completed naturally counts");
+}
+
 /// Direct damage and aura effects share one hit on the named creature's node.
 unittest
 {

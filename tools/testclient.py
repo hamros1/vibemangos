@@ -20,6 +20,8 @@ in order:
     whisper:NAME:TEXT         whisper to another player
     attack:ENTRY  stopattack  walk up to the nearest creature of ENTRY and fight it; stop
     approach:ENTRY:DIST       walk to DIST yards of the nearest creature of ENTRY
+    cast:SPELL[:ENTRY]       cast a spell, optionally at a creature by entry
+    cancelchannel:SPELL      cancel the specified channel
     loot                      walk to the creature last attacked, take its money and items
     release  corpse  tocorpse  reclaim  spirithealer
                               dead: release the spirit, ask where the corpse is, go there, take it
@@ -295,6 +297,7 @@ OPS = {0x236: "LOGIN_VERIFY_WORLD", 0x209: "ACCOUNT_DATA_TIMES", 0x332: "EXPECTE
 
 import select, time
 MOVES = set(range(0x0B5, 0x0C4)) | {0x0C9, 0x0CA, 0x0CB, 0x0DA, 0x0DB, 0x0EE}
+creature_auras = {}
 
 def describe(op, p):
     """Prints a packet that another player caused."""
@@ -306,7 +309,10 @@ def describe(op, p):
             elif kind == 0 and g == player_guid: print(f"  [player changed] {len(v)} fields")
             elif kind == 0 and seen_objects.get(g, (0, 0))[0] == 5 and 0xE in v:
                 print(f"  [game object state] {g:#018x} state {v[0xE]}")
-            elif kind == 4: print(f"  [out of range] {', '.join(str(x & 0xFFFFFFFF) for x in g)}")
+            elif kind == 4:
+                for guid in g:
+                    creature_auras.pop(guid, None)
+                print(f"  [out of range] {', '.join(str(x & 0xFFFFFFFF) for x in g)}")
             elif kind in (2, 3) and t == 4:
                 seen_objects[g] = (t, 0)
                 b0 = v[OBJECT_END + 0x1E]
@@ -334,9 +340,14 @@ def describe(op, p):
                 health = f", health {v[OBJECT_END + 0x10]}/{v.get(OBJECT_END + 0x16, '?')}" if OBJECT_END + 0x10 in v else ""
                 print(f"  [changes] {g}: fields {sorted(v)}{health}")
                 if seen_objects.get(g, (0, 0))[0] == 3:
+                    auras = creature_auras.setdefault(g, {})
                     for field, spell in v.items():
-                        if 0x2F <= field < 0x5F and spell:
-                            print(f"  [creature aura] {g:#018x} received {spell}")
+                        if 0x2F <= field < 0x5F:
+                            if spell:
+                                auras[field] = spell
+                                print(f"  [creature aura] {g:#018x} received {spell}")
+                            elif field in auras:
+                                print(f"  [creature aura] {g:#018x} ended {auras.pop(field)}")
     elif op == 0x179:
         if len(p) <= 8:
             print("  [pet spells] none (no pet)"); return
@@ -535,6 +546,9 @@ def describe(op, p):
         print(f"  [spell go] {spell} by {g & 0xFFFFFF}")
     elif op == 0x133:
         g, pos = packed_guid(p, 0); spell, reason = struct.unpack_from("<IB", p, pos); print(f"  [spell failed] {spell} reason {reason:#x}")
+    elif op == 0x139:
+        spell, duration = struct.unpack("<II", p)
+        print(f"  [channel start] {spell} for {duration} ms")
     elif op == 0x0B3:
         guid, slot = struct.unpack("<QI", p)
         print(f"  [game object animation] {guid:#018x} slot {slot}")
@@ -797,6 +811,9 @@ for action in actions:
             wsend(0x12E, struct.pack("<IH", spell, 2) + packed(target)); print(f"cast {spell} at {target & 0xFFFFFF}")
         else:
             wsend(0x12E, struct.pack("<IH", spell, 0)); print(f"cast {spell}")
+    elif kind == "cancelchannel":
+        wsend(0x13B, struct.pack("<I", int(args[0])))
+        print(f"cancel channel {args[0]}")
     elif kind in ("ahello", "ahsell", "ahlist", "ahbid"):
         # ahello:NPC, ahsell:NPC:ITEM:BID:BUYOUT:HOURS (the first of ITEM in the bags), ahlist:NPC[:NAME],
         # ahbid:NPC:AUCTION:PRICE, at the nearest creature of entry NPC.

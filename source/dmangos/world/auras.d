@@ -743,10 +743,10 @@ struct AuraSet
     }
 
     /// The aura of `spell` (from anyone); null if none.
-    Aura find(uint spell)
+    Aura find(uint spell, ulong caster = 0)
     {
         foreach (aura; list)
-            if (aura.spell.id == spell)
+            if (aura.spell.id == spell && (!caster || aura.caster == caster))
                 return aura;
         return null;
     }
