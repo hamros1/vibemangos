@@ -165,9 +165,7 @@
 28287: Create Handbook DND: no caster: no creature casts it in the data
 28299: Ball Lightning: refused: dontReport
 28335: Whirlwind: aura modStun: not on the player (effect 1)
-28337: Magnetic Pull: not done: pullTowards (effect 0)
 28404: Zombie Chow Search: no caster: no creature casts it in the data
-28434: Spider Web: not done: pullTowards (effect 0)
 28450: Arcane Explosion: aura modStun: on the caster, its unit flag not set (effect 0)
 28478: Frostbolt: aura modDecreaseSpeed: not on the player (effect 1)
 28479: aura modDecreaseSpeed: not on the player (effect 1): Kel'Thuzad's Frostbolt, its slow seen or not by the rolls before it (main's build alone, DMANGOS_NPC_SWEEP_ONLY=28479, misses it too)

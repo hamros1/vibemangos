@@ -383,8 +383,10 @@ private final class NpcSweeper
 
     private NpcOutcome once(const NpcSpell sp)
     {
-        import std.math : abs, cos, sin;
+        import std.math : abs, cos, sin, sqrt;
+        import dmangos.bytes : ByteReader, ByteWriter;
         import dmangos.world.eventai : castForceTargetSelf;
+        import dmangos.world.movement : jumpGravity, MovementFlags, MovementInfo;
         import dmangos.world.packets : ClientTeleportAck;
         import dmangos.world.relations : canAttack;
         import dmangos.world.spellcast : castTime, isNextMeleeSwingSpell, radius, range;
@@ -394,7 +396,8 @@ private final class NpcSweeper
         const data = context.data;
         const s = data.spells.spell(sp.id);
         const teleportsPlayer = s.hasEffect(SpellEffect.teleportUnits) || s.hasEffect(SpellEffect.teleportUnitsFaceCaster);
-        const moves = teleportsPlayer || s.hasEffect(SpellEffect.leap);
+        const pullsPlayer = s.hasEffect(SpellEffect.pullTowards);
+        const moves = teleportsPlayer || pullsPlayer || s.hasEffect(SpellEffect.leap);
         const destination = teleportsPlayer ? sp.id in data.spellTargets : null;
         const entry = sp.casters[0];
         const t = entry in data.creatureTemplates;
@@ -414,6 +417,8 @@ private final class NpcSweeper
         Who who(size_t i)
         {
             const a = s.implicitTargetA[i], b = s.casting.implicitTargetB[i];
+            if (s.effect[i] == SpellEffect.pullTowards && a == ImplicitTarget.unit)
+                return Who.enemy; // Magnetic Pull's explicit target is a player.
             with (ImplicitTarget)
                 if (scripted.length && (a.among(unitScriptNearCaster, enumUnitsScriptAoeAtSrcLoc,
                         enumUnitsScriptAoeAtDestLoc, enumUnitsScriptInCone60) || b.among(unitScriptNearCaster,
@@ -438,7 +443,7 @@ private final class NpcSweeper
                 || (s.effect[i] == SpellEffect.applyAura && s.casting.applyAuraName[i].among(
                     AuraType.periodicManaLeech, AuraType.powerBurnMana) && s.miscValue[i] == 0);
         const level = clamp(t.maxLevel, 1, 60);
-        const distance = r[1] <= 5 ? 2.0f : max(2.0f, min(r[0] + 3, r[1] - 1));
+        const distance = r[1] <= 5 ? 2.0f : max(2.0f, min(r[0] + (pullsPlayer ? 20 : 3), r[1] - 1));
         const facing = moves ? PI / 4 : 0;
         auto heroAt = spot;
         heroAt.x += distance * cos(facing);
@@ -447,6 +452,10 @@ private final class NpcSweeper
         const guid = nextGuid++;
         auto hero = player(guid, takesMana ? 8 : 1, level, heroAt);
         auto me = hero.session.inWorld;
+        const speedSlack = context.config.movementSpeedSlack;
+        scope (exit) context.config.movementSpeedSlack = speedSlack;
+        if (pullsPlayer)
+            context.config.movementSpeedSlack = 1; // Reports must qualify for the server's pull allowance.
         if (destination !is null && context.instanceable(destination.map))
         {
             // A boss casts its raid-room teleport within its own copy. Start the test player in that copy.
@@ -487,7 +496,7 @@ private final class NpcSweeper
         // An enemy of the player for what harms it (one friendly to it is made a monster: as it would cast at its
         // enemies).
         auto heroUnit = map.unit(me.player.guid);
-        const hostileSpell = harms(*s);
+        const hostileSpell = harms(*s) || pullsPlayer;
         // What keeps it out of a fight (immune to players, not attackable: what its event takes off) taken off.
         void fighting(Creature c)
         {
@@ -585,6 +594,9 @@ private final class NpcSweeper
                     dispellableBefore[i] = hasDispellable(unit, s.miscValue[i]);
             }
         const casterBefore = caster.position;
+        const playerBefore = me.player.position;
+        const contact = pullsPlayer ? caster.values.get!UNIT_FIELD_BOUNDINGRADIUS
+            + me.player.values.get!UNIT_FIELD_BOUNDINGRADIUS : 0;
         uint[Who] displayBefore;
         foreach (x; all)
             if (auto unit = unitOf(x))
@@ -619,6 +631,9 @@ private final class NpcSweeper
         uint[3] leastHealth = healthOf, mostPower = powerOf;
         bool[Who] diedSeen;
         bool landed;
+        MovementInfo flight;
+        int launchMs;
+        bool pullInFlight, pullLanded;
         enum step = 200;
         for (int ms = 0; ms <= total; ms += step)
         {
@@ -630,7 +645,26 @@ private final class NpcSweeper
                 map.wake(caster.guid);
             }
             foreach (p; hero.read())
-                if (teleportsPlayer && p.opcode == Opcode.MSG_MOVE_TELEPORT_ACK)
+                if (pullsPlayer && p.opcode == Opcode.SMSG_MOVE_KNOCK_BACK)
+                {
+                    auto packet = ByteReader(p.body_);
+                    const pulledGuid = packet.readPackedGuid();
+                    const order = packet.read!uint;
+                    flight.jumpCos = packet.read!float;
+                    flight.jumpSin = packet.read!float;
+                    flight.jumpXySpeed = packet.read!float;
+                    flight.jumpVelocity = packet.read!float;
+                    flight.flags = MovementFlags.jumping;
+                    flight.position = playerBefore;
+                    ByteWriter ack;
+                    ack.put(pulledGuid);
+                    ack.put(order);
+                    flight.write(ack);
+                    hero.write(Opcode.CMSG_MOVE_KNOCK_BACK_ACK, ack.data);
+                    launchMs = ms;
+                    pullInFlight = true;
+                }
+                else if (teleportsPlayer && p.opcode == Opcode.MSG_MOVE_TELEPORT_ACK)
                 {
                     hero.write(Opcode.MSG_MOVE_TELEPORT_ACK, ClientTeleportAck(me.player.guid, 0, 0));
                     landed = true;
@@ -642,8 +676,6 @@ private final class NpcSweeper
                 }
                 else if (p.opcode == Opcode.SMSG_SPELLHEALLOG)
                 {
-                    import dmangos.bytes : ByteReader;
-
                     auto rd = ByteReader(p.body_);
                     const healed = rd.readPackedGuid();
                     rd.readPackedGuid();
@@ -655,8 +687,6 @@ private final class NpcSweeper
                 }
                 else if (p.opcode == Opcode.SMSG_SPELLNONMELEEDAMAGELOG)
                 {
-                    import dmangos.bytes : ByteReader;
-
                     auto rd = ByteReader(p.body_);
                     const hurt = rd.readPackedGuid();
                     rd.readPackedGuid();
@@ -671,6 +701,27 @@ private final class NpcSweeper
                     imported!"std.stdio".stderr.writefln("  %s: %s %(%02x %)", ms, cast(Opcode) p.opcode, p.body_);
                 else if (p.opcode == Opcode.SMSG_SPELLLOGMISS)
                     mayRoll = true;
+            if (pullInFlight && ms > launchMs)
+            {
+                const duration = -2 * flight.jumpVelocity / jumpGravity; // Both ends are on level ground.
+                const elapsed = (ms - launchMs) / 1000.0f;
+                const secondsInAir = min(elapsed, duration);
+                auto report = flight;
+                report.position.x += secondsInAir * flight.jumpXySpeed * flight.jumpCos;
+                report.position.y += secondsInAir * flight.jumpXySpeed * flight.jumpSin;
+                report.position.z -= secondsInAir * (flight.jumpVelocity + jumpGravity * secondsInAir / 2);
+                const landing = elapsed >= duration;
+                if (landing)
+                    report.flags = MovementFlags.none;
+                ByteWriter body;
+                report.write(body);
+                hero.write(landing ? Opcode.MSG_MOVE_FALL_LAND : Opcode.MSG_MOVE_HEARTBEAT, body.data);
+                if (landing)
+                {
+                    pullInFlight = false;
+                    pullLanded = me.player.position == report.position && me.spellPull.speed == 0;
+                }
+            }
             foreach (i; 0 .. 3)
             {
                 foreach (x; all)
@@ -826,6 +877,15 @@ private final class NpcSweeper
                     || abs(at.y - casterBefore.y - offset * sin(facing)) > 0.01f
                     || abs(at.z - casterBefore.z) > 0.01f || abs(at.orientation - (facing + (back ? 0 : PI))) > 0.01f)
                     failed = "the player landed at the wrong point or faced away from the caster";
+                break;
+            case pullTowards:
+                const dx = casterBefore.x - playerBefore.x, dy = casterBefore.y - playerBefore.y;
+                const apart = sqrt(dx * dx + dy * dy);
+                const at = me.player.position;
+                if (!pullLanded || abs(flight.jumpXySpeed - s.miscValue[i] * 0.1f) > 0.01f
+                    || abs(at.x - (casterBefore.x - dx * contact / apart)) > 0.01f
+                    || abs(at.y - (casterBefore.y - dy * contact / apart)) > 0.01f || abs(at.z - casterBefore.z) > 0.01f)
+                    failed = "the pull did not land the player at contact range";
                 break;
             case instantKill:
                 if (unit && !diedSeen.get(x, false))

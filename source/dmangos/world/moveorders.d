@@ -346,6 +346,8 @@ mixin template MovementOrders()
     {
         if (ack.guid != player.guid || !takeMovement(ack.movement, Opcode.CMSG_MOVE_KNOCK_BACK_ACK))
             return;
+        if (spellPull.speed > 0 && ack.counter == spellPull.order)
+            spellPull.acknowledged = true;
         const m = &ack.movement;
         ByteWriter launch;
         launch.put(m.jumpCos);
@@ -537,4 +539,52 @@ unittest
     assert(told() == [Opcode.MSG_MOVE_WATER_WALK]);
     me.removeAura(walking);
     assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_MOVE_LAND_WALK));
+}
+
+// The faster movement is allowed only along an acknowledged pull's path, while that pull is active.
+unittest
+{
+    import core.time : MonoTime, msecs;
+    import dmangos.auth.accounts : AccountLevel;
+    import dmangos.world.config : WorldConfig;
+    import dmangos.world.movement : MovementFlags, Position;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    enum Report { onPath, unacknowledged, offPath, expired }
+    foreach (report; [Report.onPath, Report.unacknowledged, Report.offPath, Report.expired])
+    {
+        auto db = newDatabase();
+        auto world = newCreationContext(db, (ref WorldConfig config) { config.movementSpeedSlack = 1; });
+        auto now = MonoTime.currTime;
+        world.clock = () => now;
+        const start = Position(-8950, -140, 84, 0);
+        auto client = loggedIn(world, db, 7, "Anduin", start, AccountLevel.player);
+        auto me = client.session.inWorld;
+        Position goal = start;
+        goal.x += 40;
+        client.read();
+        me.pulledToward(goal, 1, 30);
+        assert(me.spellPull.speed == 30);
+        if (report != Report.unacknowledged)
+        {
+            MovementInfo launch;
+            launch.position = start;
+            launch.flags = MovementFlags.jumping;
+            ByteWriter ack;
+            ack.put(me.player.guid);
+            ack.put(me.spellPull.order);
+            launch.write(ack);
+            client.write(Opcode.CMSG_MOVE_KNOCK_BACK_ACK, ack.data);
+            assert(me.spellPull.acknowledged);
+        }
+        now += (report == Report.expired ? 2000 : 600).msecs;
+        MovementInfo move;
+        move.position = start;
+        move.position.x += report == Report.expired ? 32 : 18;
+        if (report == Report.offPath)
+            move.position.y += 15;
+        move.flags = MovementFlags.jumping;
+        assert(me.takeMovement(move, Opcode.MSG_MOVE_HEARTBEAT) == (report == Report.onPath));
+    }
 }

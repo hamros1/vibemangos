@@ -148,6 +148,7 @@ final class Character : OnlinePlayer, Looter
         // The movement check: where the player was, and when.
         Position checkpoint;
         MonoTime checkpointTime;
+        imported!"dmangos.world.movement".SpellPullMotion spellPull;
         Position groupPositionAt; // where group members out of sight last heard the player was
     }
 
@@ -530,15 +531,41 @@ final class Character : OnlinePlayer, Looter
     void knockedBack(Position from, float horizontal, float vertical)
     {
         import std.math : atan2, cos, sin;
-        import dmangos.world.packets : ServerKnockBack;
 
         if (player is null)
             return;
         const p = player.position;
         const angle = atan2(p.y - from.y, p.x - from.x);
+        spellPull = typeof(spellPull).init;
+        launchKnockback(cos(angle), sin(angle), horizontal, vertical);
+    }
+
+    /// Pulled toward the caster, stopping at contact range.
+    package void pulledToward(Position caster, float contact, float speed)
+    {
+        import std.math : sqrt;
+        import dmangos.world.movement : jumpGravity, SpellPullMotion;
+
+        if (player is null || flying || !inControl || teleporting != Teleport.none)
+            return;
+        const start = player.position;
+        const dx = caster.x - start.x, dy = caster.y - start.y;
+        const apart = sqrt(dx * dx + dy * dy), distance = apart - contact;
+        if (distance < 0.1f)
+            return;
+        const time = distance / speed;
+        const rise = (caster.z - start.z) / time + jumpGravity * time / 2;
+        spellPull = SpellPullMotion(start, dx / apart, dy / apart, speed, distance, context.clock(), moveOrderCounter);
+        launchKnockback(spellPull.directionX, spellPull.directionY, speed, rise);
+    }
+
+    private void launchKnockback(float cosine, float sine, float horizontal, float vertical)
+    {
+        import dmangos.world.packets : ServerKnockBack;
+
         // The vertical speed is sent negated: the client counts upwards as negative, as in its jumps (CMaNGOS
         // `SendKnockBack`). Its acknowledgement shows the throw to others (`dmangos.world.moveorders`).
-        send(ServerKnockBack(player.guid, moveOrderCounter++, cos(angle), sin(angle), horizontal, -vertical));
+        send(ServerKnockBack(player.guid, moveOrderCounter++, cosine, sine, horizontal, -vertical));
     }
 
     /// Up to `amount` of power `type` taken (a creature's drain or burn): what was taken.

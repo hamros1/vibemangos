@@ -8,6 +8,7 @@
  */
 module dmangos.world.movement;
 
+import core.time : MonoTime;
 import std.math : isFinite;
 
 import dmangos.bytes;
@@ -53,6 +54,21 @@ struct Position
     {
         return .isFinite(x) && .isFinite(y) && .isFinite(z) && .isFinite(orientation);
     }
+}
+
+/// Client projectile gravity, in yards per second squared.
+package enum float jumpGravity = 19.291105f;
+
+/// A pull the server sent, bounded by its launch time and path.
+package struct SpellPullMotion
+{
+    Position start;
+    float directionX, directionY;
+    float speed = 0;
+    float distance;
+    MonoTime sentAt;
+    uint order;
+    bool acknowledged;
 }
 
 /// Where a unit is and how it moves, as movement packets carry it.

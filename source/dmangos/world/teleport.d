@@ -250,6 +250,7 @@ private:
         }
         else if (entersCopy && (!instance || !admit(instance)))
             return false;
+        spellPull = typeof(spellPull).init;
         if (player.data.map == mapId && instance == instanceId_)
         {
             teleporting = Teleport.near;

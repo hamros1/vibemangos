@@ -667,7 +667,7 @@ private:
         // On a ship or an elevator the player moves with it: not checked, and checked afresh once off.
         if (movement.has(MovementFlags.onTransport))
             checkpoint = p, checkpointTime = context.clock();
-        else if (!passesSpeedCheck(p))
+        else if (!followsSpellPull(movement, opcode) && !passesSpeedCheck(p))
             return false;
         alignedElevator = 0; // a fresh client position or offset must be checked before following it
         player.movement = movement;
@@ -681,6 +681,39 @@ private:
             player.setEmoteState(0);
             flushPlayerChanges();
         }
+        return true;
+    }
+
+    /// Short, directional speed allowance for an acknowledged pull the server ordered.
+    private bool followsSpellPull(const ref MovementInfo motion, Opcode opcode)
+    {
+        import std.algorithm.comparison : min;
+        import std.math : abs;
+
+        if (spellPull.speed == 0)
+            return false;
+        const now = context.clock();
+        const elapsed = (now - spellPull.sentAt).total!"msecs" / 1000.0f;
+        enum float networkSlackSeconds = 0.5f, positionSlack = 1;
+        if (elapsed > spellPull.distance / spellPull.speed + networkSlackSeconds)
+        {
+            spellPull = typeof(spellPull).init;
+            return false;
+        }
+        const landing = opcode == Opcode.MSG_MOVE_FALL_LAND;
+        if (!spellPull.acknowledged || (!landing && !motion.has(MovementFlags.jumping)
+            && !motion.has(MovementFlags.fallingFar)))
+            return false;
+        const dx = motion.position.x - spellPull.start.x, dy = motion.position.y - spellPull.start.y;
+        const forward = dx * spellPull.directionX + dy * spellPull.directionY;
+        const sideways = dx * spellPull.directionY - dy * spellPull.directionX;
+        const limit = min(spellPull.distance, spellPull.speed * (elapsed + networkSlackSeconds));
+        if (forward < -positionSlack || forward > limit + positionSlack || abs(sideways) > positionSlack)
+            return false;
+        checkpoint = motion.position;
+        checkpointTime = now;
+        if (landing)
+            spellPull = typeof(spellPull).init;
         return true;
     }
 

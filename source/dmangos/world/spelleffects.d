@@ -60,7 +60,7 @@ private enum SpellEffect[] notDoneByAny = [SpellEffect.portalTeleport, SpellEffe
     SpellEffect.bindSight, SpellEffect.threatAll, SpellEffect.enchantHeldItem,
     SpellEffect.summonPhantasm, SpellEffect.inebriate, SpellEffect.destroyAllTotems, SpellEffect.summonDemon,
     SpellEffect.spiritHeal, SpellEffect.skill, SpellEffect.teleportGraveyard, SpellEffect.n122, SpellEffect.sendTaxi,
-    SpellEffect.pullTowards, SpellEffect.modifyThreatPercent, SpellEffect.n126, SpellEffect.n127,
+    SpellEffect.modifyThreatPercent, SpellEffect.n126, SpellEffect.n127,
     SpellEffect.applyAreaAuraFriend, SpellEffect.applyAreaAuraEnemy];
 
 /**
@@ -85,7 +85,7 @@ private enum SpellEffect[] creaturesDo = [SpellEffect.none, SpellEffect.schoolDa
     SpellEffect.normalizedWeaponDmg, SpellEffect.applyAura, SpellEffect.applyAreaAuraParty,
     SpellEffect.applyAreaAuraPet, SpellEffect.threat, SpellEffect.heal, SpellEffect.triggerSpell, SpellEffect.dummy,
     SpellEffect.scriptEffect, SpellEffect.interruptCast, SpellEffect.sendEvent, SpellEffect.summon,
-    SpellEffect.summonWild, SpellEffect.summonGuardian, SpellEffect.knockBack, SpellEffect.healthLeech,
+    SpellEffect.summonWild, SpellEffect.summonGuardian, SpellEffect.knockBack, SpellEffect.pullTowards, SpellEffect.healthLeech,
     SpellEffect.powerDrain, SpellEffect.powerBurn, SpellEffect.durabilityDamage, SpellEffect.durabilityDamagePct,
     SpellEffect.reputation, SpellEffect.teleportUnits, SpellEffect.teleportUnitsFaceCaster, SpellEffect.instantKill,
     SpellEffect.energize,
@@ -663,6 +663,20 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
                 if (other.kind == UnitKind.player)
                     other.session.knockedBack(caster.position, spell.miscValue[i] / 10.0f, value / 10.0f);
         break;
+    case SpellEffect.pullTowards:
+    {
+        import std.algorithm.comparison : max;
+        import dmangos.world.updatefields : UNIT_FIELD_BOUNDINGRADIUS;
+
+        auto other = map.unit(target);
+        if (target != caster.guid && other.kind == UnitKind.player)
+        {
+            const contact = max(0, caster.fields.get!UNIT_FIELD_BOUNDINGRADIUS)
+                + max(0, other.fields.get!UNIT_FIELD_BOUNDINGRADIUS);
+            other.session.pulledToward(caster.position, contact, max(1, spell.miscValue[i]) * 0.1f);
+        }
+        break;
+    }
     case SpellEffect.none:
         break;
     // Not done by any caster's cast: `doneBy` returned before the switch.

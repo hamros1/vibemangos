@@ -94,6 +94,10 @@ Entangle (22994) and Consume (25371) now move players to the front and back of t
 
 Four more cases passed against the old server code once the fixture started the player in the correct raid copy. These cover Entangle (731), Majordomo’s two teleports and Paralyze (25725). The fixture checks the stored destination and verifies that the player stays in the same copy.
 
+Magnetic Pull (28337) and Spider Web (28434) use a forced-movement arc toward the caster. Each spell uses its own horizontal speed. The server accepts the faster movement after the client acknowledges the order, within the time and path expected for that pull. The real-data sweep checks that both casts land the player at contact range and that Spider Web applies its slow. [CMaNGOS comparison for the shared pull effect](https://github.com/cmangos/mangos-classic/blob/master/src/game/Spells/SpellEffects.cpp#L4734-L4762)
+
+The sweep casts Magnetic Pull directly. Scheduling the tank exchange is still open in the Feugen and Stalagg encounter script.
+
 ## Reproduce
 
 With the repository harness database and extracted client data configured, run from the project root:
