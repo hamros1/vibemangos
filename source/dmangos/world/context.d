@@ -3557,6 +3557,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             &serverTime, spawner, mapTerrain, owns, gameObjectModels is null ? null :
                 new GameObjectCollision(gameObjectModels, client, &transportNow));
         created.instanceId = instance;
+        created.gameObjectTemplate = (uint entry) => entry in data.gameObjectTemplates;
         created.elevatorPath = &elevatorPathOf;
         created.elevatorClock = &transportNow;
         created.elevatorHomes = elevatorHomesFor(id);

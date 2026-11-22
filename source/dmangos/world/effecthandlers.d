@@ -661,7 +661,7 @@ mixin template EffectHandlers()
         map.addObject(go);
         ByteWriter w;
         w.put(go.guid);
-        map.sendToWatchers(this, Opcode.SMSG_GAMEOBJECT_SPAWN_ANIM_OBSOLETE, w.data, true);
+        map.sendToObservers(go.guid, Opcode.SMSG_GAMEOBJECT_SPAWN_ANIM_OBSOLETE, w.data);
         const ms = modDuration(spell, duration(*spell, context.client, player.data.level));
         trapSlots[slot] = go.guid;
         trapTimes[slot] = ms > 0 ? ms : int.max;
@@ -1121,7 +1121,8 @@ unittest
     auto a = new Arena;
     enum uint trapSpell = 96018, freeze = 96019, trapEntry = 96020;
     GameObjectTemplate t = {entry: trapEntry, type: GameObjectType.trap, displayId: 1, name: "Freezing Trap"};
-    t.data[0] = 12;   // the hunters' lock: the diameter is the radius
+    t.data[9] = 1;    // stealthed
+    t.data[0] = 12;   // hunter trap lock
     t.data[2] = 3;
     t.data[3] = freeze;
     t.data[4] = 1;    // one charge
@@ -1139,6 +1140,45 @@ unittest
     auto session = a.hero.session.inWorld;
     const first = session.trapSlots[0];
     assert(first && cast(GameObject) a.map.findObject(first) !is null);
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.clientdata : lockFormat;
+    import dmangos.world.auras : makeAura;
+    import dmangos.world.testclient : loggedIn, newCreationContext;
+    import dmangos.world.replication : encodeState;
+    import dmangos.world.grid : cellKeyAt;
+
+    auto trap = cast(GameObject) a.map.findObject(first);
+    auto spot = at;
+    spot.x -= 6;
+    spot.orientation = 0;
+    auto observer = loggedIn(a.context, a.db, 9, "Observer", spot, characterLevel: a.me.data.level);
+    auto rogue = observer.session.inWorld;
+    assert(!a.map.seesTrap(rogue.player, first, at));
+    assert(a.map.seesTrap(a.me, first, at));
+    auto detection = a.spell(2836, SpellEffect.applyAura, ImplicitTarget.caster, 70);
+    detection.casting.applyAuraName[0] = AuraType.modStealthDetect;
+    detection.miscValue[0] = 1;
+    bool isNew;
+    rogue.player.auras.apply(makeAura(detection, rogue.player.guid, 1, -1, true, [70, 0, 0]),
+        rogue.player.values, isNew);
+    assert(a.map.seesTrap(rogue.player, first, at));
+
+    auto remoteContext = newCreationContext(a.db);
+    remoteContext.data.gameObjectTemplates[trapEntry] = t;
+    auto remote = remoteContext.map(0);
+    remote.replicaCreated(1, cellKeyAt(at.x, at.y), first, encodeState(trap, 0));
+    assert(remote.seesTrap(rogue.player, first, at));
+    rogue.player.movement.position.orientation = 3.14f;
+    assert(!remote.seesTrap(rogue.player, first, at));
+    rogue.player.movement.position = spot;
+
+    uint[] lock = new uint[lockFormat.length];
+    lock[0] = 12; lock[1] = 2; lock[9] = 4;
+    a.context.client.locks = typeof(a.context.client.locks).parse(buildDbc(lockFormat, [lock]), "Lock.dbc");
+    auto disarm = a.spell(1842, SpellEffect.openLock, ImplicitTarget.caster, 200);
+    disarm.miscValue[0] = 4;
+    rogue.openLock(disarm, 0, first, 0);
+    assert(a.map.findObject(first) is null);
     a.cast_(trapSpell);
     assert(session.trapSlots[0] != first && a.map.findObject(first) is null, "the slot's old trap gone");
     a.tick(100);

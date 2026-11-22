@@ -54,7 +54,7 @@ import dmangos.world.creatureai : CombatWorld;
 import dmangos.world.unit : UnitRef;
 import dmangos.world.creature : Creature;
 import dmangos.world.elevators : ElevatorPath;
-import dmangos.world.gameobject : GameObject, GameObjectWorld, goStateReady;
+import dmangos.world.gameobject : GameObject, GameObjectTemplate, GameObjectType, GameObjectWorld, goStateReady;
 import dmangos.world.gameobjectcollision : GameObjectCollision;
 import dmangos.world.motion : MotionWorld;
 import dmangos.world.movement : Position;
@@ -528,6 +528,14 @@ final class Map : CombatWorld, GameObjectWorld
     // What `updateVisibility` sees, kept between calls for their memory (empty outside it).
     private SlotBits playersInSight, objectsInSight;
     private int stealthCheck = 1000; // milliseconds until stealthed players' visibility is worked out again
+    const(GameObjectTemplate)* delegate(uint) gameObjectTemplate;
+    private struct ConcealedTrap
+    {
+        ulong owner;
+        uint level;
+        bool stealthed, invisible;
+    }
+    private ConcealedTrap[ulong] concealedTraps;
     private uint ghosts; // players here released (`Entity.ghost`): with none, who sees whom is symmetric
     private bool updatingVisibility;
 
@@ -589,6 +597,7 @@ final class Map : CombatWorld, GameObjectWorld
     /// The entity in `slot` goes: nobody's client has it any more, and it has nothing.
     private void dropEntity(uint slot)
     {
+        concealedTraps.remove(at(slot).guid);
         casterReplicas.remove(at(slot).guid);
         clearInterest(slot);
         foreach (v; at(slot).viewers.dup)
@@ -944,6 +953,8 @@ final class Map : CombatWorld, GameObjectWorld
         putInCellIfOut(slot, cell);
         if (at(slot).mover !is null)
             startTicking(slot);
+        if (auto go = cast(GameObject) object)
+            indexTrap(go.guid, go.template_, go.values);
         replicate(slot, cell);
         if (onObjectArrived !is null)
             onObjectArrived(object);
@@ -1017,6 +1028,42 @@ final class Map : CombatWorld, GameObjectWorld
             forget([guid]);
     }
 
+    private void indexTrap(ulong guid, const(GameObjectTemplate)* object, const ref UpdateValues fields)
+    {
+        import dmangos.world.updatefields : OBJECT_FIELD_CREATED_BY, GAMEOBJECT_LEVEL;
+
+        if (object is null || object.type != GameObjectType.trap)
+            return;
+        const owner = fields.get!OBJECT_FIELD_CREATED_BY;
+        if (owner && (object.data[9] || object.data[11]))
+            concealedTraps[guid] = ConcealedTrap(owner, fields.get!GAMEOBJECT_LEVEL, object.data[9] != 0,
+                object.data[11] != 0);
+    }
+
+    /// The hunter and party see their own traps. Other players can detect one with the trap-specific aura modifiers.
+    bool seesTrap(const Player viewer, ulong guid, Position at) const
+    {
+        import dmangos.world.combat : Fighter, detects;
+        import dmangos.world.player : PlayerFlags;
+        import dmangos.world.spellids : AuraType;
+
+        const trap = guid in concealedTraps;
+        if (trap is null || trap.owner == viewer.guid || viewer.hasFlag(PlayerFlags.gm)
+            || factsOf(viewer.guid, trap.owner, at).sameGroup)
+            return true;
+        if (trap.invisible && viewer.auras.totalByMisc(AuraType.modInvisibilityDetection, 3) >= 300)
+            return true;
+        if (!trap.stealthed)
+            return false;
+        auto detector = viewer.fighter;
+        detector.stealthDetect += viewer.auras.totalByMisc(AuraType.modStealthDetect, 1);
+        Fighter target;
+        target.position = at;
+        target.stealthed = true;
+        target.stealth = 70 + 5 * (cast(int) trap.level - 1);
+        return detects(detector, target, settings.visibilityDistance);
+    }
+
     /**
      * Whether `who` can see `object` (in `slot`) at all, wherever they are: a spirit healer only shows itself to
      * the dead (by its NPC flags), and another node's player follows `playerSees`. `replica` is the map's flag
@@ -1026,6 +1073,8 @@ final class Map : CombatWorld, GameObjectWorld
     private bool objectVisibleTo(uint slot, const MapObject object, const Inhabitant who, bool replica) const
     {
         enum uint spiritHealer = 0x20, spiritGuide = 0x40; // UNIT_NPC_FLAG_SPIRITHEALER, _SPIRITGUIDE
+        if (concealedTraps.length && object.guid in concealedTraps)
+            return seesTrap(who.character, object.guid, object.position);
         if (replica)
         {
             // Another node's player: as a player here would be seen.
@@ -1089,12 +1138,15 @@ final class Map : CombatWorld, GameObjectWorld
         // A stealthed player is seen or lost as enemies come near it, turn and step away: who sees it is worked
         // out again once a second (stealth's detection range is a few yards, not the 10 a relocation waits for).
         // So is what a far-seeing player sees (its eye may move, and what comes near the eye is not told it).
-        if (ghosts && (stealthCheck -= diff) <= 0)
+        if ((ghosts || concealedTraps.length) && (stealthCheck -= diff) <= 0)
         {
             import dmangos.world.spellids : AuraType;
             import dmangos.world.updatefields : PLAYER_FARSIGHT;
 
             stealthCheck = 1000;
+            foreach (guid, _; concealedTraps)
+                if (auto trap = findObject(guid))
+                    updateObjectVisibility(trap);
             foreach (who; playersNow())
                 if (who.character.auras.hasType(AuraType.modStealth) || at(slotFor(who.character.guid)).farSeeing
                         || who.character.values.get!PLAYER_FARSIGHT)
@@ -1711,6 +1763,12 @@ final class Map : CombatWorld, GameObjectWorld
             putInCell(slot, at_);
         }
         startTicking(slot);
+        if (replica.fieldsOf.type == TypeId.gameObject && gameObjectTemplate !is null)
+        {
+            import dmangos.world.updatefields : OBJECT_FIELD_ENTRY;
+
+            indexTrap(guid, gameObjectTemplate(replica.fieldsOf.get!OBJECT_FIELD_ENTRY), replica.fieldsOf);
+        }
         updateObjectVisibility(replica);
     }
 
@@ -3242,7 +3300,7 @@ private:
         }
         foreach (p; at(slot).viewers.dup)
             if (!inSightOf(p, object.position)
-                || (at(slot).replica && !objectVisibleTo(slot, object, at(p).player, true))) // another node's ghost
+                || ((at(slot).replica || guid in concealedTraps) && !objectVisibleTo(slot, object, at(p).player, at(slot).replica)))
             {
                 unsee(p, slot);
                 UpdateData forget;

@@ -393,6 +393,8 @@ mixin template GameObjectHandlers()
         auto go = cast(GameObject) map.findObject(targets.gameObject);
         if (go is null)
             return SpellCastResult.badTargets;
+        if (go.type == GameObjectType.trap && !map.seesTrap(player, go.guid, go.position))
+            return SpellCastResult.badTargets;
         if (!withinInteraction(go, 5))
             return SpellCastResult.outOfRange;
         foreach (i; 0 .. 3)
@@ -425,6 +427,17 @@ mixin template GameObjectHandlers()
                 updateGatherSkill(skillId, pure_, required);
                 go.skilledUp[player.guid] = true;
             }
+        enum disarmTrap = 4; // LockType from Lock.dbc
+        if (go.type == GameObjectType.trap && spell.miscValue[i] == disarmTrap)
+        {
+            if (!map.seesTrap(player, go.guid, go.position))
+                return;
+            if (go.owner)
+                map.removeObject(go.guid);
+            else
+                map.gameObjectUsedUp(go);
+            return;
+        }
         sendGameObjectLoot(go);
     }
 
