@@ -24,6 +24,34 @@ enum LogLevel : ubyte
 }
 
 private __gshared LogLevel threshold = LogLevel.info;
+private __gshared bool colorConsole;
+
+/// Enables colored severity tags when stderr supports them. Call before starting server threads.
+void enableConsoleLogColors()
+{
+    import std.process : environment;
+
+    if (!stderr.isOpen || environment.get("NO_COLOR").length || environment.get("TERM") == "dumb")
+        return;
+
+    version (Posix)
+    {
+        import core.sys.posix.unistd : isatty;
+
+        colorConsole = isatty(stderr.fileno) == 1;
+    }
+    else version (Windows)
+    {
+        import core.sys.windows.wincon : ENABLE_PROCESSED_OUTPUT, ENABLE_VIRTUAL_TERMINAL_PROCESSING,
+            GetConsoleMode, SetConsoleMode;
+        import core.sys.windows.windef : DWORD;
+
+        auto handle = stderr.windowsHandle;
+        DWORD mode;
+        colorConsole = GetConsoleMode(handle, &mode) != 0
+            && SetConsoleMode(handle, mode | ENABLE_PROCESSED_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0;
+    }
+}
 
 /// Sets the least severe level that is still written.
 void setLogLevel(LogLevel level) @trusted nothrow @nogc
@@ -49,6 +77,20 @@ private static immutable string[] levelTags = () {
 
 static assert(levelTags[LogLevel.warning] == "WARNING");
 
+private static immutable string[] coloredLevelTags = () {
+    immutable string[LogLevel.max + 1] colors = [
+        "\x1b[2m",     // trace: dim
+        "\x1b[36m",    // verbose: cyan
+        "\x1b[32m",    // info: green
+        "\x1b[1;33m",  // warning: bold yellow
+        "\x1b[1;31m",  // error: bold red
+    ];
+    string[] tags;
+    foreach (i, color; colors)
+        tags ~= color ~ levelTags[i] ~ "\x1b[0m";
+    return tags;
+}();
+
 /// Writes a message at `level` if that level is enabled.
 void logMessage(LogLevel level, string fmt, Args...)(auto ref Args args)
 {
@@ -63,7 +105,8 @@ private void emit(LogLevel level, string message) @trusted nothrow
     {
         auto now = Clock.currTime;
         now.fracSecs = Duration.zero;
-        stderr.writefln("%s %s %s", now.toISOExtString(), levelTags[level], message);
+        const tag = colorConsole ? coloredLevelTags[level] : levelTags[level];
+        stderr.writefln("%s %s %s", now.toISOExtString(), tag, message);
     }
     catch (Exception)
     {

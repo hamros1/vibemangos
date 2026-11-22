@@ -51,6 +51,7 @@ private enum consoleAuthor = "[Console]";
 
 int main(string[] args)
 {
+    enableConsoleLogColors();
     string configPath = "authserver.json";
     GetoptResult options;
     try

@@ -46,6 +46,7 @@ extern (C) __gshared string[] rt_options = ["gcopt=parallel:0"];
 
 int main(string[] args)
 {
+    enableConsoleLogColors();
     string configPath = "worldserver.json";
     GetoptResult options;
     try

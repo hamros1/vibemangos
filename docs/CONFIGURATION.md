@@ -12,6 +12,12 @@ The servers load MariaDB Connector/C (`libmariadb3`) or `libmysqlclient` at run 
 `mysql_library` to load a specific file. The database connection string is
 `host;port;user;password;db`. For a Unix socket, use `.;/path/to/mysql.sock;user;password;db`.
 
+## Console logging
+
+Both servers color their severity labels when standard error goes to a supported terminal.
+Warnings are bold yellow and errors are bold red. Redirected logs are plain text.
+Set `NO_COLOR=1` to disable colors in a terminal.
+
 ## Login server settings
 
 | Key | Meaning | Default |
