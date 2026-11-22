@@ -28,6 +28,7 @@ import dmangos.world.worlddata : WorldData;
 
 private __gshared ClientData realClient;
 private __gshared WorldData realWorldData;
+private __gshared string realDataDir;
 private __gshared bool realLoaded, realTried;
 
 /// The real data, loaded at the first call; false (nothing to test against) without `DMANGOS_REAL_DATA`.
@@ -45,7 +46,8 @@ bool haveRealData()
         return false;
     const parts = named.split("|");
     assert(parts.length == 3, "DMANGOS_REAL_DATA: dataDir|mysqlLibrary|worldConnection");
-    realClient = ClientData.load(parts[0]);
+    realDataDir = parts[0];
+    realClient = ClientData.load(realDataDir);
     auto world = new MySqlConnection(ConnectionInfo.parse(parts[2]), parts[1]);
     scope (exit)
         world.close();
@@ -63,10 +65,17 @@ struct RealWorld
 
     static RealWorld make(uint seed = 20_261_120)
     {
+        return make(seed, false);
+    }
+
+    static RealWorld make(uint seed, bool withTerrain)
+    {
         RealWorld w;
         w.db = newDatabase();
         WorldConfig config;
         config.logoutDelay = 0;
+        if (withTerrain)
+            config.dataDir = realDataDir;
         w.context = new WorldContext(config, w.db, realWorldData, realClient);
         w.now = MonoTime.currTime;
         // The same rolls at every run: a test passes or fails for good, not one run in twenty.

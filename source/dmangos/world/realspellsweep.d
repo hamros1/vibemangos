@@ -10,6 +10,7 @@
  * on the unit the effect's implicit target names, as long as `DurationIndex` says (a finishing move's by its combo
  * points), combo points were added, power given, items made, creatures summoned; the cost was paid and the
  * cooldown (its own or its category's) started.
+ * Fishing runs with extracted terrain and waits for the bobber's bite and loot through client packets.
  *
  * A spell that fails is either fixed in the server or listed in tools/harness/realspell-known.txt with its reason:
  * the sweep fails at a failure not listed there, and says which listed ones pass now. Runs with the other real-data
@@ -466,19 +467,19 @@ private struct Sweeper
     uint nextGuid = 1000;
     bool verbose;
 
-    Outcome sweep(const Sweepable sw, ubyte race, ubyte classId)
+    Outcome sweep(const Sweepable sw, ubyte race, ubyte classId, uint fishingBobber)
     {
         Outcome last;
         foreach (attempt; 0 .. 4) // a miss, a dodge, a resist: again (a fault fails every time)
         {
-            last = once(sw, race, classId);
+            last = once(sw, race, classId, fishingBobber);
             if (last.ok)
                 break;
         }
         return last;
     }
 
-    private Outcome once(const Sweepable sw, ubyte race, ubyte classId)
+    private Outcome once(const Sweepable sw, ubyte race, ubyte classId, uint fishingBobber)
     {
         import dmangos.world.spellcast : castTime, duration, range;
 
@@ -535,6 +536,8 @@ private struct Sweeper
                     s.equippedItemSubClassMask));
         if ((s.casting.attributesEx3 & requiresMainHand) && player.inventory.equipped(15) is null)
             wear(hero, 2, 0x1 | 0x80 | 0x8000, classId, race); // an axe, a sword, a dagger
+        if (fishingBobber)
+            return problems.length ? Outcome(false, joinProblems(problems)) : fish(hero, *s, fishingBobber);
         // Reagents, tools, a spell focus beside it.
         foreach (i, reagent; s.reagents)
             if (reagent > 0)
@@ -772,7 +775,7 @@ private struct Sweeper
         uint[3] leastHealth = healthOf, mostHealth = healthOf, mostPower = powerOf, leastPower = powerOf;
         uint leastOwnPower = powerBefore;
         bool coolingDown, comboAdded;
-        SpellCastResult failedLater; // a failure told after the cast began (no water to fish in)
+        SpellCastResult failedLater; // a failure reported after the cast began
         bool hasFailedLater;
         const total = castTime(*s, context.client, 60) + 3500
             + ((s.attributesEx & 0x44) ? min(10_000, max(0, duration(*s, context.client, 60))) : 0);
@@ -973,6 +976,76 @@ private struct Sweeper
             imported!"std.stdio".stderr.writefln("%s %s (class %s, race %s): %s", sw.id, s.casting.name, classId, race,
                 problems.length ? joinProblems(problems) : "ok");
         return problems.length ? Outcome(false, joinProblems(problems)) : Outcome(true, null);
+    }
+
+    /// Casts from a bank near Stormwind, then uses the owned bobber when the client sees the bite.
+    private Outcome fish(ref TestClient hero, const ref SpellInfo spell, uint fishingBobber)
+    {
+        import dmangos.bytes : ByteReader, ByteWriter;
+        import dmangos.world.gameobject : GameObject;
+        import dmangos.world.packets : ClientGuid, ClientTeleportAck;
+        import dmangos.world.spellcast : castTime, duration;
+        import dmangos.world.terrain : invalidHeight;
+
+        auto me = hero.session.inWorld;
+        auto player = me.player;
+        auto map = w.context.map(0);
+        enum float bankX = -9083, bankY = 537;
+        const bank = Position(bankX, bankY, map.groundHeight(bankX, bankY, 88.5f, false), 0);
+        if (bank.z <= invalidHeight)
+            return Outcome(false, "the fishing fixture requires the extracted terrain near Stormwind");
+        if (!me.teleportTo(0, bank, null, uint.max, true))
+            return Outcome(false, "could not reach the fishing fixture");
+        hero.write(Opcode.MSG_MOVE_TELEPORT_ACK, ClientTeleportAck(player.guid, 0, 0));
+        hero.read();
+        enum uint skillFishing = 356;
+        player.setSkill(skillFishing, 300, 300);
+
+        ByteWriter castRequest;
+        castRequest.put(spell.id);
+        SpellTargets(TargetFlags.self).write(castRequest);
+        hero.write(Opcode.CMSG_CAST_SPELL, castRequest.data);
+
+        const limitMs = castTime(spell, w.context.client, player.data.level)
+            + duration(spell, w.context.client, player.data.level);
+        GameObject bobber;
+        for (int elapsed; elapsed <= limitMs; elapsed += 100)
+        {
+            if (bobber is null && player.values.get!UNIT_CHANNEL_SPELL == spell.id)
+            {
+                bobber = cast(GameObject) map.findObject(player.values.get!UNIT_FIELD_CHANNEL_OBJECT);
+                if (bobber is null || bobber.owner != player.guid || bobber.spawn.entry != fishingBobber)
+                    return Outcome(false, "the fishing channel has no owned bobber");
+                const at = bobber.position;
+                float surface;
+                if (!map.waterAt(at.x, at.y, at.z, surface) || at.z != surface)
+                    return Outcome(false, "the bobber is off the water surface");
+            }
+            foreach (packet; hero.read())
+            {
+                auto payload = ByteReader(packet.body_);
+                if (packet.opcode == Opcode.SMSG_CAST_RESULT && payload.read!uint() == spell.id && payload.read!ubyte())
+                    return Outcome(false, format!"fishing refused: %s"(cast(SpellCastResult) payload.read!ubyte()));
+                if (bobber is null || packet.opcode != Opcode.SMSG_GAMEOBJECT_CUSTOM_ANIM
+                    || payload.read!ulong() != bobber.guid)
+                    continue;
+                hero.write(Opcode.CMSG_GAMEOBJ_USE, ClientGuid(bobber.guid));
+                enum size_t lootItemCountOffset = ulong.sizeof + ubyte.sizeof + uint.sizeof; // GUID, type and gold
+                foreach (reply; hero.read())
+                    if (reply.opcode == Opcode.SMSG_LOOT_RESPONSE && reply.body_.length > lootItemCountOffset
+                            && reply.body_[lootItemCountOffset] > 0)
+                    {
+                        if (verbose)
+                            imported!"std.stdio".stderr.writefln("%s %s: cast, bite and catch verified", spell.id,
+                                spell.casting.name);
+                        return Outcome(true, null);
+                    }
+                return Outcome(false, "using the bobber at the bite returned no fishing loot");
+            }
+            w.now += 100.msecs;
+            me.update(100.msecs);
+        }
+        return Outcome(false, bobber is null ? "fishing produced no bobber" : "the bobber never signaled a bite");
     }
 
     /**
@@ -1266,17 +1339,24 @@ unittest
         spells = picked;
     }
     auto choices = new Choices(data, client, learnableSpells(data, client));
-    Sweeper[ushort] sweepers;
+    Sweeper[uint] sweepers;
     string[uint] failed;
     size_t passed;
     foreach (sw; spells)
     {
         const s = data.spells.spell(sw.id);
         const caster = casterOf(data, client, *s, sw.classId);
-        const key = cast(ushort)(caster[0] << 8 | caster[1]);
+        uint fishingBobber;
+        foreach (i, effect; s.effect)
+            if (effect == SpellEffect.transDoor && Character.isFishingBobber(cast(uint) s.miscValue[i] in data.gameObjectTemplates))
+                fishingBobber = cast(uint) s.miscValue[i];
+        const key = (fishingBobber ? 1u << 16 : 0u) | (cast(uint) caster[0] << 8) | caster[1];
         if (key !in sweepers)
-            sweepers[key] = Sweeper(sweepers.length ? RealWorld.make() : first, choices, 1000, only !is null);
-        const outcome = sweepers[key].sweep(sw, caster[0], caster[1]);
+        {
+            auto world = fishingBobber ? RealWorld.make(20_261_120, true) : sweepers.length ? RealWorld.make() : first;
+            sweepers[key] = Sweeper(world, choices, 1000, only !is null);
+        }
+        const outcome = sweepers[key].sweep(sw, caster[0], caster[1], fishingBobber);
         if (outcome.ok)
             ++passed;
         else
