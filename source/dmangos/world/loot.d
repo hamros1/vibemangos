@@ -398,6 +398,7 @@ final class Loot
     private bool[ulong] pendingQuestLoot;
     private ulong questCheckSequence;
     private long questCheckUntil;
+    private void delegate() deferredQuestChecks; // after a migrated loot object is on the map
     uint rollMap;
     ulong delegate() nextRoll;
     bool delegate(ushort, const ref GroupLootRoll) sendRemoteRoll;
@@ -667,11 +668,9 @@ final class Loot
     {
         if (!remoteMembers.length || send is null)
             return;
-        uint[maxLootItems] entries;
         foreach (item; items)
             if (item.quest)
             {
-                entries[item.slot] = item.itemId;
                 hasRemoteQuestDrops = true;
                 foreach (guid, _; remoteMembers)
                     item.allowed[guid] = true;
@@ -683,10 +682,26 @@ final class Loot
         questCheckUntil = nowSeconds() + 5;
         foreach (guid, _; remoteMembers)
             pendingQuestLoot[guid] = true;
-        foreach (guid, peer; remoteMembers)
+        sendPendingQuestChecks(map, send);
+    }
+
+    /// A new owner reissues checks that were still in flight at the time of the snapshot.
+    package void resumeQuestLootChecks(uint map, bool delegate(ushort, const ref QuestLootCheck) send)
+    {
+        if (send !is null && pendingQuestLoot.length)
+            deferredQuestChecks = () => sendPendingQuestChecks(map, send);
+    }
+
+    private void sendPendingQuestChecks(uint map, bool delegate(ushort, const ref QuestLootCheck) send)
+    {
+        uint[maxLootItems] entries;
+        foreach (item; items)
+            if (item.quest)
+                entries[item.slot] = item.itemId;
+        foreach (guid; pendingQuestLoot.keys)
         {
             const message = QuestLootCheck(map, target, guid, questCheckSequence, false, 0, entries[]);
-            if (!send(peer, message))
+            if (!send(remoteMembers[guid], message))
                 recheckQuestLooter(guid, (const LootItem) => false);
         }
     }
@@ -1358,6 +1373,13 @@ final class Loot
                 recheckQuestLooter(guid, (const LootItem) => false);
             refreshQuestLoot();
         }
+        if (deferredQuestChecks !is null)
+        {
+            auto check = deferredQuestChecks;
+            deferredQuestChecks = null;
+            if (pendingQuestLoot.length)
+                check();
+        }
         foreach (slot; rolls.keys)
             if (rolls[slot].update(now))
                 rolls.remove(slot);
@@ -1998,4 +2020,55 @@ unittest
     restored.vote(b, 0, RollVote.need);
     assert(a.stored == [100] && b.stored.length == 0 && !restored.rolls.length);
     assert(restored.itemInSlot(0).allowed.length == 0);
+}
+
+/// A pending remote quest-rights request is sent again after a clean handoff, within its original time.
+unittest
+{
+    foreach (expired; [false, true])
+    {
+        auto recipient = new TestLooter(8);
+        auto loot = new Loot(100, (ulong who) => who == 8 ? cast(Looter) recipient : null);
+        long now = 1000;
+        loot.clock = () => now;
+        loot.remoteMembers[8] = 4;
+        auto item = new LootItem;
+        item.itemId = 42;
+        item.count = 1;
+        item.quest = true;
+        loot.items ~= item;
+        uint sent;
+        bool check(ushort peer, const ref QuestLootCheck request)
+        {
+            assert(peer == 4 && request.map == 1 && request.loot == 100 && request.player == 8
+                && request.sequence == 4000 && request.items[0] == 42 && !request.reply);
+            ++sent;
+            return true;
+        }
+        loot.beginQuestLootChecks(1, () => 4000UL, &check);
+        assert(sent == 1 && !loot.canLoot(8));
+        ByteWriter writer;
+        loot.saveHandoff(writer);
+        auto reader = ByteReader(writer.data);
+        auto arrived = Loot.loadHandoff(100, reader);
+        arrived.find = loot.find;
+        arrived.clock = loot.clock;
+        arrived.resumeQuestLootChecks(1, &check);
+        assert(sent == 1);
+        now += expired ? 5 : 1;
+        arrived.update();
+        assert(sent == (expired ? 1 : 2) && !arrived.canLoot(8));
+        const reply = QuestLootCheck(1, 100, 8, 4000, true, 1);
+        arrived.acceptQuestLootCheck(5, reply);
+        assert(!arrived.canLoot(8), "only the originally queried player's node can confirm the quest");
+        arrived.acceptQuestLootCheck(4, reply);
+        assert(arrived.canLoot(8) == !expired);
+        if (!expired)
+        {
+            assert(arrived.sendItem(recipient, arrived.itemInSlot(0)) == 0);
+            arrived.acceptQuestLootCheck(4, reply);
+            arrived.update();
+            assert(!arrived.canLoot(8) && recipient.stored == [42] && sent == 2);
+        }
+    }
 }

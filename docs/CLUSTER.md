@@ -593,7 +593,8 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   loot turn when the loot method uses one. A multi-drop slot gives each eligible member one claim.
   The loot's node records each claim, including when the player leaves and returns. A quest check
   that goes unanswered for five seconds releases its provisional rights. A clean region handoff
-  carries the remaining drops and their claims to the new owner.
+  carries the remaining drops and their claims to the new owner. It repeats unanswered checks
+  within their original deadline.
 * **Script signals** to a creature another node simulates go there (`ScriptSignal`), applied once
   (its origin and sequence number drop a resend), and are passed on, at most three times, if the
   creature has moved again (docs/SCRIPTING.md).

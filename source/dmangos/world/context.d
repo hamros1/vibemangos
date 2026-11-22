@@ -5019,9 +5019,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if ((loot = creature.loot) !is null)
                 bindCreatureLoot(this, destination, creature, loot);
         }
-        if (loot !is null && loot.rule != LootRule.notGroup)
-            bindLootDelivery(this, destination, loot, loot.rule == LootRule.groupLoot || loot.rule == LootRule.needBeforeGreed,
-                loot.rule == LootRule.masterLoot);
+        if (loot !is null)
+        {
+            if (loot.rule != LootRule.notGroup)
+                bindLootDelivery(this, destination, loot,
+                    loot.rule == LootRule.groupLoot || loot.rule == LootRule.needBeforeGreed, loot.rule == LootRule.masterLoot);
+            loot.resumeQuestLootChecks(destination.id, sendQuestLootCheck);
+        }
     }
 
     private size_t[uint] spawnIndex, gameObjectSpawnIndex; // spawn guid -> its place in the world data
