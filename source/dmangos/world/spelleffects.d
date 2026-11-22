@@ -53,7 +53,7 @@ private enum SpellEffect[] notDoneByAny = [SpellEffect.portalTeleport, SpellEffe
     SpellEffect.bind, SpellEffect.portal, SpellEffect.ritualBase, SpellEffect.ritualSpecialize,
     SpellEffect.ritualActivatePortal, SpellEffect.dodge, SpellEffect.evade, SpellEffect.parry, SpellEffect.block,
     SpellEffect.weapon, SpellEffect.defense, SpellEffect.triggerMissile, SpellEffect.summonChangeItem,
-    SpellEffect.spellDefense, SpellEffect.language, SpellEffect.dualWield, SpellEffect.teleportUnitsFaceCaster,
+    SpellEffect.spellDefense, SpellEffect.language, SpellEffect.dualWield,
     SpellEffect.skillStep, SpellEffect.addHonor, SpellEffect.tradeSkill, SpellEffect.stealth,
     SpellEffect.forceCriticalHit, SpellEffect.guaranteeHit, SpellEffect.proficiency, SpellEffect.healthFunnel,
     SpellEffect.powerFunnel, SpellEffect.pull, SpellEffect.healMechanical, SpellEffect.createHouse,
@@ -87,7 +87,8 @@ private enum SpellEffect[] creaturesDo = [SpellEffect.none, SpellEffect.schoolDa
     SpellEffect.scriptEffect, SpellEffect.interruptCast, SpellEffect.sendEvent, SpellEffect.summon,
     SpellEffect.summonWild, SpellEffect.summonGuardian, SpellEffect.knockBack, SpellEffect.healthLeech,
     SpellEffect.powerDrain, SpellEffect.powerBurn, SpellEffect.durabilityDamage, SpellEffect.durabilityDamagePct,
-    SpellEffect.reputation, SpellEffect.teleportUnits, SpellEffect.instantKill, SpellEffect.energize,
+    SpellEffect.reputation, SpellEffect.teleportUnits, SpellEffect.teleportUnitsFaceCaster, SpellEffect.instantKill,
+    SpellEffect.energize,
     SpellEffect.healMaxHealth, SpellEffect.summonObjectWild, SpellEffect.transDoor, SpellEffect.summonPet,
     SpellEffect.learnSpell, SpellEffect.createItem, SpellEffect.addComboPoints, SpellEffect.spawn, SpellEffect.detect,
     SpellEffect.attack, SpellEffect.persistentAreaAura, SpellEffect.dispel, SpellEffect.dispelMechanic,
@@ -427,6 +428,42 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         else if (target != caster.guid) // a player to the spell's place
             context.teleportBySpell(target, spell.id);
         break;
+    case SpellEffect.teleportUnitsFaceCaster:
+    {
+        import std.math : cos, sin, PI;
+        import dmangos.world.defines : UnitFlags;
+        import dmangos.world.spellcast : radius;
+        import dmangos.world.terrain : invalidHeight;
+        import dmangos.world.updatefields : UNIT_FIELD_FLAGS;
+
+        auto who = map.unit(target);
+        if (who.kind != UnitKind.player || (who.fields.get!UNIT_FIELD_FLAGS & UnitFlags.taxiFlight))
+            break;
+        const a = spell.implicitTargetA[i], b = spell.casting.implicitTargetB[i];
+        if (a == ImplicitTarget.database || b == ImplicitTarget.database)
+        {
+            context.teleportBySpell(target, spell.id);
+            break;
+        }
+
+        auto at = caster.position;
+        if (a == ImplicitTarget.locationCasterFront || b == ImplicitTarget.locationCasterFront)
+        {
+            const distance = radius(*spell, i, context.client);
+            at.x += distance * cos(at.orientation);
+            at.y += distance * sin(at.orientation);
+            const floor = map.groundHeight(at.x, at.y, at.z + 2, false);
+            if (floor > invalidHeight)
+                at.z = floor;
+        }
+        else if (a != ImplicitTarget.locationCasterDest && b != ImplicitTarget.locationCasterDest)
+            break;
+        at.orientation = cast(float)((at.orientation + PI) % (2 * PI));
+        if (at.orientation < 0)
+            at.orientation += 2 * PI;
+        who.session.spellTeleport(map.id, at);
+        break;
+    }
     case SpellEffect.createItem: // SPELL_EFFECT_CREATE_ITEM: a player's for itself; a creature's for the player it is
         // aimed at (CMaNGOS's `DoCreateItem`: `unitTarget`'s)
         if (!spell.itemType[i])

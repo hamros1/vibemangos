@@ -84,6 +84,12 @@ Flamestrike’s ground effect was missing from the hidden-debuff list. All six p
 
 All 44 escort cases and 17 quest events now pass. The escort cases also verify that leaving the NPC behind fails the quest. The survey uses the database’s quest-giver assignments to match each Triage clinic to its own quest.
 
+## NPC summons and banishments
+
+Eight NPC casts now move their target through the shared teleport effect. The spell data chooses the caster’s position, a point in front of the caster, or a destination stored in `spell_target_position`. Caster-relative moves turn the player toward the caster. Stored destinations supply the map, coordinates and orientation. The effect leaves players on taxi flights alone. [VMaNGOS comparison for the shared effect](https://github.com/vmangos/core/blob/development/src/game/Spells/SpellEffects.cpp#L2715-L2731)
+
+The real-data sweep uses the creature AI cast and checks the player’s landing position and orientation after the client acknowledges the teleport. It covers a transfer to Kalimdor and Jin’do’s Banish teleport within the same Zul’Gurub copy.
+
 ## Reproduce
 
 With the repository harness database and extracted client data configured, run from the project root:

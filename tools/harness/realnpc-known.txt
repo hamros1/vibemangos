@@ -41,7 +41,6 @@
 15366: Songflower Serenade: no caster: no creature casts it in the data
 15708: Mortal Strike: aura modHealingPct: not on the player (effect 1)
 15727: Demoralizing Roar: aura modAttackPower: not on the player (effect 0)
-15734: Summon: not done: teleportUnitsFaceCaster (effect 0: the player did not move)
 15746: Disturb Rookery Egg: not done: activateObject (effect 0)
 16054: Flames of the Black Flight: not done: summonObjectWild (effect 1: no object 175322); not done: activateObject (effect 2)
 16472: Wicked Milking: no caster: no creature casts it in the data
@@ -55,7 +54,6 @@
 19873: Destroy Egg: not done: activateObject (effect 0)
 20220: Gnomish Engineering: no caster: no creature casts it in the data
 20221: Goblin Engineering: no caster: no creature casts it in the data
-20477: Summon Player: not done: teleportUnitsFaceCaster (effect 0: the player did not move)
 20534: Teleport: teleportUnits: the player did not move (effect 0)
 20618: Teleport: teleportUnits: the player did not move (effect 0)
 20680: Blizzard: persistentAreaAura: no area, nothing on the player (effect 0)
@@ -63,7 +61,6 @@
 20733: Black Arrow: refused: outOfRange
 21066: Void Bolt: aura modDecreaseSpeed: not on the player (effect 1)
 21655: Blink: not done: leap (effect 0: the caster did not move)
-21727: Summon Player: not done: teleportUnitsFaceCaster (effect 0: the player did not move)
 21950: Recite Words of Celebras: not done: activateObject (effect 0)
 22438: Mark of Detonation: targeting: aura procTriggerSpell at the caster, not the player (effect 0)
 22817: Fengus' Ferocity: no caster: no creature casts it in the data
@@ -73,9 +70,7 @@
 22864: Field Repair Bot 74A: no caster: no creature casts it in the data
 22910: Immolation Trap: not done: summonObjectSlot1 (effect 0: no object 164875)
 22925: Conjure Dull Flat Elven Blade DND: no caster: no creature casts it in the data
-22951: Summon Player: not done: teleportUnitsFaceCaster (effect 0: the player did not move)
 22994: Entangle: teleportUnits: the player did not move (effect 2)
-22995: Summon: not done: teleportUnitsFaceCaster (effect 0: the player did not move)
 23059: Create Thorium Brotherhood Contract DND: no caster: no creature casts it in the data
 23187: Frost Burn: aura modMeleeHaste: not on the player (effect 1)
 23331: Blast Wave: schoolDamage: no damage to the player (effect 0); aura modDecreaseSpeed: not on the player (effect 1)
@@ -106,7 +101,6 @@
 24341: Revive: not done: resurrect (effect 0)
 24375: War Stomp: aura modStun: not on the player (effect 0)
 24408: Charge: not done: charge (effect 0: the caster did not move); aura modStun: not on the player (effect 2)
-24466: Banish: not done: teleportUnitsFaceCaster (effect 0: the player did not move)
 24573: Mortal Strike: aura modHealingPct: not on the player (effect 1)
 24596: Intoxicating Venom: not done: inebriate (effect 1)
 24670: Inferno: not done: summonDemon (effect 0: no creature 89)
@@ -139,14 +133,12 @@
 26063: Ouro Submerge Visual: not done: activateObject (effect 1)
 26095: Felcloth Bag: no caster: no creature casts it in the data
 26102: Sand Blast: aura modStun: not on the player (effect 1)
-26229: Summon Player: not done: teleportUnitsFaceCaster (effect 0: the player did not move)
 26313: Cluster Rocket, PURPLE - D: summonObjectWild: no object 180856 (effect 1)
 26314: Cluster Rocket, PURPLE - N: summonObjectWild: no object 180856 (effect 1)
 26315: Cluster Rocket, PURPLE - SE: summonObjectWild: no object 180856 (effect 1)
 26316: Cluster Rocket, PURPLE - SW: summonObjectWild: no object 180856 (effect 1)
 26346: Rocket, PURPLE: summonObjectWild: no object 180856 (effect 0)
 26359: Cluster Rocket, PURPLE - U: summonObjectWild: no object 180856 (effect 1)
-26446: Summon Player: not done: teleportUnitsFaceCaster (effect 0: the player did not move)
 26448: Holiday - Teleport: Moonglade: no caster: no creature casts it in the data
 26450: Holiday - Lunar Teleport: Darnassus: no caster: no creature casts it in the data
 26452: Holiday - Lunar Teleport: Ironforge: no caster: no creature casts it in the data
