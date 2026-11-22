@@ -48,7 +48,7 @@ import std.typecons : AutoImplement;
 
 import dmangos.plaindata : decode, encode, isPlainData, layout;
 import dmangos.log : error, info, warning;
-import dmangos.world.database : Replaces, WorldDatabase, WriteLedger;
+import dmangos.world.database : DatabaseWrite, Replaces, WorldDatabase, WriteLedger;
 
 // ---------------------------------------------------------------------------------------------------
 // The arguments as bytes
@@ -783,6 +783,11 @@ abstract class WriteBehindBase : WorldDatabase
         return writer;
     }
 
+    protected bool leaseStillHolds()
+    {
+        return writableUntil is null || Clock.currStdTime < writableUntil();
+    }
+
     protected void enqueue(alias fun, Args...)(auto ref Args args)
     {
         Write w;
@@ -802,7 +807,9 @@ abstract class WriteBehindBase : WorldDatabase
 // Every method: queued if it can be, otherwise after the queue is written.
 private enum string behind(C, alias fun) = isQueued!fun
     ? "enqueue!parent(args);"
-    : "writer.settle(); return reader." ~ __traits(identifier, fun) ~ "(args);";
+    : "writer.settle(); " ~ (hasUDA!(fun, DatabaseWrite)
+        ? "if (!leaseStillHolds()) return typeof(return).init; "
+        : "") ~ "return reader." ~ __traits(identifier, fun) ~ "(args);";
 
 /// See the module documentation.
 alias WriteBehind = AutoImplement!(WriteBehindBase, behind);
@@ -867,6 +874,8 @@ unittest
 // A write reached after the lease lapsed is dropped.
 unittest
 {
+    import dmangos.world.creature : CreatureSpawn;
+
     auto inner = newDatabase();
     auto writer = new Writer(inner, null);
     scope (exit)
@@ -877,6 +886,8 @@ unittest
     db.setMuteTime(id, 42);
     assert(db.findAccount("PLAYER").get.muteTime != 42);
     assert(writer.statistics.refused == 1);
+    const spawn = CreatureSpawn.init;
+    assert(db.createCreatureSpawn(spawn) == 0 && inner.creatureSpawnRows.length == 0);
 }
 
 // The log: written before MySQL, emptied after; what it still holds at start-up is written then.

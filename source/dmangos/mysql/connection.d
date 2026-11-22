@@ -297,6 +297,13 @@ final class MySqlConnection
         return mysql.mysql_affected_rows(handle);
     }
 
+    /// Insert a row with AUTO_INCREMENT. A lost reply must not cause another row to be inserted.
+    ulong insert(string sql, Args...)(auto ref Args args)
+    {
+        run(bind!sql(args), false, false);
+        return lastInsertId;
+    }
+
     /**
      * Runs `work` inside a transaction: committed if it returns, rolled back if it throws.
      * (MyISAM tables, which the schema uses for some tables, ignore transactions.) Inside another
@@ -416,7 +423,7 @@ private:
         verbose!"connected to MySQL %s"(info.toString);
     }
 
-    Row[] run(string text, bool wantRows)
+    Row[] run(string text, bool wantRows, bool retry = true)
     {
         foreach (attempt; 0 .. 2)
         {
@@ -437,6 +444,12 @@ private:
             }
             if (attempt == 0 && lost)
             {
+                if (!retry)
+                {
+                    const why = lastError();
+                    close();
+                    throw DatabaseException.withCode(format!"MySQL error %s: %s"(code, why), code);
+                }
                 warning!"lost the connection to MySQL (%s), reconnecting"(lastError());
                 close();
                 continue;

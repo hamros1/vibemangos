@@ -38,6 +38,9 @@ enum HighGuid : ushort
     moTransport = 0x8000, /// ships and zeppelins: the high part and the entry
 }
 
+/// First counter reserved for unsaved objects.
+package enum uint temporaryCounterStart = 0x00C0_0000;
+
 /// The full guid of an object with low guid `low`.
 ulong makeGuid(HighGuid high, uint low) pure nothrow @nogc @safe
 {

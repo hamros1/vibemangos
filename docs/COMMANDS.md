@@ -39,11 +39,11 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
   waits the 5 seconds its help promises (ArcEmu's stops at once).
 * `.server info` names this server, not ArcEmu. Item links use 1.12's link format.
 * `.character additem` gives the whole count, in as many stacks as it takes.
-* `.npc spawn` and `.gobject spawn` write CMaNGOS's `creature` and `gameobject` rows (a respawn time of
-  120 seconds for creatures, the table's default); in a cluster only the GM's node knows the new spawn
-  until the others restart.
-* `.gobject scale` is not saved: CMaNGOS's `gameobject` has no size. `.gobject move` and `.gobject rotate`
-  rewrite the spawn's row and keep its guid (ArcEmu gave the object a new one).
+* `.npc spawn` and `.gobject spawn ID 1` save spawns to CMaNGOS's `creature` and `gameobject` tables.
+  MariaDB assigns their IDs so multiple nodes can save spawns. A new spawn is loaded on the GM's
+  node and the other nodes read its row when they restart. `.gobject spawn ID` is temporary.
+* `.gobject scale` lasts until the object is reloaded. `.gobject move` and `.gobject rotate`
+  keep the ID of a saved spawn. Moving or rotating a temporary spawn keeps it temporary.
 * `.gobject info` shows the size as a number (ArcEmu printed a float with `%u`).
 * `.quest giver` and `.quest finisher` name a game object by its own template (ArcEmu looks its id up
   among the items); ArcEmu's quest tables are CMaNGOS's (`creature_questrelation` and the like).

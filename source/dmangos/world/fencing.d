@@ -4,16 +4,16 @@
  * has certainly stopped, and anything it wrote after that could overwrite theirs.
  *
  * `FencedDatabase` wraps the world server's `WorldDatabase` and forwards every call, except that while
- * `writesAllowed` says no, the calls that write (all those that return nothing) are dropped and
+ * `writesAllowed` says no, writes (void calls and those marked `DatabaseWrite`) are dropped and
  * counted. It is generated from the interface (`std.typecons.AutoImplement`), so a method added there
  * is fenced without anyone remembering to.
  */
 module dmangos.world.fencing;
 
-import std.traits : ReturnType;
+import std.traits : hasUDA, ReturnType;
 import std.typecons : AutoImplement;
 
-import dmangos.world.database : WorldDatabase;
+import dmangos.world.database : DatabaseWrite, WorldDatabase;
 
 /// The part of `FencedDatabase` that is not generated.
 abstract class FencedBase : WorldDatabase
@@ -46,17 +46,20 @@ abstract class FencedBase : WorldDatabase
     }
 }
 
-// Every method of the interface: forwarded; one that returns nothing is a write, dropped while fenced.
+// Writes are dropped while fenced. A write that returns a value reports failure with its default result.
 private enum string forward(C, alias fun) = is(ReturnType!fun == void)
     ? "if (!writesAllowed()) return refuse(\"" ~ __traits(identifier, fun) ~ "\"); inner." ~ __traits(identifier, fun)
         ~ "(args);"
-    : "return inner." ~ __traits(identifier, fun) ~ "(args);";
+    : (hasUDA!(fun, DatabaseWrite)
+        ? "if (!writesAllowed()) { refuse(\"" ~ __traits(identifier, fun) ~ "\"); return typeof(return).init; } "
+        : "") ~ "return inner." ~ __traits(identifier, fun) ~ "(args);";
 
 /// See the module documentation.
 alias FencedDatabase = AutoImplement!(FencedBase, forward);
 
 unittest
 {
+    import dmangos.world.gameobject : GameObjectSpawn;
     import dmangos.world.database : MemoryWorldDatabase;
     import dmangos.world.testclient : newDatabase;
 
@@ -70,5 +73,7 @@ unittest
     db.setMuteTime(db.findAccount("PLAYER").get.id, 7);
     assert(db.findAccount("PLAYER").get.muteTime == 99, "and are dropped once it lapsed");
     assert((cast(FencedBase) db).refused == 1);
+    const spawn = GameObjectSpawn.init;
+    assert(db.createGameObjectSpawn(spawn) == 0 && inner.gameObjectSpawnRows.length == 0);
     assert(!db.findAccount("PLAYER").isNull, "reads still work");
 }

@@ -1133,6 +1133,24 @@ unittest
     assert(db.gameObjectSpawnRows.length == 1);
     gm.say(".gobject delete");
     assert(db.gameObjectSpawnRows.length == 0);
+
+    // Two worlds with the same initial spawn data use one database allocator.
+    auto left = newCreationContext(db), right = newCreationContext(db);
+    const at = Position(-8930, -120, 83.53f);
+    foreach (node; [left, right])
+    {
+        node.data.gameObjectTemplates[chair.entry] = chair;
+        assert(node.spawnCreatureAt(node.map(0), 6774, at) !is null);
+        assert(node.spawnGameObjectAt(node.map(0), chair.entry, at, true) !is null);
+    }
+    assert(db.creatureSpawnRows.length == 2 && db.gameObjectSpawnRows.length == 2);
+    auto transient = right.spawnGameObjectAt(right.map(0), chair.entry, at, false);
+    auto changed = cast(imported!"dmangos.world.gameobject".GameObjectSpawn) transient.spawn;
+    changed.y += 1;
+    transient = right.respawnGameObjectAs(right.map(0), transient, changed);
+    assert(transient.position.y == changed.y && db.gameObjectSpawnRows.length == 2);
+    right.deleteGameObjectSpawn(right.map(0), transient);
+    assert(db.gameObjectSpawnRows.length == 2);
 }
 
 version (unittest) private ulong makeGuidFor(uint entry, uint spawn)

@@ -45,7 +45,7 @@ import dmangos.world.battleground : Battlegrounds;
 import dmangos.world.gameevents : GameEvents, scheduleFor;
 import dmangos.world.creaturelinking : CreatureLink, inLinkRange, LinkFlag;
 import dmangos.world.creatureai : LinkEvent;
-import dmangos.world.objects : HighGuid, highGuidOf, makeGuid, UpdateValues;
+import dmangos.world.objects : HighGuid, highGuidOf, makeGuid, temporaryCounterStart, UpdateValues;
 import dmangos.world.unit : UnitKind, UnitRef;
 import dmangos.world.bgqueue : battlegroundOfMap, BattlegroundQueue, BattlegroundQueueHost;
 import dmangos.world.wareffort : WarEffort, WarEffortHost;
@@ -5121,7 +5121,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// A guid counter for an object of this run only (a summon, a fishing bobber): this node's range.
     uint nextTemporaryCounter()
     {
-        return 0x00C0_0000 + (nodeId % 64) * 0x1_0000 + (++summonsMade & 0xFFFF);
+        return temporaryCounterStart + (nodeId % 64) * 0x1_0000 + (++summonsMade & 0xFFFF);
     }
 
     /**
@@ -5281,7 +5281,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     // Spawns made and deleted by GMs (`.npc spawn`, `.gobject spawn`, the deletes)
     // -----------------------------------------------------------------------
 
-    private uint lastCreatureSpawn, lastGameObjectSpawn; // the highest spawn guids, once looked up
+    private bool[uint] unsavedGameObjectSpawns;
 
     /**
      * A new `creature` row of `entry` at `at` on `map` (saved, in the world data and its cell, so that
@@ -5289,22 +5289,28 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
      */
     Creature spawnCreatureAt(Map map, uint entry, Position at)
     {
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
         import dmangos.world.grid : cellKeyAt;
 
-        if (entry !in data.creatureTemplates)
+        if (!canWrite() || entry !in data.creatureTemplates)
             return null;
-        if (lastCreatureSpawn == 0)
-            foreach (ref s; data.creatureSpawns)
-                if (s.guid > lastCreatureSpawn)
-                    lastCreatureSpawn = s.guid;
-        CreatureSpawn spawn = {guid: ++lastCreatureSpawn, entry: entry, map: map.id, x: at.x, y: at.y, z: at.z,
+        CreatureSpawn spawn = {entry: entry, map: map.id, x: at.x, y: at.y, z: at.z,
             orientation: at.orientation, respawnSeconds: 120, respawnSecondsMax: 120};
+        try
+            spawn.guid = database.createCreatureSpawn(spawn);
+        catch (DatabaseException error)
+        {
+            warning!"could not save the new creature spawn %s: %s"(entry, error.msg);
+            return null;
+        }
+        if (!spawn.guid)
+            return null;
         data.creatureSpawns ~= spawn;
         const index = data.creatureSpawns.length - 1;
         data.creatureCells.require(map.id, null).require(cellKeyAt(at.x, at.y), null) ~= index;
         if (spawnIndex !is null)
             spawnIndex[spawn.guid] = index;
-        database.insertCreatureSpawn(spawn);
         auto creature = makeCreature(&data.creatureSpawns[index]);
         if (creature is null)
             return null;
@@ -5337,23 +5343,36 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     GameObject spawnGameObjectAt(Map map, uint entry, Position at, bool save)
     {
         import std.math : cos, sin;
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
         import dmangos.world.grid : cellKeyAt;
 
-        if (entry !in data.gameObjectTemplates)
+        if (!canWrite() || entry !in data.gameObjectTemplates)
             return null;
-        if (lastGameObjectSpawn == 0)
-            foreach (ref s; data.gameObjectSpawns)
-                if (s.guid > lastGameObjectSpawn)
-                    lastGameObjectSpawn = s.guid;
-        GameObjectSpawn spawn = {guid: ++lastGameObjectSpawn, entry: entry, map: map.id, x: at.x, y: at.y, z: at.z,
+        GameObjectSpawn spawn = {entry: entry, map: map.id, x: at.x, y: at.y, z: at.z,
             orientation: at.orientation, rotation: [0, 0, sin(at.orientation / 2), cos(at.orientation / 2)]};
+        if (save)
+        {
+            try
+                spawn.guid = database.createGameObjectSpawn(spawn);
+            catch (DatabaseException error)
+            {
+                warning!"could not save the new game object spawn %s: %s"(entry, error.msg);
+                return null;
+            }
+            if (!spawn.guid)
+                return null;
+        }
+        else
+        {
+            spawn.guid = nextTemporaryCounter();
+            unsavedGameObjectSpawns[spawn.guid] = true;
+        }
         data.gameObjectSpawns ~= spawn;
         const index = data.gameObjectSpawns.length - 1;
         data.gameObjectCells.require(map.id, null).require(cellKeyAt(at.x, at.y), null) ~= index;
         if (gameObjectSpawnIndex !is null)
             gameObjectSpawnIndex[spawn.guid] = index;
-        if (save)
-            database.insertGameObjectSpawn(spawn);
         auto go = makeGameObject(data.gameObjectSpawns[index]);
         go.instanceId = map.instanceId;
         if (go.type == GameObjectType.transport)
@@ -5392,8 +5411,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             data.gameObjectCells.require(changed.map, null).require(newCell, null) ~= *at;
         }
         data.gameObjectSpawns[*at] = changed;
-        database.deleteGameObjectSpawn(changed.guid);
-        database.insertGameObjectSpawn(changed);
+        if (changed.guid !in unsavedGameObjectSpawns)
+        {
+            database.deleteGameObjectSpawn(changed.guid);
+            database.insertGameObjectSpawn(changed);
+        }
         map.removeObject(go.guid);
         auto made = makeGameObject(data.gameObjectSpawns[*at]);
         made.instanceId = map.instanceId;
@@ -5420,7 +5442,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     }
         gameObjectRespawnAt.remove(s.guid);
         map.removeObject(go.guid);
-        database.deleteGameObjectSpawn(s.guid);
+        if (!unsavedGameObjectSpawns.remove(s.guid))
+            database.deleteGameObjectSpawn(s.guid);
         if (go.type == GameObjectType.transport)
             refreshElevatorHomes(map);
     }
@@ -6168,11 +6191,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
         if (entry !in data.gameObjectTemplates)
             return null;
-        if (lastGameObjectSpawn == 0)
-            foreach (ref s; data.gameObjectSpawns)
-                if (s.guid > lastGameObjectSpawn)
-                    lastGameObjectSpawn = s.guid;
-        auto spawn = GameObjectSpawn(++lastGameObjectSpawn, entry, map.id, at.x, at.y, at.z);
+        auto spawn = GameObjectSpawn(nextTemporaryCounter(), entry, map.id, at.x, at.y, at.z);
         spawn.orientation = at.orientation;
         spawn.rotation = [0, 0, sin(at.orientation / 2), cos(at.orientation / 2)];
         auto go = makeGameObject(spawn);

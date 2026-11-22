@@ -312,6 +312,11 @@ struct Replaces
 {
 }
 
+/// A write that returns a value and must still respect the node's write lease.
+struct DatabaseWrite
+{
+}
+
 /**
  * Where the writer behind the game loop (`dmangos.world.writebehind`) records which of its writes the
  * database has, so that writing its log again after a crash skips them: the table `dmangos_write_applied`
@@ -648,7 +653,10 @@ interface WorldDatabase
     /// `character_instance` (`group` false, `owner` a character) or `group_instance` (`owner` a leader).
     void saveInstanceBind(bool group, uint owner, uint instance, bool permanent);
 
-    /// A spawn a GM made (`creature`, in the world database).
+    /// A saved `creature` spawn, with its ID allocated by the world database.
+    @DatabaseWrite uint createCreatureSpawn(const ref CreatureSpawn spawn);
+
+    /// An explicit spawn ID, including replays of writes queued by older releases.
     void insertCreatureSpawn(const ref CreatureSpawn spawn);
 
     /// A spawn a GM deleted.
@@ -667,7 +675,10 @@ interface WorldDatabase
     /// ditto
     void deleteVendorItem(uint entry, uint item);
 
-    /// A game object spawn a GM made (`gameobject`).
+    /// A saved `gameobject` spawn, with its ID allocated by the world database.
+    @DatabaseWrite uint createGameObjectSpawn(const ref GameObjectSpawn spawn);
+
+    /// A saved game object at its existing ID, including replays of queued writes.
     void insertGameObjectSpawn(const ref GameObjectSpawn spawn);
 
     /// A game object spawn a GM deleted.
@@ -998,12 +1009,26 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     }
     void deleteInstanceRespawn(uint spawnGuid, uint instance) { statements.deleteInstanceRespawn(spawnGuid, instance); }
     void deleteInstanceBind(uint guid, uint instance) { statements.deleteInstanceBind(guid, instance); }
-    void insertCreatureSpawn(const ref CreatureSpawn s)
+    uint createCreatureSpawn(const ref CreatureSpawn s)
     {
-        world.execute!("INSERT INTO creature (guid, id, map, position_x, position_y, position_z, orientation, "
-            ~ "spawntimesecsmin, spawntimesecsmax, spawndist, MovementType) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")(
-            s.guid, s.entry, s.map, s.x, s.y, s.z, s.orientation, s.respawnSeconds, s.respawnSecondsMax,
-            s.wanderDistance, s.movementType);
+        return worldSpawnId!"creature"(storeCreatureSpawn!true(s));
+    }
+
+    void insertCreatureSpawn(const ref CreatureSpawn s) { storeCreatureSpawn!false(s); }
+
+    private ulong storeCreatureSpawn(bool allocate)(const ref CreatureSpawn s)
+    {
+        import std.typecons : tuple;
+
+        enum prefix = "INSERT INTO creature (guid, id, map, position_x, position_y, position_z, orientation, "
+            ~ "spawntimesecsmin, spawntimesecsmax, spawndist, MovementType) VALUES (";
+        enum remaining = ", ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        const row = tuple(s.entry, s.map, s.x, s.y, s.z, s.orientation, s.respawnSeconds,
+            s.respawnSecondsMax, s.wanderDistance, s.movementType);
+        static if (allocate)
+            return world.insert!(prefix ~ "NULL" ~ remaining)(row.expand);
+        else
+            return world.execute!(prefix ~ "?" ~ remaining)(s.guid, row.expand);
     }
     void deleteCreatureSpawn(uint guid) { world.execute!"DELETE FROM creature WHERE guid = ?"(guid); }
     void insertQuestRelation(bool start, uint entry, uint quest)
@@ -1033,12 +1058,36 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     {
         world.execute!"DELETE FROM npc_vendor WHERE entry = ? AND item = ?"(entry, item);
     }
-    void insertGameObjectSpawn(const ref GameObjectSpawn s)
+    uint createGameObjectSpawn(const ref GameObjectSpawn s)
     {
-        world.execute!("INSERT INTO gameobject (guid, id, map, position_x, position_y, position_z, orientation, "
-            ~ "rotation0, rotation1, rotation2, rotation3, spawntimesecsmin, spawntimesecsmax) "
-            ~ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")(s.guid, s.entry, s.map, s.x, s.y, s.z, s.orientation,
-            s.rotation[0], s.rotation[1], s.rotation[2], s.rotation[3], s.respawnSeconds, s.respawnSeconds);
+        return worldSpawnId!"gameobject"(storeGameObjectSpawn!true(s));
+    }
+
+    void insertGameObjectSpawn(const ref GameObjectSpawn s) { storeGameObjectSpawn!false(s); }
+
+    private ulong storeGameObjectSpawn(bool allocate)(const ref GameObjectSpawn s)
+    {
+        import std.typecons : tuple;
+
+        enum prefix = "INSERT INTO gameobject (guid, id, map, position_x, position_y, position_z, orientation, "
+            ~ "rotation0, rotation1, rotation2, rotation3, spawntimesecsmin, spawntimesecsmax) VALUES (";
+        enum remaining = ", ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        const row = tuple(s.entry, s.map, s.x, s.y, s.z, s.orientation, s.rotation[0], s.rotation[1],
+            s.rotation[2], s.rotation[3], s.respawnSeconds, s.respawnSeconds);
+        static if (allocate)
+            return world.insert!(prefix ~ "NULL" ~ remaining)(row.expand);
+        else
+            return world.execute!(prefix ~ "?" ~ remaining)(s.guid, row.expand);
+    }
+
+    private uint worldSpawnId(string table)(ulong id)
+    {
+        import dmangos.world.objects : temporaryCounterStart;
+
+        if (id < temporaryCounterStart)
+            return cast(uint) id;
+        world.execute!("DELETE FROM " ~ table ~ " WHERE guid = ?")(id);
+        return 0;
     }
     void deleteGameObjectSpawn(uint guid) { world.execute!"DELETE FROM gameobject WHERE guid = ?"(guid); }
     Nullable!NameInfo nameInfo(uint guid) { return statements.nameInfo(guid); }
@@ -2034,6 +2083,15 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
     }
     CreatureSpawn[uint] creatureSpawnRows;     /// what `insertCreatureSpawn` wrote, by guid
     GameObjectSpawn[uint] gameObjectSpawnRows; /// ditto, game objects
+    private uint lastCreatureSpawn, lastGameObjectSpawn;
+    uint createCreatureSpawn(const ref CreatureSpawn spawn)
+    {
+        CreatureSpawn row = spawn;
+        while (++lastCreatureSpawn in creatureSpawnRows) {}
+        row.guid = lastCreatureSpawn;
+        insertCreatureSpawn(row);
+        return row.guid;
+    }
     void insertCreatureSpawn(const ref CreatureSpawn s) { creatureSpawnRows[s.guid] = s; }
     void deleteCreatureSpawn(uint guid) { creatureSpawnRows.remove(guid); }
     uint[3][] questRelationRows; /// (start, entry, quest) that `insertQuestRelation` wrote and are not deleted
@@ -2053,6 +2111,14 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
         import std.algorithm.mutation : remove;
 
         vendorRows = vendorRows.remove!(r => r == [entry, item]);
+    }
+    uint createGameObjectSpawn(const ref GameObjectSpawn spawn)
+    {
+        GameObjectSpawn row = spawn;
+        while (++lastGameObjectSpawn in gameObjectSpawnRows) {}
+        row.guid = lastGameObjectSpawn;
+        insertGameObjectSpawn(row);
+        return row.guid;
     }
     void insertGameObjectSpawn(const ref GameObjectSpawn s) { gameObjectSpawnRows[s.guid] = s; }
     void deleteGameObjectSpawn(uint guid) { gameObjectSpawnRows.remove(guid); }

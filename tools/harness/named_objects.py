@@ -13,6 +13,7 @@ MORTAR_SPELL, MORTAR = 18655, 176557
 DOOR_SPELL, DOOR = 11195, 146084
 CHEER_SPELL, RACER = 7036, 4252
 REBUILD_SPELL, GOLEM = 13951, 2520
+NPC_CASTER = 4251
 CELL = 533.3333 / 8
 
 
@@ -130,18 +131,29 @@ def run(fixture):
     output = client("caster", 1, "MORTARCASTER", f"login:{caster}", "cmd:.gm on", "listen:2",
                     f"cast:{MORTAR_SPELL}", "listen:2", f"cast:{DOOR_SPELL}", "listen:2",
                     f"cast:{CHEER_SPELL}", "listen:2", f"cast:{REBUILD_SPELL}", "listen:1",
-                    f"cancelchannel:{REBUILD_SPELL}", "listen:1", "drop")
+                    f"cancelchannel:{REBUILD_SPELL}", "listen:1", f"cmd:.gobject spawn {MORTAR} 1",
+                    f"cmd:.npc spawn {NPC_CASTER}",
+                    f"target:{NPC_CASTER}", f"cmd:.debug castself {REBUILD_SPELL}", "listen:1", "drop")
     if f"entered the world as '{caster}'" not in fixture.log("node1"):
         raise RuntimeError("the caster was not simulated on node 1")
+    marker = f"command '.debug castself {REBUILD_SPELL}'"
+    player_output, _, npc_output = output.partition(marker)
     for expected in (f"[game object animation] {spawned[MORTAR]:#018x} slot 0",
                      f"[game object state] {spawned[DOOR]:#018x} state 2",
                      f"[creature aura] {spawned[RACER]:#018x} received {CHEER_SPELL}",
                      f"[channel start] {REBUILD_SPELL} for",
                      f"[creature aura] {spawned[GOLEM]:#018x} received {REBUILD_SPELL}",
                      f"[creature aura] {spawned[GOLEM]:#018x} ended {REBUILD_SPELL}"):
-        if output.count(expected) != 1:
-            raise RuntimeError(f"expected one '{expected}', got {output.count(expected)}")
-    print("PASS: node 1 saw the idle node 2's mortar animate, door open, racer gain an aura, and golem's channel cancel",
+        if player_output.count(expected) != 1:
+            raise RuntimeError(f"expected one '{expected}', got {player_output.count(expected)}")
+    npc = fixture.query(f"SELECT guid FROM creature WHERE guid > {before['creature']} AND id={NPC_CASTER}", world)
+    if (not npc or f"[spell go] {REBUILD_SPELL} by {int(npc)}" not in npc_output
+            or npc_output.count(f"[creature aura] {spawned[GOLEM]:#018x} received {REBUILD_SPELL}") != 1):
+        raise RuntimeError("the node 1 creature's channel did not reach the golem on node 2")
+    mortars = fixture.query(f"SELECT guid FROM gameobject WHERE guid > {before['gameobject']} AND id={MORTAR}", world)
+    if len(mortars.splitlines()) != 2:
+        raise RuntimeError("both nodes' saved mortars should have distinct database IDs")
+    print("PASS: cross-node effects and channels reached the idle node, and both nodes saved distinct spawns",
           flush=True)
 
 
