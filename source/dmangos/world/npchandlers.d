@@ -146,7 +146,20 @@ private:
             return false;
         }
 
-        return ConditionSubject(player, source is null ? null : &creatureInRange);
+        import dmangos.world.motion : WaypointMovement;
+
+        ConditionSubject subject = { player: player };
+        if (source !is null)
+        {
+            subject.creatureInRange = &creatureInRange;
+            if (auto creature = cast(Creature) source)
+                if (auto path = cast(WaypointMovement) creature.generator)
+                    subject.waypoint = path.lastWaypoint;
+        }
+        if (auto where = map)
+            if (auto copy = context.instanceScript(where.instanceId))
+                subject.instanceCondition = &copy.condition;
+        return subject;
     }
 
     bool conditionMet(uint conditionId, Npc source)

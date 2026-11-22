@@ -347,6 +347,8 @@ final class WaypointMovement : MovementGenerator
 
     bool paused; /// paused by a script (`ScriptCommand.pauseWaypoints`): stands where it is until resumed
 
+    @property uint lastWaypoint() const { return lastReached; }
+
     /// A lone point without a wait waits five seconds.
     this(const(WaypointNode)[] path, bool linear)
     {

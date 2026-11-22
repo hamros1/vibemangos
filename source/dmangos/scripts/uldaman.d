@@ -103,6 +103,7 @@ struct Uldaman
     {
         if (e.event == keepersAltar && (keepers == Fight.notStarted || keepers == Fight.failed))
         {
+            resetKeepers(ulda);
             starter = e.source;
             keepers = Fight.inProgress;
             steps.after(Step.wakeKeeper, 5.seconds);
@@ -128,7 +129,7 @@ struct Uldaman
             {
                 if (!ulda.alive(starter))
                 {
-                    keepers = Fight.failed;
+                    resetKeepers(ulda);
                     return;
                 }
                 keeperWoken[index] = true;
@@ -169,20 +170,19 @@ struct Uldaman
     void on(ref InstanceContext ulda, const ref CreatureEvaded e)
     {
         if (e.creature.entry == stoneKeeper && keepers == Fight.inProgress)
-        {
-            // A wipe: the keepers woken and still standing turn to stone again.
-            keepers = Fight.failed;
-            steps.clear();
-            foreach (keeper; keeperPack)
-            {
-                const index = keeperPack.indexOf(keeper);
-                if (keeperWoken[index])
-                {
-                    keeperWoken[index] = false;
-                    ulda.castSpell(keeper, stoned);
-                }
-            }
-        }
+            resetKeepers(ulda);
+    }
+
+    private void resetKeepers(ref InstanceContext ulda)
+    {
+        keepers = Fight.failed;
+        steps.clear();
+        keeperWoken[] = false;
+        keeperPack.reviveAll();
+        ulda.respawnKilled(stoneKeeper);
+        foreach (keeper; keeperPack)
+            if (ulda.alive(keeper) && !ulda.hasAura(keeper, stoned))
+                ulda.castSpell(keeper, stoned);
     }
 
     void on(ref InstanceContext ulda, const ref Signal e)
@@ -205,12 +205,25 @@ struct Uldaman
                 wake(ulda, who);
             break;
         case Signals.wakeDwarf:
+            Location boss;
+            if (!ulda.locationOf(archaedasRef, boss))
+                break;
+            EntityRef nearest;
+            float nearestDistance = float.infinity;
             foreach (who; dwarves)
-                if (!ulda.victimOf(who))
+            {
+                Location at;
+                if (!ulda.hasAura(who, stoned) || !ulda.locationOf(who, at))
+                    continue;
+                const distance = (at.x - boss.x) ^^ 2 + (at.y - boss.y) ^^ 2 + (at.z - boss.z) ^^ 2;
+                if (distance < nearestDistance)
                 {
-                    wake(ulda, who);
-                    break;
+                    nearest = who;
+                    nearestDistance = distance;
                 }
+            }
+            if (nearest)
+                wake(ulda, nearest);
             break;
         default:
             break;

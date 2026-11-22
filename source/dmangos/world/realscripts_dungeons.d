@@ -19,6 +19,75 @@ import dmangos.world.movement : Position;
 import dmangos.world.realscriptkit;
 import dmangos.world.updatefields;
 
+/// Stockade and Ragefire Chasm use the world database's combat AI without instance-wide events.
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto stockade = Dungeon.enter(34, 27);
+    stockade.pull(stockade.spawned(1717));
+    stockade.run(25.seconds);
+    assert(stockade.cast_(421, 1717) && stockade.cast_(6742, 1717), stockade.story);
+
+    auto ragefire = Dungeon.enter(389, 16);
+    ragefire.pull(ragefire.spawned(11520));
+    ragefire.run(25.seconds);
+    assert(ragefire.cast_(11970, 11520) && ragefire.cast_(18072, 11520), ragefire.story);
+}
+
+/// A rogue's Disarm Trap stops suppression temporarily and killing Broodlord stops it for the lockout.
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.bytes : ByteWriter;
+    import dmangos.script.api : ObjectFlag;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.spellcast : SpellCastResult, TargetFlags;
+    import dmangos.world.testclient : bodyOf;
+
+    enum uint device = 179784, suppression = 22247, disarm = 1842, broodlord = 12017;
+    auto d = Dungeon.enter(469, 60, 4, 2, Position(-7572.59f, -1062.57f, 449.164f));
+    GameObject trap;
+    d.map.forEachObject((object) {
+        if (auto go = cast(GameObject) object)
+            if (go.spawn.guid == 4690072)
+                trap = go;
+    });
+    assert(trap !is null);
+    const spot = Position(-7572.3f, -1062.57f, 449.164f);
+    d.goTo(spot);
+    d.goTo(spot, 1);
+    bool suppressed(size_t member) { return d.player(member).auras.find(suppression) !is null; }
+    assert(d.party[1].session.inWorld.instanceId != d.instanceId, "each player starts in a separate copy");
+    assert(trap.behaviour && d.w.context.scripts.busy(trap.behaviour), "the device's pulse is scheduled");
+    assert(d.map.near(trap.position, 20).length == 1, "near the device");
+    assert(d.runUntil(() => suppressed(0) && suppressed(1), 6.seconds),
+        format!"the same spawn pulses in both copies (%s, %s)"(suppressed(0), suppressed(1)));
+    d.port(d.party[1], 469, spot, d.instanceId);
+    assert(d.party[1].session.inWorld.instanceId == d.instanceId);
+
+    assert(d.give(5060) == 1); // Thieves' Tools
+    if (!d.player.knowsSpell(disarm))
+        d.player.spells ~= disarm;
+    ByteWriter request;
+    request.put(disarm);
+    request.put(cast(ushort) TargetFlags.locked);
+    request.putPackedGuid(trap.guid);
+    d.party[0].write(Opcode.CMSG_CAST_SPELL, request.data);
+    const result = bodyOf(d.party[0].read(), Opcode.SMSG_CAST_RESULT);
+    assert(d.runUntil(() => (trap.values.get!GAMEOBJECT_FLAGS & ObjectFlag.noInteract) != 0, 12.seconds),
+        format!"Disarm Trap disables the device (cast result %s)"(result.length >= 6 ? cast(SpellCastResult) result[5] : SpellCastResult.ok));
+    d.run(20.seconds);
+    assert(!suppressed(0) && !suppressed(1), "no pulses while disarmed");
+    assert(d.runUntil(() => suppressed(0) && suppressed(1), 110.seconds), "a rearmed device resumes its pulses");
+
+    d.kill(d.spawned(broodlord, 0, 15));
+    d.goTo(spot);
+    d.run(20.seconds);
+    assert(d.loadedObject(device) !is null && !suppressed(0) && !suppressed(1), "Lashlayer's death stops the pulses");
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // The Deadmines (36)
 // ---------------------------------------------------------------------------------------------------------------
@@ -729,7 +798,7 @@ unittest
 
 /**
  * Uldaman's Stone Keepers (4857): the altar's event (2228) wakes them one at a time (their stone skin 10255 gone) on
- * whoever used it; a wipe in the middle stops it, and the altar used again goes on with those left; the last one
+ * whoever used it; a wipe in the middle resets the whole event; the last one
  * dead, the temple doors (124367, 141869) open, for good.
  */
 unittest
@@ -759,12 +828,15 @@ unittest
     auto first = awake();
     assert(first !is null && first.ai.inCombat, "the first wakes and fights");
     d.kill(first);
+    const firstGuid = first.guid;
     d.run(7.seconds);
     assert(awake() !is null, "the next wakes");
     d.wipe(30.seconds);
     d.revive();
     d.run(5.seconds);
     assert(awake() is null, "after the wipe they are stone again");
+    assert(d.all(keeper).length == keepers.length && d.all(keeper).canFind!(k => k.guid == firstGuid),
+        "the keeper killed before the wipe is back");
     altar();
     bool open()
     {
@@ -813,6 +885,7 @@ unittest
     d.run(15.seconds);
     assert(awake() is null, "nobody wakes them after the restart");
     altar(2228);
+    assert(d.all(keeper).canFind!(k => k.guid == first.guid), "restarting the event revives the missing keeper");
     bool open()
     {
         if (auto k = awake())
@@ -1441,19 +1514,89 @@ unittest
 // ---------------------------------------------------------------------------------------------------------------
 
 /**
- * Dire Maul North: King Gordok (11501) dead, Mizzle the Crafty (14353) comes for the tribute, Cho'Rush the Observer
- * (14324) killed before him or not.
+ * Dire Maul North: Mizzle arrives even if Cho'Rush is dead. The coronation enables the tribute
+ * dialogue, and the chest gives only the loot tiers unlocked by survivors.
  */
 unittest
 {
     if (!haveRealData())
         return;
-    enum uint king = 11501, chorush = 14324, mizzle = 14353;
-    auto d = Dungeon.enter(429, 60);
-    auto observer = d.spawned(chorush, 0, 30);
-    d.kill(observer);
-    auto him = d.spawned(king, 0, 30);
-    d.kill(him);
-    d.run(3.seconds);
-    assert(d.summoned(mizzle) == 1, "Mizzle comes\n" ~ d.story);
+    import dmangos.bytes : ByteWriter;
+    import dmangos.world.loothandlers : ClientLootSlot;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.packets : ClientGuid;
+    import dmangos.world.spellcast : SpellCastResult, TargetFlags;
+    import dmangos.world.testclient : bodyOf;
+
+    enum uint king = 11501, mizzle = 14353, tribute = 179564, coronation = 22799, opening = 3365;
+    static immutable uint[6] bosses = [14324, 14326, 14321, 14323, 14325, 14322];
+    foreach (kills; [0, 1, 6])
+    {
+        auto d = Dungeon.enter(429, 60);
+        foreach (entry; bosses[0 .. kills])
+            d.kill(d.spawned(entry, 0, 25));
+        d.kill(d.spawned(king, 0, 25));
+        assert(d.summoned(mizzle) == 1, "Mizzle comes\n" ~ d.story);
+        assert(!(d.find(mizzle).values.get!UNIT_NPC_FLAGS & 1), "the coronation opens at the throne");
+        bool atThrone()
+        {
+            auto herald = d.find(mizzle);
+            d.keepUp(herald);
+            return herald !is null && (herald.values.get!UNIT_NPC_FLAGS & 1) && herald.position.x > 816;
+        }
+        assert(d.runUntil(&atThrone, 90.seconds), "Mizzle reaches the throne\n" ~ d.story);
+        auto herald = d.find(mizzle);
+        assert(d.loadedObject(tribute) is null, "tribute awaits Mizzle's dialogue");
+        d.talkTo(herald);
+        d.choose(herald, 0); // coronation
+        d.run(1.seconds);
+        assert(d.player.auras.find(coronation) !is null, "King of the Gordok");
+        d.choose(herald, 0); // return to the initial menu
+        d.choose(herald, 0); // ask about tribute
+        d.choose(herald, 0); // ask to see it
+        assert(d.runUntil(() => d.loadedObject(tribute) !is null, 5.seconds), "Mizzle produces the chest\n" ~ d.story);
+        auto chest = d.loadedObject(tribute);
+        d.goTo(chest.position);
+        d.defend(herald); // any demons pulled during the run still attack after the coronation
+        d.run(1.seconds);
+        if (!d.player.knowsSpell(opening))
+            d.player.spells ~= opening;
+        ByteWriter request;
+        request.put(opening);
+        request.put(cast(ushort) TargetFlags.locked);
+        request.putPackedGuid(chest.guid);
+        d.party[0].write(Opcode.CMSG_CAST_SPELL, request.data);
+        const result = bodyOf(d.party[0].read(), Opcode.SMSG_CAST_RESULT);
+        assert(d.runUntil(() => chest.loot !is null, 12.seconds),
+            format!"the chest can be opened after %s guard kills (cast result %s)\n%s"(kills,
+                result.length >= 6 ? cast(SpellCastResult) result[5] : SpellCastResult.ok, d.story));
+        uint equipment;
+        foreach (item; chest.loot.items)
+            equipment += item.itemId != 8766 && item.itemId != 8952 && item.itemId != 13444 && item.itemId != 13446;
+        assert(equipment == (kills == 0 ? 5 : kills == 1 ? 4 : 0),
+            format!"%s tribute bosses killed, %s equipment drops"(kills, equipment));
+
+        if (kills == 0)
+        {
+            foreach (slot, item; chest.loot.items)
+                d.party[0].write(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, ClientLootSlot(cast(ubyte) slot));
+            d.party[0].write(Opcode.CMSG_LOOT_RELEASE, ClientGuid(chest.guid));
+            d.run(1.seconds);
+            assert(d.loadedObject(tribute) is null, "the exhausted chest has gone");
+            d.restart();
+            assert(d.runUntil(&atThrone, 90.seconds), "Mizzle is still available to coronate players after a restart");
+            herald = d.find(mizzle);
+            d.talkTo(herald);
+            if (d.player.auras.find(coronation) is null)
+            {
+                d.choose(herald, 0);
+                d.run(1.seconds);
+                d.choose(herald, 0);
+            }
+            d.choose(herald, 0);
+            d.choose(herald, 0);
+            d.run(5.seconds);
+            assert(d.loadedObject(tribute) is null, "a restart and repeat dialogue cannot award tribute twice");
+        }
+    }
 }

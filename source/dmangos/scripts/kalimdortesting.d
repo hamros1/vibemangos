@@ -381,6 +381,7 @@ final class RecordingObject : GameObjectHost
 
     // Raid scripts:
     int hostAskDungeon(uint) { return 0; }
+    void hostPulseTrap() { did ~= "pulse trap"; }
 
     // Open-world round 2:
     bool[uint] items;   /// what the hero carries

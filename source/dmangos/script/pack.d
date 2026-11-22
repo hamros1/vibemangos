@@ -91,6 +91,12 @@ struct Pack(size_t capacity = 8)
         count = 0;
     }
 
+    /// Keeps the members, clearing the record of their deaths after an encounter reset.
+    void reviveAll()
+    {
+        dead_[] = false;
+    }
+
     /// Its living members.
     int opApply(scope int delegate(EntityRef) each) const
     {

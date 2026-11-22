@@ -963,6 +963,7 @@ interface GameObjectHost
 
     // Raid scripts:
     int hostAskDungeon(uint id);
+    void hostPulseTrap();
 
     // Open-world round 2:
     void hostCustomAnim();
@@ -989,6 +990,12 @@ interface GameObjectHost
 struct TrapSprung
 {
     EntityRef unit;
+}
+
+/// A player successfully disarmed a trap. The script can consume its usual removal.
+struct TrapDisarmed
+{
+    EntityRef player;
 }
 
 /// A game object script's handle on its object, for the length of one handler.
@@ -1083,6 +1090,9 @@ struct GameObjectContext
 
     /// Its dungeon script's answer to question `id` (`Asked`); 0 outside a dungeon or unanswered.
     int askDungeon(uint id) { return host.hostAskDungeon(id); }
+
+    /// Apply this trap's area aura to eligible players within the spell's radius.
+    void pulseTrap() { host.hostPulseTrap(); }
 
     // Open-world round 2:
 
@@ -1229,6 +1239,8 @@ interface InstanceHost
     // Dungeons round 2:
     ActionResult hostWalkPath(EntityRef creature, uint pathId);
     bool hostHasAura(EntityRef creature, uint spell);
+    bool hostEntryKilled(uint entry);
+    void hostRespawnKilled(uint entry);
 }
 
 /// `GameObjectFlags`, as dungeon scripts set and clear them (`InstanceContext.objectFlags`).
@@ -1410,6 +1422,12 @@ struct InstanceContext
 
     /// Whether a creature of the copy has an aura of `spell` (false if it is not here).
     bool hasAura(EntityRef creature, uint spell) { return host.hostHasAura(creature, spell); }
+
+    /// Whether a permanent spawn of this entry died in this copy.
+    bool entryKilled(uint entry) { return host.hostEntryKilled(entry); }
+
+    /// Restores this entry's killed spawns in the current copy.
+    void respawnKilled(uint entry) { host.hostRespawnKilled(entry); }
 }
 
 unittest
@@ -2054,6 +2072,12 @@ struct ItemContext
 struct Asked
 {
     EntityRef from;
+    uint id;
+}
+
+/// A database condition of type INSTANCE_SCRIPT. The script answers with 1 when it holds.
+struct InstanceCondition
+{
     uint id;
 }
 

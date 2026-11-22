@@ -233,7 +233,7 @@ struct SpellTargets
     void write(ref ByteWriter w) const
     {
         w.put(mask);
-        if (mask & (TargetFlags.unit | TargetFlags.corpseEnemy | TargetFlags.gameObject | TargetFlags.corpseAlly))
+        if (mask & (TargetFlags.unit | TargetFlags.corpseEnemy | TargetFlags.gameObject | TargetFlags.locked | TargetFlags.corpseAlly))
         {
             if (mask & TargetFlags.unit)
                 w.putPackedGuid(unit);
@@ -557,6 +557,12 @@ unittest
     foreach (ulong guid; 1010 .. 1265)
         assert(packet.read!ulong == guid && packet.read!ubyte == SpellMissInfo.resist);
     assert(SpellTargets.read(packet).mask == TargetFlags.self && packet.empty);
+
+    const lock = SpellTargets(mask: TargetFlags.locked, gameObject: 0xF110_0000_0000_0042);
+    ByteWriter encoded;
+    lock.write(encoded);
+    auto encodedLock = ByteReader(encoded.data);
+    assert(SpellTargets.read(encodedLock) == lock && encodedLock.empty);
 }
 
 /// `SMSG_SPELL_FAILURE` (to everyone around) for an interrupted cast.

@@ -48,6 +48,10 @@ final class InstanceScript : InstanceHost
     /// Puts the dungeon's game objects of an entry in the world (`InstanceContext.spawnObjects`).
     uint delegate(Map map, uint entry, uint despawnSeconds, Location near, float range) spawnObjects;
 
+    /// Whether an entry is in this copy's persisted creature deaths.
+    bool delegate(uint instance, uint entry) entryKilled;
+    void delegate(Map map, uint entry) respawnKilled;
+
     // Raid scripts:
 
     /// Puts the game object of a spawn of `entry` on the copy's map in the world for `seconds` (0: for
@@ -211,6 +215,24 @@ final class InstanceScript : InstanceHost
         auto context = InstanceContext(this);
         runtime.raise(handle, context, Asked(from, id));
         return context.answerGiven;
+    }
+
+    bool condition(uint id)
+    {
+        auto context = InstanceContext(this);
+        runtime.raise(handle, context, InstanceCondition(id));
+        return context.answerGiven == 1;
+    }
+
+    bool hostEntryKilled(uint entry)
+    {
+        return entryKilled !is null && entryKilled(id, entry);
+    }
+
+    void hostRespawnKilled(uint entry)
+    {
+        if (map !is null && respawnKilled !is null)
+            respawnKilled(map, entry);
     }
 
     /// The copy goes from this node: the script's state goes from memory (it is saved).

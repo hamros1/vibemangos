@@ -219,6 +219,8 @@ final class TestCreature : CreatureHost
 /// A dungeon copy: see the module documentation.
 final class TestInstance : InstanceHost
 {
+    bool hostEntryKilled(uint) { return false; }
+    void hostRespawnKilled(uint) {}
     mixin Recording;
     bool[ulong] dead; /// creatures that are not alive
     uint players = 1;

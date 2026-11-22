@@ -233,6 +233,8 @@ Festival's fireworks, which need players' game object summons too), effect chanc
 (Venture Co. lookouts, Gallywix), caravans and the Eastern Kingdoms' world map script.
 The original Scourge Invasion, the audited raid possession and mind-control interactions, and Heigan's floor
 have dedicated tests. Gluth's Decimate trigger still needs a reference combat log.
+The [dungeon and raid coverage audit](research/DUNGEON-SCRIPT-COVERAGE.md) records which maps use instance-wide
+scripts or database combat AI and how the Dire Maul tribute, Suppression Room and Stone Keeper reset work.
 Reputation is done (`reputation.d`, `reputationhandlers.d`): kills, quests,
 spillover, war and peace, discounts, requirements, reactions forced by auras (`SMSG_SET_FORCED_REACTIONS`: the
 disguises, the Corrupted Ashbringer's Scarlet Crusade). Reputation from spells (effect 103) and the PvP rank's

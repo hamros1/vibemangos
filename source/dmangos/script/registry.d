@@ -169,7 +169,7 @@ template KindInfo(ScriptKind kind)
     {
         alias Context = GameObjectContext;
         alias Events = AliasSeq!(ObjectUsed, Signal, /* Open-world round 2: */ Spawned, QuestAccepted, TrapSprung,
-            /* the war effort: */ QuestRewarded);
+            /* the war effort: */ QuestRewarded, TrapDisarmed);
         alias Attribute = .gameObject;
     }
     else static if (kind == ScriptKind.item) // Open-world round 2
@@ -210,7 +210,8 @@ template KindInfo(ScriptKind kind)
     {
         alias Context = InstanceContext;
         alias Events = AliasSeq!(CreatureLoaded, ObjectLoaded, CreatureDied, Signal, CreatureEngaged, CreatureEvaded,
-            EventHappened, /* Raid scripts: */ Asked, PlayerEntered, ObjectUsedHere, /* Dungeons round 2: */ Restored);
+            EventHappened, /* Raid scripts: */ Asked, PlayerEntered, ObjectUsedHere, /* Dungeons round 2: */ Restored,
+            InstanceCondition);
         alias Attribute = .instance;
     }
 }

@@ -991,9 +991,7 @@ private:
     /// Whether the condition `condition` holds for this player (no source).
     package bool conditionMet(uint condition)
     {
-        import dmangos.world.conditions : ConditionSubject;
-
-        auto subject = ConditionSubject(player, null);
+        const subject = conditionSubject(null);
         return context.data.npcs.conditions.satisfied(condition, subject, context.client);
     }
 

@@ -4,8 +4,8 @@
  * crystal generators (each goes out when its guards are slain; with all five out the force field
  * around Immol'thar falls and the Highborne summoners turn on him; his death sets Prince
  * Tortheldrin against the players), and the door behind Tendris Warpwood; in the north, King
- * Gordok's death, which makes Kromcrush and Cho'Rush friendly and brings Mizzle the Crafty for the
- * tribute, and the Fixed Trap that holds Guard Slip'kik when he walks into it.
+ * Gordok's death, which makes Kromcrush and Cho'Rush friendly and brings Mizzle the Crafty to lead
+ * the coronation and award tribute based on the surviving bosses, and the trap for Guard Slip'kik.
  *
  * The Dreadsteed of Xoroth (the warlocks' epic mount): Release J'eevee (`event_spells_warlock_dreadsteed`)
  * brings the ritual's keeper (`npc_warlock_mount_ritual`) and J'eevee, who sets out the Bell of Dethmoora,
@@ -110,6 +110,7 @@ struct DireMaul
     @transient EntityRef wall, vine, conservatory, field, warpDoor, ironbarkRef, princeRef, immoltharRef, kromcrushRef, chorushRef;
     @transient Pack!48 guardCandidates;
     @transient Pack!24 summoners;
+    @transient bool restoreTribute;
 
     // The Dreadsteed's ritual.
     @transient Ritual ritual;
@@ -121,6 +122,38 @@ struct DireMaul
 
     enum Step : ubyte { ritualCheck, ritualPulse, trap }
     Schedule!(Step, 4) steps;
+
+    static immutable uint[6] tributeBosses = [14326, 14321, guardSlipkik, kromcrush, chorush, 14322];
+
+    void on(ref InstanceContext dm, const ref Restored e)
+    {
+        restoreTribute = gordokDead;
+    }
+
+    void on(ref InstanceContext dm, const ref PlayerEntered e)
+    {
+        if (restoreTribute)
+        {
+            restoreTribute = false;
+            bringMizzle(dm);
+        }
+    }
+
+    void on(ref InstanceContext dm, const ref InstanceCondition e)
+    {
+        if (!gordokDead || e.id > tributeBosses.length)
+            return;
+        uint survivors;
+        foreach (entry; tributeBosses)
+            survivors += !dm.entryKilled(entry);
+        dm.answer(survivors == e.id);
+    }
+
+    private void bringMizzle(ref InstanceContext dm)
+    {
+        if (const herald = dm.summon(mizzle, mizzleSpawn))
+            dm.signal(herald, MizzleTheCrafty.start);
+    }
 
     void on(ref InstanceContext dm, const ref ObjectLoaded e)
     {
@@ -382,7 +415,7 @@ struct DireMaul
             }
             // Mizzle comes for the tribute whether Cho'Rush lives or not (ScriptDev2 has him summoned by Cho'Rush's
             // creature, dead or alive).
-            dm.summon(mizzle, mizzleSpawn);
+            bringMizzle(dm);
             break;
         default:
             break;
@@ -485,6 +518,21 @@ struct DireMaul
             yelled = true;
             dm.attack(summoner, immoltharRef);
         }
+    }
+}
+
+/// Mizzle's waypoint scripts announce the new king and enable gossip at the throne.
+@creature("npc_mizzle_crafty")
+struct MizzleTheCrafty
+{
+    enum uint start = 1, questGiverFlag = 2;
+
+    void on(ref CreatureContext me, const ref Signal e)
+    {
+        if (e.id != start)
+            return;
+        me.npcFlags(questGiverFlag);
+        me.walkPath();
     }
 }
 

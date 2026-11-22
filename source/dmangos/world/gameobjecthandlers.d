@@ -401,7 +401,10 @@ mixin template GameObjectHandlers()
         auto go = cast(GameObject) map.findObject(targets.gameObject);
         if (go is null)
             return SpellCastResult.badTargets;
-        if (go.type == GameObjectType.trap && !map.seesTrap(player, go.guid, go.position))
+        import dmangos.script.api : ObjectFlag;
+
+        if (go.type == GameObjectType.trap && ((go.values.get!GAMEOBJECT_FLAGS & ObjectFlag.noInteract)
+            || !map.seesTrap(player, go.guid, go.position)))
             return SpellCastResult.badTargets;
         if (!withinInteraction(go, 5))
             return SpellCastResult.outOfRange;
@@ -438,7 +441,10 @@ mixin template GameObjectHandlers()
         enum disarmTrap = 4; // LockType from Lock.dbc
         if (go.type == GameObjectType.trap && spell.miscValue[i] == disarmTrap)
         {
-            if (!map.seesTrap(player, go.guid, go.position))
+            import dmangos.script.api : ObjectFlag;
+
+            if ((go.values.get!GAMEOBJECT_FLAGS & ObjectFlag.noInteract) || !map.seesTrap(player, go.guid, go.position)
+                || context.gameObjectTrapDisarmed(go, map, player.guid))
                 return;
             if (go.owner)
                 map.removeObject(go.guid);

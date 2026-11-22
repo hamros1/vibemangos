@@ -618,7 +618,7 @@ mixin template DbScriptRunner()
         return cast(GameObject) map.findObject(makeGuid(HighGuid.gameObject, spawn.entry, spawn.guid));
     }
 
-    private long[ulong] scriptedGameObjects; // spawned by a script: guid -> when it goes (Unix time)
+    private long[GameObjectOnMap] scriptedGameObjects; // spawned by a script: when it goes (Unix time)
 
     /**
      * `SCRIPT_COMMAND_RESPAWN_GAMEOBJECT`: the game object of spawn `spawnGuid` (or `go`) put in
@@ -642,13 +642,18 @@ mixin template DbScriptRunner()
         const spawn = &data.gameObjectSpawns[*index];
         if (spawn.map != map.id || map.findObject(makeGuid(HighGuid.gameObject, spawn.entry, spawn.guid)) !is null)
             return;
+        const template_ = spawn.entry in data.gameObjectTemplates;
+        if (template_ is null || template_.type == GameObjectType.door)
+            return;
+        if (template_.type == GameObjectType.chest)
+            if (const state = map.instanceId in instances)
+                if (spawn.guid in state.usedUp)
+                    return;
         auto made = makeGameObject(*spawn);
         made.instanceId = map.instanceId;
-        if (made is null || made.type == GameObjectType.door)
-            return;
         // A static spawn just comes back; one that is not there by default goes again after a while.
         if (spawn.respawnSeconds < 0 || gameObjectAwaitingRespawn(spawn.guid))
-            scriptedGameObjects[made.guid] = unixTime + (despawnSeconds ? despawnSeconds : 0);
+            scriptedGameObjects[GameObjectOnMap(map, made.guid)] = unixTime + despawnSeconds;
         gameObjectRespawnAt.remove(spawn.guid);
         map.addObject(made);
         // Instance round 2: the dungeon's script hears of it as of any object of the copy (a ritual's bell, a trap).
@@ -665,16 +670,15 @@ mixin template DbScriptRunner()
     package void scriptedGameObjectsDue()
     {
         const now = unixTime;
-        ulong[] due;
-        foreach (guid, at; scriptedGameObjects)
+        GameObjectOnMap[] due;
+        foreach (key, at; scriptedGameObjects)
             if (at <= now)
-                due ~= guid;
-        foreach (guid; due)
+                due ~= key;
+        foreach (key; due)
         {
-            scriptedGameObjects.remove(guid);
-            foreach (map; maps.values ~ instanceMaps.values) // a dungeon copy's too
-                if (map.findObject(guid) !is null)
-                    map.removeObject(guid);
+            scriptedGameObjects.remove(key);
+            if (key.map.findObject(key.guid) !is null)
+                key.map.removeObject(key.guid);
         }
     }
 

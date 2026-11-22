@@ -165,9 +165,8 @@ hears of it.
 
 A game object script may keep schedules like a creature's: the world ticks the scripted objects whose
 steps are pending (and only those), and an object hears `Spawned` once it is in the world, its cell
-loaded (a bell watching the hour, a rift sending invaders). A trap's script hears `TrapSprung` before its
-spell and may keep it from going off for that unit (the transpolyporter takes only those with a
-transponder).
+loaded (a bell watching the hour, a rift sending invaders). A trap's script can consume `TrapSprung` to
+prevent activation or `TrapDisarmed` to replace the default removal with a rearm timer.
 
 A world map script (`@world`) is a dungeon script for a continent: it has the same abilities
 (`WorldMapContext` is an `InstanceContext`), hears the continent's creatures die and the signals its
@@ -176,6 +175,9 @@ continent it simulates a part of; its state is kept in memory only (CMaNGOS keep
 wave half done when the server stops begins anew.
 
 ### Dungeon scripts
+
+A database condition of type 18 raises `InstanceCondition` in the current copy. The script answers
+with 1 when the condition holds. Dire Maul uses this for the tribute chest's loot tiers.
 
 A dungeon's script is the copy's memory: which encounters are done (saved in `instance.data` after
 every event), which doors are open (it opens them again as their objects load), and the events no

@@ -66,7 +66,6 @@ enum : uint
     goDoorVaelastrasz = 179364,
     goDoorLashlayer = 179365,
     goBlackDragonEgg = 177807, goOrbOfDomination = 177808,
-    goSuppressionDevice = 179784,
     npcOrbTrigger = 14449,
 }
 
@@ -274,8 +273,6 @@ struct BlackwingLair
             }
         if (e.object.entry == goBlackDragonEgg)
             ++eggs;
-        if (e.object.entry == goSuppressionDevice && encounters[BwlEncounter.lashlayer] == EncounterState.done)
-            copy.despawnObject(e.object);
     }
 
     void on(ref InstanceContext copy, const ref Asked e)
@@ -887,6 +884,60 @@ struct Vaelastrasz
     {
         steps.clear();
         me.signalDungeon(BwlEncounter.vaelastrasz, EncounterState.done);
+    }
+}
+
+/// Blackwing Lair's Suppression Room periodically pulses while Broodlord Lashlayer lives.
+@gameObject("go_suppression")
+struct SuppressionDevice
+{
+    enum Step : ubyte { pulse, rearm }
+    Schedule!Step steps;
+
+    void on(ref GameObjectContext device, const ref Spawned e)
+    {
+        if (device.askDungeon(BwlEncounter.lashlayer) == EncounterState.done)
+            disable(device);
+        else if (!steps.busy)
+            steps.every(Step.pulse, (1 + device.random(5_000)).msecs, 5.seconds);
+    }
+
+    void on(ref GameObjectContext device, const ref TrapSprung e)
+    {
+        device.consume(); // the fumes are periodic, even if everyone stands still
+    }
+
+    void on(ref GameObjectContext device, const ref TrapDisarmed e)
+    {
+        device.consume();
+        disable(device);
+        if (device.askDungeon(BwlEncounter.lashlayer) != EncounterState.done)
+            steps.after(Step.rearm, (30_000 + device.random(90_001)).msecs);
+    }
+
+    void on(ref GameObjectContext device, Step step)
+    {
+        if (device.askDungeon(BwlEncounter.lashlayer) == EncounterState.done)
+            return disable(device);
+        final switch (step)
+        {
+        case Step.pulse:
+            device.customAnim();
+            device.pulseTrap();
+            break;
+        case Step.rearm:
+            device.open(false);
+            device.objectFlags(device.self, ObjectFlag.noInteract, false);
+            steps.every(Step.pulse, 5.seconds);
+            break;
+        }
+    }
+
+    private void disable(ref GameObjectContext device)
+    {
+        steps.clear();
+        device.open(true);
+        device.objectFlags(device.self, ObjectFlag.noInteract, true);
     }
 }
 

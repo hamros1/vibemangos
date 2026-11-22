@@ -5,8 +5,7 @@
  * A condition checks a player (its items, skills, spells, quests, reputation, race, class, level,
  * zone, death, combat), or
  * combines other conditions with AND, OR and NOT. The ones that need systems this server does not
- * have yet (auras, PvP ranks, world states, instance and world scripts, encounters, waypoints,
- * game events) are never met: a menu option that needs one stays hidden, which errs
+ * have yet (world states, world scripts, encounters) are never met: a menu option that needs one stays hidden, which errs
  * towards showing less. Each such type is logged once.
  */
 module dmangos.world.conditions;
@@ -88,6 +87,10 @@ struct ConditionSubject
 
     /// Whether a living creature of this entry is within range yards of the source; null when there is no source.
     bool delegate(uint entry, float range) creatureInRange;
+
+    /// An instance-defined condition, and the source creature's last visited waypoint.
+    bool delegate(uint id) instanceCondition;
+    uint waypoint;
 }
 
 /// See the module documentation.
@@ -246,6 +249,14 @@ private:
             return ((player.values.get!UNIT_FIELD_FLAGS & UnitFlags.inCombat) != 0) != (c.value1 != 0);
         case creatureInRange:
             return subject.creatureInRange !is null && subject.creatureInRange(c.value1, c.value2);
+        case instanceScript:
+            return subject.instanceCondition !is null && subject.instanceCondition(c.value1);
+        case lastWaypoint:
+            if (c.value2 == 0)
+                return subject.waypoint != 0 && subject.waypoint == c.value1;
+            if (c.value2 == 1)
+                return subject.waypoint != 0 && subject.waypoint <= c.value1;
+            return c.value2 == 2 && subject.waypoint != 0 && subject.waypoint >= c.value1;
         case activeGameEvent:
             return eventActive !is null && eventActive(c.value1);
         case activeHoliday:

@@ -3757,7 +3757,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             startScript(DbScriptType.creatureMovement, scriptId, created, creature.guid, creature.guid);
         };
         created.onGameObjectUsedUp = &gameObjectUsedUp;
-        created.onObjectGone = &objectGone;
+        created.onObjectGone = (MapObject object) => objectGone(created, object);
         created.onObjectArrived = (MapObject o) { // open-world round 2: a scripted game object's `Spawned`
             if (auto go = cast(GameObject) o)
                 if (go.behaviour && scripts.handles!(imported!"dmangos.script.api".Spawned)(go.behaviour))
@@ -3792,6 +3792,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     script.map = created;
                     script.lore = this;
                     script.spawnObjects = &spawnDungeonObjects;
+                    script.entryKilled = &entryKilledInInstance;
+                    script.respawnKilled = &respawnKilledInCopy;
                     script.signalObject = &gameObjectSignalled;
                     script.respawnObjectOf = &respawnObjectOfEntry;
                     script.summonObjectAt = &summonGameObjectAt;
@@ -4242,6 +4244,28 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return false;
     }
 
+    private bool entryKilledInInstance(uint instance, uint entry)
+    {
+        if (auto state = instance in instances)
+            foreach (guid; state.dead.byKey)
+                if (const idx = guid in spawnIndex)
+                    if (data.creatureSpawns[*idx].entry == entry)
+                        return true;
+        return false;
+    }
+
+    private void respawnKilledInCopy(Map map, uint entry)
+    {
+        if (auto state = map.instanceId in instances)
+            foreach (guid; state.dead.keys)
+                if (const idx = guid in spawnIndex)
+                {
+                    const spawn = &data.creatureSpawns[*idx];
+                    if (spawn.entry == entry)
+                        respawnInCopy(map, spawn, cast(Creature) map.findObject(makeGuid(HighGuid.unit, entry, guid)));
+                }
+    }
+
     /// The instances that are made.
     @property size_t instanceCount() const
     {
@@ -4409,7 +4433,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private void dropInstanceMap(uint id)
     {
         if (auto m = instanceMaps.get(id, null))
-            m.forEachObject((MapObject o) { objectGone(o); });
+            m.forEachObject((MapObject o) => objectGone(m, o));
         instanceMaps.remove(id);
         if (auto script = id in instanceScripts)
         {
@@ -4419,12 +4443,17 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /// An object left its map for good (`Map.onObjectGone`): its script's state goes.
-    private void objectGone(MapObject object)
+    private void objectGone(Map map, MapObject object)
     {
         if (auto creature = cast(Creature) object)
             creature.ai.releaseBehaviour();
         else if (auto go = cast(GameObject) object)
+        {
+            auto key = GameObjectOnMap(map, go.guid);
+            tickingObjects.remove(key);
+            scriptedGameObjects.remove(key);
             scripts.destroy(go.behaviour);
+        }
     }
 
     /// The script of dungeon copy `id`; null if it has none here.
@@ -6161,12 +6190,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     package void trapSprung(Map map, Inhabitant who, GameObject trap)
     {
         import dmangos.world.gameobject : GoLootState;
-        import dmangos.world.relations : isFriend, Relating;
-        import dmangos.world.character : Character;
 
-        auto session = cast(Character) who;
-        if (session is null || session.character is null || !session.player.alive)
-            return;
         if (unixTime < trap.trapReadyAt || trap.lootState != GoLootState.ready)
             return;
         if (trap.owner)
@@ -6174,9 +6198,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         const spell = cast(uint) trap.template_.data[3];
         if (spell == 0)
             return;
-        // Unfriendly units only: not one the trap's faction likes.
-        const faction = client.factionTemplates.lookup(trap.template_.faction);
-        if (faction !is null && isFriend(Relating(0, faction, false, 0, 0, true), session.relating, client))
+        auto session = trapTarget(trap, who);
+        if (session is null)
             return;
         // Open-world round 2: the trap's script may keep it from springing for this one.
         if (trap.behaviour)
@@ -6194,6 +6217,27 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         const charges = trap.template_.data[4];
         if (charges > 0 && ++trap.trapUses >= charges)
             map.gameObjectUsedUp(trap);
+    }
+
+    private auto trapTarget(GameObject trap, Inhabitant who)
+    {
+        import dmangos.world.character : Character;
+        import dmangos.world.relations : isFriend, Relating;
+
+        auto session = cast(Character) who;
+        if (session is null || session.character is null || !session.player.alive)
+            return null;
+        const faction = client.factionTemplates.lookup(trap.template_.faction);
+        if (faction !is null && isFriend(Relating(0, faction, false, 0, 0, true), session.relating, client))
+            return null;
+        return session;
+    }
+
+    package bool gameObjectTrapDisarmed(GameObject go, Map map, ulong player)
+    {
+        import dmangos.script.api : TrapDisarmed;
+
+        return raiseObject(go, map, TrapDisarmed(EntityRef(player)));
     }
 
     /// See `CreatureLore.scriptText`.
@@ -6445,8 +6489,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     // Open-world round 2: game object scripts' arrival, quests, traps and schedules
     // -----------------------------------------------------------------------
 
-    private Map[ulong] tickingObjects;          // scripted game objects with steps pending, and their maps
+    private bool[GameObjectOnMap] tickingObjects;
     private GameObjectArrival[] objectArrivals; // scripted game objects put in the world, for `Spawned`
+
+    private static struct GameObjectOnMap
+    {
+        Map map;
+        ulong guid; // distinct copies of a dungeon use the same spawn GUIDs
+    }
 
     private static struct GameObjectArrival
     {
@@ -6477,7 +6527,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private void noteTickingObject(GameObject go, Map map)
     {
         if (go.behaviour && scripts.busy(go.behaviour))
-            tickingObjects[go.guid] = map;
+            tickingObjects[GameObjectOnMap(map, go.guid)] = true;
     }
 
     /// A player accepted quest `quest` from game object `go`: its script hears of it.
@@ -6512,12 +6562,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         }
         if (!tickingObjects.length)
             return;
-        foreach (guid, map; tickingObjects.dup)
+        foreach (key, _; tickingObjects.dup)
         {
-            auto go = cast(GameObject) map.findObject(guid);
+            auto map = key.map;
+            auto go = cast(GameObject) map.findObject(key.guid);
             if (go is null || !go.behaviour || !scripts.busy(go.behaviour))
             {
-                tickingObjects.remove(guid);
+                tickingObjects.remove(key);
                 continue;
             }
             auto before = goHost.go, beforeMap = goHost.map;
@@ -6528,7 +6579,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             goHost.go = before;
             goHost.map = beforeMap;
             if (!scripts.busy(go.behaviour))
-                tickingObjects.remove(guid);
+                tickingObjects.remove(key);
         }
     }
 
@@ -6540,6 +6591,36 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         EntityRef hostSelf()
         {
             return EntityRef(go.guid);
+        }
+
+        void hostPulseTrap()
+        {
+            import dmangos.world.auras : makeAura;
+            import dmangos.world.spellcast : duration, effectValue, radius;
+            import dmangos.world.spellids : SpellEffect;
+
+            const spell = data.spells.spell(cast(uint) go.template_.data[3]);
+            if (spell is null)
+                return;
+            // Suppression Aura targets enemies around its caster's location. The device is the
+            // source of the debuff, so players must not cast the area effect on one another.
+            const level = spell.spellLevel;
+            const lasts = duration(*spell, client, level);
+            int[3] amounts;
+            float range = 0;
+            foreach (i; 0 .. spell.effect.length)
+                if (spell.effect[i] == SpellEffect.applyAura)
+                {
+                    amounts[i] = effectValue(*spell, i, level, 0);
+                    const effectRadius = radius(*spell, i, client);
+                    if (range < effectRadius)
+                        range = effectRadius;
+                }
+            if (range <= 0)
+                return;
+            foreach (who; map.near(go.position, range))
+                if (auto session = trapTarget(go, who))
+                    session.addAura(makeAura(spell, go.guid, level, lasts, false, amounts));
         }
 
         void hostDoor(bool open)
@@ -6904,7 +6985,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         go.instanceId = map.instanceId;
         map.addObject(go);
         if (seconds)
-            scriptedGameObjects[go.guid] = unixTime + seconds;
+            scriptedGameObjects[GameObjectOnMap(map, go.guid)] = unixTime + seconds;
         return go;
     }
 
@@ -7193,10 +7274,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private void gameObjectUsedUp(GameObject go)
     {
         if (go.spawn.guid >= temporaryCounterStart)
-        {
-            scriptedGameObjects.remove(go.guid);
             return;
-        }
         if (go.instanceId)
         {
             if (auto state = go.instanceId in instances)
