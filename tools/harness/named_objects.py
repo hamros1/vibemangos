@@ -114,8 +114,11 @@ def run(fixture, abrupt=False):
             (1, "MORTARCASTER", caster, source_at), (2, "MORTARSPAWN", spawner, target_at)):
         if "(success)" not in client("create-" + character, node, account, "enum", f"create:{character}:1:1", "drop"):
             raise RuntimeError(f"could not create {character}")
+        guid = int(wait_for(f"{character} to be saved",
+                            lambda: fixture.query(f"SELECT guid FROM characters WHERE name = '{character}'", characters),
+                            10))
         fixture.query(f"UPDATE characters SET position_x = {position[0]}, position_y = {position[1]}, "
-                      f"position_z = 200 WHERE name = '{character}'", characters)
+                      f"position_z = 200 WHERE guid = {guid}", characters)
     for spell in (MORTAR_SPELL, DOOR_SPELL, CHEER_SPELL, REBUILD_SPELL, VISUAL_CHANNEL):
         fixture.query(f"INSERT INTO character_spell (guid, spell) SELECT guid, {spell} FROM characters "
                       f"WHERE name = '{caster}'", characters)
@@ -172,6 +175,17 @@ def run(fixture, abrupt=False):
     client("delete-mortar", 1, "MORTARCASTER", f"login:{caster}", "cmd:.gobject select", "cmd:.gobject delete", "drop")
     if fixture.query(f"SELECT guid FROM gameobject WHERE guid = {local_mortar}", world):
         raise RuntimeError("the GM's delete must remove the mortar's saved row")
+
+    guardian = spawned[GUARDIAN] & 0xFFFFFF
+    client("kill-guardian", 2, "MORTARSPAWN", f"login:{spawner}", "listen:1", f"target:{GUARDIAN}",
+           "cmd:.kill", "drop")
+
+    def guardian_respawn():
+        return fixture.query(f"SELECT respawntime FROM creature_respawn WHERE guid = {guardian} AND instance = 0",
+                             characters)
+
+    deadline = wait_for("the guardian's respawn timer to reach MariaDB", guardian_respawn, 10)
+
     def ownership_taken():
         views = re.findall(r"this node owns \[([^]]*)\]", fixture.log("node1"))
         return views and worker.issubset(set(map(int, re.findall(r"\d+", views[-1]))))
@@ -190,6 +204,14 @@ def run(fixture, abrupt=False):
         expected = f"[{kind}] {entry} guid {spawned[entry] & 0xFFFFFF}:"
         if arrived.count(expected) != 1:
             raise RuntimeError(f"expected one saved {kind} {entry} after takeover, got {arrived.count(expected)}")
+    guardian_line = f"[creature] {GUARDIAN} guid {guardian}:"
+    guardian_views = [line for line in arrived.splitlines() if guardian_line in line]
+    if abrupt and guardian_views:
+        raise RuntimeError("a lost worker's dormant creature respawned early")
+    if not abrupt and (len(guardian_views) != 1 or "health 0," not in guardian_views[0]):
+        raise RuntimeError("the dying creature must arrive once, still as a corpse")
+    if guardian_respawn() != deadline:
+        raise RuntimeError("the guardian's original respawn deadline changed during takeover")
     door_line = next(line for line in arrived.splitlines() if f"[game object] {DOOR} " in line
                      and f"guid {spawned[DOOR] & 0xFFFFFF}:" in line)
     expected_state = 1 if abrupt else 2

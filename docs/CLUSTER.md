@@ -362,7 +362,9 @@ creature arrives hurt; a boss arrives in the same phase with the same timers.
 * **The same spawns everywhere.** Pools, spawn groups and spawn entries are chosen with a seed made
   from the cluster's name and the realm, so every node agrees on which creature a spawn is.
 * **A lost node's objects** are not migrated: their state died with the node, and the new owner
-  spawns afresh.
+  loads from the saved spawn rows and respawn deadlines. Clean moves also carry the running
+  deadlines for creatures and game objects that are currently absent. Only the node owning a
+  spawn's home cell clears its due respawn timer.
 * **Summoned creatures** are not handed over: they are dropped with their cell. A player's corpse
   stays where it is.
 

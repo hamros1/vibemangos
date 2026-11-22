@@ -15,6 +15,8 @@ enum MigrantKind : ubyte
     none = 0,     /// not carried
     creature = 1,
     gameObject = 2,
+    creatureRespawn = 3,   /// a timer, potentially with no live object in the bundle
+    gameObjectRespawn = 4, /// ditto
 }
 
 /// An object on its way to its next owner.

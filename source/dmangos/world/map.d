@@ -1451,13 +1451,13 @@ final class Map : CombatWorld, GameObjectWorld
      * (`dmangos.world.migration`) for `next`.
      */
     const(ubyte)[] migrateOut(scope bool delegate(ulong cell) inside, ushort next,
-        scope Migrant delegate(MapObject) save)
+        scope Migrant delegate(MapObject) save, const(Migrant)[] timers = null)
     {
         uint[] leaving;
         foreach (slot, ref e; entities)
             if (e.home != noCell && inside(e.home))
                 leaving ~= slot;
-        Migrant[] migrants;
+        Migrant[] migrants = timers.dup;
         foreach (slot; leaving)
         {
             if (!entities.holds(slot))

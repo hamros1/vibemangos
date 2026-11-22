@@ -284,7 +284,8 @@ tools/harness/check.sh --quick          # without the regression: unit tests (ea
 tools/harness/regression.sh             # two nodes, 250 bots in a crowd while regions split and merge
 python3 tools/harness/quorum.py         # three voters and a gateway, with clients connected during failover
 python3 tools/harness/realms.py         # sign into two clusters through one login server and check isolation
-python3 tools/harness/named_objects.py  # spells at a mortar, door and creature on an idle node
+python3 tools/harness/named_objects.py  # named spells and a clean handoff of saved spawns and a corpse
+python3 tools/harness/named_objects.py --abrupt  # kill the worker and check the original respawn deadline
 tools/harness/bench.sh LABEL crowd 500  # one benchmark run (docs/BENCHMARKS.md), report in LABEL.md
 tools/harness/db.sh start|stop|status
 # The full check also runs tools/harness/spell-audit.py: every spell a player can learn (trainers, starting

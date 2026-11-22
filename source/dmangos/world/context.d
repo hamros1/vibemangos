@@ -4335,6 +4335,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         import dmangos.log : info;
         import dmangos.cluster.services : isServiceMap, serviceOfMap;
+        import dmangos.world.migration : encodeBundle;
         import std.format : format;
 
         // Load additions before restoring live bundles or loading newly owned cells.
@@ -4375,31 +4376,36 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     dungeonCopiesIn(r.map, *copies);
             }
         foreach (ref r; lost)
-            if (auto m = r.map in maps)
+            if (physicalWorldRegion(r))
             {
-                if (instanceable(r.map))
-                    continue; // a dungeon's copies went above (its map itself is never simulated)
-                if (r.next) // moving to another node: its objects go along
+                const timers = takeRegionRespawns(r);
+                if (auto m = r.map in maps)
                 {
-                    const before = m.objectCount - m.replicaCount;
-                    leaving[r.id] = cast(ubyte[]) m.migrateOut((ulong cell) => r.rect.containsKey(cell), r.next,
-                        &saveMigrant);
-                    info!"migration: region %s leaves for node %s with %s objects (%s KiB)"(r.id, r.next,
-                        before - (m.objectCount - m.replicaCount), leaving[r.id].length / 1024);
+                    if (r.next) // moving to another node: its objects and timers go along
+                    {
+                        const before = m.objectCount - m.replicaCount;
+                        leaving[r.id] = cast(ubyte[]) m.migrateOut((ulong cell) => r.rect.containsKey(cell), r.next,
+                            &saveMigrant, timers);
+                        info!"migration: region %s leaves for node %s with %s objects (%s KiB)"(r.id, r.next,
+                            before - (m.objectCount - m.replicaCount), leaving[r.id].length / 1024);
+                    }
+                    else
+                        m.release((ulong cell) => r.rect.containsKey(cell));
                 }
-                else
-                    m.release((ulong cell) => r.rect.containsKey(cell));
+                else if (r.next)
+                    leaving[r.id] = cast(ubyte[]) encodeBundle(null, timers);
             }
+        refreshRegionRespawns(gained, arriving);
         // Every arrival first: a map that looks around for gained cells would otherwise spawn afresh what is
         // still on its way in another region's bundle.
         foreach (ref r; gained)
             if (auto objects = r.id in arriving)
             {
-                if (r.creature.spawn || instanceable(r.map))
+                if (!physicalWorldRegion(r))
                     continue; // its copies' bundles, read above
                 auto m = map(r.map);
                 const before = m.objectCount - m.replicaCount;
-                m.migrateIn(*objects, (const ref Migrant migrant) => restoreWorldMigrant(migrant, m));
+                m.migrateIn(*objects, (const ref Migrant migrant) => restoreRegionMigrant(migrant, m, r));
                 info!"migration: region %s arrived with %s objects"(r.id, m.objectCount - m.replicaCount - before);
             }
         foreach (ref r; gained)
@@ -4413,6 +4419,126 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 if (auto m = r.map in maps)
                     m.ownershipGained();
             }
+    }
+
+    private bool physicalWorldRegion(const ref Region region)
+    {
+        return !region.creature.spawn && client.maps.lookup(region.map) !is null && !instanceable(region.map);
+    }
+
+    private bool timerHome(Spawn)(const ref Region region, uint guid, const(Spawn)[] spawns, const(size_t[uint]) index,
+        out ulong cell)
+    {
+        if (const slot = guid in index)
+        {
+            const spawn = &spawns[*slot];
+            cell = cellKeyAt(spawn.x, spawn.y);
+            return region.map == spawn.map && region.rect.containsKey(cell);
+        }
+        return false;
+    }
+
+    /// Timed-out-of-world spawns move with their home cells even when there is no live object.
+    private Migrant[] takeRegionRespawns(const ref Region region)
+    {
+        import dmangos.bytes : ByteWriter;
+        import dmangos.world.migration : MigrantKind;
+
+        indexSpawns();
+        Migrant[] timers;
+        void take(Spawn)(ref long[uint] cached, const(Spawn)[] spawns, const(size_t[uint]) index, MigrantKind kind)
+        {
+            foreach (guid; cached.keys)
+            {
+                ulong home;
+                if (!timerHome(region, guid, spawns, index, home))
+                    continue;
+                if (region.next)
+                {
+                    ByteWriter state;
+                    state.put(cached[guid]);
+                    timers ~= Migrant(kind, guid, home, state.data);
+                }
+                cached.remove(guid);
+            }
+        }
+        take(respawnAt, data.creatureSpawns, spawnIndex, MigrantKind.creatureRespawn);
+        take(gameObjectRespawnAt, data.gameObjectSpawns, gameObjectSpawnIndex, MigrantKind.gameObjectRespawn);
+        return timers;
+    }
+
+    /// A clean handoff supplies its timers in the bundle. A crash only leaves the database rows.
+    private void refreshRegionRespawns(const(Region)[] gained, const(ubyte)[][uint] arriving)
+    {
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
+
+        if (!gained.length)
+            return;
+        const(Region)[] cold;
+        foreach (ref region; gained)
+        {
+            if (!physicalWorldRegion(region))
+                continue;
+            if (arriving.get(region.id, null).length)
+                takeRegionRespawns(region); // discard any cached timers from an earlier ownership
+            else
+                cold ~= region;
+        }
+        if (!cold.length)
+            return;
+        indexSpawns();
+        void sync(Spawn)(ref long[uint] cached, const(long[uint]) saved, const(Spawn)[] spawns,
+            const(size_t[uint]) index)
+        {
+            import std.algorithm.searching : any;
+
+            bool here(uint guid)
+            {
+                ulong home;
+                return cold.any!(region => timerHome(region, guid, spawns, index, home));
+            }
+            foreach (guid; cached.keys)
+                if (guid !in saved && here(guid))
+                    cached.remove(guid);
+            foreach (guid, at; saved)
+                if (here(guid))
+                    cached[guid] = at;
+        }
+        try
+        {
+            sync(respawnAt, database.loadCreatureRespawns(), data.creatureSpawns, spawnIndex);
+            sync(gameObjectRespawnAt, database.loadGameObjectRespawns(), data.gameObjectSpawns, gameObjectSpawnIndex);
+        }
+        catch (DatabaseException error)
+        {
+            warning!"migration: could not refresh respawn timers: %s"(error.msg);
+        }
+    }
+
+    private MapObject restoreRegionMigrant(const ref Migrant migrant, Map destination, const ref Region region)
+    {
+        import dmangos.bytes : ByteReader;
+        import dmangos.world.migration : MigrantKind;
+
+        const creature = migrant.kind == MigrantKind.creatureRespawn;
+        if (!creature && migrant.kind != MigrantKind.gameObjectRespawn)
+            return restoreWorldMigrant(migrant, destination);
+        ulong home;
+        const inside = creature ? timerHome(region, migrant.spawn, data.creatureSpawns, spawnIndex, home)
+            : timerHome(region, migrant.spawn, data.gameObjectSpawns, gameObjectSpawnIndex, home);
+        if (!inside || home != migrant.home)
+            return null;
+        auto state = ByteReader(migrant.state);
+        const at = state.read!long;
+        if (at > 0)
+        {
+            if (creature)
+                respawnAt[migrant.spawn] = at;
+            else
+                gameObjectRespawnAt[migrant.spawn] = at;
+        }
+        return null;
     }
 
     /// `IdCounters.take`: a block of ids for a cluster member, from this server's counters.
@@ -6693,17 +6819,18 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         foreach (guid, at; gameObjectRespawnAt)
             if (at <= time)
                 due ~= guid;
-        if (due.length && gameObjectSpawnIndex is null)
-            foreach (i, ref spawn; data.gameObjectSpawns)
-                gameObjectSpawnIndex[spawn.guid] = i;
+        if (due.length)
+            indexSpawns();
         foreach (guid; due)
         {
-            gameObjectRespawnAt.remove(guid);
-            database.saveGameObjectRespawn(guid, 0);
             const index = guid in gameObjectSpawnIndex;
-            if (index is null)
+            const spawn = index is null ? null : &data.gameObjectSpawns[*index];
+            gameObjectRespawnAt.remove(guid);
+            if (ownsCell !is null && (spawn is null || !ownsCell(spawn.map, cellKeyAt(spawn.x, spawn.y))))
                 continue;
-            const spawn = &data.gameObjectSpawns[*index];
+            database.saveGameObjectRespawn(guid, 0);
+            if (spawn is null)
+                continue;
             if (!rerolledBack(PoolMember.Kind.gameObject, guid, (uint member) {
                     if (const i = member in gameObjectSpawnIndex)
                     {
@@ -6885,7 +7012,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         import core.time : seconds;
 
-        if (now - lastRespawnCheck < 1.seconds)
+        if (now - lastRespawnCheck < 1.seconds || !canWrite())
             return;
         lastRespawnCheck = now;
         gameObjectsDue();
@@ -6899,12 +7026,23 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         indexSpawns();
         foreach (guid; due)
         {
+            const index = guid in spawnIndex;
+            const spawn = index is null ? null : &data.creatureSpawns[*index];
+            const home = spawn is null ? ulong.max : cellKeyAt(spawn.x, spawn.y);
+            if (ownsCell !is null && (spawn is null || !ownsCell(spawn.map, home)))
+            {
+                respawnAt.remove(guid);
+                continue;
+            }
+            auto there = spawn is null ? null : existingMap(spawn.map);
+            if (there !is null)
+                if (auto corpse = there.creatureAt(loanGuid(spawn)))
+                    if (!corpse.alive)
+                        continue;
             respawnAt.remove(guid);
             database.saveCreatureRespawn(guid, 0);
-            const index = guid in spawnIndex;
-            if (index is null)
+            if (spawn is null)
                 continue;
-            const spawn = &data.creatureSpawns[*index];
             if (!rerolledBack(PoolMember.Kind.creature, guid, (uint member) {
                     if (const i = member in spawnIndex)
                     {
@@ -6913,8 +7051,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     }
                 }))
                 continue;
-            auto there = existingMap(spawn.map);
-            if (there is null || !there.cellLoaded(cellKeyAt(spawn.x, spawn.y)))
+            if (there is null || !there.cellLoaded(home))
                 continue;
             if (auto creature = makeCreature(spawn))
             {
@@ -7984,6 +8121,89 @@ unittest
     assert(relay.remote.character.inventory.count(itemJerky) == jerky + 1
         && relay.remote.character.inventory.count(itemSword) == sword + 1);
     assert(restored.lootState == GoLootState.justDeactivated);
+}
+
+// Absent spawns resume their original timers after either a clean transfer or a lost owner.
+unittest
+{
+    import dmangos.cluster.regions : CellRect;
+    import dmangos.world.gameobject : GameObjectTemplate;
+    import dmangos.world.grid : cellCoordinate;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.testclient : newCreationContext, newDatabase;
+    import dmangos.world.testdata : creatureInnkeeper;
+
+    foreach (clean; [true, false])
+    {
+        auto db = newDatabase();
+        auto oldOwner = newCreationContext(db), newOwner = newCreationContext(db), bystander = newCreationContext(db);
+        const at = Position(-8930, -120, 83.53f);
+        const home = cellKeyAt(at.x, at.y);
+        const x = cellCoordinate(at.x), y = cellCoordinate(at.y);
+        const creature = CreatureSpawn(9_000_001, creatureInnkeeper, 0, at.x, at.y, at.z);
+        const door = GameObjectTemplate(entry: 9011, type: GameObjectType.door);
+        const object = GameObjectSpawn(guid: 9_000_001, entry: door.entry, x: at.x, y: at.y, z: at.z);
+        auto now = MonoTime.currTime;
+        foreach (node; [oldOwner, newOwner, bystander])
+        {
+            node.clock = () => now;
+            node.startClock = now;
+            node.startUnixTime = oldOwner.startUnixTime;
+            node.registerCreatureSpawn(creature);
+            node.registerGameObjectSpawn(object);
+            node.data.gameObjectTemplates[door.entry] = door;
+        }
+        bool moving;
+        oldOwner.ownsCell = (uint map, ulong cell) => !moving && map == 0 && cell == home;
+        newOwner.ownsCell = (uint map, ulong cell) => moving && map == 0 && cell == home;
+        bystander.ownsCell = (uint, ulong) => false;
+        const deadline = oldOwner.unixTime + 10;
+        oldOwner.respawnAt[creature.guid] = deadline;
+        oldOwner.gameObjectRespawnAt[object.guid] = deadline;
+        if (!clean)
+        {
+            db.saveCreatureRespawn(creature.guid, deadline);
+            db.saveGameObjectRespawn(object.guid, deadline);
+        }
+
+        Region region = Region(1, 0, CellRect(x, y, x + 1, y + 1), 1, 1, RegionState.revoking, 2);
+        ubyte[][uint] leaving, unused;
+        moving = true;
+        if (clean)
+        {
+            assert(oldOwner.existingMap(0) is null, "the departing owner never loaded these spawns");
+            oldOwner.regionsChanged(null, [region], null, leaving);
+            assert(leaving[region.id].length > 8);
+        }
+        region.owner = 2;
+        region.state = RegionState.granted;
+        region.next = 0;
+        const(ubyte)[][uint] arriving = clean ? [region.id: cast(const(ubyte)[]) leaving[region.id]] : null;
+        newOwner.regionsChanged([region], null, arriving, unused);
+        assert(newOwner.awaitingRespawn(creature.guid) && newOwner.gameObjectAwaitingRespawn(object.guid));
+        auto map = newOwner.map(0);
+        map.loadCell(home);
+        const creatureGuid = makeGuid(HighGuid.unit, creature.entry, creature.guid);
+        const objectGuid = makeGuid(HighGuid.gameObject, object.entry, object.guid);
+        assert(map.findObject(creatureGuid) is null && map.findObject(objectGuid) is null);
+
+        db.saveCreatureRespawn(creature.guid, deadline); // by then the departing writer has settled
+        db.saveGameObjectRespawn(object.guid, deadline);
+        bystander.respawnAt[creature.guid] = deadline;
+        bystander.gameObjectRespawnAt[object.guid] = deadline;
+        now += 11.seconds;
+        bystander.respawnDue(now);
+        assert(db.creatureRespawns[creature.guid] == deadline && db.gameObjectRespawns[object.guid] == deadline,
+            "another node cannot clear the owning node's timers");
+        newOwner.respawnDue(now);
+        auto alive = map.creatureAt(creatureGuid);
+        auto ready = map.gameObjectAt(objectGuid);
+        assert(alive !is null && alive.alive && ready !is null);
+        assert(creature.guid !in db.creatureRespawns && object.guid !in db.gameObjectRespawns);
+        now += 2.seconds;
+        newOwner.respawnDue(now);
+        assert(map.creatureAt(creatureGuid) is alive && map.gameObjectAt(objectGuid) is ready);
+    }
 }
 
 // A lost node supplies no bundle, but its durable additions still belong to the next owner.

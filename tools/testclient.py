@@ -336,7 +336,7 @@ def describe(op, p):
                 entry = v.get(3, 0); seen_objects[g] = (t, entry)
                 if move: seen_positions[g] = move[:3]
                 if t == 3:
-                    print(f"  [creature] {entry} guid {g & 0xFFFFFF}: level {v.get(OBJECT_END + 0x1C)}, health {v.get(OBJECT_END + 0x10)}, "
+                    print(f"  [creature] {entry} guid {g & 0xFFFFFF}: level {v.get(OBJECT_END + 0x1C)}, health {v.get(OBJECT_END + 0x10, 0)}, "
                           f"display {v.get(OBJECT_END + 0x7D)}, faction {v.get(OBJECT_END + 0x1D)}, npc flags {v.get(0x93, 0)}, "
                           f"unit flags {v.get(OBJECT_END + 0x28, 0):#x}, "
                           f"at {move[0]:.1f} {move[1]:.1f} {move[2]:.1f}")
