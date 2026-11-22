@@ -1241,6 +1241,98 @@ unittest
     assert(s.ask(12) == 3, "his encounter not done");
 }
 
+/// Both actual platform spawns pull the opposite tank. Movement packets, threat and pickup agree.
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.bytes : ByteReader, ByteWriter;
+    import dmangos.world.movement : jumpGravity, MovementFlags, MovementInfo;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.unit : Blow, dealDamage;
+    import std.algorithm.comparison : min;
+
+    enum uint stalagg = 15_929, feugen = 15_930;
+    const west = spawnOf(533, stalagg), east = spawnOf(533, feugen);
+    const middle = Position((west.x + east.x) / 2, (west.y + east.y) / 2, west.z);
+    auto s = new Scene(533, middle, [classWarrior, classWarrior, classWarrior]);
+    auto st = s.the(stalagg), fe = s.the(feugen);
+    s.clear(middle, 100, [stalagg, feugen]);
+    s.moveHero(0, st.position);
+    s.moveHero(1, fe.position);
+    s.moveHero(2, st.position);
+    dealDamage(s.heroUnit(0), s.map.unitOf(st), 1, Blow.spell());
+    dealDamage(s.heroUnit(1), s.map.unitOf(fe), 1, Blow.spell());
+    st.ai.addThreat(s.heroUnit(0), 1_000);
+    fe.ai.addThreat(s.heroUnit(1), 1_500);
+    st.ai.addThreat(s.heroUnit(2), 250);
+    s.run(20.seconds);
+    assert(st.ai.hostVictim.guid == s.hero(0).guid && fe.ai.hostVictim.guid == s.hero(1).guid);
+    assert(!s.cast_(28_337), "the exchange is not due yet");
+
+    MovementInfo[2] flights;
+    long[2] launched;
+    foreach (_; 0 .. 24)
+    {
+        s.w.now += 200.msecs;
+        s.elapsedMs += 200;
+        s.w.context.update(s.w.now);
+        foreach (k, ref flight; flights)
+        {
+            auto packets = s.heroes[k].read();
+            s.note(packets, k == 0);
+            foreach (packet; packets)
+                if (packet.opcode == Opcode.SMSG_MOVE_KNOCK_BACK)
+                {
+                    assert(!launched[k], "one movement order per tank");
+                    auto r = ByteReader(packet.body_);
+                    const who = r.readPackedGuid(), order = r.read!uint;
+                    assert(who == s.hero(k).guid);
+                    flight.jumpCos = r.read!float;
+                    flight.jumpSin = r.read!float;
+                    flight.jumpXySpeed = r.read!float;
+                    flight.jumpVelocity = r.read!float;
+                    flight.flags = MovementFlags.jumping;
+                    flight.position = s.hero(k).position;
+                    ByteWriter ack;
+                    ack.put(who);
+                    ack.put(order);
+                    flight.write(ack);
+                    s.heroes[k].write(Opcode.CMSG_MOVE_KNOCK_BACK_ACK, ack.data);
+                    launched[k] = s.elapsedMs;
+                }
+            if (!launched[k] || s.elapsedMs <= launched[k] || !flight.flags)
+                continue;
+            const elapsed = (s.elapsedMs - launched[k]) / 1000.0f;
+            const duration = -2 * flight.jumpVelocity / jumpGravity; // the platforms have the same elevation
+            const t = min(elapsed, duration);
+            auto travel = flight;
+            travel.position.x += t * flight.jumpXySpeed * flight.jumpCos;
+            travel.position.y += t * flight.jumpXySpeed * flight.jumpSin;
+            travel.position.z -= t * (flight.jumpVelocity + jumpGravity * t / 2);
+            const landing = elapsed >= duration;
+            if (landing)
+                flight.flags = travel.flags = MovementFlags.none;
+            ByteWriter body_;
+            travel.write(body_);
+            s.heroes[k].write(landing ? Opcode.MSG_MOVE_FALL_LAND : Opcode.MSG_MOVE_HEARTBEAT, body_.data);
+        }
+    }
+
+    assert(launched[0] && launched[0] == launched[1], format!"two simultaneous pulls expected: %s, %s\n%s"(
+        launched[0], launched[1], s.seen()));
+    assert(s.castBy(stalagg, 28_338) && s.castBy(feugen, 28_339));
+    assert(Scene.distance(s.hero(0).position, fe.position) < 5 && Scene.distance(s.hero(1).position, st.position) < 5,
+        format!"tanks landed at %s and %s, bosses at %s and %s"(s.hero(0).position, s.hero(1).position, st.position, fe.position));
+    assert(st.ai.threatOf(s.hero(0).guid) == 0 && fe.ai.threatOf(s.hero(1).guid) == 0, "the old tank loses threat on each add");
+    assert(st.ai.threatOf(s.hero(2).guid) == 250 && st.ai.hostVictim.guid == s.hero(2).guid,
+        "the other player's existing threat still matters");
+    assert(fe.ai.hostVictim.guid == s.hero(0).guid, "an uncontested tank can pick up the opposite add");
+    st.ai.taunt(s.heroUnit(1), s.map);
+    assert(st.ai.hostVictim.guid == s.hero(1).guid && st.ai.threatOf(s.hero(1).guid) == 250,
+        "the incoming tank can taunt off the backup");
+}
+
 /**
  * Sapphiron: the Frostwyrm Lair's way open (the copy's "special"), he comes 22 s later and fights all there:
  * Frost Aura, Cleave, Tail Sweep, Life Drain, his blizzard; at 46 s he takes to the air (Icebolt) and lands. His

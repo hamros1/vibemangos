@@ -297,6 +297,7 @@ final class TestInstance : InstanceHost
     }
     EntityRef fought = EntityRef(7); /// whom every creature fights
     EntityRef hostVictimOf(EntityRef) { return fought; }
+    uint hostUnitFlagsOf(EntityRef) { return 0; }
     Location[ulong] places; /// where `locate` finds entities (anything else: at the origin)
     bool hostLocationOf(EntityRef who, out Location at)
     {

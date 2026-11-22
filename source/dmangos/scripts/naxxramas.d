@@ -100,6 +100,7 @@ enum NaxxSignal : uint
     webWrapPull = 106,  /// Maexxna to an invisible man: the player of guid `value` is thrown to you; wrap them
     clearShackles = 107, /// the copy to Kel'Thuzad: too many of his guardians are shackled
     freezePlayer = 108, clearIceBlocks = 109, chains = 110,
+    magneticPull = 111, /// the copy to an add: its victim was pulled away (`value`: incoming player's guid)
     triggerBase = 1000, /// an area trigger: `triggerBase + id`
 }
 
@@ -200,6 +201,7 @@ struct Naxxramas
         triggerFrostwyrmTele = 4156;
     enum uint sayFaerlinaIntro = 12_852;
     static immutable sapphironAt = Location(3521.48f, -5234.87f, 137.626f, 4.53329f);
+    static immutable constructPlatforms = Location(3479, -2964, 312);
 
     EncounterState[NaxxEncounter.max + 1] encounters;
     ubyte horsemenKilled;
@@ -215,7 +217,7 @@ struct Naxxramas
     enum ubyte maxShackles = 3;
     ubyte shackled; /// guardians that said so since the last check
 
-    enum Step : ubyte { sapphiron, shackles }
+    enum Step : ubyte { sapphiron, shackles, tankSwap }
     Schedule!Step steps;
 
     private bool doorOpen(size_t i) const
@@ -277,6 +279,11 @@ struct Naxxramas
             steps.after(Step.sapphiron, 0.msecs);
     }
 
+    void on(ref InstanceContext copy, const ref Restored e)
+    {
+        steps.cancel(Step.tankSwap);
+    }
+
     /// The question whether the way to Sapphiron is open (every quarter ended).
     enum uint askFrostwyrm = 100;
 
@@ -320,6 +327,13 @@ struct Naxxramas
                 horsemenKilled = 0;
             if (state == EncounterState.done)
                 copy.respawnObject(goChestHorsemen, 30 * 60);
+        }
+        if (which == NaxxEncounter.thaddius)
+        {
+            if (state != EncounterState.inProgress)
+                steps.cancel(Step.tankSwap);
+            else if ((e.from.entry == npcFeugen || e.from.entry == npcStalagg) && !steps.pending(Step.tankSwap))
+                steps.every(Step.tankSwap, 21.seconds);
         }
         if ((which == NaxxEncounter.thaddius || which == NaxxEncounter.fourHorsemen) && encounters[which] == state)
             return;
@@ -402,7 +416,37 @@ struct Naxxramas
                 copy.signal(kelthuzad, NaxxSignal.clearShackles);
             shackled = 0;
             break;
+        case Step.tankSwap:
+            swapConstructTanks(copy);
+            break;
         }
+    }
+
+    private void swapConstructTanks(ref InstanceContext copy)
+    {
+        // Look up the current actors so the timer also works after a clean copy handoff.
+        EntityRef[1] west, east;
+        if (!copy.creaturesNear(constructPlatforms, npcStalagg, 120, west[])
+            || !copy.creaturesNear(constructPlatforms, npcFeugen, 120, east[]))
+            return;
+        const stalagg = west[0], feugen = east[0];
+        if ((copy.unitFlagsOf(stalagg) | copy.unitFlagsOf(feugen)) & UnitFlag.uninteractible)
+            return;
+        // Snapshot both victims before either spell moves a player or changes a threat list.
+        const stalaggTank = copy.victimOf(stalagg), feugenTank = copy.victimOf(feugen);
+        if (!stalaggTank.isPlayer || !feugenTank.isPlayer || stalaggTank == feugenTank
+            || !copy.alive(stalaggTank) || !copy.alive(feugenTank))
+            return;
+
+        enum uint pull = 28_337, stalaggMarker = 28_338, feugenMarker = 28_339;
+        copy.castSpell(stalagg, stalaggMarker);
+        copy.castSpell(feugen, feugenMarker);
+        const stalaggTankMoved = copy.castSpell(feugen, pull, stalaggTank) == ActionResult.ok;
+        const feugenTankMoved = copy.castSpell(stalagg, pull, feugenTank) == ActionResult.ok;
+        if (stalaggTankMoved)
+            copy.signal(stalagg, NaxxSignal.magneticPull, feugenTankMoved ? cast(int) feugenTank.guid : 0);
+        if (feugenTankMoved)
+            copy.signal(feugen, NaxxSignal.magneticPull, stalaggTankMoved ? cast(int) stalaggTank.guid : 0);
     }
 
     /// Whether the way to Sapphiron is open: every quarter ended.
@@ -1677,7 +1721,7 @@ struct Gluth
 private mixin template ThaddiusAdd(uint other, uint warstompOrPull, uint aggro, uint slay, uint death)
 {
     enum uint powerSurgeOrStatic = warstompOrPull;
-    enum Step : ubyte { ability, rise }
+    enum Step : ubyte { ability, rise, resumeChase }
     Schedule!Step steps;
     bool down;
 
@@ -1720,6 +1764,16 @@ private mixin template ThaddiusAdd(uint other, uint warstompOrPull, uint aggro, 
 
     void on(ref CreatureContext me, const ref Signal e)
     {
+        if (e.id == NaxxSignal.magneticPull && !down)
+        {
+            if (const victim = me.victim)
+                me.modifyThreat(victim, -100);
+            if (e.value)
+                me.addThreat(EntityRef(cast(uint) e.value), 0);
+            me.combatMovement(false);
+            steps.after(Step.resumeChase, 3.seconds);
+            return;
+        }
         if (e.id == NaxxSignal.addsDone && down)
         {
             // The other fell within our window and died: so do we (else we rose again beside Thaddius).
@@ -1760,6 +1814,12 @@ private mixin template ThaddiusAdd(uint other, uint warstompOrPull, uint aggro, 
             steps.after(Step.ability, between(me, 10_000, 15_000));
             if (const t = me.selectTarget(Pick.nearest))
                 me.attack(t);
+            break;
+        case Step.resumeChase:
+            if (!me.inMeleeReach(me.victim) && me.threatOf(me.victim) == 0)
+                if (const nearby = me.selectTarget(Pick.nearest, PickFilter.player | PickFilter.inMelee))
+                    me.attack(nearby);
+            me.combatMovement(true);
             break;
         }
     }
@@ -2483,7 +2543,28 @@ version (unittest)
         bool[ulong] opened;
         uint[] respawned;
         EntityRef[] summoned;
+        uint[] castSpells;
+        EntityRef[ulong] victims;
+        uint[ulong] flags;
         override uint hostPlayerCount() { return 1; }
+        override bool hostAlive(EntityRef who) { return cast(bool) who; }
+        override EntityRef hostVictimOf(EntityRef who) { return victims.get(who.guid, EntityRef.init); }
+        override uint hostUnitFlagsOf(EntityRef who) { return flags.get(who.guid, 0); }
+        override size_t hostCreaturesNear(Location, uint entry, float, EntityRef[] into)
+        {
+            foreach (guid; victims.keys)
+                if (EntityRef(guid).entry == entry && into.length)
+                {
+                    into[0] = EntityRef(guid);
+                    return 1;
+                }
+            return 0;
+        }
+        override ActionResult hostCast(EntityRef, uint spell, EntityRef, bool)
+        {
+            castSpells ~= spell;
+            return ActionResult.ok;
+        }
         override ActionResult hostSignal(EntityRef to, uint id, int value)
         {
             signals ~= Signal(to, id, value);
@@ -2503,6 +2584,58 @@ version (unittest)
     }
 
     EntityRef naxxObject(uint entry) { return EntityRef(0xF110_0000_0000_0001UL | (ulong(entry) << 24)); }
+}
+
+/// One copy timer coordinates the swap. A fake-dead add and an encounter reset suppress it.
+unittest
+{
+    import dmangos.bytes : ByteReader, ByteWriter;
+
+    alias self = dmangos.scripts.naxxramas;
+    auto runtime = ScriptRuntime.of!self();
+    auto host = new FakeNecropolis;
+    auto copy = InstanceContext(host);
+    auto h = runtime.create(ScriptKind.instance, "instance_naxxramas");
+    const stalagg = EntityRef(0xF130_0000_0000_0001UL | (ulong(npcStalagg) << 24));
+    const feugen = EntityRef(0xF130_0000_0000_0002UL | (ulong(npcFeugen) << 24));
+    host.victims[stalagg.guid] = EntityRef(7);
+    host.victims[feugen.guid] = EntityRef(8);
+    runtime.raise(h, copy, Signal(stalagg, NaxxEncounter.thaddius, EncounterState.inProgress));
+    runtime.tick(h, copy, 20_999);
+    runtime.raise(h, copy, Signal(feugen, NaxxEncounter.thaddius, EncounterState.inProgress));
+    assert(host.castSpells.length == 0);
+    ByteWriter saved;
+    runtime.save(h, saved);
+    h = runtime.create(ScriptKind.instance, "instance_naxxramas");
+    auto incoming = ByteReader(saved.data);
+    assert(runtime.load(h, incoming));
+    runtime.tick(h, copy, 1);
+    assert(host.castSpells == [28_338, 28_339, 28_337, 28_337]);
+    assert(host.signals == [Signal(stalagg, NaxxSignal.magneticPull, 8), Signal(feugen, NaxxSignal.magneticPull, 7)]);
+
+    host.flags[feugen.guid] = UnitFlag.uninteractible;
+    runtime.tick(h, copy, 21_000);
+    assert(host.castSpells.length == 4, "no half swap during fake death");
+    host.flags.remove(feugen.guid);
+    host.victims[feugen.guid] = host.victims[stalagg.guid];
+    runtime.tick(h, copy, 21_000);
+    assert(host.castSpells.length == 4, "one shared tank must not receive two competing pulls");
+    host.victims[feugen.guid] = EntityRef(8);
+    runtime.raise(h, copy, Signal(feugen, NaxxEncounter.thaddius, EncounterState.failed));
+    runtime.tick(h, copy, 21_000);
+    assert(host.castSpells.length == 4, "a wipe cancels the swap");
+
+    runtime.raise(h, copy, Signal(feugen, NaxxEncounter.thaddius, EncounterState.inProgress));
+    runtime.tick(h, copy, 20_999);
+    assert(host.castSpells.length == 4);
+    runtime.tick(h, copy, 1);
+    assert(host.castSpells.length == 8, "a new pull starts a fresh timer");
+    runtime.raise(h, copy, Restored());
+    runtime.tick(h, copy, 21_000);
+    assert(host.castSpells.length == 8, "a cold restore discards an in-progress swap timer");
+    runtime.raise(h, copy, Signal(stalagg, NaxxEncounter.thaddius, EncounterState.inProgress));
+    runtime.tick(h, copy, 21_000);
+    assert(host.castSpells.length == 12, "a fresh pull can start after restoring");
 }
 
 /// Naxxramas' copy: Anub'Rekhan's door shuts while he fights and his gate opens when he dies; the

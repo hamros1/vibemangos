@@ -434,6 +434,14 @@ final class InstanceScript : InstanceHost
         return c is null ? EntityRef.init : c.ai.hostVictim();
     }
 
+    uint hostUnitFlagsOf(EntityRef creature)
+    {
+        import dmangos.world.updatefields : UNIT_FIELD_FLAGS;
+
+        auto c = creatureOf(creature);
+        return c is null ? 0 : c.values.get!UNIT_FIELD_FLAGS;
+    }
+
     bool hostLocationOf(EntityRef who, out Location at)
     {
         Position there;

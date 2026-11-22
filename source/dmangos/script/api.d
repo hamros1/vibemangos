@@ -1213,6 +1213,7 @@ interface InstanceHost
     uint hostRandom(uint below);
     ActionResult hostRemoveAura(EntityRef creature, uint spell);
     EntityRef hostVictimOf(EntityRef creature);
+    uint hostUnitFlagsOf(EntityRef creature);
     bool hostLocationOf(EntityRef who, out Location at);
     EntityRef hostAnyPlayer();
     void hostKillCreditAll(uint entry);
@@ -1377,6 +1378,9 @@ struct InstanceContext
 
     /// Whom a creature fights; nothing if it does not (or is not here).
     EntityRef victimOf(EntityRef creature) { return host.hostVictimOf(creature); }
+
+    /// A creature's current `UnitFlag`s, or zero if it is not here.
+    uint unitFlagsOf(EntityRef creature) { return host.hostUnitFlagsOf(creature); }
 
     /// Where an entity of the copy is; false if it is not here.
     bool locationOf(EntityRef who, out Location at) { return host.hostLocationOf(who, at); }

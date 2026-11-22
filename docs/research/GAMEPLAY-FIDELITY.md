@@ -96,7 +96,9 @@ Four more cases passed against the old server code once the fixture started the 
 
 Magnetic Pull (28337) and Spider Web (28434) use a forced-movement arc toward the caster. Each spell uses its own horizontal speed. The server accepts the faster movement after the client acknowledges the order, within the time and path expected for that pull. The real-data sweep checks that both casts land the player at contact range and that Spider Web applies its slow. [CMaNGOS comparison for the shared pull effect](https://github.com/cmangos/mangos-classic/blob/master/src/game/Spells/SpellEffects.cpp#L4734-L4762)
 
-The sweep casts Magnetic Pull directly. Scheduling the tank exchange is still open in the Feugen and Stalagg encounter script.
+Feugen and Stalagg now cast their two Magnetic Pull markers and exchange their current tanks on a 21-second cycle. The spell fires from the destination add, so each tank flies toward the opposite platform. One archived Classic pull records both markers at 21.039 seconds and again at 42.129 seconds. Both adds start hitting the incoming tanks 3.238 seconds after the first exchange without a Taunt. Another pull records a backup tank taunting and taking over. [First Classic combat log](https://vanilla.warcraftlogs.com/reports/6g39CxdHRMzcYbX8#fight=127) · [Second Classic combat log](https://vanilla.warcraftlogs.com/reports/y3hamAcK4nfZpGCk#fight=8) · [Archived event exports](https://github.com/David-c0degeek/necropsy/tree/2b7e7f16a84fc40b1366b56f7d942f4a79f5fcf5/tests/golden/raids)
+
+The combat events establish the target changes. They do not expose the exact threat values. The implementation clears the outgoing tank's threat on its old add, preserves the other players' threat, and holds the adds on their platforms for three seconds while the tanks are in flight. The raid regression drives both movement acknowledgements and tests pickup with and without a backup tank on the threat list.
 
 ## Reproduce
 
