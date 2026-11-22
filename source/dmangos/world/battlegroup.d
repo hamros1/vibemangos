@@ -104,15 +104,34 @@ final class Battlegroup : GroupDirectory
 /// Two separate character databases contain the same local GUID and name. Both clients enter one map.
 unittest
 {
+    import dmangos.dbc : buildDbc;
     import dmangos.world.bgqueue : BattlegroundType, BattlegroundQueueHost, BattlegroundJoin;
     import dmangos.world.battleground : winnerAlliance;
+    import dmangos.world.clientdata : emotesFormat, emotesTextDataFormat, emotesTextFormat;
     import dmangos.world.group : GroupUpdate, MemberStatus;
     import dmangos.world.opcodes : ChatType, Language;
+    import dmangos.world.packets : ClientTextEmote;
     import dmangos.world.testclient;
     import dmangos.world.testdata : mapEasternKingdoms, mapWarsongGulch, testClientData, testWorldData;
 
     auto pool = new Battlegroup;
     auto client = testClientData();
+    auto wave = new uint[emotesTextFormat.length];
+    wave[0] = 101;
+    wave[2] = 3; // the one-shot wave animation
+    wave[3] = 1;
+    wave[4] = 2;
+    wave[7] = 3;
+    client.emotesText = typeof(client.emotesText).parse(buildDbc(emotesTextFormat, [wave]), "");
+    auto animation = new uint[emotesFormat.length];
+    animation[0] = 3;
+    client.emotes = typeof(client.emotes).parse(buildDbc(emotesFormat, [animation]), "");
+    enum targetedWave = "%s waves at %s.\0", atViewer = "%s waves at you.\0";
+    const strings = cast(const(ubyte)[]) ("\0" ~ targetedWave ~ atViewer ~ "%s waves.\0");
+    client.emotesTextData = typeof(client.emotesTextData).parse(buildDbc(emotesTextDataFormat, [
+        [1u, 1, 0, 0, 0, 0, 0, 0, 0, 0],
+        [2u, cast(uint) (1 + targetedWave.length), 0, 0, 0, 0, 0, 0, 0, 0],
+        [3u, cast(uint) (1 + targetedWave.length + atViewer.length), 0, 0, 0, 0, 0, 0, 0, 0]], strings), "");
     auto firstDb = newDatabase(), nextDb = newDatabase();
     WorldContext make(uint id, MemoryWorldDatabase db)
     {
@@ -191,7 +210,7 @@ unittest
     auto stats = ByteReader(bodyOf(teammate.read(), Opcode.SMSG_PARTY_MEMBER_STATS_FULL));
     assert(stats.readPackedGuid() == l && (stats.read!uint & GroupUpdate.currentHealth));
     assert(stats.read!ubyte == MemberStatus.online && stats.read!ushort > 0);
-    void checkWhisper(ref TestClient user, ChatType type, ulong other, string text)
+    void checkChat(ref TestClient user, ChatType type, ulong other, string text)
     {
         auto reply = ByteReader(bodyOf(user.read(), Opcode.SMSG_MESSAGECHAT));
         assert(reply.read!ubyte == type);
@@ -200,11 +219,11 @@ unittest
         assert(reply.read!uint == text.length + 1 && reply.readCString() == text);
     }
     whisper(left, "scout-silverhand", "Defend here?");
-    checkWhisper(teammate, ChatType.CHAT_MSG_WHISPER, l, "Defend here?");
-    checkWhisper(left, ChatType.CHAT_MSG_WHISPER_INFORM, scout, "Defend here?");
+    checkChat(teammate, ChatType.CHAT_MSG_WHISPER, l, "Defend here?");
+    checkChat(left, ChatType.CHAT_MSG_WHISPER_INFORM, scout, "Defend here?");
     whisper(teammate, "Echo-First", "On my way");
-    checkWhisper(left, ChatType.CHAT_MSG_WHISPER, scout, "On my way");
-    checkWhisper(teammate, ChatType.CHAT_MSG_WHISPER_INFORM, l, "On my way");
+    checkChat(left, ChatType.CHAT_MSG_WHISPER, scout, "On my way");
+    checkChat(teammate, ChatType.CHAT_MSG_WHISPER_INFORM, l, "On my way");
     left.read();
     ByteWriter chat;
     chat.put(cast(uint) ChatType.CHAT_MSG_BATTLEGROUND);
@@ -216,6 +235,46 @@ unittest
     message.read!uint;
     assert(message.read!ulong == scout, "the chat sender uses the same realm-qualified GUID as the name cache");
     checkName(left, scout, "Scout", "Silver Hand");
+
+    void place(ref TestClient user, Position at)
+    {
+        auto who = user.session.inWorld;
+        auto motion = who.player.movement;
+        motion.position = at;
+        who.player.movement = motion;
+        who.movedOn(motion, Opcode.MSG_MOVE_HEARTBEAT);
+    }
+    const near = teammate.session.inWorld.player.position;
+    place(left, near);
+    place(right, Position(near.x + 500, near.y, near.z));
+    foreach (user; [&left, &right, &teammate])
+        user.read();
+    teammate.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_EMOTE, "cheers at 100%."));
+    checkChat(left, ChatType.CHAT_MSG_TEXT_EMOTE, scout, "Scout-SilverHand cheers at 100%.");
+    checkChat(teammate, ChatType.CHAT_MSG_EMOTE, scout, "cheers at 100%.");
+    assert(bodyOf(right.read(), Opcode.SMSG_MESSAGECHAT).length == 0);
+
+    place(right, near);
+    foreach (user; [&left, &right, &teammate])
+        user.read();
+    teammate.write(Opcode.CMSG_TEXT_EMOTE, ClientTextEmote(101, 0, l));
+    auto onlooker = right.read();
+    assert(bodyOf(onlooker, Opcode.SMSG_EMOTE).length, "the animation still reaches the onlooker");
+    auto wavePacket = ByteReader(bodyOf(onlooker, Opcode.SMSG_TEXT_EMOTE));
+    assert(wavePacket.read!ulong == scout && wavePacket.read!uint == 101);
+    wavePacket.read!uint;
+    assert(wavePacket.read!uint == "Echo-First".length + 1 && wavePacket.readCString() == "Echo-First",
+        "an onlooker with the target's local name still sees the right realm");
+    checkChat(left, ChatType.CHAT_MSG_TEXT_EMOTE, scout, "Scout-SilverHand waves at you.");
+    teammate.read();
+
+    left.write(Opcode.CMSG_TEXT_EMOTE, ClientTextEmote(101, 0, scout));
+    checkChat(teammate, ChatType.CHAT_MSG_TEXT_EMOTE, l, "Echo-First waves at you.");
+    checkChat(right, ChatType.CHAT_MSG_TEXT_EMOTE, l, "Echo-First waves at Scout.");
+    left.read();
+    teammate.write(Opcode.CMSG_TEXT_EMOTE, ClientTextEmote(101, 0, 0));
+    checkChat(left, ChatType.CHAT_MSG_TEXT_EMOTE, scout, "Scout-SilverHand waves.");
+    right.read();
 
     teammate.read();
     a.data.serverStrings[605] = "$n captured the Horde flag!";

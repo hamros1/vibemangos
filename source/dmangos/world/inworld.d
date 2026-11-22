@@ -57,6 +57,7 @@ mixin template InWorldHandlers()
     import dmangos.world.channelservice : ChannelOp;
     import dmangos.world.queries : chatMessage, ClientChat, ClientWho, whoList, WhoEntry, creatureQueryResponse, gameObjectQueryResponse,
         itemQueryResponse;
+    import dmangos.world.clientdata : EmotesTextEntry;
     import dmangos.world.teleport : Teleport;
     import dmangos.world.updatefields : PLAYER_FIELD_BYTES, UNIT_FIELD_BYTES_1, UNIT_FIELD_TARGET;
     import dmangos.world.worlddata : CreateAction;
@@ -1546,8 +1547,23 @@ private:
     {
         if (teleporting == Teleport.far)
             return;
-        map.sendInRange(player.position, range, Opcode.SMSG_MESSAGECHAT,
-            chatMessage(type, language, player.guid, text, player.chatTag));
+        const body_ = chatMessage(type, language, player.guid, text, player.chatTag);
+        auto copy = type == ChatType.CHAT_MSG_EMOTE ? currentBattleground() : null;
+        if (copy is null || !copy.crossRealm)
+            return map.sendInRange(player.position, range, Opcode.SMSG_MESSAGECHAT, body_);
+
+        // A player emote normally gets its speaker from the name cache. Its emote formatter uses the bare name.
+        const(ubyte)[] foreign;
+        foreach (who; map.near(player.position, range))
+            if (const speaker = copy.foreignChatName(who.character.guid, player.guid))
+            {
+                if (foreign is null)
+                    foreign = chatMessage(ChatType.CHAT_MSG_TEXT_EMOTE, language, player.guid,
+                        speaker ~ " " ~ text, player.chatTag);
+                who.deliver(Opcode.SMSG_MESSAGECHAT, foreign);
+            }
+            else
+                who.deliver(Opcode.SMSG_MESSAGECHAT, body_);
     }
 
     /**
@@ -1638,7 +1654,9 @@ private:
 
         // "<player> waves at <target>." for everyone within the text emote range.
         string targetName;
-        if (const target = context.onlinePlayer(request.target))
+        auto copy = currentBattleground();
+        const crossRealm = copy !is null && copy.crossRealm;
+        if (const target = crossRealm ? copy.memberSession(request.target) : context.onlinePlayer(request.target))
             targetName = target.character.data.name;
         else if (auto creature = cast(Creature) map.findObject(request.target))
         {
@@ -1647,9 +1665,54 @@ private:
             if (creature.ai !is null && creature.alive)
                 creature.ai.receivedEmote(player.guid, request.textEmote, map);
         }
-        map.sendInRange(player.position, context.config.listenRangeTextEmote, Opcode.SMSG_TEXT_EMOTE,
-            packetBody(ServerTextEmote(player.guid, request.textEmote, request.emoteNum,
-            cast(uint) targetName.length + 1, targetName)));
+        const range = context.config.listenRangeTextEmote;
+        const basePacket = packetBody(ServerTextEmote(player.guid, request.textEmote, request.emoteNum,
+            cast(uint) targetName.length + 1, targetName));
+        if (!crossRealm)
+            return map.sendInRange(player.position, range, Opcode.SMSG_TEXT_EMOTE, basePacket);
+
+        // The 1.12 emote packet carries the target's name and the sender's GUID. FrameXML displays a text-emote
+        // chat line verbatim, allowing the foreign sender's realm to appear without changing the name cache.
+        foreach (who; map.near(player.position, range))
+        {
+            const viewer = who.character.guid;
+            const foreignTarget = copy.foreignChatName(viewer, request.target);
+            const name = foreignTarget.length ? foreignTarget : targetName;
+            if (const speaker = copy.foreignChatName(viewer, player.guid))
+                if (const line = observerEmote(*textEntry, speaker, name, viewer == request.target))
+                {
+                    who.deliver(Opcode.SMSG_MESSAGECHAT, chatMessage(ChatType.CHAT_MSG_TEXT_EMOTE,
+                        Language.LANG_UNIVERSAL, player.guid, line, player.chatTag));
+                    continue;
+                }
+            who.deliver(Opcode.SMSG_TEXT_EMOTE, foreignTarget.length
+                ? packetBody(ServerTextEmote(player.guid, request.textEmote, request.emoteNum,
+                    cast(uint) foreignTarget.length + 1, foreignTarget)) : basePacket);
+        }
+    }
+
+    /// How an onlooker or the target sees a built-in emote, from the extracted client strings.
+    string observerEmote(const ref EmotesTextEntry entry, string speaker, string target, bool targetsViewer)
+    {
+        import dmangos.world.battleground : formatServerString;
+
+        enum untargeted = 4, targeted = 0, atYou = 1, femaleOffset = 8;
+        string patternFor(size_t index)
+        {
+            if (player.data.gender != 0)
+                if (const female = context.client.emotesTextData.lookup(entry.text[index + femaleOffset]))
+                    if (const text = female.text)
+                        return text;
+            if (const row = context.client.emotesTextData.lookup(entry.text[index]))
+                return row.text;
+            return null;
+        }
+
+        const index = targetsViewer ? atYou : target.length ? targeted : untargeted;
+        auto pattern = patternFor(index);
+        if (!pattern.length && index != untargeted)
+            pattern = patternFor(untargeted);
+        return pattern.length ? formatServerString(pattern, [speaker, target]) : null;
     }
 }
 

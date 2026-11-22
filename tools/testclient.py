@@ -1064,6 +1064,11 @@ for action in actions:
     elif kind == "yell":
         wsend(0x095, struct.pack("<II", 5, 7) + args[0].encode() + b"\0"); op, p = expect(0x096)
         n = struct.unpack_from("<I", p, 21)[0]; print(f"heard: '{p[25:25 + n - 1].decode()}'")
+    elif kind == "emote":
+        wsend(0x095, struct.pack("<II", 8, 0) + ":".join(args).encode() + b"\0")
+    elif kind == "textemote":
+        target = int(args[1], 0) if len(args) > 1 else 0
+        wsend(0x104, struct.pack("<IIQ", int(args[0]), 0, target))
     elif kind == "sit":
         wsend(0x101, struct.pack("<I", 1)); got = [expect(0x1F6)]
         objs = parse_update(*got[0]); print("sat down; update fields changed:", sorted(objs[0][3])); expect(0x29D)

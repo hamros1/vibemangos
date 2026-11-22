@@ -131,9 +131,26 @@ struct EmotesTextEntry
 {
     uint id;
     uint emote; /// `Emotes.dbc` id; 0 for none
+    uint[16] text; /// `EmotesTextData.dbc` IDs by viewer, target and sender gender
 }
 
-enum emotesTextFormat = "nxixxxxxxxxxxxxxxxx"; ///
+enum emotesTextFormat = "nxi" ~ "iiiiiiiiiiiiiiii"; ///
+
+struct EmotesTextDataEntry
+{
+    uint id;
+    string[8] locales;
+
+    @property string text() const
+    {
+        foreach (localized; locales)
+            if (localized.length)
+                return localized;
+        return null;
+    }
+}
+
+enum emotesTextDataFormat = "nssssssssx";
 
 /// An `Emotes.dbc` record.
 struct EmotesEntry
@@ -710,6 +727,7 @@ final class ClientData
     @DbcFile("CreatureDisplayInfo") DbcStore!(CreatureDisplayInfoEntry, creatureDisplayInfoFormat) creatureDisplays;
     @DbcFile("CreatureModelData") DbcStore!(CreatureModelDataEntry, creatureModelDataFormat) creatureModels;
     @DbcFile("EmotesText") DbcStore!(EmotesTextEntry, emotesTextFormat) emotesText;
+    @DbcFile("EmotesTextData", false) DbcStore!(EmotesTextDataEntry, emotesTextDataFormat) emotesTextData;
     @DbcFile("Emotes") DbcStore!(EmotesEntry, emotesFormat) emotes;
     @DbcFile("Map") DbcStore!(MapEntry, mapFormat) maps;
     @DbcFile("AreaTable") DbcStore!(AreaTableEntry, areaTableFormat) areas;

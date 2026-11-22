@@ -205,10 +205,16 @@ final class Battleground
     bool[ulong] inTeamRaid; /// ditto
 
     package WorldContext context;
-    package auto memberSession(ulong guid)
+    package @property bool crossRealm() const
     {
         import dmangos.world.battlegroup : battlegroupInstance;
-        if (context.battlegroup !is null && (instance & battlegroupInstance))
+
+        return context.battlegroup !is null && (instance & battlegroupInstance) != 0;
+    }
+
+    package auto memberSession(ulong guid)
+    {
+        if (crossRealm)
             return context.battlegroup.member(instance, guid);
         return context.onlinePlayer(guid);
     }
@@ -216,10 +222,7 @@ final class Battleground
     /// The 1.12 client derives its foreign nameplate, chat and scoreboard labels from the separate realm field.
     package bool foreignName(ulong viewer, ulong guid, out ServerNameQueryResponse response)
     {
-        import dmangos.world.battlegroup : battlegroupInstance;
-
-        if (!(instance & battlegroupInstance) || context.battlegroup is null || viewer !in members
-            || (viewer >> 32) == (guid >> 32))
+        if (!crossRealm || viewer !in members || (viewer >> 32) == (guid >> 32))
             return false;
         const member = guid in members;
         if (member is null || !member.identity.name.length)
@@ -230,6 +233,16 @@ final class Battleground
         const id = member.identity;
         response = ServerNameQueryResponse(guid, id.name, realm.realmDisplayName, id.race, id.gender, id.classId);
         return true;
+    }
+
+    /// A name as the client shows it in chat, when the subject is from another realm.
+    package string foreignChatName(ulong viewer, ulong subject)
+    {
+        ServerNameQueryResponse name;
+        if (foreignName(viewer, subject, name))
+            if (const realm = chatRealmName(name.realm))
+                return name.name ~ "-" ~ realm;
+        return null;
     }
 
     /// Resolves a realm-qualified whisper only among allies in this shared copy.
@@ -977,15 +990,11 @@ final class Battleground
             if (member.offlineSince == MonoTime.init)
                 if (auto who = memberSession(guid))
                 {
-                    ServerNameQueryResponse name;
-                    if (foreignName(guid, source, name) && name.realm.length)
+                    if (const name = foreignChatName(guid, source))
                     {
                         if (foreign is null)
-                        {
-                            const realm = chatRealmName(name.realm);
                             foreign = battlegroundMessage(chatType,
-                                formatted.replace("$n", name.name ~ "-" ~ realm), source);
-                        }
+                                formatted.replace("$n", name), source);
                         who.deliver(Opcode.SMSG_MESSAGECHAT, foreign);
                     }
                     else
