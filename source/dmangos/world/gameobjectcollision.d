@@ -148,32 +148,96 @@ package final class GameObjectCollision
         }
     }
 
+    private struct PlatformSupport
+    {
+        uint slot = uint.max;
+        float z = float.nan;
+    }
+
     /// The deck close to a creature's feet, at the platform's current position.
     float platformFloor(Vector3 point) const
     {
+        return platformSupport(point, 0.5f, 3.0f).z;
+    }
+
+    /// The platform supporting a standing unit, within the tolerance of a small step.
+    uint standingPlatform(Vector3 point) const
+    {
+        return platformSupport(point, 0.25f, 0.25f).slot;
+    }
+
+    bool platformPose(uint slot, float facing, out Position pose) const
+    {
+        if (transportTime is null)
+            return false;
+        if (const platform = slot in colliders)
+            if (platform.elevator.valid)
+            {
+                const at = platform.placement.position + platform.elevator.offsetAt(transportTime());
+                pose = Position(at.x, at.y, at.z, facing);
+                return pose.isFinite;
+            }
+        return false;
+    }
+
+    private PlatformSupport platformSupport(Vector3 point, float above, float below) const
+    {
         if (!colliders.length || transportTime is null || !point.x.isFinite || !point.y.isFinite || !point.z.isFinite)
-            return float.nan;
-        enum float above = 0.5f, below = 3.0f;
+            return PlatformSupport.init;
         const origin = point + Vector3(0, 0, above);
         const clock = transportTime();
         float nearest = above + below;
-        bool found;
-        void check(const ref Collider collider)
+        uint found = uint.max;
+        void check(uint slot, const ref Collider collider)
         {
             if (!collider.elevator.valid)
                 return;
             const offset = collider.elevator.offsetAt(clock);
             if (collider.shape.intersect(Ray(origin - offset, Vector3(0, 0, -1)), nearest))
-                found = true;
+                found = slot;
         }
         foreach (slot, _; largeColliders)
-            check(colliders[slot]);
+            check(slot, colliders[slot]);
         const bounds = AABox(point, point);
         foreach (key; CoveredCells(bounds))
             if (const bucket = key in cells)
                 foreach (slot, _; *bucket)
-                    check(colliders[slot]);
-        return found ? origin.z - nearest : float.nan;
+                    check(slot, colliders[slot]);
+        return found == uint.max ? PlatformSupport.init : PlatformSupport(found, origin.z - nearest);
+    }
+
+    /// Short, supported steps between a platform and the surrounding ground while the platform is docked.
+    bool dockRoute(Vector3 from, Vector3 to, float speed, scope bool delegate(Vector3) ground,
+        scope bool delegate(Vector3, Vector3) clear, out Vector3[] route) const
+    {
+        import std.math : ceil;
+
+        enum float stepHeight = 0.4f, sampleStep = 0.25f, maxDistance = 24.0f;
+        const start = platformSupport(from, stepHeight, stepHeight);
+        const end = platformSupport(to, stepHeight, stepHeight);
+        if (start.slot == uint.max && end.slot == uint.max)
+            return false;
+        if (start.slot != uint.max && end.slot != uint.max && start.slot != end.slot)
+            return true;
+        const slot = start.slot == uint.max ? end.slot : start.slot;
+        const collider = &colliders[slot];
+        const at = transportTime();
+        const distance = (to - from).magnitude;
+        if (!distance.isFinite || distance > maxDistance || !speed.isFinite || speed <= 0
+            || collider.elevator.stationaryFor(at) < distance * 1000 / speed + 150)
+            return true;
+        const offset = collider.elevator.offsetAt(at);
+        const samples = max(1u, cast(uint) ceil(distance / sampleStep));
+        foreach (i; 0 .. samples + 1)
+        {
+            const p = from + (to - from) * (float(i) / samples);
+            const ray = Ray(p + Vector3(0, 0, stepHeight) - offset, Vector3(0, 0, -1));
+            if (!collider.shape.intersects(ray, 2 * stepHeight) && !ground(p))
+                return true;
+        }
+        if (clear(from, to))
+            route = [from, to];
+        return true;
     }
 
     bool obstructs(Position from, Position to, scope bool delegate(uint slot) closed) const
@@ -222,6 +286,7 @@ package final class GameObjectCollision
 /// Door and elevator geometry follow the state and replica lifetime used by normal maps.
 unittest
 {
+    import core.time : msecs;
     import std.conv : to;
     import std.file : mkdir, rmdirRecurse, tempDir, write;
     import std.math : PI;
@@ -233,9 +298,13 @@ unittest
     import dmangos.vmap.math : putBox;
     import dmangos.vmap.model : gameObjectModels, GroupModel, MeshTriangle, WorldModel;
     import dmangos.world.clientdata : transportAnimationFormat;
+    import dmangos.world.creature : Creature, CreatureParts, CreatureSpawn, CreatureTemplate;
     import dmangos.world.gameobject : GameObject, GameObjectSpawn, GameObjectTemplate;
     import dmangos.world.grid : cellKeyAt;
-    import dmangos.world.map : Map, MapSettings;
+    import dmangos.world.map : Map, MapObject, MapSettings;
+    import dmangos.world.migration : Migrant, MigrantKind;
+    import dmangos.world.motion : launch;
+    import dmangos.world.movement : MoveType;
     import dmangos.world.replication : encodeSlots, encodeState;
 
     const directory = buildPath(tempDir, "dmangos-door-collision-" ~ thisProcessID.to!string);
@@ -354,4 +423,71 @@ unittest
     assert(local.groundHeight(5072, -5000, 1, false) == 0, "the large collider also supplies a floor");
     local.removeObject(tram.guid);
     assert(local.inLineOfSight(farA, farB));
+
+    enum uint dockEntry = entry + 3;
+    client.transportAnimations = typeof(client.transportAnimations).parse(buildDbc(transportAnimationFormat,
+        [[0, dockEntry, 0, 0, 0, 0, 0], [1, dockEntry, 8000, 0, 0, 0, 0],
+         [2, dockEntry, 9000, 0, 0, floatBits(8), 0], [3, dockEntry, 10_000, 0, 0, 0, 0]]), "docked platform");
+    client.buildIndexes();
+    const dockTemplate = GameObjectTemplate(entry: dockEntry, type: GameObjectType.transport, displayId: display, size: 2);
+    const dockSpawn = GameObjectSpawn(guid: 5, entry: dockEntry);
+    auto dock = new GameObject(dockSpawn, &dockTemplate);
+    clock = 0;
+    auto geometry = new GameObjectCollision(models, client, () => clock);
+    geometry.update(0, dock.fields, dock.position);
+    local.addObject(dock);
+    remote.replicaCreated(1, cellKeyAt(0, 0), dock.guid, encodeState(dock, 0));
+    const land = Vector3(74.5f, 0, 0), deck = Vector3(72, 0, 0);
+    bool platformEdge(Vector3 p) { return p.x >= 74; }
+    bool clear(Vector3, Vector3) { return true; }
+    Vector3[] route;
+    assert(geometry.dockRoute(land, deck, 2.5f, &platformEdge, &clear, route) && route == [land, deck]);
+    assert(geometry.dockRoute(land, deck, 2.5f, (Vector3 p) => p.x > 74.4f, &clear, route) && !route.length,
+        "a missing floor on the approach prevents a straight-line fallback");
+
+    const unit = CreatureTemplate(entry: 100);
+    const parts = CreatureParts.init;
+    const walkerSpawn = CreatureSpawn(1, unit.entry, 0, 71, 0, 0);
+    auto walker = new Creature(walkerSpawn, &unit, 1, 1, parts, client);
+    walker.speeds[MoveType.walk] = 2.5f;
+    assert(remote.pathAtDock(Vector3(71, 0, 0), Vector3(73, 0, 0), 2.5f, route) && route.length == 2);
+    assert(launch(walker, local, [Vector3(71, 0, 0), Vector3(73, 0, 0)], true, float.nan, true) > 0);
+    clock = 7700;
+    assert(geometry.dockRoute(land, deck, 2.5f, &platformEdge, &clear, route) && !route.length);
+    assert(!launch(walker, local, [Vector3(71, 0, 0), Vector3(73, 0, 0)], true, float.nan, true)
+        && walker.spline.finalized, "a route that cannot finish before the platform departs is held");
+
+    clock = 0;
+    local.addObject(walker);
+    local.update(50.msecs);
+    assert(walker.ridingPlatform && walker.movement.transportGuid == dock.guid);
+    clock = 8500;
+    local.update(50.msecs);
+    assert(walker.position.z == 4, "the creature follows the deck between docks");
+    assert(!launch(walker, local, [Vector3(71, 0, 4), Vector3(73, 0, 4)], true)
+        && walker.ridingPlatform, "a waypoint cannot step off a moving deck");
+
+    const home = cellKeyAt(walkerSpawn.x, walkerSpawn.y);
+    const carried = local.migrateOut(key => key == home, 2, (MapObject object) {
+        ByteWriter w;
+        walker.saveState(w, clock);
+        return Migrant(MigrantKind.creature, walkerSpawn.guid, 0, w.data);
+    });
+    auto arrived = new Creature(walkerSpawn, &unit, 1, 1, parts, client);
+    remote.migrateIn(carried, (const ref Migrant migrant) {
+        import dmangos.bytes : ByteReader;
+
+        auto r = ByteReader(migrant.state);
+        arrived.loadState(r, clock);
+        return arrived;
+    });
+    clock = 8750;
+    remote.update(50.msecs);
+    assert(local.isReplica(walker.guid) && remote.creatureAt(walker.guid) is arrived);
+    assert(arrived.ridingPlatform && arrived.position.z == 6, "the same platform carries the new simulation");
+    remote.replicaRemoved(1, dock.guid);
+    remote.update(500.msecs);
+    assert(arrived.ridingPlatform, "a brief replica gap holds the attachment");
+    remote.update(550.msecs);
+    assert(!arrived.ridingPlatform, "a removed platform cannot keep a creature attached indefinitely");
 }

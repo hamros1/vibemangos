@@ -79,6 +79,38 @@ package struct ElevatorPath
         return frames[0].offset;
     }
 
+    /// How much longer the platform remains at its present position, in milliseconds.
+    uint stationaryFor(uint clock) const
+    {
+        if (!valid)
+            return 0;
+        if (speed == 0)
+            return uint.max;
+        const period = frames[$ - 1].time;
+        const time = clock % period;
+        size_t next = 1;
+        while (frames[next].time <= time)
+            ++next;
+        const at = frames[next - 1].offset;
+        if (frames[next].offset != at)
+            return 0;
+        uint remaining = frames[next].time - time;
+        foreach (_; 1 .. frames.length)
+        {
+            if (next + 1 == frames.length)
+            {
+                if (frames[0].offset != at)
+                    break;
+                next = 0;
+            }
+            if (frames[next + 1].offset != at)
+                break;
+            remaining += frames[next + 1].time - frames[next].time;
+            ++next;
+        }
+        return remaining;
+    }
+
     Position positionAt(Position stationary, uint clock) const
     {
         const offset = offsetAt(clock);

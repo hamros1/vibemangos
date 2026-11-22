@@ -752,6 +752,34 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     }
 
     private Vector3 lastSwimProbe = Vector3(float.nan, float.nan, float.nan);
+    package ulong lastPlatformUpdate;
+    package int missingPlatformMs;
+
+    package @property bool ridingPlatform() const
+    {
+        return movement.has(MovementFlags.onTransport) && movement.transportGuid != 0;
+    }
+
+    package void tellPlatformMovement(MotionWorld world)
+    {
+        import dmangos.world.opcodes : Opcode;
+
+        ByteWriter packet;
+        packet.putPackedGuid(guid);
+        movement.write(packet);
+        world.sendToObservers(guid, Opcode.MSG_MOVE_HEARTBEAT, packet.data);
+    }
+
+    package void leavePlatform(MotionWorld world)
+    {
+        if (!ridingPlatform)
+            return;
+        movement.flags &= ~MovementFlags.onTransport;
+        movement.transportGuid = 0;
+        movement.transportOffset = Position.init;
+        missingPlatformMs = 0;
+        tellPlatformMovement(world);
+    }
 
     /// Switch movement mode between splines when the creature reaches a shoreline.
     package void refreshSwimming(MotionWorld world)
@@ -1309,7 +1337,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
      */
     @property int idleFor() const
     {
-        if (!motionStarted)
+        if (!motionStarted || ridingPlatform)
             return 0;
         if (!alive)
             return loot is null && corpseTimer > 0 ? corpseTimer : 0;
@@ -1323,7 +1351,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     {
         import dmangos.world.motion : IdleMovement;
 
-        return motionStarted && spline.finalized && cast(const IdleMovement) generator !is null
+        return motionStarted && spline.finalized && !ridingPlatform && cast(const IdleMovement) generator !is null
             && (ai is null || !ai.active) && alive && auras.list.length == 0 && !summon.timed;
     }
 

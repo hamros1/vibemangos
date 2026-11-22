@@ -62,7 +62,7 @@ import dmangos.world.objects : maxUpdatePacketBytes, seenByEveryone, seenByOwner
 import dmangos.world.opcodes : Opcode;
 import dmangos.world.packets : ServerDestroyObject;
 import dmangos.world.player : DeathState, Player;
-import dmangos.world.updatefields : GAMEOBJECT_STATE, TypeId;
+import dmangos.world.updatefields : GAMEOBJECT_FACING, GAMEOBJECT_STATE, TypeId, UNIT_FIELD_FLAGS;
 import dmangos.world.migration : decodeBundle, encodeBundle, Migrant, MigrantKind;
 import dmangos.world.replication : decodeSlots, encodeMotion, encodePlayerState, encodeSlots, encodeState, Replica,
     Replicable, Replicator;
@@ -1124,9 +1124,14 @@ final class Map : CombatWorld, GameObjectWorld
             // All the time since its last tick: one tick's, or the whole of a sleep.
             const elapsedMs = cast(int)(clockMs - at(slot).lastTickAt);
             at(slot).lastTickAt = clockMs;
+            auto rider = objectCollision is null ? null : cast(Creature) at(slot).object;
+            if (rider !is null && rider.ridingPlatform)
+                advancePlatformRider(rider, elapsedMs);
             mover.tick(this, elapsedMs);
             if (!entities.holds(slot) || at(slot).mover !is mover)
                 continue; // gone while it ticked
+            if (rider !is null && !rider.ridingPlatform)
+                boardCreatureOnPlatform(rider);
             if (mover.position != before)
                 // Moving and Replicable can provide separate MapObject references to the same entity.
                 objectRelocated(at(slot).object);
@@ -1817,6 +1822,90 @@ final class Map : CombatWorld, GameObjectWorld
         if (terrain is null)
             return null;
         return terrain.pathBetween(from, to);
+    }
+
+    /// See `MotionWorld.pathAtDock`. The points outside the platform need a nearby static floor.
+    bool pathAtDock(Vector3 from, Vector3 to, float speed, out Vector3[] route)
+    {
+        import std.math : abs;
+
+        if (objectCollision is null)
+            return false;
+        bool ground(Vector3 p)
+        {
+            enum float step = 0.4f;
+            return terrain !is null && abs(terrain.heightStatic(p.x, p.y, p.z + step, true, step * 2) - p.z) <= step;
+        }
+        bool clear(Vector3 a, Vector3 b)
+        {
+            return lineOfSightBetween(Position(a.x, a.y, a.z + 1.0f), Position(b.x, b.y, b.z + 1.0f));
+        }
+        return objectCollision.dockRoute(from, to, speed, &ground, &clear, route);
+    }
+
+    /// A standing creature takes the platform under its feet as its support until it walks off.
+    private void boardCreatureOnPlatform(Creature rider)
+    {
+        import std.math : abs, cos, sin;
+        import dmangos.world.movement : MovementFlags;
+        import dmangos.world.spline : wrapAngle;
+        import dmangos.world.defines : UnitFlags;
+
+        if (!rider.alive || !rider.spline.finalized || rider.scriptFlying || rider.meleeController
+            || rider.movement.has(MovementFlags.swimming) || (rider.values.get!UNIT_FIELD_FLAGS & UnitFlags.playerControlled))
+            return;
+        const p = rider.position;
+        const slot = objectCollision.standingPlatform(Vector3(p.x, p.y, p.z));
+        if (slot == uint.max || !entities.holds(slot))
+            return;
+        enum float step = 0.25f;
+        if (terrain !is null && abs(terrain.heightStatic(p.x, p.y, p.z + step, true, 2 * step) - p.z) <= step)
+            return; // its feet were already on a stationary floor
+        auto platform = at(slot).object;
+        Position deck;
+        if (!objectCollision.platformPose(slot, platform.fields.get!GAMEOBJECT_FACING, deck))
+            return;
+        const dx = p.x - deck.x, dy = p.y - deck.y, s = sin(deck.orientation), c = cos(deck.orientation);
+        rider.movement.flags |= MovementFlags.onTransport;
+        rider.movement.transportGuid = platform.guid;
+        rider.movement.transportOffset = Position(dx * c + dy * s, dy * c - dx * s, p.z - deck.z,
+            wrapAngle(p.orientation - deck.orientation));
+        rider.movement.time = serverTime();
+        rider.lastPlatformUpdate = clockMs;
+        rider.tellPlatformMovement(this);
+    }
+
+    private void advancePlatformRider(Creature rider, int elapsedMs)
+    {
+        import std.math : abs;
+        import dmangos.world.transports : passengerPosition;
+
+        auto movement = &rider.movement;
+        movement.time = serverTime();
+        const slot = slotFor(movement.transportGuid);
+        auto platform = slot == uint.max ? null : at(slot).object;
+        Position deck;
+        if (platform is null || !objectCollision.platformPose(slot, platform.fields.get!GAMEOBJECT_FACING, deck))
+        {
+            // During a handoff the platform's replica can arrive a tick or two after the creature.
+            if ((rider.missingPlatformMs += elapsedMs) >= 1000)
+                rider.leavePlatform(this);
+            return;
+        }
+        rider.missingPlatformMs = 0;
+        const offset = movement.transportOffset;
+        Position p;
+        passengerPosition(deck.x, deck.y, deck.z, deck.orientation, offset.x, offset.y, offset.z, offset.orientation,
+            p.x, p.y, p.z, p.orientation);
+        enum float edge = 256 * cellSize - 0.5f;
+        if (!p.isFinite || abs(p.x) > edge || abs(p.y) > edge || p == movement.position)
+            return;
+        movement.position = p;
+        if (clockMs - rider.lastPlatformUpdate >= 250)
+        {
+            rider.lastPlatformUpdate = clockMs;
+            rider.tellPlatformMovement(this);
+        }
     }
 
     /// See `MotionWorld.swimmableAt`.

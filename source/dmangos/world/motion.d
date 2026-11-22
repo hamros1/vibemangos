@@ -167,6 +167,9 @@ interface MotionWorld
      */
     Vector3[] pathBetween(Vector3 from, Vector3 to);
 
+    /// Whether a platform is at an endpoint. An empty route then means the dock cannot be crossed now.
+    bool pathAtDock(Vector3 from, Vector3 to, float speed, out Vector3[] route);
+
     /// Whether the point is in water deep enough for a swimmer.
     bool swimmableAt(Vector3 at, float minimumDepth);
 
@@ -509,11 +512,11 @@ private:
             lastReached = 0;
         creature.refreshSwimming(world);
         const habitat = creature.canSwim && !creature.scriptFlying;
-        if (habitat)
+        if (habitat || creature.ridingPlatform)
         {
             bool underwater;
             const destination = habitatDestination(creature, world, Vector3(next.x, next.y, next.z), underwater);
-            if (underwater || creature.movement.has(MovementFlags.swimming) || creature.waterOnly)
+            if (underwater || creature.movement.has(MovementFlags.swimming) || creature.waterOnly || creature.ridingPlatform)
             {
                 const facing = next.delay ? next.orientation : float.nan;
                 const leg = launchHabitatPath(creature, world, destination, underwater, true, facing);
@@ -852,6 +855,17 @@ in (points.length > 1)
     const at = creature.spline.finalized ? creature.position : creature.spline.position;
     points[0] = Vector3(at.x, at.y, at.z);
     bool swimming;
+    const riding = creature.ridingPlatform && !creature.scriptFlying;
+    const groundSpeed = isNaN(speed) ? creature.speeds[walk ? MoveType.walk : MoveType.run] : speed;
+    if (riding && (!generatePath || points.length != 2))
+    {
+        Vector3[] dock;
+        if (points.length != 2 || !world.pathAtDock(points[0], points[1], groundSpeed, dock) || !dock.length)
+        {
+            stopMoving(creature, world);
+            return 0;
+        }
+    }
     // A generated route can use the underwater volume or the regular movement maps.
     if (generatePath && points.length == 2 && !creature.scriptFlying)
     {
@@ -868,7 +882,18 @@ in (points.length > 1)
             walk = false;
         }
         else
-            way = world.pathBetween(points[0], points[1]);
+        {
+            if (world.pathAtDock(points[0], points[1], groundSpeed, way) || riding)
+            {
+                if (!way.length)
+                {
+                    stopMoving(creature, world);
+                    return 0;
+                }
+            }
+            else
+                way = world.pathBetween(points[0], points[1]);
+        }
         if (way.length >= 2)
         {
             way[0] = points[0];
@@ -885,17 +910,17 @@ in (points.length > 1)
         flags |= SplineFlags.finalAngle;
         angle = wrapAngle(facing);
     }
+    const moveType = swimming ? MoveType.swim : walk ? MoveType.walk : MoveType.run;
+    const velocity = isNaN(speed) ? creature.speeds[moveType] : speed;
+    if (!(velocity > 0) || creature.immobilized)
+        return 0; // it cannot move (rooted or stunned)
+    creature.leavePlatform(world);
     auto move = &creature.movement;
     if (walk)
         move.flags |= MovementFlags.walkMode;
     else
         move.flags &= ~MovementFlags.walkMode;
     move.flags |= MovementFlags.splineEnabled | MovementFlags.forward;
-
-    const moveType = swimming ? MoveType.swim : walk ? MoveType.walk : MoveType.run;
-    const velocity = isNaN(speed) ? creature.speeds[moveType] : speed;
-    if (!(velocity > 0) || creature.immobilized)
-        return 0; // it cannot move (rooted or stunned)
     creature.spline = MoveSpline(points, flags, velocity, nextSplineId(), angle);
     creature.positionTimer = 0;
     world.sendToObservers(creature.guid, Opcode.SMSG_MONSTER_MOVE, monsterMove(creature.guid, creature.spline));
@@ -1007,6 +1032,7 @@ version (unittest)
         Vector3[] delegate(Vector3, Vector3) paths; // movement maps, if a test has them
         Vector3[] pathBetween(Vector3 from, Vector3 to) { return paths is null ? null : paths(from, to); }
         bool swimmableAt(Vector3 at, float minimumDepth) { return false; }
+        bool pathAtDock(Vector3 from, Vector3 to, float speed, out Vector3[] route) { return false; }
         bool swimmingTarget(Vector3 at, float minimumDepth, out Vector3 submerged) { return false; }
         Vector3[] pathToShore(Vector3 from, Vector3 to, float minimumDepth, bool swimming) { return null; }
         bool pathInWater(Vector3 from, Vector3 to, float minimumDepth, out Vector3[] route) { return false; }
