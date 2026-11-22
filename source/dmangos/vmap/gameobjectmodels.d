@@ -111,11 +111,20 @@ struct GameObjectShape
 
     bool intersects(const Ray ray, float distance) const
     {
+        return intersect(ray, distance, true);
+    }
+
+    /// Find the nearest hit up to `distance`, or stop at the first one for a line-of-sight check.
+    bool intersect(const Ray ray, ref float distance, bool stopAtFirstHit = false) const
+    {
         if (model is null || ray.intersectionTime(bounds) > distance)
             return false;
         const local = Ray((inverseRotation * (ray.origin - position)) * inverseScale,
             inverseRotation * ray.direction);
         float localDistance = distance * inverseScale;
-        return model.intersectRay(local, localDistance, true);
+        if (!model.intersectRay(local, localDistance, stopAtFirstHit))
+            return false;
+        distance = localDistance / inverseScale;
+        return true;
     }
 }

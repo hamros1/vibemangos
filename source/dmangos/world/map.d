@@ -1794,9 +1794,14 @@ final class Map : CombatWorld, GameObjectWorld
     /// See `MotionWorld.groundHeight`.
     float groundHeight(float x, float y, float z, bool swim)
     {
-        if (terrain is null)
-            return invalidHeightValue;
-        return terrain.heightStatic(x, y, z, true, swim ? defaultWaterSearch : defaultHeightSearch);
+        import std.math : abs, isFinite;
+
+        const floor = terrain is null ? invalidHeightValue
+            : terrain.heightStatic(x, y, z, true, swim ? defaultWaterSearch : defaultHeightSearch);
+        if (swim || objectCollision is null)
+            return floor;
+        const deck = objectCollision.platformFloor(Vector3(x, y, z));
+        return deck.isFinite && (floor <= invalidHeightValue || abs(deck - z) < abs(floor - z)) ? deck : floor;
     }
 
     version (unittest)

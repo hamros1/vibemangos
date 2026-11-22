@@ -1,4 +1,4 @@
-/// Line of sight through loaded doors and elevator platforms in one map copy.
+/// Collision with loaded doors and elevator platforms in one map copy.
 module dmangos.world.gameobjectcollision;
 
 import std.algorithm.comparison : clamp, max;
@@ -148,6 +148,34 @@ package final class GameObjectCollision
         }
     }
 
+    /// The deck close to a creature's feet, at the platform's current position.
+    float platformFloor(Vector3 point) const
+    {
+        if (!colliders.length || transportTime is null || !point.x.isFinite || !point.y.isFinite || !point.z.isFinite)
+            return float.nan;
+        enum float above = 0.5f, below = 3.0f;
+        const origin = point + Vector3(0, 0, above);
+        const clock = transportTime();
+        float nearest = above + below;
+        bool found;
+        void check(const ref Collider collider)
+        {
+            if (!collider.elevator.valid)
+                return;
+            const offset = collider.elevator.offsetAt(clock);
+            if (collider.shape.intersect(Ray(origin - offset, Vector3(0, 0, -1)), nearest))
+                found = true;
+        }
+        foreach (slot, _; largeColliders)
+            check(colliders[slot]);
+        const bounds = AABox(point, point);
+        foreach (key; CoveredCells(bounds))
+            if (const bucket = key in cells)
+                foreach (slot, _; *bucket)
+                    check(colliders[slot]);
+        return found ? origin.z - nearest : float.nan;
+    }
+
     bool obstructs(Position from, Position to, scope bool delegate(uint slot) closed) const
     {
         if (!colliders.length)
@@ -214,10 +242,11 @@ unittest
     mkdir(directory);
     scope (exit)
         rmdirRecurse(directory);
-    const bounds = AABox(Vector3(35, -1, 0), Vector3(35, 1, 2));
+    const bounds = AABox(Vector3(35, -1, 0), Vector3(37, 1, 2));
     auto group = new GroupModel(0, 1, bounds);
-    group.setMeshData([Vector3(35, -1, 0), Vector3(35, 1, 0), Vector3(35, -1, 2), Vector3(35, 1, 2)],
-        [MeshTriangle(0, 1, 2), MeshTriangle(1, 3, 2)]);
+    group.setMeshData([Vector3(35, -1, 0), Vector3(35, 1, 0), Vector3(35, -1, 2), Vector3(35, 1, 2),
+                       Vector3(37, -1, 0), Vector3(37, 1, 0)],
+        [MeshTriangle(0, 1, 2), MeshTriangle(1, 3, 2), MeshTriangle(0, 4, 1), MeshTriangle(1, 4, 5)]);
     auto model = new WorldModel;
     model.setGroups([group]);
     model.write(buildPath(directory, "panel.vmo"));
@@ -255,6 +284,7 @@ unittest
     assert(local.inLineOfSight(a, b));
     local.addObject(door);
     assert(!local.inLineOfSight(a, b), "the mesh reaches the adjacent cell even though its origin is outside it");
+    assert(local.groundHeight(72, 0, 1, false) < -100_000, "a closed door does not supply a platform floor");
     assert(!local.inLineOfSight(Position(-9000, 0, 0), Position(9000, 0, 0)),
         "a ray across many cells still sees a small indexed door");
     assert(local.lineOfSightBetween(Position(68, 0, 5), Position(72, 0, 5)), "over the mesh");
@@ -284,12 +314,17 @@ unittest
     local.addObject(elevator);
     remote.replicaCreated(1, cellKeyAt(0, 0), elevator.guid, encodeState(elevator, 0));
     assert(!local.inLineOfSight(a, b) && !remote.inLineOfSight(a, b));
+    assert(local.groundHeight(72, 0, 1, false) == 0 && remote.groundHeight(72, 0, 1, false) == 0);
     clock = 500;
     assert(local.inLineOfSight(a, b) && remote.inLineOfSight(a, b), "the platform has left the spawn position");
     const midwayA = Position(133, -6, 4), midwayB = Position(137, -6, 4);
     assert(!local.inLineOfSight(midwayA, midwayB) && !remote.inLineOfSight(midwayA, midwayB),
         "both maps use the platform between two keyframes in a different cell");
     assert(local.inLineOfSight(Position(133, -6, 0), Position(137, -6, 0)), "under the platform");
+    assert(local.groundHeight(137, -6, 5, false) == 4 && remote.groundHeight(137, -6, 5, false) == 4);
+    assert(remote.groundHeight(72, 0, 1, false) < -100_000 && local.groundHeight(137, -6, 0, false) < -100_000,
+        "the old position and a point below the deck have no platform floor");
+    assert(local.groundHeight(137, -6, 5, true) < -100_000, "a deck is not underwater terrain");
     clock = 1000;
     const endA = Position(198, -12, 8), endB = Position(202, -12, 8);
     assert(!remote.inLineOfSight(endA, endB) && local.inLineOfSight(midwayA, midwayB));
@@ -316,6 +351,7 @@ unittest
     const farA = Position(5068, -5000, 0), farB = Position(5072, -5000, 0);
     assert(local.inLineOfSight(a, b) && !local.inLineOfSight(farA, farB),
         "a platform with a large swept rectangle still moves and blocks at the current offset");
+    assert(local.groundHeight(5072, -5000, 1, false) == 0, "the large collider also supplies a floor");
     local.removeObject(tram.guid);
     assert(local.inLineOfSight(farA, farB));
 }
