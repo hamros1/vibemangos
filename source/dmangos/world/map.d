@@ -58,10 +58,12 @@ import dmangos.world.gameobject : GameObject, GameObjectTemplate, GameObjectType
 import dmangos.world.gameobjectcollision : GameObjectCollision;
 import dmangos.world.motion : MotionWorld;
 import dmangos.world.movement : Position;
-import dmangos.world.objects : maxUpdatePacketBytes, seenByEveryone, seenByOwner, UpdateData, UpdatePacket, UpdateValues;
+import dmangos.world.objects : counterOf, highGuidOf, makeGuid, maxUpdatePacketBytes, seenByEveryone, seenByOwner,
+    UpdateData, UpdatePacket, UpdateValues;
 import dmangos.world.opcodes : Opcode;
 import dmangos.world.packets : ServerDestroyObject;
 import dmangos.world.player : DeathState, Player;
+import dmangos.world.quests : QuestSpawnPhase;
 import dmangos.world.updatefields : GAMEOBJECT_FACING, GAMEOBJECT_STATE, TypeId, UNIT_FIELD_FLAGS;
 import dmangos.world.migration : decodeBundle, encodeBundle, Migrant, MigrantKind;
 import dmangos.world.replication : decodeSlots, encodeMotion, encodePlayerSlots, encodePlayerState, encodeSlots, encodeState, Replica,
@@ -811,6 +813,25 @@ final class Map : CombatWorld, GameObjectWorld
             && entities.at(p).known[o];
     }
 
+    /// World data shared by the map's authoritative spawns and its replicas.
+    const(QuestSpawnPhase[])[ulong] questSpawnPhases;
+
+    private static ulong questSpawnKey(ulong guid) pure nothrow
+    {
+        return makeGuid(highGuidOf(guid), counterOf(guid));
+    }
+
+    /// Quest eligibility for use as well as visibility, even before a replica has arrived.
+    bool questSpawnVisible(const Player viewer, ulong guid) const
+    {
+        if (questSpawnPhases.length)
+            if (const rules = questSpawnKey(guid) in questSpawnPhases)
+                foreach (ref const rule; *rules)
+                    if (!rule.allows(rule.quest in viewer.questStatus))
+                        return false;
+        return true;
+    }
+
     /**
      * The slots of the objects within `range` yards of `center`. Only a player's sight loads cells
      * (`load`, `loadCell`); every other search looks at what is loaded only:
@@ -1073,6 +1094,8 @@ final class Map : CombatWorld, GameObjectWorld
      */
     private bool objectVisibleTo(uint slot, const MapObject object, const Inhabitant who, bool replica) const
     {
+        if (!questSpawnVisible(who.character, object.guid))
+            return false;
         enum uint spiritHealer = 0x20, spiritGuide = 0x40; // UNIT_NPC_FLAG_SPIRITHEALER, _SPIRITGUIDE
         if (concealedTraps.length && object.guid in concealedTraps)
             return seesTrap(who.character, object.guid, object.position);
@@ -1358,7 +1381,7 @@ final class Map : CombatWorld, GameObjectWorld
             const s = slotFor(k);
             if (s != uint.max && s in inSight)
                 continue;
-            if (s != uint.max)
+            if (s != uint.max || !questSpawnVisible(who.character, k))
                 gone ~= k;
             else
                 at(slot).lingering ~= k;
@@ -2254,7 +2277,8 @@ final class Map : CombatWorld, GameObjectWorld
         if (objectCollision is null || slot == uint.max)
             return;
         if (auto object = at(slot).object)
-            if (object.fields.type == TypeId.gameObject)
+            if (object.fields.type == TypeId.gameObject
+                && (!questSpawnPhases.length || questSpawnKey(object.guid) !in questSpawnPhases))
                 objectCollision.update(slot, object.fields, object.position);
     }
 
@@ -3273,6 +3297,18 @@ private:
                 unsee(slot, o);
             }
 
+        if (questSpawnPhases.length && at(slot).lingering.length)
+        {
+            import std.algorithm.mutation : SwapStrategy, remove;
+
+            at(slot).lingering = at(slot).lingering.remove!((ulong g) {
+                if (questSpawnVisible(who.character, g))
+                    return false;
+                gone ~= g;
+                return true;
+            }, SwapStrategy.unstable);
+        }
+
         if (gone.length == 0)
             return;
         UpdateData forgetAll;
@@ -3301,7 +3337,9 @@ private:
         }
         foreach (p; at(slot).viewers.dup)
             if (!inSightOf(p, object.position)
-                || ((at(slot).replica || guid in concealedTraps) && !objectVisibleTo(slot, object, at(p).player, at(slot).replica)))
+                || ((at(slot).replica || guid in concealedTraps
+                    || (questSpawnPhases.length && questSpawnKey(guid) in questSpawnPhases))
+                    && !objectVisibleTo(slot, object, at(p).player, at(slot).replica)))
             {
                 unsee(p, slot);
                 UpdateData forget;
@@ -3808,6 +3846,43 @@ unittest
     assert(added.length == 25 && removed.length == 25);
     owner.peerInterest(2, added, removed);
     assert(owner.replicaCount == 0);
+}
+
+/// Quest eligibility is evaluated on the player's node, including before a carried-over spawn arrives.
+unittest
+{
+    import dmangos.world.gameobject : GameObjectSpawn;
+    import dmangos.world.objects : HighGuid;
+    import dmangos.world.quests : QuestPhaseState, QuestState, QuestStatus;
+
+    enum uint quest = 9001, spawn = 142;
+    const at = Position(20, 20, 0);
+    const template_ = GameObjectTemplate(entry: 9123, type: GameObjectType.goober);
+    const row = GameObjectSpawn(guid: spawn, entry: template_.entry, x: at.x, y: at.y);
+    auto object = new GameObject(row, &template_);
+    auto destination = new Map(0, MapSettings.init, () => 1000u);
+    destination.questSpawnPhases = [makeGuid(HighGuid.gameObject, spawn): [QuestSpawnPhase(quest, QuestPhaseState.rewarded)]];
+
+    auto alice = new Watcher(1, at);
+    alice.player.questStatus[quest] = QuestStatus(quest, QuestState.complete, true);
+    destination.addMigrated(alice, [object.guid]);
+    auto bob = new Watcher(2, at);
+    bob.player.questStatus[quest] = QuestStatus(quest, QuestState.complete);
+    destination.addMigrated(bob, [object.guid]);
+    assert(bob.take().canFind(Opcode.SMSG_UPDATE_OBJECT), "hidden object is dropped before its replica exists");
+    alice.take();
+
+    destination.replicaCreated(2, cellKeyAt(at.x, at.y), object.guid, encodeState(object, 1000));
+    assert(destination.seesObject(1, object.guid) && alice.take().length == 0, "eligible client keeps its old create");
+    assert(!destination.seesObject(2, object.guid) && bob.take().length == 0);
+
+    bob.player.questStatus[quest].rewarded = true;
+    destination.refreshVisibility(bob);
+    assert(destination.seesObject(2, object.guid) && bob.take().length == 1);
+    destination.replicaRemoved(2, object.guid);
+    destination.addObject(object);
+    assert(destination.seesObject(1, object.guid) && destination.seesObject(2, object.guid),
+        "the same rules apply after the spawn's owner changes");
 }
 
 /// Players on different nodes: each sees the other's replica, its moves, its changes and its going.

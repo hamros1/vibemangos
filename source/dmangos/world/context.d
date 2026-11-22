@@ -792,7 +792,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     package ulong[] namedGameObjectTargets(Map map_, const(SpellInfo)* spell, size_t effect, ImplicitTarget shape,
-        Position origin, out Position center)
+        Position origin, out Position center, scope bool delegate(ulong) visible = null)
     {
         import dmangos.world.spellselection : namedGameObjectsInArea, nearestNamedGameObject;
 
@@ -802,8 +802,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         const entries = data.spellScriptObjects.get(spell.id, null);
         const acrossNodes = sendGameObjectSpell !is null;
         if (shape != ImplicitTarget.gameobjectScriptNearCaster)
-            return namedGameObjectsInArea(map_, center, reach, effect, entries, acrossNodes, spell.casting.maxAffectedTargets);
-        auto object = nearestNamedGameObject(map_, center, reach, effect, entries, acrossNodes);
+            return namedGameObjectsInArea(map_, center, reach, effect, entries, acrossNodes, spell.casting.maxAffectedTargets,
+                visible);
+        auto object = nearestNamedGameObject(map_, center, reach, effect, entries, acrossNodes, visible);
         return object is null ? null : [object.guid];
     }
 
@@ -3732,6 +3733,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             &serverTime, spawner, mapTerrain, owns, gameObjectModels is null ? null :
                 new GameObjectCollision(gameObjectModels, client, &transportNow));
         created.instanceId = instance;
+        created.questSpawnPhases = data.questSpawnPhases;
         created.gameObjectTemplate = (uint entry) => entry in data.gameObjectTemplates;
         created.elevatorPath = &elevatorPathOf;
         created.elevatorClock = &transportNow;

@@ -63,7 +63,7 @@ package bool namedGameObjectEntry(const(SpellScriptObject)[] entries, size_t eff
 }
 
 package MapObject nearestNamedGameObject(Map map, Position center, float reach, size_t effect,
-    const(SpellScriptObject)[] entries, bool acrossNodes)
+    const(SpellScriptObject)[] entries, bool acrossNodes, scope bool delegate(ulong) visible = null)
 {
     import std.math : isFinite;
     import dmangos.world.replication : Replica;
@@ -76,7 +76,8 @@ package MapObject nearestNamedGameObject(Map map, Position center, float reach, 
     foreach (object; map.objectsNear(center, reach))
     {
         if (object.fields.type != TypeId.gameObject || (!acrossNodes && (cast(Replica) object) !is null)
-            || !namedGameObjectEntry(entries, effect, object.fields.get!OBJECT_FIELD_ENTRY))
+            || !namedGameObjectEntry(entries, effect, object.fields.get!OBJECT_FIELD_ENTRY)
+            || (visible !is null && !visible(object.guid)))
             continue;
         const squared = distanceSquared(center, object.position);
         if (squared < best || (squared == best && (nearest is null || object.guid < nearest.guid)))
@@ -89,7 +90,7 @@ package MapObject nearestNamedGameObject(Map map, Position center, float reach, 
 }
 
 package ulong[] namedGameObjectsInArea(Map map, Position center, float reach, size_t effect,
-    const(SpellScriptObject)[] entries, bool acrossNodes, uint maxTargets)
+    const(SpellScriptObject)[] entries, bool acrossNodes, uint maxTargets, scope bool delegate(ulong) visible = null)
 {
     import std.algorithm.sorting : sort;
     import std.math : isFinite;
@@ -103,6 +104,7 @@ package ulong[] namedGameObjectsInArea(Map map, Position center, float reach, si
     foreach (object; map.objectsNear(center, reach))
         if (object.fields.type == TypeId.gameObject && (acrossNodes || (cast(Replica) object) is null)
             && namedGameObjectEntry(entries, effect, object.fields.get!OBJECT_FIELD_ENTRY)
+            && (visible is null || visible(object.guid))
             && distanceSquared(center, object.position) <= reach ^^ 2)
             found ~= object;
     if (maxTargets && found.length > maxTargets)
@@ -189,13 +191,14 @@ package uint namedCreatureEntry(UnitRef candidate)
 
 /// Select across the caster's owned and observed creatures, sharing any target limit between them.
 package UnitRef[] namedCreaturesInArea(CombatWorld world, Position center, float reach, const(uint)[] entries,
-    bool acrossNodes, uint maxTargets, ImplicitTarget shape, int cone)
+    bool acrossNodes, uint maxTargets, ImplicitTarget shape, int cone, scope bool delegate(ulong) visible = null)
 {
     import std.algorithm.sorting : sort;
 
     UnitRef[] targets;
     visitNamedCreatures(world, center, reach, entries, 0, acrossNodes, (UnitRef candidate, float) {
-        if (shape != ImplicitTarget.enumUnitsScriptInCone60 || inNamedCreatureCone(center, candidate.position, cone))
+        if ((visible is null || visible(candidate.combatGuid))
+            && (shape != ImplicitTarget.enumUnitsScriptInCone60 || inNamedCreatureCone(center, candidate.position, cone)))
             targets ~= candidate;
     });
     if (maxTargets && targets.length > maxTargets)
@@ -211,12 +214,13 @@ package UnitRef[] namedCreaturesInArea(CombatWorld world, Position center, float
 
 /// Compare owned and observed creatures by distance, with a stable tie break.
 package UnitRef nearestNamedCreature(CombatWorld world, Position center, float reach, const(uint)[] entries,
-    ulong caster, bool acrossNodes)
+    ulong caster, bool acrossNodes, scope bool delegate(ulong) visible = null)
 {
     UnitRef nearest;
     float best = reach ^^ 2;
     visitNamedCreatures(world, center, reach, entries, caster, acrossNodes, (UnitRef candidate, float dist) {
-        if (dist < best || (dist == best && (!nearest || candidate.combatGuid < nearest.combatGuid)))
+        if ((visible is null || visible(candidate.combatGuid))
+            && (dist < best || (dist == best && (!nearest || candidate.combatGuid < nearest.combatGuid))))
         {
             best = dist;
             nearest = candidate;

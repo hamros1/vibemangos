@@ -108,6 +108,8 @@ mixin template GameObjectHandlers()
     /// Within `interactionDistance` of the object (a little more for its size).
     bool withinInteraction(const GameObject go, float more = 0)
     {
+        if (!map.questSpawnVisible(player, go.guid))
+            return false;
         const a = player.position, b = go.position;
         // A fishing bobber (and a chair) may be used from a hundred yards.
         const base = go.type == GameObjectType.fishingNode || go.type == GameObjectType.chair ? 100.0f
@@ -121,7 +123,8 @@ mixin template GameObjectHandlers()
     void handleGameObjectUse(const ClientGuid request)
     {
         enum uint goFlagNoInteract = 0x10;
-        if (player.deathState != DeathState.alive || transferring || npcCharmer)
+        if (player.deathState != DeathState.alive || transferring || npcCharmer
+            || !map.questSpawnVisible(player, request.guid))
             return;
         auto go = cast(GameObject) map.findObject(request.guid);
         if (go is null)
@@ -420,7 +423,7 @@ mixin template GameObjectHandlers()
     package void openLock(const(SpellInfo)* spell, size_t i, ulong target, uint castItem)
     {
         auto go = cast(GameObject) map.findObject(target);
-        if (go is null)
+        if (go is null || !map.questSpawnVisible(player, target))
             return;
         uint skillId;
         int required, value;

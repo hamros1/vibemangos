@@ -363,6 +363,8 @@ private:
     {
         import dmangos.world.gameobject : GameObject;
 
+        if (!map.questSpawnVisible(player, guid))
+            return false;
         if (auto npc = interactableNpc(guid, npcFlags))
         {
             giver = giverOf(npc);
@@ -438,6 +440,8 @@ private:
     {
         import dmangos.world.gameobject : GameObject;
 
+        if (!map.questSpawnVisible(player, request.guid))
+            return;
         QuestGiver giver;
         if (auto npc = context.npcFor(map.findObject(request.guid)))
             giver = giverOf(npc);
@@ -1480,6 +1484,8 @@ private:
         if (!questObjectsStale || map is null || player is null)
             return;
         questObjectsStale = false;
+        if (map.questSpawnPhases.length)
+            map.refreshVisibility(this);
         foreach (o; map.objectsNear(player.position, context.config.visibilityDistance))
             if (auto go = cast(GameObject) o)
                 if (go.activatesFor !is null)
@@ -1592,6 +1598,98 @@ private:
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+/// Two nearby clients see different quest scenes; a hidden quest giver rejects direct queries.
+unittest
+{
+    import core.time : msecs;
+    import std.algorithm.searching : canFind;
+    import dmangos.bytes : ByteWriter;
+    import dmangos.world.gameobject : GameObjectSpawn, GameObjectTemplate, GameObjectType;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.packets : ClientGuid;
+    import dmangos.world.quests : Quest, QuestPhaseState, QuestSpawnPhase, questFlagAutoRewarded;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    enum uint questId = 58901, prerequisite = 58902, prop = 58903;
+    const at = Position(-8949.95f, -132.49f, 83.53f);
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    Quest quest;
+    quest.id = questId;
+    quest.method = 2;
+    context.data.quests.quests[questId] = quest;
+    Quest earlier;
+    earlier.id = prerequisite;
+    earlier.questFlags = questFlagAutoRewarded;
+    context.data.quests.quests[prerequisite] = earlier;
+    context.data.quests.gameObjectEnds[prop] = [questId];
+    context.data.quests.link();
+    context.data.questSpawnPhases[makeGuid(HighGuid.unit, trainerSpawn)] =
+        [QuestSpawnPhase(questId, QuestPhaseState.inactive | QuestPhaseState.failed)];
+    context.data.questSpawnPhases[makeGuid(HighGuid.gameObject, prop)] =
+        [QuestSpawnPhase(questId, QuestPhaseState.active | QuestPhaseState.complete | QuestPhaseState.rewarded),
+         QuestSpawnPhase(prerequisite, QuestPhaseState.rewarded)];
+    context.data.gameObjectTemplates[prop] = GameObjectTemplate(entry: prop, type: GameObjectType.questGiver);
+    auto map = context.map(0);
+    const spawn = GameObjectSpawn(guid: prop, entry: prop, x: at.x, y: at.y, z: at.z);
+    auto object = context.makeGameObject(spawn);
+    map.addObject(object);
+    const trainer = makeGuid(HighGuid.unit, creatureTrainer, trainerSpawn);
+    auto alice = loggedIn(context, db, 7, "Alice", at);
+    auto bob = loggedIn(context, db, 8, "Bob", at);
+    auto a = alice.session.inWorld;
+    auto b = bob.session.inWorld;
+    alice.read();
+    bob.read();
+    assert(map.seesObject(7, trainer) && map.seesObject(8, trainer));
+    assert(!map.seesObject(7, object.guid) && !map.seesObject(8, object.guid));
+
+    bool getsStatus(ref TestClient client, ulong giver)
+    {
+        client.write(Opcode.CMSG_QUESTGIVER_STATUS_QUERY, ClientGuid(giver));
+        return opcodesOf(client.read()).canFind(Opcode.SMSG_QUESTGIVER_STATUS);
+    }
+
+    a.addQuest(quest);
+    assert(!getsStatus(alice, trainer), "phase applies to requests immediately, before the visibility tick");
+    alice.session.update(50.msecs);
+    assert(!map.seesObject(7, trainer) && !map.seesObject(7, object.guid), "both quest conditions are required");
+    assert(map.seesObject(8, trainer) && !map.seesObject(8, object.guid));
+    a.addQuest(earlier);
+    a.areaExploredOrEventHappens(prerequisite);
+    alice.session.update(50.msecs);
+    assert(map.seesObject(7, object.guid) && getsStatus(alice, object.guid));
+    assert(!getsStatus(bob, object.guid));
+
+    a.failQuest(questId);
+    alice.session.update(50.msecs);
+    assert(map.seesObject(7, trainer) && !map.seesObject(7, object.guid));
+    alice.write(Opcode.CMSG_QUESTLOG_REMOVE_QUEST, [ubyte(0)]);
+    a.addQuest(quest);
+    a.areaExploredOrEventHappens(questId);
+    alice.session.update(50.msecs);
+    assert(map.seesObject(7, object.guid) && !map.seesObject(7, trainer));
+    ByteWriter choose;
+    choose.put(object.guid);
+    choose.put(questId);
+    choose.put(0u);
+    alice.write(Opcode.CMSG_QUESTGIVER_CHOOSE_REWARD, choose.data);
+    alice.session.update(50.msecs);
+    assert(map.seesObject(7, object.guid) && !map.seesObject(7, trainer) && db.questRows[7][questId].rewarded);
+
+    b.addQuest(earlier);
+    b.areaExploredOrEventHappens(prerequisite);
+    b.addQuest(quest);
+    bob.session.update(50.msecs);
+    assert(map.seesObject(8, object.guid) && !map.seesObject(8, trainer));
+    bob.write(Opcode.CMSG_QUESTLOG_REMOVE_QUEST, [ubyte(0)]);
+    bob.session.update(50.msecs);
+    assert(!map.seesObject(8, object.guid) && map.seesObject(8, trainer));
+    assert(map.seesObject(7, object.guid), "the other player's turn-in survives their neighbor abandoning");
+}
 
 /**
  * A whole quest: the trainer offers it, Anduin takes it, kills the innkeeper and loots the jerky it

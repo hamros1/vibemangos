@@ -24,6 +24,41 @@ enum QuestState : ubyte
     failed = 5,
 }
 
+/// Bits in `quest_spawn_phase.visible_states`. One state describes the current quest attempt.
+enum QuestPhaseState : ubyte
+{
+    inactive = 1,
+    active = 2,
+    complete = 4,
+    rewarded = 8,
+    failed = 16,
+    all = 31,
+}
+
+struct QuestSpawnPhase
+{
+    uint quest;
+    ubyte visibleStates;
+    bool repeatable;
+
+    bool allows(const(QuestStatus)* progress) const
+    {
+        auto state = QuestPhaseState.inactive;
+        if (progress !is null)
+        {
+            if (progress.status == QuestState.incomplete)
+                state = QuestPhaseState.active;
+            else if (progress.status == QuestState.failed)
+                state = QuestPhaseState.failed;
+            else if (progress.status == QuestState.complete && (!progress.rewarded || repeatable))
+                state = QuestPhaseState.complete;
+            else if (progress.rewarded)
+                state = QuestPhaseState.rewarded;
+        }
+        return (visibleStates & state) != 0;
+    }
+}
+
 /// The mark over a quest giver's head.
 enum DialogStatus : ubyte
 {

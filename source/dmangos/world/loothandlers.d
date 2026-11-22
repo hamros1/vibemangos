@@ -278,7 +278,7 @@ private:
     @Handles(Opcode.CMSG_LOOT, WorldState.inWorld)
     void handleLoot(const ClientGuid request)
     {
-        if (player.deathState != DeathState.alive || transferring)
+        if (player.deathState != DeathState.alive || transferring || !map.questSpawnVisible(player, request.guid))
             return;
         if (player.values.getByte!UNIT_FIELD_BYTES_1(0) != 0)
             return sendLootError(request.guid, LootError.notStanding);

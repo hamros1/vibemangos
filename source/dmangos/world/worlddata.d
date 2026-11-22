@@ -32,7 +32,8 @@ import dmangos.world.motion : MotionType, WaypointNode, WaypointStore;
 import dmangos.world.loot : lootColumns, lootRow, LootStore, LootStores;
 import dmangos.world.npcdata : BroadcastText, NpcData;
 import dmangos.script.api : Location, Waypoint;
-import dmangos.world.quests : QuestData, QuestGreeting, questQuery, QuestRow;
+import dmangos.world.objects : HighGuid, makeGuid, temporaryCounterStart;
+import dmangos.world.quests : QuestData, QuestGreeting, questQuery, QuestRow, QuestPhaseState, QuestSpawnPhase;
 import dmangos.world.spells : SpellData;
 
 /// The `item_template` fields the character screen and character creation use.
@@ -468,6 +469,7 @@ final class WorldData
     NpcData npcs;                                   /// gossip, texts, trainers, vendors
     LootStores loot;                                /// `creature_loot_template`, `reference_loot_template`
     QuestData quests;                               /// `quest_template` and who gives and takes back each
+    QuestSpawnPhase[][ulong] questSpawnPhases;        /// spawn GUID without its template entry -> all required quest stages
     GraveyardLink[][uint] graveyards;               /// `game_graveyard_zone`, by `graveyardLinkKey`
     BattlegroundTemplate[ubyte] battlegroundTemplates;  /// `battleground_template`, by type
     BattlegroundType[uint] battlemasters;           /// `battlemaster_entry`: a creature entry's battleground
@@ -689,6 +691,7 @@ final class WorldData
             data.creatureLinks.addTemplate(row.get!uint(0), row.get!uint(1), row.get!uint(2), row.get!uint(3),
                 row.get!uint(4));
         data.loadSpawns(world, client, spawnSeed);
+        data.loadQuestSpawnPhases(world);
         data.loadTransports(world, client); // after the game object templates
         foreach (row; world.query!("SELECT Id, SpellId, Flags, TargetId, Availability, Probability, InitialMin, "
             ~ "InitialMax, RepeatMin, RepeatMax FROM creature_spell_list ORDER BY Id, Position")())
@@ -728,6 +731,47 @@ final class WorldData
             warning!("playercreateinfo is empty: no character can be listed or created "
                 ~ "(is the world database populated?)")();
         return data;
+    }
+
+    /// The optional extension table is absent on unmodified Classic-DB installations.
+    private void loadQuestSpawnPhases(MySqlConnection world)
+    {
+        import dmangos.world.defines : UnitFlags;
+
+        if (!world.query!("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() "
+                ~ "AND table_name = 'quest_spawn_phase'")()[0].get!uint(0))
+            return;
+        auto rows = world.query!"SELECT spawn_type, spawn_guid, quest_id, visible_states FROM quest_spawn_phase"();
+        if (!rows.length)
+            return;
+
+        enum passiveFlags = UnitFlags.immuneToPlayer | UnitFlags.immuneToNpc;
+        bool[ulong] supported;
+        foreach (ref spawn; creatureSpawns)
+            if (const template_ = spawn.entry in creatureTemplates)
+                if ((template_.unitFlags & passiveFlags) == passiveFlags)
+                    supported[makeGuid(HighGuid.unit, spawn.guid)] = true;
+        foreach (ref spawn; gameObjectSpawns)
+            if (const template_ = spawn.entry in gameObjectTemplates)
+                if (template_.type == GameObjectType.questGiver || template_.type == GameObjectType.text
+                    || template_.type == GameObjectType.goober)
+                    supported[makeGuid(HighGuid.gameObject, spawn.guid)] = true;
+
+        foreach (row; rows)
+        {
+            const kind = row.get!string(0), spawn = row.get!uint(1), quest = row.get!uint(2), states = row.get!uint(3);
+            const key = makeGuid(kind == "creature" ? HighGuid.unit : HighGuid.gameObject, spawn);
+            const template_ = quests.quest(quest);
+            if ((kind != "creature" && kind != "gameobject") || spawn >= temporaryCounterStart || key !in supported
+                || template_ is null || states == 0 || (states & ~uint(QuestPhaseState.all)))
+            {
+                warning!"ignored quest_spawn_phase row for %s %s, quest %s, states %s"(kind, spawn, quest, states);
+                continue;
+            }
+            questSpawnPhases[key] ~= QuestSpawnPhase(quest, cast(ubyte) states, template_.repeatable);
+        }
+        if (questSpawnPhases.length)
+            info!"loaded quest phases for %s spawns"(questSpawnPhases.length);
     }
 
     /**

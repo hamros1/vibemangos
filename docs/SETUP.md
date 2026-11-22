@@ -50,6 +50,7 @@ ls -lh bin/authserver bin/worldserver bin/extractor
 ## 2. Download the world database and extract client data
 
 Get the world database from [CMaNGOS Classic-DB on GitHub](https://github.com/cmangos/classic-db).
+Custom quest scenes can use the optional [quest phasing extension](QUEST-PHASING.md).
 This command downloads the tested [ClassicDB 1.12.1 z2815 archive](https://github.com/cmangos/classic-db/blob/13e933726f386399d9820138fbd1123e7cda86c8/Full_DB/ClassicDB_1_12_1_z2815.sql.gz)
 and saves it under the filename the setup script expects. Leave it compressed.
 

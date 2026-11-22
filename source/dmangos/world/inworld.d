@@ -245,6 +245,8 @@ private:
     {
         import dmangos.world.replication : Replica;
 
+        if (!map.questSpawnVisible(player, target))
+            return false;
         auto replica = cast(Replica) map.findObject(target);
         if (replica is null || replica.owner == context.nodeId || context.playerRelay is null || !context.canWrite())
             return false;

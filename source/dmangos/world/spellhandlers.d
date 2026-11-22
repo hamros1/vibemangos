@@ -1913,6 +1913,8 @@ private:
         const guid = unitTarget ? unitTarget : player.guid;
         if (guid == player.guid)
             return needsEnemy ? SpellCastResult.badTargets : SpellCastResult.ok;
+        if (!map.questSpawnVisible(player, guid))
+            return SpellCastResult.badTargets;
         auto creature = cast(Creature) map.findObject(guid);
         Position at;
         float reach;
@@ -2085,10 +2087,11 @@ private:
         Position namedCenter;
         bool hasNamedCenter;
         UnitRef[] scripted;
+        bool visible(ulong guid) { return map.questSpawnVisible(player, guid); }
         if (namedShape == ImplicitTarget.unitScriptNearCaster)
         {
             namedCenter = player.position;
-            if (auto near = nearestNamedCreature(map, namedCenter, namedRange, entries, 0, routeNamed))
+            if (auto near = nearestNamedCreature(map, namedCenter, namedRange, entries, 0, routeNamed, &visible))
                 scripted = [near];
         }
         else if (namedShape != ImplicitTarget.none)
@@ -2097,7 +2100,7 @@ private:
                 player.position, spell.id in context.data.spellTargets, &c.targets, namedCenter);
             if (hasNamedCenter)
                 scripted = namedCreaturesInArea(map, namedCenter, namedRange, entries, routeNamed,
-                    spell.casting.maxAffectedTargets, namedShape, namedCreatureCone(context.data, spell.id));
+                    spell.casting.maxAffectedTargets, namedShape, namedCreatureCone(context.data, spell.id), &visible);
         }
         const namedDestination = namedShape == ImplicitTarget.enumUnitsScriptAoeAtDestLoc && hasNamedCenter;
         const(SpellJump)[] spellChain;
@@ -2126,7 +2129,7 @@ private:
             else if (objectShape != ImplicitTarget.none)
             {
                 Position center;
-                targets = context.namedGameObjectTargets(map, spell, i, objectShape, c.gameObjectOrigin, center);
+                targets = context.namedGameObjectTargets(map, spell, i, objectShape, c.gameObjectOrigin, center, &visible);
                 if (objectShape == ImplicitTarget.enumGameobjectsScriptAoeAtDestLoc && targets.length)
                 {
                     objectDestination = center;
@@ -2251,6 +2254,8 @@ private:
                 targets = [player.guid]; // other targets: not yet; the caster stands in
             foreach (target; targets)
             {
+                if (!visible(target))
+                    continue;
                 if (remoteArea)
                     if (auto replica = cast(Replica) map.findObject(target))
                     {
@@ -3265,7 +3270,8 @@ private:
         import dmangos.world.spellselection : namedCreatureRange, nearestNamedCreature;
 
         return nearestNamedCreature(map, player.position, namedCreatureRange(*spell, context.client),
-            context.spellScriptTargets(spell.id, effect), 0, acrossNodes);
+            context.spellScriptTargets(spell.id, effect), 0, acrossNodes,
+            (ulong guid) => map.questSpawnVisible(player, guid));
     }
 
     /**

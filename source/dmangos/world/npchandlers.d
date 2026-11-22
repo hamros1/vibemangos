@@ -113,7 +113,7 @@ private:
     /// The creature `guid` on the player's map, if it has one of `npcFlags` (0: any) and is close enough.
     Npc interactableNpc(ulong guid, uint npcFlags)
     {
-        if (transferring)
+        if (transferring || !map.questSpawnVisible(player, guid))
             return null;
         auto creature = context.npcFor(map.findObject(guid)); // a creature, or another node's
         if (creature is null)
@@ -209,6 +209,8 @@ private:
     @Handles(Opcode.CMSG_GOSSIP_SELECT_OPTION, WorldState.inWorld)
     void handleGossipSelectOption(const ClientGossipSelectOption request)
     {
+        if (!map.questSpawnVisible(player, request.guid))
+            return;
         // A game object's menu (one within reach).
         {
             import dmangos.world.gameobject : GameObject;
