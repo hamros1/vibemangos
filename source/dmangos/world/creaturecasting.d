@@ -195,16 +195,13 @@ mixin template CreatureCasting()
     /// Why the last `castSpell` that could not did not (`SPELL_FAILED_*`, a pet's owner told it).
     imported!"dmangos.world.spellcast".SpellCastResult castRefusal;
 
-    private size_t routableNamedCreatureEffect(const(SpellInfo)* spell)
+    private size_t selectableNamedCreatureEffect(const(SpellInfo)* spell)
     {
-        import dmangos.world.context : WorldContext;
         import dmangos.world.spelldamage : namedCreatureEffect;
 
         const effect = namedCreatureEffect(*spell);
-        if (effect != size_t.max)
-            if (auto context = cast(WorldContext) lore)
-                if (context.sendAreaDamage !is null && !context.spellScript(spell.id))
-                    return effect;
+        if (effect != size_t.max && lore.spellScriptTargets(spell.id).length && !lore.spellScript(spell.id))
+            return effect;
         return size_t.max;
     }
 
@@ -214,8 +211,10 @@ mixin template CreatureCasting()
      */
     bool castSpell(const(SpellInfo)* spell, ulong target, uint flags)
     {
+        import dmangos.world.context : WorldContext;
         import dmangos.world.spellcast : SpellCastResult;
-        import dmangos.world.spelldamage : creatureAreaShape, creatureTargetInRange, isCreatureTargetEffect;
+        import dmangos.world.spelldamage : creatureAreaShape, creatureTargetInRange, isCreatureTargetEffect,
+            namedCreatureShape;
 
         // Why it could not, for a pet's owner (`castRefusal`).
         bool refuse(SpellCastResult why)
@@ -241,8 +240,11 @@ mixin template CreatureCasting()
         // `CAST_FORCE_TARGET_SELF`: the target casts it on itself; only it itself can be made to.
         if ((flags & castForceTargetSelf) && target != me.guid)
             return refuse(SpellCastResult.badTargets);
-        if (routableNamedCreatureEffect(spell) != size_t.max)
-            target = me.guid; // the actual creature is selected under the spell's own range at completion
+        const namedEffect = selectableNamedCreatureEffect(spell);
+        auto context = cast(WorldContext) lore;
+        if (namedEffect != size_t.max && (namedCreatureShape(*spell, namedEffect) == ImplicitTarget.enumUnitsScriptAoeAtSrcLoc
+            || (context !is null && context.sendAreaDamage !is null)))
+            target = me.guid; // the spell selects its named creatures at completion
         else if (target == 0)
             target = victim ? victim : me.guid;
         auto other = spellTarget(target);
@@ -605,16 +607,16 @@ mixin template CreatureCasting()
     {
         import dmangos.world.context : WorldContext;
         import dmangos.world.spellcast : spellFailurePacket, SpellCastResult;
-        import dmangos.world.spelldamage : creatureTargetInRange;
-        import dmangos.world.spellselection : namedCreatureRange, nearestNamedCreature;
+        import dmangos.world.spelldamage : creatureTargetInRange, namedCreatureShape;
+        import dmangos.world.spellselection : namedCreatureRadius, namedCreaturesInArea, nearestNamedCreature;
 
+        auto context = cast(WorldContext) lore;
         bool remotePrimary, sentArea;
         if (selectedWeaponTargets is null)
         if (auto other = spellTarget(target))
             if (other.replica !is null)
             {
                 remotePrimary = true;
-                auto context = cast(WorldContext) lore;
                 bool sentTarget;
                 if (context !is null && context.canWrite()
                     && (!takeMana || (creatureTargetInRange(spell, me.fighter, other.fighter, lore.clientData)
@@ -640,25 +642,37 @@ mixin template CreatureCasting()
         ulong[][3] reached;
         bool[ulong] all;
         ulong[] inOrder; // each target once, in the order the effects found them (as the packet lists them)
-        ulong remoteNamed;
-        const namedEffect = selectedWeaponTargets is null ? routableNamedCreatureEffect(spell) : size_t.max;
-        UnitRef named;
-        if (namedEffect != size_t.max)
-            named = nearestNamedCreature(world_, me.position, namedCreatureRange(*spell, lore.clientData),
-                lore.spellScriptTargets(spell.id), me.guid, true);
+        ulong[] remoteNamed;
+        const namedEffect = selectedWeaponTargets is null ? selectableNamedCreatureEffect(spell) : size_t.max;
+        const namedShape = namedEffect != size_t.max ? namedCreatureShape(*spell, namedEffect) : ImplicitTarget.none;
+        const namedRange = namedEffect != size_t.max ? namedCreatureRadius(*spell, namedEffect, lore.clientData) : 0;
+        const routeNamed = context !is null && context.sendAreaDamage !is null;
+        UnitRef[] named;
+        if (namedShape == ImplicitTarget.enumUnitsScriptAoeAtSrcLoc)
+            named = namedCreaturesInArea(world_, me.position, namedRange, lore.spellScriptTargets(spell.id), routeNamed,
+                spell.casting.maxAffectedTargets);
+        else if (namedShape == ImplicitTarget.unitScriptNearCaster)
+            if (auto nearest = nearestNamedCreature(world_, me.position, namedRange, lore.spellScriptTargets(spell.id),
+                me.guid, routeNamed))
+                named = [nearest];
         foreach (i; 0 .. 3)
             if (spell.effect[i])
             {
-                if (named.replica !is null && spell.implicitTargetA[i] == ImplicitTarget.unitScriptNearCaster)
+                if (namedShape != ImplicitTarget.none && namedCreatureShape(*spell, i) == namedShape
+                    && (named.length || namedShape == ImplicitTarget.enumUnitsScriptAoeAtSrcLoc))
                 {
-                    if (i == namedEffect && sendCreatureTargetSpell(cast(WorldContext) lore, spell, named,
-                        !takeMana, auraAbsent, cast(int) i, me.position, namedCreatureRange(*spell, lore.clientData),
-                        true))
-                        remoteNamed = named.combatGuid;
-                    continue;
+                    foreach (other; named)
+                    {
+                        if (other.replica is null)
+                            reached[i] ~= other.combatGuid;
+                        else if (i == namedEffect && sendCreatureTargetSpell(context, spell, other, !takeMana, auraAbsent,
+                            cast(int) i, me.position, namedRange, true))
+                            remoteNamed ~= other.combatGuid;
+                    }
                 }
-                reached[i] = scriptPicked(spell, i, selectedWeaponTargets is null
-                    ? targetsFor(spell, i, target) : selectedWeaponTargets);
+                else
+                    reached[i] = scriptPicked(spell, i, selectedWeaponTargets is null
+                        ? targetsFor(spell, i, target) : selectedWeaponTargets);
                 foreach (guid; reached[i])
                     if ((!remotePrimary || guid != target) && guid !in all)
                     {
@@ -722,11 +736,11 @@ mixin template CreatureCasting()
         foreach (other; resistedBy)
             other.session.spellResistedBy(spell, world_.unit(me.guid));
         auto targets = targetsOf(target);
-        if (results.length || !remotePrimary || sentArea || remoteNamed)
+        if (results.length || !remotePrimary || sentArea || remoteNamed.length)
         {
             auto displayed = results;
-            if (remoteNamed)
-                displayed ~= TargetResult(remoteNamed, SpellMissInfo.none);
+            foreach (guid; remoteNamed)
+                displayed ~= TargetResult(guid, SpellMissInfo.none);
             world_.sendToObservers(me.guid, Opcode.SMSG_SPELL_GO, spellGoPacket(me.guid, spell.id, displayed, targets));
         }
         foreach (r; results) // the combat log's line for each miss, as for a player's spell

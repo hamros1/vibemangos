@@ -982,8 +982,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.spellcast : radius, SpellMissInfo;
         import dmangos.world.spelldamage : creatureAreaShape, creatureTargetInRange, isCreatureTargetEffect,
             isHostileAreaEffect, isHostileChainEffect, isRemoteLeechChannel, isTargetedProcEffect, namedCreatureEffect,
-            rollRemoteAreaDamage, spellJumpRadius;
-        import dmangos.world.spellselection : namedCreatureRange;
+            namedCreatureShape, rollRemoteAreaDamage, spellJumpRadius;
+        import dmangos.world.spellselection : namedCreatureRadius;
         import dmangos.world.spellids : ImplicitTarget, SpellEffect;
         import dmangos.world.unit : Blow, UnitKind, UnitRef, combatRelations;
         import dmangos.world.updatefields : TypeId, UNIT_CHANNEL_SPELL, UNIT_FIELD_CHANNEL_OBJECT, UNIT_FIELD_LEVEL;
@@ -1012,7 +1012,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             || (victim.kind == UnitKind.creature && (victim.creature.ai is null || victim.creature.ai.evading)))
             return;
         const p = victim.position;
-        if ((!message.creatureCast || message.creatureArea) && !message.channelled && !(message.radius > 0
+        if ((!message.creatureCast || message.creatureArea || message.namedCreature) && !message.channelled
+            && !(message.radius > 0
             && (p.x - message.x) ^^ 2 + (p.y - message.y) ^^ 2 + (p.z - message.z) ^^ 2 <= message.radius ^^ 2))
             return;
         auto copy = cast(Replica) map_.findObject(message.caster);
@@ -1055,8 +1056,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             import std.algorithm.searching : canFind;
 
             if (victim.kind != UnitKind.creature || message.effect != namedCreatureEffect(*spell)
-                || !attacker.alive || message.radius != namedCreatureRange(*spell, client)
+                || message.radius != namedCreatureRadius(*spell, message.effect, client)
                 || !spellScriptTargets(spell.id).canFind(victim.creature.spawn.entry) || spellScript(spell.id))
+                return replyCreatureCast(peer, message, SpellMissInfo.evade);
+            if (!attacker.alive && !(message.triggered && copy.fields.type == TypeId.unit
+                && namedCreatureShape(*spell, message.effect) == ImplicitTarget.enumUnitsScriptAoeAtSrcLoc))
                 return replyCreatureCast(peer, message, SpellMissInfo.evade);
             if (message.auraAbsent && victim.hasAuraOf(spell.id))
                 return;

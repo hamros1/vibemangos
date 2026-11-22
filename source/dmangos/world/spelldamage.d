@@ -237,7 +237,21 @@ bool isCreatureTargetEffect(const ref SpellInfo spell, size_t i)
         || spell.effect[i] == SpellEffect.schoolDamage) && spell.effect[i] != SpellEffect.heal;
 }
 
-/// One named-creature hit, heal, or group of auras can be applied on its target's node.
+/// The database can name one creature near the caster, or every eligible creature around the caster.
+package ImplicitTarget namedCreatureShape(const ref SpellInfo spell, size_t i)
+{
+    const a = spell.implicitTargetA[i], b = spell.casting.implicitTargetB[i];
+    with (ImplicitTarget)
+    {
+        if (b == none && (a == unitScriptNearCaster || a == enumUnitsScriptAoeAtSrcLoc))
+            return a;
+        if (a == casterSource && b == enumUnitsScriptAoeAtSrcLoc)
+            return b;
+        return none;
+    }
+}
+
+/// One named-creature hit, heal, or group of auras can be applied on each target's node.
 package size_t namedCreatureEffect(const ref SpellInfo spell)
 {
     if (spell.attributesEx & (0x04 | 0x40))
@@ -250,10 +264,13 @@ package size_t namedCreatureEffect(const ref SpellInfo spell)
         if (spell.implicitTargetA[i] == ImplicitTarget.caster
             && spell.casting.implicitTargetB[i] == ImplicitTarget.none)
             continue;
-        if (spell.implicitTargetA[i] != ImplicitTarget.unitScriptNearCaster)
+        const shape = namedCreatureShape(spell, i);
+        if (shape == ImplicitTarget.none || spell.casting.chainTarget[i] > 1 || spell.casting.school >= 7)
             return size_t.max;
-        if (spell.casting.implicitTargetB[i] != ImplicitTarget.none || spell.casting.chainTarget[i] > 1
-            || spell.casting.school >= 7)
+        if (first != size_t.max && (spell.implicitTargetA[i] != spell.implicitTargetA[first]
+            || spell.casting.implicitTargetB[i] != spell.casting.implicitTargetB[first]
+            || (shape == ImplicitTarget.enumUnitsScriptAoeAtSrcLoc
+                && spell.casting.radiusIndex[i] != spell.casting.radiusIndex[first])))
             return size_t.max;
         if (effect == SpellEffect.applyAura)
         {

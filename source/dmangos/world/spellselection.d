@@ -7,7 +7,9 @@ import dmangos.world.clientdata : ClientData;
 import dmangos.world.creatureai : CombatWorld;
 import dmangos.world.map : Map;
 import dmangos.world.movement : Position;
-import dmangos.world.spellcast : range;
+import dmangos.world.spellcast : radius, range;
+import dmangos.world.spelldamage : namedCreatureShape;
+import dmangos.world.spellids : ImplicitTarget;
 import dmangos.world.spells : SpellInfo;
 import dmangos.world.unit : UnitRef;
 
@@ -16,48 +18,90 @@ package float namedCreatureRange(const ref SpellInfo spell, const ClientData cli
     return max(5.0f, range(spell, client)[1]);
 }
 
+/// A nearest target uses the spell's range, an area uses the effect's radius.
+package float namedCreatureRadius(const ref SpellInfo spell, size_t effect, const ClientData client)
+{
+    return namedCreatureShape(spell, effect) == ImplicitTarget.unitScriptNearCaster
+        ? namedCreatureRange(spell, client) : radius(spell, effect, client);
+}
+
+/// Select across the caster's owned and observed creatures, sharing any target limit between them.
+package UnitRef[] namedCreaturesInArea(CombatWorld world, Position center, float reach, const(uint)[] entries,
+    bool acrossNodes, uint maxTargets)
+{
+    import std.algorithm.sorting : sort;
+
+    UnitRef[] targets;
+    visitNamedCreatures(world, center, reach, entries, 0, acrossNodes,
+        (UnitRef candidate, float) { targets ~= candidate; });
+    if (maxTargets && targets.length > maxTargets)
+    {
+        targets.sort!((a, b) {
+            const left = distanceSquared(a.position, center), right = distanceSquared(b.position, center);
+            return left < right || (left == right && a.combatGuid < b.combatGuid);
+        });
+        targets = targets[0 .. maxTargets];
+    }
+    return targets;
+}
+
 /// Compare owned and observed creatures by distance, with a stable tie break.
-package UnitRef nearestNamedCreature(CombatWorld world, Position center, float radius, const(uint)[] entries,
+package UnitRef nearestNamedCreature(CombatWorld world, Position center, float reach, const(uint)[] entries,
     ulong caster, bool acrossNodes)
 {
-    import dmangos.world.replication : Replica;
-    import dmangos.world.updatefields : OBJECT_FIELD_ENTRY, TypeId;
-
     UnitRef nearest;
-    if (!entries.length)
-        return nearest;
-    float best = radius ^^ 2;
-    void consider(UnitRef candidate, uint entry)
-    {
-        if (candidate.combatGuid == caster || !candidate.alive || !entries.canFind(entry))
-            return;
-        const p = candidate.position;
-        const dist = (p.x - center.x) ^^ 2 + (p.y - center.y) ^^ 2 + (p.z - center.z) ^^ 2;
+    float best = reach ^^ 2;
+    visitNamedCreatures(world, center, reach, entries, caster, acrossNodes, (UnitRef candidate, float dist) {
         if (dist < best || (dist == best && (!nearest || candidate.combatGuid < nearest.combatGuid)))
         {
             best = dist;
             nearest = candidate;
         }
+    });
+    return nearest;
+}
+
+private float distanceSquared(Position a, Position b)
+{
+    return (a.x - b.x) ^^ 2 + (a.y - b.y) ^^ 2 + (a.z - b.z) ^^ 2;
+}
+
+private void visitNamedCreatures(CombatWorld world, Position center, float reach, const(uint)[] entries, ulong exclude,
+    bool acrossNodes, scope void delegate(UnitRef, float) visit)
+{
+    import std.math : isFinite;
+    import dmangos.world.replication : Replica;
+    import dmangos.world.updatefields : OBJECT_FIELD_ENTRY, TypeId;
+
+    if (!entries.length || !isFinite(reach) || reach <= 0)
+        return;
+    const limit = reach ^^ 2;
+    void consider(UnitRef candidate, uint entry)
+    {
+        if (candidate.combatGuid == exclude || !candidate.alive || !entries.canFind(entry))
+            return;
+        const dist = distanceSquared(candidate.position, center);
+        if (dist <= limit)
+            visit(candidate, dist);
     }
-    foreach (creature; world.creaturesNear(center, radius))
+    foreach (creature; world.creaturesNear(center, reach))
         consider(world.unitOf(creature), creature.spawn.entry);
     if (acrossNodes)
         if (auto map = cast(Map) world)
-            foreach (object; map.objectsNear(center, radius))
+            foreach (object; map.objectsNear(center, reach))
                 if (auto copy = cast(Replica) object)
                     if (copy.fields.type == TypeId.unit)
                         consider(UnitRef.observed(copy, map), copy.fields.get!OBJECT_FIELD_ENTRY);
-    return nearest;
 }
 
 /// A player and an NPC choose a nearby named replica, with the effects applied only by its owner.
 unittest
 {
-    import dmangos.bytes : ByteWriter;
+    import dmangos.bytes : ByteWriter, floatBits;
     import dmangos.cluster.protocol : AreaDamage, decode;
     import dmangos.dbc : buildDbc;
     import dmangos.serialization : serialize;
-    import dmangos.world.clientdata : spellDurationFormat;
+    import dmangos.world.clientdata : spellDurationFormat, spellRadiusFormat;
     import dmangos.world.context : WorldContext;
     import dmangos.world.creature : Creature, CreatureSpawn;
     import dmangos.world.eventai : castTriggered;
@@ -67,7 +111,7 @@ unittest
     import dmangos.world.spellcast : SpellMissInfo, SpellTargets, TargetFlags, spellAttrEx2CantCrit,
         spellAttrEx3AlwaysHit;
     import dmangos.world.spellhandlers : testSpell;
-    import dmangos.world.spellids : AuraType, ImplicitTarget, SpellEffect;
+    import dmangos.world.spellids : AuraType, SpellEffect;
     import dmangos.world.testclient;
     import dmangos.world.updatefields : UNIT_FIELD_HEALTH, UNIT_FIELD_MAXHEALTH;
 
@@ -75,11 +119,13 @@ unittest
     auto source = newCreationContext(db), owner = newCreationContext(db);
     source.nodeId = 1;
     owner.nodeId = 2;
-    enum uint ward = 55060, heal = 55061;
+    enum uint ward = 55060, heal = 55061, groupWard = 55062;
     foreach (node; [source, owner])
     {
         node.client.spellDurations = typeof(node.client.spellDurations).parse(buildDbc(spellDurationFormat,
             [[1u, 10_000, 0, 10_000]]), "SpellDuration.dbc");
+        node.client.spellRadii = typeof(node.client.spellRadii).parse(buildDbc(spellRadiusFormat,
+            [[1u, floatBits(6), 0, 0]]), "SpellRadius.dbc");
         auto aura = testSpell(ward, SpellEffect.applyAura, ImplicitTarget.unitScriptNearCaster, 10);
         aura.effect[1] = SpellEffect.applyAura;
         aura.implicitTargetA[1] = ImplicitTarget.unitScriptNearCaster;
@@ -97,12 +143,19 @@ unittest
         healing.casting.school = 1;
         node.data.spells.spells[heal] = healing;
         node.data.spellScriptTargets[ward] = node.data.spellScriptTargets[heal] = [creatureInnkeeper];
+        aura.id = groupWard;
+        aura.implicitTargetA[0 .. 2] = ImplicitTarget.casterSource;
+        aura.casting.implicitTargetB[0 .. 2] = ImplicitTarget.enumUnitsScriptAoeAtSrcLoc;
+        aura.casting.radiusIndex[0 .. 2] = 1;
+        aura.casting.maxAffectedTargets = 2;
+        node.data.spells.spells[groupWard] = aura;
+        node.data.spellScriptTargets[groupWard] = [creatureInnkeeper];
     }
 
     const at = Position(100, 100, 40);
     auto caster = loggedIn(source, db, 7, "Anduin", at);
     auto player = cast(Player) caster.session.character;
-    player.spells ~= ward;
+    player.spells ~= [ward, groupWard];
     Creature npc(WorldContext context, uint id, uint entry, float dx)
     {
         const spawn = CreatureSpawn(id, entry, 0, at.x + dx, at.y, at.z);
@@ -167,4 +220,24 @@ unittest
     owner.areaDamageArrived(1, requests[2]);
     owner.areaDamageArrived(1, requests[2]);
     assert(remote.values.get!UNIT_FIELD_HEALTH == 60u && results.length == 3);
+
+    auto overTargetLimit = npc(source, 91004, creatureInnkeeper, 5);
+    assert(npcCaster.ai.castSpell(source.data.spells.spell(groupWard), wrong.guid, 0));
+    assert(requests.length == 4 && requests[3].creatureCast && requests[3].target == remote.guid);
+    assert(farther.auras.find(groupWard) && !overTargetLimit.auras.find(groupWard), "one cap across both nodes");
+    remote.movement.position.z += 15;
+    owner.areaDamageArrived(1, requests[3]);
+    assert(!remote.auras.find(groupWard), "a normal creature cast also rechecks the recipient's position");
+    remote.movement.position.z -= 15;
+
+    castPacket = ByteWriter.init;
+    castPacket.put(groupWard);
+    SpellTargets(TargetFlags.self, 0).write(castPacket);
+    caster.write(Opcode.CMSG_CAST_SPELL, castPacket.data);
+    assert(requests.length == 5 && requests[4].target == remote.guid && requests[4].radius == 6);
+    owner.areaDamageArrived(1, requests[4]);
+    owner.areaDamageArrived(1, requests[4]);
+    aura = remote.auras.find(groupWard);
+    assert(aura && aura.caster == player.guid && aura.stacks == 1 && aura.effects == 3);
+    assert(results.length == 4 && !wrong.auras.find(groupWard) && !overTargetLimit.auras.find(groupWard));
 }

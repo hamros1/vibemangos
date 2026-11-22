@@ -500,10 +500,10 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   The creature holds the cast timer, mana and spell-list cooldown. The target's node
   rechecks eligibility and the spell's geometry. An interrupt before completion cancels
   the cast.
-* **Named creature targets.** A player or creature can select the nearest living creature
-  named by a `spell_script_target` entry, including replicas. Direct damage, healing,
-  and a group of auras at that target can resolve on its current node. That node checks
-  the creature's entry and position again and signals a successful hit to its creature AI.
+* **Named creature targets.** A player or creature can select the nearest living creature or an area
+  around the caster using `spell_script_target` entries, including replicas. An area's target cap is
+  shared across nodes. Each target's node checks its entry and position again, applies direct damage,
+  healing or a group of auras once, and signals a successful hit to the creature's AI.
 * **Spell procs.** A hostile hit can trigger auras on both actors. Self effects run with the
   actor, and supported direct damage, healing and aura effects of the same proc can
   reach a named target on its node. Aura effects with the same target share one
@@ -761,8 +761,8 @@ services line (`ServiceHost.describe`). Every log line of the cluster code start
 
 ## Spell routing limits
 
-Cross-node spell routing is effect-specific. Script-selected groups, channels and effects
-handled by spell scripts still use their local paths. Ground ticks use observed targets around the spot
+Cross-node spell routing is effect-specific. Destination-centered and cone-shaped script selections,
+channels and effects handled by spell scripts still use their local paths. Ground ticks use observed targets around the spot
 and require a current caster replica at the target. A projectile is dispatched while its
 launching node still simulates the caster and can route to the target's current replica.
 

@@ -1955,13 +1955,21 @@ private:
         TargetResult[] results;
         RemotePartyHeal[] remoteHeals;
         RemoteAreaDamage[] remoteDamage;
-        import dmangos.world.spelldamage : namedCreatureEffect;
-        import dmangos.world.spellselection : namedCreatureRange;
+        import dmangos.world.spelldamage : namedCreatureEffect, namedCreatureShape;
+        import dmangos.world.spellselection : namedCreatureRadius, namedCreaturesInArea;
 
-        const namedEffect = namedCreatureEffect(*spell);
-        const routeNamed = namedEffect != size_t.max && context.sendAreaDamage !is null && !context.spellScript(spell.id);
-        const namedRange = routeNamed ? namedCreatureRange(*spell, context.client) : 0;
-        const scripted = routeNamed ? scriptTargetNear(spell, true) : UnitRef.init;
+        const entries = context.spellScriptTargets(spell.id);
+        const namedEffect = entries.length && !context.spellScript(spell.id) ? namedCreatureEffect(*spell) : size_t.max;
+        const namedShape = namedEffect != size_t.max ? namedCreatureShape(*spell, namedEffect) : ImplicitTarget.none;
+        const namedRange = namedEffect != size_t.max ? namedCreatureRadius(*spell, namedEffect, context.client) : 0;
+        const routeNamed = context.sendAreaDamage !is null;
+        UnitRef[] scripted;
+        if (namedShape == ImplicitTarget.enumUnitsScriptAoeAtSrcLoc)
+            scripted = namedCreaturesInArea(map, player.position, namedRange, entries, routeNamed,
+                spell.casting.maxAffectedTargets);
+        else if (namedShape == ImplicitTarget.unitScriptNearCaster)
+            if (auto near = scriptTargetNear(spell, routeNamed))
+                scripted = [near];
         const(SpellJump)[] spellChain;
         uint[ulong] bounceOf;
         SpellMissInfo[ulong] missOf;
@@ -2065,21 +2073,27 @@ private:
                     continue;
                 targets = [c.targets.gameObject ? c.targets.gameObject : player.guid]; // an item: the caster's own
             }
-            else if (a == ImplicitTarget.unitScriptNearCaster)
+            else if (namedShape != ImplicitTarget.none && namedCreatureShape(*spell, i) == namedShape)
             {
-                if (scripted.replica !is null)
+                foreach (creature; scripted)
                 {
-                    if (i == namedEffect)
+                    if (creature.replica is null)
+                        targets ~= creature.combatGuid;
+                    else if (i == namedEffect)
                     {
                         const at = player.position;
-                        auto hit = AreaDamage(caster: player.guid, target: scripted.combatGuid, spell: spell.id,
+                        auto hit = AreaDamage(caster: player.guid, target: creature.combatGuid, spell: spell.id,
                             effect: cast(ubyte) i, map: map.id, instance: map.instanceId, x: at.x, y: at.y, z: at.z,
                             radius: namedRange, namedCreature: true, triggered: c.triggered);
-                        remoteDamage ~= RemoteAreaDamage(scripted.replica.owner, hit);
+                        remoteDamage ~= RemoteAreaDamage(creature.replica.owner, hit);
                     }
-                    continue;
                 }
-                const near = routeNamed ? scripted.combatGuid : scriptTargetNear(spell, false).combatGuid;
+                if (!scripted.length && namedShape == ImplicitTarget.unitScriptNearCaster)
+                    targets = [player.guid];
+            }
+            else if (a == ImplicitTarget.unitScriptNearCaster)
+            {
+                const near = scriptTargetNear(spell, false).combatGuid;
                 targets = [near ? near : player.guid];
             }
             else
@@ -2124,8 +2138,9 @@ private:
         auto displayedResults = results;
         if (drain !is null)
             displayedResults ~= TargetResult(drain.guid, SpellMissInfo.none);
-        if (scripted.replica !is null)
-            displayedResults ~= TargetResult(scripted.combatGuid, SpellMissInfo.none);
+        foreach (ref remote; remoteDamage)
+            if (remote.hit.namedCreature)
+                displayedResults ~= TargetResult(remote.hit.target, SpellMissInfo.none);
         if (spellChain.length && (remoteHeals.length || remoteDamage.length))
         {
             displayedResults = null;

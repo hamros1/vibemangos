@@ -514,25 +514,47 @@ ubyte[] spellGoPacket(ulong caster, uint spell, const(TargetResult)[] results, c
     w.putPackedGuid(caster);
     w.put(spell);
     w.put(castFlagUnknown9);
-    ubyte hits, misses;
-    foreach (r; results)
-        if (r.miss == SpellMissInfo.none)
-            ++hits;
-        else
-            ++misses;
-    w.put(hits);
-    foreach (r; results)
-        if (r.miss == SpellMissInfo.none)
-            w.put(r.guid);
-    w.put(misses);
-    foreach (r; results)
-        if (r.miss != SpellMissInfo.none)
-        {
-            w.put(r.guid);
-            w.put(cast(ubyte) r.miss);
-        }
+    // The client has one byte for each list's length. Only the listed targets are capped.
+    foreach (listMisses; [false, true])
+    {
+        ubyte count;
+        const offset = w.data.length;
+        w.put(count);
+        foreach (r; results)
+            if ((r.miss != SpellMissInfo.none) == listMisses)
+            {
+                if (count == ubyte.max)
+                    break;
+                w.put(r.guid);
+                if (listMisses)
+                    w.put(cast(ubyte) r.miss);
+                ++count;
+            }
+        w.patch(offset, count);
+    }
     targets.write(w);
     return w.data.dup;
+}
+
+unittest
+{
+    TargetResult[] crowd;
+    foreach (ulong guid; 10 .. 266)
+    {
+        crowd ~= TargetResult(guid, SpellMissInfo.none);
+        crowd ~= TargetResult(guid + 1000, SpellMissInfo.resist);
+    }
+    const targets = SpellTargets.init;
+    auto packet = ByteReader(spellGoPacket(1, 2, crowd, targets));
+    assert(packet.readPackedGuid() == 1 && packet.readPackedGuid() == 1);
+    assert(packet.read!uint == 2 && packet.read!ushort == castFlagUnknown9);
+    assert(packet.read!ubyte == ubyte.max);
+    foreach (ulong guid; 10 .. 265)
+        assert(packet.read!ulong == guid);
+    assert(packet.read!ubyte == ubyte.max);
+    foreach (ulong guid; 1010 .. 1265)
+        assert(packet.read!ulong == guid && packet.read!ubyte == SpellMissInfo.resist);
+    assert(SpellTargets.read(packet).mask == TargetFlags.self && packet.empty);
 }
 
 /// `SMSG_SPELL_FAILURE` (to everyone around) for an interrupted cast.
