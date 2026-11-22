@@ -64,6 +64,7 @@ import dmangos.world.transports : ShipObject, mapAt, transportClock;
 import dmangos.world.clientdata : ClientData;
 import dmangos.world.config : WorldConfig;
 import dmangos.world.database : WorldDatabase;
+import dmangos.vmap.gameobjectmodels : GameObjectModels;
 import dmangos.vmap.maptree : ModelCache;
 import dmangos.world.terrain : Terrain;
 import dmangos.world.group : GroupDirectory, Groups, memberStatus, MemberStatus;
@@ -284,6 +285,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private Map[uint] maps;
     private Terrain[uint] terrains;
     private ModelCache vmapModels;     // the buildings and doodads all maps share
+    private GameObjectModels gameObjectModels;
 
     /// Players in the world, by guid and by lower-cased name.
     private OnlinePlayer[ulong] online;
@@ -2889,7 +2891,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     Terrain terrain(uint mapId)
     {
         if (vmapModels is null)
-            vmapModels = new ModelCache(buildPath(config.dataDir, "vmaps"));
+        {
+            const directory = buildPath(config.dataDir, "vmaps");
+            vmapModels = new ModelCache(directory);
+            gameObjectModels = GameObjectModels.load(directory, vmapModels);
+        }
         return terrains.require(mapId, new Terrain(mapId, config.dataDir, client, vmapModels, config.mmaps));
     }
 
@@ -2975,9 +2981,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         MapObject[] delegate(uint, ulong) spawner = &spawnCell;
         if (instance)
             spawner = (uint m, ulong cell) => spawnCellIn(m, instance, cell);
+        auto mapTerrain = terrain(id);
         auto created = new Map(id, MapSettings(config.visibilityDistance, config.visibilityRelocationLimit,
             config.gridCleanUpDelay * 1000),
-            &serverTime, spawner, terrain(id), owns);
+            &serverTime, spawner, mapTerrain, owns, gameObjectModels);
         created.instanceId = instance;
         if (instance == 0) // a dungeon's copies are all on one node: nobody else needs replicas of them
             created.replicator = replicator;

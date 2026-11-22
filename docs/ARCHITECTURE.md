@@ -816,6 +816,11 @@ replaces another) and the rows to save.
 
 ## Terrain
 
+The map's line-of-sight check includes closed doors when the vmap directory has the extractor's
+game-object model list. A door's current state controls whether it blocks. The map indexes its
+rotated and scaled mesh by the cells it overlaps. Door replicas use the same geometry and their
+replicated state. Each dungeon copy has its own collision index.
+
 The extractor (`extractor/maps.d`) turns each map's ADT tiles into `.map` files (version "z1.4"),
 whose layout `mapfile.d` holds for both sides. `world/terrain.d` reads them: `GridMap` is one
 533-yard tile, and `Terrain` a map's tiles, read the first time anything asks

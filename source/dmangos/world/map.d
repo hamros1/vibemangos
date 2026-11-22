@@ -37,6 +37,7 @@
  */
 module dmangos.world.map;
 
+import dmangos.vmap.gameobjectmodels : GameObjectModels;
 import dmangos.vmap.math : Vector3;
 import core.time : Duration, MonoTime, msecs, seconds, usecs;
 import std.algorithm.searching : canFind;
@@ -53,14 +54,15 @@ import dmangos.world.creatureai : LinkEvent;
 import dmangos.world.creatureai : CombatWorld;
 import dmangos.world.unit : UnitRef;
 import dmangos.world.creature : Creature;
-import dmangos.world.gameobject : GameObject, GameObjectWorld;
+import dmangos.world.gameobject : GameObject, GameObjectWorld, goStateReady;
+import dmangos.world.gameobjectcollision : GameObjectCollision;
 import dmangos.world.motion : MotionWorld;
 import dmangos.world.movement : Position;
 import dmangos.world.objects : maxUpdatePacketBytes, seenByEveryone, seenByOwner, UpdateData, UpdatePacket, UpdateValues;
 import dmangos.world.opcodes : Opcode;
 import dmangos.world.packets : ServerDestroyObject;
 import dmangos.world.player : DeathState, Player;
-import dmangos.world.updatefields : TypeId;
+import dmangos.world.updatefields : GAMEOBJECT_STATE, TypeId;
 import dmangos.world.migration : decodeBundle, encodeBundle, Migrant, MigrantKind;
 import dmangos.world.replication : decodeSlots, encodeMotion, encodePlayerState, encodeSlots, encodeState, Replica,
     Replicable, Replicator;
@@ -393,6 +395,7 @@ final class Map : CombatWorld, GameObjectWorld
         bool[ulong] loadedCells;        // cells whose spawns exist
 
         Terrain terrain;                // heights for movement; none in tests
+        GameObjectCollision objectCollision;
         Random rng;
         uint[] ticking;                 // the objects in the tick (not resting), by slot
         uint[] tickCopy;                // `ticking` as a tick began
@@ -422,7 +425,7 @@ final class Map : CombatWorld, GameObjectWorld
 
     ///
     this(uint id, MapSettings settings, uint delegate() serverTime, Spawner spawner = null, Terrain terrain = null,
-        bool delegate(ulong cell) owns = null)
+        bool delegate(ulong cell) owns = null, GameObjectModels models = null)
     in (serverTime !is null)
     {
         this.owns = owns;
@@ -431,6 +434,8 @@ final class Map : CombatWorld, GameObjectWorld
         this.serverTime = serverTime;
         this.spawner = spawner;
         this.terrain = terrain;
+        if (models !is null)
+            objectCollision = new GameObjectCollision(models);
         rng = Random(unpredictableSeed);
     }
 
@@ -556,6 +561,7 @@ final class Map : CombatWorld, GameObjectWorld
             list.objects ~= slot;
         }
         e.cell = key;
+        updateObjectCollision(slot);
     }
 
     /// Takes `slot` out of its cell's list.
@@ -564,6 +570,8 @@ final class Map : CombatWorld, GameObjectWorld
         auto e = &at(slot);
         if (e.cell == noCell)
             return;
+        if (objectCollision !is null && e.object !is null && e.object.fields.type == TypeId.gameObject)
+            objectCollision.remove(slot);
         auto list = e.cell in cellLists;
         auto members = e.player !is null ? &list.players : &list.objects;
         const i = e.cellIndex, last = (*members)[$ - 1];
@@ -610,6 +618,8 @@ final class Map : CombatWorld, GameObjectWorld
     /// Sends what changed in an object's fields to the players whose clients have it, then forgets the changes.
     void flushObjectChanges(MapObject object)
     {
+        if (objectCollision !is null && object.fields.type == TypeId.gameObject)
+            updateObjectCollision(objectSlot(object));
         // In the map's tick, the change waits for the tick's end: several
         // changes of one object in a tick go out as one update.
         if (ticking_)
@@ -951,6 +961,8 @@ final class Map : CombatWorld, GameObjectWorld
             takeFromCell(slot);
             putInCell(slot, cell);
         }
+        else
+            updateObjectCollision(slot);
         if (e.mover is null)
             stopTicking(slot);
     }
@@ -1391,6 +1403,8 @@ final class Map : CombatWorld, GameObjectWorld
             if (at(slot).interest.length)
                 updateInterest(slot, position);
         }
+        else if (objectCollision !is null && object.fields.type == TypeId.gameObject)
+            updateObjectCollision(slot);
         if (distanceSquared(at(slot).visibilityAt, position) < settings.relocationLimit ^^ 2)
             return;
         at(slot).visibilityAt = position;
@@ -1657,6 +1671,8 @@ final class Map : CombatWorld, GameObjectWorld
                 takeFromCell(slot);
                 putInCell(slot, at_);
             }
+            else
+                updateObjectCollision(slot);
         }
         else
         {
@@ -1888,17 +1904,32 @@ final class Map : CombatWorld, GameObjectWorld
             found[i] = at(slot).player;
     }
 
-    /// See `CombatWorld.inLineOfSight`: at eye height, through the vmaps; anything goes without terrain.
-    /// Whether nothing built stands between the two points exactly.
-    bool lineOfSightBetween(Position a, Position b)
+    private void updateObjectCollision(uint slot)
     {
-        return terrain is null || terrain.isInLineOfSight(a.x, a.y, a.z, b.x, b.y, b.z);
+        if (objectCollision is null || slot == uint.max)
+            return;
+        if (auto object = at(slot).object)
+            if (object.fields.type == TypeId.gameObject)
+                objectCollision.update(slot, object.fields, object.position);
     }
 
+    /// Whether static geometry or a closed door stands between the exact endpoints.
+    bool lineOfSightBetween(Position a, Position b)
+    {
+        if (terrain !is null && !terrain.isInLineOfSight(a.x, a.y, a.z, b.x, b.y, b.z))
+            return false;
+        return objectCollision is null || !objectCollision.obstructs(a, b, (uint slot) {
+            return at(slot).object.fields.get!GAMEOBJECT_STATE == goStateReady;
+        });
+    }
+
+    /// See `CombatWorld.inLineOfSight`: terrain and objects at eye height.
     bool inLineOfSight(Position a, Position b)
     {
         enum eyes = 2.0f;
-        return terrain is null || terrain.isInLineOfSight(a.x, a.y, a.z + eyes, b.x, b.y, b.z + eyes);
+        a.z += eyes;
+        b.z += eyes;
+        return lineOfSightBetween(a, b);
     }
 
     /// Tests: water everywhere at this level (NaN: as the terrain says).
