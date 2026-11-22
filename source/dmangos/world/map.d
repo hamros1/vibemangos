@@ -37,7 +37,6 @@
  */
 module dmangos.world.map;
 
-import dmangos.vmap.gameobjectmodels : GameObjectModels;
 import dmangos.vmap.math : Vector3;
 import core.time : Duration, MonoTime, msecs, seconds, usecs;
 import std.algorithm.searching : canFind;
@@ -425,7 +424,7 @@ final class Map : CombatWorld, GameObjectWorld
 
     ///
     this(uint id, MapSettings settings, uint delegate() serverTime, Spawner spawner = null, Terrain terrain = null,
-        bool delegate(ulong cell) owns = null, GameObjectModels models = null)
+        bool delegate(ulong cell) owns = null, GameObjectCollision objectCollision = null)
     in (serverTime !is null)
     {
         this.owns = owns;
@@ -434,8 +433,7 @@ final class Map : CombatWorld, GameObjectWorld
         this.serverTime = serverTime;
         this.spawner = spawner;
         this.terrain = terrain;
-        if (models !is null)
-            objectCollision = new GameObjectCollision(models);
+        this.objectCollision = objectCollision;
         rng = Random(unpredictableSeed);
     }
 

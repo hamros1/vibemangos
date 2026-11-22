@@ -5,7 +5,7 @@
 - **Clustering.** Extend cross-node routing to script-selected groups and scripted effects. See
   [spell routing limits](CLUSTER.md#spell-routing-limits) and the
   [cross-node feature list](CLUSTER.md#what-crosses-nodes-feature-by-feature).
-- **Terrain.** Include moving elevator platforms in line-of-sight checks.
+- **Terrain.** Track elevator passengers and handle underwater pathfinding.
 - **Gameplay coverage.** See the [spell audit](SPELLS.md) for gaps by class and the
   battleground notes below for remaining Alterac Valley events.
 
@@ -43,13 +43,12 @@ describes how players use the systems available today.
 * **Creatures** wander, walk their waypoints (running their scripts), fight, die and respawn. Type 3 paths (flying) are walked as waypoints; linked creatures
   (`creature_linking`) aggro together and follow their master, and formations (`spawn_group_formation`) walk their
   path with their members in place, and water creatures spawned in deep enough water swim. Conditions
-  that need world states or scripts are never met. Elevators
-  are created but do not move. Ships and zeppelins sail and carry their passengers across
-  (`transports.d`); elevators and ships give the client one transport clock (the wall clock). Idle cells unload after `grid_cleanup_delay_seconds`.
+  that need world states or scripts are never met. The client animates elevator platforms. Ships
+  and zeppelins sail and carry their passengers across (`transports.d`). Elevators and ships use
+  the shared transport clock. Idle cells unload after `grid_cleanup_delay_seconds`.
 * **Terrain:** heights put wandering creatures on the ground. Line of sight checks use
-  closed-door meshes as well as static vmaps. Movement maps give creatures paths round
-  buildings and hills. Elevators still need collision at their animated position, and
-  swimmers path over the ground under the water.
+  static vmaps, closed doors and loaded elevator meshes at their animated position. Movement maps
+  give creatures paths round buildings and hills. Swimmers path over the ground under the water.
 * **Movement:** the speed check assumes running speed; it must learn mounts, speed auras,
   knockbacks and taxis when those exist.
 * **Environment:** the feign death timer (dying of feigning too long) is not run; mirror timers are not
@@ -111,7 +110,8 @@ implemented. See [NPCs, items and the world](GAMEPLAY.md#npcs-items-and-the-worl
 
 Done: `.map` files and vmaps, extracted and read; zones and areas, explored areas. See
 [Terrain](ARCHITECTURE.md#terrain). Movement maps provide paths around static geometry.
-Door collision uses the model at its spawn transform. Elevator collision needs the platform's position.
+Door collision uses the model at its spawn transform. Elevator line of sight follows the platform's
+animation. Elevator passenger movement and navigation remain open.
 
 ### 5. Inventory: done
 

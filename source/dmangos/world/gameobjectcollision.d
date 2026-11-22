@@ -1,8 +1,10 @@
-/// Line of sight through the loaded doors of one map copy.
+/// Line of sight through loaded doors and elevator platforms in one map copy.
 module dmangos.world.gameobjectcollision;
 
+import std.math : isFinite;
 import dmangos.vmap.gameobjectmodels : GameObjectModels, GameObjectShape;
-import dmangos.vmap.math : AABox, Ray, Vector3;
+import dmangos.vmap.math : AABox, Matrix3, Ray, Vector3;
+import dmangos.world.clientdata : ClientData, TransportAnimationEntry;
 import dmangos.world.gameobject : GameObjectType;
 import dmangos.world.grid : cellCoordinate, cellKey;
 import dmangos.world.movement : Position;
@@ -32,6 +34,46 @@ private struct CoveredCells
     }
 }
 
+private struct ElevatorFrame
+{
+    uint time;
+    Vector3 offset;
+}
+
+private ElevatorFrame[] elevatorFrames(const(TransportAnimationEntry*)[] rows, const float[4] rotation)
+{
+    if (rows.length < 2 || rows[0].time != 0)
+        return null;
+    const transform = Matrix3.fromQuaternion(rotation[0], rotation[1], rotation[2], rotation[3]);
+    auto result = new ElevatorFrame[rows.length];
+    foreach (i, row; rows)
+    {
+        if ((i && row.time <= rows[i - 1].time) || !isFinite(row.x) || !isFinite(row.y) || !isFinite(row.z))
+            return null;
+        // Vanilla's animation translations are row vectors, with Y flipped after the spawn rotation.
+        auto offset = Vector3(row.x, row.y, row.z) * transform;
+        offset.y = -offset.y;
+        result[i] = ElevatorFrame(row.time, offset);
+    }
+    return result;
+}
+
+private Vector3 elevatorOffset(const ElevatorFrame[] frames, uint clock)
+{
+    const time = clock % frames[$ - 1].time;
+    foreach (i; 1 .. frames.length)
+    {
+        const next = frames[i];
+        if (next.time > time)
+        {
+            const previous = frames[i - 1];
+            const fraction = cast(float)(time - previous.time) / (next.time - previous.time);
+            return previous.offset + (next.offset - previous.offset) * fraction;
+        }
+    }
+    return frames[0].offset;
+}
+
 /// Meshes indexed by the cells they can intersect. The map owns each slot's current door state.
 package final class GameObjectCollision
 {
@@ -41,37 +83,48 @@ package final class GameObjectCollision
         Vector3 position;
         float[4] rotation;
         float scale;
+        uint elevatorEntry; // zero for a door
     }
 
     private struct Collider
     {
         Placement placement;
         GameObjectShape shape;
+        ElevatorFrame[] frames;
+        CoveredCells covered;
     }
 
     private GameObjectModels models;
-    private Collider[uint] doors;
-    private bool[uint][ulong] cells; // world cell -> door slots with geometry here
+    private ClientData client;
+    private uint delegate() transportTime;
+    private Collider[uint] colliders;
+    private bool[uint][ulong] cells; // world cell -> slots with geometry here
 
-    this(GameObjectModels models)
+    this(GameObjectModels models, ClientData client, uint delegate() transportTime)
     {
         this.models = models;
+        this.client = client;
+        this.transportTime = transportTime;
     }
 
     void update(uint slot, const ref UpdateValues fields, Position at)
     {
-        if (fields.type != TypeId.gameObject || fields.get!GAMEOBJECT_TYPE_ID != GameObjectType.door)
+        Placement next;
+        if (fields.type == TypeId.gameObject && fields.get!GAMEOBJECT_TYPE_ID == GameObjectType.transport &&
+            client !is null && transportTime !is null && fields.get!GAMEOBJECT_LEVEL == 0)
+            next.elevatorEntry = fields.get!OBJECT_FIELD_ENTRY;
+        if (!next.elevatorEntry &&
+            (fields.type != TypeId.gameObject || fields.get!GAMEOBJECT_TYPE_ID != GameObjectType.door))
         {
             remove(slot);
             return;
         }
-        Placement next;
         next.display = fields.get!GAMEOBJECT_DISPLAYID;
         next.position = Vector3(at.x, at.y, at.z);
         next.scale = fields.get!OBJECT_FIELD_SCALE_X;
         foreach (i, ref part; next.rotation)
             part = fields.get!GAMEOBJECT_ROTATION(i);
-        if (const previous = slot in doors)
+        if (const previous = slot in colliders)
         {
             if (previous.placement == next)
                 return;
@@ -80,31 +133,43 @@ package final class GameObjectCollision
         auto shape = models.place(next.display, next.position, next.rotation, next.scale);
         if (!shape)
             return;
-        doors[slot] = Collider(next, shape);
-        foreach (key; CoveredCells(shape.bounds))
+        ElevatorFrame[] frames;
+        auto bounds = shape.bounds;
+        if (next.elevatorEntry)
+        {
+            frames = elevatorFrames(client.transportFrames(next.elevatorEntry), next.rotation);
+            if (!frames.length)
+                return;
+            // Index every cell the platform can reach. Queries use the mesh at the current offset.
+            const initial = frames[0].offset;
+            bounds = AABox(shape.bounds.lo + initial, shape.bounds.hi + initial);
+            foreach (ref frame; frames[1 .. $])
+                bounds.merge(AABox(shape.bounds.lo + frame.offset, shape.bounds.hi + frame.offset));
+        }
+        const covered = CoveredCells(bounds);
+        colliders[slot] = Collider(next, shape, frames, covered);
+        foreach (key; covered)
             cells.require(key, null)[slot] = true;
     }
 
     void remove(uint slot)
     {
-        if (const door = slot in doors)
+        if (const collider = slot in colliders)
         {
-            foreach (key; CoveredCells(door.shape.bounds))
+            foreach (key; collider.covered)
                 if (auto bucket = key in cells)
                 {
                     (*bucket).remove(slot);
                     if (!bucket.length)
                         cells.remove(key);
                 }
-            doors.remove(slot);
+            colliders.remove(slot);
         }
     }
 
     bool obstructs(Position from, Position to, scope bool delegate(uint slot) closed) const
     {
-        import std.math : isFinite;
-
-        if (!doors.length)
+        if (!colliders.length)
             return false;
         const a = Vector3(from.x, from.y, from.z), b = Vector3(to.x, to.y, to.z);
         const direction = b - a;
@@ -113,16 +178,26 @@ package final class GameObjectCollision
             return false;
         const ray = Ray(a, direction / length);
         const bounds = AABox(a.min(b), a.max(b));
+        const clock = transportTime is null ? 0 : transportTime();
         foreach (key; CoveredCells(bounds))
             if (const bucket = key in cells)
                 foreach (slot, _; *bucket)
-                    if (closed(slot) && doors[slot].shape.intersects(ray, length))
+                {
+                    const collider = colliders[slot];
+                    if (collider.frames.length)
+                    {
+                        const offset = elevatorOffset(collider.frames, clock);
+                        if (collider.shape.intersects(Ray(a - offset, ray.direction), length))
+                            return true;
+                    }
+                    else if (closed(slot) && collider.shape.intersects(ray, length))
                         return true;
+                }
         return false;
     }
 }
 
-/// Door geometry follows state, transform, and replica lifetime through the map's normal plumbing.
+/// Door and elevator geometry follow the state and replica lifetime used by normal maps.
 unittest
 {
     import std.conv : to;
@@ -130,10 +205,12 @@ unittest
     import std.math : PI;
     import std.path : buildPath;
     import std.process : thisProcessID;
-    import dmangos.bytes : ByteWriter;
+    import dmangos.bytes : ByteWriter, floatBits;
+    import dmangos.dbc : buildDbc;
     import dmangos.vmap.maptree : ModelCache;
     import dmangos.vmap.math : putBox;
     import dmangos.vmap.model : gameObjectModels, GroupModel, MeshTriangle, WorldModel;
+    import dmangos.world.clientdata : transportAnimationFormat;
     import dmangos.world.gameobject : GameObject, GameObjectSpawn, GameObjectTemplate;
     import dmangos.world.grid : cellKeyAt;
     import dmangos.world.map : Map, MapSettings;
@@ -160,9 +237,21 @@ unittest
 
     auto models = GameObjectModels.load(directory, new ModelCache(directory));
     assert(models !is null);
-    auto local = new Map(0, MapSettings.init, () => 0, models: models);
-    auto remote = new Map(0, MapSettings.init, () => 0, models: models);
-    auto otherCopy = new Map(0, MapSettings.init, () => 0, models: models);
+    enum uint elevatorEntry = entry + 1;
+    auto client = new ClientData;
+    // Deliberately out of order, with an animated return to the first position.
+    client.transportAnimations = typeof(client.transportAnimations).parse(buildDbc(transportAnimationFormat,
+        [[0, elevatorEntry, 1000, floatBits(130), floatBits(12), floatBits(8), 0],
+         [1, elevatorEntry, 0, 0, 0, 0, 0],
+         [2, elevatorEntry, 2000, 0, 0, 0, 0]]), "test elevator animation");
+    client.buildIndexes();
+    uint clock;
+    auto local = new Map(0, MapSettings.init, () => 0,
+        objectCollision: new GameObjectCollision(models, client, () => clock));
+    auto remote = new Map(0, MapSettings.init, () => 0,
+        objectCollision: new GameObjectCollision(models, client, () => clock));
+    auto otherCopy = new Map(0, MapSettings.init, () => 0,
+        objectCollision: new GameObjectCollision(models, client, () => clock));
     const template_ = GameObjectTemplate(entry: entry, type: GameObjectType.door, displayId: display, size: 2);
     const straightSpawn = GameObjectSpawn(guid: 1, entry: entry);
     const rotatedSpawn = GameObjectSpawn(guid: 2, entry: entry, orientation: PI / 2);
@@ -190,4 +279,26 @@ unittest
     local.addObject(rotated);
     assert(local.inLineOfSight(a, b) && !local.inLineOfSight(Position(0, 68, 0), Position(0, 72, 0)),
         "rotation changes the occupied cells and the direction of the blocking mesh");
+    local.removeObject(rotated.guid);
+
+    const elevatorTemplate = GameObjectTemplate(entry: elevatorEntry, type: GameObjectType.transport,
+        displayId: display, size: 2);
+    const elevatorSpawn = GameObjectSpawn(guid: 3, entry: elevatorEntry);
+    auto elevator = new GameObject(elevatorSpawn, &elevatorTemplate);
+    local.addObject(elevator);
+    remote.replicaCreated(1, cellKeyAt(0, 0), elevator.guid, encodeState(elevator, 0));
+    assert(!local.inLineOfSight(a, b) && !remote.inLineOfSight(a, b));
+    clock = 500;
+    assert(local.inLineOfSight(a, b) && remote.inLineOfSight(a, b), "the platform has left the spawn position");
+    const midwayA = Position(133, -6, 4), midwayB = Position(137, -6, 4);
+    assert(!local.inLineOfSight(midwayA, midwayB) && !remote.inLineOfSight(midwayA, midwayB),
+        "both maps use the platform between two keyframes in a different cell");
+    assert(local.inLineOfSight(Position(133, -6, 0), Position(137, -6, 0)), "under the platform");
+    clock = 1000;
+    const endA = Position(198, -12, 8), endB = Position(202, -12, 8);
+    assert(!remote.inLineOfSight(endA, endB) && local.inLineOfSight(midwayA, midwayB));
+    clock = 2500;
+    assert(!remote.inLineOfSight(midwayA, midwayB), "the collision position repeats on the shared clock");
+    remote.replicaRemoved(1, elevator.guid);
+    assert(remote.inLineOfSight(midwayA, midwayB));
 }

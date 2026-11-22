@@ -65,6 +65,7 @@ import dmangos.world.clientdata : ClientData;
 import dmangos.world.config : WorldConfig;
 import dmangos.world.database : WorldDatabase;
 import dmangos.vmap.gameobjectmodels : GameObjectModels;
+import dmangos.world.gameobjectcollision : GameObjectCollision;
 import dmangos.vmap.maptree : ModelCache;
 import dmangos.world.terrain : Terrain;
 import dmangos.world.group : GroupDirectory, Groups, memberStatus, MemberStatus;
@@ -2984,7 +2985,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         auto mapTerrain = terrain(id);
         auto created = new Map(id, MapSettings(config.visibilityDistance, config.visibilityRelocationLimit,
             config.gridCleanUpDelay * 1000),
-            &serverTime, spawner, mapTerrain, owns, gameObjectModels);
+            &serverTime, spawner, mapTerrain, owns, gameObjectModels is null ? null :
+                new GameObjectCollision(gameObjectModels, client, &transportNow));
         created.instanceId = instance;
         if (instance == 0) // a dungeon's copies are all on one node: nobody else needs replicas of them
             created.replicator = replicator;

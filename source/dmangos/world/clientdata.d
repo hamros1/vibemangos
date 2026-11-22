@@ -279,6 +279,17 @@ struct TaxiPathNodeEntry
 
 enum taxiPathNodeFormat = "diiifffii"; ///
 
+/// `TransportAnimation.dbc`: one translation keyframe for a game object template's animation.
+struct TransportAnimationEntry
+{
+    uint id;
+    uint transport;
+    uint time; /// milliseconds into the loop
+    float x = 0, y = 0, z = 0;
+}
+
+enum transportAnimationFormat = "niifffx"; ///
+
 /// `FactionTemplate.dbc`: how a unit of a faction stands to others (`dmangos.world.relations`).
 struct FactionTemplateEntry
 {
@@ -655,6 +666,7 @@ struct TalentSpellPos
 struct DbcFile
 {
     string name;
+    bool required = true;
 }
 
 private enum isDbcStore(T) = is(T == DbcStore!(E, format), E, string format);
@@ -716,6 +728,7 @@ final class ClientData
     @DbcFile("TaxiNodes") DbcStore!(TaxiNodesEntry, taxiNodesFormat) taxiNodes;
     @DbcFile("TaxiPath") DbcStore!(TaxiPathEntry, taxiPathFormat) taxiPaths;
     @DbcFile("TaxiPathNode") DbcStore!(TaxiPathNodeEntry, taxiPathNodeFormat) taxiPathNodes;
+    @DbcFile("TransportAnimation", false) DbcStore!(TransportAnimationEntry, transportAnimationFormat) transportAnimations;
     /// The taxi network: from -> to -> path; each path's points in order; the nodes flown from or to.
     uint[uint][uint] taxiPathBetween;
     /// Blizzard's spell power coefficients by spell (data/coefficients.csv, tools/fetch-coefficients.py): what each
@@ -751,11 +764,13 @@ final class ClientData
         const(AreaTableEntry)*[][uint] areasByFlag; // explore flag -> areas, ascending ids
         uint[uint] areaFlagByMap;                   // `sAreaFlagByMapID`
         const(WmoAreaTableEntry)*[][int[3]] wmoAreasByTriple; // `sWMOAreaInfoByTripple`
+        const(TransportAnimationEntry)*[][uint] transportFramesByEntry;
     }
 
     /// Reads the DBC files from `<dataDir>/dbc/`.
     static ClientData load(string dataDir)
     {
+        import std.file : exists;
         import std.traits : getUDAs;
 
         auto data = new ClientData;
@@ -763,11 +778,14 @@ final class ClientData
         // Each store, from the file its `DbcFile` names.
         static foreach (i, field; data.tupleof)
             static if (isDbcStore!(typeof(field)))
-            {
+            {{
                 static assert(getUDAs!(data.tupleof[i], DbcFile).length == 1,
                     __traits(identifier, data.tupleof[i]) ~ " needs a @DbcFile naming the file it is read from");
-                data.tupleof[i] = typeof(field).load(buildPath(dir, getUDAs!(data.tupleof[i], DbcFile)[0].name ~ ".dbc"));
-            }
+                enum file = getUDAs!(data.tupleof[i], DbcFile)[0];
+                const path = buildPath(dir, file.name ~ ".dbc");
+                if (file.required || exists(path))
+                    data.tupleof[i] = typeof(field).load(path);
+            }}
         data.buildIndexes();
         data.loadCoefficients(buildPath(dataDir, "coefficients.csv"));
         data.loadInstanceResets(buildPath(dataDir, "instance-resets.csv"));
@@ -898,6 +916,11 @@ final class ClientData
             taxiPathPoints[row.path] ~= &row;
         foreach (ref points; taxiPathPoints)
             points.sort!((a, b) => a.index < b.index);
+        transportFramesByEntry = null;
+        foreach (ref row; transportAnimations.rows)
+            transportFramesByEntry[row.transport] ~= &row;
+        foreach (ref frames; transportFramesByEntry)
+            frames.sort!((a, b) => a.time < b.time);
         sectionsByKey = null;
         facialHairByKey = null;
         raceClassInfoBySkill = null;
@@ -980,6 +1003,12 @@ final class ClientData
     const(WmoAreaTableEntry*)[] wmoAreasOf(int rootId, int adtId, int groupId) const
     {
         return wmoAreasByTriple.get([rootId, adtId, groupId], null);
+    }
+
+    /// Translation keyframes of a transport template, in animation order.
+    const(TransportAnimationEntry*)[] transportFrames(uint transportEntry) const
+    {
+        return transportFramesByEntry.get(transportEntry, null);
     }
 
     /// The explore flag of an instance's area; 0 if it has none.
