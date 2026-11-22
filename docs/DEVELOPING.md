@@ -294,8 +294,10 @@ tools/harness/db.sh start|stop|status
 The harness lives in `~/.cache/dmangos-harness` (`DMANGOS_HARNESS`). It needs an unpacked MariaDB
 (`MARIADB_ROOT`, by default the dev server's in `~/dmangos-server/mariadb`) and extracted client data
 (`CLIENT_DATA`, used read-only). Its MariaDB listens on a private socket only and runs without grant
-tables. The regression passes when all bots are in the world at the end, none failed, both nodes
-lived, and no crash was logged; it also reports how many regions split and merged.
+tables. The regression requires all bots in the world at the end, both nodes still running and
+no crashes. Runs with at least 250 bots, 180 seconds of load and 60 seconds of idle time also
+require a region split, a region merge and a player handoff. Set `EXPECT_BALANCING=1` to check
+these events in a shorter run or `EXPECT_BALANCING=0` to skip those assertions.
 
 ### Live tests against real data
 
