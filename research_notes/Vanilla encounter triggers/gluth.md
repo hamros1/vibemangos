@@ -30,7 +30,7 @@ The spell records explain portions of the zombie behavior and the effect once De
 
 - Read-only inspection of the installed Classic-DB found spell 28216 periodically triggers summon spell 28217 at six-second intervals. Spell 28235 triggers zombie search 28236 at three seconds and 29681 triggers call 29682 at three seconds. Decimate 28374 has a script effect and zero recovery time. These are distinct spell records. CMaNGOS identifies the same spell IDs and implements the 5%-health effect via 28375. [CMaNGOS encounter and spell definitions](https://github.com/cmangos/mangos-classic/blob/master/src/game/AI/ScriptDevAI/scripts/eastern_kingdoms/naxxramas/boss_gluth.cpp) · [Classic-DB](https://github.com/cmangos/classic-db)
 - A December 2020 Warcraft Logs guild archive indexes Naxxramas reports. Access to individual event streams through this archive was unavailable here. The DBM public Gluth replay is labeled Season of Discovery Heroic. A separate public 1.12 raid parser uses Turtle WoW tooling and its sample files lack Blizzard Classic provenance. [December 2020 index](https://classic.warcraftlogs.com/guild/reports-list/489695?page=3) · [DBM replay inventory](https://github.com/DeadlyBossMods/DBM-Test-Results) · [1.12 parser and examples](https://github.com/melbaa/summarize_consumes)
-- A Classic Era Warcraft Logs analysis repository contains Gluth ranking fixtures. Its published Decimate strategy cites the wiki, while ranking summaries alone omit the ordered spell, attack, and spawn events needed to discriminate triggers. [Classic Era repository](https://github.com/David-c0degeek/necropsy/tree/2b7e7f16a84fc40b1366b56f7d942f4a79f5fcf5) · [Strategy provenance](https://github.com/David-c0degeek/necropsy/blob/2b7e7f16a84fc40b1366b56f7d942f4a79f5fcf5/tasks/naxx-completion/research/naxx-strategy-proposal.yaml#L1028)
+- A Classic Era Warcraft Logs analysis repository contains Gluth ranking fixtures and stores its event exports in Git LFS. The ranking summaries omit the ordered events. The raw export findings appear below. [Classic Era repository](https://github.com/David-c0degeek/necropsy/tree/2b7e7f16a84fc40b1366b56f7d942f4a79f5fcf5) · [Strategy provenance](https://github.com/David-c0degeek/necropsy/blob/2b7e7f16a84fc40b1366b56f7d942f4a79f5fcf5/tasks/naxx-completion/research/naxx-strategy-proposal.yaml#L1028)
 
 ### Inferences
 
@@ -38,7 +38,7 @@ The spell records explain portions of the zombie behavior and the effect once De
 
 ### Gaps
 
-- No accessible raw Blizzard vanilla or Classic Era pull with sufficiently different chow, swing, and health trajectories was found in this pass. The absence of accessible traces supplies no evidence for any proposed threshold.
+- The available event streams do not include a verified Decimate. A complete stream spanning a cast and independent pulls with different boss and add states are still needed to test a proposed trigger.
 
 ## What would justify a fix?
 
@@ -66,6 +66,21 @@ Spell 28374 now calls damage spell 28375 for eligible targets above the health f
 
 
 The public Era threat viewer lists **Gluth, fight 39** in the raid report from December 15, 2020. It returned a fetch error for the fight. Warcraft Logs prompted for human verification before displaying the events. The encounter list confirms the pull exists. Its chow counts and boss casts could not be recovered. The open parses.gg bracket index returned only Retail entries at the time of this check, and the published bulk dataset excludes raw combat logs and wipes. [Open dataset description](https://parses.gg/developers) [Era viewer](https://voomlz.github.io/era/?id=dGfwz9g6RJaVLPN7&fight=39) · [Original raid report](https://classic.warcraftlogs.com/reports/dGfwz9g6RJaVLPN7#fight=39)
+
+## Raw event exports and original footage
+
+The Git LFS archives contain **25 complete Classic Era Gluth kills**, ranging from 49.333 to 104.603 seconds. I checked each paginated encounter stream for a matching encounter start and end, a terminal page cursor, and any event with spell ID 28374 or 28375. None contained either spell. The two longest complete pulls recorded different numbers of boss melee events and Frenzy casts.
+
+| Report and fight | Duration | Boss melee events | Frenzy casts | Observed Zombie Chow instances |
+|---|---:|---:|---:|---:|
+| [qZ8tk1Nw9G2hzPBJ, fight 45](https://vanilla.warcraftlogs.com/reports/qZ8tk1Nw9G2hzPBJ#fight=45) | 104.603 s | 83 | 10 | 24 |
+| [HfzqpdRtC4Jxv3cP, fight 81](https://vanilla.warcraftlogs.com/reports/HfzqpdRtC4Jxv3cP#fight=81) | 99.258 s | 87 | 9 | 24 |
+
+For those counts, I matched the report's actor IDs using NPC IDs 15932 and 16360, counted boss melee damage events and Frenzy cast events, and deduplicated zombies by actor and instance. Observed zombies may miss spawns outside the recorder’s coverage. Ten visible Frenzy casts and 24 observed zombies can occur without a recorded Decimate. These kills cannot establish what happens during a longer pull. [Archive manifests and event exports](https://github.com/David-c0degeek/necropsy/tree/2b7e7f16a84fc40b1366b56f7d942f4a79f5fcf5/tests/golden/raids/raw)
+
+A separate archive lists a 153.197-second Classic Era kill. Its raid-wide events reach only 94.531 seconds. The first page advertises a continuation and the exported next page is empty, so the capture cannot establish whether or when Decimate happened later. [Archive provenance](https://github.com/David-c0degeek/necropsy/blob/2b7e7f16a84fc40b1366b56f7d942f4a79f5fcf5/tests/golden/haplina_naxx/PROVENANCE.md) · [Report and fight](https://vanilla.warcraftlogs.com/reports/JG9Ncxdwh3VXnzmr#fight=30)
+
+A 2006 warrior recording shows the addon announcing the encounter and displaying a Decimate warning together during the opening wipe, before the warrior dies from a fall. The visible log identifies fall damage. It does not show a legible Decimate damage line, and the footage does not establish when the rest of the raid first engaged. A combat-log capture could establish whether the warning coincides with a spell event. [Syndicate tank recording, 0:27–0:34](https://www.youtube.com/watch?v=DSD7xsm1eEE&t=27s)
 
 With a raw, English-language Blizzard Classic combat log, run the following from the repository. For another game language, set `--encounter-name` to the encounter name in the file.
 

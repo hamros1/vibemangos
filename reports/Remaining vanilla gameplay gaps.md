@@ -2,7 +2,7 @@
 
 ## Implementation status
 
-The audit below describes revision `780ff19`. **The remaining confirmed difference is what triggers Gluth’s Decimate.** The damage effect now brings affected players and Zombie Chow down to 5% of maximum health and leaves a target already below 5% alone. The encounter still schedules the cast at 105 seconds. Blizzard ruled out a timer and did not publish the positive trigger. [Encounter evidence](<Vanilla encounter triggers.md#gluths-decimate-trigger-remains-open>) · [Blizzard reference findings](https://us.forums.blizzard.com/en/wow/t/wow-classic-era-%E2%80%9Cnot-a-bug%E2%80%9D-list-updated-april-22-2021/175887)
+The audit below describes revision `780ff19`. **The remaining confirmed difference is what triggers Gluth’s Decimate.** The damage effect now brings affected players and Zombie Chow down to 5% of maximum health and leaves a target already below 5% alone. The encounter still schedules the cast at 105 seconds. Blizzard ruled out a timer and did not publish the positive trigger. [Encounter evidence](<Vanilla encounter triggers.md#gluths-decimate-trigger-remains-open>) · [Blizzard reference findings](https://us.forums.blizzard.com/en/wow/t/wow-classic-era-%E2%80%9Cnot-a-bug%E2%80%9D-list-updated-april-22-2021/175887) The follow-up checked 25 complete Classic Era event streams. The longest covered 104.603 seconds and none recorded the cast, so the trigger remains open.
 
 | Audit area | Implemented and tested |
 |---|---|
