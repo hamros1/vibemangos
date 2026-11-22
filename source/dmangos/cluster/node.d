@@ -423,8 +423,8 @@ final class ClusterNode : LinkOwner
      * fills the heartbeats; null sends zeros.
      */
     this(ClusterConfig config, ulong incarnation, MonoTime delegate() clock, Dialer dialer,
-        LoadReport delegate() load = null, CoordinatorSetup setup = CoordinatorSetup.init)
-    in (config.enabled && clock !is null && dialer !is null)
+        LoadReport delegate() load = null, CoordinatorSetup setup = CoordinatorSetup.init, uint realmId = 1)
+    in (config.enabled && realmId && clock !is null && dialer !is null)
     {
         this.config = config;
         this.id = config.nodeId;
@@ -435,7 +435,7 @@ final class ClusterNode : LinkOwner
         quorumId = config.quorumId();
         coordinatorNow = config.isCoordinator;
         own = Hello(protocolVersion, config.name, id, incarnation, config.advertised, config.clientAddress,
-            config.isCoordinator, 0, config.gateway, quorumId);
+            config.isCoordinator, 0, config.gateway, quorumId, realmId);
         enforce(!config.gateway || (!config.isCoordinator && !config.standby),
             "cluster: a gateway can be neither the coordinator nor the standby");
         const lease = config.leaseMs.msecs;
@@ -1329,7 +1329,7 @@ final class ClusterNode : LinkOwner
     void closed(Link link)
     {
         import std.algorithm.mutation : remove;
-        import std.algorithm.searching : countUntil;
+        import std.algorithm.searching : countUntil, startsWith;
 
         const at = handshaking.countUntil!"a is b"(link);
         if (at >= 0)
@@ -1346,6 +1346,8 @@ final class ClusterNode : LinkOwner
                     fenced_ = true;
                     error!"cluster: the coordinator refused this node (id %s) as an older start of it: fenced"(id);
                 }
+                else if (link.closeReason.startsWith("refused: "))
+                    warning!"cluster: link to %s %s"(link.address, link.closeReason);
             }
 
         const peer = link.peer.nodeId;

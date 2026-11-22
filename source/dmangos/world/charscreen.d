@@ -46,6 +46,11 @@ private:
     @Handles(Opcode.CMSG_CHAR_ENUM, WorldState.characterScreen)
     void handleCharEnum()
     {
+        if (!admitted)
+        {
+            characterListWaiting = true;
+            return;
+        }
         ServerCharEnum list;
         foreach (ref record; context.database.characters(account.id))
         {

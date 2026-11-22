@@ -752,6 +752,26 @@ uptime, and marks characters offline at start. Every 10 seconds it points the re
 reports), or at the least busy gateway while any gateway is linked. New logins so spread over the
 nodes with the `realmlist` table as it is.
 
+### Several realms on one login server
+
+Each realm has a separate `realmlist` row and its own cluster. Every world node in that cluster uses
+the row's `realm_id` and the same character database. Nodes check the realm ID when they connect to
+each other. All realms can share one login database and one world database.
+
+To add a realm, import [the character schema](../sql/classiccharacters.sql) into a new database and
+give the server's database user access to it. The following `realmlist` row uses realm ID 2 and world port 8185.
+
+```sql
+INSERT INTO realmlist (id, name, address, port, icon, realmflags, timezone)
+VALUES (2, 'dmangos 2', '127.0.0.1', 8185, 1, 2, 1);
+```
+
+Copy the world configs for the new realm. Set `realm_id` to `2` and point `character_database` at the
+new database. Give it distinct world ports, cluster ports and coordinator addresses. Set a separate
+`write_log` for each node when running the two realms from one directory. With quorum enabled, give
+each voter its own `vote_file`. The same login server lists both realms after their coordinators
+come online.
+
 ## Monitoring
 
 Every `metrics_interval_seconds` each node logs, besides its tick and GC figures, its cluster lines

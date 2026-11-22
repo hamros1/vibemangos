@@ -209,7 +209,7 @@ private int run(WorldConfig config, string configPath)
         cluster = new ClusterNode(config.cluster, ClusterNode.newIncarnation(), &clusterClock,
             (host, port, session) => server.connect(host, port, session, linkIdle),
             () => LoadReport(cast(uint) tickAverageUs, cast(uint) context.sessionCount, cast(uint) context.objectCount),
-            setup);
+            setup, config.realmId);
         // The world simulates only what this node owns: maps ask, and are told of changes.
         context.ownsCell = (uint map, ulong cell) => cluster.regions.ownsCell(map, cell);
         cluster.onOwnership = &context.regionsChanged;

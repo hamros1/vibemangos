@@ -96,6 +96,7 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
     package Character playing;
 
     private bool admitted;                 // the account is this session's (see `Kickable.admit`)
+    private bool characterListWaiting;     // list only after an earlier session has saved and released the account
     private bool loginWaiting;             // a player login waits for that
     private ClientPlayerLogin pendingLogin;
 
@@ -478,11 +479,18 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
         state_ = WorldState.closed;
     }
 
-    /// See `Kickable.admit`: a login that waited for it goes on.
+    /// See `Kickable.admit`: character-screen requests waiting for the account can now run.
     void admit()
     {
         admitted = true;
-        if (loginWaiting && state_ == WorldState.characterScreen)
+        if (state_ != WorldState.characterScreen)
+            return;
+        if (characterListWaiting)
+        {
+            characterListWaiting = false;
+            handleCharEnum();
+        }
+        if (loginWaiting)
         {
             loginWaiting = false;
             handlePlayerLogin(pendingLogin);
@@ -826,7 +834,7 @@ unittest
 }
 
 
-/// In a cluster a player login waits until the coordinator grants the account; an eviction kicks.
+/// In a cluster the character list and login wait for the account grant; an eviction kicks.
 unittest
 {
     import dmangos.world.player : CharacterData;
@@ -850,12 +858,15 @@ unittest
     authenticate(client);
     assert(claimed == [c.account], "the session claimed its account");
 
+    client.write(Opcode.CMSG_CHAR_ENUM, null);
     client.write(Opcode.CMSG_PLAYER_LOGIN, ClientPlayerLogin(7));
-    assert(!opcodesOf(client.read()).canFind(Opcode.SMSG_LOGIN_VERIFY_WORLD), "not before the grant");
+    assert(client.read().length == 0, "the list and login both wait for the grant");
     context.sessionGranted(c.account, lastSerial + 1);
-    assert(!opcodesOf(client.read()).canFind(Opcode.SMSG_LOGIN_VERIFY_WORLD), "a grant for another session counts for nothing");
+    assert(client.read().length == 0, "a grant for another session counts for nothing");
     context.sessionGranted(c.account, lastSerial);
-    assert(opcodesOf(client.read()).canFind(Opcode.SMSG_LOGIN_VERIFY_WORLD), "in the world once granted");
+    const packets = opcodesOf(client.read());
+    assert(packets[0] == Opcode.SMSG_CHAR_ENUM && packets.canFind(Opcode.SMSG_LOGIN_VERIFY_WORLD),
+        "the client gets its list, then enters the world once granted");
     assert(client.session.character !is null);
 
     // Another node takes the account: this session is kicked, and on closing releases it.

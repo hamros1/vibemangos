@@ -358,7 +358,10 @@ final class CharacterStatements
     void setOnline(uint guid, uint accountId, bool online, uint realmId)
     {
         characters.execute!"UPDATE characters SET online = ? WHERE guid = ?"(online ? 1 : 0, guid);
-        login.execute!"UPDATE account SET active_realm_id = ? WHERE id = ?"(online ? realmId : 0, accountId);
+        if (online)
+            login.execute!"UPDATE account SET active_realm_id = ? WHERE id = ?"(realmId, accountId);
+        else // handing this account off or leaving this realm must preserve a newer login to another realm
+            login.execute!"UPDATE account SET active_realm_id = 0 WHERE id = ? AND active_realm_id = ?"(accountId, realmId);
     }
 
     /// At start-up: nobody is online on this realm (`clearOnlineAccounts`).

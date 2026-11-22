@@ -25,7 +25,7 @@ module dmangos.cluster.link;
 
 import core.time : Duration, MonoTime, usecs;
 
-import dmangos.bytes : ByteWriter;
+import dmangos.bytes : ByteReader, ByteWriter;
 import dmangos.cluster.protocol;
 import dmangos.net.server : NetSession;
 
@@ -159,7 +159,7 @@ struct LoadReport
 interface LinkOwner
 {
     /**
-     * The peer's hello (cluster and protocol already checked): `RejectReason.none` and the
+     * The peer's hello (protocol, realm and cluster already checked): `RejectReason.none` and the
      * sequences to use with that peer, or why it is refused.
      */
     RejectReason admit(Link link, const ref Hello hello, out PeerSequences sequences);
@@ -513,23 +513,23 @@ private:
             return close("refused: " ~ decode!Reject(payload).reason.to!string);
         if (header.type != MessageType.hello)
             return close("expected a hello");
+        // The version comes first in every Hello layout, including older builds.
+        auto versionReader = ByteReader(payload);
+        if (versionReader.read!ushort != protocolVersion)
+            return refuseHello(RejectReason.wrongProtocol, address_);
         const hello = decode!Hello(payload);
 
         RejectReason reason;
-        if (hello.cluster != own.cluster || hello.quorum != own.quorum)
+        if (hello.realmId != own.realmId)
+            reason = RejectReason.wrongRealm;
+        else if (hello.cluster != own.cluster || hello.quorum != own.quorum)
             reason = RejectReason.wrongCluster;
-        else if (hello.protocol != protocolVersion)
-            reason = RejectReason.wrongProtocol;
         else if (dialed_ && (own.expected ? hello.nodeId != own.expected : !hello.coordinator))
             reason = RejectReason.unexpectedNode;
         else
             reason = owner.admit(this, hello, sequences);
         if (reason != RejectReason.none)
-        {
-            if (!dialed_)
-                write(Reject(reason), 0);
-            return close("refused " ~ hello.address ~ ": " ~ reason.to!string);
-        }
+            return refuseHello(reason, hello.address);
         peer_ = hello;
         sequences.meet(hello.incarnation);
         if (!dialed_)
@@ -540,6 +540,15 @@ private:
         resyncing = sequences.retainedCount > 0;
         sendHeartbeat(clock(), LoadReport.init);
         owner.opened(this);
+    }
+
+    void refuseHello(RejectReason reason, string address)
+    {
+        import std.conv : to;
+
+        if (!dialed_)
+            write(Reject(reason), 0);
+        close("refused " ~ address ~ ": " ~ reason.to!string);
     }
 
     static ulong micros(MonoTime t) pure nothrow @nogc @safe
@@ -576,9 +585,11 @@ unittest
     auto a = new Owner, b = new Owner;
     const helloA = Hello(protocolVersion, "test", 1, 11, "a:1", "", true, 0);
     const helloB = Hello(protocolVersion, "test", 2, 22, "b:2", "", false, 0);
-    Link[2] connect()
+    Link[2] connect(uint realmId = 1)
     {
-        auto dialer = new Link(b, clock, helloB, true, "a:1", 1.seconds, 10.seconds); // B dials the coordinator A
+        auto theirHello = cast(Hello) helloB;
+        theirHello.realmId = realmId;
+        auto dialer = new Link(b, clock, theirHello, true, "a:1", 1.seconds, 10.seconds); // B dials the coordinator A
         auto accepted = new Link(a, clock, helloA, false, "b:2", 1.seconds, 10.seconds);
         return [accepted, dialer];
     }
@@ -595,6 +606,22 @@ unittest
         }
     }
     ServiceCall call(ulong n) { return ServiceCall(1, 1, 1, n, null); }
+
+    auto foreign = connect(2);
+    exchange(foreign[0], foreign[1]);
+    assert(foreign[0].wantsClose && foreign[1].wantsClose);
+    assert(foreign[1].closeReason == "refused: wrongRealm", "equal cluster names do not join separate realms");
+
+    struct OlderHello
+    {
+        enum type = MessageType.hello;
+        ushort protocol = protocolVersion - 1;
+    }
+    ByteWriter legacy;
+    putMessage(legacy, 0, OlderHello.init);
+    auto reader = new Link(a, clock, helloA, false, "b:2", 1.seconds, 10.seconds);
+    reader.receive(legacy.data);
+    assert(reader.closeReason == "refused b:2: wrongProtocol", "version checked before decoding the fields");
 
     auto first = connect();
     exchange(first[0], first[1]);

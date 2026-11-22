@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 62; // 62: named creature spell areas at their destination
+enum ushort protocolVersion = 63; // 63: cluster links include the realm ID
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -319,6 +319,7 @@ enum RejectReason : ubyte
     duplicateNode = 4,    /// the node id is this node's, or another live process's
     unexpectedNode = 5,   /// not the node that was dialed
     notInView = 6,        /// a member the coordinator has not admitted
+    wrongRealm = 7,       /// a different realm on the login server
 }
 
 /// A frame's header.
@@ -347,6 +348,7 @@ struct Hello
     ushort expected;        /// the node the dialer meant to reach; 0 for the coordinator
     bool gateway;           /// a gateway (docs/SERVICES.md): clients' connections, no regions or services
     ulong quorum;           /// fixed voter roster and lease identity, or zero for the original mode
+    uint realmId = 1;       /// the login server's realm ID, shared by all nodes in this cluster
 }
 
 /// The reply to a hello that is refused; the link closes after it.
@@ -1230,7 +1232,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 62, recordedFingerprint = 0xdc00960a5ff410c1UL;
+private enum recordedVersion = 63, recordedFingerprint = 0x121d38051582529cUL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "
