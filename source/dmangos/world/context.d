@@ -5120,7 +5120,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private void creatureLoanGained(const ref Region r, const(ubyte)[] state)
     {
         import dmangos.bytes : ByteReader;
-        import dmangos.world.grid : cellKey;
+        import dmangos.world.grid : cellKey, noCell;
         import dmangos.world.migration : decodeBundle;
 
         localCreatureLoans[r.id] = r;
@@ -5140,7 +5140,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             Migrant[] migrants;
             decodeBundle(bundle, cells, migrants);
             foreach (ref migrant; migrants)
-                migrant.home = ulong.max; // physical ownership stays reserved until the lease is retired
+                migrant.home = noCell; // physical ownership stays reserved until the lease is retired
             map_.migrateIn(encodeBundle(null, migrants), (const ref Migrant migrant) {
                 auto restored = restoreMigrant(migrant);
                 bindMigrantLoot(restored, map_);

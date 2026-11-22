@@ -48,7 +48,7 @@ import dmangos.store : SlotBits, Store;
 import dmangos.serialization : serialize;
 import dmangos.bytes : ByteWriter;
 public import dmangos.world.grid : cellSize;
-import dmangos.world.grid : cellCoordinate, cellKey, cellKeyAt;
+import dmangos.world.grid : cellCoordinate, cellKey, cellKeyAt, noCell;
 import dmangos.world.creatureai : LinkEvent;
 import dmangos.world.creatureai : CombatWorld;
 import dmangos.world.unit : UnitRef;
@@ -297,8 +297,6 @@ void deliverBuilt(Inhabitant to, const UpdatePacket packet)
     to.deliver(packet.compressed ? Opcode.SMSG_COMPRESSED_UPDATE_OBJECT : Opcode.SMSG_UPDATE_OBJECT, packet.body_);
 }
 
-/// No cell (an entity not placed in one).
-private enum ulong noCell = ulong.max;
 /// Not in the tick.
 private enum uint notTicking = uint.max;
 
@@ -3893,7 +3891,7 @@ unittest
 unittest
 {
     import dmangos.bytes : ByteReader, ByteWriter;
-    import dmangos.world.migration : encodeBundle, Migrant, MigrantKind;
+    import dmangos.world.migration : decodeBundle, encodeBundle, Migrant, MigrantKind;
     import dmangos.world.updatefields;
 
     static final class Pillar : MapObject
@@ -3901,7 +3899,7 @@ unittest
         UpdateValues values = UpdateValues(TypeId.gameObject);
         this(uint state) { values.set!OBJECT_FIELD_ENTRY(state); }
         @property ulong guid() const { return 0xF110_0000_0000_0005; }
-        @property Position position() const { return Position(5, 5, 0); }
+        @property Position position() const { return Position(-5, -5, 0); }
         ref UpdateValues fields() { return values; }
         UpdateData appearance(uint) const
         {
@@ -3917,7 +3915,7 @@ unittest
     }
     MapObject[] spawner(uint, ulong cell)
     {
-        return cell == cellKeyAt(5, 5) ? [cast(MapObject) new Pillar(1)] : null;
+        return cell == cellKeyAt(-5, -5) ? [cast(MapObject) new Pillar(1)] : null;
     }
     auto map = new Map(0, MapSettings.init, () => 1000u, &spawner);
     auto alice = new Watcher(1, Position(0, 0, 0));
@@ -3926,13 +3924,22 @@ unittest
 
     ByteWriter w;
     w.put(uint(2));
-    const bundle = encodeBundle([cellKeyAt(5, 5)], [Migrant(MigrantKind.gameObject, 5, cellKeyAt(5, 5), w.data)]);
+    const home = cellKeyAt(-5, -5);
+    const bundle = encodeBundle([home], [Migrant(MigrantKind.gameObject, 5, home, w.data)]);
     map.migrateIn(bundle, (const ref Migrant m) {
         auto r = ByteReader(m.state);
         return cast(MapObject) new Pillar(r.read!uint);
     });
     assert(map.findObject(0xF110_0000_0000_0005).fields[OBJECT_FIELD_ENTRY] == 2, "the migrated state won");
     assert(map.objectCount == 1 && map.seesObject(1, 0xF110_0000_0000_0005));
+
+    const leaving = map.migrateOut(cell => cell == home, 2,
+        (MapObject object) => Migrant(MigrantKind.gameObject, 5, 0, w.data));
+    ulong[] cells;
+    Migrant[] objects;
+    decodeBundle(leaving, cells, objects);
+    assert(cells == [home] && objects.length == 1 && objects[0].home == home,
+        "the cell just west and south of the map origin has ordinary migration state");
 }
 
 

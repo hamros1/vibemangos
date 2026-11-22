@@ -10,6 +10,9 @@ import std.math : floor;
 /// Side of a grid cell, in yards (533.33 / 8).
 enum float cellSize = 533.3333f / 8;
 
+/// Outside the client's supported map bounds, which are 256 cells from the origin in each direction.
+package enum ulong noCell = 0x8000_0000_8000_0000UL;
+
 /// The cell coordinate of a world coordinate.
 int cellCoordinate(float coordinate) pure nothrow @nogc @safe
 {
