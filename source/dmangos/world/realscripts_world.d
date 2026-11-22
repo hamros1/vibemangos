@@ -6,9 +6,7 @@
  * accepted (`escort.start` beside `e.quest != <quest>`), its creatures by `ScriptName`. Each is taken on through its
  * quest giver's packet as a client does (the quests before it in its chain counted as done), followed (the character
  * keeps within reach of it, its ambushers slain), and must walk its `script_waypoint` path to the end and complete
- * the quest; taken on and left behind (80 yards) it must fail the quest. What cannot be so is listed in
- * `knownEscorts`, with why; the test fails at an escort not listed that does not do its part, and says which listed
- * ones pass now.
+ * the quest; taken on and left behind (80 yards) it must fail the quest.
  *
  * Runs only with the real data (`DMANGOS_REAL_DATA`).
  */
@@ -231,18 +229,34 @@ private void driveJailBreak(Scene scene, ref size_t next)
 string runEscort(const EscortCase c, bool leave, out long ms, bool only = false)
 {
     import std.algorithm.comparison : clamp, max;
+    import dmangos.scripts.felwood : Arei;
+    import dmangos.scripts.moonglade : KeeperRemulos, Eranikus;
+    import dmangos.scripts.stormwind : ReginaldWindsor, SquireRowe, questGreatMasquerade, questStormwindRendezvous;
+    import dmangos.world.quests : QuestStatus;
+    import dmangos.world.spellcast : SpellTargets, TargetFlags;
+    import dmangos.world.updatefields : UNIT_NPC_FLAGS;
 
     uint mapId;
     const data = realData;
-    auto at = spawnOnContinent(data, c.entry, mapId);
+    const needsRowe = c.quest == questGreatMasquerade;
+    enum uint squireRowe = 17804;
+    const spawnEntry = needsRowe ? squireRowe : c.entry;
+    auto at = spawnOnContinent(data, spawnEntry, mapId);
     if (mapId == 2)
         foreach (const ref spawn; data.creatureSpawns)
-            if (spawn.entry == c.entry)
+            if (spawn.entry == spawnEntry)
             {
                 mapId = spawn.map;
                 at = Position(spawn.x, spawn.y, spawn.z, spawn.orientation);
                 break;
             }
+    const needsFlute = c.quest == Arei.questAncientSpirit;
+    if (needsFlute)
+    {
+        // The flute needs the spell focus at the Irontree Woods ruins (object 165760).
+        mapId = 1;
+        at = Position(5968.89f, -1212.05f, 379.832f);
+    }
     if (mapId == 2)
         return "no static spawn";
     const q = data.quests.quest(c.quest);
@@ -266,13 +280,38 @@ string runEscort(const EscortCase c, bool leave, out long ms, bool only = false)
             race = 2;
         auto s = new Scene(mapId, heroAt, Race(race), classId, level);
         s.run(600.msecs);
-        auto npc = s.find(c.entry);
+        if (needsFlute)
+        {
+            enum uint flute = 11445, purified = 4442;
+            s.hero.questStatus[purified] = QuestStatus(purified, QuestState.none, true);
+            s.heroes[0].session.inWorld.storeLoot(flute, 1, 0, false);
+            const result = s.useCarriedItem(flute, SpellTargets(TargetFlags.self));
+            if (!s.runUntil(() => s.find(c.entry) !is null, 10.seconds))
+                return format!"the flute did not summon Arei (cast result %s)"(result);
+            s.moveHero(0, s.the(c.entry).position);
+        }
+        auto npc = s.find(spawnEntry);
         if (npc is null)
             return "not up where it spawns (a pool, an event)";
+        if (needsRowe)
+        {
+            s.hero.questStatus[questStormwindRendezvous] = QuestStatus(questStormwindRendezvous, QuestState.none, true);
+            s.stayWith = npc;
+            s.gossip(npc, [0u]);
+            if (!s.runUntil(() => s.said(SquireRowe.sayWelcome), 90.seconds))
+                return "Squire Rowe did not summon and introduce Windsor";
+            npc = s.the(c.entry);
+            s.moveHero(0, npc.position);
+        }
+        if (q.requiredMinRepFaction)
+        {
+            auto rep = s.hero.reputation;
+            const faction = s.w.context.client.factions.lookup(q.requiredMinRepFaction);
+            if (rep.standingWith(faction) < q.requiredMinRepValue)
+                rep.change(faction, q.requiredMinRepValue, false, null, true);
+        }
         if (!s.takeQuest(npc, c.quest))
         {
-            import dmangos.world.updatefields : UNIT_NPC_FLAGS;
-
             why = format!"the quest not taken (its giver's NPC flags %#x)"(npc.values.get!UNIT_NPC_FLAGS);
             if (q.requiredRaces == 0 && !horde)
                 continue;
@@ -337,16 +376,32 @@ string runEscort(const EscortCase c, bool leave, out long ms, bool only = false)
         bool[ulong] used;
         const toUse = c.entry in objectsUsed;
         size_t jailStop;
+        bool readyAtKeep;
+        enum uint eranikus = 15491;
         const over = s.runUntil(() {
             import dmangos.scripts.blackrockdepths : MarshalWindsor;
-            import dmangos.world.spellcast : SpellTargets, TargetFlags;
             import dmangos.world.updatefields : UNIT_FIELD_BYTES_1;
             import dmangos.script.api : StandState;
 
-            // The marksman is part of Dorius's completion scene.
-            s.killAttackers(npc, 60, c.entry == 8284 ? 8338 : 0);
+            // Dorius's marksman must finish his shot. Eranikus must survive at low health.
+            const spare = c.entry == 8284 ? 8338 : c.quest == KeeperRemulos.questNightmareManifests ? eranikus : 0;
+            s.killAttackers(npc, 60, spare);
+            if (c.quest == KeeperRemulos.questNightmareManifests && s.said(Eranikus.sayAttack2))
+                if (auto dragon = s.find(eranikus))
+                    s.hurtTo(dragon, 18);
             if (c.quest == MarshalWindsor.quest)
                 driveJailBreak(s, jailStop);
+            if (needsRowe)
+            {
+                if (!readyAtKeep && npc.values.get!UNIT_NPC_FLAGS & ReginaldWindsor.npcFlagGossip)
+                {
+                    s.moveHero(0, npc.position);
+                    s.gossip(npc, [0u]);
+                    readyAtKeep = true;
+                }
+                foreach (guard; s.all(ReginaldWindsor.onyxiaGuard))
+                    s.kill(guard);
+            }
             const asleep = npc.values.getByte!UNIT_FIELD_BYTES_1(0) == StandState.sleep;
             if (!asleep && leadTo.x != 0 && s.elapsedMs % 1000 == 0 && Scene.distance(s.hero.position, leadTo) > 3
                     && Scene.distance(s.hero.position, npc.position) < 20)
@@ -421,19 +476,6 @@ string runEscort(const EscortCase c, bool leave, out long ms, bool only = false)
     return why;
 }
 
-/// The escorts that cannot do their part on this data, and why (each a reason found by the test, kept honest by it).
-private immutable string[string] knownEscorts;
-
-shared static this()
-{
-    knownEscorts = [
-        "npc_arei/4261": "no static spawn", // Arei (9598) is absent from this world's static spawns.
-        "npc_reginald_windsor/6403": "no static spawn", // Squire Rowe summons Reginald Windsor (12580).
-        // The quest asks for neutral with the Brood of Nozdormu (`RequiredMinRepFaction` 910).
-        "npc_keeper_remulos/8736": "the quest not taken",
-    ];
-}
-
 /**
  * Each of `cases` (escorts or the other quest events) run; it fails at one not listed in `known` (as failing as it
  * did) that does not do its part, and says which listed ones pass now.
@@ -487,7 +529,7 @@ unittest
         return;
     const cases = escortCases(realData).filter!(c => c.escort).array;
     assert(cases.length >= 30, format!"only %s escorts found in the scripts"(cases.length));
-    sweepQuests(cases, knownEscorts, "escorts");
+    sweepQuests(cases, null, "escorts");
 }
 
 /**

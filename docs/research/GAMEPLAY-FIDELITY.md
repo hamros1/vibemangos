@@ -78,8 +78,11 @@ Flamestrike’s ground effect was missing from the hidden-debuff list. All six p
 - **Triage** keeps the event active when the last patients have been admitted. A regression test confirms that a patient already in a bunk can still provide the last required save. The full clinic playthrough still needs verification.
 - **Extinguishing the Idol**, **Willix the Importer**, and **A Fine Mess** run in the same dungeon copy as the player. The last fixture leads Kernobee to the clean-zone door before checking quest credit.
 - **Jail Break!** runs through all five prison stops in Blackrock Depths. The player opens the cells and frees Dughal and Tobias through their gossip options. The test defeats the hostile prisoners and waits for Windsor to reach the exit and award quest credit.
+- **The Great Masquerade** starts by asking Squire Rowe to summon Windsor. The player talks to Windsor again at Stormwind Keep and defeats Onyxia’s guards before checking quest credit.
+- **The Nightmare Manifests** starts with the required Brood of Nozdormu reputation. The player defends the village against the phantasms and wounds Eranikus so the redemption sequence can award credit.
+- **Ancient Spirit** starts by using the Flute of the Ancients at its spell focus in the Irontree Woods and approaching the summoned quest giver. [Purified! quest completion text](https://www.wowhead.com/classic/quest=4442/purified)
 
-The sweep now passes 41 of 44 escort cases and 15 of 19 quest-event cases. It checks quest state and verifies the leave-behind failure path for escorted NPCs. The remaining setup gaps involve dynamic summons, First Aid and reputation.
+All 44 escort cases now pass, including the leave-behind failure path. Fifteen of the 19 quest-event cases discovered by the survey pass. The other four come from pairing both Triage clinics with both quest IDs. The database gives each clinic one of those quests.
 
 ## Reproduce
 
