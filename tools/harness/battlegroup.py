@@ -11,11 +11,11 @@ from cluster_fixture import AUTH, REPO, WORLD, available_ports, run_test, wait_f
 
 def run(fixture):
     login = fixture.fresh_schema("login", "classicrealmd.sql")
-    realms = ("First", "Second")
+    realms = ("First", "Silver Hand")
     characters = [fixture.fresh_schema(f"chars{i}", "classiccharacters.sql") for i in (1, 2)]
     fixture.query("UPDATE realmlist SET name='First', port=0 WHERE id=1; "
                   "INSERT INTO realmlist (id,name,address,port,icon,realmflags,timezone) "
-                  "VALUES (2,'Second','127.0.0.1',0,1,2,1)", login)
+                  "VALUES (2,'Silver Hand','127.0.0.1',0,1,2,1)", login)
     ports = available_ports(9)
     host_configs = []
     for i, database in enumerate(characters):
@@ -86,7 +86,7 @@ def run(fixture):
         actions = ["login:Echo", f"waitfile:{at_masters}", f"bgjoin:{entry}:489", f"waitfile:{in_queue}"]
         if i == 0:
             actions.append("say:.battleground forcestart")
-        actions += [f"waitfile:{invited}", "bgport:489:1", f"waitfile:{entered}", "pvplog",
+        actions += [f"waitfile:{invited}", "bgport:489:1", f"waitfile:{entered}", "pvplog:names",
                     f"waitfile:{scored}", "bgleave:489", "listen:2", "logout"]
         clients.append(client(f"battle{i}", i, *actions))
     for marker, expected in (
@@ -94,7 +94,7 @@ def run(fixture):
             (in_queue, ["copy 0 queued"] * 2),
             (invited, [" invited ["] * 2),
             (entered, ["[new world] map 489 "] * 2),
-            (scored, ["[scoreboard] running, 2 players"] * 2)):
+            (scored, [f"[scoreboard names] ['Echo', 'Echo-{other}']" for other in reversed(realms)])):
         wait_for(marker.name, lambda: all(value in fixture.log(f"battle{i}") for i, value in enumerate(expected)), 20)
         marker.touch()
     for i, proc in enumerate(clients):
@@ -108,7 +108,7 @@ def run(fixture):
     made = [line for line in fixture.log("battlegroup").splitlines() if "of warsongGulch made" in line]
     assert len(made) == 1, made
     assert all(fixture.query("SELECT map FROM characters WHERE name='Echo'", db) == "0" for db in characters)
-    print("PASS: colliding characters from two realm clusters shared one Warsong Gulch and returned home.")
+    print("PASS: colliding characters from two realm clusters saw realm-qualified scores and returned home.")
 
 
 if __name__ == "__main__":

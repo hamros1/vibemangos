@@ -106,6 +106,7 @@ unittest
 {
     import dmangos.world.bgqueue : BattlegroundType, BattlegroundQueueHost, BattlegroundJoin;
     import dmangos.world.battleground : winnerAlliance;
+    import dmangos.world.opcodes : ChatType, Language;
     import dmangos.world.testclient;
     import dmangos.world.testdata : mapEasternKingdoms, mapWarsongGulch, testClientData, testWorldData;
 
@@ -120,7 +121,7 @@ unittest
         conf.realmId = id;
         conf.battlegroup = "Emberstorm";
         auto world = new WorldContext(conf, db, data, client, null, pool);
-        world.realmDisplayName = id == 1 ? "First" : "Second";
+        world.realmDisplayName = id == 1 ? "First" : "Silver Hand";
         return world;
     }
     auto a = make(1, firstDb), b = make(2, nextDb);
@@ -149,9 +150,16 @@ unittest
     assert(match is b.battlegrounds.find(copyId) && match.members.length == 2);
     assert(left.session.inWorld.currentMap is right.session.inWorld.currentMap);
     assert(match.memberSession(l) is left.session.inWorld && match.memberSession(r) is right.session.inWorld);
-    left.write(Opcode.CMSG_NAME_QUERY, ClientNameQuery(r));
-    auto name = ByteReader(bodyOf(left.read(), Opcode.SMSG_NAME_QUERY_RESPONSE));
-    assert(name.read!ulong == r && name.readCString() == "Echo" && name.readCString() == "Second");
+    void checkName(ref TestClient user, ulong guid, string expectedName, string expectedRealm)
+    {
+        user.write(Opcode.CMSG_NAME_QUERY, ClientNameQuery(guid));
+        auto name = ByteReader(bodyOf(user.read(), Opcode.SMSG_NAME_QUERY_RESPONSE));
+        assert(name.read!ulong == guid && name.readCString() == expectedName && name.readCString() == expectedRealm);
+    }
+    checkName(left, r, "Echo", "Silver Hand");
+    checkName(right, l, "Echo", "First");
+    checkName(left, l, "Echo", "");
+    checkName(right, r, "Echo", "");
     auto teammate = loggedIn(b, nextDb, 8, "Scout", Position(-8939, -142, 85), AccountLevel.player, 1, 0, 20);
     const scout = teammate.session.inWorld.player.guid;
     assert(pool.member(copyId, scout) is null);
@@ -162,8 +170,37 @@ unittest
     assert(raid !is null && raid.isRaid && raid is b.groups.of(scout) && raid.members.length == 2);
     assert(raid.isMember(l) && raid.isMember(scout) && !raid.isMember(r));
     assert(firstDb.groups.length == 0 && nextDb.groups.length == 0);
-    teammate.write(Opcode.CMSG_LEAVE_BATTLEFIELD, null);
-    teammate.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
+    left.read();
+    ByteWriter chat;
+    chat.put(cast(uint) ChatType.CHAT_MSG_BATTLEGROUND);
+    chat.put(cast(uint) Language.LANG_COMMON);
+    chat.putCString("Defend the flag");
+    teammate.write(Opcode.CMSG_MESSAGECHAT, chat.data);
+    auto message = ByteReader(bodyOf(left.read(), Opcode.SMSG_MESSAGECHAT));
+    assert(message.read!ubyte == ChatType.CHAT_MSG_BATTLEGROUND);
+    message.read!uint;
+    assert(message.read!ulong == scout, "the chat sender uses the same realm-qualified GUID as the name cache");
+    checkName(left, scout, "Scout", "Silver Hand");
+
+    teammate.session.disconnected();
+    assert(match.memberSession(scout) is null && scout in match.members);
+    left.read();
+    left.write(Opcode.MSG_PVP_LOG_DATA, null);
+    auto board = ByteReader(bodyOf(left.read(), Opcode.MSG_PVP_LOG_DATA));
+    assert(board.read!ubyte == 0 && board.read!uint == 3);
+    bool foundScout;
+    foreach (_; 0 .. 3)
+    {
+        foundScout |= board.read!ulong == scout;
+        board.readBytes(5 * uint.sizeof);
+        const columns = board.read!uint;
+        board.readBytes(columns * uint.sizeof);
+    }
+    assert(foundScout);
+    checkName(left, scout, "Scout", "Silver Hand");
+    match.removed(scout);
+    left.write(Opcode.CMSG_NAME_QUERY, ClientNameQuery(scout));
+    assert(bodyOf(left.read(), Opcode.SMSG_NAME_QUERY_RESPONSE).length == 0);
     assert(pool.member(copyId, scout) is null && a.groups.of(l) is null && b.groups.of(scout) is null);
     match.start();
     match.rewardHonorToTeam(1,0);

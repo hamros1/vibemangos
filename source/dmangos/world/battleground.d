@@ -17,11 +17,14 @@ import core.time : Duration, MonoTime, minutes, msecs, seconds;
 
 import dmangos.bytes : ByteWriter;
 import dmangos.world.bgqueue;
+import dmangos.world.characterdb : NameInfo;
 import dmangos.world.context : WorldContext;
 import dmangos.world.gameobject : GameObject;
 import dmangos.world.map : MapObject;
 import dmangos.world.online : OnlinePlayer;
 import dmangos.world.opcodes : ChatType, Language, Opcode;
+import dmangos.world.packets : ServerNameQueryResponse;
+import dmangos.world.player : Player;
 
 /// Deserter: no queueing for 15 minutes.
 enum uint spellDeserter = 26013;
@@ -183,6 +186,7 @@ final class Battleground
         MonoTime offlineSince; /// set while logged out
         uint killingBlows, deaths, honorableKills, bonusHonor;
         uint[7] extra;
+        NameInfo identity; /// retained with the score while the player is offline
     }
 
     /// Its players, by guid.
@@ -199,6 +203,25 @@ final class Battleground
         if (context.battlegroup !is null && (instance & battlegroupInstance))
             return context.battlegroup.member(instance, guid);
         return context.onlinePlayer(guid);
+    }
+
+    /// The 1.12 client derives its foreign nameplate, chat and scoreboard labels from the separate realm field.
+    package bool foreignName(ulong viewer, ulong guid, out ServerNameQueryResponse response)
+    {
+        import dmangos.world.battlegroup : battlegroupInstance;
+
+        if (!(instance & battlegroupInstance) || context.battlegroup is null || viewer !in members
+            || (viewer >> 32) == (guid >> 32))
+            return false;
+        const member = guid in members;
+        if (member is null || !member.identity.name.length)
+            return false;
+        auto realm = context.battlegroup.homeOf(guid);
+        if (realm is null)
+            return false;
+        const id = member.identity;
+        response = ServerNameQueryResponse(guid, id.name, realm.realmDisplayName, id.race, id.gender, id.classId);
+        return true;
     }
 
     private
@@ -255,19 +278,22 @@ final class Battleground
     }
 
     /**
-     * Player `guid` of `team` came in (or came back after logging out). The
+     * A player of `team` came in (or came back after logging out). The
      * other players of its team are told; over already, it is shown the scoreboard.
      */
-    void arrived(ulong guid, ubyte team)
+    void arrived(const Player player, ubyte team)
     {
         import dmangos.log : info;
 
+        const guid = player.guid;
+        const identity = NameInfo(player.data.name, player.data.race, player.data.gender, player.data.classId);
         if (auto known = guid in members)
         {
             known.offlineSince = MonoTime.init;
+            known.identity = identity;
             return;
         }
-        members[guid] = Member(team);
+        members[guid] = Member(team, identity: identity);
         joinOrder_ ~= guid;
         ByteWriter w;
         w.put(guid);
@@ -1483,7 +1509,7 @@ mixin template BattlegroundHandlers()
             return;
         if (auto copy = context.battlegrounds.find(battleground_.instance))
         {
-            copy.arrived(player.guid, battleground_.team); // its world states went with the map's packets
+            copy.arrived(player, battleground_.team); // its world states went with the map's packets
             joinTeamRaid(copy);
         }
     }
@@ -1560,7 +1586,7 @@ mixin template BattlegroundHandlers()
             return;
         auto copy = currentBattleground();
         if (copy !is null && player.guid in copy.members && copy.status != BattlegroundStatus.waitLeave)
-            return copy.arrived(player.guid, battleground_.team);
+            return copy.arrived(player, battleground_.team);
         info!"%s: '%s' is on a battleground's map, out of its copy: sent back"(remoteAddress, player.data.name);
         const back = battleground_;
         if (copy !is null)

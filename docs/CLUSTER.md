@@ -829,6 +829,12 @@ Start every other world node normally, each with its own config. Additional real
 same host by repeating `--battlegroup-realm`. The first config runs the shared map and matchmaking
 queue. A player can log in through any node, queue at the usual battlemaster, receive an invite,
 play the match and return to their home realm. Each realm stores its own characters and rewards.
+
+The 1.12.1 client adds ` (*)` to foreign nameplates and displays the full realm after a hyphen on
+the scoreboard. In chat the client omits spaces from realm names. To players from other realms,
+Bob from Silver Hand appears as `Bob (*)`, `Bob-Silver Hand` on the scoreboard and `Bob-SilverHand`
+in chat.
+
 If a designated node loses its lease, its cluster reserves the battleground maps and queue for
 that node. Restart the combined process to restore service after it exits.
 

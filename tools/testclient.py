@@ -42,7 +42,7 @@ in order:
     join:CHANNEL  part:CHANNEL  chan:CHANNEL:TEXT  chanlist:CHANNEL
                               chat channels
     afk:TEXT  dnd:TEXT        away and busy (an empty TEXT clears it)
-    bgjoin:NPC:MAP  bgport:MAP:1  bgleave:MAP  bgstatus  pvplog
+    bgjoin:NPC:MAP  bgport:MAP:1  bgleave:MAP  bgstatus  pvplog[:names]
                               battlegrounds: queue at a battlemaster, accept, leave, the scoreboard
     objects:N                 count the creatures and game objects seen, and query N of each
     npc:ENTRY                 pick a creature in sight by entry, for the NPC actions:
@@ -895,6 +895,22 @@ for action in actions:
             wsend(0x2D3, b""); print("battlefield status")
         else:
             wsend(0x2E0, b""); print("scoreboard")
+            if args == ["names"]:
+                op, board = expect(0x2E0)
+                describe(op, board)
+                pos = 2 if board[0] else 1
+                count, = struct.unpack_from("<I", board, pos)
+                pos += 4
+                names = []
+                for _ in range(count):
+                    guid, _, _, _, _, _, columns = struct.unpack_from("<Q6I", board, pos)
+                    pos += 32 + 4 * columns
+                    wsend(0x050, struct.pack("<Q", guid))
+                    _, reply = expect(0x051)
+                    assert struct.unpack_from("<Q", reply)[0] == guid
+                    name, realm, _ = reply[8:].split(b"\0", 2)
+                    names.append((name + b"-" + realm if realm else name).decode())
+                print(f"  [scoreboard names] {sorted(names)}")
         listen_for(2)
     elif kind == "rolloffer":
         w.settimeout(20)

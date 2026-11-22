@@ -610,15 +610,13 @@ package:
                 query.put(request.guid);
                 return context.relayToOwner(ownerNode, account.id, cast(ushort) Opcode.CMSG_NAME_QUERY, query.data);
             }
-            if (context.battlegroup !is null && inWorld !is null)
+            if (inWorld !is null)
                 if (auto copy = inWorld.currentBattleground())
-                    if (auto other = copy.memberSession(request.guid))
-                    {
-                        const c = other.character;
-                        const realm = context.battlegroup.homeOf(request.guid);
-                        send(ServerNameQueryResponse(request.guid, c.data.name, realm.realmDisplayName,
-                            c.data.race, c.data.gender, c.data.classId));
-                    }
+                {
+                    ServerNameQueryResponse response;
+                    if (copy.foreignName(inWorld.player.guid, request.guid, response))
+                        send(response);
+                }
             return;
         }
         if (const other = context.onlinePlayer(request.guid))
