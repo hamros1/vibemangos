@@ -417,6 +417,15 @@ unittest
         && requests[2].effect == 1 && requests[2].spell == eruption);
     owner.gameObjectSpellArrived(1, requests[2]);
     checkRemoteAnimation(0);
+
+    // A node with only idle objects need not observe the caster's cell.
+    to.replicaRemoved(1, player.guid);
+    assert(to.findObject(player.guid) is null);
+    client.write(Opcode.CMSG_CAST_SPELL, packet.data);
+    assert(requests.length == 4);
+    owner.gameObjectSpellArrived(1, requests[3]);
+    checkRemoteAnimation();
+    assert(replies.length == 3, "the idle owner can confirm the cast without a caster replica");
 }
 
 /// A player and an NPC choose a nearby named replica, with the effects applied only by its owner.

@@ -45,7 +45,7 @@ import dmangos.world.battleground : Battlegrounds;
 import dmangos.world.gameevents : GameEvents, scheduleFor;
 import dmangos.world.creaturelinking : CreatureLink, inLinkRange, LinkFlag;
 import dmangos.world.creatureai : LinkEvent;
-import dmangos.world.objects : HighGuid, makeGuid, UpdateValues;
+import dmangos.world.objects : HighGuid, highGuidOf, makeGuid, UpdateValues;
 import dmangos.world.unit : UnitKind, UnitRef;
 import dmangos.world.bgqueue : battlegroundOfMap, BattlegroundQueue, BattlegroundQueueHost;
 import dmangos.world.wareffort : WarEffort, WarEffortHost;
@@ -746,7 +746,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.replication : Replica;
 
         const shape = namedGameObjectRouting(spell, effect);
-        if (!canWrite() || shape == ImplicitTarget.none)
+        if (!canWrite() || caster.kind == UnitKind.none || shape == ImplicitTarget.none)
             return;
         auto map_ = caster.map;
         if (auto copy = cast(Replica) map_.findObject(guid))
@@ -808,17 +808,26 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (message.sequence <= lastGameObjectSpell.get(peer, 0))
             return;
         lastGameObjectSpell[peer] = message.sequence;
-        auto copy = cast(Replica) map_.findObject(message.caster);
-        if (copy is null || copy.owner != peer || (copy.fields.type != TypeId.player && copy.fields.type != TypeId.unit))
+        const high = highGuidOf(message.caster);
+        const playerCast = high == HighGuid.player;
+        if (!message.caster || (!playerCast && high != HighGuid.unit && high != HighGuid.pet))
             return;
-        if (!UnitRef.observed(copy, map_).alive && !(message.triggered && copy.fields.type == TypeId.unit))
+        // An idle object owner may have no interest in the caster's cell. The casting node
+        // checked the cast before sending it. Any locally known authority must agree.
+        if (auto copy = cast(Replica) map_.findObject(message.caster))
+        {
+            if (copy.owner != peer || copy.fields.type != (playerCast ? TypeId.player : TypeId.unit)
+                || (!UnitRef.observed(copy, map_).alive && !(message.triggered && !playerCast)))
+                return;
+        }
+        else if (map_.unit(message.caster))
             return;
         auto object = map_.gameObjectAt(message.target);
         if (object is null || !client.isValidMapCoord(map_.id, message.x, message.y, message.z))
             return;
         const origin = Position(message.x, message.y, message.z);
         if (playNamedGameObject(map_, spell, message.effect, shape, object, origin)
-            && copy.fields.type == TypeId.player && sendGameObjectSpell !is null)
+            && playerCast && sendGameObjectSpell !is null)
         {
             auto reply = cast(GameObjectSpell) message;
             reply.reply = true;
@@ -4658,7 +4667,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         auto gameObject = cast(GameObject) object;
         if (gameObject is null)
             return Migrant.init;
-        gameObject.saveState(w);
+        gameObject.saveState(w, transportNow());
         return Migrant(MigrantKind.gameObject, gameObject.spawn.guid, 0, w.data);
     }
 
@@ -4690,7 +4699,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return null;
         }
         auto gameObject = makeGameObject(data.gameObjectSpawns[*at]);
-        gameObject.loadState(r);
+        gameObject.loadState(r, transportNow());
         return gameObject;
     }
 

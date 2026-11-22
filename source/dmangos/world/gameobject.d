@@ -411,8 +411,8 @@ final class GameObject : Replicable, Moving, PerViewer
         return update;
     }
 
-    /// Its fields, for its next owner (docs/CLUSTER.md).
-    void saveState(ref ByteWriter w) const
+    /// Its fields and pending door, goober or trap state, for its next owner (docs/CLUSTER.md).
+    void saveState(ref ByteWriter w, uint now) const
     {
         w.put(cast(ushort) values.length);
         foreach (slot; 0 .. values.length)
@@ -423,6 +423,16 @@ final class GameObject : Replicable, Moving, PerViewer
             (cast() scripts).save(behaviour, state);
         w.put(cast(uint) state.length);
         w.putBytes(state.data);
+        if (type == GameObjectType.door || type == GameObjectType.button
+            || type == GameObjectType.goober || type == GameObjectType.trap)
+            if (lootState != GoLootState.ready || restoreTimer || trapReadyAt || trapUses)
+            {
+                w.put(cast(ubyte) lootState);
+                w.put(restoreTimer);
+                w.put(now);
+                w.put(trapReadyAt);
+                w.put(trapUses);
+            }
     }
 
     /// The server's scripts, and its own script's state; no handle if it has none.
@@ -431,8 +441,10 @@ final class GameObject : Replicable, Moving, PerViewer
     ScriptHandle behaviour;
 
     /// Reads what `saveState` wrote into one made anew from the same spawn.
-    void loadState(ref ByteReader r)
+    void loadState(ref ByteReader r, uint now)
     {
+        import std.algorithm.comparison : max;
+
         const count = r.read!ushort;
         foreach (slot; 0 .. count)
         {
@@ -444,6 +456,18 @@ final class GameObject : Replicable, Moving, PerViewer
         auto state = ByteReader(r.readBytes(r.read!uint));
         if (scripts !is null && state.remaining)
             scripts.load(behaviour, state);
+        // The runtime tail is optional. Older senders and inactive spawns omit it.
+        if (!r.remaining)
+            return;
+        const storedLootState = r.read!ubyte;
+        if (storedLootState <= GoLootState.max)
+            lootState = cast(GoLootState) storedLootState;
+        restoreTimer = r.read!int;
+        const transit = cast(int)(now - r.read!uint); // signed delta on the shared wrapping clock
+        if (restoreTimer > 0 && transit > 0)
+            restoreTimer = max(1, restoreTimer - transit); // 0 is a door that stays open indefinitely
+        trapReadyAt = r.read!long;
+        trapUses = r.read!uint;
     }
 
     /// See `Replicable.motion`: a position, and an elevator's path time (the transport clock, as ships have it).
@@ -510,4 +534,55 @@ unittest
     assert(go.values[GAMEOBJECT_DISPLAYID] == 3851 && go.values[GAMEOBJECT_STATE] == 1);
     assert(go.values.get!GAMEOBJECT_ROTATION(3) > 0.87f, "cos(0.5): the facing made a rotation");
     assert(go.appearance(0).blockCount == 1);
+}
+
+/// An open door keeps its reset deadline when its region changes owners.
+unittest
+{
+    import core.time : msecs;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.map : Map, MapSettings;
+    import dmangos.world.migration : Migrant, MigrantKind;
+
+    enum uint sent = 0xFFFF_FF00, received = 0x100; // 512 ms of transit across the clock wrap
+    GameObjectTemplate door = {entry: 4, type: GameObjectType.door};
+    door.data[2] = 65536; // a second until the door closes
+    GameObjectTemplate trap = {entry: 5, type: GameObjectType.trap};
+    const doorSpawn = GameObjectSpawn(guid: 19, entry: door.entry, x: 100, y: 100);
+    const trapSpawn = GameObjectSpawn(guid: 20, entry: trap.entry, x: 101, y: 100);
+    auto owner = new Map(0, MapSettings.init, () => sent, null);
+    auto next = new Map(0, MapSettings.init, () => received, null);
+    auto opened = new GameObject(doorSpawn, &door);
+    auto sprung = new GameObject(trapSpawn, &trap);
+    owner.addObject(opened);
+    owner.addObject(sprung);
+    opened.useDoorOrButton(owner);
+    sprung.trapReadyAt = 3910;
+    sprung.trapUses = 1;
+    assert(opened.goState == goStateActive && opened.restoreTimer == 1000);
+    const cell = cellKeyAt(doorSpawn.x, doorSpawn.y);
+    const bundle = owner.migrateOut(key => key == cell, 2, (MapObject object) {
+        auto go = cast(GameObject) object;
+        ByteWriter state;
+        go.saveState(state, sent);
+        return Migrant(MigrantKind.gameObject, go.spawn.guid, 0, state.release());
+    });
+    assert(owner.isReplica(opened.guid) && owner.isReplica(sprung.guid));
+    next.migrateIn(bundle, (const ref Migrant migrant) {
+        auto go = migrant.spawn == doorSpawn.guid ? new GameObject(doorSpawn, &door) : new GameObject(trapSpawn, &trap);
+        auto state = ByteReader(migrant.state);
+        go.loadState(state, received);
+        assert(state.empty);
+        return cast(MapObject) go;
+    });
+    auto restored = next.gameObjectAt(opened.guid);
+    assert(restored.goState == goStateActive && restored.restoreTimer == 488);
+    auto restoredTrap = next.gameObjectAt(sprung.guid);
+    assert(restoredTrap.trapReadyAt == 3910 && restoredTrap.trapUses == 1);
+    next.update(487.msecs);
+    assert(restored.goState == goStateActive);
+    next.update(1.msecs);
+    assert(restored.goState == goStateReady && restored.lootState == GoLootState.ready
+        && !(restored.values.get!GAMEOBJECT_FLAGS & goFlagInUse));
+    assert(next.objectCount == 2 && !next.isReplica(restored.guid));
 }

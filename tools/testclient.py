@@ -529,6 +529,9 @@ def describe(op, p):
         print(f"  [spell go] {spell} by {g & 0xFFFFFF}")
     elif op == 0x133:
         g, pos = packed_guid(p, 0); spell, reason = struct.unpack_from("<IB", p, pos); print(f"  [spell failed] {spell} reason {reason:#x}")
+    elif op == 0x0B3:
+        guid, slot = struct.unpack("<QI", p)
+        print(f"  [game object animation] {guid:#018x} slot {slot}")
     elif op == 0x250:
         t, pos = packed_guid(p, 0); a, pos = packed_guid(p, pos); spell, dmg, school = struct.unpack_from("<IIB", p, pos)
         print(f"  [spell damage] {spell}: {dmg} to {t & 0xFFFFFF}")

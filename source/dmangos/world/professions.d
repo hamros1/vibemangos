@@ -79,11 +79,55 @@ unittest
     assert(lockResists(100, 99) && !lockResists(100, 100));
 }
 
+/// A focus on the other side of a region boundary works at the same distance as a local one.
+unittest
+{
+    import dmangos.world.character : Character;
+    import dmangos.world.gameobject : GameObjectSpawn, GameObjectTemplate, GameObjectType;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.movement : Position;
+    import dmangos.world.replication : encodeState;
+    import dmangos.world.spellcast : SpellCastResult;
+    import dmangos.world.spells : SpellInfo;
+    import dmangos.world.testclient;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    const at = Position(100, 100, 40);
+    auto client = loggedIn(context, db, 7, "Anduin", at);
+    auto caster = cast(Character) context.onlinePlayer(client.session.character.guid);
+    auto map = context.map(0);
+    SpellInfo spell;
+    spell.casting.requiresSpellFocus = 501;
+    GameObjectTemplate focus = {entry: 800, type: GameObjectType.spellFocus};
+    focus.data[0] = 501;
+    focus.data[1] = 10;
+    context.data.gameObjectTemplates[800] = focus;
+    auto wrong = focus;
+    wrong.entry = 801;
+    wrong.data[0] = 502;
+    context.data.gameObjectTemplates[801] = wrong;
+    ulong observe(uint guid, uint entry, float z)
+    {
+        const spawn = GameObjectSpawn(guid: guid, entry: entry, x: at.x, y: at.y, z: z);
+        auto go = context.makeGameObject(spawn);
+        map.replicaCreated(2, cellKeyAt(at.x, at.y), go.guid, encodeState(go, 0));
+        return go.guid;
+    }
+    observe(1, 801, at.z);
+    observe(2, 800, at.z + 20);
+    assert(caster.checkSpellFocus(&spell) == SpellCastResult.requiresSpellFocus);
+    const near = observe(3, 800, at.z + 5);
+    assert(caster.checkSpellFocus(&spell) == SpellCastResult.ok);
+    map.replicaRemoved(2, near);
+    assert(caster.checkSpellFocus(&spell) == SpellCastResult.requiresSpellFocus);
+}
+
 /// See the module documentation.
 mixin template ProfessionHandlers()
 {
     import std.random : uniform;
-    import dmangos.world.gameobject : GameObject, GameObjectType;
+    import dmangos.world.gameobject : GameObject, GameObjectTemplate, GameObjectType;
     import dmangos.world.inventory : Item, ItemState, itemDynFlagUnlocked;
     import dmangos.world.professions : focusInReach, lockResists;
     import dmangos.world.spellcast : SpellCastResult, SpellTargets;
@@ -94,19 +138,28 @@ mixin template ProfessionHandlers()
     /// The spell's focus near (see the module documentation), or `SPELL_FAILED_REQUIRES_SPELL_FOCUS`.
     package SpellCastResult checkSpellFocus(const(SpellInfo)* spell)
     {
+        import dmangos.world.replication : Replica;
+
         const focus = spell.casting.requiresSpellFocus;
         if (!focus || spell.isPassive)
             return SpellCastResult.ok;
         const at = player.position, reach = player.values.get!UNIT_FIELD_COMBATREACH;
         enum float search = 100; // the farthest focus distance in the data
-        foreach (o; map.objectsNear(at, search))
-            if (auto go = cast(GameObject) o)
-            {
-                const p = go.position;
-                const distance = ((p.x - at.x) ^^ 2 + (p.y - at.y) ^^ 2 + (p.z - at.z) ^^ 2) ^^ 0.5f;
-                if (focusInReach(go.template_.type, go.template_.data[0], go.template_.data[1], focus, distance, reach))
-                    return SpellCastResult.ok;
-            }
+        foreach (object; map.objectsNear(at, search))
+        {
+            const(GameObjectTemplate)* template_;
+            if (auto go = cast(GameObject) object)
+                template_ = go.template_;
+            else if (auto copy = cast(Replica) object)
+                if (copy.fields.type == TypeId.gameObject)
+                    template_ = copy.fields.get!OBJECT_FIELD_ENTRY in context.data.gameObjectTemplates;
+            if (template_ is null)
+                continue;
+            const p = object.position;
+            const distance = ((p.x - at.x) ^^ 2 + (p.y - at.y) ^^ 2 + (p.z - at.z) ^^ 2) ^^ 0.5f;
+            if (focusInReach(template_.type, template_.data[0], template_.data[1], focus, distance, reach))
+                return SpellCastResult.ok;
+        }
         return SpellCastResult.requiresSpellFocus;
     }
 

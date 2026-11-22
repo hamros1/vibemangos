@@ -345,7 +345,8 @@ saved.
 When a region is revoked toward a named next owner, its owner writes the state of every object
 homed in it (`Map.migrateOut`, `world/migration.d`): a creature's every field, its movement and exact
 spline, its movement generator's timers and place on its path, its vendor stock and its script's
-state (`Creature.saveState`); a game object's fields and script state. It keeps each as a replica of
+state (`Creature.saveState`); a game object's fields and script state, including pending door and
+goober resets and a trap's cooldown and spent charges. It keeps each as a replica of
 the next owner's object, so its own players notice nothing.
 
 The bundle goes with the release (`RegionReleased`). The coordinator, granting the region, sends it to
@@ -474,8 +475,11 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
 * **Spell-selected game-object animations.** A player or creature can animate eligible game objects
   named for the spell, including objects on another node. Nearest-object and area effects use
   the same selection across the two nodes and share any target limit. The object's node
-  checks ownership, caster identity, entry, effect exclusions and range.
+  checks ownership, entry, effect exclusions and range. If it observes the caster, it also
+  checks that the caster's owner and state allow the cast.
   Duplicate requests play the animation once, and a confirmed player cast can grant quest credit.
+* **Spell foci.** A nearby anvil, forge or other spell focus can satisfy a cast from an adjacent
+  node. The caster's node checks the observed focus's template and three-dimensional distance.
 * **Persistent ground effects.** The caster's node owns the spot and its tick timer. It sends
   each tick to the observed targets' nodes, which check the targets' current positions and
   resolve damage once. If an in-flight tick reaches a previous owner that knows where the
