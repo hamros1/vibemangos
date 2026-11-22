@@ -343,12 +343,28 @@ package size_t namedCreatureChannelEffect(const ref SpellInfo spell)
             || namedCreatureShape(spell, i) != ImplicitTarget.unitScriptNearCaster)
             return size_t.max;
         const aura = spell.casting.applyAuraName[i];
-        if (aura != AuraType.periodicHeal && aura != AuraType.dummy
-            && (aura != AuraType.periodicTriggerSpell || spell.triggerSpell[i]))
+        // Dummy auras can drive a scripted encounter. A visual tick here has no spell to run.
+        if (aura != AuraType.periodicHeal && (aura != AuraType.periodicTriggerSpell || spell.triggerSpell[i]))
             return size_t.max;
         first = i;
     }
     return first;
+}
+
+unittest
+{
+    SpellInfo channel;
+    channel.attributesEx = 0x04;
+    channel.effect[0] = SpellEffect.applyAura;
+    channel.implicitTargetA[0] = ImplicitTarget.unitScriptNearCaster;
+    channel.casting.applyAuraName[0] = AuraType.dummy;
+    assert(namedCreatureChannelEffect(channel) == size_t.max);
+    channel.casting.applyAuraName[0] = AuraType.periodicTriggerSpell;
+    assert(namedCreatureChannelEffect(channel) == 0);
+    channel.triggerSpell[0] = 1;
+    assert(namedCreatureChannelEffect(channel) == size_t.max);
+    channel.casting.applyAuraName[0] = AuraType.periodicHeal;
+    assert(namedCreatureChannelEffect(channel) == 0);
 }
 
 package ImplicitTarget creatureAreaShape(const ref SpellInfo spell, size_t i)
