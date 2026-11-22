@@ -257,11 +257,20 @@ final class PetState
     }
 
     /// Learns a spell, and puts it on the bar unless passive.
-    void learn(uint spell, bool passive, bool autocastable)
+    void learn(uint spell, bool passive, bool autocastable, uint replaces = 0)
     {
         if (knows(spell))
             return;
-        const state = passive ? ActiveState.passive : autocastable ? ActiveState.enabled : ActiveState.passive;
+        ubyte state = passive ? ActiveState.passive : autocastable ? ActiveState.enabled : ActiveState.passive;
+        if (replaces)
+        {
+            foreach (known; spells)
+                if (known.spell == replaces)
+                    state = known.active;
+            if (!passive)
+                bar.addSpell(spell, state, replaces);
+            unlearn(replaces);
+        }
         spells ~= PetSpellRecord(spell, state);
         if (!passive)
             bar.addSpell(spell, state);

@@ -722,14 +722,63 @@ mixin template PetHandlers()
     {
         auto state = petState();
         const info = context.data.spells.spell(spell);
-        if (state is null || info is null || pet_ is null || !pet_.alive || state.knows(spell))
+        if (canTeachPet(spell) != SpellCastResult.ok || state.knows(spell))
             return;
         state.trainingPoints -= trainingCost(state, spell);
-        state.learn(spell, info.isPassive, isAutocastable(*info));
+        const first = firstRankOf(spell);
+        uint replaces;
+        foreach (known; state.spells.dup)
+            if (firstRankOf(known.spell) == first)
+            {
+                if (replaces)
+                    state.unlearn(replaces);
+                replaces = known.spell;
+            }
+        state.learn(spell, info.isPassive, isAutocastable(*info), replaces);
         pet_.values.set!UNIT_TRAINING_POINTS(shownTrainingPoints(state));
         map.flushObjectChanges(pet_);
         sendPetSpells();
         writePet(PetSlot.current);
+    }
+
+    /// A higher rank uses the same active ability slot. Passives use none.
+    private bool hasPetSkillSlot(const PetState state, uint spell)
+    {
+        const first = firstRankOf(spell);
+        bool[uint] active;
+        foreach (known; state.spells)
+        {
+            const info = context.data.spells.spell(known.spell);
+            if (info is null || info.isPassive)
+                continue;
+            const chain = firstRankOf(known.spell);
+            if (chain == first)
+                return true;
+            active[chain] = true;
+        }
+        return active.length < 4;
+    }
+
+    private bool familyCanLearn(uint familyId, uint spell)
+    {
+        import std.algorithm.searching : canFind;
+
+        const family = context.client.creatureFamilies.lookup(familyId);
+        if (family is null)
+            return true;
+        bool familySkill;
+        foreach (ability; context.client.abilitiesForSpell(spell))
+        {
+            if (ability.skillId && family.skillLines[].canFind(ability.skillId))
+                return true;
+            foreach (ref entry; context.client.creatureFamilies.rows)
+                if (ability.skillId && entry.skillLines[].canFind(ability.skillId))
+                {
+                    familySkill = true;
+                    break;
+                }
+        }
+        return !familySkill;
     }
 
     /// Whether the pet out can be taught `spell` now: there is a pet, it is of its level, it has the points.
@@ -741,6 +790,14 @@ mixin template PetHandlers()
             return SpellCastResult.noPet;
         if (info is null)
             return SpellCastResult.notKnown;
+        if (state.type == PetType.hunter && !familyCanLearn(pet_.template_.family, spell))
+            return SpellCastResult.badTargets;
+        const first = firstRankOf(spell);
+        foreach (known; state.spells)
+            if (firstRankOf(known.spell) == first && context.data.spells.rank(known.spell) > context.data.spells.rank(spell))
+                return SpellCastResult.lowCastLevel;
+        if (!info.isPassive && !hasPetSkillSlot(state, spell))
+            return SpellCastResult.tooManySkills;
         if (info.spellLevel > pet_.values.get!UNIT_FIELD_LEVEL)
             return SpellCastResult.lowLevel;
         const cost = trainingCost(state, spell);

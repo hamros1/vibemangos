@@ -497,6 +497,49 @@ unittest
     state.trainingPoints = -10;
     session.teachPet(97004);
     assert(pet.values.get!UNIT_TRAINING_POINTS == 10);
+
+    // Four distinct active abilities. Replacing a rank and learning a passive use no additional slot.
+    import dmangos.world.spells : SpellChainNode, spellAttrPassive;
+    state.spells = null;
+    state.bar = ActionBar.initial();
+    foreach (uint id; 97101 .. 97108)
+        context.data.spells.spells[id] = testSpell(id, 2, 6, 10);
+    foreach (uint id; 97101 .. 97105)
+        session.teachPet(id);
+    const balance = state.trainingPoints;
+    assert(session.canTeachPet(97105) == SpellCastResult.tooManySkills);
+    session.teachPet(97105);
+    assert(!state.knows(97105) && state.trainingPoints == balance);
+    context.data.spells.chains[97106] = SpellChainNode(97101, 97101, 2, 0);
+    session.teachPet(97106);
+    context.data.spells.spells.edit(97107).attributes |= spellAttrPassive;
+    session.teachPet(97107);
+    assert(state.knows(97106) && state.knows(97107) && !state.knows(97101));
+    assert(buttonAction(state.bar.buttons[barSpellStart]) == 97106);
+    assert(session.canTeachPet(97101) == SpellCastResult.lowCastLevel);
+
+    // Charge belongs to the boar skill line. Growl belongs to the shared pet skill line.
+    import dmangos.world.clientdata : creatureFamilyFormat, skillLineAbilityFormat;
+    import dmangos.dbc : buildDbc;
+    uint[] wolfFamily = new uint[creatureFamilyFormat.length], boarFamily = wolfFamily.dup;
+    wolfFamily[0] = 1; wolfFamily[5] = 208; wolfFamily[6] = 270;
+    boarFamily[0] = 5; boarFamily[5] = 211; boarFamily[6] = 270;
+    context.client.creatureFamilies = typeof(context.client.creatureFamilies).parse(
+        buildDbc(creatureFamilyFormat, [wolfFamily, boarFamily]), "CreatureFamily.dbc");
+    uint[] charge = new uint[skillLineAbilityFormat.length], growl = charge.dup;
+    charge[0] = 1; charge[1] = 211; charge[2] = 7371;
+    growl[0] = 2; growl[1] = 270; growl[2] = 2649;
+    context.client.skillLineAbilities = typeof(context.client.skillLineAbilities).parse(
+        buildDbc(skillLineAbilityFormat, [charge, growl]), "SkillLineAbility.dbc");
+    context.client.buildIndexes();
+    state.spells = null;
+    state.bar = ActionBar.initial();
+    foreach (uint id; [7371, 2649])
+        context.data.spells.spells[id] = testSpell(id, 2, 6, 10);
+    assert(session.canTeachPet(7371) == SpellCastResult.badTargets);
+    session.teachPet(7371);
+    assert(!state.knows(7371));
+    assert(session.canTeachPet(2649) == SpellCastResult.ok);
 }
 
 /// A hostile creature notices a pet that comes within its aggro radius, and attacks it.

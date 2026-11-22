@@ -90,6 +90,7 @@ enum SpellCastResult : ubyte
     targetFriendly = 0x6B,
     tooClose = 0x76,
     tooManyOfItem = 0x77,
+    tooManySkills = 0x89,
     unknown = 0x91,
     ok = 0xFF,
 }
