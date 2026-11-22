@@ -84,6 +84,10 @@ A separate archive lists a 153.197-second Classic Era kill. Its raid-wide events
 
 A 2006 warrior recording shows the addon announcing the encounter and displaying a Decimate warning together during the opening wipe, before the warrior dies from a fall. The visible log identifies fall damage. It does not show a legible Decimate damage line, and the footage does not establish when the rest of the raid first engaged. A combat-log capture could establish whether the warning coincides with a spell event. [Syndicate tank recording, 0:27–0:34](https://www.youtube.com/watch?v=DSD7xsm1eEE&t=27s)
 
+The same 2006 recording shows two Decimates during the later pull. At 3:47 the player’s group still has substantial health. At 3:48 the Decimate alert is on screen, the countdown has reset and the tank’s health has fallen sharply. At 5:38 the group still has substantial health. At 5:39 the alert returns, the bar resets again and multiple group members drop to slivers of health. The alerts are roughly 112 seconds apart in the recording. Frenzy messages also appear near both events. The camera and visible combat log cannot establish the number of preceding Frenzy casts, swings or zombie events. [First transition](https://www.youtube.com/watch?v=DSD7xsm1eEE&t=227s) · [Second transition](https://www.youtube.com/watch?v=DSD7xsm1eEE&t=338s)
+
+The remaining ranking-indexed fights with available encounter pages have reported durations at or below 93.917 seconds. The longest complete stream examined still ends at 104.603 seconds. That sample is biased toward fast kills and does not supply a comparable positive trace for the video observations. [Ranking fixtures and archive manifests](https://github.com/David-c0degeek/necropsy/tree/2b7e7f16a84fc40b1366b56f7d942f4a79f5fcf5/tests/golden/raids)
+
 With a raw, English-language Blizzard Classic combat log, run the following from the repository. For another game language, set `--encounter-name` to the encounter name in the file.
 
 ```sh
