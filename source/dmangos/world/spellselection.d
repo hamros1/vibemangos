@@ -770,7 +770,7 @@ unittest
 /// A named channel heals only while its caster is channeling it. It credits a quest at completion.
 unittest
 {
-    import core.time : seconds;
+    import core.time : msecs, seconds;
     import dmangos.bytes : ByteWriter;
     import dmangos.cluster.protocol : AreaDamage;
     import dmangos.dbc : buildDbc;
@@ -869,6 +869,21 @@ unittest
     target.updateAuras(to, 1000);
     assert(target.values.get!UNIT_FIELD_HEALTH == 60 && !target.auras.find(mend, player.guid));
     assert(player.questStatus[quest.id].mobCount[0] == 1, "only a confirmed channel completed naturally counts");
+
+    client.write(Opcode.CMSG_CAST_SPELL, castPacket.data);
+    assert(target.auras.find(mend, player.guid));
+    from.replicaRemoved(2, target.guid);
+    client.session.update(50.msecs);
+    assert(player.values.get!UNIT_CHANNEL_SPELL == mend, "a replica can be absent briefly during a region handoff");
+    const inRange = target.position;
+    target.movement.position.x += 200;
+    from.replicaCreated(2, cellKeyAt(target.position.x, target.position.y), target.guid, encodeState(target, 0));
+    client.session.update(50.msecs);
+    assert(!player.values.get!UNIT_CHANNEL_SPELL && !target.auras.find(mend, player.guid),
+        "the channel ends when the named creature runs out of range");
+    assert(player.questStatus[quest.id].mobCount[0] == 1, "leaving range awards no credit");
+    target.movement.position = inRange;
+    from.replicaCreated(2, cell, target.guid, encodeState(target, 0));
 
     assert(healer.ai.castSpell(source.data.spells.spell(mend), healer.guid, 0));
     assert(healer.values.get!UNIT_FIELD_CHANNEL_OBJECT == target.guid && target.auras.find(mend, healer.guid));

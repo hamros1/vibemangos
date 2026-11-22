@@ -185,6 +185,8 @@ mixin template CreatureCasting()
     private const(SpellInfo)* namedChannelSpell;
     private int namedChannelTimer;
     private ulong namedChannelSequence;
+    private ushort namedChannelPeer;
+    private int missingNamedChannelTarget;
 
     private bool beginNamedCreatureChannel(const(SpellInfo)* spell, UnitRef target)
     {
@@ -198,6 +200,8 @@ mixin template CreatureCasting()
             stopMoving(me, world_);
         namedChannelSpell = spell;
         namedChannelTimer = ms;
+        namedChannelPeer = target.replica is null ? 0 : target.replica.owner;
+        missingNamedChannelTarget = 0;
         me.values.set!UNIT_CHANNEL_SPELL(spell.id);
         me.values.set!UNIT_FIELD_CHANNEL_OBJECT(target.combatGuid);
         world_.flushCreature(me);
@@ -253,12 +257,21 @@ mixin template CreatureCasting()
 
     private void updateNamedCreatureChannel(int diff)
     {
+        import dmangos.world.map : Map;
         import dmangos.world.spellselection : namedCreatureRange;
 
         const spell = namedChannelSpell;
         if (spell is null)
             return;
         auto target = spellTarget(me.values.get!UNIT_FIELD_CHANNEL_OBJECT);
+        namedChannelTimer -= diff;
+        if (!target)
+        {
+            if ((missingNamedChannelTarget += diff) >= 1000 || namedChannelTimer <= 0)
+                finishNamedCreatureChannel(true);
+            return;
+        }
+        missingNamedChannelTarget = 0;
         if (!target.alive)
             return finishNamedCreatureChannel(true);
         const at = target.position, from = me.position;
@@ -266,8 +279,16 @@ mixin template CreatureCasting()
         if (!((at.x - from.x) ^^ 2 + (at.y - from.y) ^^ 2 + (at.z - from.z) ^^ 2 <= reach ^^ 2)
             || !world_.inLineOfSight(from, at) || (!me.spline.finalized && (spell.casting.channelInterruptFlags & 0x08)))
             finishNamedCreatureChannel(true);
-        else if ((namedChannelTimer -= diff) <= 0)
+        else if (namedChannelTimer <= 0)
             finishNamedCreatureChannel(false);
+        else
+        {
+            const ushort peer = target.replica is null ? 0 : target.replica.owner;
+            if (peer && peer != namedChannelPeer)
+                if (auto map = cast(Map) world_)
+                    map.holdCasterReplica(me.guid, peer, cast(uint) namedChannelTimer + 5000, true);
+            namedChannelPeer = peer;
+        }
     }
 
     /// Whether its script wants ticks out of combat (timers, or its spawn events still to run).

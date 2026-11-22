@@ -668,9 +668,12 @@ private:
             if (due.length)
                 flushPlayerChanges();
         }
+        const channelElapsed = cast(int) elapsed.total!"msecs";
+        if (channelSpell !is null && followingNamedCreature)
+            followNamedChannelTarget(channelElapsed);
         if (channelSpell !is null)
-            payChannelCost(cast(int) elapsed.total!"msecs");
-        if (channelSpell !is null && (channelTimer -= cast(int) elapsed.total!"msecs") <= 0)
+            payChannelCost(channelElapsed);
+        if (channelSpell !is null && (channelTimer -= channelElapsed) <= 0)
             endChannel(false);
         if (!generic.active)
             return;
@@ -801,6 +804,9 @@ private:
             endChannel(true);
         channelSpell = spell;
         channelCreditPeer = 0;
+        followingNamedCreature = context.namedCreatureChannel(spell) != size_t.max;
+        namedChannelPeer = 0;
+        missingNamedChannelTarget = 0;
         channelTarget = channelObject ? channelObject : target ? target : player.guid;
         channelObject = 0;
         channelTimer = ms;
@@ -850,7 +856,38 @@ private:
 
     private ushort channelCreditPeer;
     private ulong namedChannelSequence;
+    private bool followingNamedCreature;
+    private ushort namedChannelPeer;
+    private int missingNamedChannelTarget;
     private const(SpellInfo)* lastChannelSpell; // the channel that ended last (`channelledAt`)
+
+    private void followNamedChannelTarget(int diff)
+    {
+        import dmangos.world.spellselection : namedCreatureRange;
+
+        auto target = map.unit(channelTarget);
+        if (!target)
+            if (auto copy = remoteChannelTarget(channelSpell, channelTarget))
+                target = UnitRef.observed(copy, map);
+        if (!target)
+        {
+            // Region handoffs briefly remove a replica before replacing it with the new owner's.
+            if ((missingNamedChannelTarget += diff) >= 1000)
+                endChannel(true);
+            return;
+        }
+        missingNamedChannelTarget = 0;
+        const at = target.position, from = player.position;
+        const reach = namedCreatureRange(*channelSpell, context.client) + player.fighter.combatReach
+            + target.fighter.combatReach;
+        if (!target.alive || (at.x - from.x) ^^ 2 + (at.y - from.y) ^^ 2 + (at.z - from.z) ^^ 2 > reach * reach
+            || !map.inLineOfSight(from, at))
+            return endChannel(true);
+        const ushort peer = target.replica is null ? 0 : target.replica.owner;
+        if (peer && peer != namedChannelPeer)
+            map.holdCasterReplica(player.guid, peer, cast(uint) channelTimer + 5000, true);
+        namedChannelPeer = peer;
+    }
 
     /**
      * A channel's cost each second (`ManaPerSecond`: Health Funnel's health), the caster's; one that costs health
@@ -932,6 +969,7 @@ private:
             return;
         const spell = channelSpell;
         channelSpell = null;
+        followingNamedCreature = false;
         const creditPeer = channelCreditPeer;
         channelCreditPeer = 0;
         namedChannelSequence = 0;
@@ -2303,6 +2341,7 @@ private:
             if (recipient.replica !is null && channelSpell is spell)
             {
                 const at = player.position;
+                namedChannelPeer = recipient.replica.owner;
                 namedChannelSequence = context.nextGameplaySequence();
                 auto hit = AreaDamage(sequence: namedChannelSequence, caster: player.guid,
                     target: recipient.combatGuid, spell: spell.id,

@@ -796,8 +796,10 @@ services line (`ServiceHost.describe`). Every log line of the cluster code start
 Players and creatures can channel a periodic heal or a timed visual aura on a nearby creature
 named by the spell, including one on another node. The caster's node tracks the duration and
 sends interruptions to the creature's node. The target checks the caster's active channel
-before healing. Only a confirmed, completed channel can grant quest credit. A creature's
-channel ends when its region moves to another node.
+before healing. If the target's region changes owners, the caster supplies its current
+state to the new node. Moving the target out of range or line of sight ends the channel.
+Only a confirmed, completed channel can grant quest credit. A creature's channel ends
+when its own region moves to another node.
 
 Cross-node spell routing is effect-specific. Other script-selected channels, registered spell scripts, and
 database spell steps that need the caster or another actor still use their local paths. Ground ticks
