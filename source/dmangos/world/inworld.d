@@ -601,6 +601,7 @@ private:
         {
             checkZone();
             worldPvpCheck(); // the towers' capture bar, the zones' buffs, the Silithyst (`dmangos.world.worldpvp`)
+            updateRemoteLootOffers();
             if (const target = migrationTarget())
                 return migrateTo(target); // the player is simulated there from now on
         }

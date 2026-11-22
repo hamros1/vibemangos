@@ -484,6 +484,53 @@ private:
                 remoteLootOffers[RemoteLootKey(offer.message.loot, offer.message.slot)] = offer;
     }
 
+    /// The owner of the visible copy may change while a roll prompt is still open.
+    private ushort remoteLootOwner(ulong target)
+    {
+        import dmangos.world.replication : Replica;
+
+        if (auto replica = cast(Replica) map.findObject(target))
+            if (replica.owner != context.nodeId && (replica.fields.type == TypeId.unit
+                || replica.fields.type == TypeId.gameObject))
+                return replica.owner;
+        return 0;
+    }
+
+    private bool sendRemoteLootVote(ref RemoteLootOffer offer, ushort node)
+    {
+        auto message = offer.message;
+        message.action = GroupLootRoll.Action.vote;
+        const previous = offer.node;
+        offer.node = node;
+        if (context.sendRemoteGroupLoot !is null && context.sendRemoteGroupLoot(node, message))
+            return true;
+        offer.node = previous;
+        return false;
+    }
+
+    /// Replay a recorded vote to a new loot owner. The original roll token makes replays harmless.
+    void updateRemoteLootOffers()
+    {
+        if (!remoteLootOffers.length)
+            return;
+        const now = context.unixTime;
+        RemoteLootKey[] expired;
+        foreach (key, ref offer; remoteLootOffers)
+        {
+            if (offer.expires < now || offer.message.map != map.id)
+            {
+                expired ~= key;
+                continue;
+            }
+            if (offer.voted && !offer.awardHandled)
+                if (const owner = remoteLootOwner(key.target))
+                    if (owner != offer.node)
+                        sendRemoteLootVote(offer, owner);
+        }
+        foreach (key; expired)
+            remoteLootOffers.remove(key);
+    }
+
     void voteOnRemoteLoot(ref RemoteLootOffer offer, RollVote vote)
     {
         if (offer.voted || offer.expires < context.unixTime)
@@ -492,12 +539,10 @@ private:
             vote = RollVote.notValid;
         else if (offer.message.needBeforeGreed && vote != RollVote.pass && !canUseItem(offer.message.item))
             vote = RollVote.pass;
-        auto message = offer.message;
-        message.action = GroupLootRoll.Action.vote;
-        message.choice = vote;
         offer.message.choice = vote;
         offer.voted = true; // an award can come back synchronously in memory
-        if (!context.sendRemoteGroupLoot(offer.node, message))
+        const owner = remoteLootOwner(offer.message.loot);
+        if (!sendRemoteLootVote(offer, owner ? owner : offer.node))
             offer.voted = false;
     }
 
@@ -508,7 +553,7 @@ private:
                 remoteLootOffers.remove(key);
         const key = RemoteLootKey(message.loot, message.slot);
         if (auto previous = key in remoteLootOffers)
-            if (previous.node == node && previous.message.roll >= message.roll)
+            if (previous.message.roll == message.roll || (previous.node == node && previous.message.roll > message.roll))
                 return;
         remoteLootOffers[key] = RemoteLootOffer(message, node, context.unixTime + lootRollSeconds + 30);
         if ((message.condition && !conditionMet(message.condition))
@@ -522,7 +567,8 @@ private:
     package void awardRemoteLoot(ushort node, const ref GroupLootRoll message)
     {
         auto offer = RemoteLootKey(message.loot, message.slot) in remoteLootOffers;
-        if (offer is null || offer.node != node || offer.message.roll != message.roll || !offer.voted
+        if (offer is null || (offer.node != node && remoteLootOwner(message.loot) != node)
+            || offer.message.roll != message.roll || !offer.voted
             || (offer.message.choice != RollVote.need && offer.message.choice != RollVote.greed)
             || offer.awardHandled || offer.expires < context.unixTime
             || offer.message.item != message.item || offer.message.count != message.count
@@ -1491,6 +1537,108 @@ unittest
                 assert(db.itemOwners[guid] == (remoteWins ? 8 : 7));
             }
         assert(saved == 1, "exactly one item is saved, for the winner");
+    }
+}
+
+// The corpse can move before a remote vote, or while the original vote is on its way to the old owner.
+unittest
+{
+    import dmangos.cluster.protocol : GroupLootRoll;
+    import dmangos.cluster.regions : CellRect, Region, RegionState;
+    import dmangos.world.character : Character;
+    import dmangos.world.characterdb : GroupRecord, GroupMemberRecord;
+    import dmangos.world.grid : cellCoordinate, cellKeyAt;
+    import dmangos.world.group : LootMethod;
+    import dmangos.world.loot : RollVote;
+    import dmangos.world.replication : encodePlayerState, encodeState;
+
+    foreach (inFlight; [false, true])
+    {
+        auto db = newDatabase();
+        GroupRecord party = {id: 1, leader: 7, leaderName: "Anduin", lootMethod: LootMethod.groupLoot,
+            lootThreshold: 2, members: [GroupMemberRecord(7, "Anduin"), GroupMemberRecord(8, "Jaina")]};
+        db.groups[party.id] = party;
+        auto first = newCreationContext(db), member = newCreationContext(db), successor = newCreationContext(db);
+        first.nodeId = 1;
+        member.nodeId = 2;
+        successor.nodeId = 3;
+        member.ownsCell = (uint, ulong) => false;
+        auto now = MonoTime.currTime;
+        first.clock = member.clock = successor.clock = () => now;
+        const point = Position(-8949.95f, -132.49f, 83.53f, 1.97f);
+        auto anduin = loggedIn(first, db, 7, "Anduin", point);
+        auto jaina = loggedIn(member, db, 8, "Jaina", point);
+        const playerCell = cellKeyAt(point.x, point.y);
+        first.map(0).replicaCreated(member.nodeId, playerCell, 8, encodePlayerState(jaina.session.character, 0));
+        first.data.items.edit(itemJerky).details.quality = 2;
+        auto victim = lootableInnkeeper(first);
+        GroupLootRoll pending, awarded;
+        first.sendRemoteGroupLoot = (ushort peer, const ref GroupLootRoll message) {
+            assert(peer == member.nodeId && message.action == GroupLootRoll.Action.offer);
+            member.groupLootRollArrived(first.nodeId, message);
+            return true;
+        };
+        successor.sendRemoteGroupLoot = (ushort peer, const ref GroupLootRoll message) {
+            assert(peer == member.nodeId && message.action == GroupLootRoll.Action.award);
+            awarded = message;
+            member.groupLootRollArrived(successor.nodeId, message);
+            return true;
+        };
+        member.sendRemoteGroupLoot = (ushort peer, const ref GroupLootRoll message) {
+            if (peer == first.nodeId)
+            {
+                assert(inFlight && message.action == GroupLootRoll.Action.vote);
+                pending = message;
+            }
+            else
+            {
+                assert(peer == successor.nodeId);
+                successor.groupLootRollArrived(member.nodeId, message);
+            }
+            return true;
+        };
+        first.deliverRemote = successor.deliverRemote = (ushort peer, ulong guid, ushort opcode, const(ubyte)[] body_) {
+            if (auto session = cast(Character) member.onlinePlayer(guid))
+                session.deliver(cast(Opcode) opcode, body_);
+        };
+        killIt(anduin, victim, now);
+        anduin.write(Opcode.CMSG_LOOT, ClientGuid(victim.guid));
+        assert(opcodesOf(jaina.read()).canFind(Opcode.SMSG_LOOT_START_ROLL));
+        anduin.write(Opcode.CMSG_LOOT_ROLL, ClientLootRoll(victim.guid, 0, RollVote.greed));
+        if (inFlight)
+        {
+            jaina.write(Opcode.CMSG_LOOT_ROLL, ClientLootRoll(victim.guid, 0, RollVote.need));
+            assert(pending.roll && !awarded.roll);
+        }
+
+        const x = cellCoordinate(victim.spawn.x), y = cellCoordinate(victim.spawn.y);
+        Region region = Region(1, 0, CellRect(x, y, x + 1, y + 1), 1, 1, RegionState.revoking, 3);
+        ubyte[][uint] leaving, unused;
+        first.regionsChanged(null, [region], null, leaving);
+        if (inFlight)
+            first.groupLootRollArrived(member.nodeId, pending);
+        region.owner = successor.nodeId;
+        region.state = RegionState.granted;
+        region.next = 0;
+        successor.regionsChanged([region], null, [region.id: cast(const(ubyte)[]) leaving[region.id]], unused);
+        auto copy = successor.map(0).creatureAt(victim.guid);
+        assert(copy !is null && copy.loot !is null && copy.loot.rolls.length == 1);
+        auto loot = copy.loot;
+        member.map(0).replicaCreated(successor.nodeId, cellKeyAt(copy.position.x, copy.position.y), copy.guid,
+            encodeState(copy, 0));
+        jaina.read();
+        if (inFlight)
+        {
+            now += 2.seconds;
+            jaina.session.update(2000.msecs);
+        }
+        else
+            jaina.write(Opcode.CMSG_LOOT_ROLL, ClientLootRoll(copy.guid, 0, RollVote.need));
+        const packets = opcodesOf(jaina.read());
+        assert(packets.canFind(Opcode.SMSG_LOOT_ROLL_WON) && !packets.canFind(Opcode.SMSG_LOOT_START_ROLL));
+        assert(awarded.roll && awarded.player == 8 && loot.itemInSlot(0).allowed.length == 0);
+        member.groupLootRollArrived(successor.nodeId, awarded);
+        assert(jaina.session.character.inventory.count(itemJerky) == 1 && anduin.session.character.inventory.count(itemJerky) == 0);
     }
 }
 
