@@ -140,7 +140,7 @@ after; 113 to 114 KB allocated a tick both. The crowd casts few spells: the abst
 `Caster` values made per effect and per hit, with no allocation of their own.
 
 Players and creatures can play a custom animation on the nearest game object named in
-`spell_script_target`. The selector honors the row's effect mask. This covers animation
+`spell_script_target`, including an object on another node. The selector honors the row's effect mask. This covers animation
 slots 0–3 for single-effect spells. Other activate-object actions remain open.
 
 Remaining creature effects include teleports facing the caster, leaps, taxis, inebriation,

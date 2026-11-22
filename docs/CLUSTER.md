@@ -471,6 +471,10 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   For a targeted channel, the caster stays on its node and the target's node verifies the
   active channel before each tick. Cancellation and pushback update the remote aura.
   The victim's node runs periodic reactions and returns caster benefits such as Vampiric Embrace.
+* **Spell-selected game-object animations.** A player or creature can play a custom animation
+  on the nearest eligible game object named for the spell, including objects on another node.
+  The object's node checks ownership, caster identity, entry, effect exclusions and range.
+  Duplicate requests play the animation once, and a confirmed player cast can grant quest credit.
 * **Persistent ground effects.** The caster's node owns the spot and its tick timer. It sends
   each tick to the observed targets' nodes, which check the targets' current positions and
   resolve damage once. If an in-flight tick reaches a previous owner that knows where the

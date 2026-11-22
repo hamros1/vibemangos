@@ -75,6 +75,7 @@ interface ReplicationHandler
     void questLootCheck(ushort peer, const ref QuestLootCheck message);
     void partyHeal(ushort peer, const ref PartyHeal message);
     void areaDamage(ushort peer, const ref AreaDamage message);
+    void gameObjectSpell(ushort peer, const ref GameObjectSpell message);
     void creatureSwing(ushort peer, const ref CreatureSwing message);
     void periodicResult(ushort peer, const ref PeriodicResult message);
 
@@ -1096,6 +1097,15 @@ final class ClusterNode : LinkOwner
             {
                 const m = decode!CreatureSwing(payload);
                 replication.creatureSwing(peer, m);
+            }
+            return;
+        }
+        if (type == MessageType.gameObjectSpell)
+        {
+            if (replication !is null)
+            {
+                const m = decode!GameObjectSpell(payload);
+                replication.gameObjectSpell(peer, m);
             }
             return;
         }

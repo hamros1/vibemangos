@@ -72,7 +72,7 @@ import dmangos.vmap.maptree : ModelCache;
 import dmangos.world.terrain : Terrain;
 import dmangos.world.group : GroupDirectory, Groups, memberStatus, MemberStatus;
 import dmangos.world.groupservice : groupCommand, GroupOp, GroupService;
-import dmangos.cluster.protocol : AreaDamage, CreatureLoan, CreatureSwing, GmRemote, GroupCommand, GroupLootRoll,
+import dmangos.cluster.protocol : AreaDamage, CreatureLoan, CreatureSwing, GameObjectSpell, GmRemote, GroupCommand, GroupLootRoll,
     KillShare, LootCoinShare, PartyHeal, PeriodicResult, QuestLootCheck, ScriptSignal, SwingRetaliation;
 import dmangos.world.loot : Loot, maxLootItems;
 import dmangos.world.map : Inhabitant, Map, MapObject, MapSettings, VisibilityFacts;
@@ -685,27 +685,95 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return namedGameObjectEffect(*spell);
     }
 
+    bool delegate(ushort, const ref GameObjectSpell) sendGameObjectSpell;
+    private ulong[ushort] lastGameObjectSpell, lastGameObjectSpellReply;
+
     package ulong namedGameObjectTarget(Map map_, const(SpellInfo)* spell, size_t effect, Position origin)
     {
         import dmangos.world.spellselection : namedCreatureRange, nearestNamedGameObject;
 
         const range = namedCreatureRange(*spell, client);
         const entries = data.spellScriptObjects.get(spell.id, null);
-        auto object = nearestNamedGameObject(map_, origin, range, effect, entries, false);
+        auto object = nearestNamedGameObject(map_, origin, range, effect, entries, sendGameObjectSpell !is null);
         return object is null ? 0 : object.guid;
     }
 
-    package void activateNamedGameObject(Map map_, const(SpellInfo)* spell, size_t effect, ulong guid)
+    package void activateNamedGameObject(UnitRef caster, const(SpellInfo)* spell, size_t effect, ulong guid, bool triggered)
+    {
+        import dmangos.world.replication : Replica;
+
+        if (!canWrite() || effect != namedGameObjectRouting(spell))
+            return;
+        auto map_ = caster.map;
+        if (auto copy = cast(Replica) map_.findObject(guid))
+        {
+            if (sendGameObjectSpell is null || copy.owner == nodeId)
+                return;
+            const at = caster.position;
+            const message = GameObjectSpell(nextGameplaySequence(), caster.combatGuid, guid,
+                spell.id, map_.id, map_.instanceId, cast(ubyte) effect, at.x, at.y, at.z, triggered);
+            sendGameObjectSpell(copy.owner, message);
+        }
+        else if (auto object = map_.gameObjectAt(guid))
+            playNamedGameObject(map_, spell, effect, object);
+    }
+
+    private bool playNamedGameObject(Map map_, const(SpellInfo)* spell, size_t effect, GameObject object)
     {
         import dmangos.world.gameobject : gameObjectAnimation;
         import dmangos.world.spellselection : namedGameObjectEntry;
 
-        if (effect != namedGameObjectRouting(spell))
+        if (!namedGameObjectEntry(data.spellScriptObjects.get(spell.id, null), effect, object.spawn.entry))
+            return false;
+        map_.sendToObservers(object.guid, Opcode.SMSG_GAMEOBJECT_CUSTOM_ANIM,
+            gameObjectAnimation(object.guid, cast(uint)(spell.miscValue[effect] - 1)));
+        return true;
+    }
+
+    void gameObjectSpellArrived(ushort peer, const ref GameObjectSpell message)
+    {
+        import dmangos.world.replication : Replica;
+        import dmangos.world.spellselection : namedCreatureRange;
+        import dmangos.world.updatefields : TypeId;
+
+        if (!peer || !message.sequence || !canWrite())
             return;
-        auto object = map_.gameObjectAt(guid);
-        if (object !is null && namedGameObjectEntry(data.spellScriptObjects.get(spell.id, null), effect, object.spawn.entry))
-            map_.sendToObservers(guid, Opcode.SMSG_GAMEOBJECT_CUSTOM_ANIM, gameObjectAnimation(guid,
-                cast(uint)(spell.miscValue[effect] - 1)));
+        auto map_ = existingMap(message.map, message.instance);
+        const spell = data.spells.spell(message.spell);
+        if (map_ is null || map_.id != message.map || spell is null || message.effect != namedGameObjectRouting(spell))
+            return;
+        if (message.reply)
+        {
+            if (message.sequence <= lastGameObjectSpellReply.get(peer, 0))
+                return;
+            lastGameObjectSpellReply[peer] = message.sequence;
+            if (auto caster = map_.unit(message.caster))
+                if (caster.kind == UnitKind.player && !caster.session.transferring)
+                    caster.session.rewardPlayerAndGroupAtCast(message.target, message.spell, peer);
+            return;
+        }
+        if (message.sequence <= lastGameObjectSpell.get(peer, 0))
+            return;
+        lastGameObjectSpell[peer] = message.sequence;
+        auto copy = cast(Replica) map_.findObject(message.caster);
+        if (copy is null || copy.owner != peer || (copy.fields.type != TypeId.player && copy.fields.type != TypeId.unit))
+            return;
+        if (!UnitRef.observed(copy, map_).alive && !(message.triggered && copy.fields.type == TypeId.unit))
+            return;
+        auto object = map_.gameObjectAt(message.target);
+        if (object is null || !client.isValidMapCoord(map_.id, message.x, message.y, message.z))
+            return;
+        const at = object.position;
+        const maxDistance = namedCreatureRange(*spell, client);
+        if (!((at.x - message.x) ^^ 2 + (at.y - message.y) ^^ 2 + (at.z - message.z) ^^ 2 <= maxDistance ^^ 2))
+            return;
+        if (playNamedGameObject(map_, spell, message.effect, object)
+            && copy.fields.type == TypeId.player && sendGameObjectSpell !is null)
+        {
+            auto reply = cast(GameObjectSpell) message;
+            reply.reply = true;
+            sendGameObjectSpell(peer, reply);
+        }
     }
 
     private struct ReplicaSpellImpact

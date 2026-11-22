@@ -207,12 +207,18 @@ private void visitNamedCreatures(CombatWorld world, Position center, float reach
 unittest
 {
     import dmangos.bytes : ByteReader, ByteWriter;
+    import dmangos.cluster.protocol : GameObjectSpell, decode;
+    import dmangos.serialization : serialize;
     import dmangos.world.creature : CreatureSpawn;
     import dmangos.world.gameobject : GameObject, GameObjectSpawn, GameObjectTemplate, GameObjectType;
     import dmangos.world.eventai : castTriggered;
+    import dmangos.world.grid : cellKeyAt;
     import dmangos.world.player : Player;
+    import dmangos.world.quests : Quest, QuestState, QuestStatus, specialKillOrCast;
+    import dmangos.world.replication : encodePlayerState, encodeState;
     import dmangos.world.spellhandlers : testSpell;
     import dmangos.world.testclient;
+    import dmangos.world.updatefields : PLAYER_QUEST_LOG_1_1;
 
     auto db = newDatabase();
     auto context = newCreationContext(db);
@@ -263,6 +269,79 @@ unittest
     assert(npc.ai.spellCaster(map));
     assert(npc.ai.castSpell(context.data.spells.spell(animation), npc.guid, castTriggered));
     checkAnimation();
+
+    auto owner = newCreationContext(db);
+    context.nodeId = 1;
+    owner.nodeId = 2;
+    owner.data.spells.spells[animation] = spell;
+    owner.data.spellScriptObjects[animation] = context.data.spellScriptObjects[animation];
+    owner.data.gameObjectTemplates[eligible] = context.data.gameObjectTemplates[eligible];
+    const remoteSpawn = GameObjectSpawn(guid: 10, entry: eligible, x: 101, y: origin.y, z: origin.z);
+    auto remote = owner.makeGameObject(remoteSpawn);
+    auto to = owner.map(0);
+    to.addObject(remote);
+    const cell = cellKeyAt(origin.x, origin.y);
+    map.replicaCreated(2, cell, remote.guid, encodeState(remote, 0));
+    to.replicaCreated(1, cell, player.guid, encodePlayerState(player, 0));
+    to.replicaCreated(1, cell, npc.guid, encodeState(npc, 0));
+    auto witness = loggedIn(owner, db, 8, "Jaina", Position(100, 101, 40));
+    GameObjectSpell[] requests, replies;
+    context.sendGameObjectSpell = (ushort peer, const ref GameObjectSpell message) {
+        assert(peer == 2 && !message.reply);
+        ByteWriter wire;
+        serialize(wire, message);
+        requests ~= decode!GameObjectSpell(wire.data);
+        return true;
+    };
+    owner.sendGameObjectSpell = (ushort peer, const ref GameObjectSpell message) {
+        assert(peer == 1 && message.reply);
+        replies ~= cast(GameObjectSpell) message;
+        return true;
+    };
+    Quest quest;
+    quest.id = 55701;
+    quest.specialFlags = specialKillOrCast;
+    quest.reqCreatureOrGoId[0] = -cast(int) eligible;
+    quest.reqCreatureOrGoCount[0] = 2;
+    quest.reqSpellCast[0] = animation;
+    context.data.quests.quests[quest.id] = quest;
+    player.values.set!PLAYER_QUEST_LOG_1_1(quest.id);
+    player.questStatus[quest.id] = QuestStatus(quest.id, QuestState.incomplete);
+    client.write(Opcode.CMSG_CAST_SPELL, packet.data);
+    assert(requests.length == 1 && requests[0].target == remote.guid && requests[0].caster == player.guid);
+    assert(player.questStatus[quest.id].mobCount[0] == 0);
+    owner.gameObjectSpellArrived(3, requests[0]);
+    assert(witness.read().length == 0);
+    owner.gameObjectSpellArrived(1, requests[0]);
+    owner.gameObjectSpellArrived(1, requests[0]);
+    void checkRemoteAnimation()
+    {
+        uint played;
+        foreach (message; witness.read())
+            if (message.opcode == Opcode.SMSG_GAMEOBJECT_CUSTOM_ANIM)
+            {
+                auto reader = ByteReader(message.body_);
+                assert(reader.read!ulong == remote.guid && reader.read!uint == 2 && reader.empty);
+                ++played;
+            }
+        assert(played == 1);
+    }
+    checkRemoteAnimation();
+    assert(replies.length == 1);
+    context.gameObjectSpellArrived(2, replies[0]);
+    context.gameObjectSpellArrived(2, replies[0]);
+    assert(player.questStatus[quest.id].mobCount[0] == 1, "confirmed remote animation credits the objective once");
+
+    auto tooFar = requests[0];
+    tooFar.sequence = context.nextGameplaySequence();
+    tooFar.x += 10;
+    owner.gameObjectSpellArrived(1, tooFar);
+    assert(witness.read().length == 0 && replies.length == 1, "the owner checks current range");
+    assert(npc.ai.castSpell(context.data.spells.spell(animation), npc.guid, castTriggered));
+    assert(requests.length == 2 && requests[1].triggered && requests[1].caster == npc.guid);
+    owner.gameObjectSpellArrived(1, requests[1]);
+    checkRemoteAnimation();
+    assert(replies.length == 1, "only a player's cast needs credit returned");
 }
 
 /// A player and an NPC choose a nearby named replica, with the effects applied only by its owner.

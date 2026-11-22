@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 67; // 67: the player's handoff carries pending named-creature impacts
+enum ushort protocolVersion = 68; // 68: spells request named game-object animations on their owner
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -96,6 +96,20 @@ enum MessageType : ushort
     sessionRoute = 57,
     quorumVote = 58,
     quorumWorkerLease = 59,
+    gameObjectSpell = 60,
+}
+
+/// Request the owning node's animation of a game object named by a spell.
+struct GameObjectSpell
+{
+    enum type = MessageType.gameObjectSpell;
+
+    ulong sequence;
+    ulong caster, target;
+    uint spell, map, instance;
+    ubyte effect;
+    float x, y, z;
+    bool triggered, reply;
 }
 
 /// A candidate's lease round, or a voter's reply with its latest durable term.
@@ -1232,7 +1246,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 67, recordedFingerprint = 0x121d38051582529cUL;
+private enum recordedVersion = 68, recordedFingerprint = 0x0f5b4a182b7f26f1UL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

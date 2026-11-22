@@ -189,7 +189,7 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
     }
     case SpellEffect.activateObject:
         if (context !is null && map !is null)
-            context.activateNamedGameObject(map, spell, i, target);
+            context.activateNamedGameObject(caster.unit, spell, i, target, c.triggered);
         break;
     case SpellEffect.dummy, SpellEffect.scriptEffect: // SPELL_EFFECT_DUMMY, SPELL_EFFECT_SCRIPT_EFFECT: the spell's script, then its database script
     {

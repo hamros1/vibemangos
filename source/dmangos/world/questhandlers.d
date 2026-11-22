@@ -1320,9 +1320,15 @@ private:
         if (remoteOwner)
         {
             auto copy = cast(Replica) object;
-            if (copy is null || copy.owner != remoteOwner || copy.fields.type != TypeId.unit || copy.meleeController)
+            if (copy is null || copy.owner != remoteOwner || copy.meleeController)
                 return;
-            target = cast(int) copy.fields.get!OBJECT_FIELD_ENTRY;
+            const entry = cast(int) copy.fields.get!OBJECT_FIELD_ENTRY;
+            if (copy.fields.type == TypeId.unit)
+                target = entry;
+            else if (copy.fields.type == TypeId.gameObject)
+                target = -entry;
+            else
+                return;
             at = copy.position;
         }
         else if (auto creature = cast(Creature) object)
