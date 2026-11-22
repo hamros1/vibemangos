@@ -75,14 +75,14 @@ unittest
 
     // He moves to another node: made anew from his spawn there, his state (phase two) read into it.
     ByteWriter w;
-    smite.saveState(w);
+    smite.saveState(w, 0);
     auto elsewhere = newCreationContext(db);
     elsewhere.data.creatureTemplates[mrSmite] = smiteTemplate;
     elsewhere.data.creatureScriptNames[mrSmite] = "boss_mr_smite";
     elsewhere.data.items[MrSmite.hammer] = elsewhere.data.items[itemStaff];
     auto moved = elsewhere.makeCreature(&spawn);
     auto r = ByteReader(w.data);
-    moved.loadState(r);
+    moved.loadState(r, 0);
     auto there = elsewhere.map(mapEasternKingdoms);
     there.addObject(moved);
     // Past one third there: his last change, the hammer (from phase two, so not the axes again).

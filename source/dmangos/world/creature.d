@@ -1218,6 +1218,11 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             decay = respawnDelay * 9 / 10;
         corpseTimer = decay * 1000;
         respawnAt = now + respawnDelay;
+        if (loot !is null)
+        {
+            loot.sendReleaseForAll(); // close a pickpocketing window before generating body loot
+            loot = null;
+        }
         foreach (aura; auras.list.dup) // every aura goes on death
             auras.remove(aura, values);
         values.set!UNIT_NPC_FLAGS(0u);
@@ -1339,7 +1344,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
      * with (docs/CLUSTER.md): every field, its movement and walk, its movement generator's
      * state and its vendor stock.
      */
-    void saveState(ref ByteWriter w) const
+    void saveState(ref ByteWriter w, uint now) const
     {
         w.put(cast(ushort) values.length);
         foreach (slot; 0 .. values.length)
@@ -1369,14 +1374,25 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         auras.saveState(w);
         w.put(auraSpeedFactor);
         w.put(auraHeld);
+        w.put(corpseTimer);
+        w.put(now);
+        w.put(respawnAt);
+        w.put(skinned);
+        w.put(pocketsEmptied);
+        w.put(pocketsRestockAt);
+        w.put(loot !is null);
+        if (loot !is null)
+            loot.saveHandoff(w);
     }
 
     /**
      * Reads what `saveState` wrote into a creature made anew from the same spawn (whose generator was
      * chosen as for any spawn): it is then the creature its last owner had, where it had it.
      */
-    void loadState(ref ByteReader r, const(SpellInfo)* delegate(uint) spell = null)
+    void loadState(ref ByteReader r, uint now, const(SpellInfo)* delegate(uint) spell = null)
     {
+        import std.algorithm.comparison : max;
+
         const count = r.read!ushort;
         foreach (slot; 0 .. count)
         {
@@ -1416,9 +1432,17 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         auras.loadState(r, values, spell);
         auraSpeedFactor = r.read!float;
         auraHeld = r.read!bool;
+        corpseTimer = r.read!int;
+        const transit = cast(int)(now - r.read!uint);
+        if (corpseTimer > 0 && transit > 0)
+            corpseTimer = max(1, corpseTimer - transit);
+        respawnAt = r.read!long;
+        skinned = r.read!bool;
+        pocketsEmptied = r.read!bool;
+        pocketsRestockAt = r.read!long;
+        if (r.read!bool)
+            loot = Loot.loadHandoff(guid, r);
         values.clearChanges();
-        // A corpse handed over: its time is not carried; it goes at the next tick, and respawns from then.
-        corpseTimer = 0;
     }
 
 private:

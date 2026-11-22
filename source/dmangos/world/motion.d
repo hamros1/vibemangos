@@ -1183,11 +1183,11 @@ unittest
     original.values.clearChanges();
 
     ByteWriter w;
-    original.saveState(w);
+    original.saveState(w, 0);
     auto copy = testCreature(spawn);
     copy.generator = selectMovement(copy, store);
     auto r = ByteReader(w.data);
-    copy.loadState(r);
+    copy.loadState(r, 0);
     assert(r.empty);
     assert(copy.position == original.position && copy.values[UNIT_FIELD_HEALTH] == 17);
     assert(copy.spline.path == original.spline.path && copy.spline.timePassed == original.spline.timePassed);

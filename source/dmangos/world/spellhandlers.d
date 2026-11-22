@@ -1745,14 +1745,14 @@ private:
     package void skinCreature(ulong target)
     {
         import dmangos.world.loot : ClientLootType, Loot, LootRule;
+        import dmangos.world.loothandlers : bindCreatureLoot;
         import dmangos.world.professions : skinningSkillFor;
 
         auto creature = cast(Creature) map.findObject(target);
         if (creature is null || !creature.skinnable)
             return;
         const t = creature.template_;
-        auto loot = new Loot(creature.guid, (ulong guid) => guid == player.guid ? cast(Looter) this : null);
-        loot.clock = () => context.unixTime;
+        auto loot = new Loot(creature.guid, null);
         loot.clientType = ClientLootType.pickpocketing; // the window a skin's loot opens in
         loot.owners[player.guid] = true;
         loot.currentLooter = player.guid;
@@ -1769,13 +1769,7 @@ private:
         creature.values.set!UNIT_FIELD_FLAGS(creature.values.get!UNIT_FIELD_FLAGS & ~Creature.unitFlagSkinnable);
         creature.skinned = true;
         creature.loot = loot;
-        auto theMap = map;
-        loot.changed = () => theMap.refreshViewers(creature);
-        loot.lootedForAll = () {
-            creature.loot = null;
-            creature.corpseTimer = 1; // nothing more to take from it: it goes
-            theMap.refreshViewers(creature);
-        };
+        bindCreatureLoot(context, map, creature, loot);
         map.flushObjectChanges(creature);
         if (lootTarget && lootTarget != creature.guid)
             if (auto other = lootOf(lootTarget))
@@ -1792,6 +1786,7 @@ private:
     {
         import std.random : uniform;
         import dmangos.world.loot : ClientLootType, Loot, LootRule;
+        import dmangos.world.loothandlers : bindCreatureLoot;
 
         auto creature = cast(Creature) map.findObject(target);
         if (creature is null || !creature.alive || !creature.template_.pickpocketLootId)
@@ -1812,8 +1807,7 @@ private:
         }
         if (creature.loot is null)
         {
-            auto loot = new Loot(creature.guid, (ulong guid) => guid == player.guid ? cast(Looter) this : null);
-            loot.clock = () => context.unixTime;
+            auto loot = new Loot(creature.guid, null);
             loot.clientType = ClientLootType.pickpocketing;
             loot.owners[player.guid] = true;
             loot.currentLooter = player.guid;
@@ -1826,11 +1820,7 @@ private:
             const b = uniform!"[]"(0, player.data.level / 2, map.random);
             loot.gold = 10 * (a + b);
             creature.loot = loot;
-            auto pocketed = creature;
-            loot.lootedForAll = () {
-                pocketed.pocketsEmptied = true;
-                pocketed.pocketsRestockAt = context.unixTime + context.config.creaturePickpocketRestockDelay;
-            };
+            bindCreatureLoot(context, map, creature, loot);
         }
         if (lootTarget && lootTarget != creature.guid)
             if (auto other = lootOf(lootTarget))

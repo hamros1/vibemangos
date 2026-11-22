@@ -11,6 +11,7 @@ module dmangos.world.loothandlers;
 
 import dmangos.world.money : Copper;
 import dmangos.world.context : WorldContext;
+import dmangos.world.creature : Creature;
 import dmangos.world.loot : Loot, LootRule;
 import dmangos.world.map : Map;
 import dmangos.world.opcodes : Opcode;
@@ -48,6 +49,49 @@ package void bindLootDelivery(WorldContext context, Map map, Loot loot, bool rol
             return context.sendRemoteLootCoins(node, message);
         };
     }
+}
+
+/// Rebind a creature's loot to its local viewers and preserve the type's completion behavior.
+package void bindCreatureLoot(WorldContext context, Map map, Creature creature, Loot loot)
+{
+    import dmangos.world.character : Character;
+    import dmangos.world.loot : ClientLootType, Looter;
+
+    const exclusive = loot.clientType == ClientLootType.pickpocketing;
+    const skin = exclusive && creature.skinned, pocket = exclusive && !skin;
+    loot.find = (ulong guid) {
+        auto session = cast(Character) context.onlinePlayer(guid);
+        if (session is null || session.currentMap !is map || ((pocket || skin) && guid !in loot.owners))
+            return null;
+        return cast(Looter) session;
+    };
+    loot.clock = () => context.unixTime;
+    if (pocket)
+    {
+        loot.lootedForAll = () {
+            creature.pocketsEmptied = true;
+            creature.pocketsRestockAt = context.unixTime + context.config.creaturePickpocketRestockDelay;
+        };
+        return;
+    }
+    loot.changed = () {
+        map.refreshViewers(creature);
+        if (!skin && loot.replicatesLootView)
+            map.refreshReplicaLootView(creature);
+    };
+    loot.lootedForAll = () {
+        if (skin)
+        {
+            creature.loot = null;
+            creature.corpseTimer = 1;
+        }
+        else
+        {
+            creature.lootedOut();
+            map.flushObjectChanges(creature);
+        }
+        map.refreshViewers(creature);
+    };
 }
 
 /// See the module documentation.
@@ -713,17 +757,14 @@ private:
     private static void prepareBodyLootFor(WorldContext context, Map map, Creature victim, ulong tapper)
     {
         import dmangos.world.character : Character;
+        import dmangos.world.loothandlers : bindCreatureLoot;
 
         enum uint noLoot = 0x4; // the static flag for no loot
         const t = victim.template_;
         if (t.staticFlags1 & noLoot)
             return lootedOutNow(map, victim);
-        auto theMap = map;
-        auto loot = new Loot(victim.guid, (ulong guid) {
-            auto session = cast(Character) context.onlinePlayer(guid);
-            return session is null || session.map !is theMap ? null : cast(Looter) session;
-        });
-        loot.clock = () => context.unixTime;
+        auto loot = new Loot(victim.guid, null);
+        bindCreatureLoot(context, map, victim, loot);
         setLootRightsFor(context, map, tapper, loot, victim.position, (ulong guid) => victim.ai.threatOf(guid) > 0);
 
         const(LootTemplate) template_ = t.lootId ? context.data.loot.creature[t.lootId] : null;
@@ -754,21 +795,11 @@ private:
         }
         loot.generateMoney(t.minLootGold, t.maxLootGold, map.random);
         victim.loot = loot;
-        loot.changed = () {
-            theMap.refreshViewers(victim);
-            if (loot.replicatesLootView)
-                theMap.refreshReplicaLootView(victim);
-        };
-        loot.lootedForAll = () {
-            victim.lootedOut();
-            theMap.flushObjectChanges(victim);
-            theMap.refreshViewers(victim);
-        };
-        loot.beginQuestLootChecks(theMap.id, &context.nextGameplaySequence, context.sendQuestLootCheck);
+        loot.beginQuestLootChecks(map.id, &context.nextGameplaySequence, context.sendQuestLootCheck);
         if (victim.loot !is null && loot.lootedForEveryone())
             lootedOutNow(map, victim);
         else if (loot.replicatesLootView)
-            theMap.refreshReplicaLootView(victim);
+            map.refreshReplicaLootView(victim);
     }
 
     /// Nothing (more) to loot from `victim`: skinnable if it has a skin, its viewers told.
@@ -1108,6 +1139,68 @@ unittest
     assert(victim.loot is null && victim.fieldFor(me.guid, 0, UNIT_DYNAMIC_FLAGS, victim.values.get!UNIT_DYNAMIC_FLAGS) == 0);
     assert(!(me.values.get!UNIT_FIELD_FLAGS & UnitFlags.looting));
     assert(victim.corpseTimer <= 2 * 60 * 1000, "looted: it goes within two minutes");
+}
+
+// A spent coin share and item stay spent when the corpse's region changes owners.
+unittest
+{
+    import dmangos.cluster.regions : CellRect, Region, RegionState;
+    import dmangos.world.grid : cellCoordinate;
+    import dmangos.world.loot : lootRow;
+
+    auto db = newDatabase();
+    auto first = newCreationContext(db), second = newCreationContext(db);
+    auto relay = new TestPlayerRelay(first, second);
+    second.next.item = 10_000;
+    auto now = MonoTime.currTime;
+    first.clock = second.clock = () => now;
+    const point = Position(-8949.95f, -132.49f, 83.53f, 1.97f);
+    auto client = loggedIn(first, db, 7, "Anduin", point);
+    auto victim = lootableInnkeeper(first);
+    first.data.loot.creature.add(99, lootRow(itemSword, 100, 0, 1, 1, 0));
+    foreach (node; [first, second])
+        node.data.creatureTemplates.edit(creatureInnkeeper).skinningLootId = 123;
+    killIt(client, victim, now);
+    client.read();
+    const corpse = ClientGuid(victim.guid);
+    client.write(Opcode.CMSG_LOOT, corpse);
+    assert(opcodesOf(client.read()).canFind(Opcode.SMSG_LOOT_RESPONSE));
+    client.write(Opcode.CMSG_LOOT_MONEY, null);
+    client.write(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, ClientLootSlot(0));
+    assert(opcodesOf(client.read()).canFind(Opcode.SMSG_ITEM_PUSH_RESULT));
+    assert(victim.loot.gold == 0 && victim.loot.items[0].itemId == itemJerky && !victim.loot.items[0].allowed.length);
+    victim.corpseTimer = 12_000;
+    const respawn = victim.respawnAt;
+
+    const x = cellCoordinate(victim.spawn.x), y = cellCoordinate(victim.spawn.y);
+    Region region = Region(1, 0, CellRect(x, y, x + 1, y + 1), 1, 1, RegionState.revoking, 2);
+    ubyte[][uint] leaving, unused;
+    first.regionsChanged(null, [region], null, leaving);
+    assert(first.map(0).isReplica(victim.guid) && opcodesOf(client.read()).canFind(Opcode.SMSG_LOOT_RELEASE_RESPONSE));
+    now += 2.seconds;
+    region.owner = 2;
+    region.state = RegionState.granted;
+    region.next = 0;
+    second.regionsChanged([region], null, [region.id: cast(const(ubyte)[]) leaving[region.id]], unused);
+    auto restored = cast(Creature) second.map(0).findObject(victim.guid);
+    assert(restored !is null && !restored.alive && restored.loot.canLoot(7));
+    assert(restored.corpseTimer >= 9950 && restored.corpseTimer <= 10050 && restored.respawnAt == respawn);
+    assert(restored.loot.gold == 0 && restored.loot.items[0].allowed.length == 0);
+
+    // The memory database's load fixture is separate from its write log.
+    foreach (guid, ref item; db.itemRows)
+        if (db.itemOwners[guid] == 7)
+            db.loadable[7].items ~= item;
+    client.write(Opcode.CMSG_LOOT, corpse);
+    assert(relay.remote !is null);
+    relay.remote.update(50.msecs);
+    assert(opcodesOf(client.read()).canFind(Opcode.SMSG_LOOT_RESPONSE));
+    client.write(Opcode.CMSG_LOOT_MONEY, null);
+    assert(!opcodesOf(client.read()).canFind(Opcode.SMSG_LOOT_MONEY_NOTIFY));
+    client.write(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, ClientLootSlot(1));
+    assert(opcodesOf(client.read()).canFind(Opcode.SMSG_ITEM_PUSH_RESULT));
+    assert(restored.loot is null && restored.skinnable);
+    assert(relay.remote.character.inventory.count(itemJerky) == 1 && relay.remote.character.inventory.count(itemSword) == 1);
 }
 
 /// A group: the experience shared by level, with the bonus for its size only from three on; round robin's turn.

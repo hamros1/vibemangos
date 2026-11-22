@@ -4731,7 +4731,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 return Migrant.init; // controlled creatures stay with their player (`petsOnLeave`)
             if (creature.ai !is null)
                 creature.ai.finishNamedCreatureChannel(true);
-            creature.saveState(w);
+            if (creature.loot !is null)
+                creature.loot.sendReleaseForAll();
+            creature.saveState(w, transportNow());
             return Migrant(MigrantKind.creature, creature.spawn.guid, 0, w.data);
         }
         auto gameObject = cast(GameObject) object;
@@ -4761,7 +4763,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             auto creature = makeCreature(&data.creatureSpawns[*at]);
             if (creature is null)
                 return null;
-            creature.loadState(r, &spellInfo);
+            creature.loadState(r, transportNow(), &spellInfo);
             return creature;
         }
         const at = m.spawn in gameObjectSpawnIndex;
@@ -4780,9 +4782,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         import dmangos.log : warning;
         import dmangos.mysql : DatabaseException;
-        import dmangos.world.gameobjecthandlers : bindChestLoot;
-        import dmangos.world.loothandlers : bindLootDelivery;
-        import dmangos.world.loot : LootRule;
         import dmangos.world.migration : MigrantKind;
 
         indexSpawns();
@@ -4820,14 +4819,30 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return null;
         }
         auto restored = restoreMigrant(migrant);
-        if (auto chest = cast(GameObject) restored)
-            if (auto loot = chest.loot)
-            {
-                bindChestLoot(this, destination, chest, loot);
-                bindLootDelivery(this, destination, loot, loot.rule == LootRule.groupLoot || loot.rule == LootRule.needBeforeGreed,
-                    loot.rule == LootRule.masterLoot);
-            }
+        bindMigrantLoot(restored, destination);
         return restored;
+    }
+
+    private void bindMigrantLoot(MapObject restored, Map destination)
+    {
+        import dmangos.world.gameobjecthandlers : bindChestLoot;
+        import dmangos.world.loothandlers : bindCreatureLoot, bindLootDelivery;
+        import dmangos.world.loot : Loot, LootRule;
+
+        Loot loot;
+        if (auto chest = cast(GameObject) restored)
+        {
+            if ((loot = chest.loot) !is null)
+                bindChestLoot(this, destination, chest, loot);
+        }
+        else if (auto creature = cast(Creature) restored)
+        {
+            if ((loot = creature.loot) !is null)
+                bindCreatureLoot(this, destination, creature, loot);
+        }
+        if (loot !is null && loot.rule != LootRule.notGroup)
+            bindLootDelivery(this, destination, loot, loot.rule == LootRule.groupLoot || loot.rule == LootRule.needBeforeGreed,
+                loot.rule == LootRule.masterLoot);
     }
 
     private size_t[uint] spawnIndex, gameObjectSpawnIndex; // spawn guid -> its place in the world data
@@ -5000,7 +5015,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             decodeBundle(bundle, cells, migrants);
             foreach (ref migrant; migrants)
                 migrant.home = ulong.max; // physical ownership stays reserved until the lease is retired
-            map_.migrateIn(encodeBundle(null, migrants), &restoreMigrant);
+            map_.migrateIn(encodeBundle(null, migrants), (const ref Migrant migrant) {
+                auto restored = restoreMigrant(migrant);
+                bindMigrantLoot(restored, map_);
+                return restored;
+            });
         }
         else if (r.creature.returning && ownsCell(spawn.map, cellKey(r.rect.x0, r.rect.y0))
             && map_.creatureAt(guid) is null)
@@ -5184,9 +5203,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         database.saveCreatureRespawn(creature.spawn.guid, creature.respawnAt);
     }
 
-    /// A corpse went; one that died elsewhere (handed over dead) comes back a respawn time from now.
+    /// A corpse went; if it died elsewhere, restore the original respawn deadline.
     private void corpseRemoved(Creature creature)
     {
+        import std.algorithm.comparison : max;
+
         if (creature.petOwner)
         {
             import dmangos.world.character : Character;
@@ -5200,7 +5221,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return;
         if (creature.spawn.guid !in respawnAt)
         {
-            respawnAt[creature.spawn.guid] = unixTime + creature.spawn.respawnSeconds;
+            const next = creature.respawnAt ? max(unixTime, creature.respawnAt) : unixTime + creature.spawn.respawnSeconds;
+            respawnAt[creature.spawn.guid] = next;
             database.saveCreatureRespawn(creature.spawn.guid, respawnAt[creature.spawn.guid]);
         }
     }
