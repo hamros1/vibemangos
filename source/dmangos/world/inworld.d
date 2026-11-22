@@ -1267,7 +1267,8 @@ private:
         const a = player.position, b = other.player.position;
         if ((a.x - b.x) ^^ 2 + (a.y - b.y) ^^ 2 + (a.z - b.z) ^^ 2 > 28.0f ^^ 2)
             return;
-        if (other !is this && canAttack(relatingNow(), other.relatingNow(), context.client))
+        if (context.client.teamForRace(player.data.race) != context.client.teamForRace(other.player.data.race)
+            || (other !is this && canAttack(relatingNow(), other.relatingNow(), context.client)))
             return;
         ByteWriter w;
         w.put(guid);
@@ -2085,6 +2086,12 @@ unittest
     inspect.put(jaina.session.character.guid);
     anduin.write(Opcode.CMSG_INSPECT, inspect.data);
     assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_INSPECT));
+
+    auto thrall = loggedIn(context, db, 9, "Thrall", anduin.session.character.position, race: raceOrc);
+    ByteWriter enemy;
+    enemy.put(thrall.session.character.guid);
+    anduin.write(Opcode.CMSG_INSPECT, enemy.data);
+    assert(!opcodesOf(anduin.read()).canFind(Opcode.SMSG_INSPECT));
 }
 
 /// An item's name asked for; a bug report kept; a whisperer told it is ignored.
