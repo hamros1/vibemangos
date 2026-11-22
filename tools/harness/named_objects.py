@@ -1,5 +1,6 @@
 """Exercise spells at named objects and creatures across a boundary in disposable schemas."""
 
+import argparse
 import json
 import os
 import re
@@ -49,7 +50,7 @@ def adjacent_boundary(regions, worker):
     return min(candidates)[1:]
 
 
-def run(fixture):
+def run(fixture, abrupt=False):
     login = fixture.fresh_schema("login", "classicrealmd.sql")
     characters = fixture.fresh_schema("characters", "classiccharacters.sql")
     world_source = fixture.base["world_database"].rsplit(";", 1)[-1]
@@ -154,21 +155,34 @@ def run(fixture):
     mortars = fixture.query(f"SELECT guid FROM gameobject WHERE guid > {before['gameobject']} AND id={MORTAR}", world)
     if len(mortars.splitlines()) != 2:
         raise RuntimeError("both nodes' saved mortars should have distinct database IDs")
-    nodes[2].terminate()
-    if nodes[2].wait(timeout=25) != 0 or "arrived with" not in fixture.log("node1"):
-        raise RuntimeError("the worker did not drain its live regions to the coordinator")
-    drained = client("after-drain", 1, "MORTARSPAWN", f"login:{spawner}", "listen:2", "drop")
+    def ownership_taken():
+        views = re.findall(r"this node owns \[([^]]*)\]", fixture.log("node1"))
+        return views and worker.issubset(set(map(int, re.findall(r"\d+", views[-1]))))
+
+    if abrupt:
+        nodes[2].kill()
+        nodes[2].wait(timeout=10)
+        wait_for("the coordinator to take the lost worker's regions", ownership_taken, 45)
+    else:
+        nodes[2].terminate()
+        if nodes[2].wait(timeout=25) != 0 or "arrived with" not in fixture.log("node1"):
+            raise RuntimeError("the worker did not drain its live regions to the coordinator")
+    arrived = client("after-takeover", 1, "MORTARSPAWN", f"login:{spawner}", "listen:2", "drop")
     for entry, kind in ((MORTAR, "game object"), (DOOR, "game object"), (RACER, "creature"), (GOLEM, "creature")):
         expected = f"[{kind}] {entry} guid {spawned[entry] & 0xFFFFFF}:"
-        if drained.count(expected) != 1:
-            raise RuntimeError(f"expected one migrated {kind} {entry} after drain, got {drained.count(expected)}")
-    door_line = next(line for line in drained.splitlines() if f"[game object] {DOOR} " in line
+        if arrived.count(expected) != 1:
+            raise RuntimeError(f"expected one saved {kind} {entry} after takeover, got {arrived.count(expected)}")
+    door_line = next(line for line in arrived.splitlines() if f"[game object] {DOOR} " in line
                      and f"guid {spawned[DOOR] & 0xFFFFFF}:" in line)
-    if not door_line.endswith("state 2"):
-        raise RuntimeError("the door lost its open state during the drain")
+    expected_state = 1 if abrupt else 2
+    if not door_line.endswith(f"state {expected_state}"):
+        raise RuntimeError(f"the door should be in state {expected_state} after takeover")
     print("PASS: cross-node effects reached the idle node, both nodes saved distinct spawns, "
-          "and the worker's spawns retained their identity and state after drain", flush=True)
+          f"and the worker's saved spawns appeared once after {'failure' if abrupt else 'drain'}", flush=True)
 
 
 if __name__ == "__main__":
-    run_test("named-object", run)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--abrupt", action="store_true", help="kill the worker during the takeover case")
+    args = parser.parse_args()
+    run_test("named-object", lambda fixture: run(fixture, args.abrupt))

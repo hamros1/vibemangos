@@ -2275,6 +2275,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         this.database = database;
         this.data = data;
         this.client = client;
+        foreach (ref spawn; data.creatureSpawns)
+            if (spawn.guid > initialCreatureSpawn)
+                initialCreatureSpawn = spawn.guid;
+        foreach (ref spawn; data.gameObjectSpawns)
+            if (spawn.guid > initialGameObjectSpawn)
+                initialGameObjectSpawn = spawn.guid;
         services = new ServiceHost;
         this.clock = () => MonoTime.currTime;
         {
@@ -4320,6 +4326,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.cluster.services : isServiceMap, serviceOfMap;
         import std.format : format;
 
+        // Load additions before restoring live bundles or loading newly owned cells.
+        discoverSavedSpawns(gained);
+
         // Retire a returned creature before handing over any newly revoked physical home region.
         foreach (ref r; lost)
             if (r.creature.spawn)
@@ -4800,6 +4809,54 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     private size_t[uint] spawnIndex, gameObjectSpawnIndex; // spawn guid -> its place in the world data
     private size_t indexedCreatureSpawns, indexedGameObjectSpawns;
+    private uint initialCreatureSpawn, initialGameObjectSpawn;
+
+    /// Saved GM additions can predate a takeover without appearing in the old owner's bundle.
+    private void discoverSavedSpawns(const(Region)[] gained)
+    {
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
+        import std.algorithm.iteration : filter;
+        import std.algorithm.searching : any;
+
+        auto world = gained.filter!(r => !r.creature.spawn && client.maps.lookup(r.map) !is null);
+        if (world.empty)
+            return;
+        indexSpawns();
+        bool gainedHome(uint mapId, float x, float y, float z, float facing)
+        {
+            if (!client.isValidMapCoord(mapId, x, y, z, facing))
+                return false;
+            const key = cellKeyAt(x, y);
+            return world.any!(r => r.map == mapId && r.rect.containsKey(key));
+        }
+        try
+        {
+            // Keep the snapshot bounds fixed. Concurrent inserts can become visible out of ID order.
+            foreach (ref saved; database.savedCreatureSpawnsAfter(initialCreatureSpawn))
+                if (saved.guid < temporaryCounterStart && saved.guid !in spawnIndex && saved.entry in data.creatureTemplates
+                    && gainedHome(saved.map, saved.x, saved.y, saved.z, saved.orientation))
+                    registerCreatureSpawn(saved);
+            foreach (ref saved; database.savedGameObjectSpawnsAfter(initialGameObjectSpawn))
+            {
+                if (saved.guid >= temporaryCounterStart || saved.guid in gameObjectSpawnIndex
+                    || !gainedHome(saved.map, saved.x, saved.y, saved.z, saved.orientation))
+                    continue;
+                const template_ = saved.entry in data.gameObjectTemplates;
+                if (template_ is null || template_.type == GameObjectType.moTransport)
+                    continue;
+                registerGameObjectSpawn(saved);
+                if (template_.type == GameObjectType.transport)
+                {
+                    longElevatorHomes.remove(saved.map);
+                    if (auto map_ = saved.map in maps)
+                        (*map_).elevatorHomes = elevatorHomesFor(saved.map);
+                }
+            }
+        }
+        catch (DatabaseException error)
+            warning!"could not discover newly saved spawns for gained regions: %s"(error.msg);
+    }
 
     private void indexSpawns()
     {
@@ -7702,6 +7759,42 @@ unittest
         objectCopies += newOwner.data.gameObjectSpawns[index].guid == object.spawn.guid;
     assert(creatureCopies == 1 && objectCopies == 1);
     assert(!newMap.isReplica(creature.guid) && !newMap.isReplica(object.guid));
+}
+
+// A lost node supplies no bundle, but its durable additions still belong to the next owner.
+unittest
+{
+    import dmangos.cluster.regions : CellRect;
+    import dmangos.world.gameobject : GameObjectTemplate;
+    import dmangos.world.grid : cellCoordinate;
+    import dmangos.world.testclient : newCreationContext, newDatabase;
+    import dmangos.world.testdata : creatureInnkeeper;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    const at = Position(-8930, -120, 83.53f);
+    const creature = CreatureSpawn(9_000_001, creatureInnkeeper, 0, at.x, at.y, at.z);
+    const outside = CreatureSpawn(9_000_002, creatureInnkeeper, 0, at.x + 100, at.y, at.z);
+    const door = GameObjectTemplate(entry: 9010, type: GameObjectType.door);
+    context.data.gameObjectTemplates[door.entry] = door;
+    const object = GameObjectSpawn(guid: 9_000_001, entry: door.entry, x: at.x, y: at.y, z: at.z);
+    db.insertCreatureSpawn(creature);
+    db.insertCreatureSpawn(outside);
+    db.insertGameObjectSpawn(object);
+    const x = cellCoordinate(at.x), y = cellCoordinate(at.y);
+    const region = Region(1, 0, CellRect(x, y, x + 1, y + 1), 2, 2, RegionState.granted);
+    ubyte[][uint] leaving;
+    context.regionsChanged([region], null, null, leaving);
+    auto map_ = context.map(0);
+    map_.loadCell(cellKeyAt(at.x, at.y));
+    const creatureGuid = makeGuid(HighGuid.unit, creature.entry, creature.guid);
+    const objectGuid = makeGuid(HighGuid.gameObject, object.entry, object.guid);
+    assert(cast(Creature) map_.findObject(creatureGuid) !is null);
+    assert(cast(GameObject) map_.findObject(objectGuid) !is null);
+    assert(outside.guid !in context.spawnIndex);
+    const creatureCount = context.data.creatureSpawns.length, objectCount = context.data.gameObjectSpawns.length;
+    context.regionsChanged([region], null, null, leaving);
+    assert(context.data.creatureSpawns.length == creatureCount && context.data.gameObjectSpawns.length == objectCount);
 }
 
 // Instance round 2: in a dungeon copy too a linked creature comes back (a boss's wipe or death brings its

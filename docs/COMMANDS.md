@@ -41,8 +41,8 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 * `.character additem` gives the whole count, in as many stacks as it takes.
 * `.npc spawn` and `.gobject spawn ID 1` save spawns to CMaNGOS's `creature` and `gameobject` tables.
   MariaDB assigns their IDs so multiple nodes can save spawns. A new spawn loads on the GM's node.
-  If the loaded spawn changes owners during a clean cluster handoff, its new node reads the row and
-  continues its current state. `.gobject spawn ID` is temporary.
+  The next owner reads newly saved rows when it takes the region. A clean handoff also preserves
+  the current state of loaded spawns. `.gobject spawn ID` is temporary.
 * `.gobject scale` lasts until the object is reloaded. `.gobject move` and `.gobject rotate`
   keep the ID of a saved spawn. Moving or rotating a temporary spawn keeps it temporary.
 * `.gobject info` shows the size as a number (ArcEmu printed a float with `%u`).
