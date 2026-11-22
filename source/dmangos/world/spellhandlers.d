@@ -1130,8 +1130,6 @@ private:
     /// A missile's flight time, in milliseconds: to `target` at the spell's speed (yards a second); 0: at once.
     int flightTime(const(SpellInfo)* spell, ulong target)
     {
-        import std.math : sqrt;
-
         if (spell.casting.speed <= 0 || target == player.guid)
             return 0;
         Position to;
@@ -1140,6 +1138,15 @@ private:
         else if (auto who = map.find(target))
             to = who.character.position;
         else
+            return 0;
+        return flightTimeTo(spell, to);
+    }
+
+    private int flightTimeTo(const(SpellInfo)* spell, Position to)
+    {
+        import std.math : sqrt;
+
+        if (spell.casting.speed <= 0)
             return 0;
         const at = player.position;
         const distance = sqrt((to.x - at.x) ^^ 2 + (to.y - at.y) ^^ 2 + (to.z - at.z) ^^ 2);
@@ -1956,20 +1963,31 @@ private:
         RemotePartyHeal[] remoteHeals;
         RemoteAreaDamage[] remoteDamage;
         import dmangos.world.spelldamage : namedCreatureEffect, namedCreatureShape;
-        import dmangos.world.spellselection : namedCreatureRadius, namedCreaturesInArea;
+        import dmangos.world.spellselection : namedCreatureCenter, namedCreatureRadius, namedCreaturesInArea;
 
         const entries = context.spellScriptTargets(spell.id);
         const namedEffect = entries.length && !context.spellScript(spell.id) ? namedCreatureEffect(*spell) : size_t.max;
         const namedShape = namedEffect != size_t.max ? namedCreatureShape(*spell, namedEffect) : ImplicitTarget.none;
         const namedRange = namedEffect != size_t.max ? namedCreatureRadius(*spell, namedEffect, context.client) : 0;
         const routeNamed = context.sendAreaDamage !is null;
+        Position namedCenter;
+        bool hasNamedCenter;
         UnitRef[] scripted;
-        if (namedShape == ImplicitTarget.enumUnitsScriptAoeAtSrcLoc)
-            scripted = namedCreaturesInArea(map, player.position, namedRange, entries, routeNamed,
-                spell.casting.maxAffectedTargets);
-        else if (namedShape == ImplicitTarget.unitScriptNearCaster)
+        if (namedShape == ImplicitTarget.unitScriptNearCaster)
+        {
+            namedCenter = player.position;
             if (auto near = scriptTargetNear(spell, routeNamed))
                 scripted = [near];
+        }
+        else if (namedShape != ImplicitTarget.none)
+        {
+            hasNamedCenter = namedCreatureCenter(*spell, namedEffect, context.client, map.id,
+                player.position, spell.id in context.data.spellTargets, &c.targets, namedCenter);
+            if (hasNamedCenter)
+                scripted = namedCreaturesInArea(map, namedCenter, namedRange, entries, routeNamed,
+                    spell.casting.maxAffectedTargets);
+        }
+        const namedDestination = namedShape == ImplicitTarget.enumUnitsScriptAoeAtDestLoc && hasNamedCenter;
         const(SpellJump)[] spellChain;
         uint[ulong] bounceOf;
         SpellMissInfo[ulong] missOf;
@@ -2081,9 +2099,9 @@ private:
                         targets ~= creature.combatGuid;
                     else if (i == namedEffect)
                     {
-                        const at = player.position;
                         auto hit = AreaDamage(caster: player.guid, target: creature.combatGuid, spell: spell.id,
-                            effect: cast(ubyte) i, map: map.id, instance: map.instanceId, x: at.x, y: at.y, z: at.z,
+                            effect: cast(ubyte) i, map: map.id, instance: map.instanceId,
+                            x: namedCenter.x, y: namedCenter.y, z: namedCenter.z,
                             radius: namedRange, namedCreature: true, triggered: c.triggered);
                         remoteDamage ~= RemoteAreaDamage(creature.replica.owner, hit);
                     }
@@ -2154,7 +2172,13 @@ private:
                     missOf[remote.heal.target] = SpellMissInfo.none;
                     displayedResults ~= TargetResult(remote.heal.target, SpellMissInfo.none);
                 }
-        map.sendToWatchers(this, Opcode.SMSG_SPELL_GO, spellGoPacket(player.guid, spell.id, displayedResults, c.targets),
+        auto displayTargets = c.targets;
+        if (namedDestination)
+        {
+            displayTargets.mask |= TargetFlags.destLocation;
+            displayTargets.dest = [namedCenter.x, namedCenter.y, namedCenter.z];
+        }
+        map.sendToWatchers(this, Opcode.SMSG_SPELL_GO, spellGoPacket(player.guid, spell.id, displayedResults, displayTargets),
             true);
         spellCastScript(spell, c.targets.unit ? c.targets.unit : player.guid); // `OnCast`
         // A hostile spell landed on another player (a duel, world PvP): what that ends (`HOSTILE_ACTION`).
@@ -2197,7 +2221,8 @@ private:
             foreach (target; effectTargets[i])
                 if (missOf[target] == SpellMissInfo.none)
                 {
-                    const flight = flightTime(spell, target);
+                    const flight = namedDestination && namedCreatureShape(*spell, i) == namedShape
+                        ? flightTimeTo(spell, namedCenter) : flightTime(spell, target);
                     if (flight > 0)
                         pendingHits ~= PendingHit(spell, i, target, c, flight);
                     else

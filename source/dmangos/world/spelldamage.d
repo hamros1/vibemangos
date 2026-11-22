@@ -237,7 +237,7 @@ bool isCreatureTargetEffect(const ref SpellInfo spell, size_t i)
         || spell.effect[i] == SpellEffect.schoolDamage) && spell.effect[i] != SpellEffect.heal;
 }
 
-/// The database can name one creature near the caster, or every eligible creature around the caster.
+/// The position or area used for a spell selecting creatures by database entry.
 package ImplicitTarget namedCreatureShape(const ref SpellInfo spell, size_t i)
 {
     const a = spell.implicitTargetA[i], b = spell.casting.implicitTargetB[i];
@@ -246,6 +246,8 @@ package ImplicitTarget namedCreatureShape(const ref SpellInfo spell, size_t i)
         if (b == none && (a == unitScriptNearCaster || a == enumUnitsScriptAoeAtSrcLoc))
             return a;
         if (a == casterSource && b == enumUnitsScriptAoeAtSrcLoc)
+            return b;
+        if ((a == database || a == locationCasterDest) && b == enumUnitsScriptAoeAtDestLoc)
             return b;
         return none;
     }
@@ -269,7 +271,7 @@ package size_t namedCreatureEffect(const ref SpellInfo spell)
             return size_t.max;
         if (first != size_t.max && (spell.implicitTargetA[i] != spell.implicitTargetA[first]
             || spell.casting.implicitTargetB[i] != spell.casting.implicitTargetB[first]
-            || (shape == ImplicitTarget.enumUnitsScriptAoeAtSrcLoc
+            || (shape != ImplicitTarget.unitScriptNearCaster
                 && spell.casting.radiusIndex[i] != spell.casting.radiusIndex[first])))
             return size_t.max;
         if (effect == SpellEffect.applyAura)

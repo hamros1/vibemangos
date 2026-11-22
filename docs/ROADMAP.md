@@ -2,7 +2,7 @@
 
 ## Open work
 
-- **Clustering.** Extend cross-node routing to destination and cone script targets and scripted effects. See
+- **Clustering.** Extend cross-node routing to cone script targets and scripted effects. See
   [spell routing limits](CLUSTER.md#spell-routing-limits) and the
   [cross-node feature list](CLUSTER.md#what-crosses-nodes-feature-by-feature).
 - **Terrain.** Track elevator passengers and handle underwater pathfinding.

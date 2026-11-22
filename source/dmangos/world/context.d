@@ -673,14 +673,24 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     package bool sendReplicaSpell(Map map_, ushort peer, const(SpellInfo)* spell, AreaDamage hit)
     {
         import std.math : isFinite, sqrt;
+        import dmangos.world.spelldamage : namedCreatureShape;
+        import dmangos.world.spellids : ImplicitTarget;
 
         if (sendAreaDamage is null || !canWrite())
             return false;
         if (spell.casting.speed > 0)
             if (auto copy = cast(Replica) map_.findObject(hit.target))
             {
-                const to = copy.position;
-                const time = sqrt((to.x - hit.x) ^^ 2 + (to.y - hit.y) ^^ 2 + (to.z - hit.z) ^^ 2)
+                auto from = Position(hit.x, hit.y, hit.z), to = copy.position;
+                if (hit.namedCreature && namedCreatureShape(*spell, hit.effect) == ImplicitTarget.enumUnitsScriptAoeAtDestLoc)
+                {
+                    auto caster = map_.unit(hit.caster);
+                    if (!caster)
+                        return false;
+                    to = from;
+                    from = caster.position;
+                }
+                const time = sqrt((to.x - from.x) ^^ 2 + (to.y - from.y) ^^ 2 + (to.z - from.z) ^^ 2)
                     / spell.casting.speed * 1000;
                 if (!isFinite(time) || time >= int.max)
                     return false;
@@ -983,7 +993,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.spelldamage : creatureAreaShape, creatureTargetInRange, isCreatureTargetEffect,
             isHostileAreaEffect, isHostileChainEffect, isRemoteLeechChannel, isTargetedProcEffect, namedCreatureEffect,
             namedCreatureShape, rollRemoteAreaDamage, spellJumpRadius;
-        import dmangos.world.spellselection : namedCreatureRadius;
+        import dmangos.world.spellselection : namedCreatureCenter, namedCreatureRadius;
         import dmangos.world.spellids : ImplicitTarget, SpellEffect;
         import dmangos.world.unit : Blow, UnitKind, UnitRef, combatRelations;
         import dmangos.world.updatefields : TypeId, UNIT_CHANNEL_SPELL, UNIT_FIELD_CHANNEL_OBJECT, UNIT_FIELD_LEVEL;
@@ -1059,9 +1069,23 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 || message.radius != namedCreatureRadius(*spell, message.effect, client)
                 || !spellScriptTargets(spell.id).canFind(victim.creature.spawn.entry) || spellScript(spell.id))
                 return replyCreatureCast(peer, message, SpellMissInfo.evade);
+            const shape = namedCreatureShape(*spell, message.effect);
             if (!attacker.alive && !(message.triggered && copy.fields.type == TypeId.unit
-                && namedCreatureShape(*spell, message.effect) == ImplicitTarget.enumUnitsScriptAoeAtSrcLoc))
+                && shape != ImplicitTarget.unitScriptNearCaster))
                 return replyCreatureCast(peer, message, SpellMissInfo.evade);
+            if (shape == ImplicitTarget.enumUnitsScriptAoeAtDestLoc)
+            {
+                if (!client.isValidMapCoord(map_.id, message.x, message.y, message.z, 0))
+                    return;
+                if (spell.implicitTargetA[message.effect] == ImplicitTarget.database)
+                {
+                    Position expected;
+                    if (!namedCreatureCenter(*spell, message.effect, client, map_.id, copy.position,
+                        spell.id in data.spellTargets, null, expected) || message.x != expected.x || message.y != expected.y
+                        || message.z != expected.z)
+                        return;
+                }
+            }
             if (message.auraAbsent && victim.hasAuraOf(spell.id))
                 return;
             const effect = spell.effect[message.effect];

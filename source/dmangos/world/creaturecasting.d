@@ -242,7 +242,7 @@ mixin template CreatureCasting()
             return refuse(SpellCastResult.badTargets);
         const namedEffect = selectableNamedCreatureEffect(spell);
         auto context = cast(WorldContext) lore;
-        if (namedEffect != size_t.max && (namedCreatureShape(*spell, namedEffect) == ImplicitTarget.enumUnitsScriptAoeAtSrcLoc
+        if (namedEffect != size_t.max && (namedCreatureShape(*spell, namedEffect) != ImplicitTarget.unitScriptNearCaster
             || (context !is null && context.sendAreaDamage !is null)))
             target = me.guid; // the spell selects its named creatures at completion
         else if (target == 0)
@@ -606,9 +606,11 @@ mixin template CreatureCasting()
         ulong[] selectedWeaponTargets = null)
     {
         import dmangos.world.context : WorldContext;
+        import dmangos.world.map : Map;
         import dmangos.world.spellcast : spellFailurePacket, SpellCastResult;
         import dmangos.world.spelldamage : creatureTargetInRange, namedCreatureShape;
-        import dmangos.world.spellselection : namedCreatureRadius, namedCreaturesInArea, nearestNamedCreature;
+        import dmangos.world.spellselection : namedCreatureCenter, namedCreatureRadius, namedCreaturesInArea,
+            nearestNamedCreature;
 
         auto context = cast(WorldContext) lore;
         bool remotePrimary, sentArea;
@@ -647,10 +649,20 @@ mixin template CreatureCasting()
         const namedShape = namedEffect != size_t.max ? namedCreatureShape(*spell, namedEffect) : ImplicitTarget.none;
         const namedRange = namedEffect != size_t.max ? namedCreatureRadius(*spell, namedEffect, lore.clientData) : 0;
         const routeNamed = context !is null && context.sendAreaDamage !is null;
+        const namedArea = namedShape != ImplicitTarget.none && namedShape != ImplicitTarget.unitScriptNearCaster;
+        auto namedCenter = me.position;
+        bool hasNamedCenter;
         UnitRef[] named;
-        if (namedShape == ImplicitTarget.enumUnitsScriptAoeAtSrcLoc)
-            named = namedCreaturesInArea(world_, me.position, namedRange, lore.spellScriptTargets(spell.id), routeNamed,
-                spell.casting.maxAffectedTargets);
+        if (namedArea)
+        {
+            auto map = cast(Map) world_;
+            const database = context is null ? null : spell.id in context.data.spellTargets;
+            hasNamedCenter = namedCreatureCenter(*spell, namedEffect, lore.clientData, map is null ? me.spawn.map : map.id,
+                me.position, database, null, namedCenter);
+            if (hasNamedCenter)
+                named = namedCreaturesInArea(world_, namedCenter, namedRange, lore.spellScriptTargets(spell.id), routeNamed,
+                    spell.casting.maxAffectedTargets);
+        }
         else if (namedShape == ImplicitTarget.unitScriptNearCaster)
             if (auto nearest = nearestNamedCreature(world_, me.position, namedRange, lore.spellScriptTargets(spell.id),
                 me.guid, routeNamed))
@@ -659,14 +671,14 @@ mixin template CreatureCasting()
             if (spell.effect[i])
             {
                 if (namedShape != ImplicitTarget.none && namedCreatureShape(*spell, i) == namedShape
-                    && (named.length || namedShape == ImplicitTarget.enumUnitsScriptAoeAtSrcLoc))
+                    && (named.length || namedArea))
                 {
                     foreach (other; named)
                     {
                         if (other.replica is null)
                             reached[i] ~= other.combatGuid;
                         else if (i == namedEffect && sendCreatureTargetSpell(context, spell, other, !takeMana, auraAbsent,
-                            cast(int) i, me.position, namedRange, true))
+                            cast(int) i, namedCenter, namedRange, true))
                             remoteNamed ~= other.combatGuid;
                     }
                 }
@@ -736,6 +748,11 @@ mixin template CreatureCasting()
         foreach (other; resistedBy)
             other.session.spellResistedBy(spell, world_.unit(me.guid));
         auto targets = targetsOf(target);
+        if (namedShape == ImplicitTarget.enumUnitsScriptAoeAtDestLoc && hasNamedCenter)
+        {
+            targets.mask |= TargetFlags.destLocation;
+            targets.dest = [namedCenter.x, namedCenter.y, namedCenter.z];
+        }
         if (results.length || !remotePrimary || sentArea || remoteNamed.length)
         {
             auto displayed = results;

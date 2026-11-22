@@ -7,11 +7,12 @@ import dmangos.world.clientdata : ClientData;
 import dmangos.world.creatureai : CombatWorld;
 import dmangos.world.map : Map;
 import dmangos.world.movement : Position;
-import dmangos.world.spellcast : radius, range;
+import dmangos.world.spellcast : radius, range, SpellTargets, TargetFlags;
 import dmangos.world.spelldamage : namedCreatureShape;
 import dmangos.world.spellids : ImplicitTarget;
 import dmangos.world.spells : SpellInfo;
 import dmangos.world.unit : UnitRef;
+import dmangos.world.worlddata : SpellTarget;
 
 package float namedCreatureRange(const ref SpellInfo spell, const ClientData client)
 {
@@ -23,6 +24,30 @@ package float namedCreatureRadius(const ref SpellInfo spell, size_t effect, cons
 {
     return namedCreatureShape(spell, effect) == ImplicitTarget.unitScriptNearCaster
         ? namedCreatureRange(spell, client) : radius(spell, effect, client);
+}
+
+/// The center of a named area, including any destination specified by the spell or its cast.
+package bool namedCreatureCenter(const ref SpellInfo spell, size_t effect, const ClientData client, uint map,
+    Position caster, const(SpellTarget)* database, const(SpellTargets)* targets, out Position center)
+{
+    center = caster;
+    if (namedCreatureShape(spell, effect) != ImplicitTarget.enumUnitsScriptAoeAtDestLoc)
+        return true;
+    if (spell.implicitTargetA[effect] == ImplicitTarget.database)
+    {
+        if (database is null || database.map != map)
+            return false;
+        center = database.at;
+    }
+    else if (targets !is null && targets.mask & TargetFlags.destLocation)
+    {
+        center = Position(targets.dest[0], targets.dest[1], targets.dest[2], caster.orientation);
+        const dist = distanceSquared(center, caster);
+        const reach = range(spell, client);
+        if (!(dist >= reach[0] ^^ 2 && dist <= reach[1] ^^ 2))
+            return false;
+    }
+    return client.isValidMapCoord(map, center.x, center.y, center.z, center.orientation);
 }
 
 /// Select across the caster's owned and observed creatures, sharing any target limit between them.
@@ -97,11 +122,12 @@ private void visitNamedCreatures(CombatWorld world, Position center, float reach
 /// A player and an NPC choose a nearby named replica, with the effects applied only by its owner.
 unittest
 {
+    import core.time : MonoTime, seconds;
     import dmangos.bytes : ByteWriter, floatBits;
     import dmangos.cluster.protocol : AreaDamage, decode;
     import dmangos.dbc : buildDbc;
     import dmangos.serialization : serialize;
-    import dmangos.world.clientdata : spellDurationFormat, spellRadiusFormat;
+    import dmangos.world.clientdata : spellDurationFormat, spellRadiusFormat, spellRangeFormat;
     import dmangos.world.context : WorldContext;
     import dmangos.world.creature : Creature, CreatureSpawn;
     import dmangos.world.eventai : castTriggered;
@@ -117,15 +143,23 @@ unittest
 
     auto db = newDatabase();
     auto source = newCreationContext(db), owner = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    source.clock = owner.clock = () => now;
     source.nodeId = 1;
     owner.nodeId = 2;
-    enum uint ward = 55060, heal = 55061, groupWard = 55062;
+    enum uint ward = 55060, heal = 55061, groupWard = 55062, groundWard = 55063;
+    const at = Position(100, 100, 40), ground = Position(125, 100, 40);
     foreach (node; [source, owner])
     {
         node.client.spellDurations = typeof(node.client.spellDurations).parse(buildDbc(spellDurationFormat,
             [[1u, 10_000, 0, 10_000]]), "SpellDuration.dbc");
         node.client.spellRadii = typeof(node.client.spellRadii).parse(buildDbc(spellRadiusFormat,
             [[1u, floatBits(6), 0, 0]]), "SpellRadius.dbc");
+        uint[spellRangeFormat.length] rangeRow;
+        rangeRow[0] = 2;
+        rangeRow[2] = floatBits(20);
+        node.client.spellRanges = typeof(node.client.spellRanges).parse(buildDbc(spellRangeFormat,
+            [rangeRow[]]), "SpellRange.dbc");
         auto aura = testSpell(ward, SpellEffect.applyAura, ImplicitTarget.unitScriptNearCaster, 10);
         aura.effect[1] = SpellEffect.applyAura;
         aura.implicitTargetA[1] = ImplicitTarget.unitScriptNearCaster;
@@ -150,12 +184,18 @@ unittest
         aura.casting.maxAffectedTargets = 2;
         node.data.spells.spells[groupWard] = aura;
         node.data.spellScriptTargets[groupWard] = [creatureInnkeeper];
+        aura.id = groundWard;
+        aura.implicitTargetA[0 .. 2] = ImplicitTarget.database;
+        aura.casting.implicitTargetB[0 .. 2] = ImplicitTarget.enumUnitsScriptAoeAtDestLoc;
+        aura.casting.speed = 10;
+        node.data.spells.spells[groundWard] = aura;
+        node.data.spellScriptTargets[groundWard] = [creatureInnkeeper];
+        node.data.spellTargets[groundWard] = SpellTarget(0, ground);
     }
 
-    const at = Position(100, 100, 40);
     auto caster = loggedIn(source, db, 7, "Anduin", at);
     auto player = cast(Player) caster.session.character;
-    player.spells ~= [ward, groupWard];
+    player.spells ~= [ward, groupWard, groundWard];
     Creature npc(WorldContext context, uint id, uint entry, float dx)
     {
         const spawn = CreatureSpawn(id, entry, 0, at.x + dx, at.y, at.z);
@@ -240,4 +280,37 @@ unittest
     aura = remote.auras.find(groupWard);
     assert(aura && aura.caster == player.guid && aura.stacks == 1 && aura.effects == 3);
     assert(results.length == 4 && !wrong.auras.find(groupWard) && !overTargetLimit.auras.find(groupWard));
+
+    auto atImpact = npc(owner, 91005, creatureInnkeeper, 26);
+    from.replicaCreated(2, cellKeyAt(atImpact.position.x, atImpact.position.y), atImpact.guid, encodeState(atImpact, 0));
+    castPacket = ByteWriter.init;
+    castPacket.put(groundWard);
+    SpellTargets(TargetFlags.self, 0).write(castPacket);
+    caster.write(Opcode.CMSG_CAST_SPELL, castPacket.data);
+    now += 1.seconds;
+    source.update(now);
+    assert(requests.length == 5, "the projectile travels to the destination, 25 yards away at 10 yards per second");
+    now += 2.seconds;
+    source.update(now);
+    assert(requests.length == 6 && requests[5].target == atImpact.guid && requests[5].x == ground.x);
+    auto misdirected = requests[5];
+    misdirected.x += 1;
+    owner.areaDamageArrived(1, misdirected);
+    assert(!atImpact.auras.find(groundWard), "the receiving node checks the database's actual center");
+    auto correct = requests[5];
+    correct.sequence = source.nextGameplaySequence();
+    owner.areaDamageArrived(1, correct);
+    owner.areaDamageArrived(1, correct);
+    aura = atImpact.auras.find(groundWard);
+    assert(aura && aura.effects == 3 && aura.stacks == 1 && !farther.auras.find(groundWard));
+
+    auto aimed = cast(SpellInfo) *source.data.spells.spell(groundWard);
+    aimed.implicitTargetA[0 .. 2] = ImplicitTarget.locationCasterDest;
+    aimed.casting.rangeIndex = 2;
+    auto target = SpellTargets(TargetFlags.destLocation, 0);
+    target.dest = [at.x + 10, at.y, at.z];
+    Position selected;
+    assert(namedCreatureCenter(aimed, 0, source.client, 0, at, null, &target, selected) && selected.x == at.x + 10);
+    target.dest[0] = ground.x;
+    assert(!namedCreatureCenter(aimed, 0, source.client, 0, at, null, &target, selected), "range ends at 20 yards");
 }
