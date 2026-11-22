@@ -197,10 +197,15 @@ mixin template CreatureCasting()
 
     private size_t selectableNamedCreatureEffect(const(SpellInfo)* spell)
     {
-        import dmangos.world.spelldamage : namedCreatureEffect;
+        import dmangos.world.context : WorldContext;
+        import dmangos.world.spelldamage : databaseSpellEffect, namedCreatureEffect;
+
+        if (auto context = cast(WorldContext) lore)
+            return context.namedCreatureRouting(spell);
 
         const effect = namedCreatureEffect(*spell);
-        if (effect != size_t.max && lore.spellScriptTargets(spell.id).length && !lore.spellScript(spell.id))
+        if (effect != size_t.max && !databaseSpellEffect(spell.effect[effect])
+            && lore.spellScriptTargets(spell.id).length && !lore.spellScript(spell.id))
             return effect;
         return size_t.max;
     }
@@ -608,7 +613,7 @@ mixin template CreatureCasting()
         import dmangos.world.context : WorldContext;
         import dmangos.world.map : Map;
         import dmangos.world.spellcast : spellFailurePacket, SpellCastResult;
-        import dmangos.world.spelldamage : creatureTargetInRange, namedCreatureShape;
+        import dmangos.world.spelldamage : creatureTargetInRange, databaseSpellEffect, namedCreatureShape;
         import dmangos.world.spellselection : namedCreatureCenter, namedCreatureCone, namedCreatureRadius,
             namedCreaturesInArea, nearestNamedCreature;
 
@@ -672,7 +677,7 @@ mixin template CreatureCasting()
             if (spell.effect[i])
             {
                 if (namedShape != ImplicitTarget.none && namedCreatureShape(*spell, i) == namedShape
-                    && (named.length || namedArea))
+                    && (named.length || namedArea || databaseSpellEffect(spell.effect[namedEffect])))
                 {
                     foreach (other; named)
                     {

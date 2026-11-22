@@ -143,6 +143,23 @@ final class DbScriptData
         return scripts[type].get(id, null);
     }
 
+    /// Every step can run immediately on the selected creature without resolving another actor.
+    package bool targetsOnly(uint spell) const
+    {
+        const plan = steps(DbScriptType.spell, spell);
+        foreach (ref step; plan)
+        {
+            if (step.delay || step.conditionId || step.wantsBuddy)
+                return false;
+            if (step.command == ScriptCommand.despawnSelf && !step.dataFlags)
+                continue;
+            if (step.command != ScriptCommand.castSpell
+                || step.dataFlags != (ScriptFlag.reverseDirection | ScriptFlag.sourceTargetsSelf))
+                return false;
+        }
+        return plan.length != 0;
+    }
+
     /// One of the relay scripts of group `templateId`, chosen at random; 0 if none.
     uint randomRelay(uint templateId) const
     {
@@ -332,6 +349,13 @@ mixin template DbScriptRunner()
         import std.algorithm.mutation : remove;
 
         scriptRuns = scriptRuns.remove!(r => r.next >= r.steps.length);
+    }
+
+    /// Run the immediate, target-only spell steps on the map that owns the target.
+    package void applyTargetSpellScript(uint spell, Map map, ulong caster, ulong target)
+    {
+        foreach (ref step; data.dbScripts.steps(DbScriptType.spell, spell))
+            runScriptStep(step, map, caster, target);
     }
 
     /// The object `guid` on `map`: a player there, or a creature or game object; none if it is not there.

@@ -1962,12 +1962,12 @@ private:
         TargetResult[] results;
         RemotePartyHeal[] remoteHeals;
         RemoteAreaDamage[] remoteDamage;
-        import dmangos.world.spelldamage : namedCreatureEffect, namedCreatureShape;
+        import dmangos.world.spelldamage : databaseSpellEffect, namedCreatureShape;
         import dmangos.world.spellselection : namedCreatureCenter, namedCreatureCone, namedCreatureRadius,
             namedCreaturesInArea;
 
         const entries = context.spellScriptTargets(spell.id);
-        const namedEffect = entries.length && !context.spellScript(spell.id) ? namedCreatureEffect(*spell) : size_t.max;
+        const namedEffect = context.namedCreatureRouting(spell);
         const namedShape = namedEffect != size_t.max ? namedCreatureShape(*spell, namedEffect) : ImplicitTarget.none;
         const namedRange = namedEffect != size_t.max ? namedCreatureRadius(*spell, namedEffect, context.client) : 0;
         const routeNamed = context.sendAreaDamage !is null;
@@ -2107,7 +2107,8 @@ private:
                         remoteDamage ~= RemoteAreaDamage(creature.replica.owner, hit);
                     }
                 }
-                if (!scripted.length && namedShape == ImplicitTarget.unitScriptNearCaster)
+                if (!scripted.length && namedShape == ImplicitTarget.unitScriptNearCaster
+                    && !databaseSpellEffect(spell.effect[namedEffect]))
                     targets = [player.guid];
             }
             else if (a == ImplicitTarget.unitScriptNearCaster)

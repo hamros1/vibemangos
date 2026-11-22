@@ -449,3 +449,104 @@ unittest
     owner.areaDamageArrived(1, requests[2]);
     assert(rear.values.get!UNIT_FIELD_HEALTH == health - 20 && rear.auras.find(cone));
 }
+
+/// A named database script runs where the creature it acts on is simulated.
+unittest
+{
+    import dmangos.bytes : ByteWriter;
+    import dmangos.cluster.protocol : AreaDamage;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.clientdata : spellDurationFormat;
+    import dmangos.world.creature : CreatureSpawn;
+    import dmangos.world.dbscripts : DbScriptStep, DbScriptType, ScriptCommand, ScriptFlag;
+    import dmangos.world.eventai : castTriggered;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.player : Player;
+    import dmangos.world.replication : encodePlayerState, encodeState;
+    import dmangos.world.spellcast : SpellMissInfo, spellAttrEx3AlwaysHit;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.spellids : AuraType, SpellEffect;
+    import dmangos.world.testclient;
+
+    auto db = newDatabase();
+    auto source = newCreationContext(db), owner = newCreationContext(db);
+    source.nodeId = 1;
+    owner.nodeId = 2;
+    enum uint scripted = 55066, buff = 55067, casterOnly = 55068;
+    foreach (node; [source, owner])
+    {
+        node.client.spellDurations = typeof(node.client.spellDurations).parse(buildDbc(spellDurationFormat,
+            [[1u, 10_000, 0, 10_000]]), "SpellDuration.dbc");
+        auto mark = testSpell(buff, SpellEffect.applyAura, ImplicitTarget.caster, 10);
+        mark.casting.durationIndex = 1;
+        mark.casting.stackAmount = 3;
+        mark.casting.applyAuraName[0] = AuraType.modStat;
+        node.data.spells.spells[buff] = mark;
+        auto command = testSpell(scripted, SpellEffect.scriptEffect, ImplicitTarget.unitScriptNearCaster, 0);
+        command.casting.attributesEx3 |= spellAttrEx3AlwaysHit;
+        node.data.spells.spells[scripted] = command;
+        node.data.spellScriptTargets[scripted] = [creatureInnkeeper];
+        node.data.dbScripts.add(DbScriptType.spell, DbScriptStep(id: scripted, command: ScriptCommand.castSpell,
+            datalong: buff, dataFlags: ScriptFlag.reverseDirection | ScriptFlag.sourceTargetsSelf));
+        node.data.spells.spells[casterOnly] = testSpell(casterOnly, SpellEffect.scriptEffect, ImplicitTarget.unitScriptNearCaster, 0);
+        node.data.spellScriptTargets[casterOnly] = [creatureInnkeeper];
+        node.data.dbScripts.add(DbScriptType.spell, DbScriptStep(id: casterOnly, command: ScriptCommand.castSpell,
+            datalong: buff, dataFlags: ScriptFlag.sourceTargetsSelf));
+    }
+
+    const at = Position(100, 100, 40);
+    auto caster = loggedIn(source, db, 7, "Anduin", at);
+    auto player = cast(Player) caster.session.character;
+    player.spells ~= [scripted, casterOnly];
+    const spawn = CreatureSpawn(91013, creatureInnkeeper, 0, at.x + 3, at.y, at.z);
+    auto target = owner.makeCreature(&spawn);
+    owner.map(0).addObject(target);
+    const triggerSpawn = CreatureSpawn(91014, creatureTrainer, 0, at.x, at.y, at.z);
+    auto npc = source.makeCreature(&triggerSpawn);
+    source.map(0).addObject(npc);
+    const cell = cellKeyAt(at.x, at.y);
+    source.map(0).replicaCreated(2, cell, target.guid, encodeState(target, 0));
+    owner.map(0).replicaCreated(1, cell, player.guid, encodePlayerState(player, 0));
+    owner.map(0).replicaCreated(1, cell, npc.guid, encodeState(npc, 0));
+
+    AreaDamage[] requests, replies;
+    source.sendAreaDamage = (ushort peer, const ref AreaDamage request) {
+        assert(peer == 2 && request.namedCreature && !request.reply);
+        requests ~= cast(AreaDamage) request;
+        return true;
+    };
+    owner.sendAreaDamage = (ushort peer, const ref AreaDamage reply) {
+        assert(peer == 1 && reply.reply);
+        replies ~= cast(AreaDamage) reply;
+        return true;
+    };
+    void castFromPlayer(uint spell)
+    {
+        ByteWriter packet;
+        packet.put(spell);
+        SpellTargets(TargetFlags.self, 0).write(packet);
+        caster.write(Opcode.CMSG_CAST_SPELL, packet.data);
+    }
+    castFromPlayer(scripted);
+    assert(requests.length == 1 && requests[0].target == target.guid);
+    owner.areaDamageArrived(1, requests[0]);
+    owner.areaDamageArrived(1, requests[0]);
+    assert(replies.length == 1 && replies[0].miss == SpellMissInfo.none, "the named script hit once");
+    auto aura = target.auras.find(buff);
+    assert(aura, "the target executed its self-cast step");
+    assert(aura.caster == target.guid && aura.stacks == 1, "the creature cast the step on itself once");
+    castFromPlayer(casterOnly);
+    assert(requests.length == 1, "an action that needs the caster stays on the caster's node");
+    source.updateScripts(0);
+    assert(player.auras.find(buff), "the caster can still run its own steps");
+
+    assert(npc.ai.spellCaster(source.map(0)));
+    assert(npc.ai.castSpell(source.data.spells.spell(scripted), npc.guid, castTriggered));
+    assert(requests.length == 2 && requests[1].caster == npc.guid && requests[1].target == target.guid);
+    owner.areaDamageArrived(1, requests[1]);
+    aura = target.auras.find(buff);
+    assert(aura && aura.caster == target.guid && aura.stacks == 2 && replies.length == 2);
+    source.map(0).replicaRemoved(2, target.guid);
+    castFromPlayer(scripted);
+    assert(requests.length == 2 && source.runningScripts == 0, "a missing named creature leaves no script to run");
+}

@@ -661,6 +661,19 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     bool delegate(ushort, const ref AreaDamage) sendAreaDamage;
     private ulong[ushort] lastAreaDamage, lastAreaDamageReply;
 
+    /// The first named effect with an implementation available on the chosen target's node.
+    package size_t namedCreatureRouting(const(SpellInfo)* spell)
+    {
+        import dmangos.world.spelldamage : databaseSpellEffect, namedCreatureEffect;
+
+        const effect = namedCreatureEffect(*spell);
+        if (effect == size_t.max || !spellScriptTargets(spell.id).length || spellScript(spell.id))
+            return size_t.max;
+        if (databaseSpellEffect(spell.effect[effect]) && !data.dbScripts.targetsOnly(spell.id))
+            return size_t.max;
+        return effect;
+    }
+
     private struct ReplicaSpellImpact
     {
         MonoTime due;
@@ -990,8 +1003,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.replication : Replica;
         import dmangos.world.spellareas : damagingGroundEffect, refreshGroundAura;
         import dmangos.world.spellcast : radius, SpellMissInfo;
-        import dmangos.world.spelldamage : creatureAreaShape, creatureTargetInRange, isCreatureTargetEffect,
-            isHostileAreaEffect, isHostileChainEffect, isRemoteLeechChannel, isTargetedProcEffect, namedCreatureEffect,
+        import dmangos.world.spelldamage : creatureAreaShape, creatureTargetInRange, databaseSpellEffect,
+            isCreatureTargetEffect, isHostileAreaEffect, isHostileChainEffect, isRemoteLeechChannel, isTargetedProcEffect,
             namedCreatureShape, remoteTargetAuraEffects, rollRemoteAreaDamage, spellJumpRadius, unblockedAuraEffects;
         import dmangos.world.spellselection : inNamedCreatureCone, namedCreatureCenter, namedCreatureCone,
             namedCreatureRadius;
@@ -1066,9 +1079,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         {
             import std.algorithm.searching : canFind;
 
-            if (victim.kind != UnitKind.creature || message.effect != namedCreatureEffect(*spell)
+            if (victim.kind != UnitKind.creature || message.effect != namedCreatureRouting(spell)
                 || message.radius != namedCreatureRadius(*spell, message.effect, client)
-                || !spellScriptTargets(spell.id).canFind(victim.creature.spawn.entry) || spellScript(spell.id))
+                || !spellScriptTargets(spell.id).canFind(victim.creature.spawn.entry))
                 return replyCreatureCast(peer, message, SpellMissInfo.evade);
             const shape = namedCreatureShape(*spell, message.effect);
             if (!attacker.alive && !(message.triggered && copy.fields.type == TypeId.unit
@@ -1093,6 +1106,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if (message.auraAbsent && victim.hasAuraOf(spell.id))
                 return;
             const effect = spell.effect[message.effect];
+            if (databaseSpellEffect(effect))
+                return applyRemoteSpellScript(peer, message, spell, victim, hostile);
             if (effect != SpellEffect.schoolDamage)
                 return remoteProcEffect(peer, message, spell, victim, hostile, attacker.hasFlag(UnitFlags.pvp));
             if (!hostile)
@@ -1573,6 +1588,33 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 share.honorless, Position(share.x, share.y, share.z)), share.map, share.instance);
     }
 
+    private void applyRemoteSpellScript(ushort peer, const ref AreaDamage message, const(SpellInfo)* spell,
+        UnitRef victim, bool hostile)
+    {
+        import dmangos.world.combat : Fighter;
+        import dmangos.world.spellcast : rollSpellHit, SpellMissInfo;
+
+        const i = message.effect;
+        const school = spell.casting.school;
+        const target = victim.fighter;
+        enum uint noImmunities = 0x20000000;
+        if (!(spell.attributes & noImmunities) && (target.immune.toSpell(school, spell.casting.dispel, spell.casting.mechanic)
+            || target.immune.toEffect(spell.effect[i], spell.casting.effectMechanic[i], spell.casting.applyAuraName[i])))
+            return replyCreatureCast(peer, message, SpellMissInfo.immune);
+        if (hostile && !message.alwaysHits)
+        {
+            const player = message.caster <= uint.max;
+            const caster = Fighter(guid: message.caster, player: player, playerControlled: player, level: message.casterLevel);
+            const miss = rollSpellHit(caster, target, *spell, victim.resistance(school), message.hitBonus, victim.map.random());
+            if (miss)
+                return replyCreatureCast(peer, message, miss);
+        }
+        applyTargetSpellScript(spell.id, victim.map, message.caster, message.target);
+        if (victim.map.creatureAt(message.target) is victim.creature)
+            namedCreatureHit(victim, message, spell);
+        replyCreatureCast(peer, message, SpellMissInfo.none);
+    }
+
     private void remoteProcEffect(ushort peer, const ref AreaDamage message, const(SpellInfo)* spell,
         UnitRef victim, bool hostile, bool casterPvP)
     {
@@ -1682,6 +1724,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.replication : Replica;
         import dmangos.world.spellcast : healLog, nonMeleeDamageLog, spellMissLog, SpellMissInfo;
         import dmangos.world.spellids : SpellEffect;
+        import dmangos.world.spelldamage : databaseSpellEffect;
         import dmangos.world.unit : UnitRef;
 
         if (message.sequence <= lastAreaDamageReply.get(peer, 0))
@@ -1713,7 +1756,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (message.namedCreature && !message.miss && message.effect < spell.effect.length)
         {
             caster.rewardPlayerAndGroupAtCast(message.target, spell.id, peer);
-            if (spell.effect[message.effect] == SpellEffect.applyAura)
+            if (spell.effect[message.effect] == SpellEffect.applyAura || databaseSpellEffect(spell.effect[message.effect]))
                 return;
         }
         if (!message.miss && (message.triggered || message.namedCreature) && message.effect < spell.effect.length

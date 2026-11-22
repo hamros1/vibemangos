@@ -265,9 +265,17 @@ package ImplicitTarget namedCreatureShape(const ref SpellInfo spell, size_t i)
     }
 }
 
-/// The first effect in a named creature's hit, heal, or group of auras on the target's node.
+/// Whether this effect can run a database spell script.
+package bool databaseSpellEffect(SpellEffect effect)
+{
+    return effect == SpellEffect.dummy || effect == SpellEffect.scriptEffect;
+}
+
+/// The first effect in a spell arriving at its named creature.
 package size_t namedCreatureEffect(const ref SpellInfo spell)
 {
+    import dmangos.world.classspells : SpellFamily;
+
     if (spell.attributesEx & (0x04 | 0x40))
         return size_t.max; // channels need their own lifetime and interrupt routing
     size_t first = size_t.max;
@@ -292,7 +300,8 @@ package size_t namedCreatureEffect(const ref SpellInfo spell)
                 && spell.effect[first] != SpellEffect.applyAura && spell.effect[first] != SpellEffect.schoolDamage))
                 return size_t.max;
         }
-        else if (first != size_t.max || (effect != SpellEffect.heal && !isDirectMagicDamageEffect(spell, i)))
+        else if (first != size_t.max || (effect != SpellEffect.heal && !isDirectMagicDamageEffect(spell, i)
+            && !(databaseSpellEffect(effect) && spell.casting.spellFamilyName == SpellFamily.generic)))
             return size_t.max;
         if (first == size_t.max)
             first = i;

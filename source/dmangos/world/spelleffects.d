@@ -183,17 +183,23 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         break;
     }
     case SpellEffect.dummy, SpellEffect.scriptEffect: // SPELL_EFFECT_DUMMY, SPELL_EFFECT_SCRIPT_EFFECT: the spell's script, then its database script
+    {
+        import dmangos.world.dbscripts : DbScriptType;
+
         if (p !is null)
         {
-            import dmangos.world.dbscripts : DbScriptType;
-
             if (p.classDummyEffect(spell, i, target, value, c.castItemEntry) || p.spellEffectScript(spell, i, target, value))
                 break;
             context.startScript(DbScriptType.spell, spell.id, map, caster.guid, target ? target : c.targets.gameObject);
         }
         else
+        {
             ai.spellEffectScript(spell, i, target, value);
+            if (map.creatureAt(target) !is null && context.namedCreatureRouting(spell) == i)
+                context.startScript(DbScriptType.spell, spell.id, map, caster.guid, target);
+        }
         break;
+    }
     case SpellEffect.summonWild: // SPELL_EFFECT_SUMMON_WILD: creatures of its entry, at the destination or near the caster
         if (p !is null)
         {
