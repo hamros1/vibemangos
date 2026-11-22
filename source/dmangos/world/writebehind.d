@@ -128,6 +128,58 @@ private struct Method
 
 private immutable Method[ulong] bySignature;
 
+// A crash before upgrading can leave aura writes in the old on-disk format.
+private struct LegacyAuraRecord
+{
+    ulong caster;
+    uint spell, stacks;
+    int[3] amount, periodTimer;
+    int maxDuration, remaining;
+    uint effectMask;
+}
+
+private interface LegacyAuraWrites
+{
+    void saveAuras(uint player, const(LegacyAuraRecord)[] auras);
+    void savePetAuras(uint pet, const(LegacyAuraRecord)[] auras);
+}
+
+private void replayLegacyAuras(alias fun)(WorldDatabase db, const(ubyte)[] bytes)
+{
+    import std.exception : enforce;
+    import dmangos.world.database : AuraRecord;
+
+    uint owner;
+    LegacyAuraRecord[] old;
+    decode(bytes, owner);
+    decode(bytes, old);
+    enforce(bytes.length == 0, "unexpected data after legacy aura records");
+    AuraRecord[] rows;
+    foreach (ref row; old)
+        rows ~= AuraRecord(row.tupleof);
+    __traits(getMember, db, __traits(identifier, fun))(owner, rows);
+}
+
+unittest
+{
+    import dmangos.world.database : AuraRecord;
+    import dmangos.world.testclient : newDatabase;
+
+    auto db = newDatabase();
+    LegacyAuraRecord row;
+    row.spell = 324;
+    row.remaining = 20_000;
+    ubyte[] bytes;
+    uint owner = 7;
+    auto rows = [row];
+    encode(bytes, owner);
+    encode(bytes, rows);
+    bySignature[signature!(LegacyAuraWrites.saveAuras)].carryOut(db, bytes);
+    bySignature[signature!(LegacyAuraWrites.savePetAuras)].carryOut(db, bytes);
+    assert(db.loadAuras(7) == [AuraRecord(row.tupleof)]);
+    assert(db.loadPetAuras(7) == db.loadAuras(7));
+}
+
 shared static this()
 {
     Method[ulong] table;
@@ -137,6 +189,8 @@ shared static this()
             assert(signature!fun !in table, "two queued methods with one signature: " ~ __traits(identifier, fun));
             table[signature!fun] = Method(__traits(identifier, fun), &carryOut!fun);
         }
+    static foreach (fun; AliasSeq!(LegacyAuraWrites.saveAuras, LegacyAuraWrites.savePetAuras))
+        table[signature!fun] = Method(__traits(identifier, fun), &replayLegacyAuras!fun);
     bySignature = cast(immutable) table;
 }
 

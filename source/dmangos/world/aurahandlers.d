@@ -838,7 +838,7 @@ private:
         foreach (aura; player.auras.list)
             if (!aura.passive && aura.duration != 0)
                 rows ~= AuraRecord(aura.caster, aura.spell.id, aura.stacks, aura.amount, aura.periodTimer,
-                    aura.maxDuration, aura.duration, aura.savedEffectMask);
+                    aura.maxDuration, aura.duration, aura.savedEffectMask, aura.charges);
         context.database.saveAuras(player.data.guid, rows);
     }
 
@@ -868,6 +868,8 @@ private:
                         enableAuraEffect(aura, i, row.amount[i]);
             }
             aura.duration = row.remaining;
+            if (row.charges)
+                aura.charges = row.charges;
             aura.stacks = row.stacks ? row.stacks : 1;
             foreach (i; 0 .. 3)
                 if (aura.period[i] > 0 && row.periodTimer[i] > 0)
@@ -1332,16 +1334,28 @@ unittest
     context.data.spells.spells[wits] = testSpell(wits, 6, 1, 2);
     context.data.spells.spells.edit(wits).casting.applyAuraName[0] = AuraType.modStat;
     context.data.spells.spells.edit(wits).miscValue[0] = 3;
+    context.data.spells.spells.edit(wits).casting.procCharges = 3;
     db.auraRows[7] = [AuraRecord(7, wits, 1, [2, 0, 0], [0, 0, 0], 60_000, 42_000, 1)];
     auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
     anduin.read();
     auto me = cast(Player) anduin.session.character;
     assert(me.auras.list.length == 1 && me.auras.list[0].duration == 42_000 && me.values.get!UNIT_FIELD_AURA(0) == wits);
+    assert(me.auras.list[0].charges == 3, "old saves without charge counts use the spell default");
+    me.auras.list[0].charges = 1;
     anduin.write(Opcode.CMSG_LOGOUT_REQUEST, null);
     import core.time : seconds;
 
     anduin.session.update(25.seconds);
     assert(db.auraRows[7].length == 1 && db.auraRows[7][0].remaining > 0, "saved again at logout");
+    assert(db.auraRows[7][0].charges == 1);
+    auto relog = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
+    assert((cast(Player) relog.session.character).auras.list[0].charges == 1);
+    auto destination = newCreationContext(db);
+    destination.data.spells.spells[wits] = *context.data.spells.spell(wits);
+    auto relay = new TestPlayerRelay(context, destination);
+    context.regionOwnerAround = (uint, Position, float) => destination.nodeId;
+    relog.session.update(5.seconds);
+    assert((cast(Player) relay.remote.character).auras.list[0].charges == 1);
 }
 
 /// Shields: a school absorb takes damage until used up, then goes; a mana shield pays mana for what it takes.

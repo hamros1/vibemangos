@@ -440,7 +440,7 @@ mixin template PetHandlers()
             foreach (aura; pet_.auras.list)
                 if (!aura.passive && aura.duration != 0)
                     rows ~= AuraRecord(aura.caster, aura.spell.id, aura.stacks, aura.amount, aura.periodTimer,
-                        aura.maxDuration, aura.duration, aura.savedEffectMask);
+                        aura.maxDuration, aura.duration, aura.savedEffectMask, aura.charges);
         context.database.savePetAuras(id, rows);
         ulong[2][] cooldowns;
         const now = context.unixTime;
@@ -463,6 +463,8 @@ mixin template PetHandlers()
             auto aura = makeAura(spell, row.caster, pet_.values.get!UNIT_FIELD_LEVEL, row.maxDuration,
                 Aura.savedPositive(*spell, row.effectMask), row.amount);
             aura.duration = row.remaining;
+            if (row.charges)
+                aura.charges = row.charges;
             aura.stacks = row.stacks ? row.stacks : 1;
             foreach (i; 0 .. 3)
                 if (aura.period[i] > 0 && row.periodTimer[i] > 0)

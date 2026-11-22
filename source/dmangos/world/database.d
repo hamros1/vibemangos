@@ -218,6 +218,7 @@ struct AuraRecord
     int maxDuration;
     int remaining;       /// `remaintime`: -1 until cancelled
     uint effectMask;     /// `effIndexMask`
+    uint charges;        /// Remaining proc charges. Older rows have zero.
 }
 
 /// An `instance` row.
