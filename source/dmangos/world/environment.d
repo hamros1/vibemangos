@@ -491,7 +491,7 @@ mixin template EnvironmentHandlers()
 {
     import core.time : Duration;
     import std.random : uniform;
-    import dmangos.bytes : ByteWriter;
+    import dmangos.bytes : ByteReader, ByteWriter;
     import dmangos.world.environment;
     import dmangos.world.movement : MovementFlags, MovementInfo;
     import dmangos.world.opcodes : Opcode;
@@ -508,6 +508,32 @@ mixin template EnvironmentHandlers()
         float breathingMultiplier = 1; // 0: breathes under water
         uint lastLiquid;            // the `LiquidType.dbc` entry the player was last in, if it has a spell
         FallStart fallStart;
+    }
+
+    private static struct EnvironmentHandoff
+    {
+        uint flags, liquid;
+        MirrorTimer[4] timers;
+        FallStart fall;
+    }
+
+    package void writeEnvironmentHandoff(ref ByteWriter writer)
+    {
+        import dmangos.serialization : serialize;
+
+        serialize(writer, EnvironmentHandoff(environment, lastLiquid, mirrorTimers, fallStart));
+    }
+
+    package void readEnvironmentHandoff(ref ByteReader reader)
+    {
+        import dmangos.serialization : deserialize;
+
+        const state = deserialize!EnvironmentHandoff(reader);
+        environment = state.flags;
+        lastLiquid = state.liquid;
+        mirrorTimers = state.timers;
+        fallStart = state.fall;
+        refreshWaterBreathing(true);
     }
 
     /// Game masters with their tag on (CMaNGOS `IsGameMaster`) and `.cheat god` take no environmental damage.
@@ -599,7 +625,7 @@ mixin template EnvironmentHandlers()
      * `WATER_BREATHING` (Water Breathing, Unending Breath) or `MOD_WATER_BREATHING` (Underwater
      * Breathing's longer breath) began or ended (CMaNGOS `SetWaterBreathingIntervalMultiplier`).
      */
-    package void refreshWaterBreathing()
+    package void refreshWaterBreathing(bool forceTimerUpdate = false)
     {
         breathingMultiplier = player.auras.has(AuraType.waterBreathing) ? 0
             : player.auras.multiplier(AuraType.modWaterBreathing);
@@ -611,7 +637,7 @@ mixin template EnvironmentHandlers()
         }
         else
             breath.setScale(10);
-        sendMirrorTimers();
+        sendMirrorTimers(forceTimerUpdate);
     }
 
     /// Whether `type` should start now (CMaNGOS `CheckMirrorTimerActivation`).
@@ -868,8 +894,12 @@ unittest
     import dmangos.extractor.maps : buildTestAdt, convertAdt, TestTerrain;
     import dmangos.world.auras : makeAura;
     import dmangos.world.config : WorldConfig;
+    import dmangos.world.creature : CreatureSpawn;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.inworld : ArrivalAction;
     import dmangos.world.movement : MovementInfo, Position;
     import dmangos.world.player : DeathState;
+    import dmangos.world.replication : encodeState;
     import dmangos.world.spellhandlers : testSpell;
     import dmangos.world.spellids : AuraType;
     import dmangos.world.terrain : pointAt;
@@ -1070,4 +1100,34 @@ unittest
     anduin.read();
     move(Opcode.MSG_MOVE_HEARTBEAT, at(100, -600));
     assert(hurt(anduin.read()) == [[2, 10_000]] && player.deathState == DeathState.ghost);
+
+    // The other node carries on the same dive, including both client bars and their damage cadence.
+    auto traveler = loggedIn(context, db, 9, "Uther", at(10, 90));
+    auto diving = traveler.session.inWorld;
+    diving.updateEnvironment();
+    diving.updateMirrorTimers(0.msecs);
+    traveler.read();
+    diving.updateMirrorTimers(30.seconds);
+    diving.startFallAt(90);
+    auto next = newCreationContext(db, (ref WorldConfig c) { c.dataDir = dir; c.rateHealth = 0; });
+    auto relay = new TestPlayerRelay(context, next);
+    const beside = at(10, 90);
+    const markerSpawn = CreatureSpawn(9000555, creatureInnkeeper, 0, beside.x + 1, beside.y, beside.z);
+    auto marker = next.makeCreature(&markerSpawn);
+    next.map(0).addObject(marker);
+    context.map(0).replicaCreated(2, cellKeyAt(beside.x + 1, beside.y), marker.guid, encodeState(marker, 0));
+    assert(diving.actAtReplica(marker.guid, ArrivalAction.init));
+    assert(relay.remote !is null);
+    assert(timers(traveler.read()) == [[0, 30_000, 60_000, -1], [1, 30_000, 60_000, -1]]);
+    relay.remote.inWorld.updateMirrorTimers(29_999.msecs);
+    assert(!opcodesOf(traveler.read()).canFind(Opcode.SMSG_ENVIRONMENTALDAMAGELOG));
+    relay.remote.inWorld.updateMirrorTimers(1.msecs);
+    assert(opcodesOf(traveler.read()).filter!(op => op == Opcode.SMSG_ENVIRONMENTALDAMAGELOG).array.length == 2,
+        "fatigue and drowning run out at their original deadline");
+
+    MovementInfo landing;
+    landing.position = at(100, 60);
+    relay.remote.inWorld.landed(landing);
+    assert(opcodesOf(traveler.read()).canFind(Opcode.SMSG_ENVIRONMENTALDAMAGELOG),
+        "landing uses the height carried from the old node");
 }

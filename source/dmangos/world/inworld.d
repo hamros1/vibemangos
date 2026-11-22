@@ -329,6 +329,7 @@ private:
             w.put(speed);
         writePvPHandoff(w);
         context.writeReplicaImpacts(player.guid, w);
+        writeEnvironmentHandoff(w);
         w.put(homeNode); // last: `migrationHome` reads it there
 
         info!"%s: '%s' moves to node %s (at map %s %.1f %.1f)"(remoteAddress, player.data.name, target,
@@ -456,6 +457,7 @@ private:
         refreshGuildFields();
         applyPassiveSpells();
         resetMovementCheck();
+        readEnvironmentHandoff(r);
         petsOnArrival();
         pendingArrival = action; // done at the first tick here, once the move is complete everywhere
         battlegroundCheckDue = action.teleportMap == uint.max; // not on its way into a copy

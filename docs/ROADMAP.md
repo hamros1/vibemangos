@@ -55,8 +55,8 @@ describes how players use the systems available today.
   a target. Water-only creatures stay submerged.
 * **Movement:** the speed check assumes running speed; it must learn mounts, speed auras,
   knockbacks and taxis when those exist.
-* **Environment:** the feign death timer (dying of feigning too long) is not run; mirror timers are not
-  frozen for game masters (they take no damage instead) and start afresh after moving between nodes.
+* **Environment:** mirror timers and the current fall continue through a clean cluster handoff.
+  The feign death timer remains open. Game masters keep running timers and take no environmental damage.
   Creatures do not hover, water walk or slow fall (`SMSG_SPLINE_MOVE_*`).
 * **Instances:** each group gets its own copy of a dungeon, saved with its binds and dead; a raid's
   copies reset together at fixed times, with warnings; encounters are not tracked. In a cluster a dungeon's copies are all on the node owning its one region, and move
