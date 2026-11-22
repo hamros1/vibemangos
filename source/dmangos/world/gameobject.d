@@ -460,6 +460,31 @@ final class GameObject : Replicable, Moving, PerViewer
         return Position(spawn.x, spawn.y, spawn.z, spawn.orientation);
     }
 
+    /// The stationary transform from the live fields, which may be newer than the receiving node's spawn row.
+    package static GameObjectSpawn migrantPlacement(const ref GameObjectSpawn spawn, const(ubyte)[] state)
+    {
+        auto reader = ByteReader(state);
+        const count = reader.read!ushort;
+        if (count <= GAMEOBJECT_FACING)
+            return spawn;
+        const fields = reader.readBytes(count * float.sizeof);
+        float value(size_t slot)
+        {
+            auto field = ByteReader(fields[slot * float.sizeof .. $]);
+            return field.read!float;
+        }
+        GameObjectSpawn placed = spawn;
+        placed.x = value(GAMEOBJECT_POS_X);
+        placed.y = value(GAMEOBJECT_POS_Y);
+        placed.z = value(GAMEOBJECT_POS_Z);
+        placed.orientation = value(GAMEOBJECT_FACING);
+        foreach (i, ref part; placed.rotation)
+            part = value(GAMEOBJECT_ROTATION + i);
+        if (placed.rotation == spawn.worldRotation)
+            placed.rotation = spawn.rotation;
+        return placed;
+    }
+
     package void setElevator(ElevatorPath path, uint delegate() clock)
     {
         elevator = ElevatorMotion(path, clock);

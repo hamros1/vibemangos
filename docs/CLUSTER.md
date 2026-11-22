@@ -357,7 +357,8 @@ The bundle goes with the release (`RegionReleased`). The coordinator, granting t
 the new owner (`RegionHandover`) on the same link as, and ahead of, the table that grants it. The new
 owner rebuilds each object from its spawn and loads the state (`Map.migrateIn`), replacing replicas
 silently, and only after applying every bundle lets anything load the region's cells afresh. A hurt
-creature arrives hurt; a boss arrives in the same phase with the same timers.
+creature arrives hurt; a boss arrives in the same phase with the same timers. A saved game-object
+move or rotation also updates the receiving node's spawn and cell index when the object arrives.
 
 * **The same spawns everywhere.** Pools, spawn groups and spawn entries are chosen with a seed made
   from the cluster's name and the realm, so every node agrees on which creature a spawn is.
