@@ -76,6 +76,7 @@ enum ScriptCommand : uint
     sendAiEvent = 35,
     pauseWaypoints = 32,
     setFacing = 36,
+    despawnGameObject = 40,
     startRelayScript = 45,
 }
 
@@ -118,7 +119,7 @@ struct DbScriptStep
         {
         case ScriptCommand.terminateScript, ScriptCommand.setFacing:
             return !(dataFlags & ScriptFlag.buddyByGo);
-        case ScriptCommand.respawnGameObject, 11, 12, 13, 27, 40, 43:
+        case ScriptCommand.respawnGameObject, ScriptCommand.despawnGameObject, 11, 12, 13, 27, 43:
             return false;
         default:
             return true;
@@ -303,6 +304,7 @@ final class ScriptRun
  */
 mixin template DbScriptRunner()
 {
+    import dmangos.cluster.protocol : ScriptGameObject;
     import dmangos.world.spellids;
     import std.random : uniform;
     import dmangos.log : trace;
@@ -314,6 +316,29 @@ mixin template DbScriptRunner()
     import dmangos.world.movement : Position;
 
     private ScriptRun[] scriptRuns;
+
+    bool delegate(ushort, const ref ScriptGameObject) sendScriptGameObject;
+    private ulong[ushort] lastScriptGameObject;
+
+    void scriptGameObjectArrived(ushort peer, const ref ScriptGameObject command)
+    {
+        if (!peer || command.sequence <= lastScriptGameObject.get(peer, 0) || !canWrite()
+            || command.action > ScriptGameObject.Action.max
+            || client.maps.lookup(command.map) is null || instanceable(command.map))
+            return;
+        lastScriptGameObject[peer] = command.sequence;
+        final switch (command.action)
+        {
+        case ScriptGameObject.Action.summon:
+            placeWildGameObject(map(command.map), command.entry,
+                Position(command.x, command.y, command.z, command.orientation), command.delay, peer, command.forwarded);
+            break;
+        case ScriptGameObject.Action.respawn, ScriptGameObject.Action.despawn:
+            scriptGameObjectAction(map(command.map), command.target, command.delay,
+                command.action == ScriptGameObject.Action.despawn, peer, command.forwarded);
+            break;
+        }
+    }
 
     /// The scripts under way.
     @property size_t runningScripts() const
@@ -545,6 +570,8 @@ mixin template DbScriptRunner()
     {
         if (!step.wantsBuddy)
             return true;
+        if (step.command == ScriptCommand.respawnGameObject || step.command == ScriptCommand.despawnGameObject)
+            return scriptGameObjectBuddies(step, map, source, target, buddies);
         const deadOk = (step.dataFlags & ScriptFlag.buddyIsDespawned) != 0;
         if (step.dataFlags & ScriptFlag.buddyByGuid)
         {
@@ -610,6 +637,66 @@ mixin template DbScriptRunner()
         else
             return false; // pools and spawn groups: not yet
         return buddies.length > 0 || step.command == ScriptCommand.terminateScript;
+    }
+
+    private bool scriptGameObjectBuddies(const ref DbScriptStep step, Map map, ScriptThing source, ScriptThing target,
+        ref ScriptThing[] buddies)
+    {
+        import dmangos.cluster.regions : cellMin, cellMax;
+        import dmangos.world.grid : cellCoordinate, cellKey;
+        import dmangos.world.objects : makeGuid, HighGuid;
+        import std.algorithm.comparison : max, min;
+
+        void found(const ref imported!"dmangos.world.gameobject".GameObjectSpawn spawn)
+        {
+            const guid = makeGuid(HighGuid.gameObject, spawn.entry, spawn.guid);
+            // An inactive spawn has no map object. Its position and GUID still select it as a buddy.
+            buddies ~= ScriptThing(guid, Position(spawn.x, spawn.y, spawn.z, spawn.orientation), null,
+                map.gameObjectAt(guid));
+        }
+
+        if (step.dataFlags & ScriptFlag.buddyByGuid)
+        {
+            indexSpawns();
+            if (const index = step.searchRadius in gameObjectSpawnIndex)
+                if (data.gameObjectSpawns[*index].map == map.id)
+                    found(data.gameObjectSpawns[*index]);
+            return buddies.length != 0;
+        }
+        if (!step.buddyEntry || (step.dataFlags & (ScriptFlag.buddyByPool | ScriptFlag.buddyBySpawnGroup)))
+            return false;
+        const origin = source.creatureOrGo || !target.exists ? source : target;
+        if (!origin.exists)
+            return false;
+        const cells = map.id in data.gameObjectCells;
+        if (cells is null)
+            return false;
+        const at = origin.position, radius = cast(float) step.searchRadius;
+        const all = (step.dataFlags & ScriptFlag.allEligibleBuddies) != 0;
+        float nearest = radius * radius;
+        size_t best = size_t.max;
+        foreach (x; max(cellMin, cellCoordinate(at.x - radius)) .. min(cellMax, cellCoordinate(at.x + radius) + 1))
+            foreach (y; max(cellMin, cellCoordinate(at.y - radius)) .. min(cellMax, cellCoordinate(at.y + radius) + 1))
+                foreach (index; cells.get(cellKey(x, y), null))
+                {
+                    const spawn = &data.gameObjectSpawns[index];
+                    if (spawn.entry != step.buddyEntry)
+                        continue;
+                    const distance = distanceSq(at, Position(spawn.x, spawn.y, spawn.z));
+                    if (distance > nearest)
+                        continue;
+                    if (all)
+                        found(*spawn);
+                    else if (best == size_t.max || distance < nearest
+                        || (distance == nearest && spawn.guid < data.gameObjectSpawns[best].guid))
+                    {
+                        best = index;
+                        nearest = distance;
+                    }
+                }
+        if (best != size_t.max)
+            found(data.gameObjectSpawns[best]);
+        return buddies.length != 0;
     }
 
     private static float distanceSq(Position a, Position b)
@@ -828,7 +915,7 @@ mixin template DbScriptRunner()
         if (spawn.map != map.id || map.findObject(makeGuid(HighGuid.gameObject, spawn.entry, spawn.guid)) !is null)
             return;
         const template_ = spawn.entry in data.gameObjectTemplates;
-        if (template_ is null || template_.type == GameObjectType.door)
+        if (template_ is null || template_.type == GameObjectType.door || template_.type == GameObjectType.fishingNode)
             return;
         if (template_.type == GameObjectType.chest)
             if (const state = map.instanceId in instances)
@@ -837,9 +924,10 @@ mixin template DbScriptRunner()
         auto made = makeGameObject(*spawn);
         made.instanceId = map.instanceId;
         // A static spawn just comes back; one that is not there by default goes again after a while.
-        if (spawn.respawnSeconds < 0 || gameObjectAwaitingRespawn(spawn.guid))
+        if (spawn.respawnSeconds < 0)
             scriptedGameObjects[GameObjectOnMap(map, made.guid)] = unixTime + despawnSeconds;
-        gameObjectRespawnAt.remove(spawn.guid);
+        if (!map.instanceId && gameObjectRespawnAt.remove(spawn.guid))
+            database.saveGameObjectRespawn(spawn.guid, 0);
         map.addObject(made);
         // Instance round 2: the dungeon's script hears of it as of any object of the copy (a ritual's bell, a trap).
         if (map.instanceId)
@@ -849,6 +937,87 @@ mixin template DbScriptRunner()
 
                 script.raise(ObjectLoaded(EntityRef(made.guid)));
             }
+    }
+
+    private ulong scriptGameObjectGuid(uint spawnGuid, uint mapId)
+    {
+        import dmangos.world.objects : makeGuid, HighGuid;
+
+        indexSpawns();
+        if (const index = spawnGuid in gameObjectSpawnIndex)
+        {
+            const spawn = &data.gameObjectSpawns[*index];
+            if (spawn.map == mapId)
+                return makeGuid(HighGuid.gameObject, spawn.entry, spawn.guid);
+        }
+        return 0;
+    }
+
+    private void scriptGameObjectAction(Map map, ulong guid, uint delay, bool despawn, ushort from = 0,
+        bool forwarded = false)
+    {
+        import dmangos.world.objects : counterOf, highGuidOf, HighGuid;
+        import dmangos.world.replication : Replica;
+
+        if (highGuidOf(guid) != HighGuid.gameObject || !canWrite())
+            return;
+        const spawnGuid = counterOf(guid);
+        auto go = map.gameObjectAt(guid);
+        if (!map.instanceId && regionOwnerAround !is null)
+        {
+            ushort owner;
+            if (scriptGameObjectGuid(spawnGuid, map.id) == guid)
+            {
+                const spawn = &data.gameObjectSpawns[gameObjectSpawnIndex[spawnGuid]];
+                owner = regionOwnerAround(map.id, Position(spawn.x, spawn.y, spawn.z), 0);
+            }
+            else if (go !is null)
+                owner = regionOwnerAround(map.id, go.position, 0);
+            else if (auto copy = cast(Replica) map.findObject(guid))
+                owner = copy.owner;
+            if (owner != nodeId)
+            {
+                if (owner && owner != from && !forwarded && sendScriptGameObject !is null)
+                {
+                    const command = ScriptGameObject(nextGameplaySequence(), guid, map.id, delay,
+                        despawn ? ScriptGameObject.Action.despawn : ScriptGameObject.Action.respawn, from != 0);
+                    sendScriptGameObject(owner, command);
+                }
+                return;
+            }
+        }
+        if (!despawn)
+            scriptSpawnGameObject(map, spawnGuid, go, delay);
+        else if (go !is null)
+        {
+            go.forceDespawn(map, delay);
+            if (delay)
+                map.wake(guid);
+        }
+    }
+
+    /// A spell's destination may be on a different worker even when its caster is simulated here.
+    package void placeWildGameObject(Map map, uint entry, Position at, uint duration, ushort from = 0,
+        bool forwarded = false)
+    {
+        if (entry !in data.gameObjectTemplates || !canWrite()
+            || !client.isValidMapCoord(map.id, at.x, at.y, at.z, at.orientation))
+            return;
+        if (!map.instanceId && regionOwnerAround !is null)
+        {
+            const owner = regionOwnerAround(map.id, at, 0);
+            if (owner != nodeId)
+            {
+                if (owner && owner != from && !forwarded && sendScriptGameObject !is null)
+                {
+                    const command = ScriptGameObject(nextGameplaySequence(), 0, map.id, duration,
+                        ScriptGameObject.Action.summon, from != 0, entry, at.x, at.y, at.z, at.orientation);
+                    sendScriptGameObject(owner, command);
+                }
+                return;
+            }
+        }
+        summonWildGameObject(map, entry, at, duration);
     }
 
     /// The game objects a script spawned whose time is up, gone again.
@@ -955,7 +1124,11 @@ mixin template DbScriptRunner()
             break;
         }
         case ScriptCommand.respawnGameObject:
-            scriptSpawnGameObject(map, step.datalong, source.go, step.datalong2);
+            scriptGameObjectAction(map, step.datalong ? scriptGameObjectGuid(step.datalong, map.id) : source.guid,
+                step.datalong2, false);
+            break;
+        case ScriptCommand.despawnGameObject:
+            scriptGameObjectAction(map, target.guid, step.datalong, true);
             break;
         case ScriptCommand.tempSpawnCreature:
         {

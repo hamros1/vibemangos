@@ -176,6 +176,8 @@ final class GameObject : Replicable, Moving, PerViewer
     uint gatherUses;             /// a vein's (or herb's) times emptied so far, against its least and most opens
     uint gatherSkill;            /// the opener's mining skill, used if this loot refills
     int despawnTimer;            /// ms until a chest opened but not emptied goes; 0: none
+    private int forcedDespawnMs;
+    package long carriedExpiry;  /// lifetime read from a region handoff
     bool[ulong] skilledUp;       /// those it gave a skill-up: once until it respawns
     uint ritualSpell;            /// a summoning portal's: the spell that made it (`dmangos.world.rituals`)
     ulong[] ritualUsers;         /// ... those who joined, the caster first
@@ -356,6 +358,16 @@ final class GameObject : Replicable, Moving, PerViewer
         world.flushGameObject(this);
     }
 
+    package void forceDespawn(GameObjectWorld world, uint delayMs)
+    {
+        import std.algorithm.comparison : min;
+
+        if (!delayMs)
+            world.gameObjectUsedUp(this);
+        else
+            forcedDespawnMs = cast(int) min(delayMs, cast(uint) int.max);
+    }
+
     /// See `Moving.tick`: the loot states move on.
     void tick(MotionWorld w, int diff)
     {
@@ -364,6 +376,8 @@ final class GameObject : Replicable, Moving, PerViewer
         auto world = cast(GameObjectWorld) w;
         if (world is null)
             return;
+        if (forcedDespawnMs > 0 && (forcedDespawnMs -= diff) <= 0)
+            return forceDespawn(world, 0);
         final switch (lootState)
         {
         case GoLootState.notReady:
@@ -516,7 +530,7 @@ final class GameObject : Replicable, Moving, PerViewer
     }
 
     /// Its fields and pending door, goober or trap state, for its next owner (docs/CLUSTER.md).
-    void saveState(ref ByteWriter w, uint now) const
+    void saveState(ref ByteWriter w, uint now, long expires = 0) const
     {
         w.put(cast(ushort) values.length);
         foreach (slot; 0 .. values.length)
@@ -527,6 +541,9 @@ final class GameObject : Replicable, Moving, PerViewer
             (cast() scripts).save(behaviour, state);
         w.put(cast(uint) state.length);
         w.putBytes(state.data);
+        w.put(expires);
+        w.put(forcedDespawnMs);
+        w.put(now);
         if (type == GameObjectType.chest)
         {
             w.put(cast(ubyte) lootState);
@@ -575,6 +592,11 @@ final class GameObject : Replicable, Moving, PerViewer
         auto state = ByteReader(r.readBytes(r.read!uint));
         if (scripts !is null && state.remaining)
             scripts.load(behaviour, state);
+        carriedExpiry = r.read!long;
+        forcedDespawnMs = r.read!int;
+        const transferMs = cast(int)(now - r.read!uint);
+        if (forcedDespawnMs > 0 && transferMs > 0)
+            forcedDespawnMs = max(1, forcedDespawnMs - transferMs);
         if (type == GameObjectType.chest)
         {
             const storedLootState = r.read!ubyte;

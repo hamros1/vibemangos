@@ -902,7 +902,11 @@ record of the expired aura can move with Ras when the two nodes' timers finish i
 
 Cross-node spell routing is effect-specific. A player's cast or item use that selects one nearby creature
 can move to that creature's node when the script needs both actors together. The new owner rechecks the
-original creature before starting the cast. Scripts that need several remote actors still use their local paths. Ground ticks
+original creature before starting the cast. Database script steps can respawn or despawn a named game
+object on its owner, and a spell can summon its wild game object on the node that owns the destination.
+Smokey's Special Compound uses both paths for its charge, focus and fires. Timed outdoor objects and
+pending forced despawns keep their deadlines in a clean handoff. Other multi-actor script actions still
+use their local paths. Ground ticks
 use observed targets around the spot and require a current caster replica at the target. At impact,
 the caster's node resolves the original target GUID locally or sends the hit to the current replica's
 owner. A projectile can wait up to two seconds for the target to appear during a handoff. A clean caster

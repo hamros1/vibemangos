@@ -35,7 +35,7 @@ void summonWildObject(ref Caster caster, const(SpellInfo)* spell, size_t i, cons
             at.z = ground;
     }
     const ms = caster.modDuration(spell, duration(*spell, context.client, caster.level));
-    context.summonWildGameObject(caster.map, entry, at, ms > 0 ? cast(uint)(ms / 1000) : 0);
+    context.placeWildGameObject(caster.map, entry, at, ms > 0 ? cast(uint)(ms / 1000) : 0);
 }
 
 /**

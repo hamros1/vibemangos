@@ -6,7 +6,7 @@
 module dmangos.world.clusterbridge;
 
 import dmangos.cluster.protocol : AreaDamage, CreatureSwing, GameObjectSpell, GroupLootRoll, LootCoinShare, PartyHeal, PeriodicResult,
-    PartyQuest, QuestLootCheck;
+    PartyQuest, QuestLootCheck, ScriptGameObject;
 
 import core.time : Duration, MonoTime, msecs;
 
@@ -438,6 +438,17 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
     void gameObjectSpell(ushort peer, const ref GameObjectSpell message)
     {
         context.gameObjectSpellArrived(peer, message);
+    }
+
+    bool sendScriptGameObject(ushort peer, const ref ScriptGameObject message)
+    {
+        auto link = node.linkTo(peer);
+        return link !is null && !link.wantsClose && node.sendTo(peer, message);
+    }
+
+    void scriptGameObject(ushort peer, const ref ScriptGameObject message)
+    {
+        context.scriptGameObjectArrived(peer, message);
     }
 
     bool sendCreatureSwing(ushort peer, const ref CreatureSwing message)

@@ -5490,13 +5490,17 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return Migrant.init;
         if (gameObject.loot !is null)
             gameObject.loot.sendReleaseForAll();
+        long expires;
+        if (!gameObject.instanceId)
+            if (auto active = existingMap(gameObject.spawn.map))
+                expires = scriptedGameObjects.get(GameObjectOnMap(active, gameObject.guid), 0L);
         auto kind = MigrantKind.gameObject;
-        if (gameObject.instanceId && !gameObject.owner && gameObject.spawn.guid >= temporaryCounterStart)
+        if ((gameObject.instanceId || expires) && !gameObject.owner && gameObject.spawn.guid >= temporaryCounterStart)
         {
             kind = MigrantKind.summonedGameObject;
             serialize(w, gameObject.spawn);
         }
-        gameObject.saveState(w, transportNow());
+        gameObject.saveState(w, transportNow(), expires);
         return Migrant(kind, gameObject.spawn.guid, 0, w.data);
     }
 
@@ -5566,7 +5570,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             auto state = ByteReader(migrant.state);
             const spawn = deserialize!GameObjectSpawn(state);
             const template_ = spawn.entry in data.gameObjectTemplates;
-            if (!destination.instanceId || durable || migrant.spawn > 0xFF_FFFF || spawn.guid != migrant.spawn
+            if (durable || migrant.spawn > 0xFF_FFFF || spawn.guid != migrant.spawn
                 || template_ is null || template_.type == GameObjectType.moTransport
                 || !atHome(spawn.map, spawn.x, spawn.y, spawn.z)
                 || !client.isValidMapCoord(spawn.map, spawn.x, spawn.y, spawn.z, spawn.orientation))
@@ -5574,6 +5578,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             auto restored = makeGameObject(spawn);
             restored.instanceId = destination.instanceId;
             restored.loadState(state, transportNow());
+            if (!registerMigratedExpiry(restored, destination, !destination.instanceId))
+                return null;
             bindMigrantLoot(restored, destination);
             return restored;
         }
@@ -5646,9 +5652,27 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             }
         auto restored = restoreMigrantInInstance(migrant, destination.instanceId);
         if (auto go = cast(GameObject) restored)
+        {
             go.instanceId = destination.instanceId;
+            if (!registerMigratedExpiry(go, destination, false))
+                return null;
+        }
         bindMigrantLoot(restored, destination);
         return restored;
+    }
+
+    private bool registerMigratedExpiry(GameObject go, Map destination, bool requiresExpiry)
+    {
+        const at = go.carriedExpiry;
+        if (at > unixTime)
+        {
+            scriptedGameObjects[GameObjectOnMap(destination, go.guid)] = at;
+            return true;
+        }
+        if (!at && !requiresExpiry)
+            return true;
+        scripts.destroy(go.behaviour);
+        return false;
     }
 
     private void bindMigrantLoot(MapObject restored, Map destination)
@@ -7698,6 +7722,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             }
             return;
         }
+        if (go.spawn.respawnSeconds < 0)
+            return;
         const at = unixTime + (go.spawn.respawnSeconds > 0 ? go.spawn.respawnSeconds : 0);
         gameObjectRespawnAt[go.spawn.guid] = at;
         database.saveGameObjectRespawn(go.spawn.guid, at);
@@ -8958,6 +8984,51 @@ unittest
     auto moved = cast(WarsongRules) restored.rules;
     assert(moved.carrier[1] == 42 && moved.dropped[0] == ground.guid && moved.dropLeft[0] == 12.seconds);
     assert(to.existingMap(mapWarsongGulch, instance).gameObjectAt(ground.guid) !is null);
+}
+
+// Outdoor scripted objects keep their expiry and scheduled forced despawn through a transfer.
+unittest
+{
+    import dmangos.cluster.regions : CellRect;
+    import dmangos.world.gameobject : GameObjectTemplate;
+    import dmangos.world.grid : cellCoordinate;
+    import dmangos.world.testclient : newCreationContext, newDatabase;
+
+    auto db = newDatabase();
+    auto from = newCreationContext(db), to = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    from.clock = () => now;
+    to.clock = () => now;
+    const template_ = GameObjectTemplate(entry: 9010, type: GameObjectType.spellFocus);
+    from.data.gameObjectTemplates[template_.entry] = template_;
+    to.data.gameObjectTemplates[template_.entry] = template_;
+    const at = Position(-8930, -120, 83.53f);
+    auto oldMap = from.map(0), newMap = to.map(0);
+    auto summon = from.summonWildGameObject(oldMap, template_.entry, at, 5);
+    auto focus = from.spawnGameObjectAt(oldMap, template_.entry, at, true);
+    focus.forceDespawn(oldMap, 700);
+    focus.tick(oldMap, 100);
+
+    const x = cellCoordinate(at.x), y = cellCoordinate(at.y);
+    auto region = Region(91, 0, CellRect(x, y, x + 1, y + 1), 1, 1, RegionState.revoking, 2);
+    ubyte[][uint] leaving, unused;
+    from.regionsChanged(null, [region], null, leaving);
+    assert(oldMap.isReplica(summon.guid) && oldMap.isReplica(focus.guid));
+    region.owner = 2;
+    region.state = RegionState.granted;
+    region.next = 0;
+    to.regionsChanged([region], null, [region.id: cast(const(ubyte)[]) leaving[region.id]], unused);
+    auto movedFocus = newMap.gameObjectAt(focus.guid);
+    assert(movedFocus !is null && newMap.gameObjectAt(summon.guid) !is null);
+    movedFocus.tick(newMap, 500);
+    assert(newMap.gameObjectAt(focus.guid) is movedFocus);
+    movedFocus.tick(newMap, 150);
+    assert(newMap.gameObjectAt(focus.guid) is null);
+    to.scriptedGameObjectsDue();
+    assert(newMap.gameObjectAt(summon.guid) !is null);
+    now += 6.seconds;
+    to.scriptedGameObjectsDue();
+    assert(newMap.gameObjectAt(summon.guid) is null);
 }
 
 unittest

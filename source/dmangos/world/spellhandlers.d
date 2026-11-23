@@ -439,6 +439,10 @@ private:
 
     private UnitRef singleNamedScriptTarget(const(SpellInfo)* spell, bool acrossNodes)
     {
+        import dmangos.world.dbscripts : DbScriptType;
+        import dmangos.world.spelldamage : databaseSpellEffect;
+        import std.algorithm.searching : any;
+
         const(uint)[] entries;
         foreach (i, effect; spell.effect)
         {
@@ -446,11 +450,18 @@ private:
                 continue;
             if (spell.casting.implicitTargetB[i] != ImplicitTarget.none)
                 return UnitRef.init;
-            if (spell.implicitTargetA[i] == ImplicitTarget.caster)
+            const shape = spell.implicitTargetA[i];
+            if (shape == ImplicitTarget.caster || (shape == ImplicitTarget.locationCasterDest
+                && effect == SpellEffect.summonObjectWild))
                 continue;
-            if (spell.implicitTargetA[i] != ImplicitTarget.unitScriptNearCaster || spell.casting.chainTarget[i] > 1)
+            if (shape != ImplicitTarget.unitScriptNearCaster || spell.casting.chainTarget[i] > 1)
                 return UnitRef.init;
             const allowed = context.spellScriptTargets(spell.id, i);
+            if (!allowed.length && databaseSpellEffect(effect)
+                && context.data.dbScripts.steps(DbScriptType.spell, spell.id).length
+                && context.data.spellScriptObjects.get(spell.id, null)
+                    .any!(object => !(object.inverseEffectMask & (1u << i))))
+                continue; // The eligible creature's database script resolves its associated objects.
             if (!allowed.length || (entries.length && entries != allowed))
                 return UnitRef.init;
             entries = allowed;

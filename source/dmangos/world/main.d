@@ -309,6 +309,7 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
         context.sendPartyHeal = &bridge.sendPartyHeal;
         context.sendAreaDamage = &bridge.sendAreaDamage;
         context.sendGameObjectSpell = &bridge.sendGameObjectSpell;
+        context.sendScriptGameObject = &bridge.sendScriptGameObject;
         context.sendCreatureSwing = &bridge.sendCreatureSwing;
         context.sendPeriodicResult = &bridge.sendPeriodicResult;
         context.signalElsewhere = &bridge.sendScriptSignal;

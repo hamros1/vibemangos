@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 92; // 92: preserve player projectiles and route launched direct missiles
+enum ushort protocolVersion = 93; // 93: route script game object operations and preserve their deadlines
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -98,6 +98,7 @@ enum MessageType : ushort
     quorumWorkerLease = 59,
     gameObjectSpell = 60,
     partyQuest = 61,
+    scriptGameObject = 62,
 }
 
 /// Group quest offers cross the same realm's ownership boundaries. The sharer authorizes acceptance.
@@ -123,6 +124,20 @@ struct GameObjectSpell
     ubyte effect;
     float x, y, z;
     bool triggered, reply;
+}
+
+/// A database script's command on a specific game object on another node.
+struct ScriptGameObject
+{
+    enum type = MessageType.scriptGameObject;
+    enum Action : ubyte { respawn, despawn, summon }
+
+    ulong sequence, target;
+    uint map, delay; // milliseconds for despawn, seconds of lifetime for respawn and summon
+    Action action;
+    bool forwarded;
+    uint entry;
+    float x, y, z, orientation;
 }
 
 /// A candidate's lease round, or a voter's reply with its latest durable term.
@@ -1262,7 +1277,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 92, recordedFingerprint = 0xe80d670280fcd81bUL;
+private enum recordedVersion = 93, recordedFingerprint = 0x62754c315d430639UL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

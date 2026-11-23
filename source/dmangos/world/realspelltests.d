@@ -469,6 +469,87 @@ unittest
     assert(target.values.get!UNIT_FIELD_HEALTH == after && to.findObject(spot) is null);
 }
 
+/// Smokey's compound runs its real script with the charge, focus, and fires on their owning nodes.
+unittest
+{
+    import dmangos.cluster.protocol : ScriptGameObject;
+    import dmangos.world.defines : inventorySlotBag0;
+    import dmangos.world.grid : cellCoordinate, cellKeyAt;
+    import dmangos.world.objects : makeGuid, HighGuid;
+    import dmangos.world.replication : encodeState;
+    import dmangos.world.spellselection : namedCreatureRange, nearestNamedCreature;
+
+    if (!haveRealData())
+        return;
+
+    auto database = newDatabase();
+    WorldConfig conf;
+    auto source = new WorldContext(conf, database, realWorldData, realClient);
+    auto owner = new WorldContext(conf, database, realWorldData, realClient);
+    auto relay = new TestPlayerRelay(source, owner);
+    enum uint compound = 15736, charge = 177672;
+    const origin = Position(2798.5f, -3759.5f, 126.2f, 0);
+    const targetCell = cellKeyAt(2803.14f, -3759.45f);
+    const fence = cellCoordinate(2803.14f);
+    auto ownerOf = (uint, Position at, float) => cellCoordinate(at.x) >= fence ? ushort(2) : ushort(1);
+    source.ownsCell = (uint, ulong key) => cast(int)(key >> 32) < fence;
+    owner.ownsCell = (uint, ulong key) => cast(int)(key >> 32) >= fence;
+    source.regionOwnerAround = owner.regionOwnerAround = ownerOf;
+    auto from = source.map(0), to = owner.map(0);
+    to.loadCell(targetCell);
+    const focusGuid = makeGuid(HighGuid.gameObject, 177668, 45697);
+    const nearFire = makeGuid(HighGuid.gameObject, 177669, 573684);
+    const farFire = makeGuid(HighGuid.gameObject, 177670, 573693);
+    const targetGuid = makeGuid(HighGuid.unit, 12247, 54271);
+    auto focus = to.gameObjectAt(focusGuid);
+    auto target = to.creatureAt(targetGuid);
+    assert(focus !is null && target !is null, "the real Classic-DB structure and focus");
+    from.replicaCreated(2, targetCell, focus.guid, encodeState(focus, 0));
+    from.replicaCreated(2, targetCell, target.guid, encodeState(target, 0));
+    ScriptGameObject[] commands;
+    owner.sendScriptGameObject = (ushort peer, const ref ScriptGameObject request) {
+        assert(peer == 1);
+        commands ~= request;
+        source.scriptGameObjectArrived(2, request);
+        return true;
+    };
+
+    auto client = loggedIn(source, database, 7, "Anduin", origin, AccountLevel.player, raceHuman, 0, 60);
+    client.session.inWorld.storeLoot(compound, 1, 0, false);
+    client.read();
+    const player = client.session.character;
+    const spell = source.spellInfo(19250);
+    const entries = source.spellScriptTargets(spell.id, 0);
+    assert(entries == [12247]);
+    assert(source.spellScriptTargets(spell.id, 2).length == 0);
+    const range = namedCreatureRange(*spell, source.client);
+    const nearest = nearestNamedCreature(from, player.position, range, entries, 0, true);
+    assert(nearest.replica !is null && nearest.combatGuid == targetGuid && nearest.replica.owner == 2,
+        "the caster must see the remote structure");
+    auto item = player.inventory[inventorySlotBag0, backpackSlot(cast(Player) player, compound)];
+    assert(item !is null);
+    database.loadable[7].items = [database.itemRows[item.guid]];
+    ByteWriter use;
+    use.put(item.bagSlot);
+    use.put(item.slot);
+    use.put(ubyte(1));
+    SpellTargets(TargetFlags.self).write(use);
+    client.write(Opcode.CMSG_USE_ITEM, use.data);
+    assert(relay.remote !is null && !source.runningScripts && !owner.runningScripts,
+        "the item must move to the original target before casting");
+    relay.remote.update(50.msecs);
+    relay.remote.update(10.seconds);
+    assert(owner.runningScripts == 1 && !source.runningScripts);
+    assert(commands.length == 1 && commands[0].action == ScriptGameObject.Action.summon && commands[0].entry == charge);
+    assert(!from.gameObjectAt(nearFire) && !from.gameObjectAt(farFire) && !to.gameObjectAt(nearFire));
+    owner.updateScripts(0);
+    assert(to.gameObjectAt(focusGuid) is null, "the real script despawns the original focus");
+    owner.updateScripts(1000);
+    assert(to.gameObjectAt(nearFire) !is null && from.gameObjectAt(farFire) !is null);
+    assert(commands.length == 2 && commands[$ - 1].action == ScriptGameObject.Action.respawn
+        && commands[$ - 1].target == farFire);
+}
+
 /// A creature's existing ground effect follows its region and expires on the new owner.
 unittest
 {
