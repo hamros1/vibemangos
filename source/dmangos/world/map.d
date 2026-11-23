@@ -2281,7 +2281,7 @@ final class Map : CombatWorld, GameObjectWorld
         const slot = objectSlot(creature);
         if (slot == uint.max)
             return;
-        if (fighting && replicator !is null)
+        if (replicator !is null && (fighting || (creature.alive && creature.ai.hasCreatureChannel)))
             updateInterest(slot, creature.position);
         else
             clearInterest(slot);

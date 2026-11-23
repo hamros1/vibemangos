@@ -656,6 +656,49 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             member.renewPartyAreaAura(spell, renewal);
     }
 
+    import dmangos.cluster.protocol : TotemWeaponEnchant;
+    bool delegate(ushort, const ref TotemWeaponEnchant) sendTotemWeaponEnchant;
+
+    void totemWeaponEnchantArrived(ushort peer, const ref TotemWeaponEnchant pulse)
+    {
+        import dmangos.world.character : Character;
+        import dmangos.world.replication : Replica;
+        import dmangos.world.spellcast : radius;
+        import dmangos.world.spellids : AuraType;
+        import dmangos.world.updatefields : OBJECT_FIELD_ENTRY, TypeId, UNIT_FIELD_HEALTH, UNIT_FIELD_SUMMONEDBY;
+
+        if (!peer || !canWrite() || pulse.auraEffect >= 3 || pulse.weaponEffect >= 3
+            || !sameAuraSubgroup(pulse.controller, pulse.target, pulse.group))
+            return;
+        auto member = cast(Character) onlinePlayer(pulse.target);
+        if (member is null || member.player is null || !member.player.alive || member.transferring
+            || member.duelingWith(pulse.controller))
+            return;
+        auto map_ = member.currentMap;
+        if (map_.id != pulse.map || map_.instanceId != pulse.instance)
+            return;
+        auto totem = cast(Replica) map_.findObject(pulse.totem);
+        if (totem is null || totem.owner != peer || totem.fields.type != TypeId.unit
+            || !totem.fields.get!UNIT_FIELD_HEALTH || totem.fields.get!UNIT_FIELD_SUMMONEDBY != pulse.controller)
+            return;
+        const totemSpells = totem.fields.get!OBJECT_FIELD_ENTRY in data.creatureControlSpells;
+        if (totemSpells is null || (*totemSpells)[0] != pulse.aura)
+            return;
+        const aura = spellInfo(pulse.aura);
+        if (aura is null || aura.casting.applyAuraName[pulse.auraEffect] != AuraType.periodicTriggerSpell)
+            return;
+        const spell = spellInfo(aura.triggerSpell[pulse.auraEffect]);
+        if (spell is null || spell.effect[pulse.weaponEffect] != SpellEffect.enchantHeldItem)
+            return;
+        const duration = cast(int) (pulse.expires - transportNow());
+        if (duration <= 0 || duration > aura.casting.amplitude[pulse.auraEffect] * 2)
+            return;
+        const reach = radius(*spell, pulse.weaponEffect, client);
+        const at = totem.position, where = member.player.position;
+        if ((at.x - where.x) ^^ 2 + (at.y - where.y) ^^ 2 + (at.z - where.z) ^^ 2 <= reach * reach)
+            member.enchantWeaponFromTotem(spell.miscValue[pulse.weaponEffect], duration);
+    }
+
     void partyHealArrived(ushort peer, const ref PartyHeal message)
     {
         import std.algorithm.comparison : max;

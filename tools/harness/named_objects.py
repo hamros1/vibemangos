@@ -258,11 +258,11 @@ def run(fixture, abrupt=False):
             if arrived.count(event) != 1:
                 raise RuntimeError(f"expected the migrated creature's aura to be {transition} once")
     if abrupt:
-        expected = f"[game object] {RECOVERY_SIGN} guid {sign}:"
-        if arrived.count(expected) != 1:
-            raise RuntimeError(f"expected one cached sign after takeover, got {arrived.count(expected)}")
         recovered = client("recovered-cached-sign", 1, "MORTARSPAWN", f"login:{spawner}", port(0, SIGN_END),
                            "cmd:.gobject select", "cmd:.gobject info", "drop")
+        expected = f"[game object] {RECOVERY_SIGN} guid {sign}:"
+        if recovered.count(expected) != 1:
+            raise RuntimeError(f"expected one cached sign after takeover, got {recovered.count(expected)}")
         check_sign(recovered)
         print("PASS: the cached sign appeared once at its saved position and rotation after the crash", flush=True)
     print("PASS: cross-node effects reached the idle node, both nodes saved distinct spawns, "

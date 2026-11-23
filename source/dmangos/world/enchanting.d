@@ -61,14 +61,32 @@ mixin template EnchantingHandlers()
         auto item = player.inventory.byGuid(itemGuid);
         if (item is null || enchantment == 0 || enchantment !in context.data.enchantmentEffects)
             return;
-        const slot = temporary ? EnchantmentSlot.temporary : EnchantmentSlot.permanent;
-        const ms = temporary ? (durationSeconds > 0 ? durationSeconds : 3600) * 1000 : 0;
-        setEnchantment(item, slot, enchantment, ms);
         if (temporary)
-        {
-            enchantmentsLeft[item.fullGuid] = ms.msecs;
-            sendEnchantTime(item, slot, ms / 1000);
-        }
+            keepTemporaryEnchantment(item, enchantment, (durationSeconds > 0 ? durationSeconds : 3600) * 1000);
+        else
+            setEnchantment(item, EnchantmentSlot.permanent, enchantment, 0);
+    }
+
+    private void keepTemporaryEnchantment(Item item, uint enchantment, uint ms)
+    {
+        setEnchantment(item, EnchantmentSlot.temporary, enchantment, ms);
+        enchantmentsLeft[item.fullGuid] = ms.msecs;
+        sendEnchantTime(item, EnchantmentSlot.temporary, ms / 1000);
+    }
+
+    /// A totem can refresh its own temporary imbue and leaves another temporary enchantment in place.
+    package void enchantWeaponFromTotem(uint enchantment, uint ms)
+    {
+        import dmangos.world.defines : equipmentSlotMainhand;
+
+        auto weapon = player.inventory.equipped(equipmentSlotMainhand);
+        if (weapon is null || weapon.proto is null || weapon.proto.itemClass != 2
+            || !enchantment || enchantment !in context.data.enchantmentEffects)
+            return;
+        const previous = weapon.enchantment(EnchantmentSlot.temporary);
+        if (previous && (previous != enchantment || enchantmentsLeft.get(weapon.fullGuid, Duration.zero) >= ms.msecs))
+            return;
+        keepTemporaryEnchantment(weapon, enchantment, ms);
     }
 
     /// An enchantment in an item's slot (0 clears it), its fields set, saved, and a worn item's bonuses redone.

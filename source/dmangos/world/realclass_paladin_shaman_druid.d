@@ -2100,7 +2100,11 @@ unittest
         }, 20);
         assert(got.length && (got[0] == 0 || got[0] == want || got[0] == want * 3 / 2),
             format!"Flametongue Totem +%s: %s, not %s"(rank, got, want));
-        // Windfury Totem's (its own slot: air).
+        // Give the previous totem's weapon enchantment time to wear off before testing Windfury.
+        me.unsummonTotems();
+        foreach (_; 0 .. 10)
+            pass(w, who, 1000.msecs);
+        assert(!me.player.inventory.equipped(15).enchantment(1));
         summoned(w, who, 10614);
         foreach (_; 0 .. 6)
             pass(w, who, 1000.msecs);

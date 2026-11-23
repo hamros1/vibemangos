@@ -406,9 +406,9 @@ mixin template DbScriptRunner()
             placeWildGameObject(map(command.map), command.entry,
                 Position(command.x, command.y, command.z, command.orientation), command.delay, peer, command.forwarded);
             break;
-        case ScriptGameObject.Action.respawn, ScriptGameObject.Action.despawn:
-            scriptGameObjectAction(map(command.map), command.target, command.delay,
-                command.action == ScriptGameObject.Action.despawn, peer, command.forwarded);
+        case ScriptGameObject.Action.respawn, ScriptGameObject.Action.despawn,
+            ScriptGameObject.Action.open, ScriptGameObject.Action.close:
+            scriptGameObjectAction(map(command.map), command.target, command.delay, command.action, peer, command.forwarded);
             break;
         }
     }
@@ -643,7 +643,10 @@ mixin template DbScriptRunner()
     {
         if (!step.wantsBuddy)
             return true;
-        if (step.command == ScriptCommand.respawnGameObject || step.command == ScriptCommand.despawnGameObject)
+        import std.algorithm.comparison : among;
+
+        if (step.command.among(ScriptCommand.respawnGameObject, ScriptCommand.despawnGameObject,
+            ScriptCommand.openDoor, ScriptCommand.closeDoor))
             return scriptGameObjectBuddies(step, map, source, target, buddies);
         import dmangos.world.objects : counterOf;
         import dmangos.world.updatefields : OBJECT_FIELD_ENTRY, UNIT_FIELD_HEALTH;
@@ -966,21 +969,6 @@ mixin template DbScriptRunner()
         map.wake(creature.guid);
     }
 
-    /// The game object of spawn `spawnGuid` on `map`, if it is there.
-    private GameObject scriptSpawnedGameObject(Map map, uint spawnGuid)
-    {
-        import dmangos.world.objects : makeGuid, HighGuid;
-
-        if (gameObjectSpawnIndex is null)
-            foreach (i, ref spawn; data.gameObjectSpawns)
-                gameObjectSpawnIndex[spawn.guid] = i;
-        const index = spawnGuid in gameObjectSpawnIndex;
-        if (index is null)
-            return null;
-        const spawn = &data.gameObjectSpawns[*index];
-        return cast(GameObject) map.findObject(makeGuid(HighGuid.gameObject, spawn.entry, spawn.guid));
-    }
-
     private long[GameObjectOnMap] scriptedGameObjects; // spawned by a script: when it goes (Unix time)
 
     private void saveDungeonObjectDeadlines(uint mapId, ref ByteWriter w)
@@ -1078,8 +1066,8 @@ mixin template DbScriptRunner()
         return 0;
     }
 
-    private void scriptGameObjectAction(Map map, ulong guid, uint delay, bool despawn, ushort from = 0,
-        bool forwarded = false)
+    private void scriptGameObjectAction(Map map, ulong guid, uint delay, ScriptGameObject.Action action,
+        ushort from = 0, bool forwarded = false)
     {
         import dmangos.world.objects : counterOf, highGuidOf, HighGuid;
         import dmangos.world.replication : Replica;
@@ -1104,20 +1092,37 @@ mixin template DbScriptRunner()
             {
                 if (owner && owner != from && !forwarded && sendScriptGameObject !is null)
                 {
-                    const command = ScriptGameObject(nextGameplaySequence(), guid, map.id, delay,
-                        despawn ? ScriptGameObject.Action.despawn : ScriptGameObject.Action.respawn, from != 0);
+                    const command = ScriptGameObject(nextGameplaySequence(), guid, map.id, delay, action, from != 0);
                     sendScriptGameObject(owner, command);
                 }
                 return;
             }
         }
-        if (!despawn)
-            scriptSpawnGameObject(map, spawnGuid, go, delay);
-        else if (go !is null)
+        final switch (action)
         {
-            go.forceDespawn(map, delay);
-            if (delay)
+        case ScriptGameObject.Action.respawn:
+            scriptSpawnGameObject(map, spawnGuid, go, delay);
+            break;
+        case ScriptGameObject.Action.despawn:
+            if (go !is null)
+            {
+                go.forceDespawn(map, delay);
+                if (delay)
+                    map.wake(guid);
+            }
+            break;
+        case ScriptGameObject.Action.open, ScriptGameObject.Action.close:
+            import dmangos.world.gameobject : GameObjectType;
+
+            if (go !is null && (go.type == GameObjectType.door || go.type == GameObjectType.button))
+            {
+                const reset = delay < 15 ? 15 : delay;
+                go.useOpenable(map, action == ScriptGameObject.Action.open, reset * 1000);
                 map.wake(guid);
+            }
+            break;
+        case ScriptGameObject.Action.summon:
+            break; // handled by placeWildGameObject
         }
     }
 
@@ -1251,10 +1256,10 @@ mixin template DbScriptRunner()
         }
         case ScriptCommand.respawnGameObject:
             scriptGameObjectAction(map, step.datalong ? scriptGameObjectGuid(step.datalong, map.id) : source.guid,
-                step.datalong2, false);
+                step.datalong2, ScriptGameObject.Action.respawn);
             break;
         case ScriptCommand.despawnGameObject:
-            scriptGameObjectAction(map, target.guid, step.datalong, true);
+            scriptGameObjectAction(map, target.guid, step.datalong, ScriptGameObject.Action.despawn);
             break;
         case ScriptCommand.tempSpawnCreature:
         {
@@ -1272,19 +1277,12 @@ mixin template DbScriptRunner()
         }
         case ScriptCommand.openDoor, ScriptCommand.closeDoor:
         {
-            // The door of the spawn named (or the source, or the target), for its reset time (15 s at least).
-            GameObject door = source.go !is null ? source.go : target.go;
-            if (step.datalong)
-                door = scriptSpawnedGameObject(map, step.datalong);
-            if (door is null)
-                break;
-            import dmangos.world.gameobject : GameObjectType;
+            import dmangos.world.objects : highGuidOf, HighGuid;
 
-            if (door.type != GameObjectType.door && door.type != GameObjectType.button)
-                break;
-            const reset = step.datalong2 < 15 ? 15 : step.datalong2;
-            door.useOpenable(map, step.command == ScriptCommand.openDoor, reset * 1000);
-            map.wake(door.guid);
+            const guid = step.datalong ? scriptGameObjectGuid(step.datalong, map.id)
+                : highGuidOf(source.guid) == HighGuid.gameObject ? source.guid : target.guid;
+            const action = step.command == ScriptCommand.openDoor ? ScriptGameObject.Action.open : ScriptGameObject.Action.close;
+            scriptGameObjectAction(map, guid, step.datalong2, action);
             break;
         }
         case ScriptCommand.removeAura:

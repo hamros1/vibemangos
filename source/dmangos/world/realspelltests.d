@@ -621,6 +621,65 @@ unittest
         && commands[$ - 1].target == farFire);
 }
 
+/// The Ahn'Qiraj gate event closes its exact door even if the script starts on another node.
+unittest
+{
+    import dmangos.cluster.protocol : ScriptGameObject;
+    import dmangos.world.creature : TempSpawnType;
+    import dmangos.world.dbscripts : DbScriptType;
+    import dmangos.world.gameobject : goStateActive, goStateReady;
+    import dmangos.world.grid : cellKeyAt, cellSize;
+    import dmangos.world.objects : makeGuid, HighGuid;
+    import std.algorithm.searching : find;
+
+    if (!haveRealData())
+        return;
+
+    auto source = RealWorld.make(), owner = RealWorld.make();
+    source.context.nodeId = 1;
+    owner.context.nodeId = 2;
+    enum uint spawn = 66334, entry = 176146, closeGate = 9425, zoneMap = 1;
+    const rows = source.context.data.gameObjectSpawns.find!(row => row.guid == spawn);
+    assert(rows.length && rows[0].entry == entry && rows[0].map == zoneMap);
+    const at = Position(rows[0].x, rows[0].y, rows[0].z, rows[0].orientation);
+    const cell = cellKeyAt(at.x, at.y);
+    source.context.ownsCell = (uint, ulong key) => key != cell;
+    owner.context.ownsCell = (uint, ulong key) => key == cell;
+    source.context.regionOwnerAround = owner.context.regionOwnerAround =
+        (uint, Position pos, float) => cellKeyAt(pos.x, pos.y) == cell ? ushort(2) : ushort(1);
+    auto from = source.context.map(zoneMap), to = owner.context.map(zoneMap);
+    const guid = makeGuid(HighGuid.gameObject, entry, spawn);
+    to.loadCell(cell);
+    auto gate = to.gameObjectAt(guid);
+    if (gate is null)
+    {
+        gate = owner.context.makeGameObject(rows[0]);
+        to.addObject(gate);
+    }
+    gate.setDoorOpen(true);
+    const actorAt = Position(at.x + 2 * cellSize, at.y, at.z);
+    auto actor = source.context.summonCreature(from, 6, actorAt, TempSpawnType.manual, 0, 0);
+    uint commands;
+    source.context.sendScriptGameObject = (ushort peer, const ref ScriptGameObject request) {
+        assert(peer == 2 && request.target == guid && request.action == ScriptGameObject.Action.close
+            && request.delay == 76);
+        ++commands;
+        owner.context.scriptGameObjectArrived(1, request);
+        owner.context.scriptGameObjectArrived(1, request);
+        return true;
+    };
+
+    assert(source.context.startScript(DbScriptType.event, closeGate, from, actor.guid, 0));
+    source.context.updateScripts(1_999);
+    assert(gate.goState == goStateActive && commands == 0);
+    source.context.updateScripts(1);
+    assert(gate.goState == goStateReady && commands == 1 && from.gameObjectAt(guid) is null);
+    gate.tick(to, 75_999);
+    assert(gate.goState == goStateReady);
+    gate.tick(to, 1);
+    assert(gate.goState == goStateActive);
+}
+
 /// The Binding sends each acolyte the real ritual steps that affect it.
 unittest
 {
@@ -893,6 +952,78 @@ unittest
     client.write(Opcode.CMSG_CANCEL_CHANNELLING, cancel.data);
     assert(!moved.player.values.get!PLAYER_FARSIGHT && to.findObject(eye) is null);
     assert(to.interestCells.canFind(originCell) && !to.interestCells.canFind(eyeCell));
+}
+
+/// Windfury Totem imbues a remote subgroup member's weapon and respects its existing enchantment.
+unittest
+{
+    import dmangos.cluster.protocol : GroupMemberState, GroupState, TotemWeaponEnchant;
+    import dmangos.world.defines : equipmentSlotMainhand, inventorySlotBag0;
+    import dmangos.world.enchantments : EnchantmentSlot;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.group : GroupType;
+    import dmangos.world.replication : encodePlayerState, encodeState;
+
+    if (!haveRealData())
+        return;
+
+    auto source = RealWorld.make(), owner = RealWorld.make();
+    source.context.nodeId = 1;
+    owner.context.nodeId = 2;
+    auto shaman = source.character(7, "Thrall", 7, 60, [], raceOrc);
+    auto warrior = owner.character(8, "Garrosh", 1, 60, [], raceOrc);
+    auto caster = shaman.session.inWorld, ally = warrior.session.inWorld;
+    auto from = source.context.map(0), to = owner.context.map(0);
+    const at = caster.player.position, cell = cellKeyAt(at.x, at.y);
+    from.replicaCreated(2, cell, ally.player.guid, encodePlayerState(ally.player, 0));
+
+    enum uint windfury = 8512, related = 1783, flametongue = 124, axe = 37;
+    ally.storeLoot(axe, 1, 0, false);
+    warrior.write(Opcode.CMSG_AUTOEQUIP_ITEM, ClientItemPos(inventorySlotBag0, backpackSlot(ally.player, axe)));
+    auto weapon = ally.player.inventory.equipped(equipmentSlotMainhand);
+    assert(weapon !is null && weapon.entry == axe);
+    auto group = GroupState(id: 6, groupType: GroupType.raid, leader: 7, leaderName: "Thrall",
+        members: [GroupMemberState(7, "Thrall"), GroupMemberState(8, "Garrosh")]);
+    source.context.groups.mirror(group);
+    group.members[1].subGroup = 1;
+    owner.context.groups.mirror(group);
+
+    caster.castTriggeredAt(windfury, caster.player.guid);
+    assert(caster.ownTotems().length == 1);
+    auto totem = caster.ownTotems()[0];
+    uint pulses;
+    source.context.sendTotemWeaponEnchant = (ushort peer, const ref TotemWeaponEnchant pulse) {
+        assert(peer == 2 && pulse.totem == totem.guid && pulse.controller == 7 && pulse.target == 8);
+        ++pulses;
+        to.replicaCreated(1, cellKeyAt(totem.position.x, totem.position.y), totem.guid, encodeState(totem, 0));
+        owner.context.totemWeaponEnchantArrived(1, pulse);
+        owner.context.totemWeaponEnchantArrived(1, pulse);
+        return true;
+    };
+    caster.updateTotemEnchants();
+    assert(pulses == 1 && !weapon.enchantment(EnchantmentSlot.temporary), "a different subgroup is rejected");
+
+    group.members[1].subGroup = 0;
+    owner.context.groups.mirror(group);
+    ally.enchantItem(weapon.fullGuid, flametongue, true, 15);
+    source.now += 5.seconds;
+    owner.now += 5.seconds;
+    caster.updateTotemEnchants();
+    assert(pulses == 2 && weapon.enchantment(EnchantmentSlot.temporary) == flametongue);
+    ally.setEnchantment(weapon, EnchantmentSlot.temporary, 0, 0);
+
+    source.now += 5.seconds;
+    owner.now += 5.seconds;
+    caster.updateTotemEnchants();
+    assert(pulses == 3 && weapon.enchantment(EnchantmentSlot.temporary) == related);
+    ally.player.movement.position.x += 80; // The sender still sees the old position.
+    source.now += 5.seconds;
+    owner.now += 5.seconds;
+    ally.updateEnchantments(5.seconds);
+    caster.updateTotemEnchants();
+    assert(pulses == 4);
+    ally.updateEnchantments(5.seconds);
+    assert(!weapon.enchantment(EnchantmentSlot.temporary), "an out-of-range pulse cannot renew Windfury");
 }
 
 /// A totem and guardian retain their GUIDs, lifetime and controller in the player's handoff.

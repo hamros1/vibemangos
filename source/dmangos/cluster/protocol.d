@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 100; // 100: preserve a remote camera through a player handoff
+enum ushort protocolVersion = 102; // 102: route database door commands to their owners
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -102,6 +102,7 @@ enum MessageType : ushort
     partyAreaAura = 63,
     scriptCreatureStep = 64,
     partySummon = 65,
+    totemWeaponEnchant = 66,
 }
 
 /// Refresh a party aura on a member simulated by another node.
@@ -116,6 +117,16 @@ struct PartyAreaAura
     float x, y, z, radius;
     int[3] values;
     ubyte effects;
+}
+
+/// One pulse of the temporary weapon enchant granted by a party member's totem.
+struct TotemWeaponEnchant
+{
+    enum type = MessageType.totemWeaponEnchant;
+
+    ulong totem, controller, target;
+    uint group, aura, map, instance, expires;
+    ubyte auraEffect, weaponEffect;
 }
 
 /// Group quest offers cross the same realm's ownership boundaries. The sharer authorizes acceptance.
@@ -147,10 +158,10 @@ struct GameObjectSpell
 struct ScriptGameObject
 {
     enum type = MessageType.scriptGameObject;
-    enum Action : ubyte { respawn, despawn, summon }
+    enum Action : ubyte { respawn, despawn, summon, open, close }
 
     ulong sequence, target;
-    uint map, delay; // milliseconds for despawn, seconds of lifetime for respawn and summon
+    uint map, delay; // milliseconds for despawn, seconds for the other actions
     Action action;
     bool forwarded;
     uint entry;
@@ -1320,7 +1331,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 100, recordedFingerprint = 0xd8fadd296b778c6eUL;
+private enum recordedVersion = 102, recordedFingerprint = 0xb8ff32d803f33443UL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

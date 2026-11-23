@@ -318,6 +318,7 @@ mixin template CreatureCasting()
         }
         if (!hasCreatureChannel)
             return;
+        map_.trackCreatureCombat(me, inCombat);
         if (!namedChannelSequence)
             return; // Arcane Missiles launches from its restored periodic aura.
         namedChannelPeer = currentChannelPeer(map_, me.values.get!UNIT_FIELD_CHANNEL_OBJECT);
@@ -360,6 +361,8 @@ mixin template CreatureCasting()
         me.values.set!UNIT_FIELD_CHANNEL_OBJECT(target.combatGuid);
         world_.flushCreature(me);
         world_.wake(me.guid);
+        if (auto map_ = cast(imported!"dmangos.world.map".Map) world_)
+            map_.trackCreatureCombat(me, inCombat);
         return true;
     }
 
@@ -383,6 +386,8 @@ mixin template CreatureCasting()
         me.values.set!UNIT_FIELD_CHANNEL_OBJECT(0UL);
         if (world_ is null)
             return;
+        if (auto map_ = cast(Map) world_)
+            map_.trackCreatureCombat(me, inCombat);
         if (cancelled)
         {
             if (!channelToken)

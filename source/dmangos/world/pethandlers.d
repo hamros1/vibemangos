@@ -1848,8 +1848,6 @@ mixin template PetHandlers()
     {
         import core.time : msecs;
         import dmangos.world.auras : AuraType;
-        import dmangos.world.defines : equipmentSlotMainhand;
-        import dmangos.world.spellcast : radius;
         import dmangos.world.spells : SpellEffect;
 
         const now = context.clock();
@@ -1884,18 +1882,7 @@ mixin template PetHandlers()
                     }
                     foreach (i; 0 .. 3)
                         if (trigger.effect[i] == SpellEffect.enchantHeldItem)
-                        {
-                            const reach = radius(*trigger, i, context.client), enchantment = cast(uint) trigger.miscValue[i];
-                            foreach (m; partyHere())
-                            {
-                                const p = m.player.position;
-                                if ((p.x - totem.position.x) ^^ 2 + (p.y - totem.position.y) ^^ 2 > reach * reach)
-                                    continue;
-                                if (const weapon = m.player.inventory.equipped(equipmentSlotMainhand))
-                                    if (weapon.proto !is null && weapon.proto.itemClass == 2)
-                                        m.enchantItem(weapon.fullGuid, enchantment, true, period * 2 / 1000);
-                            }
-                        }
+                            applyTotemWeaponPulse(totem, aura.spell.id, k, trigger, i, period * 2);
                 }
     }
 
@@ -1907,19 +1894,46 @@ mixin template PetHandlers()
         uint spell;
     }
 
-    /// This player and its party's members on its map, alive.
-    private typeof(this)[] partyHere()
+    private void applyTotemWeaponPulse(Creature totem, uint aura, size_t auraEffect,
+        const(SpellInfo)* spell, size_t effect, uint ms)
     {
+        import dmangos.cluster.protocol : TotemWeaponEnchant;
         import dmangos.world.player : DeathState;
+        import dmangos.world.replication : Replica;
+        import dmangos.world.spellcast : radius;
 
-        typeof(this)[] members = [this];
-        if (auto group = context.groups.of(player.guid))
-            foreach (ref m; group.members)
-                if (m.guid != player.guid)
-                    if (auto s = cast(typeof(this)) context.onlinePlayer(m.guid))
-                        if (s.player !is null && s.map is map && s.player.deathState == DeathState.alive)
-                            members ~= s;
-        return members;
+        const reach = radius(*spell, effect, context.client);
+        const at = totem.position;
+        bool near(Position where)
+        {
+            return (at.x - where.x) ^^ 2 + (at.y - where.y) ^^ 2 + (at.z - where.z) ^^ 2 <= reach * reach;
+        }
+        const enchantment = cast(uint) spell.miscValue[effect];
+        if (near(player.position))
+            enchantWeaponFromTotem(enchantment, ms);
+        auto group = context.groups.of(player.guid);
+        if (group is null)
+            return;
+        foreach (ref member; group.members)
+        {
+            if (member.guid == player.guid || group.subGroupOf(member.guid) != group.subGroupOf(player.guid))
+                continue;
+            if (auto local = cast(typeof(this)) context.onlinePlayer(member.guid))
+            {
+                if (local.player !is null && local.map is map && local.player.deathState == DeathState.alive
+                    && !local.duelingWith(player.guid) && near(local.player.position))
+                    local.enchantWeaponFromTotem(enchantment, ms);
+            }
+            else if (context.sendTotemWeaponEnchant !is null)
+                if (auto mirror = cast(Replica) map.findObject(member.guid))
+                    if (near(mirror.position))
+                    {
+                        const pulse = TotemWeaponEnchant(totem.guid, player.guid, member.guid,
+                            group.id, aura, map.id, map.instanceId, context.transportNow() + ms,
+                            cast(ubyte) auraEffect, cast(ubyte) effect);
+                        context.sendTotemWeaponEnchant(mirror.owner, pulse);
+                    }
+        }
     }
 
     /// The player's totems out.

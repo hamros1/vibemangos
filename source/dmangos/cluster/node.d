@@ -78,6 +78,7 @@ interface ReplicationHandler
     void questLootCheck(ushort peer, const ref QuestLootCheck message);
     void partyHeal(ushort peer, const ref PartyHeal message);
     void partyAreaAura(ushort peer, const ref PartyAreaAura message);
+    void totemWeaponEnchant(ushort peer, const ref TotemWeaponEnchant message);
     void areaDamage(ushort peer, const ref AreaDamage message);
     void gameObjectSpell(ushort peer, const ref GameObjectSpell message);
     void scriptGameObject(ushort peer, const ref ScriptGameObject message);
@@ -1160,6 +1161,15 @@ final class ClusterNode : LinkOwner
             {
                 const m = decode!ScriptCreatureStep(payload);
                 replication.scriptCreatureStep(peer, m);
+            }
+            return;
+        }
+        if (type == MessageType.totemWeaponEnchant)
+        {
+            if (replication !is null)
+            {
+                const m = decode!TotemWeaponEnchant(payload);
+                replication.totemWeaponEnchant(peer, m);
             }
             return;
         }

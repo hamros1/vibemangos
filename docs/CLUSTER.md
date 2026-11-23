@@ -918,7 +918,8 @@ target with its original tick schedule. This requires a clean handoff with the c
 
 EventAI can select a wounded ally in combat on another node when all the rule's actions are
 supported channels aimed at that ally. Leprous Technicians and Machinesmiths use this for
-Supercharge and Rebuild. The chosen ally remains the cast target. A Cultist Engineer can
+Supercharge and Rebuild. The chosen ally remains the cast target. A channeling creature keeps observing its target
+after nearby players leave. A Cultist Engineer can
 channel its Buttress visual into a Damaged Necrotic Shard on another node. The target
 keeps a single aura while the caster renews it. It expires if the caster's node stops.
 
@@ -932,7 +933,8 @@ one prison and removes its target. An interrupt leaves the target in the world.
 Cross-node spell routing is effect-specific. A player's cast or item use that selects one nearby creature
 can move to that creature's node when the script needs both actors together. The new owner rechecks the
 original creature before starting the cast. Database script steps can respawn or despawn a named game
-object on its owner, and a spell can summon its wild game object on the node that owns the destination.
+object and open or close a door on its owner. A spell can summon its wild game object on the node
+that owns the destination.
 Smokey's Special Compound uses both paths for its charge, focus and fires. Timed outdoor objects and
 pending forced despawns keep their deadlines in a clean handoff. Outdoor database script steps can
 select an observed creature on another node and send its exact command to the owner. This preserves
@@ -960,6 +962,8 @@ timer until the catch begins.
 Party area auras reach nearby players in the same raid subgroup across region boundaries. The
 recipient's node checks membership and distance. It removes the aura when those checks fail or the
 source stops renewing it. A login recalculates inherited auras from their current sources.
+Windfury and Flametongue Totem also reach the main-hand weapons of remote subgroup members.
+A pulse preserves a different temporary enchantment already on the weapon.
 
 When an in-realm battleground map moves, its new owner receives the running matches, their scores,
 objectives, and timers. Players in a match follow the map's ownership, including during combat.
