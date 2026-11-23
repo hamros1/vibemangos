@@ -247,12 +247,14 @@ private:
 
     bool hasPendingPlayerSpell()
     {
+        if (mindVisionAsked.spell)
+            return true;
         if (pendingArrival.spell && pendingArrival.namedCreature)
             return true;
         if (!pendingArrival.spell || !pendingArrival.spellTarget || pendingArrival.spellTarget > uint.max)
             return false;
         const spell = context.data.spells.spell(pendingArrival.spell);
-        return spell !is null && isPlayerHandoffSpell(*spell);
+        return spell !is null && (isPlayerHandoffSpell(*spell) || isMindVision(spell.id));
     }
 
     /// A cancel relayed before the first tick can still stop the pending spell from starting.
@@ -275,13 +277,18 @@ private:
         if (!map.questSpawnVisible(player, target))
             return false;
         auto replica = cast(Replica) map.findObject(target);
-        if (replica is null || replica.owner == context.nodeId || context.playerRelay is null || !context.canWrite())
+        return replica !is null && actAtOwner(replica.owner, target, action);
+    }
+
+    private bool actAtOwner(ushort owner, ulong target, ArrivalAction action)
+    {
+        if (!owner || owner == context.nodeId || context.playerRelay is null || !context.canWrite())
             return false;
         if (teleporting != Teleport.none || loggingOut || transferring || duel !is null || tradeSide !is null)
             return false;
         info!"%s: '%s' acts at %s, which node %s simulates: moving there"(remoteAddress, player.data.name,
-            target & 0xFFFF_FFFF, replica.owner);
-        migrateTo(replica.owner, action);
+            target & 0xFFFF_FFFF, owner);
+        migrateTo(owner, action);
         return true;
     }
 

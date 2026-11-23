@@ -191,6 +191,8 @@ private:
             return;
         if (hasPendingPlayerSpell())
             return deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(id, SpellCastResult.spellInProgress, spell));
+        if (isMindVision(id) && findMindVisionTarget(id, targets))
+            return;
         if (spell.hasEffect(SpellEffect.duel))
         {
             if (auto replica = cast(Replica) map.findObject(targets.unit))
@@ -230,6 +232,72 @@ private:
             if (actAtReplica(named, ArrivalAction(spell: id, namedCreature: named, castTargets: targets)))
                 return;
         castSpell(spell, targets, false, 0);
+    }
+
+    import dmangos.cluster.protocol : MindVisionTarget;
+
+    private static struct PendingMindVision
+    {
+        uint spell;
+        ushort node;
+        MindVisionTarget request;
+        MonoTime deadline;
+    }
+
+    private PendingMindVision mindVisionAsked;
+
+    private static bool isMindVision(uint spell)
+    {
+        return spell == 2096 || spell == 10909;
+    }
+
+    private bool findMindVisionTarget(uint spell, const ref SpellTargets targets)
+    {
+        import dmangos.world.objects : HighGuid, highGuidOf;
+
+        if (!targets.unit || highGuidOf(targets.unit) != HighGuid.player || context.sendMindVisionTarget is null
+            || context.playerRelay is null || context.onlinePlayer(targets.unit) !is null
+            || map.findObject(targets.unit) !is null || !context.canWrite())
+            return false;
+        const remote = context.remotePlayer(targets.unit);
+        if (remote is null || !remote.node)
+            return false;
+        auto request = MindVisionTarget(player.guid, targets.unit, context.nextGameplaySequence(), map.id, map.instanceId);
+        const node = remote.node;
+        mindVisionAsked = PendingMindVision(spell, node, request, context.clock() + 2.seconds);
+        if (context.sendMindVisionTarget(node, request))
+            return true;
+        mindVisionAsked = PendingMindVision.init;
+        return false;
+    }
+
+    package void mindVisionTargetFound(ushort peer, const ref MindVisionTarget message)
+    {
+        const asked = mindVisionAsked;
+        if (!asked.spell || peer != asked.node || message.sequence != asked.request.sequence
+            || message.target != asked.request.target || message.map != asked.request.map
+            || message.instance != asked.request.instance || player is null || message.caster != player.guid)
+            return;
+        mindVisionAsked = PendingMindVision.init;
+        const spell = context.spellInfo(asked.spell);
+        auto result = SpellCastResult.badTargets;
+        if (spell !is null && player.knowsSpell(asked.spell) && message.state.length
+            && context.clock() < asked.deadline && map.id == message.map && map.instanceId == message.instance)
+        {
+            auto target = new Replica(message.target, peer, message.state);
+            if (target.fields.type == TypeId.player && target.position.isFinite)
+            {
+                const targets = SpellTargets(TargetFlags.unit, message.target);
+                result = checkCast(spell, targets, false, 0, true, target);
+                if (result == SpellCastResult.ok)
+                {
+                    if (actAtOwner(peer, message.target, ArrivalAction(spell: asked.spell, spellTarget: message.target)))
+                        return;
+                    result = SpellCastResult.badTargets;
+                }
+            }
+        }
+        deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(asked.spell, result, spell));
     }
 
     /// A supported area attack or party heal whose effects are all centered on the caster.
@@ -332,6 +400,11 @@ private:
         if (npcCharmer)
             return;
         const id = reader.read!uint;
+        if (mindVisionAsked.spell == id && id)
+        {
+            mindVisionAsked = PendingMindVision.init;
+            return deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(id, SpellCastResult.interrupted));
+        }
         if (cancelPendingPlayerSpell(id))
             return deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(id, SpellCastResult.interrupted));
         if (generic.active && generic.spell.id == id)
@@ -814,6 +887,12 @@ private:
     /// The countdown of a cast in progress: it goes when its time is up.
     void updateSpells(Duration elapsed)
     {
+        if (mindVisionAsked.spell && context.clock() >= mindVisionAsked.deadline)
+        {
+            const spell = mindVisionAsked.spell;
+            mindVisionAsked = PendingMindVision.init;
+            deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell, SpellCastResult.badTargets));
+        }
         if (bobber)
             updateBobber(cast(int) elapsed.total!"msecs");
         if (persistentAreas.length)

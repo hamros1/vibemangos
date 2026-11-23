@@ -1030,6 +1030,86 @@ unittest
     assert(to.interestCells.canFind(originCell) && !to.interestCells.canFind(eyeCell));
 }
 
+/// Rank two of Mind Vision finds a player beyond normal replica distance without spending mana on a refusal.
+unittest
+{
+    import std.format : format;
+    import dmangos.cluster.protocol : MindVisionTarget, PresenceEntry;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.playercreate : NewSpell;
+    import dmangos.world.updatefields : PLAYER_FARSIGHT, UNIT_CHANNEL_SPELL, UNIT_FIELD_POWER1;
+
+    if (!haveRealData())
+        return;
+
+    enum uint shortSight = 2096, longSight = 10909;
+    auto source = RealWorld.make(), owner = RealWorld.make();
+    auto watcher = source.character(7, "Priest", 5, 60, [shortSight, longSight]);
+    auto observed = owner.character(8, "Scout", 1, 60, []);
+    auto caster = watcher.session.inWorld, target = observed.session.inWorld;
+    const body = caster.player.position;
+    target.player.movement.position.x = body.x + 400;
+    target.player.movement.position.y = body.y;
+    target.player.movement.position.z = body.z;
+    auto from = source.context.map(0), to = owner.context.map(0);
+    to.relocated(target);
+    owner.context.database = source.db;
+    auto relay = new TestPlayerRelay(source.context, owner.context);
+    source.context.presence(2, true, [PresenceEntry(8, "Scout")], null);
+    assert(from.findObject(8) is null);
+    const mana = caster.player.values.get!UNIT_FIELD_POWER1;
+    source.db.loadable[7].power[0] = mana;
+    foreach (spell; [shortSight, longSight])
+        source.db.loadable[7].spells ~= NewSpell(spell, true, false);
+
+    MindVisionTarget request;
+    uint queries;
+    source.context.sendMindVisionTarget = (ushort peer, const ref MindVisionTarget message) {
+        assert(peer == 2 && message.target == 8 && !message.reply && !message.state.length);
+        request = MindVisionTarget(message.caster, message.target, message.sequence, message.map, message.instance);
+        ++queries;
+        return true;
+    };
+    owner.context.sendMindVisionTarget = (ushort peer, const ref MindVisionTarget message) {
+        assert(peer == 1 && message.reply && message.state.length);
+        source.context.mindVisionTargetArrived(3, message); // another peer cannot answer it
+        source.context.mindVisionTargetArrived(2, message);
+        source.context.mindVisionTargetArrived(2, message);
+        return true;
+    };
+    void castSight(uint id)
+    {
+        ByteWriter cast_;
+        cast_.put(id);
+        SpellTargets(TargetFlags.unit, 8).write(cast_);
+        watcher.write(Opcode.CMSG_CAST_SPELL, cast_.data);
+    }
+
+    castSight(shortSight);
+    assert(queries == 1 && relay.remote is null);
+    owner.context.mindVisionTargetArrived(1, request);
+    assert(relay.remote is null && caster.player.values.get!UNIT_FIELD_POWER1 == mana);
+    assert(!caster.player.values.get!PLAYER_FARSIGHT);
+    castSight(longSight);
+    ByteWriter cancel;
+    cancel.put(longSight);
+    watcher.write(Opcode.CMSG_CANCEL_CAST, cancel.data);
+    owner.context.mindVisionTargetArrived(1, request);
+    assert(queries == 2 && relay.remote is null && caster.player.values.get!UNIT_FIELD_POWER1 == mana);
+
+    castSight(longSight);
+    owner.context.mindVisionTargetArrived(1, request);
+    assert(queries == 3 && relay.remote !is null);
+    relay.remote.update(1.msecs);
+    auto moved = relay.remote.inWorld;
+    assert(moved.player.position == body, format!"the caster's body moved from %s to %s"(body, moved.player.position));
+    const eye = moved.player.values.get!PLAYER_FARSIGHT;
+    assert(eye == 8, format!"camera %s, channel %s, spells %s"(eye,
+        moved.player.values.get!UNIT_CHANNEL_SPELL, moved.player.spells));
+    assert(moved.player.values.get!UNIT_CHANNEL_SPELL == longSight && moved.player.values.get!UNIT_FIELD_POWER1 < mana);
+    assert(to.interestCells.canFind(cellKeyAt(target.player.position.x, target.player.position.y)));
+}
+
 /// Windfury Totem imbues a remote subgroup member's weapon and respects its existing enchantment.
 unittest
 {

@@ -79,6 +79,7 @@ interface ReplicationHandler
     void partyHeal(ushort peer, const ref PartyHeal message);
     void partyAreaAura(ushort peer, const ref PartyAreaAura message);
     void totemWeaponEnchant(ushort peer, const ref TotemWeaponEnchant message);
+    void mindVisionTarget(ushort peer, const ref MindVisionTarget message);
     void areaDamage(ushort peer, const ref AreaDamage message);
     void gameObjectSpell(ushort peer, const ref GameObjectSpell message);
     void scriptGameObject(ushort peer, const ref ScriptGameObject message);
@@ -1170,6 +1171,15 @@ final class ClusterNode : LinkOwner
             {
                 const m = decode!TotemWeaponEnchant(payload);
                 replication.totemWeaponEnchant(peer, m);
+            }
+            return;
+        }
+        if (type == MessageType.mindVisionTarget)
+        {
+            if (replication !is null)
+            {
+                const message = decode!MindVisionTarget(payload);
+                replication.mindVisionTarget(peer, message);
             }
             return;
         }

@@ -484,6 +484,18 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         context.totemWeaponEnchantArrived(peer, message);
     }
 
+    import dmangos.cluster.protocol : MindVisionTarget;
+
+    bool sendMindVisionTarget(ushort peer, const ref MindVisionTarget message)
+    {
+        return node.sendTo(peer, message);
+    }
+
+    void mindVisionTarget(ushort peer, const ref MindVisionTarget message)
+    {
+        context.mindVisionTargetArrived(peer, message);
+    }
+
     bool sendPartyAreaAura(ushort peer, const ref PartyAreaAura message)
     {
         auto link = node.linkTo(peer);

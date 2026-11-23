@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 108; // 108: preserve active and suspended creature movement separately
+enum ushort protocolVersion = 109; // 109: find remote Mind Vision targets before casting
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -103,6 +103,18 @@ enum MessageType : ushort
     scriptCreatureStep = 64,
     partySummon = 65,
     totemWeaponEnchant = 66,
+    mindVisionTarget = 67,
+}
+
+/// A single remote target's current state for Mind Vision's normal cast checks.
+struct MindVisionTarget
+{
+    enum type = MessageType.mindVisionTarget;
+
+    ulong caster, target, sequence;
+    uint map, instance;
+    bool reply;
+    @LengthPrefix!ushort ubyte[] state;
 }
 
 /// Refresh a party aura on a member simulated by another node.
@@ -1332,7 +1344,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 108, recordedFingerprint = 0x3683077cd7d1003cUL;
+private enum recordedVersion = 109, recordedFingerprint = 0x2ab03c32ffc649d8UL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

@@ -960,6 +960,9 @@ Player projectiles launched at a local target keep their flight time when the ca
 direct damage, healing and aura effects can also follow the target to its new owner.
 Player channels such as Arcane Missiles keep their remaining time and next pulse when the caster
 moves. A far-seeing player keeps the same camera viewpoint and watches replicas around it.
+Mind Vision can find a distant player on another node. The target's owner supplies its current
+position for the usual spell checks. The caster's body stays at its original position while the
+cast starts on the target's node.
 The Orb of Draconic Energy moves its user to Emberstrife's node before checking his health and
 starting control. A forced move during creature control releases the creature. An angler can finish the original cast after moving. Their bobber keeps its GUID and bite
 timer until the catch begins.

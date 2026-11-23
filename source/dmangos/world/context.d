@@ -712,6 +712,34 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     import dmangos.cluster.protocol : TotemWeaponEnchant;
     bool delegate(ushort, const ref TotemWeaponEnchant) sendTotemWeaponEnchant;
 
+    import dmangos.cluster.protocol : MindVisionTarget;
+    bool delegate(ushort, const ref MindVisionTarget) sendMindVisionTarget;
+
+    void mindVisionTargetArrived(ushort peer, const ref MindVisionTarget message)
+    {
+        import dmangos.world.character : Character;
+        import dmangos.world.replication : encodePlayerState;
+        import dmangos.world.spellids : AuraType;
+
+        if (!peer || !message.sequence || !message.caster || !message.target || !canWrite())
+            return;
+        if (message.reply)
+        {
+            if (auto caster = cast(Character) onlinePlayer(message.caster))
+                caster.mindVisionTargetFound(peer, message);
+            return;
+        }
+        if (message.state.length || sendMindVisionTarget is null)
+            return;
+        auto reply = MindVisionTarget(message.caster, message.target, message.sequence, message.map, message.instance, true);
+        if (auto target = cast(Character) onlinePlayer(message.target))
+            if (target.player !is null && !target.transferring && target.player.alive && !target.player.gmInvisible
+                && !target.player.auras.hasType(AuraType.modStealth) && !target.player.auras.hasType(AuraType.modInvisibility)
+                && target.currentMap.id == message.map && target.currentMap.instanceId == message.instance)
+                reply.state = encodePlayerState(target.player, 0).dup;
+        sendMindVisionTarget(peer, reply);
+    }
+
     void totemWeaponEnchantArrived(ushort peer, const ref TotemWeaponEnchant pulse)
     {
         import dmangos.world.character : Character;
