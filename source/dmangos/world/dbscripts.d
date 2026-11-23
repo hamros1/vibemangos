@@ -126,6 +126,36 @@ struct DbScriptStep
         }
     }
 
+    /// Steps whose effect can be applied by the node simulating one selected creature.
+    bool runsAtCreature() const pure nothrow @nogc @safe
+    {
+        switch (command)
+        {
+        case ScriptCommand.talk, ScriptCommand.emote, ScriptCommand.moveTo, ScriptCommand.flagSet,
+            ScriptCommand.flagRemove, ScriptCommand.removeAura, ScriptCommand.castSpell, ScriptCommand.despawnSelf,
+            ScriptCommand.setFaction, ScriptCommand.morphToEntryOrModel, ScriptCommand.mountToEntryOrModel,
+            ScriptCommand.movement, ScriptCommand.standState, ScriptCommand.modifyNpcFlags, ScriptCommand.pauseWaypoints,
+            ScriptCommand.setFacing, ScriptCommand.startRelayScript:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    /// Identifies the exact row on a peer regardless of ordering of tied delay and priority.
+    uint fingerprint() const
+    {
+        import dmangos.bytes : ByteReader, ByteWriter;
+        import dmangos.serialization : serialize;
+        import std.digest.crc : crc32Of;
+
+        ByteWriter bytes;
+        serialize(bytes, this);
+        const checksum = crc32Of(bytes.data);
+        auto reader = ByteReader(checksum[]);
+        return reader.read!uint;
+    }
+
     /// Whether any kind of buddy is asked for.
     @property bool wantsBuddy() const pure nothrow @nogc @safe
     {
@@ -242,11 +272,14 @@ struct ScriptThing
     import dmangos.world.creature : Creature;
     import dmangos.world.gameobject : GameObject;
     import dmangos.world.movement : Position;
+    import dmangos.world.replication : Replica;
+    import dmangos.world.updatefields : TypeId;
 
     ulong guid;
     Position position;
     Creature creature;   /// if it is one
     GameObject go;       /// ditto
+    Replica mirror;      /// observed location, with authority on its own node
 
     /// Whether there is one.
     @property bool exists() const pure nothrow @nogc @safe
@@ -255,9 +288,14 @@ struct ScriptThing
     }
 
     /// Whether it is a creature or a game object .
-    @property bool creatureOrGo() const pure nothrow @nogc @safe
+    @property bool creatureOrGo() const
     {
-        return creature !is null || go !is null;
+        return creature !is null || go !is null || (mirror !is null && mirror.fieldsOf.type != TypeId.player);
+    }
+
+    @property bool isCreature() const
+    {
+        return creature !is null || (mirror !is null && mirror.fieldsOf.type == TypeId.unit);
     }
 }
 
@@ -304,7 +342,7 @@ final class ScriptRun
  */
 mixin template DbScriptRunner()
 {
-    import dmangos.cluster.protocol : ScriptGameObject;
+    import dmangos.cluster.protocol : ScriptCreatureStep, ScriptGameObject;
     import dmangos.world.spellids;
     import std.random : uniform;
     import dmangos.log : trace;
@@ -314,11 +352,46 @@ mixin template DbScriptRunner()
     import dmangos.world.grid : noCell;
     import dmangos.world.map : Map;
     import dmangos.world.movement : Position;
+    import dmangos.world.replication : Replica;
 
     private ScriptRun[] scriptRuns;
 
     bool delegate(ushort, const ref ScriptGameObject) sendScriptGameObject;
     private ulong[ushort] lastScriptGameObject;
+    bool delegate(ushort, const ref ScriptCreatureStep) sendScriptCreatureStep;
+    private ulong[ushort] lastCreatureStep;
+
+    void scriptCreatureStepArrived(ushort peer, const ref ScriptCreatureStep message)
+    {
+        enum maxTransitMs = 2_000;
+        if (!peer || message.sequence <= lastCreatureStep.get(peer, 0) || !canWrite()
+            || message.table > DbScriptType.max || cast(int) (transportNow() - message.sentAt) > maxTransitMs)
+            return;
+        auto region = existingMap(message.map, 0);
+        if (region is null || instanceable(message.map))
+            return;
+        lastCreatureStep[peer] = message.sequence;
+        foreach (ref step; data.dbScripts.steps(cast(DbScriptType) message.table, message.script))
+        {
+            if (!step.runsAtCreature || step.fingerprint != message.fingerprint)
+                continue;
+            auto source = scriptObject(region, message.source), target = scriptObject(region, message.target);
+            const actor = scriptActor(step, source, target);
+            if (actor.guid != message.actor || !actor.isCreature)
+                return;
+            if (actor.creature !is null)
+                executeScriptCommand(step, region, source, target, true);
+            else if (!message.forwarded && actor.mirror.owner && actor.mirror.owner != peer
+                && actor.mirror.owner != nodeId && sendScriptCreatureStep !is null)
+            {
+                ScriptCreatureStep next = message;
+                next.sequence = nextGameplaySequence();
+                next.forwarded = true;
+                sendScriptCreatureStep(actor.mirror.owner, next);
+            }
+            return;
+        }
+    }
 
     void scriptGameObjectArrived(ushort peer, const ref ScriptGameObject command)
     {
@@ -521,7 +594,7 @@ mixin template DbScriptRunner()
             while (map !is null && run.next < run.steps.length && run.steps[run.next].delay <= run.elapsed)
             {
                 const step = &run.steps[run.next++];
-                if (runScriptStep(*step, map, run.source, run.target))
+                if (runScriptStep(run.type, *step, map, run.source, run.target))
                 {
                     run.next = run.steps.length; // terminated
                     break;
@@ -539,7 +612,7 @@ mixin template DbScriptRunner()
     package void applyTargetSpellScript(uint spell, Map map, ulong caster, ulong target)
     {
         foreach (ref step; data.dbScripts.steps(DbScriptType.spell, spell))
-            runScriptStep(step, map, caster, target);
+            runScriptStep(DbScriptType.spell, step, map, caster, target);
     }
 
     /// The object `guid` on `map`: a player there, or a creature or game object; none if it is not there.
@@ -550,7 +623,7 @@ mixin template DbScriptRunner()
         if (auto who = map.find(guid))
             return ScriptThing(guid, who.character.position);
         if (auto o = map.findObject(guid))
-            return ScriptThing(guid, o.position, cast(Creature) o, cast(GameObject) o);
+            return ScriptThing(guid, o.position, cast(Creature) o, cast(GameObject) o, cast(Replica) o);
         return ScriptThing.init;
     }
 
@@ -572,7 +645,14 @@ mixin template DbScriptRunner()
             return true;
         if (step.command == ScriptCommand.respawnGameObject || step.command == ScriptCommand.despawnGameObject)
             return scriptGameObjectBuddies(step, map, source, target, buddies);
+        import dmangos.world.objects : counterOf;
+        import dmangos.world.updatefields : OBJECT_FIELD_ENTRY, UNIT_FIELD_HEALTH;
+
         const deadOk = (step.dataFlags & ScriptFlag.buddyIsDespawned) != 0;
+        const observeOtherNodes = !map.instanceId && sendScriptCreatureStep !is null
+            && (step.runsAtCreature || step.command == ScriptCommand.terminateScript)
+            && !(step.dataFlags & (ScriptFlag.buddyIsPet | ScriptFlag.buddyByPool | ScriptFlag.buddyBySpawnGroup
+                | ScriptFlag.buddyByStringId));
         if (step.dataFlags & ScriptFlag.buddyByGuid)
         {
             // By its spawn: its guid is made of the entry and the spawn, so look for it by the spawn.
@@ -583,6 +663,10 @@ mixin template DbScriptRunner()
                 foreach (creature; map.creaturesNear(at, 1000))
                     if (creature.spawn.guid == spawn && creature.alive != deadOk)
                         buddies ~= thing(creature);
+                if (observeOtherNodes)
+                    foreach (mirror; map.creatureReplicasNear(at, 1000))
+                        if (counterOf(mirror.guid) == spawn && (mirror.fields[UNIT_FIELD_HEALTH] != 0) != deadOk)
+                            buddies ~= ScriptThing(mirror.guid, mirror.position, null, null, mirror);
             }
             else
                 foreach (o; map.objectsNear(at, 1000))
@@ -602,20 +686,33 @@ mixin template DbScriptRunner()
             const range = float(step.searchRadius);
             ScriptThing nearest;
             float best = float.max;
+            void consider(ScriptThing candidate)
+            {
+                if (step.dataFlags & ScriptFlag.allEligibleBuddies)
+                {
+                    buddies ~= candidate;
+                    return;
+                }
+                const distance = distanceSq(at, candidate.position);
+                if (distance < best)
+                {
+                    best = distance;
+                    nearest = candidate;
+                }
+            }
             if (step.creatureBuddy)
             {
                 foreach (creature; map.creaturesNear(at, range))
                 {
                     if (creature.template_.entry != step.buddyEntry || creature.alive == deadOk)
                         continue;
-                    if (step.dataFlags & ScriptFlag.allEligibleBuddies)
-                        buddies ~= thing(creature);
-                    else if (distanceSq(at, creature.position) < best)
-                    {
-                        best = distanceSq(at, creature.position);
-                        nearest = thing(creature);
-                    }
+                    consider(thing(creature));
                 }
+                if (observeOtherNodes)
+                    foreach (mirror; map.creatureReplicasNear(at, range))
+                        if (mirror.fields[OBJECT_FIELD_ENTRY] == step.buddyEntry
+                            && (mirror.fields[UNIT_FIELD_HEALTH] != 0) != deadOk)
+                            consider(ScriptThing(mirror.guid, mirror.position, null, null, mirror));
             }
             else
                 foreach (o; map.objectsNear(at, range))
@@ -623,13 +720,7 @@ mixin template DbScriptRunner()
                     {
                         if (go.spawn.entry != step.buddyEntry)
                             continue;
-                        if (step.dataFlags & ScriptFlag.allEligibleBuddies)
-                            buddies ~= thing(go);
-                        else if (distanceSq(at, go.position) < best)
-                        {
-                            best = distanceSq(at, go.position);
-                            nearest = thing(go);
-                        }
+                        consider(thing(go));
                     }
             if (nearest.exists)
                 buddies ~= nearest;
@@ -705,7 +796,7 @@ mixin template DbScriptRunner()
     }
 
     /// Runs the step for each source and target it comes to; true if the script stops here.
-    private bool runScriptStep(const ref DbScriptStep step, Map map, ulong sourceGuid, ulong targetGuid)
+    private bool runScriptStep(DbScriptType type, const ref DbScriptStep step, Map map, ulong sourceGuid, ulong targetGuid)
     {
         auto source = scriptObject(map, sourceGuid), target = scriptObject(map, targetGuid);
         ScriptThing[] buddies;
@@ -732,16 +823,41 @@ mixin template DbScriptRunner()
         {
             foreach (s; sources)
                 foreach (t; targets)
-                    stop |= executeScriptCommand(step, map, s, t);
+                    stop |= dispatchScriptCommand(type, step, map, s, t);
         }
         else
             foreach (s; sources)
-                stop |= executeScriptCommand(step, map, s, ScriptThing.init);
+                stop |= dispatchScriptCommand(type, step, map, s, ScriptThing.init);
         // A step with no source at all may still act on its target (kill credit, quest explored).
         if (sources.length == 0 && targets.length)
             foreach (t; targets)
-                stop |= executeScriptCommand(step, map, ScriptThing.init, t);
+                stop |= dispatchScriptCommand(type, step, map, ScriptThing.init, t);
         return stop;
+    }
+
+    private static ScriptThing scriptActor(const ref DbScriptStep step, ScriptThing source, ScriptThing target)
+    {
+        return step.command == ScriptCommand.despawnSelf && target.isCreature ? target : source;
+    }
+
+    private bool dispatchScriptCommand(DbScriptType type, const ref DbScriptStep step, Map map,
+        ScriptThing source, ScriptThing target)
+    {
+        const actor = scriptActor(step, source, target);
+        if (!step.runsAtCreature || !actor.isCreature || actor.mirror is null)
+            return executeScriptCommand(step, map, source, target);
+        if (map.instanceId || sendScriptCreatureStep is null || !canWrite() || actor.mirror.owner == nodeId)
+            return false;
+        if (step.conditionId)
+        {
+            auto player = scriptPlayer(source, target);
+            if (player is null || !player.conditionMet(step.conditionId))
+                return false;
+        }
+        const message = ScriptCreatureStep(nextGameplaySequence(), actor.guid, source.guid, target.guid,
+            map.id, step.id, step.fingerprint, transportNow(), cast(ubyte) type);
+        sendScriptCreatureStep(actor.mirror.owner, message);
+        return false;
     }
 
     /// `SCRIPT_COMMAND_TERMINATE_SCRIPT`: stops when its buddy is not near (or, with the additional flag, when it is).
@@ -762,6 +878,15 @@ mixin template DbScriptRunner()
                 foreach (creature; map.creaturesNear(at, step.datalong2))
                     if (creature.template_.entry == step.datalong && creature.alive && creature.guid != searcher.guid)
                         found = true;
+                if (!found && !map.instanceId)
+                {
+                    import dmangos.world.updatefields : OBJECT_FIELD_ENTRY, UNIT_FIELD_HEALTH;
+
+                    foreach (mirror; map.creatureReplicasNear(at, step.datalong2))
+                        if (mirror.guid != searcher.guid && mirror.fields[OBJECT_FIELD_ENTRY] == step.datalong
+                            && mirror.fields[UNIT_FIELD_HEALTH])
+                            found = true;
+                }
             }
             else
                 foreach (o; map.objectsNear(at, step.datalong2))
@@ -1037,12 +1162,13 @@ mixin template DbScriptRunner()
     }
 
     /// Carries out a step's command; true if the script should stop.
-    private bool executeScriptCommand(const ref DbScriptStep step, Map map, ScriptThing source, ScriptThing target)
+    private bool executeScriptCommand(const ref DbScriptStep step, Map map, ScriptThing source, ScriptThing target,
+        bool conditionChecked = false)
     {
         import dmangos.world.updatefields;
 
         auto player = scriptPlayer(source, target);
-        if (step.conditionId && (player is null || !player.conditionMet(step.conditionId)))
+        if (!conditionChecked && step.conditionId && (player is null || !player.conditionMet(step.conditionId)))
             return false;
         auto creature = source.creature;
         if (creature !is null && creature.ai !is null)

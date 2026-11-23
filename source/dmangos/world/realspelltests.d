@@ -621,6 +621,67 @@ unittest
         && commands[$ - 1].target == farFire);
 }
 
+/// The Binding sends each acolyte the real ritual steps that affect it.
+unittest
+{
+    import dmangos.bytes : ByteReader;
+    import dmangos.cluster.protocol : ScriptCreatureStep;
+    import dmangos.world.creature : TempSpawnType;
+    import dmangos.world.dbscripts : DbScriptType;
+    import dmangos.world.dynobject : DynamicObject;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.replication : encodeState;
+    import dmangos.world.updatefields : DYNAMICOBJECT_CASTER, DYNAMICOBJECT_SPELLID, UNIT_NPC_FLAGS;
+
+    if (!haveRealData())
+        return;
+
+    auto source = RealWorld.make(), owner = RealWorld.make();
+    source.context.nodeId = 1;
+    owner.context.nodeId = 2;
+    auto observer = owner.character(8, "Anduin", 1, 60, []);
+    const at = observer.session.character.position;
+    auto from = source.context.map(0), to = owner.context.map(0);
+    auto warlock = source.context.summonCreature(from, 6251, at, TempSpawnType.manual, 0, 0);
+    auto magaz = source.context.summonCreature(from, 6252, at, TempSpawnType.manual, 0, 0);
+    auto wytula = owner.context.summonCreature(to, 6254, at, TempSpawnType.manual, 0, 0);
+    const cell = cellKeyAt(at.x, at.y);
+    from.replicaCreated(2, cell, wytula.guid, encodeState(wytula, 0));
+    to.replicaCreated(1, cell, warlock.guid, encodeState(warlock, 0));
+    assert(magaz.values.get!UNIT_NPC_FLAGS & 2 && wytula.values.get!UNIT_NPC_FLAGS & 2);
+    observer.read();
+
+    ScriptCreatureStep[] routed;
+    source.context.sendScriptCreatureStep = (ushort peer, const ref ScriptCreatureStep message) {
+        assert(peer == 2 && message.actor == wytula.guid && message.script == 1428);
+        routed ~= message;
+        owner.context.scriptCreatureStepArrived(1, message);
+        owner.context.scriptCreatureStepArrived(1, message);
+        return true;
+    };
+    assert(source.context.startScript(DbScriptType.event, 1428, from, warlock.guid, 0));
+    source.context.updateScripts(2000);
+    assert(routed.length == 2, "Wytula's flag removal and emote go to its owner");
+    assert(!(magaz.values.get!UNIT_NPC_FLAGS & 2) && !(wytula.values.get!UNIT_NPC_FLAGS & 2));
+    uint bows;
+    foreach (packet; observer.read())
+        if (packet.opcode == Opcode.SMSG_EMOTE)
+        {
+            auto event = ByteReader(packet.body_);
+            if (event.read!uint == 2 && event.read!ulong == wytula.guid)
+                ++bows;
+        }
+    assert(bows == 1, "a repeated delivery cannot replay the remote ritual emote");
+    source.context.updateScripts(3000);
+    assert(routed.length == 3, "the remote acolyte also runs its channel cast");
+    bool visual;
+    foreach (object; to.objectsNear(at, 10))
+        if (auto area = cast(DynamicObject) object)
+            if (area.values.get!DYNAMICOBJECT_SPELLID == 8675 && area.values.get!DYNAMICOBJECT_CASTER == wytula.guid)
+                visual = true;
+    assert(visual, "the real Warlock Channeling ground visual spawned on the acolyte's node");
+}
+
 /// A creature's existing ground effect follows its region and expires on the new owner.
 unittest
 {

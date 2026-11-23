@@ -80,6 +80,7 @@ interface ReplicationHandler
     void areaDamage(ushort peer, const ref AreaDamage message);
     void gameObjectSpell(ushort peer, const ref GameObjectSpell message);
     void scriptGameObject(ushort peer, const ref ScriptGameObject message);
+    void scriptCreatureStep(ushort peer, const ref ScriptCreatureStep message);
     void creatureSwing(ushort peer, const ref CreatureSwing message);
     void periodicResult(ushort peer, const ref PeriodicResult message);
 
@@ -1140,6 +1141,15 @@ final class ClusterNode : LinkOwner
             {
                 const m = decode!ScriptGameObject(payload);
                 replication.scriptGameObject(peer, m);
+            }
+            return;
+        }
+        if (type == MessageType.scriptCreatureStep)
+        {
+            if (replication !is null)
+            {
+                const m = decode!ScriptCreatureStep(payload);
+                replication.scriptCreatureStep(peer, m);
             }
             return;
         }

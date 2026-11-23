@@ -926,8 +926,10 @@ can move to that creature's node when the script needs both actors together. The
 original creature before starting the cast. Database script steps can respawn or despawn a named game
 object on its owner, and a spell can summon its wild game object on the node that owns the destination.
 Smokey's Special Compound uses both paths for its charge, focus and fires. Timed outdoor objects and
-pending forced despawns keep their deadlines in a clean handoff. Other multi-actor script actions still
-use their local paths. Ground ticks
+pending forced despawns keep their deadlines in a clean handoff. Outdoor database script steps can
+select an observed creature on another node and send its exact command to the owner. This preserves
+the original actors for dialogue, emotes, movement, casts, state changes and relay scripts. For
+example, each acolyte runs its part of The Binding on its own node. Ground ticks
 use observed targets around the spot and require a current caster replica at the target. At impact,
 the caster's node resolves the original target GUID locally or sends the hit to the current replica's
 owner. A projectile can wait up to two seconds for the target to appear during a handoff. A clean caster
