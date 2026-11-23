@@ -750,6 +750,8 @@ private:
 
             context.startScript(DbScriptType.creatureDeath, victim.template_.entry, map, victim.guid, player.guid);
         }
+        // See the death before the battleground switches the objective's spawns.
+        context.battlegroundCreatureKilled(map, victim.template_.entry, player.guid);
     }
 }
 

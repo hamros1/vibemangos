@@ -132,6 +132,25 @@ private class Valley
     }
 }
 
+/// A player's actual killing blow takes the mine and updates their scoreboard, even if another player tapped it.
+unittest
+{
+    if (!haveRealData()) return;
+    import dmangos.world.unit : Blow, dealDamage;
+    import dmangos.world.updatefields : UNIT_FIELD_HEALTH;
+
+    auto valley = new Valley(ownerAlliance);
+    auto boss = valley.meet(mineBosses[0][0]); // Irondeep's neutral boss
+    auto enemy = valley.opponentAt(boss.position);
+    auto horde = enemy.session.inWorld;
+    dealDamage(horde.unit, valley.map.unitOf(boss), 1, Blow.spell());
+    assert(boss.lootRecipient == horde.player.guid);
+    dealDamage(valley.me.unit, valley.map.unitOf(boss), boss.values.get!UNIT_FIELD_HEALTH, Blow.spell());
+    assert(valley.copy.worldStates[mineIcons[0][ownerAlliance]] == 1);
+    assert(valley.copy.members[valley.me.player.guid].extra[scoreMines] == 1);
+    assert(valley.copy.members[horde.player.guid].extra[scoreMines] == 0);
+}
+
 /// A mounted ram or wolf must actually be brought in. Completing the stables unlocks the commander's charge.
 unittest
 {

@@ -917,7 +917,13 @@ python3 tools/harness/battlegroup.py
 python3 tools/harness/battlegroup_failover.py
 python3 tools/harness/battleground_recovery.py
 python3 tools/harness/battleground_recovery.py --cross-realm
+python3 tools/harness/battleground_recovery.py --map arathi
+python3 tools/harness/battleground_recovery.py --map alterac
 ```
+
+Both map options also accept `--cross-realm`. The Arathi Basin test checks the resource score,
+the Stables, and a Farm capture in progress. The Alterac Valley test checks the scorecard,
+Irondeep Mine, and a contested Iceblood Tower that the Horde can still defend after takeover.
 
 ## Monitoring
 

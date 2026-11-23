@@ -4297,13 +4297,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         };
         created.onCreatureDeath = (Creature c) {
             linkedDeath(created, c); // its pack's part first, while it is still known
-            const killer = c.lootRecipient; // before `die` forgets it
             c.die(created, unixTime);
             created.creatureDeaths.put(c);
-            if (instance) // a battleground's objectives (Alterac Valley's captains, generals and mines)
-                if (auto copy = battlegrounds.find(instance))
-                    if (copy.mapId == id)
-                        copy.rules.creatureKilled(copy, c.template_.entry, killer);
+            battlegroundCreatureKilled(created, c.template_.entry, 0);
         };
         created.remotePeriodicTick = (UnitRef victim, imported!"dmangos.world.auras".Aura aura, size_t effect) {
             imported!"dmangos.world.spellauras".remotePeriodicCreatureTick(this, victim, aura, effect);
@@ -4361,6 +4357,15 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return group is null ? 0 : group.id;
         };
         return created;
+    }
+
+    /// Battleground objectives use the player credited with the killing blow, independently of the loot tap.
+    package void battlegroundCreatureKilled(Map map, uint entry, ulong killer)
+    {
+        if (map.instanceId)
+            if (auto copy = battlegrounds.find(map.instanceId))
+                if (copy.mapId == map.id)
+                    copy.rules.creatureKilled(copy, entry, killer);
     }
 
     /// The map `id` if it exists; null otherwise.
@@ -4740,6 +4745,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 {
                     auto state = BattlegroundState(clock(), writer: &match);
                     copy.transferState(state);
+                    auto stored = instances.get(id, InstanceState.init);
+                    state.transfer(stored.dead, stored.usedUp);
                 }
                 w.put(cast(uint) match.data.length);
                 w.putBytes(match.data);
@@ -4775,7 +4782,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         w.putBytes(match.data);
         w.put(cast(uint) bundle.length);
         w.putBytes(bundle);
-        auto stored = &instances.require(copy.instance, InstanceState(copy.mapId, 0, unixTime));
+        auto stored = instances.get(copy.instance, InstanceState.init);
         state.writer = &w;
         state.transfer(stored.dead, stored.usedUp);
         saveDungeonScriptRuns(copy.mapId, w, false, copy.instance);
@@ -4788,7 +4795,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.battlegroundstate : BattlegroundState;
 
         auto r = ByteReader(bytes);
-        const match = r.readBytes(r.read!uint);
+        auto match = ByteReader(r.readBytes(r.read!uint));
         const bundle = r.readBytes(r.read!uint);
         auto stored = InstanceState(mapId, 0, unixTime);
         auto state = BattlegroundState(clock(), reader: &r);
@@ -4806,6 +4813,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         import dmangos.bytes : ByteReader;
         import dmangos.log : info;
+        import dmangos.world.battlegroundstate : BattlegroundState;
 
         if (copies.length < 4)
             return;
@@ -4820,8 +4828,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 const match = r.readBytes(r.read!uint);
                 if (!match.length)
                     continue;
-                instances[id] = InstanceState(mapId, 0, unixTime);
-                battlegrounds.restore(id, bg, match);
+                auto reader = ByteReader(match);
+                battlegrounds.restore(id, bg, reader);
+                auto stored = InstanceState(mapId, 0, unixTime);
+                auto state = BattlegroundState(clock(), reader: &reader);
+                state.transfer(stored.dead, stored.usedUp);
+                instances[id] = stored;
             }
             if (id !in instances)
                 continue; // reset meanwhile
@@ -6514,6 +6526,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             {
                 const guid = creature.spawn.guid;
                 state.dead[guid] = true;
+                if (auto copy = battlegrounds.find(creature.instanceId))
+                    return copy.objectiveChanged(); // the match checkpoint includes its dead spawns
                 long until = state.resetAt ? state.resetAt : unixTime + 86_400;
                 if (moltenCoreTrash(creature.spawn) && creature.respawnAt < until)
                     state.trashRespawns[guid] = until = creature.respawnAt;
@@ -8280,6 +8294,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if (auto state = go.instanceId in instances)
             {
                 state.usedUp[go.spawn.guid] = true;
+                if (auto copy = battlegrounds.find(go.instanceId))
+                    return copy.objectiveChanged();
                 database.saveInstanceRespawn(true, go.spawn.guid, go.instanceId,
                     state.resetAt ? state.resetAt : unixTime + 86_400);
             }
@@ -9527,6 +9543,8 @@ unittest
     copy.testing = true;
     copy.made = now - 31.seconds;
     copy.activeEvents[9] = 2;
+    from.instances[instance].dead[64] = true;
+    from.instances[instance].usedUp[65] = true;
     copy.members[42] = Battleground.Member(0, now - 4.seconds, 6);
     copy.awaitingResurrection[42] = 123;
     auto rules = cast(WarsongRules) copy.rules;
@@ -9547,6 +9565,7 @@ unittest
     assert(restored.made == later - 31.seconds && restored.untilSpiritHeal == 29.seconds);
     assert(restored.members[42].offlineSince == later - 4.seconds && restored.members[42].killingBlows == 6);
     assert(restored.awaitingResurrection[42] == 123 && restored.activeEvents[9] == 2);
+    assert(64 in to.instances[instance].dead && 65 in to.instances[instance].usedUp);
     auto moved = cast(WarsongRules) restored.rules;
     assert(moved.carrier[1] == 42 && moved.dropped[0] == ground.guid && moved.dropLeft[0] == 12.seconds);
     assert(to.existingMap(mapWarsongGulch, instance).gameObjectAt(ground.guid) !is null);

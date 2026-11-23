@@ -19,6 +19,7 @@ in order:
     sit                       sit down and print the changed fields
     whisper:NAME:TEXT         whisper to another player
     attack:ENTRY  stopattack  walk up to the nearest creature of ENTRY and fight it; stop
+    targetnpc:ENTRY           select a creature in sight as the player's target
     approach:ENTRY:DIST       walk to DIST yards of the nearest creature of ENTRY
     cast:SPELL[:ENTRY]       cast a spell, optionally at a creature by entry
     cancelchannel:SPELL      cancel the specified channel
@@ -1184,6 +1185,13 @@ for action in actions:
         entry = int(args[0])
         npc = next((g for g, (t, e) in seen_objects.items() if t == 3 and e == entry), None)
         print(f"npc {entry}: " + (str(npc) if npc else "not in sight"))
+    elif kind == "targetnpc":
+        entry = int(args[0])
+        targets = [g for g, (t, e) in seen_objects.items() if t == 3 and e == entry and g in seen_positions]
+        if not targets:
+            raise RuntimeError(f"no creature {entry} in sight to target")
+        guid = min(targets, key=lambda g: sum((a - b)**2 for a, b in zip(seen_positions[g], here)))
+        wsend(0x13D, struct.pack("<Q", guid))
     elif kind in ("gossip", "trainer", "vendor", "binder", "bank"):
         print(kind); wsend({"gossip": 0x17B, "trainer": 0x1B0, "vendor": 0x19E, "binder": 0x1B5, "bank": 0x1B7}[kind],
                            struct.pack("<Q", npc)); listen_for(1)

@@ -15,7 +15,7 @@ module dmangos.world.battleground;
 
 import core.time : Duration, MonoTime, minutes, msecs, seconds;
 
-import dmangos.bytes : ByteWriter;
+import dmangos.bytes : ByteReader, ByteWriter;
 import dmangos.world.bgqueue;
 import dmangos.world.characterdb : NameInfo;
 import dmangos.world.context : WorldContext;
@@ -1374,13 +1374,11 @@ final class Battlegrounds
     }
 
     /// A region move preserves the live copy without announcing a new match to the queue.
-    package Battleground restore(uint instance, BattlegroundType type, const(ubyte)[] bytes)
+    package Battleground restore(uint instance, BattlegroundType type, ref ByteReader reader)
     {
-        import dmangos.bytes : ByteReader;
         import dmangos.world.battlegroundstate : BattlegroundState;
 
         auto restored = new Battleground(context, instance, type, rulesFor(type));
-        auto reader = ByteReader(bytes);
         auto state = BattlegroundState(context.clock(), reader: &reader);
         restored.transferState(state);
         restored.checkpointRetired = restored.status == BattlegroundStatus.waitLeave;
