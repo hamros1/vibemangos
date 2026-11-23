@@ -1388,13 +1388,132 @@ mixin template PetHandlers()
 
     /// At logout, a teleport to another map, or a move to another node: the pet goes, saved as out
     /// with its owner (or set aside if dead), to come back with it.
-    package void petsOnLeave()
+    package void petsOnLeave(bool handoff = false)
     {
         endCharm(); // a charm stays where it is, its own again
-        removeGuardians(player is null || player.alive); // at its death, only those not fighting
-        unsummonTotems(); // totems do not follow their owner
+        if (!handoff)
+        {
+            removeGuardians(player is null || player.alive); // at its death, only those not fighting
+            unsummonTotems();
+        }
         if (pet_ !is null)
             unsummonPet(PetSlot.current);
+    }
+
+    private enum ubyte loneTotemSlot = 4, guardianSlot = 5;
+
+    private const(ubyte)[] takeSummonsOnHandoff()
+    {
+        ByteWriter state;
+        state.put(map.id);
+        state.put(map.instanceId);
+        state.put(context.transportNow());
+        const now = context.clock();
+        const countAt = state.length;
+        state.put(0u);
+        uint count;
+
+        void carry(ulong guid, ubyte slot)
+        {
+            import dmangos.world.migration : MigrantKind;
+
+            auto creature = map.creatureAt(guid);
+            if (creature is null || !creature.alive)
+                return;
+            const moved = context.savePlayerSummon(creature);
+            if (moved.kind != MigrantKind.summonedCreature)
+                return;
+            state.put(slot);
+            state.put(moved.spawn);
+            state.put(moved.home);
+            state.put(creature.totemSpell);
+            state.put(creature.totemActive);
+            state.put(cast(uint) moved.state.length);
+            state.putBytes(moved.state);
+            uint tickCount;
+            const ticksAt = state.length;
+            state.put(tickCount);
+            if (slot != guardianSlot)
+                foreach (key, deadline; totemTickAt)
+                    if (key.totem == creature.guid)
+                    {
+                        state.put(key.spell);
+                        state.put(cast(int) (deadline - now).total!"msecs");
+                        ++tickCount;
+                    }
+            state.patch(ticksAt, tickCount);
+            ++count;
+        }
+
+        foreach (slot, guid; totems)
+            if (guid)
+                carry(guid, cast(ubyte) slot);
+        if (loneTotem)
+            carry(loneTotem, loneTotemSlot);
+        foreach (guid; guardians_)
+            carry(guid, guardianSlot);
+        unsummonTotems();
+        removeGuardians(true);
+        if (!count)
+            return null;
+        state.patch(countAt, count);
+        return state.data;
+    }
+
+    private void restoreSummonsOnHandoff(ref ByteReader reader)
+    {
+        import core.time : msecs;
+        import dmangos.world.creatureai : ReactState;
+        import dmangos.world.migration : Migrant, MigrantKind;
+
+        auto state = ByteReader(reader.readBytes(reader.read!uint));
+        if (state.empty || state.read!uint != map.id || state.read!uint != map.instanceId)
+            return;
+        const elapsed = cast(int)(context.transportNow() - state.read!uint);
+        const then = context.clock() - (elapsed > 0 ? elapsed : 0).msecs;
+        foreach (_; 0 .. state.read!uint)
+        {
+            const slot = state.read!ubyte;
+            const spawn = state.read!uint;
+            const home = state.read!ulong;
+            const spell = state.read!uint;
+            const active = state.read!bool;
+            const bytes = state.readBytes(state.read!uint);
+            enum tickSize = uint.sizeof + int.sizeof;
+            auto ticks = ByteReader(state.readBytes(cast(size_t) state.read!uint * tickSize));
+            if (slot > guardianSlot || (slot == loneTotemSlot && loneTotem)
+                || (slot < totems.length && totems[slot]))
+                continue;
+            const moved = Migrant(MigrantKind.summonedCreature, spawn, home, bytes);
+            if (auto creature = context.restorePlayerSummon(map, moved, player.guid))
+            {
+                if (slot == guardianSlot)
+                {
+                    creature.guardianOwner = player.guid;
+                    guardians_ ~= creature.guid;
+                }
+                else
+                {
+                    creature.totemOwner = player.guid;
+                    creature.totemSpell = spell;
+                    creature.totemActive = active;
+                    creature.ai.react = ReactState.passive;
+                    creature.ai.scriptMelee(false);
+                    creature.ai.scriptCombatMovement(false);
+                    if (slot == loneTotemSlot)
+                        loneTotem = creature.guid;
+                    else
+                        totems[slot] = creature.guid;
+                    while (!ticks.empty)
+                    {
+                        const aura = ticks.read!uint;
+                        totemTickAt[TotemTick(creature.guid, aura)] = then + ticks.read!int.msecs;
+                    }
+                }
+                creature.controllerPlayerFlags = player.values.get!PLAYER_FLAGS;
+                map.addObject(creature);
+            }
+        }
     }
 
     /// At login, after a teleport or move, and on coming back to life: the pet saved out with the player comes back (not to the dead).
@@ -1680,7 +1799,7 @@ mixin template PetHandlers()
     {
         if (slot >= totems.length || !totems[slot])
             return;
-        map.removeObject(totems[slot]);
+        forgetTotem(totems[slot]);
         totems[slot] = 0;
     }
 
@@ -1690,8 +1809,16 @@ mixin template PetHandlers()
         foreach (slot; 0 .. totems.length)
             unsummonTotem(cast(uint) slot);
         if (loneTotem)
-            map.removeObject(loneTotem);
+            forgetTotem(loneTotem);
         loneTotem = 0;
+    }
+
+    private void forgetTotem(ulong guid)
+    {
+        map.removeObject(guid);
+        foreach (key; totemTickAt.keys)
+            if (key.totem == guid)
+                totemTickAt.remove(key);
     }
 
     private ulong loneTotem; /// a totem of no slot

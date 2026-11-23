@@ -18,7 +18,7 @@ enum MigrantKind : ubyte
     creatureRespawn = 3,   /// a timer, potentially with no live object in the bundle
     gameObjectRespawn = 4, /// ditto
     summonedCreature = 5,  /// a temporary spawn with its own placement and lifetime
-    summonedGameObject = 6, /// a temporary unowned object of a dungeon copy
+    summonedGameObject = 6, /// a temporary unowned object and its placement
     scriptRun = 7,          /// an outdoor database script anchored to a home cell
 }
 

@@ -296,7 +296,7 @@ private:
             return;
         duelComplete(DuelEnd.fled); // a forced move (such as draining) ends it for both players
         cancelTrade(true);
-        petsOnLeave(); // saved, to come out again there
+        petsOnLeave(true); // save the persistent pet before transferring the live totems and guardians
         flushPlayerChanges();
         const progress = player.progress(secondsInWorld());
         context.database.saveProgress(progress);
@@ -314,7 +314,9 @@ private:
         if (!context.settleWrites() && (context.config.cluster.gateway || connection.gatewayHome.node))
             return; // a gateway handoff needs a durable checkpoint before the old owner stops
 
+        areaAurasOnLeave();
         const fishing = takeFishingHandoff();
+        const summons = takeSummonsOnHandoff();
         ByteWriter w;
         w.put(account.id);
         w.put(cast(uint) account.username.length);
@@ -374,6 +376,8 @@ private:
         writeChannelAndGroundHandoff(w);
         w.put(cast(uint) fishing.length);
         w.putBytes(fishing);
+        w.put(cast(uint) summons.length);
+        w.putBytes(summons);
         writeCastHandoff(w);
         writeFlightHandoff(w);
         writeEnvironmentHandoff(w);
@@ -509,6 +513,7 @@ private:
         context.readReplicaImpacts(player.guid, map.id, map.instanceId, r);
         readChannelAndGroundHandoff(r);
         restoreFishingHandoff(r);
+        restoreSummonsOnHandoff(r);
         readCastHandoff(r);
         loadAuras();
         loadHonor();

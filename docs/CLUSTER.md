@@ -388,8 +388,9 @@ after the chest is exhausted or expires, so the encounter cannot roll another re
   moves carry the live placement and the running deadlines for creatures and game objects that are
   currently absent. Only the node owning a spawn's home cell clears its due respawn timer.
 * **Scripted summons** keep their GUID, placement, state and remaining lifetime during a clean
-  handoff. A worker crash loses any summons it was simulating. Pets, guardians and totems still
-  follow their owner's lifecycle. Cluster nodes reserve temporary GUID ranges in the character
+  handoff. Active player guardians and totems follow their player on the same map and retain their
+  GUIDs, position, health and timers. A worker crash loses its temporary summons. Cluster nodes
+  reserve temporary GUID ranges in the character
   database so a restarted node does not reuse the IDs of objects it handed off. A player's corpse
   keeps its original location and reclaim deadline when the player changes nodes. The current owner
   replicates the body and its removal to nearby observers on other nodes.
@@ -923,6 +924,10 @@ direct damage, healing and aura effects can also follow the target to its new ow
 Player channels such as Arcane Missiles keep their remaining time and next pulse when the caster
 moves. An angler can finish the original cast after moving. Their bobber keeps its GUID and bite
 timer until the catch begins.
+
+Party area auras reach nearby players in the same raid subgroup across region boundaries. The
+recipient's node checks membership and distance. It removes the aura when those checks fail or the
+source stops renewing it. A login recalculates inherited auras from their current sources.
 
 When an in-realm battleground map moves, its new owner receives the running matches, their scores,
 objectives, and timers. Players in a match follow the map's ownership, including during combat.

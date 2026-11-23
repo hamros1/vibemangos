@@ -307,6 +307,7 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
         context.sendPartyQuest = &bridge.sendPartyQuest;
         context.sendQuestLootCheck = &bridge.sendQuestLootCheck;
         context.sendPartyHeal = &bridge.sendPartyHeal;
+        context.sendPartyAreaAura = &bridge.sendPartyAreaAura;
         context.sendAreaDamage = &bridge.sendAreaDamage;
         context.sendGameObjectSpell = &bridge.sendGameObjectSpell;
         context.sendScriptGameObject = &bridge.sendScriptGameObject;

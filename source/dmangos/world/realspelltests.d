@@ -144,6 +144,77 @@ struct RealWorld
 
 enum ubyte classMageId = 8, classRogueId = 4, classWarriorId = 1;
 
+/// Devotion Aura follows its raid subgroup across nodes and leaves when its renewal expires.
+unittest
+{
+    import dmangos.cluster.protocol : GroupMemberState, GroupState, PartyAreaAura;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.group : GroupType;
+    import dmangos.world.replication : encodePlayerState;
+
+    if (!haveRealData())
+        return;
+
+    auto source = RealWorld.make(), owner = RealWorld.make();
+    source.context.nodeId = 1;
+    owner.context.nodeId = 2;
+    enum uint devotion = 465;
+    auto paladin = source.character(7, "Uther", 2, 60, [devotion]);
+    auto knight = owner.character(8, "Anduin", classWarriorId, 60, []);
+    auto caster = paladin.session.inWorld, member = knight.session.inWorld;
+    auto from = source.context.map(0), to = owner.context.map(0);
+    const at = caster.player.position, there = member.player.position;
+    from.replicaCreated(2, cellKeyAt(there.x, there.y), member.player.guid, encodePlayerState(member.player, 0));
+    to.replicaCreated(1, cellKeyAt(at.x, at.y), caster.player.guid, encodePlayerState(caster.player, 0));
+    GroupState raid;
+    raid.id = 100;
+    raid.leader = 7;
+    raid.leaderName = "Uther";
+    raid.groupType = GroupType.raid;
+    raid.members = [GroupMemberState(7, "Uther", 0), GroupMemberState(8, "Anduin", 0)];
+    source.context.groups.mirror(raid);
+    raid.members[1].subGroup = 1;
+    owner.context.groups.mirror(raid);
+    size_t renewals;
+    source.context.sendPartyAreaAura = (ushort peer, const ref PartyAreaAura renewal) {
+        assert(peer == 2 && renewal.spell == devotion && renewal.target == 8);
+        ++renewals;
+        owner.context.partyAreaAuraArrived(1, renewal);
+        return true;
+    };
+    assert(source.cast_(paladin, devotion) == SpellCastResult.ok);
+
+    void refresh()
+    {
+        source.now += 1.seconds;
+        owner.now += 1.seconds;
+        caster.updateAreaAuras(1.seconds);
+    }
+
+    refresh();
+    assert(renewals == 1 && member.player.auras.find(devotion) is null, "the recipient checks its own subgroup");
+    raid.members[1].subGroup = 0;
+    owner.context.groups.mirror(raid);
+    refresh();
+    auto aura = member.player.auras.find(devotion, 7);
+    assert(aura !is null && aura.amount == caster.player.auras.find(devotion).amount);
+    refresh();
+    assert(member.player.auras.find(devotion, 7) is aura, "renewal keeps the same aura instance");
+    member.saveAuras();
+    assert(!owner.db.auraRows.get(8, null).length, "an inherited party aura is recalculated after login");
+
+    member.player.movement.position.x += 1000;
+    refresh();
+    member.updateAreaAuras(1.seconds);
+    assert(member.player.auras.find(devotion) is null, "the real recipient position decides distance");
+    member.player.movement.position = there;
+    refresh();
+    assert(member.player.auras.find(devotion, 7) !is null);
+    owner.now += 3.seconds;
+    member.updateAreaAuras(3.seconds);
+    assert(member.player.auras.find(devotion) is null, "without a renewal it cannot persist after owner loss");
+}
+
 /// Fire Blossom's real periodic aura can hit both the tank and a lower-threat raider.
 unittest
 {
@@ -646,6 +717,57 @@ unittest
     assert(conjured && opcodesOf(client.read()).canFind(Opcode.SMSG_SPELL_GO));
     relay.remote.update(5.seconds);
     assert(moved.inventory.count(water) == conjured);
+}
+
+/// A totem and guardian retain their GUIDs, lifetime and controller in the player's handoff.
+unittest
+{
+    import dmangos.world.creature : TempSpawnType;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.inworld : ArrivalAction;
+    import dmangos.world.replication : encodeState;
+    import dmangos.world.updatefields : UNIT_FIELD_HEALTH, UNIT_FIELD_MAXHEALTH;
+
+    if (!haveRealData())
+        return;
+
+    auto source = RealWorld.make(), owner = RealWorld.make();
+    owner.context.database = source.db;
+    auto relay = new TestPlayerRelay(source.context, owner.context);
+    enum uint stoneskin = 8071, dragonling = 4073;
+    auto client = source.character(7, "Thrall", 7, 60, [], raceOrc);
+    auto caster = client.session.inWorld;
+    const at = caster.player.position;
+    auto from = source.context.map(0), to = owner.context.map(0);
+    caster.castTriggeredAt(stoneskin, caster.player.guid);
+    caster.castTriggeredAt(dragonling, caster.player.guid);
+    assert(caster.ownTotems().length == 1 && caster.ownGuardians().length == 1);
+    auto totem = caster.ownTotems()[0], guardian = caster.ownGuardians()[0];
+    const totemGuid = totem.guid, guardianGuid = guardian.guid;
+    const totemSpell = totem.totemSpell;
+    const position = totem.position;
+    enum uint health = 25;
+    guardian.values.set!UNIT_FIELD_MAXHEALTH(100);
+    guardian.values.set!UNIT_FIELD_HEALTH(health);
+    totem.summon.timer = 4_000;
+    guardian.summon.timer = 2_000;
+    auto actor = owner.context.summonCreature(to, 6, at, TempSpawnType.manual, 0, 0);
+    from.replicaCreated(2, cellKeyAt(at.x, at.y), actor.guid, encodeState(actor, 0));
+
+    assert(caster.actAtReplica(actor.guid, ArrivalAction.init));
+    assert(relay.remote !is null && !from.creatureAt(totemGuid) && !from.creatureAt(guardianGuid));
+    auto moved = relay.remote.inWorld;
+    assert(moved.ownTotems().length == 1, "the totem is still in its slot");
+    assert(moved.ownGuardians().length == 1, "the guardian is still owned and alive");
+    auto nextTotem = moved.ownTotems()[0], nextGuardian = moved.ownGuardians()[0];
+    assert(nextTotem.guid == totemGuid && nextTotem.position == position && nextTotem.totemOwner == 7);
+    assert(nextTotem.totemSpell == totemSpell && nextTotem.auras.find(totemSpell, totemGuid) !is null);
+    assert(nextGuardian.guid == guardianGuid && nextGuardian.guardianOwner == 7
+        && nextGuardian.values.get!UNIT_FIELD_HEALTH == health);
+    nextGuardian.tick(to, 2_010);
+    assert(to.creatureAt(guardianGuid) is null && to.creatureAt(totemGuid) is nextTotem);
+    nextTotem.tick(to, 4_010);
+    assert(to.creatureAt(totemGuid) is null, "the old lifetime decides when both summons disappear");
 }
 
 /// The player keeps the active channel and its next missile when both actors change owners.

@@ -587,7 +587,39 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     bool delegate(ushort, const ref PartyHeal) sendPartyHeal;
+    bool delegate(ushort, const ref imported!"dmangos.cluster.protocol".PartyAreaAura) sendPartyAreaAura;
     private ulong[ushort] lastPartyHeal, lastPartyHealReply;
+
+    package bool sameAuraSubgroup(ulong controller, ulong recipient, uint groupId)
+    {
+        auto group = groups.of(recipient);
+        return group !is null && group.id == groupId && group.isMember(controller)
+            && group.subGroupOf(controller) == group.subGroupOf(recipient);
+    }
+
+    void partyAreaAuraArrived(ushort peer, const ref imported!"dmangos.cluster.protocol".PartyAreaAura renewal)
+    {
+        import dmangos.world.character : Character;
+        import dmangos.world.replication : Replica;
+        import dmangos.world.updatefields : TypeId, UNIT_FIELD_HEALTH, UNIT_FIELD_SUMMONEDBY;
+
+        if (!peer || !canWrite() || !sameAuraSubgroup(renewal.controller, renewal.target, renewal.group))
+            return;
+        auto member = cast(Character) onlinePlayer(renewal.target);
+        if (member is null || member.player is null || !member.player.alive || member.transferring)
+            return;
+        auto map_ = member.currentMap;
+        if (map_.id != renewal.map || map_.instanceId != renewal.instance)
+            return;
+        auto source = cast(Replica) map_.findObject(renewal.source);
+        if (source is null || source.owner != peer || !source.fields.get!UNIT_FIELD_HEALTH)
+            return;
+        if (renewal.controller == renewal.source ? source.fields.type != TypeId.player
+            : source.fields.type != TypeId.unit || source.fields.get!UNIT_FIELD_SUMMONEDBY != renewal.controller)
+            return;
+        if (const spell = data.spells.spell(renewal.spell))
+            member.renewPartyAreaAura(spell, renewal);
+    }
 
     void partyHealArrived(ushort peer, const ref PartyHeal message)
     {
@@ -5456,6 +5488,24 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// An object's state for its next owner; kind 0 for one that does not move (a player's corpse stays with its player).
     Migrant saveMigrant(MapObject object)
     {
+        if (auto creature = cast(Creature) object)
+            if (creature.meleeController || creature.totemOwner)
+                return Migrant.init; // controlled creatures follow their owner's rules
+        return saveMigratingObject(object);
+    }
+
+    package Migrant savePlayerSummon(Creature creature)
+    {
+        if (!(creature.guardianOwner || creature.totemOwner) || creature.summon.type == TempSpawnType.none
+            || creature.spawn.guid < temporaryCounterStart)
+            return Migrant.init;
+        auto migrant = saveMigratingObject(creature);
+        migrant.home = cellKeyAt(creature.spawn.x, creature.spawn.y);
+        return migrant;
+    }
+
+    private Migrant saveMigratingObject(MapObject object)
+    {
         import dmangos.bytes : ByteWriter;
         import dmangos.serialization : serialize;
         import dmangos.world.gameobject : GameObject;
@@ -5464,8 +5514,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         ByteWriter w;
         if (auto creature = cast(Creature) object)
         {
-            if (creature.meleeController || creature.totemOwner)
-                return Migrant.init; // controlled creatures follow their owner's rules
             if (creature.loot !is null)
                 creature.loot.sendReleaseForAll();
             const now = transportNow();
@@ -5504,6 +5552,20 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         }
         gameObject.saveState(w, transportNow(), expires);
         return Migrant(kind, gameObject.spawn.guid, 0, w.data);
+    }
+
+    package Creature restorePlayerSummon(Map destination, const ref Migrant migrant, ulong owner)
+    {
+        import dmangos.serialization : deserialize;
+        import dmangos.world.migration : MigrantKind;
+
+        if (migrant.kind != MigrantKind.summonedCreature)
+            return null;
+        auto reader = ByteReader(migrant.state);
+        deserialize!CreatureSpawn(reader);
+        if (deserialize!TempSpawn(reader).summoner != owner)
+            return null;
+        return cast(Creature) restoreWorldMigrant(migrant, destination);
     }
 
     /// An object rebuilt from its spawn and the state its last owner sent; null if the spawn is unknown here.

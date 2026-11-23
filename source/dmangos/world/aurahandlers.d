@@ -89,14 +89,86 @@ private:
     }
 
     private ulong[][AreaAuraKey] areaAuraGiven; /// the players given it
+    import dmangos.cluster.protocol : PartyAreaAura;
+
+    private struct ReceivedAreaAura
+    {
+        PartyAreaAura renewal;
+        Aura aura;
+    }
+
+    private ReceivedAreaAura[AreaAuraKey] receivedAreaAuras;
+
+    private static ubyte partyAuraEffects(const(SpellInfo)* spell)
+    {
+        ubyte effects;
+        foreach (i; 0 .. 3)
+            if (spell.effect[i] == SpellEffect.applyAreaAuraParty)
+                effects |= cast(ubyte)(1 << i);
+        return effects;
+    }
 
     /// Whether `spell` has an area aura for the party.
     private static bool partyAreaAura(const(SpellInfo)* spell)
     {
-        foreach (i; 0 .. 3)
-            if (spell.effect[i] == SpellEffect.applyAreaAuraParty)
-                return true;
-        return false;
+        return partyAuraEffects(spell) != 0;
+    }
+
+    private static bool inPartyAuraRange(Position at, Position source, float radius)
+    {
+        return (at.x - source.x) ^^ 2 + (at.y - source.y) ^^ 2 + (at.z - source.z) ^^ 2 <= radius * radius;
+    }
+
+    package void renewPartyAreaAura(const(SpellInfo)* spell, const ref PartyAreaAura renewal)
+    {
+        import std.math : isFinite;
+
+        const expiresIn = cast(int)(renewal.deadline - context.transportNow());
+        if (expiresIn <= 0 || expiresIn > PartyAreaAura.lifetime + 500 || renewal.radius <= 0
+            || !isFinite(renewal.radius) || !context.client.isValidMapCoord(renewal.map, renewal.x, renewal.y, renewal.z)
+            || !inPartyAuraRange(player.position, Position(renewal.x, renewal.y, renewal.z), renewal.radius)
+            || duelingWith(renewal.controller))
+            return;
+        const effects = renewal.effects & partyAuraEffects(spell);
+        if (!effects)
+            return;
+        const key = AreaAuraKey(renewal.source, renewal.spell);
+        if (const previous = key in receivedAreaAuras)
+            if (cast(int)(renewal.deadline - previous.renewal.deadline) <= 0 && previous.aura is player.auras.find(spell.id))
+                return;
+        auto aura = player.auras.find(spell.id);
+        if (aura !is null && aura.caster != renewal.source)
+            return;
+        if (aura !is null && (aura.amount != renewal.values || aura.effects != effects))
+        {
+            removeAura(aura);
+            aura = null;
+        }
+        if (aura is null)
+        {
+            aura = makeAura(spell, renewal.source, renewal.level, -1, true, renewal.values);
+            aura.effects = cast(ubyte) effects;
+            addAura(aura);
+        }
+        if (player.auras.find(spell.id, renewal.source) is aura)
+            receivedAreaAuras[key] = ReceivedAreaAura(renewal, aura);
+    }
+
+    private void expirePartyAreaAuras()
+    {
+        const now = context.transportNow();
+        foreach (key; receivedAreaAuras.keys)
+        {
+            auto row = receivedAreaAuras[key];
+            const r = &row.renewal;
+            if (cast(int)(r.deadline - now) > 0 && player.alive && map.id == r.map && map.instanceId == r.instance
+                && context.sameAuraSubgroup(r.controller, player.guid, r.group) && !duelingWith(r.controller)
+                && inPartyAuraRange(player.position, Position(r.x, r.y, r.z), r.radius))
+                continue;
+            receivedAreaAuras.remove(key);
+            if (player.auras.find(key.spell, key.source) is row.aura)
+                removeAura(row.aura);
+        }
     }
 
     /// The radius of `spell`'s party area aura.
@@ -123,6 +195,8 @@ private:
     package void updateAreaAuras(Duration elapsed)
     {
         import core.time : seconds;
+        import dmangos.world.replication : Replica;
+        import std.algorithm.comparison : min;
         import std.algorithm.searching : canFind;
         import dmangos.world.player : DeathState;
 
@@ -130,6 +204,7 @@ private:
         if (sinceAreaAuras < 1.seconds || player is null)
             return;
         sinceAreaAuras = Duration.zero;
+        expirePartyAreaAuras();
         updatePetAreaAuras(); // (`dmangos.world.petauras`)
         struct Source
         {
@@ -167,17 +242,27 @@ private:
                 sources ~= Source(pet.guid, pet.position, given, true);
             }
         typeof(this)[] members = [this];
-        if (auto group = context.groups.of(player.guid))
+        Replica[] remote;
+        auto group = context.groups.of(player.guid);
+        if (group !is null)
             foreach (ref m; group.members)
-                if (m.guid != player.guid)
+                if (m.guid != player.guid && m.subGroup == group.subGroupOf(player.guid))
+                {
                     if (auto s = cast(typeof(this)) context.onlinePlayer(m.guid))
+                    {
                         if (s.player !is null && s.map is map)
                             members ~= s;
+                    }
+                    else if (context.sendPartyAreaAura !is null && context.canWrite())
+                        if (auto copy = cast(Replica) map.findObject(m.guid))
+                            remote ~= copy;
+                }
         // Sources that lost an aura (or are gone) take it back first, so a replacing source's is given now.
         bool[AreaAuraKey] current;
         foreach (ref src; sources)
             foreach (aura; src.auras)
-                current[AreaAuraKey(src.guid, aura.spell.id)] = true;
+                if (aura.effects & partyAuraEffects(aura.spell))
+                    current[AreaAuraKey(src.guid, aura.spell.id)] = true;
         foreach (key, given; areaAuraGiven.dup)
             if (key !in current)
             {
@@ -189,18 +274,37 @@ private:
             {
                 const key = AreaAuraKey(src.guid, aura.spell.id);
                 const r = areaAuraRadius(aura.spell);
+                const effects = aura.effects & partyAuraEffects(aura.spell);
+                if (!effects)
+                    continue;
                 ulong[] given;
                 foreach (m; members)
                 {
-                    if ((m is this && !src.toOwner) || m.player.deathState != DeathState.alive)
+                    if ((m is this && !src.toOwner) || m.player.deathState != DeathState.alive
+                        || m.duelingWith(player.guid))
                         continue;
-                    const p = m.player.position;
-                    if ((p.x - src.at.x) ^^ 2 + (p.y - src.at.y) ^^ 2 + (p.z - src.at.z) ^^ 2 > r * r)
+                    if (!inPartyAuraRange(m.player.position, src.at, r))
                         continue;
                     given ~= m.player.guid;
+                    m.receivedAreaAuras.remove(key);
                     if (m.player.auras.find(aura.spell.id) is null)
-                        m.addAura(makeAura(aura.spell, src.guid, aura.casterLevel, -1, true, aura.amount));
+                    {
+                        auto granted = makeAura(aura.spell, src.guid, aura.casterLevel, -1, true, aura.amount);
+                        granted.effects = cast(ubyte) effects;
+                        m.addAura(granted);
+                    }
                 }
+                foreach (recipient; remote)
+                    if (inPartyAuraRange(recipient.position, src.at, r))
+                    {
+                        const ms = aura.duration < 0 ? PartyAreaAura.lifetime
+                            : min(cast(uint) aura.duration, PartyAreaAura.lifetime);
+                        const renewal = PartyAreaAura(src.guid, player.guid, recipient.guid, group.id, aura.spell.id,
+                            map.id, map.instanceId, context.transportNow() + ms, aura.casterLevel,
+                            src.at.x, src.at.y, src.at.z, r, aura.amount, cast(ubyte) effects);
+                        map.holdCasterReplica(src.guid, recipient.owner, ms + 1_000);
+                        context.sendPartyAreaAura(recipient.owner, renewal);
+                    }
                 foreach (g; areaAuraGiven.get(key, null))
                     if (!given.canFind(g))
                         takeAreaAura(g, aura.spell.id, src.guid);
@@ -214,6 +318,10 @@ private:
         foreach (key, given; areaAuraGiven)
             takeAreaAuraKey(key, given);
         areaAuraGiven = null;
+        foreach (key, received; receivedAreaAuras)
+            if (player.auras.find(key.spell, key.source) is received.aura)
+                removeAura(received.aura);
+        receivedAreaAuras = null;
     }
 
     private void takeAreaAuraKey(const AreaAuraKey key, const(ulong)[] given)
@@ -809,7 +917,7 @@ private:
 
         AuraRecord[] rows;
         foreach (aura; player.auras.list)
-            if (!aura.passive && aura.duration != 0)
+            if (!aura.passive && aura.duration != 0 && (!partyAreaAura(aura.spell) || aura.caster == player.guid))
                 rows ~= AuraRecord(aura.caster, aura.spell.id, aura.stacks, aura.amount, aura.periodTimer,
                     aura.maxDuration, aura.duration, aura.savedEffectMask, aura.charges);
         context.database.saveAuras(player.data.guid, rows);
@@ -823,7 +931,7 @@ private:
         foreach (ref row; context.database.loadAuras(player.data.guid))
         {
             const spell = context.data.spells.spell(row.spell);
-            if (spell is null || row.remaining == 0)
+            if (spell is null || row.remaining == 0 || (partyAreaAura(spell) && row.caster != player.guid))
                 continue;
             auto aura = makeAura(spell, row.caster, player.data.level, row.maxDuration,
                 Aura.savedPositive(*spell, row.effectMask), row.amount);
