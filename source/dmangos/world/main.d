@@ -363,6 +363,7 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
         context.canSendLootCoins = &bridge.canSendLootCoins;
         context.sendRemoteLootCoins = &bridge.sendLootCoinShare;
         context.sendPartyQuest = &bridge.sendPartyQuest;
+        context.sendPartySummon = &bridge.sendPartySummon;
         context.sendQuestLootCheck = &bridge.sendQuestLootCheck;
         context.sendPartyHeal = &bridge.sendPartyHeal;
         context.sendPartyAreaAura = &bridge.sendPartyAreaAura;

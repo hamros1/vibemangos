@@ -179,7 +179,7 @@ struct Cultist
     {
         me.reactState(Reaction.passive);
         me.castSelf(28132, true);
-        if (const shard = me.creatureNearby(damaged, 12)) me.castSpell(28078, shard, true);
+        me.castSelf(28078, true); // Buttress Channel selects the nearby damaged shard by entry.
     }
     void on(ref CreatureContext me, const ref GossipSelect e)
     {

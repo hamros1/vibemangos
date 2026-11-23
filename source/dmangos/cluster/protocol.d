@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 97; // 97: route database script steps to their creature's owner
+enum ushort protocolVersion = 100; // 100: preserve a remote camera through a player handoff
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -101,6 +101,7 @@ enum MessageType : ushort
     scriptGameObject = 62,
     partyAreaAura = 63,
     scriptCreatureStep = 64,
+    partySummon = 65,
 }
 
 /// Refresh a party aura on a member simulated by another node.
@@ -165,6 +166,21 @@ struct ScriptCreatureStep
     uint map, script, fingerprint, sentAt;
     ubyte table;
     bool forwarded;
+}
+
+/// A completed ritual addressed to one member of the summoner's group.
+struct PartySummon
+{
+    enum type = MessageType.partySummon;
+    enum Action : ubyte { invite, finishRitual }
+
+    ulong sequence, summoner, target;
+    uint group, map, instance, area;
+    float x, y, z;
+    long expires;
+    bool forwarded;
+    Action action;
+    ulong portal;
 }
 
 /// A candidate's lease round, or a voter's reply with its latest durable term.
@@ -1304,7 +1320,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 97, recordedFingerprint = 0xbc9518fe211ad77aUL;
+private enum recordedVersion = 100, recordedFingerprint = 0xd8fadd296b778c6eUL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

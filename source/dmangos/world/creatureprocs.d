@@ -107,8 +107,8 @@ mixin template CreatureProcs()
         import dmangos.world.combat : Fighter;
         import dmangos.world.spellauras : auraCast;
         import dmangos.world.spellcast : range;
-        import dmangos.world.spelldamage : isCreatureTargetEffect, isTargetedProcEffect, remoteTargetAuraEffects,
-            rollHealing, spellDamageBonus;
+        import dmangos.world.spelldamage : crystalPrison, isCreatureTargetEffect, isTargetedProcEffect, remoteTargetAuraEffects,
+            namedVisualLifetimeMs, permanentNamedCreatureVisual, rollHealing, spellDamageBonus;
         import dmangos.world.spellids : AuraType, SpellEffect;
         import dmangos.world.spellmods : SpellModOp;
 
@@ -136,9 +136,11 @@ mixin template CreatureProcs()
             if (mask)
             {
                 const aura = auraCast(source, spell, mask);
-                hit.auraMs = aura.ms;
+                hit.auraMs = channelSequence && permanentNamedCreatureVisual(spell.id) ? namedVisualLifetimeMs : aura.ms;
                 hit.auraValues = aura.values;
             }
+            if (channelSequence && spell.id == crystalPrison)
+                hit.amount = source.effectAmount(spell, 0);
             if (effect == SpellEffect.heal)
             {
                 const value = source.spellMod(SpellModOp.damage, spell, source.effectAmount(spell, i));

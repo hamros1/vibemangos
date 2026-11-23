@@ -221,6 +221,8 @@ bool isTargetedProcEffect(const ref SpellInfo spell, size_t i)
 }
 
 /// Aura effects sharing a single explicit target and therefore one duration, slot and application.
+package enum uint crystalPrison = 23015, crystalPrisonCompletion = 23019, crystalPrisonConjure = 23022;
+
 ubyte remoteTargetAuraEffects(const ref SpellInfo spell, size_t first)
 {
     const target = spell.implicitTargetA[first];
@@ -229,7 +231,8 @@ ubyte remoteTargetAuraEffects(const ref SpellInfo spell, size_t first)
     foreach (i, effect; spell.effect)
     {
         if (effect != SpellEffect.applyAura || spell.implicitTargetA[i] != target
-            || spell.casting.implicitTargetB[i] != secondary || spell.casting.chainTarget[i] > 1)
+            || (spell.casting.implicitTargetB[i] != secondary && spell.id != crystalPrison)
+            || spell.casting.chainTarget[i] > 1)
             continue;
         const aura = spell.casting.applyAuraName[i];
         if (aura == AuraType.modPossess || aura == AuraType.modPossessPet || aura == AuraType.modCharm)
@@ -338,13 +341,39 @@ package bool isRemoteLeechChannel(const ref SpellInfo spell)
     return drains;
 }
 
+/// Known named dummy auras that only show a channel and need no effect on its caster.
+package bool namedCreatureVisual(uint spell) pure nothrow @nogc @safe
+{
+    import std.algorithm.comparison : among;
+
+    return spell.among(12623u, 12774u, 15281u, 23018u, 23642u, 24217u, 28078u) != 0;
+}
+
+/// Keep the target visual for this long without a renewal from the caster.
+package enum namedVisualLifetimeMs = 2_500;
+package enum namedVisualRenewalMs = 1_000;
+
+/// These channels run until the caster aborts, dies or loses the target.
+package bool permanentNamedCreatureVisual(uint spell) pure nothrow @nogc @safe
+{
+    return spell != 24217 && namedCreatureVisual(spell);
+}
+
 /// A named-target aura whose effects can all run on the same creature.
 package size_t namedCreatureChannelEffect(const ref SpellInfo spell)
 {
     import std.algorithm.comparison : among;
 
-    if (!(spell.attributesEx & (0x04 | 0x40)) || spell.casting.speed > 0)
+    if (!(spell.attributesEx & (0x04 | 0x40)))
         return size_t.max;
+    // The prison's three effects share the Doomguard Commander. The periodic aura
+    // carries the channel token, the immunity shares its hit, and the opening effect adds threat.
+    if (spell.id == crystalPrison && spell.effect == [SpellEffect.threat, SpellEffect.applyAura, SpellEffect.applyAura]
+        && spell.implicitTargetA[] == [ImplicitTarget.unitScriptNearCaster, ImplicitTarget.unitScriptNearCaster,
+            ImplicitTarget.unitScriptNearCaster]
+        && spell.triggerSpell[1] == crystalPrisonCompletion && spell.casting.applyAuraName[1] == AuraType.periodicTriggerSpell
+        && spell.casting.applyAuraName[2] == AuraType.stateImmunity)
+        return 1;
     size_t first = size_t.max;
     bool finish, threat;
     foreach (i, effect; spell.effect)
@@ -366,7 +395,8 @@ package size_t namedCreatureChannelEffect(const ref SpellInfo spell)
                 finish = true;
             }
         }
-        else if (!aura.among(AuraType.periodicHeal, AuraType.modDamageDone, AuraType.modMeleeHaste, AuraType.modScale))
+        else if (!(aura == AuraType.dummy && namedCreatureVisual(spell.id))
+            && !aura.among(AuraType.periodicHeal, AuraType.modDamageDone, AuraType.modMeleeHaste, AuraType.modScale))
             return size_t.max;
         if (first == size_t.max)
             first = i;

@@ -286,6 +286,8 @@ mixin template CreatureCasting()
         writer.put(namedChannelPeer ? namedChannelPeer : context.nodeId);
     }
 
+    private int visualRenewalMs;
+
     package void loadCreatureChannel(ref imported!"dmangos.bytes".ByteReader reader, int transit)
     {
         import std.algorithm.comparison : max;
@@ -293,7 +295,8 @@ mixin template CreatureCasting()
         namedChannelSequence = reader.read!ulong;
         const timer = reader.read!int;
         // The named target's aura advances off-node. A missile channel's own aura transfers with its caster.
-        channelTimer = namedChannelSequence ? max(0, timer - max(0, transit)) : timer;
+        channelTimer = namedChannelSequence && timer >= 0 ? max(0, timer - max(0, transit)) : timer;
+        visualRenewalMs = 0;
         missilePulsesRemaining = reader.read!int;
         namedChannelPeer = reader.read!ushort;
         channelSpell = lore.spellInfo(me.values.get!UNIT_CHANNEL_SPELL);
@@ -318,7 +321,8 @@ mixin template CreatureCasting()
         if (!namedChannelSequence)
             return; // Arcane Missiles launches from its restored periodic aura.
         namedChannelPeer = currentChannelPeer(map_, me.values.get!UNIT_FIELD_CHANNEL_OBJECT);
-        map_.holdCasterReplica(me.guid, namedChannelPeer, cast(uint) channelTimer + 5_000, true);
+        map_.holdCasterReplica(me.guid, namedChannelPeer,
+            cast(uint) imported!"std.algorithm.comparison".max(channelTimer, 0) + 5_000, true);
     }
 
     private ushort currentChannelPeer(imported!"dmangos.world.map".Map map_, ulong target)
@@ -336,10 +340,12 @@ mixin template CreatureCasting()
     {
         import dmangos.world.context : WorldContext;
         import dmangos.world.spellcast : duration;
+        import dmangos.world.spelldamage : namedVisualRenewalMs, permanentNamedCreatureVisual;
 
         auto caster = spellCaster();
         const ms = caster.modDuration(spell, duration(*spell, lore.clientData, caster.level));
-        if (ms <= 0 || !world_.inLineOfSight(me.position, target.position))
+        if ((ms <= 0 && !(ms < 0 && named && permanentNamedCreatureVisual(spell.id)))
+            || !world_.inLineOfSight(me.position, target.position))
             return false;
         if (!me.spline.finalized)
             stopMoving(me, world_);
@@ -348,6 +354,7 @@ mixin template CreatureCasting()
         namedChannelSequence = named ? (cast(WorldContext) lore).nextGameplaySequence() : 0;
         namedChannelPeer = target.replica is null ? 0 : target.replica.owner;
         missingChannelTarget = 0;
+        visualRenewalMs = namedVisualRenewalMs;
         missilePulsesRemaining = named ? 0 : ms / spell.casting.amplitude[0];
         me.values.set!UNIT_CHANNEL_SPELL(spell.id);
         me.values.set!UNIT_FIELD_CHANNEL_OBJECT(target.combatGuid);
@@ -419,15 +426,18 @@ mixin template CreatureCasting()
     private void updateCreatureChannel(int diff)
     {
         import dmangos.world.map : Map;
+        import dmangos.world.spelldamage : permanentNamedCreatureVisual;
 
         const spell = channelSpell;
         if (spell is null)
             return;
         auto target = spellTarget(me.values.get!UNIT_FIELD_CHANNEL_OBJECT);
-        channelTimer -= diff;
+        const permanent = namedChannelSequence && permanentNamedCreatureVisual(spell.id);
+        if (!permanent)
+            channelTimer -= diff;
         if (!target)
         {
-            if ((missingChannelTarget += diff) >= 1000 || channelTimer <= 0)
+            if ((missingChannelTarget += diff) >= 1000 || (!permanent && channelTimer <= 0))
                 finishCreatureChannel(true);
             return;
         }
@@ -435,8 +445,14 @@ mixin template CreatureCasting()
         if (!canMaintainCreatureChannel(spell, target, namedChannelSequence != 0)
             || (!namedChannelSequence && channelTimer > 0 && me.auras.find(spell.id, me.guid) is null))
             finishCreatureChannel(true);
-        else if (channelTimer <= 0)
+        else if (!permanent && channelTimer <= 0)
             finishCreatureChannel(false);
+        else if (permanent)
+        {
+            const newPeer = target.replica is null ? 0 : target.replica.owner;
+            if ((visualRenewalMs -= diff) <= 0 || newPeer != namedChannelPeer)
+                renewCreatureVisual(spell, target, newPeer);
+        }
         else if (namedChannelSequence)
         {
             const ushort peer = target.replica is null ? 0 : target.replica.owner;
@@ -445,6 +461,31 @@ mixin template CreatureCasting()
                     map.holdCasterReplica(me.guid, peer, cast(uint) channelTimer + 5000, true);
             namedChannelPeer = peer;
         }
+    }
+
+    private void renewCreatureVisual(const(SpellInfo)* spell, UnitRef target, ushort peer)
+    {
+        import dmangos.cluster.protocol : AreaDamage;
+        import dmangos.world.context : WorldContext;
+        import dmangos.world.spelldamage : namedVisualLifetimeMs, namedVisualRenewalMs;
+
+        visualRenewalMs = namedVisualRenewalMs;
+        namedChannelPeer = peer;
+        if (peer)
+        {
+            if (auto context = cast(WorldContext) lore)
+                context.sendReplicaSpell(target.map, peer, spell,
+                    AreaDamage(caster: me.guid, target: target.combatGuid, spell: spell.id, map: target.map.id,
+                        instance: target.map.instanceId, creatureCast: true, namedCreature: true, channelled: true,
+                        channelUpdate: true, channelToken: namedChannelSequence, auraMs: namedVisualLifetimeMs));
+        }
+        else if (auto aura = target.auraSet.find(spell.id, me.guid))
+        {
+            if (aura.channelToken == namedChannelSequence)
+                aura.duration = namedVisualLifetimeMs;
+        }
+        else
+            finishCreatureChannel(true);
     }
 
     private bool canMaintainCreatureChannel(const(SpellInfo)* spell, UnitRef target, bool named)
@@ -557,7 +598,8 @@ mixin template CreatureCasting()
         const namedEffect = selectableNamedCreatureEffect(spell);
         auto context = cast(WorldContext) lore;
         const namedObject = context !is null && context.onlyNamedGameObjectEffects(spell);
-        const channelEffect = !triggered && !me.meleeController && context !is null
+        const channelEffect = (!triggered || imported!"dmangos.world.spelldamage".permanentNamedCreatureVisual(spell.id))
+            && !me.meleeController && context !is null
             ? context.namedCreatureChannel(spell) : size_t.max;
         if (selectedChannelTarget && channelEffect == size_t.max)
             return refuse(SpellCastResult.badTargets);
@@ -974,7 +1016,10 @@ mixin template CreatureCasting()
         // during one of its own effects still stops at that effect.
         const castOnDeath = !me.alive && !takeMana;
         auto context = cast(WorldContext) lore;
-        const channelEffect = takeMana && !me.meleeController && selectedWeaponTargets is null && context !is null
+        import dmangos.world.spelldamage : namedVisualLifetimeMs, permanentNamedCreatureVisual;
+
+        const channelEffect = (takeMana || permanentNamedCreatureVisual(spell.id)) && !me.meleeController
+            && selectedWeaponTargets is null && context !is null
             ? context.namedCreatureChannel(spell) : size_t.max;
         const missiles = takeMana && selectedWeaponTargets is null && isArcaneMissilesChannel(*spell);
         if (selectedChannelTarget && channelEffect == size_t.max)
@@ -1265,7 +1310,14 @@ mixin template CreatureCasting()
         if (channelTarget.creature !is null)
         {
             if (auto aura = channelTarget.creature.auras.find(spell.id, me.guid))
+            {
                 aura.channelToken = namedChannelSequence;
+                if (permanentNamedCreatureVisual(spell.id))
+                {
+                    aura.detachedChannel = false;
+                    aura.duration = aura.maxDuration = namedVisualLifetimeMs;
+                }
+            }
             else
                 finishCreatureChannel(true);
         }

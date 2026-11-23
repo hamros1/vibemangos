@@ -336,6 +336,7 @@ private struct Entity
     Position eye;               // where it sees from, while `farSeeing`
     SlotBits known;             // the slots its client has: players and objects
     ulong[] lingering;          // guids its client has that this map does not hold yet
+    ulong eyeGuid, eyeUntil;    // last eye location during a replica handoff
 }
 
 /// The players and objects in one cell, by slot.
@@ -3070,7 +3071,8 @@ private:
     /// The cells a local player or fighting creature is near now; the map's interest follows.
     void updateInterest(uint slot, Position position)
     {
-        observeCells(slot, position, settings.visibilityDistance);
+        const eye = at(slot).eye;
+        observeCells(slot, position, settings.visibilityDistance, at(slot).farSeeing ? &eye : null);
     }
 
     /// A ground effect observes its occupied cells even if its caster moves away from them.
@@ -3084,11 +3086,15 @@ private:
         }
     }
 
-    private void observeCells(uint slot, Position position, float radius)
+    private void observeCells(uint slot, Position position, float radius, scope const(Position)* eye = null)
     {
         ulong[] near;
         foreach (cell; cellKeysNear(position, radius))
             near ~= cell;
+        if (eye !is null)
+            foreach (cell; cellKeysNear(*eye, radius))
+                if (!near.canFind(cell))
+                    near ~= cell;
         auto had = at(slot).interest;
         foreach (cell; near)
             if (!had.canFind(cell))
@@ -3136,7 +3142,7 @@ private:
      * Where `who` sees from: the object or unit in its `PLAYER_FARSIGHT` (Far Sight's and Eagle Eye's spot, the
      * unit under its Mind Vision) while that is on this map; else where it stands.
      */
-    Position eyeOf(Inhabitant who, out bool far)
+    package Position eyeOf(Inhabitant who, out bool far)
     {
         import dmangos.world.updatefields : PLAYER_FARSIGHT;
 
@@ -3146,9 +3152,28 @@ private:
             return who.character.position;
         const slot = slotFor(target);
         if (slot == uint.max)
+        {
+            const viewer = slotFor(who.character.guid);
+            if (viewer != uint.max && at(viewer).eyeGuid == target && clockMs < at(viewer).eyeUntil)
+            {
+                far = true;
+                return at(viewer).eye;
+            }
             return who.character.position;
+        }
         far = true;
         return at(slot).player !is null ? at(slot).player.character.position : at(slot).object.position;
+    }
+
+    /// Keep interest at the last eye position while its replica arrives at this node.
+    package void retainEye(ulong viewer, ulong target, Position position)
+    {
+        const slot = slotFor(viewer);
+        if (slot == uint.max)
+            return;
+        at(slot).eyeGuid = target;
+        at(slot).eyeUntil = clockMs + 2_000;
+        at(slot).eye = position;
     }
 
     /// Where the player in `slot` sees from (`eyeOf`, as of its last `updateVisibility`).
@@ -3166,6 +3191,8 @@ private:
     /// Who sees whom, for every player near `who`, both ways.
     void updateVisibility(Inhabitant who)
     {
+        import dmangos.world.updatefields : PLAYER_FARSIGHT;
+
         const guid = who.character.guid;
         const slot = slotFor(guid);
         at(slot).visibilityAt = who.character.position;
@@ -3173,6 +3200,14 @@ private:
         const eye = eyeOf(who, far);
         at(slot).farSeeing = far;
         at(slot).eye = eye;
+        if (far)
+        {
+            const target = who.character.values.get!PLAYER_FARSIGHT;
+            if (slotFor(target) != uint.max)
+                retainEye(guid, target, eye);
+        }
+        else
+            at(slot).eyeGuid = 0;
         // One way: a ghost, an invisible game master, a stealthed player (the slot's `ghost` stands for all three).
         import dmangos.world.spellids : AuraType;
 

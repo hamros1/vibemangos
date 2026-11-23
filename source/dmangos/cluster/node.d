@@ -74,6 +74,7 @@ interface ReplicationHandler
     void groupLootRoll(ushort peer, const ref GroupLootRoll message);
     void lootCoinShare(ushort peer, const ref LootCoinShare message);
     void partyQuest(ushort peer, const ref PartyQuest message);
+    void partySummon(ushort peer, const ref PartySummon message);
     void questLootCheck(ushort peer, const ref QuestLootCheck message);
     void partyHeal(ushort peer, const ref PartyHeal message);
     void partyAreaAura(ushort peer, const ref PartyAreaAura message);
@@ -1141,6 +1142,15 @@ final class ClusterNode : LinkOwner
             {
                 const m = decode!ScriptGameObject(payload);
                 replication.scriptGameObject(peer, m);
+            }
+            return;
+        }
+        if (type == MessageType.partySummon)
+        {
+            if (replication !is null)
+            {
+                const m = decode!PartySummon(payload);
+                replication.partySummon(peer, m);
             }
             return;
         }

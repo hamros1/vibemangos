@@ -1009,7 +1009,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         import std.algorithm.searching : canFind;
         import std.random : uniform01;
         import dmangos.world.spellauras : channelAuraActive;
-        import dmangos.world.spelldamage : namedChannelTriggerEffect, namedCreatureChannelEffect;
+        import dmangos.world.spelldamage : crystalPrison, namedChannelTriggerEffect, namedCreatureChannelEffect;
 
         AuraTick[] ticks;
         Aura[] expired, heartbeats;
@@ -1048,7 +1048,8 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
                 {
                     const now = context.transportNow();
                     expiredChannels = expiredChannels.remove!(result => cast(int)(result.deadline - now) <= 0);
-                    expiredChannels ~= ExpiredChannel(aura.spell.id, now + 5000, aura.caster, aura.channelToken);
+                    const grace = aura.spell.id == crystalPrison ? 6_000 : 5_000;
+                    expiredChannels ~= ExpiredChannel(aura.spell.id, now + grace, aura.caster, aura.channelToken);
                 }
             loseAura(aura, world, true);
         }

@@ -474,6 +474,9 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   pays its normal cost and starts its cooldown. The caster must be out of combat and free to
   move. Their PvP flags and expiry timers travel with them. A cancel received before the cast
   starts discards the pending action.
+* **Party summons.** A warlock ritual or meeting stone sends the offer to the target's node, even
+  on another map. The target can accept it after changing nodes. An open player-owned ritual portal
+  keeps its GUID and participants when the caster changes nodes on the same map.
 * **Direct party heals.** At cast completion, one cast on the caster's node pays the usual cost
   and starts the cooldown. This includes cast-time spells such as Prayer of Healing. Each
   recipient's node rechecks range, map, and party or raid subgroup before applying the heal
@@ -915,11 +918,16 @@ target with its original tick schedule. This requires a clean handoff with the c
 
 EventAI can select a wounded ally in combat on another node when all the rule's actions are
 supported channels aimed at that ally. Leprous Technicians and Machinesmiths use this for
-Supercharge and Rebuild. The chosen ally remains the cast target.
+Supercharge and Rebuild. The chosen ally remains the cast target. A Cultist Engineer can
+channel its Buttress visual into a Damaged Necrotic Shard on another node. The target
+keeps a single aura while the caster renews it. It expires if the caster's node stops.
 
 Boon of Life can send its final spell hit to Ras Frostwhisper's current owner. The caster confirms
 completion, and Ras's owner consumes that cast's token before starting its EventAI relay. A short
 record of the expired aura can move with Ras when the two nodes' timers finish in different ticks.
+The Glowing Crystal Prison uses the same completion check for its Doomguard Commander.
+It applies the taunt immunity and opening threat on the target's node. A completed channel conjures
+one prison and removes its target. An interrupt leaves the target in the world.
 
 Cross-node spell routing is effect-specific. A player's cast or item use that selects one nearby creature
 can move to that creature's node when the script needs both actors together. The new owner rechecks the
@@ -944,7 +952,9 @@ cooldown.
 Player projectiles launched at a local target keep their flight time when the caster moves. Supported
 direct damage, healing and aura effects can also follow the target to its new owner.
 Player channels such as Arcane Missiles keep their remaining time and next pulse when the caster
-moves. An angler can finish the original cast after moving. Their bobber keeps its GUID and bite
+moves. A far-seeing player keeps the same camera viewpoint and watches replicas around it.
+The Orb of Draconic Energy moves its user to Emberstrife's node before checking his health and
+starting control. A forced move during creature control releases the creature. An angler can finish the original cast after moving. Their bobber keeps its GUID and bite
 timer until the catch begins.
 
 Party area auras reach nearby players in the same raid subgroup across region boundaries. The

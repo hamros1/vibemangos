@@ -682,6 +682,67 @@ unittest
     assert(visual, "the real Warlock Channeling ground visual spawned on the acolyte's node");
 }
 
+/// A Cultist Engineer renews Buttress Channel on its original shard across the boundary.
+unittest
+{
+    import dmangos.cluster.protocol : AreaDamage;
+    import dmangos.world.creature : TempSpawnType;
+    import dmangos.world.eventai : castTriggered;
+    import dmangos.world.grid : cellKeyAt, cellSize;
+    import dmangos.world.replication : encodeState;
+    import dmangos.world.spelldamage : namedVisualLifetimeMs;
+    import dmangos.world.updatefields : UNIT_CHANNEL_SPELL, UNIT_FIELD_CHANNEL_OBJECT;
+
+    if (!haveRealData())
+        return;
+
+    auto source = RealWorld.make(), owner = RealWorld.make();
+    source.context.nodeId = 1;
+    owner.context.nodeId = 2;
+    auto from = source.context.map(0), to = owner.context.map(0);
+    const here = Position(2 * cellSize - 2, 100, 40), there = Position(2 * cellSize + 2, 100, 40);
+    const casterCell = cellKeyAt(here.x, here.y), targetCell = cellKeyAt(there.x, there.y);
+    assert(casterCell != targetCell);
+
+    enum uint buttress = 28078;
+    auto shard = owner.context.summonCreature(to, 16172, there, TempSpawnType.manual, 0, 0);
+    auto cultist = source.context.summonCreature(from, 16230, here, TempSpawnType.manual, 0, 0);
+    from.replicaCreated(2, targetCell, shard.guid, encodeState(shard, 0));
+    uint applications, renewals, interruptions;
+    source.context.sendAreaDamage = (ushort peer, const ref AreaDamage effect) {
+        assert(peer == 2 && effect.target == shard.guid && effect.channelled && effect.namedCreature);
+        if (!effect.channelUpdate)
+            ++applications;
+        else if (effect.auraMs)
+            ++renewals;
+        else
+            ++interruptions;
+        to.replicaCreated(1, casterCell, cultist.guid, encodeState(cultist, 0));
+        owner.context.areaDamageArrived(1, effect);
+        return true;
+    };
+
+    cultist.ai.update(from, 50); // the real Cultist Engineer's Spawned script starts the channel
+    assert(cultist.values.get!UNIT_CHANNEL_SPELL == buttress
+        && cultist.values.get!UNIT_FIELD_CHANNEL_OBJECT == shard.guid);
+    auto visual = shard.auras.find(buttress, cultist.guid);
+    assert(visual !is null && visual.duration == namedVisualLifetimeMs && applications == 1);
+    foreach (_; 0 .. 4)
+    {
+        shard.updateAuras(to, 1_000);
+        cultist.ai.update(from, 1_000);
+        assert(shard.auras.find(buttress, cultist.guid) is visual && visual.duration == namedVisualLifetimeMs);
+    }
+    assert(renewals >= 4 && applications == 1);
+    cultist.ai.finishCreatureChannel(true);
+    assert(interruptions == 1 && shard.auras.find(buttress, cultist.guid) is null);
+
+    assert(cultist.ai.scriptCast(buttress, cultist.guid, castTriggered));
+    assert(shard.auras.find(buttress, cultist.guid) !is null);
+    shard.updateAuras(to, namedVisualLifetimeMs + 1); // the caster's worker stopped renewing
+    assert(shard.auras.find(buttress, cultist.guid) is null);
+}
+
 /// A creature's existing ground effect follows its region and expires on the new owner.
 unittest
 {
@@ -778,6 +839,60 @@ unittest
     assert(conjured && opcodesOf(client.read()).canFind(Opcode.SMSG_SPELL_GO));
     relay.remote.update(5.seconds);
     assert(moved.inventory.count(water) == conjured);
+}
+
+/// Eagle Eye keeps the original spot and remote visibility when the hunter changes nodes.
+unittest
+{
+    import dmangos.bytes : ByteWriter;
+    import dmangos.world.creature : TempSpawnType;
+    import dmangos.world.dynobject : DynamicObject;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.inworld : ArrivalAction;
+    import dmangos.world.replication : encodeState;
+    import dmangos.world.updatefields : PLAYER_FARSIGHT, UNIT_CHANNEL_SPELL;
+
+    if (!haveRealData())
+        return;
+
+    auto source = RealWorld.make(), owner = RealWorld.make(), land = RealWorld.make();
+    owner.context.database = source.db;
+    auto relay = new TestPlayerRelay(source.context, owner.context);
+    enum uint eyeSpell = 6197;
+    auto client = source.character(7, "Ranger", 3, 60, [eyeSpell], raceOrc);
+    auto caster = client.session.inWorld;
+    const body = caster.player.position, lens = Position(body.x + 450, body.y, body.z);
+    const originCell = cellKeyAt(body.x, body.y), eyeCell = cellKeyAt(lens.x, lens.y);
+    auto from = source.context.map(0), to = owner.context.map(0);
+    auto near = owner.context.summonCreature(to, 6, body, TempSpawnType.manual, 0, 0);
+    auto far = land.context.summonCreature(land.context.map(0), 1835, lens, TempSpawnType.manual, 0, 0);
+    from.replicaCreated(2, originCell, near.guid, encodeState(near, 0));
+
+    ByteWriter cast_;
+    cast_.put(eyeSpell);
+    auto targets = SpellTargets(TargetFlags.destLocation);
+    targets.dest = [lens.x, lens.y, lens.z];
+    targets.write(cast_);
+    client.write(Opcode.CMSG_CAST_SPELL, cast_.data);
+    const eye = caster.player.values.get!PLAYER_FARSIGHT;
+    assert(eye && caster.player.values.get!UNIT_CHANNEL_SPELL == eyeSpell);
+    assert(from.interestCells.canFind(originCell) && from.interestCells.canFind(eyeCell));
+    assert(caster.actAtReplica(near.guid, ArrivalAction.init));
+    assert(relay.remote !is null && from.findObject(eye) is null);
+    auto moved = relay.remote.inWorld;
+    assert(moved.player.values.get!PLAYER_FARSIGHT == eye && moved.player.values.get!UNIT_CHANNEL_SPELL == eyeSpell);
+    auto spot = cast(DynamicObject) to.findObject(eye);
+    assert(spot !is null && spot.position == lens);
+    assert(to.interestCells.canFind(originCell) && to.interestCells.canFind(eyeCell));
+    to.replicaCreated(3, eyeCell, far.guid, encodeState(far, 0));
+    to.update(1.seconds);
+    assert(to.seesObject(moved.player.guid, far.guid), "the new owner shows objects at the camera");
+
+    ByteWriter cancel;
+    cancel.put(eyeSpell);
+    client.write(Opcode.CMSG_CANCEL_CHANNELLING, cancel.data);
+    assert(!moved.player.values.get!PLAYER_FARSIGHT && to.findObject(eye) is null);
+    assert(to.interestCells.canFind(originCell) && !to.interestCells.canFind(eyeCell));
 }
 
 /// A totem and guardian retain their GUIDs, lifetime and controller in the player's handoff.
@@ -1387,6 +1502,177 @@ unittest
         assert(successor.context.runningScripts == 1, "a replay cannot start the relay again");
         successor.context.updateScripts(1);
         assert(moved.values.get!UNIT_FIELD_FACTIONTEMPLATE == 7, "the actual relay changes Ras's faction");
+    }
+}
+
+/// The Orb of Draconic Energy checks and controls the same Emberstrife after changing nodes.
+unittest
+{
+    import dmangos.bytes : ByteWriter;
+    import dmangos.world.creature : TempSpawnType;
+    import dmangos.world.defines : inventorySlotBag0;
+    import dmangos.world.grid : cellKeyAt, cellSize;
+    import dmangos.world.replication : encodeState;
+    import dmangos.world.spellcast : castTime;
+    import dmangos.world.updatefields : UNIT_CHANNEL_SPELL, UNIT_FIELD_CHARM, UNIT_FIELD_CHARMEDBY,
+        UNIT_FIELD_HEALTH, UNIT_FIELD_MAXHEALTH;
+
+    if (!haveRealData())
+        return;
+
+    enum uint orb = 12300, dominion = 16053, emberstrife = 10321;
+    const origin = Position(2 * cellSize - 2, 100, 40), targetAt = Position(2 * cellSize + 2, 100, 40);
+    const cell = cellKeyAt(targetAt.x, targetAt.y);
+    foreach (wounded; [false, true])
+    {
+        auto source = RealWorld.make(), owner = RealWorld.make();
+        owner.context.database = source.db;
+        auto relay = new TestPlayerRelay(source.context, owner.context);
+        auto from = source.context.map(1), to = owner.context.map(1);
+        auto dragon = owner.context.summonCreature(to, emberstrife, targetAt, TempSpawnType.manual, 0, 0);
+        assert(dragon !is null);
+        if (wounded)
+            dragon.values.set!UNIT_FIELD_HEALTH(dragon.values.get!UNIT_FIELD_MAXHEALTH / 12);
+        from.replicaCreated(2, cell, dragon.guid, encodeState(dragon, 0));
+        auto client = loggedIn(source.context, source.db, 112, "Keeper", origin, AccountLevel.player, raceHuman, 0, 60,
+            (ref CharacterData c) { c.map = 1; });
+        auto hero = client.session.inWorld;
+        hero.storeLoot(orb, 1, 0, false);
+        const slot = backpackSlot(hero.player, orb);
+        auto item = hero.player.inventory[inventorySlotBag0, slot];
+        assert(item !is null);
+        source.db.loadable[112].items = [source.db.itemRows[item.guid]];
+        ByteWriter use;
+        use.put(inventorySlotBag0);
+        use.put(slot);
+        use.put(ubyte(1));
+        SpellTargets(TargetFlags.self).write(use);
+        client.write(Opcode.CMSG_USE_ITEM, use.data);
+        assert(relay.remote !is null, "the orb first moves to the actual dragon's node");
+        relay.remote.update(50.msecs);
+        const spell = owner.context.spellInfo(dominion);
+        const wait = castTime(*spell, owner.context.client, 60);
+        relay.remote.update(wait.msecs);
+        auto moved = relay.remote.inWorld;
+        if (wounded)
+        {
+            assert(moved.player.values.get!UNIT_CHANNEL_SPELL == dominion);
+            assert(moved.player.values.get!UNIT_FIELD_CHARM == dragon.guid
+                && dragon.values.get!UNIT_FIELD_CHARMEDBY == moved.player.guid);
+        }
+        else
+            assert(!moved.player.values.get!UNIT_CHANNEL_SPELL && !dragon.values.get!UNIT_FIELD_CHARMEDBY,
+                "the item script refuses a dragon above ten percent health");
+    }
+}
+
+/// The Glowing Crystal Prison can capture its real target on another node exactly once.
+unittest
+{
+    import dmangos.bytes : ByteWriter;
+    import std.format : format;
+    import dmangos.cluster.protocol : AreaDamage;
+    import dmangos.world.creature : TempSpawnType;
+    import dmangos.world.defines : inventorySlotBag0;
+    import dmangos.world.gameobject : GameObject;
+    import dmangos.world.grid : cellKeyAt, cellSize;
+    import dmangos.world.replication : encodePlayerState, encodeState;
+    import dmangos.world.updatefields : UNIT_CHANNEL_SPELL, UNIT_FIELD_CHANNEL_OBJECT;
+
+    if (!haveRealData())
+        return;
+
+    enum uint item = 18601, prison = 23015, doomguard = 12396, crystal = 179644;
+    const origin = Position(2 * cellSize - 2, 100, 40), at = Position(2 * cellSize + 2, 100, 40);
+    const casterCell = cellKeyAt(origin.x, origin.y), targetCell = cellKeyAt(at.x, at.y);
+    foreach (interrupt; [true, false])
+    {
+        auto source = RealWorld.make(), owner = RealWorld.make();
+        source.context.nodeId = 1;
+        owner.context.nodeId = 2;
+        source.context.clock = () => source.now;
+        auto from = source.context.map(0), to = owner.context.map(0);
+        auto client = loggedIn(source.context, source.db, 112, "Keeper", origin, AccountLevel.player,
+            raceHuman, 0, 60, (ref CharacterData c) { c.classId = 9; });
+        auto hero = client.session.inWorld;
+        hero.storeLoot(item, 1, 0, false);
+        auto creature = owner.context.summonCreature(to, doomguard, at, TempSpawnType.manual, 0, 0);
+        from.replicaCreated(2, targetCell, creature.guid, encodeState(creature, 0));
+        assert(source.context.namedCreatureChannel(source.context.spellInfo(prison)) == 1, "the real prison row routes");
+        AreaDamage completion;
+        uint sent;
+        import dmangos.world.spellcast : SpellMissInfo;
+        SpellMissInfo rejected;
+        source.context.sendAreaDamage = (ushort peer, const ref AreaDamage effect) {
+            assert(peer == 2 && effect.target == creature.guid && effect.channelled && effect.namedCreature);
+            ++sent;
+            to.replicaCreated(1, casterCell, hero.player.guid, encodePlayerState(hero.player, 0));
+            if (effect.auraMs == AreaDamage.completedChannel)
+                completion = cast(AreaDamage) effect;
+            owner.context.areaDamageArrived(1, effect);
+            return true;
+        };
+        owner.context.sendAreaDamage = (ushort peer, const ref AreaDamage response) {
+            assert(peer == 1 && response.reply);
+            rejected = cast(SpellMissInfo) response.miss;
+            source.context.areaDamageArrived(2, response);
+            return true;
+        };
+        ByteWriter use;
+        use.put(inventorySlotBag0);
+        use.put(backpackSlot(hero.player, item));
+        use.put(ubyte(1));
+        SpellTargets(TargetFlags.self).write(use);
+        client.write(Opcode.CMSG_USE_ITEM, use.data);
+        const caster = hero.player.guid;
+        const castResult = bodyOf(client.read(), Opcode.SMSG_CAST_RESULT);
+        assert(hero.player.values.get!UNIT_CHANNEL_SPELL == prison
+            && hero.player.values.get!UNIT_FIELD_CHANNEL_OBJECT == creature.guid,
+            format!"prison channel %s, sent %s, target miss %s, cast result %s"(
+                hero.player.values.get!UNIT_CHANNEL_SPELL, sent, rejected, castResult));
+        auto aura = creature.auras.find(prison, caster);
+        assert(aura !is null && aura.channelToken && aura.duration == 18_000 && aura.effects == 0b110
+            && !aura.positive);
+        assert(creature.ai.threatOf(caster) >= 50_000);
+
+        size_t crystals()
+        {
+            size_t count;
+            foreach (object; to.objectsNear(at, 10))
+                if (auto go = cast(GameObject) object)
+                    if (go.spawn.entry == crystal)
+                        ++count;
+            return count;
+        }
+
+        client.session.update(17_999.msecs);
+        creature.updateAuras(to, 17_999);
+        assert(!crystals() && aura.duration == 1);
+        if (interrupt)
+        {
+            ByteWriter stop;
+            stop.put(prison);
+            client.write(Opcode.CMSG_CANCEL_CHANNELLING, stop.data);
+            client.session.update(100.msecs);
+            creature.updateAuras(to, 100);
+            source.context.update(source.now);
+            assert(!completion.sequence && !crystals() && creature.alive && !creature.auras.find(prison, caster));
+            continue;
+        }
+
+        creature.updateAuras(to, 1);
+        client.session.update(1.msecs);
+        source.now += 499.msecs;
+        source.context.update(source.now);
+        assert(!completion.sequence && !crystals(), "the capture spell still has one millisecond of travel");
+        source.now += 1.msecs;
+        source.context.update(source.now);
+        assert(completion.sequence && crystals() == 1 && !creature.auras.find(prison, caster));
+        completion.sequence = source.context.nextGameplaySequence();
+        owner.context.areaDamageArrived(1, completion);
+        assert(crystals() == 1, "replaying the completion does not conjure another prison");
+        creature.tick(to, 10);
+        assert(to.creatureAt(creature.guid) is null);
     }
 }
 

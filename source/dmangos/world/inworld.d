@@ -315,7 +315,11 @@ private:
             return; // a gateway handoff needs a durable checkpoint before the old owner stops
 
         areaAurasOnLeave();
+        import dmangos.serialization : serialize;
+
+        const camera = takeCameraHandoff();
         const fishing = takeFishingHandoff();
+        const ritual = takeRitualHandoff();
         const summons = takeSummonsOnHandoff();
         ByteWriter w;
         w.put(account.id);
@@ -374,8 +378,11 @@ private:
         writePvPHandoff(w);
         context.writeReplicaImpacts(player.guid, w);
         writeChannelAndGroundHandoff(w);
+        serialize(w, camera);
         w.put(cast(uint) fishing.length);
         w.putBytes(fishing);
+        w.put(cast(uint) ritual.length);
+        w.putBytes(ritual);
         w.put(cast(uint) summons.length);
         w.putBytes(summons);
         writeCastHandoff(w);
@@ -383,6 +390,7 @@ private:
         writeEnvironmentHandoff(w);
         writeRemoteLootHandoff(w);
         writeQuestOffer(w);
+        writeSummonOffer(w);
         w.put(homeNode); // last: `migrationHome` reads it there
 
         info!"%s: '%s' moves to node %s (at map %s %.1f %.1f)"(remoteAddress, player.data.name, target,
@@ -512,7 +520,9 @@ private:
         corpseArrivingFromHandoff();
         context.readReplicaImpacts(player.guid, map.id, map.instanceId, r);
         readChannelAndGroundHandoff(r);
+        restoreCameraHandoff(r);
         restoreFishingHandoff(r);
+        restoreRitualHandoff(r);
         restoreSummonsOnHandoff(r);
         readCastHandoff(r);
         loadAuras();
@@ -530,6 +540,7 @@ private:
         readEnvironmentHandoff(r);
         readRemoteLootHandoff(r);
         readQuestOffer(r);
+        readSummonOffer(r);
         petsOnArrival();
         pendingArrival = action; // done at the first tick here, once the move is complete everywhere
         battlegroundCheckDue = action.teleportMap == uint.max; // not on its way into a copy

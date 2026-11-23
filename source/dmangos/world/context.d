@@ -523,6 +523,41 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             session.receivePartyQuest(message);
     }
 
+    import dmangos.cluster.protocol : PartySummon;
+    bool delegate(ushort, const ref PartySummon) sendPartySummon;
+
+    package void routePartySummon(const ref PartySummon message, ushort peer = 0)
+    {
+        import dmangos.world.character : Character;
+        import dmangos.world.rituals : summonAcceptSeconds;
+
+        const now = unixTime;
+        if (!canWrite() || !message.sequence || !message.summoner || message.summoner == message.target
+            || message.expires <= now || message.expires > now + summonAcceptSeconds + 5
+            || !client.isValidMapCoord(message.map, message.x, message.y, message.z)
+            || (message.instance && !instanceable(message.map)))
+            return;
+        auto group = groups.of(message.target);
+        if (group is null || group.id != message.group || !group.isMember(message.summoner))
+            return;
+        if (auto member = cast(Character) onlinePlayer(message.target))
+            if (member.player !is null && !member.transferring)
+                return member.offerPartySummon(message);
+        if (sendPartySummon is null || message.forwarded)
+            return;
+        ushort owner;
+        if (const hint = recentHandoff(message.target))
+            owner = hint.node;
+        else if (const presence = remotePlayer(message.target))
+            owner = presence.node;
+        if (owner && owner != peer && owner != nodeId)
+        {
+            PartySummon onward = message;
+            onward.forwarded = peer != 0;
+            sendPartySummon(owner, onward);
+        }
+    }
+
     void questLootCheckArrived(ushort peer, const ref QuestLootCheck message)
     {
         import dmangos.world.character : Character;
@@ -769,11 +804,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     package size_t namedCreatureChannel(const(SpellInfo)* spell)
     {
         import dmangos.world.spellcast : duration;
-        import dmangos.world.spelldamage : namedChannelTriggerEffect, namedCreatureChannelEffect;
+        import dmangos.world.spelldamage : namedChannelTriggerEffect, namedCreatureChannelEffect,
+            permanentNamedCreatureVisual;
 
         const effect = namedCreatureChannelEffect(*spell);
+        const ms = duration(*spell, client, spell.spellLevel);
         return effect != size_t.max && namedCreatureEntries(spell, effect).length && !spellScript(spell.id)
-            && duration(*spell, client, spell.spellLevel) > 0
+            && (ms > 0 || (ms < 0 && permanentNamedCreatureVisual(spell.id)))
             && (namedChannelTriggerEffect(*spell) == size_t.max || namedChannelCompletionSpell(spell) !is null)
             ? effect : size_t.max;
     }
@@ -783,14 +820,15 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         import dmangos.world.dbscripts : DbScriptType;
         import dmangos.world.spellcast : duration;
-        import dmangos.world.spelldamage : namedChannelTriggerEffect, namedCreatureShape;
+        import dmangos.world.spelldamage : crystalPrisonCompletion, namedChannelTriggerEffect, namedCreatureShape;
         import dmangos.world.spellids : SpellEffect;
 
         const effect = namedChannelTriggerEffect(*spell);
         if (effect == size_t.max || spell.casting.amplitude[effect] != duration(*spell, client, spell.spellLevel))
             return null;
         const child = data.spells.spell(spell.triggerSpell[effect]);
-        if (child is null || child.casting.speed != 0 || (child.attributesEx & (0x04 | 0x40))
+        if (child is null || (child.casting.speed != 0 && child.id != crystalPrisonCompletion)
+            || (child.attributesEx & (0x04 | 0x40))
             || child.effect[0] != SpellEffect.dummy || child.effect[1] || child.effect[2]
             || namedCreatureShape(*child, 0) != ImplicitTarget.unitScriptNearCaster || child.casting.chainTarget[0] > 1
             || !spellScriptTargets(child.id, 0).length || spellScript(child.id)
@@ -1073,18 +1111,31 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// Only a caster that completed its channel can authorize its terminal spell.
     package void completeNamedChannel(Map map_, UnitRef caster, ulong target, const(SpellInfo)* spell, ulong token)
     {
-        if (!token || !canWrite() || namedChannelCompletionSpell(spell) is null)
+        import std.algorithm.comparison : max;
+        import std.math : sqrt;
+
+        const child = namedChannelCompletionSpell(spell);
+        if (!token || !canWrite() || child is null)
             return;
         auto hit = AreaDamage(caster: caster.combatGuid, target: target, spell: spell.id,
             map: map_.id, instance: map_.instanceId, creatureCast: caster.creature !is null,
             namedCreature: true, channelled: true, channelUpdate: true,
             auraMs: AreaDamage.completedChannel, channelToken: token);
-        if (map_.creatureAt(target) !is null)
-            applyAreaDamage(0, map_, hit);
-        else if (sendAreaDamage !is null)
+        const local = map_.creatureAt(target) !is null;
+        Position at;
+        int delay;
+        if (child.casting.speed > 0 && map_.positionOf(target, at))
         {
-            const now = clock();
-            replicaSpellImpacts ~= ReplicaSpellImpact(now, hit, now + replicaImpactGrace);
+            const from = caster.position;
+            const yards = sqrt((at.x - from.x) ^^ 2 + (at.y - from.y) ^^ 2 + (at.z - from.z) ^^ 2);
+            delay = cast(int) (max(5.0f, yards) / child.casting.speed * 1000);
+        }
+        if (local && delay == 0)
+            applyAreaDamage(0, map_, hit);
+        else if (local || sendAreaDamage !is null)
+        {
+            const due = clock() + delay.msecs;
+            replicaSpellImpacts ~= ReplicaSpellImpact(due, hit, due + replicaImpactGrace);
         }
     }
 
@@ -1166,7 +1217,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 replicaSpellImpacts ~= ReplicaSpellImpact(clock(), hit, MonoTime.init, hit.redirectOwner);
             return true;
         }
-        if (spell.casting.speed > 0)
+        if (!hit.channelled && spell.casting.speed > 0)
             if (auto copy = cast(Replica) map_.findObject(hit.target))
             {
                 auto from = Position(hit.x, hit.y, hit.z), to = copy.position;
@@ -1638,7 +1689,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 || distance > message.radius + origin.combatReach + victim.fighter.combatReach
                 || !map_.inLineOfSight(caster.position, victim.position))
                 return replyCreatureCast(peer, message, SpellMissInfo.evade);
-            return remoteProcEffect(peer, message, spell, victim, !message.namedCreature, attacker.hasFlag(UnitFlags.pvp));
+            const capture = spell.id == imported!"dmangos.world.spelldamage".crystalPrison;
+            if (capture && !hostile)
+                return replyCreatureCast(peer, message, SpellMissInfo.evade);
+            return remoteProcEffect(peer, message, spell, victim, !message.namedCreature || capture,
+                attacker.hasFlag(UnitFlags.pvp));
         }
         if (message.playerProjectile)
         {
@@ -1917,7 +1972,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 victim.map.flushCreature(victim.creature);
             }
         }
-        else if (aura.duration > message.auraMs)
+        else if (aura.duration > message.auraMs
+            || (message.namedCreature && imported!"dmangos.world.spelldamage".permanentNamedCreatureVisual(message.spell)))
         {
             aura.duration = message.auraMs;
             if (victim.kind == UnitKind.player)
@@ -1940,9 +1996,25 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (!((from.x - to.x) ^^ 2 + (from.y - to.y) ^^ 2 + (from.z - to.z) ^^ 2 <= reach ^^ 2)
             || !victim.map.inLineOfSight(from, to))
             return;
-        if (victim.creature.consumeChannelCompletion(spell.id, caster.combatGuid, token,
+        if (!victim.creature.consumeChannelCompletion(spell.id, caster.combatGuid, token,
                 namedChannelTriggerEffect(*spell), transportNow(), victim.map))
-            victim.creature.ai.spellHitBy(caster.combatGuid, child.id, 1u << child.casting.school, victim.map);
+            return;
+        import dmangos.world.spelldamage : crystalPrisonCompletion, crystalPrisonConjure;
+
+        auto creature = victim.creature;
+        if (child.id == crystalPrisonCompletion && !creature.petOwner)
+        {
+            import dmangos.world.eventai : castTriggered;
+
+            creature.ai.bind(victim.map);
+            if (creature.ai.castSpell(spellInfo(crystalPrisonConjure), creature.guid, castTriggered))
+            {
+                creature.ai.scriptDespawn(0);
+                victim.map.wake(creature.guid);
+            }
+        }
+        else
+            creature.ai.spellHitBy(caster.combatGuid, child.id, 1u << child.casting.school, victim.map);
     }
 
     private void replyCreatureCast(ushort peer, const ref AreaDamage message,
@@ -2296,6 +2368,22 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (!effects)
             return replyCreatureCast(peer, message, SpellMissInfo.immune);
         installRemoteAura(victim, message, spell, hostile, casterPvP, lasts, effects);
+        if (message.namedCreature && spell.id == imported!"dmangos.world.spelldamage".crystalPrison
+            && victim.kind == UnitKind.creature && !victim.creature.petOwner && message.amount > 0)
+        {
+            auto ai = victim.creature.ai;
+            if (auto source = victim.map.unit(message.caster))
+            {
+                ai.attackedBy(source, victim.map);
+                ai.addThreat(source, message.amount);
+            }
+            else if (auto mirror = cast(imported!"dmangos.world.replication".Replica) victim.map.findObject(message.caster))
+            {
+                ai.attackedBy(UnitRef.observed(mirror, victim.map), victim.map);
+                ai.addRemoteThreat(message.caster, message.amount);
+            }
+            victim.map.wake(victim.creature.guid);
+        }
         if (message.namedCreature)
             namedCreatureHit(victim, message, spell);
         replyCreatureCast(peer, message, SpellMissInfo.none);
@@ -5536,8 +5624,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         auto gameObject = cast(GameObject) object;
         if (gameObject is null)
             return Migrant.init;
-        if (gameObject.owner && gameObject.type == GameObjectType.fishingNode)
-            return Migrant.init; // follows its angler's player handoff
+        if (gameObject.owner && (gameObject.type == GameObjectType.fishingNode
+            || gameObject.type == GameObjectType.summoningRitual))
+            return Migrant.init; // follows its player's handoff
         if (gameObject.loot !is null)
             gameObject.loot.sendReleaseForAll();
         long expires;

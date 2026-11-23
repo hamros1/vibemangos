@@ -352,6 +352,8 @@ private:
         useInventoryItem(player.inventory[bag, slot], targets, true);
     }
 
+    private enum uint dominionOfSoul = 16053; // Orb of Draconic Energy
+
     private void useInventoryItem(Item item, const ref SpellTargets targets, bool handoff, ulong namedCreature = 0)
     {
         if (npcCharmer)
@@ -372,29 +374,38 @@ private:
 
         if (spell !is null && handoff && hasChargesLeft(item))
         {
-            const target = explicitItemTarget(*spell, targets);
+            if (const named = namedScriptHandoffTarget(spell, targets))
+                if (actAtReplica(named, ArrivalAction(useItem: item.fullGuid, namedCreature: named, castTargets: targets)))
+                    return;
+            const target = spell.id == dominionOfSoul ? 0 : explicitItemTarget(*spell, targets);
             if (auto replica = cast(Replica) map.findObject(target))
                 if (replica.fieldsOf.type != TypeId.player || (!inCombat && !flying && isPlayerHandoffSpell(*spell)
                     && checkCast(spell, targets, false, proto.entry, true, replica, true) == SpellCastResult.ok))
                     if (actAtReplica(target, ArrivalAction(useItem: item.fullGuid, castTargets: targets)))
                         return;
-            if (const named = namedScriptHandoffTarget(spell, targets))
-                if (actAtReplica(named, ArrivalAction(useItem: item.fullGuid, namedCreature: named, castTargets: targets)))
-                    return;
         }
         if (namedCreature && (spell is null || !resumeNamedScriptCast(spell, namedCreature)))
             return;
         bindOnUse(item);
         if (spell is null)
             return;
+        auto actual = cast(SpellTargets) targets;
+        if (spell.id == dominionOfSoul)
+        {
+            // Dominion's possession and haste affect the same named dragon, even if the client sent no unit.
+            auto dragon = singleNamedScriptTarget(spell, false);
+            if (!dragon)
+                return deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, SpellCastResult.badTargets, spell));
+            actual = SpellTargets(TargetFlags.unit, dragon.combatGuid);
+        }
         // Resolve the item's script once, where its target is authoritative.
-        if (itemScript(proto.entry, targets.unit ? targets.unit : targets.gameObject))
+        if (itemScript(proto.entry, actual.unit ? actual.unit : actual.gameObject))
             return deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, SpellCastResult.dontReport, spell));
         if (!hasChargesLeft(item))
             return deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, SpellCastResult.noChargesRemain, spell));
         usingItemGuid = item.fullGuid; // its charges are taken when the cast goes
         scope (exit) usingItemGuid = 0;
-        castSpell(spell, targets, false, proto.entry);
+        castSpell(spell, actual, false, proto.entry);
     }
 
     private static ulong explicitItemTarget(const ref SpellInfo spell, const ref SpellTargets targets)
@@ -419,7 +430,8 @@ private:
     /// Scripts that need the caster and one nearby creature can start with both on the target's node.
     private ulong namedScriptHandoffTarget(const(SpellInfo)* spell, const ref SpellTargets targets)
     {
-        if (context.playerRelay is null || targets.mask != TargetFlags.self || generic.active || channelSpell !is null)
+        if (context.playerRelay is null || (targets.mask != TargetFlags.self && spell.id != dominionOfSoul)
+            || generic.active || channelSpell !is null)
             return 0;
         if (context.sendAreaDamage !is null && (context.namedCreatureRouting(spell) != size_t.max
                 || context.namedCreatureChannel(spell) != size_t.max))
@@ -452,7 +464,8 @@ private:
                 return UnitRef.init;
             const shape = spell.implicitTargetA[i];
             if (shape == ImplicitTarget.caster || (shape == ImplicitTarget.locationCasterDest
-                && effect == SpellEffect.summonObjectWild))
+                && effect == SpellEffect.summonObjectWild)
+                || (spell.id == dominionOfSoul && shape == ImplicitTarget.enemy && effect == SpellEffect.applyAura))
                 continue;
             if (shape != ImplicitTarget.unitScriptNearCaster || spell.casting.chainTarget[i] > 1)
                 return UnitRef.init;
@@ -1408,7 +1421,7 @@ private:
     /// A missile's flight time, in milliseconds: to `target` at the spell's speed (yards a second); 0: at once.
     int flightTime(const(SpellInfo)* spell, ulong target)
     {
-        if (spell.casting.speed <= 0 || target == player.guid)
+        if (spell.casting.speed <= 0 || (spell.attributesEx & (0x04 | 0x40)) || target == player.guid)
             return 0;
         Position to;
         if (auto creature = cast(Creature) map.findObject(target))
@@ -1600,15 +1613,79 @@ private:
         }
     }
 
+    private static struct CameraHandoff
+    {
+        ulong guid;
+        Position at;
+        bool owned;
+    }
+
+    private bool cameraChannel()
+    {
+        import std.algorithm.searching : canFind;
+
+        return channelTarget && player.values.get!PLAYER_FARSIGHT == channelTarget
+            && (farSightSpot == channelTarget || channelSpell.hasEffect(SpellEffect.bindSight)
+                || channelSpell.casting.applyAuraName[].canFind(AuraType.bindSight));
+    }
+
+    private CameraHandoff takeCameraHandoff()
+    {
+        if (channelSpell is null || !cameraChannel())
+            return CameraHandoff.init;
+        bool watching;
+        const at = map.eyeOf(this, watching);
+        if (!watching)
+            return CameraHandoff.init;
+        const ownsSpot = farSightSpot != 0;
+        if (ownsSpot)
+            removeFarSightSpot();
+        return CameraHandoff(channelTarget, at, ownsSpot);
+    }
+
+    private void restoreCameraHandoff(ref ByteReader reader)
+    {
+        import dmangos.serialization : deserialize;
+        import dmangos.world.dynobject : DynamicObject;
+        import dmangos.world.objects : counterOf, highGuidOf, HighGuid, temporaryCounterStart;
+        import dmangos.world.spellcast : radius;
+
+        const camera = deserialize!CameraHandoff(reader);
+        const at = camera.at;
+        if (!camera.guid || channelSpell is null || camera.guid != channelTarget
+            || !context.client.isValidMapCoord(map.id, at.x, at.y, at.z, at.orientation))
+            return;
+        if (camera.owned)
+        {
+            const counter = counterOf(camera.guid);
+            if (highGuidOf(camera.guid) != HighGuid.dynamicObject || counter < temporaryCounterStart)
+                return;
+            foreach (effect, command; channelSpell.effect)
+                if (command == SpellEffect.addFarsight)
+                {
+                    auto spot = new DynamicObject(counter, player.guid, channelSpell.id, effect,
+                        radius(*channelSpell, effect, context.client), at);
+                    map.addObject(spot);
+                    farSightSpot = spot.guid;
+                    seeFrom(spot.guid);
+                    return;
+                }
+            return;
+        }
+        map.retainEye(player.guid, camera.guid, at);
+        seeFrom(camera.guid);
+    }
+
     private bool carriesChannelOnHandoff()
     {
         import dmangos.world.objects : highGuidOf, HighGuid;
         import std.algorithm.comparison : among;
         import std.algorithm.searching : any;
 
-        if (channelSpell is null)
+        if (channelSpell is null || channelSpell.casting.applyAuraName[].any!(a =>
+            a.among(AuraType.modCharm, AuraType.modPossess, AuraType.modPossessPet)))
             return false;
-        if (followingNamedCreature)
+        if (followingNamedCreature || carriesRitualChannel() || cameraChannel())
             return true;
         if (channelSpell.hasEffect(SpellEffect.persistentAreaAura))
             return persistentAreas.length != 0;
@@ -1618,8 +1695,7 @@ private:
         if (player.values.get!PLAYER_FARSIGHT || channelSpell.hasEffect(SpellEffect.bindSight)
             || !highGuidOf(channelTarget).among(HighGuid.player, HighGuid.unit, HighGuid.pet))
             return false;
-        return !channelSpell.casting.applyAuraName[].any!(a => a.among(AuraType.bindSight, AuraType.modCharm,
-            AuraType.modPossess, AuraType.modPossessPet));
+        return !channelSpell.casting.applyAuraName[].any!(a => a == AuraType.bindSight);
     }
 
     private const(ubyte)[] takeFishingHandoff()
@@ -3003,7 +3079,7 @@ private:
     {
         import dmangos.world.caster : Caster;
         import dmangos.world.spellauras : auraCast;
-        import dmangos.world.spelldamage : remoteTargetAuraEffects, rollHealing;
+        import dmangos.world.spelldamage : crystalPrison, remoteTargetAuraEffects, rollHealing;
 
         auto hit = &remote.hit;
         const i = hit.effect;
@@ -3018,6 +3094,11 @@ private:
         const damage = spell.effect[i] == SpellEffect.schoolDamage;
         if (damage)
             rollAreaDamage(spell, c, remote);
+        if (hit.channelled && spell.id == crystalPrison)
+        {
+            const school = spell.casting.school;
+            hit.amount = cast(int) (effectAmount(spell, 0) * (school < 7 ? player.damageMods.threat[school] : 1));
+        }
         const mask = spell.effect[i] == SpellEffect.applyAura || (damage && hit.namedCreature)
             ? remoteTargetAuraEffects(*spell, i) : 0;
         if (mask)
