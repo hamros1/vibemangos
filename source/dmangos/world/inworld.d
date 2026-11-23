@@ -105,9 +105,13 @@ private:
         deathOnLogout();
         taxiOnLeave();
         const progress = player.progress(secondsInWorld());
-        context.database.saveProgress(progress);
+        if (saveProgressOnLeave)
+            context.database.saveProgress(progress);
         context.database.setOnline(player.data.guid, account.id, false, context.config.realmId);
-        if (context.canWrite())
+        if (!saveProgressOnLeave)
+            warning!"%s: '%s' left the world (%s); progress remains at the last durable save"(
+                remoteAddress, account.username, why);
+        else if (context.canWrite())
             info!"%s: '%s' left the world (%s); '%s' saved at map %s %.1f %.1f %.1f"(remoteAddress, account.username,
                 why, player.data.name, progress.map, progress.position.x, progress.position.y, progress.position.z);
         else

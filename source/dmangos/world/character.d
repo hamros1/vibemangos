@@ -163,8 +163,33 @@ final class Character : OnlinePlayer, Looter
     /// One of the player's packets (the connection's protocol state `state`): handled here, or not one of its.
     DispatchResult handlePacket(Opcode opcode, WorldState state, ref ByteReader reader)
     {
-        return dispatchPacket(opcode, state, reader);
+        import dmangos.world.guild : GuildCommand, GuildError;
+        import dmangos.world.guildmutation : mutatesGuild;
+
+        if (state != WorldState.inWorld || !context.serializesGuildWrites || !mutatesGuild(opcode))
+            return dispatchPacket(opcode, state, reader);
+        auto pending = reader;
+        bool started;
+        DispatchResult result;
+        const saved = context.commitGuildChange({
+            started = true;
+            result = dispatchPacket(opcode, state, pending);
+        });
+        reader = pending;
+        if (!saved)
+        {
+            if (started)
+            {
+                saveProgressOnLeave = false;
+                connection.kick("guild action could not be committed");
+            }
+            else
+                guildResult(GuildCommand.create, "", GuildError.internal);
+        }
+        return result;
     }
+
+    private bool saveProgressOnLeave = true;
 
     /// The player leaves the world, the connection still open or not.
     void leave(string why, bool loggingOut)
@@ -503,21 +528,32 @@ final class Character : OnlinePlayer, Looter
     /// For the `.guild` GM commands: founds a guild named `name` led by this player (as a charter turned in).
     package imported!"dmangos.world.guild".Guild gmFoundGuild(string name)
     {
-        return foundGuild(name);
+        import dmangos.world.guild : Guild;
+
+        Guild made;
+        const saved = context.commitGuildChange({
+            if (ownGuild() is null)
+                made = foundGuild(name);
+        });
+        return saved ? made : null;
     }
 
     /// For `.guild removeplayer`: this player leaves its guild (removed, as a kick).
     package void gmLeaveGuild()
     {
-        if (auto g = ownGuild())
-            removeGuildMember(g, player.data.guid);
+        context.commitGuildChange({
+            if (auto g = ownGuild())
+                removeGuildMember(g, player.data.guid);
+        });
     }
 
     /// For `.guild disband`: this player's guild is disbanded.
     package void gmDisbandGuild()
     {
-        if (auto g = ownGuild())
-            disbandGuild(g);
+        context.commitGuildChange({
+            if (auto g = ownGuild())
+                disbandGuild(g);
+        });
     }
 
     /// A creature's spell changes the player's standing with `faction` (`SPELL_EFFECT_REPUTATION`).

@@ -527,7 +527,9 @@ interface WorldDatabase
     GuildRecord[] loadGuilds();
     /// ditto
     Nullable!GuildRecord loadGuild(uint id);
-    /// A new guild's id: one above any there is.
+    ulong guildRevision();
+    @DatabaseWrite ulong commitGuildChange(scope bool delegate(WorldDatabase db, ulong revision) change);
+    /// Reserves a guild ID. A stale invitation must never point at a guild created later.
     uint nextGuildId();
     /// A guild's own row (name, leader, emblem, texts), written whole (created if new).
     void saveGuild(const ref GuildRecord guild);
@@ -1054,6 +1056,11 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     SocialRow[] loadSocial(uint player) { return statements.loadSocial(player); }
     GuildRecord[] loadGuilds() { return statements.loadGuilds(); }
     Nullable!GuildRecord loadGuild(uint id) { return statements.loadGuild(id); }
+    ulong guildRevision() { return statements.guildRevision(); }
+    ulong commitGuildChange(scope bool delegate(WorldDatabase db, ulong revision) change)
+    {
+        return statements.commitGuildChange((ulong revision) => change(this, revision));
+    }
     uint nextGuildId() { return statements.nextGuildId(); }
     void saveGuild(const ref GuildRecord guild) { statements.saveGuild(guild); }
     void saveGuildRanks(uint guild, const(GuildRankRecord)[] ranks) { statements.saveGuildRanks(guild, ranks); }
@@ -2165,7 +2172,22 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
     CooldownRecord[][uint] cooldownRows; /// by player
     long[2][uint] talentResets; /// by player: cost, time
     GuildRecord[uint] guildRows; /// by id
-    GuildRecord[] loadGuilds() { return guildRows.values.dup; }
+    private ulong guildVersion = 1;
+    private uint lastGuildId;
+    ulong guildRevision() { return guildVersion; }
+    ulong commitGuildChange(scope bool delegate(WorldDatabase db, ulong revision) change)
+    {
+        if (change(this, guildVersion))
+            ++guildVersion;
+        return guildVersion;
+    }
+    GuildRecord[] loadGuilds()
+    {
+        GuildRecord[] records;
+        foreach (id, ref record; guildRows)
+            records ~= loadGuild(id).get;
+        return records;
+    }
     Nullable!GuildRecord loadGuild(uint id)
     {
         if (auto g = id in guildRows)
@@ -2188,11 +2210,10 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
     }
     uint nextGuildId()
     {
-        uint id;
         foreach (k, _; guildRows)
-            if (k > id)
-                id = k;
-        return id + 1;
+            if (k > lastGuildId)
+                lastGuildId = k;
+        return ++lastGuildId;
     }
     void saveGuild(const ref GuildRecord guild)
     {

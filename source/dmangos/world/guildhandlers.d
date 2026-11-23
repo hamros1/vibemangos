@@ -85,7 +85,10 @@ mixin template GuildHandlers()
     {
         context.guildToMembersHere(g.id, opcode, body_, right);
         if (context.guildBroadcastElsewhere !is null)
-            context.guildBroadcastElsewhere(g.id, right, cast(ushort) opcode, body_);
+        {
+            const id = g.id;
+            context.afterGuildWrite(() => context.guildBroadcastElsewhere(id, right, cast(ushort) opcode, body_));
+        }
     }
 
     /// An event for the guild's log (`LogGuildEvent`), saved; the other nodes read it with the guild.
@@ -98,9 +101,7 @@ mixin template GuildHandlers()
     /// A guild changed: saved, its members' fields here brought up to date, the other nodes told.
     package void guildChanged(Guild g)
     {
-        context.guildFieldsHere();
-        if (context.guildReloadElsewhere !is null)
-            context.guildReloadElsewhere(g.id);
+        context.guildChangedHere(g.id);
     }
 
     private void guildEvent(Guild g, GuildEvent event, const(string)[] strings, ulong guid = 0)
@@ -505,7 +506,6 @@ mixin template GuildHandlers()
             addGuildMember(g, signer, g.lowestRank);
         context.database.deletePetition(lowGuid(request.guid));
         turnResult(petitionTurnOk);
-        context.guildFieldsHere();
     }
 
     // -----------------------------------------------------------------------
@@ -538,14 +538,15 @@ mixin template GuildHandlers()
         if (!g.hasRight(ownRank(), GuildRight.invite))
             return guildResult(GuildCommand.invite, "", GuildError.permissions);
         const guid = context.playerGuid(low);
+        const inviter = player.guid, inviterName = player.data.name;
         if (auto here = cast(typeof(this)) context.onlinePlayer(guid))
         {
             if (here.guildInvited)
                 return guildResult(GuildCommand.invite, realName, GuildError.alreadyInvitedS);
-            here.guildInvite(g.id, player.guid, player.data.name, g.name);
+            context.afterGuildWrite(() => here.guildInvite(g.id, inviter, inviterName, g.name));
         }
         else if (context.guildInviteElsewhere !is null)
-            context.guildInviteElsewhere(node, guid, g.id, player.guid, player.data.name, g.name);
+            context.afterGuildWrite(() => context.guildInviteElsewhere(node, guid, g.id, inviter, inviterName, g.name));
         logGuildEvent(g, GuildEventLogType.invitePlayer, player.data.guid, low);
         guildChanged(g); // the other nodes' copies hold the log too
         guildResult(GuildCommand.invite, realName, GuildError.noMoreInGuild); // `ERR_PLAYER_NO_MORE_IN_GUILD`: 0, "invited"
@@ -622,8 +623,6 @@ mixin template GuildHandlers()
         g.members = g.members.filter!(m => m.guid != member).array;
         context.guilds.memberLeft(member);
         context.database.deleteGuildMember(member);
-        if (auto gone = cast(typeof(this)) context.onlinePlayer(context.playerGuid(member)))
-            gone.refreshGuildFields();
         guildChanged(g);
     }
 
@@ -920,7 +919,7 @@ mixin template GuildHandlers()
         if (!player.canAfford(Copper(tabardCost)))
             return emblemResult(notEnoughMoney);
         player.pay(Copper(tabardCost));
-        flushPlayerChanges();
+        flushInventory(true);
         g.emblem = emblem;
         context.database.saveGuild(g.record);
         emblemResult(success);

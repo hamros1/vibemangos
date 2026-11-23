@@ -7094,12 +7094,122 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     // Guilds across the node (and, through these, the cluster)
     // -----------------------------------------------------------------------
 
+    private bool guildWriteActive, guildWriteChanged;
+    private ulong mirroredGuildRevision;
+    private void delegate()[] guildAfterCommit;
+    private MonoTime nextGuildPoll;
+
+    package bool serializesGuildWrites() const
+    {
+        return config.cluster.nodeId && regionOwnerAround !is null;
+    }
+
+    /// Run the regular guild handler with the current guilds and the transaction's database.
+    package bool commitGuildChange(scope void delegate() change)
+    {
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
+        import dmangos.world.fencing : FencedBase;
+
+        if (!serializesGuildWrites() || guildWriteActive)
+        {
+            change();
+            return true;
+        }
+        if (!canWrite() || !settleWrites())
+            return false;
+        auto original = database;
+        guildWriteActive = true;
+        guildWriteChanged = false;
+        scope (exit)
+        {
+            guildWriteActive = false;
+            guildAfterCommit = null;
+        }
+        bool refreshed;
+        try
+        {
+            const revision = original.commitGuildChange((WorldDatabase transaction, ulong current) {
+                if (mirroredGuildRevision != current)
+                {
+                    guilds.load(transaction.loadGuilds());
+                    refreshed = true;
+                }
+                database = transaction;
+                scope (exit) database = original;
+                change();
+                if (auto fenced = cast(FencedBase) original)
+                    if (!fenced.writesAllowedNow)
+                        throw new DatabaseException("the guild writer's lease lapsed");
+                return guildWriteChanged;
+            });
+            if (!revision)
+                return false;
+            mirroredGuildRevision = revision;
+        }
+        catch (DatabaseException error)
+        {
+            mirroredGuildRevision = 0;
+            nextGuildPoll = MonoTime.init;
+            warning!"guild change could not be committed: %s"(error.msg);
+            return false;
+        }
+        guildWriteActive = false;
+        foreach (effect; guildAfterCommit)
+            effect();
+        if (refreshed || guildWriteChanged)
+            guildFieldsHere();
+        return true;
+    }
+
+    package void afterGuildWrite(void delegate() effect)
+    {
+        if (guildWriteActive)
+            guildAfterCommit ~= effect;
+        else
+            effect();
+    }
+
+    package void guildChangedHere(uint id)
+    {
+        if (guildWriteActive)
+            guildWriteChanged = true;
+        else
+            guildFieldsHere();
+        if (guildReloadElsewhere !is null)
+            afterGuildWrite(() => guildReloadElsewhere(id));
+    }
+
+    private void pollGuildMirror(MonoTime now)
+    {
+        import core.time : seconds;
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
+
+        if (!serializesGuildWrites() || now < nextGuildPoll)
+            return;
+        nextGuildPoll = now + 5.seconds;
+        try
+        {
+            const current = database.guildRevision();
+            if (current && mirroredGuildRevision != current)
+            {
+                guilds.load(database.loadGuilds());
+                mirroredGuildRevision = current;
+                guildFieldsHere();
+            }
+        }
+        catch (DatabaseException error)
+            warning!"guild mirror will be refreshed again: %s"(error.msg);
+    }
+
     /// A guild's packet for its members online here whose rank has `right` (0: all).
     void guildToMembersHere(uint guild, Opcode opcode, const(ubyte)[] body_, uint right)
     {
         import dmangos.world.character : Character;
 
         auto g = guilds.find(guild);
+        Character[] recipients;
         foreach (other; onlinePlayers)
             if (auto session = cast(Character) other)
                 if (session.character !is null)
@@ -7114,8 +7224,16 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                         continue; // a disbanded guild's last word: to those who were in it
                     if (right && m !is null && !g.hasRight(m.rank, cast(GuildRight) right))
                         continue;
-                    session.deliver(opcode, body_);
+                    if (guildWriteActive)
+                        recipients ~= session;
+                    else
+                        session.deliver(opcode, body_);
                 }
+        if (recipients.length)
+            afterGuildWrite({
+                foreach (session; recipients)
+                    session.deliver(opcode, body_);
+            });
     }
 
     /// The guild fields of every player here, from their guilds now.
@@ -8739,6 +8857,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         gameObjectScriptsTick(cast(int) elapsed.total!"msecs"); // open-world round 2
         pollWeather(now);
         pollWorldCatalog(now);
+        pollGuildMirror(now);
         addPendingNavigation();
         checkHonorWeek(now);
         services.tick(elapsed);

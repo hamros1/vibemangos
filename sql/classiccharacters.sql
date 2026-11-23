@@ -510,6 +510,12 @@ CREATE TABLE `dmangos_group_loot_turn` (
   KEY `group_order` (`group_id`,`id`),
   KEY `group_expiry` (`group_id`,`recorded_at`)
 ) ENGINE=InnoDB;
+CREATE TABLE `dmangos_guild_revision` (
+  `id` tinyint unsigned NOT NULL,
+  `revision` bigint unsigned NOT NULL,
+  `last_guild` int unsigned NOT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB;
 CREATE TABLE `dmangos_loot_coin` (
   `issuer` smallint unsigned NOT NULL,
   `token` bigint unsigned NOT NULL,

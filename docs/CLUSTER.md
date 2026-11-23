@@ -637,10 +637,11 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   creature has moved again (docs/SCRIPTING.md).
 * **Friends.** A friend list shows a friend another node simulates from presence; a login or logout
   is told to every other node (`FriendStatusChange`). A move between nodes is neither.
-* **Guilds** are held by every node. A change is written to the database and the other nodes read that
-  guild again (`GuildReload`); guild events and guild and officer chat reach members on every node
-  (`GuildBroadcast`); an invitation reaches a player on another node (`GuildInvitation`). Two nodes
-  changing one guild at the same moment keep the last write.
+* **Guilds.** Workers share the same database and serialize guild mutations there. Each action
+  checks current membership and rank before it writes. Changes to different fields survive when
+  they come from separate workers. A successful commit publishes the change and its guild events.
+  Workers also check the saved revision to recover updates they missed while disconnected.
+  Guild chat, officer chat and invitations reach players on other nodes.
 * **Auctions** need no owner node: the `auction` table is their one place, every node lists from it,
   and every change to a row is guarded by what was seen of it, so two nodes cannot both sell one
   auction. The coordinator settles auctions whose time is up.

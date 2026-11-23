@@ -331,6 +331,14 @@ final class MySqlConnection
         }
     }
 
+    /// A transaction whose callback changes live world state and must run only once.
+    void transactionOnce(scope void delegate() work)
+    {
+        if (inTransaction)
+            return work();
+        runTransaction(work);
+    }
+
     private void runTransaction(scope void delegate() work)
     {
         run("START TRANSACTION", false);

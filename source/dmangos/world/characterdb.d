@@ -8,6 +8,7 @@ module dmangos.world.characterdb;
 
 import dmangos.world.honorweek : HonorWeekEntry;
 import dmangos.cluster.services : ServiceKind;
+import std.algorithm.comparison : max;
 import std.algorithm.iteration : map;
 import std.algorithm.searching : find;
 import std.array : array, replicate;
@@ -15,7 +16,7 @@ import std.datetime.systime : Clock;
 import std.typecons : Nullable, nullable;
 
 import dmangos.log;
-import dmangos.mysql : Column, MySqlConnection;
+import dmangos.mysql : Column, DatabaseException, MySqlConnection;
 import dmangos.world.inventory : ItemChange, ItemRecord, ItemState;
 import dmangos.world.player : CharacterData, CharacterProgress, HomeBind, tutorialFields;
 import dmangos.world.playercreate : NewCharacter, NewSkill, NewSpell, maxEnchantmentSlot;
@@ -476,8 +477,54 @@ final class CharacterStatements
     /// See `WorldDatabase.nextGuildId`.
     uint nextGuildId()
     {
-        const rows = characters.query!"SELECT IFNULL(MAX(guildid), 0) + 1 FROM guild"();
-        return rows.length ? rows[0].get!uint(0) : 1;
+        prepareGuildRevision();
+        uint next;
+        characters.transaction({
+            const rows = characters.query!"SELECT last_guild FROM dmangos_guild_revision WHERE id = 1 FOR UPDATE WAIT 1"();
+            const highest = characters.query!"SELECT IFNULL(MAX(guildid), 0) FROM guild"()[0].get!uint(0);
+            next = max(rows[0].get!uint(0), highest) + 1;
+            characters.execute!"UPDATE dmangos_guild_revision SET last_guild = ? WHERE id = 1"(next);
+        });
+        return next;
+    }
+
+    private bool guildRevisionReady;
+
+    private void prepareGuildRevision()
+    {
+        if (guildRevisionReady)
+            return;
+        characters.execute!("CREATE TABLE IF NOT EXISTS dmangos_guild_revision ("
+            ~ "id TINYINT UNSIGNED NOT NULL, revision BIGINT UNSIGNED NOT NULL, last_guild INT UNSIGNED NOT NULL, "
+            ~ "PRIMARY KEY (id)) ENGINE=InnoDB")();
+        characters.execute!("INSERT IGNORE INTO dmangos_guild_revision (id, revision, last_guild) "
+            ~ "SELECT 1, 1, IFNULL(MAX(guildid), 0) FROM guild")();
+        guildRevisionReady = true;
+    }
+
+    ulong guildRevision()
+    {
+        prepareGuildRevision();
+        const rows = characters.query!"SELECT revision FROM dmangos_guild_revision WHERE id = 1"();
+        return rows.length ? rows[0].get!ulong(0) : 0;
+    }
+
+    ulong commitGuildChange(scope bool delegate(ulong revision) change)
+    {
+        prepareGuildRevision();
+        ulong revision;
+        characters.transactionOnce({
+            const rows = characters.query!"SELECT revision FROM dmangos_guild_revision WHERE id = 1 FOR UPDATE WAIT 1"();
+            if (!rows.length)
+                throw new DatabaseException("the guild revision row is missing");
+            revision = rows[0].get!ulong(0);
+            if (change(revision))
+            {
+                characters.execute!"UPDATE dmangos_guild_revision SET revision = revision + 1 WHERE id = 1"();
+                ++revision;
+            }
+        });
+        return revision;
     }
 
     /// See `WorldDatabase.saveGuild`.
@@ -1883,7 +1930,7 @@ final class CharacterStatements
         if (level.length == 0 || level[0].get!uint(0) < options.minLevel)
             method = 0;
 
-        leaveGuild(guid);
+        commitGuildChange((ulong) => leaveGuild(guid));
         leaveGroup(guid);
         removePetitions(guid);
         if (method == 0)
@@ -1967,14 +2014,16 @@ final class CharacterStatements
     }
 
     /// Removes the character from its guild, disbanding the guild if it is left empty.
-    private void leaveGuild(uint guid)
+    private bool leaveGuild(uint guid)
     {
         const rows = characters.query!"SELECT guildid FROM guild_member WHERE guid = ?"(guid);
         if (rows.length == 0)
-            return;
+            return false;
         const guildId = rows[0].get!uint(0);
         characters.execute!"DELETE FROM guild_member WHERE guid = ?"(guid);
-        if (characters.query!"SELECT 1 FROM guild_member WHERE guildid = ? LIMIT 1"(guildId).length == 0)
+        const remaining = characters.query!("SELECT guid FROM guild_member WHERE guildid = ? "
+            ~ "ORDER BY `rank`, guid LIMIT 1")(guildId);
+        if (!remaining.length)
         {
             characters.transaction({
                 characters.execute!"DELETE FROM guild WHERE guildid = ?"(guildId);
@@ -1983,6 +2032,13 @@ final class CharacterStatements
             });
             info!"guild %s disbanded: its last member was deleted"(guildId);
         }
+        else
+        {
+            const next = remaining[0].get!uint(0);
+            if (characters.execute!"UPDATE guild SET leaderguid = ? WHERE guildid = ? AND leaderguid = ?"(next, guildId, guid))
+                characters.execute!"UPDATE guild_member SET `rank` = 0 WHERE guid = ? AND guildid = ?"(next, guildId);
+        }
+        return true;
     }
 
     /// An offline member leaves its group: leave, pass on the lead, or disband a two-person group.
