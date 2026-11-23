@@ -78,6 +78,15 @@ struct CorpseRecord
     ubyte type;         /// a `CorpseType`
 }
 
+/// The last saved channel state and the node that hosted it.
+struct ChannelCheckpoint
+{
+    ulong revision;
+    long at;
+    ushort node;
+    string state;
+}
+
 /// A `mail` row and its one item (`mail_items`; 1.12 sends at most one).
 struct MailRecord
 {
@@ -877,6 +886,10 @@ interface WorldDatabase
     AreaTriggerTeleport[] loadAreaTriggerTeleports();
     /// ditto
     GameTele[] loadTeleports();
+
+    /// Last durable chat state for this realm. The revision fences subsequent writes.
+    ChannelCheckpoint loadChannelCheckpoint(uint realm);
+    @DatabaseWrite bool saveChannelCheckpoint(uint realm, const ref ChannelCheckpoint checkpoint);
 }
 
 /// The world tables `.lookup` searches.
@@ -1285,6 +1298,11 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     uint[] charactersFor(uint raceMask, uint quest) { return statements.charactersFor(raceMask, quest); }
     string worldState(uint id) { return statements.worldState(id); }
     void saveWorldState(uint id, string data) { statements.saveWorldState(id, data); }
+    ChannelCheckpoint loadChannelCheckpoint(uint realm) { return statements.loadChannelCheckpoint(realm); }
+    bool saveChannelCheckpoint(uint realm, const ref ChannelCheckpoint checkpoint)
+    {
+        return statements.saveChannelCheckpoint(realm, checkpoint);
+    }
     void saveAccountData(bool perCharacter, uint owner, uint type, long time, const(ubyte)[] data)
     {
         statements.saveAccountData(perCharacter, owner, type, time, data);
@@ -1564,6 +1582,17 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
     string[uint] worldStateRows;
     string worldState(uint id) { return worldStateRows.get(id, null); }
     void saveWorldState(uint id, string data) { worldStateRows[id] = data; }
+
+    private ChannelCheckpoint[uint] channelCheckpoints;
+    ChannelCheckpoint loadChannelCheckpoint(uint realm) { return channelCheckpoints.get(realm, ChannelCheckpoint.init); }
+    bool saveChannelCheckpoint(uint realm, const ref ChannelCheckpoint checkpoint)
+    {
+        if (loadChannelCheckpoint(realm).revision != checkpoint.revision)
+            return false;
+        channelCheckpoints[realm] = checkpoint;
+        ++channelCheckpoints[realm].revision;
+        return true;
+    }
     bool[ushort] gameEventStatusRows;
     ushort[] gameEventStatus() { return gameEventStatusRows.keys; }
     void setGameEventStatus(ushort event, bool on)

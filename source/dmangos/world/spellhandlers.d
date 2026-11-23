@@ -68,6 +68,20 @@ private:
     alias PersistentArea = imported!"dmangos.world.spellareas".PersistentArea;
 
     Casting generic;                 // the spell being cast (with a cast time), if any
+
+    private static struct CastHandoff
+    {
+        uint spell, mapId, instance;
+        SpellTargets targets;
+        int remaining, total;
+        uint itemEntry;
+        ulong itemGuid;
+        int[3] values;
+        ubyte which;
+        bool alwaysHits, triggered, playerHandoff;
+        uint triggeredBy, pushbacks;
+    }
+
     const(SpellInfo)* channelSpell;  // the spell being channelled, if any
     ulong channelObject;             // an object the channel is at (a fishing bobber)
     ulong bobber;                    // this angler's fishing bobber, while it floats
@@ -1584,6 +1598,53 @@ private:
             if (followingNamedCreature && namedChannelPeer)
                 map.holdCasterReplica(player.guid, namedChannelPeer, cast(uint) channelTimer + 5_000, true);
         }
+    }
+
+    private void writeCastHandoff(ref ByteWriter writer)
+    {
+        import std.algorithm.comparison : max;
+        import dmangos.plaindata : encode;
+
+        const now = context.clock();
+        writer.put(cast(int) max(0L, (gcdReadyAt - now).total!"msecs"));
+        foreach (deadline; schoolLockedUntil)
+            writer.put(cast(int) max(0L, (deadline - now).total!"msecs"));
+        ubyte[] state;
+        if (generic.active)
+        {
+            const c = &generic;
+            const snapshot = CastHandoff(c.spell.id, map.id, map.instanceId, c.targets, c.timer, c.castTime,
+                c.castItemEntry, c.castItemGuid, c.custom.values, c.custom.which, c.custom.alwaysHits,
+                c.triggered, c.playerHandoff, c.custom.by is null ? 0 : c.custom.by.id, pushbacks);
+            encode(state, snapshot);
+        }
+        writer.put(cast(uint) state.length);
+        writer.putBytes(state);
+    }
+
+    private void readCastHandoff(ref ByteReader reader)
+    {
+        import dmangos.plaindata : decode;
+
+        const now = context.clock();
+        gcdReadyAt = now + reader.read!int.msecs;
+        foreach (ref deadline; schoolLockedUntil)
+            deadline = now + reader.read!int.msecs;
+        auto state = reader.readBytes(reader.read!uint);
+        if (!state.length)
+            return;
+        CastHandoff snapshot;
+        decode(state, snapshot);
+        const spell = context.spellInfo(snapshot.spell);
+        if (spell is null || snapshot.mapId != map.id || snapshot.instance != map.instanceId)
+            return;
+        generic = Casting(spell, snapshot.targets, snapshot.remaining, snapshot.itemEntry, snapshot.triggered, true);
+        generic.castItemGuid = snapshot.itemGuid;
+        generic.castTime = snapshot.total;
+        generic.playerHandoff = snapshot.playerHandoff;
+        generic.custom = CustomValues(snapshot.values, snapshot.which, snapshot.alwaysHits,
+            context.spellInfo(snapshot.triggeredBy));
+        pushbacks = snapshot.pushbacks;
     }
 
     /// A spell waiting for the next main-hand swing is cast

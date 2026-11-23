@@ -1344,6 +1344,38 @@ final class CharacterStatements
         characters.execute!"REPLACE INTO world_state (Id, Data) VALUES (?, ?)"(id, data);
     }
 
+    private bool channelCheckpointsReady;
+
+    private void prepareChannelCheckpoints()
+    {
+        if (channelCheckpointsReady)
+            return;
+        characters.execute!("CREATE TABLE IF NOT EXISTS dmangos_channel_checkpoint ("
+            ~ "realm INT UNSIGNED NOT NULL, revision BIGINT UNSIGNED NOT NULL, saved_at BIGINT NOT NULL, "
+            ~ "node SMALLINT UNSIGNED NOT NULL, state LONGTEXT NOT NULL, PRIMARY KEY (realm)) ENGINE=InnoDB")();
+        channelCheckpointsReady = true;
+    }
+
+    imported!"dmangos.world.database".ChannelCheckpoint loadChannelCheckpoint(uint realm)
+    {
+        import dmangos.world.database : ChannelCheckpoint;
+
+        prepareChannelCheckpoints();
+        foreach (row; characters.query!"SELECT revision, saved_at, node, state FROM dmangos_channel_checkpoint WHERE realm = ?"(realm))
+            return ChannelCheckpoint(row.get!ulong(0), row.get!long(1), cast(ushort) row.get!uint(2), row.get!string(3));
+        return ChannelCheckpoint.init;
+    }
+
+    bool saveChannelCheckpoint(uint realm, const ref imported!"dmangos.world.database".ChannelCheckpoint checkpoint)
+    {
+        prepareChannelCheckpoints();
+        if (!checkpoint.revision)
+            return characters.execute!("INSERT IGNORE INTO dmangos_channel_checkpoint (realm, revision, saved_at, node, state) "
+                ~ "VALUES (?, 1, ?, ?, ?)")(realm, checkpoint.at, checkpoint.node, checkpoint.state) == 1;
+        return characters.execute!("UPDATE dmangos_channel_checkpoint SET revision = revision + 1, saved_at = ?, node = ?, state = ? "
+            ~ "WHERE realm = ? AND revision = ?")(checkpoint.at, checkpoint.node, checkpoint.state, realm, checkpoint.revision) == 1;
+    }
+
     /// See `WorldDatabase.charactersFor`.
     uint[] charactersFor(uint raceMask, uint quest)
     {

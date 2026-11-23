@@ -1446,6 +1446,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         (cast() ai).saveBehaviour(w); // its script's state (docs/SCRIPTING.md)
         ai.saveEventAi(w);
         ai.saveGroundHandoff(w);
+        ai.saveCastHandoff(w);
         w.put(lootRecipient);
         w.put(lootGroupRecipient);
         ai.saveCombat(w);
@@ -1528,6 +1529,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         ai.loadBehaviour(r);
         ai.loadEventAi(r);
         ai.loadGroundHandoff(r);
+        ai.loadCastHandoff(r);
         lootRecipient = r.read!ulong;
         lootGroupRecipient = r.read!uint;
         ai.loadCombat(r);

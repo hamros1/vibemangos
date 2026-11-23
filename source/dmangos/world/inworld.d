@@ -359,6 +359,7 @@ private:
         writePvPHandoff(w);
         context.writeReplicaImpacts(player.guid, w);
         writeChannelAndGroundHandoff(w);
+        writeCastHandoff(w);
         writeEnvironmentHandoff(w);
         writeRemoteLootHandoff(w);
         writeQuestOffer(w);
@@ -491,6 +492,7 @@ private:
         corpseArrivingFromHandoff();
         context.readReplicaImpacts(player.guid, map.id, map.instanceId, r);
         readChannelAndGroundHandoff(r);
+        readCastHandoff(r);
         loadAuras();
         loadHonor();
         loadBattleground();

@@ -172,8 +172,10 @@ What a channel says to a member goes to the member's node: the one presence says
 (docs/CLUSTER.md), or failing that the node its last command came from. When a node is lost,
 members whose sessions moved to another node stay in their channels. Members whose sessions ended
 leave as if they had logged out. A planned move preserves members, ownership, bans, and
-channel settings. Clients already in a channel can keep talking without rejoining. Losing the service
-host before it can hand off still empties its channels.
+channel settings. Clients already in a channel can keep talking without rejoining. After losing the
+host, the replacement can load a recent checkpoint from the characters database and drop members
+whose sessions were on the failed node. The checkpoint is refreshed on membership and settings
+commands and every ten seconds. Its revision prevents a stale host from overwriting newer state.
 
 ### Battleground queues
 

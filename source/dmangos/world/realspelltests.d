@@ -476,6 +476,9 @@ unittest
     import dmangos.world.creature : TempSpawnType;
     import dmangos.world.dynobject : DynamicObject;
     import dmangos.world.grid : cellCoordinate, cellKeyAt;
+    import dmangos.world.spellcast : castTime;
+    import dmangos.world.updatefields : UNIT_FIELD_HEALTH, UNIT_FIELD_LEVEL, UNIT_FIELD_MAXHEALTH, UNIT_FIELD_POWER1,
+        UNIT_FIELD_MAXPOWER1;
 
     if (!haveRealData())
         return;
@@ -489,6 +492,13 @@ unittest
     caster.ai.bind(from);
     const targets = SpellTargets.init;
     caster.ai.makePersistentArea(source.context.spellInfo(5740), 0, targets, 25);
+    const heal = source.context.spellInfo(5187);
+    const castMs = castTime(*heal, source.context.client, caster.values.get!UNIT_FIELD_LEVEL);
+    caster.values.set!UNIT_FIELD_MAXHEALTH(1000u);
+    caster.values.set!UNIT_FIELD_HEALTH(10u);
+    caster.values.set!UNIT_FIELD_POWER1(caster.values.get!UNIT_FIELD_MAXPOWER1);
+    assert(castMs > 500 && caster.ai.castSpell(heal, caster.guid, 0) && caster.ai.castingNow);
+    caster.tick(from, 500);
     ulong spot;
     foreach (object; from.objectsNear(at, 4))
         if (cast(DynamicObject) object !is null)
@@ -504,8 +514,57 @@ unittest
     assert(from.findObject(spot) is null && cast(DynamicObject) to.findObject(spot) !is null);
     auto moved = to.creatureAt(caster.guid);
     assert(moved !is null);
+    assert(moved.ai.castingNow && moved.values.get!UNIT_FIELD_HEALTH == 10);
+    moved.tick(to, castMs - 501);
+    assert(moved.ai.castingNow && moved.values.get!UNIT_FIELD_HEALTH == 10);
+    moved.tick(to, 1);
+    assert(!moved.ai.castingNow && moved.values.get!UNIT_FIELD_HEALTH > 10);
     moved.tick(to, 30_000);
     assert(to.findObject(spot) is null);
+}
+
+/// A player's pending cast completes once on the destination, using the time already spent casting.
+unittest
+{
+    import dmangos.world.creature : TempSpawnType;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.inworld : ArrivalAction;
+    import dmangos.world.replication : encodeState;
+    import dmangos.world.spellcast : castTime;
+    import dmangos.world.updatefields : UNIT_FIELD_POWER1;
+
+    if (!haveRealData())
+        return;
+
+    auto source = RealWorld.make(), owner = RealWorld.make();
+    owner.context.database = source.db;
+    auto relay = new TestPlayerRelay(source.context, owner.context);
+    enum uint conjure = 5504, water = 5350, level = 30;
+    auto client = source.character(7, "Jaina", classMageId, level, [conjure]);
+    auto player = cast(Player) client.session.character;
+    source.db.loadable[7].power[0] = player.values.get!UNIT_FIELD_POWER1;
+    auto from = source.context.map(0), to = owner.context.map(0);
+    const at = player.position;
+    auto nearby = owner.context.summonCreature(to, 1835, at, TempSpawnType.manual, 0, 0);
+    from.replicaCreated(2, cellKeyAt(at.x, at.y), nearby.guid, encodeState(nearby, 0));
+
+    ByteWriter cast_;
+    cast_.put(conjure);
+    SpellTargets.init.write(cast_);
+    client.write(Opcode.CMSG_CAST_SPELL, cast_.data);
+    assert(opcodesOf(client.read()).canFind(Opcode.SMSG_SPELL_START));
+    const ms = castTime(*source.context.spellInfo(conjure), source.context.client, level);
+    assert(ms > 500 && player.inventory.count(water) == 0);
+    client.session.update(500.msecs);
+    assert(client.session.inWorld.actAtReplica(nearby.guid, ArrivalAction.init));
+    auto moved = cast(Player) relay.remote.character;
+    relay.remote.update((ms - 501).msecs);
+    assert(moved.inventory.count(water) == 0);
+    relay.remote.update(1.msecs);
+    const conjured = moved.inventory.count(water);
+    assert(conjured && opcodesOf(client.read()).canFind(Opcode.SMSG_SPELL_GO));
+    relay.remote.update(5.seconds);
+    assert(moved.inventory.count(water) == conjured);
 }
 
 /// A missile already launched at a replica follows the player when it becomes local to the caster.

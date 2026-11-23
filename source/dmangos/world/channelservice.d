@@ -53,6 +53,11 @@ struct ChannelsHost
         return channels.saveState();
     }
 
+    void tick(imported!"core.time".Duration)
+    {
+        channels.checkpoint(false);
+    }
+
     /// A player's channel command.
     @Call void run(const ref ChannelCall call)
     {
@@ -70,6 +75,9 @@ final class ChannelService : MemberDirectory
     {
         WorldContext context;
         Member[ulong] members;    // players who gave a command, while in a channel
+        bool checkpointEnabled;
+        ulong checkpointRevision;
+        long nextCheckpoint;
     }
 
     private static struct SavedMember
@@ -91,17 +99,45 @@ final class ChannelService : MemberDirectory
     ///
     this(WorldContext context, const ClientData client, ChannelSettings settings, const(ubyte)[] state = null)
     {
-        import dmangos.plaindata : decode;
-
         this.context = context;
         channels.alliance = new Channels(this, client, settings);
         channels.horde = settings.crossFaction ? channels.alliance : new Channels(this, client, settings);
+        const clustered = context.config.cluster.nodeId != 0 && context.regionOwnerAround !is null;
+        if (clustered)
+        {
+            import dmangos.log : warning;
+            import std.base64 : Base64;
+            import std.algorithm.searching : startsWith;
+
+            try
+            {
+                const saved = context.database.loadChannelCheckpoint(context.config.realmId);
+                checkpointRevision = saved.revision;
+                const age = context.unixTime - saved.at;
+                if (!state.length && saved.revision && age >= -5 && age <= 120 && saved.state.startsWith("1:"))
+                {
+                    restoreState(Base64.decode(saved.state[2 .. $]));
+                    nodeLost(saved.node);
+                }
+            }
+            catch (Exception error)
+                warning!"channels: could not read the saved service state: %s"(error.msg);
+        }
+        if (state.length)
+            restoreState(state);
+        checkpointEnabled = clustered;
+    }
+
+    private void restoreState(const(ubyte)[] state)
+    {
+        import dmangos.plaindata : decode;
+
         if (!state.length)
             return;
         SavedState saved;
         decode(state, saved);
         channels.alliance.restoreState(saved.alliance);
-        if (!settings.crossFaction)
+        if (channels.horde !is channels.alliance)
             channels.horde.restoreState(saved.horde);
         foreach (ref row; saved.members)
         {
@@ -109,6 +145,33 @@ final class ChannelService : MemberDirectory
             member.pvpRank_ = row.pvpRank;
             members[row.guid] = member;
         }
+    }
+
+    private void checkpoint(bool changed)
+    {
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
+        import dmangos.world.database : ChannelCheckpoint;
+        import std.base64 : Base64;
+
+        const now = context.unixTime;
+        if (!checkpointEnabled || (!changed && now < nextCheckpoint) || !context.canWrite())
+            return;
+        nextCheckpoint = now + 10;
+        try
+        {
+            const saved = ChannelCheckpoint(checkpointRevision, now, context.nodeId,
+                "1:" ~ Base64.encode(saveState()).idup);
+            if (context.database.saveChannelCheckpoint(context.config.realmId, saved))
+                ++checkpointRevision;
+            else if (context.canWrite())
+            {
+                checkpointEnabled = false;
+                warning!"channels: another host has a newer service checkpoint"();
+            }
+        }
+        catch (DatabaseException error)
+            warning!"channels: could not checkpoint the service: %s"(error.msg);
     }
 
     private ubyte[] saveState() const
@@ -131,6 +194,11 @@ final class ChannelService : MemberDirectory
     /// Runs a command that came from node `via` (this node's own id for its own players).
     void run(const ChannelCommand c, ushort via)
     {
+        import std.algorithm.comparison : among;
+
+        scope (success)
+            if (!c.op.among(ChannelOp.say, ChannelOp.forcedSay, ChannelOp.list, ChannelOp.owner, ChannelOp.invite))
+                checkpoint(true);
         auto who = memberFor(c, via);
         auto set = channels.forTeam(context.client.teamForRace(c.race));
         Channel named()
@@ -232,6 +300,8 @@ final class ChannelService : MemberDirectory
             channels.forTeam(context.client.teamForRace(m.race)).leaveAll(m);
             members.remove(m.guid);
         }
+        if (gone.length)
+            checkpoint(true);
     }
 
     /// Players remembered (those in a channel, and the last to give a command).
@@ -398,6 +468,46 @@ unittest
     // Anduin logs out: the channel goes, and nobody is remembered.
     service.run(channelCommand(anduin.session.inWorld, ChannelOp.leaveAll, null), 1);
     assert(service.channels.alliance.count == 0 && service.remembered == 0);
+}
+
+/// A replacement host loads the last checkpoint and clears the failed node's disconnected member.
+unittest
+{
+    import dmangos.world.config : WorldConfig;
+    import dmangos.world.movement : Position;
+    import dmangos.world.testclient : newCreationContext, newDatabase;
+
+    void clustered(ref WorldConfig config) { config.cluster.nodeId = 1; }
+    auto db = newDatabase();
+    auto previous = newCreationContext(db, &clustered), replacement = newCreationContext(db, &clustered);
+    previous.nodeId = 1;
+    replacement.nodeId = 2;
+    previous.regionOwnerAround = (uint, Position, float) => ushort(1);
+    replacement.regionOwnerAround = (uint, Position, float) => ushort(2);
+    assert(previous.services.start(ServiceKind.channels));
+    auto service = previous.channelService;
+    auto disconnected = ChannelCommand(7, "Anduin", 1, false, 0, ChannelOp.join, "Club", "", 0);
+    auto surviving = ChannelCommand(8, "Jaina", 1, false, 0, ChannelOp.join, "Club", "", 0);
+    service.run(disconnected, 1);
+    service.run(surviving, 3);
+    disconnected.op = ChannelOp.password;
+    disconnected.arg = "secret";
+    service.run(disconnected, 1);
+    const snapshot = db.loadChannelCheckpoint(previous.config.realmId);
+    assert(snapshot.node == 1 && snapshot.revision && snapshot.state.length);
+    previous.services.release(ServiceKind.channels);
+
+    assert(replacement.services.start(ServiceKind.channels));
+    auto recovered = replacement.channelService;
+    auto club = recovered.channels.alliance.find("Club", null);
+    assert(club !is null && !club.isOn(7) && club.isOn(8) && club.ownerOf == 8);
+    auto visitor = ChannelCommand(9, "Tirion", 1, false, 0, ChannelOp.join, "Club", "", 0);
+    recovered.run(visitor, 3);
+    assert(!club.isOn(9), "the checkpoint kept the channel password");
+    const advanced = db.loadChannelCheckpoint(previous.config.realmId);
+    assert(advanced.node == 2 && advanced.revision > snapshot.revision);
+    service.checkpoint(true);
+    assert(db.loadChannelCheckpoint(previous.config.realmId) == advanced, "the old host cannot overwrite recovery");
 }
 
 /// Players keep listening and channel controls survive when the channels service changes nodes.

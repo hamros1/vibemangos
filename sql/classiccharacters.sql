@@ -459,6 +459,14 @@ CREATE TABLE `creature_respawn` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8mb4 */;
+CREATE TABLE `dmangos_channel_checkpoint` (
+  `realm` int(10) unsigned NOT NULL,
+  `revision` bigint(20) unsigned NOT NULL,
+  `saved_at` bigint(20) NOT NULL,
+  `node` smallint(5) unsigned NOT NULL,
+  `state` longtext NOT NULL,
+  PRIMARY KEY (`realm`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_general_ci;
 CREATE TABLE `dmangos_creature_pool` (
   `realm` int(10) unsigned NOT NULL,
   `pool` int(10) unsigned NOT NULL,

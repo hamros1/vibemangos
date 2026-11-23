@@ -178,6 +178,34 @@ mixin template CreatureCasting()
         groundHandoff_ = reader.readBytes(reader.read!uint);
     }
 
+    package void saveCastHandoff(ref ByteWriter writer) const
+    {
+        foreach (lock; schoolLockMs)
+            writer.put(lock);
+        writer.put(casting_ is null ? 0u : casting_.id);
+        if (casting_ !is null)
+        {
+            writer.put(castTarget);
+            writer.put(castTimer);
+            writer.put(castAuraMustBeAbsent);
+            writer.put(castAtSelectedChannelTarget);
+        }
+    }
+
+    package void loadCastHandoff(ref imported!"dmangos.bytes".ByteReader reader)
+    {
+        foreach (ref lock; schoolLockMs)
+            lock = reader.read!int;
+        if (const id = reader.read!uint)
+        {
+            casting_ = lore.spellInfo(id);
+            castTarget = reader.read!ulong;
+            castTimer = reader.read!int;
+            castAuraMustBeAbsent = reader.read!bool;
+            castAtSelectedChannelTarget = reader.read!bool;
+        }
+    }
+
     /// A player's spell hit it (its script hears of it).
     void spellHitBy(ulong caster, uint spell, uint schoolMask, CombatWorld world)
     {
