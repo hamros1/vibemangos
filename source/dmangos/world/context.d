@@ -6608,11 +6608,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
      * A pet's creature: of `entry`, at `at` on `map`, not yet on the map (the owner's
      * session makes it its pet and adds it). Null if there is no such creature or model.
      */
-    Creature makePetCreature(Map map, uint entry, uint number, Position at)
+    Creature makePetCreature(Map map, uint entry, uint number, Position at, uint handedOffCounter = 0)
     {
         if (map is null || entry !in data.creatureTemplates)
             return null;
-        const counter = nextTemporaryCounter();
+        const counter = handedOffCounter ? handedOffCounter : nextTemporaryCounter();
         CreatureSpawn spawn = {guid: counter, entry: entry, map: map.id, x: at.x, y: at.y, z: at.z,
             orientation: at.orientation};
         auto creature = makeCreature(&spawn, number);

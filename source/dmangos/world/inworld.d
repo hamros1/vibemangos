@@ -301,7 +301,7 @@ private:
      * client already has, so the client sees nothing of it. The client stays connected to its home,
      * whose id the state ends with (0: this node, when the player leaves home).
      */
-    void migrateTo(ushort target, ArrivalAction action = ArrivalAction.init)
+    package void migrateTo(ushort target, ArrivalAction action = ArrivalAction.init)
     {
         if (!context.canWrite())
             return;
@@ -309,11 +309,11 @@ private:
             return;
         duelComplete(DuelEnd.fled); // a forced move (such as draining) ends it for both players
         cancelTrade(true);
-        petsOnLeave(true); // save the persistent pet before transferring the live totems and guardians
+        const petControl = preparePetHandoff(action.teleportMap == uint.max);
         flushPlayerChanges();
         const progress = player.progress(secondsInWorld());
         context.database.saveProgress(progress);
-        if (channelSpell !is null && !carriesChannelOnHandoff())
+        if (channelSpell !is null && !petControl.guid && !carriesChannelOnHandoff())
             endChannel(true);
         releaseNpcCharm();
         saveAuras(); // the next node loads them, as it loads the rest
@@ -326,6 +326,9 @@ private:
         saveItemDurations();
         if (!context.settleWrites())
             return; // the new owner must load the completed writes before processing packets
+
+        if (petControl.guid)
+            detachPossessedPetForHandoff();
 
         areaAurasOnLeave();
         import dmangos.serialization : serialize;
@@ -406,6 +409,7 @@ private:
         writeRemoteLootHandoff(w);
         writeQuestOffer(w);
         writeSummonOffer(w);
+        writePetPossession(w, petControl);
         w.put(homeNode); // last: `migrationHome` reads it there
 
         info!"%s: '%s' moves to node %s (at map %s %.1f %.1f)"(remoteAddress, player.data.name, target,
@@ -557,7 +561,7 @@ private:
         readRemoteLootHandoff(r);
         readQuestOffer(r);
         readSummonOffer(r);
-        petsOnArrival();
+        petsOnArrival(readPetPossession(r));
         pendingArrival = action; // done at the first tick here, once the move is complete everywhere
         battlegroundCheckDue = action.teleportMap == uint.max; // not on its way into a copy
         info!"%s: '%s' arrived from another node (map %s at %.1f %.1f)"(remoteAddress, character.name, character.map,

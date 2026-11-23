@@ -25,6 +25,8 @@ enum uint spellTameBeast = 1515, spellTameBeastDone = 13481;
 /// Summon Imp: the imp casts from afar and does not melee.
 enum uint spellSummonImp = 688;
 
+enum uint spellEyesOfTheBeast = 1002;
+
 /// The imp's casting distance.
 enum float impAttackDistance = 25;
 
@@ -143,7 +145,7 @@ mixin template PetHandlers()
     import dmangos.world.unit : UnitRef;
     import dmangos.world.database : AuraRecord, PetRecord, PetSpellRecord;
     import dmangos.world.defines : UnitFlags;
-    import dmangos.world.movement : baseMoveSpeed, MoveType, Position;
+    import dmangos.world.movement : baseMoveSpeed, MovementInfo, MoveType, Position;
     import dmangos.world.npchandlers : NpcFlag;
     import dmangos.world.opcodes;
     import dmangos.world.player : PlayerFlags;
@@ -157,6 +159,15 @@ mixin template PetHandlers()
     private Creature pet_;          // the pet out, alive or dead; null if none
     private uint stableSlots_;      // the stable slots bought
     private bool stableSlotsRead;
+
+    private struct PetPossessionHandoff
+    {
+        ulong guid;
+        uint map, instance;
+        MovementInfo movement;
+        int remaining, maxDuration;
+        int[3] amount;
+    }
 
     // -----------------------------------------------------------------------
     // The pet
@@ -273,11 +284,16 @@ mixin template PetHandlers()
      * leave it, full). It is saved as the player's current pet, and its bar is sent.
      */
     private Creature bringPet(PetState state, uint entry, uint modelId, uint level, uint exp, ReactState react,
-        uint health, uint mana, uint focus = maxFocus)
+        uint health, uint mana, uint focus = maxFocus, const PetPossessionHandoff handoff = PetPossessionHandoff.init)
     {
-        auto creature = context.makePetCreature(map, entry, state.number, petSpawnPosition());
+        import dmangos.world.objects : counterOf;
+
+        auto creature = context.makePetCreature(map, entry, state.number,
+            handoff.guid ? handoff.movement.position : petSpawnPosition(), handoff.guid ? counterOf(handoff.guid) : 0);
         if (creature is null)
             return null;
+        if (handoff.guid)
+            creature.movement = handoff.movement;
         state.owner = player.guid;
         creature.becomePet(player.guid, state);
         auto v = &creature.values;
@@ -357,7 +373,8 @@ mixin template PetHandlers()
 
     /// The saved pet `r` comes out. `fullHealth`: at full health and mana (a
     /// demon summoned again); `healthPercent`: a dead hunter pet revived with so much.
-    private bool loadPet(PetRecord r, bool fullHealth = false, uint healthPercent = 0)
+    private bool loadPet(const PetRecord r, bool fullHealth = false, uint healthPercent = 0,
+        const PetPossessionHandoff handoff = PetPossessionHandoff.init)
     {
         const t = r.entry in context.data.creatureTemplates;
         if (t is null)
@@ -379,7 +396,7 @@ mixin template PetHandlers()
         const savedAuras = context.database.loadPetAuras(r.id), savedCooldowns = context.database.loadPetCooldowns(r.id);
         auto state = PetState.from(r, player.guid);
         auto creature = bringPet(state, r.entry, r.modelId, level, r.exp, cast(ReactState) r.reactState,
-            r.health == 0 && healthPercent ? 1 : health, mana, focus);
+            r.health == 0 && healthPercent ? 1 : health, mana, focus, handoff);
         if (creature is null)
             return false;
         if (r.health != 0 || fullHealth)
@@ -407,7 +424,7 @@ mixin template PetHandlers()
     private void writePet(uint slot)
     {
         auto state = petState();
-        if (state is null || pet_ is charmed_) // a charm is no pet to keep
+        if (state is null || (pet_ is charmed_ && state.type == PetType.guardian))
             return;
         if (slot == PetSlot.current && !pet_.alive)
             slot = PetSlot.notInSlot;
@@ -438,7 +455,8 @@ mixin template PetHandlers()
         AuraRecord[] rows;
         if (pet_.alive)
             foreach (aura; pet_.auras.list)
-                if (!aura.passive && aura.duration != 0)
+                if (!aura.passive && aura.duration != 0
+                    && (pet_ !is charmed_ || aura.spell.id != charmSpell || aura.caster != player.guid))
                     rows ~= AuraRecord(aura.caster, aura.spell.id, aura.stacks, aura.amount, aura.periodTimer,
                         aura.maxDuration, aura.duration, aura.savedEffectMask, aura.charges);
         context.database.savePetAuras(id, rows);
@@ -490,7 +508,7 @@ mixin template PetHandlers()
     /**
      * The pet goes, saved in `slot` (`deleted`: forgotten), and its bar with it.
      */
-    package void unsummonPet(uint slot, bool deleted = false)
+    package void unsummonPet(uint slot, bool deleted = false, bool save = true)
     {
         if (pet_ is null)
             return;
@@ -499,7 +517,7 @@ mixin template PetHandlers()
         auto state = petState();
         if (deleted)
             context.database.deletePet(player.data.guid, state.number);
-        else
+        else if (save)
             writePet(slot);
         if (pet_.ai !is null && pet_.alive)
             pet_.ai.petStopAttack(map);
@@ -1408,6 +1426,93 @@ mixin template PetHandlers()
             unsummonPet(PetSlot.current);
     }
 
+    private PetPossessionHandoff preparePetHandoff(bool sameMap)
+    {
+        if (sameMap && pet_ !is null && pet_ is charmed_ && pet_.alive && possessing
+            && petState().type == PetType.hunter && channelSpell !is null
+            && channelSpell.id == spellEyesOfTheBeast && channelTarget == pet_.guid && channelTimer > 0)
+            if (auto aura = pet_.auras.find(spellEyesOfTheBeast, player.guid))
+                if (aura.duration > 0)
+                {
+                    writePet(PetSlot.current);
+                    return PetPossessionHandoff(pet_.guid, map.id, map.instanceId, pet_.movement,
+                        aura.duration, aura.maxDuration, aura.amount);
+                }
+        petsOnLeave(true);
+        return PetPossessionHandoff.init;
+    }
+
+    private void detachPossessedPetForHandoff()
+    {
+        endCharm();
+        unsummonPet(PetSlot.current, save: false);
+    }
+
+    private static void writePetPossession(ref ByteWriter state, const ref PetPossessionHandoff pet)
+    {
+        state.put(pet.guid);
+        if (!pet.guid)
+            return;
+        state.put(pet.map);
+        state.put(pet.instance);
+        pet.movement.write(state);
+        state.put(pet.remaining);
+        state.put(pet.maxDuration);
+        foreach (value; pet.amount)
+            state.put(value);
+    }
+
+    private static PetPossessionHandoff readPetPossession(ref ByteReader state)
+    {
+        PetPossessionHandoff pet;
+        pet.guid = state.read!ulong;
+        if (pet.guid)
+        {
+            pet.map = state.read!uint;
+            pet.instance = state.read!uint;
+            pet.movement = MovementInfo.read(state);
+            pet.remaining = state.read!int;
+            pet.maxDuration = state.read!int;
+            foreach (ref value; pet.amount)
+                value = state.read!int;
+        }
+        return pet;
+    }
+
+    private bool matchesPetPossession(const ref PetPossessionHandoff pet, const ref PetRecord record)
+    {
+        import dmangos.world.objects : counterOf, makePetGuid, temporaryCounterStart;
+
+        const at = pet.movement.position;
+        const counter = counterOf(pet.guid);
+        return pet.guid && pet.map == map.id && pet.instance == map.instanceId && record.type == PetType.hunter
+            && record.health && counter >= temporaryCounterStart && pet.guid == makePetGuid(record.id, counter)
+            && channelSpell !is null && channelSpell.id == spellEyesOfTheBeast && channelTarget == pet.guid
+            && channelTimer > 0 && pet.remaining > 0 && pet.maxDuration >= pet.remaining
+            && context.client.isValidMapCoord(map.id, at.x, at.y, at.z, at.orientation);
+    }
+
+    private bool resumePetPossession(const ref PetPossessionHandoff pet, const ref PetRecord record)
+    {
+        import dmangos.world.auras : makeAura;
+
+        if (map.findObject(pet.guid) !is null && !map.isReplica(pet.guid))
+        {
+            endChannel(true);
+            return true; // the original GUID is already authoritative here
+        }
+        if (!loadPet(record, false, 0, pet))
+            return false;
+        auto aura = makeAura(channelSpell, player.guid, player.data.level, pet.maxDuration, true, pet.amount);
+        aura.duration = pet.remaining;
+        bool added;
+        if (pet_.receiveAura(aura, map, added) !is null)
+            takeCharm(pet_, channelSpell, true);
+        else
+            endChannel(true);
+        return true;
+    }
+
     private enum ubyte loneTotemSlot = 4, guardianSlot = 5;
 
     private const(ubyte)[] takeSummonsOnHandoff()
@@ -1525,7 +1630,7 @@ mixin template PetHandlers()
     }
 
     /// At login, after a teleport or move, and on coming back to life: the pet saved out with the player comes back (not to the dead).
-    package void petsOnArrival()
+    package void petsOnArrival(const PetPossessionHandoff handoff = PetPossessionHandoff.init)
     {
         import dmangos.world.player : DeathState;
 
@@ -1535,10 +1640,14 @@ mixin template PetHandlers()
         foreach (r; savedPets())
             if (r.slot == PetSlot.current)
             {
+                if (handoff.guid && matchesPetPossession(handoff, r) && resumePetPossession(handoff, r))
+                    return;
                 if (r.health || r.type == PetType.summon)
                     loadPet(r);
-                return;
+                break;
             }
+        if (handoff.guid && channelSpell !is null && channelSpell.id == spellEyesOfTheBeast)
+            endChannel(true);
     }
 
     // -----------------------------------------------------------------------

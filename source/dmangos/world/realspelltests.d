@@ -1880,6 +1880,83 @@ unittest
     }
 }
 
+/// Eyes of the Beast keeps the hunter's pet and its original mover through a clean handoff.
+unittest
+{
+    import dmangos.bytes : ByteWriter;
+    import std.format : format;
+    import dmangos.world.database : PetRecord;
+    import dmangos.world.pet : PetType;
+    import dmangos.world.pethandlers : spellEyesOfTheBeast;
+    import dmangos.world.spellcast : castTime;
+    import dmangos.world.testdata : classHunter;
+    import dmangos.world.updatefields : PLAYER_FARSIGHT, UNIT_CHANNEL_SPELL, UNIT_FIELD_CHARMEDBY, UNIT_FIELD_HEALTH;
+
+    if (!haveRealData())
+        return;
+
+    auto source = RealWorld.make(), destination = RealWorld.make();
+    destination.context.database = source.db;
+    auto relay = new TestPlayerRelay(source.context, destination.context);
+    enum uint eyes = spellEyesOfTheBeast, boar = 3099;
+    PetRecord saved;
+    saved.id = 12;
+    saved.entry = boar;
+    saved.owner = 7;
+    saved.type = PetType.hunter;
+    saved.name = "Bristle";
+    saved.level = 60;
+    saved.health = 150;
+    saved.mana = 70;
+    source.db.savePet(saved);
+    auto client = source.character(7, "Tracker", classHunter, 60, [eyes], raceOrc);
+    auto hunter = client.session.inWorld;
+    auto pet = hunter.ownPet;
+    assert(pet !is null && pet.spawn.entry == boar);
+    assert(source.cast_(client, eyes) == SpellCastResult.ok);
+    const spell = source.context.spellInfo(eyes);
+    client.session.update(castTime(*spell, source.context.client, 60).msecs);
+    assert(hunter.charmed is pet && hunter.activeMover == pet.guid);
+    assert(hunter.player.values.get!UNIT_CHANNEL_SPELL == eyes && hunter.player.values.get!PLAYER_FARSIGHT == pet.guid);
+    assert(hunter.channelledAt(spell) == pet.guid, format!"channel target %s, pet %s"(hunter.channelledAt(spell), pet.guid));
+
+    auto motion = pet.movement;
+    motion.position.x += 70;
+    ByteWriter input;
+    motion.write(input);
+    client.write(Opcode.MSG_MOVE_HEARTBEAT, input.data);
+    assert(pet.position == motion.position);
+    const guid = pet.guid, health = pet.values.get!UNIT_FIELD_HEALTH;
+    const position = pet.position, duration = pet.auras.find(eyes, hunter.player.guid).duration;
+    client.read();
+
+    hunter.migrateTo(destination.context.nodeId);
+    assert(relay.remote !is null && source.context.map(0).creatureAt(guid) is null);
+    auto current = relay.remote.inWorld;
+    auto moved = current.ownPet;
+    assert(moved !is null && moved.guid == guid && moved.position == position,
+        format!"expected pet %s at %s, got %s at %s"(guid, position, moved is null ? 0 : moved.guid,
+            moved is null ? Position.init : moved.position));
+    assert(current.charmed is moved && current.activeMover == guid && current.player.values.get!PLAYER_FARSIGHT == guid);
+    assert(current.player.values.get!UNIT_CHANNEL_SPELL == eyes && moved.values.get!UNIT_FIELD_HEALTH == health);
+    assert(moved.values.get!UNIT_FIELD_CHARMEDBY == current.player.guid);
+    assert(moved.auras.find(eyes, current.player.guid).duration == duration);
+    assert(!opcodesOf(client.read()).canFind(Opcode.SMSG_SPELL_START), "the handoff did not cast the spell again");
+
+    ByteWriter nextMove;
+    motion.position.y += 5;
+    motion.write(nextMove);
+    client.write(Opcode.MSG_MOVE_HEARTBEAT, nextMove.data);
+    assert(moved.position == motion.position, "the original connection still moves the pet");
+
+    ByteWriter cancel;
+    cancel.put(eyes);
+    client.write(Opcode.CMSG_CANCEL_CHANNELLING, cancel.data);
+    assert(current.ownPet is moved && current.charmed is null && !current.activeMover);
+    assert(!current.player.values.get!PLAYER_FARSIGHT && !current.player.values.get!UNIT_CHANNEL_SPELL);
+    assert(!moved.values.get!UNIT_FIELD_CHARMEDBY && !moved.auras.find(eyes, current.player.guid));
+}
+
 /// The Glowing Crystal Prison can capture its real target on another node exactly once.
 unittest
 {

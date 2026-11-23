@@ -2,13 +2,17 @@
 
 ## Open work
 
-- **Clustering.** The [cross-node feature list](CLUSTER.md#what-crosses-nodes-feature-by-feature)
-  records the supported behavior. The [spell routing guide](CLUSTER.md#spell-routing-limits)
-  describes effect-specific support, including script-selected targets, channels and summons.
-  See [failure handling](CLUSTER.md#failure-handling) for what resumes from a checkpoint when
-  a process stops unexpectedly.
 - **Gameplay coverage.** See the [spell audit](SPELLS.md) for class coverage and the
   [vanilla gameplay audit](<../reports/Remaining vanilla gameplay gaps.md>) for verified fixes and the open Gluth trigger.
+
+## Clustering
+
+The [cross-node feature list](CLUSTER.md#what-crosses-nodes-feature-by-feature) records supported
+behavior. The [spell routing guide](CLUSTER.md#spell-routing-limits) covers script-selected targets,
+channels and summons. [Failure handling](CLUSTER.md#failure-handling) describes which changes resume
+from a checkpoint when a process stops unexpectedly.
+
+## Gameplay systems
 
 The rest of this page records progress and gaps by subsystem. The [gameplay reference](GAMEPLAY.md)
 describes how players use the systems available today.

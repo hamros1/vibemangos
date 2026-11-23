@@ -973,8 +973,10 @@ cast starts on the target's node.
 The Orb of Draconic Energy moves its user to Emberstrife's node before checking his health and
 starting control. Routine balancing waits while a player controls a creature. If the creature's
 region is reassigned, control ends before the creature's state moves to the new owner. A forced
-player move also ends control. An angler can finish the original cast after moving. Their bobber
-keeps its GUID and bite timer until the catch begins.
+player move releases a native creature. Eyes of the Beast can resume after a clean move on the
+same map. The hunter controls the same pet at its current position for the rest of the channel.
+An angler can finish the original cast after moving. Their bobber keeps its GUID and bite timer
+until the catch begins.
 
 Party area auras reach nearby players in the same raid subgroup across region boundaries. The
 recipient's node checks membership and distance. It removes the aura when those checks fail or the

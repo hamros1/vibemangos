@@ -1097,6 +1097,9 @@ private:
         namedChannelConfirmed = false;
         namedChannelPeer = 0;
         missingNamedChannelTarget = 0;
+        // Eyes of the Beast also applies an aura to the hunter. The channel follows the pet it controls.
+        if (spell.id == imported!"dmangos.world.pethandlers".spellEyesOfTheBeast && charmed !is null && charmed is ownPet)
+            target = charmed.guid;
         channelTarget = channelObject ? channelObject : target ? target : player.guid;
         channelObject = 0;
         channelTimer = ms;
