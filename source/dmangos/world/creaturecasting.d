@@ -138,6 +138,20 @@ mixin template CreatureCasting()
         this.script = new EventAI(events, data);
     }
 
+    package void saveEventAi(ref ByteWriter writer) const
+    {
+        const state = script is null ? null : script.saveState();
+        writer.put(cast(uint) state.length);
+        writer.putBytes(state);
+    }
+
+    package void loadEventAi(ref imported!"dmangos.bytes".ByteReader reader)
+    {
+        const state = reader.readBytes(reader.read!uint);
+        if (script !is null && state.length)
+            script.restoreState(state);
+    }
+
     /// A player's spell hit it (its script hears of it).
     void spellHitBy(ulong caster, uint spell, uint schoolMask, CombatWorld world)
     {

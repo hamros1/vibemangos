@@ -370,6 +370,50 @@ unittest
     }
 }
 
+/// Krakle's Thermometer starts its database script even when the implicitly selected creature is remote.
+unittest
+{
+    import dmangos.world.creature : TempSpawnType;
+    import dmangos.world.defines : inventorySlotBag0;
+    import dmangos.world.gameobject : GameObjectSpawn;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.replication : encodeState;
+
+    if (!haveRealData())
+        return;
+
+    auto source = RealWorld.make(), owner = RealWorld.make();
+    owner.context.database = source.db;
+    auto relay = new TestPlayerRelay(source.context, owner.context);
+    const origin = Position(-8950, -132, 83.53f), at = Position(origin.x + 3, origin.y, origin.z);
+    auto client = loggedIn(source.context, source.db, 7, "Anduin", origin);
+    enum uint thermometer = 12472, targetEntry = 10541;
+    client.session.inWorld.storeLoot(thermometer, 1, 0, false);
+    client.read();
+    auto player = cast(Player) client.session.character;
+    auto item = player.inventory[inventorySlotBag0, backpackSlot(player, thermometer)];
+    assert(item !is null);
+    source.db.loadable[7].items = [source.db.itemRows[item.guid]];
+    auto targetMap = owner.context.map(0);
+    auto target = owner.context.summonCreature(targetMap, targetEntry, at, TempSpawnType.manual, 0, 0);
+    const focus = GameObjectSpawn(5000, 148503, 0, at.x, at.y, at.z);
+    targetMap.addObject(owner.context.makeGameObject(focus));
+    source.context.map(0).replicaCreated(2, cellKeyAt(at.x, at.y), target.guid, encodeState(target, 0));
+
+    ByteWriter use;
+    use.put(item.bagSlot);
+    use.put(item.slot);
+    use.put(ubyte(1));
+    SpellTargets(TargetFlags.self).write(use);
+    client.write(Opcode.CMSG_USE_ITEM, use.data);
+    assert(relay.remote !is null && source.context.runningScripts == 0 && owner.context.runningScripts == 0,
+        "move to the thermometer's target before casting");
+    relay.remote.update(50.msecs);
+    relay.remote.update(10.seconds);
+    assert(source.context.runningScripts == 0 && owner.context.runningScripts == 1,
+        "the target owner starts the original database script once");
+}
+
 /// A missile already launched at a replica follows the player when it becomes local to the caster.
 unittest
 {

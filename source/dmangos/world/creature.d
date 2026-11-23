@@ -1444,6 +1444,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             w.put(stock.lastIncrement);
         }
         (cast() ai).saveBehaviour(w); // its script's state (docs/SCRIPTING.md)
+        ai.saveEventAi(w);
         w.put(lootRecipient);
         w.put(lootGroupRecipient);
         ai.saveCombat(w);
@@ -1524,6 +1525,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             vendorStock.items[item] = VendorStocks.Stock(r.read!uint, r.read!long);
         }
         ai.loadBehaviour(r);
+        ai.loadEventAi(r);
         lootRecipient = r.read!ulong;
         lootGroupRecipient = r.read!uint;
         ai.loadCombat(r);

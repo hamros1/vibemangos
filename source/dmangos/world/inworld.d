@@ -30,7 +30,8 @@ struct ArrivalAction
     uint teleportInstance = uint.max; /// ... into this copy (uint.max: the player's own), its checks passed
     ulong tradeTarget; /// a player to ask to trade
     ulong useItem; /// the character's exact inventory item used at another node's target
-    SpellTargets itemTargets;
+    ulong namedCreature; /// the creature implicitly selected before the handoff
+    SpellTargets castTargets;
 }
 
 mixin template InWorldHandlers()
@@ -205,6 +206,12 @@ private:
             if (const spell = context.data.spells.spell(action.spell))
                 if (player.knowsSpell(action.spell))
                 {
+                    if (action.namedCreature)
+                    {
+                        if (resumeNamedScriptCast(spell, action.namedCreature))
+                            castSpell(spell, action.castTargets, false, 0);
+                        return;
+                    }
                     const playerHandoff = action.spellTarget != 0 && action.spellTarget <= uint.max
                         && isPlayerHandoffSpell(*spell);
                     castSpell(spell, SpellTargets(TargetFlags.unit, action.spellTarget), false, 0, playerHandoff);
@@ -223,11 +230,13 @@ private:
                     castSpell(spell, t, false, 0);
                 }
         if (action.useItem)
-            useInventoryItem(player.inventory.byGuid(action.useItem), action.itemTargets, false);
+            useInventoryItem(player.inventory.byGuid(action.useItem), action.castTargets, false, action.namedCreature);
     }
 
     bool hasPendingPlayerSpell()
     {
+        if (pendingArrival.spell && pendingArrival.namedCreature)
+            return true;
         if (!pendingArrival.spell || !pendingArrival.spellTarget || pendingArrival.spellTarget > uint.max)
             return false;
         const spell = context.data.spells.spell(pendingArrival.spell);
@@ -321,12 +330,13 @@ private:
         w.put(action.teleportInstance);
         w.put(action.tradeTarget);
         w.put(action.useItem);
-        if (action.useItem)
+        w.put(action.namedCreature);
+        if (action.useItem || action.namedCreature)
         {
             import dmangos.plaindata : encode;
 
             ubyte[] targets;
-            encode(targets, action.itemTargets);
+            encode(targets, action.castTargets);
             w.put(cast(uint) targets.length);
             w.putBytes(targets);
         }
@@ -436,12 +446,13 @@ private:
         action.teleportInstance = r.read!uint;
         action.tradeTarget = r.read!ulong;
         action.useItem = r.read!ulong;
-        if (action.useItem)
+        action.namedCreature = r.read!ulong;
+        if (action.useItem || action.namedCreature)
         {
             import dmangos.plaindata : decode;
 
             auto targets = r.readBytes(r.read!uint);
-            decode(targets, action.itemTargets);
+            decode(targets, action.castTargets);
         }
         instanceId_ = r.read!uint;
         entryMap = r.read!uint;

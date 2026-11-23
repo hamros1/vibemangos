@@ -353,6 +353,8 @@ despawn timer and gathering uses. Its loot window closes during transfer and can
 node. It keeps each object as a replica of
 the next owner's object, so its own players notice nothing.
 
+EventAI keeps its current phase, completed spawn events and pending timers when a creature moves.
+
 The bundle goes with the release (`RegionReleased`). The coordinator, granting the region, sends it to
 the new owner (`RegionHandover`) on the same link as, and ahead of, the table that grants it. The new
 owner rebuilds each object from its spawn and loads the state (`Map.migrateIn`), replacing replicas
@@ -389,7 +391,8 @@ after the chest is exhausted or expires, so the encounter cannot roll another re
   handoff. A worker crash loses any summons it was simulating. Pets, guardians and totems still
   follow their owner's lifecycle. Cluster nodes reserve temporary GUID ranges in the character
   database so a restarted node does not reuse the IDs of objects it handed off. A player's corpse
-  keeps its original location and reclaim deadline when the player changes nodes.
+  keeps its original location and reclaim deadline when the player changes nodes. The current owner
+  replicates the body and its removal to nearby observers on other nodes.
 
 ### Creature assistance
 
@@ -896,8 +899,9 @@ Boon of Life can send its final spell hit to Ras Frostwhisper's current owner. T
 completion, and Ras's owner consumes that cast's token before starting its EventAI relay. A short
 record of the expired aura can move with Ras when the two nodes' timers finish in different ticks.
 
-Cross-node spell routing is effect-specific. Other script-selected channels, registered spell scripts, and
-database spell steps that need the caster or another actor still use their local paths. Ground ticks
+Cross-node spell routing is effect-specific. A player's cast or item use that selects one nearby creature
+can move to that creature's node when the script needs both actors together. The new owner rechecks the
+original creature before starting the cast. Scripts that need several remote actors still use their local paths. Ground ticks
 use observed targets around the spot and require a current caster replica at the target. At impact,
 the caster's node resolves the original target GUID locally or sends the hit to the current replica's
 owner. A projectile can wait up to two seconds for the target to appear during a handoff. A clean caster

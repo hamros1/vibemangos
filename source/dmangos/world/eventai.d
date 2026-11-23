@@ -475,6 +475,53 @@ final class EventAI
 
     private bool hasLineOfSightEvents;
 
+    /// Preserve the enabled events and their timer phase when this creature changes owners.
+    package const(ubyte)[] saveState() const
+    {
+        import dmangos.bytes : ByteWriter;
+
+        ByteWriter writer;
+        writer.put(phase);
+        writer.put(updateIn);
+        writer.put(pendingDiff);
+        writer.put(spawnPending);
+        writer.put(cast(uint) holders.length);
+        foreach (ref holder; holders)
+        {
+            writer.put(holder.event.id);
+            writer.put(holder.timer);
+            writer.put(holder.enabled);
+        }
+        return writer.data;
+    }
+
+    package void restoreState(const(ubyte)[] state)
+    {
+        import dmangos.bytes : ByteReader;
+
+        auto reader = ByteReader(state);
+        phase = reader.read!uint;
+        updateIn = reader.read!int;
+        pendingDiff = reader.read!uint;
+        spawnPending = reader.read!bool;
+        uint[uint] index;
+        foreach (i, ref holder; holders)
+            index[holder.event.id] = cast(uint) i;
+        const count = reader.read!uint;
+        reader.ensureAvailable(cast(size_t) count * (2 * uint.sizeof + ubyte.sizeof));
+        foreach (_; 0 .. count)
+        {
+            const id = reader.read!uint;
+            const timer = reader.read!uint;
+            const enabled = reader.read!bool;
+            if (const i = id in index)
+            {
+                holders[*i].timer = timer;
+                holders[*i].enabled = enabled;
+            }
+        }
+    }
+
     /// Whether it needs ticks out of combat: timers there, or its spawn events still to run.
     @property bool wantsTicks() const
     {
@@ -1169,6 +1216,51 @@ final class EventAI
         }
         pendingDiff = 0;
     }
+}
+
+/// Spawn events and pending timers keep their state when the creature's region changes owners.
+unittest
+{
+    import dmangos.cluster.regions : CellRect, Region, RegionState;
+    import dmangos.world.creature : TempSpawnType;
+    import dmangos.world.grid : cellCoordinate;
+    import dmangos.world.movement : Position;
+    import dmangos.world.testclient : newCreationContext, newDatabase;
+    import dmangos.world.testdata : creatureInnkeeper;
+    import dmangos.world.updatefields : UNIT_FIELD_BYTES_1;
+
+    auto db = newDatabase();
+    auto source = newCreationContext(db), destination = newCreationContext(db);
+    source.nodeId = 1;
+    destination.nodeId = 2;
+    EventAiEvent spawned = {id: 1, type: EventType.spawned, chance: 100};
+    spawned.actions[0] = EventAiAction(ActionType.setStandState, [1, 0, 0]);
+    EventAiEvent timer = {id: 2, type: EventType.timerOutOfCombat, chance: 100, params: [1000, 1000, 0, 0, 0, 0]};
+    timer.actions[0] = EventAiAction(ActionType.setStandState, [2, 0, 0]);
+    foreach (owner; [source, destination])
+        owner.data.eventAi.byCreature[creatureInnkeeper] = [spawned, timer];
+    auto from = source.map(0), to = destination.map(0);
+    const at = Position(-8930, -120, 83.53f);
+    auto creature = source.summonCreature(from, creatureInnkeeper, at, TempSpawnType.manual, 0, 0);
+    creature.tick(from, 550);
+    assert(creature.values.getByte!UNIT_FIELD_BYTES_1(0) == 1);
+    creature.values.setByte!UNIT_FIELD_BYTES_1(0, 0);
+    creature.tick(from, 100);
+
+    const x = cellCoordinate(at.x), y = cellCoordinate(at.y);
+    auto region = Region(7, 0, CellRect(x, y, x + 1, y + 1), 1, 1, RegionState.revoking, 2);
+    ubyte[][uint] leaving, unused;
+    source.regionsChanged(null, [region], null, leaving);
+    region.owner = 2;
+    region.state = RegionState.granted;
+    region.next = 0;
+    destination.regionsChanged([region], null, [region.id: cast(const(ubyte)[]) leaving[region.id]], unused);
+    auto moved = to.creatureAt(creature.guid);
+    assert(moved !is null);
+    moved.tick(to, 399);
+    assert(moved.values.getByte!UNIT_FIELD_BYTES_1(0) == 0, "the spawn event remains consumed");
+    moved.tick(to, 1);
+    assert(moved.values.getByte!UNIT_FIELD_BYTES_1(0) == 2, "the pending timer keeps its original phase");
 }
 
 unittest

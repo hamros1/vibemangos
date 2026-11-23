@@ -168,6 +168,9 @@ private:
         // At another node's game object (a lock): opened there.
         if (targets.gameObject && actAtReplica(targets.gameObject, ArrivalAction(0, id, 0, 0, 0, targets.gameObject)))
             return;
+        if (const named = namedScriptHandoffTarget(spell, targets))
+            if (actAtReplica(named, ArrivalAction(spell: id, namedCreature: named, castTargets: targets)))
+                return;
         castSpell(spell, targets, false, 0);
     }
 
@@ -291,7 +294,7 @@ private:
         useInventoryItem(player.inventory[bag, slot], targets, true);
     }
 
-    private void useInventoryItem(Item item, const ref SpellTargets targets, bool handoff)
+    private void useInventoryItem(Item item, const ref SpellTargets targets, bool handoff, ulong namedCreature = 0)
     {
         if (npcCharmer)
             return;
@@ -315,9 +318,14 @@ private:
             if (auto replica = cast(Replica) map.findObject(target))
                 if (replica.fieldsOf.type != TypeId.player || (!inCombat && !flying && isPlayerHandoffSpell(*spell)
                     && checkCast(spell, targets, false, proto.entry, true, replica, true) == SpellCastResult.ok))
-                    if (actAtReplica(target, ArrivalAction(useItem: item.fullGuid, itemTargets: targets)))
+                    if (actAtReplica(target, ArrivalAction(useItem: item.fullGuid, castTargets: targets)))
                         return;
+            if (const named = namedScriptHandoffTarget(spell, targets))
+                if (actAtReplica(named, ArrivalAction(useItem: item.fullGuid, namedCreature: named, castTargets: targets)))
+                    return;
         }
+        if (namedCreature && (spell is null || !resumeNamedScriptCast(spell, namedCreature)))
+            return;
         bindOnUse(item);
         if (spell is null)
             return;
@@ -348,6 +356,48 @@ private:
                     return targets.gameObject;
             }
         return 0;
+    }
+
+    /// Scripts that need the caster and one nearby creature can start with both on the target's node.
+    private ulong namedScriptHandoffTarget(const(SpellInfo)* spell, const ref SpellTargets targets)
+    {
+        if (context.playerRelay is null || targets.mask != TargetFlags.self || generic.active || channelSpell !is null)
+            return 0;
+        if (context.sendAreaDamage !is null && (context.namedCreatureRouting(spell) != size_t.max
+                || context.namedCreatureChannel(spell) != size_t.max))
+            return 0;
+        auto chosen = singleNamedScriptTarget(spell, true);
+        return chosen.replica !is null && map.inLineOfSight(player.position, chosen.position) ? chosen.combatGuid : 0;
+    }
+
+    private bool resumeNamedScriptCast(const(SpellInfo)* spell, ulong target)
+    {
+        auto chosen = singleNamedScriptTarget(spell, false);
+        if (chosen && chosen.combatGuid == target && map.inLineOfSight(player.position, chosen.position))
+            return true;
+        deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, SpellCastResult.badTargets, spell));
+        return false;
+    }
+
+    private UnitRef singleNamedScriptTarget(const(SpellInfo)* spell, bool acrossNodes)
+    {
+        const(uint)[] entries;
+        foreach (i, effect; spell.effect)
+        {
+            if (effect == SpellEffect.none)
+                continue;
+            if (spell.casting.implicitTargetB[i] != ImplicitTarget.none)
+                return UnitRef.init;
+            if (spell.implicitTargetA[i] == ImplicitTarget.caster)
+                continue;
+            if (spell.implicitTargetA[i] != ImplicitTarget.unitScriptNearCaster || spell.casting.chainTarget[i] > 1)
+                return UnitRef.init;
+            const allowed = context.spellScriptTargets(spell.id, i);
+            if (!allowed.length || (entries.length && entries != allowed))
+                return UnitRef.init;
+            entries = allowed;
+        }
+        return entries.length ? scriptTargetNear(spell, entries, acrossNodes) : UnitRef.init;
     }
 
     // -----------------------------------------------------------------------

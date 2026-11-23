@@ -9,10 +9,10 @@
 module dmangos.world.corpse;
 
 import dmangos.bytes : ByteReader, ByteWriter;
-import dmangos.world.map : MapObject;
 import dmangos.world.movement : Position;
 import dmangos.world.objects;
 import dmangos.world.player : Player, PlayerFlags;
+import dmangos.world.replication : Replicable;
 import dmangos.world.updatefields;
 
 /// What a corpse is: bones, or a body to come back to (from a death in PvE or PvP).
@@ -37,7 +37,7 @@ enum long bonesLifetime = 60 * 60;
 enum float corpseReclaimRadius = 39;
 
 /// See the module documentation.
-final class Corpse : MapObject
+final class Corpse : Replicable
 {
     immutable ulong guid_;
     immutable uint owner;          /// the player's low guid
@@ -172,12 +172,19 @@ final class Corpse : MapObject
         return values;
     }
 
-    /// Its create block: a position and its fields (`UPDATEFLAG_ALL | UPDATEFLAG_HAS_POSITION`).
-    UpdateData appearance(uint serverTime) const
+    /// Its movement block is stationary and identical for local observers and replicas.
+    MovementBlock motion(uint serverTime) const
     {
         MovementBlock block;
         block.flags = UpdateFlags.all | UpdateFlags.hasPosition;
         block.position = at;
+        return block;
+    }
+
+    /// Its create block: a position and its fields (`UPDATEFLAG_ALL | UPDATEFLAG_HAS_POSITION`).
+    UpdateData appearance(uint serverTime) const
+    {
+        const block = motion(serverTime);
         UpdateData update;
         update.addCreate(UpdateType.createObject, guid_, block, values, seenByEveryone);
         return update;

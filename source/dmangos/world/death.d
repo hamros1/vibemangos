@@ -766,11 +766,27 @@ private:
 unittest
 {
     import core.time : MonoTime, seconds;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.map : Map;
     import dmangos.world.movement : Position;
     import dmangos.world.objects : HighGuid, makeGuid;
     import dmangos.world.player : DeathState, Player;
+    import dmangos.world.replication : Replicator;
     import dmangos.world.testclient;
     import dmangos.world.updatefields : PLAYER_SELF_RES_SPELL, UNIT_FIELD_HEALTH;
+
+    static final class CorpseReplicas : Replicator
+    {
+        Map observer;
+        void create(ushort peer, uint map, ulong cell, ulong guid, const(ubyte)[] state)
+        {
+            observer.replicaCreated(2, cell, guid, state);
+        }
+        void values(ushort peer, uint map, ulong guid, const(ubyte)[] slots) { observer.replicaValues(2, guid, slots); }
+        void remove(ushort peer, uint map, ulong guid) { observer.replicaRemoved(2, guid); }
+        void move(ushort, uint, ulong, ushort, const(ubyte)[], const(ubyte)[]) {}
+        void inRange(ushort, uint, Position, float, ushort, const(ubyte)[]) {}
+    }
 
     foreach (released; [false, true])
     {
@@ -788,10 +804,14 @@ unittest
             client.write(Opcode.CMSG_REPOP_REQUEST, null);
         auto from = oldOwner.map(0), to = newOwner.map(0);
         assert((from.findObject(body) !is null) == released);
+        auto wire = new CorpseReplicas;
+        wire.observer = from;
+        to.replicator = wire;
+        to.peerInterest(1, [cellKeyAt(fell.x, fell.y)], null);
 
         oldOwner.regionOwnerAround = (uint, Position, float) => newOwner.nodeId;
         client.session.update(1.seconds);
-        assert(relay.remote !is null && from.findObject(body) is null);
+        assert(relay.remote !is null && from.isReplica(body) == released);
         auto player = relay.remote.character;
         assert(player.deathState == (released ? DeathState.ghost : DeathState.corpse));
         assert(player.values.get!UNIT_FIELD_HEALTH == (released ? 1 : 0));
@@ -800,12 +820,13 @@ unittest
             assert(player.values.get!PLAYER_SELF_RES_SPELL == 2584);
             client.write(Opcode.CMSG_REPOP_REQUEST, null);
         }
-        assert(to.findObject(body) !is null && 7 in db.corpses);
+        assert(to.findObject(body) !is null && !to.isReplica(body) && from.isReplica(body) && 7 in db.corpses);
         client.write(Opcode.CMSG_RECLAIM_CORPSE, ClientGuid(body));
         assert(player.deathState == DeathState.ghost, "handoff preserves the reclaim delay");
         now += 70.seconds;
         client.write(Opcode.CMSG_RECLAIM_CORPSE, ClientGuid(body));
-        assert(player.deathState == DeathState.alive && to.findObject(body) is null && 7 !in db.corpses);
+        assert(player.deathState == DeathState.alive && to.findObject(body) is null
+            && from.findObject(body) is null && 7 !in db.corpses);
     }
 }
 
