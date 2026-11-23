@@ -1058,6 +1058,8 @@ private:
 
     bool handleDBReloadCommand(string table)
     {
+        import dmangos.world.worldcatalog : WorldCatalog, WorldCatalogKey;
+
         context.settleWrites(); // what the GM commands wrote (spawns, vendors, ...) is read back
         if (table.length < 3)
             return false;
@@ -1070,6 +1072,11 @@ private:
         {
             context.data.setTeleports(context.database.loadAreaTriggerTeleports(), context.database.loadTeleports(),
                 context.client);
+            if (context.config.cluster.nodeId)
+            {
+                const key = WorldCatalogKey(WorldCatalog.teleports, 0);
+                context.database.markWorldCatalogReload(key);
+            }
             reloaded = true;
         }
         if (!reloaded)

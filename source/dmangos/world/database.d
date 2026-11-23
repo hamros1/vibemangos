@@ -20,6 +20,8 @@ import dmangos.world.movement : Position;
 import dmangos.world.creature : CreatureSpawn;
 import dmangos.world.gameobject : GameObjectSpawn;
 import dmangos.world.inventory : ItemChange, ItemRecord, ItemState;
+import dmangos.world.npcdata : VendorItem, readVendorItems;
+import dmangos.world.worldcatalog : WorldCatalog, WorldCatalogJournal, WorldCatalogKey, WorldCatalogVersion;
 import dmangos.world.quests : QuestStatus;
 import dmangos.world.reputation : ReputationRecord;
 import dmangos.world.auctionhouse : AuctionRecord;
@@ -109,8 +111,6 @@ struct LootCoinRedemption
     uint copper;
 }
 
-/// A `mail` row and its one item (`mail_items`; 1.12 sends at most one).
-struct MailRecord
 /// The same award can reach a player again after either simulation changes workers.
 struct LootAwardKey
 {
@@ -125,6 +125,8 @@ struct LootAwardResult
     ubyte error;
 }
 
+/// A `mail` row and its one item (`mail_items`; 1.12 sends at most one).
+struct MailRecord
 {
     uint id;
     ubyte messageType;     /// who sent it: 0 a player
@@ -759,7 +761,7 @@ interface WorldDatabase
     void updateCreatureScale(uint entry, float scale);
 
     /// A vendor's ware a GM added (`npc_vendor`: unlimited, in `slot`) or removed.
-    void insertVendorItem(uint entry, uint item, uint slot);
+    void insertVendorItem(uint entry, uint item);
     /// ditto
     void deleteVendorItem(uint entry, uint item);
 
@@ -919,13 +921,13 @@ interface WorldDatabase
     void saveChestAward(uint owner, uint money, uint playerBytes2, const(ItemChange)[] changes,
         const InstanceChestRecord chest);
 
-    /// Ids and names in a world table whose name contains `text` (`.lookup`), at most `limit`.
-    LookupResult[] lookup(LookupTable table, string text, uint limit);
     LootAwardResult loadLootAward(const ref LootAwardKey key);
     /// Records the result and any new inventory rows in the same transaction.
     void saveLootAward(const ref LootAwardKey key, ubyte error, long now, uint money, uint playerBytes2,
         const(ItemChange)[] changes);
 
+    /// Ids and names in a world table whose name contains `text` (`.lookup`), at most `limit`.
+    LookupResult[] lookup(LookupTable table, string text, uint limit);
 
     /// `game_tele`: adds a place (`.recall add`), or deletes one by name; false if there was none.
     void addTeleport(const GameTele tele);
@@ -936,6 +938,12 @@ interface WorldDatabase
     AreaTriggerTeleport[] loadAreaTriggerTeleports();
     /// ditto
     GameTele[] loadTeleports();
+
+    WorldCatalogVersion[] worldCatalogVersions();
+    void markWorldCatalogReload(WorldCatalogKey key);
+    VendorItem[] loadVendorItems(uint entry);
+    uint[] loadCreatureQuestRelations(bool start, uint entry);
+    Nullable!float loadCreatureScale(uint entry);
 
     /// Last durable service state for this realm. The revision fences subsequent writes.
     ServiceCheckpoint loadServiceCheckpoint(ServiceKind kind, uint realm);
@@ -969,6 +977,7 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     private MySqlConnection world;
     private CharacterStatements statements;
     private bool temporaryCounterReady;
+    private WorldCatalogJournal catalog;
 
     ///
     this(MySqlConnection login, MySqlConnection characterDb, MySqlConnection world)
@@ -978,11 +987,13 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
         this.characterDb = characterDb;
         this.world = world;
         this.statements = new CharacterStatements(characterDb, login);
+        this.catalog = WorldCatalogJournal(world);
     }
 
     void prepareLedger()
     {
         statements.prepareInstanceChests();
+        statements.prepareLootAwards();
         characterDb.execute!("CREATE TABLE IF NOT EXISTS `dmangos_write_applied` ("
             ~ "`stream` INT UNSIGNED NOT NULL, `seq` BIGINT UNSIGNED NOT NULL, PRIMARY KEY (`stream`)"
             ~ ") ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='dmangos: the newest write of each stream carried out'")();
@@ -993,7 +1004,6 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
         auto rows = characterDb.query!"SELECT seq FROM dmangos_write_applied WHERE stream = ?"(stream);
         return rows.length ? rows[0].get!ulong(0) : 0;
     }
-        statements.prepareLootAwards();
 
     void applying(uint stream, ulong seq, scope void delegate() work)
     {
@@ -1230,30 +1240,41 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     }
     void insertQuestRelation(bool start, uint entry, uint quest)
     {
-        if (start)
-            world.execute!"INSERT INTO creature_questrelation (id, quest) VALUES (?, ?)"(entry, quest);
-        else
-            world.execute!"INSERT INTO creature_involvedrelation (id, quest) VALUES (?, ?)"(entry, quest);
+        catalog.change(WorldCatalogKey(start ? WorldCatalog.questStarter : WorldCatalog.questFinisher, entry), {
+            if (start)
+                world.execute!"INSERT IGNORE INTO creature_questrelation (id, quest) VALUES (?, ?)"(entry, quest);
+            else
+                world.execute!"INSERT IGNORE INTO creature_involvedrelation (id, quest) VALUES (?, ?)"(entry, quest);
+        });
     }
     void deleteQuestRelation(bool start, uint entry, uint quest)
     {
-        if (start)
-            world.execute!"DELETE FROM creature_questrelation WHERE id = ? AND quest = ?"(entry, quest);
-        else
-            world.execute!"DELETE FROM creature_involvedrelation WHERE id = ? AND quest = ?"(entry, quest);
+        catalog.change(WorldCatalogKey(start ? WorldCatalog.questStarter : WorldCatalog.questFinisher, entry), {
+            if (start)
+                world.execute!"DELETE FROM creature_questrelation WHERE id = ? AND quest = ?"(entry, quest);
+            else
+                world.execute!"DELETE FROM creature_involvedrelation WHERE id = ? AND quest = ?"(entry, quest);
+        });
     }
     void updateCreatureScale(uint entry, float scale)
     {
-        world.execute!"UPDATE creature_template SET Scale = ? WHERE Entry = ?"(scale, entry);
+        catalog.change(WorldCatalogKey(WorldCatalog.creatureScale, entry), {
+            world.execute!"UPDATE creature_template SET Scale = ? WHERE Entry = ?"(scale, entry);
+        });
     }
-    void insertVendorItem(uint entry, uint item, uint slot)
+    void insertVendorItem(uint entry, uint item)
     {
-        world.execute!("INSERT INTO npc_vendor (entry, item, maxcount, incrtime, slot, condition_id) "
-            ~ "VALUES (?, ?, 0, 0, ?, 0)")(entry, item, slot);
+        catalog.change(WorldCatalogKey(WorldCatalog.vendor, entry), {
+            world.execute!("INSERT IGNORE INTO npc_vendor (entry, item, maxcount, incrtime, slot, condition_id) "
+                ~ "SELECT ?, ?, 0, 0, COALESCE(MAX(slot), -1) + 1, 0 FROM npc_vendor WHERE entry = ?")(
+                    entry, item, entry);
+        });
     }
     void deleteVendorItem(uint entry, uint item)
     {
-        world.execute!"DELETE FROM npc_vendor WHERE entry = ? AND item = ?"(entry, item);
+        catalog.change(WorldCatalogKey(WorldCatalog.vendor, entry), {
+            world.execute!"DELETE FROM npc_vendor WHERE entry = ? AND item = ?"(entry, item);
+        });
     }
     uint createGameObjectSpawn(const ref GameObjectSpawn s)
     {
@@ -1400,6 +1421,17 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
         });
     }
 
+    LootAwardResult loadLootAward(const ref LootAwardKey key)
+    {
+        return statements.loadLootAward(key);
+    }
+
+    void saveLootAward(const ref LootAwardKey key, ubyte error, long now, uint money, uint playerBytes2,
+        const(ItemChange)[] changes)
+    {
+        statements.saveLootAward(key, error, now, money, playerBytes2, changes);
+    }
+
     void setMuteTime(uint accountId, long until)
     {
         login.execute!"UPDATE account SET mutetime = ? WHERE id = ?"(until, accountId);
@@ -1421,17 +1453,6 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
                 ~ "ORDER BY entry LIMIT ?")(pattern, limit);
         case LookupTable.spell:
             return world.queryAs!(LookupResult, "SELECT Id, SpellName FROM spell_template WHERE SpellName LIKE ? "
-    LootAwardResult loadLootAward(const ref LootAwardKey key)
-    {
-        return statements.loadLootAward(key);
-    }
-
-    void saveLootAward(const ref LootAwardKey key, ubyte error, long now, uint money, uint playerBytes2,
-        const(ItemChange)[] changes)
-    {
-        statements.saveLootAward(key, error, now, money, playerBytes2, changes);
-    }
-
                 ~ "ORDER BY Id LIMIT ?")(pattern, limit);
         }
     }
@@ -1439,17 +1460,20 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     /// Adds a `game_tele` place.
     void addTeleport(const GameTele t)
     {
-        world.execute!("INSERT INTO game_tele (position_x, position_y, position_z, orientation, map, name) "
-            ~ "VALUES (?, ?, ?, ?, ?, ?)")(t.x, t.y, t.z, t.orientation, t.map, t.name);
+        catalog.change(WorldCatalogKey(WorldCatalog.teleports, 0), {
+            world.execute!("INSERT INTO game_tele (position_x, position_y, position_z, orientation, map, name) "
+                ~ "VALUES (?, ?, ?, ?, ?, ?)")(t.x, t.y, t.z, t.orientation, t.map, t.name);
+        });
     }
 
     /// Deletes the `game_tele` place called `name`; false if there is none.
     bool deleteTeleport(string name)
     {
-        if (world.query!"SELECT id FROM game_tele WHERE name = ?"(name).length == 0)
-            return false;
-        world.execute!"DELETE FROM game_tele WHERE name = ?"(name);
-        return true;
+        bool deleted;
+        catalog.change(WorldCatalogKey(WorldCatalog.teleports, 0), {
+            deleted = world.execute!"DELETE FROM game_tele WHERE name = ?"(name) != 0;
+        });
+        return deleted;
     }
 
     AreaTriggerTeleport[] loadAreaTriggerTeleports()
@@ -1460,6 +1484,37 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     GameTele[] loadTeleports()
     {
         return world.queryAs!(GameTele, gameTeleQuery)();
+    }
+
+    WorldCatalogVersion[] worldCatalogVersions()
+    {
+        return catalog.current();
+    }
+
+    void markWorldCatalogReload(WorldCatalogKey key)
+    {
+        catalog.change(key);
+    }
+
+    VendorItem[] loadVendorItems(uint entry)
+    {
+        return readVendorItems(world, entry);
+    }
+
+    uint[] loadCreatureQuestRelations(bool start, uint entry)
+    {
+        const rows = start ? world.query!"SELECT quest FROM creature_questrelation WHERE id = ? ORDER BY quest"(entry)
+            : world.query!"SELECT quest FROM creature_involvedrelation WHERE id = ? ORDER BY quest"(entry);
+        uint[] quests;
+        foreach (row; rows)
+            quests ~= row.get!uint(0);
+        return quests;
+    }
+
+    Nullable!float loadCreatureScale(uint entry)
+    {
+        const rows = world.query!"SELECT Scale FROM creature_template WHERE Entry = ?"(entry);
+        return rows.length ? nullable(rows[0].get!float(0)) : Nullable!float.init;
     }
 
     void saveNewCharacter(const ref NewCharacter character, bool insertTutorialData)
@@ -1830,6 +1885,23 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
         saveInstanceChest(chest);
     }
 
+    private LootAwardResult[LootAwardKey] lootAwards;
+
+    LootAwardResult loadLootAward(const ref LootAwardKey key)
+    {
+        return lootAwards.get(key, LootAwardResult.init);
+    }
+
+    void saveLootAward(const ref LootAwardKey key, ubyte error, long now, uint money, uint playerBytes2,
+        const(ItemChange)[] changes)
+    {
+        if (key in lootAwards)
+            return;
+        if (!error)
+            saveInventory(key.player, money, playerBytes2, changes);
+        lootAwards[key] = LootAwardResult(true, error);
+    }
+
     LookupResult[] lookup(LookupTable table, string text, uint limit)
     {
         import std.algorithm.searching : canFind;
@@ -1845,6 +1917,7 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
     void addTeleport(const GameTele tele)
     {
         teleportRows ~= tele;
+        markWorldCatalogReload(WorldCatalogKey(WorldCatalog.teleports, 0));
     }
 
     bool deleteTeleport(string name)
@@ -1853,7 +1926,10 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
 
         const before = teleportRows.length;
         teleportRows = teleportRows.remove!(t => t.name == name);
-        return teleportRows.length < before;
+        if (teleportRows.length == before)
+            return false;
+        markWorldCatalogReload(WorldCatalogKey(WorldCatalog.teleports, 0));
+        return true;
     }
 
     AreaTriggerTeleport[] loadAreaTriggerTeleports()
@@ -1864,6 +1940,46 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
     GameTele[] loadTeleports()
     {
         return teleportRows.dup;
+    }
+
+    private ulong[WorldCatalogKey] savedCatalogVersions;
+
+    WorldCatalogVersion[] worldCatalogVersions()
+    {
+        WorldCatalogVersion[] versions;
+        foreach (key, revision; savedCatalogVersions)
+            versions ~= WorldCatalogVersion(key, revision, false);
+        return versions;
+    }
+
+    void markWorldCatalogReload(WorldCatalogKey key)
+    {
+        ++savedCatalogVersions.require(key, 0);
+    }
+
+    VendorItem[] loadVendorItems(uint entry)
+    {
+        VendorItem[] result;
+        foreach (ref row; vendorRows)
+            if (row[0] == entry)
+                result ~= VendorItem(row[1], 0, 0, cast(uint) result.length, 0);
+        return result;
+    }
+
+    uint[] loadCreatureQuestRelations(bool start, uint entry)
+    {
+        uint[] quests;
+        foreach (ref row; questRelationRows)
+            if (row[0] == uint(start) && row[1] == entry)
+                quests ~= row[2];
+        return quests;
+    }
+
+    Nullable!float loadCreatureScale(uint entry)
+    {
+        if (auto scale = entry in creatureScales)
+            return nullable(*scale);
+        return Nullable!float.init;
     }
 
     GroupRecord[] loadGroups()
@@ -1885,23 +2001,6 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
 
     bool recordGroupLootRotation(uint group, ushort node, ulong drop, const ref GroupLootRotation turn, long now)
     {
-    private LootAwardResult[LootAwardKey] lootAwards;
-
-    LootAwardResult loadLootAward(const ref LootAwardKey key)
-    {
-        return lootAwards.get(key, LootAwardResult.init);
-    }
-
-    void saveLootAward(const ref LootAwardKey key, ubyte error, long now, uint money, uint playerBytes2,
-        const(ItemChange)[] changes)
-    {
-        if (key in lootAwards)
-            return;
-        if (!error)
-            saveInventory(key.player, money, playerBytes2, changes);
-        lootAwards[key] = LootAwardResult(true, error);
-    }
-
         import std.algorithm.mutation : remove;
 
         if (group !in groups || loadGroupLootRotation(group, node, drop).assigned)
@@ -2561,22 +2660,36 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
         return true;
     }
     uint[3][] questRelationRows; /// (start, entry, quest) that `insertQuestRelation` wrote and are not deleted
-    void insertQuestRelation(bool start, uint entry, uint quest) { questRelationRows ~= [start, entry, quest]; }
+    void insertQuestRelation(bool start, uint entry, uint quest)
+    {
+        questRelationRows ~= [start, entry, quest];
+        markWorldCatalogReload(WorldCatalogKey(start ? WorldCatalog.questStarter : WorldCatalog.questFinisher, entry));
+    }
     void deleteQuestRelation(bool start, uint entry, uint quest)
     {
         import std.algorithm.mutation : remove;
 
         questRelationRows = questRelationRows.remove!(r => r == [uint(start), entry, quest]);
+        markWorldCatalogReload(WorldCatalogKey(start ? WorldCatalog.questStarter : WorldCatalog.questFinisher, entry));
     }
     float[uint] creatureScales; /// what `updateCreatureScale` wrote, by entry
-    void updateCreatureScale(uint entry, float scale) { creatureScales[entry] = scale; }
+    void updateCreatureScale(uint entry, float scale)
+    {
+        creatureScales[entry] = scale;
+        markWorldCatalogReload(WorldCatalogKey(WorldCatalog.creatureScale, entry));
+    }
     uint[2][] vendorRows; /// what `insertVendorItem` wrote (entry, item), less what `deleteVendorItem` removed
-    void insertVendorItem(uint entry, uint item, uint slot) { vendorRows ~= [entry, item]; }
+    void insertVendorItem(uint entry, uint item)
+    {
+        vendorRows ~= [entry, item];
+        markWorldCatalogReload(WorldCatalogKey(WorldCatalog.vendor, entry));
+    }
     void deleteVendorItem(uint entry, uint item)
     {
         import std.algorithm.mutation : remove;
 
         vendorRows = vendorRows.remove!(r => r == [entry, item]);
+        markWorldCatalogReload(WorldCatalogKey(WorldCatalog.vendor, entry));
     }
     uint createGameObjectSpawn(const ref GameObjectSpawn spawn)
     {

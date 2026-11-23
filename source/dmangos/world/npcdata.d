@@ -318,6 +318,14 @@ private struct VendorRow
     }
 }
 
+package VendorItem[] readVendorItems(MySqlConnection world, uint entry)
+{
+    VendorItem[] result;
+    foreach (row; world.queryAs!(VendorRow, vendorQuery ~ "npc_vendor WHERE entry = ? ORDER BY slot, item")(entry))
+        result ~= row.toItem;
+    return result;
+}
+
 /// `npc_text`'s columns, eight options of ten.
 private enum npcTextQuery = () {
     import std.format : format;

@@ -277,6 +277,55 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 player.deliver(Opcode.SMSG_WEATHER, body_);
     }
 
+    import dmangos.world.worldcatalog : WorldCatalog, WorldCatalogKey;
+
+    private MonoTime nextCatalogPoll;
+    private ulong[WorldCatalogKey] loadedCatalogVersions;
+
+    private void pollWorldCatalog(MonoTime now)
+    {
+        import core.time : seconds;
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
+
+        if (!config.cluster.nodeId || now < nextCatalogPoll)
+            return;
+        nextCatalogPoll = now + 5.seconds;
+        try
+        {
+            foreach (ref version_; database.worldCatalogVersions())
+            {
+                const key = version_.key;
+                if (!version_.pending && loadedCatalogVersions.get(key, 0) == version_.revision)
+                    continue;
+                final switch (key.catalog)
+                {
+                case WorldCatalog.vendor:
+                    data.npcs.vendors[key.entry] = database.loadVendorItems(key.entry);
+                    break;
+                case WorldCatalog.questStarter:
+                    data.quests.creatureStarts[key.entry] = database.loadCreatureQuestRelations(true, key.entry);
+                    break;
+                case WorldCatalog.questFinisher:
+                    data.quests.creatureEnds[key.entry] = database.loadCreatureQuestRelations(false, key.entry);
+                    break;
+                case WorldCatalog.creatureScale:
+                    const scale = database.loadCreatureScale(key.entry);
+                    if (!scale.isNull)
+                        if (auto creature = data.creatureTemplates.edit(key.entry))
+                            creature.scale = scale.get;
+                    break;
+                case WorldCatalog.teleports:
+                    data.setTeleports(database.loadAreaTriggerTeleports(), database.loadTeleports(), client);
+                    break;
+                }
+                loadedCatalogVersions[key] = version_.revision;
+            }
+        }
+        catch (DatabaseException error)
+            warning!"world catalog updates will be retried: %s"(error.msg);
+    }
+
     WorldConfig config;
     WorldDatabase database;
     /// The thread `database` writes through (`dmangos.world.writebehind`); null: writes are immediate.
@@ -8689,6 +8738,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             script.tick(cast(int) elapsed.total!"msecs");
         gameObjectScriptsTick(cast(int) elapsed.total!"msecs"); // open-world round 2
         pollWeather(now);
+        pollWorldCatalog(now);
         addPendingNavigation();
         checkHonorWeek(now);
         services.tick(elapsed);

@@ -651,8 +651,10 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   and the next change timer during a clean handoff. A new host can recover a recent checkpoint
   after a crash. Workers ask for the current state when players arrive and periodically while
   they remain in the zone.
-* **GM edits of world data** (`.npc vendoradditem` and the like) are written to the world database and
-  held in the GM's node's memory; other nodes see them after a restart.
+* **GM edits of world data.** Vendor items, NPC quest starters and finishers, creature template
+  scale, and recall destinations are saved to the world database. Workers reload the affected
+  data within five seconds. A teleport table reload also reaches other workers. Realms that use
+  the same world database share these edits.
 
 ## Load balancing
 

@@ -91,7 +91,7 @@ private:
             auto list = &context.data.npcs.vendors.require(entry, null);
             const slot = cast(uint) list.length;
             *list ~= VendorItem(item, 0, 0, slot, 0);
-            context.database.insertVendorItem(entry, item, slot);
+            context.database.insertVendorItem(entry, item);
             text = format!"Item '%s' '%s' Added to list"(item, proto.details.name);
         }
         else

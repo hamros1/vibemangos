@@ -1,3 +1,12 @@
+-- Invalidate cached vendor, quest, creature and teleport data after a live edit.
+CREATE TABLE IF NOT EXISTS `dmangos_world_catalog` (
+    `catalog` tinyint unsigned NOT NULL,
+    `entry` int unsigned NOT NULL,
+    `revision` bigint unsigned NOT NULL,
+    `pending` int unsigned NOT NULL DEFAULT 0,
+    PRIMARY KEY (`catalog`, `entry`)
+) ENGINE=InnoDB;
+
 -- Jeziba introduces the nearby catalogue after the player accepts quest 5164.
 SET @dmangos_jeziba_scene = EXISTS (
     SELECT 1 FROM `quest_template` WHERE `entry` = 5164 AND `StartScript` = 0
