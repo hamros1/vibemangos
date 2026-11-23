@@ -278,6 +278,20 @@ final class ScriptRun
     uint mapId;
     uint instanceId;        /// the map's dungeon instance (0: none)
     ulong source, target;   /// the objects it began with (0: none)
+    bool waitForSource, waitForTarget; /// players present when the old owner released the copy
+    long waitForPlayersUntil;
+
+    this(DbScriptType type, uint id, uint mapId, uint instanceId, ulong source, ulong target,
+        const(DbScriptStep)[] steps)
+    {
+        this.type = type;
+        this.id = id;
+        this.mapId = mapId;
+        this.instanceId = instanceId;
+        this.source = source;
+        this.target = target;
+        this.steps = steps;
+    }
 }
 
 /**
@@ -322,16 +336,73 @@ mixin template DbScriptRunner()
                         && run.instanceId == map.instanceId
                         && (unique == ScriptUnique.bySource ? run.source == source : run.target == target))
                     return true;
-        auto run = new ScriptRun;
-        run.type = type;
-        run.id = id;
-        run.steps = steps;
-        run.mapId = map.id;
-        run.instanceId = map.instanceId;
-        run.source = source;
-        run.target = target;
-        scriptRuns ~= run;
+        scriptRuns ~= new ScriptRun(type, id, map.id, map.instanceId, source, target, steps);
         return true;
+    }
+
+    /// Detaches the database script runs the departing dungeon copies were executing.
+    private void takeDungeonScriptRuns(uint mapId, ref ByteWriter w)
+    {
+        import std.algorithm.mutation : remove;
+
+        const countAt = w.length;
+        w.put(0u);
+        uint count;
+        const now = unixTime;
+        foreach (run; scriptRuns)
+        {
+            if (run.mapId != mapId || run.instanceId == 0 || run.next >= run.steps.length)
+                continue;
+            auto copy = instanceMap(run.instanceId);
+            if (copy is null)
+                continue;
+            ++count;
+            const sourcePresent = run.source && copy.find(run.source) !is null;
+            const targetPresent = run.target && copy.find(run.target) !is null;
+            const awaitingPlayers = run.waitForPlayersUntil > now;
+            enum playerHandoffGraceSeconds = 10;
+            w.put(run.instanceId);
+            w.put(cast(ubyte) run.type);
+            w.put(run.id);
+            w.put(cast(uint) run.next);
+            w.put(run.elapsed);
+            w.put(run.source);
+            w.put(run.target);
+            w.put(sourcePresent || (awaitingPlayers && run.waitForSource));
+            w.put(targetPresent || (awaitingPlayers && run.waitForTarget));
+            w.put(sourcePresent || targetPresent ? now + playerHandoffGraceSeconds : run.waitForPlayersUntil);
+        }
+        w.patch(countAt, count);
+        scriptRuns = scriptRuns.remove!(run => run.mapId == mapId && run.instanceId != 0);
+    }
+
+    /// Rebuilds transferred runs from the receiver's database without replaying their completed steps.
+    private void restoreDungeonScriptRuns(uint mapId, ref ByteReader r)
+    {
+        foreach (_; 0 .. r.read!uint)
+        {
+            const instance = r.read!uint;
+            const type = cast(DbScriptType) r.read!ubyte;
+            const id = r.read!uint;
+            const next = r.read!uint;
+            const elapsed = r.read!uint;
+            const source = r.read!ulong, target = r.read!ulong;
+            const waitForSource = r.read!bool, waitForTarget = r.read!bool;
+            const waitUntil = r.read!long;
+            auto copy = instanceMap(instance);
+            if (copy is null || copy.id != mapId || type > DbScriptType.max)
+                continue;
+            const steps = data.dbScripts.steps(type, id);
+            if (next >= steps.length)
+                continue;
+            auto run = new ScriptRun(type, id, mapId, instance, source, target, steps);
+            run.next = next;
+            run.elapsed = elapsed;
+            run.waitForSource = waitForSource;
+            run.waitForTarget = waitForTarget;
+            run.waitForPlayersUntil = waitUntil;
+            scriptRuns ~= run;
+        }
     }
 
     /// Runs the steps whose time has come, `diff` milliseconds on.
@@ -342,6 +413,14 @@ mixin template DbScriptRunner()
         {
             run.elapsed += diff;
             auto map = existingMap(run.mapId, run.instanceId);
+            if (map !is null && run.waitForPlayersUntil)
+            {
+                if (unixTime < run.waitForPlayersUntil
+                    && ((run.waitForSource && map.find(run.source) is null)
+                        || (run.waitForTarget && map.find(run.target) is null)))
+                    continue;
+                run.waitForPlayersUntil = 0;
+            }
             while (map !is null && run.next < run.steps.length && run.steps[run.next].delay <= run.elapsed)
             {
                 const step = &run.steps[run.next++];
@@ -619,6 +698,40 @@ mixin template DbScriptRunner()
     }
 
     private long[GameObjectOnMap] scriptedGameObjects; // spawned by a script: when it goes (Unix time)
+
+    private void saveDungeonObjectDeadlines(uint mapId, ref ByteWriter w)
+    {
+        const countAt = w.length;
+        w.put(0u);
+        uint count;
+        foreach (key, deadline; scriptedGameObjects)
+            if (key.map.id == mapId && key.map.instanceId && instanceMap(key.map.instanceId) is key.map)
+            {
+                ++count;
+                w.put(key.map.instanceId);
+                w.put(key.guid);
+                w.put(deadline);
+            }
+        w.patch(countAt, count);
+    }
+
+    private void restoreDungeonObjectDeadlines(uint mapId, ref ByteReader r)
+    {
+        const now = unixTime;
+        foreach (_; 0 .. r.read!uint)
+        {
+            const instance = r.read!uint;
+            const guid = r.read!ulong;
+            const deadline = r.read!long;
+            auto copy = instanceMap(instance);
+            if (copy is null || copy.id != mapId || cast(GameObject) copy.findObject(guid) is null)
+                continue;
+            if (deadline <= now)
+                copy.removeObject(guid);
+            else
+                scriptedGameObjects[GameObjectOnMap(copy, guid)] = deadline;
+        }
+    }
 
     /**
      * `SCRIPT_COMMAND_RESPAWN_GAMEOBJECT`: the game object of spawn `spawnGuid` (or `go`) put in

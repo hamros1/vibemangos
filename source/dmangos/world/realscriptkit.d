@@ -737,16 +737,12 @@ final class Dungeon
         Position[] where;
         foreach (i; 0 .. party.length)
             where ~= player(i).position;
-        foreach (ref c; party)
-            c.write(Opcode.CMSG_LOGOUT_REQUEST, null);
-        w.now += 100.msecs;
-        w.context.update(w.now);
         WorldConfig config;
         config.logoutDelay = 0;
         auto old = w.context;
-        w.context = new WorldContext(config, w.db, old.data, old.client);
         if (handoff)
         {
+            w.context = new WorldContext(config, w.db, old.data, old.client);
             enum uint regionId = 40;
             if (old.nodeId == 0)
                 old.nodeId = 1;
@@ -760,8 +756,20 @@ final class Dungeon
             const(ubyte)[][uint] arriving;
             arriving[regionId] = leaving[regionId];
             w.context.regionsChanged([Region(regionId, mapId)], null, arriving, leaving);
-            assert(old.instanceState(copy) is null && w.context.instanceMap(copy) !is null, "the copy changed owners");
+            assert(w.context.instanceMap(copy) !is null, "the copy arrived");
         }
+        foreach (ref c; party)
+            c.write(Opcode.CMSG_LOGOUT_REQUEST, null);
+        w.now += 100.msecs;
+        old.update(w.now);
+        if (handoff)
+        {
+            assert(old.instanceState(copy) is null, "the previous owner dropped the copy");
+            w.context.clock = () => w.now;
+            w.context.update(w.now); // the new owner can tick before the players arrive
+        }
+        else
+            w.context = new WorldContext(config, w.db, old.data, old.client);
         {
             import std.random : rndGen;
 

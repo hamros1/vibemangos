@@ -1531,8 +1531,9 @@ unittest
 
     enum uint king = 11501, mizzle = 14353, tribute = 179564, coronation = 22799, opening = 3365;
     static immutable uint[6] bosses = [14324, 14326, 14321, 14323, 14325, 14322];
-    foreach (kills; [0, 1, 6])
+    foreach (run, kills; [0, 1, 6, 0])
     {
+        const testExpiry = run == 3;
         auto d = Dungeon.enter(429, 60);
         foreach (entry; bosses[0 .. kills])
             d.kill(d.spawned(entry, 0, 25));
@@ -1540,7 +1541,7 @@ unittest
         assert(d.summoned(mizzle) == 1, "Mizzle comes\n" ~ d.story);
         assert(!(d.find(mizzle).values.get!UNIT_NPC_FLAGS & 1), "the coronation opens at the throne");
         const heraldGuid = d.find(mizzle).guid;
-        if (kills == 0)
+        if (run == 0)
         {
             bool onTheWay()
             {
@@ -1563,7 +1564,7 @@ unittest
             return herald !is null && (herald.values.get!UNIT_NPC_FLAGS & 1) && herald.position.x > 816;
         }
         assert(d.runUntil(&atThrone, 90.seconds), "Mizzle reaches the throne\n" ~ d.story);
-        if (kills == 0)
+        if (run == 0)
         {
             d.handoff();
             auto waiting = d.find(mizzle);
@@ -1575,12 +1576,31 @@ unittest
         assert(d.loadedObject(tribute) is null, "tribute awaits Mizzle's dialogue");
         d.talkTo(herald);
         d.choose(herald, 0); // coronation
+        if (testExpiry)
+        {
+            d.handoff(); // the cast still needs its player on the receiving node
+            herald = d.find(mizzle);
+        }
         d.run(1.seconds);
         assert(d.player.auras.find(coronation) !is null, "King of the Gordok");
-        d.choose(herald, 0); // return to the initial menu
+        if (testExpiry)
+            d.talkTo(herald);
+        else
+            d.choose(herald, 0); // return to the initial menu
         d.choose(herald, 0); // ask about tribute
         d.choose(herald, 0); // ask to see it
-        assert(d.runUntil(() => d.loadedObject(tribute) !is null, 5.seconds), "Mizzle produces the chest\n" ~ d.story);
+        if (run == 0)
+        {
+            assert(d.w.context.runningScripts > 0 && d.loadedObject(tribute) is null, "the tribute request is queued");
+            d.handoff();
+            assert(!(d.find(mizzle).values.get!UNIT_NPC_FLAGS & 1), "Mizzle removed gossip while preparing the chest");
+            d.handoff(); // after disabling gossip, before the delayed step enables it again
+            herald = d.find(mizzle);
+            assert(d.runUntil(() => (herald.values.get!UNIT_NPC_FLAGS & 1) != 0, 800.msecs),
+                "the remaining delay survives without replaying completed steps");
+        }
+        assert(d.runUntil(() => d.loadedObject(tribute) !is null, 5.seconds),
+            "Mizzle completes the tribute request\n" ~ d.story);
         size_t chests;
         d.map.forEachObject((object) {
             if (auto go = cast(GameObject) object)
@@ -1588,6 +1608,28 @@ unittest
         });
         assert(chests == 1, "Mizzle produces exactly one tribute chest");
         auto chest = d.loadedObject(tribute);
+        if (testExpiry)
+        {
+            const chestGuid = chest.guid;
+            enum uint ritualCircle = 179668, lifetime = 3600;
+            const deadline = d.w.context.unixTime + lifetime; // the unopened chest's database-script lifetime
+            auto circle = d.w.context.summonWildGameObject(d.map, ritualCircle, chest.position, lifetime + 2);
+            assert(circle !is null);
+            d.run(5.minutes, 1.seconds);
+            d.handoff();
+            assert(d.loadedObject(tribute) !is null && d.loadedObject(tribute).guid == chestGuid,
+                "the unopened chest arrived");
+            assert(d.loadedObject(ritualCircle) !is null && d.loadedObject(ritualCircle).guid == circle.guid,
+                "the scripted summon arrived with the same GUID");
+            d.run((deadline - d.w.context.unixTime - 1).seconds, 1.seconds);
+            assert(d.loadedObject(tribute) !is null, "the unopened chest lasts until its original deadline");
+            d.run(1.seconds, 1.seconds);
+            assert(d.loadedObject(tribute) is null, "the unopened chest expires at its original deadline");
+            assert(d.loadedObject(ritualCircle) !is null, "the other object's deadline is independent");
+            d.run(2.seconds, 1.seconds);
+            assert(d.loadedObject(ritualCircle) is null, "the scripted summon expires at its original deadline");
+            continue;
+        }
         d.goTo(chest.position);
         d.defend(herald); // any demons pulled during the run still attack after the coronation
         d.run(1.seconds);

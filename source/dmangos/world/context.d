@@ -4158,13 +4158,15 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             info!"cluster: dungeon map %s is hosted here now, with %s saved instances"(mapId, count);
     }
 
-    /// The copies of dungeon `mapId` loaded here, their objects saved for node `next`: (copy, bundle) pairs.
+    /// The copies of dungeon `mapId` and their pending database actions for the next owner.
     private const(ubyte)[] dungeonCopiesOut(uint mapId, ushort next)
     {
         import dmangos.bytes : ByteWriter;
         import dmangos.log : info;
 
         ByteWriter w;
+        ByteWriter deadlines;
+        saveDungeonObjectDeadlines(mapId, deadlines); // before migrateOut removes the local objects and their timers
         uint[] ids;
         foreach (id, m; instanceMaps)
             if (instances.get(id, InstanceState.init).mapId == mapId && m.instanceId == id)
@@ -4181,6 +4183,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             info!"migration: instance %s of map %s leaves for node %s with %s objects"(id, mapId, next,
                 before - (m.objectCount - m.replicaCount));
         }
+        takeDungeonScriptRuns(mapId, w);
+        w.putBytes(deadlines.data);
         return w.data;
     }
 
@@ -4218,6 +4222,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             });
             info!"migration: instance %s of map %s arrived with %s objects"(id, mapId,
                 m.objectCount - m.replicaCount - before);
+        }
+        if (!r.empty) // older owners sent only the copy/object pairs
+        {
+            restoreDungeonScriptRuns(mapId, r);
+            restoreDungeonObjectDeadlines(mapId, r);
         }
     }
 
@@ -5220,8 +5229,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return Migrant.init;
         if (gameObject.loot !is null)
             gameObject.loot.sendReleaseForAll();
+        auto kind = MigrantKind.gameObject;
+        if (gameObject.instanceId && !gameObject.owner && gameObject.spawn.guid >= temporaryCounterStart)
+        {
+            kind = MigrantKind.summonedGameObject;
+            serialize(w, gameObject.spawn);
+        }
         gameObject.saveState(w, transportNow());
-        return Migrant(MigrantKind.gameObject, gameObject.spawn.guid, 0, w.data);
+        return Migrant(kind, gameObject.spawn.guid, 0, w.data);
     }
 
     /// An object rebuilt from its spawn and the state its last owner sent; null if the spawn is unknown here.
@@ -5271,6 +5286,22 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         bool atHome(uint mapId, float x, float y, float z)
         {
             return mapId == destination.id && client.isValidMapCoord(mapId, x, y, z) && cellKeyAt(x, y) == migrant.home;
+        }
+        if (migrant.kind == MigrantKind.summonedGameObject)
+        {
+            auto state = ByteReader(migrant.state);
+            const spawn = deserialize!GameObjectSpawn(state);
+            const template_ = spawn.entry in data.gameObjectTemplates;
+            if (!destination.instanceId || durable || migrant.spawn > 0xFF_FFFF || spawn.guid != migrant.spawn
+                || template_ is null || template_.type == GameObjectType.moTransport
+                || !atHome(spawn.map, spawn.x, spawn.y, spawn.z)
+                || !client.isValidMapCoord(spawn.map, spawn.x, spawn.y, spawn.z, spawn.orientation))
+                return null;
+            auto restored = makeGameObject(spawn);
+            restored.instanceId = destination.instanceId;
+            restored.loadState(state, transportNow());
+            bindMigrantLoot(restored, destination);
+            return restored;
         }
         if (migrant.kind == MigrantKind.summonedCreature)
         {

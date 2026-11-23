@@ -364,6 +364,11 @@ Scripted waypoint movement carries the database path ID, its progress and any pa
 resolves that path from its world data, including when the spawn normally stands still. A waypoint
 route suspended by combat resumes when the creature goes home.
 
+On a clean dungeon handoff, queued database scripts resume at their next step with the elapsed
+time intact. The receiving node waits briefly for players who were participating when the copy
+moved. Script-spawned game objects, including temporary unowned objects, keep their original
+expiry deadlines. An object whose deadline passes in transit is removed on arrival.
+
 * **The same spawns everywhere.** Pools, spawn groups and spawn entries are chosen with a seed made
   from the cluster's name and the realm, so every node agrees on which creature a spawn is.
 * **After a node is lost**, the new owner loads saved respawn deadlines, discovers spawns added
