@@ -326,13 +326,12 @@ its home, the new owner makes its session for that home, and the old owner tells
 sent before its home heard are passed on by the old owner for a few seconds, and a home that hears
 from a new owner before the old one's word takes it as the owner.
 
-**What travels:** the character as saved, including auras, spell cooldowns, quests and reputation;
-its movement; its death state and corpse; pending cross-node projectile impacts; what its client knows; its pet (saved as
-out and brought out again on the next node);
-its client's address and build; the dungeon copy it is in and where it came in from. **What does
-not:** timers that only shape timing (regeneration, rest, flood protection), `.gm allowwhispers`
-targets and `.cheat triggerpass`, which start afresh on the new node. A player in flight stays on the
-node where the flight started until it lands; its first move after landing moves it on.
+The character's saved auras, cooldowns, quests and reputation move with it. A clean handoff also
+carries its movement, corpse and death state, pending projectile impacts, what its client knows,
+active pet, dungeon copy and client connection details. Regeneration, rest, zone checks and chat
+flood protection keep their progress. Temporary GM commands and allowed whisper senders stay in
+effect for the same session. Ordinary balancing waits for a taxi flight to land. A forced clean
+handoff can resume the flight from its current route and position.
 
 ### Leaving the game
 

@@ -1571,3 +1571,54 @@ unittest
     assert(mail.deliverTime <= context.unixTime, "at once");
     assert(!db.looseItem(501).isNull && db.looseItem(501).get.entry == itemBuckler, "its row the letter's");
 }
+
+/// Clean moves keep timer progress, chat limits and temporary session settings.
+unittest
+{
+    import core.time : msecs;
+    import std.algorithm.searching : canFind;
+    import dmangos.world.config : WorldConfig;
+    import dmangos.world.player : RestType;
+    import dmangos.world.testclient : TestPlayerRelay, bodyOf, loggedIn, newCreationContext, newDatabase, say;
+
+    void floodProtection(ref WorldConfig config)
+    {
+        config.floodLines = 2;
+        config.floodSeconds = 20;
+        config.floodMessage = true;
+    }
+
+    auto db = newDatabase();
+    auto first = newCreationContext(db, &floodProtection), second = newCreationContext(db, &floodProtection);
+    auto relay = new TestPlayerRelay(first, second);
+    auto client = loggedIn(first, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    client.say("One");
+    client.say("Two");
+    client.read();
+    auto previous = client.session.inWorld;
+    const floodUntil = previous.floodTime, countedAt = first.unixTime - 6;
+    assert(previous.floodLines == 2);
+    previous.regenTimer.elapsed = 1500.msecs;
+    previous.restTimer.elapsed = 800.msecs;
+    previous.zoneTimer.elapsed = 400.msecs;
+    previous.player.setRestType(RestType.city, countedAt);
+    previous.zoneUpdatePending = true;
+    previous.pendingZone = 1519;
+    previous.triggerpassCheat = true;
+    previous.godModeCheat = true;
+    previous.gmTargets[8] = true;
+
+    previous.migrateTo(second.nodeId);
+    assert(relay.remote !is null && client.session.inWorld is null);
+    const current = relay.remote.inWorld;
+    assert(current.regenTimer.elapsed == 1500.msecs && current.restTimer.elapsed == 800.msecs);
+    assert(current.player.restType == RestType.city && current.player.restCountedAt == countedAt);
+    assert(current.zoneTimer.elapsed == 400.msecs && current.zoneUpdatePending && current.pendingZone == 1519);
+    assert(current.triggerpassCheat && current.godModeCheat && !current.powerCheat && 8 in current.gmTargets);
+    assert(current.floodLines == 2 && current.floodTime == floodUntil);
+
+    client.read();
+    client.say("Three");
+    const rejection = bodyOf(client.read(), Opcode.SMSG_MESSAGECHAT);
+    assert(canFind(rejection, cast(const(ubyte)[]) "serverside flood protection"));
+}

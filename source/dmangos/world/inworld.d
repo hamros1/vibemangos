@@ -178,8 +178,8 @@ private:
                 return owner == context.nodeId ? 0 : owner;
         if (migratedAt != MonoTime.init && context.clock() - migratedAt < 10.seconds)
             return 0;
-        // Combat and control of another unit stay with that unit's simulation. A flight lands on its
-        // current node before ordinary balancing can move the player.
+        // Combat and control of another unit stay with that unit's simulation. Ordinary balancing
+        // lets a taxi flight finish on its current node.
         if (inCombat || flying || duel !is null || tradeSide !is null || charmed !is null || npcCharmer)
             return 0;
         // A gateway owns no ground, including the edge between two world nodes.
@@ -388,6 +388,7 @@ private:
         w.put(moveOrderCounter);
         foreach (speed; player.speeds)
             w.put(speed);
+        writeSessionHandoff(w);
         writeDeathHandoff(w);
         writePvPHandoff(w);
         context.writeReplicaImpacts(player.guid, w);
@@ -522,10 +523,10 @@ private:
         player = makePlayer(character, false);
         player.movement = movement;
         player.speeds = speeds; // as the client has them; auras loaded below change them as they did there
+        readSessionHandoff(r);
         readDeathHandoff(r);
         readPvPHandoff(r);
         saveTimer = IntervalTimer(sessionSaveInterval());
-        regenTimer.reset();
         enteredWorld = context.clock();
         migratedAt = context.clock();
         ownerNode = 0;
@@ -562,6 +563,62 @@ private:
         info!"%s: '%s' arrived from another node (map %s at %.1f %.1f)"(remoteAddress, character.name, character.map,
             character.position.x, character.position.y);
         return true;
+    }
+
+    private void writeSessionHandoff(ref ByteWriter state)
+    {
+        state.put(regenTimer.elapsed.total!"msecs");
+        state.put(restTimer.elapsed.total!"msecs");
+        state.put(zoneTimer.elapsed.total!"msecs");
+        state.put(cast(ubyte) player.restType);
+        state.put(player.restCountedAt);
+        state.put(player.innTrigger);
+        state.put(zoneUpdatePending);
+        state.put(pendingZone);
+        state.put(floodLines);
+        state.put(floodTime);
+        state.put(triggerpassCheat);
+        state.put(cooldownCheat);
+        state.put(castTimeCheat);
+        state.put(godModeCheat);
+        state.put(powerCheat);
+        state.put(invincible);
+        state.put(cast(uint) gmTargets.length);
+        foreach (guid; gmTargets.byKey)
+            state.put(guid);
+    }
+
+    private void readSessionHandoff(ref ByteReader state)
+    {
+        import core.time : msecs;
+        import dmangos.bytes : PacketException;
+
+        const regen = state.read!long, rest = state.read!long, zone = state.read!long;
+        const restType = cast(RestType) state.read!ubyte;
+        const restCountedAt = state.read!long;
+        const inn = state.read!uint;
+        if (regen < 0 || rest < 0 || zone < 0 || restType > RestType.max)
+            throw new PacketException("invalid player session timer in handoff");
+        regenTimer.elapsed = regen.msecs;
+        restTimer.elapsed = rest.msecs;
+        zoneTimer.elapsed = zone.msecs;
+        player.setRestType(restType, restCountedAt, inn);
+        zoneUpdatePending = state.read!bool;
+        pendingZone = state.read!uint;
+        floodLines = state.read!uint;
+        floodTime = state.read!long;
+        triggerpassCheat = state.read!bool;
+        cooldownCheat = state.read!bool;
+        castTimeCheat = state.read!bool;
+        godModeCheat = state.read!bool;
+        powerCheat = state.read!bool;
+        invincible = state.read!bool;
+        const allowed = state.read!uint;
+        if (allowed > state.remaining / ulong.sizeof)
+            throw new PacketException("invalid GM whisper list in handoff");
+        gmTargets = null;
+        foreach (_; 0 .. allowed)
+            gmTargets[state.read!ulong] = true;
     }
 
     /**
