@@ -940,7 +940,9 @@ pending forced despawns keep their deadlines in a clean handoff. Outdoor databas
 select an observed creature on another node and send its exact command to the owner. This preserves
 the original actors for dialogue, emotes, movement, casts, state changes and relay scripts. For
 example, each acolyte runs its part of The Binding on its own node. A scripted point movement
-keeps the destination and its arrival relay when ownership changes mid-walk. Ground ticks
+keeps the destination and its arrival relay when ownership changes mid-walk. A creature summoned
+by a database script starts on the node that owns its destination. Highlord Demitrian can summon
+Thunderaan at his original spawn point across a region boundary. Ground ticks
 use observed targets around the spot and require a current caster replica at the target. At impact,
 the caster's node resolves the original target GUID locally or sends the hit to the current replica's
 owner. A projectile can wait up to two seconds for the target to appear during a handoff. A clean caster
@@ -968,8 +970,14 @@ A pulse preserves a different temporary enchantment already on the weapon.
 
 When an in-realm battleground map moves, its new owner receives the running matches, their scores,
 objectives, and timers. Players in a match follow the map's ownership, including during combat.
+After a crash, the new map owner reports which matches it recovered. The queue closes lost copies,
+and affected players return to their entry points. Unused invitations to matches that had yet to open
+stay valid. An invitation to a lost copy cannot start the same match again.
 
 ## Testing
+
+Run `python3 tools/harness/queue_failover.py` to check queue host loss with an open invitation, and
+`python3 tools/harness/queue_failover.py --active-match` to check map host loss during Warsong Gulch.
 
 The cluster code is tested in memory: links wired back to back and a fake clock, with whole clusters
 of world contexts (joining, views, heartbeats, timeouts, restarts and fencing; handovers with no cell

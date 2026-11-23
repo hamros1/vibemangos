@@ -185,6 +185,7 @@ final class BattlegroundQueue
         uint[2] invited;        /// invited and inside, by team
         BattlegroundStatus status;
         MonoTime made;
+        ulong mapEpoch;         /// the map grant which reported the live copy
     }
 
     private
@@ -257,6 +258,12 @@ final class BattlegroundQueue
         long deadline;
     }
 
+    private static struct SavedMapEpoch
+    {
+        uint instance;
+        ulong epoch;
+    }
+
     /// Capture the queue for a handoff. Times are offsets in 100 ns units from this node's clock.
     private ubyte[] saveState() const
     {
@@ -297,6 +304,11 @@ final class BattlegroundQueue
         state.testing = testing;
         ubyte[] bytes;
         encode(bytes, state);
+        SavedMapEpoch[] epochs;
+        foreach (ref copy; running)
+            if (copy.mapEpoch)
+                epochs ~= SavedMapEpoch(copy.instance, copy.mapEpoch);
+        encode(bytes, epochs);
         return bytes;
     }
 
@@ -343,6 +355,14 @@ final class BattlegroundQueue
         foreach (ref copy; state.copies)
             running[copy.instance] = Running(copy.instance, copy.type, copy.bracket, copy.clientId, copy.invited,
                 copy.status, now + copy.made.hnsecs);
+        if (bytes.length) // queues saved before map-owner reconciliation have no grant stamps
+        {
+            SavedMapEpoch[] epochs;
+            decode(bytes, epochs);
+            foreach (ref stamp; epochs)
+                if (auto copy = stamp.instance in running)
+                    copy.mapEpoch = stamp.epoch;
+        }
         foreach (ref lost; state.lost)
             lostNodes[lost.key] = now + lost.deadline.hnsecs;
         waitTimes = state.waitTimes_;
@@ -476,6 +496,7 @@ final class BattlegroundQueue
         uint instance;
         ubyte team;
         BattlegroundType type;
+        bool requiresLiveCopy;
     }
 
     /**
@@ -498,7 +519,10 @@ final class BattlegroundQueue
             return Entry.init;
         }
         if (ticket.stage == Stage.inside && ticket.instance in running)
-            return Entry(true, ticket.instance, ticket.team, type);
+        {
+            const copy = running[ticket.instance];
+            return Entry(true, ticket.instance, ticket.team, type, copy.mapEpoch || copy.status >= BattlegroundStatus.inProgress);
+        }
         if (ticket.stage != Stage.invited)
             return Entry.init;
         auto copy = ticket.instance in running;
@@ -513,7 +537,7 @@ final class BattlegroundQueue
         *ticket = Ticket(type, Stage.inside, copy.instance, null, team);
         send(guid, battlefieldStatus(slot, type, copy.clientId, BattlegroundStatus.inProgress, 0,
             sinceMs(copy.made)));
-        return Entry(true, copy.instance, team, type);
+        return Entry(true, copy.instance, team, type, copy.mapEpoch || copy.status >= BattlegroundStatus.inProgress);
     }
 
     /// The client asks for its queues: every slot's state, sent again.
@@ -521,13 +545,15 @@ final class BattlegroundQueue
     {
         nodes[guid] = node;
         auto mine = guid in tickets;
-        if (mine is null)
-            return;
         const now = clock();
-        foreach (i, ref t; *mine)
+        foreach (uint i; 0 .. queueSlots)
         {
+            const t = mine is null ? Ticket.init : (*mine)[i];
             if (t.type == BattlegroundType.none)
+            {
+                send(guid, battlefieldStatus(i, BattlegroundType.none, 0, BattlegroundStatus.none));
                 continue;
+            }
             final switch (t.stage)
             {
             case Stage.queued:
@@ -613,7 +639,7 @@ final class BattlegroundQueue
     }
 
     /// From the copy's node: copy `instance` started, ended (`waitLeave`) or closed (`none`).
-    void changed(uint instance, BattlegroundStatus status)
+    void changed(uint instance, BattlegroundStatus status, ulong mapEpoch = 0)
     {
         auto copy = instance in running;
         if (copy is null)
@@ -635,6 +661,35 @@ final class BattlegroundQueue
             return;
         }
         copy.status = status;
+        copy.mapEpoch = mapEpoch;
+    }
+
+    /// Reconcile the queue with the copy IDs the current map owner actually restored.
+    private bool reconcileMap(BattlegroundType type, ulong epoch, const(BattlegroundChanged)[] live)
+    {
+        import dmangos.log : info;
+
+        bool changed_;
+        foreach (ref match; live)
+            if (auto copy = match.instance in running)
+                if (copy.type == type && copy.mapEpoch < epoch
+                    && match.status >= BattlegroundStatus.waitJoin && match.status <= BattlegroundStatus.waitLeave)
+                {
+                    changed(match.instance, cast(BattlegroundStatus) match.status, epoch);
+                    changed_ = true;
+                }
+        foreach (instance; running.keys)
+        {
+            auto copy = &running[instance];
+            if (copy.type == type && copy.mapEpoch < epoch
+                && (copy.mapEpoch || copy.status >= BattlegroundStatus.inProgress))
+            {
+                info!"battleground: copy %s was interrupted by loss of its map host"(instance);
+                changed(instance, BattlegroundStatus.none);
+                changed_ = true;
+            }
+        }
+        return changed_;
     }
 
     /// A replacement combined host has no live copy of a match that had already started.
@@ -990,6 +1045,7 @@ struct BattlegroundEntry
     uint instance;
     ubyte team;
     ubyte type;
+    bool requiresLiveCopy;
 }
 
 /// A player's request about all its slots (`status`, `logout`).
@@ -1022,6 +1078,20 @@ struct BattlegroundChanged
 {
     uint instance;
     ubyte status;
+    ulong mapEpoch;
+}
+
+/// The copies recovered by the new holder of a battleground map's fencing token.
+struct BattlegroundMapRecovered
+{
+    uint map;
+    ulong epoch;
+    BattlegroundChanged[] live;
+}
+
+struct BattlegroundMapRecoveryReply
+{
+    bool received;
 }
 
 /// A copy, asked about.
@@ -1043,12 +1113,14 @@ struct BattlegroundQueueHost
     import dmangos.world.context : WorldContext;
 
     BattlegroundQueue queue;
+    private WorldContext context;
 
     bool clockOwner = true;
 
     this(BattlegroundQueue queue, const(ubyte)[] state, bool clockOwner = true, WorldContext context = null)
     {
         this.queue = queue;
+        this.context = context;
         this.clockOwner = clockOwner;
         if (!clockOwner)
             return;
@@ -1104,7 +1176,7 @@ struct BattlegroundQueueHost
     {
         const e = queue.port(r.guid, r.node, cast(BattlegroundType) r.type, r.enter);
         queue.durable.save(true, &queue.saveState);
-        return BattlegroundEntry(e.enter, e.instance, e.team, e.type);
+        return BattlegroundEntry(e.enter, e.instance, e.team, e.type, e.requiresLiveCopy);
     }
 
     ///
@@ -1136,8 +1208,25 @@ struct BattlegroundQueueHost
     ///
     @Call void changed(const ref BattlegroundChanged r)
     {
-        queue.changed(r.instance, cast(BattlegroundStatus) r.status);
+        auto copy = r.instance in queue.running;
+        if (copy is null || r.status > BattlegroundStatus.waitLeave)
+            return;
+        if (context !is null && context.battlegroundMapEpoch !is null && !context.config.battlegroup.length)
+            if (!r.mapEpoch || context.battlegroundMapEpoch(battlegroundMaps[copy.type]) != r.mapEpoch)
+                return;
+        queue.changed(r.instance, cast(BattlegroundStatus) r.status, r.mapEpoch);
         queue.durable.save(true, &queue.saveState);
+    }
+
+    @Call BattlegroundMapRecoveryReply mapRecovered(const ref BattlegroundMapRecovered r)
+    {
+        const type = battlegroundOfMap(r.map);
+        if (!type || context is null || context.battlegroundMapEpoch is null || context.config.battlegroup.length
+            || !r.epoch || context.battlegroundMapEpoch(r.map) != r.epoch || !context.canWrite())
+            return BattlegroundMapRecoveryReply(false);
+        if (queue.reconcileMap(type, r.epoch, r.live))
+            queue.durable.save(true, &queue.saveState);
+        return BattlegroundMapRecoveryReply(true);
     }
 
     ///
@@ -1339,7 +1428,8 @@ unittest
     moved.tick();
     assert(sent.length == 0, "already-sent reminders stay sent");
     moved.status(2, 2);
-    auto invite = ByteReader(sent[$ - 1].body_);
+    assert(sent.length == queueSlots);
+    auto invite = ByteReader(sent[1].body_);
     assert(invite.read!uint == 1, "the invitation stays in the same client slot");
     invite.skip(13);
     assert(invite.read!uint == 19_000, "the client sees the invitation time remaining");
@@ -1426,8 +1516,10 @@ unittest
     auto second = BattlegroundQueueHost(recovered, null, true, replacement);
     const retried = second.port(port);
     assert(retried == accepted && recovered.copies[accepted.instance].invited == [2, 2]);
+    sent = null;
     recovered.status(4, 4);
-    auto invite = ByteReader(sent[$ - 1].body_);
+    assert(sent.length == queueSlots);
+    auto invite = ByteReader(sent[0].body_);
     invite.skip(17);
     const remaining = invite.read!uint;
     assert(remaining >= 59_000 && remaining <= 61_000, "outage time counts against the invitation");
@@ -1435,6 +1527,56 @@ unittest
     second.tick(5.seconds);
     assert(!recovered.ticketsOf(1).length && recovered.ticketsOf(2)[0].instance == accepted.instance);
     assert(recovered.copies[accepted.instance].invited == [1, 2]);
+}
+
+/// A map grant closes lost battles and preserves restored copies and unused invitations.
+unittest
+{
+    import dmangos.world.testclient : newCreationContext, newDatabase;
+
+    auto now = MonoTime.currTime;
+    Sent[] sent;
+    auto world = newCreationContext(newDatabase());
+    ulong epoch = 10;
+    world.battlegroundMapEpoch = (uint map) => map == battlegroundMaps[BattlegroundType.warsongGulch] ? epoch : 0UL;
+    auto original = testQueue(now, sent);
+    auto host = BattlegroundQueueHost(original, null, true, world);
+    enum type = BattlegroundType.warsongGulch;
+    uint make(uint player, ubyte level)
+    {
+        original.join(player, 1, 0, level, type, 0);
+        original.forceStart();
+        return original.ticketsOf(player)[0].instance;
+    }
+    const lost = make(1, 20), drained = make(2, 40), unused = make(3, 60);
+    foreach (ref status; [BattlegroundChanged(lost, BattlegroundStatus.waitJoin, epoch),
+        BattlegroundChanged(drained, BattlegroundStatus.inProgress, epoch)])
+        host.changed(status);
+    assert(original.port(1, 1, type, true).requiresLiveCopy);
+
+    ++epoch;
+    auto recovered = testQueue(now, sent);
+    auto successor = BattlegroundQueueHost(recovered, original.saveState(), true, world);
+    const map = battlegroundMaps[type];
+    const staleReport = BattlegroundMapRecovered(map, epoch - 1);
+    assert(!successor.mapRecovered(staleReport).received);
+    auto newest = BattlegroundChanged(unused, BattlegroundStatus.inProgress, epoch - 1);
+    host.changed(newest);
+    assert(original.copies[unused].status == BattlegroundStatus.waitJoin);
+    const report = BattlegroundMapRecovered(map, epoch, [BattlegroundChanged(drained, BattlegroundStatus.inProgress)]);
+    assert(successor.mapRecovered(report).received);
+    assert(lost !in recovered.copies && !recovered.ticketsOf(1).length);
+    assert(recovered.copies[drained].mapEpoch == epoch);
+    assert(recovered.ticketsOf(2)[0].instance == drained);
+    assert(recovered.port(3, 1, type, true) == BattlegroundQueue.Entry(true, unused, 0, type, false));
+    newest.mapEpoch = epoch;
+    successor.changed(newest);
+
+    auto movedAgain = testQueue(now, sent);
+    auto finalHost = BattlegroundQueueHost(movedAgain, recovered.saveState(), true, world);
+    assert(finalHost.mapRecovered(report).received);
+    assert(movedAgain.copies[unused].status == BattlegroundStatus.inProgress,
+        "a retried report from the same grant leaves new live copies alone after a queue move");
 }
 
 // The battlemaster's list: the copies of the player's bracket, by the numbers players see.

@@ -3727,6 +3727,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return null;
     }
 
+    /// The fencing token of a battleground map's current grant, or zero during revocation.
+    ulong delegate(uint map) battlegroundMapEpoch;
+
     /// A battleground copy closed: its map goes (its players have left it).
     void closeBattlegroundMap(uint instance)
     {
@@ -5054,6 +5057,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 dungeonGained(r.map);
                 if (auto copies = r.id in arriving)
                     dungeonCopiesIn(r.map, *copies);
+                if (battlegroundOfMap(r.map) && battlegroundMapEpoch !is null && !config.battlegroup.length)
+                    battlegrounds.recoverMap(r.map, r.epoch);
             }
         foreach (ref r; lost)
             if (physicalWorldRegion(r))
@@ -6371,28 +6376,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     Creature summonCreature(CombatWorld world, uint entry, Position at, TempSpawnType type, uint durationMs,
         ulong summoner)
     {
-        import std.math : cos, sin, PI;
-        import std.random : uniform01;
-
         auto map = cast(Map) world;
-        if (map is null || entry !in data.creatureTemplates)
+        if (map is null || entry !in data.creatureTemplates || !resolveCreatureSummonPosition(map, summoner, at))
             return null;
-        if (at.x == 0 && at.y == 0 && at.z == 0)
-        {
-            // Near the summoner: a couple of yards from it, on the ground.
-            Position from;
-            if (auto who = map.find(summoner))
-                from = who.character.position;
-            else if (auto o = map.findObject(summoner))
-                from = o.position;
-            else
-                return null;
-            const angle = uniform01(spawnRandom) * 2 * PI;
-            at = Position(from.x + 2 * cos(angle), from.y + 2 * sin(angle), from.z, from.orientation);
-            const ground = map.groundHeight(at.x, at.y, from.z + 2, false);
-            if (ground > -100_000)
-                at.z = ground;
-        }
         const counter = nextTemporaryCounter();
         CreatureSpawn spawn = {guid: counter, entry: entry, map: map.id, x: at.x, y: at.y, z: at.z,
             orientation: at.orientation};
@@ -6411,6 +6397,29 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 script.raise(CreatureLoaded(EntityRef(creature.guid)));
             }
         return creature;
+    }
+
+    private bool resolveCreatureSummonPosition(Map map, ulong summoner, ref Position at)
+    {
+        import std.math : cos, sin, PI;
+        import std.random : uniform01;
+
+        if (at.x != 0 || at.y != 0 || at.z != 0)
+            return true;
+        // A zero destination means a couple of yards from the summoner, on the ground.
+        Position from;
+        if (auto who = map.find(summoner))
+            from = who.character.position;
+        else if (auto o = map.findObject(summoner))
+            from = o.position;
+        else
+            return false;
+        const angle = uniform01(spawnRandom) * 2 * PI;
+        at = Position(from.x + 2 * cos(angle), from.y + 2 * sin(angle), from.z, from.orientation);
+        const ground = map.groundHeight(at.x, at.y, from.z + 2, false);
+        if (ground > -100_000)
+            at.z = ground;
+        return true;
     }
 
     /**

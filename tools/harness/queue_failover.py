@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
-"""Kill a queue host with an open invite and accept it from the original gateway session."""
+"""Check that queue host loss preserves an invite and battleground host loss closes its match."""
 
+import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 
 from cluster_fixture import AUTH, REPO, available_ports, run_test, wait_for
 
 
-def run(fixture):
+def run(fixture, active_match=False):
     login = fixture.fresh_schema("login", "classicrealmd.sql")
     chars = fixture.fresh_schema("chars", "classiccharacters.sql")
-    base = dict(fixture.base, bind_address="127.0.0.1", realm_id=1, metrics_interval_seconds=1,
+    base = dict(fixture.base, bind_address="127.0.0.1", realm_id=1, metrics_interval_seconds=1, idle_timeout=240,
                 login_database=login, character_database=chars)
     realm = fixture.query("SELECT name FROM realmlist WHERE id=1", login)
     ports = available_ports(9)
@@ -41,7 +43,7 @@ def run(fixture):
     wait_for("auth listening", lambda: "listening on" in fixture.log("auth"), 10)
 
     def client(label, *actions):
-        env = dict(os.environ, REALM=realm, WORLD=f"127.0.0.1:{ports[3]}")
+        env = dict(os.environ, REALM=realm, WORLD=f"127.0.0.1:{ports[3]}", DMANGOS_TEST_WAITFILE_SECONDS="40")
         return fixture.start(label, [sys.executable, "-u", REPO / "tools/testclient.py", str(ports[8]),
                                      account, password, *actions], env=env)
 
@@ -55,12 +57,37 @@ def run(fixture):
 
     join = fixture.directory / "join"
     accept = fixture.directory / "accept"
+    actions = ("listen:160", "bgstatus", "logout") if active_match else (
+        "listen:4", "bgleave:489", "listen:1", "logout")
     battle = client("battle", "login:Keeper", f"waitfile:{join}", f"bgjoin:{battlemaster}:489",
                     "cmd:.battleground forcestart", "listen:3", f"waitfile:{accept}", "bgstatus", "bgport:489:1",
-                    "listen:4", "bgleave:489", "listen:1", "logout")
+                    *actions)
     wait_for("battlemaster", lambda: f"[creature] {battlemaster} guid" in fixture.log("battle"), 12)
     join.touch()
     wait_for("original invite", lambda: " invited [" in fixture.log("battle"), 10)
+    if active_match:
+        accept.touch()
+
+        def match_started():
+            for node in (1, 2, 3):
+                started = re.search(r"battleground: warsongGulch \(copy (\d+)\) begins", fixture.log(f"node{node}"))
+                if started:
+                    return node, int(started[1])
+
+        host, instance = wait_for("Warsong Gulch to begin", match_started, 140)
+        nodes[host].kill()
+        nodes[host].wait(timeout=10)
+        marker = f"battleground: copy {instance} was interrupted by loss of its map host"
+        wait_for("the queue to close the interrupted battle",
+                 lambda: any(marker in fixture.log(f"node{node}") for node in (1, 2, 3) if node != host), 30)
+        if battle.wait(timeout=60):
+            raise RuntimeError(fixture.log("battle")[-3500:])
+        log = fixture.log("battle")
+        entered = log.split("[new world] map 489 ", 1)
+        if len(entered) != 2 or "[new world] map 0 " not in entered[1] or "[battlefield status] slot 0: none" not in entered[1]:
+            raise RuntimeError("the gateway client did not return from the interrupted match\n" + log[-3500:])
+        print(f"PASS: map host {host} failed, the queue closed copy {instance}, and the original client returned")
+        return
     rev, host = map(int, fixture.query(checkpoint, chars).split())
     assert host in (1, 2, 3)
     nodes[host].kill()
@@ -69,7 +96,7 @@ def run(fixture):
     def progressed():
         updated, node = map(int, fixture.query(checkpoint, chars).split())
         return node if node != host and updated > rev else None
-    successor = wait_for("new queue host checkpoint", progressed, 16)
+    successor = wait_for("new queue host checkpoint", progressed, 32)
     accept.touch()
     if battle.wait(timeout=40):
         raise RuntimeError(fixture.log("battle")[-3500:])
@@ -80,4 +107,8 @@ def run(fixture):
 
 
 if __name__ == "__main__":
-    run_test("queue-takeover", run)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--active-match", action="store_true", help="kill the Warsong Gulch map host after the battle starts")
+    args = parser.parse_args()
+    name = "match-takeover" if args.active_match else "queue-takeover"
+    run_test(name, lambda fixture: run(fixture, args.active_match))

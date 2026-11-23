@@ -1103,7 +1103,7 @@ private:
     void setStatus(BattlegroundStatus to)
     {
         status = to;
-        context.services.call!(BattlegroundQueueHost.changed)(BattlegroundChanged(instance, to));
+        context.battlegrounds.queueChanged(this, to);
     }
 
     /// The objects of event pair (`event1`, `event2`) loaded in the copy's map.
@@ -1285,6 +1285,7 @@ final class Battlegrounds
     {
         WorldContext context;
         Battleground[uint] copies;
+        MonoTime[uint] mapRecoveryDue;
     }
 
     ///
@@ -1313,7 +1314,10 @@ final class Battlegrounds
         if (auto known = instance in copies)
             return *known;
         info!"battleground: copy %s of %s made"(instance, type);
-        return copies[instance] = new Battleground(context, instance, type, rulesFor(type));
+        auto copy = copies[instance] = new Battleground(context, instance, type, rulesFor(type));
+        if (context.battlegroundMapEpoch !is null && !context.config.battlegroup.length)
+            queueChanged(copy, BattlegroundStatus.waitJoin);
+        return copy;
     }
 
     /// A region move preserves the live copy without announcing a new match to the queue.
@@ -1412,8 +1416,60 @@ final class Battlegrounds
     /// Each copy's tick.
     void tick(Duration elapsed)
     {
+        reportRecoveredMaps();
         foreach (copy; copies.values)
             copy.tick(elapsed);
+    }
+
+    package void recoverMap(uint map, ulong epoch)
+    {
+        if (epoch)
+            mapRecoveryDue[map] = MonoTime.init;
+    }
+
+    private void reportRecoveredMaps()
+    {
+        const now = context.clock();
+        foreach (map; mapRecoveryDue.keys)
+        {
+            if (!context.hostsDungeon(map))
+            {
+                mapRecoveryDue.remove(map);
+                continue;
+            }
+            if (now < mapRecoveryDue[map])
+                continue;
+            const epoch = context.battlegroundMapEpoch(map);
+            if (!epoch)
+                continue;
+            mapRecoveryDue[map] = now + 5.seconds;
+            sendRecoveredMap(map, epoch);
+        }
+    }
+
+    private void sendRecoveredMap(uint map, ulong epoch)
+    {
+        BattlegroundChanged[] live;
+        foreach (copy; copies)
+            if (copy.mapId == map)
+                live ~= BattlegroundChanged(copy.instance, copy.status, epoch);
+        context.services.call!(BattlegroundQueueHost.mapRecovered)(BattlegroundMapRecovered(map, epoch, live),
+            (BattlegroundMapRecoveryReply reply) {
+                if (reply.received && context.battlegroundMapEpoch(map) == epoch)
+                    mapRecoveryDue.remove(map);
+            });
+    }
+
+    private void queueChanged(Battleground copy, BattlegroundStatus status)
+    {
+        ulong epoch;
+        if (context.battlegroundMapEpoch !is null && !context.config.battlegroup.length)
+        {
+            if (!context.hostsDungeon(copy.mapId))
+                return;
+            epoch = context.battlegroundMapEpoch(copy.mapId);
+        }
+        context.services.call!(BattlegroundQueueHost.changed)(BattlegroundChanged(copy.instance, status, epoch));
     }
 
     /// The copy closed: the queue told, its map gone.
@@ -1424,7 +1480,7 @@ final class Battlegrounds
         if (copies.get(copy.instance, null) !is copy)
             return;
         copies.remove(copy.instance);
-        context.services.call!(BattlegroundQueueHost.changed)(BattlegroundChanged(copy.instance, BattlegroundStatus.none));
+        queueChanged(copy, BattlegroundStatus.none);
         context.closeBattlegroundMap(copy.instance);
         info!"battleground: copy %s of %s closed"(copy.instance, copy.type);
     }
@@ -1615,7 +1671,17 @@ mixin template BattlegroundHandlers()
             bringBack(1.0f);
         info!"%s: '%s' goes into %s (copy %s)"(remoteAddress, player.data.name, cast(BattlegroundType) e.type,
             e.instance);
-        teleportTo(start.map, Position(start.x, start.y, start.z, start.orientation), null, e.instance);
+        teleportTo(start.map, Position(start.x, start.y, start.z, start.orientation), null, e.instance, false,
+            e.requiresLiveCopy);
+    }
+
+    package void refusedBattlegroundEntry(uint instance)
+    {
+        if (battleground_.instance != instance)
+            return;
+        context.services.call!(BattlegroundQueueHost.left)(BattlegroundLeft(instance, player.guid, battleground_.team));
+        battleground_ = BattlegroundData.init;
+        saveBattleground();
     }
 
     /// The player arrived on a battleground map (at the world port's end): the copy adds it.
@@ -1726,6 +1792,7 @@ mixin template BattlegroundHandlers()
             context.services.call!(BattlegroundQueueHost.left)(BattlegroundLeft(back.instance, player.guid, back.team));
         battleground_ = BattlegroundData.init;
         saveBattleground();
+        context.services.call!(BattlegroundQueueHost.status)(BattlegroundPlayer(player.guid, context.nodeId));
         returnFromBattleground(back);
     }
 

@@ -680,6 +680,82 @@ unittest
     assert(gate.goState == goStateActive);
 }
 
+/// Highlord Demitrian's actual quest step summons Thunderaan at his distant spawn point.
+unittest
+{
+    import std.algorithm.comparison : max;
+    import std.algorithm.searching : find;
+    import dmangos.cluster.protocol : ScriptCreatureStep;
+    import dmangos.cluster.regions : CellRect, Region, RegionState;
+    import dmangos.world.dbscripts : DbScriptType, ScriptCommand;
+    import dmangos.world.grid : cellCoordinate, cellKeyAt;
+    import dmangos.world.objects : HighGuid, makeGuid;
+
+    if (!haveRealData())
+        return;
+
+    enum uint quest = 7786, demitrian = 14347, spawn = 42744, thunderaan = 14435, kalimdor = 1;
+    auto source = RealWorld.make(), owner = RealWorld.make(), next = RealWorld.make();
+    source.context.nodeId = 1;
+    owner.context.nodeId = 2;
+    next.context.nodeId = 3;
+    const frozen = MonoTime.currTime;
+    source.context.clock = owner.context.clock = next.context.clock = () => frozen;
+    const rows = source.context.data.creatureSpawns.find!(row => row.guid == spawn);
+    assert(rows.length && rows[0].entry == demitrian && rows[0].map == kalimdor);
+    const step = source.context.data.dbScripts.steps(DbScriptType.questEnd, quest)[0];
+    assert(step.command == ScriptCommand.tempSpawnCreature && step.datalong == thunderaan && step.datalong2 == 180_000);
+    const at = Position(step.x, step.y, step.z, step.o);
+    const home = cellKeyAt(rows[0].x, rows[0].y), cell = cellKeyAt(at.x, at.y);
+    assert(home != cell);
+    ushort destination = 2;
+    source.context.regionOwnerAround = owner.context.regionOwnerAround =
+        (uint, Position pos, float) => cellKeyAt(pos.x, pos.y) == cell ? destination : ushort(1);
+    source.context.ownsCell = (uint, ulong key) => key != cell;
+    owner.context.ownsCell = (uint, ulong key) => destination == 2 && key == cell;
+    next.context.ownsCell = (uint, ulong key) => destination == 3 && key == cell;
+    auto from = source.context.map(kalimdor);
+    from.loadCell(home);
+    const speaker = makeGuid(HighGuid.unit, demitrian, spawn);
+    assert(from.creatureAt(speaker) !is null);
+    ScriptCreatureStep sent;
+    source.context.sendScriptCreatureStep = (ushort peer, const ref ScriptCreatureStep request) {
+        assert(peer == 2 && request.source == speaker && !sent.sequence);
+        sent = request;
+        owner.context.scriptCreatureStepArrived(1, request);
+        owner.context.scriptCreatureStepArrived(1, request);
+        return true;
+    };
+
+    assert(source.context.startScript(DbScriptType.questEnd, quest, from, speaker, 0));
+    source.context.updateScripts(0);
+    auto to = owner.context.map(kalimdor);
+    assert(sent.sequence && !from.creaturesNear(at, 1).length);
+    auto summons = to.creaturesNear(at, 1);
+    assert(summons.length == 1);
+    auto boss = summons[0];
+    assert(boss.spawn.entry == thunderaan && boss.summon.summoner == speaker && boss.summon.timer == 180_000);
+    boss.tick(to, 50_000);
+    assert(boss.summon.timer == 130_000);
+    const guid = boss.guid;
+
+    const x = cellCoordinate(at.x), y = cellCoordinate(at.y);
+    auto region = Region(42, kalimdor, CellRect(x, y, x + 1, y + 1), 2, 5, RegionState.revoking, 3);
+    ubyte[][uint] leaving, unused;
+    owner.context.regionsChanged(null, [region], null, leaving);
+    destination = 3;
+    region.owner = destination;
+    region.state = RegionState.granted;
+    region.next = 0;
+    next.context.regionsChanged([region], null, [region.id: cast(const(ubyte)[]) leaving[region.id]], unused);
+    auto current = next.context.map(kalimdor);
+    auto resumed = current.creatureAt(guid);
+    assert(to.creatureAt(guid) is null && resumed !is null);
+    const transit = max(0, cast(int)(next.context.transportNow() - owner.context.transportNow()));
+    assert(resumed.summon.timer == 130_000 - transit);
+    assert(current.creaturesNear(at, 1).length == 1, "the same temporary boss keeps its remaining lifetime");
+}
+
 /// The Binding sends each acolyte the real ritual steps that affect it.
 unittest
 {

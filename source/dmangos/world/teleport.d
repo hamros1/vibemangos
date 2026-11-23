@@ -100,7 +100,7 @@ private:
      * first (`migrateTo`), which teleports it into its copy.
      */
     package bool teleportTo(uint mapId, Position destination, const(AreaTriggerTeleport)* trigger = null,
-        uint toInstance = uint.max, bool checked = false)
+        uint toInstance = uint.max, bool checked = false, bool requiresLiveBattleground = false)
     {
         const client = context.client;
         if (!client.isValidMapCoord(mapId, destination.x, destination.y, destination.z, destination.orientation))
@@ -157,6 +157,7 @@ private:
             action.teleportMap = mapId;
             action.teleportTo = destination;
             action.teleportInstance = toInstance;
+            action.requiresLiveBattleground = requiresLiveBattleground;
             if (context.askDungeonEntry is null)
             {
                 migrateTo(host, action);
@@ -180,6 +181,15 @@ private:
                     migrateTo(host, action);
                 });
             return true;
+        }
+
+        // A backfill invite to a battle already underway can never create a fresh copy after a crash.
+        if (requiresLiveBattleground && context.battlegrounds.find(toInstance) is null)
+        {
+            refusedBattlegroundEntry(toInstance);
+            enum ubyte transferAbortNotFound = 0x02;
+            deliver(Opcode.SMSG_TRANSFER_ABORTED, [transferAbortNotFound]);
+            return false;
         }
 
         // Another node's ground on another map (a hearthstone, a graveyard, a GM's port): the player

@@ -28,6 +28,7 @@ struct ArrivalAction
     uint teleportMap = uint.max; /// a far teleport into a dungeon this node hosts (uint.max: none) ...
     Position teleportTo;         /// ... to here ...
     uint teleportInstance = uint.max; /// ... into this copy (uint.max: the player's own), its checks passed
+    bool requiresLiveBattleground; /// an invitation sent after the match started cannot create its copy
     ulong tradeTarget; /// a player to ask to trade
     ulong useItem; /// the character's exact inventory item used at another node's target
     ulong namedCreature; /// the creature implicitly selected before the handoff
@@ -199,7 +200,8 @@ private:
         {
             // Into a dungeon this node hosts: its copy is chosen here. Turned away (a lockout, a full
             // copy), the player goes back to the node of the ground it stands on at the next look.
-            if (!teleportTo(action.teleportMap, action.teleportTo, null, action.teleportInstance, true))
+            if (!teleportTo(action.teleportMap, action.teleportTo, null, action.teleportInstance, true,
+                action.requiresLiveBattleground))
                 migratedAt = MonoTime.init;
             return;
         }
@@ -346,6 +348,7 @@ private:
         w.put(action.teleportTo.z);
         w.put(action.teleportTo.orientation);
         w.put(action.teleportInstance);
+        w.put(action.requiresLiveBattleground);
         w.put(action.tradeTarget);
         w.put(action.useItem);
         w.put(action.namedCreature);
@@ -473,6 +476,7 @@ private:
         action.teleportMap = r.read!uint;
         action.teleportTo = Position(r.read!float, r.read!float, r.read!float, r.read!float);
         action.teleportInstance = r.read!uint;
+        action.requiresLiveBattleground = r.read!bool;
         action.tradeTarget = r.read!ulong;
         action.useItem = r.read!ulong;
         action.namedCreature = r.read!ulong;

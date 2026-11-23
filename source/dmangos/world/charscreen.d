@@ -356,13 +356,16 @@ mixin template CharacterLogin()
         loadItemDurations(player.data.logoutTime > 0 ? context.unixTime - player.data.logoutTime : 0);
         applyPassiveSpells();
         petsOnArrival(); // the saved current pet comes back
-        battlegroundOnLogin();
         resumeSavedFlight(); // logged out in flight: it flies on
         info!"%s: '%s' entered the world as '%s' (guid %s, map %s at %.1f %.1f %.1f)"(remoteAddress,
             account.username, character.name, guid, character.map, character.position.x, character.position.y,
             character.position.z);
         announceToFriends(true);
         guildLogin();
+        // An interrupted battleground can send the character straight to another node.
+        battlegroundOnLogin();
+        if (player is null)
+            return;
         // Another node's ground (a dungeon it hosts, say): there at once, not after the first look.
         if (const target = migrationTarget())
             migrateTo(target);

@@ -934,7 +934,7 @@ for action in actions:
     elif kind == "waitfile":
         from pathlib import Path
         path = Path(":".join(args))
-        deadline = time.monotonic() + 15
+        deadline = time.monotonic() + float(os.environ.get("DMANGOS_TEST_WAITFILE_SECONDS", "15"))
         while not path.exists():
             if time.monotonic() >= deadline:
                 raise RuntimeError(f"{path.name} did not appear")

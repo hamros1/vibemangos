@@ -367,20 +367,32 @@ mixin template DbScriptRunner()
         if (!peer || message.sequence <= lastCreatureStep.get(peer, 0) || !canWrite()
             || message.table > DbScriptType.max || cast(int) (transportNow() - message.sentAt) > maxTransitMs)
             return;
-        auto region = existingMap(message.map, 0);
-        if (region is null || instanceable(message.map))
+        if (client.maps.lookup(message.map) is null || instanceable(message.map))
             return;
         lastCreatureStep[peer] = message.sequence;
-        foreach (ref step; data.dbScripts.steps(cast(DbScriptType) message.table, message.script))
+        const type = cast(DbScriptType) message.table;
+        foreach (ref step; data.dbScripts.steps(type, message.script))
         {
-            if (!step.runsAtCreature || step.fingerprint != message.fingerprint)
+            if (step.fingerprint != message.fingerprint)
                 continue;
+            if (step.command == ScriptCommand.tempSpawnCreature)
+            {
+                const at = Position(message.x, message.y, message.z, message.orientation);
+                if (message.source && message.actor == message.source
+                    && ((step.x == 0 && step.y == 0 && step.z == 0) || at == Position(step.x, step.y, step.z, step.o)))
+                    placeScriptCreature(map(message.map), step, at, message.source, message.target, type, peer,
+                        message.forwarded);
+                return;
+            }
+            auto region = existingMap(message.map, 0);
+            if (!step.runsAtCreature || region is null)
+                return;
             auto source = scriptObject(region, message.source), target = scriptObject(region, message.target);
             const actor = scriptActor(step, source, target);
             if (actor.guid != message.actor || !actor.isCreature)
                 return;
             if (actor.creature !is null)
-                executeScriptCommand(step, region, source, target, true);
+                executeScriptCommand(type, step, region, source, target, true);
             else if (!message.forwarded && actor.mirror.owner && actor.mirror.owner != peer
                 && actor.mirror.owner != nodeId && sendScriptCreatureStep !is null)
             {
@@ -848,7 +860,7 @@ mixin template DbScriptRunner()
     {
         const actor = scriptActor(step, source, target);
         if (!step.runsAtCreature || !actor.isCreature || actor.mirror is null)
-            return executeScriptCommand(step, map, source, target);
+            return executeScriptCommand(type, step, map, source, target);
         if (map.instanceId || sendScriptCreatureStep is null || !canWrite() || actor.mirror.owner == nodeId)
             return false;
         if (step.conditionId)
@@ -1145,6 +1157,35 @@ mixin template DbScriptRunner()
         summonWildGameObject(map, entry, at, duration);
     }
 
+    private void placeScriptCreature(Map map, const ref DbScriptStep step, Position at, ulong source, ulong target,
+        DbScriptType type, ushort from = 0, bool forwarded = false)
+    {
+        import dmangos.world.creature : TempSpawnType;
+
+        if (!canWrite() || step.datalong !in data.creatureTemplates
+            || !client.isValidMapCoord(map.id, at.x, at.y, at.z, at.orientation))
+            return;
+        if (!map.instanceId && regionOwnerAround !is null)
+        {
+            const owner = regionOwnerAround(map.id, at, 0);
+            if (owner != nodeId)
+            {
+                if (owner && owner != from && !forwarded && sendScriptCreatureStep !is null)
+                {
+                    const message = ScriptCreatureStep(nextGameplaySequence(), source, source, target, map.id, step.id,
+                        step.fingerprint, transportNow(), cast(ubyte) type, from != 0, at.x, at.y, at.z, at.orientation);
+                    sendScriptCreatureStep(owner, message);
+                }
+                return;
+            }
+        }
+        const lifetime = step.datalong2 ? TempSpawnType.timedOutOfCombatOrDead : TempSpawnType.dead;
+        auto summoned = summonCreature(map, step.datalong, at, lifetime, step.datalong2, source);
+        if (summoned !is null && step.dataint[3] > 0)
+            if (const relay = cast(uint) step.dataint[3] in data.dbScripts.summonRelays)
+                startScript(DbScriptType.relay, *relay, map, summoned.guid, target);
+    }
+
     /// The game objects a script spawned whose time is up, gone again.
     package void scriptedGameObjectsDue()
     {
@@ -1162,8 +1203,8 @@ mixin template DbScriptRunner()
     }
 
     /// Carries out a step's command; true if the script should stop.
-    private bool executeScriptCommand(const ref DbScriptStep step, Map map, ScriptThing source, ScriptThing target,
-        bool conditionChecked = false)
+    private bool executeScriptCommand(DbScriptType type, const ref DbScriptStep step, Map map, ScriptThing source,
+        ScriptThing target, bool conditionChecked = false)
     {
         import dmangos.world.updatefields;
 
@@ -1258,16 +1299,9 @@ mixin template DbScriptRunner()
             break;
         case ScriptCommand.tempSpawnCreature:
         {
-            import dmangos.world.creature : TempSpawnType;
-
-            if (!source.exists)
-                break;
-            // Where the step says (all zeros: near the source), for its time out of combat, or until it dies.
-            auto summoned = summonCreature(map, step.datalong, Position(step.x, step.y, step.z, step.o),
-                step.datalong2 ? TempSpawnType.timedOutOfCombatOrDead : TempSpawnType.dead, step.datalong2, source.guid);
-            if (summoned !is null && step.dataint[3] > 0)
-                if (const relay = cast(uint) step.dataint[3] in data.dbScripts.summonRelays)
-                    startScript(DbScriptType.relay, *relay, map, summoned.guid, target.guid);
+            auto at = Position(step.x, step.y, step.z, step.o);
+            if (source.exists && resolveCreatureSummonPosition(map, source.guid, at))
+                placeScriptCreature(map, step, at, source.guid, target.guid, type);
             break;
         }
         case ScriptCommand.openDoor, ScriptCommand.closeDoor:

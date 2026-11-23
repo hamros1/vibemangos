@@ -341,6 +341,14 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
         }
         // The world simulates only what this node owns: maps ask, and are told of changes.
         context.ownsCell = (uint map, ulong cell) => cluster.regions.ownsCell(map, cell);
+        context.battlegroundMapEpoch = (uint map) {
+            import dmangos.cluster.regions : RegionState;
+
+            foreach (ref region; cluster.regions.latestTable)
+                if (region.map == map && region.state == RegionState.granted)
+                    return region.epoch;
+            return 0UL;
+        };
         cluster.onOwnership = &context.regionsChanged;
         cluster.onCreatureRelease = &context.releaseCreatureLoan;
         context.sendCreatureLoan = &cluster.creatureLoan;
