@@ -890,10 +890,11 @@ record of the expired aura can move with Ras when the two nodes' timers finish i
 Cross-node spell routing is effect-specific. Other script-selected channels, registered spell scripts, and
 database spell steps that need the caster or another actor still use their local paths. Ground ticks
 use observed targets around the spot and require a current caster replica at the target. At impact,
-the node simulating the caster routes a named-creature projectile using the target's current
-ownership. A player handoff preserves its deadline and lets the new node wait briefly to see the
-target. For a named-creature hit, the caster's node supplies a short-lived replica even
-when the target's node has no nearby players. Other routed projectiles depend on the launching node.
+the caster's node resolves the original target GUID locally or sends the hit to the current replica's
+owner. A projectile can wait up to two seconds for the target to appear during a handoff. A named-creature
+projectile also preserves its impact deadline when its player caster hands off. The caster's node supplies
+a short-lived caster replica for these hits even when the target's node has no nearby players. Other routed
+projectiles depend on the launching node.
 
 ## Testing
 

@@ -1031,10 +1031,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         MonoTime due;
         AreaDamage hit;
-        MonoTime retryUntil; // after handoff: wait briefly for the target's replica to arrive here
+        MonoTime retryUntil; // time allowed to resolve the target across a handoff
         ushort sentTo; // a completed channel can follow a replica to a different owner
     }
 
+    private enum replicaImpactGrace = 2.seconds;
     private ReplicaSpellImpact[] replicaSpellImpacts;
 
     /// Only a caster that completed its channel can authorize its terminal spell.
@@ -1051,7 +1052,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         else if (sendAreaDamage !is null)
         {
             const now = clock();
-            replicaSpellImpacts ~= ReplicaSpellImpact(now, hit, now + 2.seconds);
+            replicaSpellImpacts ~= ReplicaSpellImpact(now, hit, now + replicaImpactGrace);
         }
     }
 
@@ -1107,7 +1108,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 continue;
             const remaining = max(0, cast(int)(deadline - arrived));
             const due = now + remaining.msecs;
-            restored ~= ReplicaSpellImpact(due, hit, due + 2.seconds);
+            restored ~= ReplicaSpellImpact(due, hit, due + replicaImpactGrace);
         }
         replicaSpellImpacts ~= restored;
     }
@@ -1165,6 +1166,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     private void deliverReplicaSpells(MonoTime now)
     {
+        import dmangos.world.unit : UnitKind;
+
         if (!replicaSpellImpacts.length)
             return;
         auto pending = replicaSpellImpacts;
@@ -1180,7 +1183,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if (map_ is null || !map_.unit(impact.hit.caster) || !canWrite())
                 continue;
             const completion = impact.hit.channelUpdate && impact.hit.auraMs == AreaDamage.completedChannel;
-            if (completion && impact.retryUntil <= now)
+            if (impact.retryUntil != MonoTime.init && impact.retryUntil <= now)
                 continue;
             if (auto copy = cast(Replica) map_.findObject(impact.hit.target))
             {
@@ -1191,15 +1194,20 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     impact.sentTo = copy.owner;
                 }
             }
-            else if (impact.hit.namedCreature && map_.unit(impact.hit.target))
+            else
             {
-                applyAreaDamage(0, map_, impact.hit);
-                continue;
+                auto target = map_.unit(impact.hit.target);
+                if (target && (target.kind != UnitKind.player || !target.session.transferring))
+                {
+                    applyAreaDamage(0, map_, impact.hit);
+                    continue;
+                }
+                if (completion)
+                    impact.sentTo = 0;
             }
-            else if (completion)
-                impact.sentTo = 0;
-            if (impact.retryUntil > now)
-                replicaSpellImpacts ~= impact;
+            if (impact.retryUntil == MonoTime.init)
+                impact.retryUntil = now + replicaImpactGrace;
+            replicaSpellImpacts ~= impact;
         }
     }
 

@@ -324,6 +324,75 @@ unittest
     assert(impacts == 1 && !caster.ai.castingNow);
 }
 
+/// A missile already launched at a replica follows the player when it becomes local to the caster.
+unittest
+{
+    import dmangos.cluster.protocol : AreaDamage;
+    import dmangos.world.creature : TempSpawnType;
+    import dmangos.world.grid : cellKeyAt, cellSize;
+    import dmangos.world.replication : encodePlayerState;
+
+    if (!haveRealData())
+        return;
+
+    foreach (arrivalDelay; [0.msecs, 300.msecs, 2500.msecs])
+    {
+        auto source = RealWorld.make(), home = RealWorld.make();
+        source.context.database = home.db;
+        source.context.clock = () => source.now;
+        auto relay = new TestPlayerRelay(home.context, source.context);
+        const origin = Position(2 * cellSize - 2, 100, 40), at = Position(2 * cellSize + 2, 100, 40);
+        auto map = source.context.map(0);
+        auto caster = source.context.summonCreature(map, 1835, origin, TempSpawnType.manual, 0, 0);
+        enum uint guid = 116, channel = 15735, missile = 15736;
+        auto client = loggedIn(home.context, home.db, guid, "Remotevictim", at, AccountLevel.player, raceHuman, 0, 38);
+        auto player = client.session.character;
+        map.replicaCreated(home.context.nodeId, cellKeyAt(at.x, at.y), guid, encodePlayerState(player, 0));
+        caster.ai.setScript(null, source.context.data.eventAi);
+        caster.ai.bind(map);
+        source.context.sendAreaDamage = (ushort, const ref AreaDamage) {
+            assert(false, "the missile must resolve at the player's new authority");
+        };
+
+        const health = client.session.inWorld.unit.health;
+        assert(caster.ai.castSpell(source.context.data.spells.spell(channel), guid, 0));
+        caster.tick(map, 1000);
+        caster.ai.interruptedBySpell(3000);
+        if (arrivalDelay > 0.msecs)
+        {
+            map.replicaRemoved(home.context.nodeId, guid);
+            source.now += 300.msecs;
+            source.context.update(source.now); // at impact time neither the player nor its replica is here
+            source.now += arrivalDelay;
+        }
+        home.context.regionOwnerAround = (uint, Position, float) => source.context.nodeId;
+        client.session.update(1.seconds);
+        assert(!home.context.map(0).unit(guid) && map.unit(guid).health == health);
+        source.now += 300.msecs;
+        source.context.update(source.now);
+        const after = map.unit(guid).health;
+        const expired = arrivalDelay == 2500.msecs;
+        assert(expired ? after == health : after < health, "only a pending missile should hit the migrated player");
+        source.now += 3.seconds;
+        source.context.update(source.now);
+        assert(map.unit(guid).health == after);
+
+        uint impacts;
+        foreach (packet; client.read())
+            if (packet.opcode == Opcode.SMSG_SPELLNONMELEEDAMAGELOG)
+            {
+                auto r = ByteReader(packet.body_);
+                const target = r.readPackedGuid(), attacker = r.readPackedGuid();
+                if (r.read!uint == missile)
+                {
+                    assert(target == guid && attacker == caster.guid && r.read!uint == health - after);
+                    ++impacts;
+                }
+            }
+        assert(impacts == (expired ? 0 : 1));
+    }
+}
+
 /// The technician's unmodified EventAI row selects a wounded mechanical ally across a region boundary.
 unittest
 {
