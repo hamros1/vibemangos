@@ -26,7 +26,7 @@ import dmangos.world.clientdata : ClientData;
 import dmangos.world.map : Idler, Moving, PerViewer;
 import dmangos.world.replication : Replica, Replicable;
 import dmangos.vmap.math : Vector3;
-import dmangos.world.motion : followSpline, IdleMovement, MotionType, MotionWorld, MovementGenerator, WaypointStore;
+import dmangos.world.motion : followSpline, IdleMovement, MotionWorld, MovementGenerator, readMovement, saveMovement, WaypointStore;
 import dmangos.world.movement : baseMoveSpeed, MovementFlags, MovementInfo, MoveType, Position;
 import dmangos.bytes : ByteReader, ByteWriter;
 import dmangos.world.spline : MoveSpline;
@@ -1430,13 +1430,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         spline.writeExact(w);
         w.put(positionTimer);
         w.put(motionStarted);
-        const route = ai.waypointBeforeCombat();
-        const savedMovement = route is null ? generator : route;
-        w.put(cast(ubyte) savedMovement.type);
-        ByteWriter state;
-        savedMovement.save(state);
-        w.put(cast(ushort) state.length);
-        w.putBytes(state.data);
+        saveMovement(w, generator);
         w.put(cast(ushort) vendorStock.items.length);
         foreach (item, stock; vendorStock.items)
         {
@@ -1502,10 +1496,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         spline = MoveSpline.readExact(r);
         positionTimer = r.read!int;
         motionStarted = r.read!bool;
-        const type = r.read!ubyte;
-        auto state = ByteReader(r.readBytes(r.read!ushort));
-        import dmangos.world.motion : restoreMovement;
-        generator = restoreMovement(cast(MotionType) type, state, this, waypoints, generator);
+        generator = readMovement(r, this, waypoints, generator);
         vendorStock.items = null;
         foreach (_; 0 .. r.read!ushort)
         {
@@ -1518,7 +1509,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         ai.loadCastHandoff(r);
         lootRecipient = r.read!ulong;
         lootGroupRecipient = r.read!uint;
-        ai.loadCombat(r);
+        ai.loadCombat(r, waypoints);
         auras.loadState(r, values, spell);
         auraSpeedFactor = r.read!float;
         auraHeld = r.read!bool;

@@ -1042,8 +1042,9 @@ unittest
     db.saveInstanceRespawn(false, 79999, copy, 0); // a creature killed there
 
     // A creature of the copy, loaded and hurt on node 1.
+    import dmangos.script.api : Location;
     import dmangos.world.creature : CreatureSpawn;
-    import dmangos.world.motion : WaypointMovement, WaypointNode;
+    import dmangos.world.motion : PointMovement, WaypointMovement, WaypointNode;
     import dmangos.world.updatefields : UNIT_FIELD_HEALTH;
 
     CreatureSpawn defias = {guid: 79998, entry: creatureInnkeeper, map: mapDeadmines, x: -16, y: -383, z: 61};
@@ -1068,6 +1069,8 @@ unittest
     inCopy.addObject(opponent);
     hurt.ai.attackedBy(inCopy.unit(opponent.guid), inCopy);
     assert(hurt.ai.inCombat, "the route was suspended by combat");
+    hurt.ai.hostMoveNow(Location(-24, -384, 61), 82, true);
+    assert(cast(PointMovement) hurt.generator !is null && !hurt.spline.finalized);
 
     host = 2;
     ubyte[][uint] leaving;
@@ -1085,8 +1088,11 @@ unittest
     assert(there !is null, "the copy came along");
     auto same = cast(Creature) there.findObject(hurt.guid);
     assert(same !is null && same.instanceId == copy && same.values.get!UNIT_FIELD_HEALTH == 7, "as it was");
-    assert(same.ai.inCombat && cast(const WaypointMovement) same.ai.waypointBeforeCombat() !is null,
+    assert(same.ai.inCombat && cast(const WaypointMovement) same.ai.movementAfterCombat() !is null,
         "combat still holds the scripted route for when the creature goes home");
+    auto activeMove = cast(PointMovement) same.generator;
+    assert(activeMove !is null && activeMove.notifyScript && activeMove.arrivalPoint == 82);
+    assert(same.spline.path == hurt.spline.path && same.spline.timePassed == hurt.spline.timePassed);
     assert(b.instanceFor(7, mapDeadmines) == copy, "the bind, as saved");
     assert(b.deadInInstance(copy, 79999), "its dead stay dead");
     const another = b.instanceFor(8, mapDeadmines);

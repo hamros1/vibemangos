@@ -941,7 +941,8 @@ pending forced despawns keep their deadlines in a clean handoff. Outdoor databas
 select an observed creature on another node and send its exact command to the owner. This preserves
 the original actors for dialogue, emotes, movement, casts, state changes and relay scripts. For
 example, each acolyte runs its part of The Binding on its own node. A scripted point movement
-keeps the destination and its arrival relay when ownership changes mid-walk. A creature summoned
+keeps the destination and its arrival relay when ownership changes mid-walk. During combat or evade,
+the creature keeps its active movement and the route it will resume when it returns home. A creature summoned
 by a database script starts on the node that owns its destination. Highlord Demitrian can summon
 Thunderaan at his original spawn point across a region boundary. Ground ticks
 use observed targets around the spot and require a current caster replica at the target. At impact,

@@ -272,12 +272,20 @@ final class WanderMovement : MovementGenerator
 
     override void save(ref ByteWriter w) const
     {
+        w.put(centre.x);
+        w.put(centre.y);
+        w.put(centre.z);
+        w.put(radius);
+        w.put(randomRun);
         w.put(nextMoveTimer);
         w.put(nextMoveCount);
     }
 
     override void load(ref ByteReader r)
     {
+        centre = Vector3(r.read!float, r.read!float, r.read!float);
+        radius = r.read!float;
+        randomRun = r.read!bool;
         nextMoveTimer = r.read!int;
         nextMoveCount = r.read!uint;
     }
@@ -679,10 +687,7 @@ final class PointMovement : MovementGenerator
         w.put(relayTarget);
         w.put(after !is null);
         if (after !is null)
-        {
-            w.put(cast(ubyte) after.type);
-            after.save(w);
-        }
+            saveMovement(w, after);
     }
 
     static PointMovement restore(ref ByteReader r, const Creature creature, const WaypointStore waypoints,
@@ -696,10 +701,7 @@ final class PointMovement : MovementGenerator
         move.relay = r.read!uint;
         move.relayTarget = r.read!ulong;
         if (r.read!bool)
-        {
-            const kind = cast(MotionType) r.read!ubyte;
-            move.after = restoreMovement(kind, r, creature, waypoints, fallback);
-        }
+            move.after = readMovement(r, creature, waypoints, fallback);
         return move;
     }
 
@@ -766,6 +768,22 @@ final class DistractMovement : MovementGenerator
     {
         return left;
     }
+
+    override void save(ref ByteWriter w) const
+    {
+        w.put(left);
+        w.put(after !is null);
+        if (after !is null)
+            saveMovement(w, after);
+    }
+
+    static DistractMovement restore(ref ByteReader r, const Creature creature, const WaypointStore waypoints,
+        MovementGenerator fallback)
+    {
+        const left = r.read!int;
+        auto after = r.read!bool ? readMovement(r, creature, waypoints, fallback) : null;
+        return new DistractMovement(left, after);
+    }
 }
 
 /**
@@ -826,6 +844,11 @@ final class FollowMovement : MovementGenerator
         w.put(leader);
         w.put(distance);
         w.put(angle);
+        w.put(followedTo.x);
+        w.put(followedTo.y);
+        w.put(followedTo.z);
+        w.put(followedTo.orientation);
+        w.put(following);
     }
 
     override void load(ref ByteReader r)
@@ -833,6 +856,8 @@ final class FollowMovement : MovementGenerator
         leader = r.read!ulong;
         distance = r.read!float;
         angle = r.read!float;
+        followedTo = Position(r.read!float, r.read!float, r.read!float, r.read!float);
+        following = r.read!bool;
     }
 }
 
@@ -859,12 +884,25 @@ MovementGenerator selectMovement(const Creature creature, const WaypointStore wa
     }
 }
 
+package void saveMovement(ref ByteWriter writer, const MovementGenerator movement)
+{
+    writer.put(cast(ubyte) movement.type);
+    ByteWriter state;
+    movement.save(state);
+    writer.put(cast(ushort) state.length);
+    writer.putBytes(state.data);
+}
+
 /// Restores the generator along with the separately serialized spline.
-package MovementGenerator restoreMovement(MotionType type, ref ByteReader state, const Creature creature,
+package MovementGenerator readMovement(ref ByteReader reader, const Creature creature,
     const WaypointStore waypoints, MovementGenerator fallback)
 {
-    if (type == MotionType.point && !state.empty)
+    const type = cast(MotionType) reader.read!ubyte;
+    auto state = ByteReader(reader.readBytes(reader.read!ushort));
+    if (type == MotionType.point)
         return PointMovement.restore(state, creature, waypoints, fallback);
+    if (type == MotionType.distract)
+        return DistractMovement.restore(state, creature, waypoints, fallback);
     if (waypoints !is null && (type == MotionType.waypoint || type == MotionType.linearWaypoint))
     {
         if (auto route = WaypointMovement.restore(state, waypoints, creature.spawn, type == MotionType.linearWaypoint))
@@ -881,6 +919,12 @@ package MovementGenerator restoreMovement(MotionType type, ref ByteReader state,
         auto follower = new FollowMovement(0, 0, 0);
         follower.load(state);
         return follower;
+    }
+    if (type == MotionType.random)
+    {
+        auto wander = new WanderMovement(Vector3.init, 0, false);
+        wander.load(state);
+        return wander;
     }
     return type == MotionType.idle ? new IdleMovement : fallback;
 }

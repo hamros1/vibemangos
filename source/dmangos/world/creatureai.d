@@ -20,7 +20,7 @@ import dmangos.world.creature : Creature, VirtualItem;
 import dmangos.world.gameobject : GameObject;
 import dmangos.world.defines : UnitFlags;
 import dmangos.world.motion : habitatDestination, IdleMovement, launch, launchHabitatPath, launchShoreLeg,
-    MotionWorld, MovementGenerator, stopMoving;
+    MotionWorld, MovementGenerator, readMovement, saveMovement, selectMovement, stopMoving, WaypointStore;
 import dmangos.world.movement : MovementFlags, Position;
 import dmangos.world.opcodes : Opcode;
 import dmangos.world.relations;
@@ -660,13 +660,8 @@ final class CreatureAI : Scripted, CreatureHost, ScourgeCampHost
         return threat;
     }
 
-    /// A waypoint route suspended by combat still belongs to the creature after a handoff.
-    package const(MovementGenerator) waypointBeforeCombat() const
-    {
-        import dmangos.world.motion : WaypointMovement;
-
-        return inCombat_ ? cast(const WaypointMovement) outOfCombat : null;
-    }
+    version (unittest)
+        package const(MovementGenerator) movementAfterCombat() const { return outOfCombat; }
 
     /// Combat state that must follow a live creature when its region moves.
     package void saveCombat(ref imported!"dmangos.bytes".ByteWriter writer) const
@@ -674,6 +669,11 @@ final class CreatureAI : Scripted, CreatureHost, ScourgeCampHost
         import dmangos.serialization : serialize;
 
         writer.put(inCombat_);
+        writer.put(evadingHome);
+        writer.put(evadingAcrossShore);
+        writer.put(outOfCombat !is null);
+        if (outOfCombat !is null)
+            saveMovement(writer, outOfCombat);
         if (!inCombat_)
             return;
         writer.put(victim);
@@ -692,11 +692,14 @@ final class CreatureAI : Scripted, CreatureHost, ScourgeCampHost
         }
     }
 
-    package void loadCombat(ref imported!"dmangos.bytes".ByteReader reader)
+    package void loadCombat(ref imported!"dmangos.bytes".ByteReader reader, const WaypointStore waypoints)
     {
         import dmangos.serialization : deserialize;
 
         inCombat_ = reader.read!bool;
+        evadingHome = reader.read!bool;
+        evadingAcrossShore = reader.read!bool;
+        outOfCombat = reader.read!bool ? readMovement(reader, me, waypoints, selectMovement(me, waypoints)) : null;
         if (!inCombat_)
             return;
         victim = reader.read!ulong;
@@ -713,8 +716,6 @@ final class CreatureAI : Scripted, CreatureHost, ScourgeCampHost
             const guid = reader.read!ulong;
             addRemoteThreat(guid, reader.read!float);
         }
-        outOfCombat = me.generator;
-        me.generator = new IdleMovement;
         restoringThreat = combatHandoffGraceMs;
     }
 

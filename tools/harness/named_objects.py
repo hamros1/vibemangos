@@ -212,6 +212,7 @@ def run(fixture, abrupt=False):
 
     if abrupt:
         edited = client("edit-cached-sign", 2, "MORTARSPAWN", f"login:{spawner}",
+                        "cmd:.cheat god",  # The probe ports above terrain on both visits.
                         port(0, SIGN_START), "cmd:.gobject select", port(0, SIGN_END),
                         "cmd:.gobject move", "cmd:.gobject rotate x 90", "cmd:.gobject select",
                         "cmd:.gobject info", port(0, (*target_at, 200)), "drop")
