@@ -652,7 +652,8 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
         return false;
     }
 
-    server.run(cooperate, sharedLease is null ? null : &canServeInput);
+    server.run(cooperate, sharedLease is null ? null : &canServeInput,
+        cluster is null ? null : () => context.battlegrounds.flushCheckpoints());
     if (sharedLease !is null && sharedLease.fenced)
         return restartExitCode;
     if (ownsRealm())

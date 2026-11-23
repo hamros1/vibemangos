@@ -329,6 +329,26 @@ private:
                 dropFlagOf(copy, who);
     }
 
+    public override void playerRestored(Battleground copy, ulong guid)
+    {
+        auto who = cast(imported!"dmangos.world.character".Character) copy.memberSession(guid);
+        if (who is null || who.player is null)
+            return;
+        foreach (ubyte side; 0 .. 2)
+        {
+            const spell = carriedFlagSpells[side];
+            if (carrier[side] == guid && !copy.memberAlive(guid))
+                dropFlagOf(copy, guid);
+            else if (carrier[side] == guid)
+            {
+                if (who.player.auras.find(spell) is null)
+                    copy.castOn(guid, spell);
+            }
+            else
+                copy.removeAuraOf(guid, spell);
+        }
+    }
+
     /// `HandlePlayerDroppedFlag`: the flag `who` carries falls where it is.
     void dropFlagOf(Battleground copy, ulong who)
     {

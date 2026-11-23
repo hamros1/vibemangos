@@ -467,6 +467,16 @@ CREATE TABLE `dmangos_bg_queue_checkpoint` (
   `state` longtext NOT NULL,
   PRIMARY KEY (`realm`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_general_ci;
+CREATE TABLE `dmangos_bg_match_checkpoint` (
+  `realm` int unsigned NOT NULL,
+  `map` int unsigned NOT NULL,
+  `instance` int unsigned NOT NULL,
+  `revision` bigint unsigned NOT NULL,
+  `saved_at` bigint NOT NULL,
+  `state` longtext NOT NULL,
+  PRIMARY KEY (`realm`,`instance`),
+  KEY `recent` (`realm`,`map`,`saved_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_general_ci;
 CREATE TABLE `dmangos_channel_checkpoint` (
   `realm` int(10) unsigned NOT NULL,
   `revision` bigint(20) unsigned NOT NULL,

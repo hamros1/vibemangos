@@ -184,7 +184,8 @@ private:
         }
 
         // A backfill invite to a battle already underway can never create a fresh copy after a crash.
-        if (requiresLiveBattleground && context.battlegrounds.find(toInstance) is null)
+        if ((mapEntry.isBattleground && context.hostsDungeon(mapId) && !context.battlegrounds.mapReady(mapId))
+            || (requiresLiveBattleground && context.battlegrounds.find(toInstance) is null))
         {
             refusedBattlegroundEntry(toInstance);
             enum ubyte transferAbortNotFound = 0x02;

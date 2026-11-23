@@ -23,7 +23,7 @@ import dmangos.world.playercreate : NewCharacter, NewSkill, NewSpell, maxEnchant
 import dmangos.world.database : AuraRecord, TicketRecord, BattlegroundData, PvpStatsBattleground, PvpStatsPlayer, HonorColumns, HonorPointRecord, HonorRecord, CooldownRecord, PetRecord, PetSpellRecord, GuildEventRecord, GuildMemberRecord, GuildRankRecord, GuildRecord,
     PetitionRecord, SocialRow, CorpseRecord, InstanceBindRecord, InstanceRecord, InstanceRecords,
     InstanceRespawnRecord, MailRecord, ServiceCheckpoint, GroupLootRotation, LootCoinCredit, LootCoinRedemption,
-    LootAwardKey, LootAwardResult;
+    LootAwardKey, LootAwardResult, BattlegroundCheckpoint;
 import dmangos.world.reputation : ReputationRecord;
 import dmangos.world.auctionhouse : AuctionRecord;
 import dmangos.world.quests : QuestState, QuestStatus;
@@ -210,7 +210,9 @@ final class CharacterStatements
         next.mail = maxPlusOne!("SELECT GREATEST(IFNULL((SELECT MAX(id) FROM mail), 0), "
             ~ "IFNULL((SELECT MAX(id) FROM item_text), 0), IFNULL((SELECT MAX(id) FROM auction), 0))");
         next.group = maxPlusOne!"SELECT MAX(groupId) FROM `groups`";
-        next.instance = maxPlusOne!"SELECT MAX(id) FROM instance";
+        prepareBattlegroundCheckpoints();
+        next.instance = maxPlusOne!("SELECT GREATEST(IFNULL((SELECT MAX(id) FROM instance), 0), "
+            ~ "IFNULL((SELECT MAX(instance & 2147483647) FROM dmangos_bg_match_checkpoint), 0))");
         next.pet = maxPlusOne!"SELECT MAX(id) FROM character_pet";
         return next;
     }
@@ -1451,6 +1453,43 @@ final class CharacterStatements
                         checkpoint.at, checkpoint.node, checkpoint.state, realm, checkpoint.revision) == 1;
             }
         assert(0, "unexpected checkpoint service");
+    }
+
+    private bool battlegroundCheckpointsReady;
+
+    private void prepareBattlegroundCheckpoints()
+    {
+        if (battlegroundCheckpointsReady)
+            return;
+        characters.execute!"CREATE TABLE IF NOT EXISTS dmangos_bg_match_checkpoint (
+            realm INT UNSIGNED NOT NULL, map INT UNSIGNED NOT NULL, instance INT UNSIGNED NOT NULL,
+            revision BIGINT UNSIGNED NOT NULL, saved_at BIGINT NOT NULL,
+            state LONGTEXT NOT NULL, PRIMARY KEY (realm, instance), KEY recent (realm, map, saved_at)
+        ) ENGINE=InnoDB"();
+        battlegroundCheckpointsReady = true;
+    }
+
+    BattlegroundCheckpoint[] loadBattlegroundCheckpoints(uint realm, uint map, long since)
+    {
+        prepareBattlegroundCheckpoints();
+        BattlegroundCheckpoint[] matches;
+        foreach (row; characters.query!"SELECT instance, revision, saved_at, state FROM dmangos_bg_match_checkpoint
+            WHERE realm = ? AND map = ? AND saved_at >= ? AND state <> ''"(realm, map, since))
+            matches ~= BattlegroundCheckpoint(row.get!uint(0), row.get!ulong(1), row.get!long(2), row.get!string(3));
+        return matches;
+    }
+
+    bool saveBattlegroundCheckpoint(uint realm, uint map, const ref BattlegroundCheckpoint checkpoint)
+    {
+        prepareBattlegroundCheckpoints();
+        if (!checkpoint.revision)
+            return characters.execute!"INSERT IGNORE INTO dmangos_bg_match_checkpoint
+                (realm, map, instance, revision, saved_at, state) VALUES (?, ?, ?, 1, ?, ?)"(
+                    realm, map, checkpoint.instance, checkpoint.at, checkpoint.state) == 1;
+        return characters.execute!"UPDATE dmangos_bg_match_checkpoint
+            SET revision = revision + 1, saved_at = ?, state = ?
+            WHERE realm = ? AND map = ? AND instance = ? AND revision = ?"(
+                checkpoint.at, checkpoint.state, realm, map, checkpoint.instance, checkpoint.revision) == 1;
     }
 
     /// See `WorldDatabase.charactersFor`.

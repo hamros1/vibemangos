@@ -334,6 +334,7 @@ mixin template CharacterLogin()
         state_ = WorldState.inWorld;
         connection.playing = this; // in the world from here on
         instanceId_ = context.instanceFor(player.guid, player.data.map); // a dungeon: its group's copy, or its own
+        loadBattleground(); // the initial map packets need the copy's current world states
         sendLoginPackets(recovered);
         context.enterWorld(this, true); // after the player's own create block: now others see it, and it sees them
         context.database.setOnline(guid, account.id, true, context.config.realmId);
@@ -350,7 +351,6 @@ mixin template CharacterLogin()
         deathOnLogin();
         loadAuras();
         loadHonor();
-        loadBattleground();
         loadEnchantmentTimers();
         // Timed items that run in real time lose the time logged out.
         loadItemDurations(player.data.logoutTime > 0 ? context.unixTime - player.data.logoutTime : 0);

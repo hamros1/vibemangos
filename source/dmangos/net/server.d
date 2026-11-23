@@ -265,7 +265,8 @@ final class TcpServer
     }
 
     /// Serves clients until `requestShutdown` is called.
-    void run(void delegate() cooperate = null, bool delegate() beforeInput = null)
+    void run(void delegate() cooperate = null, bool delegate() beforeInput = null,
+        void delegate() afterInput = null)
     {
         raiseFileLimit(options.maxConnections + 64); // and the listeners, the database, the map files
         foreach (ref listener; listeners)
@@ -316,7 +317,7 @@ final class TcpServer
                     continue;
                 }
                 if (event.readable)
-                    receiveFrom(connection, now);
+                    receiveFrom(connection, now, afterInput);
                 if (!connection.broken && event.writable)
                     flush(connection);
             }
@@ -474,7 +475,7 @@ private:
         flush(connection);
     }
 
-    void receiveFrom(Connection connection, MonoTime now)
+    void receiveFrom(Connection connection, MonoTime now, scope void delegate() afterInput = null)
     {
         // The whole loop runs between reads. A cluster peer can carry hundreds of clients on
         // one socket, so give it a larger allowance while keeping one read per ready socket.
@@ -495,7 +496,11 @@ private:
 
         connection.lastActivity = now;
         try
+        {
             connection.session.receive(buffer[0 .. cast(size_t) received]);
+            if (afterInput !is null)
+                afterInput();
+        }
         catch (Exception e)
         {
             error!"%s: session failed: %s"(connection.session.address, e.msg);

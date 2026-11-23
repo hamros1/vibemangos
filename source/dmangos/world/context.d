@@ -1345,7 +1345,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /// Move queued impacts with the caster. The deadlines use the shared node clock.
-    package void writeReplicaImpacts(ulong caster, ref ByteWriter writer)
+    package void writeReplicaImpacts(ulong caster, ref ByteWriter writer, bool departing = true)
     {
         import dmangos.serialization : serialize;
 
@@ -1364,7 +1364,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         {
             if (impact.hit.caster != caster)
             {
-                replicaSpellImpacts[kept++] = impact;
+                if (departing)
+                    replicaSpellImpacts[kept++] = impact;
                 continue;
             }
             writer.put(transferTime + cast(uint)(impact.due - now).total!"msecs");
@@ -1375,7 +1376,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             writer.put(impact.sentTo);
             serialize(writer, impact.hit);
         }
-        replicaSpellImpacts.length = kept;
+        if (departing)
+            replicaSpellImpacts.length = kept;
     }
 
     /// Adopt impacts for the caster on the same map and instance from which they were launched.
@@ -4745,7 +4747,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             info!"migration: instance %s of map %s leaves for node %s with %s objects"(id, mapId, next,
                 m is null ? 0 : before - (m.objectCount - m.replicaCount));
         }
-        takeDungeonScriptRuns(mapId, w);
+        saveDungeonScriptRuns(mapId, w, true);
         w.putBytes(deadlines.data);
         return w.data;
     }
@@ -4753,13 +4755,57 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// A copy being made for `dungeonCopiesIn` (its script's `Restored` is not raised: its creatures come along).
     private bool copyArriving;
 
+    /// The same object and match data used for a clean handoff, captured without releasing the live map.
+    package const(ubyte)[] snapshotBattleground(imported!"dmangos.world.battleground".Battleground copy)
+    {
+        import dmangos.world.battlegroundstate : BattlegroundState;
+        import dmangos.world.migration : encodeBundle;
+
+        auto m = existingMap(copy.mapId, copy.instance);
+        const bundle = m is null ? encodeBundle(null, null) : m.snapshotObjects((MapObject object) {
+            if (auto creature = cast(Creature) object)
+                if (creature.meleeController || creature.totemOwner || creature.guardianOwner)
+                    return Migrant.init;
+            return saveMigratingObject(object, false);
+        });
+        ByteWriter w, match;
+        auto state = BattlegroundState(clock(), writer: &match);
+        copy.transferState(state);
+        w.put(cast(uint) match.length);
+        w.putBytes(match.data);
+        w.put(cast(uint) bundle.length);
+        w.putBytes(bundle);
+        auto stored = &instances.require(copy.instance, InstanceState(copy.mapId, 0, unixTime));
+        state.writer = &w;
+        state.transfer(stored.dead, stored.usedUp);
+        saveDungeonScriptRuns(copy.mapId, w, false, copy.instance);
+        saveDungeonObjectDeadlines(copy.mapId, w, copy.instance);
+        return w.data;
+    }
+
+    package void restoreBattleground(uint mapId, uint id, const(ubyte)[] bytes)
+    {
+        import dmangos.world.battlegroundstate : BattlegroundState;
+
+        auto r = ByteReader(bytes);
+        const match = r.readBytes(r.read!uint);
+        const bundle = r.readBytes(r.read!uint);
+        auto stored = InstanceState(mapId, 0, unixTime);
+        auto state = BattlegroundState(clock(), reader: &r);
+        state.transfer(stored.dead, stored.usedUp);
+        auto copy = battlegrounds.restore(id, battlegroundOfMap(mapId), match);
+        instances[id] = stored;
+        restoreDungeonCopy(mapId, id, bundle);
+        restoreDungeonScriptRuns(mapId, r);
+        restoreDungeonObjectDeadlines(mapId, r);
+        copy.recoveredAfterCrash();
+    }
+
     /// What `dungeonCopiesOut` sent: each copy made here and its objects as they were.
     private void dungeonCopiesIn(uint mapId, const(ubyte)[] copies)
     {
         import dmangos.bytes : ByteReader;
         import dmangos.log : info;
-        import dmangos.world.gameobject : GameObject;
-        import dmangos.world.migration : Migrant;
 
         if (copies.length < 4)
             return;
@@ -4779,26 +4825,36 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             }
             if (id !in instances)
                 continue; // reset meanwhile
-            copyArriving = true;
-            auto m = map(mapId, id);
-            copyArriving = false;
-            const before = m.objectCount - m.replicaCount;
-            m.migrateIn(bundle, (const ref Migrant migrant) {
-                auto object = restoreWorldMigrant(migrant, m);
-                if (auto creature = cast(Creature) object)
-                    creature.instanceId = id;
-                else if (auto go = cast(GameObject) object)
-                    go.instanceId = id;
-                return object;
-            });
             info!"migration: instance %s of map %s arrived with %s objects"(id, mapId,
-                m.objectCount - m.replicaCount - before);
+                restoreDungeonCopy(mapId, id, bundle));
         }
         if (!r.empty) // older owners sent only the copy/object pairs
         {
             restoreDungeonScriptRuns(mapId, r);
             restoreDungeonObjectDeadlines(mapId, r);
         }
+    }
+
+    private size_t restoreDungeonCopy(uint mapId, uint id, const(ubyte)[] bundle)
+    {
+        import dmangos.world.gameobject : GameObject;
+
+        Map m;
+        {
+            copyArriving = true;
+            scope (exit) copyArriving = false;
+            m = map(mapId, id);
+        }
+        const before = m.objectCount - m.replicaCount;
+        m.migrateIn(bundle, (const ref Migrant migrant) {
+            auto object = restoreWorldMigrant(migrant, m);
+            if (auto creature = cast(Creature) object)
+                creature.instanceId = id;
+            else if (auto go = cast(GameObject) object)
+                go.instanceId = id;
+            return object;
+        });
+        return m.objectCount - m.replicaCount - before;
     }
 
     /// An instance gone from this node's memory only (another node hosts it).
@@ -5225,8 +5281,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 dungeonGained(r.map);
                 if (auto copies = r.id in arriving)
                     dungeonCopiesIn(r.map, *copies);
-                if (battlegroundOfMap(r.map) && battlegroundMapEpoch !is null && !config.battlegroup.length)
-                    battlegrounds.recoverMap(r.map, r.epoch);
+                if (battlegroundOfMap(r.map) && battlegroundMapEpoch !is null
+                    && (battlegroup is null || battlegroup.host is this))
+                    battlegrounds.recoverMap(r.map, (r.id in arriving) !is null);
             }
         foreach (ref r; lost)
             if (physicalWorldRegion(r))
@@ -5822,7 +5879,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return migrant;
     }
 
-    private Migrant saveMigratingObject(MapObject object)
+    private Migrant saveMigratingObject(MapObject object, bool departing = true)
     {
         import dmangos.bytes : ByteWriter;
         import dmangos.serialization : serialize;
@@ -5832,7 +5889,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         ByteWriter w;
         if (auto creature = cast(Creature) object)
         {
-            if (creature.loot !is null)
+            if (departing && creature.loot !is null)
                 creature.loot.sendReleaseForAll();
             const now = transportNow();
             auto kind = MigrantKind.creature;
@@ -5847,8 +5904,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             creature.saveState(state, now);
             w.put(cast(uint) state.data.length);
             w.putBytes(state.data);
-            writeReplicaImpacts(creature.guid, w);
-            creature.ai.detachGroundHandoff();
+            writeReplicaImpacts(creature.guid, w, departing);
+            if (departing)
+                creature.ai.detachGroundHandoff();
             return Migrant(kind, creature.spawn.guid, 0, w.data);
         }
         auto gameObject = cast(GameObject) object;
@@ -5857,7 +5915,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (gameObject.owner && (gameObject.type == GameObjectType.fishingNode
             || gameObject.type == GameObjectType.summoningRitual))
             return Migrant.init; // follows its player's handoff
-        if (gameObject.loot !is null)
+        if (departing && gameObject.loot !is null)
             gameObject.loot.sendReleaseForAll();
         long expires;
         if (!gameObject.instanceId)
@@ -9492,6 +9550,54 @@ unittest
     auto moved = cast(WarsongRules) restored.rules;
     assert(moved.carrier[1] == 42 && moved.dropped[0] == ground.guid && moved.dropLeft[0] == 12.seconds);
     assert(to.existingMap(mapWarsongGulch, instance).gameObjectAt(ground.guid) !is null);
+}
+
+// A cold map grant restores the same snapshot without touching the running map or accepting its stale writes.
+unittest
+{
+    import dmangos.world.bgqueue : BattlegroundType, BattlegroundStatus;
+    import dmangos.world.gameobject : GameObjectTemplate;
+    import dmangos.world.testclient : newCreationContext, newDatabase;
+    import dmangos.world.testdata : mapWarsongGulch;
+    import dmangos.world.warsong : WarsongRules, flagOnGround, stateCapturesAlliance, stateFlagHorde;
+
+    enum instance = 123;
+    auto db = newDatabase();
+    auto from = newCreationContext(db), to = newCreationContext(db);
+    const now = MonoTime.currTime;
+    from.clock = () => now;
+    to.clock = () => now + 25.seconds;
+    from.battlegroundMapEpoch = map => map == mapWarsongGulch ? 4UL : 0UL;
+    to.battlegroundMapEpoch = map => map == mapWarsongGulch ? 5UL : 0UL;
+    const banner = GameObjectTemplate(entry: 179786, type: GameObjectType.flagDrop);
+    from.data.gameObjectTemplates[banner.entry] = banner;
+    to.data.gameObjectTemplates[banner.entry] = banner;
+    auto match = from.battlegrounds.open(instance, BattlegroundType.warsongGulch);
+    auto map = from.map(mapWarsongGulch, instance);
+    auto flag = from.spawnGameObjectAt(map, banner.entry, Position(1500, 1480, 353), true);
+    assert(flag !is null);
+    match.status = BattlegroundStatus.inProgress;
+    match.setWorldState(stateCapturesAlliance, 1);
+    match.setWorldState(stateFlagHorde, flagOnGround);
+    auto rules = cast(WarsongRules) match.rules;
+    rules.dropped[1] = flag.guid;
+    rules.dropLeft[1] = 8.seconds;
+    from.battlegrounds.flushCheckpoints();
+    const realm = from.config.realmId;
+    const saved = db.loadBattlegroundCheckpoints(realm, mapWarsongGulch, long.min)[0];
+    assert(map.gameObjectAt(flag.guid) is flag);
+
+    to.battlegrounds.recoverMap(mapWarsongGulch, false);
+    auto restored = to.battlegrounds.find(instance);
+    assert(restored !is null && restored.status == BattlegroundStatus.inProgress);
+    assert(restored.worldStates[stateCapturesAlliance] == 1 && restored.worldStates[stateFlagHorde] == flagOnGround);
+    auto recovered = cast(WarsongRules) restored.rules;
+    assert(recovered.dropLeft[1] == 8.seconds && recovered.dropped[1] == flag.guid);
+    assert(to.existingMap(mapWarsongGulch, instance).gameObjectAt(flag.guid) !is null);
+    assert(!db.saveBattlegroundCheckpoint(realm, mapWarsongGulch, saved));
+    to.battlegrounds.closed(restored);
+    assert(db.loadBattlegroundCheckpoints(realm, mapWarsongGulch, long.min).length == 0);
+    assert(db.highestGuids().instance > instance);
 }
 
 // Outdoor scripted objects keep their expiry and scheduled forced despawn through a transfer.

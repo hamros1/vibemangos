@@ -429,7 +429,18 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   hosts go to that node and its answer comes back; `.instance resetall` goes to every node.
 
 Battleground copies run on the node hosting their map in the same way. The queues that fill them are
-a cluster service (docs/SERVICES.md).
+a cluster service (docs/SERVICES.md). A replacement worker restores a recent running match from
+MariaDB before accepting players. The checkpoint keeps its copy ID, scoreboard, objectives,
+members, timers, and map objects. An alive Warsong flag carrier gets the flag aura back if the
+character save predates the pickup. A dropped flag keeps its object GUID and remaining return time.
+Gateway clients load the restored map over their original connections.
+
+Match checkpoints record objective changes before the worker sends its response in normal
+operation. The worker also saves every two seconds while a copy is running. The countdown and
+objective timers pause at the checkpoint during recovery. Player positions and combat state still
+recover from each character's last durable save. The replacement closes copies whose checkpoints
+are missing, unreadable, retired, or older than two minutes. The match is retired before final
+rewards are issued so a replacement cannot pay them out again.
 
 ## State shared across nodes
 
@@ -894,9 +905,9 @@ for the text shown to foreign viewers. Allies in the same match can whisper him 
 The combined host renews its lease while every realm trusts it. Both realms grant their battleground
 maps and queue to that host before it accepts queue actions. The standby takes over automatically
 after the old lease expires. A recovered host stays on standby while the replacement holds the
-lease. Queues and valid invites to matches that have yet to start survive. An interrupted match
-that already started closes and players return to where they queued. With a single combined
-host, restart its process to restore service.
+lease. Queues, valid invites, and running matches recover from the lowest realm's character database.
+The standby loads the match before reconciling its queue slots. With a single combined host, restart
+its process to restore service.
 
 The isolated end-to-end checks need the harness database, client data and release binaries
 described in [Developing](DEVELOPING.md).
@@ -904,6 +915,8 @@ described in [Developing](DEVELOPING.md).
 ```sh
 python3 tools/harness/battlegroup.py
 python3 tools/harness/battlegroup_failover.py
+python3 tools/harness/battleground_recovery.py
+python3 tools/harness/battleground_recovery.py --cross-realm
 ```
 
 ## Monitoring
@@ -986,11 +999,10 @@ source stops renewing it. A login recalculates inherited auras from their curren
 Windfury and Flametongue Totem also reach the main-hand weapons of remote subgroup members.
 A pulse preserves a different temporary enchantment already on the weapon.
 
-When an in-realm battleground map moves, its new owner receives the running matches, their scores,
-objectives, and timers. Players in a match follow the map's ownership, including during combat.
-After a crash, the new map owner reports which matches it recovered. The queue closes lost copies,
-and affected players return to their entry points. Unused invitations to matches that had yet to open
-stay valid. An invitation to a lost copy cannot start the same match again.
+When a battleground map moves, the players follow it, including during combat. After a crash,
+the new map owner reports the matches it recovered from MariaDB. Unused invitations stay valid for
+matches that recovered and those that had yet to open. The queue closes missing copies, clears
+their slots, and returns affected players to their entry points.
 
 ## Testing
 

@@ -522,8 +522,8 @@ mixin template DbScriptRunner()
         scriptRuns ~= run;
     }
 
-    /// Detaches the database script runs the departing dungeon copies were executing.
-    private void takeDungeonScriptRuns(uint mapId, ref ByteWriter w)
+    /// Saves pending database script steps. A transfer detaches them from the old map.
+    private void saveDungeonScriptRuns(uint mapId, ref ByteWriter w, bool departing, uint onlyInstance = 0)
     {
         import std.algorithm.mutation : remove;
 
@@ -533,7 +533,8 @@ mixin template DbScriptRunner()
         const now = unixTime;
         foreach (run; scriptRuns)
         {
-            if (run.mapId != mapId || run.instanceId == 0 || run.next >= run.steps.length)
+            if (run.mapId != mapId || run.instanceId == 0 || (onlyInstance && run.instanceId != onlyInstance)
+                || run.next >= run.steps.length)
                 continue;
             auto copy = instanceMap(run.instanceId);
             if (copy is null)
@@ -555,7 +556,8 @@ mixin template DbScriptRunner()
             w.put(sourcePresent || targetPresent ? now + playerHandoffGraceSeconds : run.waitForPlayersUntil);
         }
         w.patch(countAt, count);
-        scriptRuns = scriptRuns.remove!(run => run.mapId == mapId && run.instanceId != 0);
+        if (departing)
+            scriptRuns = scriptRuns.remove!(run => run.mapId == mapId && run.instanceId != 0);
     }
 
     /// Rebuilds transferred runs from the receiver's database without replaying their completed steps.
@@ -978,13 +980,14 @@ mixin template DbScriptRunner()
 
     private long[GameObjectOnMap] scriptedGameObjects; // spawned by a script: when it goes (Unix time)
 
-    private void saveDungeonObjectDeadlines(uint mapId, ref ByteWriter w)
+    private void saveDungeonObjectDeadlines(uint mapId, ref ByteWriter w, uint onlyInstance = 0)
     {
         const countAt = w.length;
         w.put(0u);
         uint count;
         foreach (key, deadline; scriptedGameObjects)
-            if (key.map.id == mapId && key.map.instanceId && instanceMap(key.map.instanceId) is key.map)
+            if (key.map.id == mapId && key.map.instanceId && (!onlyInstance || key.map.instanceId == onlyInstance)
+                && instanceMap(key.map.instanceId) is key.map)
             {
                 ++count;
                 w.put(key.map.instanceId);

@@ -1054,7 +1054,10 @@ private:
     {
         scope (success) // a battleground's turn-ins (Alterac Valley's armor scraps, its offerings)
             if (auto copy = currentBattleground())
+            {
                 copy.rules.questRewarded(copy, player.guid, quest.id);
+                copy.objectiveChanged();
+            }
         questObjectsStale = true;
         foreach (i; 0 .. questObjectives)
             if (quest.reqItemId[i])

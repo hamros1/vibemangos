@@ -261,7 +261,8 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
 
         return context.canWrite() && context.ownsCell !is null
             && context.ownsCell(saved.map, cellKeyAt(saved.position.x, saved.position.y))
-            && context.onlinePlayer(saved.guid) is null;
+            && context.onlinePlayer(context.playerGuid(saved.guid)) is null
+            && context.battlegrounds.mapReady(saved.map);
     }
 
     private void finishGatewayRecovery()

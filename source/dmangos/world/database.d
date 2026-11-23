@@ -90,6 +90,15 @@ struct ServiceCheckpoint
     string state;
 }
 
+/// One durable match. An empty state retires the copy while reserving its instance ID.
+struct BattlegroundCheckpoint
+{
+    uint instance;
+    ulong revision;
+    long at;
+    string state;
+}
+
 /// The next round-robin recipient, or the original answer for a retried drop.
 struct GroupLootRotation
 {
@@ -950,6 +959,8 @@ interface WorldDatabase
     /// Last durable service state for this realm. The revision fences subsequent writes.
     ServiceCheckpoint loadServiceCheckpoint(ServiceKind kind, uint realm);
     @DatabaseWrite bool saveServiceCheckpoint(ServiceKind kind, uint realm, const ref ServiceCheckpoint checkpoint);
+    BattlegroundCheckpoint[] loadBattlegroundCheckpoints(uint realm, uint map, long since);
+    @DatabaseWrite bool saveBattlegroundCheckpoint(uint realm, uint map, const ref BattlegroundCheckpoint checkpoint);
 }
 
 /// The world tables `.lookup` searches.
@@ -1396,6 +1407,14 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     {
         return statements.saveServiceCheckpoint(kind, realm, checkpoint);
     }
+    BattlegroundCheckpoint[] loadBattlegroundCheckpoints(uint realm, uint map, long since)
+    {
+        return statements.loadBattlegroundCheckpoints(realm, map, since);
+    }
+    bool saveBattlegroundCheckpoint(uint realm, uint map, const ref BattlegroundCheckpoint checkpoint)
+    {
+        return statements.saveBattlegroundCheckpoint(realm, map, checkpoint);
+    }
     void saveAccountData(bool perCharacter, uint owner, uint type, long time, const(ubyte)[] data)
     {
         statements.saveAccountData(perCharacter, owner, type, time, data);
@@ -1749,6 +1768,24 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
             return false;
         serviceCheckpoints[kind][realm] = checkpoint;
         ++serviceCheckpoints[kind][realm].revision;
+        return true;
+    }
+    private BattlegroundCheckpoint[uint][uint][uint] battlegroundCheckpoints;
+    BattlegroundCheckpoint[] loadBattlegroundCheckpoints(uint realm, uint map, long since)
+    {
+        BattlegroundCheckpoint[] rows;
+        foreach (row; battlegroundCheckpoints.get(realm, null).get(map, null))
+            if (row.at >= since && row.state.length)
+                rows ~= row;
+        return rows;
+    }
+    bool saveBattlegroundCheckpoint(uint realm, uint map, const ref BattlegroundCheckpoint checkpoint)
+    {
+        auto refRows = &battlegroundCheckpoints.require(realm, null).require(map, null);
+        if (refRows.get(checkpoint.instance, BattlegroundCheckpoint.init).revision != checkpoint.revision)
+            return false;
+        (*refRows)[checkpoint.instance] = checkpoint;
+        ++(*refRows)[checkpoint.instance].revision;
         return true;
     }
     bool[ushort] gameEventStatusRows;
@@ -2841,6 +2878,11 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
         foreach (r; instanceRows.instances)
             if (r.id > instance)
                 instance = r.id;
+        foreach (realm; battlegroundCheckpoints)
+            foreach (map; realm)
+                foreach (id, _; map)
+                    if ((id & 0x7FFF_FFFF) > instance)
+                        instance = id & 0x7FFF_FFFF;
         uint pet;
         foreach (id, _; petRows)
             if (id > pet)

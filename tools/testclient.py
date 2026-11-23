@@ -43,8 +43,9 @@ in order:
     join:CHANNEL  part:CHANNEL  chan:CHANNEL:TEXT  chanlist:CHANNEL
                               chat channels
     afk:TEXT  dnd:TEXT        away and busy (an empty TEXT clears it)
-    bgjoin:NPC:MAP  bgport:MAP:1  bgleave:MAP  bgstatus  pvplog[:names]
+    bgjoin:NPC:MAP  bgport:MAP:1  bgleave:MAP  bgstatus  pvplog[:names|scores]
                               battlegrounds: queue at a battlemaster, accept, leave, the scoreboard
+    cancelaura:SPELL           cancel an aura on yourself, such as a Warsong flag
     objects:N                 count the creatures and game objects seen, and query N of each
     npc:ENTRY                 pick a creature in sight by entry, for the NPC actions:
     gossip  select:N  text:ID  trainer  buyspell:ID  vendor  binder  bank
@@ -475,6 +476,15 @@ def describe(op, p):
     elif op == 0x2E8: print(f"  [group joined battleground] {struct.unpack('<i', p)[0]}")
     elif op == 0x2EC: print(f"  [battleground player joined] {struct.unpack('<Q', p)[0] & 0xFFFFFFFF}")
     elif op == 0x2ED: print(f"  [battleground player left] {struct.unpack('<Q', p)[0] & 0xFFFFFFFF}")
+    elif op == 0x2C2:
+        map_id, _, count = struct.unpack_from("<IIH", p)
+        if map_id in (30, 489, 529):
+            states = dict(struct.iter_unpack("<II", p[10:]))
+            assert len(states) == count
+            print(f"  [initial battlefield states] {map_id}: {states}")
+    elif op == 0x2C3:
+        state, value = struct.unpack("<II", p)
+        print(f"  [world state] {state}={value}")
     elif op == 0x2E0:
         over = p[0]; pos = 2 if over else 1; n = struct.unpack_from("<I", p, pos)[0]
         print(f"  [scoreboard] {'over, winner ' + str(p[1]) if over else 'running'}, {n} players")
@@ -899,7 +909,7 @@ for action in actions:
             wsend(0x2D3, b""); print("battlefield status")
         else:
             wsend(0x2E0, b""); print("scoreboard")
-            if args == ["names"]:
+            if args in (["names"], ["scores"]):
                 op, board = expect(0x2E0)
                 describe(op, board)
                 pos = 2 if board[0] else 1
@@ -907,14 +917,19 @@ for action in actions:
                 pos += 4
                 names = []
                 for _ in range(count):
-                    guid, _, _, _, _, _, columns = struct.unpack_from("<Q6I", board, pos)
+                    guid, _, blows, kills, deaths, honor, columns = struct.unpack_from("<Q6I", board, pos)
                     pos += 32 + 4 * columns
+                    if args == ["scores"]:
+                        extra = list(struct.unpack_from(f"<{columns}I", board, pos - 4 * columns))
+                        print(f"  [scoreboard player] {guid}: blows={blows} kills={kills} deaths={deaths} honor={honor} objectives={extra}")
+                        continue
                     wsend(0x050, struct.pack("<Q", guid))
                     _, reply = expect(0x051)
                     assert struct.unpack_from("<Q", reply)[0] == guid
                     name, realm, _ = reply[8:].split(b"\0", 2)
                     names.append((name + b"-" + realm if realm else name).decode())
-                print(f"  [scoreboard names] {sorted(names)}")
+                if args == ["names"]:
+                    print(f"  [scoreboard names] {sorted(names)}")
         listen_for(2)
     elif kind == "rolloffer":
         w.settimeout(20)
@@ -1108,6 +1123,8 @@ for action in actions:
         listen_for(1.5)
     elif kind == "trigger":
         wsend(0x0B4, struct.pack("<I", int(args[0]))); print(f"area trigger {args[0]}"); listen_for(1.5)
+    elif kind == "cancelaura":
+        wsend(0x136, struct.pack("<I", int(args[0]))); print(f"cancel aura {args[0]}"); listen_for(1)
     elif kind == "worldport":
         m, x, y, z = int(args[0]), *map(float, args[1:4])
         wsend(0x008, struct.pack("<II4f", 0, m, x, y, z, 0)); print(f"worldport {m} {x} {y} {z}"); listen_for(1.5)

@@ -1556,6 +1556,22 @@ final class Map : CombatWorld, GameObjectWorld
         return encodeBundle(cells, migrants);
     }
 
+    /// A read-only migration bundle for a battleground checkpoint.
+    package const(ubyte)[] snapshotObjects(scope Migrant delegate(MapObject) save)
+    {
+        Migrant[] migrants;
+        foreach (slot, ref e; entities)
+            if (e.home != noCell && !e.replica && e.object !is null)
+            {
+                auto migrant = save(e.object);
+                if (migrant.kind == MigrantKind.none)
+                    continue;
+                migrant.home = e.home;
+                migrants ~= migrant;
+            }
+        return encodeBundle(loadedCells.keys, migrants);
+    }
+
     /// Captures one object and replaces its local simulation with a replica of the new owner.
     private Migrant moveObjectOut(uint slot, ushort next, scope Migrant delegate(MapObject) save)
     {

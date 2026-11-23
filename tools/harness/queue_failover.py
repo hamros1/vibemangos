@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Check that queue host loss preserves an invite and battleground host loss closes its match."""
+"""Check that queue host loss preserves an invite."""
 
 import argparse
 import json
 import os
-import re
 import subprocess
 import sys
 
@@ -12,6 +11,10 @@ from cluster_fixture import AUTH, REPO, available_ports, run_test, wait_for
 
 
 def run(fixture, active_match=False):
+    if active_match:
+        from battleground_recovery import run as run_match_recovery
+
+        return run_match_recovery(fixture)
     login = fixture.fresh_schema("login", "classicrealmd.sql")
     chars = fixture.fresh_schema("chars", "classiccharacters.sql")
     base = dict(fixture.base, bind_address="127.0.0.1", realm_id=1, metrics_interval_seconds=1, idle_timeout=240,
@@ -57,37 +60,12 @@ def run(fixture, active_match=False):
 
     join = fixture.directory / "join"
     accept = fixture.directory / "accept"
-    actions = ("listen:160", "bgstatus", "logout") if active_match else (
-        "listen:4", "bgleave:489", "listen:1", "logout")
     battle = client("battle", "login:Keeper", f"waitfile:{join}", f"bgjoin:{battlemaster}:489",
                     "cmd:.battleground forcestart", "listen:3", f"waitfile:{accept}", "bgstatus", "bgport:489:1",
-                    *actions)
+                    "listen:4", "bgleave:489", "listen:1", "logout")
     wait_for("battlemaster", lambda: f"[creature] {battlemaster} guid" in fixture.log("battle"), 12)
     join.touch()
     wait_for("original invite", lambda: " invited [" in fixture.log("battle"), 10)
-    if active_match:
-        accept.touch()
-
-        def match_started():
-            for node in (1, 2, 3):
-                started = re.search(r"battleground: warsongGulch \(copy (\d+)\) begins", fixture.log(f"node{node}"))
-                if started:
-                    return node, int(started[1])
-
-        host, instance = wait_for("Warsong Gulch to begin", match_started, 140)
-        nodes[host].kill()
-        nodes[host].wait(timeout=10)
-        marker = f"battleground: copy {instance} was interrupted by loss of its map host"
-        wait_for("the queue to close the interrupted battle",
-                 lambda: any(marker in fixture.log(f"node{node}") for node in (1, 2, 3) if node != host), 30)
-        if battle.wait(timeout=60):
-            raise RuntimeError(fixture.log("battle")[-3500:])
-        log = fixture.log("battle")
-        entered = log.split("[new world] map 489 ", 1)
-        if len(entered) != 2 or "[new world] map 0 " not in entered[1] or "[battlefield status] slot 0: none" not in entered[1]:
-            raise RuntimeError("the gateway client did not return from the interrupted match\n" + log[-3500:])
-        print(f"PASS: map host {host} failed, the queue closed copy {instance}, and the original client returned")
-        return
     rev, host = map(int, fixture.query(checkpoint, chars).split())
     assert host in (1, 2, 3)
     nodes[host].kill()

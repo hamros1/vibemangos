@@ -141,6 +141,9 @@ class BattlegroundRules
     /// `who` lost the aura of `spell` (cancelled, purged by an immunity, dispelled).
     void auraLost(Battleground copy, ulong who, uint spell) {}
 
+    /// Repair objective auras if a character checkpoint and the match were saved at different times.
+    void playerRestored(Battleground copy, ulong guid) {}
+
     /// `who` was rewarded for `quest` in the copy (a turn-in).
     void questRewarded(Battleground copy, ulong who, uint quest) {}
 
@@ -296,6 +299,12 @@ final class Battleground
         Duration prematureLeft;
         bool prematureCounting;
         uint lastWarning;      // the premature end's last warning, in seconds left
+        bool checkpointDirty = true;
+        bool checkpointRetired;
+        ulong checkpointRevision;
+        MonoTime nextCheckpoint;
+        bool endingPending;
+        ubyte pendingWinner;
     }
 
     package void transferState(ref imported!"dmangos.world.battlegroundstate".BattlegroundState state)
@@ -304,6 +313,20 @@ final class Battleground
             awaitingResurrection, members, raidLeaderOf, inTeamRaid, startLeft, said, endLeft, emptySince,
             prematureLeft, prematureCounting, lastWarning, joinOrder_, pulses);
         rules.transferState(state);
+    }
+
+    package void recoveredAfterCrash()
+    {
+        const now = context.clock();
+        foreach (ref member; members)
+            if (member.offlineSince == MonoTime.init)
+                member.offlineSince = now; // keep the place and any carried objective while the gateway reconnects
+        if (crossRealm)
+        {
+            // The combined host's unsaved team raids are rebuilt as their members return.
+            inTeamRaid = null;
+            raidLeaderOf = null;
+        }
     }
 
     ///
@@ -355,6 +378,7 @@ final class Battleground
     {
         import dmangos.log : info;
 
+        checkpointDirty = true;
         const guid = player.guid;
         const identity = NameInfo(player.data.name, player.data.race, player.data.gender, player.data.classId);
         if (auto known = guid in members)
@@ -383,6 +407,7 @@ final class Battleground
         auto m = guid in members;
         if (m is null)
             return;
+        checkpointDirty = true;
         rules.playerLeaving(this, guid);
         const team = m.team;
         if (context.battlegroup !is null && guid in inTeamRaid)
@@ -424,6 +449,7 @@ final class Battleground
     {
         if (auto m = guid in members)
         {
+            checkpointDirty = true;
             m.offlineSince = context.clock();
             if (status == BattlegroundStatus.inProgress)
                 rules.playerLeaving(this, guid);
@@ -446,6 +472,11 @@ final class Battleground
     /// Each tick: the spirit guides, those offline too long, the countdown, the battle, the end.
     void tick(Duration elapsed)
     {
+        if (endingPending)
+        {
+            end(pendingWinner);
+            return;
+        }
         const now = context.clock();
         spiritHealPulse(elapsed);
         // Those offline too long go.
@@ -514,6 +545,12 @@ final class Battleground
 
         if (status == BattlegroundStatus.waitLeave)
             return;
+        // Commit the end before paying out. A crash at this boundary must not run the rewards twice.
+        endingPending = true;
+        pendingWinner = winner;
+        if (!context.battlegrounds.retireCheckpoint(this))
+            return;
+        endingPending = false;
         rules.ending(this, winner);
         this.winner = winner;
         setStatus(BattlegroundStatus.waitLeave);
@@ -597,6 +634,8 @@ final class Battleground
     /// `.battleground leave`: everyone out now, the copy closed.
     void close()
     {
+        if (!context.battlegrounds.retireCheckpoint(this))
+            return;
         if (status != BattlegroundStatus.waitLeave)
             setStatus(BattlegroundStatus.waitLeave);
         sendEveryoneOut();
@@ -612,6 +651,7 @@ final class Battleground
 
         if (status != BattlegroundStatus.inProgress)
             return;
+        checkpointDirty = true;
         if (auto v = victim in members)
             ++v.deaths;
         if (auto k = killer in members)
@@ -718,8 +758,13 @@ final class Battleground
     {
         if (auto m = guid in members)
             if (column < m.extra.length)
+            {
                 m.extra[column] += by;
+                checkpointDirty = true;
+            }
     }
+
+    package void objectiveChanged() { checkpointDirty = true; }
 
     /// The scoreboard: `MSG_PVP_LOG_DATA`'s body.
     const(ubyte)[] scoreboard()
@@ -937,6 +982,7 @@ final class Battleground
             activeEvents.remove(event1);
             despawnPair(event1, event2);
         }
+        checkpointDirty = true;
     }
 
     /// The doors (`eventDoors`) open for good.
@@ -970,6 +1016,7 @@ final class Battleground
             if (*known == value)
                 return;
         worldStates[id] = value;
+        checkpointDirty = true;
         if (status == BattlegroundStatus.none)
             return;
         ByteWriter w;
@@ -1103,6 +1150,7 @@ private:
     void setStatus(BattlegroundStatus to)
     {
         status = to;
+        checkpointDirty = true;
         context.battlegrounds.queueChanged(this, to);
     }
 
@@ -1281,11 +1329,16 @@ unittest
 /// The battleground copies this node runs.
 final class Battlegrounds
 {
+    private enum checkpointInterval = 2.seconds;
+    private enum checkpointFormat = "1:";
+    private enum checkpointLifetime = 120;
+
     private
     {
         WorldContext context;
         Battleground[uint] copies;
         MonoTime[uint] mapRecoveryDue;
+        bool[uint] mapsToRestore; // true when the old host transferred the live state
     }
 
     ///
@@ -1315,7 +1368,7 @@ final class Battlegrounds
             return *known;
         info!"battleground: copy %s of %s made"(instance, type);
         auto copy = copies[instance] = new Battleground(context, instance, type, rulesFor(type));
-        if (context.battlegroundMapEpoch !is null && !context.config.battlegroup.length)
+        if (durable)
             queueChanged(copy, BattlegroundStatus.waitJoin);
         return copy;
     }
@@ -1330,12 +1383,17 @@ final class Battlegrounds
         auto reader = ByteReader(bytes);
         auto state = BattlegroundState(context.clock(), reader: &reader);
         restored.transferState(state);
+        restored.checkpointRetired = restored.status == BattlegroundStatus.waitLeave;
         return copies[instance] = restored;
     }
 
     /// The simulation is leaving with its map. Its queue slots remain valid on the new host.
     package void forgetMap(uint map)
     {
+        if (context.battlegroup !is null && context.battlegroup.host !is context)
+            return;
+        mapsToRestore.remove(map);
+        mapRecoveryDue.remove(map);
         foreach (id; copies.keys)
             if (copies[id].mapId == map)
                 copies.remove(id);
@@ -1416,15 +1474,127 @@ final class Battlegrounds
     /// Each copy's tick.
     void tick(Duration elapsed)
     {
+        foreach (map; mapsToRestore.keys)
+            mapReady(map);
         reportRecoveredMaps();
         foreach (copy; copies.values)
-            copy.tick(elapsed);
+            if (copy.mapId !in mapsToRestore && (!durable || context.canWrite()))
+                copy.tick(elapsed);
+        flushCheckpoints(true);
     }
 
-    package void recoverMap(uint map, ulong epoch)
+    package @property bool durable() const
     {
-        if (epoch)
-            mapRecoveryDue[map] = MonoTime.init;
+        return context.battlegroundMapEpoch !is null;
+    }
+
+    package void recoverMap(uint map, bool transferred)
+    {
+        mapsToRestore[map] = transferred;
+        mapReady(map);
+    }
+
+    /// Do not admit a player or report an empty map while its durable copies are still being loaded.
+    package bool mapReady(uint map)
+    {
+        import dmangos.log : info, warning;
+        import dmangos.mysql : DatabaseException;
+        import std.algorithm.searching : startsWith;
+        import std.base64 : Base64;
+
+        if (map !in mapsToRestore)
+            return true;
+        if (!canCheckpoint(map))
+            return false;
+        const transferred = mapsToRestore[map];
+        try
+        {
+            const since = transferred ? long.min : context.unixTime - checkpointLifetime;
+            foreach (ref saved; context.database.loadBattlegroundCheckpoints(context.config.realmId, map, since))
+            {
+                if (auto copy = find(saved.instance))
+                {
+                    copy.checkpointRevision = saved.revision;
+                    continue;
+                }
+                if (transferred || !saved.state.startsWith(checkpointFormat))
+                    continue;
+                // Claim the row before exposing the match. A late write using the old revision fails.
+                if (!context.database.saveBattlegroundCheckpoint(context.config.realmId, map, saved))
+                    return false;
+                try
+                {
+                    context.restoreBattleground(map, saved.instance, Base64.decode(saved.state[checkpointFormat.length .. $]));
+                    find(saved.instance).checkpointRevision = saved.revision + 1;
+                    info!"battleground: copy %s restored on node %s after loss of its map host"(saved.instance, context.nodeId);
+                }
+                catch (Exception error)
+                {
+                    copies.remove(saved.instance);
+                    context.closeBattlegroundMap(saved.instance);
+                    warning!"battleground: could not restore copy %s: %s"(saved.instance, error.msg);
+                }
+            }
+        }
+        catch (DatabaseException error)
+        {
+            warning!"battleground: could not read saved copies of map %s: %s"(map, error.msg);
+            return false;
+        }
+        mapsToRestore.remove(map);
+        mapRecoveryDue[map] = MonoTime.init;
+        return true;
+    }
+
+    package void flushCheckpoints(bool periodic = false)
+    {
+        if (!durable)
+            return;
+        const now = context.clock();
+        foreach (copy; copies)
+            if (!copy.checkpointRetired && copy.status < BattlegroundStatus.waitLeave
+                && (copy.checkpointDirty || (periodic && now >= copy.nextCheckpoint)))
+                saveCheckpoint(copy, false);
+    }
+
+    private bool canCheckpoint(uint map)
+    {
+        return context.hostsDungeon(map) && context.battlegroundMapEpoch(map) && context.canWrite();
+    }
+
+    private bool retireCheckpoint(Battleground copy)
+    {
+        if (!durable || find(copy.instance) !is copy || copy.checkpointRetired)
+            return true;
+        return saveCheckpoint(copy, true);
+    }
+
+    private bool saveCheckpoint(Battleground copy, bool retire)
+    {
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
+        import dmangos.world.database : BattlegroundCheckpoint;
+        import std.base64 : Base64;
+
+        if (copy.mapId in mapsToRestore || !canCheckpoint(copy.mapId))
+            return false;
+        try
+        {
+            const state = retire ? null : checkpointFormat ~ Base64.encode(context.snapshotBattleground(copy)).idup;
+            const row = BattlegroundCheckpoint(copy.instance, copy.checkpointRevision, context.unixTime, state);
+            if (context.database.saveBattlegroundCheckpoint(context.config.realmId, copy.mapId, row))
+            {
+                ++copy.checkpointRevision;
+                copy.checkpointDirty = false;
+                copy.checkpointRetired = retire;
+                copy.nextCheckpoint = context.clock() + checkpointInterval;
+                return true;
+            }
+            warning!"battleground: copy %s checkpoint was superseded by another owner"(copy.instance);
+        }
+        catch (DatabaseException error)
+            warning!"battleground: could not checkpoint copy %s: %s"(copy.instance, error.msg);
+        return false;
     }
 
     private void reportRecoveredMaps()
@@ -1463,7 +1633,7 @@ final class Battlegrounds
     private void queueChanged(Battleground copy, BattlegroundStatus status)
     {
         ulong epoch;
-        if (context.battlegroundMapEpoch !is null && !context.config.battlegroup.length)
+        if (durable)
         {
             if (!context.hostsDungeon(copy.mapId))
                 return;
@@ -1478,6 +1648,8 @@ final class Battlegrounds
         import dmangos.log : info;
 
         if (copies.get(copy.instance, null) !is copy)
+            return;
+        if (!retireCheckpoint(copy))
             return;
         copies.remove(copy.instance);
         queueChanged(copy, BattlegroundStatus.none);
@@ -1691,6 +1863,12 @@ mixin template BattlegroundHandlers()
             return;
         if (auto copy = context.battlegrounds.find(battleground_.instance))
         {
+            if (context.battlegrounds.durable)
+            {
+                const progress = player.progress(secondsInWorld());
+                context.database.saveProgress(progress);
+                context.settleWrites(); // recovery must be able to find the character on this map
+            }
             copy.arrived(player, battleground_.team); // its world states went with the map's packets
             joinTeamRaid(copy);
         }
@@ -1772,13 +1950,17 @@ mixin template BattlegroundHandlers()
             {
                 const rejoined = member.offlineSince != MonoTime.init;
                 copy.arrived(player, battleground_.team);
+                copy.rules.playerRestored(copy, player.guid);
                 // A gateway's login packets cannot see the temporary raid on the shared match host.
                 if (rejoined && context.battlegroup !is null)
+                {
+                    joinTeamRaid(copy);
                     if (auto raid = context.battlegroup.raids.of(player.guid))
                     {
                         groupChanged();
                         raid.updatePlayerOnlineStatus(this, true);
                     }
+                }
                 return;
             }
         info!"%s: '%s' is on a battleground's map, out of its copy: sent back"(remoteAddress, player.data.name);

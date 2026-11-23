@@ -692,19 +692,6 @@ final class BattlegroundQueue
         return changed_;
     }
 
-    /// A replacement combined host has no live copy of a match that had already started.
-    private void closeInterruptedMatches()
-    {
-        import dmangos.log : info;
-
-        foreach (instance; running.keys)
-            if (running[instance].status >= BattlegroundStatus.inProgress)
-            {
-                info!"battleground: copy %s was interrupted by loss of the shared host"(instance);
-                changed(instance, BattlegroundStatus.none);
-            }
-    }
-
     /// From the copy's node, before it closes an empty copy: how many may still come (invited).
     uint invited(uint instance) const
     {
@@ -1140,11 +1127,7 @@ struct BattlegroundQueueHost
                 if (context.battlegroup is null)
                     queue.nodeLost(0, previousNode);
                 else
-                {
                     context.battlegroup.queueHostLost(previousNode);
-                    if (context.config.battlegroupStandbyNode)
-                        queue.closeInterruptedMatches();
-                }
             }
             catch (Exception error)
                 warning!"battleground queues: could not restore the saved service state: %s"(error.msg);
@@ -1211,7 +1194,7 @@ struct BattlegroundQueueHost
         auto copy = r.instance in queue.running;
         if (copy is null || r.status > BattlegroundStatus.waitLeave)
             return;
-        if (context !is null && context.battlegroundMapEpoch !is null && !context.config.battlegroup.length)
+        if (context !is null && context.battlegroundMapEpoch !is null)
             if (!r.mapEpoch || context.battlegroundMapEpoch(battlegroundMaps[copy.type]) != r.mapEpoch)
                 return;
         queue.changed(r.instance, cast(BattlegroundStatus) r.status, r.mapEpoch);
@@ -1221,7 +1204,7 @@ struct BattlegroundQueueHost
     @Call BattlegroundMapRecoveryReply mapRecovered(const ref BattlegroundMapRecovered r)
     {
         const type = battlegroundOfMap(r.map);
-        if (!type || context is null || context.battlegroundMapEpoch is null || context.config.battlegroup.length
+        if (!type || context is null || context.battlegroundMapEpoch is null
             || !r.epoch || context.battlegroundMapEpoch(r.map) != r.epoch || !context.canWrite())
             return BattlegroundMapRecoveryReply(false);
         if (queue.reconcileMap(type, r.epoch, r.live))
@@ -1601,7 +1584,7 @@ unittest
     assert(ByteReader(sent[0].body_[13 .. $]).read!uint == 0, "none in the 10-19 bracket");
 }
 
-/// A cold combined-host takeover closes interrupted matches while retaining open invites to other copies.
+/// Recover the running copy and keep unused invites when the queue is restored first.
 unittest
 {
     auto now = MonoTime.currTime;
@@ -1620,8 +1603,8 @@ unittest
 
     auto recovered = testQueue(now, sent);
     recovered.restoreState(queue.saveState(), 12.seconds);
-    recovered.closeInterruptedMatches();
-    assert(recovered.ticketsOf(10) is null && played.instance !in recovered.copies);
+    recovered.reconcileMap(type, 2, [BattlegroundChanged(played.instance, BattlegroundStatus.inProgress, 2)]);
+    assert(recovered.ticketsOf(10)[0].instance == played.instance && played.instance in recovered.copies);
     const entry = recovered.port(20, 1, type, true);
     assert(entry.enter && entry.instance == invited);
 }
