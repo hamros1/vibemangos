@@ -48,23 +48,26 @@ struct RealmServiceCheckpoint
         return null;
     }
 
-    void save(bool changed, scope ubyte[] delegate() snapshot)
+    bool save(bool changed, scope ubyte[] delegate() snapshot)
     {
         import dmangos.log : warning;
         import dmangos.mysql : DatabaseException;
         import std.base64 : Base64;
 
         if (context is null || !context.canWrite())
-            return;
+            return false;
         const now = context.unixTime;
         if (!changed && now < nextSave)
-            return;
+            return false;
         nextSave = now + 10;
         try
         {
             const row = ServiceCheckpoint(revision, now, context.nodeId, "1:" ~ Base64.encode(snapshot()).idup);
             if (context.database.saveServiceCheckpoint(kind, context.config.realmId, row))
+            {
                 ++revision;
+                return true;
+            }
             else if (context.canWrite())
             {
                 warning!"%s: another host has a newer service checkpoint"(kind);
@@ -73,5 +76,6 @@ struct RealmServiceCheckpoint
         }
         catch (DatabaseException error)
             warning!"%s: could not checkpoint the service: %s"(kind, error.msg);
+        return false;
     }
 }

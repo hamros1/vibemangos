@@ -575,7 +575,9 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   party and raid chat, member stats, ready checks, rolls, minimap pings) is decided on the player's
   node from its mirror. A packet for a member goes to its node by presence, or for a few seconds
   after a command to the node the command came from. Stats of a member another node simulates are
-  asked of that node (`MemberStatsRequest`).
+  asked of that node (`MemberStatsRequest`). The coordinator checkpoints pending invitations and
+  meeting stone queues. A promoted coordinator restores the original invitations, even before the
+  first accept creates the party. It also resumes waiting parties and solo places.
 * **NPC services** (gossip, trainers, vendors, innkeepers, bankers, repairs) work on a replica of
   another node's creature through an `NpcStandIn` built from the replica's fields and the shared
   template; the player's side (money, items, spells, bind point) is on the player's node. A vendor's

@@ -19,7 +19,7 @@ import dmangos.world.context : WorldContext;
 import dmangos.world.group;
 import dmangos.world.map : packetBody;
 import dmangos.world.meetingstone;
-import core.time : Duration;
+import core.time : Duration, MonoTime, msecs;
 import dmangos.world.online : OnlinePlayer;
 import dmangos.world.opcodes : Opcode;
 import dmangos.world.packets;
@@ -127,6 +127,16 @@ final class GroupService
     /// Who waits at the meeting stones (`dmangos.world.meetingstone`).
     MeetingStoneQueue meetingStones;
     private long sinceMeetingStones; // milliseconds since the queue last moved
+    private imported!"dmangos.world.servicecheckpoint".RealmServiceCheckpoint durable;
+    private bool savesCoordinatorState, clearOldCheckpoint;
+    private ubyte[] lastSavedState;
+    private MonoTime recoveredInvitesUntil;
+
+    private static struct CoordinatorState
+    {
+        OpenGroupInvite[] invites;
+        MeetingStoneQueue stones;
+    }
 
     ///
     this(WorldContext context)
@@ -134,9 +144,93 @@ final class GroupService
         this.context = context;
     }
 
+    /// Refresh the write revision on startup and restore the old coordinator's queues on promotion.
+    void startCoordinator(bool takeOver)
+    {
+        import dmangos.log : warning;
+        import dmangos.plaindata : decode;
+        import dmangos.world.servicecheckpoint : RealmServiceCheckpoint;
+
+        stopCoordinator();
+        savesCoordinatorState = true;
+        durable = RealmServiceCheckpoint(context, ServiceKind.groupQueue);
+        ushort previous;
+        Duration age;
+        const saved = durable.load(takeOver, previous, age);
+        clearOldCheckpoint = !saved.length;
+        if (!saved.length)
+            return;
+        try
+        {
+            CoordinatorState state;
+            const(ubyte)[] bytes = saved;
+            decode(bytes, state);
+            foreach (ref invite; state.invites)
+                context.groups.restoreInvitation(invite);
+            meetingStones = state.stones;
+            lastSavedState = saved.dup;
+            const cluster = context.config.cluster;
+            recoveredInvitesUntil = context.clock() + (long(cluster.leaseMs) + cluster.failureTimeoutMs + 2000).msecs;
+        }
+        catch (Exception error)
+        {
+            clearOldCheckpoint = true;
+            warning!"groups: saved invitations and meeting stones could not be restored: %s"(error.msg);
+        }
+    }
+
+    void stopCoordinator()
+    {
+        savesCoordinatorState = false;
+        clearOldCheckpoint = false;
+        lastSavedState = null;
+        recoveredInvitesUntil = MonoTime.init;
+        sinceMeetingStones = 0;
+        meetingStones = MeetingStoneQueue.init;
+    }
+
+    private ubyte[] saveCoordinatorState()
+    {
+        import dmangos.plaindata : encode;
+
+        ubyte[] bytes;
+        const state = CoordinatorState(context.groups.openInvitations(), meetingStones);
+        encode(bytes, state);
+        return bytes;
+    }
+
+    private void checkpoint(bool changed)
+    {
+        if (!savesCoordinatorState || !context.canWrite())
+            return;
+        const active = context.groups.invitedTo.length || meetingStones.players.length || meetingStones.parties.length
+            || meetingStones.offline.length;
+        if (!active && !lastSavedState.length && !clearOldCheckpoint)
+            return;
+        ubyte[] state;
+        if (changed)
+        {
+            state = saveCoordinatorState();
+            if (!clearOldCheckpoint && state == lastSavedState)
+                return;
+        }
+        if (durable.save(changed || clearOldCheckpoint, () {
+            if (!state.length)
+                state = saveCoordinatorState();
+            return state;
+        }))
+        {
+            lastSavedState = active ? state : null;
+            clearOldCheckpoint = false;
+        }
+    }
+
     /// Runs a command that came from node `via` (this node's own id for its own players).
     void run(const GroupCommand c, ushort via)
     {
+        if (!context.canWrite())
+            return;
+        scope (success) checkpoint(true);
         context.heardFrom(c.guid, via);
         auto groups = context.groups;
         final switch (c.op) // the deserializer refused any other value
@@ -291,6 +385,18 @@ final class GroupService
     {
         import std.sumtype : match;
 
+        scope (success) checkpoint(false);
+        if (recoveredInvitesUntil != MonoTime.init)
+        {
+            if (context.clock() < recoveredInvitesUntil)
+                return; // a gateway may still be restoring its players and their presence
+            recoveredInvitesUntil = MonoTime.init;
+            foreach (ref invite; context.groups.openInvitations())
+                if (!invite.group && !online(invite.leader))
+                    context.groups.uninvite(invite.leader);
+                else if (!online(invite.recipient))
+                    context.groups.uninvite(invite.recipient);
+        }
         sinceMeetingStones += elapsed.total!"msecs";
         if (sinceMeetingStones < 1000)
             return;
@@ -377,10 +483,11 @@ private:
                 return send(c.guid, ServerMeetingStoneJoinFailed(JoinFailure.raid));
             if (group.isFull)
                 return send(c.guid, ServerMeetingStoneJoinFailed(JoinFailure.partyFull));
-            return queueParty(group, c.number, team);
+            return queueParty(group, c.number, team, true);
         }
         meetingStones.removePlayer(c.guid);
         meetingStones.players ~= QueuedPlayer(c.guid, c.name, cast(ubyte) c.number2, team, c.number);
+        checkpoint(true);
         send(c.guid, ServerMeetingStoneSetQueue(c.number, QueueStatus.joinedQueue));
     }
 
@@ -412,12 +519,14 @@ private:
     }
 
     // `group` waits for members for `area`, its open roles from its members' classes.
-    void queueParty(Group group, uint area, uint team)
+    void queueParty(Group group, uint area, uint team, bool recordImmediately = false)
     {
         meetingStones.removeParty(group.id);
         auto party = QueuedParty(group.id, group.leader, team, area);
         MeetingStoneQueue.fillRoles(party, classesOf(group));
         meetingStones.parties ~= party;
+        if (recordImmediately)
+            checkpoint(true);
         broadcast(group, ServerMeetingStoneSetQueue(area, QueueStatus.joinedQueue));
     }
 
@@ -528,6 +637,7 @@ private:
                 if (!group.addInvite(recipient, recipientName))
                     return group.removeAllInvites();
             }
+            checkpoint(true);
             context.deliverTo(recipient, Opcode.SMSG_GROUP_INVITE, packetBody(ServerGroupInvite(c.name)));
             result(c, PARTY_OP_INVITE, name, ERR_PARTY_RESULT_OK);
         }
@@ -564,6 +674,75 @@ private:
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+/// Promotion preserves the original party prompts and solo meeting stone positions.
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import dmangos.cluster.protocol : PresenceEntry;
+    import dmangos.world.config : WorldConfig;
+    import dmangos.world.movement : Position;
+    import dmangos.world.testclient : newCreationContext, newDatabase;
+
+    foreach (created; [false, true])
+    {
+        auto db = newDatabase();
+        auto former = newCreationContext(db, (ref WorldConfig c) { c.cluster.nodeId = 1; });
+        former.nodeId = 1;
+        former.regionOwnerAround = (uint, Position, float) => former.nodeId;
+        const players = [PresenceEntry(7, "Anduin", 7, 1, 1, 20, 0, 12, 0, 0, ""),
+            PresenceEntry(8, "Jaina", 8, 1, 8, 20, 0, 12, 0, 0, ""),
+            PresenceEntry(9, "Lina", 9, 1, 8, 20, 0, 12, 0, 0, ""),
+            PresenceEntry(10, "Quill", 10, 1, 8, 20, 0, 12, 0, 0, ""),
+            PresenceEntry(11, "Mira", 11, 1, 5, 20, 0, 12, 0, 0, "")];
+        former.presence(3, true, players, null);
+        auto original = former.groupService;
+        original.startCoordinator(false);
+        ulong[] prompted;
+        former.deliverRemote = (ushort node, ulong player, ushort opcode, const(ubyte)[]) {
+            if (opcode == Opcode.SMSG_GROUP_INVITE)
+            {
+                assert(db.loadServiceCheckpoint(ServiceKind.groupQueue, former.config.realmId).revision > 0);
+                prompted ~= player;
+            }
+        };
+        original.run(GroupCommand(7, "Anduin", 1, false, GroupOp.invite, 0, "Jaina"), 3);
+        original.run(GroupCommand(7, "Anduin", 1, false, GroupOp.invite, 0, "Lina"), 3);
+        if (created)
+            original.run(GroupCommand(8, "Jaina", 1, false, GroupOp.accept), 3);
+        assert(prompted == [8UL, 9UL]);
+        const originalGroup = former.groups.of(7);
+        const groupId = originalGroup is null ? 0 : originalGroup.id;
+        if (groupId)
+            db.groups[groupId].leaderName = "Anduin"; // the SQL loader joins the leader's character row
+        enum uint deadmines = 1581;
+        original.run(GroupCommand(10, "Quill", 1, false, GroupOp.meetingStoneJoin, 0, null, null, deadmines, 8), 3);
+        original.run(GroupCommand(11, "Mira", 1, false, GroupOp.meetingStoneJoin, 0, null, null, deadmines, 5), 3);
+        original.run(GroupCommand(11, "Mira", 1, false, GroupOp.logout), 3);
+
+        auto successor = newCreationContext(db, (ref WorldConfig c) { c.cluster.nodeId = 2; });
+        successor.nodeId = 2;
+        successor.regionOwnerAround = (uint, Position, float) => successor.nodeId;
+        successor.presence(3, true, players[0 .. 4], null);
+        auto current = successor.groupService;
+        current.startCoordinator(true);
+        assert(current.meetingStones.player(10).area == deadmines && current.meetingStones.offline[0].guid == 11);
+        assert(successor.groups.invitationOf(9) !is null);
+        ushort[] packets;
+        successor.deliverRemote = (ushort node, ulong player, ushort opcode, const(ubyte)[]) { packets ~= opcode; };
+        if (!created)
+            current.run(GroupCommand(8, "Jaina", 1, false, GroupOp.accept), 3);
+        current.run(GroupCommand(9, "Lina", 1, false, GroupOp.accept), 3);
+        auto group = successor.groups.of(7);
+        assert(group.members.length == 3 && group is successor.groups.of(8) && group is successor.groups.of(9));
+        assert(!groupId || group.id == groupId);
+        assert(!packets.canFind(Opcode.SMSG_GROUP_INVITE), "players can accept the original prompts");
+
+        successor.presence(3, true, players, null);
+        current.run(GroupCommand(11, "Mira", 1, false, GroupOp.meetingStoneInfo), 3);
+        assert(current.meetingStones.player(11).area == deadmines && !current.meetingStones.offline.length);
+    }
+}
 
 /**
  * A party across two nodes: the coordinator invites a player of node 2 and creates the group when it

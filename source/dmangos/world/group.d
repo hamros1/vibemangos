@@ -851,6 +851,14 @@ private:
     }
 }
 
+/// One pending invitation, including the leader when the first accept will create the party.
+package struct OpenGroupInvite
+{
+    uint group;
+    ulong leader, recipient;
+    string leaderName, recipientName;
+}
+
 /// See the module documentation.
 final class Groups
 {
@@ -950,6 +958,47 @@ final class Groups
     Group invitationOf(ulong guid)
     {
         return invitedTo.get(guid, null);
+    }
+
+    package OpenGroupInvite[] openInvitations()
+    {
+        import std.algorithm.sorting : sort;
+
+        OpenGroupInvite[] result;
+        foreach (recipient, group; invitedTo)
+            if (group.isCreated || group.leader != recipient)
+                result ~= OpenGroupInvite(group.id, group.leader, recipient, group.leaderName, group.invitees[recipient]);
+        result.sort!((a, b) => a.recipient < b.recipient);
+        return result;
+    }
+
+    package void restoreInvitation(const ref OpenGroupInvite invite)
+    {
+        if (!invite.leader || !invite.recipient || invite.leader == invite.recipient || of(invite.recipient) !is null)
+            return;
+        auto group = invite.group ? byId.get(invite.group, null) : of(invite.leader);
+        if (!invite.group)
+        {
+            if (group !is null)
+            {
+                if (!group.isLeader(invite.leader) || group.id !in byId)
+                    return;
+            }
+            else
+            {
+                group = invitationOf(invite.leader);
+                if (group is null)
+                {
+                    group = newGroup();
+                    if (!group.addLeaderInvite(invite.leader, invite.leaderName))
+                        return;
+                }
+                else if (group.isCreated || !group.isLeader(invite.leader))
+                    return;
+            }
+        }
+        if (group !is null)
+            group.addInvite(invite.recipient, invite.recipientName);
     }
 
     /// A group that is not created yet, for a first invitation.
@@ -1086,7 +1135,7 @@ final class Groups
             if (group.slots.length < Group.membersMinCount)
                 group.disband(true);
         }
-        else if (group.inviteeCount <= 1)
+        else if (group.isLeader(guid) || group.inviteeCount <= 1)
             group.removeAllInvites();
     }
 }

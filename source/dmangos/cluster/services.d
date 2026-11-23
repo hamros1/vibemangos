@@ -48,6 +48,7 @@ enum ServiceKind : ushort
     lootTurns = 5,          /// the coordinator's group loot rotation
     scourge = 6,            /// the original Scourge Invasion on this realm
     weather = 7,            /// zone weather across the realm
+    groupQueue = 8,         /// saved coordinator invitations and meeting stone queues
     example = 0xFFFF,       /// for tests
 }
 

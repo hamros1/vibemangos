@@ -516,6 +516,14 @@ CREATE TABLE `dmangos_guild_revision` (
   `last_guild` int unsigned NOT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB;
+CREATE TABLE `dmangos_group_checkpoint` (
+  `realm` int unsigned NOT NULL,
+  `revision` bigint unsigned NOT NULL,
+  `saved_at` bigint NOT NULL,
+  `node` smallint unsigned NOT NULL,
+  `state` longtext NOT NULL,
+  PRIMARY KEY (`realm`)
+) ENGINE=InnoDB;
 CREATE TABLE `dmangos_loot_coin` (
   `issuer` smallint unsigned NOT NULL,
   `token` bigint unsigned NOT NULL,

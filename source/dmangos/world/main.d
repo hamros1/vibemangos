@@ -469,6 +469,8 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
             // Groups are the coordinator's: this node mirrors them.
             context.groups.clear();
         }
+        else
+            context.groupService.startCoordinator(false);
         // Phase 7: the standby, become the coordinator, takes up the coordinator's part of the world server.
         cluster.onPromoted = () {
             import dmangos.cluster.services : ServiceKind;
@@ -476,6 +478,7 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
             context.forwardGroup = null;
             context.groups.clear();        // the groups too, from the database the old coordinator kept them in
             context.groups.load(context.database.loadGroups());
+            context.groupService.startCoordinator(true);
             context.services.start(ServiceKind.lootTurns);
             context.groups.changes = &bridge.groupChanged;
             context.groups.removed = &bridge.groupRemoved;
@@ -494,6 +497,7 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
             context.forwardGroup = &bridge.forwardGroup;
             context.groups.changes = null;
             context.groups.removed = null;
+            context.groupService.stopCoordinator();
             context.idPool = cluster.pool;
             context.services.stop(ServiceKind.lootTurns);
         };
