@@ -883,6 +883,10 @@ EventAI can select a wounded ally in combat on another node when all the rule's 
 supported channels aimed at that ally. Leprous Technicians and Machinesmiths use this for
 Supercharge and Rebuild. The chosen ally remains the cast target.
 
+Boon of Life can send its final spell hit to Ras Frostwhisper's current owner. The caster confirms
+completion, and Ras's owner consumes that cast's token before starting its EventAI relay. A short
+record of the expired aura can move with Ras when the two nodes' timers finish in different ticks.
+
 Cross-node spell routing is effect-specific. Other script-selected channels, registered spell scripts, and
 database spell steps that need the caster or another actor still use their local paths. Ground ticks
 use observed targets around the spot and require a current caster replica at the target. At impact,

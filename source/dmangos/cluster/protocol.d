@@ -199,6 +199,7 @@ struct SwingRetaliation
 struct AreaDamage
 {
     enum type = MessageType.areaDamage;
+    enum int completedChannel = -1; /// auraMs for a named channel confirmed complete by its caster
 
     ulong sequence;
     ulong caster;
@@ -220,7 +221,7 @@ struct AreaDamage
     bool creatureArea; /// hostile area or cone of a creature spell
     bool namedCreature; /// the spell selects a living creature by its spell_script_target entry
     bool channelled;   /// a player started a channel on its own node
-    bool channelUpdate; /// the channel's remote aura is shortened, or removed for auraMs zero
+    bool channelUpdate; /// shorten (positive auraMs), cancel (zero), or complete (completedChannel)
     bool groundTick; /// a tick of a persistent effect centered on the spot, independent of the caster's position
     ushort groundRedirect; /// reply: new target owner; request: previous owner already declined the tick
     uint groundAmount; /// before the caster's and recipient's damage factors, for a tick redirected here

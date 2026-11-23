@@ -307,6 +307,111 @@ unittest
     }
 }
 
+/// The Soulbound Keepsake triggers Ras's relay only after the caster completes Boon of Life.
+unittest
+{
+    import dmangos.bytes : ByteWriter;
+    import dmangos.cluster.protocol : AreaDamage;
+    import dmangos.cluster.regions : CellRect, Region, RegionState;
+    import dmangos.world.creature : TempSpawnType;
+    import dmangos.world.defines : inventorySlotBag0;
+    import dmangos.world.grid : cellCoordinate, cellKeyAt, cellSize;
+    import dmangos.world.replication : encodePlayerState, encodeState;
+    import dmangos.world.updatefields : UNIT_CHANNEL_SPELL, UNIT_FIELD_CHANNEL_OBJECT, UNIT_FIELD_FACTIONTEMPLATE;
+
+    if (!haveRealData())
+        return;
+
+    enum uint keepsake = 13752, boon = 17179, ras = 10508;
+    const origin = Position(2 * cellSize - 2, 100, 40), at = Position(2 * cellSize + 2, 100, 40);
+    const cell = cellKeyAt(at.x, at.y), casterCell = cellKeyAt(origin.x, origin.y);
+    const x = cellCoordinate(at.x), y = cellCoordinate(at.y);
+    const gained = Region(7, 0, CellRect(x, y, x + 1, y + 1), 3, 2, RegionState.granted);
+
+    foreach (cancelled; [false, true])
+    {
+        auto source = RealWorld.make(), owner = RealWorld.make(), successor = RealWorld.make();
+        source.context.nodeId = 1;
+        owner.context.nodeId = 2;
+        successor.context.nodeId = 3;
+        source.context.clock = () => source.now;
+        auto from = source.context.map(0), to = owner.context.map(0), destination = successor.context.map(0);
+        auto hero = loggedIn(source.context, source.db, 112, "Keepsake", origin, AccountLevel.player, raceHuman, 0, 60);
+        auto player = cast(Player) hero.session.character;
+        hero.session.inWorld.storeLoot(keepsake, 1, 0, false);
+        auto boss = owner.context.summonCreature(to, ras, at, TempSpawnType.manual, 0, 0);
+        assert(boss !is null);
+        from.replicaCreated(2, cell, boss.guid, encodeState(boss, 0));
+        const oldFaction = boss.values.get!UNIT_FIELD_FACTIONTEMPLATE;
+        AreaDamage delivered;
+        uint completions;
+        source.context.sendAreaDamage = (ushort peer, const ref AreaDamage message) {
+            auto world = peer == 2 ? owner.context : successor.context;
+            world.map(0).replicaCreated(1, casterCell, player.guid, encodePlayerState(player, 0));
+            if (message.channelUpdate && message.auraMs == AreaDamage.completedChannel)
+            {
+                ++completions;
+                delivered = cast(AreaDamage) message;
+            }
+            world.areaDamageArrived(1, message);
+            return true;
+        };
+        ByteWriter use;
+        use.put(inventorySlotBag0);
+        use.put(backpackSlot(player, keepsake));
+        use.put(ubyte(1));
+        SpellTargets(TargetFlags.unit, boss.guid).write(use);
+        hero.write(Opcode.CMSG_USE_ITEM, use.data);
+        assert(player.values.get!UNIT_CHANNEL_SPELL == boon && player.values.get!UNIT_FIELD_CHANNEL_OBJECT == boss.guid);
+        auto aura = boss.auras.find(boon, player.guid);
+        assert(aura !is null && aura.channelToken && aura.duration == 20_000);
+
+        hero.session.update(19_999.msecs);
+        boss.updateAuras(to, 19_999);
+        assert(player.values.get!UNIT_CHANNEL_SPELL == boon && aura.duration == 1);
+        if (!cancelled)
+        {
+            boss.updateAuras(to, 1);
+            assert(!boss.auras.find(boon, player.guid), "the aura expires on the target's own clock");
+        }
+        assert(owner.context.runningScripts == 0, "the target's timer cannot start the relay");
+        const bundle = to.migrateOut(key => key == cell, 3, &owner.context.saveMigrant);
+        ubyte[][uint] unused;
+        successor.context.regionsChanged([gained], null, [gained.id: bundle], unused);
+        auto moved = destination.creatureAt(boss.guid);
+        assert(moved !is null && to.creatureAt(boss.guid) is null);
+
+        if (cancelled)
+        {
+            from.replicaCreated(3, cell, boss.guid, encodeState(moved, 0));
+            ByteWriter stop;
+            stop.put(boon);
+            hero.write(Opcode.CMSG_CANCEL_CHANNELLING, stop.data);
+            hero.session.update(100.msecs);
+            moved.updateAuras(destination, 100);
+            source.context.update(source.now);
+            assert(!completions && !moved.auras.find(boon, player.guid) && !successor.context.runningScripts);
+            assert(moved.values.get!UNIT_FIELD_FACTIONTEMPLATE == oldFaction);
+            continue;
+        }
+
+        hero.session.update(1.msecs);
+        source.context.update(source.now);
+        assert(!player.values.get!UNIT_CHANNEL_SPELL && completions == 1 && !owner.context.runningScripts,
+            "the former owner cannot apply the completion");
+        from.replicaCreated(3, cell, boss.guid, encodeState(moved, 0));
+        source.now += 50.msecs;
+        source.context.update(source.now);
+        assert(completions == 2 && successor.context.runningScripts == 1,
+            "only the current owner starts the real EventAI relay");
+        delivered.sequence = source.context.nextGameplaySequence();
+        successor.context.areaDamageArrived(1, delivered);
+        assert(successor.context.runningScripts == 1, "a replay cannot start the relay again");
+        successor.context.updateScripts(1);
+        assert(moved.values.get!UNIT_FIELD_FACTIONTEMPLATE == 7, "the actual relay changes Ras's faction");
+    }
+}
+
 /// Cold Snap (12472) makes Ice Block (11958) ready again: its cooldown is its category's (37), not its own.
 unittest
 {

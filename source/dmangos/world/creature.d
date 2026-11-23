@@ -672,6 +672,12 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
 
     /// Its auras (`dmangos.world.auras`): what players' spells left on it.
     AuraSet auras;
+    private struct ExpiredChannel
+    {
+        uint spell, deadline;
+        ulong caster, token;
+    }
+    private ExpiredChannel[] expiredChannels;
 
     /// `UNIT_DYNFLAG_LOOTABLE`, `UNIT_DYNFLAG_TAPPED`
     enum uint dynLootable = 0x01, dynTapped = 0x04;
@@ -974,13 +980,36 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
                     world);
     }
 
+    /// An aura can expire before the caster's completion reaches this creature's owner.
+    package bool consumeChannelCompletion(uint spell, ulong caster, ulong token, size_t effect, uint now,
+        CombatWorld world)
+    {
+        import std.algorithm.mutation : remove;
+
+        if (auto aura = auras.find(spell, caster))
+            if (aura.channelToken == token && !aura.detachedChannel && (aura.effects & (1u << effect)))
+            {
+                loseAura(aura, world, true);
+                world.flushCreature(this);
+                return true;
+            }
+        foreach (i, result; expiredChannels)
+            if (result.spell == spell && result.caster == caster && result.token == token)
+            {
+                expiredChannels = expiredChannels.remove(i);
+                return cast(int)(result.deadline - now) > 0;
+            }
+        return false;
+    }
+
     /// Its auras' time passes: their casters do what their ticks do; those that ended go.
     void updateAuras(CombatWorld world, int diff)
     {
+        import std.algorithm.mutation : remove;
         import std.algorithm.searching : canFind;
         import std.random : uniform01;
         import dmangos.world.spellauras : channelAuraActive;
-        import dmangos.world.spelldamage : namedCreatureChannelEffect;
+        import dmangos.world.spelldamage : namedChannelTriggerEffect, namedCreatureChannelEffect;
 
         AuraTick[] ticks;
         Aura[] expired, heartbeats;
@@ -989,6 +1018,8 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         {
             if (!alive)
                 break;
+            if (tick.aura.channelToken && namedChannelTriggerEffect(*tick.aura.spell) == tick.effect)
+                continue; // Only the caster can confirm that the channel finished.
             if (tick.aura.caster
                 && namedCreatureChannelEffect(*tick.aura.spell) != size_t.max
                 && !channelAuraActive(world.unitOf(this), tick.aura, true))
@@ -1009,7 +1040,18 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             if (!expired.canFind(aura) && uniform01(world.random) * 100 < aura.heartbeatChance)
                 expired ~= aura;
         foreach (aura; expired)
+        {
+            const effect = aura.channelToken && !aura.detachedChannel
+                ? namedChannelTriggerEffect(*aura.spell) : size_t.max;
+            if (alive && ai !is null && effect != size_t.max && (aura.effects & (1u << effect)))
+                if (auto context = ai.spellCaster(world).context)
+                {
+                    const now = context.transportNow();
+                    expiredChannels = expiredChannels.remove!(result => cast(int)(result.deadline - now) <= 0);
+                    expiredChannels ~= ExpiredChannel(aura.spell.id, now + 5000, aura.caster, aura.channelToken);
+                }
             loseAura(aura, world, true);
+        }
         if (expired.length)
             world.flushCreature(this);
     }
@@ -1256,6 +1298,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         }
         foreach (aura; auras.list.dup) // every aura goes on death
             auras.remove(aura, values);
+        expiredChannels = null;
         values.set!UNIT_NPC_FLAGS(0u);
         stopMoving(this, world);
         generator = new IdleMovement;
@@ -1416,6 +1459,17 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         w.put(loot !is null);
         if (loot !is null)
             loot.saveHandoff(w);
+        if (expiredChannels.length)
+        {
+            w.put(cast(uint) expiredChannels.length);
+            foreach (ref result; expiredChannels)
+            {
+                w.put(result.spell);
+                w.put(result.deadline);
+                w.put(result.caster);
+                w.put(result.token);
+            }
+        }
     }
 
     /**
@@ -1483,6 +1537,14 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         pocketsRestockAt = r.read!long;
         if (r.read!bool)
             loot = Loot.loadHandoff(guid, r);
+        expiredChannels = null;
+        if (!r.empty)
+            foreach (_; 0 .. r.read!uint)
+            {
+                const result = ExpiredChannel(r.read!uint, r.read!uint, r.read!ulong, r.read!ulong);
+                if (cast(int)(result.deadline - now) > 0)
+                    expiredChannels ~= result;
+            }
         values.clearChanges();
     }
 

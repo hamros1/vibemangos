@@ -736,12 +736,34 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     package size_t namedCreatureChannel(const(SpellInfo)* spell)
     {
         import dmangos.world.spellcast : duration;
-        import dmangos.world.spelldamage : namedCreatureChannelEffect;
+        import dmangos.world.spelldamage : namedChannelTriggerEffect, namedCreatureChannelEffect;
 
         const effect = namedCreatureChannelEffect(*spell);
         return effect != size_t.max && namedCreatureEntries(spell, effect).length && !spellScript(spell.id)
             && duration(*spell, client, spell.spellLevel) > 0
+            && (namedChannelTriggerEffect(*spell) == size_t.max || namedChannelCompletionSpell(spell) !is null)
             ? effect : size_t.max;
+    }
+
+    /// A single terminal dummy hit with no spell script of its own can run where its creature is owned.
+    private const(SpellInfo)* namedChannelCompletionSpell(const(SpellInfo)* spell)
+    {
+        import dmangos.world.dbscripts : DbScriptType;
+        import dmangos.world.spellcast : duration;
+        import dmangos.world.spelldamage : namedChannelTriggerEffect, namedCreatureShape;
+        import dmangos.world.spellids : SpellEffect;
+
+        const effect = namedChannelTriggerEffect(*spell);
+        if (effect == size_t.max || spell.casting.amplitude[effect] != duration(*spell, client, spell.spellLevel))
+            return null;
+        const child = data.spells.spell(spell.triggerSpell[effect]);
+        if (child is null || child.casting.speed != 0 || (child.attributesEx & (0x04 | 0x40))
+            || child.effect[0] != SpellEffect.dummy || child.effect[1] || child.effect[2]
+            || namedCreatureShape(*child, 0) != ImplicitTarget.unitScriptNearCaster || child.casting.chainTarget[0] > 1
+            || !spellScriptTargets(child.id, 0).length || spellScript(child.id)
+            || data.dbScripts.steps(DbScriptType.spell, child.id).length)
+            return null;
+        return child;
     }
 
     package ImplicitTarget namedGameObjectRouting(const(SpellInfo)* spell, size_t effect)
@@ -1000,9 +1022,28 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         MonoTime due;
         AreaDamage hit;
         MonoTime retryUntil; // after handoff: wait briefly for the target's replica to arrive here
+        ushort sentTo; // a completed channel can follow a replica to a different owner
     }
 
     private ReplicaSpellImpact[] replicaSpellImpacts;
+
+    /// Only a caster that completed its channel can authorize its terminal spell.
+    package void completeNamedChannel(Map map_, UnitRef caster, ulong target, const(SpellInfo)* spell, ulong token)
+    {
+        if (!token || !canWrite() || namedChannelCompletionSpell(spell) is null)
+            return;
+        auto hit = AreaDamage(caster: caster.combatGuid, target: target, spell: spell.id,
+            map: map_.id, instance: map_.instanceId, creatureCast: caster.creature !is null,
+            namedCreature: true, channelled: true, channelUpdate: true,
+            auraMs: AreaDamage.completedChannel, channelToken: token);
+        if (map_.creatureAt(target) !is null)
+            applyAreaDamage(0, map_, hit);
+        else if (sendAreaDamage !is null)
+        {
+            const now = clock();
+            replicaSpellImpacts ~= ReplicaSpellImpact(now, hit, now + 2.seconds);
+        }
+    }
 
     /// Move pending named-creature impacts with a player. The impact time uses the shared node clock.
     package void writeReplicaImpacts(ulong caster, ref ByteWriter writer)
@@ -1103,7 +1144,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return false;
         if (hit.channelled)
             map_.holdCasterReplica(hit.caster, peer, cast(uint) max(0, hit.auraMs) + 5_000,
-                hit.creatureCast && !hit.channelUpdate);
+                (hit.creatureCast && !hit.channelUpdate)
+                || (hit.channelUpdate && hit.auraMs == AreaDamage.completedChannel));
         else if (hit.namedCreature)
             map_.holdCasterReplica(hit.caster, peer, 5_000);
         if (!hit.sequence || !hit.channelled)
@@ -1127,16 +1169,25 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             auto map_ = existingMap(impact.hit.map, impact.hit.instance);
             if (map_ is null || !map_.unit(impact.hit.caster) || !canWrite())
                 continue;
+            const completion = impact.hit.channelUpdate && impact.hit.auraMs == AreaDamage.completedChannel;
+            if (completion && impact.retryUntil <= now)
+                continue;
             if (auto copy = cast(Replica) map_.findObject(impact.hit.target))
             {
-                if (sendReplicaSpellImpact(map_, copy.owner, impact.hit))
-                    continue;
+                if (copy.owner != impact.sentTo && sendReplicaSpellImpact(map_, copy.owner, impact.hit))
+                {
+                    if (!completion)
+                        continue;
+                    impact.sentTo = copy.owner;
+                }
             }
             else if (impact.hit.namedCreature && map_.unit(impact.hit.target))
             {
                 applyAreaDamage(0, map_, impact.hit);
                 continue;
             }
+            else if (completion)
+                impact.sentTo = 0;
             if (impact.retryUntil > now)
                 replicaSpellImpacts ~= impact;
         }
@@ -1493,6 +1544,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             }
             if (message.channelUpdate)
             {
+                if (message.auraMs == AreaDamage.completedChannel)
+                {
+                    if (message.namedCreature && caster.alive)
+                        applyNamedChannelCompletion(caster, victim, spell, message.channelToken);
+                    return;
+                }
                 const confirms = message.namedCreature && message.auraMs > 0;
                 if (confirms && (casterFields.get!UNIT_CHANNEL_SPELL != message.spell
                     || casterFields.get!UNIT_FIELD_CHANNEL_OBJECT != message.target))
@@ -1787,6 +1844,25 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 victim.session.sendAuraDuration(aura);
         }
         return true;
+    }
+
+    private void applyNamedChannelCompletion(UnitRef caster, UnitRef victim, const(SpellInfo)* spell, ulong token)
+    {
+        import std.algorithm.searching : canFind;
+        import dmangos.world.spelldamage : namedChannelTriggerEffect;
+        import dmangos.world.spellselection : namedCreatureRange;
+
+        const child = namedChannelCompletionSpell(spell);
+        if (child is null || !spellScriptTargets(child.id, 0).canFind(victim.creature.spawn.entry))
+            return;
+        const from = caster.position, to = victim.position;
+        const reach = namedCreatureRange(*spell, client) + caster.fighter.combatReach + victim.fighter.combatReach;
+        if (!((from.x - to.x) ^^ 2 + (from.y - to.y) ^^ 2 + (from.z - to.z) ^^ 2 <= reach ^^ 2)
+            || !victim.map.inLineOfSight(from, to))
+            return;
+        if (victim.creature.consumeChannelCompletion(spell.id, caster.combatGuid, token,
+                namedChannelTriggerEffect(*spell), transportNow(), victim.map))
+            victim.creature.ai.spellHitBy(caster.combatGuid, child.id, 1u << child.casting.school, victim.map);
     }
 
     private void replyCreatureCast(ushort peer, const ref AreaDamage message,

@@ -1083,6 +1083,8 @@ private:
         player.values.set!UNIT_CHANNEL_SPELL(0u);
         player.values.set!UNIT_FIELD_CHANNEL_OBJECT(0UL);
         flushPlayerChanges();
+        if (!cancelled && channelToken)
+            context.completeNamedChannel(map, map.unit(player.guid), channelTarget, spell, channelToken);
     }
 
     /// The client stops channelling.

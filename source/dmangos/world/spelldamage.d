@@ -341,6 +341,7 @@ package size_t namedCreatureChannelEffect(const ref SpellInfo spell)
     if (!(spell.attributesEx & (0x04 | 0x40)) || spell.casting.speed > 0)
         return size_t.max;
     size_t first = size_t.max;
+    bool finish, threat;
     foreach (i, effect; spell.effect)
     {
         if (effect == SpellEffect.none)
@@ -349,14 +350,33 @@ package size_t namedCreatureChannelEffect(const ref SpellInfo spell)
             || namedCreatureShape(spell, i) != ImplicitTarget.unitScriptNearCaster)
             return size_t.max;
         const aura = spell.casting.applyAuraName[i];
-        // Dummy auras can drive a scripted encounter. A visual tick here has no spell to run.
-        if (!aura.among(AuraType.periodicHeal, AuraType.modDamageDone, AuraType.modMeleeHaste, AuraType.modScale)
-            && (aura != AuraType.periodicTriggerSpell || spell.triggerSpell[i]))
+        if (aura == AuraType.modThreat)
+            threat = true;
+        else if (aura == AuraType.periodicTriggerSpell)
+        {
+            if (spell.triggerSpell[i])
+            {
+                if (finish || !spell.casting.amplitude[i])
+                    return size_t.max;
+                finish = true;
+            }
+        }
+        else if (!aura.among(AuraType.periodicHeal, AuraType.modDamageDone, AuraType.modMeleeHaste, AuraType.modScale))
             return size_t.max;
         if (first == size_t.max)
             first = i;
     }
-    return first;
+    return threat && !finish ? size_t.max : first;
+}
+
+/// The potential completion effect. The world also checks its timing and the child spell.
+package size_t namedChannelTriggerEffect(const ref SpellInfo spell)
+{
+    foreach (i, trigger; spell.triggerSpell)
+        if (trigger && spell.effect[i] == SpellEffect.applyAura
+            && spell.casting.applyAuraName[i] == AuraType.periodicTriggerSpell)
+            return i;
+    return size_t.max;
 }
 
 unittest
@@ -371,6 +391,8 @@ unittest
     assert(namedCreatureChannelEffect(channel) == 0);
     channel.triggerSpell[0] = 1;
     assert(namedCreatureChannelEffect(channel) == size_t.max);
+    channel.casting.amplitude[0] = 2000;
+    assert(namedCreatureChannelEffect(channel) == 0 && namedChannelTriggerEffect(channel) == 0);
     channel.casting.applyAuraName[0] = AuraType.periodicHeal;
     assert(namedCreatureChannelEffect(channel) == 0);
     channel.triggerSpell[0] = 0;

@@ -216,6 +216,7 @@ mixin template CreatureCasting()
     {
         import dmangos.cluster.protocol : AreaDamage;
         import dmangos.world.context : WorldContext;
+        import dmangos.world.map : Map;
         import dmangos.world.spellcast : spellFailurePacket, SpellCastResult;
 
         auto spell = namedChannelSpell;
@@ -252,6 +253,10 @@ mixin template CreatureCasting()
                 spellFailurePacket(me.guid, spell.id, SpellCastResult.interrupted));
         }
         world_.flushCreature(me);
+        if (!cancelled && channelToken)
+            if (auto context = cast(WorldContext) lore)
+                if (auto map = cast(Map) world_)
+                    context.completeNamedChannel(map, map.unitOf(me), guid, spell, channelToken);
     }
 
     package void namedCreatureChannelRejected(ulong sequence)
