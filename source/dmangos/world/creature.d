@@ -460,8 +460,8 @@ interface Npc
 
 /**
  * An NPC another node simulates, as this node serves it: its replica's fields and position,
- * its template from the world data every node shares. Limited vendor stock is counted here, apart from
- * the real creature's: a known gap until it is kept by the creature's node.
+ * its template from the world data every node shares. A clustered vendor's owner supplies the stock
+ * shown in its list and reserves stock for a purchase.
  */
 final class NpcStandIn : Npc
 {

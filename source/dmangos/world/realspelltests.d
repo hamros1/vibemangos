@@ -1817,6 +1817,7 @@ unittest
         owner.context.database = source.db;
         auto relay = new TestPlayerRelay(source.context, owner.context);
         auto from = source.context.map(1), to = owner.context.map(1);
+        to.random.seed(20_261_120); // RealWorld.make seeds map 0, while this cast lands on Kalimdor.
         auto dragon = owner.context.summonCreature(to, emberstrife, targetAt, TempSpawnType.manual, 0, 0);
         assert(dragon !is null);
         if (wounded)

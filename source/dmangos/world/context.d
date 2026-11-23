@@ -487,8 +487,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private RemotePlayer[ulong][ushort] remoteByNode;
 
     /**
-     * Reserves limited vendor stock on the node simulating the creature; `then` gets
-     * whether it was there and what is left. Null standalone.
+     * Reserves limited vendor stock on the creature's node, or reads it when `wanted` is zero.
+     * `then` gets whether it was available and the current count. Null standalone.
      */
     void delegate(ushort owner, uint map, ulong creature, uint item, uint maxCount, uint incrTime, uint buyCount,
         uint wanted, void delegate(bool reserved, uint left) then) reserveStock;

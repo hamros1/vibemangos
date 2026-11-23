@@ -581,9 +581,9 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
 * **NPC services** (gossip, trainers, vendors, innkeepers, bankers, repairs) work on a replica of
   another node's creature through an `NpcStandIn` built from the replica's fields and the shared
   template; the player's side (money, items, spells, bind point) is on the player's node. A vendor's
-  limited stock is the creature's, counted on its node: buying a limited item from a stand-in first
-  reserves it there (`StockRequest`, `StockReply`), and stock reserved for a purchase that then fails
-  goes back (`StockRelease`).
+  limited stock belongs to the creature. The vendor list reads its current count from the creature's
+  node. A purchase reserves stock there (`StockRequest`, `StockReply`), and a failed purchase returns
+  that reservation (`StockRelease`).
 * **GM commands that name a player** another node simulates are sent there (`GmRemote`):
   `.kickplayer`, `.summon`, `.appear` (the place comes back and the GM teleports there),
   `.playerinfo`, `.kill`, `.ban character`, `.rename`. What each does to its player is the same method

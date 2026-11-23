@@ -892,6 +892,16 @@ unittest
         asked = Asked(owner, wanted, then);
     };
     context.releaseStock = (ushort, uint, ulong, uint, uint, uint count) { released ~= count; };
+    anduin.write(Opcode.CMSG_LIST_INVENTORY, ClientNpcGuid(innkeeper));
+    assert(!anduin.read().length && asked.owner == 2 && asked.wanted == 0);
+    auto earlierList = asked.then;
+    anduin.write(Opcode.CMSG_LIST_INVENTORY, ClientNpcGuid(innkeeper));
+    earlierList(true, 2);
+    assert(!anduin.read().length, "an old stock reply cannot replace a later list");
+    asked.then(true, 1);
+    const list = packet!ServerListInventory(anduin.read());
+    assert(list.items.length == 1 && list.items[0].available == 1 && !released.length);
+
     anduin.write(Opcode.CMSG_BUY_ITEM, ClientBuyItem(innkeeper, itemJerky, 1, 1));
     assert(anduin.read().length == 0 && asked.owner == 2 && asked.wanted == 5, "nothing until node 2 answers");
     asked.then(true, 1);

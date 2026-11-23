@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 112; // 112: resume an active possession of the player's own pet
+enum ushort protocolVersion = 113; // 113: read live vendor stock without reserving it
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -768,7 +768,7 @@ struct StockRequest
     uint request;
     uint map;
     ulong creature;
-    uint item, maxCount, incrTime, buyCount, wanted;
+    uint item, maxCount, incrTime, buyCount, wanted; /// zero reads the current stock without reserving any
 }
 
 /// Whether the stock was there (and is now the buyer's), and what is left.
@@ -1344,7 +1344,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 112, recordedFingerprint = 0x2ab03c32ffc649d8UL;
+private enum recordedVersion = 113, recordedFingerprint = 0x2ab03c32ffc649d8UL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

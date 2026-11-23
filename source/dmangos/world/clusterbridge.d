@@ -37,7 +37,14 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
     private MonoTime[WorldSession] releaseAt;  // home: sessions whose owner was lost, released after its lease
     private uint leaseMs;
     private PresenceEntry[ulong] presenceSent;  // what peers were last told of this node's players
-    private void delegate(bool, uint)[uint] stockWaiting; // stock requests sent, by number
+    private struct PendingStock
+    {
+        ushort owner;
+        MonoTime expires; // a stock read can time out without returning reserved items
+        void delegate(bool, uint) then;
+    }
+
+    private PendingStock[uint] stockWaiting;
     private uint nextStockRequest = 1;
     private MonoTime nextPresence;
 
@@ -61,6 +68,19 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
     {
         const now = context.clock();
         gatewayTick(now);
+        if (stockWaiting.length)
+        {
+            uint[] expired;
+            foreach (request, ref pending; stockWaiting)
+                if (pending.expires != MonoTime.init && now >= pending.expires)
+                    expired ~= request;
+            foreach (request; expired)
+            {
+                const callback = stockWaiting[request].then;
+                stockWaiting.remove(request);
+                callback(false, 0);
+            }
+        }
         if (now >= nextPresence)
         {
             nextPresence = now + 1000.msecs;
@@ -197,14 +217,15 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         node.sendTo(peer, InRange(map, center.x, center.y, center.z, range, opcode, cast(ubyte[]) body_));
     }
 
-    /// For the context: reserves limited stock on the node simulating a vendor.
+    /// For the context: checks or reserves limited stock on the node simulating a vendor.
     void reserveStock(ushort owner, uint map, ulong creature, uint item, uint maxCount, uint incrTime, uint buyCount,
         uint wanted, void delegate(bool, uint) then)
     {
         const request = nextStockRequest++;
         if (!node.sendTo(owner, StockRequest(request, map, creature, item, maxCount, incrTime, buyCount, wanted)))
             return then(false, 0);
-        stockWaiting[request] = then;
+        const expiry = wanted ? MonoTime.init : context.clock() + context.config.cluster.failureTimeoutMs.msecs;
+        stockWaiting[request] = PendingStock(owner, expiry, then);
     }
 
     /// For the context: gives reserved stock back.
@@ -213,7 +234,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         node.sendTo(owner, StockRelease(map, creature, item, maxCount, count));
     }
 
-    /// Another node's player buys from a creature this node simulates: its stock, counted here.
+    /// Another node's player views or buys the stock of a creature simulated here.
     void stockRequest(ushort peer, const ref StockRequest m)
     {
         auto vendor = vendorHere(m.map, m.creature);
@@ -222,9 +243,11 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         if (vendor !is null)
         {
             const now = context.unixTime;
-            if (vendor.vendorItemCount(m.item, m.maxCount, m.incrTime, m.buyCount, now) >= m.wanted)
+            const available = vendor.vendorItemCount(m.item, m.maxCount, m.incrTime, m.buyCount, now);
+            if (available >= m.wanted)
             {
-                left = vendor.takeVendorItems(m.item, m.maxCount, m.incrTime, m.buyCount, m.wanted, now);
+                left = m.wanted ? vendor.takeVendorItems(m.item, m.maxCount, m.incrTime, m.buyCount, m.wanted, now)
+                    : available;
                 reserved = true;
             }
         }
@@ -233,12 +256,13 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
 
     void stockReply(ushort peer, const ref StockReply m)
     {
-        if (auto then = m.request in stockWaiting)
-        {
-            auto callback = *then;
-            stockWaiting.remove(m.request);
-            callback(m.reserved, m.left);
-        }
+        if (auto pending = m.request in stockWaiting)
+            if (pending.owner == peer)
+            {
+                auto callback = pending.then;
+                stockWaiting.remove(m.request);
+                callback(m.reserved, m.left);
+            }
     }
 
     void stockRelease(ushort peer, const ref StockRelease m)

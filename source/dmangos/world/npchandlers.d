@@ -909,13 +909,26 @@ private:
         return !vendorItem.conditionId || conditionMet(vendorItem.conditionId, vendor);
     }
 
-    /// Sends the vendor's list of items.
-    void sendListInventory(ulong guid)
+    private ulong vendorListRequest;
+
+    /// Sends the vendor's list of items, with limited stock read from its current owner.
+    void sendListInventory(ulong guid, bool retry = true)
     {
+        import dmangos.world.creature : NpcStandIn;
+
         enum maxVendorItems = 128; // the most items a vendor list holds
+        const request = ++vendorListRequest;
         auto vendor = interactableNpc(guid, NpcFlag.vendor);
         if (vendor is null)
             return;
+        const standIn = cast(NpcStandIn) vendor;
+        const owner = standIn is null || context.reserveStock is null ? ushort(0) : standIn.owner;
+        struct StockRead
+        {
+            size_t row;
+            uint maxCount, incrTime;
+        }
+        StockRead[] reads;
         ServerListInventory list;
         list.vendor = guid;
         const discount = reputationPriceDiscount(vendor.npcValues.get!UNIT_FIELD_FACTIONTEMPLATE);
@@ -924,8 +937,18 @@ private:
             const proto = vendorItem.item in context.data.items;
             if (proto is null || !canSeeVendorItem(vendor, vendorItem, *proto))
                 continue;
-            const available = vendorItem.maxCount == 0 ? uint.max : vendor.vendorItemCount(vendorItem.item,
-                vendorItem.maxCount, vendorItem.incrTime, proto.buyCount, context.unixTime);
+            uint available = uint.max;
+            if (vendorItem.maxCount)
+            {
+                if (owner)
+                {
+                    available = 0;
+                    reads ~= StockRead(list.items.length, vendorItem.maxCount, vendorItem.incrTime);
+                }
+                else
+                    available = vendor.vendorItemCount(vendorItem.item, vendorItem.maxCount, vendorItem.incrTime,
+                        proto.buyCount, context.unixTime);
+            }
             list.items ~= VendorListItem(cast(uint) i + 1, vendorItem.item, proto.displayId, available,
                 cast(uint) floor(proto.details.buyPrice * discount), proto.maxDurability, proto.buyCount);
             if (list.items.length >= maxVendorItems)
@@ -933,7 +956,30 @@ private:
         }
         if (list.items.length == 0)
             list.error = [0]; // "Vendor has no inventory"
-        send(list);
+        if (!reads.length)
+            return send(list);
+
+        auto remaining = reads.length;
+        void readStock(StockRead read)
+        {
+            const item = list.items[read.row];
+            context.reserveStock(owner, map.id, guid, item.item, read.maxCount, read.incrTime, item.buyCount,
+                0, (bool found, uint count) {
+                    if (found)
+                        list.items[read.row].available = count;
+                    if (--remaining || player is null || transferring || request != vendorListRequest)
+                        return;
+                    auto current = interactableNpc(guid, NpcFlag.vendor);
+                    if (current is null)
+                        return;
+                    const replica = cast(NpcStandIn) current;
+                    if (retry && (replica is null || replica.owner != owner))
+                        return sendListInventory(guid, false);
+                    send(list);
+                });
+        }
+        foreach (read; reads)
+            readStock(read);
     }
 }
 
