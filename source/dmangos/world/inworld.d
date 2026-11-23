@@ -451,7 +451,7 @@ private:
         state_ = WorldState.inWorld;
         connection.playing = this; // in the world from here on
         context.enterWorldMigrated(this, known);
-        context.readReplicaImpacts(player.guid, map, r);
+        context.readReplicaImpacts(player.guid, map.id, map.instanceId, r);
         loadAuras();
         loadHonor();
         loadBattleground();

@@ -327,7 +327,7 @@ sent before its home heard are passed on by the old owner for a few seconds, and
 from a new owner before the old one's word takes it as the owner.
 
 **What travels:** the character as saved, including auras, spell cooldowns, quests and reputation;
-its movement; pending named-creature projectile impacts; what its client knows; its pet (saved as
+its movement; pending cross-node projectile impacts; what its client knows; its pet (saved as
 out and brought out again on the next node);
 its client's address and build; the dungeon copy it is in and where it came in from. **What does
 not:** timers that only shape timing (regeneration, rest, flood protection), `.gm allowwhispers`
@@ -893,10 +893,9 @@ Cross-node spell routing is effect-specific. Other script-selected channels, reg
 database spell steps that need the caster or another actor still use their local paths. Ground ticks
 use observed targets around the spot and require a current caster replica at the target. At impact,
 the caster's node resolves the original target GUID locally or sends the hit to the current replica's
-owner. A projectile can wait up to two seconds for the target to appear during a handoff. A named-creature
-projectile also preserves its impact deadline when its player caster hands off. The caster's node supplies
-a short-lived caster replica for these hits even when the target's node has no nearby players. Other routed
-projectiles depend on the launching node.
+owner. A projectile can wait up to two seconds for the target to appear during a handoff. A clean caster
+handoff carries pending cross-node projectiles and their impact deadlines with it. The caster's current
+node supplies a short-lived replica for impact even when the target's node has no nearby players.
 
 ## Testing
 

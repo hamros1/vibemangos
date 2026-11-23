@@ -1056,15 +1056,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         }
     }
 
-    /// Move pending named-creature impacts with a player. The impact time uses the shared node clock.
+    /// Move queued impacts with the caster. The deadlines use the shared node clock.
     package void writeReplicaImpacts(ulong caster, ref ByteWriter writer)
     {
-        import std.algorithm.comparison : max;
         import dmangos.serialization : serialize;
 
         uint count;
         foreach (ref impact; replicaSpellImpacts)
-            if (impact.hit.caster == caster && impact.hit.namedCreature)
+            if (impact.hit.caster == caster)
                 ++count;
         writer.put(count);
         if (!count)
@@ -1075,20 +1074,24 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         size_t kept;
         foreach (impact; replicaSpellImpacts)
         {
-            if (impact.hit.caster != caster || !impact.hit.namedCreature)
+            if (impact.hit.caster != caster)
             {
                 replicaSpellImpacts[kept++] = impact;
                 continue;
             }
-            const milliseconds = cast(uint) max(0L, (impact.due - now).total!"msecs");
-            writer.put(transferTime + milliseconds);
+            writer.put(transferTime + cast(uint)(impact.due - now).total!"msecs");
+            const waiting = impact.retryUntil != MonoTime.init;
+            writer.put(waiting);
+            if (waiting)
+                writer.put(transferTime + cast(uint)(impact.retryUntil - now).total!"msecs");
+            writer.put(impact.sentTo);
             serialize(writer, impact.hit);
         }
         replicaSpellImpacts.length = kept;
     }
 
-    /// Adopt named-creature impacts after the caster is installed on its new map.
-    package void readReplicaImpacts(ulong caster, Map map_, ref ByteReader reader)
+    /// Adopt impacts for the caster on the same map and instance from which they were launched.
+    package void readReplicaImpacts(ulong caster, uint mapId, uint instance, ref ByteReader reader)
     {
         import std.algorithm.comparison : max;
         import dmangos.serialization : deserialize;
@@ -1102,13 +1105,16 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         foreach (_; 0 .. count)
         {
             const deadline = reader.read!uint;
+            const waiting = reader.read!bool;
+            const expiresIn = waiting ? cast(int)(reader.read!uint - arrived) : 0;
+            const sentTo = reader.read!ushort;
             auto hit = deserialize!AreaDamage(reader);
-            if (hit.caster != caster || !hit.namedCreature || hit.reply || hit.benefits.length
-                || hit.map != map_.id || hit.instance != map_.instanceId)
+            if (hit.caster != caster || hit.reply || hit.benefits.length || hit.map != mapId || hit.instance != instance
+                || (waiting && expiresIn <= 0))
                 continue;
             const remaining = max(0, cast(int)(deadline - arrived));
             const due = now + remaining.msecs;
-            restored ~= ReplicaSpellImpact(due, hit, due + replicaImpactGrace);
+            restored ~= ReplicaSpellImpact(due, hit, waiting ? now + expiresIn.msecs : MonoTime.init, sentTo);
         }
         replicaSpellImpacts ~= restored;
     }
@@ -1147,7 +1153,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return sendReplicaSpellImpact(map_, peer, hit);
     }
 
-    private bool sendReplicaSpellImpact(Map map_, ushort peer, AreaDamage hit)
+    private bool sendReplicaSpellImpact(Map map_, ushort peer, AreaDamage hit, bool projectile = false)
     {
         import std.algorithm.comparison : max;
 
@@ -1157,8 +1163,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             map_.holdCasterReplica(hit.caster, peer, cast(uint) max(0, hit.auraMs) + 5_000,
                 (hit.creatureCast && !hit.channelUpdate)
                 || (hit.channelUpdate && hit.auraMs == AreaDamage.completedChannel));
-        else if (hit.namedCreature)
-            map_.holdCasterReplica(hit.caster, peer, 5_000);
+        else if (hit.namedCreature || projectile)
+            map_.holdCasterReplica(hit.caster, peer, 5_000, projectile);
         if (!hit.sequence || !hit.channelled)
             hit.sequence = nextGameplaySequence();
         return sendAreaDamage(peer, hit);
@@ -1187,7 +1193,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 continue;
             if (auto copy = cast(Replica) map_.findObject(impact.hit.target))
             {
-                if (copy.owner != impact.sentTo && sendReplicaSpellImpact(map_, copy.owner, impact.hit))
+                if (copy.owner != impact.sentTo && sendReplicaSpellImpact(map_, copy.owner, impact.hit, !completion))
                 {
                     if (!completion)
                         continue;
@@ -5377,7 +5383,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 serialize(w, creature.summon);
                 w.put(now);
             }
-            creature.saveState(w, now);
+            ByteWriter state;
+            creature.saveState(state, now);
+            w.put(cast(uint) state.data.length);
+            w.putBytes(state.data);
+            writeReplicaImpacts(creature.guid, w);
             return Migrant(kind, creature.spawn.guid, 0, w.data);
         }
         auto gameObject = cast(GameObject) object;
@@ -5398,6 +5408,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// An object rebuilt from its spawn and the state its last owner sent; null if the spawn is unknown here.
     MapObject restoreMigrant(const ref Migrant m)
     {
+        return restoreMigrantInInstance(m, 0);
+    }
+
+    private MapObject restoreMigrantInInstance(const ref Migrant m, uint instance)
+    {
         import dmangos.bytes : ByteReader;
         import dmangos.log : warning;
         import dmangos.world.gameobject : GameObject;
@@ -5413,7 +5428,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             auto creature = makeCreature(&data.creatureSpawns[*at]);
             if (creature is null)
                 return null;
-            creature.loadState(r, transportNow(), &spellInfo, data.waypoints);
+            loadMigrantCreature(creature, instance, transportNow(), r);
             return creature;
         }
         const at = m.spawn in gameObjectSpawnIndex;
@@ -5425,6 +5440,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         auto gameObject = makeGameObject(data.gameObjectSpawns[*at]);
         gameObject.loadState(r, transportNow());
         return gameObject;
+    }
+
+    private void loadMigrantCreature(Creature creature, uint instance, uint now, ref ByteReader reader)
+    {
+        auto state = ByteReader(reader.readBytes(reader.read!uint));
+        creature.instanceId = instance;
+        creature.loadState(state, now, &spellInfo, data.waypoints);
+        readReplicaImpacts(creature.guid, creature.spawn.map, instance, reader);
     }
 
     /// A region may bring a saved GM spawn created after this node loaded its world data.
@@ -5474,9 +5497,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             auto restored = makeCreature(&spawn);
             if (restored is null)
                 return null;
-            restored.instanceId = destination.instanceId;
             restored.summon = summon;
-            restored.loadState(state, now, &spellInfo, data.waypoints);
+            loadMigrantCreature(restored, destination.instanceId, now, state);
             restored.factionTemplate = client.factionTemplates.lookup(restored.values.get!UNIT_FIELD_FACTIONTEMPLATE);
             if (transit > 0)
                 restored.summon.update(restored, transit);
@@ -5527,7 +5549,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                             refreshElevatorHomes(destination);
                 }
             }
-        auto restored = restoreMigrant(migrant);
+        auto restored = restoreMigrantInInstance(migrant, destination.instanceId);
         if (auto go = cast(GameObject) restored)
             go.instanceId = destination.instanceId;
         bindMigrantLoot(restored, destination);

@@ -278,50 +278,87 @@ unittest
     assert(decoy.health == decoyHealth);
 }
 
-/// Missiles fired at a player on another node land there once, and interruption stops later launches.
+/// A missile lands once even when its NPC caster moves to a third node before impact.
 unittest
 {
+    import dmangos.cluster.regions : CellRect, Region, RegionState;
     import dmangos.cluster.protocol : AreaDamage;
     import dmangos.world.creature : TempSpawnType;
-    import dmangos.world.grid : cellKeyAt, cellSize;
+    import dmangos.world.grid : cellCoordinate, cellKeyAt, cellSize;
     import dmangos.world.replication : encodePlayerState, encodeState;
 
     if (!haveRealData())
         return;
 
-    auto source = RealWorld.make(), owner = RealWorld.make();
-    source.context.nodeId = 1;
-    owner.context.nodeId = 2;
-    source.context.clock = () => source.now;
-    const origin = Position(2 * cellSize - 2, 100, 40), at = Position(2 * cellSize + 2, 100, 40);
-    auto from = source.context.map(0), to = owner.context.map(0);
-    auto caster = source.context.summonCreature(from, 1835, origin, TempSpawnType.manual, 0, 0);
-    auto target = loggedIn(owner.context, owner.db, 116, "Remotevictim", at, AccountLevel.player, raceHuman, 0, 38);
-    auto player = cast(Player) target.session.character;
-    from.replicaCreated(2, cellKeyAt(at.x, at.y), player.guid, encodePlayerState(player, 0));
-    to.replicaCreated(1, cellKeyAt(origin.x, origin.y), caster.guid, encodeState(caster, 0));
-    caster.ai.setScript(null, source.context.data.eventAi);
-    caster.ai.bind(from);
+    foreach (moves; [false, true])
+    {
+        auto source = RealWorld.make(), owner = RealWorld.make(), successor = RealWorld.make();
+        source.context.nodeId = 1;
+        owner.context.nodeId = 2;
+        successor.context.nodeId = 3;
+        source.context.clock = () => source.now;
+        successor.context.clock = () => successor.now;
+        const origin = Position(2 * cellSize - 2, 100, 40), at = Position(2 * cellSize + 2, 100, 40);
+        const originCell = cellKeyAt(origin.x, origin.y), targetCell = cellKeyAt(at.x, at.y);
+        auto from = source.context.map(0), to = owner.context.map(0);
+        auto caster = source.context.summonCreature(from, 1835, origin, TempSpawnType.manual, 0, 0);
+        auto target = loggedIn(owner.context, owner.db, 116, "Remotevictim", at, AccountLevel.player, raceHuman, 0, 38);
+        auto player = cast(Player) target.session.character;
+        from.replicaCreated(2, targetCell, player.guid, encodePlayerState(player, 0));
+        to.replicaCreated(1, originCell, caster.guid, encodeState(caster, 0));
+        caster.ai.setScript(null, source.context.data.eventAi);
+        caster.ai.bind(from);
 
-    uint impacts;
-    source.context.sendAreaDamage = (ushort peer, const ref AreaDamage hit) {
-        assert(peer == 2 && hit.caster == caster.guid && hit.target == player.guid && hit.spell == 15736);
-        ++impacts;
-        owner.context.areaDamageArrived(1, hit);
-        return true;
-    };
-    const health = target.session.inWorld.unit.health;
-    assert(caster.ai.castSpell(source.context.data.spells.spell(15735), player.guid, 0) && caster.ai.castingNow);
-    caster.tick(from, 1000);
-    assert(impacts == 0, "the missile is still travelling");
-    source.now += 300.msecs;
-    source.context.update(source.now);
-    assert(impacts == 1 && target.session.inWorld.unit.health < health);
-    caster.ai.interruptedBySpell(3000);
-    caster.tick(from, 5000);
-    source.now += 3.seconds;
-    source.context.update(source.now);
-    assert(impacts == 1 && !caster.ai.castingNow);
+        uint impacts;
+        ushort expectedOwner = 1;
+        bool dispatch(ushort sender, ushort peer, const ref AreaDamage hit)
+        {
+            assert(peer == 2 && sender == expectedOwner && hit.caster == caster.guid
+                && hit.target == player.guid && hit.spell == 15736);
+            ++impacts;
+            owner.context.areaDamageArrived(sender, hit);
+            return true;
+        }
+        source.context.sendAreaDamage = (ushort peer, const ref AreaDamage hit) => dispatch(1, peer, hit);
+        successor.context.sendAreaDamage = (ushort peer, const ref AreaDamage hit) => dispatch(3, peer, hit);
+        const health = target.session.inWorld.unit.health;
+        assert(caster.ai.castSpell(source.context.data.spells.spell(15735), player.guid, 0) && caster.ai.castingNow);
+        caster.tick(from, 1000);
+        assert(impacts == 0, "the missile is still travelling");
+        source.now += 100.msecs;
+        successor.now += 100.msecs;
+        if (moves)
+        {
+            const x = cellCoordinate(origin.x), y = cellCoordinate(origin.y);
+            const region = Region(7, 0, CellRect(x, y, x + 1, y + 1), 3, 1, RegionState.granted);
+            const bundle = from.migrateOut(cell => cell == originCell, 3, &source.context.saveMigrant);
+            ubyte[][uint] unused;
+            successor.context.regionsChanged([region], null, [region.id: bundle], unused);
+            from = successor.context.map(0);
+            caster = from.creatureAt(caster.guid);
+            assert(caster !is null);
+            from.replicaCreated(2, targetCell, player.guid, encodePlayerState(player, 0));
+            to.replicaCreated(3, originCell, caster.guid, encodeState(caster, 0));
+            expectedOwner = 3;
+        }
+        source.now += 50.msecs;
+        successor.now += 50.msecs;
+        source.context.update(source.now);
+        successor.context.update(successor.now);
+        assert(impacts == 0 && target.session.inWorld.unit.health == health, "handoff preserves flight time");
+        source.now += 125.msecs;
+        successor.now += 125.msecs;
+        source.context.update(source.now);
+        successor.context.update(successor.now);
+        assert(impacts == 1 && target.session.inWorld.unit.health < health, "an in-flight missile follows its caster");
+        caster.ai.interruptedBySpell(3000);
+        caster.tick(from, 5000);
+        source.now += 3.seconds;
+        successor.now += 3.seconds;
+        source.context.update(source.now);
+        successor.context.update(successor.now);
+        assert(impacts == 1 && !caster.ai.castingNow);
+    }
 }
 
 /// A missile already launched at a replica follows the player when it becomes local to the caster.
