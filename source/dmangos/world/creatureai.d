@@ -319,7 +319,7 @@ final class CreatureAI : Scripted, CreatureHost, ScourgeCampHost
         bool meleeAttacking;       // swinging at its victim
         bool inCombat_;
         bool evadingHome;          // running back, ignoring everything
-        bool evadingAcrossShore;   // another spline is needed after the shore
+        bool evadingAcrossShore;   // another spline is needed after an intermediate leg
         int unreachableTimer;      // ms left before it gives up on its victim
         bool victimReachable = true; // its last way to the victim ended within reach
         bool[ulong] suppressed;    // given up on, while it has others to fight
@@ -1736,7 +1736,7 @@ private:
         if (moved(me.position, Position(target.x, target.y, target.z), vertical) < 0.1f)
             return false;
         const step = launchHabitatPath(me, world, target, underwater, false, home.orientation);
-        evadingAcrossShore = step.crossesShore;
+        evadingAcrossShore = step.continues;
         return step.duration != 0;
     }
 

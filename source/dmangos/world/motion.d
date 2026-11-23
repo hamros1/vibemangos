@@ -29,6 +29,7 @@ import std.random : Random, uniform, uniform01;
 import dmangos.bytes : ByteReader, ByteWriter;
 import dmangos.vmap.math : Vector3;
 import dmangos.world.creature : Creature, CreatureSpawn;
+import dmangos.world.elevators : DockRoute;
 import dmangos.world.movement : MovementFlags, MoveType, Position;
 import dmangos.world.opcodes : Opcode;
 import dmangos.world.spline;
@@ -167,8 +168,8 @@ interface MotionWorld
      */
     Vector3[] pathBetween(Vector3 from, Vector3 to);
 
-    /// Whether a platform is at an endpoint. An empty route then means the dock cannot be crossed now.
-    bool pathAtDock(Vector3 from, Vector3 to, float speed, out Vector3[] route);
+    /// A leg to an animated platform or away from it, which may need to wait for the next stop.
+    DockRoute pathAtDock(Vector3 from, Vector3 to, float speed, out Vector3[] route);
 
     /// Whether the point is in water deep enough for a swimmer.
     bool swimmableAt(Vector3 at, float minimumDepth);
@@ -344,7 +345,7 @@ final class WaypointMovement : MovementGenerator
         int nextMoveTime;   // `i_nextMoveTime`: waiting while above 0
         int pathDuration;
         size_t[] nodeIndexes; // spline points that are path points, to arrive at on the way
-        bool continueToWaypoint; // the spline ended at a shoreline, or could not start
+        bool continueToWaypoint; // an intermediate leg, or the spline could not start
     }
 
     bool paused; /// paused by a script (`ScriptCommand.pauseWaypoints`): stands where it is until resumed
@@ -545,15 +546,15 @@ private:
             lastReached = 0;
         creature.refreshSwimming(world);
         const habitat = creature.canSwim && !creature.scriptFlying;
-        if (habitat || creature.ridingPlatform)
+        if (habitat)
         {
             bool underwater;
             const destination = habitatDestination(creature, world, Vector3(next.x, next.y, next.z), underwater);
-            if (underwater || creature.movement.has(MovementFlags.swimming) || creature.waterOnly || creature.ridingPlatform)
+            if (underwater || creature.movement.has(MovementFlags.swimming) || creature.waterOnly)
             {
                 const facing = next.delay ? next.orientation : float.nan;
                 const leg = launchHabitatPath(creature, world, destination, underwater, true, facing);
-                continueToWaypoint = leg.crossesShore || !leg.duration;
+                continueToWaypoint = leg.continues || !leg.duration;
                 pathDuration = int.max; // the next leg must wait for the real endpoint
                 if (!leg.duration)
                     nextMoveTime = 500;
@@ -563,7 +564,25 @@ private:
 
         const speed = creature.speeds[creature.movement.has(MovementFlags.walkMode) ? MoveType.walk : MoveType.run];
         const at = creature.spline.finalized ? creature.position : creature.spline.position;
-        Vector3[] points = [Vector3(at.x, at.y, at.z)];
+        const from = Vector3(at.x, at.y, at.z);
+        Vector3[] dock;
+        const dockLeg = creature.scriptFlying ? DockRoute.unrelated
+            : world.pathAtDock(from, Vector3(next.x, next.y, next.z), creature.speeds[MoveType.walk], dock);
+        if (dockLeg != DockRoute.unrelated || creature.ridingPlatform)
+        {
+            const facing = dockLeg == DockRoute.complete && next.delay ? next.orientation : float.nan;
+            pathDuration = int.max;
+            if (dock.length && launchSpline(creature, world, dock, true, false, facing, float.nan))
+                continueToWaypoint = dockLeg == DockRoute.approach;
+            else
+            {
+                stopMoving(creature, world);
+                continueToWaypoint = true;
+                nextMoveTime = 500;
+            }
+            return;
+        }
+        Vector3[] points = [from];
 
         // BuildIntPath: a straight line to the point; its time, from the point before.
         uint travel(const ref WaypointNode node)
@@ -576,7 +595,7 @@ private:
 
         uint travelTime = travel(*next);
         bool looped;
-        bool beforeWater;
+        bool mustFinish;
         size_t node = current;
         while (next.delay == 0 && travelTime < minimumPathTime)
         {
@@ -589,16 +608,15 @@ private:
                 if (!nodeAfter(after, true))
                     break;
             }
-            if (habitat)
+            const candidate = &path[after];
+            const end = Vector3(candidate.x, candidate.y, candidate.z);
+            Vector3 submerged;
+            if ((habitat && world.swimmingTarget(end, creature.collisionHeight, submerged))
+                || (!creature.scriptFlying && world.pathAtDock(points[$ - 1], end, creature.speeds[MoveType.walk], dock)
+                    != DockRoute.unrelated))
             {
-                const candidate = &path[after];
-                Vector3 submerged;
-                if (world.swimmingTarget(Vector3(candidate.x, candidate.y, candidate.z), creature.collisionHeight,
-                    submerged))
-                {
-                    beforeWater = true;
-                    break;
-                }
+                mustFinish = true;
+                break;
             }
             nodeIndexes ~= points.length - 1;
             travelTime += travel(path[after]);
@@ -611,7 +629,7 @@ private:
         continueToWaypoint = !pathDuration;
         if (continueToWaypoint)
             nextMoveTime = 500;
-        else if (next.delay == 0 && !beforeWater)
+        else if (next.delay == 0 && !mustFinish)
             pathDuration -= preSendTime;
     }
 }
@@ -657,7 +675,7 @@ final class PointMovement : MovementGenerator
             return initialize(creature, world);
         if (!creature.spline.finalized)
             return;
-        if (step.crossesShore)
+        if (step.continues)
             return initialize(creature, world);
         // There: back to what it did before (from where it stands now).
         creature.generator = after is null ? new IdleMovement : after;
@@ -838,11 +856,11 @@ package void launchFollowPath(Creature creature, MotionWorld world, Vector3 dest
     launchHabitatPath(creature, world, destination, underwater, walk, facing);
 }
 
-/// A movement spline's time and whether another leg is needed after reaching the shore.
+/// A movement spline's time and whether another leg is needed.
 package struct HabitatStep
 {
     int duration;
-    bool crossesShore;
+    bool continues;
 }
 
 /// Travel to a point in the current medium or as far as the first shoreline.
@@ -857,7 +875,10 @@ package HabitatStep launchHabitatPath(Creature creature, MotionWorld world, Vect
     }
     if (creature.canSwim && !creature.scriptFlying && swimming != underwater)
         return HabitatStep(launchShoreLeg(creature, world, destination, walk), true);
-    return HabitatStep(launch(creature, world, [Vector3.init, destination], walk, facing, true), false);
+    HabitatStep step;
+    step.duration = launchPath(creature, world, [Vector3.init, destination], walk, facing, true,
+        float.nan, step.continues);
+    return step;
 }
 
 /// Stop just across the shoreline. The next spline takes the speed for its new medium.
@@ -883,6 +904,13 @@ package int launchShoreLeg(Creature creature, MotionWorld world, Vector3 destina
  */
 int launch(Creature creature, MotionWorld world, Vector3[] points, bool walk, float facing = float.nan,
     bool generatePath = false, float speed = float.nan)
+{
+    bool continues;
+    return launchPath(creature, world, points, walk, facing, generatePath, speed, continues);
+}
+
+private int launchPath(Creature creature, MotionWorld world, Vector3[] points, bool walk, float facing,
+    bool generatePath, float speed, out bool continues)
 in (points.length > 1)
 {
     const at = creature.spline.finalized ? creature.position : creature.spline.position;
@@ -893,11 +921,12 @@ in (points.length > 1)
     if (riding && (!generatePath || points.length != 2))
     {
         Vector3[] dock;
-        if (points.length != 2 || !world.pathAtDock(points[0], points[1], groundSpeed, dock) || !dock.length)
+        if (points.length != 2 || world.pathAtDock(points[0], points[1], groundSpeed, dock) != DockRoute.complete)
         {
             stopMoving(creature, world);
             return 0;
         }
+        points = dock;
     }
     // A generated route can use the underwater volume or the regular movement maps.
     if (generatePath && points.length == 2 && !creature.scriptFlying)
@@ -916,12 +945,18 @@ in (points.length > 1)
         }
         else
         {
-            if (world.pathAtDock(points[0], points[1], groundSpeed, way) || riding)
+            const dockLeg = world.pathAtDock(points[0], points[1], groundSpeed, way);
+            if (dockLeg != DockRoute.unrelated || riding)
             {
                 if (!way.length)
                 {
                     stopMoving(creature, world);
                     return 0;
+                }
+                if (dockLeg == DockRoute.approach)
+                {
+                    continues = true;
+                    facing = float.nan;
                 }
             }
             else
@@ -934,6 +969,12 @@ in (points.length > 1)
         }
     }
 
+    return launchSpline(creature, world, points, walk, swimming, facing, speed);
+}
+
+private int launchSpline(Creature creature, MotionWorld world, const(Vector3)[] points, bool walk,
+    bool swimming, float facing, float speed)
+{
     uint flags = walk ? SplineFlags.none : SplineFlags.runMode;
     if (creature.scriptFlying)
         flags |= SplineFlags.flying;
@@ -1065,7 +1106,7 @@ version (unittest)
         Vector3[] delegate(Vector3, Vector3) paths; // movement maps, if a test has them
         Vector3[] pathBetween(Vector3 from, Vector3 to) { return paths is null ? null : paths(from, to); }
         bool swimmableAt(Vector3 at, float minimumDepth) { return false; }
-        bool pathAtDock(Vector3 from, Vector3 to, float speed, out Vector3[] route) { return false; }
+        DockRoute pathAtDock(Vector3 from, Vector3 to, float speed, out Vector3[] route) { return DockRoute.unrelated; }
         bool swimmingTarget(Vector3 at, float minimumDepth, out Vector3 submerged) { return false; }
         Vector3[] pathToShore(Vector3 from, Vector3 to, float minimumDepth, bool swimming) { return null; }
         bool pathInWater(Vector3 from, Vector3 to, float minimumDepth, out Vector3[] route) { return false; }

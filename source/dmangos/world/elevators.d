@@ -2,11 +2,20 @@
 module dmangos.world.elevators;
 
 import std.algorithm.comparison : max;
+import std.algorithm.searching : canFind;
 import std.math : abs, isFinite;
 import dmangos.vmap.math : AABox, Matrix3, Vector3;
 import dmangos.world.clientdata : TransportAnimationEntry;
 import dmangos.world.grid : cellSize;
 import dmangos.world.movement : Position;
+
+package enum DockRoute
+{
+    unrelated,  // use the usual path
+    wait,       // no safe leg yet
+    approach,   // a ground path to the dock, then try the destination again
+    complete,   // a path all the way to the destination
+}
 
 package struct ElevatorPath
 {
@@ -17,6 +26,7 @@ package struct ElevatorPath
     }
 
     private Frame[] frames;
+    private Vector3[] stops;
     private float speed = 0;
 
     this(const(TransportAnimationEntry*)[] rows, const float[4] rotation)
@@ -40,7 +50,12 @@ package struct ElevatorPath
                     / (row.time - result[i - 1].time));
         }
         if (speed.isFinite)
+        {
             frames = result;
+            foreach (i; 1 .. frames.length)
+                if (frames[i - 1].offset == frames[i].offset && !stops.canFind(frames[i].offset))
+                    stops ~= frames[i].offset;
+        }
     }
 
     @property bool valid() const
@@ -52,6 +67,12 @@ package struct ElevatorPath
     @property float maxSpeed() const
     {
         return speed;
+    }
+
+    /// The offsets where consecutive keyframes give a rider time to cross the dock.
+    @property const(Vector3)[] dockOffsets() const
+    {
+        return stops;
     }
 
     bool travelsAcross(float distance) const

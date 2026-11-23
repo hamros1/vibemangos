@@ -7,7 +7,6 @@
   See
   [spell routing limits](CLUSTER.md#spell-routing-limits) and the
   [cross-node feature list](CLUSTER.md#what-crosses-nodes-feature-by-feature).
-- **Terrain.** Connect longer movement-map approaches to moving platform docks.
 - **Gameplay coverage.** See the [spell audit](SPELLS.md) for class coverage and the
   [vanilla gameplay audit](<../reports/Remaining vanilla gameplay gaps.md>) for verified fixes and the open Gluth trigger.
 
@@ -118,9 +117,10 @@ Done: `.map` files and vmaps, extracted and read; zones and areas, explored area
 [Terrain](ARCHITECTURE.md#terrain). Movement maps provide paths around static geometry.
 Door collision uses the model at its spawn transform. Elevator line of sight, passenger
 movement, visibility and nearby floor probes follow the platform's animation, including
-long tram routes. Creature paths can take short steps onto or off a docked platform when the deck and
-surrounding ground support the route and the pause is long enough. An autonomous creature standing on
-an animated game-object platform moves with it, including across a clean cluster handoff.
+long tram routes. A creature route with a deck waypoint can use the movement map to reach the
+landing, wait for the platform, and continue on the movement map after disembarking. The crossing
+requires solid support and enough time before departure. An autonomous creature standing on an
+animated game-object platform moves with it, including across a clean cluster handoff.
 
 ### 5. Inventory: done
 

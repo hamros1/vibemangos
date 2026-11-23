@@ -830,6 +830,12 @@ platform's current cell. The spawn cell still determines ownership. On an active
 node keeps the homes of long horizontal routes loaded so a tram can reach its other end even
 when nobody is near its spawn.
 
+A waypoint on the deck identifies the lift route. The server recognizes that point at a scheduled
+stop even while the platform is away. A complete dry-land movement-map path can take the creature
+around obstacles to a landing. It stays there until the deck and the static floor support the
+crossing and the platform has time to spare. Once aboard, the creature rides until it can reach
+its next waypoint from a landing.
+
 The extractor (`extractor/maps.d`) turns each map's ADT tiles into `.map` files (version "z1.4"),
 whose layout `mapfile.d` holds for both sides. `world/terrain.d` reads them: `GridMap` is one
 533-yard tile, and `Terrain` a map's tiles, read the first time anything asks

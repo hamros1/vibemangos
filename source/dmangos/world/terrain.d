@@ -560,12 +560,24 @@ final class Terrain
      */
     Vector3[] pathBetween(Vector3 from, Vector3 to, bool waterOnly = false, bool requireComplete = false)
     {
+        return movementPath(from, to, waterOnly ? navFlag!(NavArea.water) : walkingFlags,
+            waterOnly || requireComplete);
+    }
+
+    /// Docks link to a complete path on dry land.
+    package Vector3[] groundPath(Vector3 from, Vector3 to)
+    {
+        return movementPath(from, to, navFlag!(NavArea.ground), true);
+    }
+
+    private Vector3[] movementPath(Vector3 from, Vector3 to, ushort flags, bool requireComplete)
+    {
         if (navigation is null)
             return null;
         tile(from.x, from.y); // the tiles under both ends, loaded
         tile(to.x, to.y);
-        auto way = navigation.findPath(from, to, waterOnly ? navFlag!(NavArea.water) : walkingFlags);
-        return (waterOnly || requireComplete) && way.partial ? null : way.points;
+        auto way = navigation.findPath(from, to, flags);
+        return requireComplete && way.partial ? null : way.points;
     }
 
     /// Whether the map has movement maps.

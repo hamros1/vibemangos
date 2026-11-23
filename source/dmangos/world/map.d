@@ -56,6 +56,7 @@ import dmangos.world.creature : Creature;
 import dmangos.world.elevators : ElevatorPath;
 import dmangos.world.gameobject : GameObject, GameObjectTemplate, GameObjectType, GameObjectWorld, goStateReady;
 import dmangos.world.gameobjectcollision : GameObjectCollision;
+import dmangos.world.elevators : DockRoute;
 import dmangos.world.motion : MotionWorld;
 import dmangos.world.movement : Position;
 import dmangos.world.objects : counterOf, highGuidOf, makeGuid, maxUpdatePacketBytes, seenByEveryone, seenByOwner,
@@ -1893,6 +1894,7 @@ final class Map : CombatWorld, GameObjectWorld
     {
         /// Movement maps for a test: the way between two points.
         Vector3[] delegate(Vector3 from, Vector3 to) testPaths;
+        bool delegate(Vector3 point, float tolerance) testStaticGround;
     }
 
     /// See `MotionWorld.pathBetween`.
@@ -1906,29 +1908,58 @@ final class Map : CombatWorld, GameObjectWorld
         return terrain.pathBetween(from, to);
     }
 
-    /// See `MotionWorld.pathAtDock`. The points outside the platform need a nearby static floor.
-    bool pathAtDock(Vector3 from, Vector3 to, float speed, out Vector3[] route)
+    private bool hasStaticGround(Vector3 p, float step)
     {
         import std.math : abs;
 
+        version (unittest)
+            if (testStaticGround !is null)
+                return testStaticGround(p, step);
+        return terrain !is null && abs(terrain.heightStatic(p.x, p.y, p.z + step, true, step * 2) - p.z) <= step;
+    }
+
+    /// See `MotionWorld.pathAtDock`. The points outside the platform need a nearby static floor.
+    DockRoute pathAtDock(Vector3 from, Vector3 to, float speed, out Vector3[] route)
+    {
         if (objectCollision is null)
-            return false;
-        bool ground(Vector3 p)
-        {
-            enum float step = 0.4f;
-            return terrain !is null && abs(terrain.heightStatic(p.x, p.y, p.z + step, true, step * 2) - p.z) <= step;
-        }
+            return DockRoute.unrelated;
+        bool ground(Vector3 p) { return hasStaticGround(p, 0.4f); }
         bool clear(Vector3 a, Vector3 b)
         {
             return lineOfSightBetween(Position(a.x, a.y, a.z + 1.0f), Position(b.x, b.y, b.z + 1.0f));
         }
-        return objectCollision.dockRoute(from, to, speed, &ground, &clear, route);
+        bool connects(Vector3 a, Vector3 b)
+        {
+            const delta = b - a;
+            if (!(delta.magnitude <= 1.25f) || !clear(a, b))
+                return false;
+            // A movement-map endpoint can sit slightly above the extracted floor after rasterization.
+            foreach (i; 0 .. 6)
+                if (!hasStaticGround(a + delta * (i / 5.0f), 0.75f))
+                    return false;
+            return true;
+        }
+        Vector3[] navigate(Vector3 a, Vector3 b)
+        {
+            auto path = terrain is null ? null : terrain.groundPath(a, b);
+            version (unittest)
+                if (testPaths !is null)
+                    path = testPaths(a, b);
+            if (!path.length || !connects(a, path[0]) || !connects(path[$ - 1], b))
+                return null;
+            if (path[0] != a)
+                path = [a] ~ path;
+            if (path[$ - 1] != b)
+                path ~= b;
+            return path;
+        }
+        return objectCollision.dockRoute(from, to, speed, &ground, &clear, &navigate, route);
     }
 
     /// A standing creature takes the platform under its feet as its support until it walks off.
     private void boardCreatureOnPlatform(Creature rider)
     {
-        import std.math : abs, cos, sin;
+        import std.math : cos, sin;
         import dmangos.world.movement : MovementFlags;
         import dmangos.world.spline : wrapAngle;
         import dmangos.world.defines : UnitFlags;
@@ -1940,8 +1971,7 @@ final class Map : CombatWorld, GameObjectWorld
         const slot = objectCollision.standingPlatform(Vector3(p.x, p.y, p.z));
         if (slot == uint.max || !entities.holds(slot))
             return;
-        enum float step = 0.25f;
-        if (terrain !is null && abs(terrain.heightStatic(p.x, p.y, p.z + step, true, 2 * step) - p.z) <= step)
+        if (hasStaticGround(Vector3(p.x, p.y, p.z), 0.25f))
             return; // its feet were already on a stationary floor
         auto platform = at(slot).object;
         Position deck;
