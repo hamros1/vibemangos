@@ -97,10 +97,12 @@ def run(fixture, new_party, active_wave):
     arena = trigger_position(TRIGGER, MAP)
     ring = f"worldport:{MAP}:" + ":".join(map(str, arena))
     arena_floor = f"worldport:{MAP}:608.960:-231.322:-53.907"
+    checkpoint_floor = f"worldport:{MAP}:608.460:-231.322:-53.907"
+    checkpoint_arrival = "608.5 -231.3 -53.9"
     paths = [fixture.directory / name for name in
-             ("invite", "accept", "enter", "inside", "follow", "start-ring", "first-wave", "second-wave",
+             ("invite", "accept", "enter", "inside", "follow", "start-ring", "move", "first-wave", "second-wave",
               "resume-wave", "champion", "check-boss", "finish")]
-    invite, accept, enter, inside, follow, start, first, second, resume, champion, check_boss, finish = paths
+    invite, accept, enter, inside, follow, start, move, first, second, resume, champion, check_boss, finish = paths
     wait = lambda flag: f"waitfile:{flag}"
     kill_beasts = "killpack:" + ":".join(map(str, BEASTS))
     kill_champion = "killpack:" + ":".join(map(str, sorted(CHAMPIONS)))
@@ -111,11 +113,12 @@ def run(fixture, new_party, active_wave):
     clients = [
         client("party0", 0, f"login:{names[0]}", *assemble_leader, wait(enter), *portal, boss_room,
                f"attack:{BOSS}", f"targetnpc:{BOSS}", "cmd:.kill", "loot",
-               ring, wait(start), f"trigger:{TRIGGER}", arena_floor, "cmd:.saveall", wait(first), *first_wave,
+               ring, wait(start), f"trigger:{TRIGGER}", arena_floor, wait(move), checkpoint_floor,
+               wait(first), *first_wave,
                wait(second), kill_beasts, wait(champion), kill_champion, wait(check_boss), boss_room, "query",
                wait(finish), "logout"),
         client("party1", 1, f"login:{names[1]}", *assemble_member, wait(enter), *portal, wait(follow), ring,
-               wait(start), arena_floor,
+               wait(start), arena_floor, wait(move), checkpoint_floor,
                wait(check_boss), boss_room, "query", wait(finish), "logout"),
     ]
 
@@ -168,8 +171,9 @@ def run(fixture, new_party, active_wave):
             return entries
 
     original = wait_for("the complete first wave", lambda: wave(logs()[0]), 25)
-    assert fixture.query("SELECT COUNT(*) FROM characters WHERE map=230 AND position_x BETWEEN 580 AND 660",
-                         characters) == "2"
+    move.touch()
+    wait_for("both clients moved just before the crash",
+             lambda: all(f"[teleport] to {checkpoint_arrival};" in log for log in logs()), 6)
     checkpoint = f"instance {copy} of map {MAP} saved an encounter checkpoint"
     checkpoint_counts = {tag: fixture.log(tag).count(checkpoint) for tag in nodes}
     first.touch()
@@ -183,13 +187,16 @@ def run(fixture, new_party, active_wave):
     defeated = wait_for("first-wave deaths before the crash", defeated_wave_members, 4)
     host = wait_for("the durable checkpoint after the kills", lambda: next(
         (tag for tag in nodes if fixture.log(tag).count(checkpoint) > checkpoint_counts[tag]), None), 4)
+    assert fixture.query(f"SELECT COUNT(*) FROM characters WHERE map={MAP} AND ABS(position_x - 608.460)<0.05",
+                         characters) == "2", "the encounter checkpoint saved both players' latest positions"
     offsets = list(map(len, logs()))
     nodes[host].send_signal(signal.SIGKILL)
     assert nodes[host].wait(timeout=10) == -signal.SIGKILL
 
     def recovered():
         suffixes = [log[offset:] for log, offset in zip(logs(), offsets)]
-        if all(f"[new world] map {MAP} " in log and "[creature] 10096 " in log for log in suffixes):
+        if all(f"[new world] map {MAP} at {checkpoint_arrival};" in log and "[creature] 10096 " in log
+               for log in suffixes):
             return suffixes
 
     after = wait_for("both existing sockets to reload the Ring of Law", recovered, 40)

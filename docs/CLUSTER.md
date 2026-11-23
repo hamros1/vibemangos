@@ -388,9 +388,9 @@ after the chest is exhausted or expires, so the encounter cannot roll another re
   currently absent. Only the node owning a spawn's home cell clears its due respawn timer.
 * **Scripted summons** keep their GUID, placement, state and remaining lifetime during a clean
   handoff. Active player guardians and totems follow their player on the same map and retain their
-  GUIDs, position, health and timers. A worker crash loses its temporary summons. Cluster nodes
-  reserve temporary GUID ranges in the character
-  database so a restarted node does not reuse the IDs of objects it handed off. A player's corpse
+  GUIDs, position, health and timers. Dungeon scripts can checkpoint selected summons for crash
+  recovery. Cluster nodes reserve temporary GUID ranges in the character database so a restarted
+  node does not reuse the IDs of objects it handed off. A player's corpse
   keeps its original location and reclaim deadline when the player changes nodes. The current owner
   replicates the body and its removal to nearby observers on other nodes.
 
@@ -427,7 +427,8 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   saved binds, spawn deaths, and script state. In Blackrock Depths, the Ring of Law resumes its
   saved wave once a player returns. The replacement restores the gates, announcer, remaining
   timer, and living opponents. The script checkpoints each wave's summons and deaths and saves
-  changes to surviving opponents every two seconds.
+  changes to surviving opponents every two seconds. At each wave checkpoint the worker also
+  saves the party's current positions and health.
 * **GM commands.** `.instance info`, `.instance shutdown` and `.instance reset` of a copy another node
   hosts go to that node and its answer comes back; `.instance resetall` goes to every node.
 
@@ -704,7 +705,7 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
 
 | What fails | What happens |
 |---|---|
-| **A member** | Its links close (at once if the process died, after `failure_timeout_ms` if it hangs) and the coordinator drops it from the view. Its replicas vanish from the other nodes at once. After its lease and the margin, the coordinator deals its regions and services out again; they spawn afresh. Its accounts are freed at the same time. |
+| **A member** | Its links close (at once if the process died, after `failure_timeout_ms` if it hangs) and the coordinator drops it from the view. Its replicas vanish from the other nodes at once. After its lease and the margin, the coordinator reassigns its regions and services. The replacements load durable state where available. Its accounts are freed at the same time. |
 | **A player's owner** | A gateway keeps the client connected and reloads its saved character once the coordinator has fenced the old process. A regular home disconnects the client, who can log in again after the owner's lease. |
 | **A gateway's direct link to an owner** | The gateway pauses client gameplay and answers pings. The owner keeps the character and buffers packets while both nodes remain in the coordinator's view. |
 | **A player's home** | The owner logs the player out, saved. For a gateway, the coordinator waits for the simulation to stop or be fenced before it grants the account again. |

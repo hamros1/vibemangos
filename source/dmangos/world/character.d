@@ -853,7 +853,7 @@ private:
     }
 
     /// Seconds since the character entered the world.
-    uint secondsInWorld()
+    package uint secondsInWorld()
     {
         return cast(uint)(context.clock() - enteredWorld).total!"seconds";
     }

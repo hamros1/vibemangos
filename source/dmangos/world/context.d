@@ -4326,11 +4326,19 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 auto state = instance in instances;
                 auto script = InstanceScript.make(scripts, *name, instance, id, state is null ? null : state.data,
                     (string saved, bool checkpoint) {
+                        const durable = checkpoint && config.cluster.enabled && hostsDungeon(id) && canWrite();
+                        // The gateway picks the recovery map from the saved character's position.
+                        if (durable)
+                            foreach (who; created.playersNow())
+                                if (auto session = cast(Character) who)
+                                {
+                                    const progress = who.character.progress(session.secondsInWorld());
+                                    database.saveProgress(progress);
+                                }
                         if (auto st = instance in instances)
                             st.data = saved;
                         database.saveInstanceData(instance, saved);
-                        if (checkpoint && battlegroundMapEpoch !is null && hostsDungeon(id) && canWrite()
-                            && settleWrites())
+                        if (durable && settleWrites())
                         {
                             import dmangos.log : info;
 
