@@ -43,6 +43,56 @@ unittest
     assert(tick(PlayerClass.rogue, 5, false) == cast(uint)(rogueSpirit * 0.5f + 2));
 }
 
+/// Flat health regeneration uses the tooltip's five-second rate across the normal two-second ticks.
+unittest
+{
+    import dmangos.world.spellcast : SpellCastResult;
+
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    enum uint weakTrollsBlood = 3219, majorTrollsBlood = 24361, demonArmor = 11735;
+    enum uint gripOfCommand = 21172, auraOfBattle = 21174;
+    void check(uint guid, uint spell, uint perFiveSeconds, bool inCombat)
+    {
+        auto c = w.character(guid, "Regen", PlayerClass.warlock, 60, [spell]);
+        auto me = cast(Player) c.session.character;
+        assert(w.cast_(c, spell) == SpellCastResult.ok);
+        assert(me.auras.find(spell) !is null);
+        me.values.set!UNIT_FIELD_HEALTH(1u);
+        foreach (tick; 1u .. 6u)
+        {
+            me.regenerate(2000, 0, 1, 1, 1, inCombat);
+            assert(me.values.get!UNIT_FIELD_HEALTH == 1 + perFiveSeconds * tick * 2 / 5);
+        }
+    }
+    check(1, weakTrollsBlood, 2, true);
+    check(2, majorTrollsBlood, 20, true);
+    check(3, demonArmor, 15, false);
+    check(4, gripOfCommand, 60, true);
+    check(5, auraOfBattle, 40, true);
+}
+
+/// ClassicDB's template pool selects a single Akubar the Seer across its installed placements.
+unittest
+{
+    import dmangos.world.worlddata : PoolMember;
+
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto data = w.context.data;
+    size_t positions, active;
+    foreach (ref spawn; data.creatureSpawns)
+        if (spawn.entry == 8298)
+        {
+            ++positions;
+            assert(data.pools.inPool(PoolMember.Kind.creature, spawn.guid));
+            active += data.pools.spawns(PoolMember.Kind.creature, spawn.guid);
+        }
+    assert(positions > 1 && active == 1);
+}
+
 /// The five-second rule after a channel paid at its start: as long as it channels (Tranquility, 10 seconds), five
 /// seconds after one that is shorter; mana from spirit, a tick, spirit / 5 + 15 for a druid.
 unittest

@@ -112,11 +112,13 @@ EscortCase[] escortCases(const WorldData data)
     return cases;
 }
 
-/// The first spawn of `entry` on a continent; its map 2 if none.
+/// The first active spawn of `entry` on a continent; its map 2 if none.
 private Position spawnOnContinent(const WorldData data, uint entry, out uint map)
 {
+    import dmangos.world.worlddata : PoolMember;
+
     foreach (const ref s; data.creatureSpawns)
-        if (s.entry == entry && (s.map == 0 || s.map == 1))
+        if (s.entry == entry && (s.map == 0 || s.map == 1) && data.pools.spawns(PoolMember.Kind.creature, s.guid))
         {
             map = s.map;
             return Position(s.x, s.y, s.z, s.orientation);
@@ -280,6 +282,7 @@ string runEscort(const EscortCase c, bool leave, out long ms, bool only = false)
     import dmangos.world.quests : QuestStatus;
     import dmangos.world.spellcast : SpellTargets, TargetFlags;
     import dmangos.world.updatefields : UNIT_NPC_FLAGS;
+    import dmangos.world.worlddata : PoolMember;
 
     uint mapId;
     const data = realData;
@@ -289,7 +292,7 @@ string runEscort(const EscortCase c, bool leave, out long ms, bool only = false)
     auto at = spawnOnContinent(data, spawnEntry, mapId);
     if (mapId == 2)
         foreach (const ref spawn; data.creatureSpawns)
-            if (spawn.entry == spawnEntry)
+            if (spawn.entry == spawnEntry && data.pools.spawns(PoolMember.Kind.creature, spawn.guid))
             {
                 mapId = spawn.map;
                 at = Position(spawn.x, spawn.y, spawn.z, spawn.orientation);

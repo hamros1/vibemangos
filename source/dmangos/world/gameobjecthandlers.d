@@ -750,10 +750,11 @@ unittest
     auto context = newCreationContext(db);
     auto now = MonoTime.currTime;
     context.clock = () => now;
-    enum uint herbLock = 99, herbLoot = 500, gather = 2366, herbalism = 182, thoriumLock = 400, mine = 2575, mining = 186;
+    enum uint herbLock = 99, herbLoot = 500, gather = 2366, herbalism = 182, thoriumLock = 400, mine = 2575, mining = 186,
+        blackwoodLock = 93, opening = 6477;
     // Lock: id, 8 types, 8 indexes, 8 skills, 8 skipped. Peacebloom's (Lock.dbc 29): herbalism (type 2) at 0; and
     // Small Thorium Vein's (400): mining (3) at 245.
-    auto lockRow = new uint[lockFormat.length], thoriumRow = new uint[lockFormat.length];
+    auto lockRow = new uint[lockFormat.length], thoriumRow = new uint[lockFormat.length], blackwoodRow = new uint[lockFormat.length];
     lockRow[0] = herbLock;
     lockRow[1] = 2;
     lockRow[9] = 2;
@@ -762,7 +763,10 @@ unittest
     thoriumRow[1] = 2;
     thoriumRow[9] = 3;
     thoriumRow[17] = 245;
-    context.client.locks = typeof(context.client.locks).parse(buildDbc(lockFormat, [lockRow, thoriumRow]), "Lock.dbc");
+    blackwoodRow[0] = blackwoodLock;
+    blackwoodRow[2] = 2;
+    blackwoodRow[10] = 12;
+    context.client.locks = typeof(context.client.locks).parse(buildDbc(lockFormat, [lockRow, thoriumRow, blackwoodRow]), "Lock.dbc");
     // Herb Gathering and Mining as spell_template has them (2366, 2575: base points -1, dice 1, 5 points a level).
     foreach (id, lockType; [gather: 2, mine: 3])
     {
@@ -774,6 +778,8 @@ unittest
             casting.dmgClass = DamageClass.none;
         }
     }
+    context.data.spells.spells[opening] = testSpell(opening, 33, 23, 0);
+    context.data.spells.spells.edit(opening).miscValue[0] = 12;
     context.data.loot.gameObject.add(herbLoot, lootRow(itemJerky, 100, 0, 1, 1, 0));
 
     GameObjectTemplate door = {entry: 9001, type: GameObjectType.door, displayId: 1, name: "Door"};
@@ -796,7 +802,7 @@ unittest
         raceHuman, 0, 60);
     anduin.read();
     auto me = cast(Player) anduin.session.character;
-    me.spells ~= [gather, mine];
+    me.spells ~= [gather, mine, opening];
     auto map = context.map(0);
     GameObject[3] gos;
     foreach (i; 0 .. 3)
@@ -906,6 +912,32 @@ unittest
                 assert(map.findObject(gos[1].guid) !is null && again.lootState == GoLootState.ready, "filled again");
         }
         assert(picks >= 2 && picks <= 3, "two or three times");
+    }
+
+    // Blackwood food stores use ordinary quest loot even with their old Classic-DB script name.
+    {
+        enum uint nutStores = 175329, quest = 4763, foodLoot = 12811;
+        GameObjectTemplate chest = {entry: nutStores, type: GameObjectType.chest, displayId: 2};
+        chest.data[0] = blackwoodLock;
+        chest.data[1] = foodLoot;
+        context.data.gameObjectTemplates[nutStores] = chest;
+        context.data.gameObjectScriptNames[nutStores] = "go_furbolg_food";
+        context.data.loot.gameObject.add(foodLoot, lootRow(itemJerky, -100, 0, 1, 1, 0));
+        const spawn = GameObjectSpawn(90006, nutStores, 0, -8950, -133, 83.53f);
+        auto food = context.makeGameObject(spawn);
+        map.addObject(food);
+        assert(!food.behaviour, "food stores have no script to summon a warrior");
+
+        const before = me.inventory.count(itemJerky);
+        Quest needsFood = {id: quest, method: 2, reqItemId: [itemJerky, 0, 0, 0], reqItemCount: [before + 1, 0, 0, 0]};
+        context.data.quests.quests[quest] = needsFood;
+        anduin.session.inWorld.addQuest(context.data.quests.quests[quest]);
+        anduin.read();
+        anduin.write(Opcode.CMSG_CAST_SPELL, gatherAt(food.guid, opening));
+        assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_LOOT_RESPONSE));
+        anduin.write(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, slot.data);
+        anduin.write(Opcode.CMSG_LOOT_RELEASE, ClientGuid(food.guid));
+        assert(me.inventory.count(itemJerky) == before + 1);
     }
 
     // The idol: a quest asks for it to be used; its use counts, and it sparkles while it does.

@@ -706,6 +706,13 @@ mixin template CreatureCasting()
                     continue;
                 found ~= other.combatGuid;
             }
+            // Kurinnaxx's Sand Trap selects one player under whom to place the trap.
+            if (spell.id == 26524 && found.length)
+            {
+                import std.random : uniform;
+
+                return [found[uniform(0, found.length, world_.random)]];
+            }
             // A player's totem's (Fire Nova, Magma Totem): the creatures there its owner may attack too.
             if (me.totemOwner)
                 foreach (other; world_.creaturesNear(center, r))

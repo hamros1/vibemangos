@@ -417,12 +417,45 @@ struct QuestRow
         q.offerRewardEmoteDelay = [oed1, oed2, oed3, oed4];
         if (q.maxLevel == 0)
             q.maxLevel = 255;
+        // Classic-DB leaves these gates unset. The selector spells 17451/17452 give 6000 reputation
+        // in the chosen school before its trainer can offer the quest (vMaNGOS issue #3451).
+        if (q.requiredMinRepFaction == 0)
+        {
+            switch (q.id)
+            {
+            case 5283, 5301:
+                q.requiredMinRepFaction = 46;
+                q.requiredMinRepValue = 6000;
+                break;
+            case 5284, 5302:
+                q.requiredMinRepFaction = 289;
+                q.requiredMinRepValue = 6000;
+                break;
+            default:
+                break;
+            }
+        }
         return q;
     }
 }
 
 unittest
 {
+    foreach (id; [5283, 5284, 5301, 5302])
+    {
+        const armor = id == 5283 || id == 5301;
+        QuestRow row;
+        row.id = id;
+        row.rewSpellCast = armor ? 9790 : 9789;
+        const quest = row.toQuest();
+        assert(quest.requiredMinRepFaction == (armor ? 46 : 289) && quest.requiredMinRepValue == 6000);
+        assert(quest.rewSpellCast == row.rewSpellCast);
+        row.requiredMinRepFaction = 123;
+        row.requiredMinRepValue = 4000;
+        const withOverride = row.toQuest();
+        assert(withOverride.requiredMinRepFaction == 123 && withOverride.requiredMinRepValue == 4000);
+    }
+
     Quest q;
     q.questLevel = 5;
     q.rewMoneyMaxLevel = 150;

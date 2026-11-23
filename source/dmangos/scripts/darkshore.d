@@ -4,7 +4,7 @@
  * Through Force", 994, and "Escape Through Stealth", 995) and Therylune ("Therylune's Escape", 945);
  * the Threshwackonator 4100, which follows the player to Gelkak and turns on him ("Gyromast's
  * Revenge", 2078); the rabid Thistle Bears caught in a trap ("Plagued Lands", 2118); and the
- * Blackwood furbolgs and their food stores.
+ * Blackwood furbolgs and the purification at their bonfire.
  */
 module dmangos.scripts.darkshore;
 
@@ -528,19 +528,6 @@ struct PurifyFood
         }
         foreach (i, furbolg; furbolgs[0 .. count])
             e.signal(furbolg, BlackwoodFurbolg.seekPurification, i + 1 == count);
-    }
-}
-
-/// The Blackwood food stores: whoever takes from them is attacked by a warrior near, or one who comes.
-@gameObject("go_furbolg_food")
-struct FurbolgFood
-{
-    void on(ref GameObjectContext it, const ref ObjectUsed e)
-    {
-        const at = it.location;
-        if (!it.creatureNearby(BlackwoodFurbolg.warrior, 20))
-            it.summon(BlackwoodFurbolg.warrior, Location(at.x + 8, at.y + 8, at.z), 120_000, e.player);
-        // A warrior standing near notices the theft on his own (he is hostile and close); the chest opens as usual.
     }
 }
 

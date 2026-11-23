@@ -298,6 +298,32 @@ unittest
     assert(boss.ai.threatOf(guid) == before / 2, "half its hate gone");
 }
 
+/// A Blackrock Outrunner's Net roots its target and halves only that target's threat.
+unittest
+{
+    import dmangos.script.api : ActionResult;
+    import dmangos.world.realspelltests : classWarriorId, haveRealData, RealWorld;
+
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto tank = w.character(114, "Tank", classWarriorId, 20, []);
+    auto raider = w.character(115, "Raider", classWarriorId, 20, []);
+    auto map = w.context.map(0);
+    auto outrunner = map.creatureAt(w.enemy(tank, 485));
+    auto netted = tank.session.inWorld.unit;
+    auto other = raider.session.inWorld.unit;
+    outrunner.ai.attackedBy(netted, map);
+    outrunner.ai.damageTaken(netted, 200);
+    outrunner.ai.damageTaken(other, 150);
+
+    assert(outrunner.ai.castFor(map, 6533, netted.combatGuid, true) == ActionResult.ok);
+    assert(netted.hasAuraOf(6533), "Net still roots its target");
+    assert(netted.hasAuraOf(11920), "Net triggers Net Guard");
+    assert(outrunner.ai.threatOf(netted.combatGuid) == 100, "Net halves the victim's threat");
+    assert(outrunner.ai.threatOf(other.combatGuid) == 150, "Net leaves everyone else's threat unchanged");
+}
+
 /// Scourge Strike (`spell_scourge_strike`), a creature's spell: it passes a player over (`TargetChecked`).
 unittest
 {

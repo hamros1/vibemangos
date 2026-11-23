@@ -125,15 +125,30 @@ imported!"dmangos.world.creature".Creature summonTotem(ref Caster caster, const(
 
 /**
  * Each tick: each active totem of `owner`'s (one whose spell takes time to cast: Searing Totem) casts its spell at
- * the nearest enemy of its owner within its range, when it can.
+ * the nearest enemy within range. A player's totem only helps fights its owner or group has already joined.
  */
 void totemsAct(ref Caster owner, imported!"dmangos.world.creature".Creature[] totems)
 {
+    import std.algorithm.searching : any;
     import dmangos.world.spellcast : range;
-    import dmangos.world.unit : UnitRef;
+    import dmangos.world.unit : UnitKind, UnitRef;
 
     auto map = owner.map;
     auto context = owner.context;
+    const ownerGuid = owner.guid;
+    auto group = owner.kind == UnitKind.player ? context.groups.of(ownerGuid) : null;
+    bool fightingOwnerOrGroup(ulong guid)
+    {
+        if (guid == ownerGuid)
+            return true;
+        if (auto helper = map.creatureAt(guid))
+        {
+            guid = helper.petOwner ? helper.petOwner : helper.guardianOwner;
+            if (guid == ownerGuid)
+                return true;
+        }
+        return group !is null && group.isMember(guid);
+    }
     foreach (totem; totems)
     {
         if (!totem.alive || !totem.totemActive || totem.ai is null || totem.ai.castingNow)
@@ -155,9 +170,14 @@ void totemsAct(ref Caster owner, imported!"dmangos.world.creature".Creature[] to
             }
         }
         foreach (c; map.creaturesNear(totem.position, reach))
-            if (c !is totem && !c.totemOwner && c.petOwner != owner.guid && c.ai !is null)
+            if (c.alive && c !is totem && !c.totemOwner && c.petOwner != ownerGuid && c.ai !is null)
+            {
+                const threat = c.ai.threatList;
+                if (owner.kind == UnitKind.player && !any!fightingOwnerOrGroup(threat.byKey))
+                    continue;
                 consider(map.unitOf(c));
-        if (owner.kind == imported!"dmangos.world.unit".UnitKind.creature) // a creature's at the players it fights too
+            }
+        if (owner.kind == UnitKind.creature) // a creature's at the players it fights too
             foreach (u; map.playersNear(totem.position, reach))
                 consider(u);
         if (nearest)

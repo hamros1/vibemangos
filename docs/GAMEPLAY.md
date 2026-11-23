@@ -540,8 +540,8 @@ See the [roadmap](ROADMAP.md) for open work, the [spell audit](SPELLS.md) for sp
   shaman's totems stand beside it, one of each element (a new one replaces the old), with its level,
   their health and the spell's duration, and go when it dies or leaves: a passive one holds its
   spell's aura (`creature_template_spells`), given to its owner and party within its radius; an
-  active one (Searing Totem) casts its spell at the nearest enemy in range. Their kills are their
-  owner's. Dispels (Dispel Magic, Cleanse, Remove Curse, Purge) take random auras of their type:
+  active one (Searing Totem) casts its spell at the nearest enemy already fighting the shaman or the group.
+  Their kills are their owner's. Dispels (Dispel Magic, Cleanse, Remove Curse, Purge) take random auras of their type:
   harmful magic off friends, helpful magic off enemies. Creatures are slowed and sped up by their
   auras, and stand still while rooted or stunned. Drains over time: Drain Life and Siphon Life hurt
   (`SMSG_SPELLNONMELEEDAMAGELOG`, periodic) and heal their caster by it, Drain Mana and Viper Sting take

@@ -55,6 +55,7 @@ struct Blow
     bool remotePlayerPvP;
     SwingRetaliationReply retaliate; /// sends defensive damage back to a remote attacker
     bool threatIncludesCaster; /// a prepared strike already includes the caster's school modifier
+    bool suppressCombat; /// the blow alone does not put the recipient into combat
 
     ///
     static Blow swing(const ref MeleeDamage d)

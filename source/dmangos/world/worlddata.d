@@ -963,6 +963,11 @@ final class WorldData
             pools.add(row.get!uint(1), PoolMember(PoolMember.Kind.pool, row.get!uint(0), row.get!float(2)));
         foreach (row; world.query!"SELECT guid, pool_entry, chance FROM pool_creature"())
             pools.add(row.get!uint(1), PoolMember(PoolMember.Kind.creature, row.get!uint(0), row.get!float(2)));
+        // A template pool includes each placement of that creature entry. The specific GUID row, if present,
+        // already assigned that placement to its pool. Sort the new memberships for the shared cluster seed.
+        foreach (row; world.query!("SELECT creature.guid, pool_creature_template.pool_entry, pool_creature_template.chance "
+            ~ "FROM pool_creature_template JOIN creature ON creature.id = pool_creature_template.id ORDER BY creature.guid")())
+            pools.add(row.get!uint(1), PoolMember(PoolMember.Kind.creature, row.get!uint(0), row.get!float(2)));
         foreach (row; world.query!"SELECT guid, pool_entry, chance FROM pool_gameobject"())
             pools.add(row.get!uint(1), PoolMember(PoolMember.Kind.gameObject, row.get!uint(0), row.get!float(2)));
         auto rng = Random(spawnSeed ? cast(uint)(spawnSeed ^ spawnSeed >> 32) : unpredictableSeed);
@@ -1524,9 +1529,11 @@ final class PoolChooser
     private bool[uint][PoolMember.Kind] pooled, chosen;
     private uint[uint][PoolMember.Kind] poolOf; // the pool each member is in
 
-    /// Adds a member to a pool.
+    /// Adds a member to a pool, giving its first assignment precedence over duplicate rules.
     void add(uint pool, PoolMember member)
     {
+        if (inPool(member.kind, member.id))
+            return;
         members[pool] ~= member;
         pooled[member.kind][member.id] = true;
         poolOf[member.kind][member.id] = pool;
@@ -1646,6 +1653,21 @@ private:
         if (member.kind == PoolMember.Kind.pool)
             choosePool(member.id, rng);
     }
+}
+
+/// A placement assigned by GUID keeps its membership when a creature-template pool also includes it.
+unittest
+{
+    auto pools = new PoolChooser;
+    pools.limits[2] = 0;
+    enum creature = PoolMember.Kind.creature;
+    pools.add(1, PoolMember(creature, 30));
+    pools.add(2, PoolMember(creature, 30));
+    pools.add(2, PoolMember(creature, 31));
+    auto rng = Random(7);
+    pools.choose(rng);
+    assert(pools.spawns(creature, 30) && !pools.spawns(creature, 31));
+    assert(pools.reroll(creature, 30, rng) == 30);
 }
 
 unittest

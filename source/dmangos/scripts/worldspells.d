@@ -59,6 +59,17 @@ struct HateToHalf
     }
 }
 
+/// Net Guard, triggered by Net (6533), halves the victim's threat on its caster when applied.
+@spell("spell_net_guard") @spellIds(11920)
+struct NetGuard
+{
+    void on(ref SpellContext it, const ref AuraApplied e)
+    {
+        if (e.effect == 0 && e.caster.isCreature)
+            it.modifyThreat(e.caster, e.target, -50);
+    }
+}
+
 /// Random Aggro (a creature's spell): each enemy it reaches is on its threat list.
 @spell("spell_random_aggro")
 struct RandomAggro

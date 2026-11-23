@@ -207,6 +207,8 @@ final class Player : InventoryOwner
     bool dualWield;
     /// The area within `data.zone`; the zone itself where there is no map data.
     uint area;
+    /// Uncredited health regeneration, in milliseconds times the health-per-five-seconds rate.
+    private double healthRegenProgress = 0;
 
     /**
      * Builds the player from its database rows and the skills and spells
@@ -725,11 +727,11 @@ final class Player : InventoryOwner
     }
 
     /**
-     * Health per second now (CMaNGOS's `RegenerateHealth`): out of combat from spirit, times
+     * Health per five seconds: out of combat from spirit, times
      * `MOD_HEALTH_REGEN_PERCENT` auras (Regeneration), a third more sitting (`sittingHealthRegen`); in combat none, but the share
      * `MOD_REGEN_DURING_COMBAT` auras keep of it; and always `MOD_HEALTH_REGEN_IN_COMBAT`'s (Demon Armor).
      */
-    float healthRegenNow(float healthRate, bool inCombat) const
+    double healthRegenPerFiveSeconds(float healthRate, bool inCombat) const
     {
         float add = 0;
         const duringCombat = auras.total(AuraType.modRegenDuringCombat);
@@ -740,12 +742,22 @@ final class Player : InventoryOwner
             if (values.getByte!UNIT_FIELD_BYTES_1(0) != 0)
                 add *= sittingHealthRegen; // not standing
         }
-        add += auras.total(AuraType.modHealthRegenInCombat);
-        return add > 0 ? add : 0;
+        double perFiveSeconds = add * 5.0;
+        foreach (aura; auras.list)
+        {
+            // The Alterac Valley officer auras specify health per second. Troll's Blood, Demon Armor,
+            // and the other effects of this type give health per five seconds.
+            enum uint gripOfCommand = 21172, auraOfBattle = 21174;
+            const scale = aura.spell.id == gripOfCommand || aura.spell.id == auraOfBattle ? 5 : 1;
+            foreach (i; 0 .. aura.amount.length)
+                if ((aura.effects & (1 << i)) && aura.type(i) == AuraType.modHealthRegenInCombat)
+                    perFiveSeconds += aura.amount[i] * cast(int) aura.stacks * scale;
+        }
+        return max(0.0, perFiveSeconds);
     }
 
     /**
-     * Regeneration over `milliseconds`: health (`healthRegenNow`), mana, energy, and out of combat rage
+     * Regeneration over `milliseconds`: health, mana, energy, and out of combat rage
      * decaying; Bloodrage and Enrage count as combat for it (`regenInterrupted`). Returns whether anything changed.
      */
     bool regenerate(uint milliseconds, float healthRate, float manaRate, float rageLoss, float energyRate,
@@ -756,13 +768,19 @@ final class Player : InventoryOwner
         const health = values.get!UNIT_FIELD_HEALTH, maxHealth = values.get!UNIT_FIELD_MAXHEALTH;
         if (health < maxHealth && health > 0)
         {
-            const gained = cast(uint)(healthRegenNow(healthRate, inCombat) * milliseconds / 1000);
+            healthRegenProgress += healthRegenPerFiveSeconds(healthRate, inCombat) * milliseconds;
+            const missing = maxHealth - health;
+            enum millisecondsPerFiveSeconds = 5000;
+            const gained = cast(uint) min(healthRegenProgress / millisecondsPerFiveSeconds, missing);
+            healthRegenProgress = gained == missing ? 0 : healthRegenProgress - gained * double(millisecondsPerFiveSeconds);
             if (gained)
             {
-                values.set!UNIT_FIELD_HEALTH(min(health + gained, maxHealth));
+                values.set!UNIT_FIELD_HEALTH(health + gained);
                 changed = true;
             }
         }
+        else
+            healthRegenProgress = 0;
         changed |= addPower(Power.mana, cast(int)(manaRegenPerSecond() * manaRate * (milliseconds / 1000)));
         spiritPaused = spiritPaused > milliseconds ? spiritPaused - milliseconds : 0;
         changed |= addPower(Power.energy, cast(int)((milliseconds / 100) * energyRate * powerRegenFactor(Power.energy)));

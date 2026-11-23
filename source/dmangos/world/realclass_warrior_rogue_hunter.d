@@ -1545,6 +1545,11 @@ unittest
             }
             assert(fitsChance(back, n, 20.0 * points), format!"Relentless Strikes, %s points: %s of %s"(points, back, n));
         }
+        auto victim = creatureOf(w, hogger);
+        victim.values.set!UNIT_FIELD_MAXHEALTH(1u);
+        const lethal = finisher(w, who, eviscerate, hogger, 5);
+        assert(lethal.damage && !victim.alive, "Eviscerate kills the target");
+        assert(energized == [[14181, 25]], "Relentless Strikes restores energy once on a lethal five-point finisher");
     }
     foreach (r, rank; [13976u, 13979, 13980])
     {

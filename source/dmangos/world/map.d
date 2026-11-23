@@ -2514,6 +2514,15 @@ final class Map : CombatWorld, GameObjectWorld
     /// Told when a player steps within a trap's radius (it may spring).
     void delegate(Inhabitant who, GameObject trap) onTrap;
 
+    /// The context fires a trap whose fuse has expired at its position.
+    void delegate(GameObject trap) onTimedTrap;
+
+    void triggerTimedTrap(GameObject trap)
+    {
+        if (onTimedTrap !is null)
+            onTimedTrap(trap);
+    }
+
     /**
      * Told of another node's creature (its replica here, alive, out of combat) near a player who
      * moved, to decide whether it notices the player (and the player must go to that node to fight).
@@ -2560,6 +2569,8 @@ final class Map : CombatWorld, GameObjectWorld
      */
     private static bool creatureNoticeable(const Creature creature)
     {
+        if (creature.totemOwner) // proximity alone does not aggro a totem
+            return false;
         const own = creature.factionTemplate is null ? 0 : creature.factionTemplate.id;
         return own != creature.template_.faction || creature.summon.summoner != 0;
     }
@@ -4556,6 +4567,10 @@ unittest
     moved();
     assert(monster.ai.currentVictim == 0, "as spawned: no fight");
     escortee.factionTemplate = context.client.factionTemplates.lookup(escortFaction); // a script's escort faction
+    escortee.totemOwner = anduin.session.character.guid;
+    moved();
+    assert(monster.ai.currentVictim == 0, "proximity does not draw aggro on a totem");
+    escortee.totemOwner = 0;
     moved();
     assert(monster.ai.currentVictim == escortee.guid, "the monster falls on the escorted");
 }

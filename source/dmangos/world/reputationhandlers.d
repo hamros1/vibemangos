@@ -5,7 +5,7 @@
  *
  * Kills give the reputations of `creature_onkill_reputation` (shared in a group like experience,
  * half to the team faction where it says so, up to its rank cap); quests their `RewRepFaction`
- * ones. Less for kills grey to the player and quests 6 levels and more below it, down to
+ * ones. Less for kills grey to the player and gains from quests at least 6 levels below it, down to
  * `rate_reputation_lowlevel_kill` and `_quest`; `reputation_reward_rate` scales each faction's.
  * The client sets war, the inactive list and the watched faction itself.
  */
@@ -139,7 +139,7 @@ mixin template ReputationHandlers()
             // until the release of Patch 3.0.8").
             if (source == ReputationSource.kill && isGray(current, level))
                 percent *= context.config.rateReputationLowLevelKill;
-            else if (source == ReputationSource.quest && current > level + 5)
+            else if (source == ReputationSource.quest && rep > 0 && current > level + 5)
                 percent *= max(context.config.rateReputationLowLevelQuest, 1.0f - 0.2f * (current - (level + 5)));
         }
         if (percent <= 0)
@@ -346,6 +346,7 @@ unittest
     import dmangos.world.objects : HighGuid, makeGuid;
     import dmangos.world.opcodes;
     import dmangos.world.player : Player;
+    import dmangos.world.quests : Quest;
     import dmangos.world.relations : ReputationRank;
     import dmangos.world.reputation : FactionFlag;
     import dmangos.world.testclient;
@@ -396,6 +397,13 @@ unittest
     anduin.session.inWorld.rewardKillReputation(keeper, 1);
     assert(me.reputation.standingWith(guild) == 25 + 5);
 
+    Quest quest;
+    quest.questLevel = 1;
+    quest.rewRepFaction[0 .. 2] = [guild, team];
+    quest.rewRepValue[0 .. 2] = [250, -500];
+    anduin.session.inWorld.rewardQuestReputation(quest);
+    assert(me.reputation.standingWith(guild) == 80 && me.reputation.standingWith(team) == -486);
+
     // War, by the client's checkbox.
     ByteWriter w;
     w.put(3u);
@@ -406,7 +414,7 @@ unittest
     // Saved at logout, there at the next login.
     anduin.write(Opcode.CMSG_LOGOUT_REQUEST, null);
     const rows = db.loadReputation(me.data.guid);
-    assert(rows.length == 2 && rows.canFind!(r => r.faction == guild && r.standing == 30
+    assert(rows.length == 2 && rows.canFind!(r => r.faction == guild && r.standing == 80
         && (r.flags & (FactionFlag.visible | FactionFlag.atWar)) == (FactionFlag.visible | FactionFlag.atWar)));
 }
 

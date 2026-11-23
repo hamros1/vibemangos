@@ -144,6 +144,62 @@ struct RealWorld
 
 enum ubyte classMageId = 8, classRogueId = 4, classWarriorId = 1;
 
+/// Fire Blossom's real periodic aura can hit both the tank and a lower-threat raider.
+unittest
+{
+    import dmangos.world.eventai : castTriggered;
+    import dmangos.world.updatefields : UNIT_FIELD_HEALTH, UNIT_FIELD_MAXHEALTH;
+
+    if (!haveRealData())
+        return;
+
+    auto w = RealWorld.make();
+    auto tank = w.character(111, "Tank", classWarriorId, 60, []);
+    auto raider = w.character(112, "Raider", classMageId, 60, []);
+    foreach (client; [tank, raider])
+    {
+        auto player = cast(Player) client.session.character;
+        player.values.set!UNIT_FIELD_MAXHEALTH(100_000);
+        player.values.set!UNIT_FIELD_HEALTH(100_000);
+    }
+    auto map = w.context.map(0);
+    auto firewalker = map.creatureAt(w.enemy(tank, 11666));
+    auto tankUnit = map.unit(tank.session.character.guid), raiderUnit = map.unit(raider.session.character.guid);
+    firewalker.ai.attackedBy(tankUnit, map);
+    firewalker.ai.addThreat(tankUnit, 1000);
+    firewalker.ai.addThreat(raiderUnit, 1);
+    auto blossom = w.context.data.spells.spell(19636);
+    assert(blossom !is null);
+    foreach (_; 0 .. 3)
+    {
+        assert(firewalker.ai.castSpell(blossom, firewalker.guid, castTriggered));
+        foreach (pulse; 0 .. 6)
+            firewalker.updateAuras(map, 1000);
+    }
+    assert(tankUnit.health < 100_000 && raiderUnit.health < 100_000, "Fire Blossom pulses beyond the tank");
+}
+
+/// Baron Rivendare's Unholy Aura deals damage without pulling him or placing the player in combat.
+unittest
+{
+    if (!haveRealData())
+        return;
+
+    auto w = RealWorld.make();
+    auto raider = w.character(113, "Scout", classWarriorId, 60, []);
+    auto map = w.context.map(0);
+    auto baron = map.creatureAt(w.enemy(raider, 10440));
+    auto player = raider.session.inWorld;
+    baron.ai.update(map, 1000);
+    assert(baron.auras.find(17467) !is null, "the real idle EventAI rule supplies Unholy Aura");
+    assert(!baron.ai.inCombat && !player.inCombat);
+    const health = player.unit.health;
+    foreach (_; 0 .. 3)
+        baron.updateAuras(map, 2000);
+    assert(player.unit.health < health, "Unholy Aura damages nearby players");
+    assert(!baron.ai.inCombat && !player.inCombat, "the aura alone does not start combat");
+}
+
 /// The technician's unmodified EventAI row selects a wounded mechanical ally across a region boundary.
 unittest
 {

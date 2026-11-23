@@ -207,6 +207,13 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         }
         else
         {
+            if (spell.id == 26524 && caster.creature.spawn.entry == 15348)
+            {
+                auto victim = map.unit(target);
+                if (victim.kind == UnitKind.player && c.once(i))
+                    context.placeKurinnaxxTrap(map, victim.position);
+                break;
+            }
             ai.spellEffectScript(spell, i, target, value);
             if (map.creatureAt(target) !is null && context.namedCreatureRouting(spell) == i)
                 context.startScript(DbScriptType.spell, spell.id, map, caster.guid, target);

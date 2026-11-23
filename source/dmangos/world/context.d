@@ -860,6 +860,15 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
     private ObjectAnimationImpact[] objectAnimations;
 
+    package void placeKurinnaxxTrap(Map map, Position at)
+    {
+        if (auto trap = summonWildGameObject(map, 180647, at, 10))
+        {
+            trap.restoreTimer = 4000;
+            map.wake(trap.guid);
+        }
+    }
+
     private void landObjectAnimations(MonoTime now)
     {
         import dmangos.world.gameobject : gameObjectAnimation;
@@ -3834,6 +3843,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 askCreatureLoans(created, caller, enemy, radius);
             };
         created.onTrap = (Inhabitant who, GameObject trap) { trapSprung(created, who, trap); };
+        created.onTimedTrap = (GameObject trap) { disturbEncounterTrap(created, trap); };
         created.onWaypointScript = (Creature creature, uint scriptId) {
             import dmangos.world.dbscripts : DbScriptType;
 

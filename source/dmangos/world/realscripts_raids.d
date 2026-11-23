@@ -1662,6 +1662,30 @@ unittest
             s.map.findObject(spawners[0].guid) !is null, s.objects(175622).length));
 }
 
+/// Kurinnaxx places one visible trap under a player and springs it at that location four seconds later.
+unittest
+{
+    import dmangos.script.api : ActionResult;
+
+    if (!haveRealData())
+        return;
+    const origin = spawnOf(509, 15348);
+    auto s = new Scene(509, origin, 2);
+    auto boss = s.the(15348);
+    s.moveHero(1, Position(origin.x + 10, origin.y, origin.z));
+    s.run(100.msecs);
+    assert(boss.ai.castFor(s.map, 26524, boss.guid, true) == ActionResult.ok);
+    auto traps = s.objects(180647);
+    assert(traps.length == 1, "one Sand Trap per cast");
+    const at = traps[0].position;
+    assert(Scene.distance(at, s.hero(0).position) < 0.1f || Scene.distance(at, s.hero(1).position) < 0.1f,
+        "Sand Trap spawns at a player's feet");
+    s.run(3900.msecs, 100.msecs);
+    assert(s.map.gameObjectAt(traps[0].guid) !is null && !s.cast_(25656));
+    s.run(100.msecs, 100.msecs);
+    assert(s.map.gameObjectAt(traps[0].guid) is null && s.cast_(25656), "the trap springs after four seconds");
+}
+
 /// Each wave spares one floor section and erupts in the other three.
 unittest
 {

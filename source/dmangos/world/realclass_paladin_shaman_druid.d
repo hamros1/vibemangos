@@ -1933,6 +1933,8 @@ unittest
         if (talent)
             learnPassive(w, who, talent);
         const hogger = foe(w, who, 448, 8);
+        auto map = w.context.map(0);
+        dealDamage(who.session.inWorld.unit, map.unit(hogger), 1, Blow.spell());
         auto totem = summoned(w, who, 10438);
         const attack = totem.totemSpell;
         const range = valueRange(w, attack, 0, 60);
@@ -1946,8 +1948,78 @@ unittest
         foreach (d; got)
             assert(d == 0 || inRange(d, range[0], range[1], 5 * cast(int) rank), format!"Call of Flame %s: %s, not %s +%s%%"(
                 rank, got, range, 5 * rank));
-        cast(void) hogger;
     }
+}
+
+/// Searing Totem helps the shaman's group, leaving idle creatures and other players' fights alone.
+unittest
+{
+    import dmangos.world.creatureai : ReactState;
+
+    if (!haveRealData())
+        return;
+    enum uint searingTotem = 10438;
+    auto w = RealWorld.make();
+    auto who = shaman(w, 381, [searingTotem]);
+    auto ally = w.character(382, "Rexxar", PlayerClass.warrior, 60, [], raceOrc);
+    auto bystander = w.character(383, "Drekthar", PlayerClass.warrior, 60, [], raceOrc);
+    guestOfStormwind(ally);
+    guestOfStormwind(bystander);
+    auto me = who.session.inWorld;
+    auto group = w.context.groups.newGroup();
+    group.addLeaderInvite(me.player.guid, "Thrall");
+    group.create();
+    group.addMember(ally.session.inWorld.player.guid, "Rexxar");
+
+    auto map = w.context.map(0);
+    auto idle = creatureOf(w, foe(w, who, 448, 6));
+    auto unrelated = creatureOf(w, foe(w, who, 448, 9));
+    auto engaged = creatureOf(w, foe(w, who, 448, 13));
+    unrelated.ai.react = ReactState.defensive;
+    dealDamage(bystander.session.inWorld.unit, map.unitOf(unrelated), 0, Blow.spell());
+    auto totem = summoned(w, who, searingTotem);
+    pass(w, who, 1000.msecs);
+    assert(!totem.ai.castingNow, "idle creatures and unrelated fights leave the totem idle");
+    assert(!me.inCombat, "the totem cannot pull a creature on the shaman");
+
+    engaged.ai.react = ReactState.defensive;
+    dealDamage(ally.session.inWorld.unit, map.unitOf(engaged), 0, Blow.spell());
+    assert(engaged.ai.threatOf(ally.session.inWorld.player.guid) == 0, "no damage is required to engage");
+    foreach (_; 0 .. 6)
+        pass(w, who, 1000.msecs);
+    assert(engaged.ai.threatOf(totem.guid) > 0, "the totem helps a party member who has drawn aggro");
+    assert(idle.ai.threatList.length == 0, "the nearer idle creature is still untouched");
+    assert(totem.guid !in unrelated.ai.threatList, "the nearer unrelated fight is still untouched");
+}
+
+/// Player-owned totems disappear on death. Creature-owned totems remain until their own despawn.
+unittest
+{
+    import dmangos.script.api : ActionResult;
+
+    if (!haveRealData())
+        return;
+    enum uint searingTotem = 10438;
+    auto w = RealWorld.make();
+    auto who = shaman(w, 384, [searingTotem]);
+    auto map = w.context.map(0);
+    auto playerTotem = summoned(w, who, searingTotem);
+    auto creature = creatureOf(w, foe(w, who, 448, 12));
+    assert(creature.ai.castFor(map, searingTotem, creature.guid, true) == ActionResult.ok);
+    Creature creatureTotem;
+    foreach (c; map.creaturesNear(creature.position, 5))
+        if (c.totemOwner == creature.guid)
+            creatureTotem = c;
+    assert(creatureTotem !is null, "the creature summoned a totem");
+
+    const playerTotemGuid = playerTotem.guid;
+    who.session.inWorld.sufferDamage(UnitRef.init, 1_000_000, Blow.spell());
+    assert(map.creatureAt(playerTotemGuid) is null, "the player's totem goes on death");
+
+    creature.die(map, w.context.unixTime);
+    pass(w, who, 1000.msecs);
+    assert(map.creatureAt(creatureTotem.guid) is creatureTotem && creatureTotem.alive,
+        "the creature's totem remains after its owner dies");
 }
 
 /**

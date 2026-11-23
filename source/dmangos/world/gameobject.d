@@ -82,6 +82,9 @@ interface GameObjectWorld
 
     /// It is used up: it goes, and comes back when its spawn's respawn time is up.
     void gameObjectUsedUp(GameObject go);
+
+    /// A trap's timed fuse expired. Cast its spell at its position.
+    void triggerTimedTrap(GameObject trap);
 }
 
 /// A `gameobject_template` row.
@@ -162,7 +165,7 @@ final class GameObject : Replicable, Moving, PerViewer
     private ElevatorMotion elevator;
     GoLootState lootState = GoLootState.ready;
     Loot loot;                   /// what it holds while open (a chest)
-    int restoreTimer;            /// ms until a door or button goes back, or a goober is done
+    int restoreTimer;            /// ms until a door or button goes back, a goober is done or a timed trap fires
     uint instanceId;             /// the dungeon instance it is in (0: none): used up there, it stays so
     long trapReadyAt;            /// a trap's cooldown: it springs again from then (Unix time)
     ulong owner;                 /// who made it (a fishing bobber's angler); 0: a spawn
@@ -363,7 +366,14 @@ final class GameObject : Replicable, Moving, PerViewer
             return;
         final switch (lootState)
         {
-        case GoLootState.notReady, GoLootState.ready:
+        case GoLootState.notReady:
+            return;
+        case GoLootState.ready:
+            if (type == GameObjectType.trap && restoreTimer > 0 && (restoreTimer -= diff) <= 0)
+            {
+                restoreTimer = 0;
+                world.triggerTimedTrap(this);
+            }
             return;
         case GoLootState.activated:
             switch (type)
@@ -423,6 +433,8 @@ final class GameObject : Replicable, Moving, PerViewer
     @property bool resting() const
     {
         if (elevator.active)
+            return false;
+        if (type == GameObjectType.trap && lootState == GoLootState.ready && restoreTimer > 0)
             return false;
         if (lootState == GoLootState.activated)
             return (type == GameObjectType.door || type == GameObjectType.button) && restoreTimer <= 0;
@@ -676,12 +688,16 @@ unittest
     GameObjectTemplate trap = {entry: 5, type: GameObjectType.trap};
     const doorSpawn = GameObjectSpawn(guid: 19, entry: door.entry, x: 100, y: 100);
     const trapSpawn = GameObjectSpawn(guid: 20, entry: trap.entry, x: 101, y: 100);
+    const fusedSpawn = GameObjectSpawn(guid: 21, entry: trap.entry, x: 102, y: 100);
     auto owner = new Map(0, MapSettings.init, () => sent, null);
     auto next = new Map(0, MapSettings.init, () => received, null);
     auto opened = new GameObject(doorSpawn, &door);
     auto sprung = new GameObject(trapSpawn, &trap);
+    auto fused = new GameObject(fusedSpawn, &trap);
+    fused.restoreTimer = 1000;
     owner.addObject(opened);
     owner.addObject(sprung);
+    owner.addObject(fused);
     opened.useDoorOrButton(owner);
     sprung.trapReadyAt = 3910;
     sprung.trapUses = 1;
@@ -695,7 +711,8 @@ unittest
     });
     assert(owner.isReplica(opened.guid) && owner.isReplica(sprung.guid));
     next.migrateIn(bundle, (const ref Migrant migrant) {
-        auto go = migrant.spawn == doorSpawn.guid ? new GameObject(doorSpawn, &door) : new GameObject(trapSpawn, &trap);
+        auto go = migrant.spawn == doorSpawn.guid ? new GameObject(doorSpawn, &door)
+            : new GameObject(migrant.spawn == trapSpawn.guid ? trapSpawn : fusedSpawn, &trap);
         auto state = ByteReader(migrant.state);
         go.loadState(state, received);
         assert(state.empty);
@@ -705,10 +722,18 @@ unittest
     assert(restored.goState == goStateActive && restored.restoreTimer == 488);
     auto restoredTrap = next.gameObjectAt(sprung.guid);
     assert(restoredTrap.trapReadyAt == 3910 && restoredTrap.trapUses == 1);
+    uint fired;
+    next.onTimedTrap = (GameObject object) {
+        assert(object.guid == fused.guid);
+        ++fired;
+    };
     next.update(487.msecs);
-    assert(restored.goState == goStateActive);
+    assert(restored.goState == goStateActive && fired == 0);
     next.update(1.msecs);
+    assert(fired == 1);
+    next.update(1000.msecs);
+    assert(fired == 1);
     assert(restored.goState == goStateReady && restored.lootState == GoLootState.ready
         && !(restored.values.get!GAMEOBJECT_FLAGS & goFlagInUse));
-    assert(next.objectCount == 2 && !next.isReplica(restored.guid));
+    assert(next.objectCount == 3 && !next.isReplica(restored.guid));
 }

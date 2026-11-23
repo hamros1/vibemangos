@@ -1274,7 +1274,7 @@ unittest
     assert(!(a.keeper.values.get!UNIT_DYNAMIC_FLAGS & AuraSet.dynTrackUnit));
 }
 
-/// Regeneration's auras: a share in combat, a percentage more out of it, health every second whatever, a power's
+/// Regeneration's auras: a share in combat, a percentage more out of it, flat health in or out of combat, a power's
 /// rate; Bloodrage counts as combat.
 unittest
 {
@@ -1286,8 +1286,8 @@ unittest
     auto a = new Arena;
     auto me = a.me;
     me.values.set!UNIT_FIELD_STAT0(Stat.spirit, 100u);
-    const base = me.healthRegenNow(1, false);
-    assert(base > 0 && me.healthRegenNow(1, true) == 0, "none in combat");
+    const base = me.healthRegenPerFiveSeconds(1, false);
+    assert(base > 0 && me.healthRegenPerFiveSeconds(1, true) == 0, "none in combat");
     SpellInfo duringCombat, regen, armor, innervate, bloodrage;
     duringCombat.id = 96030;
     duringCombat.effect[0] = SpellEffect.applyAura;
@@ -1307,11 +1307,11 @@ unittest
     bloodrage.casting.applyAuraName[0] = AuraType.interruptRegen;
     auto session = a.hero.session.inWorld;
     session.addAura(makeAura(&duringCombat, me.guid, 60, -1, true, [30, 0, 0]));
-    assert(isClose(me.healthRegenNow(1, true), base * 0.3f), "30% kept in combat");
+    assert(isClose(me.healthRegenPerFiveSeconds(1, true), base * 0.3f, 1e-6), "30% kept in combat");
     session.addAura(makeAura(&regen, me.guid, 60, -1, true, [100, 0, 0]));
-    assert(isClose(me.healthRegenNow(1, false), base * 2), "twice as fast out of combat");
+    assert(isClose(me.healthRegenPerFiveSeconds(1, false), base * 2), "twice as fast out of combat");
     session.addAura(makeAura(&armor, me.guid, 60, -1, true, [3, 0, 0]));
-    assert(isClose(me.healthRegenNow(1, true), base * 0.3f + 3), "and 3 a second always");
+    assert(isClose(me.healthRegenPerFiveSeconds(1, true), base * 0.3f + 3, 1e-6), "and 3 per five seconds always");
     session.addAura(makeAura(&innervate, me.guid, 60, -1, true, [100, 0, 0]));
     assert(me.powerRegenFactor(Power.energy) == 2 && me.powerRegenFactor(Power.mana) == 1);
     assert(!me.regenInterrupted);

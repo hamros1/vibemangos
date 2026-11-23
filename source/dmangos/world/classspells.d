@@ -903,6 +903,7 @@ mixin template ClassSpells()
     {
         import dmangos.world.spellmods : affects;
 
+        enum uint relentlessStrikesEnergy = 14181;
         ProcCast[] casts;
         foreach (aura; player.auras.list)
             foreach (k; 0 .. 3)
@@ -910,6 +911,9 @@ mixin template ClassSpells()
                 if (!(aura.effects & (1 << k)) || aura.type(k) != AuraType.addTargetTrigger || !aura.spell.triggerSpell[k]
                         || !affects(aura, k, *spell))
                     continue;
+                const trigger = aura.spell.triggerSpell[k];
+                // Relentless Strikes restores the rogue's own energy even if the finisher killed its target.
+                const returnsEnergy = trigger == relentlessStrikesEnergy;
                 const chance = aura.amount[k] + aura.spell.casting.pointsPerComboPoint[k] * castCombo;
                 foreach (target; hit)
                 {
@@ -920,8 +924,8 @@ mixin template ClassSpells()
                     auto unit = target == player.guid ? UnitRef.of(this) : map.unit(target);
                     if (!unit && target == remote.combatGuid)
                         unit = remote;
-                    if (unit && unit.alive && uniform01(map.random) * 100 < chance)
-                        casts ~= ProcCast(aura.spell.triggerSpell[k], target);
+                    if (unit && (unit.alive || (returnsEnergy && player.alive)) && uniform01(map.random) * 100 < chance)
+                        casts ~= ProcCast(trigger, returnsEnergy ? player.guid : target);
                 }
             }
         foreach (c; casts)

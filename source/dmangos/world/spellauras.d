@@ -465,6 +465,24 @@ void periodicTick(ref Caster caster, imported!"dmangos.world.creature".Creature 
         break;
     case AuraType.periodicManaLeech:
         return manaLeechTick(caster, victim, aura, i, amount);
+    case AuraType.periodicTriggerSpell:
+        if (caster.kind == UnitKind.creature && caster.creature is target)
+        {
+            import dmangos.world.eventai : EventTarget, castTriggered;
+
+            enum uint fireBlossom = 19636, unholyAura = 17467;
+            if (aura.spell.id == fireBlossom || aura.spell.id == unholyAura)
+                if (const child = caster.context.data.spells.spell(aura.spell.triggerSpell[i]))
+                {
+                    // Fire Blossom chooses a new raider per pulse. Unholy Aura pulses around the Baron.
+                    const selected = aura.spell.id == fireBlossom
+                        ? caster.ai.moreTargetFor(EventTarget.hostileRandomPlayer, 0, child.id, castTriggered)
+                        : caster.guid;
+                    if (selected)
+                        caster.castTriggered(child, selected);
+                }
+        }
+        break;
     default:
         break;
     }

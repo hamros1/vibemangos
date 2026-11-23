@@ -27,10 +27,9 @@ uint unlearnCostLow(uint level) pure nothrow @nogc @safe
 }
 
 /**
- * The blacksmiths of the specializations: Myolor Sunderfury and Krathok Moltenfist choose Armorsmith or
- * Weaponsmith for the journeyman (225) friendly with that guild; the armorsmith and weaponsmith trainers
- * train, and unlearn, their own; Lilith, Kilram and Seril teach a weaponsmith of level 50 with 250 skill
- * their weapon (one of the three), and take it back.
+ * Myolor Sunderfury and Krathok Moltenfist refer eligible blacksmiths to the Armorsmith or Weaponsmith
+ * quest and restore an earned specialization. The specialty trainers teach recipes and handle unlearning.
+ * Lilith, Kilram and Seril teach and take back the three weapon masteries.
  */
 @creature("npc_prof_blacksmith")
 struct ProfessionBlacksmith
@@ -41,6 +40,7 @@ struct ProfessionBlacksmith
         spellLearnWeapon = 9789, spellLearnArmor = 9790, spellLearnHammer = 17044, spellLearnAxe = 17043,
         spellLearnSword = 17042,
         factionArmor = 46, factionWeapon = 289,
+        spellChooseArmor = 17451, spellChooseWeapon = 17452,
         // Trainers.
         omni1 = 11145, omni2 = 11176, weapon1 = 11146, weapon2 = 11178, armor1 = 5164, armor2 = 11177,
         hammer = 11191, axe = 11192, sword = 11193,
@@ -54,6 +54,7 @@ struct ProfessionBlacksmith
         askUnlearnWeapon, askUnlearnArmor, askLearnHammer, askLearnAxe, askLearnSword,
         askUnlearnHammer, askUnlearnAxe, askUnlearnSword,
         unlearnWeapon, unlearnArmor, learnHammer, learnAxe, learnSword, unlearnHammer, unlearnAxe, unlearnSword,
+        chooseArmor, chooseWeapon,
     }
 
     void on(ref CreatureContext me, const ref GossipHello e)
@@ -62,17 +63,29 @@ struct ProfessionBlacksmith
         const p = e.player;
         GossipMenu menu;
         const entry = me.self.entry;
+        if (isSelector(entry) && mayStudy(me, p))
+        {
+            if (mayChoose(me, p))
+            {
+                menu.add(GossipIcon.chat, "I wish to become an armorsmith.", Action.chooseArmor);
+                menu.add(GossipIcon.chat, "I wish to become a weaponsmith.", Action.chooseWeapon);
+            }
+            else
+            {
+                const name = entry == omni1 ? "Myolor" : "Krathok";
+                if (earnedArmor(me, p))
+                    menu.add(GossipIcon.chat, name ~ ", I was once an armorsmith and wish to retake the hammer once more!"
+                        ~ " Teach me the way of the armorsmith.", Action.learnArmor);
+                if (earnedWeapon(me, p))
+                    menu.add(GossipIcon.chat, name ~ ", I was once a weaponsmith and wish to retake the hammer once more!"
+                        ~ (entry == omni1 ? " Teach me the way of the weaponsmith!" : " Teach me the way of the weaponsmith."),
+                        Action.learnWeapon);
+            }
+        }
         if (me.skillOf(p, skillBlacksmithing) >= 225)
         {
-            const specialized = me.knowsSpell(p, spellArmor) || me.knowsSpell(p, spellWeapon);
             switch (entry)
             {
-            case omni1, omni2:
-                if (!specialized && me.standingOf(p, factionArmor) == Standing.friendly)
-                    menu.add(GossipIcon.chat, "Please teach me how to become an Armorsmith", Action.learnArmor);
-                if (!specialized && me.standingOf(p, factionWeapon) == Standing.friendly)
-                    menu.add(GossipIcon.chat, "Please teach me how to become a Weaponsmith", Action.learnWeapon);
-                break;
             case weapon1, weapon2:
                 if (me.knowsSpell(p, spellWeapon))
                 {
@@ -146,12 +159,20 @@ struct ProfessionBlacksmith
         case Action.askUnlearnSword:
             return confirm(me, p, "I wish to unlearn Swordsmithing", Action.unlearnSword);
         // Doing it.
+        case Action.chooseArmor, Action.chooseWeapon:
+            if (isSelector(me.self.entry) && mayStudy(me, p) && mayChoose(me, p))
+            {
+                const armor = e.action == Action.chooseArmor;
+                if (me.castAs(p, armor ? spellChooseArmor : spellChooseWeapon, p, true) == ActionResult.ok)
+                    me.sayText(me.self.entry == omni1 ? (armor ? 6487 : 6486) : (armor ? 6491 : 6490), p);
+            }
+            break;
         case Action.learnArmor:
-            if (!me.knowsSpell(p, spellArmor) && !me.knowsSpell(p, spellWeapon))
+            if (isSelector(me.self.entry) && mayStudy(me, p) && earnedArmor(me, p))
                 me.castAs(p, spellLearnArmor, p, true);
             break;
         case Action.learnWeapon:
-            if (!me.knowsSpell(p, spellWeapon) && !me.knowsSpell(p, spellArmor))
+            if (isSelector(me.self.entry) && mayStudy(me, p) && earnedWeapon(me, p))
                 me.castAs(p, spellLearnWeapon, p, true);
             break;
         case Action.learnHammer:
@@ -186,6 +207,33 @@ struct ProfessionBlacksmith
             break;
         }
         me.closeGossip(p);
+    }
+
+    private static bool isSelector(uint entry)
+    {
+        return entry == omni1 || entry == omni2;
+    }
+
+    private static bool mayStudy(ref CreatureContext me, EntityRef player)
+    {
+        return me.levelOf(player) >= 40 && me.skillOf(player, skillBlacksmithing) >= 200
+            && !me.knowsSpell(player, spellArmor) && !me.knowsSpell(player, spellWeapon);
+    }
+
+    private static bool mayChoose(ref CreatureContext me, EntityRef player)
+    {
+        return me.standingOf(player, factionArmor) < Standing.friendly && me.standingOf(player, factionWeapon) < Standing.friendly
+            && !earnedArmor(me, player) && !earnedWeapon(me, player);
+    }
+
+    private static bool earnedArmor(ref CreatureContext me, EntityRef player)
+    {
+        return me.questStatus(player, 5283) == QuestProgress.rewarded || me.questStatus(player, 5301) == QuestProgress.rewarded;
+    }
+
+    private static bool earnedWeapon(ref CreatureContext me, EntityRef player)
+    {
+        return me.questStatus(player, 5284) == QuestProgress.rewarded || me.questStatus(player, 5302) == QuestProgress.rewarded;
     }
 
     private static void confirm(ref CreatureContext me, EntityRef player, string text, uint action)
@@ -320,14 +368,36 @@ unittest
 
     assert(unlearnCostMedium(50) == 250_000 && unlearnCostMedium(60) == 500_000 && unlearnCostLow(60) == 50_000);
 
-    // Myolor: a journeyman friendly with the armorsmiths becomes one.
+    // A first-time armorsmith gets Grumnus's referral at 40/200 and only learns from the quest.
     auto myolor = Driven!self("npc_prof_blacksmith", ProfessionBlacksmith.omni1);
-    myolor.host.skills[164] = 230;
-    myolor.host.standings[ProfessionBlacksmith.factionArmor] = Standing.friendly;
+    myolor.host.level = 39;
+    myolor.host.skills[164] = 200;
+    myolor.raise(GossipHello(hero));
+    assert(myolor.host.menu.length == 0);
+    myolor.host.level = 40;
     assert(myolor.raise(GossipHello(hero)));
+    assert(myolor.host.menu.length == 2 && myolor.host.menu[0].action == ProfessionBlacksmith.Action.chooseArmor);
+    myolor.raise(GossipSelect(hero, 0, 0, ProfessionBlacksmith.Action.chooseArmor));
+    assert(myolor.host.has("cast as hero 17451") && myolor.host.has("text 6487") && myolor.host.has("close"));
+    assert(!myolor.host.has("cast as hero 9790"));
+    myolor.host.standings[ProfessionBlacksmith.factionArmor] = Standing.friendly;
+    myolor.raise(GossipHello(hero));
+    assert(myolor.host.menu.length == 0, "a referral alone does not qualify for relearning");
+    myolor.raise(GossipSelect(hero, 0, 0, ProfessionBlacksmith.Action.chooseWeapon));
+    myolor.raise(GossipSelect(hero, 0, 0, ProfessionBlacksmith.Action.learnArmor));
+    assert(!myolor.host.has("cast as hero 17452") && !myolor.host.has("cast as hero 9790"));
+    myolor.host.quests[5283] = QuestProgress.rewarded;
+    myolor.raise(GossipHello(hero));
     assert(myolor.host.menu.length == 1 && myolor.host.menu[0].action == ProfessionBlacksmith.Action.learnArmor);
     myolor.raise(GossipSelect(hero, 0, 0, ProfessionBlacksmith.Action.learnArmor));
-    assert(myolor.host.has("cast as hero 9790") && myolor.host.has("close"));
+    assert(myolor.host.has("cast as hero 9790"));
+
+    auto krathok = Driven!self("npc_prof_blacksmith", ProfessionBlacksmith.omni2);
+    krathok.host.skills[164] = 200;
+    krathok.raise(GossipHello(hero));
+    assert(krathok.host.menu.length == 2 && krathok.host.menu[1].action == ProfessionBlacksmith.Action.chooseWeapon);
+    krathok.raise(GossipSelect(hero, 0, 1, ProfessionBlacksmith.Action.chooseWeapon));
+    assert(krathok.host.has("cast as hero 17452") && krathok.host.has("text 6490") && !krathok.host.has("cast as hero 9789"));
 
     // Lilith: the hammer, asked twice; then forgotten, for its price.
     auto lilith = Driven!self("npc_prof_blacksmith", ProfessionBlacksmith.hammer);

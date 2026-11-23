@@ -92,7 +92,8 @@ mixin template CombatHandlers()
             emote.put(player.guid);
             map.sendToWatchers(this, Opcode.SMSG_EMOTE, emote.data, true);
         }
-        enterCombatFor(combatLinger);
+        if (!blow.suppressCombat)
+            enterCombatFor(combatLinger);
         if (swing && attacker.kind == UnitKind.creature)
             updateCombatSkills(attacker.creature.template_.creatureType, AttackType.mainHand, true);
         else if (swing && attacker.replica !is null)

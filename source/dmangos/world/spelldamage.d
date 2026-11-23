@@ -105,6 +105,7 @@ uint spellDamage(ref Caster caster, const(SpellInfo)* spell, UnitRef victim, uin
 {
     import std.random : uniform, uniform01;
     import dmangos.world.combat : armorAgainst, armorReducedDamage, partiallyResisted;
+    import dmangos.world.creatureai : spellAttrEx2NoInitialThreat;
     import dmangos.world.opcodes : Opcode;
     import dmangos.world.spellcast : isBinarySpell, nonMeleeDamageLog;
     import dmangos.world.spellmods : SpellModOp;
@@ -151,8 +152,12 @@ uint spellDamage(ref Caster caster, const(SpellInfo)* spell, UnitRef victim, uin
         attacker: caster.guid, spell.id, damage, school, absorbed, resisted, false, 0, crit));
     if (victim.alive)
     {
-        caster.enteredCombat(damage);
         auto blow = how.periodic ? Blow.periodic(school) : Blow.spell(school, crit);
+        enum uint unholyAuraPulse = 17466, baronRivendare = 10440;
+        blow.suppressCombat = spell.id == unholyAuraPulse && caster.creature !is null
+            && caster.creature.spawn.entry == baronRivendare && (spell.attributesEx2 & spellAttrEx2NoInitialThreat);
+        if (!blow.suppressCombat)
+            caster.enteredCombat(damage);
         blow.threat = caster.spellMod(SpellModOp.threat, spell, 1.0f); // (`SPELLMOD_THREAT`: Shadow Affinity)
         dealDamage(caster.unit, victim, damage, blow);
     }

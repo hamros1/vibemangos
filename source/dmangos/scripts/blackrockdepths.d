@@ -954,7 +954,8 @@ struct Rocknot
 }
 
 /**
- * Mistress Nagmara: with her "Potion of Love" (quest 4201) done, she goes to Rocknot, sweet-talks him,
+ * Mistress Nagmara: after "The Love Potion" (quest 4201), her gossip starts the scene with Rocknot.
+ * She sweet-talks him,
  * gives him the potion and leads him away under the stairs (opening the bar's door on the way),
  * where the two stay, kissing.
  */
@@ -973,15 +974,9 @@ struct MistressNagmara
     EntityRef lover;
     bool begun;
 
-    void on(ref CreatureContext me, const ref QuestRewarded e)
-    {
-        if (e.quest == quest)
-            start(me);
-    }
-
     void on(ref CreatureContext me, const ref GossipHello e)
     {
-        if (begun || me.questStatus(e.player, quest) != QuestProgress.complete)
+        if (begun || me.questStatus(e.player, quest) != QuestProgress.rewarded)
             return;
         GossipMenu menu;
         menu.add(GossipIcon.chat, "Why don't you and Rocknot go find somewhere private...", begin);
@@ -991,7 +986,7 @@ struct MistressNagmara
 
     void on(ref CreatureContext me, const ref GossipSelect e)
     {
-        if (e.action != begin)
+        if (e.action != begin || me.questStatus(e.player, quest) != QuestProgress.rewarded)
             return;
         me.closeGossip(e.player);
         start(me);
@@ -1836,8 +1831,17 @@ unittest
     alias self = dmangos.scripts.blackrockdepths;
     auto her = runCreature!self("npc_mistress_nagmara", nagmara);
     her.host.nearby = creatureRef(rocknot);
+    her.host.progress = QuestProgress.complete;
+    her.raise(GossipHello(playerRef));
+    assert(!her.host.done("gossip 1") && !her.host.done("move 1"));
+    her.host.progress = QuestProgress.rewarded;
     her.raise(QuestRewarded(playerRef, MistressNagmara.quest));
-    assert(her.host.done("move 1"));
+    assert(!her.host.done("move 1"), "the turn-in only unlocks the gossip option");
+    her.raise(GossipHello(playerRef));
+    assert(her.host.done("gossip 1"));
+    her.raise(GossipSelect(playerRef, 0, 0, MistressNagmara.begin));
+    her.raise(GossipSelect(playerRef, 0, 0, MistressNagmara.begin));
+    assert(her.host.times("move 1") == 1, "the gossip starts the scene once");
     her.raise(MovementDone(1));
     her.run(10_000);
     assert(her.host.done("cast 14928") && her.host.done("signal 1 0") && her.host.done("follow"));
