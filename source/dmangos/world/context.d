@@ -66,7 +66,7 @@ import dmangos.world.characterdb : DeleteOptions, GuidCounters;
 import dmangos.world.transports : ShipObject, mapAt, transportClock;
 import dmangos.world.clientdata : ClientData;
 import dmangos.world.config : WorldConfig;
-import dmangos.world.database : WorldDatabase;
+import dmangos.world.database : InstanceChestRecord, WorldDatabase;
 import dmangos.vmap.gameobjectmodels : GameObjectModels;
 import dmangos.world.gameobjectcollision : GameObjectCollision;
 import dmangos.world.elevators : ElevatorPath;
@@ -3859,6 +3859,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         bool[uint] dead;       /// creature spawns killed there (they do not come back while it lasts)
         bool[uint] usedUp;     /// game object spawns used up there
         string data;           /// its dungeon script's state (`instance.data`)
+        InstanceChestRecord[uint] chests; /// scripted reward loot, by spawn
     }
 
     private Map[uint] instanceMaps;            // instance id -> its map
@@ -4124,6 +4125,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     else
                         state.dead[r.spawnGuid] = true;
                 }
+        foreach (chest; saved.chests)
+            if (auto state = chest.instance in instances)
+                if (which(state.mapId))
+                    state.chests[chest.spawn] = chest;
     }
 
     /**
@@ -4313,7 +4318,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             foreach (index; (*cells).get(cell, null))
             {
                 const spawn = &data.gameObjectSpawns[index];
-                if (spawn.respawnSeconds < 0 || (state !is null && spawn.guid in state.usedUp)
+                const reward = state is null ? null : spawn.guid in state.chests;
+                if ((spawn.respawnSeconds < 0 && reward is null) || (state !is null && spawn.guid in state.usedUp)
                     || !gameObjectInEvents(spawn.guid) || !upInPool(PoolMember.Kind.gameObject, spawn.guid))
                     continue;
                 const event = spawn.guid in data.gameObjectBattleEvents;
@@ -4321,6 +4327,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     continue;
                 auto go = makeGameObject(*spawn);
                 go.instanceId = instance;
+                if (reward !is null && !restoreReward(go, *reward))
+                {
+                    scripts.destroy(go.behaviour);
+                    continue;
+                }
                 if (copy !is null && event !is null && (*event)[0] == 254 && copy.doorsOpen)
                     go.setDoorOpen(true); // a door loading after the start is open
                 spawned ~= go;
@@ -5372,6 +5383,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 }
             }
         auto restored = restoreMigrant(migrant);
+        if (auto go = cast(GameObject) restored)
+            go.instanceId = destination.instanceId;
         bindMigrantLoot(restored, destination);
         return restored;
     }
@@ -7299,6 +7312,72 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if (const template_ = data.loot.gameObject[go.lootId])
                 return questItems(template_).length > 0;
         return false;
+    }
+
+    /// Persistent rewards are one-shot database-spawned dungeon chests with no gathering refills.
+    package bool isInstanceReward(const GameObject go)
+    {
+        import dmangos.world.gameobject : GameObjectType;
+
+        return go.instanceId in instances && go.spawn.guid < temporaryCounterStart
+            && go.type == GameObjectType.chest && go.consumable && go.spawn.respawnSeconds < 0
+            && !go.template_.data[4] && !go.template_.data[5];
+    }
+
+    package InstanceChestRecord checkpointReward(Map map, GameObject go,
+        const imported!"dmangos.world.loot".LootItem claimed = null, ulong looter = 0)
+    {
+        import dmangos.bytes : ByteWriter;
+        import dmangos.world.instancescripting : toHex;
+
+        auto state = go.instanceId in instances;
+        if (state is null)
+            return InstanceChestRecord.init;
+        const now = unixTime;
+        const visibleUntil = scriptedGameObjects.get(GameObjectOnMap(map, go.guid), long.max);
+        const openedUntil = now + (go.despawnTimer + 999) / 1000;
+        const deadline = state.chests.get(go.spawn.guid, InstanceChestRecord.init).expiresAt;
+        ByteWriter w;
+        w.put(ubyte(1));
+        go.loot.saveHandoff(w, claimed, looter);
+        auto record = InstanceChestRecord(go.instanceId, go.spawn.guid,
+            deadline ? deadline : visibleUntil < openedUntil ? visibleUntil : openedUntil, toHex(w.data));
+        state.chests[go.spawn.guid] = record;
+        return record;
+    }
+
+    private bool restoreReward(GameObject go, const ref InstanceChestRecord reward)
+    {
+        import dmangos.bytes : ByteReader, PacketException;
+        import dmangos.log : warning;
+        import dmangos.world.gameobject : GoLootState;
+        import dmangos.world.gameobjecthandlers : bindChestLoot;
+        import dmangos.world.instancescripting : fromHex;
+        import dmangos.world.loot : Loot;
+        import std.algorithm.searching : all;
+
+        const remaining = reward.expiresAt - unixTime;
+        if (remaining <= 0 || !isInstanceReward(go))
+            return false;
+        auto r = ByteReader(fromHex(reward.loot));
+        try
+        {
+            if (r.read!ubyte != 1)
+                throw new PacketException("unknown instance reward version");
+            auto loot = Loot.loadHandoff(go.guid, r);
+            if (!loot.gold && loot.items.all!(item => item.allowed.length == 0))
+                return false;
+            go.loot = loot;
+            go.lootState = GoLootState.activated;
+            go.despawnTimer = cast(int)(remaining > int.max / 1000 ? int.max : remaining * 1000);
+            bindChestLoot(this, instanceMaps[go.instanceId], go, loot);
+            return true;
+        }
+        catch (PacketException e)
+        {
+            warning!"could not restore reward chest %s of instance %s: %s"(reward.spawn, reward.instance, e.msg);
+            return false;
+        }
     }
 
     /// A game object used up: it comes back after its spawn's respawn time.

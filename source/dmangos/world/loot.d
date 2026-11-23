@@ -414,6 +414,8 @@ final class Loot
     void delegate() changed;
     /// Told when nobody has anything left to take.
     void delegate() lootedForAll;
+    /// A lockout reward persists the spent slot together with the inventory award.
+    uint delegate(Looter, LootItem, bool) storeReward;
     /// Told first when a looter releases it (a disenchanted item's loot: what is left goes into the bags).
     void delegate(Looter) beforeRelease;
 
@@ -496,8 +498,9 @@ final class Loot
         @LengthPrefix!ubyte HandoffRoll[] rolls;
     }
 
-    package void saveHandoff(ref ByteWriter writer) const
+    package void saveHandoff(ref ByteWriter writer, const LootItem claimed = null, ulong looter = 0) const
     {
+        import std.algorithm.mutation : remove;
         import dmangos.serialization : serialize;
 
         HandoffState state = {
@@ -512,13 +515,16 @@ final class Loot
             state.remoteMembers ~= HandoffMember(guid, node);
         foreach (item; items)
         {
+            auto eligible = item.allowed.keys;
+            if (item is claimed)
+                eligible = item.freeForAll ? eligible.remove!(guid => guid == looter) : null;
             HandoffItem saved = {
                 itemId: item.itemId, count: item.count, displayId: item.displayId, randomPropertyId: item.randomPropertyId,
                 slot: item.slot, quality: item.quality, condition: item.condition, quest: item.quest,
                 freeForAll: item.freeForAll, underThreshold: item.underThreshold, blocked: item.blocked,
                 released: item.released, currentLooterPass: item.currentLooterPass, winner: item.winner,
                 remoteAward: item.remoteAward, remoteMasterTarget: item.remoteMasterTarget,
-                remoteAwardNode: item.remoteAwardNode, allowed: item.allowed.keys,
+                remoteAwardNode: item.remoteAwardNode, allowed: eligible,
             };
             state.items ~= saved;
         }
@@ -1129,7 +1135,8 @@ final class Loot
     uint sendItem(Looter looter, LootItem item, bool sendError = true)
     {
         const guid = looter.looterGuid;
-        const result = looter.storeLoot(item.itemId, item.count, item.randomPropertyId, sendError);
+        const result = storeReward is null ? looter.storeLoot(item.itemId, item.count, item.randomPropertyId, sendError)
+            : storeReward(looter, item, sendError);
         if (result != 0)
         {
             item.blocked = false;

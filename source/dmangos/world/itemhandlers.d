@@ -93,7 +93,8 @@ private:
      * update carries it all: new and changed items, then the player's fields that point at them, then
      * the items gone.
      */
-    void flushInventory(bool moneyChanged = false)
+    void flushInventory(bool moneyChanged = false,
+        const imported!"dmangos.world.database".InstanceChestRecord chest = imported!"dmangos.world.database".InstanceChestRecord.init)
     {
         if (inventory.equipmentChanged)
         {
@@ -115,7 +116,9 @@ private:
             sendUpdate(update);
         const changes = inventory.takeChanges();
         flushPlayerChanges(false);
-        if (changes.length || moneyChanged)
+        if (chest.instance)
+            context.database.saveChestAward(player.data.guid, player.money.amount, player.values[PLAYER_BYTES_2], changes, chest);
+        else if (changes.length || moneyChanged)
             context.database.saveInventory(player.data.guid, player.money.amount, player.values[PLAYER_BYTES_2], changes);
         mailItemsAway();
     }

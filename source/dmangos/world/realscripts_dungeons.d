@@ -1652,8 +1652,41 @@ unittest
 
         if (kills == 0)
         {
-            foreach (slot, item; chest.loot.items)
-                d.party[0].write(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, ClientLootSlot(cast(ubyte) slot));
+            d.handoff();
+            chest = d.loadedObject(tribute);
+            assert(chest !is null && chest.loot !is null && chest.loot.storeReward !is null,
+                "the new owner can checkpoint awards");
+            d.player.spells ~= opening;
+            d.party[0].write(Opcode.CMSG_CAST_SPELL, request.data);
+            d.run(6.seconds);
+            auto claimed = chest.loot.itemInSlot(2); // first equipment slot
+            assert(claimed !is null);
+            const itemId = claimed.itemId;
+            d.party[0].write(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, ClientLootSlot(claimed.slot));
+            assert(claimed.allowed.length == 0 && d.itemCount(itemId) == 1, "the first award reached the bags");
+            const savedSlots = chest.loot.items.dup;
+            d.restartAfterCrash();
+            chest = d.loadedObject(tribute);
+            assert(chest !is null && chest.loot !is null, "the partially looted chest survives recovery");
+            uint awarded;
+            foreach (guid, item; d.w.db.itemRows)
+                if (item.entry == itemId && d.w.db.itemOwners[guid] == d.player.data.guid)
+                    awarded += item.count;
+            assert(chest.loot.items.length == savedSlots.length && awarded == 1);
+            foreach (item; savedSlots)
+            {
+                auto restored = chest.loot.itemInSlot(item.slot);
+                assert(restored.itemId == item.itemId && restored.count == item.count
+                    && restored.randomPropertyId == item.randomPropertyId
+                    && restored.allowed.keys == item.allowed.keys, "same roll and claims");
+            }
+            if (!d.player.knowsSpell(opening))
+                d.player.spells ~= opening;
+            d.party[0].write(Opcode.CMSG_CAST_SPELL, request.data);
+            d.run(6.seconds);
+            foreach (item; chest.loot.items)
+                if (d.player.guid in item.allowed)
+                    d.party[0].write(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, ClientLootSlot(item.slot));
             d.party[0].write(Opcode.CMSG_LOOT_RELEASE, ClientGuid(chest.guid));
             d.run(1.seconds);
             assert(d.loadedObject(tribute) is null, "the exhausted chest has gone");

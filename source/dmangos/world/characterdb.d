@@ -1040,9 +1040,25 @@ final class CharacterStatements
         return all;
     }
 
+    private bool instanceChestsReady;
+
+    /// Also run on the write-behind connection before it starts a transaction.
+    void prepareInstanceChests()
+    {
+        if (instanceChestsReady)
+            return;
+        characters.execute!("CREATE TABLE IF NOT EXISTS dmangos_instance_chest ("
+            ~ "instance INT UNSIGNED NOT NULL, spawn INT UNSIGNED NOT NULL, expires_at BIGINT NOT NULL, "
+            ~ "loot MEDIUMTEXT CHARACTER SET ascii NOT NULL, PRIMARY KEY (instance, spawn)) ENGINE=InnoDB")();
+        instanceChestsReady = true;
+    }
+
     /// See `WorldDatabase.loadInstances`.
     InstanceRecords loadInstances()
     {
+        import dmangos.world.database : InstanceChestRecord;
+
+        prepareInstanceChests();
         InstanceRecords all;
         foreach (row; characters.query!"SELECT id, map, resettime, IFNULL(data, '') FROM instance"())
             all.instances ~= InstanceRecord(row.get!uint(0), row.get!uint(1), row.get!long(2), row.get!string(3));
@@ -1054,6 +1070,8 @@ final class CharacterStatements
             all.respawns ~= InstanceRespawnRecord(false, row.get!uint(0), row.get!uint(1), row.get!long(2));
         foreach (row; characters.query!"SELECT guid, instance, respawntime FROM gameobject_respawn WHERE instance <> 0"())
             all.respawns ~= InstanceRespawnRecord(true, row.get!uint(0), row.get!uint(1), row.get!long(2));
+        foreach (row; characters.query!"SELECT instance, spawn, expires_at, loot FROM dmangos_instance_chest"())
+            all.chests ~= InstanceChestRecord(row.get!uint(0), row.get!uint(1), row.get!long(2), row.get!string(3));
         return all;
     }
 
@@ -1087,6 +1105,14 @@ final class CharacterStatements
         characters.execute!"UPDATE instance SET data = ? WHERE id = ?"(data, id);
     }
 
+    void saveInstanceChest(const imported!"dmangos.world.database".InstanceChestRecord chest)
+    {
+        characters.execute!("INSERT INTO dmangos_instance_chest (instance, spawn, expires_at, loot) "
+            ~ "SELECT id, ?, ?, ? FROM instance WHERE id = ? "
+            ~ "ON DUPLICATE KEY UPDATE expires_at = VALUES(expires_at), loot = VALUES(loot)")(
+                chest.spawn, chest.expiresAt, chest.loot, chest.instance);
+    }
+
     /// See `WorldDatabase.deleteInstance`.
     void deleteInstance(uint id)
     {
@@ -1095,6 +1121,7 @@ final class CharacterStatements
         characters.execute!"DELETE FROM group_instance WHERE instance = ?"(id);
         characters.execute!"DELETE FROM creature_respawn WHERE instance = ?"(id);
         characters.execute!"DELETE FROM gameobject_respawn WHERE instance = ?"(id);
+        characters.execute!"DELETE FROM dmangos_instance_chest WHERE instance = ?"(id);
     }
 
     /// See `WorldDatabase.saveInstanceBind`.

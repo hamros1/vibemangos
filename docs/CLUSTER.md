@@ -369,6 +369,11 @@ time intact. The receiving node waits briefly for players who were participating
 moved. Script-spawned game objects, including temporary unowned objects, keep their original
 expiry deadlines. An object whose deadline passes in transit is removed on arrival.
 
+Opened one-shot dungeon reward chests spawned by database scripts also survive a host crash. The
+characters database stores their rolled contents and expiry. An inventory award and its consumed
+loot slot are written in the same transaction. The lockout keeps the record until reset, including
+after the chest is exhausted or expires, so the encounter cannot roll another reward.
+
 * **The same spawns everywhere.** Pools, spawn groups and spawn entries are chosen with a seed made
   from the cluster's name and the realm, so every node agrees on which creature a spawn is.
 * **After a node is lost**, the new owner loads saved respawn deadlines, discovers spawns added

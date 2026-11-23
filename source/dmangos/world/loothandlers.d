@@ -1002,6 +1002,12 @@ private:
     /// See `Looter.storeLoot`: the item stored, everyone in the group told.
     public uint storeLoot(uint entry, uint count, int randomPropertyId, bool sendError)
     {
+        return storeLootItem(entry, count, randomPropertyId, sendError);
+    }
+
+    package uint storeLootItem(uint entry, uint count, int randomPropertyId, bool sendError,
+        scope imported!"dmangos.world.database".InstanceChestRecord delegate() checkpoint = null)
+    {
         ItemPosCount[] dest;
         const result = player.inventory.canStoreNew(nullBag, nullSlot, dest, entry, count);
         if (result != InventoryResult.ok)
@@ -1019,7 +1025,7 @@ private:
             group.broadcast(Opcode.SMSG_ITEM_PUSH_RESULT, packetBody(pushed));
         else
             send(pushed);
-        flushInventory();
+        flushInventory(false, checkpoint is null ? imported!"dmangos.world.database".InstanceChestRecord.init : checkpoint());
         return InventoryResult.ok;
     }
 

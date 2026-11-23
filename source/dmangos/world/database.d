@@ -248,6 +248,14 @@ struct InstanceRespawnRecord
     long until;
 }
 
+/// The rolled contents and expiry of one scripted reward chest in a lockout.
+struct InstanceChestRecord
+{
+    uint instance, spawn;
+    long expiresAt;
+    string loot;
+}
+
 /// A `character_honor_cp` row: honor from a kill or another source, on a day.
 struct HonorPointRecord
 {
@@ -361,6 +369,7 @@ struct InstanceRecords
     InstanceRecord[] instances;
     InstanceBindRecord[] binds;
     InstanceRespawnRecord[] respawns;
+    InstanceChestRecord[] chests;
 }
 
 interface WorldDatabase
@@ -646,6 +655,8 @@ interface WorldDatabase
     /// `instance.data`: its dungeon script's state.
     void saveInstanceData(uint id, string data);
 
+    void saveInstanceChest(const InstanceChestRecord chest);
+
     /// The map of instance `id`; uint.max if there is no such instance.
     uint instanceMapOf(uint id);
 
@@ -836,6 +847,10 @@ interface WorldDatabase
      */
     void saveInventory(uint owner, uint money, uint playerBytes2, const(ItemChange)[] changes);
 
+    /// Commits the inventory award and the remaining chest loot together.
+    void saveChestAward(uint owner, uint money, uint playerBytes2, const(ItemChange)[] changes,
+        const InstanceChestRecord chest);
+
     /// Ids and names in a world table whose name contains `text` (`.lookup`), at most `limit`.
     LookupResult[] lookup(LookupTable table, string text, uint limit);
 
@@ -890,6 +905,7 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
 
     void prepareLedger()
     {
+        statements.prepareInstanceChests();
         characterDb.execute!("CREATE TABLE IF NOT EXISTS `dmangos_write_applied` ("
             ~ "`stream` INT UNSIGNED NOT NULL, `seq` BIGINT UNSIGNED NOT NULL, PRIMARY KEY (`stream`)"
             ~ ") ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='dmangos: the newest write of each stream carried out'")();
@@ -1028,6 +1044,7 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     void saveInstance(uint id, uint map, long resetTime) { statements.saveInstance(id, map, resetTime); }
     void deleteInstance(uint id) { statements.deleteInstance(id); }
     void saveInstanceData(uint id, string data) { statements.saveInstanceData(id, data); }
+    void saveInstanceChest(const InstanceChestRecord chest) { statements.saveInstanceChest(chest); }
     uint instanceMapOf(uint id) { return statements.instanceMapOf(id); }
     uint[uint] instanceBindsOf(uint player) { return statements.instanceBindsOf(player); }
     bool instanceLimitReached(uint account, uint instance, long now)
@@ -1270,6 +1287,15 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     void saveInventory(uint owner, uint money, uint playerBytes2, const(ItemChange)[] changes)
     {
         statements.saveInventory(owner, money, playerBytes2, changes);
+    }
+
+    void saveChestAward(uint owner, uint money, uint playerBytes2, const(ItemChange)[] changes,
+        const InstanceChestRecord chest)
+    {
+        characterDb.transaction({
+            statements.saveInventory(owner, money, playerBytes2, changes);
+            statements.saveInstanceChest(chest);
+        });
     }
 
     void setMuteTime(uint accountId, long until)
@@ -1651,6 +1677,13 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
                 break;
             }
         moneySaves[owner] = [money, playerBytes2];
+    }
+
+    void saveChestAward(uint owner, uint money, uint playerBytes2, const(ItemChange)[] changes,
+        const InstanceChestRecord chest)
+    {
+        saveInventory(owner, money, playerBytes2, changes);
+        saveInstanceChest(chest);
     }
 
     LookupResult[] lookup(LookupTable table, string text, uint limit)
@@ -2164,6 +2197,17 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
                 r.data = data;
     }
 
+    void saveInstanceChest(const InstanceChestRecord chest)
+    {
+        foreach (ref row; instanceRows.chests)
+            if (row.instance == chest.instance && row.spawn == chest.spawn)
+            {
+                row = chest;
+                return;
+            }
+        instanceRows.chests ~= chest;
+    }
+
     uint instanceMapOf(uint id)
     {
         foreach (ref r; instanceRows.instances)
@@ -2192,6 +2236,7 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
         instanceRows.instances = instanceRows.instances.filter!(r => r.id != id).array;
         instanceRows.binds = instanceRows.binds.filter!(b => b.instance != id).array;
         instanceRows.respawns = instanceRows.respawns.filter!(r => r.instance != id).array;
+        instanceRows.chests = instanceRows.chests.filter!(r => r.instance != id).array;
     }
     private import dmangos.world.context : InstanceEntry;
     private InstanceEntry[][uint] instanceEntries;

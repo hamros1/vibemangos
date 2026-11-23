@@ -760,7 +760,7 @@ mixin template DbScriptRunner()
             return;
         if (template_.type == GameObjectType.chest)
             if (const state = map.instanceId in instances)
-                if (spawn.guid in state.usedUp)
+                if (spawn.guid in state.usedUp || spawn.guid in state.chests)
                     return;
         auto made = makeGameObject(*spawn);
         made.instanceId = map.instanceId;

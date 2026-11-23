@@ -648,6 +648,13 @@ CREATE TABLE `instance` (
   KEY `resettime` (`resettime`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
+CREATE TABLE IF NOT EXISTS `dmangos_instance_chest` (
+  `instance` int unsigned NOT NULL,
+  `spawn` int unsigned NOT NULL,
+  `expires_at` bigint NOT NULL,
+  `loot` mediumtext CHARACTER SET ascii NOT NULL,
+  PRIMARY KEY (`instance`, `spawn`)
+) ENGINE=InnoDB;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8mb4 */;
 CREATE TABLE `instance_reset` (

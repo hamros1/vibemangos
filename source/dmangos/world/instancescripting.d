@@ -605,7 +605,7 @@ final class InstanceScript : InstanceHost
     }
 }
 
-private string toHex(const(ubyte)[] bytes)
+package string toHex(const(ubyte)[] bytes)
 {
     static immutable digits = "0123456789abcdef";
     auto text = new char[bytes.length * 2];
@@ -617,7 +617,7 @@ private string toHex(const(ubyte)[] bytes)
     return cast(string) text;
 }
 
-private ubyte[] fromHex(const(char)[] text)
+package ubyte[] fromHex(const(char)[] text)
 {
     static int value(char c)
     {

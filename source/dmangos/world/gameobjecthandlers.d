@@ -31,6 +31,12 @@ package void bindChestLoot(WorldContext context, Map map, GameObject chest, Loot
         return session is null || session.currentMap !is map ? null : cast(Looter) session;
     };
     loot.clock = () => context.unixTime;
+    if (context.isInstanceReward(chest))
+        loot.storeReward = (Looter looter, imported!"dmangos.world.loot".LootItem item, bool sendError) {
+            auto player = cast(Character) looter;
+            return player.storeLootItem(item.itemId, item.count, item.randomPropertyId, sendError,
+                () => context.checkpointReward(map, chest, item, looter.looterGuid));
+        };
     loot.changed = () => map.flushGameObject(chest);
     loot.lootedForAll = () {
         if (refillVein(context, map, chest))
@@ -475,6 +481,8 @@ mixin template GameObjectHandlers()
                 return;
             go.loot = makeGameObjectLoot(go);
             go.lootState = GoLootState.activated;
+            if (context.isInstanceReward(go))
+                context.database.saveInstanceChest(context.checkpointReward(map, go));
             map.wake(go.guid);
             go.loot.beginQuestLootChecks(map.id, &context.nextGameplaySequence, context.sendQuestLootCheck);
             if (go.loot is null)

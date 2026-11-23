@@ -721,13 +721,19 @@ final class Dungeon
         reconnect(false);
     }
 
+    /// Discards the old world without letting its sockets log out or its timers run.
+    void restartAfterCrash()
+    {
+        reconnect(false, true);
+    }
+
     /// Moves the dungeon's region to a second world and reconnects the party to the transferred copy.
     void handoff()
     {
         reconnect(true);
     }
 
-    private void reconnect(bool handoff)
+    private void reconnect(bool handoff, bool crash = false)
     {
         import dmangos.cluster.regions : Region;
         import dmangos.world.config : WorldConfig;
@@ -758,10 +764,13 @@ final class Dungeon
             w.context.regionsChanged([Region(regionId, mapId)], null, arriving, leaving);
             assert(w.context.instanceMap(copy) !is null, "the copy arrived");
         }
-        foreach (ref c; party)
-            c.write(Opcode.CMSG_LOGOUT_REQUEST, null);
-        w.now += 100.msecs;
-        old.update(w.now);
+        if (!crash)
+        {
+            foreach (ref c; party)
+                c.write(Opcode.CMSG_LOGOUT_REQUEST, null);
+            w.now += 100.msecs;
+            old.update(w.now);
+        }
         if (handoff)
         {
             assert(old.instanceState(copy) is null, "the previous owner dropped the copy");
