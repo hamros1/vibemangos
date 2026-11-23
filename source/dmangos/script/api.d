@@ -1256,6 +1256,8 @@ struct InstanceContext
 {
     private InstanceHost host;
     private bool checkpoint_, waitForPlayer_;
+    private EntityRef[] summons_;
+    private const(EntityRef)[] savedSummons_;
 
     @disable this(this);
 
@@ -1289,6 +1291,25 @@ struct InstanceContext
     /// On restoration, hold the saved timers until the first player comes back.
     void waitForPlayer() { waitForPlayer_ = true; }
     package(dmangos) @property bool waitingForPlayer() const { return waitForPlayer_; }
+
+    /// Include a living encounter summon in the copy's durable checkpoints.
+    void checkpointSummon(EntityRef creature)
+    {
+        summons_ ~= creature;
+        checkpoint();
+    }
+
+    /// Whether this summon was included in the checkpoint being restored.
+    bool hasSavedSummon(EntityRef creature) const
+    {
+        foreach (saved; savedSummons_)
+            if (saved == creature)
+                return true;
+        return false;
+    }
+
+    package(dmangos) @property EntityRef[] checkpointSummons() { return summons_; }
+    package(dmangos) @property void savedSummons(const(EntityRef)[] creatures) { savedSummons_ = creatures; }
 
     // Raid scripts:
 

@@ -471,6 +471,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         online[who.character.guid] = who;
         onlineByName[toLowerName(who.character.data.name)] = who;
         mapOf(who).addMigrated(who, known);
+        if (announcePresence !is null)
+            announcePresence(who, true);
     }
 
     /// A player's simulation leaves for node `next`: off the map and the lists, without a word.
@@ -482,10 +484,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         lastHeard[who.character.guid] = Heard(next, MonoTime.currTime, who.character.data.level);
         online.remove(who.character.guid);
         onlineByName.remove(toLowerName(who.character.data.name));
+        if (announcePresence !is null)
+            announcePresence(who, false);
     }
 
     // Players other nodes simulate: what each node said of its own.
     private RemotePlayer[ulong][ushort] remoteByNode;
+    void delegate(Character, bool) announcePresence;
 
     /**
      * Reserves limited vendor stock on the creature's node, or reads it when `wanted` is zero.
@@ -2832,6 +2837,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         auto players = &remoteByNode.require(node, null);
         foreach (ref e; entries)
         {
+            foreach (peer, ref known; remoteByNode)
+                if (peer != node)
+                    known.remove(e.guid);
             (*players)[e.guid] = RemotePlayer(node, e);
             lastHeard.remove(e.guid); // presence knows where it is now
         }
@@ -4334,6 +4342,35 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     script.map = created;
                     script.lore = this;
                     script.spawnObjects = &spawnDungeonObjects;
+                    script.captureSummon = (EntityRef ref_) {
+                        auto creature = created.creatureAt(ref_.guid);
+                        if (creature is null || !creature.alive || creature.summon.type == TempSpawnType.none)
+                            return Migrant.init;
+                        auto migrant = saveMigratingObject(creature, false);
+                        migrant.home = cellKeyAt(creature.spawn.x, creature.spawn.y);
+                        return migrant;
+                    };
+                    script.restoreSummon = (const ref Migrant migrant) {
+                        import dmangos.log : warning;
+
+                        try
+                        {
+                            auto creature = cast(Creature) restoreWorldMigrant(migrant, created);
+                            if (creature !is null && !config.cluster.enabled)
+                            {
+                                import std.algorithm.comparison : max;
+
+                                summonsMade = max(summonsMade, creature.spawn.guid - temporaryCounterStart);
+                            }
+                            return cast(MapObject) creature;
+                        }
+                        catch (Exception error)
+                        {
+                            warning!"instance %s: could not restore encounter summon %s: %s"(instance,
+                                migrant.spawn, error.msg);
+                            return cast(MapObject) null;
+                        }
+                    };
                     script.entryKilled = &entryKilledInInstance;
                     script.respawnKilled = &respawnKilledInCopy;
                     script.signalObject = &gameObjectSignalled;
@@ -6448,6 +6485,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         online[who.character.guid] = who;
         onlineByName[toLowerName(who.character.data.name)] = who;
         mapOf(who).add(who, shipsShown);
+        if (announcePresence !is null)
+            announcePresence(who, true);
     }
 
     /// A player in the world was renamed (`.character rename`): it is found by its new name.
@@ -6472,6 +6511,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             current.remove(who);
         online.remove(who.character.guid);
         onlineByName.remove(toLowerName(who.character.data.name));
+        if (announcePresence !is null)
+            announcePresence(who, false);
     }
 
     /// The player in the world with this guid, or null.

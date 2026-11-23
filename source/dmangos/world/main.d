@@ -482,7 +482,6 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
             context.services.start(ServiceKind.lootTurns);
             context.groups.changes = &bridge.groupChanged;
             context.groups.removed = &bridge.groupRemoved;
-            bridge.broadcastGroups();
             context.takeOverIds();
             speaksForRealm = true;
             context.keepsHonorWeek = true;

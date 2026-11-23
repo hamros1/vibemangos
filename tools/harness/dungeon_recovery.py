@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Kill the worker between Ring of Law waves and finish the same dungeon on the same sockets."""
 
+import argparse
 import json
 import os
 import re
@@ -16,12 +17,13 @@ from cluster_fixture import AUTH, REPO, available_ports, run_test, wait_for
 MAP = 230
 BOSS = 9018
 KEY = 11140
+ENTRANCE = 1466
 TRIGGER = 1526
 BEASTS = {8925: 4, 8926: 2, 8927: 5, 8928: 3, 8933: 3, 8932: 7}
 CHAMPIONS = set(range(9027, 9033))
 
 
-def run(fixture):
+def run(fixture, new_party, active_wave):
     login = fixture.fresh_schema("login", "classicrealmd.sql")
     characters = fixture.fresh_schema("chars", "classiccharacters.sql")
     ports = available_ports(9)
@@ -60,13 +62,20 @@ def run(fixture):
     if seed.wait(timeout=25):
         raise RuntimeError("the seed world did not shut down cleanly")
     leader, member = guids
-    copy = 1
-    fixture.query("UPDATE characters SET level=60,health=2000,map=0,position_x=-8424,position_y=342,position_z=121; "
-                  f"INSERT INTO groups VALUES (1,{leader},0,0,3,{leader},2,0,0,0,0,0,0,0,0,0); "
-                  f"INSERT INTO group_member VALUES (1,{leader},0,0),(1,{member},0,0); "
-                  f"INSERT INTO instance (id,map,data) VALUES ({copy},{MAP},''); "
-                  f"INSERT INTO group_instance VALUES ({leader},{copy},0); "
-                  f"INSERT INTO character_instance VALUES ({leader},{copy},0),({member},{copy},0)", characters)
+    dbc = (Path(fixture.base["data_dir"]) / "dbc" / "AreaTrigger.dbc").read_bytes()
+    count, _, size, _ = struct.unpack_from("<4I", dbc, 4)
+
+    def trigger_position(trigger, map_id):
+        return next(struct.unpack_from("<3f", dbc, p+8) for p in range(20, 20+count*size, size)
+                    if struct.unpack_from("<II", dbc, p) == (trigger, map_id))
+
+    x, y, z = trigger_position(ENTRANCE, 0)
+    fixture.query(f"UPDATE characters SET level=60,health=2000,map=0,position_x={x},position_y={y},position_z={z}",
+                  characters)
+    if not new_party:
+        fixture.query(f"INSERT INTO groups VALUES (1,{leader},0,0,3,{leader},2,0,0,0,0,0,0,0,0,0); "
+                      f"INSERT INTO group_member VALUES (1,{leader},0,0),(1,{member},0,0)", characters)
+    assert fixture.query("SELECT COUNT(*) FROM instance", characters) == "0"
 
     roster = [{"node_id": node, "address": f"127.0.0.1:{ports[node+3]}"} for node in (1, 2, 3)]
     nodes = {}
@@ -85,24 +94,28 @@ def run(fixture):
                                       f"AND map={MAP} ORDER BY guid LIMIT 1", world_db).split()
     boss_room = f"worldport:{MAP}:{float(x)+1}:{y}:{z}"
     boss_arrival = f"[teleport] to {float(x)+1:.1f} {float(y):.1f} {float(z):.1f};"
-    dbc = (Path(fixture.base["data_dir"]) / "dbc" / "AreaTrigger.dbc").read_bytes()
-    count, _, size, _ = struct.unpack_from("<4I", dbc, 4)
-    arena = next(struct.unpack_from("<3f", dbc, p+8) for p in range(20, 20+count*size, size)
-                 if struct.unpack_from("<II", dbc, p) == (TRIGGER, MAP))
+    arena = trigger_position(TRIGGER, MAP)
     ring = f"worldport:{MAP}:" + ":".join(map(str, arena))
+    arena_floor = f"worldport:{MAP}:608.960:-231.322:-53.907"
     paths = [fixture.directory / name for name in
-             ("enter", "follow", "start-ring", "first-wave", "second-wave", "champion", "check-boss", "finish")]
-    enter, follow, start, first, second, champion, check_boss, finish = paths
+             ("invite", "accept", "enter", "inside", "follow", "start-ring", "first-wave", "second-wave",
+              "resume-wave", "champion", "check-boss", "finish")]
+    invite, accept, enter, inside, follow, start, first, second, resume, champion, check_boss, finish = paths
     wait = lambda flag: f"waitfile:{flag}"
     kill_beasts = "killpack:" + ":".join(map(str, BEASTS))
     kill_champion = "killpack:" + ":".join(map(str, sorted(CHAMPIONS)))
+    first_wave = (kill_beasts.replace("killpack:", "killpack:one:"), wait(resume), kill_beasts) if active_wave else (kill_beasts,)
+    assemble_leader = (wait(invite), f"invite:{names[1]}") if new_party else ()
+    assemble_member = (wait(accept), "accept") if new_party else ()
+    portal = ("cmd:.cheat god", f"trigger:{ENTRANCE}", wait(inside))
     clients = [
-        client("party0", 0, f"login:{names[0]}", wait(enter), "cmd:.cheat god", boss_room,
+        client("party0", 0, f"login:{names[0]}", *assemble_leader, wait(enter), *portal, boss_room,
                f"attack:{BOSS}", f"targetnpc:{BOSS}", "cmd:.kill", "loot",
-               ring, wait(start), "cmd:.saveall", f"trigger:{TRIGGER}", wait(first), kill_beasts,
+               ring, wait(start), f"trigger:{TRIGGER}", arena_floor, "cmd:.saveall", wait(first), *first_wave,
                wait(second), kill_beasts, wait(champion), kill_champion, wait(check_boss), boss_room, "query",
                wait(finish), "logout"),
-        client("party1", 1, f"login:{names[1]}", wait(follow), "cmd:.cheat god", ring,
+        client("party1", 1, f"login:{names[1]}", *assemble_member, wait(enter), *portal, wait(follow), ring,
+               wait(start), arena_floor,
                wait(check_boss), boss_room, "query", wait(finish), "logout"),
     ]
 
@@ -124,7 +137,23 @@ def run(fixture):
     wait_for("both players routed from the gateway to workers",
              lambda: all(any(f"'{name}' arrived from another node" in fixture.log(tag)
                              for tag in nodes if tag != "node4") for name in names), 15)
+    if new_party:
+        invite.touch()
+        wait_for("the coordinator to deliver the invite", lambda: "[invited by]" in logs()[1], 12)
+        accept.touch()
+        wait_for("both clients to see the new party", lambda: all("[group list] party" in log for log in logs()), 12)
     enter.touch()
+    wait_for("both players through the real dungeon portal",
+             lambda: all(f"[new world] map {MAP} " in log for log in logs()), 20)
+    binds = wait_for("both character binds written",
+                     lambda: fixture.query("SELECT instance FROM character_instance ORDER BY guid", characters)
+                     if fixture.query("SELECT COUNT(*) FROM character_instance", characters) == "2" else "", 12)
+    copies = set(map(int, binds.split()))
+    assert len(copies) == 1, f"party split between dungeon copies {sorted(copies)}"
+    copy, = copies
+    assert fixture.query(f"SELECT instance FROM group_instance WHERE leaderGuid={leader}", characters) == str(copy)
+    wait_for("both clients to see the same party", lambda: all("[group list] party" in log for log in logs()), 12)
+    inside.touch()
     wait_for("Gerstahn's key in the saved inventory", lambda: durable_key() == "1", 30)
     assert fixture.query(f"SELECT COUNT(*) FROM creature_respawn WHERE instance={copy} AND guid={boss_guid}",
                          characters) == "1"
@@ -133,18 +162,27 @@ def run(fixture):
     assert fixture.query(f"SELECT id FROM instance WHERE map={MAP}", characters) == str(copy)
     start.touch()
 
-    def wave(log):
-        entries = creature_guids(log, BEASTS)
+    def wave(log, exclude=()):
+        entries = {guid: entry for guid, entry in creature_guids(log, BEASTS).items() if guid not in exclude}
         if entries and len(set(entries.values())) == 1 and len(entries) == BEASTS[next(iter(entries.values()))]:
             return entries
 
     original = wait_for("the complete first wave", lambda: wave(logs()[0]), 25)
     assert fixture.query("SELECT COUNT(*) FROM characters WHERE map=230 AND position_x BETWEEN 580 AND 660",
                          characters) == "2"
-    first.touch()
     checkpoint = f"instance {copy} of map {MAP} saved an encounter checkpoint"
-    host = wait_for("the durable break between waves",
-                    lambda: next((tag for tag in nodes if checkpoint in fixture.log(tag)), None), 4)
+    checkpoint_counts = {tag: fixture.log(tag).count(checkpoint) for tag in nodes}
+    first.touch()
+
+    def defeated_wave_members():
+        dead = {int(guid) & 0xFFFFFF for guid in re.findall(r"\[changes\] (\d+): fields .*?health 0/", logs()[0])}
+        defeated = set(original) & dead
+        if len(defeated) == (1 if active_wave else len(original)):
+            return defeated
+
+    defeated = wait_for("first-wave deaths before the crash", defeated_wave_members, 4)
+    host = wait_for("the durable checkpoint after the kills", lambda: next(
+        (tag for tag in nodes if fixture.log(tag).count(checkpoint) > checkpoint_counts[tag]), None), 4)
     offsets = list(map(len, logs()))
     nodes[host].send_signal(signal.SIGKILL)
     assert nodes[host].wait(timeout=10) == -signal.SIGKILL
@@ -155,13 +193,19 @@ def run(fixture):
             return suffixes
 
     after = wait_for("both existing sockets to reload the Ring of Law", recovered, 40)
-    assert all(not creature_guids(log, BEASTS) for log in after), "the defeated wave came back"
+    wait_for("both recovered clients to see the party roster",
+             lambda: all("[group list] party" in log for log in recovered()), 4)
+    survivors = {guid: entry for guid, entry in original.items() if guid not in defeated}
+    assert all(creature_guids(log, BEASTS) == survivors for log in after), "the first wave resumed with the wrong creatures"
     for log in after:
         assert re.search(r"\[game object\] 161525 guid \d+: .*state 0", log), "east gate failed to reopen"
         assert re.search(r"\[game object\] 161523 guid \d+: .*state 1", log), "entry gate failed to stay closed"
 
+    if active_wave:
+        resume.touch()
+
     def shared_wave():
-        leader_wave, member_wave = map(wave, recovered())
+        leader_wave, member_wave = (wave(log, survivors) for log in recovered())
         if leader_wave and leader_wave == member_wave:
             return leader_wave
 
@@ -183,9 +227,14 @@ def run(fixture):
     for i, process in enumerate(clients):
         if process.wait(timeout=30):
             raise RuntimeError(logs()[i][-4000:])
-    print(f"PASS: worker {host} died between Ring of Law waves; both original clients finished copy {copy}, "
+    when = "during the first Ring of Law wave" if active_wave else "between Ring of Law waves"
+    print(f"PASS: worker {host} died {when}; both original clients finished copy {copy}, "
           "with its boss death and one prison key intact")
 
 
 if __name__ == "__main__":
-    run_test("blackrock-depths-recovery", run)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--new-party", action="store_true", help="form the party through an in-game invite")
+    parser.add_argument("--active-wave", action="store_true", help="kill the worker with part of the first wave still alive")
+    args = parser.parse_args()
+    run_test("blackrock-depths-recovery", lambda fixture: run(fixture, args.new_party, args.active_wave))

@@ -238,9 +238,11 @@ struct BlackrockDepths
     {
         if (ring != Fight.inProgress)
             return;
-        // Only a scheduled break with every summoned opponent defeated is safe to resume.
-        // The defeated wave's corpses and loot belong to the old process.
-        if (ringMobs.alive || !steps.pending(Step.ring))
+        // An older or incomplete checkpoint cannot safely resume a wave with missing opponents.
+        foreach (mob; ringMobs)
+            if (!brd.hasSavedSummon(mob))
+                return failRing(brd);
+        if (!ringMobs.alive && !steps.pending(Step.ring))
         {
             failRing(brd);
             return;
@@ -252,7 +254,12 @@ struct BlackrockDepths
     void on(ref InstanceContext brd, const ref PlayerEntered e)
     {
         if (ring == Fight.inProgress && !grimstoneRef)
+        {
             grimstoneRef = brd.summon(grimstone, grimstonePlace);
+            foreach (mob; ringMobs)
+                if (!brd.alive(brd.victimOf(mob)))
+                    brd.attack(mob, e.player);
+        }
     }
 
     void on(ref InstanceContext brd, const ref CreatureLoaded e)
@@ -436,9 +443,10 @@ struct BlackrockDepths
     void on(ref InstanceContext brd, const ref CreatureDied e)
     {
         const entry = e.creature.entry;
-        if (ringMobs.died(e.creature) && ringMobs.allDead && ring == Fight.inProgress)
+        if (ring == Fight.inProgress && ringMobs.died(e.creature))
         {
-            steps.after(Step.ring, 5.seconds);
+            if (ringMobs.allDead)
+                steps.after(Step.ring, 5.seconds);
             brd.checkpoint();
         }
         vaultGuards.died(e.creature);
@@ -563,6 +571,8 @@ struct BlackrockDepths
         {
             if (stage == 3)
                 ringBeast = cast(ubyte) brd.random(6);
+            else if (ringMobs.allDead)
+                ringMobs.clear();
             const kind = ringBeast;
             foreach (_; 0 .. beastCount[kind])
                 summonRingMob(brd, beasts[kind], eastSpawn);
@@ -619,7 +629,8 @@ struct BlackrockDepths
         at.y += (cast(int) brd.random(9) - 4) * 0.5f;
         const target = ringPlayer && brd.alive(ringPlayer) ? ringPlayer : brd.anyPlayer();
         if (const made = brd.summon(entry, at, 0, target))
-            ringMobs.add(made);
+            if (ringMobs.add(made))
+                brd.checkpointSummon(made);
     }
 
     private void failRing(ref InstanceContext brd)
@@ -635,6 +646,7 @@ struct BlackrockDepths
         gate(brd, arenaGate1, false);
         gate(brd, arenaGate2, false);
         gate(brd, arenaGate4, true);
+        brd.checkpoint();
     }
 
     private void say(ref InstanceContext brd, int text)

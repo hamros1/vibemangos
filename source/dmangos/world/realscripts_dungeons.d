@@ -1403,6 +1403,7 @@ unittest
 unittest
 {
     import dmangos.scripts.blackrockdepths : BlackrockDepths, Fight;
+    import dmangos.world.updatefields : UNIT_FIELD_HEALTH;
 
     if (!haveRealData())
         return;
@@ -1434,7 +1435,20 @@ unittest
     assert(d.saved!BlackrockDepths.ringStage == 4, "no early wave");
     d.run(150.msecs);
     assert(d.saved!BlackrockDepths.ringStage == 5);
-    assert(d.all(BlackrockDepths.beasts[resumed.ringBeast]).length == count);
+    assert(d.saved!BlackrockDepths.ringMobs.alive == count);
+    auto secondWave = d.all(BlackrockDepths.beasts[resumed.ringBeast]);
+    assert(secondWave.length == count);
+    const defeated = secondWave[0].guid;
+    const wounded = secondWave[1].guid;
+    d.hit(secondWave[1], secondWave[1].values.get!UNIT_FIELD_HEALTH / 3);
+    const health = secondWave[1].values.get!UNIT_FIELD_HEALTH;
+    d.kill(secondWave[0]); // the death checkpoints the remaining wave, including the wounded beast
+    assert(d.saved!BlackrockDepths.ringMobs.alive == count - 1);
+    d.restartAfterCrash();
+    assert(d.saved!BlackrockDepths.ringStage == 5);
+    assert(d.map.findObject(defeated) is null, "the dead beast did not return");
+    assert(d.map.creatureAt(wounded).values.get!UNIT_FIELD_HEALTH == health, "the same wounded beast resumed");
+    assert(d.all(BlackrockDepths.beasts[resumed.ringBeast]).length == count - 1);
     bool champion()
     {
         foreach (b; beasts)

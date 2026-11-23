@@ -1062,6 +1062,29 @@ final class Groups
         invitedTo = null;
     }
 
+    /// A complete baseline can supersede a disband a disconnected worker missed.
+    void reconcileMirrors(const(uint)[] ids)
+    {
+        bool[uint] present;
+        foreach (id; ids)
+            present[id] = true;
+        foreach (id; byId.keys)
+        {
+            auto group = byId[id];
+            if (id in present)
+            {
+                foreach (ref slot; group.slots)
+                    if (directory.local(slot.guid) !is null)
+                        group.sendUpdateTo(slot.guid);
+                continue;
+            }
+            GroupState gone;
+            gone.id = id;
+            gone.removed = true;
+            mirror(gone);
+        }
+    }
+
     /**
      * The mirror of a group of the coordinator's (never saved here): its members here see each other
      * anew, and one that has just joined tells the members who do not see it how it is.
@@ -1117,6 +1140,8 @@ final class Groups
             if (auto player = directory.local(guid))
             {
                 player.groupChanged(); // its leader flag, and who sees its health
+                if (guid !in memberOf && group !is null)
+                    group.sendEmptyList(guid);
                 if (!before.canFind(guid) && after.canFind(guid))
                     group.updatePlayerOutOfRange(player, GroupUpdate.full);
             }

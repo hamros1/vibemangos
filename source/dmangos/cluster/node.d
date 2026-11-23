@@ -67,6 +67,7 @@ interface ReplicationHandler
     void stockRelease(ushort peer, const ref StockRelease message);
     void groupCommand(ushort peer, const ref GroupCommand message);
     void groupState(ushort peer, const ref GroupState message);
+    void groupCatalog(ushort peer, const ref GroupCatalog message);
     void memberStatsRequest(ushort peer, const ref MemberStatsRequest message);
     void toEveryone(ushort peer, const ref ToEveryone message);
     void gmRemote(ushort peer, const ref GmRemote message);
@@ -707,7 +708,8 @@ final class ClusterNode : LinkOwner
         if (!quorumId && link.peer.coordinator)
             coordinatorId = peer;
         info!"cluster: linked to node %s at %s (incarnation %s)"(peer, link.peer.address, link.peer.incarnation);
-        if (replication !is null)
+        // In quorum mode the peer can discard messages from this term until it accepts the leader.
+        if (replication !is null && !(quorumId && isCoordinator))
             replication.peerLinked(peer);
         if (isCoordinator)
             directory.back(peer, link.peer.incarnation);
@@ -853,6 +855,8 @@ final class ClusterNode : LinkOwner
             info!"cluster: node %s leads quorum term %s"(peer, term);
             sendTakeoverAccepted(link);
             coordinatorLinked(link);
+            if (replication !is null)
+                replication.peerLinked(peer);
         }
         else
             sendTakeoverAccepted(link);
@@ -1230,7 +1234,7 @@ final class ClusterNode : LinkOwner
             }
             else if (type == MessageType.groupState)
             {
-                if (isCoordinator)
+                if (isCoordinator || peer != coordinatorId)
                     return;
                 const m = decode!GroupState(payload);
                 replication.groupState(peer, m);
@@ -1239,6 +1243,15 @@ final class ClusterNode : LinkOwner
             {
                 const m = decode!MemberStatsRequest(payload);
                 replication.memberStatsRequest(peer, m);
+            }
+            return;
+        }
+        if (type == MessageType.groupCatalog)
+        {
+            if (replication !is null && !isCoordinator && peer == coordinatorId)
+            {
+                const m = decode!GroupCatalog(payload);
+                replication.groupCatalog(peer, m);
             }
             return;
         }
@@ -1352,6 +1365,8 @@ final class ClusterNode : LinkOwner
                 // It ignored what came before it took this node as its coordinator: the view and table again.
                 link.send(View(viewCoordinator, viewVersion, members));
                 link.send(RegionTable(viewCoordinator, authority.version_, authority.regions.dup));
+                if (replication !is null)
+                    replication.peerLinked(peer);
             }
             return;
         }

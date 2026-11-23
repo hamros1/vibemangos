@@ -804,11 +804,12 @@ unittest
     jaina.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_PARTY, "hi"));
     assert(fromNode2.canFind(Sent(1, anduin.session.character.guid, Opcode.SMSG_MESSAGECHAT)));
 
-    // Disbanded on the coordinator: the mirror forgets it.
-    GroupState gone;
-    gone.id = group.id;
-    gone.removed = true;
-    node2.groups.mirror(gone);
+    // A resumed link refreshes the roster and removes groups disbanded while it was down.
+    node2.groups.reconcileMirrors([group.id]);
+    assert(opcodesOf(jaina.read()).canFind(Opcode.SMSG_GROUP_LIST));
+    assert(node2.groups.sameGroup(jainaGuid, anduin.session.character.guid));
+    node2.groups.reconcileMirrors([]);
+    assert(opcodesOf(jaina.read()).canFind(Opcode.SMSG_GROUP_LIST));
     assert(node2.groups.of(jainaGuid) is null && node2.groups.count == 0);
 }
 

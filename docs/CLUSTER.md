@@ -424,9 +424,10 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
 * **The region moving** (a rebalance, a takeover). The new host reads the dungeon's copies, binds and
   dead from the database, and the copies' creatures and objects come along, copy by copy, as they
   were. The old host forgets the copies and deletes nothing. After a crash, the replacement uses
-  saved binds, spawn deaths, and script state. In Blackrock Depths, the Ring of Law resumes between
-  cleared waves. The replacement restores the gates and announcer, then runs the remaining timer
-  once a player returns.
+  saved binds, spawn deaths, and script state. In Blackrock Depths, the Ring of Law resumes its
+  saved wave once a player returns. The replacement restores the gates, announcer, remaining
+  timer, and living opponents. The script checkpoints each wave's summons and deaths and saves
+  changes to surviving opponents every two seconds.
 * **GM commands.** `.instance info`, `.instance shutdown` and `.instance reset` of a copy another node
   hosts go to that node and its answer comes back; `.instance resetall` goes to every node.
 
@@ -587,9 +588,11 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   leaving and disbanding, loot settings, icons, raids, sub-groups, assistants, logging out) is a
   `GroupCommand` that `GroupService` runs there. Every other node **mirrors** the groups: the
   coordinator sends a group's whole state (`GroupState`) after each change, its removal when it is
-  disbanded, and all of them to a node that links. What only reads a group (who sees whose health,
+  disbanded, and a complete roster after a worker accepts the coordinator. The worker drops groups
+  omitted from that roster after reconnecting. What only reads a group (who sees whose health,
   party and raid chat, member stats, ready checks, rolls, minimap pings) is decided on the player's
-  node from its mirror. A packet for a member goes to its node by presence, or for a few seconds
+  node from its mirror. Each node publishes arrivals and departures immediately, including during
+  a handoff. A packet for a member goes to its node by presence, or for a few seconds
   after a command to the node the command came from. Stats of a member another node simulates are
   asked of that node (`MemberStatsRequest`). The coordinator checkpoints pending invitations and
   meeting stone queues. A promoted coordinator restores the original invitations, even before the
@@ -926,14 +929,17 @@ python3 tools/harness/battleground_recovery.py --map arathi
 python3 tools/harness/battleground_recovery.py --map alterac
 python3 tools/harness/battleground_recovery.py --map alterac --cross-realm --finish-phase during
 python3 tools/harness/dungeon_recovery.py
+python3 tools/harness/dungeon_recovery.py --new-party --active-wave
 ```
 
 Both map options also accept `--cross-realm`. The Arathi Basin test checks the resource score,
 the Stables, and a Farm capture in progress. The Alterac Valley test checks the scorecard,
 Irondeep Mine, and a contested Iceblood Tower that the Horde can still defend after takeover.
-The dungeon test kills the Blackrock Depths worker between waves and checks that both clients can
-finish the original copy on their existing connections. It also checks that Gerstahn stays dead
-and the party keeps the one Prison Cell Key it looted before the crash.
+The dungeon test takes an unbound party through the Blackrock Depths portal and kills its
+worker between waves. `--new-party` forms the group through an invitation after a worker
+handoff. `--active-wave` tests a crash with some opponents still alive. Both clients must
+finish the same copy on their existing connections. Gerstahn stays dead and the party keeps
+the one Prison Cell Key it looted before the crash.
 
 ## Monitoring
 

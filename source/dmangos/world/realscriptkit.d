@@ -160,17 +160,13 @@ final class Dungeon
     /// The dungeon script's state as the copy saved it (`instance.data`), read into a fresh `S`.
     S saved(S)()
     {
-        import std.conv : to;
         import dmangos.script.state : loadScript;
-        import dmangos.world.instancescripting : instanceDataPrefix;
+        import dmangos.world.instancescripting : instanceDataPrefix, instanceScriptBytes;
 
         S state;
         const text = data;
         assert(text.length > instanceDataPrefix.length, "nothing saved");
-        ubyte[] bytes;
-        for (size_t i = instanceDataPrefix.length; i + 1 < text.length; i += 2)
-            bytes ~= text[i .. i + 2].to!ubyte(16);
-        auto r = ByteReader(bytes);
+        auto r = ByteReader(instanceScriptBytes(text));
         assert(loadScript(state, r), "the saved state is " ~ S.stringof ~ "'s");
         return state;
     }

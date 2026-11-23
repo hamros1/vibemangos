@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 118; // battleground handoffs include completed results and their rewards
+enum ushort protocolVersion = 119; // group baselines end with the active group IDs
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -104,6 +104,7 @@ enum MessageType : ushort
     partySummon = 65,
     totemWeaponEnchant = 66,
     mindVisionTarget = 67,
+    groupCatalog = 68,
 }
 
 /// A single remote target's current state for Mind Vision's normal cast checks.
@@ -936,6 +937,14 @@ struct GroupState
     @LengthPrefix!uint GroupMemberState[] members;
 }
 
+/// The coordinator has finished sending this peer its full set of groups.
+struct GroupCatalog
+{
+    enum type = MessageType.groupCatalog;
+
+    @LengthPrefix!uint uint[] ids;
+}
+
 /// A member's full stats, for a player on the sender (`CMSG_REQUEST_PARTY_MEMBER_STATS`).
 struct MemberStatsRequest
 {
@@ -1381,7 +1390,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 118, recordedFingerprint = 0xe7b5a95ddace80c0UL;
+private enum recordedVersion = 119, recordedFingerprint = 0x96adaa77ba5757b1UL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

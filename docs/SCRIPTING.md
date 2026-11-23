@@ -195,9 +195,11 @@ in copies too).
 A copy's script made again from `instance.data` (the server restarted, or the copy was unloaded and is
 entered again) hears `Restored` once, before any of its creatures or objects load. Scripts can reset
 an interrupted fight by returning it to its starting state and opening the entrance. The Ring of
-Law can also resume between cleared waves. Its death handler uses `checkpoint()` to flush the saved
-wave and timer to the database on a cluster worker. Its restore handler uses `waitForPlayer()` to
-start that timer once a player returns. The script rebuilds the gates and announcer on arrival.
+Law can also save its living opponents with `checkpointSummon()`. Its death handler uses
+`checkpoint()` to flush the new wave state and remaining actors to the database on a cluster
+worker. The restore handler verifies the living opponents have all been saved and uses
+`waitForPlayer()` to hold them and their timer for the party. The script rebuilds the gates and
+announcer on arrival.
 During a planned move to another node, the copy keeps its creatures and fights and skips `Restored`.
 
 ### Gossip menus of a script's own

@@ -6,7 +6,7 @@
 module dmangos.world.clusterbridge;
 
 import dmangos.cluster.protocol : AreaDamage, CreatureSwing, GameObjectSpell, GroupLootRoll, LootCoinShare, PartyHeal, PeriodicResult,
-    PartyAreaAura, PartyQuest, PartySummon, QuestLootCheck, ScriptCreatureStep, ScriptGameObject, TotemWeaponEnchant;
+    GroupCatalog, PartyAreaAura, PartyQuest, PartySummon, QuestLootCheck, ScriptCreatureStep, ScriptGameObject, TotemWeaponEnchant;
 
 import core.time : Duration, MonoTime, msecs;
 
@@ -61,6 +61,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         this.node = node;
         this.context = context;
         context.gatewayReachable = (ushort home) => linkedOwner(home).node != 0;
+        context.announcePresence = &announcePresence;
     }
 
     /// Sends what each map's players became near and left since the last tick, and once a second what changed of them.
@@ -148,8 +149,15 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
     {
         node.sendTo(peer, Presence(true, presenceSent.values, null));
         if (node.isCoordinator)
+        {
+            uint[] ids;
             foreach (ref state; context.groups.states())
+            {
                 node.sendTo(peer, state);
+                ids ~= state.id;
+            }
+            node.sendTo(peer, GroupCatalog(ids));
+        }
         foreach (map; context.allMaps)
         {
             auto cells = map.interestCells;
@@ -301,6 +309,11 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
     void groupState(ushort peer, const ref GroupState m)
     {
         context.groups.mirror(m);
+    }
+
+    void groupCatalog(ushort peer, const ref GroupCatalog m)
+    {
+        context.groups.reconcileMirrors(m.ids);
     }
 
     /// For the context: asks a member's node for its full stats.
@@ -721,13 +734,6 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         session.gmTargeted(m, sink, (GmRemote back) { node.sendTo(peer, back); });
     }
 
-    /// Every group, for every other node's mirror (a coordinator that has just taken over).
-    void broadcastGroups()
-    {
-        foreach (ref state; context.groups.states())
-            node.broadcast(state);
-    }
-
     /// On the coordinator: groups for the other nodes' mirrors.
     void groupChanged(const Group group)
     {
@@ -763,34 +769,53 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
             (Opcode op, const(ubyte)[] b) { node.sendTo(peer, DeliverTo(m.from, cast(ushort) op, cast(ubyte[]) b)); });
     }
 
-    /// What changed of this node's players since the last time, to every peer.
-    private void sendPresence()
+    private static PresenceEntry presenceOf(Character who)
     {
         import dmangos.world.context : PresenceFlags;
         import dmangos.world.player : PlayerFlags;
 
+        const p = who.character;
+        uint flags;
+        if (p.gmTagOn)
+            flags |= PresenceFlags.gmTag;
+        if (p.hasFlag(PlayerFlags.afk))
+            flags |= PresenceFlags.afk;
+        if (p.hasFlag(PlayerFlags.dnd))
+            flags |= PresenceFlags.dnd;
+        if (who.hasPermissions)
+            flags |= PresenceFlags.permissions;
+        return PresenceEntry(p.guid, p.data.name, p.data.account, p.data.race, p.data.classId,
+            cast(ubyte) p.data.level, p.data.gender, p.data.zone, flags, cast(ubyte) who.security, p.autoReply,
+            who.hasPermissions ? who.permissions : null);
+    }
+
+    /// Publish a player's arrival or departure before other actions can use their presence.
+    private void announcePresence(Character who, bool arrived)
+    {
+        const guid = who.character.guid;
+        if (arrived)
+        {
+            const entry = presenceOf(who);
+            presenceSent[guid] = entry;
+            node.broadcast(Presence(false, [entry], null));
+        }
+        else if (presenceSent.remove(guid))
+            node.broadcast(Presence(false, null, [guid]));
+    }
+
+    /// What changed of this node's players since the last time, to every peer.
+    private void sendPresence()
+    {
         PresenceEntry[] changed;
         bool[ulong] here;
         foreach (who; context.onlinePlayers)
         {
-            const p = who.character;
-            uint flags;
-            if (p.gmTagOn)
-                flags |= PresenceFlags.gmTag;
-            if (p.hasFlag(PlayerFlags.afk))
-                flags |= PresenceFlags.afk;
-            if (p.hasFlag(PlayerFlags.dnd))
-                flags |= PresenceFlags.dnd;
-            if (who.hasPermissions)
-                flags |= PresenceFlags.permissions;
-            const entry = PresenceEntry(p.guid, p.data.name, p.data.account, p.data.race, p.data.classId,
-                cast(ubyte) p.data.level, p.data.gender, p.data.zone, flags, cast(ubyte) who.security, p.autoReply,
-                who.hasPermissions ? (cast(Character) who).permissions : null);
-            here[p.guid] = true;
-            if (auto sent = p.guid in presenceSent)
+            const entry = presenceOf(who);
+            here[entry.guid] = true;
+            if (auto sent = entry.guid in presenceSent)
                 if (*sent == entry)
                     continue;
-            presenceSent[p.guid] = entry;
+            presenceSent[entry.guid] = entry;
             changed ~= entry;
         }
         ulong[] gone;

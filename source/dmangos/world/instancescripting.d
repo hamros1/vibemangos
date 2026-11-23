@@ -16,9 +16,19 @@ import dmangos.world.creatureai : CreatureLore;
 import dmangos.world.movement : Position;
 import dmangos.world.gameobject : GameObject;
 import dmangos.world.map : Map, MapObject;
+import dmangos.world.migration : Migrant, decodeBundle, encodeBundle;
 
 /// What `instance.data` starts with when a dungeon script wrote it.
 enum string instanceDataPrefix = "dmangos-script:";
+private enum string instanceSummonPrefix = ":summons1:";
+
+/// The script bytes from a row written by a dungeon script, including older rows without summons.
+package ubyte[] instanceScriptBytes(string data)
+{
+    import std.algorithm.searching : findSplit;
+
+    return fromHex(data[instanceDataPrefix.length .. $].findSplit(instanceSummonPrefix)[0]);
+}
 
 /// See the module documentation. It is also the core's side of the script's context.
 final class InstanceScript : InstanceHost
@@ -31,6 +41,10 @@ final class InstanceScript : InstanceHost
         string saved;
         uint id, mapId;
         bool world; // open-world round 2: a continent's script (`@world`), kept in memory only
+        EntityRef[] durableSummons;
+        Migrant[] pendingSummons;
+        bool summonsPending;
+        int sinceSummonSave;
     }
 
     /// The copy's map, once it is made.
@@ -41,6 +55,10 @@ final class InstanceScript : InstanceHost
 
     /// The world's creatures (summons); null in tests without one.
     CreatureLore lore;
+
+    /// Read-only capture and cold restore of summons that the encounter opted to checkpoint.
+    Migrant delegate(EntityRef) captureSummon;
+    MapObject delegate(const ref Migrant) restoreSummon;
 
     /// A `Signal` for a game object's script (`InstanceContext.signal` to an object).
     bool delegate(GameObject go, Map map, EntityRef from, uint id, int value) signalObject;
@@ -80,14 +98,50 @@ final class InstanceScript : InstanceHost
         script.saved = data;
         if (data.length > instanceDataPrefix.length && data[0 .. instanceDataPrefix.length] == instanceDataPrefix)
         {
-            auto bytes = fromHex(data[instanceDataPrefix.length .. $]);
+            auto bytes = instanceScriptBytes(data);
             auto r = ByteReader(bytes);
             if (runtime.load(script.handle, r))
+            {
                 script.fromSave = true;
+                script.loadSummons(data);
+            }
             else
                 info!"instance %s: the saved state of script %s has another layout; it starts afresh"(id, name);
         }
         return script;
+    }
+
+    private void loadSummons(string data)
+    {
+        import std.algorithm.searching : findSplit;
+        import dmangos.world.migration : MigrantKind;
+        import dmangos.world.creature : CreatureSpawn;
+        import dmangos.world.objects : HighGuid, makeGuid;
+        import dmangos.serialization : deserialize;
+        import dmangos.log : warning;
+
+        const section = data.findSplit(instanceSummonPrefix)[2];
+        if (!section.length)
+            return;
+        try
+        {
+            ulong[] cells;
+            Migrant[] saved;
+            decodeBundle(fromHex(section), cells, saved);
+            EntityRef[] refs;
+            foreach (ref migrant; saved)
+            {
+                if (migrant.kind != MigrantKind.summonedCreature)
+                    return;
+                auto r = ByteReader(migrant.state);
+                const spawn = deserialize!CreatureSpawn(r);
+                refs ~= EntityRef(makeGuid(HighGuid.unit, spawn.entry, spawn.guid));
+            }
+            durableSummons = refs;
+            pendingSummons = saved;
+        }
+        catch (Exception error)
+            warning!"instance %s: could not load its encounter summons: %s"(id, error.msg);
     }
 
     /// Whether its state was read from `instance.data` (and `restored` has not been called since).
@@ -101,6 +155,26 @@ final class InstanceScript : InstanceHost
             return;
         fromSave = false;
         raise(Restored());
+    }
+
+    private void restorePendingSummons()
+    {
+        if (!summonsPending)
+            return;
+        summonsPending = false;
+        const pending = pendingSummons;
+        pendingSummons = null;
+        size_t index;
+        EntityRef[] missing;
+        map.migrateIn(encodeBundle(null, pending), (const ref Migrant migrant) {
+            const guid = durableSummons[index++];
+            auto object = restoreSummon(migrant);
+            if (object is null)
+                missing ~= guid;
+            return object;
+        });
+        foreach (creature; missing)
+            raise(CreatureEvaded(creature));
     }
 
     /// Open-world round 2: the script `name` (`world_template.ScriptName`) of continent `mapId`; null if none serves it.
@@ -129,10 +203,21 @@ final class InstanceScript : InstanceHost
             return false;
         }
         auto context = InstanceContext(this);
+        static if (is(E == Restored))
+            context.savedSummons = durableSummons;
         runtime.raise(handle, context, event);
         checkpoint = context.checkpointRequested;
+        durableSummons ~= context.checkpointSummons;
         static if (is(E == Restored))
+        {
             waitForPlayer = context.waitingForPlayer;
+            summonsPending = waitForPlayer && pendingSummons.length && restoreSummon !is null;
+            if (!summonsPending)
+            {
+                pendingSummons = null;
+                durableSummons = null;
+            }
+        }
         return context.consumed;
     }
 
@@ -150,6 +235,8 @@ final class InstanceScript : InstanceHost
             pending ~= () { raise(event); };
             return false;
         }
+        static if (is(E == PlayerEntered))
+            restorePendingSummons();
         raising = true;
         bool checkpoint;
         const consumed = dispatch(event, checkpoint);
@@ -171,9 +258,10 @@ final class InstanceScript : InstanceHost
     /// Its schedules, `ms` milliseconds on (nothing to do when none is pending).
     void tick(int ms)
     {
-        if (!runtime.busy(handle) || (waitForPlayer && !map.population))
+        if ((!runtime.busy(handle) && !durableSummons.length) || (waitForPlayer && !map.population))
             return;
         waitForPlayer = false;
+        sinceSummonSave += ms;
         raising = true;
         bool checkpoint;
         if (world)
@@ -186,6 +274,7 @@ final class InstanceScript : InstanceHost
             auto context = InstanceContext(this);
             runtime.tick(handle, context, ms);
             checkpoint = context.checkpointRequested;
+            durableSummons ~= context.checkpointSummons;
         }
         raising = false;
         save(checkpoint);
@@ -199,11 +288,31 @@ final class InstanceScript : InstanceHost
 
     private void save(bool checkpoint)
     {
-        if (persist is null) // a world map's script: kept in memory only
+        if (persist is null || summonsPending) // wait for the saved actors before writing another checkpoint
             return;
+        string summons;
+        if (durableSummons.length && captureSummon !is null)
+        {
+            if (!checkpoint && sinceSummonSave < 2_000)
+                return;
+            Migrant[] migrants;
+            EntityRef[] living;
+            foreach (creature; durableSummons)
+            {
+                auto made = captureSummon(creature);
+                if (!made.state.length)
+                    continue;
+                migrants ~= made;
+                living ~= creature;
+            }
+            durableSummons = living;
+            if (migrants.length)
+                summons = instanceSummonPrefix ~ toHex(encodeBundle(null, migrants));
+        }
+        sinceSummonSave = 0;
         ByteWriter w;
         runtime.save(handle, w);
-        const data = instanceDataPrefix ~ toHex(w.data);
+        const data = instanceDataPrefix ~ toHex(w.data) ~ summons;
         if (data != saved)
         {
             saved = data;

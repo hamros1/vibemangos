@@ -24,7 +24,7 @@ in order:
     cast:SPELL[:ENTRY]       cast a spell, optionally at a creature by entry
     cancelchannel:SPELL      cancel the specified channel
     loot                      walk to the creature last attacked, take its money and items
-    killpack:ENTRY[:ENTRY...] select and kill each visible living creature of these entries (GM)
+    killpack:[one:]ENTRY...    select and kill matching visible living creatures (GM)
     castopen:SPELL:ENTRY      cast at the nearest game object of ENTRY without taking its loot
     rolloffer  rollvote:N     keep the next group loot prompt, then pass (0), need (1) or greed (2)
     waitfile:PATH             keep receiving packets until another test process creates this file
@@ -1206,15 +1206,24 @@ for action in actions:
         guid = min(targets, key=lambda g: sum((a - b)**2 for a, b in zip(seen_positions[g], here)))
         wsend(0x13D, struct.pack("<Q", guid))
     elif kind == "killpack":
+        first_only = args[0] == "one"
+        if first_only:
+            args = args[1:]
         entries = set(map(int, args))
-        targets = [g for g in living_creatures if seen_objects[g][1] in entries]
+        targets = sorted(g for g in living_creatures if seen_objects[g][1] in entries)
         if not targets:
             raise RuntimeError(f"no living creatures of {entries} in sight")
-        for guid in sorted(targets):
-            wsend(0x13D, struct.pack("<Q", guid))
-            wsend(0x095, struct.pack("<II", 0, 7) + b".kill\0")
+        if first_only:
+            targets = targets[:1]
         print(f"killpack: {len(targets)} creatures")
-        listen_for(0.3)
+        for _ in range(6):
+            alive = [guid for guid in targets if guid in living_creatures]
+            if not alive:
+                break
+            for guid in alive:
+                wsend(0x13D, struct.pack("<Q", guid))
+                wsend(0x095, struct.pack("<II", 0, 7) + b".kill\0")
+            listen_for(0.45)
     elif kind in ("gossip", "trainer", "vendor", "binder", "bank"):
         print(kind); wsend({"gossip": 0x17B, "trainer": 0x1B0, "vendor": 0x19E, "binder": 0x1B5, "bank": 0x1B7}[kind],
                            struct.pack("<Q", npc)); listen_for(1)
