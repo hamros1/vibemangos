@@ -879,6 +879,10 @@ or line of sight ends the channel.
 The target's current owner must confirm the channel before completion can grant quest
 credit. A creature's channel ends when its own region moves to another node.
 
+EventAI can select a wounded ally in combat on another node when all the rule's actions are
+supported channels aimed at that ally. Leprous Technicians and Machinesmiths use this for
+Supercharge and Rebuild. The chosen ally remains the cast target.
+
 Cross-node spell routing is effect-specific. Other script-selected channels, registered spell scripts, and
 database spell steps that need the caster or another actor still use their local paths. Ground ticks
 use observed targets around the spot and require a current caster replica at the target. At impact,

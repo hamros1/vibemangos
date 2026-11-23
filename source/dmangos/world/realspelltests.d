@@ -144,51 +144,167 @@ struct RealWorld
 
 enum ubyte classMageId = 8, classRogueId = 4, classWarriorId = 1;
 
-/// Supercharge puts one aura with all three effects on a mechanical creature's owner.
+/// The technician's unmodified EventAI row selects a wounded mechanical ally across a region boundary.
 unittest
 {
+    import std.algorithm.searching : find;
+    import std.format : format;
     import std.math : abs;
+    import std.random : rndGen;
     import dmangos.cluster.protocol : AreaDamage;
+    import dmangos.cluster.regions : CellRect, Region, RegionState;
     import dmangos.world.creature : TempSpawnType;
-    import dmangos.world.grid : cellKeyAt;
-    import dmangos.world.replication : encodeState;
-    import dmangos.world.updatefields : OBJECT_FIELD_SCALE_X, UNIT_CHANNEL_SPELL, UNIT_FIELD_CHANNEL_OBJECT;
+    import dmangos.world.grid : cellCoordinate, cellKeyAt, cellSize;
+    import dmangos.world.map : Map;
+    import dmangos.world.replication : encodeState, Replicator;
+    import dmangos.world.updatefields : OBJECT_FIELD_SCALE_X, UNIT_CHANNEL_SPELL, UNIT_FIELD_CHANNEL_OBJECT,
+        UNIT_FIELD_HEALTH, UNIT_FIELD_MAXHEALTH;
 
     if (!haveRealData())
         return;
-    auto source = RealWorld.make(), owner = RealWorld.make();
-    source.context.nodeId = 1;
-    owner.context.nodeId = 2;
-    auto from = source.context.map(0), to = owner.context.map(0);
-    enum uint supercharge = 10732, technician = 6222, mechanoTank = 6225;
-    const origin = Position(100, 100, 40), at = Position(103, 100, 40);
-    auto caster = source.context.summonCreature(from, technician, origin, TempSpawnType.manual, 0, 0);
-    auto target = owner.context.summonCreature(to, mechanoTank, at, TempSpawnType.manual, 0, 0);
-    const spell = source.context.data.spells.spell(supercharge);
-    assert(caster !is null && target !is null && spell !is null);
+
+    static final class CasterReplicas : Replicator
+    {
+        Map[ushort] peers;
+        void create(ushort peer, uint map, ulong cell, ulong guid, const(ubyte)[] state)
+        {
+            peers[peer].replicaCreated(1, cell, guid, state);
+        }
+        void values(ushort peer, uint map, ulong guid, const(ubyte)[] fields)
+        {
+            peers[peer].replicaValues(1, guid, fields);
+        }
+        void move(ushort peer, uint map, ulong guid, ushort opcode, const(ubyte)[] packet, const(ubyte)[] motion) {}
+        void remove(ushort peer, uint map, ulong guid) { peers[peer].replicaRemoved(1, guid); }
+        void inRange(ushort peer, uint map, Position where, float radius, ushort opcode, const(ubyte)[] packet) {}
+    }
+
+    enum uint supercharge = 10732, rebuild = 10345, technician = 6222, mechanoTank = 6225;
+    enum uint woundedRule = 622205;
+    const origin = Position(2 * cellSize - 2, 100, 40), at = Position(2 * cellSize + 2, 100, 40);
     const cell = cellKeyAt(at.x, at.y);
-    from.replicaCreated(2, cell, target.guid, encodeState(target, 0));
-    caster.ai.spellCaster(from);
-    const scale = target.values.get!OBJECT_FIELD_SCALE_X;
-    uint applications;
-    source.context.sendAreaDamage = (ushort peer, const ref AreaDamage request) {
-        assert(peer == 2 && request.namedCreature && request.channelled);
-        applications += !request.channelUpdate;
-        to.replicaCreated(1, cell, caster.guid, encodeState(caster, 0));
-        owner.context.areaDamageArrived(1, request);
-        return true;
-    };
-    assert(caster.ai.castSpell(spell, target.guid, 0));
-    assert(caster.values.get!UNIT_FIELD_CHANNEL_OBJECT == target.guid && applications == 1);
-    auto aura = target.auras.find(supercharge, caster.guid);
-    assert(aura !is null && aura.effects == 0b111, "Supercharge arrives as one aura with all effects");
-    assert(aura.amount == [caster.ai.effectAmount(spell, 0), 25, 25]);
-    assert(abs(target.values.get!OBJECT_FIELD_SCALE_X - scale * 1.25f) < 0.001f);
-    assert(abs(target.auras.attackTimeFactor(0) - 0.8f) < 0.001f);
-    caster.ai.interruptCast();
-    assert(!caster.values.get!UNIT_CHANNEL_SPELL && !target.auras.find(supercharge, caster.guid));
-    assert(abs(target.values.get!OBJECT_FIELD_SCALE_X - scale) < 0.001f);
-    assert(target.auras.attackTimeFactor(0) == 1);
+    assert(cell != cellKeyAt(origin.x, origin.y));
+
+    foreach (testCase, expectedSpell; [supercharge, rebuild])
+    {
+        auto source = RealWorld.make(), owner = RealWorld.make(), successor = RealWorld.make();
+        source.context.nodeId = 1;
+        owner.context.nodeId = 2;
+        successor.context.nodeId = 3;
+        auto from = source.context.map(0), to = owner.context.map(0), destination = successor.context.map(0);
+        auto wire = new CasterReplicas;
+        wire.peers[2] = to;
+        wire.peers[3] = destination;
+        from.replicator = wire;
+        auto caster = source.context.summonCreature(from, technician, origin, TempSpawnType.manual, 0, 0);
+        auto decoy = source.context.summonCreature(from, mechanoTank,
+            Position(origin.x + 1, origin.y, origin.z), TempSpawnType.manual, 0, 0);
+        auto target = owner.context.summonCreature(to, mechanoTank, at, TempSpawnType.manual, 0, 0);
+        assert(caster !is null && decoy !is null && target !is null);
+        auto data = source.context.data.eventAi;
+        const rule = data.eventsOf(technician, caster.spawn.guid).find!(e => e.id == woundedRule);
+        assert(rule.length, "the real wounded-ally rule is loaded");
+        caster.ai.setScript(rule[0 .. 1], data);
+        auto attacker = loggedIn(source.context, source.db, 110, "Engineer", origin);
+        const attackerGuid = attacker.session.character.guid;
+        caster.ai.attackedBy(from.unit(attackerGuid), from);
+        caster.ai.scriptMelee(false);
+        caster.ai.scriptCombatMovement(false);
+        decoy.ai.attackedBy(from.unit(attackerGuid), from);
+        target.values.set!UNIT_FIELD_MAXHEALTH(5000);
+        target.values.set!UNIT_FIELD_HEALTH(5000);
+        from.replicaCreated(2, cell, target.guid, encodeState(target, 0));
+
+        uint applications, interruptions;
+        WorldContext[ushort] targets = [cast(ushort) 2: owner.context, cast(ushort) 3: successor.context];
+        source.context.sendAreaDamage = (ushort peer, const ref AreaDamage request) {
+            assert(request.namedCreature && request.channelled && request.target == target.guid);
+            if (request.channelUpdate)
+            {
+                assert(peer == 3 && request.auraMs == 0);
+                ++interruptions;
+            }
+            else
+            {
+                assert(peer == 2);
+                ++applications;
+            }
+            targets[peer].areaDamageArrived(1, request);
+            return true;
+        };
+        for (int elapsed; elapsed < 29_000; elapsed += 500)
+            caster.ai.update(from, 500);
+        assert(!applications, "the rule does not fire on a healthy replica");
+        target.values.set!UNIT_FIELD_HEALTH(3000);
+        from.replicaCreated(2, cell, target.guid, encodeState(target, 0));
+        caster.ai.update(from, 500);
+        assert(!applications, "the rule ignores a wounded replica outside combat");
+        target.ai.remoteDamageTaken(attackerGuid, 1, 1.0f, to);
+        from.replicaCreated(2, cell, target.guid, encodeState(target, 0));
+        assert(caster.ai.inCombat && target.ai.inCombat, "the technician and the wounded tank are fighting");
+        bool selected;
+        assert(caster.ai.lowestHpFriendly(15, 1200, false, rule[0].actions, selected) == target.guid && selected,
+            "both alternatives accept the wounded remote tank");
+
+        // Both alternatives in the real random-action row run through EventAI.
+        rndGen.seed(testCase == 0 ? 1 : 2);
+        caster.ai.update(from, 500);
+        assert(applications == 1 && caster.values.get!UNIT_CHANNEL_SPELL == expectedSpell,
+            format!"expected %s, channeling %s, applications %s, cast result %s"(expectedSpell,
+                caster.values.get!UNIT_CHANNEL_SPELL, applications, caster.ai.castRefusal));
+        assert(caster.values.get!UNIT_FIELD_CHANNEL_OBJECT == target.guid, "a closer healthy tank is not selected");
+        auto aura = target.auras.find(expectedSpell, caster.guid);
+        assert(aura !is null && aura.channelToken && !decoy.auras.find(expectedSpell));
+        const token = aura.channelToken;
+        const scale = target.values.get!OBJECT_FIELD_SCALE_X;
+        const period = aura.period[0];
+        const beforeHandoff = period > 0 ? period / 2 : 500;
+        if (expectedSpell == supercharge)
+        {
+            const spell = source.context.data.spells.spell(supercharge);
+            assert(aura.effects == 0b111 && aura.amount == [caster.ai.effectAmount(spell, 0), 25, 25]);
+            assert(abs(target.auras.attackTimeFactor(0) - 0.8f) < 0.001f);
+        }
+        else
+            assert(period > 0 && aura.amount[0] > 0);
+        target.updateAuras(to, beforeHandoff);
+        caster.ai.update(from, beforeHandoff);
+        const remaining = aura.duration;
+
+        const x = cellCoordinate(at.x), y = cellCoordinate(at.y);
+        const gained = Region(7, 0, CellRect(x, y, x + 1, y + 1), 3, 2, RegionState.granted);
+        const bundle = to.migrateOut(key => key == cell, 3, &owner.context.saveMigrant);
+        ubyte[][uint] unused;
+        successor.context.regionsChanged([gained], null, [gained.id: bundle], unused);
+        auto migrated = destination.creatureAt(target.guid);
+        assert(migrated !is null && to.creatureAt(target.guid) is null);
+        auto movedAura = migrated.auras.find(expectedSpell, caster.guid);
+        assert(movedAura !is null && movedAura.channelToken == token && movedAura.duration == remaining);
+        assert(migrated.values.get!OBJECT_FIELD_SCALE_X == scale);
+
+        from.replicaRemoved(2, target.guid);
+        caster.ai.update(from, 50);
+        assert(caster.values.get!UNIT_CHANNEL_SPELL == expectedSpell);
+        from.replicaCreated(3, cell, target.guid, encodeState(migrated, 0));
+        caster.ai.update(from, 50);
+        assert(destination.isReplica(caster.guid), "the channel publishes its caster to the new owner");
+        assert(applications == 1, "ownership change preserves the aura without applying it again");
+        if (period > 0)
+        {
+            migrated.updateAuras(destination, period - beforeHandoff - 1);
+            assert(migrated.values.get!UNIT_FIELD_HEALTH == 3000, "the next tick waits for its original deadline");
+            migrated.updateAuras(destination, 1);
+            assert(migrated.values.get!UNIT_FIELD_HEALTH == 3000 + movedAura.amount[0]);
+        }
+        caster.ai.interruptCast();
+        assert(interruptions == 1 && !caster.values.get!UNIT_CHANNEL_SPELL && !migrated.auras.find(expectedSpell, caster.guid));
+        assert(migrated.auras.attackTimeFactor(0) == 1);
+        if (expectedSpell == supercharge)
+            assert(abs(migrated.values.get!OBJECT_FIELD_SCALE_X * 1.25f - scale) < 0.001f);
+        const health = migrated.values.get!UNIT_FIELD_HEALTH;
+        migrated.updateAuras(destination, 4000);
+        assert(migrated.values.get!UNIT_FIELD_HEALTH == health, "interruption stops future healing");
+    }
 }
 
 /// Cold Snap (12472) makes Ice Block (11958) ready again: its cooldown is its category's (37), not its own.

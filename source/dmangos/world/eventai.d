@@ -270,6 +270,7 @@ struct EventHolder
     uint timer;
     bool enabled = true;
     ulong eventTarget;   /// what the event found (a friend to heal)
+    bool selectedChannelTarget; /// keep the wounded ally as the channel target
 }
 
 /**
@@ -291,7 +292,8 @@ interface Scripted
 
     /// The friend within `radius` most hurt, by at least `deficit`
     /// (health, or percent); 0 if none.
-    ulong lowestHpFriendly(float radius, uint deficit, bool percent);
+    ulong lowestHpFriendly(float radius, uint deficit, bool percent, scope const(EventAiAction)[] actions,
+        out bool selectedChannelTarget);
 
     /// Plays a sound around it.
     void scriptSound(uint sound);
@@ -364,7 +366,7 @@ interface Scripted
     ulong targetFor(int type, ulong invoker);
 
     /// Casts `spell` at `target` as `flags` say: false if it could not.
-    bool scriptCast(uint spell, ulong target, uint flags);
+    bool scriptCast(uint spell, ulong target, uint flags, bool selectedChannelTarget = false);
 
     /// A broadcast text, said, yelled, emoted or whispered as the text says.
     void scriptText(uint text, ulong target);
@@ -579,7 +581,8 @@ final class EventAI
         {
             if (!me.fighting)
                 return false;
-            const friend = me.lowestHpFriendly(e.params[1], e.params[0], e.params[4] != 0);
+            const friend = me.lowestHpFriendly(e.params[1], e.params[0], e.params[4] != 0, e.actions,
+                h.selectedChannelTarget);
             h.eventTarget = friend;
             return friend != 0;
         }
@@ -661,14 +664,14 @@ final class EventAI
                 if (a.type != ActionType.none)
                     actions ~= cast(uint) i;
             if (actions.length)
-                success = act(e.actions[actions[uniform(0, actions.length)]], me, invoker);
+                success = act(e.actions[actions[uniform(0, actions.length)]], me, invoker, h.selectedChannelTarget);
         }
         else
         {
-            success = act(e.actions[0], me, invoker);
+            success = act(e.actions[0], me, invoker, h.selectedChannelTarget);
             if (!(e.flags & eventCombatAction) || success)
                 foreach (ref a; e.actions[1 .. $])
-                    act(a, me, invoker);
+                    act(a, me, invoker, h.selectedChannelTarget);
         }
         if (!(e.flags & eventCombatAction) || success)
             reset(h);
@@ -706,7 +709,7 @@ final class EventAI
     }
 
     /// Runs one action; whether it succeeded.
-    private bool act(const ref EventAiAction a, Scripted me, ulong invoker)
+    private bool act(const ref EventAiAction a, Scripted me, ulong invoker, bool selectedChannelTarget)
     {
         switch (a.type)
         {
@@ -889,7 +892,7 @@ final class EventAI
                 return false;
             if (a.params[1] == EventTarget.nearestAoeTarget)
                 target = 0; // only that there is one in reach: the spell finds its own
-            return me.scriptCast(a.params[0], target, cast(uint) a.params[2]);
+            return me.scriptCast(a.params[0], target, cast(uint) a.params[2], selectedChannelTarget);
         }
         case ActionType.rangedMovement:
             me.scriptRangedMovement(a.params[0], a.params[1]);
@@ -1182,7 +1185,8 @@ unittest
         @property bool fighting() { return inFight; }
         bool hasOwnAura(uint spell) { return false; }
         bool victimCasting() { return false; }
-        ulong lowestHpFriendly(float radius, uint deficit, bool percent) { return 0; }
+        ulong lowestHpFriendly(float radius, uint deficit, bool percent, scope const(EventAiAction)[] actions,
+            out bool selectedChannelTarget) { return 0; }
         void scriptSound(uint sound) {}
         void scriptUnitFlags(ulong target, uint flags, bool set) {}
         void scriptMelee(bool on) {}
@@ -1211,7 +1215,12 @@ unittest
         uint victimHealthPercent() { return 100; }
         float victimDistance() { return 2; }
         ulong targetFor(int type, ulong invoker) { return type == EventTarget.self ? 1 : 2; }
-        bool scriptCast(uint spell, ulong target, uint flags) { cast_ ~= spell; castAt ~= target; return true; }
+        bool scriptCast(uint spell, ulong target, uint flags, bool selectedChannelTarget)
+        {
+            cast_ ~= spell;
+            castAt ~= target;
+            return true;
+        }
         void scriptText(uint text, ulong target) { texts ~= text; }
         void scriptEmote(uint emote) {}
         void scriptStandState(uint state) {}

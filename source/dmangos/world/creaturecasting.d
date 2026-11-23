@@ -98,6 +98,7 @@ mixin template CreatureCasting()
         ulong castTarget;
         int castTimer;                 // until it goes off
         bool castAuraMustBeAbsent;
+        bool castAtSelectedChannelTarget;
         const(SpellInfo)* nextSwing;   // a spell on its next swing
         bool combatMovement_ = true;   // it chases its victim
         bool rangedModeSet;            // its script keeps it at a distance to cast
@@ -331,6 +332,12 @@ mixin template CreatureCasting()
 
     bool castSpell(const(SpellInfo)* spell, ulong target, uint flags, CustomValues custom = CustomValues.init)
     {
+        return prepareCast(spell, target, flags, custom, false);
+    }
+
+    private bool prepareCast(const(SpellInfo)* spell, ulong target, uint flags, CustomValues custom,
+        bool selectedChannelTarget)
+    {
         import dmangos.world.context : WorldContext;
         import dmangos.world.spellcast : SpellCastResult;
         import dmangos.world.spelldamage : creatureAreaShape, creatureTargetInRange, isCreatureTargetEffect,
@@ -363,14 +370,20 @@ mixin template CreatureCasting()
         const namedEffect = selectableNamedCreatureEffect(spell);
         auto context = cast(WorldContext) lore;
         const namedObject = context !is null && context.onlyNamedGameObjectEffects(spell);
-        const namedChannel = !triggered && !me.meleeController && context !is null && context.namedCreatureChannel(spell) != size_t.max;
-        if (namedObject || namedChannel || (namedEffect != size_t.max
+        const channelEffect = !triggered && !me.meleeController && context !is null
+            ? context.namedCreatureChannel(spell) : size_t.max;
+        if (selectedChannelTarget && channelEffect == size_t.max)
+            return refuse(SpellCastResult.badTargets);
+        const selectsTargets = namedObject || channelEffect != size_t.max || (namedEffect != size_t.max
             && (namedCreatureShape(*spell, namedEffect) != ImplicitTarget.unitScriptNearCaster
-                || (context !is null && context.sendAreaDamage !is null))))
+                || (context !is null && context.sendAreaDamage !is null)));
+        if (selectsTargets && !selectedChannelTarget)
             target = me.guid; // the spell selects its targets at completion
         else if (target == 0)
             target = victim ? victim : me.guid;
         auto other = spellTarget(target);
+        if (selectedChannelTarget && !validChannelTarget(spell, channelEffect, other, context))
+            return refuse(SpellCastResult.badTargets);
         if (target != me.guid)
         {
             if (other)
@@ -379,7 +392,7 @@ mixin template CreatureCasting()
                     return refuse(SpellCastResult.targetsDead);
                 if ((flags & castAuraNotPresent) && other.hasAuraOf(spell.id))
                     return refuse(SpellCastResult.dontReport);
-                if (other.replica !is null)
+                if (other.replica !is null && !selectedChannelTarget)
                 {
                     import std.algorithm.searching : any;
                     import std.range : iota;
@@ -406,10 +419,10 @@ mixin template CreatureCasting()
             return refuse(SpellCastResult.dontReport);
         if (!(flags & (castForceCast | castForceTargetSelf)) && !triggered)
         {
-            if (other.replica !is null
+            if (!selectedChannelTarget && (other.replica !is null
                 ? !creatureTargetInRange(spell, me.fighter, other.fighter, lore.clientData)
                     || !world_.inLineOfSight(me.position, other.position)
-                : !inRangeFor(spell, target))
+                : !inRangeFor(spell, target)))
                 return refuse(SpellCastResult.outOfRange);
             if (paysMana(spell) && manaCost(spell) > me.values.get!UNIT_FIELD_POWER1)
             {
@@ -441,13 +454,14 @@ mixin template CreatureCasting()
             }
         if (time <= 0)
         {
-            go(spell, target, !triggered, (flags & castAuraNotPresent) != 0, null, custom);
+            go(spell, target, !triggered, (flags & castAuraNotPresent) != 0, null, custom, selectedChannelTarget);
             return true;
         }
         casting_ = spell;
         castTarget = target;
         castTimer = time;
         castAuraMustBeAbsent = (flags & castAuraNotPresent) != 0;
+        castAtSelectedChannelTarget = selectedChannelTarget;
         if (!me.spline.finalized)
             stopMoving(me, world_);
         auto targets = targetsOf(target);
@@ -478,7 +492,7 @@ mixin template CreatureCasting()
             return;
         if (castTarget != me.guid)
         {
-            auto other = combatTarget(world_, castTarget);
+            auto other = castAtSelectedChannelTarget ? spellTarget(castTarget) : combatTarget(world_, castTarget);
             auto friend = !other ? world_.creatureAt(castTarget) : null;
             if ((!other || !other.alive) && (friend is null || !friend.alive))
                 return interruptCast();
@@ -488,7 +502,7 @@ mixin template CreatureCasting()
             return;
         auto spell = casting_;
         casting_ = null;
-        go(spell, castTarget, true, castAuraMustBeAbsent);
+        go(spell, castTarget, true, castAuraMustBeAbsent, null, CustomValues.init, castAtSelectedChannelTarget);
     }
 
     private int[7] schoolLockMs; /// each school's lockout left (an interrupt's), in milliseconds
@@ -750,7 +764,7 @@ mixin template CreatureCasting()
      * happen to each target; its mana is spent.
      */
     private void go(const(SpellInfo)* spell, ulong target, bool takeMana, bool auraAbsent = false,
-        ulong[] selectedWeaponTargets = null, CustomValues custom = CustomValues.init)
+        ulong[] selectedWeaponTargets = null, CustomValues custom = CustomValues.init, bool selectedChannelTarget = false)
     {
         import dmangos.world.context : WorldContext;
         import dmangos.world.map : Map;
@@ -765,6 +779,8 @@ mixin template CreatureCasting()
         auto context = cast(WorldContext) lore;
         const channelEffect = takeMana && !me.meleeController && selectedWeaponTargets is null && context !is null
             ? context.namedCreatureChannel(spell) : size_t.max;
+        if (selectedChannelTarget && channelEffect == size_t.max)
+            return;
         UnitRef channelTarget;
         size_t firstChannelEffect = size_t.max;
         uint channelExclusions;
@@ -772,8 +788,19 @@ mixin template CreatureCasting()
         {
             import dmangos.world.spellselection : namedCreatureRange;
 
-            channelTarget = nearestNamedCreature(world_, me.position, namedCreatureRange(*spell, lore.clientData),
-                context.namedCreatureEntries(spell, channelEffect), me.guid, context.sendAreaDamage !is null);
+            if (selectedChannelTarget)
+            {
+                channelTarget = spellTarget(target);
+                if (!validChannelTarget(spell, channelEffect, channelTarget, context))
+                {
+                    world_.sendToObservers(me.guid, Opcode.SMSG_SPELL_FAILURE,
+                        spellFailurePacket(me.guid, spell.id, SpellCastResult.badTargets));
+                    return;
+                }
+            }
+            else
+                channelTarget = nearestNamedCreature(world_, me.position, namedCreatureRange(*spell, lore.clientData),
+                    context.namedCreatureEntries(spell, channelEffect), me.guid, context.sendAreaDamage !is null);
             if (!channelTarget || !beginNamedCreatureChannel(spell, channelTarget))
                 return;
             const entry = namedCreatureEntry(channelTarget);
@@ -781,7 +808,7 @@ mixin template CreatureCasting()
             channelExclusions = context.scriptTargetExclusions(spell.id, entry);
         }
         bool remotePrimary, sentArea;
-        if (selectedWeaponTargets is null)
+        if (selectedWeaponTargets is null && channelEffect == size_t.max)
         if (auto other = spellTarget(target))
             if (other.replica !is null)
             {
@@ -1523,26 +1550,89 @@ mixin template CreatureCasting()
         return other && other.castingSpell;
     }
 
-    /// ditto: the one most hurt among itself and those near it in combat that are not its enemies.
-    ulong lowestHpFriendly(float radius, uint deficit, bool percent)
+    /// A wounded ally chosen by EventAI must remain an eligible recipient at cast time.
+    private bool validChannelTarget(const(SpellInfo)* spell, size_t effect, UnitRef target,
+        imported!"dmangos.world.context".WorldContext context)
     {
+        import std.algorithm.searching : canFind;
+        import dmangos.world.spellselection : namedCreatureEntry, namedCreatureRange;
+        import dmangos.world.unit : combatRelations;
+
+        if (!target.alive || target.combatGuid == me.guid || (target.creature is null
+            && (target.replica is null || target.replica.fields.type != TypeId.unit)))
+            return false;
+        if (!context.namedCreatureEntries(spell, effect).canFind(namedCreatureEntry(target))
+            || isEnemy(relating, combatRelations(target, me.client), me.client))
+            return false;
+        const from = me.position, to = target.position;
+        const reach = namedCreatureRange(*spell, lore.clientData);
+        return (from.x - to.x) ^^ 2 + (from.y - to.y) ^^ 2 + (from.z - to.z) ^^ 2 <= reach ^^ 2
+            && world_.inLineOfSight(from, to);
+    }
+
+    /// See `Scripted`. An event can use remote allies if every possible action can channel on them.
+    ulong lowestHpFriendly(float radius, uint deficit, bool percent, scope const(EventAiAction)[] actions,
+        out bool selectedChannelTarget)
+    {
+        import dmangos.world.context : WorldContext;
+        import dmangos.world.defines : UnitFlags;
+        import dmangos.world.map : Map;
+        import dmangos.world.replication : Replica;
+
+        auto context = cast(WorldContext) lore;
+        const(SpellInfo)*[3] spells;
+        size_t[3] effects;
+        size_t count;
+        if (context !is null && !me.meleeController && actions.length <= spells.length)
+            foreach (ref action; actions)
+            {
+                if (action.type == ActionType.none)
+                    continue;
+                const spell = action.type == ActionType.castSpell && action.params[1] == EventTarget.eventSpecific
+                    && !(action.params[2] & (castTriggered | castForceTargetSelf))
+                    ? lore.spellInfo(action.params[0]) : null;
+                const effect = spell is null ? size_t.max : context.namedCreatureChannel(spell);
+                if (effect == size_t.max)
+                {
+                    count = 0;
+                    break;
+                }
+                spells[count] = spell;
+                effects[count++] = effect;
+            }
+        selectedChannelTarget = count != 0;
+
         ulong best;
         uint mostMissing;
+        void consider(UnitRef target, const ref imported!"dmangos.world.objects".UpdateValues fields)
+        {
+            const maximum = fields.get!UNIT_FIELD_MAXHEALTH, health = fields.get!UNIT_FIELD_HEALTH;
+            if (!health || health >= maximum)
+                return;
+            const missing = maximum - health;
+            const measure = percent ? cast(uint)(ulong(missing) * 100 / maximum) : missing;
+            if (measure <= deficit || measure <= mostMissing)
+                return;
+            foreach (i; 0 .. count)
+                if (!validChannelTarget(spells[i], effects[i], target, context))
+                    return;
+            mostMissing = measure;
+            best = target.combatGuid;
+        }
         foreach (other; world_.creaturesNear(me.position, radius))
         {
             if (!other.alive || other.ai is null || !other.ai.inCombat)
                 continue;
-            if (other !is me && isEnemy(relating, other.ai.relating, me.client)) // not hostile to it
+            if (!count && other !is me && isEnemy(relating, other.ai.relating, me.client))
                 continue;
-            const maximum = other.values.get!UNIT_FIELD_MAXHEALTH, health = other.values.get!UNIT_FIELD_HEALTH;
-            const missing = maximum - health;
-            const measure = percent ? (maximum ? cast(uint)(ulong(missing) * 100 / maximum) : 0) : missing;
-            if (measure > deficit && measure > mostMissing)
-            {
-                mostMissing = measure;
-                best = other.guid;
-            }
+            consider(world_.unitOf(other), other.values);
         }
+        if (count && context.sendAreaDamage !is null)
+            if (auto map = cast(Map) world_)
+                foreach (object; map.objectsNear(me.position, radius))
+                    if (auto copy = cast(Replica) object)
+                        if (copy.fields.type == TypeId.unit && (copy.fields.get!UNIT_FIELD_FLAGS & UnitFlags.inCombat))
+                            consider(UnitRef.observed(copy, map), copy.fieldsOf());
         return best;
     }
 
@@ -1872,9 +1962,10 @@ mixin template CreatureCasting()
     }
 
     /// ditto
-    bool scriptCast(uint spell, ulong target, uint flags)
+    bool scriptCast(uint spell, ulong target, uint flags, bool selectedChannelTarget = false)
     {
-        return castSpell(lore is null ? null : lore.spellInfo(spell), target, flags);
+        return prepareCast(lore is null ? null : lore.spellInfo(spell), target, flags, CustomValues.init,
+            selectedChannelTarget);
     }
 
     /**
