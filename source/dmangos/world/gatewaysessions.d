@@ -240,11 +240,12 @@ package mixin template GatewaySessions()
 
         // A live gateway may temporarily lose this direct link. Only the coordinator's view
         // establishes that the client is gone for good.
-        WorldSession[] orphans;
+        WorldSession[] departed;
         foreach (session; remote)
-            if (session.gatewayHome.node && node.simulationOwner(session.home) != session.gatewayHome)
-                orphans ~= session;
-        foreach (session; orphans)
+            if (session.gatewayHome.node && (node.simulationOwner(session.home) != session.gatewayHome
+                || !session.pollGatewayRecovery(now)))
+                departed ~= session;
+        foreach (session; departed)
             session.clientGone();
     }
 

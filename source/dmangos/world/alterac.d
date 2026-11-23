@@ -773,7 +773,7 @@ private:
 // Tests
 // ---------------------------------------------------------------------------
 
-// The nodes: an assault, a defence, a tower destroyed for good; a graveyard taken.
+// The nodes: an assault, a defence, a tower destroyed after recovery; a graveyard taken.
 unittest
 {
     import core.time : MonoTime, minutes, seconds;
@@ -818,10 +818,28 @@ unittest
     assert(rules.nodes[nodeIcebloodTower].owner == ownerHorde && rules.nodes[nodeIcebloodTower].state == stateHeld);
     assert(copy.members[8].extra[scoreTowersDefended] == 1);
     assert(rules.objectUsed(copy, 7, held));
-    copy.tick(5.minutes + 1.seconds);
+    now += 2.minutes;
+    copy.tick(2.minutes);
+    const snapshot = context.snapshotBattleground(copy);
+    const mapId = copy.mapId, instance = copy.instance;
+    context = newCreationContext(db);
+    now += 1.minutes;
+    context.clock = () => now;
+    context.restoreBattleground(mapId, instance, snapshot, true);
+    copy = context.battlegrounds.find(instance);
+    rules = cast(AlteracRules) copy.rules;
+    rules.alive = (ulong) => true;
+    assert(rules.nodes[nodeIcebloodTower].left == 3.minutes, "keep the time remaining before the worker stopped");
+    assert(copy.members[7].extra[scoreTowersAssaulted] == 2 && copy.members[8].extra[scoreTowersDefended] == 1);
+    now += 179.seconds;
+    copy.tick(179.seconds);
+    assert(rules.nodes[nodeIcebloodTower].state == stateAssaulted);
+    now += 1.seconds;
+    copy.tick(1.seconds);
     assert(rules.nodes[nodeIcebloodTower].totalOwner == ownerAlliance, "destroyed");
     assert(rules.homeTowers[ownerHorde] == 3);
     assert((eventMarshals + 4) !in copy.activeEvents, "its warmaster went");
+    assaulted = banner(96001, nodeIcebloodTower, AlteracRules.eventOf(ownerAlliance, stateAssaulted));
     assert(!rules.objectUsed(copy, 8, assaulted) || rules.nodes[nodeIcebloodTower].owner == ownerAlliance,
         "and it cannot be taken back");
 

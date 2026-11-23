@@ -90,7 +90,8 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
     package SimulationOwner gatewayHome;   // owner: the gateway's incarnation
     package uint gatewayCharacter;         // owner: the simulated character, including while loading
     package ulong gatewayToken;            // owner: the coordinator's route for this simulation
-    private CharacterData recovery;        // owner: durable state awaiting the client's worldport acknowledgement
+    private CharacterData recovery;        // owner: durable state while recovering, until the client loads the map
+    private MonoTime recoveryReadyBy;      // owner: waiting for the ownership grant to take effect
 
     /// The character in the world (docs/DESIGN.md, step 3); null at the character screen.
     package Character playing;
@@ -244,14 +245,33 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
         auto loaded = context.database.loadCharacter(guid);
         if (loaded.isNull || loaded.get.account != account.id || !loaded.get.position.isFinite
             || context.data.createInfo(loaded.get.race, loaded.get.classId) is null
-            || !ownsRecoveryPosition(loaded.get))
+            || context.ownsCell is null)
             return false;
         build = clientBuild;
         gatewayCharacter = guid;
         recovery = loaded.get;
-        const at = recovery.position;
-        send(ServerTransferPending(recovery.map));
-        send(ServerNewWorld(recovery.map, at.x, at.y, at.z, at.orientation));
+        const now = context.clock();
+        recoveryReadyBy = now + 15.seconds;
+        return pollGatewayRecovery(now);
+    }
+
+    /// The gateway can see the replacement's grant before its map is ready to simulate.
+    package bool pollGatewayRecovery(MonoTime now)
+    {
+        if (recoveryReadyBy == MonoTime.init)
+            return true;
+        if (now >= recoveryReadyBy)
+        {
+            warning!"%s: timed out restoring character %s on map %s"(remoteAddress, recovery.guid, recovery.map);
+            return false;
+        }
+        if (ownsRecoveryPosition(recovery))
+        {
+            recoveryReadyBy = MonoTime.init;
+            const at = recovery.position;
+            send(ServerTransferPending(recovery.map));
+            send(ServerNewWorld(recovery.map, at.x, at.y, at.z, at.orientation));
+        }
         return true;
     }
 
@@ -283,6 +303,7 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
         else if (recovery.guid)
         {
             recovery = CharacterData.init;
+            recoveryReadyBy = MonoTime.init;
             context.playerRelay.left(homeNode, account.id, false);
             context.playerRelay.remoteDone(account.id);
         }
@@ -518,7 +539,8 @@ package:
         {
             if ((gatewayPaused || recovery.guid) && !gatewayNameQuery)
             {
-                if (recovery.guid && opcode == Opcode.MSG_MOVE_WORLDPORT_ACK && reader.empty)
+                if (recovery.guid && recoveryReadyBy == MonoTime.init
+                    && opcode == Opcode.MSG_MOVE_WORLDPORT_ACK && reader.empty)
                     finishGatewayRecovery();
                 else if (opcode == Opcode.CMSG_PING)
                     dispatchPacket(opcode, WorldState.characterScreen, reader);

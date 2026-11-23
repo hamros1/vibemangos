@@ -2813,10 +2813,20 @@ unittest
         client.write(Opcode.CMSG_PING, ClientPing(1, 0));
         assert(opcodesOf(client.read()).canFind(Opcode.SMSG_PONG));
 
+        // A shared map grant can reach the gateway before the replacement can apply it.
+        bool canApplyGrant;
+        standby.regions.allowMap = (uint) => canApplyGrant;
         ticks(5000, standby, gateway);
         bridges[worker.id].fenceGatewaySimulations();
         assert(worlds[worker.id].onlinePlayer(guid) is null);
         assert(gateway.regions.ownerAt(0, cell) == standby.id && socket.owner == standby.id && !socket.wantsClose);
+        assert(!opcodesOf(client.read()).canFind(Opcode.SMSG_NEW_WORLD), "wait for the grant to take effect");
+        client.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
+        ticks(200, standby, gateway);
+        assert(worlds[standby.id].onlinePlayer(guid) is null, "an early acknowledgement cannot start gameplay");
+
+        canApplyGrant = true;
+        ticks(300, standby, gateway);
         const transfer = opcodesOf(client.read());
         assert(transfer.count(Opcode.SMSG_NEW_WORLD) == 1 && transfer.canFind(Opcode.SMSG_TRANSFER_PENDING));
         assert(worlds[standby.id].onlinePlayer(guid) is null, "the client has not acknowledged the transfer yet");
