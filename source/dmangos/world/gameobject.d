@@ -556,7 +556,7 @@ final class GameObject : Replicable, Moving, PerViewer
                 w.put(guid);
             w.put(loot !is null);
             if (loot !is null)
-                loot.saveHandoff(w);
+                loot.saveHandoff(w, null, 0, true);
             return;
         }
         if (type == GameObjectType.door || type == GameObjectType.button
@@ -613,7 +613,7 @@ final class GameObject : Replicable, Moving, PerViewer
             foreach (_; 0 .. skilled)
                 skilledUp[r.read!ulong] = true;
             if (r.read!bool)
-                loot = Loot.loadHandoff(guid, r);
+                loot = Loot.loadHandoff(guid, r, true);
             return;
         }
         // The runtime tail is optional. Older senders and inactive spawns omit it.

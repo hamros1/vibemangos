@@ -610,17 +610,18 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   award leaves the item available for reassignment and reports the error to the master. A pending
   award locks the slot until confirmation or loot expiry.
 * **Party coin splits.** The loot's node divides the drop among eligible, reachable members,
-  with the extra copper going to the looter first and then in GUID order. Each remote member's
-  node credits and saves its share once. A share that cannot be sent stays with the looter.
-  Once queued to a peer, a share is never reassigned. If the peer dies before it saves the credit,
-  the share can be lost.
+  with the extra copper going to the looter first and then in GUID order. For a cross-node split,
+  all shares are saved together before the gold is cleared. A player's current node applies the
+  share once, even if the previous node failed or the delivery message was lost. A clean corpse
+  handoff preserves the payout if its database write needs a retry.
 * **Round-robin item pickup.** The coordinator chooses the turn for ordinary shared drops under
   Round Robin, Group Loot, and Need Before Greed. The turn advances once for the party even when
   consecutive drops come from different nodes. The designated member may click the corpse or
   chest and claim the item on its owner's node. The round-robin slot waits for the coordinator's
   reply while coins and rolls remain available. If the reply times out, the item stays with the
-  player who created the drop. The cursor resets when the coordinator reloads the party. Conditioned
-  and personal non-quest drops keep their local pickup rules.
+  player who created the drop. The party's rotation and recent choices survive a coordinator
+  restart. A retried request gets the original choice without advancing the turn twice.
+  Conditioned and personal non-quest drops keep their local pickup rules.
 * **Quest drops.** At a kill or chest opening, the loot's node asks each eligible remote member's
   node which quest drops that character needs. Eligible members see the corpse's loot cursor on
   replicas. Clicking the corpse or chest moves the player to the loot's node, where the player's

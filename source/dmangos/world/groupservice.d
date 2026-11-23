@@ -29,6 +29,9 @@ struct LootTurnRequest
     uint group;
     ulong recipient;
     ulong[] eligible;
+    ushort node;
+    ulong token;
+    long issuedAt;
 }
 
 struct LootTurnReply
@@ -41,14 +44,71 @@ struct LootTurnReply
 struct LootTurnHost
 {
     Groups groups;
+    WorldContext context;
 
     @Call LootTurnReply take(const ref LootTurnRequest request)
     {
+        import dmangos.log : warning;
+        import dmangos.world.database : GroupLootRotation;
+
         auto group = groups.of(request.recipient);
         if (group is null || group.id != request.group)
             return LootTurnReply.init;
-        return LootTurnReply(group.takeLootTurn(request.eligible));
+        if (context is null || !context.config.cluster.enabled || !group.persistentLootTurns)
+            return LootTurnReply(group.takeLootTurn(request.eligible));
+        const now = context.unixTime, age = now - request.issuedAt;
+        if (!context.canWrite() || !request.node || !request.token || age < -5 || age > 60)
+            return LootTurnReply.init;
+        const previous = group.nextLooter;
+        try
+        {
+            const recorded = context.database.loadGroupLootRotation(request.group, request.node, request.token);
+            if (recorded.assigned)
+                return LootTurnReply(recorded.assigned);
+            const order = group.lootTurnOrder(recorded.order);
+            group.nextLooter = recorded.nextLooter;
+            const chosen = group.takeLootTurn(request.eligible, order);
+            const turn = GroupLootRotation(group.nextLooter, chosen, order);
+            if (chosen && context.database.recordGroupLootRotation(request.group, request.node, request.token, turn, now))
+                return LootTurnReply(chosen);
+        }
+        catch (Exception error)
+            warning!"group %s: could not save the round-robin turn: %s"(group.id, error.msg);
+        group.nextLooter = previous;
+        return LootTurnReply.init;
     }
+}
+
+unittest
+{
+    import dmangos.world.characterdb : GroupMemberRecord, GroupRecord;
+    import dmangos.world.config : WorldConfig;
+    import dmangos.world.testclient : newCreationContext, newDatabase;
+
+    void clustered(ref WorldConfig config) { config.cluster.nodeId = 1; }
+    auto db = newDatabase();
+    db.groups[42] = GroupRecord(id: 42, leader: 7, leaderName: "Anduin",
+        members: [GroupMemberRecord(7, "Anduin"), GroupMemberRecord(9, "Varian"), GroupMemberRecord(8, "Jaina")]);
+    auto first = newCreationContext(db, &clustered);
+    auto oldHost = LootTurnHost(first.groups, first);
+    const now = first.unixTime;
+    auto turn = LootTurnRequest(42, 7, [7UL, 8, 9], 1, 100, now);
+    assert(oldHost.take(turn).looter == 7);
+    turn.node = 2;
+    assert(oldHost.take(turn).looter == 9);
+
+    db.groups[42].members = [db.groups[42].members[0], db.groups[42].members[2], db.groups[42].members[1]];
+    auto second = newCreationContext(db, &clustered);
+    auto replacement = LootTurnHost(second.groups, second);
+    turn.node = 1;
+    assert(replacement.take(turn).looter == 7, "a retry gets the original answer");
+    turn.token = 101;
+    assert(replacement.take(turn).looter == 8, "the cursor survives the coordinator switch");
+    turn.token = 102;
+    assert(replacement.take(turn).looter == 7, "the original party order also survives");
+    turn.token = 103;
+    turn.issuedAt -= 61;
+    assert(replacement.take(turn).looter == 0, "a parked request older than the retry window cannot advance the cursor");
 }
 
 /// `op` by `who`.

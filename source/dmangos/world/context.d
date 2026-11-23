@@ -441,7 +441,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     bool delegate(ushort, const ref LootCoinShare) sendRemoteLootCoins;
     bool delegate(ushort, const ref QuestLootCheck) sendQuestLootCheck;
     private ulong gameplaySequence;
-    private ulong[ushort] lastLootCoinShare;
+    private MonoTime nextLootCoinPoll;
+    private bool[uint] retryLootCoinRedemption;
     private ulong[ushort] lastMasterLootAward;
 
     ulong nextGameplaySequence()
@@ -607,18 +608,70 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             sendRemoteGroupLoot(peer, result);
     }
 
-    /// Loot shares arrive in sequence over a peer link, even when it resumes after a disconnect.
+    /// The link only speeds up delivery. The database holds the credit if this player moves.
     void lootCoinShareArrived(ushort peer, const ref LootCoinShare message)
     {
-        import dmangos.world.character : Character;
-        import dmangos.world.loot : grantLootCoinShare;
+        import dmangos.world.objects : lowGuid;
 
-        if (!peer || !message.copper || message.sequence <= lastLootCoinShare.get(peer, 0) || !canWrite())
+        if (!peer || !message.sequence || !message.copper || playerGuid(lowGuid(message.player)) != message.player)
             return;
-        lastLootCoinShare[peer] = message.sequence;
-        if (auto player = cast(Character) onlinePlayer(message.player))
-            if (player.character !is null && player.character.data.map == message.map)
-                grantLootCoinShare(player, message.copper);
+        redeemLootCoinShare(lowGuid(message.player));
+    }
+
+    package void redeemLootCoinShare(uint guid)
+    {
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
+        import dmangos.world.character : Character;
+        import dmangos.world.loot : tellLootCoinShare;
+        import dmangos.world.updatefields : PLAYER_FIELD_COINAGE;
+
+        auto player = cast(Character) onlinePlayer(playerGuid(guid));
+        if (player is null || player.player is null || player.transferring || !canWrite())
+            return;
+        if (!settleWrites())
+        {
+            retryLootCoinRedemption[guid] = true;
+            return;
+        }
+        try
+        {
+            const paid = database.redeemLootCoins(guid, unixTime);
+            if (!paid.valid)
+                return;
+            retryLootCoinRedemption.remove(guid);
+            player.player.values.set!PLAYER_FIELD_COINAGE(paid.wallet);
+            player.flushPlayerChanges();
+            if (paid.copper)
+                tellLootCoinShare(player, paid.copper);
+        }
+        catch (DatabaseException error)
+        {
+            retryLootCoinRedemption[guid] = true;
+            warning!"could not redeem group coins for character %s: %s"(guid, error.msg);
+        }
+    }
+
+    private void pollLootCoinCredits(MonoTime now)
+    {
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
+
+        if (sendRemoteLootCoins is null || !online.length || now < nextLootCoinPoll || !canWrite())
+            return;
+        nextLootCoinPoll = now + 1.seconds;
+        try
+        {
+            foreach (guid; database.pendingLootCoinPlayers())
+                redeemLootCoinShare(guid);
+            foreach (guid; retryLootCoinRedemption.keys)
+                if (onlinePlayer(playerGuid(guid)) is null)
+                    retryLootCoinRedemption.remove(guid);
+                else
+                    redeemLootCoinShare(guid);
+        }
+        catch (DatabaseException error)
+            warning!"could not look up pending group coins: %s"(error.msg);
     }
 
     bool delegate(ushort, const ref PartyHeal) sendPartyHeal;
@@ -2805,7 +2858,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         // The cluster services this node can run (docs/SERVICES.md); standalone it runs them all at once.
         import dmangos.world.groupservice : LootTurnHost;
 
-        services.provide!LootTurnHost((const(ubyte)[]) => LootTurnHost(groups));
+        services.provide!LootTurnHost((const(ubyte)[]) => LootTurnHost(groups, this));
         services.provide!BattlegroundQueueHost((const(ubyte)[] state) =>
             BattlegroundQueueHost(battlegroup is null ? newBattlegroundQueue() : battlegroup.queue, state,
                 battlegroup is null || battlegroup.host is this, this));
@@ -8559,6 +8612,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         addPendingNavigation();
         checkHonorWeek(now);
         services.tick(elapsed);
+        pollLootCoinCredits(now);
         worldPvp.tick(elapsed);
         if (battlegroup is null || battlegroup.host is this) battlegrounds.tick(elapsed);
         landObjectAnimations(now);

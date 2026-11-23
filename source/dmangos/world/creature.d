@@ -1462,7 +1462,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         w.put(pocketsRestockAt);
         w.put(loot !is null);
         if (loot !is null)
-            loot.saveHandoff(w);
+            loot.saveHandoff(w, null, 0, true);
         const channel = ai.hasCreatureChannel;
         if (expiredChannels.length || channel)
         {
@@ -1531,7 +1531,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         pocketsEmptied = r.read!bool;
         pocketsRestockAt = r.read!long;
         if (r.read!bool)
-            loot = Loot.loadHandoff(guid, r);
+            loot = Loot.loadHandoff(guid, r, true);
         expiredChannels = null;
         if (!r.empty)
             foreach (_; 0 .. r.read!uint)

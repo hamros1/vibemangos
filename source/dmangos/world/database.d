@@ -88,6 +88,27 @@ struct ServiceCheckpoint
     string state;
 }
 
+/// The next round-robin recipient, or the original answer for a retried drop.
+struct GroupLootRotation
+{
+    ulong nextLooter;
+    ulong assigned;
+    const(ulong)[] order;
+}
+
+struct LootCoinCredit
+{
+    uint player;
+    uint copper;
+}
+
+struct LootCoinRedemption
+{
+    bool valid;
+    uint wallet;
+    uint copper;
+}
+
 /// A `mail` row and its one item (`mail_items`; 1.12 sends at most one).
 struct MailRecord
 {
@@ -764,6 +785,15 @@ interface WorldDatabase
     /// Every group with its members.
     GroupRecord[] loadGroups();
 
+    GroupLootRotation loadGroupLootRotation(uint group, ushort node, ulong drop);
+    @DatabaseWrite bool recordGroupLootRotation(uint group, ushort node, ulong drop, const ref GroupLootRotation turn, long now);
+
+    /// Deposits every group share together, identified by the original drop's immutable payout token.
+    @DatabaseWrite bool saveLootCoinSplit(ushort issuer, ulong token, const(LootCoinCredit)[] shares);
+    uint[] pendingLootCoinPlayers();
+    /// Updates the wallet and marks the player's credits paid in the same transaction.
+    @DatabaseWrite LootCoinRedemption redeemLootCoins(uint player, long now);
+
     /// The `groups` row of a new group.
     void createGroup(const ref GroupRecord group);
 
@@ -1269,6 +1299,20 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     void deleteGameObjectSpawn(uint guid) { world.execute!"DELETE FROM gameobject WHERE guid = ?"(guid); }
     Nullable!NameInfo nameInfo(uint guid) { return statements.nameInfo(guid); }
     GroupRecord[] loadGroups() { return statements.loadGroups(); }
+    GroupLootRotation loadGroupLootRotation(uint group, ushort node, ulong drop)
+    {
+        return statements.loadGroupLootRotation(group, node, drop);
+    }
+    bool recordGroupLootRotation(uint group, ushort node, ulong drop, const ref GroupLootRotation turn, long now)
+    {
+        return statements.recordGroupLootRotation(group, node, drop, turn, now);
+    }
+    bool saveLootCoinSplit(ushort issuer, ulong token, const(LootCoinCredit)[] shares)
+    {
+        return statements.saveLootCoinSplit(issuer, token, shares);
+    }
+    uint[] pendingLootCoinPlayers() { return statements.pendingLootCoinPlayers(); }
+    LootCoinRedemption redeemLootCoins(uint player, long now) { return statements.redeemLootCoins(player, now); }
     void createGroup(const ref GroupRecord group) { statements.createGroup(group); }
     void updateGroup(const ref GroupRecord group) { statements.updateGroup(group); }
     void deleteGroup(uint groupId) { statements.deleteGroup(groupId); }
@@ -1513,6 +1557,26 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
     uint[4][] actionButtonWrites;     /// guid, button, action, type
     uint[tutorialFields][uint] tutorialSaves; /// by account
     GroupRecord[uint] groups;         /// `groups` and `group_member`, by group id
+    private struct SavedLootTurn
+    {
+        ushort node;
+        ulong drop;
+        GroupLootRotation rotation;
+        long at;
+    }
+    private SavedLootTurn[][uint] groupLootTurns;
+    private struct LootCoinKey
+    {
+        ushort issuer;
+        ulong token;
+        uint player;
+    }
+    private struct SavedLootCoin
+    {
+        uint copper;
+        long paidAt;
+    }
+    private SavedLootCoin[LootCoinKey] lootCredits;
     long[uint] muteTimes;             /// by account id
     bool[uint][uint] spellRows;       /// guid -> spells learned through `saveSpell`
     uint[2][uint][uint] skillRows;    /// guid -> skill -> value, max
@@ -1776,8 +1840,73 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
         return groups.values;
     }
 
+    GroupLootRotation loadGroupLootRotation(uint group, ushort node, ulong drop)
+    {
+        auto turns = groupLootTurns.get(group, null);
+        foreach (ref turn; turns)
+            if (turn.node == node && turn.drop == drop)
+                return turn.rotation;
+        if (!turns.length)
+            return GroupLootRotation.init;
+        const last = turns[$ - 1].rotation;
+        return GroupLootRotation(last.nextLooter, 0, last.order);
+    }
+
+    bool recordGroupLootRotation(uint group, ushort node, ulong drop, const ref GroupLootRotation turn, long now)
+    {
+        import std.algorithm.mutation : remove;
+
+        if (group !in groups || loadGroupLootRotation(group, node, drop).assigned)
+            return false;
+        auto turns = groupLootTurns.get(group, null).remove!(turn => turn.at < now - 120);
+        groupLootTurns[group] = turns ~ SavedLootTurn(node, drop, GroupLootRotation(turn.nextLooter, turn.assigned, turn.order.dup), now);
+        return true;
+    }
+
+    bool saveLootCoinSplit(ushort issuer, ulong token, const(LootCoinCredit)[] shares)
+    {
+        foreach (ref share; shares)
+        {
+            const key = LootCoinKey(issuer, token, share.player);
+            if (share.copper && key !in lootCredits)
+                lootCredits[key] = SavedLootCoin(share.copper);
+        }
+        return true;
+    }
+
+    uint[] pendingLootCoinPlayers()
+    {
+        bool[uint] players;
+        foreach (key, ref credit; lootCredits)
+            if (!credit.paidAt)
+                players[key.player] = true;
+        return players.keys;
+    }
+
+    LootCoinRedemption redeemLootCoins(uint player, long now)
+    {
+        import dmangos.world.money : Copper;
+
+        auto character = player in loadable;
+        if (character is null)
+            return LootCoinRedemption.init;
+        Copper credited;
+        foreach (key, ref credit; lootCredits)
+            if (key.player == player && !credit.paidAt)
+            {
+                credited = credited + Copper(credit.copper);
+                credit.paidAt = now;
+            }
+        const saved = moneySaves.get(player, [character.money, character.playerBytes2]);
+        const money = (Copper(saved[0]) + credited).amount;
+        if (credited)
+            saveInventory(player, money, saved[1], null);
+        return LootCoinRedemption(true, money, credited.amount);
+    }
+
     void createGroup(const ref GroupRecord group)
     {
+        groupLootTurns.remove(group.id);
         GroupRecord row = cast(GroupRecord) group;
         row.members = null;
         groups[group.id] = row;
@@ -1793,6 +1922,7 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
 
     void deleteGroup(uint groupId)
     {
+        groupLootTurns.remove(groupId);
         groups.remove(groupId);
     }
 

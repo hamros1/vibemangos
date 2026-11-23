@@ -488,6 +488,30 @@ CREATE TABLE `dmangos_temporary_counter` (
   `next_counter` bigint(20) unsigned NOT NULL,
   PRIMARY KEY (`realm`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_general_ci COMMENT='dmangos: reserved temporary GUID counter';
+CREATE TABLE `dmangos_group_loot_turn` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `group_id` int unsigned NOT NULL,
+  `node` smallint unsigned NOT NULL,
+  `drop_token` bigint unsigned NOT NULL,
+  `assigned` bigint unsigned NOT NULL,
+  `next_looter` bigint unsigned NOT NULL,
+  `member_order` varchar(448) NOT NULL,
+  `recorded_at` bigint NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `drop_identity` (`group_id`,`node`,`drop_token`),
+  KEY `group_order` (`group_id`,`id`),
+  KEY `group_expiry` (`group_id`,`recorded_at`)
+) ENGINE=InnoDB;
+CREATE TABLE `dmangos_loot_coin` (
+  `issuer` smallint unsigned NOT NULL,
+  `token` bigint unsigned NOT NULL,
+  `player` int unsigned NOT NULL,
+  `copper` int unsigned NOT NULL,
+  `paid_at` bigint NOT NULL DEFAULT 0,
+  PRIMARY KEY (`issuer`,`token`,`player`),
+  KEY `pending_player` (`player`,`paid_at`),
+  KEY `paid_at` (`paid_at`,`player`)
+) ENGINE=InnoDB;
 CREATE TABLE `dmangos_write_applied` (
   `stream` int(10) unsigned NOT NULL,
   `seq` bigint(20) unsigned NOT NULL,

@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 105; // 105: route database-script summons to their destination
+enum ushort protocolVersion = 107; // 107: carry pending coin payouts in loot handoffs
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -1332,7 +1332,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 105, recordedFingerprint = 0x3683077cd7d1003cUL;
+private enum recordedVersion = 107, recordedFingerprint = 0x3683077cd7d1003cUL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

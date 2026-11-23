@@ -264,20 +264,22 @@ final class Group
     ulong[targetIconCount] targetIcons;
 
     /// Chooses an eligible member in party order and advances to the next eligible member.
-    ulong takeLootTurn(const(ulong)[] eligible)
+    ulong takeLootTurn(const(ulong)[] eligible, const(ulong)[] order = null)
     {
         import std.algorithm.searching : canFind;
 
-        if (!slots.length)
+        if (order is null)
+            order = lootTurnOrder(null);
+        if (!order.length)
             return 0;
         size_t start;
-        foreach (i, ref slot; slots)
-            if (slot.guid == nextLooter)
+        foreach (i, guid; order)
+            if (guid == nextLooter)
                 start = i;
         ulong first;
-        foreach (offset; 0 .. slots.length)
+        foreach (offset; 0 .. order.length)
         {
-            const guid = slots[(start + offset) % slots.length].guid;
+            const guid = order[(start + offset) % order.length];
             if (!eligible.canFind(guid))
                 continue;
             if (first)
@@ -288,6 +290,26 @@ final class Group
             first = guid;
         }
         return first;
+    }
+
+    /// Keep the recorded rotation across a reload, removing former members and appending new ones.
+    package ulong[] lootTurnOrder(const(ulong)[] previous) const
+    {
+        import std.algorithm.searching : canFind;
+
+        ulong[] order;
+        foreach (guid; previous)
+            if (isMember(guid))
+                order ~= guid;
+        foreach (ref slot; slots)
+            if (!order.canFind(slot.guid))
+                order ~= slot.guid;
+        return order;
+    }
+
+    package @property bool persistentLootTurns() const
+    {
+        return owner.database !is null;
     }
 
     private

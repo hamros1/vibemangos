@@ -843,6 +843,11 @@ abstract class WriteBehindBase : WorldDatabase
         return reader.loadCreaturePoolStates(realm);
     }
 
+    override uint[] pendingLootCoinPlayers()
+    {
+        return reader.pendingLootCoinPlayers();
+    }
+
     protected bool leaseStillHolds()
     {
         return writableUntil is null || Clock.currStdTime < writableUntil();

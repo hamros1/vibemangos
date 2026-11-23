@@ -21,7 +21,7 @@ import dmangos.world.player : CharacterData, CharacterProgress, HomeBind, tutori
 import dmangos.world.playercreate : NewCharacter, NewSkill, NewSpell, maxEnchantmentSlot;
 import dmangos.world.database : AuraRecord, TicketRecord, BattlegroundData, PvpStatsBattleground, PvpStatsPlayer, HonorColumns, HonorPointRecord, HonorRecord, CooldownRecord, PetRecord, PetSpellRecord, GuildEventRecord, GuildMemberRecord, GuildRankRecord, GuildRecord,
     PetitionRecord, SocialRow, CorpseRecord, InstanceBindRecord, InstanceRecord, InstanceRecords,
-    InstanceRespawnRecord, MailRecord, ServiceCheckpoint;
+    InstanceRespawnRecord, MailRecord, ServiceCheckpoint, GroupLootRotation, LootCoinCredit, LootCoinRedemption;
 import dmangos.world.reputation : ReputationRecord;
 import dmangos.world.auctionhouse : AuctionRecord;
 import dmangos.world.quests : QuestState, QuestStatus;
@@ -1629,12 +1629,131 @@ final class CharacterStatements
         return groups;
     }
 
+    private bool groupLootTurnsReady;
+
+    private void prepareGroupLootTurns()
+    {
+        if (groupLootTurnsReady)
+            return;
+        characters.execute!("CREATE TABLE IF NOT EXISTS dmangos_group_loot_turn ("
+            ~ "id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT, group_id INT UNSIGNED NOT NULL, "
+            ~ "node SMALLINT UNSIGNED NOT NULL, drop_token BIGINT UNSIGNED NOT NULL, assigned BIGINT UNSIGNED NOT NULL, "
+            ~ "next_looter BIGINT UNSIGNED NOT NULL, member_order VARCHAR(448) NOT NULL, recorded_at BIGINT NOT NULL, PRIMARY KEY (id), "
+            ~ "UNIQUE KEY drop_identity (group_id, node, drop_token), KEY group_order (group_id, id), "
+            ~ "KEY group_expiry (group_id, recorded_at)) ENGINE=InnoDB")();
+        groupLootTurnsReady = true;
+    }
+
+    GroupLootRotation loadGroupLootRotation(uint group, ushort node, ulong drop)
+    {
+        import dmangos.plaindata : decode;
+        import std.base64 : Base64;
+
+        prepareGroupLootTurns();
+        foreach (row; characters.query!("SELECT next_looter, assigned FROM dmangos_group_loot_turn "
+            ~ "WHERE group_id = ? AND node = ? AND drop_token = ?")(group, node, drop))
+            return GroupLootRotation(row.get!ulong(0), row.get!ulong(1));
+        foreach (row; characters.query!("SELECT next_looter, member_order FROM dmangos_group_loot_turn WHERE group_id = ? "
+            ~ "ORDER BY id DESC LIMIT 1")(group))
+        {
+            const(ubyte)[] bytes = Base64.decode(row.get!string(1));
+            ulong[] order;
+            decode(bytes, order);
+            return GroupLootRotation(row.get!ulong(0), 0, order);
+        }
+        return GroupLootRotation.init;
+    }
+
+    bool recordGroupLootRotation(uint group, ushort node, ulong drop, const ref GroupLootRotation turn, long now)
+    {
+        import dmangos.plaindata : encode;
+        import std.base64 : Base64;
+
+        prepareGroupLootTurns();
+        ubyte[] bytes;
+        encode(bytes, turn.order);
+        const order = Base64.encode(bytes).idup;
+        bool saved;
+        characters.transaction({
+            saved = characters.execute!("INSERT IGNORE INTO dmangos_group_loot_turn "
+                ~ "(group_id, node, drop_token, assigned, next_looter, member_order, recorded_at) "
+                ~ "SELECT groupId, ?, ?, ?, ?, ?, ? FROM `groups` WHERE groupId = ?")(
+                    node, drop, turn.assigned, turn.nextLooter, order, now, group) == 1;
+            if (saved)
+                characters.execute!("DELETE FROM dmangos_group_loot_turn WHERE group_id = ? AND recorded_at < ?")(
+                    group, now - 120);
+        });
+        return saved;
+    }
+
+    private bool lootCoinsReady;
+
+    private void prepareLootCoins()
+    {
+        if (lootCoinsReady)
+            return;
+        characters.execute!("CREATE TABLE IF NOT EXISTS dmangos_loot_coin ("
+            ~ "issuer SMALLINT UNSIGNED NOT NULL, token BIGINT UNSIGNED NOT NULL, player INT UNSIGNED NOT NULL, "
+            ~ "copper INT UNSIGNED NOT NULL, paid_at BIGINT NOT NULL DEFAULT 0, PRIMARY KEY (issuer, token, player), "
+            ~ "KEY pending_player (player, paid_at), KEY paid_at (paid_at, player)) ENGINE=InnoDB")();
+        lootCoinsReady = true;
+    }
+
+    bool saveLootCoinSplit(ushort issuer, ulong token, const(LootCoinCredit)[] shares)
+    {
+        if (!issuer || !token || !shares.length)
+            return false;
+        prepareLootCoins();
+        characters.transaction({
+            foreach (ref share; shares)
+                if (share.copper)
+                    characters.execute!("INSERT IGNORE INTO dmangos_loot_coin (issuer, token, player, copper) "
+                        ~ "SELECT ?, ?, guid, ? FROM characters WHERE guid = ? AND account <> 0")(
+                            issuer, token, share.copper, share.player);
+        });
+        return true;
+    }
+
+    uint[] pendingLootCoinPlayers()
+    {
+        prepareLootCoins();
+        return characters.query!"SELECT DISTINCT player FROM dmangos_loot_coin WHERE paid_at = 0"()
+            .map!(row => row.get!uint(0)).array;
+    }
+
+    LootCoinRedemption redeemLootCoins(uint player, long now)
+    {
+        import dmangos.world.money : Copper;
+
+        prepareLootCoins();
+        LootCoinRedemption result;
+        characters.transaction({
+            const wallet = characters.query!"SELECT money FROM characters WHERE guid = ? AND account <> 0 FOR UPDATE"(player);
+            if (!wallet.length)
+                return;
+            Copper coins;
+            foreach (row; characters.query!("SELECT copper FROM dmangos_loot_coin WHERE player = ? "
+                ~ "AND paid_at = 0 FOR UPDATE")(player))
+                coins = coins + Copper(row.get!uint(0));
+            const money = (Copper(wallet[0].get!uint(0)) + coins).amount;
+            if (coins)
+            {
+                characters.execute!"UPDATE characters SET money = ? WHERE guid = ?"(money, player);
+                characters.execute!"UPDATE dmangos_loot_coin SET paid_at = ? WHERE player = ? AND paid_at = 0"(now, player);
+            }
+            result = LootCoinRedemption(true, money, coins.amount);
+        });
+        return result;
+    }
+
     /// Saves a new group with its members.
     void createGroup(const ref GroupRecord g)
     {
+        prepareGroupLootTurns();
         characters.transaction({
             characters.execute!"DELETE FROM `groups` WHERE groupId = ?"(g.id);
             characters.execute!"DELETE FROM group_member WHERE groupId = ?"(g.id);
+            characters.execute!"DELETE FROM dmangos_group_loot_turn WHERE group_id = ?"(g.id);
             characters.execute!("INSERT INTO `groups` (groupId, leaderGuid, mainTank, mainAssistant, lootMethod, "
                 ~ "looterGuid, lootThreshold, icon1, icon2, icon3, icon4, icon5, icon6, icon7, icon8, isRaid) "
                 ~ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")(g.id, g.leader, g.mainTank,
@@ -1654,9 +1773,11 @@ final class CharacterStatements
     /// Deletes a disbanded group and its members.
     void deleteGroup(uint groupId)
     {
+        prepareGroupLootTurns();
         characters.transaction({
             characters.execute!"DELETE FROM `groups` WHERE groupId = ?"(groupId);
             characters.execute!"DELETE FROM group_member WHERE groupId = ?"(groupId);
+            characters.execute!"DELETE FROM dmangos_group_loot_turn WHERE group_id = ?"(groupId);
         });
     }
 
@@ -1737,10 +1858,12 @@ final class CharacterStatements
         }
 
         returnMail(guid, accountId, options, nextMailId);
+        prepareLootCoins();
         const pets = characters.query!"SELECT id FROM character_pet WHERE owner = ?"(guid)
             .map!(row => row.get!uint(0)).array;
 
         characters.transaction({
+            characters.execute!"DELETE FROM dmangos_loot_coin WHERE player = ?"(guid);
             foreach (pet; pets)
             {
                 characters.execute!"DELETE FROM character_pet WHERE id = ?"(pet);
@@ -1832,13 +1955,7 @@ final class CharacterStatements
             .map!(row => row.get!uint(0)).array;
 
         if (members.length <= 2)
-        {
-            characters.transaction({
-                characters.execute!"DELETE FROM `groups` WHERE groupId = ?"(groupId);
-                characters.execute!"DELETE FROM group_member WHERE groupId = ?"(groupId);
-            });
-            return;
-        }
+            return deleteGroup(groupId);
 
         characters.execute!"DELETE FROM group_member WHERE memberGuid = ?"(guid);
         const leader = characters.query!"SELECT leaderGuid FROM `groups` WHERE groupId = ?"(groupId);

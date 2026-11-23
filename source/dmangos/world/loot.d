@@ -373,6 +373,21 @@ enum LootStatus : uint
 }
 
 /// See the module documentation.
+struct CoinRecipient
+{
+    ulong guid;
+    ushort node;
+    uint copper;
+}
+
+/// A split waiting for its durable write. Retries keep the original token and copper amounts.
+struct CoinPayout
+{
+    ushort issuer;
+    ulong token;
+    @LengthPrefix!ubyte CoinRecipient[] recipients;
+}
+
 final class Loot
 {
     immutable ulong target;      /// the corpse
@@ -405,7 +420,11 @@ final class Loot
     ushort delegate(ulong) remoteMemberNode; /// current simulation of an initially eligible remote member
     void delegate(ushort, ulong, Opcode, const(ubyte)[]) tellRemoteRoller;
     ushort delegate(ulong) coinNode; /// where a remote member can receive a share now
-    bool delegate(ushort, ulong, uint) payRemoteCoins;
+    ushort coinIssuer;
+    ulong delegate() nextCoinPayout;
+    bool delegate(const ref CoinPayout) saveCoinPayout;
+    void delegate(const ref CoinPayout) notifyCoinRecipients;
+    private CoinPayout pendingCoins;
     private bool checked;        // the rolls are started
 
     /// The players by guid, for packets and items.
@@ -498,7 +517,8 @@ final class Loot
         @LengthPrefix!ubyte HandoffRoll[] rolls;
     }
 
-    package void saveHandoff(ref ByteWriter writer, const LootItem claimed = null, ulong looter = 0) const
+    package void saveHandoff(ref ByteWriter writer, const LootItem claimed = null, ulong looter = 0,
+        bool withCoinPayout = false) const
     {
         import std.algorithm.mutation : remove;
         import dmangos.serialization : serialize;
@@ -536,9 +556,11 @@ final class Loot
             state.rolls ~= saved;
         }
         serialize(writer, state);
+        if (withCoinPayout)
+            serialize(writer, pendingCoins);
     }
 
-    package static Loot loadHandoff(ulong target, ref ByteReader reader)
+    package static Loot loadHandoff(ulong target, ref ByteReader reader, bool withCoinPayout = false)
     {
         import dmangos.serialization : deserialize;
 
@@ -546,6 +568,8 @@ final class Loot
         if (state.items.length > maxLootItems || state.rolls.length > maxLootItems)
             throw new PacketException("too many loot items in a handoff");
         auto result = new Loot(target, null);
+        if (withCoinPayout)
+            result.pendingCoins = deserialize!CoinPayout(reader);
         result.clientType = state.clientType;
         result.gold = state.gold;
         result.rule = state.rule;
@@ -1234,55 +1258,35 @@ final class Loot
      */
     void sendGold(Looter looter)
     {
-        import std.algorithm.sorting : sort;
-
         if (gold == 0 || looter.looterGuid !in owners)
             return;
+        const grouped = rule != LootRule.notGroup || coinNode !is null;
+        auto recipients = pendingCoins.token ? pendingCoins.recipients : grouped ? divideGold(looter) : null;
+        if (!pendingCoins.token && saveCoinPayout !is null)
+        {
+            import std.algorithm.searching : any;
+
+            if (recipients.any!(recipient => recipient.node != 0))
+                pendingCoins = CoinPayout(coinIssuer, nextCoinPayout(), recipients);
+        }
+        if (pendingCoins.token && (saveCoinPayout is null || !saveCoinPayout(pendingCoins)))
+            return; // the loot keeps its exact payout for the next attempt, including after a handoff
         const copper = gold;
-        gold = 0; // consume the drop before calling either local or remote recipients
+        gold = 0;
         foreach (guid; looking.keys)
             if (auto other = find(guid))
                 other.deliver(Opcode.SMSG_LOOT_CLEAR_MONEY, null);
-        if (rule != LootRule.notGroup || coinNode !is null)
+        if (pendingCoins.token)
         {
-            const self = looter.looterGuid;
-            struct Recipient
-            {
-                ulong guid;
-                Looter local;
-                ushort node;
-            }
-            Recipient[] recipients = [Recipient(self, looter)];
-            auto eligible = owners.keys;
-            if (coinNode !is null)
-                foreach (guid, _; remoteMembers)
-                    if (guid !in owners)
-                        eligible ~= guid;
-            foreach (guid; eligible)
-                if (guid != self)
-                {
-                    if (auto local = find(guid))
-                        recipients ~= Recipient(guid, local);
-                    else if (coinNode !is null)
-                        if (const node = coinNode(guid))
-                            recipients ~= Recipient(guid, null, node);
-                }
-            recipients[1 .. $].sort!((a, b) => a.guid < b.guid);
-            const base = cast(uint)(copper / recipients.length);
-            const extra = copper % recipients.length;
-            uint looterShare = base + uint(extra != 0);
-            foreach (i, ref recipient; recipients[1 .. $])
-            {
-                const share = base + uint(i + 1 < extra);
-                if (recipient.local !is null)
-                    grantLootCoinShare(recipient.local, share);
-                else if (share && !payRemoteCoins(recipient.node, recipient.guid, share))
-                {
-                    // Nothing was queued on that link. The looter gets the undeliverable share.
-                    looterShare += share;
-                }
-            }
-            grantLootCoinShare(looter, looterShare);
+            if (notifyCoinRecipients !is null)
+                notifyCoinRecipients(pendingCoins);
+            pendingCoins = CoinPayout.init;
+        }
+        else if (grouped)
+        {
+            foreach (ref recipient; recipients)
+                if (auto local = recipient.guid == looter.looterGuid ? looter : find(recipient.guid))
+                    grantLootCoinShare(local, recipient.copper);
         }
         else
             looter.receiveMoney(copper);
@@ -1290,6 +1294,33 @@ final class Loot
             release(looter);
         else if (changed !is null)
             changed();
+    }
+
+    private CoinRecipient[] divideGold(Looter looter)
+    {
+        import std.algorithm.sorting : sort;
+
+        const self = looter.looterGuid;
+        CoinRecipient[] recipients = [CoinRecipient(self)];
+        auto eligible = owners.keys;
+        if (coinNode !is null)
+            foreach (guid, _; remoteMembers)
+                if (guid !in owners)
+                    eligible ~= guid;
+        foreach (guid; eligible)
+            if (guid != self)
+            {
+                if (find(guid) !is null)
+                    recipients ~= CoinRecipient(guid);
+                else if (coinNode !is null)
+                    if (const node = coinNode(guid))
+                        recipients ~= CoinRecipient(guid, node);
+            }
+        recipients[1 .. $].sort!((a, b) => a.guid < b.guid);
+        const base = cast(uint)(gold / recipients.length), extra = gold % recipients.length;
+        foreach (i, ref recipient; recipients)
+            recipient.copper = base + uint(i < extra);
+        return recipients;
     }
 
     /// `looter` releases a corpse's loot: the window closes; the current looter lets its items go to the others.
@@ -1736,6 +1767,11 @@ void grantLootCoinShare(Looter looter, uint copper)
 {
     if (copper)
         looter.receiveMoney(copper);
+    tellLootCoinShare(looter, copper);
+}
+
+package void tellLootCoinShare(Looter looter, uint copper)
+{
     ByteWriter w;
     w.put(copper);
     looter.deliver(Opcode.SMSG_LOOT_MONEY_NOTIFY, w.data);
@@ -1744,6 +1780,39 @@ void grantLootCoinShare(Looter looter, uint copper)
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+/// An unconfirmed split keeps the same payout token and shares when the corpse moves.
+unittest
+{
+    auto looter = new TestLooter(7);
+    auto loot = new Loot(50, (ulong guid) => guid == 7 ? looter : null);
+    loot.rule = LootRule.groupLoot;
+    loot.owners[7] = true;
+    loot.remoteMembers[8] = 2;
+    loot.gold = 11;
+    loot.coinIssuer = 1;
+    loot.coinNode = (ulong guid) => guid == 8 ? ushort(2) : ushort(0);
+    loot.nextCoinPayout = () => 42UL;
+    loot.saveCoinPayout = (const ref CoinPayout plan) => false;
+    loot.sendGold(looter);
+    assert(loot.gold == 11 && looter.money == 0);
+
+    ByteWriter writer;
+    loot.saveHandoff(writer, null, 0, true);
+    auto reader = ByteReader(writer.data);
+    auto moved = Loot.loadHandoff(loot.target, reader, true);
+    assert(reader.empty);
+    moved.find = loot.find;
+    moved.saveCoinPayout = (const ref CoinPayout plan) {
+        assert(plan.issuer == 1 && plan.token == 42 && plan.recipients == [CoinRecipient(7, 0, 6), CoinRecipient(8, 2, 5)]);
+        return true;
+    };
+    uint notifications;
+    moved.notifyCoinRecipients = (const ref CoinPayout) { ++notifications; };
+    moved.sendGold(looter);
+    moved.sendGold(looter);
+    assert(!moved.gold && notifications == 1 && !looter.money);
+}
 
 version (unittest)
 {

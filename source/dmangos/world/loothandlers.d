@@ -20,6 +20,11 @@ import dmangos.world.opcodes : Opcode;
 package void bindLootDelivery(WorldContext context, Map map, Loot loot, bool rolls, bool master)
 {
     import dmangos.cluster.protocol : LootCoinShare;
+    import dmangos.log : warning;
+    import dmangos.mysql : DatabaseException;
+    import dmangos.world.database : LootCoinCredit;
+    import dmangos.world.loot : CoinPayout;
+    import dmangos.world.objects : lowGuid;
     import dmangos.world.replication : Replica;
     import dmangos.world.updatefields : TypeId;
 
@@ -42,7 +47,7 @@ package void bindLootDelivery(WorldContext context, Map map, Loot loot, bool rol
                 context.deliverRemote(node, guid, cast(ushort) opcode, body_);
             };
     }
-    if (context.sendRemoteLootCoins !is null && context.canSendLootCoins !is null)
+    if (!map.instanceId && context.nodeId && context.sendRemoteLootCoins !is null && context.canSendLootCoins !is null)
     {
         loot.coinNode = (ulong guid) {
             if (auto remote = cast(Replica) map.findObject(guid))
@@ -51,9 +56,35 @@ package void bindLootDelivery(WorldContext context, Map map, Loot loot, bool rol
                     return remote.owner;
             return ushort(0);
         };
-        loot.payRemoteCoins = (ushort node, ulong guid, uint copper) {
-            const message = LootCoinShare(context.nextGameplaySequence(), guid, map.id, copper);
-            return context.sendRemoteLootCoins(node, message);
+        loot.coinIssuer = context.nodeId;
+        loot.nextCoinPayout = &context.nextGameplaySequence;
+        loot.saveCoinPayout = (const ref CoinPayout payout) {
+            LootCoinCredit[] shares;
+            foreach (ref recipient; payout.recipients)
+                if (recipient.copper && context.playerGuid(lowGuid(recipient.guid)) == recipient.guid)
+                    shares ~= LootCoinCredit(lowGuid(recipient.guid), recipient.copper);
+            try
+            {
+                return context.database.saveLootCoinSplit(payout.issuer, payout.token, shares);
+            }
+            catch (DatabaseException error)
+            {
+                warning!"group coin split %s could not be saved yet: %s"(payout.token, error.msg);
+                return false;
+            }
+        };
+        loot.notifyCoinRecipients = (const ref CoinPayout payout) {
+            foreach (ref recipient; payout.recipients)
+                if (recipient.copper)
+                {
+                    if (context.onlinePlayer(recipient.guid) !is null)
+                        context.redeemLootCoinShare(lowGuid(recipient.guid));
+                    else if (recipient.node)
+                    {
+                        const message = LootCoinShare(payout.token, recipient.guid, map.id, recipient.copper);
+                        context.sendRemoteLootCoins(recipient.node, message);
+                    }
+                }
         };
     }
 }
@@ -968,7 +999,9 @@ private:
             {
                 loot.remoteTurns = loot.remoteMembers.length != 0;
                 loot.waitForTurn(tapper);
-                context.services.call!(LootTurnHost.take)(LootTurnRequest(group.id, tapper, eligible),
+                auto request = LootTurnRequest(group.id, tapper, eligible, context.nodeId,
+                    context.nextGameplaySequence(), context.unixTime);
+                context.services.call!(LootTurnHost.take)(request,
                     (LootTurnReply turn) { loot.finishTurn(turn.looter); });
                 return;
             }
@@ -2139,9 +2172,9 @@ unittest
         corpseNode.sendRemoteLootCoins = (ushort node, const ref LootCoinShare message) {
             assert(node == 2 && message.player == 8 && message.copper == 5);
             ++sent;
+            paid = message;
             if (delivery == Delivery.refused)
                 return false;
-            paid = message;
             memberNode.lootCoinShareArrived(1, message);
             memberNode.lootCoinShareArrived(1, message);
             return true;
@@ -2159,11 +2192,27 @@ unittest
         anduin.write(Opcode.CMSG_LOOT_MONEY, null);
         anduin.write(Opcode.CMSG_LOOT_MONEY, null); // retrying the client request changes nothing
         assert(sent == (delivery == Delivery.offline ? 0 : 1));
-        assert(anduin.session.character.money == before + Copper(delivery == Delivery.accepted ? 6 : 11));
+        assert(anduin.session.character.money == before + Copper(delivery == Delivery.offline ? 11 : 6));
         assert(jaina.session.character.money == otherBefore + Copper(delivery == Delivery.accepted ? 5 : 0));
         assert(varian.session.character.money == farBefore);
         assert(db.moneySaves[7][0] == anduin.session.character.money.amount);
-        if (delivery == Delivery.accepted)
+        if (delivery == Delivery.refused)
+        {
+            assert(db.pendingLootCoinPlayers() == [8u], "a lost notification keeps the remote share in the database");
+            jaina.session.clientGone();
+            auto replacement = newCreationContext(db);
+            replacement.nodeId = 3;
+            replacement.clock = () => now;
+            replacement.sendRemoteLootCoins = (ushort, const ref LootCoinShare) => false;
+            jaina = loggedIn(replacement, db, 8, "Jaina", Position(-8945, -132, 83.5f));
+            jaina.read();
+            now += 1.seconds;
+            replacement.update(now);
+            assert(jaina.session.character.money == otherBefore + Copper(5));
+            assert(!db.pendingLootCoinPlayers().length);
+            memberNode = replacement;
+        }
+        if (delivery != Delivery.offline)
         {
             assert(db.moneySaves[8][0] == jaina.session.character.money.amount);
             auto packets = jaina.read();
