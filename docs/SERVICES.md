@@ -169,8 +169,9 @@ channel (a GM permission). Checks that belong to the player's
 node (names, the GM client channel) are made there before the call.
 
 What a channel says to a member goes to the member's node: the one presence says simulates it
-(docs/CLUSTER.md), or failing that the node its last command came from. A lost node's players leave
-their channels as if they had logged out. A planned move preserves members, ownership, bans, and
+(docs/CLUSTER.md), or failing that the node its last command came from. When a node is lost,
+members whose sessions moved to another node stay in their channels. Members whose sessions ended
+leave as if they had logged out. A planned move preserves members, ownership, bans, and
 channel settings. Clients already in a channel can keep talking without rejoining. Losing the service
 host before it can hand off still empties its channels.
 

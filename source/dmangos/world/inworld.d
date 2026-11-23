@@ -14,6 +14,7 @@ module dmangos.world.inworld;
 
     import dmangos.world.movement : baseMoveSpeed, MovementFlags, MovementInfo, MoveType, movingOrTurning, Position;
     import dmangos.world.creature : Creature;
+import dmangos.world.spellcast : SpellTargets;
 /// What a player moving to another node does on arrival (`performArrivalAction`).
 struct ArrivalAction
 {
@@ -28,6 +29,8 @@ struct ArrivalAction
     Position teleportTo;         /// ... to here ...
     uint teleportInstance = uint.max; /// ... into this copy (uint.max: the player's own), its checks passed
     ulong tradeTarget; /// a player to ask to trade
+    ulong useItem; /// the character's exact inventory item used at another node's target
+    SpellTargets itemTargets;
 }
 
 mixin template InWorldHandlers()
@@ -219,6 +222,8 @@ private:
                     t.gameObject = action.castObject;
                     castSpell(spell, t, false, 0);
                 }
+        if (action.useItem)
+            useInventoryItem(player.inventory.byGuid(action.useItem), action.itemTargets, false);
     }
 
     bool hasPendingPlayerSpell()
@@ -315,6 +320,16 @@ private:
         w.put(action.teleportTo.orientation);
         w.put(action.teleportInstance);
         w.put(action.tradeTarget);
+        w.put(action.useItem);
+        if (action.useItem)
+        {
+            import dmangos.plaindata : encode;
+
+            ubyte[] targets;
+            encode(targets, action.itemTargets);
+            w.put(cast(uint) targets.length);
+            w.putBytes(targets);
+        }
         // The dungeon copy it is in, and where it came into it from (`.instance exit`).
         w.put(instanceId_);
         w.put(entryMap);
@@ -420,6 +435,14 @@ private:
         action.teleportTo = Position(r.read!float, r.read!float, r.read!float, r.read!float);
         action.teleportInstance = r.read!uint;
         action.tradeTarget = r.read!ulong;
+        action.useItem = r.read!ulong;
+        if (action.useItem)
+        {
+            import dmangos.plaindata : decode;
+
+            auto targets = r.readBytes(r.read!uint);
+            decode(targets, action.itemTargets);
+        }
         instanceId_ = r.read!uint;
         entryMap = r.read!uint;
         entryPoint = Position(r.read!float, r.read!float, r.read!float, r.read!float);

@@ -542,6 +542,9 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   The creature holds the cast timer, mana and spell-list cooldown. The target's node
   rechecks eligibility and the spell's geometry. An interrupt before completion cancels
   the cast.
+* **Targeted item use.** When an item targets a nearby creature or game object on another node,
+  the player's handoff carries the item GUID and cast targets. The new owner runs the item script
+  and consumes charges through the usual cast path.
 * **Named creature targets.** A player or creature can select the nearest living creature, targets in a cone,
   or an area around the caster or destination using `spell_script_target` entries, including replicas.
   An area's target cap is shared across nodes. Each target's node checks its entry and position again,

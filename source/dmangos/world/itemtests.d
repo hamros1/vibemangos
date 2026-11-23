@@ -238,6 +238,66 @@ private ubyte[] useItem(ubyte bag, ubyte slot)
     return w.data.dup;
 }
 
+/// An item used on a creature across a node boundary casts once and spends one charge there.
+unittest
+{
+    import dmangos.world.creature : TempSpawnType;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.replication : encodeState;
+    import dmangos.world.spellids : ImplicitTarget, SpellEffect;
+
+    auto db = newDatabase();
+    auto source = newCreationContext(db), destination = newCreationContext(db);
+    auto relay = new TestPlayerRelay(source, destination);
+    enum uint heal = 97603;
+    foreach (node; [source, destination])
+    {
+        auto mend = testSpell(heal, SpellEffect.heal, ImplicitTarget.friend, 25);
+        mend.casting.dmgClass = DamageClass.none;
+        node.data.spells.spells[heal] = mend;
+        with (*node.data.items.edit(itemJerky))
+        {
+            stackable = 1;
+            spellCharges[0] = 2;
+            details.spells[0].id = heal;
+            details.spells[0].trigger = 0;
+        }
+    }
+    const at = Position(-8950, -132, 83.53f);
+    auto client = loggedIn(source, db, 7, "Anduin", at);
+    client.session.inWorld.storeLoot(itemJerky, 1, 0, false);
+    auto player = cast(Player) client.session.character;
+    auto item = player.inventory[inventorySlotBag0, backpackSlotOf(player, itemJerky)];
+    const guid = item.fullGuid;
+    db.loadable[7].items = [db.itemRows[item.guid]]; // the fixture records inventory writes separately from login data
+    auto target = destination.summonCreature(destination.map(0), creatureInnkeeper, Position(at.x + 2, at.y, at.z),
+        TempSpawnType.manual, 0, 0);
+    target.values.set!UNIT_FIELD_MAXHEALTH(100u);
+    target.values.set!UNIT_FIELD_HEALTH(20u);
+    source.map(0).replicaCreated(2, cellKeyAt(at.x + 2, at.y), target.guid, encodeState(target, 0));
+    ByteWriter packet;
+    packet.put(item.bagSlot);
+    packet.put(item.slot);
+    packet.put(ubyte(1));
+    SpellTargets(TargetFlags.unit, target.guid).write(packet);
+    client.write(Opcode.CMSG_USE_ITEM, packet.data);
+    assert(relay.remote !is null && target.values.get!UNIT_FIELD_HEALTH == 20);
+    assert(cast(int) item.values.get!ITEM_FIELD_SPELL_CHARGES(0) == 2);
+    relay.remote.update(50.msecs);
+    const healed = target.values.get!UNIT_FIELD_HEALTH;
+    auto moved = (cast(Player) relay.remote.character).inventory.byGuid(guid);
+    assert(moved !is null, "the item should arrive in the character's inventory");
+    uint extra;
+    const packets = client.read();
+    const result = castReason(packets, extra);
+    import std.format : format;
+    assert(healed > 20 && cast(int) moved.values.get!ITEM_FIELD_SPELL_CHARGES(0) == 1,
+        format!"health %s, charges %s, cast %s, packets %s"(healed,
+            moved.values.get!ITEM_FIELD_SPELL_CHARGES(0), result, opcodesOf(packets)));
+    relay.remote.update(50.msecs);
+    assert(target.values.get!UNIT_FIELD_HEALTH == healed && cast(int) moved.values.get!ITEM_FIELD_SPELL_CHARGES(0) == 1);
+}
+
 /**
  * Item charges: one with two positive charges is used twice, then stays with none (`NO_CHARGES_REMAIN`); one
  * with a negative charge is used up a use at a time. Using an item that binds on use binds it.

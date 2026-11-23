@@ -217,8 +217,16 @@ final class ChannelService : MemberDirectory
     {
         Member[] gone;
         foreach (m; members)
-            if (m.node == node && context.onlinePlayer(m.guid) is null)
+        {
+            if (m.node != node)
+                continue;
+            if (context.onlinePlayer(m.guid) !is null)
+                m.node = context.nodeId;
+            else if (auto moved = context.remotePlayer(m.guid))
+                m.node = moved.node;
+            else
                 gone ~= m;
+        }
         foreach (m; gone)
         {
             channels.forTeam(context.client.teamForRace(m.race)).leaveAll(m);
@@ -376,9 +384,14 @@ unittest
     service.run(channelCommand(anduin.session.inWorld, ChannelOp.moderator, "Club", "jaina"), 1);
     assert(service.channels.alliance.find("Club", null).flagsOf(0x40) & MemberFlags.moderator);
 
-    // Node 2 is lost: Jaina leaves the channel, which Anduin is told.
+    // The player's former node is lost after she handed off. Her channel membership survives.
+    context.presence(3, true, [PresenceEntry(0x40, "Jaina", 9, 1, 8, 10, 1, 12, 0, 0, "")], null);
     anduin.read();
-    service.nodeLost(2);
+    context.presenceLost(2);
+    assert(service.channels.alliance.find("Club", null).isOn(0x40) && !anduin.read().length);
+
+    // The current node is lost: Jaina leaves the channel, which Anduin is told.
+    context.presenceLost(3);
     assert(!service.channels.alliance.find("Club", null).isOn(0x40));
     assert(anduin.read()[0].body_[0] == ChatNotify.left);
 

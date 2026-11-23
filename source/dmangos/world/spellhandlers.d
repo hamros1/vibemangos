@@ -34,6 +34,7 @@ mixin template SpellHandlers()
         parryChance, weaponDamage;
     import dmangos.world.auras : AuraInterrupt;
     import dmangos.world.inworld : ArrivalAction;
+    import dmangos.world.inventory : Item;
     import dmangos.world.creature : Creature;
     import dmangos.world.unit : UnitKind, UnitRef;
     import dmangos.world.gameobject : GameObject;
@@ -287,36 +288,66 @@ private:
         const bag = reader.read!ubyte, slot = reader.read!ubyte;
         reader.read!ubyte; // spell count
         auto targets = SpellTargets.read(reader);
-        const item = player.inventory[bag, slot];
+        useInventoryItem(player.inventory[bag, slot], targets, true);
+    }
+
+    private void useInventoryItem(Item item, const ref SpellTargets targets, bool handoff)
+    {
+        if (npcCharmer)
+            return;
         if (item is null)
             return sendEquipError(InventoryResult.itemNotFound);
         const proto = item.proto;
         if (proto.requiredLevel > player.data.level)
             return sendEquipError(InventoryResult.cantEquipLevel, item);
-        if (const error = useItemError(player.inventory[bag, slot]))
+        if (const error = useItemError(item))
             return sendEquipError(error);
-        bindOnUse(player.inventory[bag, slot]);
         enum uint triggerOnUse = 0;
+        const(SpellInfo)* spell;
         foreach (ref use; proto.details.spells)
+            if (use.id && use.trigger == triggerOnUse)
+                if ((spell = context.data.spells.spell(use.id)) !is null)
+                    break;
+
+        if (spell !is null && handoff && hasChargesLeft(item))
         {
-            if (use.id == 0 || use.trigger != triggerOnUse)
-                continue;
-            const spell = context.data.spells.spell(use.id);
-            if (spell is null)
-                continue;
-            // Open-world round 2: the item's script may refuse the use.
-            if (itemScript(proto.entry, targets.unit ? targets.unit : targets.gameObject))
-            {
-                deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, SpellCastResult.dontReport, spell));
-                return;
-            }
-            if (!hasChargesLeft(item))
-                return deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, SpellCastResult.noChargesRemain, spell));
-            usingItemGuid = item.fullGuid; // its charges are taken when the cast goes
-            castSpell(spell, targets, false, proto.entry);
-            usingItemGuid = 0;
-            break;
+            const target = explicitItemTarget(*spell, targets);
+            if (auto replica = cast(Replica) map.findObject(target))
+                if (replica.fieldsOf.type != TypeId.player || (!inCombat && !flying && isPlayerHandoffSpell(*spell)
+                    && checkCast(spell, targets, false, proto.entry, true, replica, true) == SpellCastResult.ok))
+                    if (actAtReplica(target, ArrivalAction(useItem: item.fullGuid, itemTargets: targets)))
+                        return;
         }
+        bindOnUse(item);
+        if (spell is null)
+            return;
+        // Resolve the item's script once, where its target is authoritative.
+        if (itemScript(proto.entry, targets.unit ? targets.unit : targets.gameObject))
+            return deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, SpellCastResult.dontReport, spell));
+        if (!hasChargesLeft(item))
+            return deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, SpellCastResult.noChargesRemain, spell));
+        usingItemGuid = item.fullGuid; // its charges are taken when the cast goes
+        scope (exit) usingItemGuid = 0;
+        castSpell(spell, targets, false, proto.entry);
+    }
+
+    private static ulong explicitItemTarget(const ref SpellInfo spell, const ref SpellTargets targets)
+    {
+        import std.algorithm.comparison : among;
+
+        if (targets.mask & (TargetFlags.sourceLocation | TargetFlags.destLocation))
+            return 0;
+        foreach (i, effect; spell.effect)
+            if (effect != SpellEffect.none)
+            {
+                const shape = spell.implicitTargetA[i];
+                if (targets.unit && shape.among(ImplicitTarget.unit, ImplicitTarget.enemy, ImplicitTarget.friend,
+                    ImplicitTarget.unitRaid, ImplicitTarget.unitFriendChainHeal))
+                    return targets.unit;
+                if (targets.gameObject && shape.among(ImplicitTarget.gameObject, ImplicitTarget.gameObjectItem))
+                    return targets.gameObject;
+            }
+        return 0;
     }
 
     // -----------------------------------------------------------------------
