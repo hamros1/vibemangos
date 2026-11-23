@@ -4777,7 +4777,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return w.data;
     }
 
-    package void restoreBattleground(uint mapId, uint id, const(ubyte)[] bytes)
+    package void restoreBattleground(uint mapId, uint id, const(ubyte)[] bytes, bool includesPowerUps)
     {
         import dmangos.world.battlegroundstate : BattlegroundState;
 
@@ -4787,7 +4787,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         auto stored = InstanceState(mapId, 0, unixTime);
         auto state = BattlegroundState(clock(), reader: &r);
         state.transfer(stored.dead, stored.usedUp);
-        auto copy = battlegrounds.restore(id, battlegroundOfMap(mapId), match);
+        auto copy = battlegrounds.restore(id, battlegroundOfMap(mapId), match, includesPowerUps);
         instances[id] = stored;
         restoreDungeonCopy(mapId, id, bundle);
         restoreDungeonScriptRuns(mapId, r);
@@ -4941,7 +4941,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 const spawn = &data.gameObjectSpawns[index];
                 const reward = state is null ? null : spawn.guid in state.chests;
                 if ((spawn.respawnSeconds < 0 && reward is null) || (state !is null && spawn.guid in state.usedUp)
-                    || !gameObjectInEvents(spawn.guid) || !upInPool(PoolMember.Kind.gameObject, spawn.guid))
+                    || !gameObjectInEvents(spawn.guid))
+                    continue;
+                const available = copy !is null && spawn.battlegroundPowerUp ? copy.powerUpAvailable(spawn.guid)
+                    : upInPool(PoolMember.Kind.gameObject, spawn.guid);
+                if (!available)
                     continue;
                 const event = spawn.guid in data.gameObjectBattleEvents;
                 if (copy !is null && !copy.spawnAllowed(event))
@@ -6201,6 +6205,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         indexedGameObjectSpawns = data.gameObjectSpawns.length;
     }
 
+    package const(GameObjectSpawn)* gameObjectSpawnOf(uint guid)
+    {
+        indexSpawns();
+        if (const index = guid in gameObjectSpawnIndex)
+            return &data.gameObjectSpawns[*index];
+        return null;
+    }
+
     /// The coordinator owns the loan lifecycle. A table entry reserves its spawn on every node.
     void delegate(CreatureLoan) sendCreatureLoan;
     Region delegate(uint) creatureLease;
@@ -7011,6 +7023,17 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         const spell = cast(uint) trap.template_.data[3];
         if (spell == 0)
             return;
+        if (trap.spawn.battlegroundPowerUp)
+        {
+            import dmangos.world.character : Character;
+
+            if (auto copy = battlegrounds.find(map.instanceId))
+                if (auto player = cast(Character) who)
+                    if (player.player !is null && data.spells.spell(spell) !is null
+                        && copy.takePowerUp(map, trap, player.player.guid))
+                        player.castTriggeredAt(spell, player.player.guid);
+            return;
+        }
         auto session = trapTarget(trap, who);
         if (session is null)
             return;

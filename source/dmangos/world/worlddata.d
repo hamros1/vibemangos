@@ -1568,6 +1568,21 @@ final class PoolChooser
         return roll(pool, PoolMember.Kind.creature, id, rng, true);
     }
 
+    /// A map copy manages its own selection in single-slot game object pools.
+    package uint singleGameObjectPool(uint id) const
+    {
+        import std.algorithm.searching : all;
+
+        const pool = poolOf.get(PoolMember.Kind.gameObject, null).get(id, 0);
+        return pool && pool !in childPools && limits.get(pool, 1) == 1
+            && members.get(pool, null).all!(m => m.kind == PoolMember.Kind.gameObject) ? pool : 0;
+    }
+
+    package uint rollSingleGameObject(uint pool, uint id, ref Random rng) const
+    {
+        return roll(pool, PoolMember.Kind.gameObject, id, rng, true);
+    }
+
     /**
      * Member `id`'s respawn time is up: its pool rolls again (CMaNGOS's `RollOne` with it as the trigger), among
      * itself and the members of its kind not up. Returns the one that spawns: `id` itself, or another that is up

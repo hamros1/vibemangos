@@ -679,6 +679,8 @@ See the [roadmap](ROADMAP.md) for open work, the [spell audit](SPELLS.md) for sp
     back two minutes later.
   * **Leaving early** gives Deserter (15 minutes without queueing). A side short of players for five
     minutes loses.
+  * **Power-ups:** walk through Speed, Restoration or Berserking in Warsong Gulch or Arathi Basin
+    during the match. The pickup disappears, then its station respawns on the map's timer.
   * **Warsong Gulch:** three flag captures win. **Arathi Basin:** five bases and their resources;
     2000 resources win. **Alterac Valley** (`alterac.d`), as 1.12 had it (reinforcements came with patch 2.3.0): a
     general's death wins, the only way to; graveyards and towers assaulted from their banners and taken (a

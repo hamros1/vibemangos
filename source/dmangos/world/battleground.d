@@ -20,7 +20,7 @@ import dmangos.world.bgqueue;
 import dmangos.world.characterdb : NameInfo;
 import dmangos.world.context : WorldContext;
 import dmangos.world.gameobject : GameObject;
-import dmangos.world.map : MapObject;
+import dmangos.world.map : Map, MapObject;
 import dmangos.world.online : OnlinePlayer;
 import dmangos.world.opcodes : ChatType, Language, Opcode;
 import dmangos.world.packets : ServerNameQueryResponse;
@@ -305,14 +305,23 @@ final class Battleground
         MonoTime nextCheckpoint;
         bool endingPending;
         ubyte pendingWinner;
+        struct PowerUp
+        {
+            uint spawn;
+            MonoTime readyAt;
+        }
+        PowerUp[ulong] powerUps; // standalone placement GUID or pool ID in the high half
     }
 
-    package void transferState(ref imported!"dmangos.world.battlegroundstate".BattlegroundState state)
+    package void transferState(ref imported!"dmangos.world.battlegroundstate".BattlegroundState state,
+        bool includesPowerUps = true)
     {
         state.transfer(made, status, winner, activeEvents, worldStates, weekend, testing, graveyardTeams,
             awaitingResurrection, members, raidLeaderOf, inTeamRaid, startLeft, said, endLeft, emptySince,
             prematureLeft, prematureCounting, lastWarning, joinOrder_, pulses);
         rules.transferState(state);
+        if (includesPowerUps)
+            state.transfer(powerUps);
     }
 
     package void recoveredAfterCrash()
@@ -503,7 +512,10 @@ final class Battleground
         case BattlegroundStatus.inProgress:
             checkPrematureEnd(elapsed);
             if (status == BattlegroundStatus.inProgress)
+            {
+                refreshPowerUps(now);
                 rules.tick(this, elapsed);
+            }
             break;
         case BattlegroundStatus.waitLeave:
             endLeft -= elapsed;
@@ -953,6 +965,64 @@ final class Battleground
         return event is null || activeEvents.get((*event)[0], eventNone) == (*event)[1];
     }
 
+    private ulong powerUpSlot(uint spawn) const
+    {
+        const pool = context.data.pools is null ? 0 : context.data.pools.singleGameObjectPool(spawn);
+        return pool ? cast(ulong) pool << 32 : spawn;
+    }
+
+    package bool powerUpAvailable(uint spawn)
+    {
+        import dmangos.world.worlddata : PoolMember;
+
+        if (const slot = powerUpSlot(spawn) in powerUps)
+            return slot.readyAt == MonoTime.init && slot.spawn == spawn;
+        return context.upInPool(PoolMember.Kind.gameObject, spawn);
+    }
+
+    package bool takePowerUp(Map map, GameObject pickup, ulong member)
+    {
+        if (status != BattlegroundStatus.inProgress || !memberAlive(member) || !context.canWrite()
+            || !powerUpAvailable(pickup.spawn.guid) || map.gameObjectAt(pickup.guid) !is pickup)
+            return false;
+        const delay = pickup.spawn.respawnSeconds > 0 ? pickup.spawn.respawnSeconds : 180;
+        powerUps[powerUpSlot(pickup.spawn.guid)] = PowerUp(pickup.spawn.guid, context.clock() + delay.seconds);
+        checkpointDirty = true;
+        map.removeObject(pickup.guid);
+        return true;
+    }
+
+    private void refreshPowerUps(MonoTime now)
+    {
+        import dmangos.world.grid : cellKeyAt;
+
+        auto map = context.existingMap(mapId, instance);
+        if (map is null)
+            return;
+        foreach (key, ref slot; powerUps)
+        {
+            if (slot.readyAt == MonoTime.init || now < slot.readyAt)
+                continue;
+            const pool = cast(uint)(key >> 32);
+            const next = pool && context.data.pools !is null
+                ? context.data.pools.rollSingleGameObject(pool, slot.spawn, map.random) : slot.spawn;
+            const candidate = context.gameObjectSpawnOf(next);
+            if (candidate !is null && candidate.map == mapId && candidate.battlegroundPowerUp)
+                slot.spawn = next;
+            slot.readyAt = MonoTime.init;
+            checkpointDirty = true;
+            const spawn = context.gameObjectSpawnOf(slot.spawn);
+            if (spawn !is null && context.gameObjectInEvents(spawn.guid)
+                && spawnAllowed(spawn.guid in context.data.gameObjectBattleEvents)
+                && map.cellLoaded(cellKeyAt(spawn.x, spawn.y)))
+            {
+                auto go = context.makeGameObject(*spawn);
+                go.instanceId = instance;
+                map.addObject(go);
+            }
+        }
+    }
+
     /// Whether the doors are open (the battle began).
     @property bool doorsOpen() const
     {
@@ -1299,6 +1369,117 @@ private:
     }
 }
 
+/// The real power-up spells trigger on movement and the Arathi station's cooldown survives a crash.
+unittest
+{
+    import dmangos.world.packets : ClientTeleportAck;
+    import dmangos.world.realspelltests : haveRealData, RealWorld;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+
+    if (!haveRealData())
+        return;
+
+    auto w = RealWorld.make();
+    auto user = w.character(17, "Runner", 1, 60, []);
+    auto me = user.session.inWorld;
+    enum uint warsong = 489, arathi = 529;
+    enum uint[3] entries = [179871, 179904, 179905], spells = [23451, 23493, 23505];
+    uint locate(uint mapId, uint entry)
+    {
+        foreach (ref spawn; w.context.data.gameObjectSpawns)
+            if (spawn.map == mapId && spawn.entry == entry)
+                return spawn.guid;
+        assert(0, "battleground power-up spawn missing");
+    }
+
+    void begin(Battleground copy)
+    {
+        copy.testing = true;
+        me.enterBattleground(BattlegroundEntry(true, copy.instance, 0, copy.type));
+        user.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
+        user.read();
+        assert(me.player.data.map == copy.mapId && me.currentMap.instanceId == copy.instance,
+            "the test player entered the intended match");
+    }
+
+    void near(Battleground copy, Position at)
+    {
+        assert(me.teleportTo(copy.mapId, Position(at.x + 5, at.y, at.z), null, copy.instance, true));
+        user.write(Opcode.MSG_MOVE_TELEPORT_ACK, ClientTeleportAck(me.player.guid, 0, 0));
+        user.read();
+    }
+
+    void step(Position at)
+    {
+        auto movement = me.player.movement;
+        movement.position = at;
+        me.player.movement = movement;
+        me.movedOn(movement, Opcode.MSG_MOVE_HEARTBEAT);
+        user.read();
+    }
+
+    auto gulch = w.context.battlegrounds.open(500, BattlegroundType.warsongGulch);
+    begin(gulch);
+    foreach (i, entry; entries)
+    {
+        const spawn = w.context.gameObjectSpawnOf(locate(warsong, entry));
+        const at = Position(spawn.x, spawn.y, spawn.z);
+        near(gulch, at);
+        const guid = makeGuid(HighGuid.gameObject, entry, spawn.guid);
+        assert(me.currentMap.gameObjectAt(guid) !is null);
+        if (i == 0)
+        {
+            step(at);
+            assert(me.player.auras.find(spells[i]) is null && me.currentMap.gameObjectAt(guid) !is null,
+                "a power-up stays available before the gates open");
+            gulch.start();
+            near(gulch, at);
+        }
+        step(at);
+        assert(me.player.auras.find(spells[i]) !is null && me.currentMap.gameObjectAt(guid) is null);
+        step(at);
+        assert(me.currentMap.gameObjectAt(guid) is null, "a second step cannot collect the same object");
+    }
+
+    gulch.close();
+    user.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
+    user.read();
+    auto basin = w.context.battlegrounds.open(501, BattlegroundType.arathiBasin);
+    begin(basin);
+    basin.start();
+    const spawn = w.context.gameObjectSpawnOf(locate(arathi, entries[0]));
+    const pos = Position(spawn.x, spawn.y, spawn.z);
+    near(basin, pos);
+    GameObject[] pickups(Map map)
+    {
+        GameObject[] found;
+        foreach (object; map.objectsNear(pos, 3))
+            if (auto go = cast(GameObject) object)
+                if (go.spawn.battlegroundPowerUp)
+                    found ~= go;
+        return found;
+    }
+
+    assert(pickups(me.currentMap).length == 1);
+    step(pos);
+    assert(!pickups(me.currentMap).length);
+    w.now += 90.seconds;
+    const bytes = w.context.snapshotBattleground(basin);
+    auto replacement = RealWorld.make();
+    auto clock = w.now + 30.seconds;
+    replacement.context.clock = () => clock;
+    replacement.context.restoreBattleground(arathi, basin.instance, bytes, true);
+    auto recovered = replacement.context.battlegrounds.find(basin.instance);
+    auto map = replacement.context.existingMap(arathi, basin.instance);
+    clock += 89.seconds;
+    recovered.tick(Duration.zero);
+    assert(!pickups(map).length, "no early respawn after recovery");
+    clock += 1.seconds;
+    recovered.tick(Duration.zero);
+    assert(pickups(map).length == 1, "the same station respawns once on its remaining timer");
+}
+
 /// A `mangos_string` with its `%s`, `%u` and `%d` filled in order with `args`.
 string formatServerString(string text, const(string)[] args)
 {
@@ -1330,7 +1511,7 @@ unittest
 final class Battlegrounds
 {
     private enum checkpointInterval = 2.seconds;
-    private enum checkpointFormat = "1:";
+    private enum checkpointFormat = "2:", legacyCheckpointFormat = "1:";
     private enum checkpointLifetime = 120;
 
     private
@@ -1374,13 +1555,13 @@ final class Battlegrounds
     }
 
     /// A region move preserves the live copy without announcing a new match to the queue.
-    package Battleground restore(uint instance, BattlegroundType type, ref ByteReader reader)
+    package Battleground restore(uint instance, BattlegroundType type, ref ByteReader reader, bool includesPowerUps = true)
     {
         import dmangos.world.battlegroundstate : BattlegroundState;
 
         auto restored = new Battleground(context, instance, type, rulesFor(type));
         auto state = BattlegroundState(context.clock(), reader: &reader);
-        restored.transferState(state);
+        restored.transferState(state, includesPowerUps);
         restored.checkpointRetired = restored.status == BattlegroundStatus.waitLeave;
         return copies[instance] = restored;
     }
@@ -1515,14 +1696,16 @@ final class Battlegrounds
                     copy.checkpointRevision = saved.revision;
                     continue;
                 }
-                if (transferred || !saved.state.startsWith(checkpointFormat))
+                const includesPowerUps = saved.state.startsWith(checkpointFormat);
+                if (transferred || (!includesPowerUps && !saved.state.startsWith(legacyCheckpointFormat)))
                     continue;
                 // Claim the row before exposing the match. A late write using the old revision fails.
                 if (!context.database.saveBattlegroundCheckpoint(context.config.realmId, map, saved))
                     return false;
                 try
                 {
-                    context.restoreBattleground(map, saved.instance, Base64.decode(saved.state[checkpointFormat.length .. $]));
+                    context.restoreBattleground(map, saved.instance, Base64.decode(saved.state[checkpointFormat.length .. $]),
+                        includesPowerUps);
                     find(saved.instance).checkpointRevision = saved.revision + 1;
                     info!"battleground: copy %s restored on node %s after loss of its map host"(saved.instance, context.nodeId);
                 }

@@ -114,6 +114,12 @@ struct GameObjectSpawn
     float[4] rotation = 0;
     int respawnSeconds;
 
+    /// The static speed, restoration and berserking pickups in the two battlegrounds.
+    package @property bool battlegroundPowerUp() const
+    {
+        return (map == 489 || map == 529) && (entry == 179871 || entry == 179904 || entry == 179905);
+    }
+
     /// The world rotation, deriving a quaternion from the facing when the spawn has none.
     package @property float[4] worldRotation() const
     {
@@ -440,6 +446,8 @@ final class GameObject : Replicable, Moving, PerViewer
     {
         if (type != GameObjectType.trap)
             return 0;
+        if (instanceId && spawn.battlegroundPowerUp)
+            return 3; // battleground pickups have zero diameter and use a three-yard radius
         return template_.data[0] == 12 ? template_.data[2] : template_.data[2] / 2.0f;
     }
 
