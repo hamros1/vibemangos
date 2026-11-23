@@ -405,7 +405,7 @@ unittest
     import dmangos.world.creature : TempSpawnType;
     import dmangos.world.grid : cellCoordinate, cellKeyAt, cellSize;
     import dmangos.world.map : Map;
-    import dmangos.world.replication : encodeState, Replicator;
+    import dmangos.world.replication : encodePlayerState, encodeState, Replica, Replicator;
     import dmangos.world.updatefields : OBJECT_FIELD_SCALE_X, UNIT_CHANNEL_SPELL, UNIT_FIELD_CHANNEL_OBJECT,
         UNIT_FIELD_HEALTH, UNIT_FIELD_MAXHEALTH;
 
@@ -414,17 +414,18 @@ unittest
 
     static final class CasterReplicas : Replicator
     {
+        ushort owner;
         Map[ushort] peers;
         void create(ushort peer, uint map, ulong cell, ulong guid, const(ubyte)[] state)
         {
-            peers[peer].replicaCreated(1, cell, guid, state);
+            peers[peer].replicaCreated(owner, cell, guid, state);
         }
         void values(ushort peer, uint map, ulong guid, const(ubyte)[] fields)
         {
-            peers[peer].replicaValues(1, guid, fields);
+            peers[peer].replicaValues(owner, guid, fields);
         }
         void move(ushort peer, uint map, ulong guid, ushort opcode, const(ubyte)[] packet, const(ubyte)[] motion) {}
-        void remove(ushort peer, uint map, ulong guid) { peers[peer].replicaRemoved(1, guid); }
+        void remove(ushort peer, uint map, ulong guid) { peers[peer].replicaRemoved(owner, guid); }
         void inRange(ushort peer, uint map, Position where, float radius, ushort opcode, const(ubyte)[] packet) {}
     }
 
@@ -442,6 +443,7 @@ unittest
         successor.context.nodeId = 3;
         auto from = source.context.map(0), to = owner.context.map(0), destination = successor.context.map(0);
         auto wire = new CasterReplicas;
+        wire.owner = 1;
         wire.peers[2] = to;
         wire.peers[3] = destination;
         from.replicator = wire;
@@ -538,6 +540,30 @@ unittest
         caster.ai.update(from, 50);
         assert(destination.isReplica(caster.guid), "the channel publishes its caster to the new owner");
         assert(applications == 1, "ownership change preserves the aura without applying it again");
+
+        // The caster's region now moves too. The new caster owner has no observers around the tank yet.
+        auto nextWire = new CasterReplicas;
+        nextWire.owner = 2;
+        nextWire.peers[3] = destination;
+        to.replicator = nextWire;
+        owner.context.sendAreaDamage = (ushort peer, const ref AreaDamage request) {
+            assert(peer == 3 && request.channelUpdate && request.channelToken == token && request.auraMs == 0);
+            ++interruptions;
+            successor.context.areaDamageArrived(2, request);
+            return true;
+        };
+        const casterCell = cellKeyAt(origin.x, origin.y);
+        const casterX = cellCoordinate(origin.x), casterY = cellCoordinate(origin.y);
+        const gainedCaster = Region(8, 0, CellRect(casterX, casterY, casterX + 1, casterY + 1), 2, 1, RegionState.granted);
+        const casterBundle = from.migrateOut(key => key == casterCell, 2, &source.context.saveMigrant);
+        owner.context.regionsChanged([gainedCaster], null, [gainedCaster.id: casterBundle], unused);
+        auto movedCaster = to.creatureAt(caster.guid);
+        assert(movedCaster !is null && from.creatureAt(caster.guid) is null);
+        assert(movedCaster.ai.castingNow && movedCaster.values.get!UNIT_CHANNEL_SPELL == expectedSpell
+            && movedCaster.values.get!UNIT_FIELD_CHANNEL_OBJECT == migrated.guid, "caster handoff preserves the active channel");
+        auto remoteCaster = cast(Replica) destination.findObject(caster.guid);
+        assert(remoteCaster !is null && remoteCaster.owner == 2, "the new caster owner pins its replica at the target");
+        assert(migrated.auras.find(expectedSpell, caster.guid) is movedAura && movedAura.duration == remaining);
         if (period > 0)
         {
             migrated.updateAuras(destination, period - beforeHandoff - 1);
@@ -545,8 +571,24 @@ unittest
             migrated.updateAuras(destination, 1);
             assert(migrated.values.get!UNIT_FIELD_HEALTH == 3000 + movedAura.amount[0]);
         }
-        caster.ai.interruptCast();
-        assert(interruptions == 1 && !caster.values.get!UNIT_CHANNEL_SPELL && !migrated.auras.find(expectedSpell, caster.guid));
+        if (expectedSpell == supercharge)
+        {
+            // The original deadline is earlier than a newly started channel's deadline.
+            movedCaster.ai.setScript(null, data);
+            to.replicaCreated(3, cell, migrated.guid, encodeState(migrated, 0));
+            to.replicaCreated(1, casterCell, attackerGuid, encodePlayerState(attacker.session.character, 0));
+            movedCaster.ai.update(to, remaining / 2);
+            assert(movedCaster.ai.castingNow);
+            movedCaster.ai.update(to, remaining - remaining / 2);
+            migrated.updateAuras(destination, remaining);
+            assert(interruptions == 0);
+        }
+        else
+        {
+            movedCaster.ai.interruptCast();
+            assert(interruptions == 1);
+        }
+        assert(!movedCaster.values.get!UNIT_CHANNEL_SPELL && !migrated.auras.find(expectedSpell, caster.guid));
         assert(migrated.auras.attackTimeFactor(0) == 1);
         if (expectedSpell == supercharge)
             assert(abs(migrated.values.get!OBJECT_FIELD_SCALE_X * 1.25f - scale) < 0.001f);

@@ -1459,7 +1459,8 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         w.put(loot !is null);
         if (loot !is null)
             loot.saveHandoff(w);
-        if (expiredChannels.length)
+        const namedChannel = ai.hasNamedCreatureChannel;
+        if (expiredChannels.length || namedChannel)
         {
             w.put(cast(uint) expiredChannels.length);
             foreach (ref result; expiredChannels)
@@ -1470,6 +1471,8 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
                 w.put(result.token);
             }
         }
+        if (namedChannel)
+            ai.saveNamedCreatureChannel(w);
     }
 
     /**
@@ -1545,6 +1548,8 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
                 if (cast(int)(result.deadline - now) > 0)
                     expiredChannels ~= result;
             }
+        if (!r.empty)
+            ai.loadNamedCreatureChannel(r, transit);
         values.clearChanges();
     }
 

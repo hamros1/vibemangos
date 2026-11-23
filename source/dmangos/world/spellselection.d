@@ -919,11 +919,6 @@ unittest
     assert(target.values.get!UNIT_FIELD_HEALTH == 70);
     healer.ai.interruptCast();
     assert(!target.auras.find(mend, healer.guid) && !healer.values.get!UNIT_CHANNEL_SPELL);
-    assert(healer.ai.castSpell(source.data.spells.spell(mend), healer.guid, 0));
-    assert(target.auras.find(mend, healer.guid));
-    from.migrateOut(key => key == cell, 3, &source.saveMigrant);
-    assert(from.isReplica(healer.guid) && !target.auras.find(mend, healer.guid),
-        "moving a caster's home region cancels the owned channel");
 
     // This time the aura's creature moves, with the current channel still running.
     client.write(Opcode.CMSG_CAST_SPELL, castPacket.data);

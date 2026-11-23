@@ -877,7 +877,9 @@ to the creature's node. The target checks the caster's active channel before hea
 region changes owners, the aura keeps its duration and next tick time. Moving the target out of range
 or line of sight ends the channel.
 The target's current owner must confirm the channel before completion can grant quest
-credit. A creature's channel ends when its own region moves to another node.
+credit. When the creature casting one of these channels moves to another node, its new owner
+resumes the original cast and publishes the caster to the target's owner. The aura stays on the
+target with its original tick schedule. This requires a clean handoff with the caster's state.
 
 EventAI can select a wounded ally in combat on another node when all the rule's actions are
 supported channels aimed at that ally. Leprous Technicians and Machinesmiths use this for

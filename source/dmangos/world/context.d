@@ -5364,7 +5364,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         {
             if (creature.meleeController || creature.totemOwner)
                 return Migrant.init; // controlled creatures follow their owner's rules
-            if (creature.ai !is null)
+            if (creature.ai !is null && !creature.ai.hasNamedCreatureChannel)
                 creature.ai.finishCreatureChannel(true);
             if (creature.loot !is null)
                 creature.loot.sendReleaseForAll();
@@ -5697,7 +5697,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 || creature.ai.evading || creature.petOwner)
                 return null;
         }
-        const bundle = map_.releaseCreatureLoan(guid, r.next, &saveMigrant);
+        const bundle = map_.releaseCreatureLoan(guid, r.next, (MapObject object) {
+            if (!r.next)
+                (cast(Creature) object).ai.finishCreatureChannel(true);
+            return saveMigrant(object);
+        });
         if (!bundle.length && r.id !in localCreatureLoans)
             return null;
         ByteWriter state;

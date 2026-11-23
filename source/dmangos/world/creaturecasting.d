@@ -202,6 +202,52 @@ mixin template CreatureCasting()
     private int missingChannelTarget;
     private int missilePulsesRemaining;
 
+    package @property bool hasNamedCreatureChannel() const
+    {
+        return channelSpell !is null && namedChannelSequence != 0;
+    }
+
+    package void saveNamedCreatureChannel(ref ByteWriter writer) const
+    {
+        import dmangos.world.context : WorldContext;
+
+        writer.put(namedChannelSequence);
+        writer.put(channelTimer);
+        const context = cast(const WorldContext) lore;
+        writer.put(namedChannelPeer ? namedChannelPeer : context.nodeId);
+    }
+
+    package void loadNamedCreatureChannel(ref imported!"dmangos.bytes".ByteReader reader, int transit)
+    {
+        import std.algorithm.comparison : max;
+
+        namedChannelSequence = reader.read!ulong;
+        channelTimer = max(0, reader.read!int - max(0, transit));
+        namedChannelPeer = reader.read!ushort;
+        channelSpell = lore.spellInfo(me.values.get!UNIT_CHANNEL_SPELL);
+    }
+
+    /// Republish an existing channel once this caster is installed on its new map.
+    package void resumeNamedCreatureChannel(imported!"dmangos.world.map".Map map_)
+    {
+        if (!hasNamedCreatureChannel)
+            return;
+        world_ = map_;
+        namedChannelPeer = currentChannelPeer(map_, me.values.get!UNIT_FIELD_CHANNEL_OBJECT);
+        map_.holdCasterReplica(me.guid, namedChannelPeer, cast(uint) channelTimer + 5_000, true);
+    }
+
+    private ushort currentChannelPeer(imported!"dmangos.world.map".Map map_, ulong target)
+    {
+        import dmangos.world.replication : Replica;
+
+        if (map_.creatureAt(target) !is null)
+            return 0;
+        if (auto copy = cast(Replica) map_.findObject(target))
+            return copy.owner;
+        return namedChannelPeer;
+    }
+
     private bool beginCreatureChannel(const(SpellInfo)* spell, UnitRef target, bool named)
     {
         import dmangos.world.context : WorldContext;
@@ -263,12 +309,12 @@ mixin template CreatureCasting()
                         world_.flushCreature(target);
                     }
             }
-            else if (auto target = spellTarget(guid))
-                if (target.replica !is null)
+            else if (auto map_ = cast(Map) world_)
+                if (const peer = currentChannelPeer(map_, guid))
                     if (auto context = cast(WorldContext) lore)
-                        context.sendReplicaSpell(target.map, target.replica.owner, spell,
-                            AreaDamage(caster: me.guid, target: guid, spell: spell.id, map: target.map.id,
-                                instance: target.map.instanceId, creatureCast: true, namedCreature: true,
+                        context.sendReplicaSpell(map_, peer, spell,
+                            AreaDamage(caster: me.guid, target: guid, spell: spell.id, map: map_.id,
+                                instance: map_.instanceId, creatureCast: true, namedCreature: true,
                                 channelled: true, channelUpdate: true, channelToken: channelToken));
             world_.sendToObservers(me.guid, Opcode.SMSG_SPELL_FAILURE,
                 spellFailurePacket(me.guid, spell.id, SpellCastResult.interrupted));

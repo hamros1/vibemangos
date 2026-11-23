@@ -1635,8 +1635,12 @@ final class Map : CombatWorld, GameObjectWorld
         if (at(slot).mover !is null)
             startTicking(slot);
         if (auto creature = cast(Creature) object)
-            if (creature.ai !is null && creature.ai.inCombat)
-                trackCreatureCombat(creature, true);
+            if (creature.ai !is null)
+            {
+                if (creature.ai.inCombat)
+                    trackCreatureCombat(creature, true);
+                creature.ai.resumeNamedCreatureChannel(this);
+            }
         replicate(slot, at_);
         updateObjectVisibility(object);
     }
