@@ -1504,23 +1504,8 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         motionStarted = r.read!bool;
         const type = r.read!ubyte;
         auto state = ByteReader(r.readBytes(r.read!ushort));
-        if (waypoints !is null && (type == MotionType.waypoint || type == MotionType.linearWaypoint))
-        {
-            import dmangos.world.motion : WaypointMovement;
-
-            if (auto route = WaypointMovement.restore(state, waypoints, spawn, type == MotionType.linearWaypoint))
-                generator = route;
-        }
-        else if (type == generator.type)
-            generator.load(state);
-        else if (type == MotionType.follow) // a linked creature following its master
-        {
-            import dmangos.world.motion : FollowMovement;
-
-            auto follower = new FollowMovement(0, 0, 0);
-            follower.load(state);
-            generator = follower;
-        }
+        import dmangos.world.motion : restoreMovement;
+        generator = restoreMovement(cast(MotionType) type, state, this, waypoints, generator);
         vendorStock.items = null;
         foreach (_; 0 .. r.read!ushort)
         {

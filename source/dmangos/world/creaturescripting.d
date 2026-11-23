@@ -146,6 +146,13 @@ mixin template CreatureScripting()
         raiseScript(MovementDone(point));
     }
 
+    package void scriptPointArrived(uint point, ulong orderedBy)
+    {
+        movementArrived(point);
+        if (orderedBy)
+            tellArrival(orderedBy, point);
+    }
+
     /// A `Signal` from another script.
     void signalled(EntityRef from, uint id, int value, CombatWorld world)
     {
@@ -589,11 +596,9 @@ mixin template CreatureScripting()
         import dmangos.world.motion : PointMovement;
 
         auto move = new PointMovement(Vector3(at.x, at.y, at.z), at.orientation, !run, null);
-        move.onArrived = (Creature c) {
-            c.ai.movementArrived(point);
-            if (orderedBy)
-                c.ai.tellArrival(orderedBy, point);
-        };
+        move.notifyScript = true;
+        move.arrivalPoint = point;
+        move.orderedBy = orderedBy;
         if (inCombat_ || evadingHome)
         {
             outOfCombat = move; // where it goes once home from the fight
@@ -1354,7 +1359,8 @@ mixin template CreatureScripting()
         if (!inCombat_)
             return hostMoveTo(at, point, run);
         auto move = new PointMovement(Vector3(at.x, at.y, at.z), at.orientation, !run, null);
-        move.onArrived = (Creature c) { c.ai.movementArrived(point); };
+        move.notifyScript = true;
+        move.arrivalPoint = point;
         me.generator = move;
         if (world_ !is null)
         {

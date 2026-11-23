@@ -1251,19 +1251,17 @@ unittest
     pointMover.speeds[MoveType.run] = 7;
     pointMover.speeds[MoveType.swim] = 4;
     auto movement = new PointMovement(above, 0.5f, false, null);
-    uint arrivals;
-    movement.onArrived = (Creature) { ++arrivals; };
     pointMover.generator = movement;
     map.addObject(pointMover);
     pointMover.tick(map, 1);
     assert(!pointMover.spline.finalized && !pointMover.fighter.swimming);
     followSpline(pointMover, pointMover.spline.duration + 1);
     pointMover.tick(map, 1);
-    assert(!arrivals && pointMover.fighter.swimming && pointMover.spline.finalDestination == above,
-        "the arrival callback waits while the creature begins its swim leg");
+    assert(pointMover.generator is movement && pointMover.fighter.swimming && pointMover.spline.finalDestination == above,
+        "the point movement continues while the creature begins its swim leg");
     followSpline(pointMover, pointMover.spline.duration + 1);
     pointMover.tick(map, 1);
-    assert(arrivals == 1 && pointMover.position.z == above.z);
+    assert(pointMover.generator !is movement && pointMover.position.z == above.z);
 
     const evadeSpawn = CreatureSpawn(7, 101, 1, bank.x, bank.y, bank.z);
     auto evader = new Creature(evadeSpawn, &amphibianTemplate, 1, 1, parts, client);

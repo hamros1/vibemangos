@@ -636,7 +636,7 @@ private:
 
 /**
  * A walk (or run) to one point, facing there as
- * told; then the movement it had before goes on, and `onArrived` is told.
+ * told; then the movement it had before goes on and its arrival action runs.
  */
 final class PointMovement : MovementGenerator
 {
@@ -645,7 +645,9 @@ final class PointMovement : MovementGenerator
     private bool walk;
     package MovementGenerator after; // what it goes back to
     private HabitatStep step;
-    void delegate(Creature creature) onArrived; /// told once there
+    package bool notifyScript;
+    package uint arrivalPoint, relay;
+    package ulong orderedBy, relayTarget;
 
     ///
     this(Vector3 destination, float facing, bool walk, MovementGenerator after)
@@ -659,6 +661,46 @@ final class PointMovement : MovementGenerator
     override @property MotionType type() const
     {
         return MotionType.point;
+    }
+
+    override void save(ref ByteWriter w) const
+    {
+        w.put(destination.x);
+        w.put(destination.y);
+        w.put(destination.z);
+        w.put(facing);
+        w.put(walk);
+        w.put(step.duration);
+        w.put(step.continues);
+        w.put(notifyScript);
+        w.put(arrivalPoint);
+        w.put(orderedBy);
+        w.put(relay);
+        w.put(relayTarget);
+        w.put(after !is null);
+        if (after !is null)
+        {
+            w.put(cast(ubyte) after.type);
+            after.save(w);
+        }
+    }
+
+    static PointMovement restore(ref ByteReader r, const Creature creature, const WaypointStore waypoints,
+        MovementGenerator fallback)
+    {
+        auto move = new PointMovement(Vector3(r.read!float, r.read!float, r.read!float), r.read!float, r.read!bool, null);
+        move.step = HabitatStep(r.read!int, r.read!bool);
+        move.notifyScript = r.read!bool;
+        move.arrivalPoint = r.read!uint;
+        move.orderedBy = r.read!ulong;
+        move.relay = r.read!uint;
+        move.relayTarget = r.read!ulong;
+        if (r.read!bool)
+        {
+            const kind = cast(MotionType) r.read!ubyte;
+            move.after = restoreMovement(kind, r, creature, waypoints, fallback);
+        }
+        return move;
     }
 
     override void initialize(Creature creature, MotionWorld world)
@@ -680,8 +722,13 @@ final class PointMovement : MovementGenerator
         // There: back to what it did before (from where it stands now).
         creature.generator = after is null ? new IdleMovement : after;
         creature.generator.initialize(creature, world);
-        if (onArrived !is null)
-            onArrived(creature);
+        if (creature.ai !is null)
+        {
+            if (notifyScript)
+                creature.ai.scriptPointArrived(arrivalPoint, orderedBy);
+            if (relay)
+                creature.ai.scriptRelay(cast(int) relay, relayTarget);
+        }
     }
 }
 
@@ -810,6 +857,32 @@ MovementGenerator selectMovement(const Creature creature, const WaypointStore wa
     default:
         return new IdleMovement;
     }
+}
+
+/// Restores the generator along with the separately serialized spline.
+package MovementGenerator restoreMovement(MotionType type, ref ByteReader state, const Creature creature,
+    const WaypointStore waypoints, MovementGenerator fallback)
+{
+    if (type == MotionType.point && !state.empty)
+        return PointMovement.restore(state, creature, waypoints, fallback);
+    if (waypoints !is null && (type == MotionType.waypoint || type == MotionType.linearWaypoint))
+    {
+        if (auto route = WaypointMovement.restore(state, waypoints, creature.spawn, type == MotionType.linearWaypoint))
+            return route;
+        return fallback;
+    }
+    if (type == fallback.type)
+    {
+        fallback.load(state);
+        return fallback;
+    }
+    if (type == MotionType.follow)
+    {
+        auto follower = new FollowMovement(0, 0, 0);
+        follower.load(state);
+        return follower;
+    }
+    return type == MotionType.idle ? new IdleMovement : fallback;
 }
 
 /// The next spline id (`splineCounter`): one counter for every unit on the server, whichever thread moves it.

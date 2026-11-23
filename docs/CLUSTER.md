@@ -939,7 +939,8 @@ Smokey's Special Compound uses both paths for its charge, focus and fires. Timed
 pending forced despawns keep their deadlines in a clean handoff. Outdoor database script steps can
 select an observed creature on another node and send its exact command to the owner. This preserves
 the original actors for dialogue, emotes, movement, casts, state changes and relay scripts. For
-example, each acolyte runs its part of The Binding on its own node. Ground ticks
+example, each acolyte runs its part of The Binding on its own node. A scripted point movement
+keeps the destination and its arrival relay when ownership changes mid-walk. Ground ticks
 use observed targets around the spot and require a current caster replica at the target. At impact,
 the caster's node resolves the original target GUID locally or sends the hit to the current replica's
 owner. A projectile can wait up to two seconds for the target to appear during a handoff. A clean caster

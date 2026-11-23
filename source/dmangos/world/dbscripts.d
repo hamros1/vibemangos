@@ -957,13 +957,8 @@ mixin template DbScriptRunner()
         if (auto point = cast(PointMovement) previous)
             previous = point.after;
         auto move = new PointMovement(to, facing == 0 ? float.nan : facing, walk, previous);
-        if (step.datalong)
-        {
-            const relay = step.datalong, targetGuid = target.guid;
-            move.onArrived = (Creature c) {
-                startScript(DbScriptType.relay, relay, map, c.guid, targetGuid);
-            };
-        }
+        move.relay = step.datalong;
+        move.relayTarget = target.guid;
         creature.generator = move;
         move.initialize(creature, map);
         map.wake(creature.guid);
@@ -1488,6 +1483,7 @@ unittest
     import dmangos.cluster.regions : CellRect, Region, RegionState;
     import dmangos.world.creature : TempSpawnType;
     import dmangos.world.grid : cellCoordinate;
+    import dmangos.world.motion : PointMovement;
     import dmangos.world.movement : Position;
     import dmangos.world.testclient : newCreationContext, newDatabase;
     import dmangos.world.testdata : creatureInnkeeper;
@@ -1499,20 +1495,27 @@ unittest
     destination.nodeId = 2;
     auto now = MonoTime.currTime;
     source.clock = destination.clock = () => now;
-    enum uint relay = 9901, first = 0x10000000, second = 0x20000000;
+    enum uint relay = 9901, walk = 9902, arrive = 9903;
+    enum uint first = 0x10000000, second = 0x20000000, reached = 0x40000000;
+    const at = Position(-8930, -120, 83.53f);
     foreach (owner; [source, destination])
     {
         owner.data.dbScripts.add(DbScriptType.relay, DbScriptStep(relay, 0, 0, ScriptCommand.modifyNpcFlags, first, 1));
         owner.data.dbScripts.add(DbScriptType.relay, DbScriptStep(relay, 1000, 0, ScriptCommand.modifyNpcFlags, second, 1));
+        DbScriptStep move = {id: walk, command: ScriptCommand.moveTo, datalong: arrive, x: at.x + 4, y: at.y, z: at.z};
+        owner.data.dbScripts.add(DbScriptType.relay, move);
+        owner.data.dbScripts.add(DbScriptType.relay, DbScriptStep(arrive, 0, 0, ScriptCommand.modifyNpcFlags, reached, 2));
     }
     auto from = source.map(0), to = destination.map(0);
-    const at = Position(-8930, -120, 83.53f);
     auto speaker = source.summonCreature(from, creatureInnkeeper, at, TempSpawnType.manual, 0, 0);
     auto other = source.summonCreature(from, creatureInnkeeper, Position(at.x + 500, at.y, at.z),
         TempSpawnType.manual, 0, 0);
     assert(source.startScript(DbScriptType.relay, relay, from, speaker.guid, 0));
     assert(source.startScript(DbScriptType.relay, relay, from, other.guid, 0));
+    assert(source.startScript(DbScriptType.relay, walk, from, speaker.guid, 0));
     source.updateScripts(400);
+    speaker.tick(from, 400);
+    assert(cast(PointMovement) speaker.generator !is null && !speaker.spline.finalized);
     now += 400.msecs;
     assert(speaker.values.get!UNIT_NPC_FLAGS & first);
     speaker.values.set!UNIT_NPC_FLAGS(speaker.values.get!UNIT_NPC_FLAGS & ~first);
@@ -1528,6 +1531,7 @@ unittest
     destination.regionsChanged([region], null, [region.id: cast(const(ubyte)[]) leaving[region.id]], unused);
     auto resumed = to.creatureAt(speaker.guid);
     assert(resumed !is null && from.creatureAt(speaker.guid) is null);
+    assert(cast(PointMovement) resumed.generator !is null && resumed.spline.timePassed == speaker.spline.timePassed);
     assert(destination.runningScripts == 1 && source.runningScripts == 1,
         "only the run anchored in the departing region moves");
 
@@ -1536,6 +1540,13 @@ unittest
     destination.updateScripts(100);
     assert((resumed.values.get!UNIT_NPC_FLAGS & (first | second)) == second);
     assert(destination.runningScripts == 0);
+    foreach (_; 0 .. 20)
+    {
+        resumed.tick(to, 250);
+        destination.updateScripts(250);
+    }
+    assert(cast(PointMovement) resumed.generator is null && (resumed.position.x - (at.x + 4)) ^^ 2 < 0.01f);
+    assert(resumed.values.get!UNIT_NPC_FLAGS & reached, "the arrival relay runs once at the destination");
     source.updateScripts(600);
     assert((other.values.get!UNIT_NPC_FLAGS & (first | second)) == (first | second));
     assert(source.runningScripts == 0);
