@@ -1353,11 +1353,13 @@ final class CharacterStatements
             enum checkpointTable = "dmangos_channel_checkpoint";
         else static if (kind == ServiceKind.battlegroundQueue)
             enum checkpointTable = "dmangos_bg_queue_checkpoint";
+        else static if (kind == ServiceKind.weather)
+            enum checkpointTable = "dmangos_weather_checkpoint";
         else
             static assert(false, "unexpected checkpoint service");
     }
 
-    private enum checkpointed = [ServiceKind.channels, ServiceKind.battlegroundQueue];
+    private enum checkpointed = [ServiceKind.channels, ServiceKind.battlegroundQueue, ServiceKind.weather];
 
     private void prepareServiceCheckpoints(ServiceKind kind)()
     {

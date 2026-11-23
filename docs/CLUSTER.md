@@ -645,7 +645,11 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   auction. The coordinator settles auctions whose time is up.
 * **Mail** lives in the database and is read each time, so it is the same on every node; one node
   returns and deletes expired mail.
-* **Weather** is each node's own: a zone two nodes share may rain on one side only.
+* **Weather.** A realm service rolls each zone's weather once using its seasonal chances. Every
+  worker shows the same weather to players in that zone. The service carries the current weather
+  and the next change timer during a clean handoff. A new host can recover a recent checkpoint
+  after a crash. Workers ask for the current state when players arrive and periodically while
+  they remain in the zone.
 * **GM edits of world data** (`.npc vendoradditem` and the like) are written to the world database and
   held in the GM's node's memory; other nodes see them after a restart.
 

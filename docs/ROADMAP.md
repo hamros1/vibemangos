@@ -2,11 +2,11 @@
 
 ## Open work
 
-- **Clustering.** Route the remaining script-selected channels and spell scripts that need actions on
-  more than one node.
-  See
-  [spell routing limits](CLUSTER.md#spell-routing-limits) and the
-  [cross-node feature list](CLUSTER.md#what-crosses-nodes-feature-by-feature).
+- **Clustering.** The [cross-node feature list](CLUSTER.md#what-crosses-nodes-feature-by-feature)
+  records the supported behavior. The [spell routing guide](CLUSTER.md#spell-routing-limits)
+  describes effect-specific support, including script-selected targets, channels and summons.
+  See [failure handling](CLUSTER.md#failure-handling) for what resumes from a checkpoint when
+  a process stops unexpectedly.
 - **Gameplay coverage.** See the [spell audit](SPELLS.md) for class coverage and the
   [vanilla gameplay audit](<../reports/Remaining vanilla gameplay gaps.md>) for verified fixes and the open Gluth trigger.
 

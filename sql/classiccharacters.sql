@@ -475,6 +475,14 @@ CREATE TABLE `dmangos_channel_checkpoint` (
   `state` longtext NOT NULL,
   PRIMARY KEY (`realm`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_general_ci;
+CREATE TABLE `dmangos_weather_checkpoint` (
+  `realm` int(10) unsigned NOT NULL,
+  `revision` bigint(20) unsigned NOT NULL,
+  `saved_at` bigint(20) NOT NULL,
+  `node` smallint(5) unsigned NOT NULL,
+  `state` longtext NOT NULL,
+  PRIMARY KEY (`realm`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_general_ci;
 CREATE TABLE `dmangos_creature_pool` (
   `realm` int(10) unsigned NOT NULL,
   `pool` int(10) unsigned NOT NULL,

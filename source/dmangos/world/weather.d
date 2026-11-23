@@ -203,6 +203,7 @@ unittest
     import dmangos.world.opcodes : Opcode;
     import dmangos.world.testclient;
     import dmangos.world.testdata;
+    import dmangos.world.weatherservice : WeatherHost;
 
     auto db = newDatabase();
     auto context = newCreationContext(db);
@@ -213,14 +214,16 @@ unittest
     foreach (ref season; rainy)
         season = SeasonChances(100, 0, 0);
     context.data.weatherChances[zone] = rainy;
-    assert(context.weatherFor(zone).length == 13 && context.weatherOf(zone) !is null);
+    assert(context.weatherFor(zone).length == 13);
+    auto weather = context.services.local!WeatherHost().weatherOf(zone);
+    assert(weather !is null);
     assert(context.weatherFor(zone + 1000) == fineWeatherPacket(), "no row: fine");
     auto now = MonoTime.currTime;
     context.update(now);
     bool heard;
     foreach (_; 0 .. 40)
     {
-        context.weatherOf(zone).timer = 0;
+        weather.timer = 0;
         now += 10.msecs;
         context.update(now);
         if (opcodesOf(anduin.read()).canFind(Opcode.SMSG_WEATHER))

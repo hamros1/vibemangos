@@ -1,14 +1,15 @@
 # Cluster services
 
 A **cluster service** is a responsibility with an identity of its own that belongs to no place in
-the world: the chat channels, the battleground queues, the Ahn'Qiraj war effort, world PvP. The cluster (docs/CLUSTER.md) places each
+the world: the chat channels, the battleground queues, the Ahn'Qiraj war effort, world PvP and zone
+weather. The cluster (docs/CLUSTER.md) places each
 service on one node, and every node calls it by what it is, not by where it runs. A call to a
 service on the caller's own node is a direct function call; a call to one on another node goes over
 the cluster's links and its reply comes back the same way. Callers do not know which it was.
 
 The code is `cluster/services.d`. The services are `ChannelsHost` (`world/channelservice.d`),
-`BattlegroundQueueHost` (`world/bgqueue.d`), `WarEffortHost` (`world/wareffort.d`) and `WorldPvpHost`
-(`world/worldpvp.d`).
+`BattlegroundQueueHost` (`world/bgqueue.d`), `WarEffortHost` (`world/wareffort.d`), `WorldPvpHost`
+(`world/worldpvp.d`), `InvasionHost` (`world/scourge.d`) and `WeatherHost` (`world/weatherservice.d`).
 
 ## Why services
 
@@ -48,9 +49,9 @@ A service may also have:
 * `start()`, run when its host starts it;
 * `tick(Duration)`, run every world tick of its host;
 * `stop()`, run when it is released;
-* `saveState()`, returning bytes that go along with the service when it moves, from which the next
-  host's factory rebuilds it. The channels and the queues have none (they start empty after a move);
-  the war effort's is its whole state.
+* `saveState()`, returning bytes that go along with the service when it moves. The next host's
+  factory rebuilds it from those bytes. Channels, battleground queues and zone weather can also
+  recover recent database checkpoints after a crash.
 
 Everything about the calls is worked out at compile time, by `static foreach` over the `@Call`
 methods:
@@ -63,15 +64,15 @@ methods:
 * **The dispatcher** (`Hosted!S.dispatch`) runs a call from its request's bytes and writes its
   reply's. There is no virtual dispatch per call and no registry filled at run time.
 
-The kinds of service are an enum, `ServiceKind`: `channels`, `battlegroundQueue`, `warEffort`, `worldPvp`,
-and `example` for tests. `clusterServiceKinds` lists those a cluster places.
+`ServiceKind` identifies a service on the wire. `clusterServiceKinds` lists the services that are
+placed as regions. The coordinator hosts `lootTurns`, and tests use `example`.
 
 ## Hosting
 
 Each node has a `ServiceHost` (`WorldContext.services`):
 
 * `provide!S(make)` tells it how to build a service of type `S`, from the state its last host saved
-  or from nothing. Every world server provides both services.
+  or from scratch. Every world server provides the services listed above.
 * `start(kind, state)` and `stop(kind)` host a service here, or release it (returning its state).
 * `hosts(kind)` and `local!S()` say whether it runs here.
 * `tick` runs every hosted service's `tick` and resends parked calls (below).

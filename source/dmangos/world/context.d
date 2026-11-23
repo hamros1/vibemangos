@@ -16,7 +16,7 @@ module dmangos.world.context;
 
 import dmangos.cluster.protocol : PartyQuest;
 import dmangos.bytes : ByteReader, ByteWriter;
-import dmangos.cluster.services : ServiceHost;
+import dmangos.cluster.services : ServiceHost, ServiceKind;
 import dmangos.world.writebehind : Writer;
 static import dmangos.world.updatefields;
 import core.time : Duration, minutes, MonoTime, msecs, seconds;
@@ -195,71 +195,86 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     mixin DbScriptRunner; // `dbscripts_on_*` under way
 
-    import dmangos.world.weather : Weather;
+    import dmangos.world.weatherservice : WeatherHost, WeatherNotice, WeatherWatch;
 
-    private Weather[uint] weathers; // by zone, while players are in it
+    private WeatherNotice[uint] realmWeather;
+    private MonoTime[uint] nextWeatherRequest;
+    private MonoTime nextWeatherPoll;
+    private ushort lastWeatherHost;
 
     /**
-     * The weather of `zone`, for a player entering it: its weather's `SMSG_WEATHER`
-     * body (made and generated the first time), or fine weather where it has no `game_weather` row.
+     * Weather for a player entering a zone. The service sends the current state if the worker
+     * has not heard it yet. Zones without a `game_weather` row are always fine.
      */
     ubyte[] weatherFor(uint zone)
     {
-        import dmangos.world.weather : fineWeatherPacket, seasonOf;
+        import dmangos.world.weather : fineWeatherPacket;
 
-        if (auto w = zone in weathers)
-            return w.packet();
-        const chances = zone in data.weatherChances;
-        if (chances is null)
+        if (zone !in data.weatherChances)
             return fineWeatherPacket();
-        Weather w;
-        w.chances = *chances;
-        w.regenerate(spawnRandom, seasonOf(unixTime));
-        weathers[zone] = w;
-        return weathers[zone].packet();
+        if (auto host = services.local!WeatherHost())
+        {
+            const request = WeatherWatch(zone);
+            const current = host.watch(request);
+            realmWeather[zone] = current;
+            return current.packet();
+        }
+        watchWeather(zone, clock());
+        if (const current = zone in realmWeather)
+            return current.packet();
+        return fineWeatherPacket();
     }
 
-    /// Each zone's weather changes when due, shown to the players in it; a zone
-    /// nobody is in any more forgets its weather.
-    private void updateWeathers(int diff)
+    private void watchWeather(uint zone, MonoTime now)
+    {
+        import core.time : seconds;
+
+        if (now < nextWeatherRequest.get(zone, MonoTime.init))
+            return;
+        nextWeatherRequest[zone] = now + 30.seconds;
+        const host = weatherHostNode();
+        const before = realmWeather.get(zone, WeatherNotice.init);
+        services.call!(WeatherHost.watch)(WeatherWatch(zone), (WeatherNotice current) {
+            if (host == weatherHostNode() && before == realmWeather.get(zone, WeatherNotice.init))
+                weatherHeard(current);
+        });
+    }
+
+    private ushort weatherHostNode()
+    {
+        return services.placement is null ? 0 : services.placement(ServiceKind.weather);
+    }
+
+    private void pollWeather(MonoTime now)
+    {
+        import core.time : seconds;
+
+        const host = weatherHostNode();
+        if (lastWeatherHost != host)
+        {
+            lastWeatherHost = host;
+            nextWeatherRequest = null;
+            nextWeatherPoll = MonoTime.init;
+        }
+        if (now < nextWeatherPoll || !data.weatherChances.length)
+            return;
+        nextWeatherPoll = now + 5.seconds;
+        foreach (player; online)
+            if (player.character !is null && player.character.data.zone in data.weatherChances)
+                watchWeather(player.character.data.zone, now);
+    }
+
+    private void weatherHeard(const ref WeatherNotice current)
     {
         import dmangos.world.opcodes : Opcode;
-        import dmangos.world.weather : seasonOf;
 
-        if (weathers.length == 0)
+        if (current.zone !in data.weatherChances || realmWeather.get(current.zone, WeatherNotice.init) == current)
             return;
-        foreach (zone; weathers.keys)
-        {
-            auto w = zone in weathers;
-            w.timer -= diff;
-            if (w.timer > 0)
-                continue;
-            w.timer = typeof(*w).init.timer;
-            bool anyone;
-            foreach (player; online)
-                if (player.character !is null && player.character.data.zone == zone)
-                {
-                    anyone = true;
-                    break;
-                }
-            if (!anyone)
-            {
-                weathers.remove(zone);
-                continue;
-            }
-            if (!w.regenerate(spawnRandom, seasonOf(unixTime)))
-                continue;
-            const body_ = w.packet();
-            foreach (player; online.values)
-                if (player.character !is null && player.character.data.zone == zone)
-                    player.deliver(Opcode.SMSG_WEATHER, body_);
-        }
-    }
-
-    /// The weather of `zone` now, if it has some (tests).
-    package Weather* weatherOf(uint zone)
-    {
-        return zone in weathers;
+        realmWeather[current.zone] = current;
+        const body_ = current.packet();
+        foreach (player; online.values)
+            if (player.character !is null && player.character.data.zone == current.zone)
+                player.deliver(Opcode.SMSG_WEATHER, body_);
     }
 
     WorldConfig config;
@@ -2900,6 +2915,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             ChannelSettings(config.allowTwoSideInteractionChannel), state)));
         services.provide!InvasionHost(&newInvasionHost);
         services.listen!(InvasionHost, InvasionState)(&invasionHeard);
+        services.provide!WeatherHost((const(ubyte)[] state) => WeatherHost(this, state));
+        services.listen!(WeatherHost, WeatherNotice)(&weatherHeard);
         services.provide!WarEffortHost(&newWarEffortHost);
         services.listen!(WarEffortHost, WarEffort)(&warEffortHeard); // before it starts: it tells as it does
         worldPvp = new WorldPvpFollower(this);
@@ -8654,7 +8671,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         foreach (script; worldScripts) // open-world round 2: the continents'
             script.tick(cast(int) elapsed.total!"msecs");
         gameObjectScriptsTick(cast(int) elapsed.total!"msecs"); // open-world round 2
-        updateWeathers(cast(int) elapsed.total!"msecs");
+        pollWeather(now);
         addPendingNavigation();
         checkHonorWeek(now);
         services.tick(elapsed);
