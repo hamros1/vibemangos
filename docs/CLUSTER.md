@@ -964,8 +964,10 @@ Mind Vision can find a distant player on another node. The target's owner suppli
 position for the usual spell checks. The caster's body stays at its original position while the
 cast starts on the target's node.
 The Orb of Draconic Energy moves its user to Emberstrife's node before checking his health and
-starting control. A forced move during creature control releases the creature. An angler can finish the original cast after moving. Their bobber keeps its GUID and bite
-timer until the catch begins.
+starting control. Routine balancing waits while a player controls a creature. If the creature's
+region is reassigned, control ends before the creature's state moves to the new owner. A forced
+player move also ends control. An angler can finish the original cast after moving. Their bobber
+keeps its GUID and bite timer until the catch begins.
 
 Party area auras reach nearby players in the same raid subgroup across region boundaries. The
 recipient's node checks membership and distance. It removes the aura when those checks fail or the

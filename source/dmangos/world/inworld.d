@@ -149,7 +149,7 @@ private:
     /**
      * The node this player's simulation should move to now, or 0. It moves when it stands well inside
      * another node's ground (`migrationMargin` all round: no going back and forth along a border), not
-     * within ten seconds of its last move, nor while dueling, trading, teleporting or logging out. Away from home, it
+     * within ten seconds of its last move, or while it is busy with another player or creature. Away from home, it
      * goes straight on to a third node, its home told.
      */
     package ushort migrationTarget()
@@ -174,9 +174,9 @@ private:
                 return owner == context.nodeId ? 0 : owner;
         if (migratedAt != MonoTime.init && context.clock() - migratedAt < 10.seconds)
             return 0;
-        // A fight stays on the node it is on: the creatures it is with are simulated here. A flight too: the node
-        // that flies it lands it (its state is not carried), and the player moves on from the ground.
-        if (inCombat || flying || duel !is null || tradeSide !is null)
+        // Combat and control of another unit stay with that unit's simulation. A flight lands on its
+        // current node before ordinary balancing can move the player.
+        if (inCombat || flying || duel !is null || tradeSide !is null || charmed !is null || npcCharmer)
             return 0;
         // A gateway owns no ground, including the edge between two world nodes.
         const margin = context.config.cluster.gateway ? 0 : migrationMargin;

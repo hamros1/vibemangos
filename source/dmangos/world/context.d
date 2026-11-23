@@ -5110,6 +5110,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if (r.creature.spawn)
                 creatureLoanLost(r);
 
+        foreach (ref r; lost)
+            if (instanceable(r.map) || physicalWorldRegion(r))
+                releaseRegionCharms(r);
+
         // A service's region (docs/SERVICES.md): it stops here, its state going along with it, or starts.
         foreach (ref r; lost)
             if (isServiceMap(r.map))
@@ -5210,6 +5214,20 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private bool physicalWorldRegion(const ref Region region)
     {
         return !region.creature.spawn && client.maps.lookup(region.map) !is null && !instanceable(region.map);
+    }
+
+    private void releaseRegionCharms(const ref Region region)
+    {
+        import dmangos.world.character : Character;
+        import dmangos.world.objects : highGuidOf;
+
+        const wholeMap = instanceable(region.map);
+        foreach (who; online.values)
+            if (auto controller = cast(Character) who)
+                if (auto creature = controller.charmed)
+                    if (highGuidOf(creature.guid) == HighGuid.unit && creature.spawn.map == region.map
+                        && (wholeMap || region.rect.containsKey(cellKeyAt(creature.spawn.x, creature.spawn.y))))
+                        controller.releaseCharmForHandoff();
     }
 
     /// With no live bundle, refresh previously known placements before loading the gained cells.

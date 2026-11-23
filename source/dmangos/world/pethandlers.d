@@ -1124,6 +1124,14 @@ mixin template PetHandlers()
                 creature.loseAura(aura, map);
     }
 
+    /// Release control while both the player and the native creature are still here.
+    package void releaseCharmForHandoff()
+    {
+        if (channelSpell !is null && channelSpell.id == charmSpell)
+            endChannel(true);
+        endCharm();
+    }
+
     /// The player takes control of `creature` (`TakePossessOf`): the client moves it and sees as it.
     private void possessBegins(Creature creature)
     {

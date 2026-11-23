@@ -1796,9 +1796,10 @@ unittest
 unittest
 {
     import dmangos.bytes : ByteWriter;
+    import dmangos.cluster.regions : CellRect, Region, RegionState;
     import dmangos.world.creature : TempSpawnType;
     import dmangos.world.defines : inventorySlotBag0;
-    import dmangos.world.grid : cellKeyAt, cellSize;
+    import dmangos.world.grid : cellCoordinate, cellKeyAt, cellSize;
     import dmangos.world.replication : encodeState;
     import dmangos.world.spellcast : castTime;
     import dmangos.world.updatefields : UNIT_CHANNEL_SPELL, UNIT_FIELD_CHARM, UNIT_FIELD_CHARMEDBY,
@@ -1846,6 +1847,32 @@ unittest
             assert(moved.player.values.get!UNIT_CHANNEL_SPELL == dominion);
             assert(moved.player.values.get!UNIT_FIELD_CHARM == dragon.guid
                 && dragon.values.get!UNIT_FIELD_CHARMEDBY == moved.player.guid);
+
+            const later = owner.context.clock() + 11.seconds;
+            owner.context.clock = () => later;
+            owner.context.regionOwnerAround = (uint, Position, float) => ushort(1);
+            assert(!moved.inCombat && moved.migrationTarget() == 0,
+                "ordinary balancing waits for creature control to end");
+
+            auto successor = RealWorld.make();
+            successor.context.nodeId = 3;
+            const guid = dragon.guid, woundedHealth = dragon.values.get!UNIT_FIELD_HEALTH;
+            const x = cellCoordinate(targetAt.x), y = cellCoordinate(targetAt.y);
+            auto region = Region(82, 1, CellRect(x, y, x + 1, y + 1), 2, 1, RegionState.revoking, 3);
+            ubyte[][uint] leaving, unused;
+            owner.context.regionsChanged(null, [region], null, leaving);
+            assert(moved.charmed is null && !moved.player.values.get!UNIT_CHANNEL_SPELL);
+            assert(to.creatureAt(guid) is null && leaving.get(region.id, null).length,
+                "release must include the original creature in the region handoff");
+
+            region.owner = 3;
+            region.state = RegionState.granted;
+            region.next = 0;
+            successor.context.regionsChanged([region], null, [region.id: cast(const(ubyte)[]) leaving[region.id]], unused);
+            auto destination = successor.context.map(1);
+            auto restored = destination.creatureAt(guid);
+            assert(restored !is null && restored.values.get!UNIT_FIELD_HEALTH == woundedHealth);
+            assert(!restored.values.get!UNIT_FIELD_CHARMEDBY && destination.creaturesNear(targetAt, 1).length == 1);
         }
         else
             assert(!moved.player.values.get!UNIT_CHANNEL_SPELL && !dragon.values.get!UNIT_FIELD_CHARMEDBY,
