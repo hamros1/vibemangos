@@ -19,6 +19,7 @@ enum MigrantKind : ubyte
     gameObjectRespawn = 4, /// ditto
     summonedCreature = 5,  /// a temporary spawn with its own placement and lifetime
     summonedGameObject = 6, /// a temporary unowned object of a dungeon copy
+    scriptRun = 7,          /// an outdoor database script anchored to a home cell
 }
 
 /// An object on its way to its next owner.

@@ -8,6 +8,7 @@
  */
 module dmangos.world.corpse;
 
+import dmangos.bytes : ByteReader, ByteWriter;
 import dmangos.world.map : MapObject;
 import dmangos.world.movement : Position;
 import dmangos.world.objects;
@@ -81,12 +82,17 @@ final class Corpse : MapObject
     /// `player`'s body where it stands, looking like it.
     this(const Player player, CorpseType type, long now)
     {
+        this(player, type, now, player.data.map, player.position);
+    }
+
+    this(const Player player, CorpseType type, long now, uint mapId, Position position)
+    {
         enum uint flagUnk2 = 0x04, hideHelm = 0x08, hideCloak = 0x10;               // corpse flags
         enum uint playerHideHelm = 0x00000400, playerHideCloak = 0x00000800;      // player flags
         owner = player.data.guid;
         guid_ = makeGuid(HighGuid.corpse, owner);
-        map = player.data.map;
-        at = player.position;
+        map = mapId;
+        at = position;
         this.type = type;
         ghostTime = now;
         values = UpdateValues(TypeId.corpse);
@@ -116,6 +122,35 @@ final class Corpse : MapObject
         foreach (ubyte slot; 0 .. 19)
             if (const item = player.inventory.equipped(slot))
                 values.set!CORPSE_FIELD_ITEM(slot, item.proto.displayId | uint(item.proto.inventoryType) << 24);
+        values.clearChanges();
+    }
+
+    package void writeHandoff(ref ByteWriter writer) const
+    {
+        writer.put(map);
+        writer.put(instanceId);
+        writer.put(at.x);
+        writer.put(at.y);
+        writer.put(at.z);
+        writer.put(at.orientation);
+        writer.put(cast(ubyte) type);
+        writer.put(ghostTime);
+        foreach (slot; 0 .. values.length)
+            writer.put(values[slot]);
+    }
+
+    package this(uint player, ref ByteReader reader)
+    {
+        owner = player;
+        guid_ = makeGuid(HighGuid.corpse, owner);
+        map = reader.read!uint;
+        instanceId = reader.read!uint;
+        at = Position(reader.read!float, reader.read!float, reader.read!float, reader.read!float);
+        type = cast(CorpseType) reader.read!ubyte;
+        ghostTime = reader.read!long;
+        values = UpdateValues(TypeId.corpse);
+        foreach (slot; 0 .. values.length)
+            values.setSlot(slot, reader.read!uint);
         values.clearChanges();
     }
 

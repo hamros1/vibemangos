@@ -148,9 +148,8 @@ The largest area. In order:
    remaining lifetime through a clean handoff. Mana regeneration in combat remains open.
 3. **Death: done** (`death.d`, `corpse.d`), resurrection sickness and battleground
    spirit guides included, and ghosts hidden from the living. Bones (an hour where a body was, bare; CMaNGOS's
-   `Death.Bones` on): done. Not yet: the ghost's own auras (applied by
-   hand), corpses of a player on another node of a cluster (a corpse is put on
-   the map its player's node simulates; a node that does not own the cell keeps it anyway).
+   `Death.Bones` on): done. A clean cluster handoff preserves the player's death state and corpse
+   reclaim deadline. The ghost's own auras still need implementation.
 4. **Experience and loot: done** (`experience.d`, `loot.d`, `loothandlers.d`). Quest drops,
    skinning, pickpocketing and random properties are implemented. A cluster
    supports group loot rolls, coin splits, round-robin pickup, quest drops and Master Loot across

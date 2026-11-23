@@ -4806,9 +4806,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         foreach (ref r; lost)
             if (physicalWorldRegion(r))
             {
-                const timers = takeRegionRespawns(r);
+                auto timers = takeRegionRespawns(r);
                 if (auto m = r.map in maps)
                 {
+                    timers ~= takeRegionScriptRuns(*m, r);
                     if (r.next) // moving to another node: its objects and timers go along
                     {
                         const before = m.objectCount - m.replicaCount;
@@ -5031,6 +5032,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.bytes : ByteReader;
         import dmangos.world.migration : MigrantKind;
 
+        if (migrant.kind == MigrantKind.scriptRun)
+        {
+            if (region.rect.containsKey(migrant.home))
+                restoreRegionScriptRun(destination.id, migrant);
+            return null;
+        }
         const creature = migrant.kind == MigrantKind.creatureRespawn;
         if (migrant.kind == MigrantKind.summonedCreature && !region.rect.containsKey(migrant.home))
             return null;

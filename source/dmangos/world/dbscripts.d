@@ -26,6 +26,7 @@ module dmangos.world.dbscripts;
 import dmangos.world.spellids;
 
 import dmangos.mysql : MySqlConnection;
+import dmangos.world.grid : noCell;
 
 /// Which table a script comes from.
 enum DbScriptType : ubyte
@@ -278,6 +279,8 @@ final class ScriptRun
     uint mapId;
     uint instanceId;        /// the map's dungeon instance (0: none)
     ulong source, target;   /// the objects it began with (0: none)
+    ulong anchor;           /// outdoor world object whose region carries this run
+    ulong home = noCell;    /// also retained if the anchor despawns during the run
     bool waitForSource, waitForTarget; /// players present when the old owner released the copy
     long waitForPlayersUntil;
 
@@ -306,6 +309,7 @@ mixin template DbScriptRunner()
     import dmangos.world.dbscripts;
     import dmangos.world.creature : Creature;
     import dmangos.world.gameobject : GameObject;
+    import dmangos.world.grid : noCell;
     import dmangos.world.map : Map;
     import dmangos.world.movement : Position;
 
@@ -336,8 +340,76 @@ mixin template DbScriptRunner()
                         && run.instanceId == map.instanceId
                         && (unique == ScriptUnique.bySource ? run.source == source : run.target == target))
                     return true;
-        scriptRuns ~= new ScriptRun(type, id, map.id, map.instanceId, source, target, steps);
+        auto run = new ScriptRun(type, id, map.id, map.instanceId, source, target, steps);
+        if (!run.instanceId)
+        {
+            run.home = map.migrantHome(source);
+            run.anchor = source;
+            if (run.home == noCell)
+            {
+                run.home = map.migrantHome(target);
+                run.anchor = target;
+            }
+        }
+        scriptRuns ~= run;
         return true;
+    }
+
+    /// Move outdoor scripts with their first local world object and keep their completed steps consumed.
+    private imported!"dmangos.world.migration".Migrant[] takeRegionScriptRuns(Map map,
+        const ref imported!"dmangos.cluster.regions".Region region)
+    {
+        import std.algorithm.mutation : remove;
+        import dmangos.world.migration : Migrant, MigrantKind;
+
+        Migrant[] runs;
+        const now = transportNow();
+        foreach (run; scriptRuns)
+        {
+            if (run.mapId != map.id || run.instanceId || run.home == noCell || run.next >= run.steps.length)
+                continue;
+            const knownHome = map.migrantHome(run.anchor);
+            const home = knownHome == noCell ? run.home : knownHome;
+            if (!region.rect.containsKey(home))
+                continue;
+            if (region.next)
+            {
+                ByteWriter w;
+                w.put(cast(ubyte) run.type);
+                w.put(cast(uint) run.next);
+                w.put(run.elapsed);
+                w.put(now);
+                w.put(run.source);
+                w.put(run.target);
+                w.put(run.anchor);
+                runs ~= Migrant(MigrantKind.scriptRun, run.id, home, w.data);
+            }
+            run.next = run.steps.length;
+        }
+        scriptRuns = scriptRuns.remove!(run => run.next >= run.steps.length);
+        return runs;
+    }
+
+    private void restoreRegionScriptRun(uint mapId, const ref imported!"dmangos.world.migration".Migrant migrant)
+    {
+        import std.algorithm.comparison : max, min;
+
+        auto r = ByteReader(migrant.state);
+        const type = cast(DbScriptType) r.read!ubyte;
+        const next = r.read!uint, elapsed = r.read!uint;
+        const transit = max(0, cast(int)(transportNow() - r.read!uint));
+        const source = r.read!ulong, target = r.read!ulong, anchor = r.read!ulong;
+        if (type > DbScriptType.max || (anchor != source && anchor != target))
+            return;
+        const steps = data.dbScripts.steps(type, migrant.spawn);
+        if (next >= steps.length)
+            return;
+        auto run = new ScriptRun(type, migrant.spawn, mapId, 0, source, target, steps);
+        run.next = next;
+        run.elapsed = cast(uint) min(uint.max, cast(ulong) elapsed + transit);
+        run.anchor = anchor;
+        run.home = migrant.home;
+        scriptRuns ~= run;
     }
 
     /// Detaches the database script runs the departing dungeon copies were executing.
@@ -1110,6 +1182,66 @@ unittest
     assert(data.steps(DbScriptType.questEnd, 1).length == 0);
     DbScriptStep respawn = {command: ScriptCommand.respawnGameObject};
     assert(!respawn.creatureBuddy && a.creatureBuddy);
+}
+
+/// An outdoor relay resumes its next step after the source's region moves.
+unittest
+{
+    import core.time : MonoTime, msecs;
+    import dmangos.cluster.regions : CellRect, Region, RegionState;
+    import dmangos.world.creature : TempSpawnType;
+    import dmangos.world.grid : cellCoordinate;
+    import dmangos.world.movement : Position;
+    import dmangos.world.testclient : newCreationContext, newDatabase;
+    import dmangos.world.testdata : creatureInnkeeper;
+    import dmangos.world.updatefields : UNIT_NPC_FLAGS;
+
+    auto db = newDatabase();
+    auto source = newCreationContext(db), destination = newCreationContext(db);
+    source.nodeId = 1;
+    destination.nodeId = 2;
+    auto now = MonoTime.currTime;
+    source.clock = destination.clock = () => now;
+    enum uint relay = 9901, first = 0x10000000, second = 0x20000000;
+    foreach (owner; [source, destination])
+    {
+        owner.data.dbScripts.add(DbScriptType.relay, DbScriptStep(relay, 0, 0, ScriptCommand.modifyNpcFlags, first, 1));
+        owner.data.dbScripts.add(DbScriptType.relay, DbScriptStep(relay, 1000, 0, ScriptCommand.modifyNpcFlags, second, 1));
+    }
+    auto from = source.map(0), to = destination.map(0);
+    const at = Position(-8930, -120, 83.53f);
+    auto speaker = source.summonCreature(from, creatureInnkeeper, at, TempSpawnType.manual, 0, 0);
+    auto other = source.summonCreature(from, creatureInnkeeper, Position(at.x + 500, at.y, at.z),
+        TempSpawnType.manual, 0, 0);
+    assert(source.startScript(DbScriptType.relay, relay, from, speaker.guid, 0));
+    assert(source.startScript(DbScriptType.relay, relay, from, other.guid, 0));
+    source.updateScripts(400);
+    now += 400.msecs;
+    assert(speaker.values.get!UNIT_NPC_FLAGS & first);
+    speaker.values.set!UNIT_NPC_FLAGS(speaker.values.get!UNIT_NPC_FLAGS & ~first);
+
+    const x = cellCoordinate(at.x), y = cellCoordinate(at.y);
+    auto region = Region(7, 0, CellRect(x, y, x + 1, y + 1), 1, 1, RegionState.revoking, 2);
+    ubyte[][uint] leaving, unused;
+    source.regionsChanged(null, [region], null, leaving);
+    now += 200.msecs;
+    region.owner = 2;
+    region.state = RegionState.granted;
+    region.next = 0;
+    destination.regionsChanged([region], null, [region.id: cast(const(ubyte)[]) leaving[region.id]], unused);
+    auto resumed = to.creatureAt(speaker.guid);
+    assert(resumed !is null && from.creatureAt(speaker.guid) is null);
+    assert(destination.runningScripts == 1 && source.runningScripts == 1,
+        "only the run anchored in the departing region moves");
+
+    destination.updateScripts(350);
+    assert(!(resumed.values.get!UNIT_NPC_FLAGS & (first | second)));
+    destination.updateScripts(100);
+    assert((resumed.values.get!UNIT_NPC_FLAGS & (first | second)) == second);
+    assert(destination.runningScripts == 0);
+    source.updateScripts(600);
+    assert((other.values.get!UNIT_NPC_FLAGS & (first | second)) == (first | second));
+    assert(source.runningScripts == 0);
 }
 
 /**

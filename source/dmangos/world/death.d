@@ -151,6 +151,60 @@ mixin template DeathHandlers()
 private:
     int deathTimer;                // until a body not released is released anyway
     Corpse corpse;                 // the body, while there is one
+    enum ubyte releaseTimer = 0x08; // PLAYER_FIELD_BYTE_RELEASE_TIMER
+
+    void writeDeathHandoff(ref ByteWriter writer)
+    {
+        writer.put(cast(ubyte) player.deathState);
+        if (player.deathState == DeathState.corpse)
+        {
+            writer.put(deathTimer);
+            writer.put(player.values.get!PLAYER_SELF_RES_SPELL);
+        }
+        else if (player.deathState == DeathState.ghost)
+        {
+            writer.put(corpse !is null);
+            if (corpse !is null)
+                corpse.writeHandoff(writer);
+        }
+    }
+
+    void readDeathHandoff(ref ByteReader reader)
+    {
+        player.deathState = cast(DeathState) reader.read!ubyte;
+        if (player.deathState == DeathState.corpse)
+        {
+            deathTimer = reader.read!int;
+            player.values.set!PLAYER_SELF_RES_SPELL(reader.read!uint);
+            player.values.set!UNIT_FIELD_HEALTH(0u);
+            player.values.set!UNIT_DYNAMIC_FLAGS(0u);
+            player.values.setByte!PLAYER_FIELD_BYTES(0, player.values.getByte!PLAYER_FIELD_BYTES(0) | releaseTimer);
+        }
+        else if (player.deathState == DeathState.ghost)
+        {
+            if (reader.read!bool)
+                corpse = new Corpse(player.data.guid, reader);
+            player.values.set!UNIT_FIELD_HEALTH(1u);
+            setGhostAppearance(true);
+        }
+    }
+
+    /// Transfer the representation with its player while keeping the corpse's original location.
+    void corpseLeavingForHandoff()
+    {
+        if (corpse is null)
+            return;
+        if (auto there = context.existingMap(corpse.map, corpse.instanceId))
+            if (there.findObject(corpse.guid) is corpse)
+                there.removeObject(corpse.guid);
+        corpse = null;
+    }
+
+    void corpseArrivingFromHandoff()
+    {
+        if (corpse !is null && (!corpse.instanceId || context.hostsDungeon(corpse.map)))
+            context.map(corpse.map, corpse.instanceId).addObject(corpse);
+    }
 
     /**
      * The player died: a tenth of what it wears is worn out (killed
@@ -176,7 +230,6 @@ private:
         player.deathState = DeathState.corpse;
         sendMovementOrder!(Opcode.SMSG_FORCE_MOVE_ROOT)();
         player.values.set!UNIT_DYNAMIC_FLAGS(0u);
-        enum ubyte releaseTimer = 0x08; // PLAYER_FIELD_BYTE_RELEASE_TIMER: the client counts down to the release
         player.values.setByte!PLAYER_FIELD_BYTES(0, player.values.getByte!PLAYER_FIELD_BYTES(0) | releaseTimer);
         deathTimer = autoReleaseMs;
         player.data.deathExpireTime = nextDeathExpireTime(player.data.deathExpireTime, context.unixTime);
@@ -270,6 +323,13 @@ private:
      */
     void setGhost(bool on)
     {
+        setGhostAppearance(on);
+        refreshSpeeds();
+        refreshMovementAuras();
+    }
+
+    void setGhostAppearance(bool on)
+    {
         enum uint wispDisplay = 1825; // creature 12861, the wisp of spell 20584's transform
         enum ubyte raceNightElf = 4;
         const wisp = player.data.race == raceNightElf;
@@ -277,8 +337,6 @@ private:
         player.values.set!PLAYER_FLAGS(on ? flags | PlayerFlags.ghost : flags & ~PlayerFlags.ghost);
         if (wisp)
             player.values.set!UNIT_FIELD_DISPLAYID(on ? wispDisplay : player.values.get!UNIT_FIELD_NATIVEDISPLAYID);
-        refreshSpeeds();
-        refreshMovementAuras();
     }
 
     /// The ghost takes its body back, if near it and the delay is over.
@@ -668,13 +726,7 @@ private:
         }
         player.deathState = DeathState.ghost;
         const c = saved.get;
-        corpse = new Corpse(player, cast(CorpseType) c.type, c.time);
-        corpse.at = Position(c.x, c.y, c.z, c.orientation);
-        corpse.values.set!CORPSE_FIELD_POS_X(c.x);
-        corpse.values.set!CORPSE_FIELD_POS_Y(c.y);
-        corpse.values.set!CORPSE_FIELD_POS_Z(c.z);
-        corpse.values.set!CORPSE_FIELD_FACING(c.orientation);
-        corpse.values.clearChanges();
+        corpse = new Corpse(player, cast(CorpseType) c.type, c.time, c.map, Position(c.x, c.y, c.z, c.orientation));
         if (c.map == player.data.map)
             map.addObject(corpse);
         else
@@ -709,6 +761,53 @@ private:
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+/// Both unreleased bodies and ghosts keep their death state through a player handoff.
+unittest
+{
+    import core.time : MonoTime, seconds;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.player : DeathState, Player;
+    import dmangos.world.testclient;
+    import dmangos.world.updatefields : PLAYER_SELF_RES_SPELL, UNIT_FIELD_HEALTH;
+
+    foreach (released; [false, true])
+    {
+        auto db = newDatabase();
+        auto oldOwner = newCreationContext(db), newOwner = newCreationContext(db);
+        auto relay = new TestPlayerRelay(oldOwner, newOwner);
+        auto now = MonoTime.currTime;
+        oldOwner.clock = newOwner.clock = () => now;
+        const fell = Position(-8949.95f, -132.49f, 83.53f, 1.97f);
+        auto client = loggedIn(oldOwner, db, 7, "Anduin", fell);
+        client.session.inWorld.playerDied(false);
+        (cast(Player) client.session.character).values.set!PLAYER_SELF_RES_SPELL(2584u);
+        const body = makeGuid(HighGuid.corpse, 7);
+        if (released)
+            client.write(Opcode.CMSG_REPOP_REQUEST, null);
+        auto from = oldOwner.map(0), to = newOwner.map(0);
+        assert((from.findObject(body) !is null) == released);
+
+        oldOwner.regionOwnerAround = (uint, Position, float) => newOwner.nodeId;
+        client.session.update(1.seconds);
+        assert(relay.remote !is null && from.findObject(body) is null);
+        auto player = relay.remote.character;
+        assert(player.deathState == (released ? DeathState.ghost : DeathState.corpse));
+        assert(player.values.get!UNIT_FIELD_HEALTH == (released ? 1 : 0));
+        if (!released)
+        {
+            assert(player.values.get!PLAYER_SELF_RES_SPELL == 2584);
+            client.write(Opcode.CMSG_REPOP_REQUEST, null);
+        }
+        assert(to.findObject(body) !is null && 7 in db.corpses);
+        client.write(Opcode.CMSG_RECLAIM_CORPSE, ClientGuid(body));
+        assert(player.deathState == DeathState.ghost, "handoff preserves the reclaim delay");
+        now += 70.seconds;
+        client.write(Opcode.CMSG_RECLAIM_CORPSE, ClientGuid(body));
+        assert(player.deathState == DeathState.alive && to.findObject(body) is null && 7 !in db.corpses);
+    }
+}
 
 /**
  * A player killed lies rooted; released, it is a ghost at its graveyard with its corpse saved where

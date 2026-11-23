@@ -331,6 +331,7 @@ private:
         w.put(moveOrderCounter);
         foreach (speed; player.speeds)
             w.put(speed);
+        writeDeathHandoff(w);
         writePvPHandoff(w);
         context.writeReplicaImpacts(player.guid, w);
         writeEnvironmentHandoff(w);
@@ -340,6 +341,7 @@ private:
 
         info!"%s: '%s' moves to node %s (at map %s %.1f %.1f)"(remoteAddress, player.data.name, target,
             player.data.map, player.position.x, player.position.y);
+        corpseLeavingForHandoff();
         context.leaveWorldForMigration(this, target);
         connection.gatewayCharacter = player.data.guid;
         player = null;
@@ -442,6 +444,7 @@ private:
         player = makePlayer(character, false);
         player.movement = movement;
         player.speeds = speeds; // as the client has them; auras loaded below change them as they did there
+        readDeathHandoff(r);
         readPvPHandoff(r);
         saveTimer = IntervalTimer(sessionSaveInterval());
         regenTimer.reset();
@@ -451,6 +454,7 @@ private:
         state_ = WorldState.inWorld;
         connection.playing = this; // in the world from here on
         context.enterWorldMigrated(this, known);
+        corpseArrivingFromHandoff();
         context.readReplicaImpacts(player.guid, map.id, map.instanceId, r);
         loadAuras();
         loadHonor();

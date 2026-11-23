@@ -1875,6 +1875,18 @@ final class Map : CombatWorld, GameObjectWorld
         return slot != uint.max && entities.at(slot).replica;
     }
 
+    /// The home cell of a world object that moves when this node releases its region.
+    package ulong migrantHome(ulong guid)
+    {
+        const slot = slotFor(guid);
+        if (slot == uint.max || at(slot).replica)
+            return noCell;
+        auto object = at(slot).object;
+        if (auto creature = cast(Creature) object)
+            return creature.meleeController || creature.totemOwner ? noCell : at(slot).home;
+        return cast(GameObject) object is null ? noCell : at(slot).home;
+    }
+
     /// The terrain with its buildings, or null (the GM commands' collision queries).
     @property Terrain collision()
     {

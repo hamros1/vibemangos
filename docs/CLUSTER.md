@@ -327,7 +327,7 @@ sent before its home heard are passed on by the old owner for a few seconds, and
 from a new owner before the old one's word takes it as the owner.
 
 **What travels:** the character as saved, including auras, spell cooldowns, quests and reputation;
-its movement; pending cross-node projectile impacts; what its client knows; its pet (saved as
+its movement; its death state and corpse; pending cross-node projectile impacts; what its client knows; its pet (saved as
 out and brought out again on the next node);
 its client's address and build; the dungeon copy it is in and where it came in from. **What does
 not:** timers that only shape timing (regeneration, rest, flood protection), `.gm allowwhispers`
@@ -364,6 +364,10 @@ Scripted waypoint movement carries the database path ID, its progress and any pa
 resolves that path from its world data, including when the spawn normally stands still. A waypoint
 route suspended by combat resumes when the creature goes home.
 
+An outdoor database script anchored to a creature or game object moves with that object's home
+region. The new owner resumes at the next pending step and counts time spent in transit. Completed
+steps stay consumed.
+
 On a clean dungeon handoff, queued database scripts resume at their next step with the elapsed
 time intact. The receiving node waits briefly for players who were participating when the copy
 moved. Script-spawned game objects, including temporary unowned objects, keep their original
@@ -385,7 +389,7 @@ after the chest is exhausted or expires, so the encounter cannot roll another re
   handoff. A worker crash loses any summons it was simulating. Pets, guardians and totems still
   follow their owner's lifecycle. Cluster nodes reserve temporary GUID ranges in the character
   database so a restarted node does not reuse the IDs of objects it handed off. A player's corpse
-  stays where it is.
+  keeps its original location and reclaim deadline when the player changes nodes.
 
 ### Creature assistance
 
