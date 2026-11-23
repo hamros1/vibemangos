@@ -612,10 +612,9 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         import dmangos.world.social : FriendInfo, FriendStatus;
 
         const info = FriendInfo(cast(FriendStatus) m.status, m.area, m.level, m.classId);
-        foreach (other; context.onlinePlayers)
-            if (auto session = cast(Character) other)
-                if (session.character !is null)
-                    session.friendNews(m.guid, m.online, info);
+        foreach (session; context.onlinePlayers)
+            if (session.character !is null)
+                session.friendNews(m.guid, m.online, info);
     }
 
     private uint nextEntryRequest = 1;
@@ -711,13 +710,12 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         if (everywhere(m.op))
         {
             // For every player here.
-            foreach (other; context.onlinePlayers)
-                if (auto here = cast(Character) other)
-                    if (here.character !is null)
-                        here.gmTargeted(m, sink, (GmRemote back) {});
+            foreach (here; context.onlinePlayers)
+                if (here.character !is null)
+                    here.gmTargeted(m, sink, (GmRemote back) {});
             return;
         }
-        auto session = cast(Character) context.onlinePlayer(m.target);
+        auto session = context.onlinePlayer(m.target);
         if (session is null || session.character is null)
             return sink.red("Player is not online at the moment.");
         session.gmTargeted(m, sink, (GmRemote back) { node.sendTo(peer, back); });

@@ -149,7 +149,7 @@ mixin template SocialHandlers()
         import dmangos.world.player : PlayerFlags;
         import dmangos.world.character : Character;
 
-        if (auto other = cast(Character) context.onlinePlayer(guid))
+        if (auto other = context.onlinePlayer(guid))
             if (other.character !is null && (!other.character.gmTagOn || hasPermissions))
             {
                 const c = other.character;
@@ -256,10 +256,9 @@ mixin template SocialHandlers()
         if (player.gmTagOn)
             return;
         const info = online ? friendInfoOfSelf() : FriendInfo.init;
-        foreach (other; context.onlinePlayers)
-            if (auto session = cast(Character) other)
-                if (session !is this && session.character !is null)
-                    session.friendNews(player.guid, online, info);
+        foreach (session; context.onlinePlayers)
+            if (session !is this && session.character !is null)
+                session.friendNews(player.guid, online, info);
         if (context.announceFriendElsewhere !is null)
             context.announceFriendElsewhere(player.guid, online, info.status, info.area, info.level, info.classId);
     }

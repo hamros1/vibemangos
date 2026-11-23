@@ -216,7 +216,7 @@ private:
     /// The online session of the ticket's author; null if offline.
     private typeof(this) ticketAuthor(const ref TicketRecord t)
     {
-        return cast(typeof(this)) context.onlinePlayer(cast(ulong) t.player);
+        return context.onlinePlayer(cast(ulong) t.player);
     }
 
     /// `.gmTicket list`: every open ticket, a line each, to this GM.
@@ -231,7 +231,7 @@ private:
             string assigned;
             if (const gm = t.id in context.ticketAssignedTo)
             {
-                if (auto aplr = cast(typeof(this)) context.onlinePlayer(*gm))
+                if (auto aplr = context.onlinePlayer(*gm))
                     assigned = aplr.player.data.name;
                 else
                 {
@@ -338,7 +338,7 @@ private:
             ticketChannelSay("GmTicket:0:Ticket not found.", false);
             return true;
         }
-        typeof(this) plr = words.length == 1 ? this : cast(typeof(this)) context.onlinePlayer(words[1]);
+        typeof(this) plr = words.length == 1 ? this : context.onlinePlayer(words[1]);
         if (plr is null)
         {
             ticketChannelSay("GmTicket:0:Player not found.", false);
@@ -361,7 +361,7 @@ private:
             return true;
         }
         if (assigned != 0 && assigned != player.guid)
-            if (auto aplr = cast(typeof(this)) context.onlinePlayer(assigned))
+            if (auto aplr = context.onlinePlayer(assigned))
                 if (aplr.player !is null && !canUseCommand('z'))
                 {
                     ticketChannelSay("GmTicket:0:Ticket already assigned to another GM.", false);
@@ -395,7 +395,7 @@ private:
             ticketChannelSay("GmTicket:0:Ticket not assigned to a GM.", false);
             return true;
         }
-        auto plr = cast(typeof(this)) context.onlinePlayer(assigned);
+        auto plr = context.onlinePlayer(assigned);
         if (!canUseCommand('z') && plr !is null && plr.player !is null && plr.canUseCommand('z'))
         {
             ticketChannelSay("GmTicket:0:You can not release tickets from admins.", false);

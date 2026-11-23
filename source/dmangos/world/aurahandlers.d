@@ -248,7 +248,7 @@ private:
             foreach (ref m; group.members)
                 if (m.guid != player.guid && m.subGroup == group.subGroupOf(player.guid))
                 {
-                    if (auto s = cast(typeof(this)) context.onlinePlayer(m.guid))
+                    if (auto s = context.onlinePlayer(m.guid))
                     {
                         if (s.player !is null && s.map is map)
                             members ~= s;
@@ -333,7 +333,7 @@ private:
     /// Player `member` loses the aura of `spell` that `source` gave it.
     private void takeAreaAura(ulong member, uint spell, ulong source)
     {
-        auto s = member == player.guid ? this : cast(typeof(this)) context.onlinePlayer(member);
+        auto s = member == player.guid ? this : context.onlinePlayer(member);
         if (s is null || s.player is null)
             return;
         foreach (aura; s.player.auras.list.dup)
@@ -1097,7 +1097,7 @@ private:
         case AuraType.periodicLeech, AuraType.periodicManaLeech:
             // Another player's drain (a duel, world PvP): its caster's doing, as on a creature.
             if (aura.caster != player.guid)
-                if (auto caster = cast(typeof(this)) context.onlinePlayer(aura.caster))
+                if (auto caster = context.onlinePlayer(aura.caster))
                     if (caster.map is map && caster.player !is null)
                         return aura.type(i) == AuraType.periodicLeech ? caster.leechTick(unit, aura, i, amount)
                             : caster.manaLeechTick(unit, aura, i, amount);

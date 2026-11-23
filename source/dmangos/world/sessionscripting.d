@@ -390,7 +390,7 @@ mixin template SessionScripting()
 
         if (player !is null && who.guid == player.guid)
             return this;
-        auto other = cast(Character) context.onlinePlayer(who.guid);
+        auto other = context.onlinePlayer(who.guid);
         return other !is null && other.player !is null && other.map is map ? other : null;
     }
 

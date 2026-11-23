@@ -4,8 +4,7 @@
  * A `Store!T` keeps values of `T` in a growing array of slots and hands out `Ref!T`: a slot and its
  * generation. Removing a value frees its slot for reuse and bumps its generation, so a reference kept
  * from before no longer finds anything (a stale reference is caught, not misdirected). Lookup is an
- * array index; iterating walks one array. A `Side!T` holds a value for some of a store's slots (state
- * that comes and goes) packed in a dense array, and a `SlotBits` is a set of slots, one bit each.
+ * array index; iterating walks one array. A `SlotBits` is a set of slots, one bit each.
  *
  * Generations are 32 bits: a slot would have to be reused four billion times before an old reference
  * could alias a new value.
@@ -28,6 +27,7 @@ struct Ref(T)
 /// See the module documentation.
 struct Store(T)
 {
+    @disable this(this);
     private T[] items;
     private uint[] generations; // odd: the slot holds a value
     private uint[] free;
@@ -112,75 +112,6 @@ struct Store(T)
             if (generations[i] & 1)
                 if (const r = dg(cast(uint) i, value))
                     return r;
-        return 0;
-    }
-}
-
-/// A value for some slots, packed: adding and removing moves nothing else; iterating walks the values.
-struct Side(T)
-{
-    private T[] values;
-    private uint[] owners;  // the slot of each value
-    private uint[] indexOf; // slot -> index + 1 (0: none)
-
-    /// The value for `slot`, made (as `T.init`) if it has none.
-    ref T require(uint slot) pure nothrow @safe
-    {
-        if (auto v = this[slot])
-            return *v;
-        if (indexOf.length <= slot)
-            indexOf.length = slot + 1;
-        values ~= T.init;
-        owners ~= slot;
-        indexOf[slot] = cast(uint) values.length;
-        return values[$ - 1];
-    }
-
-    /// The value for `slot`; null if it has none.
-    inout(T)* opIndex(uint slot) inout pure nothrow @nogc @trusted
-    {
-        if (slot >= indexOf.length || indexOf[slot] == 0)
-            return null;
-        return &values[indexOf[slot] - 1];
-    }
-
-    /// Whether `slot` has a value.
-    bool has(uint slot) const pure nothrow @nogc @safe
-    {
-        return slot < indexOf.length && indexOf[slot] != 0;
-    }
-
-    /// The value for `slot` goes (the last value takes its place).
-    void remove(uint slot) pure nothrow @safe
-    {
-        if (!has(slot))
-            return;
-        const i = indexOf[slot] - 1, last = values.length - 1;
-        if (i != last)
-        {
-            values[i] = values[last];
-            owners[i] = owners[last];
-            indexOf[owners[i]] = cast(uint)(i + 1);
-        }
-        values[last] = T.init;
-        values.length = last;
-        owners.length = last;
-        () @trusted { values.assumeSafeAppend(); owners.assumeSafeAppend(); }();
-        indexOf[slot] = 0;
-    }
-
-    /// How many slots have a value.
-    @property size_t length() const pure nothrow @nogc @safe
-    {
-        return values.length;
-    }
-
-    /// Every value, with its slot.
-    int opApply(scope int delegate(uint slot, ref T value) dg)
-    {
-        foreach (i, ref value; values)
-            if (const r = dg(owners[i], value))
-                return r;
         return 0;
     }
 }
@@ -282,17 +213,6 @@ unittest
     assert(sum == 5);
     store.remove(a); // stale: nothing happens
     assert(store.length == 2);
-
-    Side!int side;
-    side.require(5) = 50;
-    side.require(9) = 90;
-    side.require(2) = 20;
-    side.remove(5);
-    assert(side[5] is null && *side[9] == 90 && *side[2] == 20 && side.length == 2);
-    int[uint] seen;
-    foreach (slot, ref v; side)
-        seen[slot] = v;
-    assert(seen.length == 2 && seen[9] == 90 && seen[2] == 20);
 
     SlotBits bits;
     assert(bits.add(3) && bits.add(200) && !bits.add(3) && bits.length == 2);

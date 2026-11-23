@@ -293,19 +293,19 @@ if (isPlainData!K && isPlainData!V)
     }
 
     /// `key in map`.
-    Value* opBinaryRight(string op : "in")(const K key) @trusted
+    Value* opBinaryRight(string op : "in")(const K key) @safe
     {
         return find(key);
     }
 
     /// ditto
-    const(V)* opBinaryRight(string op : "in")(const K key) const @trusted
+    const(V)* opBinaryRight(string op : "in")(const K key) const @safe
     {
         return find(key);
     }
 
     /// `map[key]`; a missing key is an error, as in an associative array.
-    ref Value opIndex(const K key) @trusted
+    ref Value opIndex(const K key) @safe
     {
         import core.exception : RangeError;
 
@@ -315,7 +315,7 @@ if (isPlainData!K && isPlainData!V)
     }
 
     /// ditto
-    ref const(V) opIndex(const K key) const @trusted
+    ref const(V) opIndex(const K key) const @safe
     {
         import core.exception : RangeError;
 
@@ -325,7 +325,7 @@ if (isPlainData!K && isPlainData!V)
     }
 
     /// The value, or `fallback`.
-    Value get(const K key, lazy Value fallback) const @trusted
+    Value get(const K key, lazy Value fallback) const @safe
     {
         if (auto p = find(key))
             return *p;
@@ -420,7 +420,7 @@ if (isPlainData!K && isPlainData!V)
     }
 
     /// ditto
-    @property const(V)[] values() const @trusted
+    @property const(V)[] values() const @safe
     {
         return building.length ? values_ ~ building.values : values_;
     }

@@ -921,7 +921,7 @@ mixin template DbScriptRunner()
 
         foreach (o; [target, source])
             if (o.exists && !o.creatureOrGo)
-                if (auto session = cast(Character) onlinePlayer(o.guid))
+                if (auto session = onlinePlayer(o.guid))
                     return session;
         return null;
     }

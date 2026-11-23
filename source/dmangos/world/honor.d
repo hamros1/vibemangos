@@ -539,7 +539,7 @@ mixin template HonorHandlers()
         typeof(this)[] near;
         const v = victim.position;
         foreach (ref slot; group.members)
-            if (auto member = cast(typeof(this)) context.onlinePlayer(slot.guid))
+            if (auto member = context.onlinePlayer(slot.guid))
                 if (member.player !is null && member.map !is null && member.map.id == mapId
                     && member.map.instanceId == instance)
                 {
@@ -671,7 +671,7 @@ mixin template HonorHandlers()
         import dmangos.world.relations : canAttack;
 
         const guid = reader.read!ulong;
-        auto other = guid == player.guid ? this : cast(typeof(this)) context.onlinePlayer(guid);
+        auto other = guid == player.guid ? this : context.onlinePlayer(guid);
         if (other is null || other.player is null || other.map !is map)
             return;
         const p = player.position, q = other.player.position;

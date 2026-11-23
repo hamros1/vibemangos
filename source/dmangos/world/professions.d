@@ -95,7 +95,7 @@ unittest
     auto context = newCreationContext(db);
     const at = Position(100, 100, 40);
     auto client = loggedIn(context, db, 7, "Anduin", at);
-    auto caster = cast(Character) context.onlinePlayer(client.session.character.guid);
+    auto caster = context.onlinePlayer(client.session.character.guid);
     auto map = context.map(0);
     SpellInfo spell;
     spell.casting.requiresSpellFocus = 501;

@@ -48,15 +48,11 @@ summons hold guids that must be looked up again each time.
 * Who sees what is kept from both sides: a player's `known` set (a `SlotBits`, one bit per slot) and
   an entity's `viewers` (the slots of the players whose clients have it). Sending to an object's
   viewers walks its viewer list instead of asking every player on the map.
-* State that comes and goes (threat, a cast under way, an escort, loot, a pet's state) belongs in
-  sparse side tables (`Side!T`: a dense array and a slot-to-index map), so adding or removing it moves
-  nothing else and a system walks only its own dense array.
 * Shared templates (`CreatureTemplate` and the others) are immutable and shared by pointer.
 
-**Status.** The map keeps every player and object in one `Store!Entity` with a single guid table
-(step 1). Creatures and game objects are still classes referred to from their slots, and `Side!T` is
-not used yet; per-kind stores of structs and side tables are the next part of this work. Splitting
-hot fields from cold ones is done only where the profiler shows it pays.
+The map keeps every player and object in one `Store!Entity` with a single guid table.
+Creatures and game objects are classes referred to from their slots. Split hot and cold fields
+where profiling shows a benefit.
 
 **Not chosen.** An archetype entity-component system: our kinds are few and known at compile time,
 every object has the large fixed field block the protocol defines, and the state that comes and goes

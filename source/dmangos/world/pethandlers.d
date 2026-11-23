@@ -2035,7 +2035,7 @@ mixin template PetHandlers()
         {
             if (member.guid == player.guid || group.subGroupOf(member.guid) != group.subGroupOf(player.guid))
                 continue;
-            if (auto local = cast(typeof(this)) context.onlinePlayer(member.guid))
+            if (auto local = context.onlinePlayer(member.guid))
             {
                 if (local.player !is null && local.map is map && local.player.deathState == DeathState.alive
                     && !local.duelingWith(player.guid) && near(local.player.position))

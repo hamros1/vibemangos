@@ -149,7 +149,7 @@ no lock of its own.
   Those sent to the coordinator are echoed, which is what renews a node's lease.
 * **Protocol version.** `protocolVersion` changes whenever a message changes. Nodes speaking
   another version are refused at the handshake, so a cluster runs one build throughout. The compiler
-  enforces it: a fingerprint of every message's layout (fields, length prefixes, enum members) is
+  enforces it: a fingerprint of every message's layout (including nested fields, length prefixes, and enum values) is
   recorded with the version, and a message changed without both being updated does not compile. It
   also checks that every message type has exactly one struct and that the types are contiguous.
 * **Enum fields.** A field typed as an enum (a group, channel or GM operation, a service status)

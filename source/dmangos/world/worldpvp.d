@@ -928,10 +928,9 @@ final class WorldPvpFollower
         import dmangos.world.character : Character;
 
         Character[] found;
-        foreach (p; context.onlinePlayers())
-            if (auto c = cast(Character) p)
-                if (c.character !is null)
-                    found ~= c;
+        foreach (c; context.onlinePlayers())
+            if (c.character !is null)
+                found ~= c;
         return found;
     }
 

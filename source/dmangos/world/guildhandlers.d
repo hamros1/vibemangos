@@ -225,10 +225,14 @@ mixin template GuildHandlers()
     /// Founds a guild of `name` with this player its master; null if the name is taken.
     package Guild foundGuild(string name)
     {
+        import dmangos.mysql : DatabaseException;
+
         if (context.guilds.named(name) !is null)
             return null;
         GuildRecord r;
         r.id = context.database.nextGuildId();
+        if (!r.id)
+            throw new DatabaseException("guild ID reservation was fenced");
         r.name = name;
         r.leader = player.data.guid;
         r.motd = "No message set.";
@@ -539,7 +543,7 @@ mixin template GuildHandlers()
             return guildResult(GuildCommand.invite, "", GuildError.permissions);
         const guid = context.playerGuid(low);
         const inviter = player.guid, inviterName = player.data.name;
-        if (auto here = cast(typeof(this)) context.onlinePlayer(guid))
+        if (auto here = context.onlinePlayer(guid))
         {
             if (here.guildInvited)
                 return guildResult(GuildCommand.invite, realName, GuildError.alreadyInvitedS);

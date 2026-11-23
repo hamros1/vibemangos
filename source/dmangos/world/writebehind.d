@@ -48,7 +48,7 @@ import std.typecons : AutoImplement;
 
 import dmangos.plaindata : decode, encode, isPlainData, layout;
 import dmangos.log : error, info, warning;
-import dmangos.world.database : DatabaseWrite, Replaces, WorldDatabase, WriteLedger;
+import dmangos.world.database : DatabaseRead, DatabaseWrite, Replaces, WorldDatabase, WriteLedger;
 
 // ---------------------------------------------------------------------------------------------------
 // The arguments as bytes
@@ -62,7 +62,7 @@ import dmangos.world.database : DatabaseWrite, Replaces, WorldDatabase, WriteLed
 template isQueued(alias fun)
 {
     enum isQueued = () {
-        static if (!is(ReturnType!fun == void))
+        static if (!is(ReturnType!fun == void) || hasUDA!(fun, DatabaseRead))
             return false;
         else
         {

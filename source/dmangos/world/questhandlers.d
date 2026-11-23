@@ -1425,7 +1425,7 @@ private:
         if (group is null)
             return creditCreatureOrGo(target, spell, guid);
         foreach (ref slot; group.members)
-            if (auto member = cast(Character) context.onlinePlayer(slot.guid))
+            if (auto member = context.onlinePlayer(slot.guid))
                 if (member.player !is null && member.player.deathState != DeathState.ghost
                         && (member is this || member.atGroupRewardDistance(map, at)))
                     member.creditCreatureOrGo(target, spell, guid);

@@ -27,7 +27,7 @@ package void bindChestLoot(WorldContext context, Map map, GameObject chest, Loot
     import dmangos.world.gameobject : GoLootState;
 
     loot.find = (ulong guid) {
-        auto session = cast(Character) context.onlinePlayer(guid);
+        auto session = context.onlinePlayer(guid);
         return session is null || session.currentMap !is map ? null : cast(Looter) session;
     };
     loot.clock = () => context.unixTime;
@@ -632,7 +632,7 @@ mixin template GameObjectHandlers()
 
                 bool allowed(ulong guid, const LootItem item)
                 {
-                    auto owner = cast(Character) context.onlinePlayer(guid);
+                    auto owner = context.onlinePlayer(guid);
                     if (item.quest)
                         return owner !is null && owner.hasQuestForItem(item.itemId);
                     return item.condition == 0 || (owner !is null && owner.conditionMet(item.condition));

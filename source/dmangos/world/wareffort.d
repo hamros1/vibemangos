@@ -825,7 +825,7 @@ unittest
     assert(pileHere(context, 155_012), "past a tenth: the bars' first pile");
 
     // Every init in a capital carries the goals and counts.
-    (cast(Character) context.onlinePlayer("Anduin")).sendInitWorldStates(1519);
+    (context.onlinePlayer("Anduin")).sendInitWorldStates(1519);
     const init = anduin.read();
     assert(init.length == 1 && init[0].opcode == Opcode.SMSG_INIT_WORLD_STATES);
     assert(init[0].body_[8] == 55 && init[0].body_[9] == 0, "25 goals and 30 counts");

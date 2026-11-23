@@ -32,7 +32,7 @@ bool loadScript(S)(ref S state, ref ByteReader r)
 {
     try
     {
-        if (r.read!ulong != layoutFingerprint!S)
+        if (!compatibleLayout!S(r.read!ulong))
             return false;
         S read;
         readValue(r, read);
@@ -45,6 +45,44 @@ bool loadScript(S)(ref S state, ref ByteReader r)
 
 private:
 
+bool compatibleLayout(S)(ulong stored)
+{
+    enum current = layoutFingerprint!S;
+    enum legacy = legacyDungeonLayout(current);
+    return stored == current || (legacy != 0 && stored == legacy);
+}
+
+// Dungeon layouts with enums saved by 219ecf7 and the matching enum-aware fingerprints.
+// A later change to those enum values also changes the lookup key.
+ulong legacyDungeonLayout(ulong current) pure nothrow @nogc @safe
+{
+    switch (current)
+    {
+    case 0x485605316b929e94UL: return 0x3def319d8434f6eaUL; // Deadmines
+    case 0x21314848b8220200UL: return 0x13647cd038c9c4ccUL; // ShadowfangKeep
+    case 0x79ed00fbda77adeeUL: return 0x5254ad1cbcd364e6UL; // Gnomeregan
+    case 0xf42962d98d45e308UL: return 0xf58ef804aa79ca29UL; // ScarletMonastery
+    case 0x5bb70847c70ef71aUL: return 0x3388fd22daa3a5a8UL; // Uldaman
+    case 0x9d03d77813dec195UL: return 0x783120410c6378bfUL; // ZulFarrak
+    case 0x54d14e49f617b487UL: return 0x07d8a290ee9f3768UL; // Maraudon
+    case 0xea95117c233f15f7UL: return 0x2cd948dcaa3295fdUL; // BlackfathomDeeps
+    case 0x16663c1a96892d9bUL: return 0xd55de4fa96ca9c08UL; // SunkenTemple
+    case 0xf9ea7af64bb35083UL: return 0x09873c5cccd6d62bUL; // BlackrockDepths
+    case 0xbdaf7d3a6da5faf3UL: return 0x6722bd559cf208d5UL; // BlackrockSpire
+    case 0x2ff3a5ff97f3461eUL: return 0xfdf53dada7b5b9a0UL; // Stratholme
+    case 0x047e72f7bede7dc4UL: return 0xfb153714702be643UL; // Scholomance
+    case 0x50a9302ef83caeeaUL: return 0xb5d2ff570b594c8fUL; // DireMaul
+    case 0xb67098a4d5e07cbaUL: return 0xb6c36d52991d570eUL; // MoltenCore
+    case 0x07790e4e603f7da1UL: return 0xe1b4dffdcd20a6f1UL; // OnyxiasLair
+    case 0x83881956a512360fUL: return 0x32570741e17de7e3UL; // ZulGurub
+    case 0xa61171b3679a2d60UL: return 0x5c21858c252ae812UL; // BlackwingLair
+    case 0xe7bcf2f0f0cfae55UL: return 0xa676c85b7c5997c7UL; // RuinsOfAhnQiraj
+    case 0x2b625e18f5cc90f1UL: return 0x1930997e372b81b0UL; // TempleOfAhnQiraj
+    case 0xf681f342534aff66UL: return 0x2edbb9bc0f083bfeUL; // Naxxramas
+    default: return 0;
+    }
+}
+
 string layoutOf(T)()
 {
     static if (is(T == struct))
@@ -56,7 +94,14 @@ string layoutOf(T)()
         return s ~ "}";
     }
     else static if (is(T E == enum))
-        return T.stringof ~ "(" ~ E.stringof ~ ")";
+    {
+        import std.conv : to;
+
+        string s = T.stringof ~ "(" ~ E.stringof;
+        static foreach (name; __traits(allMembers, T))
+            s ~= ";" ~ name ~ "=" ~ (cast(E) __traits(getMember, T, name)).to!string;
+        return s ~ ")";
+    }
     else static if (isStaticArray!T)
         return layoutOf!(typeof(T.init[0])) ~ "[" ~ T.length.stringof ~ "]";
     else static if (isArray!T)
@@ -179,4 +224,34 @@ unittest
     auto r3 = ByteReader(w.data[0 .. 10]);
     assert(!loadScript(back, r3), "short");
     static assert(layoutFingerprint!State != layoutFingerprint!Other);
+}
+
+unittest
+{
+    static struct Previous
+    {
+        enum Step : ubyte { intro, outro }
+        struct State { Step step; }
+    }
+    static struct Reordered
+    {
+        enum Step : ubyte { outro, intro }
+        struct State { Step step; }
+    }
+    ByteWriter w;
+    const previous = Previous.State(Previous.Step.intro);
+    saveScript(previous, w);
+    auto reader = ByteReader(w.data);
+    Reordered.State state;
+    assert(!loadScript(state, reader));
+
+    import dmangos.scripts.deadmines : Deadmines;
+
+    ByteWriter current, legacy;
+    Deadmines dungeon;
+    saveScript(dungeon, current);
+    legacy.put(0x3def319d8434f6eaUL);
+    legacy.putBytes(current.data[ulong.sizeof .. $]);
+    reader = ByteReader(legacy.data);
+    assert(loadScript(dungeon, reader));
 }

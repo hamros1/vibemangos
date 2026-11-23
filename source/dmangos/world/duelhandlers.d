@@ -52,7 +52,7 @@ private:
     {
         if (duel is null)
             return null;
-        auto other = cast(typeof(this)) context.onlinePlayer(duel.opponent);
+        auto other = context.onlinePlayer(duel.opponent);
         return other is null || other.duel is null || other.player is null ? null : other;
     }
 
@@ -68,7 +68,7 @@ private:
      */
     package void startDuel(ulong target)
     {
-        auto other = cast(typeof(this)) context.onlinePlayer(target);
+        auto other = context.onlinePlayer(target);
         if (other is null || other is this || other.player is null || other.map !is map)
             return;
         if (duel !is null || other.duel !is null)

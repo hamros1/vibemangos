@@ -386,6 +386,11 @@ struct Replaces
 {
 }
 
+/// A database method that returns or fills in data without changing durable game state.
+struct DatabaseRead
+{
+}
+
 /// A write that returns a value and must still respect the node's write lease.
 struct DatabaseWrite
 {
@@ -439,36 +444,36 @@ struct InstanceRecords
 interface WorldDatabase
 {
     /// The account named `username`, or null.
-    Nullable!WorldAccount findAccount(string username);
+    @DatabaseRead Nullable!WorldAccount findAccount(string username);
 
     /// Whether the account or the address has a ban in force.
-    bool isBanned(uint accountId, string ip);
+    @DatabaseRead bool isBanned(uint accountId, string ip);
 
     /// Logs the connection in `account_logons`, with the world server as its source.
     void recordLogon(uint accountId, string ip);
 
     /// The account's characters on this realm, by guid.
-    CharacterRecord[] characters(uint accountId);
+    @DatabaseRead CharacterRecord[] characters(uint accountId);
 
     // --- character creation and deletion ---
 
     /// Next free character, item and mail ids.
-    GuidCounters highestGuids();
+    @DatabaseRead GuidCounters highestGuids();
 
     /// Whether a character already has this (normalized) name.
-    bool nameTaken(string name);
+    @DatabaseRead bool nameTaken(string name);
 
     /// Characters on every realm, from `realmcharacters`.
-    uint accountCharacterTotal(uint accountId);
+    @DatabaseRead uint accountCharacterTotal(uint accountId);
 
     /// Characters on this realm.
-    uint realmCharacterCount(uint accountId);
+    @DatabaseRead uint realmCharacterCount(uint accountId);
 
     /// Races of the account's characters on this realm, in table order.
-    ubyte[] characterRaces(uint accountId);
+    @DatabaseRead ubyte[] characterRaces(uint accountId);
 
     /// Whether the account has its `character_tutorial` row.
-    bool hasTutorialData(uint accountId);
+    @DatabaseRead bool hasTutorialData(uint accountId);
 
     /// Stores a newly created character (and, if asked, the account's empty tutorial row).
     void saveNewCharacter(const ref NewCharacter character, bool insertTutorialData);
@@ -477,10 +482,10 @@ interface WorldDatabase
     void setRealmCharacterCount(uint accountId, uint realmId, uint count);
 
     /// The account, name and level of a character, or null.
-    Nullable!CharacterOwner characterOwner(uint guid);
+    @DatabaseRead Nullable!CharacterOwner characterOwner(uint guid);
 
     /// Whether the character leads a guild.
-    bool isGuildLeader(uint guid);
+    @DatabaseRead bool isGuildLeader(uint guid);
 
     /// Deletes (or unlinks) a character and everything that belongs to it.
     void deleteCharacter(uint guid, uint accountId, DeleteOptions options, uint delegate() nextMailId);
@@ -488,7 +493,7 @@ interface WorldDatabase
     // --- entering and leaving the world ---
 
     /// Everything logging in reads about a character, or null if there is no such character.
-    Nullable!CharacterData loadCharacter(uint guid);
+    @DatabaseRead Nullable!CharacterData loadCharacter(uint guid);
 
     /// Stores the home a character without one gets.
     void insertHomeBind(uint guid, const HomeBind bind);
@@ -518,13 +523,13 @@ interface WorldDatabase
     void deleteCorpse(uint player);
 
     /// The player's corpse, if it has one.
-    Nullable!CorpseRecord loadCorpse(uint player);
+    @DatabaseRead Nullable!CorpseRecord loadCorpse(uint player);
 
     /// A dead creature comes back at `respawnTime` (0: forget it).
     void saveCreatureRespawn(uint spawnGuid, long respawnTime);
 
     /// The persisted choices for this realm's single-choice world creature pools, keyed by pool.
-    CreaturePoolState[uint] loadCreaturePoolStates(uint realm);
+    @DatabaseRead CreaturePoolState[uint] loadCreaturePoolStates(uint realm);
 
     /// Claim the initial row (revision 0) or update the expected revision. A stale owner cannot renew it.
     @DatabaseWrite bool updateCreaturePoolState(uint realm, uint pool, ulong revision, uint spawn, long due);
@@ -533,13 +538,13 @@ interface WorldDatabase
     @Replaces void saveAuras(uint player, const(AuraRecord)[] auras);
 
     /// Every guild, with its ranks and members; one guild alone.
-    GuildRecord[] loadGuilds();
+    @DatabaseRead GuildRecord[] loadGuilds();
     /// ditto
-    Nullable!GuildRecord loadGuild(uint id);
-    ulong guildRevision();
+    @DatabaseRead Nullable!GuildRecord loadGuild(uint id);
+    @DatabaseRead ulong guildRevision();
     @DatabaseWrite ulong commitGuildChange(scope bool delegate(WorldDatabase db, ulong revision) change);
     /// Reserves a guild ID. A stale invitation must never point at a guild created later.
-    uint nextGuildId();
+    @DatabaseWrite uint nextGuildId();
     /// A guild's own row (name, leader, emblem, texts), written whole (created if new).
     void saveGuild(const ref GuildRecord guild);
     /// Its ranks, all of them (the old rows go).
@@ -554,38 +559,38 @@ interface WorldDatabase
     void deleteGuild(uint guild);
 
     /// The petition (charter) of item `petition`, with its signers; null if none.
-    Nullable!PetitionRecord loadPetition(uint petition);
+    @DatabaseRead Nullable!PetitionRecord loadPetition(uint petition);
     /// A new charter of `owner`'s (its older ones go).
     void createPetition(uint owner, uint petition, string name);
     /// A signature; whether an account signed a petition already.
     void signPetition(uint owner, uint petition, uint player, uint account);
     /// ditto
-    bool accountSignedPetition(uint account, uint petition);
+    @DatabaseRead bool accountSignedPetition(uint account, uint petition);
     /// A charter turned in or gone.
     void deletePetition(uint petition);
     /// A character's own charters and its signatures go (it joined a guild).
     void deletePetitionsOf(uint player);
 
     /// `character_social`: the player's friends and ignored players.
-    SocialRow[] loadSocial(uint player);
+    @DatabaseRead SocialRow[] loadSocial(uint player);
     /// ditto: one row, written (flags 0: deleted)
     void saveSocial(uint player, uint other, ubyte flags);
     /// Whether `player` ignores `other`.
-    bool isIgnoring(uint player, uint other);
+    @DatabaseRead bool isIgnoring(uint player, uint other);
 
     /// `characters.resettalents_cost` and `resettalents_time`: what the last talent reset cost, and when.
     void saveTalentReset(uint player, uint cost, long time);
     /// ditto
-    void loadTalentReset(uint player, out uint cost, out long time);
+    @DatabaseRead void loadTalentReset(uint player, out uint cost, out long time);
 
     /// `character_spell_cooldown`: the player's cooldowns still running, all of them (the old rows go).
     @Replaces void saveCooldowns(uint player, const(CooldownRecord)[] cooldowns);
 
     /// ditto, as saved
-    CooldownRecord[] loadCooldowns(uint player);
+    @DatabaseRead CooldownRecord[] loadCooldowns(uint player);
 
     /// `character_pet` and `pet_spell`: every pet of `owner`, in id order.
-    PetRecord[] loadPets(uint owner);
+    @DatabaseRead PetRecord[] loadPets(uint owner);
     /// A pet's row and spells, written whole.
     void savePet(const ref PetRecord pet);
     /// A pet moved to another slot.
@@ -593,24 +598,24 @@ interface WorldDatabase
     /// A pet gone for good (abandoned): its row, spells, auras and cooldowns.
     void deletePet(uint owner, uint pet);
     /// `characters.stable_slots`: how many stable slots the player bought.
-    uint loadStableSlots(uint player);
+    @DatabaseRead uint loadStableSlots(uint player);
     /// ditto
     void saveStableSlots(uint player, uint slots);
 
     /// The player's saved auras.
-    AuraRecord[] loadAuras(uint player);
+    @DatabaseRead AuraRecord[] loadAuras(uint player);
 
     /// The player's reputation: these factions' rows replaced.
     void saveReputation(uint player, const(ReputationRecord)[] rows);
 
     /// The player's `character_reputation` rows.
-    ReputationRecord[] loadReputation(uint player);
+    @DatabaseRead ReputationRecord[] loadReputation(uint player);
 
     /// What the player has of honor: its honor columns and `character_honor_cp` rows.
-    HonorRecord loadHonor(uint player);
+    @DatabaseRead HonorRecord loadHonor(uint player);
 
     /// The player's `character_battleground_data` row (none: all 0).
-    BattlegroundData loadBattlegroundData(uint player);
+    @DatabaseRead BattlegroundData loadBattlegroundData(uint player);
 
     /// The player's `character_battleground_data` row replaced (deleted if the player is in no copy and came from nowhere).
     void saveBattlegroundData(uint player, const BattlegroundData data);
@@ -626,16 +631,16 @@ interface WorldDatabase
     // --- the honor week (`dmangos.world.honorweek`) ---
 
     /// `saved_variables.NextMaintenanceDate`: the next maintenance day; 0 if never set.
-    uint nextHonorMaintenance();
+    @DatabaseRead uint nextHonorMaintenance();
 
     /// ditto
     void setNextHonorMaintenance(uint day);
 
     /// The day of the oldest honorable `character_honor_cp` row; 0 if none.
-    uint oldestHonorDay();
+    @DatabaseRead uint oldestHonorDay();
 
     /// The standing's input: each player's honorable honor and kills on days from `from` until `until`.
-    HonorWeekEntry[] honorWeek(uint from, uint until);
+    @DatabaseRead HonorWeekEntry[] honorWeek(uint from, uint until);
 
     /// A player's rating after a week, and with `setStanding` its place in last week's standing.
     void setHonorRating(uint player, float rating, uint standing, bool setStanding);
@@ -653,10 +658,10 @@ interface WorldDatabase
     void sendMail(const ref MailRecord mail);
 
     /// The player's mail, delivered or not, oldest first (`_LoadMail`).
-    MailRecord[] loadMail(uint receiver);
+    @DatabaseRead MailRecord[] loadMail(uint receiver);
 
     /// One mail by id, if it exists.
-    Nullable!MailRecord mailById(uint id);
+    @DatabaseRead Nullable!MailRecord mailById(uint id);
 
     /// A mail's money, cash on delivery, flags and item (`_SaveMail`'s update).
     void updateMail(const ref MailRecord mail);
@@ -665,7 +670,7 @@ interface WorldDatabase
     void deleteMail(uint id);
 
     /// The mail whose time is up by `now` (Unix time), oldest first.
-    MailRecord[] expiredMail(long now);
+    @DatabaseRead MailRecord[] expiredMail(long now);
 
     /// An item gone with its mail (`item_instance`).
     void deleteLooseItem(uint guid);
@@ -674,49 +679,49 @@ interface WorldDatabase
     void saveItemText(uint id, string text);
 
     /// ditto; empty if there is none.
-    string itemText(uint id);
+    @DatabaseRead string itemText(uint id);
 
     /// An item kept outside any inventory (in the mail), as `item_instance` with its owner to be.
     void saveLooseItem(const ref ItemRecord item, uint owner);
 
     /// ditto, to take it back out; null if there is none.
-    Nullable!ItemRecord looseItem(uint guid);
+    @DatabaseRead Nullable!ItemRecord looseItem(uint guid);
 
     /// A character's race and account; [0, 0] if it does not exist.
-    uint[2] characterRaceAccount(uint guid);
+    @DatabaseRead uint[2] characterRaceAccount(uint guid);
 
     /// Every creature that is dead now: spawn guid -> when it comes back (Unix time).
-    long[uint] loadCreatureRespawns();
+    @DatabaseRead long[uint] loadCreatureRespawns();
 
     /// A new auction.
     void insertAuction(const ref AuctionRecord auction);
 
     /// The auctions of house `houseId` (0: of every house).
-    AuctionRecord[] loadAuctions(uint houseId);
+    @DatabaseRead AuctionRecord[] loadAuctions(uint houseId);
 
     /// The auction `id`, if it is still there.
-    Nullable!AuctionRecord auctionById(uint id);
+    @DatabaseRead Nullable!AuctionRecord auctionById(uint id);
 
     /// A bid: true if the auction still had the bid `oldBid` of `oldBidder` (it now has the new one).
-    bool bidOnAuction(uint id, uint oldBidder, uint oldBid, uint bidder, uint bid);
+    @DatabaseWrite bool bidOnAuction(uint id, uint oldBidder, uint oldBid, uint bidder, uint bid);
 
     /// The auction gone (sold, cancelled, expired): true if it was still there with the bid `bid`.
-    bool deleteAuction(uint id, uint bid);
+    @DatabaseWrite bool deleteAuction(uint id, uint bid);
 
     /// The auctions over by `now` (Unix time).
-    AuctionRecord[] expiredAuctions(long now);
+    @DatabaseRead AuctionRecord[] expiredAuctions(long now);
 
     /// The highest auction id in use.
-    uint maxAuctionId();
+    @DatabaseRead uint maxAuctionId();
 
     /// A used-up game object comes back at `respawnTime` (0: it is back).
     void saveGameObjectRespawn(uint spawnGuid, long respawnTime);
 
     /// Every game object used up now: spawn guid -> when it comes back (Unix time).
-    long[uint] loadGameObjectRespawns();
+    @DatabaseRead long[uint] loadGameObjectRespawns();
 
     /// The dungeon instances that exist (`instance`), their binds and what is dead or used up in them.
-    InstanceRecords loadInstances();
+    @DatabaseRead InstanceRecords loadInstances();
 
     /// An instance made (`instance`): its map, and (a raid's) when it resets (Unix time; 0: when empty).
     void saveInstance(uint id, uint map, long resetTime);
@@ -730,29 +735,29 @@ interface WorldDatabase
     void saveInstanceChest(const InstanceChestRecord chest);
 
     /// The map of instance `id`; uint.max if there is no such instance.
-    uint instanceMapOf(uint id);
+    @DatabaseRead uint instanceMapOf(uint id);
 
     /// A character's binds as saved (`character_instance`): map -> instance.
-    uint[uint] instanceBindsOf(uint player);
+    @DatabaseRead uint[uint] instanceBindsOf(uint player);
 
     /// `character_instance` (`group` false, `owner` a character) or `group_instance` (`owner` a leader).
     void saveInstanceBind(bool group, uint owner, uint instance, bool permanent);
 
     /// Realm-wide rolling instance history, kept in the realm's shared character database.
-    bool instanceLimitReached(uint account, uint instance, long now);
+    @DatabaseRead bool instanceLimitReached(uint account, uint instance, long now);
     @DatabaseWrite bool admitInstance(uint account, uint instance, long now);
 
     /// A saved `creature` spawn, with its ID allocated by the world database.
     @DatabaseWrite uint createCreatureSpawn(const ref CreatureSpawn spawn);
 
-    /// The first counter in a new reserved block of temporary object IDs for this realm.
-    ulong reserveTemporaryCounters(uint realm, uint count);
+    /// The first counter in a new reserved block of temporary object IDs, or null if fenced.
+    @DatabaseWrite Nullable!ulong reserveTemporaryCounters(uint realm, uint count);
 
     /// A saved spawn with a direct creature entry.
-    Nullable!CreatureSpawn savedCreatureSpawn(uint guid);
+    @DatabaseRead Nullable!CreatureSpawn savedCreatureSpawn(uint guid);
 
     /// Direct creature spawn rows added above a node's initial world-data snapshot.
-    CreatureSpawn[] savedCreatureSpawnsAfter(uint guid);
+    @DatabaseRead CreatureSpawn[] savedCreatureSpawnsAfter(uint guid);
 
     /// An explicit spawn ID, including replays of writes queued by older releases.
     void insertCreatureSpawn(const ref CreatureSpawn spawn);
@@ -783,13 +788,13 @@ interface WorldDatabase
     @DatabaseWrite bool updateGameObjectPlacement(const ref GameObjectSpawn spawn);
 
     /// A saved spawn with a direct game-object entry.
-    Nullable!GameObjectSpawn savedGameObjectSpawn(uint guid);
+    @DatabaseRead Nullable!GameObjectSpawn savedGameObjectSpawn(uint guid);
 
     /// Direct game-object spawn rows added above a node's initial world-data snapshot.
-    GameObjectSpawn[] savedGameObjectSpawnsAfter(uint guid);
+    @DatabaseRead GameObjectSpawn[] savedGameObjectSpawnsAfter(uint guid);
 
     /// The saved transforms on a map, including rows whose entry comes from a spawn group.
-    GameObjectSpawn[] savedGameObjectSpawnsOnMap(uint map);
+    @DatabaseRead GameObjectSpawn[] savedGameObjectSpawnsOnMap(uint map);
 
     /// A saved game object at its existing ID, including replays of queued writes.
     void insertGameObjectSpawn(const ref GameObjectSpawn spawn);
@@ -807,17 +812,17 @@ interface WorldDatabase
     void deleteInstanceRespawn(uint spawnGuid, uint instance);
 
     /// Name, race, gender and class of a character, or null.
-    Nullable!NameInfo nameInfo(uint guid);
+    @DatabaseRead Nullable!NameInfo nameInfo(uint guid);
 
     /// Every group with its members.
-    GroupRecord[] loadGroups();
+    @DatabaseRead GroupRecord[] loadGroups();
 
-    GroupLootRotation loadGroupLootRotation(uint group, ushort node, ulong drop);
+    @DatabaseRead GroupLootRotation loadGroupLootRotation(uint group, ushort node, ulong drop);
     @DatabaseWrite bool recordGroupLootRotation(uint group, ushort node, ulong drop, const ref GroupLootRotation turn, long now);
 
     /// Deposits every group share together, identified by the original drop's immutable payout token.
     @DatabaseWrite bool saveLootCoinSplit(ushort issuer, ulong token, const(LootCoinCredit)[] shares);
-    uint[] pendingLootCoinPlayers();
+    @DatabaseRead uint[] pendingLootCoinPlayers();
     /// Updates the wallet and marks the player's credits paid in the same transaction.
     @DatabaseWrite LootCoinRedemption redeemLootCoins(uint player, long now);
 
@@ -845,7 +850,7 @@ interface WorldDatabase
     void setMuteTime(uint accountId, long until);
 
     /// The guid of the character called `name`, or 0.
-    uint characterGuid(string name);
+    @DatabaseRead uint characterGuid(string name);
 
     /// Gives an offline character a new name (`characters.name`).
     void renameCharacter(uint guid, string newName);
@@ -865,47 +870,47 @@ interface WorldDatabase
     /// A wrapped item's own entry and flags (`character_gifts`): kept, read back (found: true), and dropped.
     void saveGift(uint owner, uint item, uint entry, uint flags);
     /// ditto
-    bool loadGift(uint item, out uint entry, out uint flags);
+    @DatabaseRead bool loadGift(uint item, out uint entry, out uint flags);
     /// ditto
     void deleteGift(uint item);
 
     /// The raids' next resets (`instance_reset`: Unix time, by map); and one's change.
-    long[uint] loadRaidResets();
+    @DatabaseRead long[uint] loadRaidResets();
     /// ditto
     void saveRaidReset(uint map, long time);
 
     /// A pet's auras that last (`pet_aura`), all of them (the old rows go); and those saved.
     void savePetAuras(uint pet, const(AuraRecord)[] auras);
     /// ditto
-    AuraRecord[] loadPetAuras(uint pet);
+    @DatabaseRead AuraRecord[] loadPetAuras(uint pet);
 
     /// A pet's cooldowns still running (`pet_spell_cooldown`: spell, Unix time ready), all of them; and those saved.
     void savePetCooldowns(uint pet, const(ulong[2])[] cooldowns);
     /// ditto
-    ulong[2][] loadPetCooldowns(uint pet);
+    @DatabaseRead ulong[2][] loadPetCooldowns(uint pet);
 
     /// The game events on when last looked (`game_event_status`), and one's change.
-    ushort[] gameEventStatus();
+    @DatabaseRead ushort[] gameEventStatus();
     /// ditto
     void setGameEventStatus(ushort event, bool on);
 
     /// The characters of races in `raceMask` (and, `quest` not 0, rewarded for it): a game event's letters' receivers.
-    uint[] charactersFor(uint raceMask, uint quest);
+    @DatabaseRead uint[] charactersFor(uint raceMask, uint quest);
 
     /// A server-wide state's saved text (`world_state`, by its id: 1 the war effort), empty if none; and its change.
-    string worldState(uint id);
+    @DatabaseRead string worldState(uint id);
     /// ditto
     @Replaces void saveWorldState(uint id, string data);
 
     /// The client's saved settings of `type` (macros, key bindings, ...): the account's (`account_data`) or,
     /// `perCharacter`, the character's (`character_account_data`); `owner` the account or character.
     void saveAccountData(bool perCharacter, uint owner, uint type, long time, const(ubyte)[] data);
-    const(ubyte)[] accountData(bool perCharacter, uint owner, uint type); /// ditto
+    @DatabaseRead const(ubyte)[] accountData(bool perCharacter, uint owner, uint type); /// ditto
 
     /// GM tickets (`gm_tickets`): every ticket, the open ones only (`closed` too with `all`).
-    TicketRecord[] tickets(bool all);
+    @DatabaseRead TicketRecord[] tickets(bool all);
     /// A new ticket; returns its id.
-    uint addTicket(TicketRecord ticket);
+    @DatabaseWrite uint addTicket(TicketRecord ticket);
     /// A ticket's text changed, at `now`.
     void updateTicketText(uint id, string text, long now);
     /// A ticket removed (closed, kept); or deleted for good.
@@ -932,34 +937,34 @@ interface WorldDatabase
     void saveChestAward(uint owner, uint money, uint playerBytes2, const(ItemChange)[] changes,
         const InstanceChestRecord chest);
 
-    LootAwardResult loadLootAward(const ref LootAwardKey key);
+    @DatabaseRead LootAwardResult loadLootAward(const ref LootAwardKey key);
     /// Records the result and any new inventory rows in the same transaction.
     void saveLootAward(const ref LootAwardKey key, ubyte error, long now, uint money, uint playerBytes2,
         const(ItemChange)[] changes);
 
     /// Ids and names in a world table whose name contains `text` (`.lookup`), at most `limit`.
-    LookupResult[] lookup(LookupTable table, string text, uint limit);
+    @DatabaseRead LookupResult[] lookup(LookupTable table, string text, uint limit);
 
     /// `game_tele`: adds a place (`.recall add`), or deletes one by name; false if there was none.
     void addTeleport(const GameTele tele);
     /// ditto
-    bool deleteTeleport(string name);
+    @DatabaseWrite bool deleteTeleport(string name);
 
     /// `areatrigger_teleport` and `game_tele`, read again (`.server reloadtable`).
-    AreaTriggerTeleport[] loadAreaTriggerTeleports();
+    @DatabaseRead AreaTriggerTeleport[] loadAreaTriggerTeleports();
     /// ditto
-    GameTele[] loadTeleports();
+    @DatabaseRead GameTele[] loadTeleports();
 
-    WorldCatalogVersion[] worldCatalogVersions();
+    @DatabaseRead WorldCatalogVersion[] worldCatalogVersions();
     void markWorldCatalogReload(WorldCatalogKey key);
-    VendorItem[] loadVendorItems(uint entry);
-    uint[] loadCreatureQuestRelations(bool start, uint entry);
-    Nullable!float loadCreatureScale(uint entry);
+    @DatabaseRead VendorItem[] loadVendorItems(uint entry);
+    @DatabaseRead uint[] loadCreatureQuestRelations(bool start, uint entry);
+    @DatabaseRead Nullable!float loadCreatureScale(uint entry);
 
     /// Last durable service state for this realm. The revision fences subsequent writes.
-    ServiceCheckpoint loadServiceCheckpoint(ServiceKind kind, uint realm);
+    @DatabaseRead ServiceCheckpoint loadServiceCheckpoint(ServiceKind kind, uint realm);
     @DatabaseWrite bool saveServiceCheckpoint(ServiceKind kind, uint realm, const ref ServiceCheckpoint checkpoint);
-    BattlegroundCheckpoint[] loadBattlegroundCheckpoints(uint realm, uint map, long since);
+    @DatabaseRead BattlegroundCheckpoint[] loadBattlegroundCheckpoints(uint realm, uint map, long since);
     @DatabaseWrite bool saveBattlegroundCheckpoint(uint realm, uint map, const ref BattlegroundCheckpoint checkpoint);
 }
 
@@ -1201,7 +1206,7 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
         return worldSpawnId!"creature"(storeCreatureSpawn!true(s));
     }
 
-    ulong reserveTemporaryCounters(uint realm, uint count)
+    Nullable!ulong reserveTemporaryCounters(uint realm, uint count)
     {
         if (!temporaryCounterReady)
         {
@@ -1217,7 +1222,7 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
             first = characterDb.query!"SELECT next_counter FROM dmangos_temporary_counter WHERE realm = ?"(realm)
                 [0].get!ulong(0) - count;
         });
-        return first;
+        return nullable!ulong(first);
     }
 
     Nullable!CreatureSpawn savedCreatureSpawn(uint guid)
@@ -2687,11 +2692,11 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
         insertCreatureSpawn(row);
         return row.guid;
     }
-    ulong reserveTemporaryCounters(uint realm, uint count)
+    Nullable!ulong reserveTemporaryCounters(uint realm, uint count)
     {
         const first = temporaryCounters.get(realm, 0);
         temporaryCounters[realm] = first + count;
-        return first;
+        return nullable!ulong(first);
     }
     Nullable!CreatureSpawn savedCreatureSpawn(uint guid)
     {

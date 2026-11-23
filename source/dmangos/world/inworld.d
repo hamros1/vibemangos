@@ -316,14 +316,7 @@ private:
         if (channelSpell !is null && !petControl.guid && !carriesChannelOnHandoff())
             endChannel(true);
         releaseNpcCharm();
-        saveAuras(); // the next node loads them, as it loads the rest
-        saveCooldowns();
-        saveQuests();
-        saveReputation();
-        saveHonor();
-        saveBattleground();
-        saveEnchantmentTimes();
-        saveItemDurations();
+        savePlayerDetails();
         if (!context.settleWrites())
             return; // the new owner must load the completed writes before processing packets
 
@@ -1209,6 +1202,8 @@ private:
         t.level = player.data.level;
         t.created = context.unixTime;
         t.id = context.database.addTicket(t);
+        if (!t.id)
+            return;
         ticketResult(Opcode.SMSG_GMTICKET_CREATE, createSuccess);
         ticketChannelSay(format!"GmTicket:1:%s:%s:%s"(t.id, t.level, t.name), true);
     }
@@ -1355,7 +1350,7 @@ private:
         import dmangos.world.queries : chatMessage;
 
         const guid = reader.read!ulong;
-        if (auto other = cast(typeof(this)) context.onlinePlayer(guid))
+        if (auto other = context.onlinePlayer(guid))
             if (other.player !is null)
                 other.deliver(Opcode.SMSG_MESSAGECHAT, chatMessage(ChatType.CHAT_MSG_IGNORED, Language.LANG_UNIVERSAL,
                     player.guid, player.data.name));
@@ -1417,7 +1412,7 @@ private:
         import dmangos.world.relations : canAttack;
 
         const guid = reader.read!ulong;
-        auto other = cast(typeof(this)) context.onlinePlayer(guid);
+        auto other = context.onlinePlayer(guid);
         if (other is null || other.player is null || other.map !is map)
             return;
         const a = player.position, b = other.player.position;
@@ -1728,7 +1723,8 @@ private:
         import dmangos.world.whisper : deliverWhisper, WhisperFrom;
 
         const from = WhisperFrom(player.guid, player.data.race, hasPermissions, player.chatTag);
-        auto target = context.onlinePlayer(to);
+        import dmangos.world.online : OnlinePlayer;
+        OnlinePlayer target = context.onlinePlayer(to);
         if (target is null)
             if (auto copy = currentBattleground())
                 target = copy.alliedWhisperTarget(player.guid, to);

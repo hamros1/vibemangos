@@ -233,7 +233,7 @@ mixin template RitualSummoning()
         const summonSpell = context.data.spells.spell(r.spell);
         if (summonSpell !is null && (summonSpell.attributes & notInCombat) && inCombat)
             return;
-        auto owner = go.owner ? cast(typeof(this)) context.onlinePlayer(go.owner) : null;
+        auto owner = go.owner ? context.onlinePlayer(go.owner) : null;
         if (go.owner)
         {
             // The caster's group only, the caster not again, and only while it channels.
@@ -270,7 +270,7 @@ mixin template RitualSummoning()
         {
             if (guid != go.owner)
             {
-                if (auto member = cast(typeof(this)) context.onlinePlayer(guid))
+                if (auto member = context.onlinePlayer(guid))
                 {
                     if (member.map !is map || !member.channelsRitualAt(go.guid))
                         continue;
@@ -291,12 +291,12 @@ mixin template RitualSummoning()
     /// Enough have joined (`TriggerSummoningRitual`): the channels end, the portal goes, the summons is cast.
     private void completeRitual(GameObject go, const RitualData r, typeof(this) owner)
     {
-        auto caster = owner !is null ? owner : go.ritualUsers.length ? cast(typeof(this)) context.onlinePlayer(
+        auto caster = owner !is null ? owner : go.ritualUsers.length ? context.onlinePlayer(
             go.ritualUsers[0]) : null;
         const target = go.ritualTarget;
         foreach (guid; go.ritualUsers)
         {
-            if (auto user = cast(typeof(this)) context.onlinePlayer(guid))
+            if (auto user = context.onlinePlayer(guid))
             {
                 if (user.map is map && user.channelsRitualAt(go.guid))
                     user.endChannel(false);

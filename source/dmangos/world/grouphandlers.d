@@ -176,7 +176,7 @@ private:
     @Handles(Opcode.CMSG_REQUEST_PARTY_MEMBER_STATS, WorldState.inWorld)
     void handleRequestPartyMemberStats(const ClientGuid request)
     {
-        auto member = context.onlinePlayer(request.guid);
+        OnlinePlayer member = context.onlinePlayer(request.guid);
         if (member is null && context.battlegroup !is null)
             if (auto raid = context.battlegroup.raids.of(player.guid))
                 if (raid.isMember(request.guid))

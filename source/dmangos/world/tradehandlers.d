@@ -86,7 +86,7 @@ private:
     {
         if (tradeSide is null)
             return null;
-        auto other = cast(typeof(this)) context.onlinePlayer(tradeSide.trader);
+        auto other = context.onlinePlayer(tradeSide.trader);
         return other is null || other.tradeSide is null || other.player is null ? null : other;
     }
 
@@ -222,7 +222,7 @@ private:
             return sendTradeStatus(TradeStatus.youStunned);
         if (loggingOut)
             return sendTradeStatus(TradeStatus.youLogout);
-        auto other = cast(typeof(this)) context.onlinePlayer(target);
+        auto other = context.onlinePlayer(target);
         if (other is null && mayMigrate)
             return initiateTradeAtReplica(target);
         if (other is null || other.player is null || other.map !is map)

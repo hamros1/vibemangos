@@ -115,7 +115,7 @@ package void bindCreatureLoot(WorldContext context, Map map, Creature creature, 
     const exclusive = loot.clientType == ClientLootType.pickpocketing;
     const skin = exclusive && creature.skinned, pocket = exclusive && !skin;
     loot.find = (ulong guid) {
-        auto session = cast(Character) context.onlinePlayer(guid);
+        auto session = context.onlinePlayer(guid);
         if (session is null || session.currentMap !is map || ((pocket || skin) && guid !in loot.owners))
             return null;
         return cast(Looter) session;
@@ -659,7 +659,7 @@ private:
             if (cast(Replica) map.findObject(victim.lootRecipient))
                 return rewardCreatureKillFor(context, map, victim, victim.lootRecipient);
         }
-        auto tapper = cast(Character) context.onlinePlayer(victim.lootRecipient);
+        auto tapper = context.onlinePlayer(victim.lootRecipient);
         if (tapper is null || tapper.map !is map)
             tapper = this;
         if (victim.lootRecipient == 0)
@@ -677,7 +677,7 @@ private:
                 if (group !is null)
                     foreach (ref slot; group.members)
                         if (slot.guid != player.guid)
-                            if (auto member = cast(Character) context.onlinePlayer(slot.guid))
+                            if (auto member = context.onlinePlayer(slot.guid))
                                 if (member.map is map && member.atGroupRewardDistance(victim))
                                     member.deliver(Opcode.SMSG_PARTYKILLLOG, w.data);
             }
@@ -712,7 +712,7 @@ private:
         auto group = context.groups.of(tapper);
         if (group is null)
         {
-            if (auto local = cast(Character) context.onlinePlayer(tapper))
+            if (auto local = context.onlinePlayer(tapper))
             {
                 local.rewardKillReputation(victim, 1);
                 local.rewardHonorForCreature(victim);
@@ -748,7 +748,7 @@ private:
         Near[] members;
         foreach (ref slot; group.members)
         {
-            if (auto member = cast(Character) context.onlinePlayer(slot.guid))
+            if (auto member = context.onlinePlayer(slot.guid))
             {
                 if (member.atGroupRewardDistance(victim))
                     members ~= Near(member, slot.guid, 0, member.player.data.level,
@@ -914,12 +914,12 @@ private:
                 if (item.quest)
                 {
                     // A quest item: only for one whose quest still asks for it.
-                    auto owner = cast(Character) context.onlinePlayer(guid);
+                    auto owner = context.onlinePlayer(guid);
                     return owner !is null && owner.hasQuestForItem(item.itemId);
                 }
                 if (item.condition == 0)
                     return true;
-                auto owner = cast(Character) context.onlinePlayer(guid);
+                auto owner = context.onlinePlayer(guid);
                 return owner !is null && owner.conditionMet(item.condition);
             }
 
@@ -981,7 +981,7 @@ private:
         foreach (ref member; group.members)
         {
             const guid = member.guid;
-            auto looter = cast(Character) context.onlinePlayer(guid);
+            auto looter = context.onlinePlayer(guid);
             if (looter is null)
             {
                 if (rotates || crossNodeCoins || crossNodeMaster || context.sendQuestLootCheck !is null)
@@ -1544,7 +1544,7 @@ unittest
             };
         corpseNode.deliverRemote = (ushort node, ulong guid, ushort opcode, const(ubyte)[] body_) {
             assert(node == currentMember.nodeId);
-            if (auto player = cast(Character) currentMember.onlinePlayer(guid))
+            if (auto player = currentMember.onlinePlayer(guid))
                 player.deliver(cast(Opcode) opcode, body_);
         };
 
@@ -1691,7 +1691,7 @@ unittest
             return true;
         };
         first.deliverRemote = successor.deliverRemote = (ushort peer, ulong guid, ushort opcode, const(ubyte)[] body_) {
-            if (auto session = cast(Character) member.onlinePlayer(guid))
+            if (auto session = member.onlinePlayer(guid))
                 session.deliver(cast(Opcode) opcode, body_);
         };
         killIt(anduin, victim, now);

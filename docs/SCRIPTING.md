@@ -93,9 +93,9 @@ struct MrSmite
   (which capture pointers). A boss fight is a set of steps and a phase variable: plain data.
 * **Persistence by reflection.** `saveScript`/`loadScript` serialize every field of the struct
   except those marked `@transient`, recursively, with a layout fingerprint computed at compile time
-  from the field names and types: state saved by an older layout is detected and the script starts
-  fresh rather than reading garbage. The same bytes are used to move a creature to another node, to
-  save a dungeon script into `instance.data`, and (later) to carry state across a reload.
+  from field names, types, and enum values. Loading a different layout starts the script fresh.
+  Existing dungeon saves load when their layout matches the one recorded during the upgrade.
+  The same bytes move creatures between nodes and save dungeon scripts in `instance.data`.
 
 ### Entities are handles
 

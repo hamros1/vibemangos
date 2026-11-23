@@ -494,7 +494,8 @@ private:
             if (sameStart(name, place.name, place.name.length))
             {
                 const placeName = place.name;
-                context.database.deleteTeleport(placeName);
+                if (!context.database.deleteTeleport(placeName))
+                    return false;
                 context.data.teleports = context.data.teleports.remove!(t => t.name == placeName);
                 greenSystemMessage("Recall location removed.");
                 gmLog(format!"used recall delete, removed \"%s\" location from database."(name));

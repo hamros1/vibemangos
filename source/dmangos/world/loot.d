@@ -286,8 +286,7 @@ interface Looter
 /// A player's guid -> the looter, or null if it is not here.
 alias FindLooter = Looter delegate(ulong guid);
 
-/// `LootItem`: an item in a drop.
-final class LootItem
+private struct LootItemFields
 {
     uint itemId;
     uint count;
@@ -306,6 +305,14 @@ final class LootItem
     ulong remoteAward;        /// an outstanding award, locked until the receiver answers
     ulong remoteMasterTarget; /// selected recipient of an outstanding master award
     ushort remoteAwardNode;  /// the node that was sent the outstanding award
+}
+
+/// `LootItem`: an item in a drop.
+final class LootItem
+{
+    LootItemFields fields;
+    alias fields this;
+
     bool[ulong] allowed;      /// who may still take it
 
     /// How `player` sees this item in the loot window, by the loot method: may take, may only view, or not at all.
@@ -457,23 +464,7 @@ final class Loot
     // The rolled contents and rights are independent of the window open on a particular session.
     private struct HandoffItem
     {
-        uint itemId;
-        uint count;
-        uint displayId;
-        int randomPropertyId;
-        ubyte slot;
-        uint quality;
-        uint condition;
-        bool quest;
-        bool freeForAll;
-        bool underThreshold;
-        bool blocked;
-        bool released;
-        bool currentLooterPass;
-        ulong winner;
-        ulong remoteAward;
-        ulong remoteMasterTarget;
-        ushort remoteAwardNode;
+        LootItemFields fields;
         @LengthPrefix!ubyte ulong[] allowed;
     }
 
@@ -547,15 +538,7 @@ final class Loot
             auto eligible = item.allowed.keys;
             if (item is claimed)
                 eligible = item.freeForAll ? eligible.remove!(guid => guid == looter) : null;
-            HandoffItem saved = {
-                itemId: item.itemId, count: item.count, displayId: item.displayId, randomPropertyId: item.randomPropertyId,
-                slot: item.slot, quality: item.quality, condition: item.condition, quest: item.quest,
-                freeForAll: item.freeForAll, underThreshold: item.underThreshold, blocked: item.blocked,
-                released: item.released, currentLooterPass: item.currentLooterPass, winner: item.winner,
-                remoteAward: item.remoteAward, remoteMasterTarget: item.remoteMasterTarget,
-                remoteAwardNode: item.remoteAwardNode, allowed: eligible,
-            };
-            state.items ~= saved;
+            state.items ~= HandoffItem(item.fields, eligible);
         }
         foreach (slot, roll; rolls)
         {
@@ -606,26 +589,10 @@ final class Loot
             result.remoteMembers[member.guid] = member.node;
         foreach (ref saved; state.items)
         {
-            if (saved.slot >= maxLootItems || result.itemInSlot(saved.slot) !is null)
+            if (saved.fields.slot >= maxLootItems || result.itemInSlot(saved.fields.slot) !is null)
                 throw new PacketException("invalid item slot in a loot handoff");
             auto item = new LootItem;
-            item.itemId = saved.itemId;
-            item.count = saved.count;
-            item.displayId = saved.displayId;
-            item.randomPropertyId = saved.randomPropertyId;
-            item.slot = saved.slot;
-            item.quality = saved.quality;
-            item.condition = saved.condition;
-            item.quest = saved.quest;
-            item.freeForAll = saved.freeForAll;
-            item.underThreshold = saved.underThreshold;
-            item.blocked = saved.blocked;
-            item.released = saved.released;
-            item.currentLooterPass = saved.currentLooterPass;
-            item.winner = saved.winner;
-            item.remoteAward = saved.remoteAward;
-            item.remoteMasterTarget = saved.remoteMasterTarget;
-            item.remoteAwardNode = saved.remoteAwardNode;
+            item.fields = saved.fields;
             foreach (guid; saved.allowed)
                 item.allowed[guid] = true;
             result.items ~= item;

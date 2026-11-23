@@ -386,7 +386,7 @@ final class ServiceHost
     {
         ServiceKind kind;
         ulong call;
-        immutable(ubyte)[] request;
+        ubyte[] request;
         ushort sentTo;          // 0: parked, waiting for the service to be somewhere
         MonoTime since;
         void delegate(const(ubyte)[] reply) then;
@@ -455,7 +455,7 @@ final class ServiceHost
         }
         ubyte[] bytes;
         encode(bytes, request);
-        callRemote(kindOf!S, callId!method, cast(immutable) bytes, (const(ubyte)[] r) {
+        callRemote(kindOf!S, callId!method, bytes, (const(ubyte)[] r) {
             if (then is null)
                 return;
             Reply reply;
@@ -478,10 +478,10 @@ final class ServiceHost
         }
         ubyte[] bytes;
         encode(bytes, request);
-        callRemote(kindOf!S, callId!method, cast(immutable) bytes, null);
+        callRemote(kindOf!S, callId!method, bytes, null);
     }
 
-    private void callRemote(ServiceKind kind, ulong id, immutable(ubyte)[] request,
+    private void callRemote(ServiceKind kind, ulong id, ubyte[] request,
         void delegate(const(ubyte)[] reply) then)
     {
         const sequence = nextSequence++;
@@ -514,7 +514,7 @@ final class ServiceHost
             p.sentTo = 0;
             return;
         }
-        auto call = ServiceCall(p.kind, p.call, self, sequence, cast(ubyte[]) p.request);
+        auto call = ServiceCall(p.kind, p.call, self, sequence, p.request);
         p.sentTo = sendCall(node, call) ? node : 0;
         if (p.sentTo)
             ++counts.sent;

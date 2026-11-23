@@ -347,7 +347,7 @@ package void remoteManaLeechTick(imported!"dmangos.world.context".WorldContext c
     if (!context.canWrite() || !channelAuraActive(victim, aura) || aura.amount[i] <= 0
         || kind < 0 || kind > Power.happiness)
         return;
-    if (auto caster = cast(Character) context.onlinePlayer(aura.caster))
+    if (auto caster = context.onlinePlayer(aura.caster))
     {
         if (caster.player is null || !caster.player.alive)
             return;

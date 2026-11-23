@@ -66,7 +66,7 @@ mixin template CombatHandlers()
         if (attacker.kind == UnitKind.player)
             pvpHitBy(attacker.session, attacker.session.isPvP);
         else if (attacker.kind == UnitKind.creature && attacker.creature.petOwner)
-            pvpHitBy(cast(typeof(this)) context.onlinePlayer(attacker.creature.petOwner),
+            pvpHitBy(context.onlinePlayer(attacker.creature.petOwner),
                 (attacker.creature.values.get!UNIT_FIELD_FLAGS & UnitFlags.pvp) != 0);
         else if (blow.remotePlayer)
             flagFromPvPHit(blow.remotePlayerPvP);
@@ -122,7 +122,7 @@ mixin template CombatHandlers()
             if (attacker.kind == UnitKind.player)
                 killer = attacker.session;
             else if (attacker.kind == UnitKind.creature && attacker.creature.petOwner)
-                killer = cast(typeof(this)) context.onlinePlayer(attacker.creature.petOwner);
+                killer = context.onlinePlayer(attacker.creature.petOwner);
             if (killer !is null && killer !is this)
                 killer.playerKilledByMe(this);
             if (auto copy = currentBattleground()) // the battleground counts the death and the kill
@@ -196,7 +196,7 @@ private:
         if (enemy is null)
         {
             // A player here (a duel's opponent, an enemy flagged for PvP)?
-            auto other = cast(typeof(this)) context.onlinePlayer(request.guid);
+            auto other = context.onlinePlayer(request.guid);
             if (other !is null && other !is this && other.player !is null && other.map is map)
             {
                 if (!canAttackNow(relatingNow, other.relatingNow, context.client))
@@ -470,7 +470,7 @@ private:
         auto victim = cast(Creature) map.findObject(attacking);
         if (victim is null)
         {
-            auto other = cast(typeof(this)) context.onlinePlayer(attacking);
+            auto other = context.onlinePlayer(attacking);
             if (other is null || other.player is null || other.map !is map)
                 return stopAttack(false);
             return updateMeleeAgainstPlayer(other);
@@ -729,7 +729,7 @@ private:
             procAuras(ProcFlag.kill, UnitRef.init);
 
         foreach (guid, _; victim.attackers)
-            if (auto other = cast(Character) context.onlinePlayer(guid))
+            if (auto other = context.onlinePlayer(guid))
                 if (other !is this)
                     other.stopAttack(false);
         stopAttack(false);

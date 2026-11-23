@@ -80,6 +80,7 @@ import dmangos.cluster.protocol : AreaDamage, CreatureLoan, CreatureSwing, GameO
 import dmangos.world.loot : Loot, maxLootItems;
 import dmangos.world.map : Inhabitant, Map, MapObject, MapSettings, VisibilityFacts;
 import dmangos.world.online : OnlinePlayer;
+import dmangos.world.character : Character;
 import dmangos.world.playercreate : CreationSettings;
 import dmangos.world.spellids : ImplicitTarget, SpellEffect;
 import dmangos.world.worlddata : EventCreature, EventMail, PoolMember, Ship, SpellListEntry, WorldData;
@@ -359,8 +360,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private GameObjectModels gameObjectModels;
 
     /// Players in the world, by guid and by lower-cased name.
-    private OnlinePlayer[ulong] online;
-    private OnlinePlayer[dstring] onlineByName;
+    private Character[ulong] online;
+    private Character[dstring] onlineByName;
 
     /// Parties and raids, online or not.
     Groups groups;
@@ -463,7 +464,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /// A player arrives from another node: in the lists of who is online, and on its map.
-    void enterWorldMigrated(OnlinePlayer who, const(ulong)[] known)
+    void enterWorldMigrated(Character who, const(ulong)[] known)
     {
         import dmangos.world.worlddata : toLowerName;
 
@@ -473,7 +474,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /// A player's simulation leaves for node `next`: off the map and the lists, without a word.
-    void leaveWorldForMigration(OnlinePlayer who, ushort next)
+    void leaveWorldForMigration(Character who, ushort next)
     {
         import dmangos.world.worlddata : toLowerName;
 
@@ -519,14 +520,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     void groupLootRollArrived(ushort peer, const ref GroupLootRoll message)
     {
-        import dmangos.world.character : Character;
-
         if (!peer || !message.roll || message.slot >= maxLootItems || !canWrite())
             return;
         final switch (message.action)
         {
         case GroupLootRoll.Action.offer:
-            if (auto player = cast(Character) onlinePlayer(message.player))
+            if (auto player = onlinePlayer(message.player))
                 if (player.character !is null && player.currentMap.id == message.map)
                     player.offerRemoteLoot(peer, message);
             return;
@@ -574,10 +573,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     void receivePartyQuest(const ref PartyQuest message)
     {
-        import dmangos.world.character : Character;
-
         const guid = message.action == PartyQuest.Action.confirm ? message.sharer : message.member;
-        auto session = cast(Character) onlinePlayer(guid);
+        auto session = onlinePlayer(guid);
         if (session !is null && !session.transferring)
             session.receivePartyQuest(message);
     }
@@ -587,7 +584,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     package void routePartySummon(const ref PartySummon message, ushort peer = 0)
     {
-        import dmangos.world.character : Character;
         import dmangos.world.rituals : summonAcceptSeconds;
 
         const now = unixTime;
@@ -599,7 +595,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         auto group = groups.of(message.target);
         if (group is null || group.id != message.group || !group.isMember(message.summoner))
             return;
-        if (auto member = cast(Character) onlinePlayer(message.target))
+        if (auto member = onlinePlayer(message.target))
             if (member.player !is null && !member.transferring)
                 return member.offerPartySummon(message);
         if (sendPartySummon is null || message.forwarded)
@@ -619,8 +615,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     void questLootCheckArrived(ushort peer, const ref QuestLootCheck message)
     {
-        import dmangos.world.character : Character;
-
         if (!peer || !message.sequence || !canWrite())
             return;
         if (message.reply)
@@ -631,7 +625,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         }
         if (sendQuestLootCheck is null || message.items.length == 0 || message.items.length > maxLootItems)
             return;
-        auto player = cast(Character) onlinePlayer(message.player);
+        auto player = onlinePlayer(message.player);
         if (player is null || player.character is null || player.transferring || player.currentMap.id != message.map)
             return;
         auto reply = QuestLootCheck(message.map, message.loot, message.player, message.sequence, true);
@@ -645,7 +639,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         import dmangos.log : warning;
         import dmangos.mysql : DatabaseException;
-        import dmangos.world.character : Character;
         import dmangos.world.inventory : InventoryResult;
         import dmangos.world.loot : lootAwardKey;
 
@@ -653,7 +646,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (sendRemoteGroupLoot is null || !key.player || playerGuid(key.player) != message.player
             || !message.loot || !message.item || !message.count)
             return;
-        auto player = cast(Character) onlinePlayer(message.player);
+        auto player = onlinePlayer(message.player);
         if (player is null || player.character is null || player.transferring || player.currentMap.id != message.map
             || !settleWrites())
             return;
@@ -703,11 +696,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         import dmangos.log : warning;
         import dmangos.mysql : DatabaseException;
-        import dmangos.world.character : Character;
         import dmangos.world.loot : tellLootCoinShare;
         import dmangos.world.updatefields : PLAYER_FIELD_COINAGE;
 
-        auto player = cast(Character) onlinePlayer(playerGuid(guid));
+        auto player = onlinePlayer(playerGuid(guid));
         if (player is null || player.player is null || player.transferring || !canWrite())
             return;
         if (!settleWrites())
@@ -768,13 +760,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     void partyAreaAuraArrived(ushort peer, const ref imported!"dmangos.cluster.protocol".PartyAreaAura renewal)
     {
-        import dmangos.world.character : Character;
         import dmangos.world.replication : Replica;
         import dmangos.world.updatefields : TypeId, UNIT_FIELD_HEALTH, UNIT_FIELD_SUMMONEDBY;
 
         if (!peer || !canWrite() || !sameAuraSubgroup(renewal.controller, renewal.target, renewal.group))
             return;
-        auto member = cast(Character) onlinePlayer(renewal.target);
+        auto member = onlinePlayer(renewal.target);
         if (member is null || member.player is null || !member.player.alive || member.transferring)
             return;
         auto map_ = member.currentMap;
@@ -798,7 +789,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     void mindVisionTargetArrived(ushort peer, const ref MindVisionTarget message)
     {
-        import dmangos.world.character : Character;
         import dmangos.world.replication : encodePlayerState;
         import dmangos.world.spellids : AuraType;
 
@@ -806,14 +796,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return;
         if (message.reply)
         {
-            if (auto caster = cast(Character) onlinePlayer(message.caster))
+            if (auto caster = onlinePlayer(message.caster))
                 caster.mindVisionTargetFound(peer, message);
             return;
         }
         if (message.state.length || sendMindVisionTarget is null)
             return;
         auto reply = MindVisionTarget(message.caster, message.target, message.sequence, message.map, message.instance, true);
-        if (auto target = cast(Character) onlinePlayer(message.target))
+        if (auto target = onlinePlayer(message.target))
             if (target.player !is null && !target.transferring && target.player.alive && !target.player.gmInvisible
                 && !target.player.auras.hasType(AuraType.modStealth) && !target.player.auras.hasType(AuraType.modInvisibility)
                 && target.currentMap.id == message.map && target.currentMap.instanceId == message.instance)
@@ -823,7 +813,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     void totemWeaponEnchantArrived(ushort peer, const ref TotemWeaponEnchant pulse)
     {
-        import dmangos.world.character : Character;
         import dmangos.world.replication : Replica;
         import dmangos.world.spellcast : radius;
         import dmangos.world.spellids : AuraType;
@@ -832,7 +821,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (!peer || !canWrite() || pulse.auraEffect >= 3 || pulse.weaponEffect >= 3
             || !sameAuraSubgroup(pulse.controller, pulse.target, pulse.group))
             return;
-        auto member = cast(Character) onlinePlayer(pulse.target);
+        auto member = onlinePlayer(pulse.target);
         if (member is null || member.player is null || !member.player.alive || member.transferring
             || member.duelingWith(pulse.controller))
             return;
@@ -864,7 +853,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     void partyHealArrived(ushort peer, const ref PartyHeal message)
     {
         import std.algorithm.comparison : max;
-        import dmangos.world.character : Character;
         import dmangos.world.replication : Replica;
         import dmangos.world.spelldamage : applyHealAmount, isChainHealEffect, isPartyHealEffect, spellJumpRadius,
             withinPartyHealRadius;
@@ -880,7 +868,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return;
         // Record refused deliveries too: a recipient moving or rejoining cannot revive an old heal.
         lastPartyHeal[peer] = message.sequence;
-        auto target = cast(Character) onlinePlayer(message.target);
+        auto target = onlinePlayer(message.target);
         if (target is null || target.player is null || !target.player.alive || target.transferring
             || target.currentMap.id != message.map || target.currentMap.instanceId != message.instance
             || !withinPartyHealRadius(message, target.player.position))
@@ -929,7 +917,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     private void partyHealLanded(ushort peer, const ref PartyHeal message)
     {
-        import dmangos.world.character : Character;
         import dmangos.world.procs : ProcEx, ProcHit, spellProcFlags;
         import dmangos.world.replication : Replica;
         import dmangos.world.spellcast : healLog;
@@ -938,7 +925,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (message.sequence <= lastPartyHealReply.get(peer, 0))
             return;
         lastPartyHealReply[peer] = message.sequence;
-        auto caster = cast(Character) onlinePlayer(message.caster);
+        auto caster = onlinePlayer(message.caster);
         if (caster is null || caster.player is null || caster.transferring
             || caster.currentMap.id != message.map || caster.currentMap.instanceId != message.instance)
             return;
@@ -1457,8 +1444,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return false;
         if (hit.channelled)
             map_.holdCasterReplica(hit.caster, peer, cast(uint) max(0, hit.auraMs) + 5_000,
-                (hit.creatureCast && !hit.channelUpdate)
-                || (hit.channelUpdate && hit.auraMs == AreaDamage.completedChannel));
+                (hit.creatureCast && !hit.channelUpdate) || hit.channelOperation == AreaDamage.ChannelUpdate.complete);
         else if (hit.namedCreature || projectile)
             map_.holdCasterReplica(hit.caster, peer, 5_000, projectile);
         if (!hit.sequence || !hit.channelled)
@@ -1484,7 +1470,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             auto map_ = existingMap(impact.hit.map, impact.hit.instance);
             if (map_ is null || !map_.unit(impact.hit.caster) || !canWrite())
                 continue;
-            const completion = impact.hit.channelUpdate && impact.hit.auraMs == AreaDamage.completedChannel;
+            const completion = impact.hit.channelOperation == AreaDamage.ChannelUpdate.complete;
             if (impact.retryUntil != MonoTime.init && impact.retryUntil <= now)
                 continue;
             if (auto copy = cast(Replica) map_.findObject(impact.hit.target))
@@ -1690,7 +1676,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import std.math : isFinite;
         import dmangos.bytes : ByteWriter;
         import dmangos.world.combat : MeleeHitOutcome;
-        import dmangos.world.character : Character;
         import dmangos.world.objects : highGuidOf;
         import dmangos.world.spellcast : nonMeleeDamageLog, spellGoPacket, spellMissLog, SpellMissInfo, SpellTargets,
             TargetFlags, TargetResult;
@@ -1709,7 +1694,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return;
         auto target = attacker.ai.combatTarget(map_, reply.target);
         if (reply.targetPvP && reply.controller)
-            if (auto owner = cast(Character) onlinePlayer(reply.controller))
+            if (auto owner = onlinePlayer(reply.controller))
                 owner.attackedFlaggedPlayer();
         if (reply.spell)
         {
@@ -1782,7 +1767,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private void applyAreaDamage(ushort peer, Map map_, const ref AreaDamage message)
     {
         import std.math : isFinite, PI, sqrt;
-        import dmangos.world.character : Character;
         import dmangos.world.combat : hasInArc;
         import dmangos.world.defines : UnitFlags;
         import dmangos.world.honor : HonorVictim;
@@ -1865,22 +1849,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 if (targetEffect == size_t.max)
                     return replyCreatureCast(peer, message, SpellMissInfo.evade);
             }
-            if (message.channelUpdate)
-            {
-                if (message.auraMs == AreaDamage.completedChannel)
-                {
-                    if (message.namedCreature && caster.alive)
-                        applyNamedChannelCompletion(caster, victim, spell, message.channelToken);
-                    return;
-                }
-                const confirms = message.namedCreature && message.auraMs > 0;
-                if (confirms && (casterFields.get!UNIT_CHANNEL_SPELL != message.spell
-                    || casterFields.get!UNIT_FIELD_CHANNEL_OBJECT != message.target))
-                    return;
-                if (updateRemoteChannelAura(victim, message) && confirms)
-                    replyCreatureCast(peer, message, SpellMissInfo.none);
-                return;
-            }
+            const operation = message.channelOperation;
+            if (operation != AreaDamage.ChannelUpdate.none)
+                return applyRemoteChannelUpdate(peer, message, operation, caster, victim, spell);
             const validEffect = message.namedCreature
                 ? message.effect == targetEffect && message.radius == namedCreatureRange(*spell, client)
                     && message.auraMs > 0
@@ -2162,14 +2133,40 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 message.auraMs, message.auraValues);
     }
 
-    private bool updateRemoteChannelAura(UnitRef victim, const ref AreaDamage message)
+    private void applyRemoteChannelUpdate(ushort peer, const ref AreaDamage message,
+        AreaDamage.ChannelUpdate operation, UnitRef caster, UnitRef victim, const(SpellInfo)* spell)
     {
-        if (message.auraMs < 0)
-            return false;
+        import dmangos.world.spellcast : SpellMissInfo;
+        import dmangos.world.updatefields : UNIT_CHANNEL_SPELL, UNIT_FIELD_CHANNEL_OBJECT;
+
+        final switch (operation)
+        {
+        case AreaDamage.ChannelUpdate.none, AreaDamage.ChannelUpdate.invalid:
+            return;
+        case AreaDamage.ChannelUpdate.complete:
+            if (message.namedCreature && caster.alive)
+                applyNamedChannelCompletion(caster, victim, spell, message.channelToken);
+            return;
+        case AreaDamage.ChannelUpdate.cancel:
+            updateRemoteChannelAura(victim, message, true);
+            return;
+        case AreaDamage.ChannelUpdate.shorten:
+            const fields = caster.replica is null ? caster.fields : &caster.replica.fieldsOf();
+            if (message.namedCreature && (fields.get!UNIT_CHANNEL_SPELL != message.spell
+                || fields.get!UNIT_FIELD_CHANNEL_OBJECT != message.target))
+                return;
+            if (updateRemoteChannelAura(victim, message, false) && message.namedCreature)
+                replyCreatureCast(peer, message, SpellMissInfo.none);
+            return;
+        }
+    }
+
+    private bool updateRemoteChannelAura(UnitRef victim, const ref AreaDamage message, bool cancel)
+    {
         auto aura = victim.auraSet.find(message.spell, message.caster);
         if (aura is null || aura.detachedChannel || (message.namedCreature && aura.channelToken != message.channelToken))
             return false;
-        if (message.auraMs == 0)
+        if (cancel)
         {
             if (victim.kind == UnitKind.player)
                 victim.session.removeAura(aura);
@@ -2253,7 +2250,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private bool dealRemoteDamage(UnitRef attacker, UnitRef victim, uint damage,
         const ref imported!"dmangos.world.unit".Blow blow)
     {
-        import dmangos.world.character : Character;
         import dmangos.world.dbscripts : DbScriptType;
         import dmangos.world.unit : dealDamage;
 
@@ -2284,7 +2280,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.defines : UnitFlags;
         import dmangos.world.honor : HonorVictim;
         import dmangos.world.aurahandlers : ProcFlag;
-        import dmangos.world.character : Character;
         import dmangos.world.procs : ProcEx, ProcHit;
         import dmangos.world.unit : Blow;
         import dmangos.world.updatefields : TypeId, UNIT_FIELD_FLAGS;
@@ -2377,13 +2372,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         import dmangos.world.auras : AuraType;
         import dmangos.world.caster : Caster;
-        import dmangos.world.character : Character;
         import dmangos.world.defines : Power;
         import dmangos.world.spelldamage : changeUnitPower, effectMultiplier, SpellHeal, spellHeal;
         import dmangos.world.spellmods : SpellModOp;
         import dmangos.world.updatefields : UNIT_FIELD_MAXPOWER1;
 
-        auto source = cast(Character) onlinePlayer(message.caster);
+        auto source = onlinePlayer(message.caster);
         const spell = data.spells.spell(message.spell);
         if (source is null || source.player is null || !source.player.alive || spell is null
             || message.effect >= spell.effect.length || message.target == message.caster)
@@ -2459,10 +2453,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     package void killShareArrived(const ref KillShare share)
     {
-        import dmangos.world.character : Character;
         import dmangos.world.honor : HonorVictim;
 
-        auto player = cast(Character) onlinePlayer(share.target);
+        auto player = onlinePlayer(share.target);
         if (player is null || player.character is null)
         {
             // A peer sent the credit before its presence caught up with our handoff.
@@ -2634,7 +2627,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     private void areaDamageLanded(ushort peer, const ref AreaDamage message)
     {
-        import dmangos.world.character : Character;
         import dmangos.world.aurahandlers : ProcFlag;
         import dmangos.world.experience : grayLevel;
         import dmangos.world.honor : HonorVictim;
@@ -2671,7 +2663,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if ((message.triggered || message.creatureCast || message.groundTick || message.namedCreature)
             && message.caster > uint.max)
             return creatureProcLanded(peer, message);
-        auto caster = cast(Character) onlinePlayer(message.caster);
+        auto caster = onlinePlayer(message.caster);
         if (caster is null || caster.player is null || caster.transferring
             || caster.currentMap.id != message.map || caster.currentMap.instanceId != message.instance)
             return;
@@ -4077,7 +4069,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private void updateShips()
     {
         import dmangos.log : info;
-        import dmangos.world.character : Character;
         import dmangos.world.movement : MovementFlags, Position;
 
         if (ships.length == 0 && data.ships.length)
@@ -4204,18 +4195,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// See `CreatureLore.teleportBySpell`.
     void teleportBySpell(ulong guid, uint spell)
     {
-        import dmangos.world.character : Character;
-
         if (const to = spell in data.spellTargets)
-            if (auto c = cast(Character) onlinePlayer(guid))
+            if (auto c = onlinePlayer(guid))
                 c.spellTeleport(to.map, to.at);
     }
 
     /// What `Map`'s `playerSees` needs of the world: a group, a side, the viewer's corpse.
     private VisibilityFacts visibilityFacts(Map map_, ulong viewer, ulong seen, Position seenAt)
     {
-        import dmangos.world.character : Character;
-
         VisibilityFacts f;
         f.sameGroup = groups.sameGroup(viewer, seen);
         ubyte raceOf(ulong guid)
@@ -4230,7 +4217,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         f.cooperate = a && b && client.teamForRace(a) == client.teamForRace(b);
         // Stealth: whether the viewer detects the other (both players here; another node's are taken as seen).
         {
-            auto watcher = cast(Character) onlinePlayer(viewer), hidden = cast(Character) onlinePlayer(seen);
+            auto watcher = onlinePlayer(viewer), hidden = onlinePlayer(seen);
             if (watcher !is null && hidden !is null && watcher.player !is null && hidden.player !is null)
             {
                 import dmangos.world.combat : detects, maxPlayerStealthDetectRange;
@@ -4242,7 +4229,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     && seesThrough(watcherFighter, hiddenFighter);
             }
         }
-        if (auto local = cast(Character) onlinePlayer(viewer))
+        if (auto local = onlinePlayer(viewer))
             if (const body_ = local.ownCorpse())
                 if (body_.map == map_.id)
                     f.corpseDistance = ((body_.at.x - seenAt.x) ^^ 2 + (body_.at.y - seenAt.y) ^^ 2
@@ -5370,7 +5357,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     private void releaseRegionCharms(const ref Region region)
     {
-        import dmangos.world.character : Character;
         import dmangos.world.objects : highGuidOf;
 
         const wholeMap = instanceable(region.map);
@@ -6415,7 +6401,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /// Puts a player in the world: on its map and in the lists of who is online.
-    void enterWorld(OnlinePlayer who, bool shipsShown = false)
+    void enterWorld(Character who, bool shipsShown = false)
     in (who.character.guid !in online, "a character is in the world once")
     {
         import dmangos.world.worlddata : toLowerName;
@@ -6426,7 +6412,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /// A player in the world was renamed (`.character rename`): it is found by its new name.
-    void renamed(OnlinePlayer who, string oldName)
+    void renamed(Character who, string oldName)
     {
         import dmangos.world.worlddata : toLowerName;
 
@@ -6435,7 +6421,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /// Takes a player out of the world.
-    void leaveWorld(OnlinePlayer who, Map from = null)
+    void leaveWorld(Character who, Map from = null)
     {
         import dmangos.world.worlddata : toLowerName;
 
@@ -6450,13 +6436,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /// The player in the world with this guid, or null.
-    OnlinePlayer onlinePlayer(ulong guid)
+    Character onlinePlayer(ulong guid)
     {
         return online.get(guid, null);
     }
 
     /// The player in the world with this name (any case), or null.
-    OnlinePlayer onlinePlayer(string name)
+    Character onlinePlayer(string name)
     {
         import dmangos.world.worlddata : toLowerName;
 
@@ -6464,7 +6450,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /// Every player in the world.
-    OnlinePlayer[] onlinePlayers()
+    Character[] onlinePlayers()
     {
         return online.values;
     }
@@ -6551,9 +6537,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
         if (creature.petOwner)
         {
-            import dmangos.world.character : Character;
-
-            if (auto owner = cast(Character) onlinePlayer(creature.petOwner))
+            if (auto owner = onlinePlayer(creature.petOwner))
                 if (owner.character !is null)
                     owner.petCorpseGone(creature);
             return;
@@ -6617,7 +6601,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         enum uint block = 1024, count = 0x100_0000 - temporaryCounterStart;
         if (nextClusterTemporary == clusterTemporaryEnd)
         {
-            nextClusterTemporary = database.reserveTemporaryCounters(config.realmId, block);
+            import dmangos.mysql : DatabaseException;
+
+            const first = database.reserveTemporaryCounters(config.realmId, block);
+            if (first.isNull)
+                throw new DatabaseException("temporary object ID reservation was fenced");
+            nextClusterTemporary = first.get;
             clusterTemporaryEnd = nextClusterTemporary + block;
         }
         return temporaryCounterStart + cast(uint)(nextClusterTemporary++ % count);
@@ -6740,7 +6729,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.defines : UnitFlags;
         import dmangos.world.inworld : ArrivalAction;
         import dmangos.world.relations : canAttack, isEnemy, Relating;
-        import dmangos.world.character : Character;
         import dmangos.world.updatefields;
 
         auto session = cast(Character) who;
@@ -7046,7 +7034,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     private auto trapTarget(GameObject trap, Inhabitant who)
     {
-        import dmangos.world.character : Character;
         import dmangos.world.relations : isFriend, Relating;
 
         auto session = cast(Character) who;
@@ -7191,22 +7178,33 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (!canWrite() || !settleWrites())
             return false;
         auto original = database;
+        auto published = guilds;
         guildWriteActive = true;
         guildWriteChanged = false;
+        bool committed, refreshed;
         scope (exit)
         {
             guildWriteActive = false;
             guildAfterCommit = null;
+            if (!committed)
+            {
+                guilds = published;
+                mirroredGuildRevision = 0;
+                nextGuildPoll = MonoTime.init;
+            }
         }
-        bool refreshed;
         try
         {
             const revision = original.commitGuildChange((WorldDatabase transaction, ulong current) {
-                if (mirroredGuildRevision != current)
+                refreshed = mirroredGuildRevision != current;
+                if (refreshed)
                 {
+                    guilds = new Guilds;
                     guilds.load(transaction.loadGuilds());
-                    refreshed = true;
                 }
+                else
+                    guilds = published.copy();
+
                 database = transaction;
                 scope (exit) database = original;
                 change();
@@ -7217,12 +7215,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             });
             if (!revision)
                 return false;
+            if (!refreshed && !guildWriteChanged)
+                guilds = published;
             mirroredGuildRevision = revision;
+            committed = true;
         }
         catch (DatabaseException error)
         {
-            mirroredGuildRevision = 0;
-            nextGuildPoll = MonoTime.init;
             warning!"guild change could not be committed: %s"(error.msg);
             return false;
         }
@@ -7278,29 +7277,26 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// A guild's packet for its members online here whose rank has `right` (0: all).
     void guildToMembersHere(uint guild, Opcode opcode, const(ubyte)[] body_, uint right)
     {
-        import dmangos.world.character : Character;
-
         auto g = guilds.find(guild);
         Character[] recipients;
-        foreach (other; onlinePlayers)
-            if (auto session = cast(Character) other)
-                if (session.character !is null)
-                {
-                    const low = cast(uint) session.character.guid;
-                    auto m = g is null ? null : g.member(low);
-                    if (m is null && opcode != Opcode.SMSG_GUILD_EVENT)
-                        continue;
-                    if (m is null && guilds.of(low) !is null)
-                        continue;
-                    if (m is null && session.guildOfField != guild)
-                        continue; // a disbanded guild's last word: to those who were in it
-                    if (right && m !is null && !g.hasRight(m.rank, cast(GuildRight) right))
-                        continue;
-                    if (guildWriteActive)
-                        recipients ~= session;
-                    else
-                        session.deliver(opcode, body_);
-                }
+        foreach (session; onlinePlayers)
+            if (session.character !is null)
+            {
+                const low = cast(uint) session.character.guid;
+                auto m = g is null ? null : g.member(low);
+                if (m is null && opcode != Opcode.SMSG_GUILD_EVENT)
+                    continue;
+                if (m is null && guilds.of(low) !is null)
+                    continue;
+                if (m is null && session.guildOfField != guild)
+                    continue; // a disbanded guild's last word: to those who were in it
+                if (right && m !is null && !g.hasRight(m.rank, cast(GuildRight) right))
+                    continue;
+                if (guildWriteActive)
+                    recipients ~= session;
+                else
+                    session.deliver(opcode, body_);
+            }
         if (recipients.length)
             afterGuildWrite({
                 foreach (session; recipients)
@@ -7311,12 +7307,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// The guild fields of every player here, from their guilds now.
     void guildFieldsHere()
     {
-        import dmangos.world.character : Character;
-
-        foreach (other; onlinePlayers)
-            if (auto session = cast(Character) other)
-                if (session.character !is null)
-                    session.refreshGuildFields();
+        foreach (session; onlinePlayers)
+            if (session.character !is null)
+                session.refreshGuildFields();
     }
 
     /// Another node changed guild `id`: read again (gone if it is gone), its members' fields here updated.
@@ -7330,9 +7323,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// An invitation from another node for a player here.
     void guildInvitationArrived(ulong target, uint guild, ulong inviter, string inviterName, string guildName)
     {
-        import dmangos.world.character : Character;
-
-        if (auto session = cast(Character) onlinePlayer(target))
+        if (auto session = onlinePlayer(target))
             if (session.character !is null)
                 session.guildInvite(guild, inviter, inviterName, guildName);
     }
@@ -7640,9 +7631,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
         bool hostHasItem(EntityRef player, uint item)
         {
-            import dmangos.world.character : Character;
-
-            auto session = cast(Character) onlinePlayer(player.guid);
+            auto session = onlinePlayer(player.guid);
             return session !is null && session.player !is null && session.player.inventory.count(item, false) > 0;
         }
 
@@ -7813,12 +7802,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
         ActionResult hostObjectCast(EntityRef caster, uint spell, EntityRef target)
         {
-            import dmangos.world.character : Character;
             import dmangos.world.spellcast : SpellCastResult, SpellTargets, TargetFlags;
 
             if (auto creature = map.creatureAt(caster.guid))
                 return creature.ai.castFor(map, spell, target.guid, true);
-            auto session = cast(Character) onlinePlayer(caster.guid);
+            auto session = onlinePlayer(caster.guid);
             if (session is null || session.player is null || session.currentMap !is map)
                 return ActionResult.notHere;
             const info = data.spells.spell(spell);
@@ -7994,10 +7982,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// See `CreatureLore.conditionMet`.
     bool conditionMet(uint id, ulong player)
     {
-        import dmangos.world.character : Character;
         import dmangos.world.conditions : ConditionSubject;
 
-        auto c = cast(Character) onlinePlayer(player);
+        auto c = onlinePlayer(player);
         if (c is null || c.player is null)
             return false;
         const subject = ConditionSubject(c.player, null);
@@ -8030,7 +8017,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     void zoneUnderAttack(CombatWorld world, Creature defender, ulong attacker)
     {
         import dmangos.bytes : ByteWriter;
-        import dmangos.world.character : Character;
         import dmangos.world.unit : UnitKind;
 
         auto map = cast(Map) world;
@@ -8041,7 +8027,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (unit.kind == UnitKind.player)
             session = unit.session;
         else if (unit.kind == UnitKind.creature && unit.creature.petOwner)
-            session = cast(Character) onlinePlayer(unit.creature.petOwner);
+            session = onlinePlayer(unit.creature.petOwner);
         if (session is null || session.player is null)
             return;
         auto t = terrain(map.id);
@@ -8093,11 +8079,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         // Its own script (`@scriptedEvent`), around the player who started it or is its target.
         if (const handle = eventScript(event))
         {
-            import dmangos.world.character : Character;
-
-            auto player = cast(Character) onlinePlayer(source);
+            auto player = onlinePlayer(source);
             if (player is null)
-                player = cast(Character) onlinePlayer(target);
+                player = onlinePlayer(target);
             if (player !is null && player.eventScript(handle, event, source, target))
                 return; // the script did what the event does
         }
@@ -8179,8 +8163,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// A game object from its spawn, with what it needs to show players their quests' objects.
     GameObject makeGameObject(scope const ref GameObjectSpawn spawn)
     {
-        import dmangos.world.character : Character;
-
         auto go = new GameObject(spawn, spawn.entry in data.gameObjectTemplates);
         go.setElevator(elevatorPathOf(go.guid, go.fields), &transportNow);
         if (const kit = worldPvp is null ? 0 : worldPvp.artKitOf(spawn.entry, spawn.x, spawn.y, spawn.z))
@@ -8191,7 +8173,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         }
         if (isQuestObject(go))
             go.activatesFor = (ulong viewer) {
-                auto session = cast(Character) onlinePlayer(viewer);
+                auto session = onlinePlayer(viewer);
                 return session !is null && session.gameObjectActivatesForQuest(go);
             };
         if (const name = spawn.entry in data.gameObjectScriptNames)
@@ -8969,7 +8951,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private bool[ulong] updatedPlayers; // the players the maps phase has updated this tick
     private Map[] tickMapsNow;
     private Inhabitant[] mapTickPlayers;
-    private OnlinePlayer[] tickPlayersNow;
+    private Character[] tickPlayersNow;
 
     private static void snapshotValues(T, Key)(T[Key] source, ref T[] snapshot)
     {

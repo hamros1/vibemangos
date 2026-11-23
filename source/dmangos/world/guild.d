@@ -262,6 +262,21 @@ final class Guilds
             put(new Guild(cast(GuildRecord) r));
     }
 
+    /// An independent guild mirror for a transaction whose changes may be discarded.
+    package Guilds copy()
+    {
+        auto result = new Guilds;
+        foreach (guild; byId)
+        {
+            auto record = guild.record;
+            record.ranks = record.ranks.dup;
+            record.members = record.members.dup;
+            record.events = record.events.dup;
+            result.put(new Guild(record));
+        }
+        return result;
+    }
+
     /// One guild as saved now (another node changed it); null `record` (`isNull`): it is gone.
     void replace(uint id, Guild guild)
     {

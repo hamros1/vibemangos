@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 115; // 115: battleground transfers include dead and used-up spawns
+enum ushort protocolVersion = 116; // 116: script state identifies the saved enum values
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -324,6 +324,20 @@ struct AreaDamage
     uint targetLevel;
     @LengthPrefix!ubyte RemoteSpellBenefit[] benefits;
     ulong channelToken; /// identifies one named channel across messages and target owners
+
+    enum ChannelUpdate : ubyte { none, shorten, cancel, complete, invalid }
+
+    /// Decode the channel control operation from the existing wire fields.
+    ChannelUpdate channelOperation() const pure nothrow @nogc
+    {
+        if (!channelUpdate)
+            return ChannelUpdate.none;
+        if (auraMs > 0)
+            return ChannelUpdate.shorten;
+        if (auraMs == 0)
+            return ChannelUpdate.cancel;
+        return auraMs == completedChannel ? ChannelUpdate.complete : ChannelUpdate.invalid;
+    }
 }
 
 /// A proc on the victim's aura that benefits the original caster.
@@ -1318,22 +1332,45 @@ static assert(() {
  * compile: nodes of the two builds would misread each other. Raise `protocolVersion` and record the new
  * fingerprint (the assertion's message says it).
  */
-private enum ulong protocolFingerprint = () {
-    string text;
-    static foreach (S; messageStructs!())
+private string wireLayout(T)()
+{
+    import std.conv : to;
+    import std.traits : Unqual, isDynamicArray, isStaticArray;
+
+    alias U = Unqual!T;
+    static if (is(U E == enum))
     {
-        text ~= __traits(identifier, S) ~ "{";
-        static foreach (i, F; typeof(S.tupleof))
-        {
-            text ~= F.stringof ~ " " ~ __traits(identifier, S.tupleof[i]);
-            static foreach (attribute; __traits(getAttributes, S.tupleof[i]))
-                text ~= " @" ~ attribute.stringof;
-            static if (is(F == enum))
-                text ~= " " ~ [__traits(allMembers, F)].stringof;
-            text ~= ";";
-        }
-        text ~= "}";
+        string result = U.stringof ~ ":" ~ E.stringof ~ "{";
+        static foreach (name; __traits(allMembers, U))
+            result ~= name ~ "=" ~ (cast(E) __traits(getMember, U, name)).to!string ~ ";";
+        return result ~ "}";
     }
+    else static if (isDynamicArray!U)
+        return wireLayout!(typeof(U.init[0]))() ~ "[]";
+    else static if (isStaticArray!U)
+        return wireLayout!(typeof(U.init[0]))() ~ "[" ~ U.length.to!string ~ "]";
+    else static if (is(U == struct))
+    {
+        string result = U.stringof ~ "{";
+        static foreach (i, F; typeof(U.tupleof))
+        {
+            result ~= wireLayout!F() ~ " " ~ __traits(identifier, U.tupleof[i]);
+            static foreach (attribute; __traits(getAttributes, U.tupleof[i]))
+                result ~= " @" ~ attribute.stringof;
+            result ~= ";";
+        }
+        return result ~ "}";
+    }
+    else
+        return U.stringof;
+}
+
+private enum ulong protocolFingerprint = () {
+    import std.conv : to;
+
+    string text = wireLayout!MessageType();
+    static foreach (S; messageStructs!())
+        text ~= (cast(ushort) S.type).to!string ~ "=" ~ wireLayout!S();
     ulong hash = 0xcbf29ce484222325; // FNV-1a
     foreach (c; text)
     {
@@ -1344,9 +1381,27 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 115, recordedFingerprint = 0x2ab03c32ffc649d8UL;
+private enum recordedVersion = 116, recordedFingerprint = 0xe7b5a95ddace80c0UL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "
     ~ "recordedVersion = protocolVersion and recordedFingerprint = "
     ~ imported!"std.format".format!"0x%016x"(protocolFingerprint));
+
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    static assert(wireLayout!RegionLoads.canFind("uint busyUs"));
+    static assert(wireLayout!ServiceReply.canFind("notHere=1"));
+
+    AreaDamage message;
+    alias Update = AreaDamage.ChannelUpdate;
+    assert(message.channelOperation == Update.none);
+    message.channelUpdate = true;
+    assert(message.channelOperation == Update.cancel);
+    message.auraMs = 500;
+    assert(message.channelOperation == Update.shorten);
+    message.auraMs = AreaDamage.completedChannel;
+    assert(message.channelOperation == Update.complete);
+}

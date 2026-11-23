@@ -2123,7 +2123,7 @@ mixin template BattlegroundHandlers()
             ubyte race, level;
             ushort node;
             bool deserter;
-            if (auto local = cast(typeof(this)) context.onlinePlayer(slot.guid))
+            if (auto local = context.onlinePlayer(slot.guid))
             {
                 if (local.player is null)
                     return refuse(offlineMember);
@@ -2529,7 +2529,7 @@ unittest
         import dmangos.world.player : DeathState;
         import dmangos.world.updatefields : CORPSE_FIELD_DYNAMIC_FLAGS, UNIT_FIELD_FLAGS, UNIT_FIELD_HEALTH;
 
-        auto dead = cast(Character) context.onlinePlayer(8), looter = cast(Character) context.onlinePlayer(7);
+        auto dead = context.onlinePlayer(8), looter = context.onlinePlayer(7);
         dead.player.values.set!UNIT_FIELD_HEALTH(0u);
         dead.playerDied(false);
         assert(dead.player.values.get!UNIT_FIELD_FLAGS & UnitFlags.skinnable, "marked for his insignia");

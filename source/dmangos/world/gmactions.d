@@ -174,6 +174,13 @@ private:
     {
         const progress = player.progress(secondsInWorld());
         context.database.saveProgress(progress);
+        savePlayerDetails();
+        saveTimer.reset();
+    }
+
+    /// The separate player records needed for a periodic save or a handoff.
+    private void savePlayerDetails()
+    {
         saveAuras();
         saveCooldowns();
         saveQuests();
@@ -182,7 +189,6 @@ private:
         saveBattleground();
         saveEnchantmentTimes();
         saveItemDurations();
-        saveTimer.reset();
     }
 
     /// A system message to everyone in the world.

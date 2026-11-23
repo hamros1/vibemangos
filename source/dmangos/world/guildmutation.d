@@ -88,4 +88,20 @@ unittest
     officer.write(Opcode.CMSG_GUILD_MOTD, text("Old permissions"));
     assert(db.loadGuild(record.id).get.motd == "Meet at the bank" && db.guildRevision() == 4);
     assert(second.guilds.of(8) is null);
+
+    import dmangos.mysql : DatabaseException;
+
+    auto before = first.guilds.find(record.id);
+    const oldMotd = before.motd;
+    const oldRank = before.member(7).rank;
+    bool notified;
+    assert(!first.commitGuildChange({
+        auto staged = first.guilds.find(record.id);
+        staged.motd = "Uncommitted";
+        staged.member(7).rank = 3;
+        first.afterGuildWrite(() { notified = true; });
+        throw new DatabaseException("save failed");
+    }));
+    assert(first.guilds.find(record.id) is before);
+    assert(before.motd == oldMotd && before.member(7).rank == oldRank && !notified);
 }

@@ -798,7 +798,7 @@ private:
         {
             import dmangos.world.aurahandlers : ProcFlag;
 
-            if (auto other = cast(typeof(this)) context.onlinePlayer(target))
+            if (auto other = context.onlinePlayer(target))
                 if (other.player !is null && other.map is map)
                     other.procAuras(ProcFlag.takeRangedAttack, unit);
         }
@@ -1056,7 +1056,7 @@ private:
                 if (aura.duration > 0 && (!namedChannelSequence || aura.channelToken == namedChannelSequence))
                     aura.duration = aura.duration > delay ? aura.duration - delay : 1;
         }
-        else if (auto other = channelTarget == player.guid ? this : cast(typeof(this)) context.onlinePlayer(channelTarget))
+        else if (auto other = channelTarget == player.guid ? this : context.onlinePlayer(channelTarget))
             if (other.player !is null)
                     if (auto aura = other.player.auras.find(spell.id, player.guid))
                     if (aura.duration > 0)
@@ -2531,7 +2531,7 @@ private:
             at = creature.position;
             reach = creature.values.get!UNIT_FIELD_COMBATREACH;
         }
-        else if (auto other = cast(typeof(this)) context.onlinePlayer(guid))
+        else if (auto other = context.onlinePlayer(guid))
         {
             if (other.map !is map || other.player is null)
                 return SpellCastResult.badTargets;
@@ -2934,7 +2934,7 @@ private:
         // A hostile spell landed on another player (a duel, world PvP): what that ends (`HOSTILE_ACTION`).
         foreach (r; results)
             if (r.miss == SpellMissInfo.none && r.guid != player.guid)
-                if (auto other = cast(typeof(this)) context.onlinePlayer(r.guid))
+                if (auto other = context.onlinePlayer(r.guid))
                     if (other.player !is null && other.map is map
                             && canAttack(relatingNow(), other.relatingNow(), context.client))
                         other.interruptAuras(AuraInterrupt.hostileAction);
@@ -3347,7 +3347,7 @@ private:
             at = body_.position;
             marked = (body_.values.get!CORPSE_FIELD_FLAGS & CorpseFlags.lootable) != 0;
         }
-        auto victim = owner ? cast(typeof(this)) context.onlinePlayer(owner) : null;
+        auto victim = owner ? context.onlinePlayer(owner) : null;
         if (victim is null || victim is this || victim.player is null || victim.map !is map
                 || victim.player.deathState == DeathState.alive || victim.teamId == teamId)
             return;
@@ -3379,7 +3379,7 @@ private:
                     castSpell(aura, SpellTargets(TargetFlags.self, player.guid), true, 0);
             return;
         }
-        auto other = target == player.guid ? this : cast(typeof(this)) context.onlinePlayer(target);
+        auto other = target == player.guid ? this : context.onlinePlayer(target);
         if (other is null || other.player is null || other.map !is map || other.player.deathState != DeathState.alive)
             return;
         map.sendToWatchers(this, Opcode.SMSG_SPELLINSTAKILLLOG, w.data, true);
@@ -3761,7 +3761,7 @@ private:
         if (c.targets.corpse)
             if (auto corpse = cast(Corpse) map.findObject(c.targets.corpse))
                 owner = corpse.values.get!CORPSE_FIELD_OWNER;
-        auto other = owner == player.guid ? null : cast(typeof(this)) context.onlinePlayer(owner);
+        auto other = owner == player.guid ? null : context.onlinePlayer(owner);
         if (other is null || other.player is null || other.player.deathState == DeathState.alive)
             return;
         const v = &other.player.values;
@@ -3851,7 +3851,7 @@ private:
     {
         if (target == player.guid)
             return null;
-        auto other = cast(typeof(this)) context.onlinePlayer(target);
+        auto other = context.onlinePlayer(target);
         if (other is null || other.player is null || other.map !is map)
             return null;
         return canAttack(relatingNow(), other.relatingNow(), context.client) ? other : null;

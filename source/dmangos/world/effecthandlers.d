@@ -111,7 +111,7 @@ mixin template EffectHandlers()
     {
         if (guid == player.guid)
             return this;
-        auto other = cast(typeof(this)) context.onlinePlayer(guid);
+        auto other = context.onlinePlayer(guid);
         return other !is null && other.player !is null && other.map is map ? other : null;
     }
 

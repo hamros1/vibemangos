@@ -279,10 +279,9 @@ void shutdownInstanceHere(WorldContext context, uint id, GmSink sink)
         return sink.red(format!"Instance with id %u already shut down."(id));
     sink.system(format!"Attempting to shutdown instance with id %u..."(id));
     // Everyone inside goes back out first.
-    foreach (other; context.onlinePlayers)
-        if (auto inside = cast(Character) other)
-            if (inside.instanceId == id && inside.character !is null)
-                inside.exitInstance();
+    foreach (inside; context.onlinePlayers)
+        if (inside.instanceId == id && inside.character !is null)
+            inside.exitInstance();
     context.shutdownInstance(id);
     sink.system("...done");
 }
