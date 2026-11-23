@@ -286,6 +286,7 @@ unittest
     import dmangos.world.creature : TempSpawnType;
     import dmangos.world.grid : cellCoordinate, cellKeyAt, cellSize;
     import dmangos.world.replication : encodePlayerState, encodeState;
+    import dmangos.world.updatefields : UNIT_FIELD_CHANNEL_OBJECT;
 
     if (!haveRealData())
         return;
@@ -336,7 +337,9 @@ unittest
             successor.context.regionsChanged([region], null, [region.id: bundle], unused);
             from = successor.context.map(0);
             caster = from.creatureAt(caster.guid);
-            assert(caster !is null);
+            assert(caster !is null && caster.ai.castingNow
+                && caster.values.get!UNIT_FIELD_CHANNEL_OBJECT == player.guid,
+                "the moved channel keeps its original target");
             from.replicaCreated(2, targetCell, player.guid, encodePlayerState(player, 0));
             to.replicaCreated(3, originCell, caster.guid, encodeState(caster, 0));
             expectedOwner = 3;
@@ -351,13 +354,19 @@ unittest
         source.context.update(source.now);
         successor.context.update(successor.now);
         assert(impacts == 1 && target.session.inWorld.unit.health < health, "an in-flight missile follows its caster");
+        if (moves)
+        {
+            caster.tick(from, 1000);
+            assert(impacts == 1, "the next pulse is also in flight");
+        }
         caster.ai.interruptedBySpell(3000);
         caster.tick(from, 5000);
         source.now += 3.seconds;
         successor.now += 3.seconds;
         source.context.update(source.now);
         successor.context.update(successor.now);
-        assert(impacts == 1 && !caster.ai.castingNow);
+        assert(impacts == (moves ? 2 : 1) && !caster.ai.castingNow,
+            "only already launched missiles land after the interruption");
     }
 }
 

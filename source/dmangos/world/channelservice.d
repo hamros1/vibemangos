@@ -8,7 +8,7 @@
  * the player, and a call of the service's `run`: on its node a direct call, from another the command
  * as bytes (`dmangos.cluster.services`). What a channel tells a member goes to the node simulating it
  * (`DeliverTo`), found by presence, or the node its last command came from. The service moves like a
- * region; after a move the channels start empty.
+ * region and carries its channel state on a clean handoff.
  */
 module dmangos.world.channelservice;
 
@@ -48,6 +48,11 @@ struct ChannelsHost
 {
     ChannelService channels;
 
+    ubyte[] saveState() const
+    {
+        return channels.saveState();
+    }
+
     /// A player's channel command.
     @Call void run(const ref ChannelCall call)
     {
@@ -67,12 +72,60 @@ final class ChannelService : MemberDirectory
         Member[ulong] members;    // players who gave a command, while in a channel
     }
 
-    ///
-    this(WorldContext context, const ClientData client, ChannelSettings settings)
+    private static struct SavedMember
     {
+        ulong guid;
+        string name;
+        ubyte race;
+        bool moderatesAll;
+        byte pvpRank;
+        ushort node;
+    }
+
+    private static struct SavedState
+    {
+        SavedChannel[] alliance, horde;
+        SavedMember[] members;
+    }
+
+    ///
+    this(WorldContext context, const ClientData client, ChannelSettings settings, const(ubyte)[] state = null)
+    {
+        import dmangos.plaindata : decode;
+
         this.context = context;
         channels.alliance = new Channels(this, client, settings);
         channels.horde = settings.crossFaction ? channels.alliance : new Channels(this, client, settings);
+        if (!state.length)
+            return;
+        SavedState saved;
+        decode(state, saved);
+        channels.alliance.restoreState(saved.alliance);
+        if (!settings.crossFaction)
+            channels.horde.restoreState(saved.horde);
+        foreach (ref row; saved.members)
+        {
+            auto member = new Member(context, row.guid, row.name, row.race, row.moderatesAll, row.node);
+            member.pvpRank_ = row.pvpRank;
+            members[row.guid] = member;
+        }
+    }
+
+    private ubyte[] saveState() const
+    {
+        import dmangos.plaindata : encode;
+
+        SavedState saved;
+        saved.alliance = channels.alliance.saveState();
+        if (channels.horde !is channels.alliance)
+            saved.horde = channels.horde.saveState();
+        foreach (member; members)
+            if (channels.alliance.channelsOf(member.guid).length || channels.horde.channelsOf(member.guid).length)
+                saved.members ~= SavedMember(member.guid, member.name, member.race, member.moderatesAll,
+                    member.pvpRank, member.node);
+        ubyte[] bytes;
+        encode(bytes, saved);
+        return bytes;
     }
 
     /// Runs a command that came from node `via` (this node's own id for its own players).
@@ -334,7 +387,7 @@ unittest
     assert(service.channels.alliance.count == 0 && service.remembered == 0);
 }
 
-/// The channels service on another node (docs/SERVICES.md): node 1's player joins and hears node 2's.
+/// Players keep listening and channel controls survive when the channels service changes nodes.
 unittest
 {
     import dmangos.cluster.protocol : ServiceCall, ServiceReply;
@@ -351,12 +404,20 @@ unittest
     a.services.stopAll();
     a.services.self = 1;
     b.services.self = 2;
-    a.services.placement = b.services.placement = (ServiceKind) => cast(ushort) 2;
+    ushort host = 2;
+    a.services.placement = b.services.placement = (ServiceKind) => host;
     a.services.sendCall = (ushort node, const ref ServiceCall c) { b.services.receiveCall(1, c); return true; };
     b.services.sendReply = (ushort node, const ref ServiceReply r) { a.services.receiveReply(2, r); return true; };
+    b.services.sendCall = (ushort node, const ref ServiceCall c) { a.services.receiveCall(2, c); return true; };
+    a.services.sendReply = (ushort node, const ref ServiceReply r) { b.services.receiveReply(1, r); return true; };
     // What node 2's channels tell node 1's players goes there (`DeliverTo`).
     b.deliverRemote = (ushort node, ulong guid, ushort opcode, const(ubyte)[] body_) {
         if (auto who = a.onlinePlayer(guid))
+            who.deliver(cast(Opcode) opcode, body_);
+    };
+    a.deliverRemote = (ushort node, ulong guid, ushort opcode, const(ubyte)[] body_) {
+        assert(node == 2);
+        if (auto who = b.onlinePlayer(guid))
             who.deliver(cast(Opcode) opcode, body_);
     };
 
@@ -381,4 +442,35 @@ unittest
     foreach (p; anduin.read())
         heard = heard || p.opcode == Opcode.SMSG_MESSAGECHAT;
     assert(heard, "said on node 2, heard on node 1");
+
+    b.presence(1, true, [imported!"dmangos.cluster.protocol".PresenceEntry(
+        7, "Anduin", 9, 1, 8, 10, 1, 12, 0, 0, "")], null);
+    auto service = b.channelService;
+    service.run(channelCommand(anduin.session.inWorld, ChannelOp.password, "Club", "secret"), 1);
+    service.run(channelCommand(anduin.session.inWorld, ChannelOp.moderator, "Club", "Jaina"), 1);
+    service.run(channelCommand(anduin.session.inWorld, ChannelOp.moderate, "Club"), 1);
+    auto uther = loggedIn(b, dbB, 9, "Uther", Position(0, 0, 0));
+    service.run(channelCommand(uther.session.inWorld, ChannelOp.join, "Club", "secret"), 2);
+    service.run(channelCommand(anduin.session.inWorld, ChannelOp.ban, "Club", "Uther"), 1);
+    uther.read();
+    anduin.read();
+    jaina.read();
+
+    const state = b.services.stop(ServiceKind.channels);
+    host = 1;
+    assert(a.services.start(ServiceKind.channels, state));
+    assert(b.channelService is null);
+    auto club = a.channelService.channels.alliance.find("CLUB", null);
+    assert(club !is null && club.ownerOf == 7 && club.isOn(8) && (club.flagsOf(8) & MemberFlags.moderator),
+        "the moved service keeps its owner, members and moderators");
+    assert(a.channelService.remembered == 2 && !anduin.read().length && !jaina.read().length);
+
+    jaina.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_CHANNEL, "hello after handoff", "Club"));
+    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_MESSAGECHAT));
+    assert(opcodesOf(jaina.read()).canFind(Opcode.SMSG_MESSAGECHAT));
+    uther.write(Opcode.CMSG_JOIN_CHANNEL, ClientChannelPassword("Club", "secret"));
+    assert(!club.isOn(9) && uther.read()[0].body_[0] == ChatNotify.banned);
+    auto visitor = loggedIn(a, dbA, 10, "Tirion", Position(0, 0, 0));
+    visitor.write(Opcode.CMSG_JOIN_CHANNEL, ClientChannelPassword("Club", ""));
+    assert(!club.isOn(10) && visitor.read()[0].body_[0] == ChatNotify.wrongPassword);
 }

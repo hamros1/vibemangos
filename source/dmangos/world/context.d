@@ -2603,8 +2603,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         data.npcs.conditions.eventActive = (uint id) => gameEvents.isActive(id);
         data.npcs.conditions.holidayActive = (uint holiday) => gameEvents.holidayActive(holiday);
         updateGameEvents(clock(), true); // before any cell loads, so its spawns follow the events now
-        services.provide!ChannelsHost((const(ubyte)[]) => ChannelsHost(new ChannelService(this, client,
-            ChannelSettings(config.allowTwoSideInteractionChannel))));
+        services.provide!ChannelsHost((const(ubyte)[] state) => ChannelsHost(new ChannelService(this, client,
+            ChannelSettings(config.allowTwoSideInteractionChannel), state)));
         services.provide!InvasionHost(&newInvasionHost);
         services.listen!(InvasionHost, InvasionState)(&invasionHeard);
         services.provide!WarEffortHost(&newWarEffortHost);
@@ -5370,8 +5370,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         {
             if (creature.meleeController || creature.totemOwner)
                 return Migrant.init; // controlled creatures follow their owner's rules
-            if (creature.ai !is null && !creature.ai.hasNamedCreatureChannel)
-                creature.ai.finishCreatureChannel(true);
             if (creature.loot !is null)
                 creature.loot.sendReleaseForAll();
             const now = transportNow();

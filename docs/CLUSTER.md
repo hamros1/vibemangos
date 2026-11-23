@@ -896,6 +896,8 @@ the caster's node resolves the original target GUID locally or sends the hit to 
 owner. A projectile can wait up to two seconds for the target to appear during a handoff. A clean caster
 handoff carries pending cross-node projectiles and their impact deadlines with it. The caster's current
 node supplies a short-lived replica for impact even when the target's node has no nearby players.
+NPC Arcane Missiles also carries its channel aura and remaining pulses with the caster. An interrupt
+stops future launches and leaves already launched missiles in flight.
 
 ## Testing
 

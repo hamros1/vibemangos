@@ -295,9 +295,15 @@ final class ServiceHost
         auto starter = kind in starters;
         if (starter is null)
             return false;
+        ServiceHandoff handoff;
+        if (state.length)
+            decode(state, handoff);
         if (auto old = kind in hosted)
             old.stop();
-        hosted[kind] = (*starter)(state);
+        hosted[kind] = (*starter)(handoff.state);
+        foreach (ref answer; handoff.answers)
+            if (answer.key.kind == kind)
+                rememberAnswer(answer.key, answer.reply);
         return true;
     }
 
@@ -307,10 +313,16 @@ final class ServiceHost
         auto h = kind in hosted;
         if (h is null)
             return null;
-        auto state = h.save();
+        ServiceHandoff handoff;
+        handoff.state = h.save();
+        foreach (ref key; answeredOrder)
+            if (key.kind == kind)
+                handoff.answers ~= SavedAnswer(key, answered[key]);
         h.stop();
         hosted.remove(kind);
-        return state;
+        ubyte[] bytes;
+        encode(bytes, handoff);
+        return bytes;
     }
 
     /// Hosts `service` here, from now on; calls to its kind run here.
@@ -397,10 +409,24 @@ final class ServiceHost
     private ulong nextSequence = 1;
     private struct AnswerKey
     {
+        ServiceKind kind;
         ushort origin;
         ulong incarnation;
         ulong sequence;
     }
+
+    private struct SavedAnswer
+    {
+        AnswerKey key;
+        ubyte[] reply;
+    }
+
+    private struct ServiceHandoff
+    {
+        ubyte[] state;
+        SavedAnswer[] answers;
+    }
+
     /// An incarnation distinguishes a reconnect from a new caller numbering its calls from one.
     ulong delegate(ushort) peerIncarnation;
     private ubyte[][AnswerKey] answered;
@@ -472,10 +498,11 @@ final class ServiceHost
         {
             ubyte[] reply;
             auto then = p.then;
-            const known = dispatch(p.kind, p.call, p.request, reply);
+            const key = AnswerKey(p.kind, self, peerIncarnation is null ? 0 : peerIncarnation(self), sequence);
+            const status = answerCall(key, p.call, p.request, reply, false);
             pending.remove(sequence);
             ++counts.local;
-            if (known && then !is null)
+            if (status == ServiceStatus.ok && then !is null)
                 then(reply);
             return;
         }
@@ -495,34 +522,42 @@ final class ServiceHost
     void receiveCall(ushort from, const ref ServiceCall call)
     {
         auto reply = ServiceReply(call.kind, call.sequence, ServiceStatus.ok, null);
-        const key = AnswerKey(call.origin, peerIncarnation is null ? 0 : peerIncarnation(from), call.sequence);
-        if (auto earlier = key in answered)
-        {
-            reply.reply = *earlier;
-            ++counts.repeated;
-        }
-        else if (!hosts(cast(ServiceKind) call.kind))
-            reply.status = ServiceStatus.notHere;
-        else
-        {
-            ubyte[] bytes;
-            if (!dispatch(cast(ServiceKind) call.kind, call.call, call.request, bytes))
-                reply.status = ServiceStatus.unknownCall;
-            else
-            {
-                ++counts.served;
-                answered[key] = bytes;
-                answeredOrder ~= key;
-                if (answeredOrder.length > answersKept)
-                {
-                    answered.remove(answeredOrder[0]);
-                    answeredOrder = answeredOrder[1 .. $];
-                }
-                reply.reply = bytes;
-            }
-        }
+        const key = AnswerKey(cast(ServiceKind) call.kind, call.origin,
+            peerIncarnation is null ? 0 : peerIncarnation(from), call.sequence);
+        reply.status = answerCall(key, call.call, call.request, reply.reply, true);
         if (sendReply !is null)
             sendReply(from, reply);
+    }
+
+    private ServiceStatus answerCall(AnswerKey key, ulong call, const(ubyte)[] request, ref ubyte[] reply, bool remote)
+    {
+        if (auto earlier = key in answered)
+        {
+            reply = *earlier;
+            ++counts.repeated;
+            return ServiceStatus.ok;
+        }
+        if (!hosts(key.kind))
+            return ServiceStatus.notHere;
+        if (!dispatch(key.kind, call, request, reply))
+            return ServiceStatus.unknownCall;
+        if (remote)
+            ++counts.served;
+        rememberAnswer(key, reply);
+        return ServiceStatus.ok;
+    }
+
+    private void rememberAnswer(AnswerKey key, ubyte[] reply)
+    {
+        if (key in answered)
+            return;
+        answered[key] = reply;
+        answeredOrder ~= key;
+        if (answeredOrder.length > answersKept)
+        {
+            answered.remove(answeredOrder[0]);
+            answeredOrder = answeredOrder[1 .. $];
+        }
     }
 
     /// The answer to one of this node's calls.
@@ -783,6 +818,8 @@ unittest
 // Started from a provider, stopped with its state, started elsewhere from it.
 unittest
 {
+    import core.time : msecs;
+
     @Service(ServiceKind.example)
     static struct Tally
     {
@@ -799,17 +836,44 @@ unittest
         return t;
     }
 
-    auto a = new ServiceHost, b = new ServiceHost;
-    a.provide!Tally(&make);
-    b.provide!Tally(&make);
-    assert(a.start(ServiceKind.example));
-    a.call!(Tally.bump)(Add(3), (uint n) {});
-    const state = a.stop(ServiceKind.example);
-    assert(!a.hosts(ServiceKind.example) && b.start(ServiceKind.example, state));
-    uint seen;
-    b.call!(Tally.bump)(Add(4), (uint n) { seen = n; });
-    assert(seen == 7, "moved with its state");
-    assert(!b.start(ServiceKind.channels), "not provided here");
+    foreach (callerBecomesHost; [false, true])
+    {
+        auto a = new ServiceHost, b = new ServiceHost;
+        auto caller = callerBecomesHost ? b : new ServiceHost;
+        a.self = 1;
+        b.self = 2;
+        if (!callerBecomesHost)
+            caller.self = 3;
+        a.peerIncarnation = b.peerIncarnation = (ushort id) => cast(ulong) id + 10;
+        a.provide!Tally(&make);
+        b.provide!Tally(&make);
+        assert(a.start(ServiceKind.example));
+
+        ushort placement = 1;
+        caller.placement = (ServiceKind) => placement;
+        caller.sendCall = (ushort node, const ref ServiceCall call) {
+            (node == 1 ? a : b).receiveCall(caller.self, call);
+            return true;
+        };
+        uint seen;
+        caller.call!(Tally.bump)(Add(3), (uint n) { seen = n; });
+        assert(a.local!Tally().count == 3 && caller.pendingCalls == 1, "the first reply was lost");
+        const state = a.stop(ServiceKind.example);
+        assert(!a.hosts(ServiceKind.example) && b.start(ServiceKind.example, state));
+        placement = 2;
+        b.sendReply = (ushort peer, const ref ServiceReply reply) {
+            assert(peer == caller.self);
+            caller.receiveReply(2, reply);
+            return true;
+        };
+        caller.peerLost(1);
+        caller.tick(50.msecs);
+        assert(caller.pendingCalls == 0 && seen == 3 && b.local!Tally().count == 3,
+            "a reply lost during handoff must not cause a second mutation");
+        b.call!(Tally.bump)(Add(4), (uint n) { seen = n; });
+        assert(seen == 7, "moved with its state");
+        assert(!b.start(ServiceKind.channels), "not provided here");
+    }
 }
 
 // Two nodes: a call goes as bytes to the node the service is on, its reply back to the continuation;

@@ -348,6 +348,8 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
 
             context.services.self = cluster.id;
             context.services.peerIncarnation = (ushort peer) {
+                if (peer == cluster.id)
+                    return cluster.incarnation;
                 if (auto link = cluster.linkTo(peer))
                     return link.peer.incarnation;
                 return 0UL;

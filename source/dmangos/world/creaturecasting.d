@@ -202,37 +202,43 @@ mixin template CreatureCasting()
     private int missingChannelTarget;
     private int missilePulsesRemaining;
 
-    package @property bool hasNamedCreatureChannel() const
+    package @property bool hasCreatureChannel() const
     {
-        return channelSpell !is null && namedChannelSequence != 0;
+        return channelSpell !is null;
     }
 
-    package void saveNamedCreatureChannel(ref ByteWriter writer) const
+    package void saveCreatureChannel(ref ByteWriter writer) const
     {
         import dmangos.world.context : WorldContext;
 
         writer.put(namedChannelSequence);
         writer.put(channelTimer);
+        writer.put(missilePulsesRemaining);
         const context = cast(const WorldContext) lore;
         writer.put(namedChannelPeer ? namedChannelPeer : context.nodeId);
     }
 
-    package void loadNamedCreatureChannel(ref imported!"dmangos.bytes".ByteReader reader, int transit)
+    package void loadCreatureChannel(ref imported!"dmangos.bytes".ByteReader reader, int transit)
     {
         import std.algorithm.comparison : max;
 
         namedChannelSequence = reader.read!ulong;
-        channelTimer = max(0, reader.read!int - max(0, transit));
+        const timer = reader.read!int;
+        // The named target's aura advances off-node. A missile channel's own aura transfers with its caster.
+        channelTimer = namedChannelSequence ? max(0, timer - max(0, transit)) : timer;
+        missilePulsesRemaining = reader.read!int;
         namedChannelPeer = reader.read!ushort;
         channelSpell = lore.spellInfo(me.values.get!UNIT_CHANNEL_SPELL);
     }
 
     /// Republish an existing channel once this caster is installed on its new map.
-    package void resumeNamedCreatureChannel(imported!"dmangos.world.map".Map map_)
+    package void resumeCreatureChannel(imported!"dmangos.world.map".Map map_)
     {
-        if (!hasNamedCreatureChannel)
+        if (!hasCreatureChannel)
             return;
         world_ = map_;
+        if (!namedChannelSequence)
+            return; // Arcane Missiles launches from its restored periodic aura.
         namedChannelPeer = currentChannelPeer(map_, me.values.get!UNIT_FIELD_CHANNEL_OBJECT);
         map_.holdCasterReplica(me.guid, namedChannelPeer, cast(uint) channelTimer + 5_000, true);
     }

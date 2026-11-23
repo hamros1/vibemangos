@@ -129,7 +129,8 @@ context.services.call!(ChannelsHost.run)(ChannelCall(command, nodeId));   // no 
 
 Because a call may be sent twice (after `notHere`, or after its node was lost while the reply was
 on its way), the host remembers its last 4096 answers by (origin node, sequence number). A call it
-has answered before is answered again from memory and not run twice. No epoch travels with a call:
+has answered before is answered again from memory and not run twice. A clean handoff carries the
+service's cached replies to the new host, including when that host is the original caller. No epoch travels with a call:
 a node hosts a service only while it holds the service region's lease, and stops it when it loses
 it, so a call reaching a node that is no longer the host gets `notHere`.
 
@@ -169,8 +170,9 @@ node (names, the GM client channel) are made there before the call.
 
 What a channel says to a member goes to the member's node: the one presence says simulates it
 (docs/CLUSTER.md), or failing that the node its last command came from. A lost node's players leave
-their channels as if they had logged out. After the service moves, channels start empty; players
-join again when they next log in or change zone.
+their channels as if they had logged out. A planned move preserves members, ownership, bans, and
+channel settings. Clients already in a channel can keep talking without rejoining. Losing the service
+host before it can hand off still empties its channels.
 
 ### Battleground queues
 

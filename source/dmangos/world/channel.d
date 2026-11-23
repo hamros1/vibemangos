@@ -550,6 +550,22 @@ private:
     }
 }
 
+/// Channel state carried between service hosts. Membership and bans are indexed again on arrival.
+package struct SavedChannel
+{
+    static struct Member
+    {
+        ulong guid;
+        MemberFlags flags;
+    }
+
+    string name, password;
+    ulong owner;
+    bool announcements, moderation;
+    Member[] players;
+    ulong[] bans;
+}
+
 /// See the module documentation.
 final class Channels
 {
@@ -605,6 +621,44 @@ final class Channels
     @property size_t count() const
     {
         return byName.length;
+    }
+
+    package SavedChannel[] saveState() const
+    {
+        SavedChannel[] result;
+        foreach (channel; byName)
+        {
+            SavedChannel saved;
+            saved.name = channel.name;
+            saved.password = channel.password;
+            saved.owner = channel.ownerGuid;
+            saved.announcements = channel.announcements;
+            saved.moderation = channel.moderation;
+            foreach (guid, flags; channel.players)
+                saved.players ~= SavedChannel.Member(guid, flags);
+            saved.bans = channel.bannedGuids.keys;
+            result ~= saved;
+        }
+        return result;
+    }
+
+    package void restoreState(const(SavedChannel)[] saved)
+    {
+        foreach (ref row; saved)
+        {
+            auto channel = getOrCreate(row.name);
+            channel.password = row.password;
+            channel.ownerGuid = row.owner;
+            channel.announcements = row.announcements;
+            channel.moderation = row.moderation;
+            foreach (ref player; row.players)
+            {
+                channel.players[player.guid] = player.flags;
+                joined(player.guid, channel);
+            }
+            foreach (guid; row.bans)
+                channel.bannedGuids[guid] = true;
+        }
     }
 
     /// Someone left: a channel nobody is in goes away.
