@@ -766,14 +766,19 @@ mixin template CreatureCasting()
         const channelEffect = takeMana && !me.meleeController && selectedWeaponTargets is null && context !is null
             ? context.namedCreatureChannel(spell) : size_t.max;
         UnitRef channelTarget;
+        size_t firstChannelEffect = size_t.max;
+        uint channelExclusions;
         if (channelEffect != size_t.max)
         {
             import dmangos.world.spellselection : namedCreatureRange;
 
             channelTarget = nearestNamedCreature(world_, me.position, namedCreatureRange(*spell, lore.clientData),
-                lore.spellScriptTargets(spell.id, channelEffect), me.guid, context.sendAreaDamage !is null);
+                context.namedCreatureEntries(spell, channelEffect), me.guid, context.sendAreaDamage !is null);
             if (!channelTarget || !beginNamedCreatureChannel(spell, channelTarget))
                 return;
+            const entry = namedCreatureEntry(channelTarget);
+            firstChannelEffect = context.namedCreatureEffectFor(spell, channelEffect, entry);
+            channelExclusions = context.scriptTargetExclusions(spell.id, entry);
         }
         bool remotePrimary, sentArea;
         if (selectedWeaponTargets is null)
@@ -838,13 +843,16 @@ mixin template CreatureCasting()
             {
                 const objectShape = selectedWeaponTargets is null && context !is null
                     ? context.namedGameObjectRouting(spell, i) : ImplicitTarget.none;
-                if (i == channelEffect)
+                if (channelEffect != size_t.max)
                 {
                     import dmangos.world.spellselection : namedCreatureRange;
 
                     if (channelTarget.replica is null)
-                        reached[i] = [channelTarget.combatGuid];
-                    else
+                    {
+                        if (!(channelExclusions & (1u << i)))
+                            reached[i] = [channelTarget.combatGuid];
+                    }
+                    else if (i == firstChannelEffect)
                     {
                         if (!sendCreatureTargetSpell(context, spell, channelTarget, false, auraAbsent, cast(int) i,
                                 me.position, namedCreatureRange(*spell, lore.clientData), true, namedChannelSequence))

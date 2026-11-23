@@ -739,7 +739,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.spelldamage : namedCreatureChannelEffect;
 
         const effect = namedCreatureChannelEffect(*spell);
-        return effect != size_t.max && spellScriptTargets(spell.id, effect).length && !spellScript(spell.id)
+        return effect != size_t.max && namedCreatureEntries(spell, effect).length && !spellScript(spell.id)
             && duration(*spell, client, spell.spellLevel) > 0
             ? effect : size_t.max;
     }
@@ -1482,9 +1482,15 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if (!actorCanChannel || message.triggered || message.creatureArea
                 || (message.namedCreature ? named == size_t.max : !isRemoteLeechChannel(*spell)))
                 return;
-            if (message.namedCreature && (victim.kind != UnitKind.creature
-                || !spellScriptTargets(spell.id, named).canFind(victim.creature.spawn.entry)))
-                return replyCreatureCast(peer, message, SpellMissInfo.evade);
+            size_t targetEffect = size_t.max;
+            if (message.namedCreature)
+            {
+                if (victim.kind != UnitKind.creature || !spellScriptTargets(spell.id).canFind(victim.creature.spawn.entry))
+                    return replyCreatureCast(peer, message, SpellMissInfo.evade);
+                targetEffect = namedCreatureEffectFor(spell, named, victim.creature.spawn.entry);
+                if (targetEffect == size_t.max)
+                    return replyCreatureCast(peer, message, SpellMissInfo.evade);
+            }
             if (message.channelUpdate)
             {
                 const confirms = message.namedCreature && message.auraMs > 0;
@@ -1496,7 +1502,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 return;
             }
             const validEffect = message.namedCreature
-                ? message.effect == named && message.radius == namedCreatureRange(*spell, client) && message.auraMs > 0
+                ? message.effect == targetEffect && message.radius == namedCreatureRange(*spell, client)
+                    && message.auraMs > 0
                 : isTargetedProcEffect(*spell, message.effect);
             if (!validEffect || casterFields.get!UNIT_CHANNEL_SPELL != message.spell
                 || casterFields.get!UNIT_FIELD_CHANNEL_OBJECT != message.target)

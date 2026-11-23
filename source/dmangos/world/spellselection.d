@@ -782,10 +782,11 @@ unittest
     assert(forwarded.length == 1);
 }
 
-/// A named channel heals only while its caster is channeling it. It credits a quest at completion.
+/// A named channel carries one aura across owners. The allowed effects tick once and end on interruption.
 unittest
 {
     import core.time : msecs, seconds;
+    import std.math : abs;
     import dmangos.cluster.regions : CellRect, Region, RegionState;
     import dmangos.bytes : ByteWriter;
     import dmangos.cluster.protocol : AreaDamage;
@@ -800,8 +801,8 @@ unittest
     import dmangos.world.spellhandlers : testSpell;
     import dmangos.world.spellids : AuraType;
     import dmangos.world.testclient;
-    import dmangos.world.updatefields : PLAYER_QUEST_LOG_1_1, UNIT_CHANNEL_SPELL, UNIT_FIELD_CHANNEL_OBJECT,
-        UNIT_FIELD_HEALTH, UNIT_FIELD_MAXHEALTH;
+    import dmangos.world.updatefields : OBJECT_FIELD_SCALE_X, PLAYER_QUEST_LOG_1_1, UNIT_CHANNEL_SPELL,
+        UNIT_FIELD_CHANNEL_OBJECT, UNIT_FIELD_HEALTH, UNIT_FIELD_MAXHEALTH;
 
     auto db = newDatabase();
     auto source = newCreationContext(db), owner = newCreationContext(db);
@@ -811,8 +812,12 @@ unittest
     enum uint mend = 16637;
     auto spell = testSpell(mend, SpellEffect.applyAura, ImplicitTarget.unitScriptNearCaster, 10);
     spell.attributesEx = 0x04;
-    spell.casting.applyAuraName[0] = AuraType.periodicHeal;
-    spell.casting.amplitude[0] = 1000;
+    spell.effect[1 .. 3] = SpellEffect.applyAura;
+    spell.implicitTargetA[1 .. 3] = ImplicitTarget.unitScriptNearCaster;
+    spell.casting.applyAuraName = [AuraType.modDamageDone, AuraType.periodicHeal, AuraType.modScale];
+    spell.basePoints[1 .. 3] = 9;
+    spell.baseDice[1 .. 3] = 1;
+    spell.casting.amplitude[1] = 1000;
     spell.casting.durationIndex = 1;
     foreach (node; [source, owner])
     {
@@ -820,6 +825,7 @@ unittest
             [[1u, 3000, 0, 3000]]), "SpellDuration.dbc");
         node.data.spells.spells[mend] = spell;
         node.data.spellScriptTargets[mend] = [creatureTrainer];
+        node.data.spellScriptTargetMasks[mend][creatureTrainer] = 0b001;
     }
     auto client = loggedIn(source, db, 7, "Anduin", origin);
     auto player = cast(Player) client.session.character;
@@ -830,6 +836,7 @@ unittest
     target.values.set!UNIT_FIELD_MAXHEALTH(100);
     target.values.set!UNIT_FIELD_HEALTH(20);
     to.addObject(target);
+    const baseScale = target.values.get!OBJECT_FIELD_SCALE_X;
     const cell = cellKeyAt(origin.x, origin.y);
     from.replicaCreated(2, cell, target.guid, encodeState(target, 0));
     const healerSpawn = CreatureSpawn(91026, creatureInnkeeper, 0, origin.x, origin.y, origin.z);
@@ -849,6 +856,7 @@ unittest
 
     source.sendAreaDamage = (ushort peer, const ref AreaDamage request) {
         assert(peer == 2 && request.namedCreature && request.channelled && request.target == target.guid);
+        assert(request.channelUpdate || request.effect == 1, "the excluded first effect is not sent as the lead");
         if (request.creatureCast)
             to.replicaCreated(1, cell, healer.guid, encodeState(healer, 0));
         else
@@ -866,8 +874,11 @@ unittest
     ByteWriter castPacket;
     castPacket.put(mend);
     SpellTargets(TargetFlags.self, 0).write(castPacket);
+    assert(source.namedCreatureChannel(source.data.spells.spell(mend)) == 0);
     client.write(Opcode.CMSG_CAST_SPELL, castPacket.data);
-    assert(player.values.get!UNIT_FIELD_CHANNEL_OBJECT == target.guid && target.auras.find(mend, player.guid));
+    assert(player.values.get!UNIT_FIELD_CHANNEL_OBJECT == target.guid, "the caster starts on its selected creature");
+    assert(target.auras.find(mend, player.guid), "the selected creature's owner installs the aura");
+    assert(target.auras.find(mend, player.guid).effects == 0b110);
     target.updateAuras(to, 1000);
     assert(target.values.get!UNIT_FIELD_HEALTH == 30);
     ByteWriter cancel;
@@ -903,6 +914,7 @@ unittest
 
     assert(healer.ai.castSpell(source.data.spells.spell(mend), healer.guid, 0));
     assert(healer.values.get!UNIT_FIELD_CHANNEL_OBJECT == target.guid && target.auras.find(mend, healer.guid));
+    assert(target.auras.find(mend, healer.guid).effects == 0b110);
     target.updateAuras(to, 1000);
     assert(target.values.get!UNIT_FIELD_HEALTH == 70);
     healer.ai.interruptCast();
@@ -917,10 +929,14 @@ unittest
     client.write(Opcode.CMSG_CAST_SPELL, castPacket.data);
     const token = target.auras.find(mend, player.guid).channelToken;
     assert(token);
+    target.updateAuras(to, 1400);
+    client.session.update(1400.msecs);
+    assert(target.values.get!UNIT_FIELD_HEALTH == 80);
     auto successor = newCreationContext(db);
     successor.nodeId = 3;
     successor.data.spells.spells[mend] = spell;
     successor.data.spellScriptTargets[mend] = [creatureTrainer];
+    successor.data.spellScriptTargetMasks[mend][creatureTrainer] = 0b001;
     successor.client.spellDurations = owner.client.spellDurations;
     db.insertCreatureSpawn(row);
     auto destination = successor.map(0);
@@ -931,17 +947,28 @@ unittest
     successor.regionsChanged([gained], null, [gained.id: bundle], unused);
     auto migrated = cast(Creature) destination.findObject(target.guid);
     assert(migrated !is null && migrated.auras.find(mend, player.guid).channelToken == token);
+    assert(migrated.auras.find(mend, player.guid).effects == 0b110);
+    assert(abs(migrated.values.get!OBJECT_FIELD_SCALE_X - baseScale * 1.1f) < 0.001f);
     from.replicaCreated(3, cell, migrated.guid, encodeState(migrated, 0));
-    uint rebinds;
+    uint rebinds, interrupts, applications;
     source.sendAreaDamage = (ushort peer, const ref AreaDamage request) {
-        assert(peer == 3 && request.channelUpdate && request.channelToken == token && request.auraMs > 0);
-        ++rebinds;
+        assert(peer == 3 && request.channelled && request.namedCreature);
+        if (request.channelUpdate)
+        {
+            assert(request.channelToken == token);
+            if (request.auraMs)
+                ++rebinds;
+            else
+                ++interrupts;
+        }
+        else
+            ++applications;
         destination.replicaCreated(1, cell, player.guid, encodePlayerState(player, 0));
         successor.areaDamageArrived(1, request);
         return true;
     };
     successor.sendAreaDamage = (ushort peer, const ref AreaDamage reply) {
-        assert(peer == 1 && reply.reply && reply.channelToken == token);
+        assert(peer == 1 && reply.reply);
         source.areaDamageArrived(3, reply);
         return true;
     };
@@ -951,11 +978,22 @@ unittest
         spell: mend, map: 0, namedCreature: true, channelled: true, channelUpdate: true, channelToken: token - 1);
     successor.areaDamageArrived(1, late);
     assert(migrated.auras.find(mend, player.guid), "a cancellation from an earlier cast leaves this aura in place");
-    migrated.updateAuras(destination, 1000);
-    assert(migrated.values.get!UNIT_FIELD_HEALTH == target.values.get!UNIT_FIELD_HEALTH + 10);
-    client.session.update(2950.msecs);
-    assert(rebinds == 1 && !player.values.get!UNIT_CHANNEL_SPELL);
-    assert(player.questStatus[quest.id].mobCount[0] == 2, "the current owner's confirmation counts once");
+    migrated.updateAuras(destination, 599);
+    assert(migrated.values.get!UNIT_FIELD_HEALTH == 80, "ownership change preserves the pending tick");
+    migrated.updateAuras(destination, 1);
+    assert(migrated.values.get!UNIT_FIELD_HEALTH == 90 && target.values.get!UNIT_FIELD_HEALTH == 80);
+    assert(to.creatureAt(target.guid) is null && applications == 0, "a rebind never applies a second aura");
+    client.write(Opcode.CMSG_CANCEL_CHANNELLING, cancel.data);
+    assert(interrupts == 1 && !migrated.auras.find(mend, player.guid) && !player.values.get!UNIT_CHANNEL_SPELL);
+    assert(abs(migrated.values.get!OBJECT_FIELD_SCALE_X - baseScale) < 0.001f);
+    migrated.updateAuras(destination, 2000);
+    assert(migrated.values.get!UNIT_FIELD_HEALTH == 90 && player.questStatus[quest.id].mobCount[0] == 1);
+
+    client.write(Opcode.CMSG_CAST_SPELL, castPacket.data);
+    assert(applications == 1 && migrated.auras.find(mend, player.guid).effects == 0b110);
+    client.session.update(3.seconds);
+    assert(!player.values.get!UNIT_CHANNEL_SPELL && player.questStatus[quest.id].mobCount[0] == 2,
+        "only a completed channel confirmed by the current owner grants credit");
 }
 
 /// Direct damage and aura effects share one hit on the named creature's node.

@@ -333,9 +333,11 @@ package bool isRemoteLeechChannel(const ref SpellInfo spell)
     return drains;
 }
 
-/// One named-target aura whose effects can run entirely on its target.
+/// A named-target aura whose effects can all run on the same creature.
 package size_t namedCreatureChannelEffect(const ref SpellInfo spell)
 {
+    import std.algorithm.comparison : among;
+
     if (!(spell.attributesEx & (0x04 | 0x40)) || spell.casting.speed > 0)
         return size_t.max;
     size_t first = size_t.max;
@@ -343,14 +345,16 @@ package size_t namedCreatureChannelEffect(const ref SpellInfo spell)
     {
         if (effect == SpellEffect.none)
             continue;
-        if (first != size_t.max || effect != SpellEffect.applyAura || spell.casting.chainTarget[i] > 1
+        if (effect != SpellEffect.applyAura || spell.casting.chainTarget[i] > 1
             || namedCreatureShape(spell, i) != ImplicitTarget.unitScriptNearCaster)
             return size_t.max;
         const aura = spell.casting.applyAuraName[i];
         // Dummy auras can drive a scripted encounter. A visual tick here has no spell to run.
-        if (aura != AuraType.periodicHeal && (aura != AuraType.periodicTriggerSpell || spell.triggerSpell[i]))
+        if (!aura.among(AuraType.periodicHeal, AuraType.modDamageDone, AuraType.modMeleeHaste, AuraType.modScale)
+            && (aura != AuraType.periodicTriggerSpell || spell.triggerSpell[i]))
             return size_t.max;
-        first = i;
+        if (first == size_t.max)
+            first = i;
     }
     return first;
 }
@@ -369,6 +373,13 @@ unittest
     assert(namedCreatureChannelEffect(channel) == size_t.max);
     channel.casting.applyAuraName[0] = AuraType.periodicHeal;
     assert(namedCreatureChannelEffect(channel) == 0);
+    channel.triggerSpell[0] = 0;
+    channel.effect[1] = SpellEffect.applyAura;
+    channel.implicitTargetA[1] = ImplicitTarget.unitScriptNearCaster;
+    channel.casting.applyAuraName[1] = AuraType.modMeleeHaste;
+    assert(namedCreatureChannelEffect(channel) == 0 && remoteTargetAuraEffects(channel, 0) == 0b011);
+    channel.implicitTargetA[1] = ImplicitTarget.caster;
+    assert(namedCreatureChannelEffect(channel) == size_t.max);
 }
 
 package ImplicitTarget creatureAreaShape(const ref SpellInfo spell, size_t i)

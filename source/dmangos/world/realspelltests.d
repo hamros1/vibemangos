@@ -144,6 +144,53 @@ struct RealWorld
 
 enum ubyte classMageId = 8, classRogueId = 4, classWarriorId = 1;
 
+/// Supercharge puts one aura with all three effects on a mechanical creature's owner.
+unittest
+{
+    import std.math : abs;
+    import dmangos.cluster.protocol : AreaDamage;
+    import dmangos.world.creature : TempSpawnType;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.replication : encodeState;
+    import dmangos.world.updatefields : OBJECT_FIELD_SCALE_X, UNIT_CHANNEL_SPELL, UNIT_FIELD_CHANNEL_OBJECT;
+
+    if (!haveRealData())
+        return;
+    auto source = RealWorld.make(), owner = RealWorld.make();
+    source.context.nodeId = 1;
+    owner.context.nodeId = 2;
+    auto from = source.context.map(0), to = owner.context.map(0);
+    enum uint supercharge = 10732, technician = 6222, mechanoTank = 6225;
+    const origin = Position(100, 100, 40), at = Position(103, 100, 40);
+    auto caster = source.context.summonCreature(from, technician, origin, TempSpawnType.manual, 0, 0);
+    auto target = owner.context.summonCreature(to, mechanoTank, at, TempSpawnType.manual, 0, 0);
+    const spell = source.context.data.spells.spell(supercharge);
+    assert(caster !is null && target !is null && spell !is null);
+    const cell = cellKeyAt(at.x, at.y);
+    from.replicaCreated(2, cell, target.guid, encodeState(target, 0));
+    caster.ai.spellCaster(from);
+    const scale = target.values.get!OBJECT_FIELD_SCALE_X;
+    uint applications;
+    source.context.sendAreaDamage = (ushort peer, const ref AreaDamage request) {
+        assert(peer == 2 && request.namedCreature && request.channelled);
+        applications += !request.channelUpdate;
+        to.replicaCreated(1, cell, caster.guid, encodeState(caster, 0));
+        owner.context.areaDamageArrived(1, request);
+        return true;
+    };
+    assert(caster.ai.castSpell(spell, target.guid, 0));
+    assert(caster.values.get!UNIT_FIELD_CHANNEL_OBJECT == target.guid && applications == 1);
+    auto aura = target.auras.find(supercharge, caster.guid);
+    assert(aura !is null && aura.effects == 0b111, "Supercharge arrives as one aura with all effects");
+    assert(aura.amount == [caster.ai.effectAmount(spell, 0), 25, 25]);
+    assert(abs(target.values.get!OBJECT_FIELD_SCALE_X - scale * 1.25f) < 0.001f);
+    assert(abs(target.auras.attackTimeFactor(0) - 0.8f) < 0.001f);
+    caster.ai.interruptCast();
+    assert(!caster.values.get!UNIT_CHANNEL_SPELL && !target.auras.find(supercharge, caster.guid));
+    assert(abs(target.values.get!OBJECT_FIELD_SCALE_X - scale) < 0.001f);
+    assert(target.auras.attackTimeFactor(0) == 1);
+}
+
 /// Cold Snap (12472) makes Ice Block (11958) ready again: its cooldown is its category's (37), not its own.
 unittest
 {

@@ -1998,7 +1998,7 @@ private:
     SpellCastResult go(Casting c)
     {
         import dmangos.world.spelldamage : isChainHealEffect, isHostileAreaEffect, isHostileChainEffect, spellJumpRadius;
-        import dmangos.world.spellselection : namedCreatureRange;
+        import dmangos.world.spellselection : namedCreatureEntry, namedCreatureRange;
 
         // `TARGET_FLAG_UNIT`, `_UNIT_ENEMY`, `_UNIT_ALLY`, `_CORPSE_ENEMY`, `_UNIT_DEAD`, `_CORPSE_ALLY`: a spell's
         // `Targets` that let the client name a unit.
@@ -2007,7 +2007,9 @@ private:
         auto drain = !c.triggered ? remoteLeechTarget(spell, c.targets.unit) : null;
         const namedChannel = c.triggered ? size_t.max : context.namedCreatureChannel(spell);
         auto recipient = namedChannel == size_t.max ? UnitRef.init
-            : scriptTargetNear(spell, namedChannel, context.sendAreaDamage !is null);
+            : scriptTargetNear(spell, context.namedCreatureEntries(spell, namedChannel), context.sendAreaDamage !is null);
+        const recipientEntry = recipient ? namedCreatureEntry(recipient) : 0;
+        const channelExclusions = recipient ? context.scriptTargetExclusions(spell.id, recipientEntry) : 0;
         auto remoteChannel = recipient.replica is null ? drain : recipient.replica;
         auto result = checkCast(spell, c.targets, c.triggered, c.castItemEntry, false, drain,
             c.playerHandoff || drain !is null);
@@ -2124,8 +2126,11 @@ private:
                 : areaTargets(spell, i, c.targets, remoteArea);
             if (spell.effect[i] == SpellEffect.persistentAreaAura) // SPELL_EFFECT_PERSISTENT_AREA_AURA: once, whoever stands there
                 targets = [player.guid];
-            else if (i == namedChannel)
-                targets = [recipient.combatGuid];
+            else if (namedChannel != size_t.max)
+            {
+                if (!(channelExclusions & (1u << i)))
+                    targets = [recipient.combatGuid];
+            }
             else if (objectShape != ImplicitTarget.none)
             {
                 Position center;
@@ -2245,7 +2250,7 @@ private:
             }
             else if (a == ImplicitTarget.unitScriptNearCaster)
             {
-                const near = scriptTargetNear(spell, i, false).combatGuid;
+                const near = scriptTargetNear(spell, context.spellScriptTargets(spell.id, i), false).combatGuid;
                 if (!near && context.spellScriptTargets(spell.id).length && !context.spellScriptTargets(spell.id, i).length)
                     continue;
                 targets = [near ? near : player.guid];
@@ -2388,9 +2393,10 @@ private:
             {
                 const at = player.position;
                 namedChannelPeer = recipient.replica.owner;
+                const first = context.namedCreatureEffectFor(spell, namedChannel, recipientEntry);
                 auto hit = AreaDamage(channelToken: namedChannelSequence, caster: player.guid,
                     target: recipient.combatGuid, spell: spell.id,
-                    effect: cast(ubyte) namedChannel, map: map.id, instance: map.instanceId,
+                    effect: cast(ubyte) first, map: map.id, instance: map.instanceId,
                     x: at.x, y: at.y, z: at.z, radius: namedCreatureRange(*spell, context.client),
                     namedCreature: true, channelled: true);
                 auto remote = RemoteAreaDamage(recipient.replica.owner, hit);
@@ -3265,13 +3271,12 @@ private:
 
     /// Instance round 2: the nearest living creature within the spell's range (at least 5 yards) of an entry
     /// `spell_script_target` gives the spell; 0 if none.
-    private UnitRef scriptTargetNear(const(SpellInfo)* spell, size_t effect, bool acrossNodes)
+    private UnitRef scriptTargetNear(const(SpellInfo)* spell, const(uint)[] entries, bool acrossNodes)
     {
         import dmangos.world.spellselection : namedCreatureRange, nearestNamedCreature;
 
         return nearestNamedCreature(map, player.position, namedCreatureRange(*spell, context.client),
-            context.spellScriptTargets(spell.id, effect), 0, acrossNodes,
-            (ulong guid) => map.questSpawnVisible(player, guid));
+            entries, 0, acrossNodes, (ulong guid) => map.questSpawnVisible(player, guid));
     }
 
     /**
