@@ -458,7 +458,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private ulong gameplaySequence;
     private MonoTime nextLootCoinPoll;
     private bool[uint] retryLootCoinRedemption;
-    private ulong[ushort] lastMasterLootAward;
 
     ulong nextGameplaySequence()
     {
@@ -478,18 +477,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         final switch (message.action)
         {
         case GroupLootRoll.Action.offer:
-        case GroupLootRoll.Action.award:
             if (auto player = cast(Character) onlinePlayer(message.player))
                 if (player.character !is null && player.currentMap.id == message.map)
-                {
-                    if (message.action == GroupLootRoll.Action.offer)
-                        player.offerRemoteLoot(peer, message);
-                    else
-                        player.awardRemoteLoot(peer, message);
-                }
+                    player.offerRemoteLoot(peer, message);
             return;
+        case GroupLootRoll.Action.award:
         case GroupLootRoll.Action.masterAward:
-            receiveMasterLootAward(peer, message);
+            receiveGroupLootAward(peer, message);
             return;
         case GroupLootRoll.Action.vote:
         case GroupLootRoll.Action.result:
@@ -598,29 +592,52 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         sendQuestLootCheck(peer, reply);
     }
 
-    private void receiveMasterLootAward(ushort peer, const ref GroupLootRoll message)
+    private void receiveGroupLootAward(ushort peer, const ref GroupLootRoll message)
     {
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
         import dmangos.world.character : Character;
         import dmangos.world.inventory : InventoryResult;
+        import dmangos.world.loot : lootAwardKey;
 
-        // Awards arrive in sequence on the peer link. Record it before trying to change inventory.
-        if (sendRemoteGroupLoot is null || message.roll <= lastMasterLootAward.get(peer, 0))
+        const key = lootAwardKey(message);
+        if (sendRemoteGroupLoot is null || !key.player || playerGuid(key.player) != message.player
+            || !message.loot || !message.item || !message.count)
             return;
-        lastMasterLootAward[peer] = message.roll;
-        GroupLootRoll result = message;
-        result.action = GroupLootRoll.Action.result;
-        result.stored = false;
-        result.inventoryError = InventoryResult.itemNotFound;
-        if (auto player = cast(Character) onlinePlayer(message.player))
-            if (player.character !is null && !player.transferring && player.currentMap.id == message.map
-                && (!message.condition || player.conditionMet(message.condition)))
-            {
-                result.inventoryError = cast(ubyte) player.storeLoot(message.item, message.count,
-                    message.randomProperty, false);
-                result.stored = result.inventoryError == InventoryResult.ok;
-            }
-        if (!result.stored || settleWrites())
-            sendRemoteGroupLoot(peer, result);
+        auto player = cast(Character) onlinePlayer(message.player);
+        if (player is null || player.character is null || player.transferring || player.currentMap.id != message.map
+            || !settleWrites())
+            return;
+        try
+        {
+            if (database.loadLootAward(key).recorded)
+                return; // the loot owner can read the original result even after both workers change
+            const master = message.action == GroupLootRoll.Action.masterAward;
+            auto localLoot = peer == nodeId ? lootOnMap(message.map, message.loot) : null;
+            const localDrop = localLoot !is null && localLoot.hasPendingRemoteAward(message);
+            if (peer == nodeId && !localDrop)
+                return;
+            if (!master && !player.acceptRemoteLootAward(peer, message, localDrop))
+                return;
+
+            GroupLootRoll result = message;
+            result.action = GroupLootRoll.Action.result;
+            result.inventoryError = InventoryResult.itemNotFound;
+            if (!master || !message.condition || player.conditionMet(message.condition))
+                result.inventoryError = cast(ubyte) player.storeLootItem(message.item, message.count,
+                    message.randomProperty, !master, award: key);
+            result.stored = result.inventoryError == InventoryResult.ok;
+            if (!result.stored)
+                database.saveLootAward(key, result.inventoryError, unixTime, 0, 0, null);
+            if (!settleWrites())
+                return;
+            if (localDrop)
+                localLoot.remoteAwardResult(peer, result);
+            else
+                sendRemoteGroupLoot(peer, result);
+        }
+        catch (DatabaseException error)
+            warning!"group loot award %s could not be completed yet: %s"(key.token, error.msg);
     }
 
     /// The link only speeds up delivery. The database holds the credit if this player moves.

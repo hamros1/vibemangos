@@ -111,6 +111,20 @@ struct LootCoinRedemption
 
 /// A `mail` row and its one item (`mail_items`; 1.12 sends at most one).
 struct MailRecord
+/// The same award can reach a player again after either simulation changes workers.
+struct LootAwardKey
+{
+    ulong token, loot;
+    uint map, player;
+    ubyte slot;
+}
+
+struct LootAwardResult
+{
+    bool recorded;
+    ubyte error;
+}
+
 {
     uint id;
     ubyte messageType;     /// who sent it: 0 a player
@@ -907,6 +921,11 @@ interface WorldDatabase
 
     /// Ids and names in a world table whose name contains `text` (`.lookup`), at most `limit`.
     LookupResult[] lookup(LookupTable table, string text, uint limit);
+    LootAwardResult loadLootAward(const ref LootAwardKey key);
+    /// Records the result and any new inventory rows in the same transaction.
+    void saveLootAward(const ref LootAwardKey key, ubyte error, long now, uint money, uint playerBytes2,
+        const(ItemChange)[] changes);
+
 
     /// `game_tele`: adds a place (`.recall add`), or deletes one by name; false if there was none.
     void addTeleport(const GameTele tele);
@@ -974,6 +993,7 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
         auto rows = characterDb.query!"SELECT seq FROM dmangos_write_applied WHERE stream = ?"(stream);
         return rows.length ? rows[0].get!ulong(0) : 0;
     }
+        statements.prepareLootAwards();
 
     void applying(uint stream, ulong seq, scope void delegate() work)
     {
@@ -1401,6 +1421,17 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
                 ~ "ORDER BY entry LIMIT ?")(pattern, limit);
         case LookupTable.spell:
             return world.queryAs!(LookupResult, "SELECT Id, SpellName FROM spell_template WHERE SpellName LIKE ? "
+    LootAwardResult loadLootAward(const ref LootAwardKey key)
+    {
+        return statements.loadLootAward(key);
+    }
+
+    void saveLootAward(const ref LootAwardKey key, ubyte error, long now, uint money, uint playerBytes2,
+        const(ItemChange)[] changes)
+    {
+        statements.saveLootAward(key, error, now, money, playerBytes2, changes);
+    }
+
                 ~ "ORDER BY Id LIMIT ?")(pattern, limit);
         }
     }
@@ -1854,6 +1885,23 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
 
     bool recordGroupLootRotation(uint group, ushort node, ulong drop, const ref GroupLootRotation turn, long now)
     {
+    private LootAwardResult[LootAwardKey] lootAwards;
+
+    LootAwardResult loadLootAward(const ref LootAwardKey key)
+    {
+        return lootAwards.get(key, LootAwardResult.init);
+    }
+
+    void saveLootAward(const ref LootAwardKey key, ubyte error, long now, uint money, uint playerBytes2,
+        const(ItemChange)[] changes)
+    {
+        if (key in lootAwards)
+            return;
+        if (!error)
+            saveInventory(key.player, money, playerBytes2, changes);
+        lootAwards[key] = LootAwardResult(true, error);
+    }
+
         import std.algorithm.mutation : remove;
 
         if (group !in groups || loadGroupLootRotation(group, node, drop).assigned)

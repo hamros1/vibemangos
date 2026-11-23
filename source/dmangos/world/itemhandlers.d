@@ -19,6 +19,7 @@ import dmangos.world.money : Copper;
 mixin template ItemHandlers()
 {
     import dmangos.world.money : Copper;
+    import dmangos.world.database : LootAwardKey;
     import std.algorithm.searching : countUntil;
     import dmangos.log;
     import dmangos.world.creature : Creature, Npc;
@@ -94,7 +95,8 @@ private:
      * the items gone.
      */
     void flushInventory(bool moneyChanged = false,
-        const imported!"dmangos.world.database".InstanceChestRecord chest = imported!"dmangos.world.database".InstanceChestRecord.init)
+        const imported!"dmangos.world.database".InstanceChestRecord chest = imported!"dmangos.world.database".InstanceChestRecord.init,
+        const LootAwardKey award = LootAwardKey.init)
     {
         if (inventory.equipmentChanged)
         {
@@ -118,6 +120,9 @@ private:
         flushPlayerChanges(false);
         if (chest.instance)
             context.database.saveChestAward(player.data.guid, player.money.amount, player.values[PLAYER_BYTES_2], changes, chest);
+        else if (award.token)
+            context.database.saveLootAward(award, 0, context.unixTime, player.money.amount, player.values[PLAYER_BYTES_2],
+                changes);
         else if (changes.length || moneyChanged)
             context.database.saveInventory(player.data.guid, player.money.amount, player.values[PLAYER_BYTES_2], changes);
         mailItemsAway();

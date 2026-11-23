@@ -320,8 +320,8 @@ private:
         saveBattleground();
         saveEnchantmentTimes();
         saveItemDurations();
-        if (!context.settleWrites() && (context.config.cluster.gateway || connection.gatewayHome.node))
-            return; // a gateway handoff needs a durable checkpoint before the old owner stops
+        if (!context.settleWrites())
+            return; // the new owner must load the completed writes before processing packets
 
         areaAurasOnLeave();
         import dmangos.serialization : serialize;

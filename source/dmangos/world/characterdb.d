@@ -21,7 +21,8 @@ import dmangos.world.player : CharacterData, CharacterProgress, HomeBind, tutori
 import dmangos.world.playercreate : NewCharacter, NewSkill, NewSpell, maxEnchantmentSlot;
 import dmangos.world.database : AuraRecord, TicketRecord, BattlegroundData, PvpStatsBattleground, PvpStatsPlayer, HonorColumns, HonorPointRecord, HonorRecord, CooldownRecord, PetRecord, PetSpellRecord, GuildEventRecord, GuildMemberRecord, GuildRankRecord, GuildRecord,
     PetitionRecord, SocialRow, CorpseRecord, InstanceBindRecord, InstanceRecord, InstanceRecords,
-    InstanceRespawnRecord, MailRecord, ServiceCheckpoint, GroupLootRotation, LootCoinCredit, LootCoinRedemption;
+    InstanceRespawnRecord, MailRecord, ServiceCheckpoint, GroupLootRotation, LootCoinCredit, LootCoinRedemption,
+    LootAwardKey, LootAwardResult;
 import dmangos.world.reputation : ReputationRecord;
 import dmangos.world.auctionhouse : AuctionRecord;
 import dmangos.world.quests : QuestState, QuestStatus;
@@ -1748,6 +1749,42 @@ final class CharacterStatements
         return result;
     }
 
+    private bool lootAwardsReady;
+
+    void prepareLootAwards()
+    {
+        if (lootAwardsReady)
+            return;
+        characters.execute!("CREATE TABLE IF NOT EXISTS dmangos_loot_award ("
+            ~ "token BIGINT UNSIGNED NOT NULL, loot BIGINT UNSIGNED NOT NULL, map_id INT UNSIGNED NOT NULL, "
+            ~ "slot TINYINT UNSIGNED NOT NULL, player INT UNSIGNED NOT NULL, result TINYINT UNSIGNED NOT NULL, "
+            ~ "recorded_at BIGINT NOT NULL, PRIMARY KEY (token, loot, map_id, slot, player), "
+            ~ "KEY player_age (player, recorded_at)) ENGINE=InnoDB")();
+        lootAwardsReady = true;
+    }
+
+    LootAwardResult loadLootAward(const ref LootAwardKey key)
+    {
+        prepareLootAwards();
+        const rows = characters.query!("SELECT result FROM dmangos_loot_award "
+            ~ "WHERE token = ? AND loot = ? AND map_id = ? AND slot = ? AND player = ?")(
+                key.token, key.loot, key.map, key.slot, key.player);
+        return rows.length ? LootAwardResult(true, rows[0].get!ubyte(0)) : LootAwardResult.init;
+    }
+
+    void saveLootAward(const ref LootAwardKey key, ubyte result, long now, uint money, uint playerBytes2,
+        const(ItemChange)[] changes)
+    {
+        prepareLootAwards();
+        characters.transaction({
+            const inserted = characters.execute!("INSERT IGNORE INTO dmangos_loot_award "
+                ~ "(token, loot, map_id, slot, player, result, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?)")(
+                    key.token, key.loot, key.map, key.slot, key.player, result, now);
+            if (inserted && !result)
+                saveInventory(key.player, money, playerBytes2, changes);
+        });
+    }
+
     /// Saves a new group with its members.
     void createGroup(const ref GroupRecord g)
     {
@@ -1861,11 +1898,13 @@ final class CharacterStatements
 
         returnMail(guid, accountId, options, nextMailId);
         prepareLootCoins();
+        prepareLootAwards();
         const pets = characters.query!"SELECT id FROM character_pet WHERE owner = ?"(guid)
             .map!(row => row.get!uint(0)).array;
 
         characters.transaction({
             characters.execute!"DELETE FROM dmangos_loot_coin WHERE player = ?"(guid);
+            characters.execute!"DELETE FROM dmangos_loot_award WHERE player = ?"(guid);
             foreach (pet; pets)
             {
                 characters.execute!"DELETE FROM character_pet WHERE id = ?"(pet);

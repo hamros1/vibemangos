@@ -19,10 +19,10 @@ import dmangos.world.opcodes : Opcode;
 /// Supply cluster delivery on the map that currently owns this loot.
 package void bindLootDelivery(WorldContext context, Map map, Loot loot, bool rolls, bool master)
 {
-    import dmangos.cluster.protocol : LootCoinShare;
+    import dmangos.cluster.protocol : GroupLootRoll, LootCoinShare;
     import dmangos.log : warning;
     import dmangos.mysql : DatabaseException;
-    import dmangos.world.database : LootCoinCredit;
+    import dmangos.world.database : LootAwardKey, LootAwardResult, LootCoinCredit;
     import dmangos.world.loot : CoinPayout;
     import dmangos.world.objects : lowGuid;
     import dmangos.world.replication : Replica;
@@ -34,7 +34,24 @@ package void bindLootDelivery(WorldContext context, Map map, Loot loot, bool rol
     {
         loot.rollMap = map.id;
         loot.nextRoll = &context.nextGameplaySequence;
-        loot.sendRemoteRoll = context.sendRemoteGroupLoot;
+        loot.sendRemoteRoll = (ushort node, const ref GroupLootRoll message) {
+            if (node != context.nodeId)
+                return context.sendRemoteGroupLoot(node, message);
+            context.groupLootRollArrived(node, message);
+            return true;
+        };
+        loot.localAwardNode = context.nodeId;
+        loot.loadRemoteAward = (const ref LootAwardKey key) {
+            try
+            {
+                return context.database.loadLootAward(key);
+            }
+            catch (DatabaseException error)
+            {
+                warning!"group loot award %s could not be checked yet: %s"(key.token, error.msg);
+                return LootAwardResult.init;
+            }
+        };
         loot.remoteMemberNode = (ulong guid) {
             if (auto player = cast(Replica) map.findObject(guid))
                 if (player.fields.type == TypeId.player && player.owner != context.nodeId)
@@ -143,6 +160,7 @@ mixin template LootHandlers()
     import dmangos.world.defines : ItemClass, nullBag, nullSlot, UnitFlags;
     import dmangos.world.experience;
     import dmangos.world.inventory : EquipError, InventoryResult, Item, ItemPosCount;
+    import dmangos.world.database : LootAwardKey;
     import dmangos.world.loot;
     import dmangos.world.inworld : ArrivalAction;
     import dmangos.world.loothandlers : ClientLootMasterGive, ClientLootRoll, ClientLootSlot;
@@ -595,22 +613,21 @@ private:
                 message.randomProperty));
     }
 
-    package void awardRemoteLoot(ushort node, const ref GroupLootRoll message)
+    package bool acceptRemoteLootAward(ushort node, const ref GroupLootRoll message, bool localDrop)
     {
         auto offer = RemoteLootKey(message.loot, message.slot) in remoteLootOffers;
-        if (offer is null || (offer.node != node && remoteLootOwner(message.loot) != node)
+        // After a crash the original prompt can be gone. A current owner can finish its award.
+        if (offer is null || offer.expires < context.unixTime)
+            return localDrop || remoteLootOwner(message.loot) == node;
+        if ((offer.node != node && remoteLootOwner(message.loot) != node && !localDrop)
             || offer.message.roll != message.roll || !offer.voted
             || (offer.message.choice != RollVote.need && offer.message.choice != RollVote.greed)
-            || offer.awardHandled || offer.expires < context.unixTime
+            || offer.awardHandled
             || offer.message.item != message.item || offer.message.count != message.count
-            || offer.message.randomProperty != message.randomProperty || !context.canWrite())
-            return; // without the original offer, we cannot tell whether an award was already made
+            || offer.message.randomProperty != message.randomProperty)
+            return false;
         offer.awardHandled = true;
-        GroupLootRoll result = message;
-        result.action = GroupLootRoll.Action.result;
-        result.stored = storeLoot(message.item, message.count, message.randomProperty, true) == 0;
-        if (!result.stored || context.settleWrites())
-            context.sendRemoteGroupLoot(node, result);
+        return true;
     }
 
     // -----------------------------------------------------------------------
@@ -1039,7 +1056,8 @@ private:
     }
 
     package uint storeLootItem(uint entry, uint count, int randomPropertyId, bool sendError,
-        scope imported!"dmangos.world.database".InstanceChestRecord delegate() checkpoint = null)
+        scope imported!"dmangos.world.database".InstanceChestRecord delegate() checkpoint = null,
+        const LootAwardKey award = LootAwardKey.init)
     {
         ItemPosCount[] dest;
         const result = player.inventory.canStoreNew(nullBag, nullSlot, dest, entry, count);
@@ -1058,7 +1076,8 @@ private:
             group.broadcast(Opcode.SMSG_ITEM_PUSH_RESULT, packetBody(pushed));
         else
             send(pushed);
-        flushInventory(false, checkpoint is null ? imported!"dmangos.world.database".InstanceChestRecord.init : checkpoint());
+        flushInventory(false, checkpoint is null ? imported!"dmangos.world.database".InstanceChestRecord.init
+            : checkpoint(), award);
         return InventoryResult.ok;
     }
 
@@ -1453,9 +1472,10 @@ unittest
     import dmangos.world.loot : RollVote;
     import dmangos.world.replication : encodePlayerState;
 
-    foreach (scenario; 0 .. 6)
+    foreach (scenario; 0 .. 7)
     {
-        const moving = scenario == 5;
+        const moving = scenario >= 5;
+        bool loseDelivery = scenario == 6;
         const conditioned = scenario == 3 || scenario == 4;
         const method = scenario == 0 || conditioned || moving ? LootMethod.groupLoot : LootMethod.needBeforeGreed;
         const remoteCanUse = scenario != 2;
@@ -1500,7 +1520,14 @@ unittest
         corpseNode.sendRemoteGroupLoot = (ushort node, const ref GroupLootRoll message) {
             assert(node == currentMember.nodeId);
             if (message.action == GroupLootRoll.Action.award)
+            {
                 award = message;
+                if (loseDelivery)
+                {
+                    loseDelivery = false;
+                    return true;
+                }
+            }
             currentMember.groupLootRollArrived(corpseNode.nodeId, message);
             return true;
         };
@@ -1533,7 +1560,7 @@ unittest
         assert(opcodesOf(jaina.read()).canFind(Opcode.SMSG_LOOT_START_ROLL) == (remoteCanUse && remoteMeetsCondition),
             "the remote node checks the loot condition and Need Before Greed usability");
 
-        if (moving)
+        void moveMember()
         {
             otherNode.regionOwnerAround = (uint, Position, float) => successor.nodeId;
             now += 2.seconds;
@@ -1545,7 +1572,9 @@ unittest
                 encodePlayerState(relay.remote.character, 0));
             assert(!opcodesOf(jaina.read()).canFind(Opcode.SMSG_LOOT_START_ROLL), "the original prompt stays open");
         }
-        auto roller = moving ? relay.remote : jaina.session;
+        if (scenario == 5)
+            moveMember();
+        auto roller = currentMember is successor ? relay.remote : jaina.session;
         jaina.write(Opcode.CMSG_LOOT_ROLL, ClientLootRoll(victim.guid, 0, remoteWins ? RollVote.need : RollVote.greed));
         jaina.write(Opcode.CMSG_LOOT_ROLL, ClientLootRoll(victim.guid, 0, RollVote.need));
         assert(loot.rolls.length == 1 && anduin.session.character.inventory.count(itemJerky) == 0
@@ -1554,6 +1583,13 @@ unittest
         anduin.write(Opcode.CMSG_LOOT_ROLL, ClientLootRoll(victim.guid, 0, remoteWins ? RollVote.greed : RollVote.need));
         assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_LOOT_ROLL_WON));
         assert(opcodesOf(jaina.read()).canFind(Opcode.SMSG_LOOT_ROLL_WON) == remoteMeetsCondition);
+        if (scenario == 6)
+        {
+            assert(loot.itemInSlot(0).remoteAward == award.roll && !roller.character.inventory.count(itemJerky));
+            moveMember();
+            roller = relay.remote;
+            loot.update();
+        }
         assert(loot.rolls.length == 0 && loot.itemInSlot(0).allowed.length == 0);
         assert(anduin.session.character.inventory.count(itemJerky) == (remoteWins ? 0 : 1));
         assert(roller.character.inventory.count(itemJerky) == (remoteWins ? 1 : 0));
@@ -1589,8 +1625,10 @@ unittest
     import dmangos.world.loot : RollVote;
     import dmangos.world.replication : encodePlayerState, encodeState;
 
-    foreach (inFlight; [false, true])
+    enum Case { voteAfterMove, delayedVote, lostConfirmation }
+    foreach (scenario; [Case.voteAfterMove, Case.delayedVote, Case.lostConfirmation])
     {
+        const inFlight = scenario == Case.delayedVote, lostConfirmation = scenario == Case.lostConfirmation;
         auto db = newDatabase();
         GroupRecord party = {id: 1, leader: 7, leaderName: "Anduin", lootMethod: LootMethod.groupLoot,
             lootThreshold: 2, members: [GroupMemberRecord(7, "Anduin"), GroupMemberRecord(8, "Jaina")]};
@@ -1611,7 +1649,14 @@ unittest
         auto victim = lootableInnkeeper(first);
         GroupLootRoll pending, awarded;
         first.sendRemoteGroupLoot = (ushort peer, const ref GroupLootRoll message) {
-            assert(peer == member.nodeId && message.action == GroupLootRoll.Action.offer);
+            assert(peer == member.nodeId);
+            if (message.action == GroupLootRoll.Action.award)
+            {
+                assert(lostConfirmation);
+                awarded = message;
+            }
+            else
+                assert(message.action == GroupLootRoll.Action.offer);
             member.groupLootRollArrived(first.nodeId, message);
             return true;
         };
@@ -1624,8 +1669,19 @@ unittest
         member.sendRemoteGroupLoot = (ushort peer, const ref GroupLootRoll message) {
             if (peer == first.nodeId)
             {
-                assert(inFlight && message.action == GroupLootRoll.Action.vote);
-                pending = message;
+                if (lostConfirmation)
+                {
+                    if (message.action == GroupLootRoll.Action.vote)
+                        first.groupLootRollArrived(member.nodeId, message);
+                    else
+                        assert(message.action == GroupLootRoll.Action.result && message.stored);
+                    // The original confirmation is dropped after the award was saved.
+                }
+                else
+                {
+                    assert(inFlight && message.action == GroupLootRoll.Action.vote);
+                    pending = message;
+                }
             }
             else
             {
@@ -1647,6 +1703,13 @@ unittest
             jaina.write(Opcode.CMSG_LOOT_ROLL, ClientLootRoll(victim.guid, 0, RollVote.need));
             assert(pending.roll && !awarded.roll);
         }
+        else if (lostConfirmation)
+        {
+            jaina.write(Opcode.CMSG_LOOT_ROLL, ClientLootRoll(victim.guid, 0, RollVote.need));
+            assert(awarded.roll && victim.loot.itemInSlot(0).remoteAward == awarded.roll);
+            assert(jaina.session.character.inventory.count(itemJerky) == 1);
+            assert(opcodesOf(jaina.read()).canFind(Opcode.SMSG_LOOT_ROLL_WON));
+        }
 
         const x = cellCoordinate(victim.spawn.x), y = cellCoordinate(victim.spawn.y);
         Region region = Region(1, 0, CellRect(x, y, x + 1, y + 1), 1, 1, RegionState.revoking, 3);
@@ -1659,12 +1722,14 @@ unittest
         region.next = 0;
         successor.regionsChanged([region], null, [region.id: cast(const(ubyte)[]) leaving[region.id]], unused);
         auto copy = successor.map(0).creatureAt(victim.guid);
-        assert(copy !is null && copy.loot !is null && copy.loot.rolls.length == 1);
+        assert(copy !is null && copy.loot !is null && copy.loot.rolls.length == (lostConfirmation ? 0 : 1));
         auto loot = copy.loot;
         member.map(0).replicaCreated(successor.nodeId, cellKeyAt(copy.position.x, copy.position.y), copy.guid,
             encodeState(copy, 0));
         jaina.read();
-        if (inFlight)
+        if (lostConfirmation)
+            loot.update();
+        else if (inFlight)
         {
             now += 2.seconds;
             jaina.session.update(2000.msecs);
@@ -1672,7 +1737,8 @@ unittest
         else
             jaina.write(Opcode.CMSG_LOOT_ROLL, ClientLootRoll(copy.guid, 0, RollVote.need));
         const packets = opcodesOf(jaina.read());
-        assert(packets.canFind(Opcode.SMSG_LOOT_ROLL_WON) && !packets.canFind(Opcode.SMSG_LOOT_START_ROLL));
+        assert(packets.canFind(Opcode.SMSG_LOOT_ROLL_WON) == !lostConfirmation
+            && !packets.canFind(Opcode.SMSG_LOOT_START_ROLL));
         assert(awarded.roll && awarded.player == 8 && loot.itemInSlot(0).allowed.length == 0);
         member.groupLootRollArrived(successor.nodeId, awarded);
         assert(jaina.session.character.inventory.count(itemJerky) == 1 && anduin.session.character.inventory.count(itemJerky) == 0);

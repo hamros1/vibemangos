@@ -22,8 +22,14 @@ import std.random : Random, uniform, uniform01;
 import dmangos.bytes : ByteReader, ByteWriter, PacketException;
 import dmangos.cluster.protocol : GroupLootRoll, QuestLootCheck;
 import dmangos.serialization : LengthPrefix;
+import dmangos.world.database : LootAwardKey, LootAwardResult;
 import dmangos.world.opcodes : Opcode;
 import dmangos.world.worlddata : ItemTemplate;
+
+package LootAwardKey lootAwardKey(const ref GroupLootRoll award)
+{
+    return LootAwardKey(award.roll, award.loot, award.map, cast(uint) award.player, award.slot);
+}
 
 // ---------------------------------------------------------------------------
 // The tables
@@ -418,6 +424,9 @@ final class Loot
     ulong delegate() nextRoll;
     bool delegate(ushort, const ref GroupLootRoll) sendRemoteRoll;
     ushort delegate(ulong) remoteMemberNode; /// current simulation of an initially eligible remote member
+    LootAwardResult delegate(const ref LootAwardKey) loadRemoteAward;
+    ushort localAwardNode;
+    private long checkAwardsAt;
     void delegate(ushort, ulong, Opcode, const(ubyte)[]) tellRemoteRoller;
     ushort delegate(ulong) coinNode; /// where a remote member can receive a share now
     ushort coinIssuer;
@@ -1208,6 +1217,49 @@ final class Loot
         return false;
     }
 
+    /// Resume an award when the recipient's connection or its reply did not survive a handoff.
+    private void recoverRemoteAwards(long now)
+    {
+        if (loadRemoteAward is null || now < checkAwardsAt)
+            return;
+        checkAwardsAt = now + 2;
+        foreach (item; items)
+        {
+            if (!item.remoteAward)
+                continue;
+            const recipient = item.remoteMasterTarget ? item.remoteMasterTarget : item.winner;
+            auto message = GroupLootRoll(item.remoteMasterTarget ? GroupLootRoll.Action.masterAward
+                : GroupLootRoll.Action.award, rollMap, target, recipient, item.remoteAward, item.slot,
+                item.itemId, item.count, item.randomPropertyId, item.condition);
+            const key = lootAwardKey(message);
+            const outcome = loadRemoteAward(key);
+            if (outcome.recorded)
+            {
+                message.action = GroupLootRoll.Action.result;
+                message.stored = !outcome.error;
+                message.inventoryError = outcome.error;
+                remoteAwardResult(item.remoteAwardNode, message);
+                continue;
+            }
+            const node = find(recipient) !is null ? localAwardNode : rollMemberNode(recipient);
+            if (node)
+            {
+                item.remoteAwardNode = node;
+                sendRemoteRoll(node, message);
+            }
+        }
+    }
+
+    bool hasPendingRemoteAward(const ref GroupLootRoll message)
+    {
+        if (auto item = itemInSlot(message.slot))
+            return (message.action == GroupLootRoll.Action.masterAward) == (item.remoteMasterTarget != 0)
+                && item.remoteAward == message.roll && message.player == (item.remoteMasterTarget
+                ? item.remoteMasterTarget : item.winner) && message.item == item.itemId && message.count == item.count
+                && message.randomProperty == item.randomPropertyId && message.condition == item.condition;
+        return false;
+    }
+
     /// Show the master why an assignment was rejected.
     void notifyMasterAwardError(uint result)
     {
@@ -1418,6 +1470,7 @@ final class Loot
             if (pendingQuestLoot.length)
                 check();
         }
+        recoverRemoteAwards(now);
         foreach (slot; rolls.keys)
             if (rolls[slot].update(now))
                 rolls.remove(slot);

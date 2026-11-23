@@ -599,8 +599,9 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   prompt after their simulation moves to another node on the same map, once the loot owner sees the
   new player owner. They also keep the prompt when the corpse or chest moves. The player's node
   sends its vote to the owner of the visible replica and replays the original vote if that owner changes.
-  A failed store leaves it
-  reserved for the winner. An award whose outcome is unknown stays locked until the loot expires.
+  A failed store leaves the item reserved for the winner. The inventory write and its result
+  commit together. If the delivery or reply is lost, the loot's owner reads the saved result or
+  retries the same award on the winner's current worker.
 * **Master loot.** The designated master can assign shared items at or above the loot threshold
   to eligible party members on any node. If the master is eligible and starts on another node,
   the corpse shows them the loot cursor and interacting with the corpse or chest moves them to
@@ -608,7 +609,7 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   member opened the loot first. An ineligible master leaves the group with its usual fallback
   loot rules. The recipient's node checks item conditions and saves the award once. A rejected
   award leaves the item available for reassignment and reports the error to the master. A pending
-  award locks the slot until confirmation or loot expiry.
+  award keeps the slot locked while the current owner checks for its saved result or retries it.
 * **Party coin splits.** The loot's node divides the drop among eligible, reachable members,
   with the extra copper going to the looter first and then in GUID order. For a cross-node split,
   all shares are saved together before the gold is cleared. A player's current node applies the

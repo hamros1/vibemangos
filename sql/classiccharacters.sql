@@ -520,6 +520,17 @@ CREATE TABLE `dmangos_loot_coin` (
   KEY `pending_player` (`player`,`paid_at`),
   KEY `paid_at` (`paid_at`,`player`)
 ) ENGINE=InnoDB;
+CREATE TABLE `dmangos_loot_award` (
+  `token` bigint unsigned NOT NULL,
+  `loot` bigint unsigned NOT NULL,
+  `map_id` int unsigned NOT NULL,
+  `slot` tinyint unsigned NOT NULL,
+  `player` int unsigned NOT NULL,
+  `result` tinyint unsigned NOT NULL,
+  `recorded_at` bigint NOT NULL,
+  PRIMARY KEY (`token`,`loot`,`map_id`,`slot`,`player`),
+  KEY `player_age` (`player`,`recorded_at`)
+) ENGINE=InnoDB;
 CREATE TABLE `dmangos_write_applied` (
   `stream` int(10) unsigned NOT NULL,
   `seq` bigint(20) unsigned NOT NULL,
