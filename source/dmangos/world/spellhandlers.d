@@ -1498,7 +1498,7 @@ private:
         nextSwing.active = false;
     }
 
-    /// Ground casts belong to this caster simulation and end when it leaves this node.
+    /// Ground casts end when the caster leaves this map or logs out.
     package void endGroundCasts()
     {
         if (channelSpell !is null && channelSpell.hasEffect(SpellEffect.persistentAreaAura))
@@ -1510,6 +1510,79 @@ private:
 
             auto me = Caster.of(this);
             endPersistentAreas(me, persistentAreas);
+        }
+    }
+
+    private void writeChannelAndGroundHandoff(ref ByteWriter writer)
+    {
+        import dmangos.world.spellareas : detachGroundAreas, writeGroundAreas;
+
+        const ground = channelSpell !is null && channelSpell.hasEffect(SpellEffect.persistentAreaAura);
+        const active = channelSpell !is null && (followingNamedCreature || (ground && persistentAreas.length));
+        if (!persistentAreas.length && !active)
+        {
+            if (ground)
+                endChannel(true);
+            writer.put(0u);
+            return;
+        }
+        ByteWriter state;
+        state.put(map.id);
+        state.put(map.instanceId);
+        state.put(active ? channelSpell.id : 0u);
+        if (active)
+        {
+            state.put(channelTarget);
+            state.put(channelTimer);
+            state.put(channelCostTimer);
+            state.put(pushbacks);
+            state.put(namedChannelSequence);
+            if (namedChannelSequence)
+            {
+                state.put(namedChannelPeer);
+                state.put(namedChannelConfirmed);
+                state.put(channelCreditPeer);
+            }
+        }
+        writeGroundAreas(persistentAreas, state);
+        detachGroundAreas(map, persistentAreas);
+        writer.put(cast(uint) state.data.length);
+        writer.putBytes(state.data);
+    }
+
+    private void readChannelAndGroundHandoff(ref ByteReader reader)
+    {
+        import dmangos.world.caster : Caster;
+        import dmangos.world.spellareas : readGroundAreas;
+
+        auto state = ByteReader(reader.readBytes(reader.read!uint));
+        if (state.empty || state.read!uint != map.id || state.read!uint != map.instanceId)
+            return;
+        if (const id = state.read!uint)
+        {
+            channelSpell = context.spellInfo(id);
+            channelTarget = state.read!ulong;
+            channelTimer = state.read!int;
+            channelCostTimer = state.read!int;
+            pushbacks = state.read!uint;
+            namedChannelSequence = state.read!ulong;
+            followingNamedCreature = namedChannelSequence != 0;
+            if (followingNamedCreature)
+            {
+                namedChannelPeer = state.read!ushort;
+                namedChannelConfirmed = state.read!bool;
+                channelCreditPeer = state.read!ushort;
+            }
+        }
+        auto caster = Caster.of(this);
+        persistentAreas = readGroundAreas(caster, state);
+        if (channelSpell !is null)
+        {
+            player.values.set!UNIT_CHANNEL_SPELL(channelSpell.id);
+            player.values.set!UNIT_FIELD_CHANNEL_OBJECT(channelTarget);
+            flushPlayerChanges();
+            if (followingNamedCreature && namedChannelPeer)
+                map.holdCasterReplica(player.guid, namedChannelPeer, cast(uint) channelTimer + 5_000, true);
         }
     }
 

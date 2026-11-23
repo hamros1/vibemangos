@@ -414,6 +414,100 @@ unittest
         "the target owner starts the original database script once");
 }
 
+/// A ground channel follows the caster and keeps its next damage tick and original ground object.
+unittest
+{
+    import dmangos.world.creature : TempSpawnType;
+    import dmangos.world.dynobject : DynamicObject;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.inworld : ArrivalAction;
+    import dmangos.world.replication : encodeState;
+    import dmangos.world.updatefields : UNIT_CHANNEL_SPELL, UNIT_FIELD_HEALTH;
+
+    if (!haveRealData())
+        return;
+
+    auto source = RealWorld.make(), owner = RealWorld.make();
+    owner.context.database = source.db;
+    auto relay = new TestPlayerRelay(source.context, owner.context);
+    enum uint rain = 5740;
+    auto client = source.character(7, "Anduin", 9, 30, [rain]);
+    auto caster = cast(Player) client.session.character;
+    const origin = caster.position, at = Position(origin.x + 3, origin.y, origin.z);
+    auto from = source.context.map(0), to = owner.context.map(0);
+    auto target = owner.context.summonCreature(to, 6, at, TempSpawnType.manual, 0, 0);
+    from.replicaCreated(2, cellKeyAt(at.x, at.y), target.guid, encodeState(target, 0));
+    ByteWriter spell;
+    spell.put(rain);
+    auto targets = SpellTargets(TargetFlags.destLocation);
+    targets.dest = [at.x, at.y, at.z];
+    targets.write(spell);
+    client.write(Opcode.CMSG_CAST_SPELL, spell.data);
+    assert(caster.values.get!UNIT_CHANNEL_SPELL == rain);
+    ulong spot;
+    foreach (object; from.objectsNear(at, 6))
+        if (cast(DynamicObject) object !is null)
+            spot = object.guid;
+    assert(spot);
+
+    const period = source.context.data.spells.spell(rain).casting.amplitude[0];
+    assert(period > 1);
+    client.session.update((period / 2).msecs);
+    assert(client.session.inWorld.actAtReplica(target.guid, ArrivalAction.init));
+    assert(relay.remote !is null && relay.remote.character.values.get!UNIT_CHANNEL_SPELL == rain);
+    assert(from.findObject(spot) is null && cast(DynamicObject) to.findObject(spot) !is null);
+    const health = target.values.get!UNIT_FIELD_HEALTH;
+    relay.remote.update((period - period / 2 - 1).msecs);
+    assert(target.values.get!UNIT_FIELD_HEALTH == health);
+    relay.remote.update(1.msecs);
+    assert(target.values.get!UNIT_FIELD_HEALTH < health);
+    ByteWriter cancel;
+    cancel.put(rain);
+    client.write(Opcode.CMSG_CANCEL_CHANNELLING, cancel.data);
+    const after = target.values.get!UNIT_FIELD_HEALTH;
+    relay.remote.update(period.msecs);
+    assert(target.values.get!UNIT_FIELD_HEALTH == after && to.findObject(spot) is null);
+}
+
+/// A creature's existing ground effect follows its region and expires on the new owner.
+unittest
+{
+    import dmangos.cluster.regions : CellRect, Region, RegionState;
+    import dmangos.world.creature : TempSpawnType;
+    import dmangos.world.dynobject : DynamicObject;
+    import dmangos.world.grid : cellCoordinate, cellKeyAt;
+
+    if (!haveRealData())
+        return;
+
+    auto source = RealWorld.make(), owner = RealWorld.make();
+    source.context.nodeId = 1;
+    owner.context.nodeId = 2;
+    const at = Position(-8950, -132, 83.53f);
+    auto from = source.context.map(0), to = owner.context.map(0);
+    auto caster = source.context.summonCreature(from, 1835, at, TempSpawnType.manual, 0, 0);
+    caster.ai.bind(from);
+    const targets = SpellTargets.init;
+    caster.ai.makePersistentArea(source.context.spellInfo(5740), 0, targets, 25);
+    ulong spot;
+    foreach (object; from.objectsNear(at, 4))
+        if (cast(DynamicObject) object !is null)
+            spot = object.guid;
+    assert(spot);
+
+    const x = cellCoordinate(at.x), y = cellCoordinate(at.y);
+    const region = Region(7, 0, CellRect(x, y, x + 1, y + 1), 2, 1, RegionState.granted);
+    const home = cellKeyAt(at.x, at.y);
+    const bundle = from.migrateOut(cell => cell == home, 2, &source.context.saveMigrant);
+    ubyte[][uint] unused;
+    owner.context.regionsChanged([region], null, [region.id: bundle], unused);
+    assert(from.findObject(spot) is null && cast(DynamicObject) to.findObject(spot) !is null);
+    auto moved = to.creatureAt(caster.guid);
+    assert(moved !is null);
+    moved.tick(to, 30_000);
+    assert(to.findObject(spot) is null);
+}
+
 /// A missile already launched at a replica follows the player when it becomes local to the caster.
 unittest
 {
@@ -695,6 +789,7 @@ unittest
     import dmangos.cluster.protocol : AreaDamage;
     import dmangos.cluster.regions : CellRect, Region, RegionState;
     import dmangos.world.creature : TempSpawnType;
+    import dmangos.world.inworld : ArrivalAction;
     import dmangos.world.defines : inventorySlotBag0;
     import dmangos.world.grid : cellCoordinate, cellKeyAt, cellSize;
     import dmangos.world.replication : encodePlayerState, encodeState;
@@ -709,12 +804,13 @@ unittest
     const x = cellCoordinate(at.x), y = cellCoordinate(at.y);
     const gained = Region(7, 0, CellRect(x, y, x + 1, y + 1), 3, 2, RegionState.granted);
 
-    foreach (cancelled; [false, true])
+    foreach (scenario; 0 .. 3)
     {
+        const cancelled = scenario == 1, casterMoves = scenario == 2;
         auto source = RealWorld.make(), owner = RealWorld.make(), successor = RealWorld.make();
         source.context.nodeId = 1;
-        owner.context.nodeId = 2;
-        successor.context.nodeId = 3;
+        owner.context.nodeId = casterMoves ? 3 : 2;
+        successor.context.nodeId = casterMoves ? 2 : 3;
         source.context.clock = () => source.now;
         auto from = source.context.map(0), to = owner.context.map(0), destination = successor.context.map(0);
         auto hero = loggedIn(source.context, source.db, 112, "Keepsake", origin, AccountLevel.player, raceHuman, 0, 60);
@@ -722,12 +818,12 @@ unittest
         hero.session.inWorld.storeLoot(keepsake, 1, 0, false);
         auto boss = owner.context.summonCreature(to, ras, at, TempSpawnType.manual, 0, 0);
         assert(boss !is null);
-        from.replicaCreated(2, cell, boss.guid, encodeState(boss, 0));
+        from.replicaCreated(owner.context.nodeId, cell, boss.guid, encodeState(boss, 0));
         const oldFaction = boss.values.get!UNIT_FIELD_FACTIONTEMPLATE;
         AreaDamage delivered;
         uint completions;
         source.context.sendAreaDamage = (ushort peer, const ref AreaDamage message) {
-            auto world = peer == 2 ? owner.context : successor.context;
+            auto world = peer == owner.context.nodeId ? owner.context : successor.context;
             world.map(0).replicaCreated(1, casterCell, player.guid, encodePlayerState(player, 0));
             if (message.channelUpdate && message.auraMs == AreaDamage.completedChannel)
             {
@@ -756,6 +852,29 @@ unittest
             assert(!boss.auras.find(boon, player.guid), "the aura expires on the target's own clock");
         }
         assert(owner.context.runningScripts == 0, "the target's timer cannot start the relay");
+        if (casterMoves)
+        {
+            successor.context.database = source.db;
+            successor.context.clock = () => source.now;
+            auto relay = new TestPlayerRelay(source.context, successor.context);
+            auto nearby = successor.context.summonCreature(destination, 1835, origin, TempSpawnType.manual, 0, 0);
+            from.replicaCreated(2, casterCell, nearby.guid, encodeState(nearby, 0));
+            destination.replicaCreated(3, cell, boss.guid, encodeState(boss, 0));
+            assert(hero.session.inWorld.actAtReplica(nearby.guid, ArrivalAction.init));
+            assert(relay.remote.character.values.get!UNIT_CHANNEL_SPELL == boon
+                && relay.remote.character.values.get!UNIT_FIELD_CHANNEL_OBJECT == boss.guid);
+            successor.context.sendAreaDamage = (ushort peer, const ref AreaDamage message) {
+                assert(peer == 3 && message.auraMs == AreaDamage.completedChannel);
+                to.replicaCreated(2, casterCell, player.guid, encodePlayerState(relay.remote.character, 0));
+                owner.context.areaDamageArrived(2, message);
+                ++completions;
+                return true;
+            };
+            relay.remote.update(1.msecs);
+            successor.context.update(source.now);
+            assert(completions == 1 && owner.context.runningScripts == 1 && !successor.context.runningScripts);
+            continue;
+        }
         const bundle = to.migrateOut(key => key == cell, 3, &owner.context.saveMigrant);
         ubyte[][uint] unused;
         successor.context.regionsChanged([gained], null, [gained.id: bundle], unused);

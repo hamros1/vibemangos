@@ -5393,6 +5393,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             w.put(cast(uint) state.data.length);
             w.putBytes(state.data);
             writeReplicaImpacts(creature.guid, w);
+            creature.ai.detachGroundHandoff();
             return Migrant(kind, creature.spawn.guid, 0, w.data);
         }
         auto gameObject = cast(GameObject) object;

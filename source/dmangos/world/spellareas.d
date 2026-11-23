@@ -122,6 +122,72 @@ struct PersistentArea
     bool[ulong] holding; /// those its aura is on: till they leave it, or it ends
 }
 
+/// Record active ground objects and their timers for their caster's next owner.
+package void writeGroundAreas(const(PersistentArea)[] areas, ref imported!"dmangos.bytes".ByteWriter writer)
+{
+    import dmangos.serialization : serialize;
+    import dmangos.world.objects : counterOf;
+
+    writer.put(cast(uint) areas.length);
+    foreach (ref area; areas)
+    {
+        writer.put(counterOf(area.spot.guid));
+        writer.put(area.spell.id);
+        writer.put(cast(ubyte) area.effect);
+        writer.put(area.spot.radius);
+        serialize(writer, area.spot.position);
+        writer.put(area.value);
+        writer.put(area.amplitude);
+        writer.put(area.timer);
+        writer.put(area.left);
+        writer.put(cast(uint) area.holding.length);
+        foreach (guid, _; area.holding)
+            writer.put(guid);
+    }
+}
+
+/// Remove the old caster's objects while their effects continue under the new owner.
+package void detachGroundAreas(imported!"dmangos.world.map".Map map, ref PersistentArea[] areas)
+{
+    foreach (ref area; areas)
+        map.removeObject(area.spot.guid);
+    areas = null;
+}
+
+/// Recreate ground objects with their original GUID, duration and next tick time.
+package PersistentArea[] readGroundAreas(ref Caster caster, ref imported!"dmangos.bytes".ByteReader reader)
+{
+    import dmangos.serialization : deserialize;
+    import dmangos.world.spellids : SpellEffect;
+
+    PersistentArea[] areas;
+    foreach (_; 0 .. reader.read!uint)
+    {
+        const counter = reader.read!uint;
+        const spell = caster.context.spellInfo(reader.read!uint);
+        const effect = reader.read!ubyte;
+        const radius = reader.read!float;
+        const at = deserialize!Position(reader);
+        const value = reader.read!int, amplitude = reader.read!int, timer = reader.read!int, left = reader.read!int;
+        const holders = reader.read!uint;
+        reader.ensureAvailable(cast(size_t) holders * ulong.sizeof);
+        if (spell is null || effect >= spell.effect.length || spell.effect[effect] != SpellEffect.persistentAreaAura
+            || amplitude <= 0 || timer <= 0 || left <= 0 || !(radius > 0))
+        {
+            reader.readBytes(cast(size_t) holders * ulong.sizeof);
+            continue;
+        }
+        auto spot = new DynamicObject(counter, caster.guid, spell.id, effect, radius, at);
+        auto area = PersistentArea(spot, spell, effect, value, amplitude, timer, left);
+        foreach (j; 0 .. holders)
+            area.holding[reader.read!ulong] = true;
+        caster.map.addObject(spot);
+        caster.map.observeGroundArea(spot, radius);
+        areas ~= area;
+    }
+    return areas;
+}
+
 /**
  * The spot of effect `i` of `spell` (its radius and duration by the caster's modifiers) at the cast's destination,
  * or where the caster stands; added to `areas`.
@@ -236,6 +302,7 @@ private void tickReplicas(ref Caster caster, const ref PersistentArea area, bool
         }
         tick.target = copy.guid;
         tick.sequence = context.nextGameplaySequence();
+        caster.map.holdCasterReplica(caster.guid, copy.owner, cast(uint) area.amplitude + 5_000);
         context.sendAreaDamage(copy.owner, tick);
     }
 }

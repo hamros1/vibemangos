@@ -1639,7 +1639,7 @@ final class Map : CombatWorld, GameObjectWorld
             {
                 if (creature.ai.inCombat)
                     trackCreatureCombat(creature, true);
-                creature.ai.resumeCreatureChannel(this);
+                creature.ai.resumeSpellHandoff(this);
             }
         replicate(slot, at_);
         updateObjectVisibility(object);

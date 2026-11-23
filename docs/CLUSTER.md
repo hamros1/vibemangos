@@ -520,7 +520,8 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   resolve damage once. If an in-flight tick reaches a previous owner that knows where the
   target went, it declines the tick and the caster's node routes it once more. The spot is
   visible across nodes. Effects such as slows expire unless the next pulse renews them.
-  Cancelling a channel or moving the caster's simulation to another node ends its ground casts.
+  A clean handoff on the same map and copy preserves the ground objects and their next tick for
+  players and NPCs. An active player ground channel moves too. Cancelling it still removes its ground objects.
 * **Creature melee.** An NPC keeps threat on a player it can still see after the player's
   handoff. The fight keeps nearby replicas available even when the last local player leaves.
   A pet, charmed creature or guardian can melee nearby players and creatures across the
@@ -887,7 +888,7 @@ to the creature's node. The target checks the caster's active channel before hea
 region changes owners, the aura keeps its duration and next tick time. Moving the target out of range
 or line of sight ends the channel.
 The target's current owner must confirm the channel before completion can grant quest
-credit. When the creature casting one of these channels moves to another node, its new owner
+credit. When a player or creature casting one of these channels moves to another node, its new owner
 resumes the original cast and publishes the caster to the target's owner. The aura stays on the
 target with its original tick schedule. This requires a clean handoff with the caster's state.
 

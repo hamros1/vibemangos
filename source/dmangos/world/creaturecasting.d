@@ -121,6 +121,7 @@ mixin template CreatureCasting()
         int despawnTimer;              // gone in so long (0: not)
         bool meleeEnabled = true;      // it swings at its victim
         imported!"dmangos.world.spellareas".PersistentArea[] persistentAreas_; // its spots of persistent area auras
+        const(ubyte)[] groundHandoff_; // ground objects to install once the creature is on its new map
         ulong[] totems_;               // its totems (`dmangos.world.spellsummons`)
     }
 
@@ -150,6 +151,31 @@ mixin template CreatureCasting()
         const state = reader.readBytes(reader.read!uint);
         if (script !is null && state.length)
             script.restoreState(state);
+    }
+
+    package void saveGroundHandoff(ref ByteWriter writer) const
+    {
+        import dmangos.world.spellareas : writeGroundAreas;
+
+        ByteWriter ground;
+        if (persistentAreas_.length)
+            writeGroundAreas(persistentAreas_, ground);
+        writer.put(cast(uint) ground.data.length);
+        writer.putBytes(ground.data);
+    }
+
+    package void detachGroundHandoff()
+    {
+        import dmangos.world.map : Map;
+        import dmangos.world.spellareas : detachGroundAreas;
+
+        if (auto map_ = cast(Map) world_)
+            detachGroundAreas(map_, persistentAreas_);
+    }
+
+    package void loadGroundHandoff(ref imported!"dmangos.bytes".ByteReader reader)
+    {
+        groundHandoff_ = reader.readBytes(reader.read!uint);
     }
 
     /// A player's spell hit it (its script hears of it).
@@ -245,12 +271,22 @@ mixin template CreatureCasting()
         channelSpell = lore.spellInfo(me.values.get!UNIT_CHANNEL_SPELL);
     }
 
-    /// Republish an existing channel once this caster is installed on its new map.
-    package void resumeCreatureChannel(imported!"dmangos.world.map".Map map_)
+    /// Restore spells that need this caster installed on its new map.
+    package void resumeSpellHandoff(imported!"dmangos.world.map".Map map_)
     {
+        import dmangos.bytes : ByteReader;
+        import dmangos.world.spellareas : readGroundAreas;
+
+        world_ = map_;
+        if (groundHandoff_.length)
+        {
+            auto reader = ByteReader(groundHandoff_);
+            groundHandoff_ = null;
+            auto caster = spellCaster();
+            persistentAreas_ = readGroundAreas(caster, reader);
+        }
         if (!hasCreatureChannel)
             return;
-        world_ = map_;
         if (!namedChannelSequence)
             return; // Arcane Missiles launches from its restored periodic aura.
         namedChannelPeer = currentChannelPeer(map_, me.values.get!UNIT_FIELD_CHANNEL_OBJECT);
