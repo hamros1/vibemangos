@@ -27,6 +27,7 @@ import dmangos.world.clientdata : ClientData;
 import dmangos.world.config : loadWorldConfig, WorldConfig;
 import dmangos.world.context : WorldContext;
 import dmangos.world.battlegroup : Battlegroup;
+import dmangos.world.battlegrouplease : battlegroupMaps, BattlegroupHostLease;
 import dmangos.world.database : MySqlWorldDatabase;
 import dmangos.world.realm : RealmRegistration;
 import dmangos.world.session : WorldSession;
@@ -71,7 +72,7 @@ int main(string[] args)
         setLogLevel(config.logLevel);
         if (additionalRealms.length)
             return runBattlegroup([configPath] ~ additionalRealms);
-        if (config.battlegroup.length && (!config.cluster.enabled || config.cluster.nodeId == config.battlegroupNode))
+        if (config.battlegroupHostSlot)
             throw new Exception("Start this battlegroup host with --battlegroup-realm for its other realms.");
         return run(config, configPath);
     }
@@ -96,17 +97,47 @@ private int runBattlegroup(string[] paths)
     foreach (path; paths)
     {
         auto config = loadWorldConfig(path);
-        enforce(config.battlegroup.length && (!config.cluster.enabled || config.cluster.nodeId == config.battlegroupNode),
-            "Every co-hosted config must name its battlegroup and use its designated battlegroup node.");
+        enforce(config.battlegroupHostSlot,
+            "Every co-hosted config must name its battlegroup and use one of its designated host nodes.");
         foreach (other; configs)
         {
             enforce(config.battlegroup == other.battlegroup && config.realmId != other.realmId,
                 "Battlegroup configs must name the same group and different realm IDs.");
+            enforce(config.battlegroupHostSlot == other.battlegroupHostSlot
+                && !!config.battlegroupStandbyNode == !!other.battlegroupStandbyNode,
+                "All co-hosted configs must be primary or all standby, and agree on automatic failover.");
             enforce(config.characterDatabase != other.characterDatabase && config.loginDatabase == other.loginDatabase,
                 "Realms must share their login database and have separate character databases.");
             enforce(config.writeLog != other.writeLog, "Give each realm its own write_log.");
         }
         configs ~= config;
+    }
+    auto first = configs[0];
+    MySqlConnection electionDb;
+    scope (exit)
+        if (electionDb !is null)
+            electionDb.close();
+    BattlegroupHostLease sharedLease;
+    if (first.battlegroupStandbyNode)
+    {
+        import std.algorithm.sorting : sort;
+        import std.array : join;
+        import std.format : format;
+        import std.random : unpredictableSeed;
+
+        auto topology = configs.dup;
+        topology.sort!((a, b) => a.realmId < b.realmId);
+        enforce(topology[0].realmId == first.realmId,
+            "Run the lowest realm ID first on both battlegroup hosts. It stores the shared queue.");
+        string[] entries;
+        foreach (config; topology)
+            entries ~= format!"%s/%s/%s"(config.realmId, config.battlegroupNode, config.battlegroupStandbyNode);
+        const identity = entries.join(",");
+        enforce(identity.length <= 1024, "Too many realms in this battlegroup.");
+        const token = (cast(ulong) unpredictableSeed << 32) | unpredictableSeed | 1UL;
+        electionDb = connect(first.loginDatabase, first.mysqlLibrary, "battlegroup lease");
+        sharedLease = new BattlegroupHostLease(electionDb, first.battlegroup, identity, token,
+            first.battlegroupHostSlot, configs.length, () => realmClusterClock(true));
     }
     int outcome;
     Fiber realmLoop(WorldConfig config, string path)
@@ -114,7 +145,7 @@ private int runBattlegroup(string[] paths)
         return new Fiber({
             try
             {
-                const code = run(config, path, pool, { Fiber.yield(); });
+                const code = run(config, path, pool, { Fiber.yield(); }, sharedLease);
                 if (code) outcome = code;
             }
             catch (Exception e)
@@ -142,7 +173,21 @@ private int runBattlegroup(string[] paths)
     return outcome;
 }
 
-private int run(WorldConfig config, string configPath, Battlegroup pool = null, void delegate() cooperate = null)
+private MonoTime realmClusterClock(bool quorum)
+{
+    version (linux)
+        if (quorum)
+        {
+            import core.time : ClockType, MonoTimeImpl;
+
+            alias BootTime = MonoTimeImpl!(ClockType.bootTime);
+            return MonoTime.init + (BootTime.currTime - BootTime.init);
+        }
+    return MonoTime.currTime;
+}
+
+private int run(WorldConfig config, string configPath, Battlegroup pool = null, void delegate() cooperate = null,
+    BattlegroupHostLease sharedLease = null)
 {
     auto login = connect(config.loginDatabase, config.mysqlLibrary, "login");
     scope (exit)
@@ -216,7 +261,8 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
     ClusterNode cluster;
     bool ownsRealm()
     {
-        return speaksForRealm && (cluster is null || cluster.isCoordinator);
+        return speaksForRealm && (cluster is null || cluster.isCoordinator)
+            && (sharedLease is null || !sharedLease.fenced);
     }
     context.keepsHonorWeek = speaksForRealm; // the honor week is reckoned once, by the realm's speaker
     if (speaksForRealm)
@@ -247,16 +293,13 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
     bool leaseHeld;
     MonoTime clusterClock()
     {
-        version (linux)
-            if (config.cluster.quorum)
-            {
-                import core.time : ClockType, MonoTimeImpl;
-
-                alias BootTime = MonoTimeImpl!(ClockType.bootTime);
-                return MonoTime.init + (BootTime.currTime - BootTime.init);
-            }
-        return MonoTime.currTime;
+        return realmClusterClock(config.cluster.quorum);
     }
+    MonoTime nextBattlegroupPoll;
+    ubyte battlegroupSlot;
+    const tracksBattlegroup = config.battlegroupStandbyNode && config.cluster.voter(config.cluster.nodeId) !is null;
+    if (tracksBattlegroup)
+        BattlegroupHostLease.ensureTable(login);
     void loseWorldLease()
     {
         writer.leaseLapsed(imported!"std.datetime.systime".Clock.currStdTime);
@@ -281,6 +324,21 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
             (host, port, session) => server.connect(host, port, session, linkIdle),
             () => LoadReport(cast(uint) tickAverageUs, cast(uint) context.sessionCount, cast(uint) context.objectCount),
             setup, config.realmId);
+        if (config.battlegroupStandbyNode)
+        {
+            import dmangos.cluster.services : ServiceKind;
+            import std.algorithm.searching : all, canFind;
+
+            if (sharedLease !is null)
+                sharedLease.addRealm(() => cluster.regions.leaseHolds(clusterClock()) && !cluster.fenced,
+                    () => battlegroupMaps.all!(map => cluster.regions.ownerAt(map, 0) == cluster.id));
+            cluster.regions.allowMap = (uint map) {
+                if (!battlegroupMaps.canFind(map))
+                    return true;
+                return sharedLease !is null && sharedLease.assignedEverywhere()
+                    && (pool.host is context || pool.host.services.hosts(ServiceKind.battlegroundQueue));
+            };
+        }
         // The world simulates only what this node owns: maps ask, and are told of changes.
         context.ownsCell = (uint map, ulong cell) => cluster.regions.ownsCell(map, cell);
         cluster.onOwnership = &context.regionsChanged;
@@ -342,7 +400,8 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
         };
         // A node whose lease lapsed writes nothing: by the time its accounts and regions go elsewhere it has
         // certainly stopped, and writes after that could overwrite theirs.
-        context.database = new FencedDatabase(context.database, () => cluster.regions.leaseHolds(clusterClock()));
+        context.database = new FencedDatabase(context.database, () => cluster.regions.leaseHolds(clusterClock())
+            && (sharedLease is null || !sharedLease.engaged || sharedLease.holds()));
         // Cluster services (docs/SERVICES.md): where each runs is in the region table; calls go over the links.
         {
             import dmangos.cluster.protocol : ServiceCall, ServiceNews, ServiceReply;
@@ -374,7 +433,12 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
         behind.writableUntil = () {
             import std.datetime.systime : Clock;
 
-            const ends = cluster.regions.leaseEnds, at = clusterClock();
+            import std.algorithm.comparison : min;
+
+            const at = clusterClock();
+            auto ends = cluster.regions.leaseEnds;
+            if (sharedLease !is null && sharedLease.engaged)
+                ends = sharedLease.holds() ? min(ends, sharedLease.validUntil) : at;
             if (ends == MonoTime.max)
                 return long.max;
             return Clock.currStdTime + (ends > at ? (ends - at).total!"hnsecs" : -1);
@@ -441,6 +505,21 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
                 requestShutdown();
             if (cluster !is null)
             {
+                if (tracksBattlegroup && now >= nextBattlegroupPoll)
+                {
+                    nextBattlegroupPoll = now + 1.seconds;
+                    try
+                    {
+                        const slot = BattlegroupHostLease.currentSlot(login, config.battlegroup);
+                        if (slot != battlegroupSlot)
+                        {
+                            battlegroupSlot = slot;
+                            cluster.pinMaps(battlegroupMaps, config.battlegroupNodeAt(slot));
+                        }
+                    }
+                    catch (imported!"dmangos.mysql".DatabaseException e)
+                        warning!"battlegroup %s: cannot read shared placement: %s"(config.battlegroup, e.msg);
+                }
                 bridge.tick();
                 cluster.tick();
                 // Queued writes from an expired lease cannot follow a new grant.
@@ -543,7 +622,19 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
     if (cluster !is null)
         server.addListener(config.cluster.listenAddress, config.cluster.listenPort,
             (string address) => cluster.accept(address), (2 * config.cluster.failureTimeoutMs).msecs);
-    server.run(cooperate);
+    bool canServeInput()
+    {
+        sharedLease.tick();
+        if (!sharedLease.fenced)
+            return true;
+        writer.leaseLapsed(imported!"std.datetime.systime".Clock.currStdTime);
+        warning!"battlegroup %s: shared lease lost, stopping both host and queue simulation"(config.battlegroup);
+        return false;
+    }
+
+    server.run(cooperate, sharedLease is null ? null : &canServeInput);
+    if (sharedLease !is null && sharedLease.fenced)
+        return restartExitCode;
     if (ownsRealm())
         realm.updateUptime(cast(uint) context.peakSessions);
     return context.restartRequested ? restartExitCode : 0;
@@ -572,9 +663,9 @@ private CoordinatorSetup coordinatorSetup(uint regionCount, WorldData data, Clie
     }
     if (context.config.battlegroup.length)
     {
-        import dmangos.cluster.services : ServiceKind, serviceMap;
-        foreach (uint map; [30u, 489u, 529u, serviceMap(ServiceKind.battlegroundQueue)])
-            setup.pinned[map] = context.config.battlegroupNode;
+        const host = context.config.battlegroupStandbyNode ? 0 : context.config.battlegroupNode;
+        foreach (map; battlegroupMaps)
+            setup.pinned[map] = cast(ushort) host;
     }
     setup.regions = partition(maps, costs, regionCount, setup.whole);
     foreach (ref r; setup.regions)

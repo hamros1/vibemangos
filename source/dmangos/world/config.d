@@ -52,7 +52,23 @@ struct WorldConfig
     /// A shared battleground pool. Empty keeps the realm's own queue.
     @JsonName("battlegroup") string battlegroup;
     @JsonName("battlegroup_node") ushort battlegroupNode = 1;
+    /// Optional node in this realm's standby combined host.
+    @JsonName("battlegroup_standby_node") ushort battlegroupStandbyNode;
 
+    /// 1 for a primary battlegroup host, 2 for a standby, 0 for another node.
+    @property ubyte battlegroupHostSlot() const
+    {
+        if (!battlegroup.length)
+            return 0;
+        if (!cluster.enabled || cluster.nodeId == battlegroupNode)
+            return 1;
+        return battlegroupStandbyNode && cluster.nodeId == battlegroupStandbyNode ? 2 : 0;
+    }
+
+    ushort battlegroupNodeAt(ubyte slot) const
+    {
+        return slot == 1 ? battlegroupNode : slot == 2 ? battlegroupStandbyNode : 0;
+    }
 
     /// `LoginDatabaseInfo`
     @JsonName("login_database") string loginDatabase = "127.0.0.1;3306;mangos;mangos;classicrealmd";
@@ -297,6 +313,10 @@ struct WorldConfig
 
         enforce(!battlegroup.length || battlegroupNode > 0, "battlegroup_node must be positive");
         enforce(!battlegroup.length || realmId <= ushort.max, "battlegroup realm_id exceeds 65535");
+        enforce(!battlegroupStandbyNode || (battlegroup.length && battlegroup.length <= 128
+            && battlegroupStandbyNode != battlegroupNode && cluster.enabled && cluster.quorum
+            && (!cluster.gateway || !battlegroupHostSlot)),
+            "Automatic battlegroup failover requires quorum, distinct world hosts and a battlegroup name up to 128 bytes");
         enforce(realmId > 0, "realm_id must be at least 1");
         cluster.validate();
         enforce(compression >= 1 && compression <= 9, "compression must be between 1 and 9");

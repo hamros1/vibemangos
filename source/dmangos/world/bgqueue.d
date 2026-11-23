@@ -637,6 +637,19 @@ final class BattlegroundQueue
         copy.status = status;
     }
 
+    /// A replacement combined host has no live copy of a match that had already started.
+    private void closeInterruptedMatches()
+    {
+        import dmangos.log : info;
+
+        foreach (instance; running.keys)
+            if (running[instance].status >= BattlegroundStatus.inProgress)
+            {
+                info!"battleground: copy %s was interrupted by loss of the shared host"(instance);
+                changed(instance, BattlegroundStatus.none);
+            }
+    }
+
     /// From the copy's node, before it closes an empty copy: how many may still come (invited).
     uint invited(uint instance) const
     {
@@ -1052,7 +1065,14 @@ struct BattlegroundQueueHost
             try
             {
                 queue.restoreState(recovered, elapsed);
-                queue.nodeLost(context.config.battlegroup.length ? context.config.realmId : 0, previousNode);
+                if (context.battlegroup is null)
+                    queue.nodeLost(0, previousNode);
+                else
+                {
+                    context.battlegroup.queueHostLost(previousNode);
+                    if (context.config.battlegroupStandbyNode)
+                        queue.closeInterruptedMatches();
+                }
             }
             catch (Exception error)
                 warning!"battleground queues: could not restore the saved service state: %s"(error.msg);
@@ -1437,4 +1457,29 @@ unittest
     sent = null;
     q.list(9, 1, 0, BattlegroundType.warsongGulch, 15);
     assert(ByteReader(sent[0].body_[13 .. $]).read!uint == 0, "none in the 10-19 bracket");
+}
+
+/// A cold combined-host takeover closes interrupted matches while retaining open invites to other copies.
+unittest
+{
+    auto now = MonoTime.currTime;
+    Sent[] sent;
+    auto queue = testQueue(now, sent);
+    enum type = BattlegroundType.warsongGulch;
+    queue.join(10, 1, 0, 20, type, 0);
+    queue.forceStart();
+    const played = queue.port(10, 1, type, true);
+    assert(played.enter);
+    queue.changed(played.instance, BattlegroundStatus.inProgress);
+    queue.join(20, 1, 0, 40, type, 0);
+    queue.forceStart();
+    const invited = queue.ticketsOf(20)[0].instance;
+    assert(invited && invited != played.instance);
+
+    auto recovered = testQueue(now, sent);
+    recovered.restoreState(queue.saveState(), 12.seconds);
+    recovered.closeInterruptedMatches();
+    assert(recovered.ticketsOf(10) is null && played.instance !in recovered.copies);
+    const entry = recovered.port(20, 1, type, true);
+    assert(entry.enter && entry.instance == invited);
 }

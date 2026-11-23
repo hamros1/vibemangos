@@ -79,6 +79,30 @@ final class RegionAuthority
     bool[uint] wholeMaps;
     ushort[uint] pinnedMaps;
 
+    /// A reserved map stays unassigned while its designated host is unavailable or undecided.
+    void pinMaps(const(uint)[] maps, ushort node)
+    {
+        foreach (map; maps)
+            pinnedMaps[map] = node;
+        foreach (ref region; regions_)
+            if (const pin = region.map in pinnedMaps)
+            {
+                if (region.state == RegionState.granted && region.owner != *pin)
+                {
+                    region.state = RegionState.revoking;
+                    region.next = 0;
+                    movingTo[region.id] = 0;
+                    touch();
+                }
+                else if (region.state == RegionState.revoking && region.next && region.next != *pin)
+                {
+                    region.next = 0;
+                    movingTo[region.id] = 0;
+                    touch();
+                }
+            }
+    }
+
     /**
      * `regions` from `partition`, with what each costs; `incarnation` is the coordinator's (epochs
      * start above anything an earlier coordinator granted).
@@ -689,6 +713,9 @@ final class RegionView
         ulong[uint] releaseSent;      // region id -> epoch whose release went out
     }
 
+    /// Optional extra lease for selected maps that need permission from another authority.
+    bool delegate(uint map) allowMap;
+
     ///
     this(ushort self, bool authority, Duration lease)
     {
@@ -787,7 +814,7 @@ final class RegionView
         const holds = leaseHolds(now);
         bool[uint] nowOwned;
         foreach (ref r; table)
-            if (holds && r.owner == self && r.state == RegionState.granted)
+            if (holds && r.owner == self && r.state == RegionState.granted && (allowMap is null || allowMap(r.map)))
             {
                 nowOwned[r.id] = true;
                 if (auto had = r.id in owned)
@@ -810,7 +837,7 @@ final class RegionView
             {
                 // Merged into another region this node still owns (the id gone from the table, its
                 // cells inside the other's rectangle): nothing is lost.
-                bool merged = holds && !r.creature.spawn;
+                bool merged = holds && !r.creature.spawn && (allowMap is null || allowMap(r.map));
                 foreach (ref t; table)
                     if (t.id == id)
                         merged = false;
@@ -859,6 +886,8 @@ final class RegionView
     /// Whether this node owns the cell with key `cell` of `map` (as of the last `refresh`).
     bool ownsCell(uint map, ulong cell) const
     {
+        if (allowMap !is null && !allowMap(map))
+            return false;
         foreach (ref r; owned)
             if (r.map == map && r.rect.containsKey(cell))
                 return true;
@@ -1337,4 +1366,45 @@ unittest
     view.refresh(now, gained, lost);
     assert(gained.length == 0 && lost.length == 0, "merged: nothing changes hands");
     assert(view.ownedRegions.length == 1 && view.ownedRegions[0].rect == CellRect(0, 0, 64, 16));
+}
+
+/// A shared placement can reserve a map, fence its grant, and resume on the newly designated node.
+unittest
+{
+    auto now = MonoTime.currTime;
+    const rect = CellRect(0, 0, 1, 1);
+    auto coordinator = new RegionAuthority([Region(1, 489, rect), Region(2, 0, rect)], null, 1, 1,
+        5.seconds, () => now);
+    coordinator.joined(2);
+    coordinator.pinMaps([489u], 0);
+    now += 6.seconds;
+    coordinator.tick();
+    assert(coordinator.regions[0].state == RegionState.unowned);
+    assert(coordinator.regions[1].state == RegionState.granted);
+    coordinator.pinMaps([489u], 1);
+    coordinator.tick();
+    auto region = coordinator.regions[0];
+    assert(region.owner == 1 && region.state == RegionState.granted);
+
+    auto view = new RegionView(1, true, 5.seconds);
+    bool hasSharedLease;
+    view.allowMap = map => map != 489 || hasSharedLease;
+    view.take(1, coordinator.version_, coordinator.regions.dup);
+    Region[] gained, lost;
+    view.refresh(now, gained, lost);
+    assert(!view.ownsCell(489, 0));
+    hasSharedLease = true;
+    view.refresh(now, gained, lost);
+    assert(view.ownsCell(489, 0) && gained.length == 1);
+    hasSharedLease = false;
+    assert(!view.ownsCell(489, 0));
+    view.refresh(now, gained, lost);
+    assert(lost.length == 1 && lost[0].id == region.id);
+
+    coordinator.pinMaps([489u], 2);
+    assert(coordinator.regions[0].state == RegionState.revoking);
+    assert(coordinator.regions[0].next == 0);
+    assert(coordinator.released(1, region.id, region.epoch));
+    coordinator.tick();
+    assert(coordinator.regions[0].owner == 2 && coordinator.regions[0].state == RegionState.granted);
 }

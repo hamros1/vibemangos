@@ -56,6 +56,16 @@ final class Battlegroup : GroupDirectory
         realm.battlegroup = this;
     }
 
+    /// Tickets use each realm's own node IDs even when they share one host process.
+    void queueHostLost(ushort previousNode)
+    {
+        if (!previousNode)
+            return;
+        const slot = previousNode == host.config.battlegroupStandbyNode ? ubyte(2) : ubyte(1);
+        foreach (id, realm; realms)
+            queue.nodeLost(id, realm.config.battlegroupNodeAt(slot));
+    }
+
     WorldContext homeOf(ulong guid)
     {
         return realms.get(cast(uint)(guid >> 32), null);

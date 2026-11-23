@@ -550,6 +550,15 @@ final class ClusterNode : LinkOwner
         return link;
     }
 
+    /// Update the designated host also on voters that may take over as coordinator.
+    void pinMaps(const(uint)[] maps, ushort node)
+    {
+        foreach (map; maps)
+            standbySetup.pinned[map] = node;
+        if (isCoordinator)
+            authority.pinMaps(maps, node);
+    }
+
     /// Heartbeats, failure detection and dialing; called every world tick.
     void tick()
     {
@@ -910,7 +919,8 @@ final class ClusterNode : LinkOwner
             authority = RegionAuthority.adopt(regions_.latestTable, regions_.latestVersion, standbySetup.cost.dup, id,
                 live, cast(ushort) old, lostCoordinatorHeard, lease, clock);
         authority.wholeMaps = standbySetup.whole;
-        authority.pinnedMaps = standbySetup.pinned;
+        foreach (map, node; standbySetup.pinned)
+            authority.pinMaps([map], node);
         authority.balancing.interval = config.balanceIntervalSeconds.seconds;
         authority.balancing.minLoadUs = config.balanceMinLoadUs;
         authority.balancing.cooldown = config.regionCooldownSeconds.seconds;

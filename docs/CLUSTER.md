@@ -833,7 +833,7 @@ come online.
 
 After setting up two realms as above, you can let their players queue together for Warsong Gulch,
 Arathi Basin and Alterac Valley. Choose one node in each realm to host matches. The two designated
-nodes must run on the same machine. Give every world node in both realms the same
+nodes run in the same worldserver process. Give every world node in both realms the same
 `battlegroup` name. Set `battlegroup_node` to its own realm's designated node ID. For example,
 add these top-level properties in each config when node 1 hosts matches in both realms.
 
@@ -863,14 +863,34 @@ in chat and emotes. Built-in emotes such as `/wave` use the server's extracted `
 for the text shown to foreign viewers. Allies in the same match can whisper him with
 `/w Bob-SilverHand` and reply with `/r`.
 
-If a designated node loses its lease, its cluster reserves the battleground maps and queue for
-that node. Restart the combined process to restore service after it exits.
+### Automatic battlegroup failover
 
-The isolated end-to-end check runs two realms with two nodes each. It needs the harness database,
-client data and release binaries described in [Developing](DEVELOPING.md).
+1. Enable quorum in every participating realm. Keep enough voters online in each realm to elect a
+   coordinator when either combined host is offline.
+2. In each realm's world configs, keep `battlegroup_node` as the primary and set
+   `battlegroup_standby_node` to a different node ID in that realm. Use world nodes for both hosts.
+   Gateways remain separate. Every config in a realm must use the same two IDs.
+3. Start the primary and standby in separate processes using `--battlegroup-realm` for the
+   additional realms on each host. Pass the lowest realm ID as the first config on both processes.
+   That realm's character database holds the shared queue checkpoint. For machine failover,
+   run the two processes on different machines.
+4. Check the logs for the active slot and for `services: battlegroundQueue runs here` on both
+   realms. The shared login database stores the host lease in `d_battlegroup_host`, created
+   at startup if needed.
+
+The combined host renews its lease while every realm trusts it. Both realms grant their battleground
+maps and queue to that host before it accepts queue actions. The standby takes over automatically
+after the old lease expires. A recovered host stays on standby while the replacement holds the
+lease. Queues and valid invites to matches that have yet to start survive. An interrupted match
+that already started closes and players return to where they queued. With a single combined
+host, restart its process to restore service.
+
+The isolated end-to-end checks need the harness database, client data and release binaries
+described in [Developing](DEVELOPING.md).
 
 ```sh
 python3 tools/harness/battlegroup.py
+python3 tools/harness/battlegroup_failover.py
 ```
 
 ## Monitoring
