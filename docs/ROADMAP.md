@@ -201,7 +201,7 @@ The largest area. In order:
    * The scoreboard's columns, `WorldStateUI.dbc`'s (Alterac Valley's mines captured and leaders killed too), and
      the scores kept (`pvpstats_*`, `battleground_score_statistics`): done.
    * Planned queue service moves preserve queues and invitations, and running copies can still be
-     refilled. Losing the queue host without a handoff starts the service empty.
+     refilled. After a queue host failure, a recent checkpoint restores the queue and active invitations.
 
 * Spell casting with effects, auras (feeding `stats.d`), cooldowns and the attack swing loop.
 * Creature AI, threat, death, loot, XP and level-up (stats recomputed for the new level).

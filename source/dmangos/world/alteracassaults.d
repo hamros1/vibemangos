@@ -41,6 +41,11 @@ mixin template ValleyAssaults()
     private Assault[2][2] assaults;
     private ulong[2] fieldCommander;
 
+    private void transferAssaultState(ref imported!"dmangos.world.battlegroundstate".BattlegroundState state)
+    {
+        state.transfer(mineSupplies, mounts, hides, capturedMount, assaults, fieldCommander);
+    }
+
     private bool supplied(ubyte side)
     {
         return mineSupplies[side][side] >= 280 || mineSupplies[side][1 - side] >= 70;

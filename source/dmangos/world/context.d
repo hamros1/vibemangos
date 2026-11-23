@@ -2468,6 +2468,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             lastHeard.remove(guid);
         if (auto channels = channelService)
             channels.nodeLost(node);
+        if (battlegroup !is null)
+            battlegroup.queue.nodeLost(config.realmId, node);
+        else if (!config.battlegroup.length)
+            if (auto queue = battlegroundQueue)
+                queue.nodeLost(0, node);
     }
 
     /// The other nodes of the cluster that say who their players are (none standalone).
@@ -2596,7 +2601,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         services.provide!LootTurnHost((const(ubyte)[]) => LootTurnHost(groups));
         services.provide!BattlegroundQueueHost((const(ubyte)[] state) =>
             BattlegroundQueueHost(battlegroup is null ? newBattlegroundQueue() : battlegroup.queue, state,
-                battlegroup is null || battlegroup.host is this));
+                battlegroup is null || battlegroup.host is this, this));
         battlegrounds = new Battlegrounds(this);
         if (sharedBattles !is null) sharedBattles.attach(this);
         gameEvents = new GameEvents;
@@ -3483,7 +3488,17 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         q.clock = () => clock();
         q.newInstanceId = (out uint id) => takeId(IdKind.instance, id);
         q.deliver = &deliverQueuePacket;
+        q.currentNode = &queuePlayerNode;
         return q;
+    }
+
+    package ushort queuePlayerNode(ulong guid)
+    {
+        if (onlinePlayer(guid) !is null)
+            return nodeId;
+        if (auto remote = remotePlayer(guid))
+            return remote.node;
+        return 0;
     }
 
     package void deliverQueuePacket(ulong guid, ushort node, Opcode opcode, const(ubyte)[] body_)
@@ -4285,6 +4300,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
      */
     private void dungeonLost(uint mapId)
     {
+        if (battlegroundOfMap(mapId))
+            battlegrounds.forgetMap(mapId);
         foreach (id; instances.keys)
             if (instances[id].mapId == mapId)
             {
@@ -4315,6 +4332,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         import dmangos.bytes : ByteWriter;
         import dmangos.log : info;
+        import dmangos.world.battlegroundstate : BattlegroundState;
+        import dmangos.world.migration : encodeBundle;
+        import std.algorithm.searching : canFind;
 
         ByteWriter w;
         ByteWriter deadlines;
@@ -4323,17 +4343,33 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         foreach (id, m; instanceMaps)
             if (instances.get(id, InstanceState.init).mapId == mapId && m.instanceId == id)
                 ids ~= id;
+        const bg = battlegroundOfMap(mapId);
+        if (bg)
+            foreach (copy; battlegrounds.all)
+                if (copy.mapId == mapId && !ids.canFind(copy.instance))
+                    ids ~= copy.instance; // its first player may still be acknowledging the world port
         w.put(cast(uint) ids.length);
         foreach (id; ids)
         {
-            auto m = instanceMaps[id];
-            const before = m.objectCount - m.replicaCount;
-            const bundle = m.migrateOut((ulong) => true, next, &saveMigrant);
+            auto m = instanceMaps.get(id, null);
+            const before = m is null ? 0 : m.objectCount - m.replicaCount;
+            const bundle = m is null ? encodeBundle(null, null) : m.migrateOut((ulong) => true, next, &saveMigrant);
             w.put(id);
             w.put(cast(uint) bundle.length);
             w.putBytes(bundle);
+            if (bg)
+            {
+                ByteWriter match;
+                if (auto copy = battlegrounds.find(id))
+                {
+                    auto state = BattlegroundState(clock(), writer: &match);
+                    copy.transferState(state);
+                }
+                w.put(cast(uint) match.data.length);
+                w.putBytes(match.data);
+            }
             info!"migration: instance %s of map %s leaves for node %s with %s objects"(id, mapId, next,
-                before - (m.objectCount - m.replicaCount));
+                m is null ? 0 : before - (m.objectCount - m.replicaCount));
         }
         takeDungeonScriptRuns(mapId, w);
         w.putBytes(deadlines.data);
@@ -4354,10 +4390,19 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (copies.length < 4)
             return;
         auto r = ByteReader(copies);
+        const bg = battlegroundOfMap(mapId);
         foreach (_; 0 .. r.read!uint)
         {
             const id = r.read!uint;
             const bundle = r.readBytes(r.read!uint);
+            if (bg)
+            {
+                const match = r.readBytes(r.read!uint);
+                if (!match.length)
+                    continue;
+                instances[id] = InstanceState(mapId, 0, unixTime);
+                battlegrounds.restore(id, bg, match);
+            }
             if (id !in instances)
                 continue; // reset meanwhile
             copyArriving = true;
@@ -8815,6 +8860,60 @@ unittest
     assert(t.mayAct(3, 0, now), "and so is 3^0");
     assert(!t.mayAct(1, 2, now + 29.seconds));
     assert(t.mayAct(1, 2, now + 31.seconds));
+}
+
+// A whole battleground moves with its objectives, timers, scores and objects on the ground.
+unittest
+{
+    import dmangos.cluster.regions : CellRect;
+    import dmangos.world.battleground : Battleground;
+    import dmangos.world.bgqueue : BattlegroundType, BattlegroundStatus;
+    import dmangos.world.gameobject : GameObjectTemplate;
+    import dmangos.world.testclient : newCreationContext, newDatabase;
+    import dmangos.world.testdata : mapWarsongGulch;
+    import dmangos.world.warsong : WarsongRules;
+
+    enum instance = 123;
+    auto db = newDatabase();
+    auto from = newCreationContext(db), to = newCreationContext(db);
+    const now = MonoTime.currTime, later = now + 60.seconds;
+    from.clock = () => now;
+    to.clock = () => later;
+    const at = Position(1500, 1480, 353);
+    const template_ = GameObjectTemplate(entry: 9009, type: GameObjectType.door);
+    from.data.gameObjectTemplates[template_.entry] = template_;
+    to.data.gameObjectTemplates[template_.entry] = template_;
+    auto copy = from.battlegrounds.open(instance, BattlegroundType.warsongGulch);
+    auto field = from.map(mapWarsongGulch, instance);
+    auto ground = from.spawnGameObjectAt(field, template_.entry, at, true);
+    assert(ground !is null);
+    copy.status = BattlegroundStatus.inProgress;
+    copy.testing = true;
+    copy.made = now - 31.seconds;
+    copy.activeEvents[9] = 2;
+    copy.members[42] = Battleground.Member(0, now - 4.seconds, 6);
+    copy.awaitingResurrection[42] = 123;
+    auto rules = cast(WarsongRules) copy.rules;
+    rules.dropped[0] = ground.guid;
+    rules.dropLeft[0] = 12.seconds;
+    rules.carrier[1] = 42;
+
+    auto region = Region(200, mapWarsongGulch, CellRect(-256, -256, 256, 256), 1, 1, RegionState.revoking, 2);
+    ubyte[][uint] leaving, unused;
+    from.regionsChanged(null, [region], null, leaving);
+    assert(from.battlegrounds.find(instance) is null);
+    region.owner = 2;
+    region.state = RegionState.granted;
+    region.next = 0;
+    to.regionsChanged([region], null, [region.id: cast(const(ubyte)[]) leaving[region.id]], unused);
+    auto restored = to.battlegrounds.find(instance);
+    assert(restored !is null && restored.status == BattlegroundStatus.inProgress && restored.testing);
+    assert(restored.made == later - 31.seconds && restored.untilSpiritHeal == 29.seconds);
+    assert(restored.members[42].offlineSince == later - 4.seconds && restored.members[42].killingBlows == 6);
+    assert(restored.awaitingResurrection[42] == 123 && restored.activeEvents[9] == 2);
+    auto moved = cast(WarsongRules) restored.rules;
+    assert(moved.carrier[1] == 42 && moved.dropped[0] == ground.guid && moved.dropLeft[0] == 12.seconds);
+    assert(to.existingMap(mapWarsongGulch, instance).gameObjectAt(ground.guid) !is null);
 }
 
 unittest

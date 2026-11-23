@@ -44,6 +44,11 @@ final class Battlegroup : GroupDirectory
                 return true;
             };
             queue.deliver = &deliver;
+            queue.currentNode = (ulong guid) {
+                if (auto realm = homeOf(guid))
+                    return realm.queuePlayerNode(guid);
+                return ushort(0);
+            };
         }
         else
             realm.battlegrounds = host.battlegrounds;

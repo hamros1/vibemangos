@@ -95,7 +95,11 @@ private:
         saveHonor();
         saveEnchantmentTimes();
         saveItemDurations();
-        battlegroundLoggedOut();
+        // A fenced simulation can be replaced behind a gateway. Its queue and channel state
+        // still belong to the player, so only an authoritative session reports this logout.
+        const authoritative = context.canWrite();
+        if (authoritative)
+            battlegroundLoggedOut();
         saveBattleground();
         deathOnLogout();
         taxiOnLeave();
@@ -111,7 +115,8 @@ private:
         if (attacking)
             stopAttack(false);
         leaveGroupsOnLogout(loggingOut);
-        context.channelCommand(this, ChannelOp.leaveAll, null);
+        if (authoritative)
+            context.channelCommand(this, ChannelOp.leaveAll, null);
         announceToFriends(false);
         guildLogout();
         auto group = context.groups.of(player.guid);
@@ -149,6 +154,7 @@ private:
     package ushort migrationTarget()
     {
         import core.time : seconds;
+        import dmangos.world.bgqueue : battlegroundOfMap;
 
         if (context.regionOwnerAround is null || teleporting != Teleport.none || loggingOut || transferring)
             return 0;
@@ -161,6 +167,10 @@ private:
             const next = context.regionOwnerAround(player.data.map, player.position, 0);
             return next == context.nodeId ? 0 : next;
         }
+        // The whole match moves together. Combat and recent player moves cannot keep it on the former map host.
+        if (battleground_.instance && instanceId_ == battleground_.instance && battlegroundOfMap(player.data.map))
+            if (const owner = context.dungeonHost(player.data.map))
+                return owner == context.nodeId ? 0 : owner;
         if (migratedAt != MonoTime.init && context.clock() - migratedAt < 10.seconds)
             return 0;
         // A fight stays on the node it is on: the creatures it is with are simulated here. A flight too: the node
@@ -575,7 +585,7 @@ private:
         if (battlegroundCheckDue)
         {
             battlegroundCheckDue = false;
-            battlegroundOnLogin();
+            battlegroundOnLogin(true);
         }
         if (player is null)
             return;

@@ -237,6 +237,14 @@ final class AlteracRules : BattlegroundRules
     Procession[2] processions;
     bool[2] lordCalled;             /// once a battle
 
+    override void transferState(ref imported!"dmangos.world.battlegroundstate".BattlegroundState state)
+    {
+        state.transfer(nodes, mineOwner, mineHeldLeft, homeTowers, captainDead, scraps, upgrades, warcryLeft,
+            offerings, processions, lordCalled);
+        transferAssaultState(state);
+        transferAirState(state);
+    }
+
     override void reset(Battleground copy)
     {
         foreach (side; 0 .. 2)

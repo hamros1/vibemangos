@@ -71,13 +71,13 @@ final class ChannelService : MemberDirectory
     /// The channels of each team.
     ChannelManagers channels;
 
+    import dmangos.world.servicecheckpoint : RealmServiceCheckpoint;
+
     private
     {
         WorldContext context;
         Member[ulong] members;    // players who gave a command, while in a channel
-        bool checkpointEnabled;
-        ulong checkpointRevision;
-        long nextCheckpoint;
+        RealmServiceCheckpoint durable;
     }
 
     private static struct SavedMember
@@ -102,30 +102,27 @@ final class ChannelService : MemberDirectory
         this.context = context;
         channels.alliance = new Channels(this, client, settings);
         channels.horde = settings.crossFaction ? channels.alliance : new Channels(this, client, settings);
-        const clustered = context.config.cluster.nodeId != 0 && context.regionOwnerAround !is null;
-        if (clustered)
+        import core.time : Duration;
+
+        auto checkpoint = RealmServiceCheckpoint(context, ServiceKind.channels);
+        ushort previousNode;
+        Duration age;
+        const recovered = checkpoint.load(!state.length, previousNode, age);
+        if (state.length)
+            restoreState(state);
+        else if (recovered.length)
         {
             import dmangos.log : warning;
-            import std.base64 : Base64;
-            import std.algorithm.searching : startsWith;
 
             try
             {
-                const saved = context.database.loadChannelCheckpoint(context.config.realmId);
-                checkpointRevision = saved.revision;
-                const age = context.unixTime - saved.at;
-                if (!state.length && saved.revision && age >= -5 && age <= 120 && saved.state.startsWith("1:"))
-                {
-                    restoreState(Base64.decode(saved.state[2 .. $]));
-                    nodeLost(saved.node);
-                }
+                restoreState(recovered);
+                nodeLost(previousNode);
             }
             catch (Exception error)
-                warning!"channels: could not read the saved service state: %s"(error.msg);
+                warning!"channels: could not restore the saved service state: %s"(error.msg);
         }
-        if (state.length)
-            restoreState(state);
-        checkpointEnabled = clustered;
+        durable = checkpoint;
     }
 
     private void restoreState(const(ubyte)[] state)
@@ -149,29 +146,7 @@ final class ChannelService : MemberDirectory
 
     private void checkpoint(bool changed)
     {
-        import dmangos.log : warning;
-        import dmangos.mysql : DatabaseException;
-        import dmangos.world.database : ChannelCheckpoint;
-        import std.base64 : Base64;
-
-        const now = context.unixTime;
-        if (!checkpointEnabled || (!changed && now < nextCheckpoint) || !context.canWrite())
-            return;
-        nextCheckpoint = now + 10;
-        try
-        {
-            const saved = ChannelCheckpoint(checkpointRevision, now, context.nodeId,
-                "1:" ~ Base64.encode(saveState()).idup);
-            if (context.database.saveChannelCheckpoint(context.config.realmId, saved))
-                ++checkpointRevision;
-            else if (context.canWrite())
-            {
-                checkpointEnabled = false;
-                warning!"channels: another host has a newer service checkpoint"();
-            }
-        }
-        catch (DatabaseException error)
-            warning!"channels: could not checkpoint the service: %s"(error.msg);
+        durable.save(changed, () => saveState());
     }
 
     private ubyte[] saveState() const
@@ -493,7 +468,7 @@ unittest
     disconnected.op = ChannelOp.password;
     disconnected.arg = "secret";
     service.run(disconnected, 1);
-    const snapshot = db.loadChannelCheckpoint(previous.config.realmId);
+    const snapshot = db.loadServiceCheckpoint(ServiceKind.channels, previous.config.realmId);
     assert(snapshot.node == 1 && snapshot.revision && snapshot.state.length);
     previous.services.release(ServiceKind.channels);
 
@@ -504,10 +479,10 @@ unittest
     auto visitor = ChannelCommand(9, "Tirion", 1, false, 0, ChannelOp.join, "Club", "", 0);
     recovered.run(visitor, 3);
     assert(!club.isOn(9), "the checkpoint kept the channel password");
-    const advanced = db.loadChannelCheckpoint(previous.config.realmId);
+    const advanced = db.loadServiceCheckpoint(ServiceKind.channels, previous.config.realmId);
     assert(advanced.node == 2 && advanced.revision > snapshot.revision);
     service.checkpoint(true);
-    assert(db.loadChannelCheckpoint(previous.config.realmId) == advanced, "the old host cannot overwrite recovery");
+    assert(db.loadServiceCheckpoint(ServiceKind.channels, previous.config.realmId) == advanced, "the old host cannot overwrite recovery");
 }
 
 /// Players keep listening and channel controls survive when the channels service changes nodes.

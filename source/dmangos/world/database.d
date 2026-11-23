@@ -8,6 +8,7 @@
 module dmangos.world.database;
 
 import dmangos.world.honorweek : HonorWeekEntry;
+import dmangos.cluster.services : ServiceKind;
 import std.typecons : Nullable, nullable;
 
 import dmangos.crypto.srp6 : sessionKeyLength;
@@ -78,8 +79,8 @@ struct CorpseRecord
     ubyte type;         /// a `CorpseType`
 }
 
-/// The last saved channel state and the node that hosted it.
-struct ChannelCheckpoint
+/// The last saved realm service state and the node that hosted it.
+struct ServiceCheckpoint
 {
     ulong revision;
     long at;
@@ -887,9 +888,9 @@ interface WorldDatabase
     /// ditto
     GameTele[] loadTeleports();
 
-    /// Last durable chat state for this realm. The revision fences subsequent writes.
-    ChannelCheckpoint loadChannelCheckpoint(uint realm);
-    @DatabaseWrite bool saveChannelCheckpoint(uint realm, const ref ChannelCheckpoint checkpoint);
+    /// Last durable service state for this realm. The revision fences subsequent writes.
+    ServiceCheckpoint loadServiceCheckpoint(ServiceKind kind, uint realm);
+    @DatabaseWrite bool saveServiceCheckpoint(ServiceKind kind, uint realm, const ref ServiceCheckpoint checkpoint);
 }
 
 /// The world tables `.lookup` searches.
@@ -1298,10 +1299,10 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     uint[] charactersFor(uint raceMask, uint quest) { return statements.charactersFor(raceMask, quest); }
     string worldState(uint id) { return statements.worldState(id); }
     void saveWorldState(uint id, string data) { statements.saveWorldState(id, data); }
-    ChannelCheckpoint loadChannelCheckpoint(uint realm) { return statements.loadChannelCheckpoint(realm); }
-    bool saveChannelCheckpoint(uint realm, const ref ChannelCheckpoint checkpoint)
+    ServiceCheckpoint loadServiceCheckpoint(ServiceKind kind, uint realm) { return statements.loadServiceCheckpoint(kind, realm); }
+    bool saveServiceCheckpoint(ServiceKind kind, uint realm, const ref ServiceCheckpoint checkpoint)
     {
-        return statements.saveChannelCheckpoint(realm, checkpoint);
+        return statements.saveServiceCheckpoint(kind, realm, checkpoint);
     }
     void saveAccountData(bool perCharacter, uint owner, uint type, long time, const(ubyte)[] data)
     {
@@ -1583,14 +1584,14 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
     string worldState(uint id) { return worldStateRows.get(id, null); }
     void saveWorldState(uint id, string data) { worldStateRows[id] = data; }
 
-    private ChannelCheckpoint[uint] channelCheckpoints;
-    ChannelCheckpoint loadChannelCheckpoint(uint realm) { return channelCheckpoints.get(realm, ChannelCheckpoint.init); }
-    bool saveChannelCheckpoint(uint realm, const ref ChannelCheckpoint checkpoint)
+    private ServiceCheckpoint[uint][ServiceKind] serviceCheckpoints;
+    ServiceCheckpoint loadServiceCheckpoint(ServiceKind kind, uint realm) { return serviceCheckpoints.get(kind, null).get(realm, ServiceCheckpoint.init); }
+    bool saveServiceCheckpoint(ServiceKind kind, uint realm, const ref ServiceCheckpoint checkpoint)
     {
-        if (loadChannelCheckpoint(realm).revision != checkpoint.revision)
+        if (loadServiceCheckpoint(kind, realm).revision != checkpoint.revision)
             return false;
-        channelCheckpoints[realm] = checkpoint;
-        ++channelCheckpoints[realm].revision;
+        serviceCheckpoints[kind][realm] = checkpoint;
+        ++serviceCheckpoints[kind][realm].revision;
         return true;
     }
     bool[ushort] gameEventStatusRows;

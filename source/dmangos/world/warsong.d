@@ -110,6 +110,11 @@ final class WarsongRules : BattlegroundRules
     bool[2] respawning;       /// side i's flag is back after a capture ...
     Duration[2] respawnLeft;  /// ... in this long
 
+    override void transferState(ref imported!"dmangos.world.battlegroundstate".BattlegroundState state)
+    {
+        state.transfer(carrier, dropped, dropLeft, respawning, respawnLeft);
+    }
+
     override void reset(Battleground copy)
     {
         foreach (side; 0 .. 2)

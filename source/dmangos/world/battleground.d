@@ -115,6 +115,8 @@ unittest
  */
 class BattlegroundRules
 {
+    void transferState(ref imported!"dmangos.world.battlegroundstate".BattlegroundState state) {}
+
     /// Before the first player comes: events and world states as they start.
     void reset(Battleground copy) {}
 
@@ -294,6 +296,14 @@ final class Battleground
         Duration prematureLeft;
         bool prematureCounting;
         uint lastWarning;      // the premature end's last warning, in seconds left
+    }
+
+    package void transferState(ref imported!"dmangos.world.battlegroundstate".BattlegroundState state)
+    {
+        state.transfer(made, status, winner, activeEvents, worldStates, weekend, testing, graveyardTeams,
+            awaitingResurrection, members, raidLeaderOf, inTeamRaid, startLeft, said, endLeft, emptySince,
+            prematureLeft, prematureCounting, lastWarning, joinOrder_, pulses);
+        rules.transferState(state);
     }
 
     ///
@@ -1306,6 +1316,27 @@ final class Battlegrounds
         return copies[instance] = new Battleground(context, instance, type, rulesFor(type));
     }
 
+    /// A region move preserves the live copy without announcing a new match to the queue.
+    package Battleground restore(uint instance, BattlegroundType type, const(ubyte)[] bytes)
+    {
+        import dmangos.bytes : ByteReader;
+        import dmangos.world.battlegroundstate : BattlegroundState;
+
+        auto restored = new Battleground(context, instance, type, rulesFor(type));
+        auto reader = ByteReader(bytes);
+        auto state = BattlegroundState(context.clock(), reader: &reader);
+        restored.transferState(state);
+        return copies[instance] = restored;
+    }
+
+    /// The simulation is leaving with its map. Its queue slots remain valid on the new host.
+    package void forgetMap(uint map)
+    {
+        foreach (id; copies.keys)
+            if (copies[id].mapId == map)
+                copies.remove(id);
+    }
+
     /// Each battleground's rules (Warsong Gulch's, Arathi Basin's, ...); the shared ones for the others.
     BattlegroundRules rulesFor(BattlegroundType type)
     {
@@ -1535,6 +1566,8 @@ mixin template BattlegroundHandlers()
     {
         import dmangos.world.clientdata : MapType;
 
+        if (battleground_.instance == e.instance && (instanceId_ == e.instance || transferring))
+            return;
         const t = e.type in context.data.battlegroundTemplates;
         if (t is null)
             return;
@@ -1663,12 +1696,12 @@ mixin template BattlegroundHandlers()
      * still runs and keeps the player's place; else out,
      * back where it came from.
      */
-    package void battlegroundOnLogin()
+    package void battlegroundOnLogin(bool migrated = false)
     {
         if (battlegroundOfMap(player.data.map) == BattlegroundType.none || !context.hostsDungeon(player.data.map))
             return;
         auto copy = currentBattleground();
-        if (copy !is null && copy.status != BattlegroundStatus.waitLeave)
+        if (copy !is null && (migrated || copy.status != BattlegroundStatus.waitLeave))
             if (auto member = player.guid in copy.members)
             {
                 const rejoined = member.offlineSince != MonoTime.init;
@@ -1689,6 +1722,8 @@ mixin template BattlegroundHandlers()
             leaveTeamRaid(copy, battleground_.team);
             copy.removed(player.guid);
         }
+        else if (back.instance)
+            context.services.call!(BattlegroundQueueHost.left)(BattlegroundLeft(back.instance, player.guid, back.team));
         battleground_ = BattlegroundData.init;
         saveBattleground();
         returnFromBattleground(back);

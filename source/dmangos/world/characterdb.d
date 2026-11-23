@@ -7,6 +7,7 @@
 module dmangos.world.characterdb;
 
 import dmangos.world.honorweek : HonorWeekEntry;
+import dmangos.cluster.services : ServiceKind;
 import std.algorithm.iteration : map;
 import std.algorithm.searching : find;
 import std.array : array, replicate;
@@ -20,7 +21,7 @@ import dmangos.world.player : CharacterData, CharacterProgress, HomeBind, tutori
 import dmangos.world.playercreate : NewCharacter, NewSkill, NewSpell, maxEnchantmentSlot;
 import dmangos.world.database : AuraRecord, TicketRecord, BattlegroundData, PvpStatsBattleground, PvpStatsPlayer, HonorColumns, HonorPointRecord, HonorRecord, CooldownRecord, PetRecord, PetSpellRecord, GuildEventRecord, GuildMemberRecord, GuildRankRecord, GuildRecord,
     PetitionRecord, SocialRow, CorpseRecord, InstanceBindRecord, InstanceRecord, InstanceRecords,
-    InstanceRespawnRecord, MailRecord;
+    InstanceRespawnRecord, MailRecord, ServiceCheckpoint;
 import dmangos.world.reputation : ReputationRecord;
 import dmangos.world.auctionhouse : AuctionRecord;
 import dmangos.world.quests : QuestState, QuestStatus;
@@ -1344,36 +1345,60 @@ final class CharacterStatements
         characters.execute!"REPLACE INTO world_state (Id, Data) VALUES (?, ?)"(id, data);
     }
 
-    private bool channelCheckpointsReady;
+    private bool[ServiceKind] checkpointsReady;
 
-    private void prepareChannelCheckpoints()
+    private template checkpointTable(ServiceKind kind)
     {
-        if (channelCheckpointsReady)
+        static if (kind == ServiceKind.channels)
+            enum checkpointTable = "dmangos_channel_checkpoint";
+        else static if (kind == ServiceKind.battlegroundQueue)
+            enum checkpointTable = "dmangos_bg_queue_checkpoint";
+        else
+            static assert(false, "unexpected checkpoint service");
+    }
+
+    private enum checkpointed = [ServiceKind.channels, ServiceKind.battlegroundQueue];
+
+    private void prepareServiceCheckpoints(ServiceKind kind)()
+    {
+        if (checkpointsReady.get(kind, false))
             return;
-        characters.execute!("CREATE TABLE IF NOT EXISTS dmangos_channel_checkpoint ("
+        characters.execute!("CREATE TABLE IF NOT EXISTS " ~ checkpointTable!kind ~ " ("
             ~ "realm INT UNSIGNED NOT NULL, revision BIGINT UNSIGNED NOT NULL, saved_at BIGINT NOT NULL, "
             ~ "node SMALLINT UNSIGNED NOT NULL, state LONGTEXT NOT NULL, PRIMARY KEY (realm)) ENGINE=InnoDB")();
-        channelCheckpointsReady = true;
+        checkpointsReady[kind] = true;
     }
 
-    imported!"dmangos.world.database".ChannelCheckpoint loadChannelCheckpoint(uint realm)
+    ServiceCheckpoint loadServiceCheckpoint(ServiceKind kind, uint realm)
     {
-        import dmangos.world.database : ChannelCheckpoint;
-
-        prepareChannelCheckpoints();
-        foreach (row; characters.query!"SELECT revision, saved_at, node, state FROM dmangos_channel_checkpoint WHERE realm = ?"(realm))
-            return ChannelCheckpoint(row.get!ulong(0), row.get!long(1), cast(ushort) row.get!uint(2), row.get!string(3));
-        return ChannelCheckpoint.init;
+        static foreach (candidate; checkpointed)
+            if (kind == candidate)
+            {
+                prepareServiceCheckpoints!candidate();
+                foreach (row; characters.query!("SELECT revision, saved_at, node, state FROM "
+                    ~ checkpointTable!candidate ~ " WHERE realm = ?")(realm))
+                    return ServiceCheckpoint(row.get!ulong(0), row.get!long(1), cast(ushort) row.get!uint(2),
+                        row.get!string(3));
+                return ServiceCheckpoint.init;
+            }
+        assert(0, "unexpected checkpoint service");
     }
 
-    bool saveChannelCheckpoint(uint realm, const ref imported!"dmangos.world.database".ChannelCheckpoint checkpoint)
+    bool saveServiceCheckpoint(ServiceKind kind, uint realm, const ref ServiceCheckpoint checkpoint)
     {
-        prepareChannelCheckpoints();
-        if (!checkpoint.revision)
-            return characters.execute!("INSERT IGNORE INTO dmangos_channel_checkpoint (realm, revision, saved_at, node, state) "
-                ~ "VALUES (?, 1, ?, ?, ?)")(realm, checkpoint.at, checkpoint.node, checkpoint.state) == 1;
-        return characters.execute!("UPDATE dmangos_channel_checkpoint SET revision = revision + 1, saved_at = ?, node = ?, state = ? "
-            ~ "WHERE realm = ? AND revision = ?")(checkpoint.at, checkpoint.node, checkpoint.state, realm, checkpoint.revision) == 1;
+        static foreach (candidate; checkpointed)
+            if (kind == candidate)
+            {
+                prepareServiceCheckpoints!candidate();
+                if (!checkpoint.revision)
+                    return characters.execute!("INSERT IGNORE INTO " ~ checkpointTable!candidate
+                        ~ " (realm, revision, saved_at, node, state) VALUES (?, 1, ?, ?, ?)")(
+                            realm, checkpoint.at, checkpoint.node, checkpoint.state) == 1;
+                return characters.execute!("UPDATE " ~ checkpointTable!candidate
+                    ~ " SET revision = revision + 1, saved_at = ?, node = ?, state = ? WHERE realm = ? AND revision = ?")(
+                        checkpoint.at, checkpoint.node, checkpoint.state, realm, checkpoint.revision) == 1;
+            }
+        assert(0, "unexpected checkpoint service");
     }
 
     /// See `WorldDatabase.charactersFor`.

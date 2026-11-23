@@ -91,6 +91,11 @@ mixin template ValleyAir()
     }
     private Patrol[] patrols;
 
+    private void transferAirState(ref imported!"dmangos.world.battlegroundstate".BattlegroundState state)
+    {
+        state.transfer(rescues, patrols);
+    }
+
     private void placeFocuses(Battleground copy)
     {
         auto map = copy.context.map(copy.mapId, copy.instance);

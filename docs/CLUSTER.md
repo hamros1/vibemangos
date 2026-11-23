@@ -915,6 +915,9 @@ An unfinished player or creature cast resumes after a clean handoff with its ori
 remaining cast time. The new owner also keeps active spell-school lockouts and the player's global
 cooldown.
 
+When an in-realm battleground map moves, its new owner receives the running matches, their scores,
+objectives, and timers. Players in a match follow the map's ownership, including during combat.
+
 ## Testing
 
 The cluster code is tested in memory: links wired back to back and a fake clock, with whole clusters

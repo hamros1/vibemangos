@@ -189,8 +189,13 @@ invitations and expires them after 80 seconds. What the queue tells a player goe
 A battleground map, like a dungeon, is one region, so one node runs every copy of it. A player
 accepting an invitation moves to that node, as for a dungeon. A planned service move carries the
 queue order, groups, player slots, invitations, wait averages and running copies. Timers resume with
-their remaining time on the new host's clock. If the old host is lost before it can hand off, the
-service starts with empty queues.
+their remaining time on the new host's clock. If the queue host is lost, the replacement loads a
+recent database checkpoint. Time spent during the outage counts against invitations. A retried
+acceptance returns the original copy and team without reserving another place. If a worker is lost,
+the queue removes disconnected players' waiting slots and invitations after a short grace period.
+Players whose sessions moved keep their queue position. Worker IDs are scoped to their realm in a
+shared battlegroup. When a gateway recovers a player after lease loss, the old simulation cannot
+clear the player's queue slots or channel membership by reporting a logout.
 
 ### The Ahn'Qiraj war effort
 

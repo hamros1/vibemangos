@@ -116,6 +116,12 @@ final class ArathiRules : BattlegroundRules
     /// Whether a player may open a banner (`CanUseBattleGroundObject`): alive; tests stand in for it.
     bool delegate(ulong) alive;
 
+    override void transferState(ref imported!"dmangos.world.battlegroundstate".BattlegroundState state)
+    {
+        state.transfer(status, previous, captureLeft, bannerLeft, bannerStatus, icon, sinceTick,
+            towardsHonor, towardsReputation, warned);
+    }
+
     override void reset(Battleground copy)
     {
         foreach (side; 0 .. 2)

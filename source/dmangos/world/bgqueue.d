@@ -25,6 +25,7 @@ import core.time : Duration, MonoTime, hnsecs, msecs, seconds;
 import dmangos.bytes : ByteWriter;
 import dmangos.cluster.services : Call, Service, ServiceKind;
 import dmangos.world.opcodes : Opcode;
+import dmangos.world.servicecheckpoint : RealmServiceCheckpoint;
 
 /// A battleground type: the index of `BattlemasterList.dbc` and of `battleground_template`.
 enum BattlegroundType : ubyte
@@ -137,6 +138,8 @@ final class BattlegroundQueue
 {
     /// Sends a packet to a player, on the node it was last heard from (if not found nearer).
     void delegate(ulong guid, ushort node, Opcode opcode, const(ubyte)[] body_) deliver;
+    /// Looks up the player's current node, including any move since its last queue command.
+    ushort delegate(ulong guid) currentNode;
     /// A new copy's instance id (the cluster's); false if none can be had now.
     bool delegate(out uint id) newInstanceId;
     MonoTime delegate() clock;
@@ -155,6 +158,7 @@ final class BattlegroundQueue
         Stage stage;
         uint instance;   /// invited to or inside
         Waiting group;   /// while waiting or invited
+        ubyte team;      /// inside, for retries of the accepted invitation
     }
 
     /// Players who queued together.
@@ -187,10 +191,12 @@ final class BattlegroundQueue
     {
         Ticket[queueSlots][ulong] tickets;
         ushort[ulong] nodes;
+        MonoTime[ulong] lostNodes; // keyed by realm ID and node ID
         Waiting[][2][bracketCount][4] waiting; // [type][bracket][team]
         Running[uint] running;
         uint[waitSamples][bracketCount][2][4] waitTimes; // [type][team][bracket]
         uint[bracketCount][2][4] waitNext;
+        RealmServiceCheckpoint durable;
     }
 
     // Group references in tickets become one-based indexes into the ordered group list.
@@ -213,6 +219,7 @@ final class BattlegroundQueue
         Stage stage;
         uint instance;
         uint group;
+        ubyte team;
     }
 
     private static struct SavedPlayer
@@ -238,9 +245,16 @@ final class BattlegroundQueue
         SavedGroup[] groups;
         SavedPlayer[] players;
         SavedCopy[] copies;
+        SavedLostNode[] lost;
         typeof(waitTimes) waitTimes_;
         typeof(waitNext) waitNext_;
         bool testing;
+    }
+
+    private static struct SavedLostNode
+    {
+        ulong key;
+        long deadline;
     }
 
     /// Capture the queue for a handoff. Times are offsets in 100 ns units from this node's clock.
@@ -265,15 +279,19 @@ final class BattlegroundQueue
         {
             SavedPlayer player;
             player.guid = guid;
-            player.node = nodes.get(guid, 0);
+            player.node = currentNode is null ? 0 : currentNode(guid);
+            if (!player.node)
+                player.node = nodes.get(guid, 0);
             foreach (i, ref slot; slots)
                 player.slots[i] = SavedTicket(slot.type, slot.stage, slot.instance,
-                    slot.group is null ? 0 : groupIds[slot.group]);
+                    slot.group is null ? 0 : groupIds[slot.group], slot.team);
             state.players ~= player;
         }
         foreach (ref copy; running)
             state.copies ~= SavedCopy(copy.instance, copy.type, copy.bracket, copy.clientId, copy.invited,
                 copy.status, (copy.made - now).total!"hnsecs");
+        foreach (key, deadline; lostNodes)
+            state.lost ~= SavedLostNode(key, (deadline - now).total!"hnsecs");
         state.waitTimes_ = waitTimes;
         state.waitNext_ = waitNext;
         state.testing = testing;
@@ -283,7 +301,7 @@ final class BattlegroundQueue
     }
 
     /// Restore a fresh queue using this node's clock, templates and callbacks.
-    private void restoreState(const(ubyte)[] bytes)
+    private void restoreState(const(ubyte)[] bytes, Duration elapsed = Duration.zero)
     {
         import dmangos.plaindata : decode;
 
@@ -291,7 +309,12 @@ final class BattlegroundQueue
             return;
         SavedQueue state;
         decode(bytes, state);
-        const now = clock();
+        tickets = null;
+        nodes = null;
+        running = null;
+        lostNodes = null;
+        waiting = typeof(waiting).init;
+        const now = clock() - elapsed;
         auto groups = new Waiting[state.groups.length + 1];
         foreach (i, ref saved; state.groups)
         {
@@ -313,13 +336,15 @@ final class BattlegroundQueue
         {
             Ticket[queueSlots] slots;
             foreach (i, ref slot; player.slots)
-                slots[i] = Ticket(slot.type, slot.stage, slot.instance, groups[slot.group]);
+                slots[i] = Ticket(slot.type, slot.stage, slot.instance, groups[slot.group], slot.team);
             tickets[player.guid] = slots;
             nodes[player.guid] = player.node;
         }
         foreach (ref copy; state.copies)
             running[copy.instance] = Running(copy.instance, copy.type, copy.bracket, copy.clientId, copy.invited,
                 copy.status, now + copy.made.hnsecs);
+        foreach (ref lost; state.lost)
+            lostNodes[lost.key] = now + lost.deadline.hnsecs;
         waitTimes = state.waitTimes_;
         waitNext = state.waitNext_;
         testing = state.testing;
@@ -472,6 +497,8 @@ final class BattlegroundQueue
             forgetIfIdle(guid);
             return Entry.init;
         }
+        if (ticket.stage == Stage.inside && ticket.instance in running)
+            return Entry(true, ticket.instance, ticket.team, type);
         if (ticket.stage != Stage.invited)
             return Entry.init;
         auto copy = ticket.instance in running;
@@ -483,7 +510,7 @@ final class BattlegroundQueue
         }
         const team = ticket.group.team;
         removeFromGroup(guid, ticket.group);
-        *ticket = Ticket(type, Stage.inside, copy.instance, null);
+        *ticket = Ticket(type, Stage.inside, copy.instance, null, team);
         send(guid, battlefieldStatus(slot, type, copy.clientId, BattlegroundStatus.inProgress, 0,
             sinceMs(copy.made)));
         return Entry(true, copy.instance, team, type);
@@ -531,6 +558,12 @@ final class BattlegroundQueue
             if (t.type != BattlegroundType.none && t.stage != Stage.inside)
                 leaveQueue(guid, cast(int) i, false);
         forgetIfIdle(guid);
+    }
+
+    /// Give connections and presence from a moving player time to reach this host.
+    void nodeLost(uint realm, ushort node)
+    {
+        lostNodes[(cast(ulong) realm << 16) | node] = clock() + 5.seconds;
     }
 
     /// The `SMSG_BATTLEFIELD_LIST`: the copies of `type` in the bracket of `level`.
@@ -587,7 +620,18 @@ final class BattlegroundQueue
             return;
         if (status == BattlegroundStatus.none)
         {
+            const type = copy.type;
+            const bracket = copy.bracket;
             running.remove(instance);
+            foreach (guid; tickets.keys)
+            {
+                const slot = slotOf(guid, type);
+                if (slot < 0 || tickets[guid][slot].instance != instance)
+                    continue;
+                leaveQueue(guid, slot, true, false);
+                forgetIfIdle(guid);
+            }
+            update(type, bracket);
             return;
         }
         copy.status = status;
@@ -658,9 +702,43 @@ final class BattlegroundQueue
                     leaveQueue(p, slot, true);
                 forgetIfIdle(p);
             }
+        foreach (key; lostNodes.keys)
+            if (lostNodes[key] <= now)
+            {
+                pruneLostNode(cast(uint)(key >> 16), cast(ushort) key);
+                lostNodes.remove(key);
+            }
     }
 
 private:
+    void pruneLostNode(uint realm, ushort node)
+    {
+        bool[bracketCount][4] vacated;
+        foreach (guid; nodes.keys)
+        {
+            if (guid >> 32 != realm || nodes[guid] != node)
+                continue;
+            if (const online = currentNode is null ? 0 : currentNode(guid))
+            {
+                nodes[guid] = online;
+                continue;
+            }
+            nodes.remove(guid);
+            if (auto mine = guid in tickets)
+                foreach (i, ref t; *mine)
+                    if (t.type != BattlegroundType.none && t.stage != Stage.inside)
+                    {
+                        vacated[t.type][t.group.bracket] = true;
+                        leaveQueue(guid, cast(int) i, false, false);
+                    }
+            forgetIfIdle(guid);
+        }
+        foreach (type, byBracket; vacated)
+            foreach (bracket, changed; byBracket)
+                if (changed)
+                    update(cast(BattlegroundType) type, cast(ubyte) bracket);
+    }
+
     void send(ulong guid, const(ubyte)[] body_, Opcode opcode = Opcode.SMSG_BATTLEFIELD_STATUS)
     {
         if (deliver !is null)
@@ -701,7 +779,7 @@ private:
     }
 
     /// The player leaves a queue: slot `slot` emptied, the player told.
-    void leaveQueue(ulong guid, int slot, bool tell)
+    void leaveQueue(ulong guid, int slot, bool tell, bool refill = true)
     {
         auto ticket = &tickets[guid][slot];
         const type = ticket.type;
@@ -717,7 +795,7 @@ private:
         *ticket = Ticket.init;
         if (tell)
             send(guid, battlefieldStatus(slot, type, 0, BattlegroundStatus.none));
-        if (g !is null)
+        if (refill && g !is null)
             update(type, g.bracket);
     }
 
@@ -949,15 +1027,36 @@ struct BattlegroundInvited
 @Service(ServiceKind.battlegroundQueue)
 struct BattlegroundQueueHost
 {
+    import dmangos.world.context : WorldContext;
+
     BattlegroundQueue queue;
 
     bool clockOwner = true;
 
-    this(BattlegroundQueue queue, const(ubyte)[] state, bool clockOwner = true)
+    this(BattlegroundQueue queue, const(ubyte)[] state, bool clockOwner = true, WorldContext context = null)
     {
         this.queue = queue;
         this.clockOwner = clockOwner;
-        if (clockOwner) queue.restoreState(state);
+        if (!clockOwner)
+            return;
+        queue.durable = RealmServiceCheckpoint(context, ServiceKind.battlegroundQueue);
+        ushort previousNode;
+        Duration elapsed;
+        const recovered = queue.durable.load(!state.length, previousNode, elapsed);
+        if (state.length)
+            queue.restoreState(state);
+        else if (recovered.length)
+        {
+            import dmangos.log : warning;
+
+            try
+            {
+                queue.restoreState(recovered, elapsed);
+                queue.nodeLost(context.config.battlegroup.length ? context.config.realmId : 0, previousNode);
+            }
+            catch (Exception error)
+                warning!"battleground queues: could not restore the saved service state: %s"(error.msg);
+        }
     }
 
     ubyte[] saveState() const
@@ -969,19 +1068,22 @@ struct BattlegroundQueueHost
     @Call void join(const ref BattlegroundJoin r)
     {
         queue.join(r.guid, r.node, r.team, r.level, cast(BattlegroundType) r.type, r.desired);
+        queue.durable.save(true, &queue.saveState);
     }
 
     ///
     @Call BattlegroundJoinResult joinGroup(const ref BattlegroundGroupJoin r)
     {
-        return BattlegroundJoinResult(queue.joinGroup(r.players, r.nodes, r.team, r.level, cast(BattlegroundType) r.type,
-            r.desired));
+        const error = queue.joinGroup(r.players, r.nodes, r.team, r.level, cast(BattlegroundType) r.type, r.desired);
+        queue.durable.save(true, &queue.saveState);
+        return BattlegroundJoinResult(error);
     }
 
     ///
     @Call BattlegroundEntry port(const ref BattlegroundPort r)
     {
         const e = queue.port(r.guid, r.node, cast(BattlegroundType) r.type, r.enter);
+        queue.durable.save(true, &queue.saveState);
         return BattlegroundEntry(e.enter, e.instance, e.team, e.type);
     }
 
@@ -995,6 +1097,7 @@ struct BattlegroundQueueHost
     @Call void logout(const ref BattlegroundPlayer r)
     {
         queue.logout(r.guid);
+        queue.durable.save(true, &queue.saveState);
     }
 
     ///
@@ -1007,12 +1110,14 @@ struct BattlegroundQueueHost
     @Call void left(const ref BattlegroundLeft r)
     {
         queue.left(r.instance, r.guid, r.team);
+        queue.durable.save(true, &queue.saveState);
     }
 
     ///
     @Call void changed(const ref BattlegroundChanged r)
     {
         queue.changed(r.instance, cast(BattlegroundStatus) r.status);
+        queue.durable.save(true, &queue.saveState);
     }
 
     ///
@@ -1025,11 +1130,15 @@ struct BattlegroundQueueHost
     @Call void forceStart(const ref BattlegroundInstance)
     {
         queue.forceStart();
+        queue.durable.save(true, &queue.saveState);
     }
 
     void tick(Duration)
     {
-        if (clockOwner) queue.tick();
+        if (!clockOwner)
+            return;
+        queue.tick();
+        queue.durable.save(false, &queue.saveState);
     }
 }
 
@@ -1226,6 +1335,86 @@ unittest
     moved.left(inside.instance, 1, 0);
     assert(moved.ticketsOf(6)[0].stage == Stage.invited && moved.ticketsOf(7)[0].stage == Stage.invited);
     assert(moved.ticketsOf(8)[0].stage == Stage.queued, "the first waiting group refills the running copy");
+}
+
+// A worker loss removes disconnected players and refills the copy, even across realm-scoped node IDs.
+unittest
+{
+    import dmangos.world.battlegroup : realmPlayerGuid;
+
+    auto now = MonoTime.currTime;
+    Sent[] sent;
+    auto q = testQueue(now, sent);
+    alias WS = BattlegroundType.warsongGulch;
+    const dead = realmPlayerGuid(1, 1), moved = realmPlayerGuid(1, 2), otherRealm = realmPlayerGuid(2, 1);
+    const waiting = realmPlayerGuid(1, 3), horde = realmPlayerGuid(2, 2);
+    q.currentNode = (ulong guid) => guid == moved ? ushort(3) : ushort(0);
+    q.join(dead, 2, 0, 60, WS, 0);
+    q.join(moved, 2, 0, 60, WS, 0);
+    q.join(otherRealm, 2, 0, 60, WS, 0);
+    q.join(horde, 1, 1, 60, WS, 0);
+    q.forceStart();
+    q.join(waiting, 1, 0, 60, WS, 0);
+    const instance = q.ticketsOf(moved)[0].instance;
+    assert(instance && q.ticketsOf(waiting)[0].stage == BattlegroundQueue.Stage.queued);
+    q.nodeLost(1, 2);
+    now += 4.seconds;
+    q.tick();
+    assert(q.ticketsOf(dead).length, "give a replacement link or presence time to report");
+    now += 1.seconds;
+    q.tick();
+    assert(!q.ticketsOf(dead).length);
+    assert(q.ticketsOf(moved)[0].instance == instance && q.nodes[moved] == 3);
+    assert(q.ticketsOf(otherRealm)[0].instance == instance);
+    assert(q.ticketsOf(waiting)[0].instance == instance && q.copies[instance].invited[0] == 3);
+    q.changed(instance, BattlegroundStatus.none);
+    assert(!q.ticketsOf(otherRealm).length && !q.ticketsOf(waiting).length && !q.ticketsOf(moved).length);
+}
+
+// Recover without a service handoff. The queue remembers an acceptance whose reply was lost.
+unittest
+{
+    import dmangos.bytes : ByteReader;
+    import dmangos.world.config : WorldConfig;
+    import dmangos.world.movement : Position;
+    import dmangos.world.testclient : newCreationContext, newDatabase;
+
+    void clustered(ref WorldConfig config) { config.cluster.nodeId = 1; }
+    auto db = newDatabase();
+    auto previous = newCreationContext(db, &clustered), replacement = newCreationContext(db, &clustered);
+    previous.nodeId = 1;
+    replacement.nodeId = 2;
+    previous.regionOwnerAround = (uint, Position, float) => ushort(1);
+    replacement.regionOwnerAround = (uint, Position, float) => ushort(2);
+    auto now = MonoTime.currTime;
+    auto later = now;
+    previous.clock = () => now;
+    replacement.clock = () => later;
+    Sent[] sent;
+    alias WS = BattlegroundType.warsongGulch;
+    auto original = testQueue(now, sent);
+    auto first = BattlegroundQueueHost(original, null, true, previous);
+    foreach (ref request; [BattlegroundJoin(1, 1, 0, 60, WS, 0), BattlegroundJoin(2, 3, 0, 60, WS, 0),
+        BattlegroundJoin(3, 3, 1, 60, WS, 0), BattlegroundJoin(4, 4, 1, 60, WS, 0)])
+        first.join(request);
+    const port = BattlegroundPort(3, 3, WS, true);
+    const accepted = first.port(port);
+    assert(accepted.enter && accepted.team == 1);
+
+    later += 20.seconds;
+    auto recovered = testQueue(later, sent);
+    auto second = BattlegroundQueueHost(recovered, null, true, replacement);
+    const retried = second.port(port);
+    assert(retried == accepted && recovered.copies[accepted.instance].invited == [2, 2]);
+    recovered.status(4, 4);
+    auto invite = ByteReader(sent[$ - 1].body_);
+    invite.skip(17);
+    const remaining = invite.read!uint;
+    assert(remaining >= 59_000 && remaining <= 61_000, "outage time counts against the invitation");
+    later += 5.seconds;
+    second.tick(5.seconds);
+    assert(!recovered.ticketsOf(1).length && recovered.ticketsOf(2)[0].instance == accepted.instance);
+    assert(recovered.copies[accepted.instance].invited == [1, 2]);
 }
 
 // The battlemaster's list: the copies of the player's bracket, by the numbers players see.
