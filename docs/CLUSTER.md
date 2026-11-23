@@ -914,6 +914,8 @@ stops future launches and leaves already launched missiles in flight.
 An unfinished player or creature cast resumes after a clean handoff with its original target and
 remaining cast time. The new owner also keeps active spell-school lockouts and the player's global
 cooldown.
+Player projectiles launched at a local target keep their flight time when the caster moves. Supported
+direct damage, healing and aura effects can also follow the target to its new owner.
 
 When an in-realm battleground map moves, its new owner receives the running matches, their scores,
 objectives, and timers. Players in a match follow the map's ownership, including during combat.

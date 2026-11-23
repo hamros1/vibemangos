@@ -62,6 +62,7 @@ private:
         ulong target;
         Casting casting;
         int left;      // ms of flight left
+        uint bounce;
     }
 
     /// A persistent area aura's spot under way (`dmangos.world.spellareas`).
@@ -80,6 +81,49 @@ private:
         ubyte which;
         bool alwaysHits, triggered, playerHandoff;
         uint triggeredBy, pushbacks;
+    }
+
+    private static struct AuraIdentity
+    {
+        uint spell;
+        ulong caster;
+    }
+
+    private static struct MissileHandoff
+    {
+        static struct AuraMask
+        {
+            ulong target;
+            ubyte mask;
+        }
+
+        CastHandoff cast_;
+        uint deadline, bounce;
+        ulong target;
+        ubyte effect, persistentDone;
+        Position gameObjectOrigin;
+        AuraMask[] auraEffects;
+    }
+
+    private static struct FlightHandoff
+    {
+        static struct Spend
+        {
+            uint spell;
+            bool triggered;
+            AuraIdentity[] auras;
+        }
+
+        static struct Used
+        {
+            uint forSpell;
+            AuraIdentity aura;
+        }
+
+        uint mapId, instance;
+        MissileHandoff[] hits;
+        Spend[] spends;
+        Used[] used;
     }
 
     const(SpellInfo)* channelSpell;  // the spell being channelled, if any
@@ -753,6 +797,8 @@ private:
         updateTraps(cast(int) elapsed.total!"msecs");
         if (pendingHits.length)
         {
+            import dmangos.world.spelldamage : isTargetedProcEffect;
+
             // The missiles that arrive now (a copy: an effect may cast another).
             const diff = cast(int) elapsed.total!"msecs";
             PendingHit[] due;
@@ -760,11 +806,27 @@ private:
             foreach (hit; pendingHits)
             {
                 hit.left -= diff;
-                (hit.left <= 0 ? due : still) ~= hit;
+                const waiting = hit.left <= 0 && hit.left > -2_000 && context.sendAreaDamage !is null
+                    && isTargetedProcEffect(*hit.spell, hit.effect) && map.findObject(hit.target) is null
+                    && !map.unit(hit.target);
+                (hit.left > 0 || waiting ? still : due) ~= hit;
             }
             pendingHits = still;
+            PendingHit[] local;
             foreach (hit; due)
-                doEffect(hit.spell, hit.effect, hit.target, hit.casting);
+            {
+                if (context.sendAreaDamage !is null && isTargetedProcEffect(*hit.spell, hit.effect))
+                    if (auto copy = cast(Replica) map.findObject(hit.target))
+                    {
+                        auto remote = RemoteAreaDamage(copy.owner, AreaDamage(caster: player.guid, target: hit.target,
+                            spell: hit.spell.id, effect: cast(ubyte) hit.effect, map: map.id, instance: map.instanceId,
+                            triggered: hit.casting.triggered, playerProjectile: true), hit.bounce);
+                        sendRolledReplicaEffect(hit.spell, hit.casting, remote);
+                        continue;
+                    }
+                doEffect(hit.spell, hit.effect, hit.target, hit.casting, hit.bounce);
+                local ~= hit;
+            }
             // The charged modifiers of casts whose missiles have all landed.
             if (missileSpends.length)
             {
@@ -780,10 +842,10 @@ private:
             }
             // A missile's last effect on a target landed: what lands with it (Frostbite's freeze after Frostbolt's
             // damage, not before it).
-            foreach (k, hit; due)
+            foreach (k, hit; local)
             {
                 bool last = !missileOnTheWay(hit.spell, hit.target);
-                foreach (other; due[k + 1 .. $])
+                foreach (other; local[k + 1 .. $])
                     last &= !(other.spell is hit.spell && other.target == hit.target);
                 if (last)
                     targetTriggers(hit.spell, [hit.target]);
@@ -1612,10 +1674,7 @@ private:
         ubyte[] state;
         if (generic.active)
         {
-            const c = &generic;
-            const snapshot = CastHandoff(c.spell.id, map.id, map.instanceId, c.targets, c.timer, c.castTime,
-                c.castItemEntry, c.castItemGuid, c.custom.values, c.custom.which, c.custom.alwaysHits,
-                c.triggered, c.playerHandoff, c.custom.by is null ? 0 : c.custom.by.id, pushbacks);
+            const snapshot = snapshotCast(generic);
             encode(state, snapshot);
         }
         writer.put(cast(uint) state.length);
@@ -1635,16 +1694,106 @@ private:
             return;
         CastHandoff snapshot;
         decode(state, snapshot);
+        generic = restoreCast(snapshot);
+        if (generic.active)
+            pushbacks = snapshot.pushbacks;
+    }
+
+    private CastHandoff snapshotCast(const ref Casting c)
+    {
+        return CastHandoff(c.spell.id, map.id, map.instanceId, c.targets, c.timer, c.castTime,
+            c.castItemEntry, c.castItemGuid, c.custom.values, c.custom.which, c.custom.alwaysHits,
+            c.triggered, c.playerHandoff, c.custom.by is null ? 0 : c.custom.by.id, pushbacks);
+    }
+
+    private Casting restoreCast(const ref CastHandoff snapshot)
+    {
         const spell = context.spellInfo(snapshot.spell);
         if (spell is null || snapshot.mapId != map.id || snapshot.instance != map.instanceId)
-            return;
-        generic = Casting(spell, snapshot.targets, snapshot.remaining, snapshot.itemEntry, snapshot.triggered, true);
-        generic.castItemGuid = snapshot.itemGuid;
-        generic.castTime = snapshot.total;
-        generic.playerHandoff = snapshot.playerHandoff;
-        generic.custom = CustomValues(snapshot.values, snapshot.which, snapshot.alwaysHits,
+            return Casting.init;
+        auto c = Casting(spell, snapshot.targets, snapshot.remaining, snapshot.itemEntry, snapshot.triggered, true);
+        c.castItemGuid = snapshot.itemGuid;
+        c.castTime = snapshot.total;
+        c.playerHandoff = snapshot.playerHandoff;
+        c.custom = CustomValues(snapshot.values, snapshot.which, snapshot.alwaysHits,
             context.spellInfo(snapshot.triggeredBy));
-        pushbacks = snapshot.pushbacks;
+        return c;
+    }
+
+    private void writeFlightHandoff(ref ByteWriter writer)
+    {
+        import dmangos.plaindata : encode;
+        import std.algorithm.searching : canFind;
+
+        ubyte[] bytes;
+        if (pendingHits.length || missileSpends.length || chargedModsUsed.length)
+        {
+            FlightHandoff state;
+            state.mapId = map.id;
+            state.instance = map.instanceId;
+            const now = context.transportNow();
+            foreach (ref hit; pendingHits)
+            {
+                auto saved = MissileHandoff(snapshotCast(hit.casting), now + cast(uint) hit.left, hit.bounce,
+                    hit.target, cast(ubyte) hit.effect, hit.casting.persistentDone, hit.casting.gameObjectOrigin);
+                foreach (target, mask; hit.casting.auraEffects)
+                    saved.auraEffects ~= MissileHandoff.AuraMask(target, mask);
+                state.hits ~= saved;
+            }
+            foreach (ref m; missileSpends)
+            {
+                auto saved = FlightHandoff.Spend(m.spell.id, m.triggered, null);
+                foreach (aura; m.hadAtStart)
+                    if (player.auras.list.canFind!(present => present is aura))
+                        saved.auras ~= AuraIdentity(aura.spell.id, aura.caster);
+                state.spends ~= saved;
+            }
+            foreach (ref used; chargedModsUsed)
+                if (player.auras.list.canFind!(present => present is used.aura))
+                    state.used ~= FlightHandoff.Used(used.spell, AuraIdentity(used.aura.spell.id, used.aura.caster));
+            encode(bytes, state);
+        }
+        writer.put(cast(uint) bytes.length);
+        writer.putBytes(bytes);
+    }
+
+    private void readFlightHandoff(ref ByteReader reader)
+    {
+        import dmangos.plaindata : decode;
+
+        auto bytes = reader.readBytes(reader.read!uint);
+        if (!bytes.length)
+            return;
+        FlightHandoff state;
+        decode(bytes, state);
+        if (state.mapId != map.id || state.instance != map.instanceId)
+            return;
+        const now = context.transportNow();
+        foreach (ref saved; state.hits)
+        {
+            auto c = restoreCast(saved.cast_);
+            if (c.spell is null || saved.effect >= c.spell.effect.length)
+                continue;
+            c.active = false;
+            c.persistentDone = saved.persistentDone;
+            c.gameObjectOrigin = saved.gameObjectOrigin;
+            foreach (ref aura; saved.auraEffects)
+                c.auraEffects[aura.target] = aura.mask;
+            const remaining = cast(int)(saved.deadline - now);
+            pendingHits ~= PendingHit(c.spell, saved.effect, saved.target, c, remaining, saved.bounce);
+        }
+        foreach (ref saved; state.spends)
+            if (const spell = context.spellInfo(saved.spell))
+            {
+                Aura[] held;
+                foreach (ref identity; saved.auras)
+                    if (auto aura = player.auras.find(identity.spell, identity.caster))
+                        held ~= aura;
+                missileSpends ~= MissileSpend(spell, held, saved.triggered);
+            }
+        foreach (ref used; state.used)
+            if (auto aura = player.auras.find(used.aura.spell, used.aura.caster))
+                chargedModsUsed ~= ChargedModUse(aura, used.forSpell);
     }
 
     /// A spell waiting for the next main-hand swing is cast
@@ -2589,7 +2738,7 @@ private:
                     const flight = namedDestination && namedCreatureShape(*spell, i) == namedShape
                         ? flightTimeTo(spell, namedCenter) : flightTime(spell, target);
                     if (flight > 0)
-                        pendingHits ~= PendingHit(spell, i, target, c, flight);
+                        pendingHits ~= PendingHit(spell, i, target, c, flight, bounceOf.get(target, 0));
                     else
                         doEffect(spell, i, target, c, bounceOf.get(target, 0));
                 }
@@ -2787,7 +2936,7 @@ private:
         auto me = Caster.of(this);
         hit.casterLevel = player.data.level;
         hit.hitBonus = spellHitBonusOf(spell);
-        hit.alwaysHits = c.custom.alwaysHits;
+        hit.alwaysHits = hit.playerProjectile || c.custom.alwaysHits;
         const damage = spell.effect[i] == SpellEffect.schoolDamage;
         if (damage)
             rollAreaDamage(spell, c, remote);

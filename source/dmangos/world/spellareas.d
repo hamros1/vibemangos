@@ -597,7 +597,7 @@ unittest
     assert(migrated.values.get!UNIT_FIELD_HEALTH == startingHealth - 10, "handoff keeps damage already applied");
     foreach (_; 0 .. 2)
         oldOwner.areaDamageArrived(casterNode.nodeId, requests[1]);
-    assert(replies.length == 2 && replies[1].groundRedirect == casterNode.nodeId);
+    assert(replies.length == 2 && replies[1].redirectOwner == casterNode.nodeId);
     foreach (_; 0 .. 2)
         casterNode.areaDamageArrived(oldOwner.nodeId, replies[1]);
     assert(migrated.values.get!UNIT_FIELD_HEALTH == startingHealth - 20, "the in-flight tick follows its victim exactly once");

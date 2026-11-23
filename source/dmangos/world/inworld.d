@@ -370,6 +370,7 @@ private:
         context.writeReplicaImpacts(player.guid, w);
         writeChannelAndGroundHandoff(w);
         writeCastHandoff(w);
+        writeFlightHandoff(w);
         writeEnvironmentHandoff(w);
         writeRemoteLootHandoff(w);
         writeQuestOffer(w);
@@ -513,6 +514,7 @@ private:
         loadSocial();
         refreshGuildFields();
         applyPassiveSpells();
+        readFlightHandoff(r);
         resetMovementCheck();
         readEnvironmentHandoff(r);
         readRemoteLootHandoff(r);

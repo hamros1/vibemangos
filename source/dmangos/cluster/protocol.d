@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 91; // 91: carry live battleground copies with their maps
+enum ushort protocolVersion = 92; // 92: preserve player projectiles and route launched direct missiles
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -223,7 +223,8 @@ struct AreaDamage
     bool channelled;   /// a player started a channel on its own node
     bool channelUpdate; /// shorten (positive auraMs), cancel (zero), or complete (completedChannel)
     bool groundTick; /// a tick of a persistent effect centered on the spot, independent of the caster's position
-    ushort groundRedirect; /// reply: new target owner; request: previous owner already declined the tick
+    bool playerProjectile; /// a direct spell whose target was local when it was launched
+    ushort redirectOwner; /// reply: new target owner; request: previous owner already declined the impact
     uint groundAmount; /// before the caster's and recipient's damage factors, for a tick redirected here
     float facing;      /// the creature's orientation at completion
     bool auraAbsent; /// the caster asked to apply this aura only if it is absent
@@ -1261,7 +1262,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 91, recordedFingerprint = 0xde67f0a3bbbc0422UL;
+private enum recordedVersion = 92, recordedFingerprint = 0xe80d670280fcd81bUL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

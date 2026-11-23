@@ -636,6 +636,99 @@ unittest
     }
 }
 
+/// A real Frostbolt fired at a local target survives clean caster and target handoffs.
+unittest
+{
+    import dmangos.cluster.protocol : AreaDamage;
+    import dmangos.cluster.regions : CellRect, Region, RegionState;
+    import dmangos.world.classspells : CustomValues;
+    import dmangos.world.creature : TempSpawnType;
+    import dmangos.world.grid : cellCoordinate, cellKeyAt;
+    import dmangos.world.inworld : ArrivalAction;
+    import dmangos.world.replication : encodePlayerState, encodeState;
+    import dmangos.world.updatefields : UNIT_FIELD_HEALTH, UNIT_FIELD_MAXHEALTH;
+
+    if (!haveRealData())
+        return;
+
+    enum Handoff { both, target, redirected }
+    foreach (path; [Handoff.both, Handoff.target, Handoff.redirected])
+    {
+        auto source = RealWorld.make(), owner = RealWorld.make();
+        owner.context.database = source.db;
+        auto relay = new TestPlayerRelay(source.context, owner.context);
+        owner.context.clock = () => source.now;
+        enum uint frostbolt = 116;
+        auto client = source.character(7, "Jaina", classMageId, 60, [frostbolt]);
+        auto caster = client.session.inWorld;
+        caster.player.movement.position.orientation = 0;
+        auto at = caster.player.position;
+        at.x += 18;
+        auto from = source.context.map(0), to = owner.context.map(0);
+        auto target = source.context.summonCreature(from, 6, at, TempSpawnType.manual, 0, 0);
+        const guid = target.guid;
+        target.values.set!UNIT_FIELD_MAXHEALTH(1000u);
+        target.values.set!UNIT_FIELD_HEALTH(1000u);
+        const spell = source.context.spellInfo(frostbolt);
+        const flight = cast(int)(18_000 / spell.casting.speed);
+        const castResult = caster.castCustom(frostbolt, guid, CustomValues(alwaysHits: true));
+        assert(flight > 100 && castResult == SpellCastResult.ok && caster.missileOnTheWay(spell, guid));
+        client.session.update((flight / 2).msecs);
+
+        const x = cellCoordinate(at.x), y = cellCoordinate(at.y), home = cellKeyAt(at.x, at.y);
+        const region = Region(8, 0, CellRect(x, y, x + 1, y + 1), 2, 1, RegionState.granted);
+        const bundle = from.migrateOut(cell => cell == home, 2, &source.context.saveMigrant);
+        ubyte[][uint] unused;
+        owner.context.regionsChanged([region], null, [region.id: bundle], unused);
+        auto spellSession = client.session;
+        auto receiver = to.creatureAt(guid);
+        assert(receiver !is null && receiver.values.get!UNIT_FIELD_HEALTH == 1000);
+        if (path == Handoff.both)
+        {
+            assert(caster.actAtReplica(guid, ArrivalAction.init));
+            spellSession = relay.remote;
+            assert(spellSession !is null && spellSession.inWorld.missileOnTheWay(spell, guid));
+        }
+        else
+        {
+            const origin = caster.player.position;
+            to.replicaCreated(1, cellKeyAt(origin.x, origin.y), caster.player.guid, encodePlayerState(caster.player, 0));
+            WorldContext formerOwner;
+            if (path == Handoff.redirected)
+            {
+                formerOwner = RealWorld.make().context;
+                formerOwner.nodeId = 3;
+                const view = encodeState(receiver, 0);
+                from.replicaCreated(3, home, guid, view);
+                formerOwner.map(0).replicaCreated(2, home, guid, view);
+                formerOwner.sendAreaDamage = (ushort peer, const ref AreaDamage reply) {
+                    assert(peer == 1 && reply.reply && reply.redirectOwner == 2);
+                    source.context.areaDamageArrived(3, reply);
+                    return true;
+                };
+            }
+            source.context.sendAreaDamage = (ushort peer, const ref AreaDamage hit) {
+                assert(hit.playerProjectile && hit.target == guid);
+                if (peer == 3 && formerOwner !is null)
+                    formerOwner.areaDamageArrived(1, hit);
+                else
+                {
+                    assert(peer == 2);
+                    owner.context.areaDamageArrived(1, hit);
+                }
+                return true;
+            };
+        }
+        spellSession.update((flight - flight / 2 - 25).msecs);
+        assert(receiver.values.get!UNIT_FIELD_HEALTH == 1000);
+        spellSession.update(50.msecs);
+        const after = receiver.values.get!UNIT_FIELD_HEALTH;
+        assert(after < 1000 && receiver.auras.find(frostbolt, 7) !is null);
+        spellSession.update(2.seconds);
+        assert(receiver.values.get!UNIT_FIELD_HEALTH == after, "the same projectile cannot land twice");
+    }
+}
+
 /// The technician's unmodified EventAI row selects a wounded mechanical ally across a region boundary.
 unittest
 {
