@@ -370,6 +370,30 @@ struct PvpStatsPlayer
     uint[5] attr;
 }
 
+struct BattlegroundReputation
+{
+    uint faction;
+    int amount;
+}
+
+/// Earned when the result becomes durable. The key is scoped to the recipient's home database.
+struct BattlegroundReward
+{
+    uint realm, match, player;
+    uint markSpell, honor, honorDay;
+    BattlegroundReputation[] reputation;
+}
+
+/// The prepared writes for one reward. These are applied together with its receipt.
+struct BattlegroundPayment
+{
+    uint money, playerBytes;
+    ItemChange[] inventory;
+    ItemRecord mailedItem;
+    MailRecord mail;
+    ReputationRecord[] reputation;
+}
+
 /// What `loadHonor` gives.
 struct HonorRecord
 {
@@ -966,6 +990,10 @@ interface WorldDatabase
     @DatabaseWrite bool saveServiceCheckpoint(ServiceKind kind, uint realm, const ref ServiceCheckpoint checkpoint);
     @DatabaseRead BattlegroundCheckpoint[] loadBattlegroundCheckpoints(uint realm, uint map, long since);
     @DatabaseWrite bool saveBattlegroundCheckpoint(uint realm, uint map, const ref BattlegroundCheckpoint checkpoint);
+    @DatabaseWrite bool publishBattlegroundResult(uint realm, uint match, const PvpStatsBattleground result,
+        const(PvpStatsPlayer)[] scores, const(BattlegroundReward)[] rewards, bool keepStatistics);
+    @DatabaseRead BattlegroundReward[] pendingBattlegroundRewards();
+    @DatabaseWrite bool payBattlegroundReward(const ref BattlegroundReward reward, const ref BattlegroundPayment payment);
 }
 
 /// The world tables `.lookup` searches.
@@ -1420,6 +1448,22 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     {
         return statements.saveBattlegroundCheckpoint(realm, map, checkpoint);
     }
+
+    bool publishBattlegroundResult(uint realm, uint match, const PvpStatsBattleground result,
+        const(PvpStatsPlayer)[] scores, const(BattlegroundReward)[] rewards, bool keepStatistics)
+    {
+        return statements.publishBattlegroundResult(realm, match, result, scores, rewards, keepStatistics);
+    }
+
+    BattlegroundReward[] pendingBattlegroundRewards()
+    {
+        return statements.pendingBattlegroundRewards();
+    }
+
+    bool payBattlegroundReward(const ref BattlegroundReward reward, const ref BattlegroundPayment payment)
+    {
+        return statements.payBattlegroundReward(reward, payment);
+    }
     void saveAccountData(bool perCharacter, uint owner, uint type, long time, const(ubyte)[] data)
     {
         statements.saveAccountData(perCharacter, owner, type, time, data);
@@ -1778,9 +1822,11 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
     private BattlegroundCheckpoint[uint][uint][uint] battlegroundCheckpoints;
     BattlegroundCheckpoint[] loadBattlegroundCheckpoints(uint realm, uint map, long since)
     {
+        import std.algorithm.searching : startsWith;
+
         BattlegroundCheckpoint[] rows;
         foreach (row; battlegroundCheckpoints.get(realm, null).get(map, null))
-            if (row.at >= since && row.state.length)
+            if (row.state.length && (row.at >= since || row.state.startsWith("F:")))
                 rows ~= row;
         return rows;
     }
@@ -1791,6 +1837,43 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
             return false;
         (*refRows)[checkpoint.instance] = checkpoint;
         ++(*refRows)[checkpoint.instance].revision;
+        return true;
+    }
+
+    private bool[uint[2]] publishedBattlegroundResults;
+    private BattlegroundReward[uint[3]] battlegroundRewards;
+
+    bool publishBattlegroundResult(uint realm, uint match, const PvpStatsBattleground result,
+        const(PvpStatsPlayer)[] scores, const(BattlegroundReward)[] rewards, bool keepStatistics)
+    {
+        const uint[2] key = [realm, match];
+        if (key in publishedBattlegroundResults)
+            return true;
+        publishedBattlegroundResults[key] = true;
+        foreach (ref reward; rewards)
+            battlegroundRewards[[realm, match, reward.player]] = cast(BattlegroundReward) reward;
+        if (keepStatistics)
+            savePvpStats(result, scores);
+        return true;
+    }
+
+    BattlegroundReward[] pendingBattlegroundRewards() { return battlegroundRewards.values; }
+
+    bool payBattlegroundReward(const ref BattlegroundReward reward, const ref BattlegroundPayment payment)
+    {
+        if (!battlegroundRewards.remove([reward.realm, reward.match, reward.player]))
+            return false;
+        if (payment.inventory.length)
+            saveInventory(reward.player, payment.money, payment.playerBytes, payment.inventory);
+        if (payment.mail.id)
+        {
+            saveLooseItem(payment.mailedItem, reward.player);
+            sendMail(payment.mail);
+        }
+        saveReputation(reward.player, payment.reputation);
+        if (reward.honor)
+            saveHonor(reward.player, loadHonor(reward.player).columns,
+                [HonorPointRecord(0, reward.player, reward.honor, reward.honorDay, 1)]);
         return true;
     }
     bool[ushort] gameEventStatusRows;

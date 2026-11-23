@@ -367,10 +367,11 @@ final class AlteracRules : BattlegroundRules
         case npcVanndar, npcDrekThar:
             const winner = entry == npcVanndar ? ownerHorde : ownerAlliance;
             copy.castOnTeam(spellGeneralDead, winner);
-            copy.rewardReputationToTeam(factions[winner], repBoss[weekend], winner);
-            copy.rewardHonorToTeam(honorBoss, winner);
             copy.message(stringGeneralDead[1 - winner], ChatType.CHAT_MSG_BG_SYSTEM_NEUTRAL);
-            copy.end(winner == ownerAlliance ? winnerAlliance : winnerHorde);
+            copy.end(winner == ownerAlliance ? winnerAlliance : winnerHorde, {
+                copy.rewardReputationToTeam(factions[winner], repBoss[weekend], winner);
+                copy.rewardHonorToTeam(honorBoss, winner);
+            });
             return;
         case npcCaptainStonehearth, npcCaptainGalvangar:
             const loser = entry == npcCaptainStonehearth ? ownerAlliance : ownerHorde, winner = cast(ubyte)(1 - loser);
@@ -825,7 +826,7 @@ unittest
     context = newCreationContext(db);
     now += 1.minutes;
     context.clock = () => now;
-    context.restoreBattleground(mapId, instance, snapshot, true);
+    context.restoreBattleground(mapId, instance, snapshot);
     copy = context.battlegrounds.find(instance);
     rules = cast(AlteracRules) copy.rules;
     rules.alive = (ulong) => true;

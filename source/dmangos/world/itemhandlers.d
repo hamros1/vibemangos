@@ -96,7 +96,7 @@ private:
      */
     void flushInventory(bool moneyChanged = false,
         const imported!"dmangos.world.database".InstanceChestRecord chest = imported!"dmangos.world.database".InstanceChestRecord.init,
-        const LootAwardKey award = LootAwardKey.init)
+        const LootAwardKey award = LootAwardKey.init, bool alreadySaved = false)
     {
         if (inventory.equipmentChanged)
         {
@@ -123,7 +123,7 @@ private:
         else if (award.token)
             context.database.saveLootAward(award, 0, context.unixTime, player.money.amount, player.values[PLAYER_BYTES_2],
                 changes);
-        else if (changes.length || moneyChanged)
+        else if (!alreadySaved && (changes.length || moneyChanged))
             context.database.saveInventory(player.data.guid, player.money.amount, player.values[PLAYER_BYTES_2], changes);
         mailItemsAway();
     }

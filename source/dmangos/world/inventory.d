@@ -2098,7 +2098,7 @@ private:
     }
 
     /// Bound when picked up, a quest item, or a bind-on-equip bag put in a bag slot.
-    static bool bindsWhenStored(const(ItemTemplate)* proto, ushort pos)
+    package static bool bindsWhenStored(const(ItemTemplate)* proto, ushort pos)
     {
         return proto.bonding == bindWhenPickedUp || proto.bonding == bindQuestItem
             || (proto.bonding == bindWhenEquipped && isBagPos(pos));

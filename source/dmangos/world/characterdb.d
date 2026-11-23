@@ -23,7 +23,7 @@ import dmangos.world.playercreate : NewCharacter, NewSkill, NewSpell, maxEnchant
 import dmangos.world.database : AuraRecord, TicketRecord, BattlegroundData, PvpStatsBattleground, PvpStatsPlayer, HonorColumns, HonorPointRecord, HonorRecord, CooldownRecord, PetRecord, PetSpellRecord, GuildEventRecord, GuildMemberRecord, GuildRankRecord, GuildRecord,
     PetitionRecord, SocialRow, CorpseRecord, InstanceBindRecord, InstanceRecord, InstanceRecords,
     InstanceRespawnRecord, MailRecord, ServiceCheckpoint, GroupLootRotation, LootCoinCredit, LootCoinRedemption,
-    LootAwardKey, LootAwardResult, BattlegroundCheckpoint;
+    LootAwardKey, LootAwardResult, BattlegroundCheckpoint, BattlegroundReward, BattlegroundPayment;
 import dmangos.world.reputation : ReputationRecord;
 import dmangos.world.auctionhouse : AuctionRecord;
 import dmangos.world.quests : QuestState, QuestStatus;
@@ -1474,7 +1474,7 @@ final class CharacterStatements
         prepareBattlegroundCheckpoints();
         BattlegroundCheckpoint[] matches;
         foreach (row; characters.query!"SELECT instance, revision, saved_at, state FROM dmangos_bg_match_checkpoint
-            WHERE realm = ? AND map = ? AND saved_at >= ? AND state <> ''"(realm, map, since))
+            WHERE realm = ? AND map = ? AND state <> '' AND (saved_at >= ? OR state LIKE 'F:%')"(realm, map, since))
             matches ~= BattlegroundCheckpoint(row.get!uint(0), row.get!ulong(1), row.get!long(2), row.get!string(3));
         return matches;
     }
@@ -1490,6 +1490,98 @@ final class CharacterStatements
             SET revision = revision + 1, saved_at = ?, state = ?
             WHERE realm = ? AND map = ? AND instance = ? AND revision = ?"(
                 checkpoint.at, checkpoint.state, realm, map, checkpoint.instance, checkpoint.revision) == 1;
+    }
+
+    private bool battlegroundRewardsReady;
+
+    private void prepareBattlegroundRewards()
+    {
+        if (battlegroundRewardsReady)
+            return;
+        characters.execute!"CREATE TABLE IF NOT EXISTS dmangos_bg_result (
+            realm INT UNSIGNED NOT NULL, instance INT UNSIGNED NOT NULL,
+            winner TINYINT UNSIGNED NOT NULL, bracket TINYINT UNSIGNED NOT NULL, type TINYINT UNSIGNED NOT NULL,
+            scores LONGTEXT NOT NULL, PRIMARY KEY (realm, instance)) ENGINE=InnoDB"();
+        characters.execute!"CREATE TABLE IF NOT EXISTS dmangos_bg_reward (
+            realm INT UNSIGNED NOT NULL, instance INT UNSIGNED NOT NULL, player INT UNSIGNED NOT NULL,
+            reward TEXT NOT NULL, paid BOOLEAN NOT NULL DEFAULT FALSE,
+            PRIMARY KEY (realm, instance, player), KEY pending (paid, player)) ENGINE=InnoDB"();
+        battlegroundRewardsReady = true;
+    }
+
+    private static string encodeBattleResult(T)(T value)
+    {
+        import dmangos.bytes : ByteWriter;
+        import dmangos.world.battlegroundstate : BattlegroundState;
+        import std.base64 : Base64;
+
+        ByteWriter bytes;
+        auto writer = BattlegroundState(writer: &bytes);
+        writer.transfer(value);
+        return Base64.encode(bytes.data).idup;
+    }
+
+    bool publishBattlegroundResult(uint realm, uint match, const PvpStatsBattleground result,
+        const(PvpStatsPlayer)[] scores, const(BattlegroundReward)[] rewards, bool keepStatistics)
+    {
+        prepareBattlegroundRewards();
+        const encodedScores = encodeBattleResult(scores.dup);
+        characters.transaction({
+            if (!characters.execute!"INSERT IGNORE INTO dmangos_bg_result
+                (realm, instance, winner, bracket, type, scores) VALUES (?, ?, ?, ?, ?, ?)"(
+                    realm, match, result.winner, result.bracket, result.type, encodedScores))
+                return;
+            foreach (ref reward; rewards)
+                characters.execute!"INSERT INTO dmangos_bg_reward (realm, instance, player, reward)
+                    VALUES (?, ?, ?, ?)"(realm, match, reward.player, encodeBattleResult(cast(BattlegroundReward) reward));
+            if (keepStatistics)
+                savePvpStats(result, scores);
+        });
+        return true;
+    }
+
+    BattlegroundReward[] pendingBattlegroundRewards()
+    {
+        import dmangos.bytes : ByteReader;
+        import dmangos.world.battlegroundstate : BattlegroundState;
+        import std.base64 : Base64;
+
+        prepareBattlegroundRewards();
+        BattlegroundReward[] pending;
+        foreach (row; characters.query!"SELECT reward FROM dmangos_bg_reward WHERE paid = FALSE ORDER BY realm, instance"())
+        {
+            auto bytes = ByteReader(Base64.decode(row.get!string(0)));
+            auto reader = BattlegroundState(reader: &bytes);
+            BattlegroundReward reward;
+            reader.transfer(reward);
+            pending ~= reward;
+        }
+        return pending;
+    }
+
+    bool payBattlegroundReward(const ref BattlegroundReward reward, const ref BattlegroundPayment payment)
+    {
+        prepareBattlegroundRewards();
+        bool applied;
+        characters.transaction({
+            if (!characters.execute!"UPDATE dmangos_bg_reward SET paid = TRUE
+                WHERE realm = ? AND instance = ? AND player = ? AND paid = FALSE"(
+                    reward.realm, reward.match, reward.player))
+                return;
+            applied = true; // also true if a retry finds that the first COMMIT took effect
+            if (payment.inventory.length)
+                saveInventory(reward.player, payment.money, payment.playerBytes, payment.inventory);
+            if (payment.mail.id)
+            {
+                saveLooseItem(payment.mailedItem, reward.player);
+                sendMailRecord(payment.mail);
+            }
+            saveReputation(reward.player, payment.reputation);
+            if (reward.honor)
+                characters.execute!"INSERT INTO character_honor_cp (guid, victim_type, victim, honor, date, type)
+                    VALUES (?, 0, ?, ?, ?, 1)"(reward.player, reward.player, float(reward.honor), reward.honorDay);
+        });
+        return applied;
     }
 
     /// See `WorldDatabase.charactersFor`.

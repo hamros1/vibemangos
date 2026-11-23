@@ -439,8 +439,11 @@ Match checkpoints record objective changes before the worker sends its response 
 operation. The worker also saves every two seconds while a copy is running. The countdown and
 objective timers pause at the checkpoint during recovery. Player positions and combat state still
 recover from each character's last durable save. The replacement closes copies whose checkpoints
-are missing, unreadable, retired, or older than two minutes. The match is retired before final
-rewards are issued so a replacement cannot pay them out again.
+are missing, unreadable, retired, or older than two minutes. Unpublished results stay eligible for
+recovery past that cutoff. The standby can restore the final scoreboard during the post-match window.
+Each home database commits the character's marks, honor, and reputation together with a payout receipt.
+The current character owner can deliver a pending reward after recovery or on a later login. Marks
+that exceed available bag space arrive by mail.
 
 ## State shared across nodes
 
@@ -919,6 +922,7 @@ python3 tools/harness/battleground_recovery.py
 python3 tools/harness/battleground_recovery.py --cross-realm
 python3 tools/harness/battleground_recovery.py --map arathi
 python3 tools/harness/battleground_recovery.py --map alterac
+python3 tools/harness/battleground_recovery.py --map alterac --cross-realm --finish-phase during
 ```
 
 Both map options also accept `--cross-realm`. The Arathi Basin test checks the resource score,

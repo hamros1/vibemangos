@@ -507,6 +507,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     bool delegate(ushort, const ref QuestLootCheck) sendQuestLootCheck;
     private ulong gameplaySequence;
     private MonoTime nextLootCoinPoll;
+    private MonoTime nextBattlegroundRewardPoll;
     private bool[uint] retryLootCoinRedemption;
 
     ulong nextGameplaySequence()
@@ -723,6 +724,25 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             retryLootCoinRedemption[guid] = true;
             warning!"could not redeem group coins for character %s: %s"(guid, error.msg);
         }
+    }
+
+    private void pollBattlegroundRewards(MonoTime now)
+    {
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
+
+        if (!battlegrounds.durable || !online.length || now < nextBattlegroundRewardPoll || !canWrite())
+            return;
+        nextBattlegroundRewardPoll = now + 1.seconds;
+        try
+        {
+            foreach (ref reward; database.pendingBattlegroundRewards())
+                if (auto who = onlinePlayer(playerGuid(reward.player)))
+                    if (who.player !is null && !who.transferring)
+                        who.payBattlegroundReward(reward);
+        }
+        catch (DatabaseException error)
+            warning!"could not deliver battleground rewards: %s"(error.msg);
     }
 
     private void pollLootCoinCredits(MonoTime now)
@@ -4764,7 +4784,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         });
         ByteWriter w, match;
         auto state = BattlegroundState(clock(), writer: &match);
-        copy.transferState(state);
+        copy.transferState(state, durableSnapshot: true);
         w.put(cast(uint) match.length);
         w.putBytes(match.data);
         w.put(cast(uint) bundle.length);
@@ -4777,7 +4797,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return w.data;
     }
 
-    package void restoreBattleground(uint mapId, uint id, const(ubyte)[] bytes, bool includesPowerUps)
+    package void restoreBattleground(uint mapId, uint id, const(ubyte)[] bytes, uint formatVersion = 3)
     {
         import dmangos.world.battlegroundstate : BattlegroundState;
 
@@ -4787,7 +4807,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         auto stored = InstanceState(mapId, 0, unixTime);
         auto state = BattlegroundState(clock(), reader: &r);
         state.transfer(stored.dead, stored.usedUp);
-        auto copy = battlegrounds.restore(id, battlegroundOfMap(mapId), match, includesPowerUps);
+        auto copy = battlegrounds.restore(id, battlegroundOfMap(mapId), match, formatVersion);
         instances[id] = stored;
         restoreDungeonCopy(mapId, id, bundle);
         restoreDungeonScriptRuns(mapId, r);
@@ -8941,6 +8961,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         checkHonorWeek(now);
         services.tick(elapsed);
         pollLootCoinCredits(now);
+        pollBattlegroundRewards(now);
         worldPvp.tick(elapsed);
         if (battlegroup is null || battlegroup.host is this) battlegrounds.tick(elapsed);
         landObjectAnimations(now);

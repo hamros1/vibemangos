@@ -22,7 +22,7 @@ MAPS = {
 }
 
 
-def run(fixture, cross_realm=False, battleground="warsong"):
+def run(fixture, cross_realm=False, battleground="warsong", finish_phase=None):
     map_id, type_name, masters = MAPS[battleground]
     login = fixture.fresh_schema("login", "classicrealmd.sql")
     databases = [fixture.fresh_schema("chars1", "classiccharacters.sql")]
@@ -43,6 +43,8 @@ def run(fixture, cross_realm=False, battleground="warsong"):
             tag = f"realm{i+1}-node{node}"
             config = dict(fixture.base, realm_id=i+1, login_database=login, character_database=database, idle_timeout=360,
                           port=ports[8*i+node-1], bind_address="127.0.0.1", write_log=tag+".writes")
+            if finish_phase:
+                config["battleground_score_statistics"] = True
             config["cluster"] = dict(name="battle-recovery", node_id=node, listen_address="127.0.0.1",
                                      listen_port=ports[8*i+3+node], voters=roster, gateway=node == 4)
             if node != 4:
@@ -103,6 +105,18 @@ def run(fixture, cross_realm=False, battleground="warsong"):
                                 f"WHERE id={masters[side]} AND map=0 LIMIT 1", world_db).split()
         fixture.query(f"UPDATE characters SET level=60,map=0,position_x={x},position_y={y},position_z={z} "
                       f"WHERE name='{name}'", databases[side if cross_realm else 0])
+        if finish_phase == "after" and side == 1:
+            db = databases[side if cross_realm else 0]
+            player = int(fixture.query(f"SELECT guid FROM characters WHERE name='{name}'", db))
+            occupied = set(map(int, fixture.query(
+                f"SELECT slot FROM character_inventory WHERE guid={player} AND bag=0", db).split()))
+            for slot in range(23, 39):
+                if slot not in occupied:
+                    item = 900000 + slot
+                    fixture.query("INSERT INTO item_instance (guid,owner_guid,itemEntry,charges,enchantments) VALUES "
+                                  f"({item},{player},4540,'0 0 0 0 0',''); "
+                                  "INSERT INTO character_inventory (guid,bag,slot,item,item_template) VALUES "
+                                  f"({player},0,{slot},{item},4540)", db)
 
     def port_to(table, entry):
         x, y, z = fixture.query(f"SELECT position_x,position_y,position_z FROM {table} "
@@ -113,6 +127,7 @@ def run(fixture, cross_realm=False, battleground="warsong"):
         ("join", "force", "accept", "play", "next-objective", "resume", "finish"))
     before_crash = [[], []]
     after_crash = [[], []]
+    win_match = fixture.directory / "win-match"
     drop = battleground == "warsong" and cross_realm
     if battleground == "warsong":
         flag_room = port_to("gameobject", 179831)
@@ -139,6 +154,9 @@ def run(fixture, cross_realm=False, battleground="warsong"):
         after_crash[0] = ["bgstatus", "pvplog:scores", port_to("creature", 13078)]
         after_crash[1] = ["bgstatus", "pvplog:scores", f"waitfile:{next_objective}",
                           tower, "usego:178940", "pvplog:scores"]
+        if finish_phase:
+            before_crash[0] += [f"waitfile:{win_match}", port_to("creature", 11946), "targetnpc:11946", "cmd:.kill"]
+            after_crash = [["pvplog:scores"], ["pvplog:scores"]]
     if not after_crash[1]:
         after_crash[1] = ["bgstatus", "pvplog:scores"]
     battle = []
@@ -198,9 +216,36 @@ def run(fixture, cross_realm=False, battleground="warsong"):
         assert fixture.query(f"SELECT COUNT(*) FROM creature_respawn WHERE instance={instance}", databases[0]) == "0"
         expected = {1358: 1, 1360: 0, 1390: 1, 1385: 0}
     revision_sql = f"SELECT revision FROM dmangos_bg_match_checkpoint WHERE realm=1 AND instance={instance} AND state <> ''"
+    blocked_connection = None
+    if finish_phase:
+        first = databases[0]
+        if finish_phase != "after":
+            event = ("BEFORE INSERT ON dmangos_bg_result" if finish_phase == "before"
+                     else "BEFORE INSERT ON character_honor_cp")
+            fixture.query(f"CREATE TRIGGER bg_finish_hold {event} FOR EACH ROW SET @bg_finish_hold = SLEEP(60)", first)
+        win_match.touch()
+        if finish_phase == "after":
+            wait_for("both reward transactions to commit",
+                     lambda: all(fixture.query(f"SELECT COUNT(*) FROM dmangos_bg_reward WHERE instance={instance} "
+                                                "AND paid=TRUE", db) == str(1 if cross_realm else 2) for db in databases), 20)
+        else:
+            schema = first.rsplit(";", 1)[-1]
+            blocked_connection = wait_for("the worker to reach the intended transaction",
+                lambda: fixture.query("SELECT ID FROM information_schema.PROCESSLIST "
+                                      f"WHERE DB='{schema}' AND STATE='User sleep'"), 20)
+            assert blocked_connection.isdecimal()
+            assert fixture.query(f"SELECT COUNT(*) FROM dmangos_bg_reward WHERE instance={instance} AND paid=TRUE",
+                                 first) == "0"
+            if finish_phase == "before":
+                assert fixture.query(f"SELECT LEFT(state, 2) FROM dmangos_bg_match_checkpoint WHERE instance={instance}",
+                                     first) == "F:"
     revision = int(fixture.query(revision_sql, databases[0]))
     workers[host][1].send_signal(signal.SIGKILL)
     assert workers[host][1].wait(timeout=10) == -signal.SIGKILL
+    if blocked_connection:
+        if fixture.query(f"SELECT ID FROM information_schema.PROCESSLIST WHERE ID={blocked_connection}"):
+            fixture.query(f"KILL CONNECTION {blocked_connection}")
+        fixture.query("DROP TRIGGER bg_finish_hold", databases[0])
 
     marker = f"copy {instance} restored on node"
     wait_for("the successor to restore the copy",
@@ -218,7 +263,37 @@ def run(fixture, cross_realm=False, battleground="warsong"):
         states = ast.literal_eval(log.split(f"[initial battlefield states] {map_id}: ", 1)[1].splitlines()[0])
         assert {key: states.get(key) for key in expected} == expected, log[-4000:]
     resume.touch()
-    if battleground == "warsong":
+    if finish_phase:
+        wait_for("both final scoreboards on the original connections",
+                 lambda: all("[scoreboard] over, winner 1, 2 players" in log for log in recovered()), 16)
+        wait_for("both home databases to pay the reward",
+                 lambda: all(fixture.query(f"SELECT COUNT(*) FROM dmangos_bg_reward WHERE instance={instance} "
+                                            "AND paid=TRUE", db) == str(1 if cross_realm else 2) for db in databases), 20)
+        weekend = "Call to Arms: Alterac Valley!) starts" in fixture.log(workers[host][0])
+        expected_standing = (687, 108) if weekend else (458, 72)
+        expected_honor = (1584, 792) if weekend else (792, 0)
+        for side, name in enumerate(names):
+            db = databases[side if cross_realm else 0]
+            player = fixture.query(f"SELECT guid FROM characters WHERE name='{name}'", db)
+            assert fixture.query(f"SELECT SUM(count) FROM item_instance WHERE owner_guid={player} AND itemEntry=20560",
+                                 db) == ("3" if side == 0 else "1")
+            assert fixture.query(f"SELECT COUNT(*) FROM mail_items WHERE receiver={player} AND item_template=20560",
+                                 db) == ("1" if finish_phase == "after" and side == 1 else "0")
+            faction = 730 if side == 0 else 729
+            standing = int(fixture.query(f"SELECT standing FROM character_reputation WHERE guid={player} AND faction={faction}", db))
+            assert standing == expected_standing[side], standing
+            honor_rows, honor = fixture.query(
+                f"SELECT COUNT(*),IFNULL(SUM(honor),0) FROM character_honor_cp WHERE guid={player} AND victim_type=0",
+                db).split()
+            assert (int(honor_rows), float(honor)) == (int(expected_honor[side] > 0), expected_honor[side])
+            assert fixture.query(f"SELECT COUNT(*) FROM dmangos_bg_result WHERE instance={instance} AND winner=1", db) == "1"
+            assert fixture.query("SELECT COUNT(*) FROM pvpstats_battlegrounds WHERE winner_team=1", db) == "1"
+            logged_score = fixture.query(
+                f"SELECT score_bonus_honor, attr_3, attr_5 FROM pvpstats_players WHERE character_guid={player}", db)
+            saved_score = (expected_honor[side], 1 - side, 1 - side)
+            assert tuple(map(int, logged_score.split())) == saved_score, logged_score
+        result = f"the final scoreboard and one payout to each player, after killing the worker {finish_phase} payout"
+    elif battleground == "warsong":
         def captured_again():
             log = recovered()[0]
             return all(s in log for s in ("objectives=[1, 0]", "objectives=[2, 0]", "[world state] 1581=2"))
@@ -243,7 +318,8 @@ def run(fixture, cross_realm=False, battleground="warsong"):
                  lambda: all(s in recovered()[1] for s in (f"use 178940 ({contested_banner})", "[world state] 1385=1",
                                                            "objectives=[0, 0, 0, 1, 0, 0, 0]")), 15)
         result = "the original mine and tower scores, with Irondeep held and Iceblood Tower contested, then defended the tower"
-    assert all(f"copy {visible_id} in progress" in log for visible_id, log in zip(visible_ids, recovered()))
+    if not finish_phase:
+        assert all(f"copy {visible_id} in progress" in log for visible_id, log in zip(visible_ids, recovered()))
     for side, name in enumerate(names):
         assert fixture.query("SELECT b.instance_id FROM character_battleground_data b "
                              f"JOIN characters c USING (guid) WHERE c.name='{name}'",
@@ -259,6 +335,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--map", choices=MAPS, default="warsong", help="battleground to exercise")
     parser.add_argument("--cross-realm", action="store_true", help="kill the shared battlegroup host and recover on its standby")
+    parser.add_argument("--finish-phase", choices=("before", "during", "after"), help="kill around Alterac's final payout")
     args = parser.parse_args()
+    if args.finish_phase and args.map != "alterac":
+        parser.error("--finish-phase uses --map alterac")
     prefix = "cross-realm" if args.cross_realm else "same-realm"
-    run_test(f"{prefix}-{args.map}-recovery", lambda fixture: run(fixture, args.cross_realm, args.map))
+    suffix = args.finish_phase or "recovery"
+    run_test(f"{prefix}-{args.map}-{suffix}", lambda fixture: run(fixture, args.cross_realm, args.map, args.finish_phase))

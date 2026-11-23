@@ -2,6 +2,8 @@
 /// Home sessions, services, character storage and ordinary maps still belong to their own realm.
 module dmangos.world.battlegroup;
 
+import core.time : seconds;
+
 import dmangos.world.bgqueue : BattlegroundQueue;
 import dmangos.world.context : WorldContext;
 import dmangos.world.group : GroupDirectory, Groups, memberStatus;
@@ -405,7 +407,11 @@ unittest
     assert(match.members.length == 2);
     match.start();
     match.rewardHonorToTeam(2,0);
+    alliance.context.battlegroundMapEpoch = (uint) => 1UL;
+    horde.context.battlegroundMapEpoch = (uint) => 1UL;
     match.end(winnerAlliance);
+    alliance.context.update(alliance.now += 1.seconds);
+    horde.context.update(horde.now += 1.seconds);
     assert(elf.session.inWorld.player.inventory.count(20558) == 3);
     assert(orc.session.inWorld.player.inventory.count(20558) == 1);
     assert(alliance.db.pvpStatsRows.length == 1 && horde.db.pvpStatsRows.length == 1);

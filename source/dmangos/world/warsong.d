@@ -386,9 +386,12 @@ private:
         respawning[other] = true;
         copy.removeAuraOf(who, carriedFlagSpells[other]);
         copy.playSound(soundCaptured[team]);
-        copy.rewardReputationToTeam(reputationFactions[team], copy.weekend ? weekendCaptureReputation : captureReputation,
-            team);
-        copy.rewardHonorToTeam(captureKills, team);
+        void captureReward()
+        {
+            copy.rewardReputationToTeam(reputationFactions[team],
+                copy.weekend ? weekendCaptureReputation : captureReputation, team);
+            copy.rewardHonorToTeam(captureKills, team);
+        }
         const captures = copy.worldStates.get(captureStates[team], 0) + 1;
         copy.setWorldState(captureStates[team], captures);
         copy.setWorldState(flagStates[team], flagOnBase);
@@ -405,10 +408,13 @@ private:
                 copy.setWorldState(hudStates[side], iconInvisible);
             }
             respawning = [false, false];
-            copy.end(Battleground.winnerOf(team));
+            copy.end(Battleground.winnerOf(team), &captureReward);
         }
         else
+        {
+            captureReward();
             respawnLeft[other] = flagRespawnTime;
+        }
     }
 
     /// `RespawnFlagAtBase`: side `side`'s flag at its base again (after a capture: both flags, said aloud).

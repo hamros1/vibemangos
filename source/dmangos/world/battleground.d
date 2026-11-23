@@ -18,6 +18,7 @@ import core.time : Duration, MonoTime, minutes, msecs, seconds;
 import dmangos.bytes : ByteReader, ByteWriter;
 import dmangos.world.bgqueue;
 import dmangos.world.characterdb : NameInfo;
+import dmangos.world.database : BattlegroundReward, PvpStatsBattleground, PvpStatsPlayer;
 import dmangos.world.context : WorldContext;
 import dmangos.world.gameobject : GameObject;
 import dmangos.world.map : Map, MapObject;
@@ -305,6 +306,15 @@ final class Battleground
         MonoTime nextCheckpoint;
         bool endingPending;
         ubyte pendingWinner;
+        bool collectingFinalRewards;
+        bool finalPublicationPending;
+        ubyte finalBracket;
+        struct FinalPlayer
+        {
+            PvpStatsPlayer score;
+            BattlegroundReward reward;
+        }
+        FinalPlayer[ulong] finalPlayers;
         struct PowerUp
         {
             uint spawn;
@@ -314,14 +324,21 @@ final class Battleground
     }
 
     package void transferState(ref imported!"dmangos.world.battlegroundstate".BattlegroundState state,
-        bool includesPowerUps = true)
+        uint formatVersion = 3, bool durableSnapshot = false)
     {
         state.transfer(made, status, winner, activeEvents, worldStates, weekend, testing, graveyardTeams,
             awaitingResurrection, members, raidLeaderOf, inTeamRaid, startLeft, said, endLeft, emptySince,
             prematureLeft, prematureCounting, lastWarning, joinOrder_, pulses);
         rules.transferState(state);
-        if (includesPowerUps)
+        if (formatVersion >= 2)
             state.transfer(powerUps);
+        if (formatVersion >= 3)
+        {
+            bool stillEnding = !durableSnapshot && endingPending;
+            state.transfer(stillEnding, pendingWinner, finalPublicationPending, finalBracket, finalPlayers);
+            if (state.reader !is null)
+                endingPending = stillEnding;
+        }
     }
 
     package void recoveredAfterCrash()
@@ -394,6 +411,9 @@ final class Battleground
         {
             known.offlineSince = MonoTime.init;
             known.identity = identity;
+            if (status == BattlegroundStatus.waitLeave && !endingPending)
+                if (auto who = memberSession(guid))
+                    showFinalBoard(who, scoreboard());
             return;
         }
         members[guid] = Member(team, identity: identity);
@@ -518,6 +538,8 @@ final class Battleground
             }
             break;
         case BattlegroundStatus.waitLeave:
+            if (finalPublicationPending)
+                publishFinalResult();
             endLeft -= elapsed;
             if (endLeft <= Duration.zero)
                 sendEveryoneOut();
@@ -550,23 +572,36 @@ final class Battleground
      * told; the winners get three marks of honor, the others one; everyone is shown the scoreboard,
      * and sent out two minutes later.
      */
-    void end(ubyte winner)
+    void end(ubyte winner, scope void delegate() finalObjectiveReward = null)
     {
         import dmangos.log : info;
         import dmangos.world.character : Character;
 
-        if (status == BattlegroundStatus.waitLeave)
+        if (status == BattlegroundStatus.waitLeave && !endingPending)
             return;
-        // Commit the end before paying out. A crash at this boundary must not run the rewards twice.
-        endingPending = true;
-        pendingWinner = winner;
-        if (!context.battlegrounds.retireCheckpoint(this))
+        const managed = context.battlegrounds.durable && context.battlegrounds.find(instance) is this;
+        if (!endingPending)
+        {
+            pendingWinner = winner;
+            endingPending = true;
+            if (managed)
+                collectFinalRewards(winner, finalObjectiveReward);
+            else
+            {
+                if (finalObjectiveReward !is null)
+                    finalObjectiveReward();
+                rules.ending(this, winner);
+            }
+            this.winner = winner;
+            status = BattlegroundStatus.waitLeave;
+            endLeft = endDelay;
+        }
+        if (managed && !context.battlegrounds.saveCheckpoint(this, false))
             return;
         endingPending = false;
-        rules.ending(this, winner);
-        this.winner = winner;
         setStatus(BattlegroundStatus.waitLeave);
-        endLeft = endDelay;
+        if (finalPublicationPending)
+            publishFinalResult();
         if (winner == winnerAlliance)
             playSound(soundAllianceWins, 0);
         else if (winner == winnerHorde)
@@ -575,24 +610,108 @@ final class Battleground
             if (auto c = cast(Character) memberSession(guid))
             {
                 const won = winner != winnerNone && teamWins(m.team, winner);
-                c.battlegroundEnded(markSpells[type][won ? 0 : 1]);
+                c.battlegroundEnded(managed ? 0 : markSpells[type][won ? 0 : 1]);
             }
         if (winner == winnerAlliance)
             message(stringAllianceWins, ChatType.CHAT_MSG_BG_SYSTEM_NEUTRAL);
         else if (winner == winnerHorde)
             message(stringHordeWins, ChatType.CHAT_MSG_BG_SYSTEM_NEUTRAL);
-        if (context.config.battlegroundScoreStatistics || context.battlegroup !is null)
+        if (!managed && (context.config.battlegroundScoreStatistics || context.battlegroup !is null))
             keepScores();
         const board = scoreboard();
         foreach (guid, ref m; members)
             if (auto who = memberSession(guid))
-            {
-                who.deliver(Opcode.MSG_PVP_LOG_DATA, board);
-                who.deliver(Opcode.SMSG_BATTLEFIELD_STATUS, battlefieldStatus(0, type, 0,
-                    BattlegroundStatus.inProgress, cast(uint) endDelay.total!"msecs", sinceMs));
-            }
+                showFinalBoard(who, board);
         info!"battleground: %s (copy %s) is over, won by %s"(type, instance,
             winner == winnerAlliance ? "the Alliance" : winner == winnerHorde ? "the Horde" : "nobody");
+    }
+
+    private void showFinalBoard(OnlinePlayer who, const(ubyte)[] board)
+    {
+        who.deliver(Opcode.MSG_PVP_LOG_DATA, board);
+        who.deliver(Opcode.SMSG_BATTLEFIELD_STATUS, battlefieldStatus(0, type, 0,
+            BattlegroundStatus.inProgress, cast(uint) endLeft.total!"msecs", sinceMs));
+    }
+
+    package bool canRejoinFinalScore() const
+    {
+        return context.battlegrounds.durable && !checkpointRetired && !endingPending && endLeft > Duration.zero;
+    }
+
+    private void collectFinalRewards(ubyte winner, scope void delegate() finalObjectiveReward)
+    {
+        import dmangos.world.bgqueue : bracketOf;
+        import dmangos.world.honor : honorDay, honorToday;
+
+        uint level;
+        const day = honorDay(honorToday());
+        foreach (guid, ref member; members)
+            if (member.offlineSince == MonoTime.init)
+                if (auto who = memberSession(guid))
+                {
+                    level = who.character.data.level;
+                    const won = teamWins(member.team, winner);
+                    finalPlayers[guid] = FinalPlayer(score: PvpStatsPlayer.init,
+                        reward: BattlegroundReward(context.config.realmId, instance, cast(uint) guid,
+                            markSpells[type][won ? 0 : 1], 0, day));
+                }
+        collectingFinalRewards = true;
+        scope (exit) collectingFinalRewards = false;
+        if (finalObjectiveReward !is null)
+            finalObjectiveReward();
+        rules.ending(this, winner);
+        foreach (guid, ref finished; finalPlayers)
+        {
+            const m = &members[guid];
+            finished.score = PvpStatsPlayer(cast(uint) guid, m.killingBlows, m.deaths, m.honorableKills, m.bonusHonor);
+            finished.score.attr = m.extra[0 .. 5];
+        }
+        if (const t = template_)
+            finalBracket = cast(ubyte)((t.minLevel + 10 * (level ? bracketOf(*t, level) : 0)) / 10);
+        finalPublicationPending = true;
+    }
+
+    private bool publishFinalResult()
+    {
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
+
+        if (!finalPublicationPending)
+            return true;
+        struct RealmResult
+        {
+            PvpStatsPlayer[] scores;
+            BattlegroundReward[] rewards;
+        }
+        RealmResult[WorldContext] results;
+        results[context] = RealmResult.init;
+        foreach (guid, ref finished; finalPlayers)
+        {
+            auto home = context.battlegroup is null ? context : context.battlegroup.homeOf(guid);
+            if (home is null)
+                return false;
+            auto result = &results.require(home, RealmResult.init);
+            result.scores ~= finished.score;
+            result.rewards ~= finished.reward;
+        }
+        const result = PvpStatsBattleground(winner, finalBracket, cast(ubyte) type);
+        try
+        {
+            foreach (home, ref rows; results)
+                if (!home.database.publishBattlegroundResult(context.config.realmId, instance, result, rows.scores,
+                    rows.rewards, home.config.battlegroundScoreStatistics
+                        && (rows.scores.length != 0 || context.battlegroup is null)))
+                    return false;
+        }
+        catch (DatabaseException error)
+        {
+            warning!"battleground: could not publish result for copy %s: %s"(instance, error.msg);
+            return false;
+        }
+        finalPublicationPending = false;
+        finalPlayers = null;
+        checkpointDirty = true;
+        return true;
     }
 
     /**
@@ -716,7 +835,15 @@ final class Battleground
                 if (auto c = cast(Character) memberSession(guid))
                 {
                     const honor = bonusHonor(units, *t, c.player.data.level);
-                    if (c.battlegroundBonusHonor(honor))
+                    if (collectingFinalRewards)
+                    {
+                        if (auto finished = guid in finalPlayers)
+                        {
+                            finished.reward.honor += honor;
+                            m.bonusHonor += honor;
+                        }
+                    }
+                    else if (c.battlegroundBonusHonor(honor))
                         m.bonusHonor += honor;
                 }
     }
@@ -728,8 +855,15 @@ final class Battleground
 
         foreach (guid, ref m; members)
             if (m.team == team && m.offlineSince == MonoTime.init)
-                if (auto c = cast(Character) memberSession(guid))
+            {
+                if (collectingFinalRewards)
+                {
+                    if (auto finished = guid in finalPlayers)
+                        finished.reward.reputation ~= imported!"dmangos.world.database".BattlegroundReputation(faction, amount);
+                }
+                else if (auto c = cast(Character) memberSession(guid))
                     c.battlegroundReputation(faction, amount);
+            }
     }
 
     /// Casts `spell` on everyone of `team` here (a quest's credit).
@@ -782,7 +916,7 @@ final class Battleground
     const(ubyte)[] scoreboard()
     {
         ByteWriter w;
-        const over = status == BattlegroundStatus.waitLeave;
+        const over = status == BattlegroundStatus.waitLeave && !endingPending;
         w.put(ubyte(over));
         if (over)
             w.put(winner);
@@ -1469,7 +1603,7 @@ unittest
     auto replacement = RealWorld.make();
     auto clock = w.now + 30.seconds;
     replacement.context.clock = () => clock;
-    replacement.context.restoreBattleground(arathi, basin.instance, bytes, true);
+    replacement.context.restoreBattleground(arathi, basin.instance, bytes);
     auto recovered = replacement.context.battlegrounds.find(basin.instance);
     auto map = replacement.context.existingMap(arathi, basin.instance);
     clock += 89.seconds;
@@ -1511,7 +1645,7 @@ unittest
 final class Battlegrounds
 {
     private enum checkpointInterval = 2.seconds;
-    private enum checkpointFormat = "2:", legacyCheckpointFormat = "1:";
+    private enum checkpointFormat = "3:", pendingResultFormat = "F:";
     private enum checkpointLifetime = 120;
 
     private
@@ -1555,14 +1689,14 @@ final class Battlegrounds
     }
 
     /// A region move preserves the live copy without announcing a new match to the queue.
-    package Battleground restore(uint instance, BattlegroundType type, ref ByteReader reader, bool includesPowerUps = true)
+    package Battleground restore(uint instance, BattlegroundType type, ref ByteReader reader, uint formatVersion = 3)
     {
         import dmangos.world.battlegroundstate : BattlegroundState;
 
         auto restored = new Battleground(context, instance, type, rulesFor(type));
         auto state = BattlegroundState(context.clock(), reader: &reader);
-        restored.transferState(state, includesPowerUps);
-        restored.checkpointRetired = restored.status == BattlegroundStatus.waitLeave;
+        restored.transferState(state, formatVersion);
+        restored.checkpointRetired = formatVersion < 3 && restored.status == BattlegroundStatus.waitLeave;
         return copies[instance] = restored;
     }
 
@@ -1696,8 +1830,9 @@ final class Battlegrounds
                     copy.checkpointRevision = saved.revision;
                     continue;
                 }
-                const includesPowerUps = saved.state.startsWith(checkpointFormat);
-                if (transferred || (!includesPowerUps && !saved.state.startsWith(legacyCheckpointFormat)))
+                const formatVersion = saved.state.startsWith(checkpointFormat) || saved.state.startsWith(pendingResultFormat)
+                    ? 3u : saved.state.startsWith("2:") ? 2u : saved.state.startsWith("1:") ? 1u : 0u;
+                if (transferred || !formatVersion)
                     continue;
                 // Claim the row before exposing the match. A late write using the old revision fails.
                 if (!context.database.saveBattlegroundCheckpoint(context.config.realmId, map, saved))
@@ -1705,7 +1840,7 @@ final class Battlegrounds
                 try
                 {
                     context.restoreBattleground(map, saved.instance, Base64.decode(saved.state[checkpointFormat.length .. $]),
-                        includesPowerUps);
+                        formatVersion);
                     find(saved.instance).checkpointRevision = saved.revision + 1;
                     info!"battleground: copy %s restored on node %s after loss of its map host"(saved.instance, context.nodeId);
                 }
@@ -1733,7 +1868,7 @@ final class Battlegrounds
             return;
         const now = context.clock();
         foreach (copy; copies)
-            if (!copy.checkpointRetired && copy.status < BattlegroundStatus.waitLeave
+            if (!copy.checkpointRetired && !copy.endingPending
                 && (copy.checkpointDirty || (periodic && now >= copy.nextCheckpoint)))
                 saveCheckpoint(copy, false);
     }
@@ -1747,6 +1882,8 @@ final class Battlegrounds
     {
         if (!durable || find(copy.instance) !is copy || copy.checkpointRetired)
             return true;
+        if (copy.endingPending || !copy.publishFinalResult())
+            return false;
         return saveCheckpoint(copy, true);
     }
 
@@ -1761,7 +1898,8 @@ final class Battlegrounds
             return false;
         try
         {
-            const state = retire ? null : checkpointFormat ~ Base64.encode(context.snapshotBattleground(copy)).idup;
+            const format = copy.finalPublicationPending ? pendingResultFormat : checkpointFormat;
+            const state = retire ? null : format ~ Base64.encode(context.snapshotBattleground(copy)).idup;
             const row = BattlegroundCheckpoint(copy.instance, copy.checkpointRevision, context.unixTime, state);
             if (context.database.saveBattlegroundCheckpoint(context.config.realmId, copy.mapId, row))
             {
@@ -1846,7 +1984,7 @@ mixin template BattlegroundHandlers()
     import dmangos.log : info, warning;
     import dmangos.world.battleground;
     import dmangos.world.bgqueue;
-    import dmangos.world.database : BattlegroundData;
+    import dmangos.world.database : BattlegroundData, BattlegroundReward;
     import dmangos.world.movement : Position;
     import dmangos.world.opcodes;
     import dmangos.world.updatefields;
@@ -2126,7 +2264,7 @@ mixin template BattlegroundHandlers()
         if (battlegroundOfMap(player.data.map) == BattlegroundType.none || !context.hostsDungeon(player.data.map))
             return;
         auto copy = currentBattleground();
-        if (copy !is null && (migrated || copy.status != BattlegroundStatus.waitLeave))
+        if (copy !is null && (migrated || copy.status != BattlegroundStatus.waitLeave || copy.canRejoinFinalScore()))
             if (auto member = player.guid in copy.members)
             {
                 const rejoined = member.offlineSince != MonoTime.init;
@@ -2168,6 +2306,141 @@ mixin template BattlegroundHandlers()
         if (player.deathState != DeathState.alive)
             bringBack(1.0f);
         battlegroundCastHere(markSpell);
+    }
+
+    /// Pays from a durable entitlement on the node that owns the character.
+    package void payBattlegroundReward(const ref BattlegroundReward reward)
+    {
+        import std.algorithm.comparison : max;
+        import dmangos.mysql : TransactionLost;
+        import dmangos.world.database : BattlegroundPayment, MailRecord;
+        import dmangos.world.defines : nullBag, nullSlot, inventorySlotBag0;
+        import dmangos.world.inventory : Inventory, Item, ItemChange, ItemPosCount, ItemState, itemDynFlagBound;
+        import dmangos.world.reputation : Reputation;
+        import dmangos.world.spellids : SpellEffect;
+
+        BattlegroundPayment payment;
+        payment.money = player.money.amount;
+        payment.playerBytes = player.values[PLAYER_BYTES_2];
+        auto inventory = player.inventory;
+        if (inventory.hasChanges)
+            flushInventory();
+
+        ItemPosCount[] destinations;
+        Item[] stacks;
+        uint carried;
+        if (reward.markSpell)
+        {
+            const spell = context.data.spells.spell(reward.markSpell);
+            if (spell is null)
+                return;
+            uint entry, count;
+            foreach (i, effect; spell.effect)
+                if (effect == SpellEffect.createItem)
+                {
+                    entry = spell.itemType[i];
+                    count = cast(uint) max(1, spell.simpleValue(i));
+                    break;
+                }
+            if (!entry || entry !in context.data.items)
+                return;
+            inventory.canStoreNew(nullBag, nullSlot, destinations, entry, count);
+            foreach (destination; destinations)
+            {
+                auto item = inventory.create(entry, destination.count);
+                if (item is null)
+                    return;
+                stacks ~= item;
+                auto existing = inventory[destination.pos];
+                auto row = existing is null ? item.record : existing.record;
+                if (existing !is null)
+                    row.count += destination.count;
+                else
+                {
+                    const bag = cast(ubyte)(destination.pos >> 8);
+                    if (bag != inventorySlotBag0)
+                        row.bag = inventory[inventorySlotBag0, bag].record.guid;
+                    row.slot = cast(ubyte) destination.pos;
+                }
+                if (Inventory.bindsWhenStored(item.proto, destination.pos))
+                    row.flags |= itemDynFlagBound;
+                payment.inventory ~= ItemChange(existing is null ? ItemState.new_ : ItemState.changed, row);
+                carried += destination.count;
+            }
+            if (carried < count)
+            {
+                auto item = inventory.create(entry, count - carried);
+                if (item is null || item.count != count - carried)
+                    return;
+                item.bind();
+                payment.mailedItem = item.record;
+                auto mail = &payment.mail;
+                mail.id = context.nextMailId();
+                mail.stationery = 61;
+                mail.sender = mail.receiver = player.data.guid;
+                mail.subject = "Battleground rewards";
+                mail.checked = 0x04;
+                mail.itemGuid = payment.mailedItem.guid;
+                mail.itemEntry = entry;
+                mail.deliverTime = context.unixTime;
+                mail.expireTime = mail.deliverTime + 30 * 24 * 60 * 60;
+            }
+        }
+
+        Reputation draft;
+        if (reward.reputation.length && player.reputation !is null)
+        {
+            draft = new Reputation(context.client, 1u << (player.data.race - 1), 1u << (player.data.classId - 1));
+            draft.states = player.reputation.states;
+            draft.made = player.reputation.made.dup;
+            foreach (ref gain; reward.reputation)
+                if (const faction = context.client.factions.lookup(gain.faction))
+                    draft.change(faction, gain.amount, true, context.data.spillovers);
+            payment.reputation = draft.takeChanged();
+        }
+        if (reward.honor)
+            saveHonor();
+        if (!context.settleWrites())
+            return;
+        try
+        {
+            if (!context.database.payBattlegroundReward(reward, payment))
+                return;
+        }
+        catch (TransactionLost error)
+        {
+            // If COMMIT succeeded before the connection dropped, this session may have stale item slots.
+            connection.kick("the battleground reward transaction lost its database connection");
+            throw error;
+        }
+
+        Item delivered;
+        foreach (i, item; stacks)
+            delivered = inventory.store(destinations[i .. i + 1], item);
+        if (delivered !is null)
+        {
+            sendNewItem(delivered, carried, true, true);
+            flushInventory(alreadySaved: true);
+        }
+        if (payment.mail.id)
+            deliver(Opcode.SMSG_RECEIVED_MAIL, [ubyte(0), 0, 0, 0]);
+        if (draft !is null)
+        {
+            player.reputation = draft;
+            sendReputationChanges(-1);
+            foreach (ref gain; reward.reputation)
+                reputationChanged(gain.faction);
+        }
+        if (reward.honor)
+        {
+            loadHonor();
+            ByteWriter credit;
+            credit.put(reward.honor);
+            credit.put(0UL);
+            credit.put(0u);
+            deliver(Opcode.SMSG_PVP_CREDIT, credit.data);
+            flushPlayerChanges();
+        }
     }
 
     /// Casts `spell` on the player itself, triggered, if the spell exists.
