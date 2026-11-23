@@ -243,37 +243,7 @@ private:
     {
         if (player is null || damage == 0)
             return 0;
-        uint absorbed;
-        Aura[] spent;
-        foreach (aura; player.auras.list)
-            foreach (i; 0 .. 3)
-            {
-                if (damage == 0 || !(aura.effects & (1 << i)) || aura.amount[i] <= 0
-                        || !(aura.misc(i) & (1 << school)))
-                    continue;
-                const type = aura.type(i);
-                if (type != AuraType.schoolAbsorb && type != AuraType.manaShield)
-                    continue;
-                uint take = damage < cast(uint) aura.amount[i] ? damage : cast(uint) aura.amount[i];
-                if (type == AuraType.manaShield)
-                {
-                    // (less by its caster's modifiers: Improved Mana Shield, `SPELLMOD_MULTIPLE_VALUE`)
-                    const perPoint = aura.caster == player.guid
-                        ? spellMod(SpellModOp.multipleValue, aura.spell, aura.spell.casting.multipleValue[i])
-                        : aura.spell.casting.multipleValue[i];
-                    const mana = player.values.get!UNIT_FIELD_POWER1(0);
-                    if (perPoint > 0 && take * perPoint > mana)
-                        take = cast(uint)(mana / perPoint);
-                    player.values.set!UNIT_FIELD_POWER1(0, mana - cast(uint)(take * perPoint));
-                }
-                aura.amount[i] -= take;
-                damage -= take;
-                absorbed += take;
-                if (aura.amount[i] <= 0)
-                    spent ~= aura;
-            }
-        foreach (aura; spent)
-            removeAura(aura);
+        const absorbed = unit.absorbShields(school, damage);
         splitDamage(school, damage); // Blessing of Sacrifice: a share to its paladin
         splitDamagePct(school, damage); // Soul Link: a share to the demon (`dmangos.world.petauras`)
         if (absorbed)

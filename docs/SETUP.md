@@ -98,6 +98,11 @@ unset game_password
 Look for `created account` before continuing. [Account administration](CONFIGURATION.md#account-administration)
 covers password resets and GM permissions.
 
+If you already have an installed server, update its world data before starting the new build.
+On a standard local installation, run `sudo tools/database.sh apply-world-fixes` from the
+repository root. For a separate database host or socket, pass its MariaDB connection options
+after `apply-world-fixes`. This command updates `classicmangos` and is safe to rerun.
+
 ## 4. Start the servers
 
 Open three terminals and run `cd "$HOME/dmangos"` in each, or use your checkout's path if

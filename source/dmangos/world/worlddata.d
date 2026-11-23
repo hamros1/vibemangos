@@ -1548,6 +1548,26 @@ final class PoolChooser
         return byKind !is null && (id in *byKind) !is null;
     }
 
+    /// Top-level pools with exactly one slot and only creature placements.
+    package uint[][uint] singleCreaturePools() const
+    {
+        import std.algorithm.searching : all;
+
+        uint[][uint] selected;
+        foreach (pool, group; members)
+            if (pool && group.length > 1 && pool !in childPools && limits.get(pool, 1) == 1
+                && group.all!(member => member.kind == PoolMember.Kind.creature))
+                foreach (member; group)
+                    selected[pool] ~= member.id;
+        return selected;
+    }
+
+    /// A single-choice creature pool's durable slot is its only active member, so all placements may roll.
+    package uint rollSingleCreature(uint pool, uint id, ref Random rng) const
+    {
+        return roll(pool, PoolMember.Kind.creature, id, rng, true);
+    }
+
     /**
      * Member `id`'s respawn time is up: its pool rolls again (CMaNGOS's `RollOne` with it as the trigger), among
      * itself and the members of its kind not up. Returns the one that spawns: `id` itself, or another that is up
@@ -1555,15 +1575,26 @@ final class PoolChooser
      */
     uint reroll(PoolMember.Kind kind, uint id, ref Random rng)
     {
-        import std.random : randomShuffle, uniform01;
-
         if (!inPool(kind, id) || !spawns(kind, id))
             return 0;
-        auto candidates = members.get(poolOf[kind][id], null).dup;
+        const found = roll(poolOf[kind][id], kind, id, rng);
+        if (found != id)
+        {
+            chosen[kind].remove(id);
+            chosen[kind][found] = true;
+        }
+        return found;
+    }
+
+    private uint roll(uint pool, PoolMember.Kind kind, uint id, ref Random rng, bool singleChoice = false) const
+    {
+        import std.random : randomShuffle, uniform01;
+
+        auto candidates = members.get(pool, null).dup;
         randomShuffle(candidates, rng);
         bool eligible(const ref PoolMember m)
         {
-            return m.kind == kind && (m.id == id || !spawns(kind, m.id));
+            return m.kind == kind && (singleChoice || m.id == id || !spawns(kind, m.id));
         }
         uint found;
         uint fallback; // the first with a chance, if no roll hits one and none is without
@@ -1586,14 +1617,7 @@ final class PoolChooser
                     found = m.id;
                     break;
                 }
-        if (!found)
-            found = fallback ? fallback : id;
-        if (found != id)
-        {
-            chosen[kind].remove(id);
-            chosen[kind][found] = true;
-        }
-        return found;
+        return found ? found : (fallback ? fallback : id);
     }
 
     /// Chooses the members of every top-level pool, and of the pools those choose.

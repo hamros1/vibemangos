@@ -1256,6 +1256,9 @@ private:
             f.damage[type] = [stats.damage[type].min, stats.damage[type].max];
             if (item !is null)
                 f.damageSchool[type] = item.proto.details.damage[0].school;
+            if (f.damageSchool[type] == 0)
+                f.weaponDamageFlat[type] = auras.totalForWeapon(AuraType.modDamageDone,
+                    item is null ? -1 : item.proto.subClass, 1);
         }
         f.crit = chances.crit;
         f.auraCrit = chances.auraCrit;

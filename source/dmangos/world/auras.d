@@ -677,9 +677,10 @@ struct AuraSet
 
     /**
      * The sum of the amounts of `type`, of auras with no item requirement or whose spell's weapon class
-     * and subclasses take `weaponSubClass` (-1: no weapon: only those with no requirement).
+     * and subclasses take `weaponSubClass` (-1: no weapon: only those with no requirement). `mask` narrows the
+     * effects to those whose misc value has one of its bits (-1: any misc value).
      */
-    int totalForWeapon(AuraType type, int weaponSubClass) const
+    int totalForWeapon(AuraType type, int weaponSubClass, int mask = -1) const
     {
         enum int itemClassWeapon = 2;
         int sum;
@@ -690,7 +691,7 @@ struct AuraSet
                     || !(aura.spell.equippedItemSubClassMask & (1 << weaponSubClass))))
                 continue;
             foreach (i; 0 .. 3)
-                if ((aura.effects & (1 << i)) && aura.type(i) == type)
+                if ((aura.effects & (1 << i)) && aura.type(i) == type && (mask == -1 || (aura.misc(i) & mask)))
                     sum += aura.amount[i] * cast(int) aura.stacks;
         }
         return sum;

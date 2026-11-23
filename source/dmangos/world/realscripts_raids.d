@@ -25,6 +25,62 @@ import dmangos.world.realscriptkit_raids;
 import dmangos.world.realspelltests : haveRealData;
 import dmangos.world.updatefields;
 
+/// Molten Core trash uses the database timer and tracks the linked boss across cells.
+unittest
+{
+    import dmangos.world.grid : cellKeyAt;
+
+    if (!haveRealData())
+        return;
+    enum uint moltenCore = 409, garrEntry = 12057, surgerEntry = 12101;
+    const at = spawnOf(moltenCore, surgerEntry);
+    auto s = new Scene(moltenCore, at);
+    auto context = s.w.context;
+    auto surger = s.the(surgerEntry);
+    const guid = surger.guid, spawn = surger.spawn.guid;
+    auto killAndRecord(Creature creature)
+    {
+        s.kill(creature);
+        s.run(200.msecs);
+        assert(context.deadInInstance(s.instance, creature.spawn.guid));
+        return creature.respawnAt;
+    }
+    const due = killAndRecord(surger);
+    const saved = s.w.db.loadInstances().respawns;
+    assert(saved.canFind!(row => !row.gameObject && row.instance == s.instance && row.spawnGuid == spawn && row.until == due));
+    s.w.now += (due - context.unixTime() - 1).seconds;
+    context.respawnDue(s.w.now);
+    assert(context.deadInInstance(s.instance, spawn));
+    s.w.now += 1.seconds;
+    context.respawnDue(s.w.now);
+    auto back = s.map.creatureAt(guid);
+    assert(back !is null && back !is surger && back.alive && !context.deadInInstance(s.instance, spawn));
+
+    s.moveHero(0, spawnOf(moltenCore, garrEntry));
+    auto garr = s.the(garrEntry);
+    killAndRecord(garr);
+    s.moveHero(0, at);
+    const blocked = killAndRecord(back);
+    s.w.now += (blocked - context.unixTime()).seconds;
+    context.respawnDue(s.w.now);
+    assert(context.deadInInstance(s.instance, spawn) && context.deadInInstance(s.instance, garr.spawn.guid));
+    auto dead = s.map.creatureAt(guid);
+    assert(dead is null || !dead.alive);
+
+    // On a fresh load, a different, previously untouched Surger cannot spawn once Garr is dead either.
+    foreach (const ref candidate; realData.creatureSpawns)
+        if (candidate.entry == surgerEntry && candidate.map == moltenCore && candidate.guid != spawn)
+        {
+            const itsCell = cellKeyAt(candidate.x, candidate.y), killedCell = cellKeyAt(at.x, at.y);
+            if (itsCell == killedCell || s.map.cellLoaded(itsCell))
+                continue;
+            s.map.loadCell(itsCell);
+            assert(!s.all(surgerEntry).canFind!(c => c.spawn.guid == candidate.guid));
+            return;
+        }
+    assert(false, "the fixture needs an unloaded Lava Surger cell");
+}
+
 /// One stage of a fight: the boss hurt to a share of its health, then the fight goes on; what it must have done.
 struct Stage
 {
@@ -202,9 +258,17 @@ unittest
     const Boss[] bosses = [
         // Lucifron: Impending Doom, Lucifron's Curse, Shadow Shock; his two Flamewaker Protectors.
         Boss("Lucifron", 409, 12118, 0, [protector], [Stage(0, 20, [19702, 19703, 19460])]),
-        // Magmadar: Panic, Lava Bomb (one at someone without mana, one at someone with), Frenzy at 30 s with
-        // its emote; back to "not started" after a wipe (ScriptDev's NOT_STARTED).
-        Boss("Magmadar", 409, 11982, 1, [], [Stage(0, 35, [19408, 19411, 20474, 19451], [-1_000_001])], 0, 0, 0),
+        // Magmadar: Panic, one Lava Bomb per interval, and Frenzy at 30 s with its emote.
+        Boss("Magmadar", 409, 11982, 1, [], [Stage(0, 35, [19408, 19451], [-1_000_001]),
+            Stage(0, 0, null, null, null, null,
+            (Scene s, Creature boss) {
+                long[] bombs;
+                foreach (cast_; s.casts)
+                    if (!cast_.started && cast_.caster == boss.guid && (cast_.spell == 19411 || cast_.spell == 20474))
+                        bombs ~= cast_.atMs;
+                assert(bombs.length == 2 && bombs[1] - bombs[0] >= 12_000,
+                    format!"Magmadar's bombs should share one timer, saw %s"(bombs));
+            })], 0, 0, 0),
         // Gehennas: his curse, Rain of Fire, Shadow Bolt at random and at his victim; two Flamewakers.
         Boss("Gehennas", 409, 12259, 2, [flamewaker], [Stage(0, 15, [19716, 19717, 19729, 19728])]),
         // Garr: Antimagic Pulse, Magma Shackles; a Firesworn killed erupts and enrages him; Massive Eruption.
@@ -233,6 +297,31 @@ unittest
         fight(b);
         wipe(b);
     }
+}
+
+/// A landed Lava Bomb puts Conflagration at the impact point.
+unittest
+{
+    import dmangos.script.api : ActionResult;
+
+    if (!haveRealData())
+        return;
+    enum uint magmadarEntry = 11982, lavaBomb = 19411, firePatch = 177704, conflagration = 19428;
+    if (realData.gameObjectScriptNames.get(firePatch, "") != "go_magmadar_lava_bomb")
+        return; // The stock-database fix supplies the trap script binding.
+    const spawn = spawnOf(409, magmadarEntry);
+    auto s = new Scene(409, Position(spawn.x + 24, spawn.y, spawn.z), [classWarrior, classMage]);
+    auto magmadar = s.the(magmadarEntry);
+    s.moveHero(1, Position(spawn.x + 40, spawn.y, spawn.z));
+    assert(magmadar.ai.castFor(s.map, lavaBomb, s.hero.guid, true) == ActionResult.ok);
+    const fires = s.objects(firePatch);
+    assert(fires.length == 1 && Scene.distance(fires[0].position, s.hero.position) < 0.1f);
+    s.godlike = false;
+    s.fill();
+    const health = s.heroUnit.health;
+    s.run(3.seconds);
+    assert(s.heroUnit.hasAuraOf(conflagration) && s.heroUnit.health < health);
+    assert(!s.heroUnit(1).hasAuraOf(conflagration));
 }
 
 /// Where the world database spawns the game object `entry` on `map` (the first spawn).

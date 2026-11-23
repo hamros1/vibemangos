@@ -837,6 +837,12 @@ abstract class WriteBehindBase : WorldDatabase
         return writer;
     }
 
+    // Pool choices use synchronous writes and do not depend on the queued character or respawn writes.
+    override imported!"dmangos.world.database".CreaturePoolState[uint] loadCreaturePoolStates(uint realm)
+    {
+        return reader.loadCreaturePoolStates(realm);
+    }
+
     protected bool leaseStillHolds()
     {
         return writableUntil is null || Clock.currStdTime < writableUntil();

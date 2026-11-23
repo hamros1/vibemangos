@@ -527,8 +527,8 @@ final class CreatureAI : Scripted, CreatureHost, ScourgeCampHost
 
     private void reportDamage(ulong attacker, uint damage)
     {
-        if (damage && namedChannelSpell !is null && (namedChannelSpell.casting.channelInterruptFlags & 0x02))
-            finishNamedCreatureChannel(true);
+        if (damage && channelSpell !is null && (channelSpell.casting.channelInterruptFlags & 0x02))
+            finishCreatureChannel(true);
         if (damage)
             triggerCombatTimer();
         if (behaviour)
@@ -1258,7 +1258,7 @@ private:
         if (castingNow)
         {
             // Casting: it stands, facing its target.
-            auto facing = namedChannelSpell is null ? target : spellTarget(me.values.get!UNIT_FIELD_CHANNEL_OBJECT);
+            auto facing = channelSpell is null ? target : spellTarget(me.values.get!UNIT_FIELD_CHANNEL_OBJECT);
             if (facing)
                 me.movement.position.orientation = angleTo(me.position, facing.position);
             return;

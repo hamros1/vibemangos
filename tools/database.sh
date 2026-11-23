@@ -2,16 +2,20 @@
 set -euo pipefail
 
 repo=$(cd -- "$(dirname -- "$0")/.." && pwd)
-if (( $# < 2 )); then
-    echo "Usage: $0 {install|export-world} WORLD.sql.gz [MariaDB connection options]" >&2
+usage() {
+    printf 'Usage: %s {install|export-world} WORLD.sql.gz [MariaDB connection options]\n' "$0" >&2
+    printf '       %s apply-world-fixes [MariaDB connection options]\n' "$0" >&2
     exit 2
-fi
+}
+(( $# >= 1 )) || usage
 operation=$1
-world=$2
-shift 2
+shift
 
 case "$operation" in
     install)
+        (( $# >= 1 )) || usage
+        world=$1
+        shift
         # Check the compressed file before creating any databases.
         gzip -t -- "$world"
         {
@@ -22,9 +26,17 @@ case "$operation" in
             cat "$repo/sql/classiccharacters.sql"
             printf '\nUSE classicmangos;\n'
             gzip -dc -- "$world"
+            printf '\nUSE classicmangos;\n'
+            cat "$repo/sql/classic-world-fixes.sql"
         } | mariadb "$@" --batch --skip-force
         ;;
+    apply-world-fixes)
+        mariadb "$@" --batch --skip-force classicmangos < "$repo/sql/classic-world-fixes.sql"
+        ;;
     export-world)
+        (( $# >= 1 )) || usage
+        world=$1
+        shift
         # The game data is in classicmangos. Keep runtime-only tables as empty schemas.
         # The dump client takes read locks for the MyISAM tables, too.
         mkdir -p -- "$(dirname -- "$world")"

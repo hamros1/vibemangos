@@ -55,6 +55,7 @@ enum : uint
 
     goLavaSteam = 178107,
     goLavaSplash = 178108,
+    goLavaBomb = 177704,
     goCacheOfTheFireLord = 179703,
 }
 
@@ -107,6 +108,8 @@ enum McSignal : uint
     suicide = 105,      /// Golemagg to his Core Ragers, as he dies
     ragnarosSay = 106,  /// Majordomo to Ragnaros: say line `value` of the summoning
     majordomoDown = 107, /// Majordomo to Ragnaros: killed by his fire; the fight is near
+    lavaBomb = 108,    /// Magmadar's landed bomb, `value`: the target's player GUID
+    lavaBombMana = 109,
 }
 
 /// A random length between `low` and `high` milliseconds.
@@ -179,6 +182,14 @@ struct MoltenCore
 
     void on(ref InstanceContext copy, const ref Signal e)
     {
+        if (e.id == McSignal.lavaBomb || e.id == McSignal.lavaBombMana)
+        {
+            const target = EntityRef(cast(uint) e.value);
+            Location at;
+            if (e.from.entry == npcMagmadar && copy.locationOf(target, at))
+                copy.summonObject(goLavaBomb, at, e.id == McSignal.lavaBombMana ? 60 : 30);
+            return;
+        }
         if (e.id == McSignal.unsummonAdds)
         {
             foreach (ref g; guard)
@@ -306,13 +317,13 @@ struct Lucifron
     }
 }
 
-/// Magmadar: frenzies, panics everyone, and drops lava bombs on those with mana and those without.
+/// Magmadar: frenzies, panics everyone, and throws one Lava Bomb at a time.
 @creature("boss_magmadar")
 struct Magmadar
 {
     enum : uint { frenzy = 19451, magmaSpit = 19449, panic = 19408, lavaBomb = 19411, lavaBombMana = 20474 }
     enum int emoteFrenzy = -1_000_001;
-    enum Step : ubyte { frenzy, panic, bomb, manaBomb }
+    enum Step : ubyte { frenzy, panic, bomb, oldManaBomb }
     Schedule!Step steps;
 
     mixin(encounterOf!("Encounter.magmadar", "EncounterState.notStarted"));
@@ -334,7 +345,12 @@ struct Magmadar
         steps.after(Step.frenzy, 30.seconds);
         steps.after(Step.panic, between(me, 6000, 10_000));
         steps.after(Step.bomb, 12.seconds);
-        steps.after(Step.manaBomb, 18.seconds);
+    }
+
+    void on(ref CreatureContext me, const ref Signal e)
+    {
+        if (e.from == me.self && (e.id == McSignal.lavaBomb || e.id == McSignal.lavaBombMana))
+            me.signalDungeon(e.id, e.value);
     }
 
     void on(ref CreatureContext me, Step step)
@@ -353,13 +369,56 @@ struct Magmadar
         case Step.panic:
             steps.after(step, me.castSelf(panic) == ActionResult.ok ? between(me, 30_000, 35_000) : retry);
             break;
-        case Step.bomb, Step.manaBomb:
-            const mana = step == Step.manaBomb;
-            const target = me.selectTarget(Pick.random, mana ? PickFilter.manaUser : PickFilter.notManaUser);
-            const ok = target && me.castSpell(mana ? lavaBombMana : lavaBomb, target) == ActionResult.ok;
+        case Step.bomb:
+            const mana = me.selectTarget(Pick.random, PickFilter.player | PickFilter.manaUser);
+            const other = me.selectTarget(Pick.random, PickFilter.player | PickFilter.notManaUser);
+            const chooseMana = mana && (!other || me.random(2));
+            const target = chooseMana ? mana : other;
+            const ok = target && me.castSpell(chooseMana ? lavaBombMana : lavaBomb, target) == ActionResult.ok;
             steps.after(step, ok ? between(me, 12_000, 15_000) : retry);
             break;
+        case Step.oldManaBomb: // A queued step restored from a copy running the older script.
+            break;
         }
+    }
+}
+
+/// Lava Bomb places its fire only when the dummy spell hits a player.
+@spell("spell_magmadar_lava_bomb")
+@spellIds(Magmadar.lavaBomb, Magmadar.lavaBombMana)
+struct MagmadarLavaBomb
+{
+    void on(ref SpellContext spell, const ref EffectHit e)
+    {
+        if (e.caster.entry == npcMagmadar && e.target.isPlayer)
+        {
+            const signal = spell.spellId == Magmadar.lavaBombMana ? McSignal.lavaBombMana : McSignal.lavaBomb;
+            spell.signal(e.caster, signal, cast(int) e.target.guid);
+        }
+    }
+}
+
+/// The fire patch keeps applying Conflagration to players within the trap radius.
+@gameObject("go_magmadar_lava_bomb")
+struct MagmadarLavaBombTrap
+{
+    enum Step : ubyte { pulse }
+    Schedule!Step steps;
+
+    void on(ref GameObjectContext trap, const ref Spawned e)
+    {
+        if (!steps.busy)
+            steps.every(Step.pulse, 1.seconds);
+    }
+
+    void on(ref GameObjectContext trap, const ref TrapSprung e)
+    {
+        trap.consume();
+    }
+
+    void on(ref GameObjectContext trap, Step step)
+    {
+        trap.pulseTrap();
     }
 }
 

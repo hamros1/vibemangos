@@ -3682,9 +3682,10 @@ private:
         uint blocked;
         if (uniform01(map.random) * 100 < blockChance(it, me, type))
             blocked = 0; // creatures carry no shield values yet
-        const total = damage > 0 ? cast(uint) damage : 0;
+        uint total = damage > 0 ? cast(uint) damage : 0;
+        const absorbed = victim.absorb(school, total);
         map.sendToWatchers(this, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(target: victim.combatGuid, attacker: player.guid,
-            spell.id, total, school, 0, 0, false, blocked, crit), true);
+            spell.id, total, school, absorbed, 0, false, blocked, crit), true);
         enterCombatFor(combatLinger);
         final switch (victim.kind)
         {

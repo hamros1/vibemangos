@@ -350,11 +350,15 @@ struct DarkmasterGandling
         case Step.portal:
             if (me.healthPercent > 3)
                 if (const target = me.selectTarget(Pick.random, PickFilter.player))
-                    if (me.castSpell(shadowPortal, target) == ActionResult.ok)
+                {
+                    if (me.castSpell(shadowPortal, target) != ActionResult.ok)
                     {
-                        portalTarget = target;
-                        steps.after(Step.portalDone, 1.seconds); // its cast
+                        steps.after(Step.portal, 400.msecs); // wait for a channel or another cast to finish
+                        break;
                     }
+                    portalTarget = target;
+                    steps.after(Step.portalDone, 1.seconds); // its cast
+                }
             steps.after(Step.portal, (20_000 + me.random(15_000)).msecs);
             break;
         case Step.portalDone:

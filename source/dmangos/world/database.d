@@ -248,6 +248,14 @@ struct InstanceRespawnRecord
     long until;
 }
 
+/// The only selected placement of a single-choice world creature pool and when it may roll again.
+struct CreaturePoolState
+{
+    uint spawn;
+    long due;
+    ulong revision;
+}
+
 /// The rolled contents and expiry of one scripted reward chest in a lockout.
 struct InstanceChestRecord
 {
@@ -458,6 +466,12 @@ interface WorldDatabase
 
     /// A dead creature comes back at `respawnTime` (0: forget it).
     void saveCreatureRespawn(uint spawnGuid, long respawnTime);
+
+    /// The persisted choices for this realm's single-choice world creature pools, keyed by pool.
+    CreaturePoolState[uint] loadCreaturePoolStates(uint realm);
+
+    /// Claim the initial row (revision 0) or update the expected revision. A stale owner cannot renew it.
+    @DatabaseWrite bool updateCreaturePoolState(uint realm, uint pool, ulong revision, uint spawn, long due);
 
     /// The player's auras, replacing those saved before.
     @Replaces void saveAuras(uint player, const(AuraRecord)[] auras);
@@ -955,6 +969,11 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     void deleteCorpse(uint player) { statements.deleteCorpse(player); }
     Nullable!CorpseRecord loadCorpse(uint player) { return statements.loadCorpse(player); }
     void saveCreatureRespawn(uint spawnGuid, long respawnTime) { statements.saveCreatureRespawn(spawnGuid, respawnTime); }
+    CreaturePoolState[uint] loadCreaturePoolStates(uint realm) { return statements.loadCreaturePoolStates(realm); }
+    bool updateCreaturePoolState(uint realm, uint pool, ulong revision, uint spawn, long due)
+    {
+        return statements.updateCreaturePoolState(realm, pool, revision, spawn, due);
+    }
     void saveAuras(uint player, const(AuraRecord)[] auras) { statements.saveAuras(player, auras); }
     void saveCooldowns(uint player, const(CooldownRecord)[] cooldowns) { statements.saveCooldowns(player, cooldowns); }
     void saveTalentReset(uint player, uint cost, long time) { statements.saveTalentReset(player, cost, time); }
@@ -2187,6 +2206,20 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
             creatureRespawns.remove(spawnGuid);
     }
     long[uint] loadCreatureRespawns() { return creatureRespawns.dup; }
+
+    private CreaturePoolState[uint][uint] creaturePoolStates;
+
+    CreaturePoolState[uint] loadCreaturePoolStates(uint realm) { return creaturePoolStates.get(realm, null).dup; }
+
+    bool updateCreaturePoolState(uint realm, uint pool, ulong revision, uint spawn, long due)
+    {
+        auto states = realm in creaturePoolStates;
+        const previous = states is null ? null : pool in *states;
+        if ((previous is null ? 0 : previous.revision) != revision)
+            return false;
+        creaturePoolStates[realm][pool] = CreaturePoolState(spawn, due, revision + 1);
+        return true;
+    }
     InstanceRecords instanceRows;    /// what the instance methods keep
     InstanceRecords loadInstances() { return instanceRows; }
     void saveInstance(uint id, uint map, long resetTime) { instanceRows.instances ~= InstanceRecord(id, map, resetTime); }

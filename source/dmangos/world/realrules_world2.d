@@ -73,9 +73,13 @@ unittest
     check(5, auraOfBattle, 40, true);
 }
 
-/// ClassicDB's template pool selects a single Akubar the Seer across its installed placements.
+/// ClassicDB selects one Akubar and a fresh context restores his actual placement and death timer.
 unittest
 {
+    import dmangos.world.context : WorldContext;
+    import dmangos.world.creature : CreatureSpawn;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.objects : HighGuid, makeGuid;
     import dmangos.world.worlddata : PoolMember;
 
     if (!haveRealData())
@@ -83,14 +87,38 @@ unittest
     auto w = RealWorld.make();
     auto data = w.context.data;
     size_t positions, active;
+    const(CreatureSpawn)* selected;
     foreach (ref spawn; data.creatureSpawns)
         if (spawn.entry == 8298)
         {
             ++positions;
             assert(data.pools.inPool(PoolMember.Kind.creature, spawn.guid));
-            active += data.pools.spawns(PoolMember.Kind.creature, spawn.guid);
+            if (data.pools.spawns(PoolMember.Kind.creature, spawn.guid))
+            {
+                ++active;
+                selected = &spawn;
+            }
         }
-    assert(positions > 1 && active == 1);
+    assert(positions > 1 && active == 1 && selected !is null);
+    const cell = cellKeyAt(selected.x, selected.y);
+    const guid = makeGuid(HighGuid.unit, selected.entry, selected.guid);
+    auto map = w.context.map(selected.map);
+    map.loadCell(cell);
+    auto akubar = map.creatureAt(guid);
+    assert(akubar !is null && akubar.alive);
+    const killed = w.context.unixTime;
+    akubar.values.set!UNIT_FIELD_HEALTH(0u);
+    map.creatureDeath(akubar);
+    w.context.update(w.now);
+    const states = w.db.loadCreaturePoolStates(w.context.config.realmId);
+    assert(1031u in states, "Akubar's pool records the death on the world tick");
+    const state = states[1031];
+    assert(state.spawn == selected.guid && state.due >= killed + selected.respawnSeconds
+        && state.due <= w.context.unixTime + selected.respawnSecondsMax);
+    auto restarted = new WorldContext(w.context.config, w.db, data, w.context.client);
+    auto restored = restarted.map(selected.map);
+    restored.loadCell(cell);
+    assert(restarted.awaitingRespawn(selected.guid) && restored.creatureAt(guid) is null);
 }
 
 /// The five-second rule after a channel paid at its start: as long as it channels (Tranquility, 10 seconds), five

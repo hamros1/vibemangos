@@ -955,6 +955,39 @@ final class CharacterStatements
             characters.execute!"DELETE FROM creature_respawn WHERE guid = ? AND instance = 0"(spawnGuid);
     }
 
+    private bool creaturePoolsReady;
+
+    private void prepareCreaturePools()
+    {
+        if (creaturePoolsReady)
+            return;
+        characters.execute!("CREATE TABLE IF NOT EXISTS dmangos_creature_pool ("
+            ~ "realm INT UNSIGNED NOT NULL, pool INT UNSIGNED NOT NULL, spawn INT UNSIGNED NOT NULL, "
+            ~ "due BIGINT NOT NULL, revision BIGINT UNSIGNED NOT NULL, PRIMARY KEY (realm, pool)) ENGINE=InnoDB")();
+        creaturePoolsReady = true;
+    }
+
+    imported!"dmangos.world.database".CreaturePoolState[uint] loadCreaturePoolStates(uint realm)
+    {
+        import dmangos.world.database : CreaturePoolState;
+
+        prepareCreaturePools();
+        CreaturePoolState[uint] states;
+        foreach (row; characters.query!"SELECT pool, spawn, due, revision FROM dmangos_creature_pool WHERE realm = ?"(realm))
+            states[row.get!uint(0)] = CreaturePoolState(row.get!uint(1), row.get!long(2), row.get!ulong(3));
+        return states;
+    }
+
+    bool updateCreaturePoolState(uint realm, uint pool, ulong revision, uint spawn, long due)
+    {
+        prepareCreaturePools();
+        if (!revision)
+            return characters.execute!("INSERT IGNORE INTO dmangos_creature_pool (realm, pool, spawn, due, revision) "
+                ~ "VALUES (?, ?, ?, ?, 1)")(realm, pool, spawn, due) == 1;
+        return characters.execute!("UPDATE dmangos_creature_pool SET spawn = ?, due = ?, revision = revision + 1 "
+            ~ "WHERE realm = ? AND pool = ? AND revision = ?")(spawn, due, realm, pool, revision) == 1;
+    }
+
     /// The `auction` columns, in `AuctionRecord` order.
     enum auctionColumns = "id, houseid, itemguid, item_template, item_count, item_randompropertyid, itemowner, "
         ~ "buyoutprice, time, buyguid, lastbid, startbid, deposit";

@@ -20,6 +20,16 @@ import dmangos.world.combat : MeleeDamage, MeleeHitOutcome, VictimState;
 import dmangos.world.spellcast : isNextMeleeSwingSpell, SpellMissInfo;
 import dmangos.world.spells : SpellInfo;
 
+/// Arcane Missiles channels used by creature AI and creatures casting the player ranks.
+package bool isArcaneMissilesChannel(const ref SpellInfo spell)
+{
+    import std.algorithm.comparison : among;
+
+    return spell.id.among(5143, 5144, 5145, 8416, 8417, 10211, 10212, 15735, 15790, 22272, 25345)
+        && spell.effect[0] == SpellEffect.applyAura && spell.implicitTargetA[0] == ImplicitTarget.caster
+        && spell.casting.applyAuraName[0] == AuraType.periodicTriggerSpell && spell.casting.amplitude[0] > 0;
+}
+
 /// A next-swing spell with one weapon effect, aimed at one enemy or a chain of enemies.
 package int nextWeaponSwingEffect(const ref SpellInfo spell)
 {
@@ -75,7 +85,8 @@ mixin template CreatureCasting()
     import dmangos.bytes : ByteWriter;
     import dmangos.world.auras : makeAura;
     import dmangos.world.combat : AttackType, calculateMeleeDamage, hasInArc, MeleeDamage, MeleeHitOutcome;
-    import dmangos.world.creaturecasting : creatureWeaponSpellDamage, nextWeaponSwingEffect, weaponSpellMiss;
+    import dmangos.world.creaturecasting : creatureWeaponSpellDamage, isArcaneMissilesChannel, nextWeaponSwingEffect,
+        weaponSpellMiss;
     import dmangos.world.eventai;
     import dmangos.world.motion : launch, stopMoving;
     import dmangos.world.opcodes : ChatType, Language, Opcode;
@@ -85,6 +96,7 @@ mixin template CreatureCasting()
         powerCost, radius, range, spellGoPacket, spellStartPacket, SpellMissInfo, SpellTargets,
         TargetFlags, TargetResult, preventionPacify, preventionSilence;
     import dmangos.world.spells : SpellInfo;
+    import dmangos.world.unit : combatRelations;
     import dmangos.world.updatefields;
     import dmangos.world.npcdata : BroadcastText;
     import dmangos.script.api : AuraRemoved, EntityRef, KilledUnit, SpellHit;
@@ -180,16 +192,17 @@ mixin template CreatureCasting()
     /// Whether it is casting a spell now.
     @property bool castingNow() const
     {
-        return casting_ !is null || namedChannelSpell !is null;
+        return casting_ !is null || channelSpell !is null;
     }
 
-    private const(SpellInfo)* namedChannelSpell;
-    private int namedChannelTimer;
+    private const(SpellInfo)* channelSpell;
+    private int channelTimer;
     private ulong namedChannelSequence;
     private ushort namedChannelPeer;
-    private int missingNamedChannelTarget;
+    private int missingChannelTarget;
+    private int missilePulsesRemaining;
 
-    private bool beginNamedCreatureChannel(const(SpellInfo)* spell, UnitRef target)
+    private bool beginCreatureChannel(const(SpellInfo)* spell, UnitRef target, bool named)
     {
         import dmangos.world.context : WorldContext;
         import dmangos.world.spellcast : duration;
@@ -200,11 +213,12 @@ mixin template CreatureCasting()
             return false;
         if (!me.spline.finalized)
             stopMoving(me, world_);
-        namedChannelSpell = spell;
-        namedChannelTimer = ms;
-        namedChannelSequence = (cast(WorldContext) lore).nextGameplaySequence();
+        channelSpell = spell;
+        channelTimer = ms;
+        namedChannelSequence = named ? (cast(WorldContext) lore).nextGameplaySequence() : 0;
         namedChannelPeer = target.replica is null ? 0 : target.replica.owner;
-        missingNamedChannelTarget = 0;
+        missingChannelTarget = 0;
+        missilePulsesRemaining = named ? 0 : ms / spell.casting.amplitude[0];
         me.values.set!UNIT_CHANNEL_SPELL(spell.id);
         me.values.set!UNIT_FIELD_CHANNEL_OBJECT(target.combatGuid);
         world_.flushCreature(me);
@@ -212,18 +226,19 @@ mixin template CreatureCasting()
         return true;
     }
 
-    package void finishNamedCreatureChannel(bool cancelled)
+    package void finishCreatureChannel(bool cancelled)
     {
         import dmangos.cluster.protocol : AreaDamage;
         import dmangos.world.context : WorldContext;
         import dmangos.world.map : Map;
         import dmangos.world.spellcast : spellFailurePacket, SpellCastResult;
 
-        auto spell = namedChannelSpell;
+        auto spell = channelSpell;
         if (spell is null)
             return;
-        namedChannelSpell = null;
-        namedChannelTimer = 0;
+        channelSpell = null;
+        channelTimer = 0;
+        missilePulsesRemaining = 0;
         const channelToken = namedChannelSequence;
         namedChannelSequence = 0;
         const guid = me.values.get!UNIT_FIELD_CHANNEL_OBJECT;
@@ -233,7 +248,13 @@ mixin template CreatureCasting()
             return;
         if (cancelled)
         {
-            if (auto target = world_.creatureAt(guid))
+            if (!channelToken)
+            {
+                if (auto aura = me.auras.find(spell.id, me.guid))
+                    if (aura.duration > 0) // an expiring aura is removed by the tick that found it
+                        me.loseAura(aura, world_);
+            }
+            else if (auto target = world_.creatureAt(guid))
             {
                 if (auto aura = target.auras.find(spell.id, me.guid))
                     if (aura.channelToken == channelToken)
@@ -262,42 +283,73 @@ mixin template CreatureCasting()
     package void namedCreatureChannelRejected(ulong sequence)
     {
         if (sequence && sequence == namedChannelSequence)
-            finishNamedCreatureChannel(true);
+            finishCreatureChannel(true);
     }
 
-    private void updateNamedCreatureChannel(int diff)
+    private void updateCreatureChannel(int diff)
     {
         import dmangos.world.map : Map;
-        import dmangos.world.spellselection : namedCreatureRange;
 
-        const spell = namedChannelSpell;
+        const spell = channelSpell;
         if (spell is null)
             return;
         auto target = spellTarget(me.values.get!UNIT_FIELD_CHANNEL_OBJECT);
-        namedChannelTimer -= diff;
+        channelTimer -= diff;
         if (!target)
         {
-            if ((missingNamedChannelTarget += diff) >= 1000 || namedChannelTimer <= 0)
-                finishNamedCreatureChannel(true);
+            if ((missingChannelTarget += diff) >= 1000 || channelTimer <= 0)
+                finishCreatureChannel(true);
             return;
         }
-        missingNamedChannelTarget = 0;
-        if (!target.alive)
-            return finishNamedCreatureChannel(true);
-        const at = target.position, from = me.position;
-        const reach = namedCreatureRange(*spell, lore.clientData) + me.fighter.combatReach + target.fighter.combatReach;
-        if (!((at.x - from.x) ^^ 2 + (at.y - from.y) ^^ 2 + (at.z - from.z) ^^ 2 <= reach ^^ 2)
-            || !world_.inLineOfSight(from, at) || (!me.spline.finalized && (spell.casting.channelInterruptFlags & 0x08)))
-            finishNamedCreatureChannel(true);
-        else if (namedChannelTimer <= 0)
-            finishNamedCreatureChannel(false);
-        else
+        missingChannelTarget = 0;
+        if (!canMaintainCreatureChannel(spell, target, namedChannelSequence != 0)
+            || (!namedChannelSequence && channelTimer > 0 && me.auras.find(spell.id, me.guid) is null))
+            finishCreatureChannel(true);
+        else if (channelTimer <= 0)
+            finishCreatureChannel(false);
+        else if (namedChannelSequence)
         {
             const ushort peer = target.replica is null ? 0 : target.replica.owner;
             if (peer && peer != namedChannelPeer)
                 if (auto map = cast(Map) world_)
-                    map.holdCasterReplica(me.guid, peer, cast(uint) namedChannelTimer + 5000, true);
+                    map.holdCasterReplica(me.guid, peer, cast(uint) channelTimer + 5000, true);
             namedChannelPeer = peer;
+        }
+    }
+
+    private bool canMaintainCreatureChannel(const(SpellInfo)* spell, UnitRef target, bool named)
+    {
+        import dmangos.world.spelldamage : creatureTargetInRange;
+        import dmangos.world.spellselection : namedCreatureRange;
+
+        const at = target.position, from = me.position;
+        if (!target.alive || (!me.spline.finalized && (spell.casting.channelInterruptFlags & 0x08))
+            || !world_.inLineOfSight(from, at))
+            return false;
+        if (!named)
+            return isMissileTarget(target) && creatureTargetInRange(spell, me.fighter, target.fighter, lore.clientData);
+        const reach = namedCreatureRange(*spell, lore.clientData) + me.fighter.combatReach + target.fighter.combatReach;
+        return (at.x - from.x) ^^ 2 + (at.y - from.y) ^^ 2 + (at.z - from.z) ^^ 2 <= reach ^^ 2;
+    }
+
+    private bool isMissileTarget(UnitRef target)
+    {
+        return target && target.alive && target.combatGuid != me.guid
+            && canAttack(relating, target.combatRelations(me.client), me.client);
+    }
+
+    /// A tick of the caster's Arcane Missiles aura uses the original channel target.
+    package void arcaneMissilesTick(const(SpellInfo)* spell, size_t effect)
+    {
+        if (spell != channelSpell || namedChannelSequence || effect != 0 || missilePulsesRemaining <= 0)
+            return;
+        --missilePulsesRemaining;
+        if (auto target = spellTarget(me.values.get!UNIT_FIELD_CHANNEL_OBJECT))
+        {
+            if (!canMaintainCreatureChannel(spell, target, false))
+                return finishCreatureChannel(true);
+            if (const pulse = lore.spellInfo(spell.triggerSpell[effect]))
+                castSpell(pulse, target.combatGuid, castTriggered);
         }
     }
 
@@ -387,6 +439,9 @@ mixin template CreatureCasting()
         else if (target == 0)
             target = victim ? victim : me.guid;
         auto other = spellTarget(target);
+        const missiles = !triggered && isArcaneMissilesChannel(*spell);
+        if (missiles && !isMissileTarget(other))
+            return refuse(SpellCastResult.badTargets);
         if (selectedChannelTarget && !validChannelTarget(spell, channelEffect, other, context))
             return refuse(SpellCastResult.badTargets);
         if (target != me.guid)
@@ -397,7 +452,7 @@ mixin template CreatureCasting()
                     return refuse(SpellCastResult.targetsDead);
                 if ((flags & castAuraNotPresent) && other.hasAuraOf(spell.id))
                     return refuse(SpellCastResult.dontReport);
-                if (other.replica !is null && !selectedChannelTarget)
+                if (other.replica !is null && !selectedChannelTarget && !missiles)
                 {
                     import std.algorithm.searching : any;
                     import std.range : iota;
@@ -439,8 +494,8 @@ mixin template CreatureCasting()
         }
         if (casting_ !is null)
             interruptCast();
-        if (namedChannelSpell !is null && (flags & castInterruptPrevious))
-            finishNamedCreatureChannel(true);
+        if (channelSpell !is null && (flags & castInterruptPrevious))
+            finishCreatureChannel(true);
         if (!triggered && isNextMeleeSwingSpell(*spell))
         {
             nextSwing = spell;
@@ -477,7 +532,7 @@ mixin template CreatureCasting()
     /// The cast under way: it goes off when its time is up, or fails if its target is gone.
     private void updateCasting(int diff)
     {
-        updateNamedCreatureChannel(diff);
+        updateCreatureChannel(diff);
         foreach (ref t; schoolLockMs)
             if (t > 0)
                 t -= diff;
@@ -528,7 +583,7 @@ mixin template CreatureCasting()
     /// Crowd control began (`silenceOnly`: a silence): the cast under way stops if it is one that stops.
     package void crowdControlBegan(bool silenceOnly)
     {
-        auto current = casting_ is null ? namedChannelSpell : casting_;
+        auto current = casting_ is null ? channelSpell : casting_;
         if (current !is null && (!silenceOnly || current.casting.preventionType == preventionSilence))
             interruptCast();
     }
@@ -539,7 +594,7 @@ mixin template CreatureCasting()
     {
         import dmangos.world.spellcast : isInterruptible;
 
-        auto current = casting_ is null ? namedChannelSpell : casting_;
+        auto current = casting_ is null ? channelSpell : casting_;
         if (current !is null && isInterruptible(*current))
             interruptCast(lockMs);
     }
@@ -549,13 +604,13 @@ mixin template CreatureCasting()
     {
         import dmangos.world.spellcast : spellFailurePacket, SpellCastResult;
 
-        auto current = casting_ is null ? namedChannelSpell : casting_;
+        auto current = casting_ is null ? channelSpell : casting_;
         if (current is null)
             return;
         if (lockMs > 0 && current.casting.school < schoolLockMs.length)
             schoolLockMs[current.casting.school] = lockMs;
-        if (namedChannelSpell !is null)
-            return finishNamedCreatureChannel(true);
+        if (channelSpell !is null)
+            return finishCreatureChannel(true);
         if (world_ !is null)
             world_.sendToObservers(me.guid, Opcode.SMSG_SPELL_FAILURE,
                 spellFailurePacket(me.guid, casting_.id, SpellCastResult.interrupted));
@@ -791,6 +846,7 @@ mixin template CreatureCasting()
         auto context = cast(WorldContext) lore;
         const channelEffect = takeMana && !me.meleeController && selectedWeaponTargets is null && context !is null
             ? context.namedCreatureChannel(spell) : size_t.max;
+        const missiles = takeMana && selectedWeaponTargets is null && isArcaneMissilesChannel(*spell);
         if (selectedChannelTarget && channelEffect == size_t.max)
             return;
         UnitRef channelTarget;
@@ -813,14 +869,24 @@ mixin template CreatureCasting()
             else
                 channelTarget = nearestNamedCreature(world_, me.position, namedCreatureRange(*spell, lore.clientData),
                     context.namedCreatureEntries(spell, channelEffect), me.guid, context.sendAreaDamage !is null);
-            if (!channelTarget || !beginNamedCreatureChannel(spell, channelTarget))
+            if (!channelTarget || !beginCreatureChannel(spell, channelTarget, true))
                 return;
             const entry = namedCreatureEntry(channelTarget);
             firstChannelEffect = context.namedCreatureEffectFor(spell, channelEffect, entry);
             channelExclusions = context.scriptTargetExclusions(spell.id, entry);
         }
         bool remotePrimary, sentArea;
-        if (selectedWeaponTargets is null && channelEffect == size_t.max)
+        if (missiles)
+        {
+            auto other = spellTarget(target);
+            if (!isMissileTarget(other)
+                || !creatureTargetInRange(spell, me.fighter, other.fighter, lore.clientData)
+                || !beginCreatureChannel(spell, other, false))
+                return;
+            // The periodic aura is on the caster. Each missile routes to the target separately.
+            remotePrimary = other.replica !is null;
+        }
+        else if (selectedWeaponTargets is null && channelEffect == size_t.max)
         if (auto other = spellTarget(target))
             if (other.replica !is null)
             {
@@ -895,7 +961,7 @@ mixin template CreatureCasting()
                     {
                         if (!sendCreatureTargetSpell(context, spell, channelTarget, false, auraAbsent, cast(int) i,
                                 me.position, namedCreatureRange(*spell, lore.clientData), true, namedChannelSequence))
-                            return finishNamedCreatureChannel(true);
+                            return finishCreatureChannel(true);
                         remoteNamed ~= channelTarget.combatGuid;
                     }
                 }
@@ -1071,7 +1137,7 @@ mixin template CreatureCasting()
             if (auto aura = channelTarget.creature.auras.find(spell.id, me.guid))
                 aura.channelToken = namedChannelSequence;
             else
-                finishNamedCreatureChannel(true);
+                finishCreatureChannel(true);
         }
         world_.flushCreature(me);
     }

@@ -694,6 +694,114 @@ unittest
         }
 }
 
+/// The stock-database fix introduces the catalogue after the client accepts Jeziba's quest.
+unittest
+{
+    import std.math : atan2, isClose;
+
+    if (!haveRealData())
+        return;
+    enum uint quest = 5164, jezibaEntry = 10976, catalogueEntry = 176192;
+    uint mapId;
+    const at = spawnOnContinent(realData, jezibaEntry, mapId);
+    const row = realData.quests.quest(quest);
+    if (row is null || row.startScript != quest)
+        return; // An older or customized world database may leave this scene unbound.
+
+    auto s = new Scene(mapId, Position(at.x + 2, at.y, at.z));
+    auto jeziba = s.the(jezibaEntry);
+    auto catalogue = s.objects(catalogueEntry)[0];
+    const toward = atan2(catalogue.position.y - at.y, catalogue.position.x - at.x);
+    s.run(200.msecs);
+    s.forget();
+    assert(s.takeQuest(jeziba, quest));
+    s.run(1200.msecs);
+    assert(isClose(jeziba.position.orientation, toward), format!"facing %s toward %s, spline %s ms of %s, facing %s"(
+        jeziba.position.orientation, toward, jeziba.spline.timePassed, jeziba.spline.duration, jeziba.spline.facingAngle));
+    assert(s.texts.length == 0 && !s.emotes.canFind(25));
+    s.run(1.seconds);
+    const introduction = s.w.context.broadcastText(6332).text(false);
+    assert(s.texts.canFind!(line => line.speaker == "Jeziba" && line.text == introduction), s.seen());
+    assert(!s.emotes.canFind(25));
+    s.run(1.seconds);
+    assert(s.emotes.canFind(25));
+    s.run(2.seconds);
+    assert(isClose(jeziba.position.orientation, at.orientation));
+}
+
+/// Placing the relics, winning the fight and speaking to Joseph lead to Pamela's reunion and the chest.
+unittest
+{
+    import dmangos.bytes : ByteWriter;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.spellcast : SpellTargets, TargetFlags;
+
+    if (!haveRealData() || realData.gameObjectScriptNames.get(177526, "") != "go_darrowshire_relic_bundle")
+        return;
+    enum uint battle = 5721, treasure = 5942, relics = 15209, horgus = 10946,
+        captain = 10937, corrupted = 10938, joseph = 10936, pamela = 10926, chest = 177544;
+    auto s = new Scene(0, Position(1439.81f, -3702.22f, 77.12f), [classWarrior, classPriest], withTerrain: true);
+    s.giveQuest(battle);
+    s.useCarriedItem(relics, SpellTargets(TargetFlags.self));
+    assert(s.runUntil(() => s.find(10948) !is null, 20.seconds), "Relic Bundle should start the battle");
+    bool waitFor(uint entry, uint secondsLimit)
+    {
+        return s.runUntil({
+            foreach (attacker; [10951u, 10952, 10953, 10954])
+                foreach (enemy; s.all(attacker))
+                    s.kill(enemy);
+            return s.find(entry) !is null;
+        }, secondsLimit.seconds, 1.seconds);
+    }
+    assert(waitFor(horgus, 250));
+    s.kill(s.the(horgus));
+    assert(waitFor(captain, 22));
+    assert(waitFor(corrupted, 360));
+    s.kill(s.the(corrupted));
+    assert(waitFor(joseph, 5));
+    auto father = s.the(joseph);
+    s.moveHero(0, father.position);
+    s.moveHero(1, s.the(pamela).position);
+    s.forget();
+    s.gossip(father, []);
+    s.run(400.msecs);
+    assert(s.questState(battle) == QuestState.complete, "Joseph's forgiveness completes the original objective");
+    s.stayWith = father;
+    s.following = 1;
+    assert(s.runUntil(() => s.texts.canFind!(line => line.speaker == "Joseph Redpath" && line.text.canFind("finally home")),
+        150.seconds, 200.msecs), s.seen());
+    s.stayWith = null;
+    const sequence = [7397u, 7399, 7400, 7401, 7398, 7402, 7403];
+    size_t heard;
+    foreach (line; s.texts)
+    {
+        if (line.text != s.w.context.broadcastText(sequence[heard]).text(false))
+            continue;
+        if (++heard == sequence.length)
+            break;
+    }
+    assert(heard == sequence.length, s.seen());
+
+    auto daughter = s.the(pamela);
+    s.moveHero(0, daughter.position);
+    void reward(ulong giver, uint quest)
+    {
+        ByteWriter packet;
+        packet.put(giver);
+        packet.put(quest);
+        packet.put(0u);
+        s.heroes[0].write(Opcode.CMSG_QUESTGIVER_CHOOSE_REWARD, packet.data);
+        s.listen();
+    }
+    reward(daughter.guid, battle);
+    assert(s.hero.questStatus[battle].rewarded);
+    assert(s.takeQuest(daughter, treasure));
+    const box = s.objects(chest)[0];
+    s.moveHero(0, box.position);
+    reward(box.guid, treasure);
+    assert(s.hero.questStatus[treasure].rewarded);
+}
+
 /// Eris accepts help for a peasant, but direct aid to the priest brings the Cleaner once.
 unittest
 {

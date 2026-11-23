@@ -1075,8 +1075,9 @@ mixin template DbScriptRunner()
 
             const from = creature.position, to = target.position;
             const facing = step.datalong ? creature.spawn.orientation : atan2(to.y - from.y, to.x - from.x);
-            if (creature.spline.finalized)
-                launch(creature, map, [Vector3(from.x, from.y, from.z), Vector3(from.x, from.y, from.z)], true, facing);
+            if (creature.spline.finalized
+                && launch(creature, map, [Vector3(from.x, from.y, from.z), Vector3(from.x, from.y, from.z)], true, facing))
+                map.wake(creature.guid);
             break;
         }
         case ScriptCommand.startRelayScript:

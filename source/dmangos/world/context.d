@@ -67,6 +67,7 @@ import dmangos.world.transports : ShipObject, mapAt, transportClock;
 import dmangos.world.clientdata : ClientData;
 import dmangos.world.config : WorldConfig;
 import dmangos.world.database : InstanceChestRecord, WorldDatabase;
+import dmangos.world.creaturepools : CreaturePools;
 import dmangos.vmap.gameobjectmodels : GameObjectModels;
 import dmangos.world.gameobjectcollision : GameObjectCollision;
 import dmangos.world.elevators : ElevatorPath;
@@ -2565,6 +2566,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         this.groups = new Groups(database, this, next.group, config.battlegroup.length ? config.realmId : 0);
         groupService = new GroupService(this);
         respawnAt = database.loadCreatureRespawns();
+        creaturePools = new CreaturePools(() => this.database, config.realmId, data, respawnAt);
         gameObjectRespawnAt = database.loadGameObjectRespawns();
         groups.load(database.loadGroups());
         guilds = new Guilds;
@@ -2739,8 +2741,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (corpse !is null && m.findObject(corpse.guid) is corpse)
             m.corpseExpired(corpse);
         if (auto state = m.instanceId in instances)
+        {
+            state.trashRespawns.remove(spawn.guid);
             if (state.dead.remove(spawn.guid))
                 database.deleteInstanceRespawn(spawn.guid, m.instanceId);
+        }
         if (m.findObject(makeGuid(HighGuid.unit, spawn.entry, spawn.guid)) !is null)
             return;
         auto back = makeCreature(spawn);
@@ -2748,6 +2753,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return;
         back.instanceId = m.instanceId;
         m.addObject(back);
+        queueLinked(m.id, m.instanceId, back);
         if (auto script = m.instanceId in instanceScripts)
         {
             import dmangos.script.api : CreatureLoaded, EntityRef;
@@ -2759,6 +2765,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// Spawn `guid`, dead and waiting, is due now.
     private void respawnSpawnNow(uint guid)
     {
+        if (creaturePools.manages(guid))
+        {
+            if (creaturePools.waiting(guid))
+                creaturePools.dead(guid, unixTime, true);
+            return;
+        }
         if (auto at = guid in respawnAt)
             if (*at > unixTime)
             {
@@ -2849,20 +2861,40 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /**
-     * In a dungeon copy, a slave (by spawn) that waits on its master: `cantSpawnIfBossDead` while its master
+     * In a dungeon copy, a slave that waits on its master: `cantSpawnIfBossDead` while its master
      * is dead, `cantSpawnIfBossAlive` while it lives.
      */
     private bool cantSpawnWhileBossDead(const ref CreatureSpawn spawn, const(InstanceState)* state)
     {
         if (state is null)
             return false;
-        if (const l = spawn.guid in data.creatureLinks.bySlaveGuid)
+        const link = data.creatureLinks.linkOf(spawn.guid, spawn.entry, spawn.map);
+        if (link is null || !(link.flags & (LinkFlag.cantSpawnIfBossDead | LinkFlag.cantSpawnIfBossAlive)))
+            return false;
+        uint master = link.masterGuid;
+        if (!master)
         {
-            const bossDead = (l.masterGuid in state.dead) !is null;
-            return ((l.flags & LinkFlag.cantSpawnIfBossDead) && bossDead)
-                || ((l.flags & LinkFlag.cantSpawnIfBossAlive) && !bossDead);
+            float nearest = float.infinity;
+            foreach (indices; data.creatureCells.get(spawn.map, null))
+                foreach (index; indices)
+                {
+                    const ref candidate = data.creatureSpawns[index];
+                    if (candidate.entry != link.masterEntry || candidate.guid == spawn.guid
+                        || !inLinkRange(spawn.x, spawn.y, candidate.x, candidate.y, link.range))
+                        continue;
+                    const distance = (spawn.x - candidate.x) ^^ 2 + (spawn.y - candidate.y) ^^ 2;
+                    if (distance < nearest || (distance == nearest && candidate.guid < master))
+                    {
+                        master = candidate.guid;
+                        nearest = distance;
+                    }
+                }
         }
-        return false;
+        if (!master)
+            return false;
+        const bossDead = master in state.dead;
+        return ((link.flags & LinkFlag.cantSpawnIfBossDead) && bossDead)
+            || ((link.flags & LinkFlag.cantSpawnIfBossAlive) && !bossDead);
     }
 
     /// Creatures just spawned that may follow or be followed: worked out once their cell holds them.
@@ -3023,6 +3055,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// Whether a spawn is up in its pool (`pool_*`): in none, or rolled.
     bool upInPool(PoolMember.Kind kind, uint guid)
     {
+        if (kind == PoolMember.Kind.creature && creaturePools.manages(guid))
+            return creaturePools.selected(guid);
         return data.pools is null || data.pools.spawns(kind, guid);
     }
 
@@ -3949,10 +3983,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         long resetAt;          /// a raid's reset (Unix time): its lockout lasts till then; 0 for a dungeon
         long createdAt;        /// when it was made (or, saved, read back), Unix time
         MonoTime emptySince;   /// MonoTime.init while someone is in it
-        bool[uint] dead;       /// creature spawns killed there (they do not come back while it lasts)
+        bool[uint] dead;       /// creature spawns killed there
         bool[uint] usedUp;     /// game object spawns used up there
         string data;           /// its dungeon script's state (`instance.data`)
         InstanceChestRecord[uint] chests; /// scripted reward loot, by spawn
+        long[uint] trashRespawns;         /// Molten Core trash deadlines, by spawn
     }
 
     private Map[uint] instanceMaps;            // instance id -> its map
@@ -4216,7 +4251,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     if (r.gameObject)
                         state.usedUp[r.spawnGuid] = true;
                     else
+                    {
                         state.dead[r.spawnGuid] = true;
+                        if (const spawn = creatureSpawnOf(r.spawnGuid))
+                            if (moltenCoreTrash(*spawn) && r.until > 0 && (!state.resetAt || r.until < state.resetAt))
+                                state.trashRespawns[r.spawnGuid] = r.until;
+                    }
                 }
         foreach (chest; saved.chests)
             if (auto state = chest.instance in instances)
@@ -4927,6 +4967,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
         if (!gained.length)
             return;
+        creaturePools.refresh();
         const(Region)[] cold;
         foreach (ref region; gained)
         {
@@ -4947,6 +4988,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
             bool here(uint guid)
             {
+                static if (is(Spawn == CreatureSpawn))
+                    if (creaturePools.manages(guid))
+                        return false; // the durable pool row owns this deadline
                 ulong home;
                 return cold.any!(region => timerHome(region, guid, spawns, index, home));
             }
@@ -4987,9 +5031,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         const at = state.read!long;
         if (at > 0)
         {
-            if (creature)
+            if (creature && !creaturePools.manages(migrant.spawn))
                 respawnAt[migrant.spawn] = at;
-            else
+            else if (!creature)
                 gameObjectRespawnAt[migrant.spawn] = at;
         }
         return null;
@@ -5313,7 +5357,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if (creature.meleeController || creature.totemOwner)
                 return Migrant.init; // controlled creatures follow their owner's rules
             if (creature.ai !is null)
-                creature.ai.finishNamedCreatureChannel(true);
+                creature.ai.finishCreatureChannel(true);
             if (creature.loot !is null)
                 creature.loot.sendReleaseForAll();
             const now = transportNow();
@@ -5670,7 +5714,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         const until = state.length ? reader.read!long : 0L;
         const bundle = reader.readBytes(reader.remaining);
         if (until > unixTime)
-            respawnAt[spawn.guid] = until;
+            if (!creaturePools.manages(spawn.guid))
+                respawnAt[spawn.guid] = until;
         if (bundle.length)
         {
             ulong[] cells;
@@ -5690,9 +5735,17 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             // A crashed borrower left no state. Re-read saved deaths before rebuilding its spawn.
             if (!state.length)
             {
-                const saved = database.loadCreatureRespawns().get(spawn.guid, 0);
-                if (saved > unixTime)
-                    respawnAt[spawn.guid] = saved;
+                if (creaturePools.manages(spawn.guid))
+                {
+                    if (!creaturePools.refresh())
+                        return;
+                }
+                else
+                {
+                    const saved = database.loadCreatureRespawns().get(spawn.guid, 0);
+                    if (saved > unixTime)
+                        respawnAt[spawn.guid] = saved;
+                }
             }
             if (!awaitingRespawn(spawn.guid) && creatureInEvents(spawn.guid)
                 && upInPool(PoolMember.Kind.creature, spawn.guid))
@@ -5837,6 +5890,15 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private long[uint] respawnAt;
     private MonoTime lastRespawnCheck;
 
+    private bool moltenCoreTrash(const ref CreatureSpawn spawn)
+    {
+        enum moltenCore = 409, lockout = 7 * 24 * 60 * 60, worldBossRank = 3, instanceBind = 0x01;
+        if (spawn.map != moltenCore || spawn.respawnSeconds == 0 || spawn.respawnSeconds >= lockout)
+            return false;
+        const template_ = spawn.entry in data.creatureTemplates;
+        return template_ !is null && template_.rank != worldBossRank && !(template_.extraFlags & instanceBind);
+    }
+
     /// A creature died: its respawn time is saved at once; it comes back when it says.
     void creatureDied(Creature creature)
     {
@@ -5856,14 +5918,22 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         {
             if (auto state = creature.instanceId in instances)
             {
-                state.dead[creature.spawn.guid] = true; // until the instance resets
-                database.saveInstanceRespawn(false, creature.spawn.guid, creature.instanceId,
-                    state.resetAt ? state.resetAt : unixTime + 86_400);
+                const guid = creature.spawn.guid;
+                state.dead[guid] = true;
+                long until = state.resetAt ? state.resetAt : unixTime + 86_400;
+                if (moltenCoreTrash(creature.spawn) && creature.respawnAt < until)
+                    state.trashRespawns[guid] = until = creature.respawnAt;
+                database.saveInstanceRespawn(false, guid, creature.instanceId, until);
             }
             return;
         }
-        respawnAt[creature.spawn.guid] = creature.respawnAt;
-        database.saveCreatureRespawn(creature.spawn.guid, creature.respawnAt);
+        if (creaturePools.manages(creature.spawn.guid))
+            creaturePools.dead(creature.spawn.guid, creature.respawnAt);
+        else
+        {
+            respawnAt[creature.spawn.guid] = creature.respawnAt;
+            database.saveCreatureRespawn(creature.spawn.guid, creature.respawnAt);
+        }
     }
 
     /// A corpse went; if it died elsewhere, restore the original respawn deadline.
@@ -5882,6 +5952,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         }
         if (creature.summon.type != TempSpawnType.none || creature.instanceId)
             return;
+        if (creaturePools.manages(creature.spawn.guid))
+        {
+            const next = creature.respawnAt ? max(unixTime, creature.respawnAt) : unixTime + creature.spawn.respawnSeconds;
+            creaturePools.dead(creature.spawn.guid, next);
+            return;
+        }
         if (creature.spawn.guid !in respawnAt)
         {
             const next = creature.respawnAt ? max(unixTime, creature.respawnAt) : unixTime + creature.spawn.respawnSeconds;
@@ -7357,8 +7433,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             }
             return;
         }
-        respawnAt[corpse.spawn.guid] = unixTime + 1;
-        database.saveCreatureRespawn(corpse.spawn.guid, respawnAt[corpse.spawn.guid]);
+        if (creaturePools.manages(corpse.spawn.guid))
+            creaturePools.dead(corpse.spawn.guid, unixTime + 1, true);
+        else
+        {
+            respawnAt[corpse.spawn.guid] = unixTime + 1;
+            database.saveCreatureRespawn(corpse.spawn.guid, respawnAt[corpse.spawn.guid]);
+        }
         map.corpseExpired(corpse);
     }
 
@@ -7688,6 +7769,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// Whether a spawn is dead and waiting to come back.
     bool awaitingRespawn(uint spawnGuid)
     {
+        if (creaturePools.manages(spawnGuid))
+            return creaturePools.waiting(spawnGuid);
         if (auto at = spawnGuid in respawnAt)
             return *at > unixTime;
         return false;
@@ -7707,6 +7790,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         lastRespawnCheck = now;
         gameObjectsDue();
         const time = unixTime;
+        respawnCreaturePools(time);
+        respawnMoltenCoreTrash(time);
         uint[] due;
         foreach (guid, at; respawnAt)
             if (at <= time && !creatureOnLoan(guid))
@@ -7748,6 +7833,78 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 there.addObject(creature);
                 linkedRespawn(there, creature);
             }
+        }
+    }
+
+    private void respawnMoltenCoreTrash(long now)
+    {
+        foreach (id, map; instanceMaps)
+            if (auto state = id in instances)
+                foreach (guid; state.trashRespawns.keys)
+                {
+                    const readyAt = guid in state.trashRespawns;
+                    if (readyAt is null || *readyAt > now)
+                        continue;
+                    const spawn = creatureSpawnOf(guid);
+                    if (spawn is null || cantSpawnWhileBossDead(*spawn, state))
+                    {
+                        state.trashRespawns.remove(guid);
+                        database.saveInstanceRespawn(false, guid, id, state.resetAt ? state.resetAt : now + 86_400);
+                        continue;
+                    }
+                    const at = cellKeyAt(spawn.x, spawn.y);
+                    if (map.cellLoaded(at))
+                    {
+                        auto corpse = map.creatureAt(makeGuid(HighGuid.unit, spawn.entry, guid));
+                        respawnInCopy(map, spawn, corpse is null || corpse.alive ? null : corpse);
+                    }
+                    else
+                    {
+                        state.trashRespawns.remove(guid);
+                        state.dead.remove(guid);
+                        database.deleteInstanceRespawn(guid, id);
+                    }
+                }
+    }
+
+    /// Only the selected placement's owner may roll it. Once a placement is ready, its owner loads it once.
+    private void respawnCreaturePools(long time)
+    {
+        import std.random : uniform;
+
+        if (!creaturePools.refresh())
+            return;
+        foreach (pool, state; creaturePools.states())
+        {
+            if (state.due > time || !creaturePools.contains(pool, state.spawn) || creatureOnLoan(state.spawn))
+                continue;
+            const spawn = creatureSpawnOf(state.spawn);
+            if (spawn is null)
+                continue;
+            const home = cellKeyAt(spawn.x, spawn.y);
+            if (ownsCell !is null && !ownsCell(spawn.map, home))
+                continue;
+            auto there = existingMap(spawn.map);
+            if (there !is null && there.creatureAt(loanGuid(spawn)) !is null)
+                continue; // a corpse is still waiting for loot or the live creature is already here
+            if (state.due)
+            {
+                const next = creatureSpawnOf(creaturePools.roll(pool, state.spawn, spawnRandom));
+                if (next is null)
+                    continue;
+                long due;
+                if (next.guid != state.spawn)
+                    due = time + (next.respawnSecondsMax > next.respawnSeconds
+                        ? uniform!"[]"(next.respawnSeconds, next.respawnSecondsMax, spawnRandom) : next.respawnSeconds);
+                if (!creaturePools.change(pool, state.revision, next.guid, due) || due)
+                    continue;
+            }
+            if (there !is null && there.cellLoaded(home) && creatureInEvents(spawn.guid))
+                if (auto creature = makeCreature(spawn))
+                {
+                    there.addObject(creature);
+                    linkedRespawn(there, creature);
+                }
         }
     }
 
@@ -8304,6 +8461,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if (auto serial = session in serials)
                 claimSession(account, *serial);
     }
+
+    private CreaturePools creaturePools;
 }
 
 /// NPC services across nodes: a replica of a creature is served through a stand-in.
@@ -9069,6 +9228,182 @@ unittest
         newOwner.respawnDue(now);
         assert(map.creatureAt(creatureGuid) is alive && map.gameObjectAt(objectGuid) is ready);
     }
+}
+
+// As with Akubar, two cells can host one rare. The deadline, the roll, and its new location outlive a node.
+unittest
+{
+    import dmangos.cluster.regions : CellRect;
+    import dmangos.world.fencing : FencedDatabase;
+    import dmangos.world.grid : cellCoordinate;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.testclient : newDatabase;
+    import dmangos.world.testdata : creatureInnkeeper, testClientData, testWorldData;
+    import dmangos.world.updatefields : UNIT_FIELD_HEALTH;
+    import dmangos.world.worlddata : PoolChooser;
+
+    enum uint realm = 37, pool = 1031;
+    enum kind = PoolMember.Kind.creature;
+    const placements = [
+        CreatureSpawn(guid: 9_000_001, entry: creatureInnkeeper, x: -8900, y: -120, z: 84, respawnSeconds: 10),
+        CreatureSpawn(guid: 9_000_002, entry: creatureInnkeeper, x: -6500, y: -120, z: 84, respawnSeconds: 10),
+    ];
+    const homes = [cellKeyAt(placements[0].x, placements[0].y), cellKeyAt(placements[1].x, placements[1].y)];
+    assert(homes[0] != homes[1]);
+
+    auto clock = MonoTime.currTime;
+    WorldContext newNode(WorldDatabase db, uint seed = 13)
+    {
+        auto client = testClientData();
+        auto world = testWorldData(client);
+        world.pools = new PoolChooser;
+        world.pools.limits[pool] = 1;
+        foreach (i, ref spawn; placements)
+        {
+            world.pools.add(pool, PoolMember(kind, spawn.guid));
+            world.creatureCells[0][homes[i]] ~= world.creatureSpawns.length;
+            world.creatureSpawns ~= spawn;
+        }
+        auto rng = Random(seed);
+        world.pools.choose(rng);
+        WorldConfig config;
+        config.realmId = realm;
+        auto node = new WorldContext(config, db, world, client);
+        node.clock = () => clock;
+        return node;
+    }
+
+    void expectRoll(WorldContext node, uint original, uint wanted)
+    {
+        foreach (seed; 0u .. 32u)
+        {
+            auto rng = Random(seed);
+            if (node.data.pools.rollSingleCreature(pool, original, rng) == wanted)
+            {
+                node.spawnRandom = Random(seed);
+                return;
+            }
+        }
+        assert(false, "no test seed chose the wanted pool member");
+    }
+
+    enum Scenario { standalone, split, clean, cold }
+    foreach (scenario; [Scenario.standalone, Scenario.split, Scenario.clean, Scenario.cold])
+    {
+        auto db = newDatabase();
+        auto oldOwner = newNode(db);
+        auto remote = scenario == Scenario.standalone ? oldOwner : newNode(db);
+        auto winner = scenario == Scenario.clean || scenario == Scenario.cold ? newNode(db) : oldOwner;
+        foreach (node; [oldOwner, remote, winner])
+        {
+            node.startClock = clock;
+            node.startUnixTime = oldOwner.startUnixTime;
+        }
+        const first = oldOwner.upInPool(kind, placements[0].guid) ? 0 : 1;
+        const second = 1 - first;
+        const start = placements[first].guid, alternate = placements[second].guid;
+        const startingGuid = makeGuid(HighGuid.unit, creatureInnkeeper, start);
+        const alternateGuid = makeGuid(HighGuid.unit, creatureInnkeeper, alternate);
+        bool moved;
+        if (scenario != Scenario.standalone)
+        {
+            oldOwner.ownsCell = (uint mapId, ulong cell) => (!moved || scenario == Scenario.cold)
+                && !mapId && cell == homes[first];
+            remote.ownsCell = (uint mapId, ulong cell) => !mapId && cell == homes[second];
+            if (scenario == Scenario.cold)
+                oldOwner.database = new FencedDatabase(oldOwner.database, () => !moved);
+            if (winner !is oldOwner)
+                winner.ownsCell = (uint mapId, ulong cell) => moved && !mapId && cell == homes[first];
+        }
+        auto firstMap = oldOwner.map(0), secondMap = remote.map(0);
+        firstMap.loadCell(homes[first]);
+        secondMap.loadCell(homes[second]);
+        auto rare = firstMap.creatureAt(startingGuid);
+        assert(rare !is null && secondMap.creatureAt(alternateGuid) is null);
+        rare.values.set!UNIT_FIELD_HEALTH(0u);
+        firstMap.creatureDeath(rare);
+        firstMap.corpseExpired(rare);
+        const dead = db.loadCreaturePoolStates(realm)[pool];
+        assert(dead.spawn == start && dead.due == oldOwner.unixTime + 10 && dead.revision == 1);
+        assert(!db.updateCreaturePoolState(realm, pool, 0, alternate, 0), "a stale initial claim loses");
+
+        if (winner !is oldOwner)
+        {
+            import dmangos.cluster.regions : Region, RegionState;
+
+            const x = cellCoordinate(placements[first].x), y = cellCoordinate(placements[first].y);
+            Region region = Region(1, 0, CellRect(x, y, x + 1, y + 1), 1, 1, RegionState.revoking, 2);
+            ubyte[][uint] leaving, unused;
+            moved = true;
+            if (scenario == Scenario.clean)
+                oldOwner.regionsChanged(null, [region], null, leaving);
+            region.owner = 2;
+            region.state = RegionState.granted;
+            region.next = 0;
+            const(ubyte)[][uint] arriving = scenario == Scenario.clean
+                ? [region.id: cast(const(ubyte)[]) leaving[region.id]] : null;
+            winner.regionsChanged([region], null, arriving, unused);
+            winner.map(0).loadCell(homes[first]);
+            assert(winner.awaitingRespawn(start) && winner.map(0).creatureAt(startingGuid) is null);
+        }
+
+        clock += 11.seconds;
+        if (winner !is oldOwner)
+            oldOwner.respawnDue(clock);
+        if (remote !is winner)
+            remote.respawnDue(clock);
+        assert(db.loadCreaturePoolStates(realm)[pool] == dead, "only the owner of the selected home can roll");
+        expectRoll(winner, start, alternate);
+        winner.respawnDue(clock);
+        const waiting = db.loadCreaturePoolStates(realm)[pool];
+        assert(waiting.spawn == alternate && waiting.due == winner.unixTime + 10 && waiting.revision == 2);
+        assert(!db.updateCreaturePoolState(realm, pool, dead.revision, start, 0), "a stale winner cannot undo the roll");
+        assert(secondMap.creatureAt(alternateGuid) is null, "the alternate keeps its own delay");
+
+        // An already running destination learns the choice, and a restarted destination loads the same choice.
+        assert(db.loadCreaturePoolStates(realm + 1).length == 0);
+        auto finalOwner = scenario == Scenario.split ? remote : newNode(db, 55);
+        if (finalOwner !is remote)
+        {
+            finalOwner.startClock = clock;
+            finalOwner.startUnixTime = winner.unixTime;
+            if (scenario != Scenario.standalone)
+            {
+                remote.ownsCell = (uint, ulong) => false;
+                finalOwner.ownsCell = (uint mapId, ulong cell) => !mapId && cell == homes[second];
+            }
+        }
+        clock += 2.seconds;
+        finalOwner.respawnDue(clock);
+        auto destination = finalOwner.map(0);
+        destination.loadCell(homes[second]);
+        assert(!finalOwner.upInPool(kind, start) && finalOwner.awaitingRespawn(alternate));
+        assert(destination.creatureAt(alternateGuid) is null);
+
+        clock += 11.seconds;
+        expectRoll(finalOwner, alternate, alternate);
+        finalOwner.respawnDue(clock);
+        const live = db.loadCreaturePoolStates(realm)[pool];
+        auto placed = destination.creatureAt(alternateGuid);
+        assert(live.spawn == alternate && !live.due && live.revision == 3 && placed !is null && placed.alive);
+        clock += 2.seconds;
+        finalOwner.respawnDue(clock);
+        if (remote !is winner && remote !is finalOwner)
+            remote.respawnDue(clock);
+        assert(destination.creatureAt(alternateGuid) is placed);
+        assert(destination is secondMap || secondMap.creatureAt(alternateGuid) is null);
+        assert(!db.updateCreaturePoolState(realm, pool, dead.revision, start, 0));
+    }
+
+    // Upgrade from a pre-pool-state database whose pending spawn disagrees with the fresh seed.
+    auto legacy = newDatabase();
+    auto seeded = newNode(legacy);
+    const unseeded = seeded.upInPool(kind, placements[0].guid) ? placements[1].guid : placements[0].guid;
+    const inherited = seeded.unixTime + 10;
+    legacy.saveCreatureRespawn(unseeded, inherited);
+    auto upgraded = newNode(legacy);
+    assert(upgraded.upInPool(kind, unseeded) && upgraded.awaitingRespawn(unseeded));
+    assert(legacy.loadCreaturePoolStates(realm)[pool].due == inherited);
 }
 
 // A lost node supplies no bundle, but its durable additions still belong to the next owner.

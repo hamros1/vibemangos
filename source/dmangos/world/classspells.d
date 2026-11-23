@@ -1589,7 +1589,7 @@ mixin template ClassSpells()
         enum uint sweepingStrikes = 12292, sweepingStrikesCreature = 18765, sweepingDamage = 12723, sweepingWeapon = 26654;
         if (spell.id == sweepingStrikes || spell.id == sweepingStrikesCreature)
         {
-            if (hit.spell !is null && (hit.spell.id == sweepingDamage || hit.spell.id == sweepingWeapon))
+            if (hit.damage == 0 || (hit.spell !is null && (hit.spell.id == sweepingDamage || hit.spell.id == sweepingWeapon)))
                 return false;
             const second = anotherEnemyNear(other);
             if (!second)

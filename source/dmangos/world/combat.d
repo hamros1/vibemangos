@@ -102,6 +102,7 @@ struct Fighter
     uint[3] weaponSkill;       /// a player's current skill, by attack type
     uint[3] weaponSkillMax;    /// a player's maximum (against players, the higher counts)
     float[2][3] damage = 0;    /// by attack type: minimum, maximum (`UNIT_FIELD_MINDAMAGE`, ...)
+    int[3] weaponDamageFlat;   /// flat `MOD_DAMAGE_DONE` for each physical weapon (Furious Howl)
     uint[3] damageSchool;      /// by attack type: the school index (0: physical)
     float crit = 0;            /// its crit chance: a player's from agility; a creature's 5
     float auraCrit = 0;        /// the part of `crit` its auras give (talents, buffs, gear's crit), not its agility
@@ -816,7 +817,7 @@ float armorReducedDamage(uint attackerLevel, uint armor, float damage) pure noth
     return reduced > 1 ? reduced : 1;
 }
 
-/// A weapon's damage: a whole number between its minimum and maximum (5 if it has none).
+/// A weapon's damage: a whole number between its minimum and maximum (5 if it has none), plus flat damage auras.
 uint weaponDamage(const Fighter attacker, AttackType type, ref Random rng) @safe
 {
     float low = attacker.damage[type][0], high = attacker.damage[type][1];
@@ -828,7 +829,9 @@ uint weaponDamage(const Fighter attacker, AttackType type, ref Random rng) @safe
     }
     if (high == 0)
         high = 5;
-    return uniform!"[]"(cast(uint) low, cast(uint) high, rng);
+    const rolled = uniform!"[]"(cast(uint) low, cast(uint) high, rng);
+    const damage = cast(long) rolled + attacker.weaponDamageFlat[type];
+    return damage > 0 ? cast(uint) damage : 0;
 }
 
 /// A glancing blow does 1% to 99% of the damage, less the better the defense.

@@ -373,13 +373,14 @@ unittest
     }
 }
 
-/// A spell's strike as its log tells it: the spell, the target, the damage, whether it crit.
+/// A spell's strike as its log tells it, including damage absorbed by a shield.
 private struct Strike
 {
     uint spell;
     ulong target;
     uint damage;
     bool crit;
+    uint absorbed;
 }
 
 /// The energize logs (spell, amount) the last `strikes` read.
@@ -409,7 +410,7 @@ private Strike[] strikes(ref TestClient who)
             s.spell = r.read!uint;
             s.damage = r.read!uint;
             r.read!ubyte; // school
-            r.read!uint;  // absorbed
+            s.absorbed = r.read!uint;
             r.read!int;   // resisted
             r.read!ubyte; // periodic
             r.read!ubyte;
@@ -1170,6 +1171,81 @@ unittest
     assert(me.player.auras.find(20230).charges == 30, "no charge spent");
 }
 
+/// Power Word: Shield on the first creature prevents Sweeping Strikes while it absorbs all the damage.
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint sweepingStrikes = 12292, sweepingHit = 12723, heroicStrike = 11567, shield = 10901;
+    auto w = RealWorld.make();
+    auto who = w.character(351, "Shieldsweeper", PlayerClass.warrior, 60, [battleStance, sweepingStrikes, heroicStrike]);
+    auto me = who.session.inWorld;
+    equip(who, wornShortsword);
+    stance(w, who, battleStance);
+    auto first = creatureOf(w, foe(w, who, 448));
+    auto second = creatureOf(w, foe(w, who, 448));
+    auto map = w.context.map(0);
+    first.values.set!UNIT_FIELD_RESISTANCES(0, 0);
+    second.values.set!UNIT_FIELD_RESISTANCES(0, 0);
+    setPower(who, Power.rage, 1000);
+    assert(w.cast_(who, sweepingStrikes) == SpellCastResult.ok);
+    auto sweep = me.player.auras.find(sweepingStrikes);
+
+    void giveShield(int amount)
+    {
+        bool isNew;
+        first.auras.apply(makeAura(spellOf(w, shield), first.guid, 60, 30_000, true, [amount, 0, 0]), first.values, isNew);
+    }
+
+    const originalHealth = first.values.get!UNIT_FIELD_HEALTH;
+    const otherHealth = second.values.get!UNIT_FIELD_HEALTH;
+    giveShield(1000);
+    foreach (_; 0 .. 20)
+    {
+        if (first.auras.find(shield).amount[0] < 1000 || sweep.charges < 5)
+            break;
+        me.swing(first, AttackType.mainHand);
+    }
+    assert(first.auras.find(shield).amount[0] < 1000, "a white swing was absorbed");
+    assert(first.values.get!UNIT_FIELD_HEALTH == originalHealth && second.values.get!UNIT_FIELD_HEALTH == otherHealth,
+        "the shield absorbs a white swing completely and there is no second strike");
+    assert(sweep.charges == 5, "a white swing absorbed in full leaves all Sweeping Strikes charges");
+
+    Strike landedHeroicStrike()
+    {
+        foreach (_; 0 .. 20)
+        {
+            w.now += 2.seconds;
+            setPower(who, Power.rage, 1000);
+            who.read();
+            assert(w.castAt(who, heroicStrike, first.guid) == SpellCastResult.ok);
+            me.swing(first, AttackType.mainHand);
+            const hits = strikes(who);
+            foreach (hit; hits)
+                if (hit.spell == heroicStrike && hit.target == first.guid)
+                {
+                    foreach (other; hits)
+                        if (other.spell == sweepingHit && other.target == second.guid)
+                            assert(other.damage == hit.damage, "Sweeping Strikes repeats the damage left after the absorb");
+                    return hit;
+                }
+        }
+        assert(false, "Heroic Strike never landed");
+    }
+
+    auto full = landedHeroicStrike();
+    assert(full.damage == 0 && full.absorbed > 0 && sweep.charges == 5, "a fully absorbed Heroic Strike spends no charge");
+    assert(first.values.get!UNIT_FIELD_HEALTH == originalHealth && second.values.get!UNIT_FIELD_HEALTH == otherHealth);
+
+    first.loseAura(first.auras.find(shield), map);
+    giveShield(10);
+    auto partial = landedHeroicStrike();
+    assert(partial.absorbed == 10 && partial.damage > 0 && sweep.charges == 4, "a partly absorbed strike spends one charge");
+    assert(first.auras.find(shield) is null, "a depleted shield goes away");
+    assert(first.values.get!UNIT_FIELD_HEALTH == originalHealth - partial.damage
+        && second.values.get!UNIT_FIELD_HEALTH == otherHealth - partial.damage, "both creatures take the same unabsorbed damage");
+}
+
 /**
  * Intimidating Shout (5246): its target cowers (20511, 8 sec), up to 5 enemies near flee (5246's fear, 8 sec).
  */
@@ -1836,6 +1912,62 @@ private TestClient hunter(ref RealWorld w, uint guid, const(uint)[] spells)
     who.session.inWorld.player.values.set!PLAYER_AMMO_ID(roughArrow);
     who.read();
     return who;
+}
+
+/// A single-charge Furious Howl adds its full physical amount to Heroic Strike and Raptor Strike once.
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint heroicStrike = 11567, howlRankFour = 24597;
+    foreach (id; [heroicStrike, raptorStrike])
+    {
+        auto w = RealWorld.make();
+        auto who = id == raptorStrike ? hunter(w, 520, [id])
+            : w.character(520, "Howler", PlayerClass.warrior, 60, [id]);
+        if (id == heroicStrike)
+            equip(who, wornShortsword);
+        auto me = who.session.inWorld;
+        auto target = creatureOf(w, foe(w, who, 448));
+        target.values.set!UNIT_FIELD_RESISTANCES(0, 0);
+        auto map = w.context.map(0);
+
+        Strike swingWith(uint seed)
+        {
+            w.now += 10.seconds; // both the global cooldown and Raptor Strike's cooldown
+            if (id == heroicStrike)
+                setPower(who, Power.rage, 1000);
+            else
+                setPower(who, Power.mana, me.player.values.get!UNIT_FIELD_MAXPOWER1(Power.mana));
+            who.read();
+            map.random.seed(seed);
+            const result = w.castAt(who, id, target.guid);
+            assert(result == SpellCastResult.ok, format!"queueing weapon attack %s: %s"(id, result));
+            me.swing(target, AttackType.mainHand);
+            foreach (hit; strikes(who))
+                if (hit.spell == id && hit.target == target.guid)
+                    return hit;
+            return Strike.init;
+        }
+
+        uint seed = 20_261_123;
+        Strike original;
+        foreach (_; 0 .. 20)
+        {
+            original = swingWith(seed);
+            if (original.damage && !original.crit)
+                break;
+            ++seed;
+        }
+        assert(original.damage && !original.crit, "a repeatable noncritical hit landed");
+        const extra = giveAura(w, who, howlRankFour).amount[0];
+        assert(extra >= 45 && extra <= 57, "rank four Furious Howl amount comes from the real spell data");
+        const boosted = swingWith(seed);
+        assert(boosted.damage == original.damage + extra, format!"spell %s deals %s plus %s: observed %s"(
+            id, original.damage, extra, boosted.damage));
+        assert(me.player.auras.find(howlRankFour) is null, "the next physical attack spends Furious Howl");
+        assert(swingWith(seed).damage == original.damage, "the following attack uses unbuffed weapon damage");
+    }
 }
 
 /**

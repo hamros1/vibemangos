@@ -471,7 +471,9 @@ void periodicTick(ref Caster caster, imported!"dmangos.world.creature".Creature 
             import dmangos.world.eventai : EventTarget, castTriggered;
 
             enum uint fireBlossom = 19636, unholyAura = 17467;
-            if (aura.spell.id == fireBlossom || aura.spell.id == unholyAura)
+            if (aura.spell.id != fireBlossom && aura.spell.id != unholyAura)
+                caster.ai.arcaneMissilesTick(aura.spell, i);
+            else
                 if (const child = caster.context.data.spells.spell(aura.spell.triggerSpell[i]))
                 {
                     // Fire Blossom chooses a new raider per pulse. Unholy Aura pulses around the Baron.

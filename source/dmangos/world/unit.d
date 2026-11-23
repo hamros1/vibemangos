@@ -331,10 +331,60 @@ struct UnitRef
         dealDamage(map.unit(attacker), this, damage.damage, Blow.swing(damage));
     }
 
-    /// Damage of `school` (an index) about to hit it: what its shields absorb comes off `damage` (a player's; a creature has none).
+    /// Damage of `school` (an index) about to hit it: what its shields absorb comes off `damage`.
     uint absorb(uint school, ref uint damage)
     {
-        return kind == UnitKind.player ? session.absorbIncoming(school, damage) : 0;
+        return kind == UnitKind.player ? session.absorbIncoming(school, damage) : absorbShields(school, damage);
+    }
+
+    /// A school shield or mana shield takes damage up to its capacity, then the aura expires.
+    package uint absorbShields(uint school, ref uint damage)
+    {
+        import std.algorithm.comparison : min;
+        import dmangos.world.auras : AuraType;
+        import dmangos.world.spellmods : SpellModOp;
+        import dmangos.world.updatefields : UNIT_FIELD_POWER1;
+
+        auto auras = auraSet;
+        if (auras is null || damage == 0)
+            return 0;
+        uint absorbed;
+        Aura[] spent;
+        foreach (aura; auras.list)
+            foreach (i; 0 .. 3)
+            {
+                if (damage == 0 || !(aura.effects & (1 << i)) || aura.amount[i] <= 0
+                        || !(aura.misc(i) & (1 << school)))
+                    continue;
+                const type = aura.type(i);
+                if (type != AuraType.schoolAbsorb && type != AuraType.manaShield)
+                    continue;
+                uint take = min(damage, cast(uint) aura.amount[i]);
+                if (type == AuraType.manaShield)
+                {
+                    auto values = fields;
+                    const perPoint = kind == UnitKind.player && aura.caster == combatGuid
+                        ? session.spellMod(SpellModOp.multipleValue, aura.spell, aura.spell.casting.multipleValue[i])
+                        : aura.spell.casting.multipleValue[i];
+                    const mana = values.get!UNIT_FIELD_POWER1(0);
+                    if (perPoint > 0 && take * perPoint > mana)
+                        take = cast(uint)(mana / perPoint);
+                    values.set!UNIT_FIELD_POWER1(0, mana - cast(uint)(take * perPoint));
+                }
+                aura.amount[i] -= take;
+                damage -= take;
+                absorbed += take;
+                if (aura.amount[i] <= 0)
+                    spent ~= aura;
+            }
+        foreach (aura; spent)
+            if (kind == UnitKind.player)
+                session.removeAura(aura);
+            else
+                creature.loseAura(aura, map);
+        if (absorbed && kind == UnitKind.creature)
+            map.flushObjectChanges(creature);
+        return absorbed;
     }
 
     /// Its resistance to school `school` (an index; 0 is armor).

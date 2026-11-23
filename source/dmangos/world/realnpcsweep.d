@@ -385,6 +385,7 @@ private final class NpcSweeper
     {
         import std.math : abs, cos, sin, sqrt;
         import dmangos.bytes : ByteReader, ByteWriter;
+        import dmangos.world.creaturecasting : isArcaneMissilesChannel;
         import dmangos.world.eventai : castForceTargetSelf;
         import dmangos.world.movement : jumpGravity, MovementFlags, MovementInfo;
         import dmangos.world.packets : ClientTeleportAck;
@@ -434,7 +435,8 @@ private final class NpcSweeper
                     return true;
             return false;
         }
-        const wantsEnemy = any(Who.enemy), wantsFriend = any(Who.friend);
+        const missiles = isArcaneMissilesChannel(*s);
+        const wantsEnemy = missiles || any(Who.enemy), wantsFriend = any(Who.friend);
 
         // The hostile player: of the caster's level, a mage where mana is taken.
         bool takesMana;
@@ -496,7 +498,7 @@ private final class NpcSweeper
         // An enemy of the player for what harms it (one friendly to it is made a monster: as it would cast at its
         // enemies).
         auto heroUnit = map.unit(me.player.guid);
-        const hostileSpell = harms(*s) || pullsPlayer;
+        const hostileSpell = harms(*s) || pullsPlayer || missiles;
         // What keeps it out of a fight (immune to players, not attackable: what its event takes off) taken off.
         void fighting(Creature c)
         {

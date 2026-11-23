@@ -200,6 +200,130 @@ unittest
     assert(!baron.ai.inCombat && !player.inCombat, "the aura alone does not start combat");
 }
 
+/// The creature's Arcane Missiles remain on the original target and stop when interrupted.
+unittest
+{
+    import dmangos.bytes : ByteReader;
+    import dmangos.script.api : ActionResult;
+    import std.format : format;
+    import dmangos.world.updatefields : UNIT_CHANNEL_SPELL, UNIT_FIELD_CHANNEL_OBJECT, UNIT_FIELD_MAXPOWER1,
+        UNIT_FIELD_POWER1;
+
+    if (!haveRealData())
+        return;
+
+    auto w = RealWorld.make();
+    auto first = w.character(114, "Missiletarget", classWarriorId, 38, []);
+    auto second = w.character(115, "Missiledecoy", classWarriorId, 38, []);
+    auto map = w.context.map(0);
+    auto invoker = map.creatureAt(w.enemy(first, 1835));
+    auto target = map.unit(first.session.character.guid), decoy = map.unit(second.session.character.guid);
+    invoker.ai.setScript(null, w.context.data.eventAi); // isolate the tested cast from the Invoker's recast timer
+    invoker.ai.attackedBy(target, map);
+    invoker.ai.scriptMelee(false);
+    invoker.ai.scriptCombatMovement(false);
+    const targetHealth = target.health, decoyHealth = decoy.health;
+    auto pulses(uint pulse, ulong expected)
+    {
+        uint count;
+        foreach (packet; first.read())
+            if (packet.opcode == Opcode.SMSG_SPELL_GO)
+            {
+                auto r = ByteReader(packet.body_);
+                r.readPackedGuid();
+                if (r.readPackedGuid() != invoker.guid || r.read!uint != pulse)
+                    continue;
+                r.read!ushort;
+                const hitCount = r.read!ubyte;
+                assert(hitCount <= 1);
+                if (hitCount)
+                    assert(r.read!ulong == expected);
+                else
+                {
+                    assert(r.read!ubyte == 1);
+                    assert(r.read!ulong == expected);
+                }
+                ++count;
+            }
+        return count;
+    }
+
+    enum uint channel = 15735, missile = 15736;
+    assert(invoker.ai.castFor(map, channel, target.combatGuid, false) == ActionResult.ok);
+    assert(invoker.values.get!UNIT_CHANNEL_SPELL == channel && invoker.values.get!UNIT_FIELD_CHANNEL_OBJECT == target.combatGuid);
+    invoker.tick(map, 1000);
+    assert(pulses(missile, target.combatGuid) == 1);
+    invoker.ai.taunt(decoy, map);
+    assert(invoker.values.get!UNIT_FIELD_CHANNEL_OBJECT == target.combatGuid);
+    invoker.tick(map, 1000);
+    assert(pulses(missile, target.combatGuid) == 1);
+    invoker.ai.interruptedBySpell(3000);
+    assert(!invoker.ai.castingNow && !invoker.values.get!UNIT_CHANNEL_SPELL && !invoker.auras.find(channel));
+    assert(invoker.ai.castFor(map, channel, target.combatGuid, false) != ActionResult.ok, "Arcane school locked out");
+    invoker.tick(map, 5000);
+    assert(pulses(missile, target.combatGuid) == 0);
+    assert(target.health < targetHealth && decoy.health == decoyHealth);
+
+    first.session.inWorld.godModeCheat = true;
+    foreach (variant; [15735u, 15790u, 22272u])
+    {
+        invoker.values.set!UNIT_FIELD_POWER1(invoker.values.get!UNIT_FIELD_MAXPOWER1);
+        assert(invoker.ai.castFor(map, variant, target.combatGuid, false) == ActionResult.ok);
+        invoker.tick(map, 7000); // A coarse tick must stop at the end of the channel.
+        const child = w.context.data.spells.spell(variant).triggerSpell[0];
+        const count = pulses(child, target.combatGuid);
+        assert(count == 5, format!"Arcane Missiles %s: %s pulses, %s target health"(variant, count, target.health));
+        assert(!invoker.ai.castingNow && !invoker.auras.find(variant));
+    }
+    assert(decoy.health == decoyHealth);
+}
+
+/// Missiles fired at a player on another node land there once, and interruption stops later launches.
+unittest
+{
+    import dmangos.cluster.protocol : AreaDamage;
+    import dmangos.world.creature : TempSpawnType;
+    import dmangos.world.grid : cellKeyAt, cellSize;
+    import dmangos.world.replication : encodePlayerState, encodeState;
+
+    if (!haveRealData())
+        return;
+
+    auto source = RealWorld.make(), owner = RealWorld.make();
+    source.context.nodeId = 1;
+    owner.context.nodeId = 2;
+    source.context.clock = () => source.now;
+    const origin = Position(2 * cellSize - 2, 100, 40), at = Position(2 * cellSize + 2, 100, 40);
+    auto from = source.context.map(0), to = owner.context.map(0);
+    auto caster = source.context.summonCreature(from, 1835, origin, TempSpawnType.manual, 0, 0);
+    auto target = loggedIn(owner.context, owner.db, 116, "Remotevictim", at, AccountLevel.player, raceHuman, 0, 38);
+    auto player = cast(Player) target.session.character;
+    from.replicaCreated(2, cellKeyAt(at.x, at.y), player.guid, encodePlayerState(player, 0));
+    to.replicaCreated(1, cellKeyAt(origin.x, origin.y), caster.guid, encodeState(caster, 0));
+    caster.ai.setScript(null, source.context.data.eventAi);
+    caster.ai.bind(from);
+
+    uint impacts;
+    source.context.sendAreaDamage = (ushort peer, const ref AreaDamage hit) {
+        assert(peer == 2 && hit.caster == caster.guid && hit.target == player.guid && hit.spell == 15736);
+        ++impacts;
+        owner.context.areaDamageArrived(1, hit);
+        return true;
+    };
+    const health = target.session.inWorld.unit.health;
+    assert(caster.ai.castSpell(source.context.data.spells.spell(15735), player.guid, 0) && caster.ai.castingNow);
+    caster.tick(from, 1000);
+    assert(impacts == 0, "the missile is still travelling");
+    source.now += 300.msecs;
+    source.context.update(source.now);
+    assert(impacts == 1 && target.session.inWorld.unit.health < health);
+    caster.ai.interruptedBySpell(3000);
+    caster.tick(from, 5000);
+    source.now += 3.seconds;
+    source.context.update(source.now);
+    assert(impacts == 1 && !caster.ai.castingNow);
+}
+
 /// The technician's unmodified EventAI row selects a wounded mechanical ally across a region boundary.
 unittest
 {
