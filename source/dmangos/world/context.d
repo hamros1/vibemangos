@@ -4317,10 +4317,17 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             {
                 auto state = instance in instances;
                 auto script = InstanceScript.make(scripts, *name, instance, id, state is null ? null : state.data,
-                    (string saved) {
+                    (string saved, bool checkpoint) {
                         if (auto st = instance in instances)
                             st.data = saved;
                         database.saveInstanceData(instance, saved);
+                        if (checkpoint && battlegroundMapEpoch !is null && hostsDungeon(id) && canWrite()
+                            && settleWrites())
+                        {
+                            import dmangos.log : info;
+
+                            info!"instance %s of map %s saved an encounter checkpoint"(instance, id);
+                        }
                     });
                 if (script !is null)
                 {

@@ -27,7 +27,7 @@ final class InstanceScript : InstanceHost
     {
         ScriptRuntime runtime;
         ScriptHandle handle;
-        void delegate(string data) persist;
+        void delegate(string data, bool checkpoint) persist;
         string saved;
         uint id, mapId;
         bool world; // open-world round 2: a continent's script (`@world`), kept in memory only
@@ -67,7 +67,7 @@ final class InstanceScript : InstanceHost
      * `persist` writes its state back. Null if no script serves `name`.
      */
     static InstanceScript make(ScriptRuntime runtime, string name, uint id, uint mapId, string data,
-        void delegate(string data) persist)
+        void delegate(string data, bool checkpoint) persist)
     {
         if (runtime is null || !runtime.serves(ScriptKind.instance, name))
             return null;
@@ -94,7 +94,7 @@ final class InstanceScript : InstanceHost
     bool fromSave;
 
     /// The copy's map made, nothing of it loaded yet: `Restored`, if its state came from `instance.data`
-    /// (the server restarted, the copy was unloaded), so what was under way when it was saved starts again.
+    /// (the server restarted, the copy was unloaded), lets the script reconcile its saved progress.
     void restored()
     {
         if (!fromSave)
@@ -117,7 +117,7 @@ final class InstanceScript : InstanceHost
     }
 
     /// Raises `event` with the context of its kind; whether it consumed it (a world map's never does).
-    private bool dispatch(E)(const E event)
+    private bool dispatch(E)(const E event, out bool checkpoint)
     {
         if (world)
         {
@@ -130,6 +130,9 @@ final class InstanceScript : InstanceHost
         }
         auto context = InstanceContext(this);
         runtime.raise(handle, context, event);
+        checkpoint = context.checkpointRequested;
+        static if (is(E == Restored))
+            waitForPlayer = context.waitingForPlayer;
         return context.consumed;
     }
 
@@ -148,9 +151,10 @@ final class InstanceScript : InstanceHost
             return false;
         }
         raising = true;
-        const consumed = dispatch(event);
+        bool checkpoint;
+        const consumed = dispatch(event, checkpoint);
         raising = false;
-        save();
+        save(checkpoint);
         while (pending.length)
         {
             auto next = pending[0];
@@ -162,13 +166,16 @@ final class InstanceScript : InstanceHost
 
     private bool raising;              // a handler runs
     private void delegate()[] pending; // events its actions caused, for after it
+    private bool waitForPlayer;
 
     /// Its schedules, `ms` milliseconds on (nothing to do when none is pending).
     void tick(int ms)
     {
-        if (!runtime.busy(handle))
+        if (!runtime.busy(handle) || (waitForPlayer && !map.population))
             return;
+        waitForPlayer = false;
         raising = true;
+        bool checkpoint;
         if (world)
         {
             auto context = WorldMapContext(this);
@@ -178,9 +185,10 @@ final class InstanceScript : InstanceHost
         {
             auto context = InstanceContext(this);
             runtime.tick(handle, context, ms);
+            checkpoint = context.checkpointRequested;
         }
         raising = false;
-        save();
+        save(checkpoint);
         while (pending.length)
         {
             auto next = pending[0];
@@ -189,7 +197,7 @@ final class InstanceScript : InstanceHost
         }
     }
 
-    private void save()
+    private void save(bool checkpoint)
     {
         if (persist is null) // a world map's script: kept in memory only
             return;
@@ -199,7 +207,7 @@ final class InstanceScript : InstanceHost
         if (data != saved)
         {
             saved = data;
-            persist(data);
+            persist(data, checkpoint);
         }
     }
 

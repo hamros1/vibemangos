@@ -1255,6 +1255,7 @@ enum ObjectFlag : uint
 struct InstanceContext
 {
     private InstanceHost host;
+    private bool checkpoint_, waitForPlayer_;
 
     @disable this(this);
 
@@ -1280,6 +1281,14 @@ struct InstanceContext
 
     /// A line in the server's log, naming the copy.
     void log(string text) { host.hostLog(text); }
+
+    /// Make this handler's saved state durable before continuing on a cluster worker.
+    void checkpoint() { checkpoint_ = true; }
+    package(dmangos) @property bool checkpointRequested() const { return checkpoint_; }
+
+    /// On restoration, hold the saved timers until the first player comes back.
+    void waitForPlayer() { waitForPlayer_ = true; }
+    package(dmangos) @property bool waitingForPlayer() const { return waitForPlayer_; }
 
     // Raid scripts:
 

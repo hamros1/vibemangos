@@ -1402,6 +1402,8 @@ unittest
  */
 unittest
 {
+    import dmangos.scripts.blackrockdepths : BlackrockDepths, Fight;
+
     if (!haveRealData())
         return;
     enum uint grimstone = 10096;
@@ -1409,12 +1411,30 @@ unittest
     static immutable uint[6] champions = [9027, 9028, 9029, 9030, 9031, 9032];
     auto d = Dungeon.enter(230, 55);
     d.trigger(1526);
-    d.run(30.seconds);
+    assert(d.runUntil(() => d.saved!BlackrockDepths.ringStage == 4, 18.seconds), d.story);
     assert(d.summoned(grimstone) == 1, "Grimstone\n" ~ d.story);
     uint kinds;
     foreach (b; beasts)
         kinds += d.summoned(b) > 0;
     assert(kinds == 1, "beasts of one kind\n" ~ d.story);
+    const count = d.killSummons(beasts[]);
+    d.run(50.msecs);
+    auto atBreak = d.saved!BlackrockDepths;
+    assert(count && atBreak.ringMobs.allDead && atBreak.ringStage == 4, d.story);
+    const delay = atBreak.steps.remaining(BlackrockDepths.Step.ring);
+    assert(delay > 4_000 && delay <= 5_000);
+    d.restartAfterCrash();
+    const resumed = d.saved!BlackrockDepths;
+    const remaining = resumed.steps.remaining(BlackrockDepths.Step.ring);
+    assert(resumed.ringStage == 4 && resumed.ringBeast == atBreak.ringBeast && resumed.ringMobs.allDead);
+    assert(remaining > 0 && delay - remaining >= 0 && delay - remaining <= 750);
+    assert(d.all(BlackrockDepths.beasts[resumed.ringBeast]).length == 0, "the defeated wave stays gone");
+    assert(d.all(grimstone).length == 1, "the announcer was restored once");
+    d.run((remaining - 100).msecs);
+    assert(d.saved!BlackrockDepths.ringStage == 4, "no early wave");
+    d.run(150.msecs);
+    assert(d.saved!BlackrockDepths.ringStage == 5);
+    assert(d.all(BlackrockDepths.beasts[resumed.ringBeast]).length == count);
     bool champion()
     {
         foreach (b; beasts)
@@ -1428,8 +1448,6 @@ unittest
     assert(d.runUntil(&champion, 60.seconds), "a champion\n" ~ d.story);
     d.killSummons(champions[]);
     d.run(10.seconds);
-    import dmangos.scripts.blackrockdepths : BlackrockDepths, Fight;
-
     assert(d.saved!BlackrockDepths.ring == Fight.done, "the ring is won");
 }
 

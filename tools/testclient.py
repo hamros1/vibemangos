@@ -24,6 +24,7 @@ in order:
     cast:SPELL[:ENTRY]       cast a spell, optionally at a creature by entry
     cancelchannel:SPELL      cancel the specified channel
     loot                      walk to the creature last attacked, take its money and items
+    killpack:ENTRY[:ENTRY...] select and kill each visible living creature of these entries (GM)
     castopen:SPELL:ENTRY      cast at the nearest game object of ENTRY without taking its loot
     rolloffer  rollvote:N     keep the next group loot prompt, then pass (0), need (1) or greed (2)
     waitfile:PATH             keep receiving packets until another test process creates this file
@@ -183,6 +184,7 @@ GAMEOBJECT_END = OBJECT_END + 0x1A
 COUNTS = {1: ITEM_END, 2: CONTAINER_END, 3: UNIT_END, 4: PLAYER_END, 5: GAMEOBJECT_END, 7: 0x26}  # 7: CORPSE_END
 seen_objects = {}
 seen_positions = {}   # creature guid -> where it was created
+living_creatures = set()
 here = [0.0, 0.0, 0.0]  # where this client last put its character
 corpse_at = [0.0, 0.0, 0.0]
 last_target = [0]
@@ -337,6 +339,7 @@ def describe(op, p):
             elif kind == 4:
                 for guid in g:
                     creature_auras.pop(guid, None)
+                    living_creatures.discard(guid)
                 print(f"  [out of range] {', '.join(str(x & 0xFFFFFFFF) for x in g)}")
             elif kind in (2, 3) and t == 4:
                 seen_objects[g] = (t, 0)
@@ -351,6 +354,10 @@ def describe(op, p):
                 entry = v.get(3, 0); seen_objects[g] = (t, entry)
                 if move: seen_positions[g] = move[:3]
                 if t == 3:
+                    if v.get(OBJECT_END + 0x10, 0):
+                        living_creatures.add(g)
+                    else:
+                        living_creatures.discard(g)
                     print(f"  [creature] {entry} guid {g & 0xFFFFFF}: level {v.get(OBJECT_END + 0x1C)}, health {v.get(OBJECT_END + 0x10, 0)}, "
                           f"display {v.get(OBJECT_END + 0x7D)}, faction {v.get(OBJECT_END + 0x1D)}, npc flags {v.get(0x93, 0)}, "
                           f"unit flags {v.get(OBJECT_END + 0x28, 0):#x}, "
@@ -362,11 +369,16 @@ def describe(op, p):
                     if not move and 0xF in v:
                         seen_positions[g] = tuple(struct.unpack("<f", struct.pack("<I", v.get(i, 0)))[0] for i in (0xF, 0x10, 0x11))
                     print(f"  [game object] {entry} guid {g & 0xFFFFFF}: type {v.get(0x15)}, display {v.get(0x8)}, "
-                          f"state {v.get(0xE)}")
+                          f"state {v.get(0xE, 0)}")
             elif kind == 0:
                 health = f", health {v[OBJECT_END + 0x10]}/{v.get(OBJECT_END + 0x16, '?')}" if OBJECT_END + 0x10 in v else ""
                 print(f"  [changes] {g}: fields {sorted(v)}{health}")
                 if seen_objects.get(g, (0, 0))[0] == 3:
+                    if OBJECT_END + 0x10 in v:
+                        if v[OBJECT_END + 0x10]:
+                            living_creatures.add(g)
+                        else:
+                            living_creatures.discard(g)
                     describe_creature_auras(g, v)
     elif op == 0x179:
         if len(p) <= 8:
@@ -461,6 +473,7 @@ def describe(op, p):
         g, pos = packed_guid(p, 0); x, y, z = struct.unpack_from("<3f", p, pos + 8); print(f"  [teleports] {g} to {x:.1f} {y:.1f} {z:.1f}")
     elif op == 0x03F: print(f"  [loading screen] map {struct.unpack('<I', p)[0]}")
     elif op == 0x03E:
+        living_creatures.clear()
         print("  [new world] map %d at %.1f %.1f %.1f; answering" % struct.unpack("<I4f", p)[:4]); wsend(0x0DC, b"")
     elif op == 0x040: print(f"  [transfer aborted] reason {p[0]}")
     elif op == 0x2D4:
@@ -1192,6 +1205,16 @@ for action in actions:
             raise RuntimeError(f"no creature {entry} in sight to target")
         guid = min(targets, key=lambda g: sum((a - b)**2 for a, b in zip(seen_positions[g], here)))
         wsend(0x13D, struct.pack("<Q", guid))
+    elif kind == "killpack":
+        entries = set(map(int, args))
+        targets = [g for g in living_creatures if seen_objects[g][1] in entries]
+        if not targets:
+            raise RuntimeError(f"no living creatures of {entries} in sight")
+        for guid in sorted(targets):
+            wsend(0x13D, struct.pack("<Q", guid))
+            wsend(0x095, struct.pack("<II", 0, 7) + b".kill\0")
+        print(f"killpack: {len(targets)} creatures")
+        listen_for(0.3)
     elif kind in ("gossip", "trainer", "vendor", "binder", "bank"):
         print(kind); wsend({"gossip": 0x17B, "trainer": 0x1B0, "vendor": 0x19E, "binder": 0x1B5, "bank": 0x1B7}[kind],
                            struct.pack("<Q", npc)); listen_for(1)

@@ -180,6 +180,19 @@ struct BlackrockDepths
             arenaGates[gateIndex(entry)] = e.object;
             if (ring == Fight.done && (entry == arenaGate3 || entry == arenaGate4))
                 brd.door(e.object, true);
+            else if (ring == Fight.failed && entry != arenaGate3)
+                brd.door(e.object, entry == arenaGate4);
+            else if (ring == Fight.inProgress)
+            {
+                switch (entry)
+                {
+                case arenaGate1: brd.door(e.object, ringStage >= 3 && ringStage <= 5); break;
+                case arenaGate2: brd.door(e.object, ringStage >= 6); break;
+                case arenaGate3: brd.door(e.object, false); break;
+                case arenaGate4: brd.door(e.object, ringStage < 2); break;
+                default: break;
+                }
+            }
             break;
         case tombEnter: tombIn = e.object; break;
         case tombExit:
@@ -219,6 +232,27 @@ struct BlackrockDepths
                 runeObjects[entry - dwarfRuneA] = e.object;
             break;
         }
+    }
+
+    void on(ref InstanceContext brd, const ref Restored e)
+    {
+        if (ring != Fight.inProgress)
+            return;
+        // Only a scheduled break with every summoned opponent defeated is safe to resume.
+        // The defeated wave's corpses and loot belong to the old process.
+        if (ringMobs.alive || !steps.pending(Step.ring))
+        {
+            failRing(brd);
+            return;
+        }
+        grimstoneRef = EntityRef.init;
+        brd.waitForPlayer();
+    }
+
+    void on(ref InstanceContext brd, const ref PlayerEntered e)
+    {
+        if (ring == Fight.inProgress && !grimstoneRef)
+            grimstoneRef = brd.summon(grimstone, grimstonePlace);
     }
 
     void on(ref InstanceContext brd, const ref CreatureLoaded e)
@@ -403,7 +437,10 @@ struct BlackrockDepths
     {
         const entry = e.creature.entry;
         if (ringMobs.died(e.creature) && ringMobs.allDead && ring == Fight.inProgress)
+        {
             steps.after(Step.ring, 5.seconds);
+            brd.checkpoint();
+        }
         vaultGuards.died(e.creature);
         cronies.died(e.creature);
         switch (entry)

@@ -193,12 +193,12 @@ database scripts spawn in the copy (a ritual's bell, a trap) as for those its ce
 in copies too).
 
 A copy's script made again from `instance.data` (the server restarted, or the copy was unloaded and is
-entered again) hears `Restored` once, before any of its creatures or objects load. What was under way
-when it was saved is not any more: its summons, its creatures' fights and its timers went with the old
-world. The handler puts back what ScriptDev's `Load` does (an encounter `IN_PROGRESS` becomes
-`NOT_STARTED`): an event half done can be begun again, a door it shut opens. Each dungeon's real-data
-tests restart a copy in the middle of its events and do them again. A copy that moves to another node
-with its creatures does not hear it: its fights go on there.
+entered again) hears `Restored` once, before any of its creatures or objects load. Scripts can reset
+an interrupted fight by returning it to its starting state and opening the entrance. The Ring of
+Law can also resume between cleared waves. Its death handler uses `checkpoint()` to flush the saved
+wave and timer to the database on a cluster worker. Its restore handler uses `waitForPlayer()` to
+start that timer once a player returns. The script rebuilds the gates and announcer on arrival.
+During a planned move to another node, the copy keeps its creatures and fights and skips `Restored`.
 
 ### Gossip menus of a script's own
 

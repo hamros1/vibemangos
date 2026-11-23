@@ -423,8 +423,10 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   copy, so the player lands in the other's copy.
 * **The region moving** (a rebalance, a takeover). The new host reads the dungeon's copies, binds and
   dead from the database, and the copies' creatures and objects come along, copy by copy, as they
-  were. The old host forgets the copies and deletes nothing. After a crash nothing can come along:
-  the copies start from their spawns, less the dead.
+  were. The old host forgets the copies and deletes nothing. After a crash, the replacement uses
+  saved binds, spawn deaths, and script state. In Blackrock Depths, the Ring of Law resumes between
+  cleared waves. The replacement restores the gates and announcer, then runs the remaining timer
+  once a player returns.
 * **GM commands.** `.instance info`, `.instance shutdown` and `.instance reset` of a copy another node
   hosts go to that node and its answer comes back; `.instance resetall` goes to every node.
 
@@ -923,11 +925,15 @@ python3 tools/harness/battleground_recovery.py --cross-realm
 python3 tools/harness/battleground_recovery.py --map arathi
 python3 tools/harness/battleground_recovery.py --map alterac
 python3 tools/harness/battleground_recovery.py --map alterac --cross-realm --finish-phase during
+python3 tools/harness/dungeon_recovery.py
 ```
 
 Both map options also accept `--cross-realm`. The Arathi Basin test checks the resource score,
 the Stables, and a Farm capture in progress. The Alterac Valley test checks the scorecard,
 Irondeep Mine, and a contested Iceblood Tower that the Horde can still defend after takeover.
+The dungeon test kills the Blackrock Depths worker between waves and checks that both clients can
+finish the original copy on their existing connections. It also checks that Gerstahn stays dead
+and the party keeps the one Prison Cell Key it looted before the crash.
 
 ## Monitoring
 
