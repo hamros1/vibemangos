@@ -920,6 +920,9 @@ remaining cast time. The new owner also keeps active spell-school lockouts and t
 cooldown.
 Player projectiles launched at a local target keep their flight time when the caster moves. Supported
 direct damage, healing and aura effects can also follow the target to its new owner.
+Player channels such as Arcane Missiles keep their remaining time and next pulse when the caster
+moves. An angler can finish the original cast after moving. Their bobber keeps its GUID and bite
+timer until the catch begins.
 
 When an in-realm battleground map moves, its new owner receives the running matches, their scores,
 objectives, and timers. Players in a match follow the map's ownership, including during combat.

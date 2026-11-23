@@ -300,6 +300,8 @@ private:
         flushPlayerChanges();
         const progress = player.progress(secondsInWorld());
         context.database.saveProgress(progress);
+        if (channelSpell !is null && !carriesChannelOnHandoff())
+            endChannel(true);
         releaseNpcCharm();
         saveAuras(); // the next node loads them, as it loads the rest
         saveCooldowns();
@@ -312,6 +314,7 @@ private:
         if (!context.settleWrites() && (context.config.cluster.gateway || connection.gatewayHome.node))
             return; // a gateway handoff needs a durable checkpoint before the old owner stops
 
+        const fishing = takeFishingHandoff();
         ByteWriter w;
         w.put(account.id);
         w.put(cast(uint) account.username.length);
@@ -369,6 +372,8 @@ private:
         writePvPHandoff(w);
         context.writeReplicaImpacts(player.guid, w);
         writeChannelAndGroundHandoff(w);
+        w.put(cast(uint) fishing.length);
+        w.putBytes(fishing);
         writeCastHandoff(w);
         writeFlightHandoff(w);
         writeEnvironmentHandoff(w);
@@ -503,6 +508,7 @@ private:
         corpseArrivingFromHandoff();
         context.readReplicaImpacts(player.guid, map.id, map.instanceId, r);
         readChannelAndGroundHandoff(r);
+        restoreFishingHandoff(r);
         readCastHandoff(r);
         loadAuras();
         loadHonor();

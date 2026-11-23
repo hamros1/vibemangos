@@ -648,6 +648,68 @@ unittest
     assert(moved.inventory.count(water) == conjured);
 }
 
+/// The player keeps the active channel and its next missile when both actors change owners.
+unittest
+{
+    import dmangos.cluster.regions : CellRect, Region, RegionState;
+    import dmangos.world.auras : AuraType;
+    import dmangos.world.grid : cellCoordinate, cellKeyAt;
+    import dmangos.world.inworld : ArrivalAction;
+    import dmangos.world.updatefields : UNIT_CHANNEL_SPELL, UNIT_FIELD_HEALTH, UNIT_FIELD_MAXHEALTH;
+
+    if (!haveRealData())
+        return;
+
+    auto source = RealWorld.make(), owner = RealWorld.make();
+    owner.context.database = source.db;
+    auto relay = new TestPlayerRelay(source.context, owner.context);
+    enum uint missiles = 5143;
+    auto client = source.character(7, "Jaina", classMageId, 60, [missiles]);
+    auto caster = client.session.inWorld;
+    caster.player.movement.position.orientation = 0;
+    auto from = source.context.map(0), to = owner.context.map(0);
+    const guid = source.enemy(client);
+    auto target = from.creatureAt(guid);
+    target.values.set!UNIT_FIELD_MAXHEALTH(1000u);
+    target.values.set!UNIT_FIELD_HEALTH(1000u);
+    assert(source.castAt(client, missiles, guid) == SpellCastResult.ok);
+    auto aura = caster.player.auras.find(missiles);
+    assert(aura !is null && caster.player.values.get!UNIT_CHANNEL_SPELL == missiles);
+    size_t pulse;
+    while (pulse < aura.period.length && aura.type(pulse) != AuraType.periodicTriggerSpell)
+        ++pulse;
+    assert(pulse < aura.period.length && aura.periodTimer[pulse] > 1);
+    const child = source.context.spellInfo(aura.spell.triggerSpell[pulse]);
+    client.session.update((aura.periodTimer[pulse] / 2).msecs);
+    const remaining = aura.periodTimer[pulse];
+    assert(remaining > 1);
+
+    const at = target.position;
+    const x = cellCoordinate(at.x), y = cellCoordinate(at.y), home = cellKeyAt(at.x, at.y);
+    const region = Region(11, 0, CellRect(x, y, x + 1, y + 1), 2, 1, RegionState.granted);
+    const state = from.migrateOut(cell => cell == home, 2, &source.context.saveMigrant);
+    ubyte[][uint] unused;
+    owner.context.regionsChanged([region], null, [region.id: state], unused);
+    assert(caster.actAtReplica(guid, ArrivalAction.init));
+    assert(relay.remote !is null && relay.remote.inWorld.player.values.get!UNIT_CHANNEL_SPELL == missiles);
+    auto moved = relay.remote.inWorld.player.auras.find(missiles);
+    assert(moved !is null && moved.periodTimer[pulse] == remaining);
+    relay.remote.update((remaining - 1).msecs);
+    assert(!relay.remote.inWorld.missileOnTheWay(child, guid));
+    relay.remote.update(1.msecs);
+    assert(relay.remote.inWorld.missileOnTheWay(child, guid));
+
+    ByteWriter cancel;
+    cancel.put(missiles);
+    client.write(Opcode.CMSG_CANCEL_CHANNELLING, cancel.data);
+    relay.remote.update(1.seconds);
+    auto receiver = to.creatureAt(guid);
+    const after = receiver.values.get!UNIT_FIELD_HEALTH;
+    assert(after < 1000 && relay.remote.inWorld.player.values.get!UNIT_CHANNEL_SPELL == 0);
+    relay.remote.update(5.seconds);
+    assert(receiver.values.get!UNIT_FIELD_HEALTH == after);
+}
+
 /// A missile already launched at a replica follows the player when it becomes local to the caster.
 unittest
 {

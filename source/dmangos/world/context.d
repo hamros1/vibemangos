@@ -5488,6 +5488,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         auto gameObject = cast(GameObject) object;
         if (gameObject is null)
             return Migrant.init;
+        if (gameObject.owner && gameObject.type == GameObjectType.fishingNode)
+            return Migrant.init; // follows its angler's player handoff
         if (gameObject.loot !is null)
             gameObject.loot.sendReleaseForAll();
         long expires;

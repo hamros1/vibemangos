@@ -1600,16 +1600,81 @@ private:
         }
     }
 
+    private bool carriesChannelOnHandoff()
+    {
+        import dmangos.world.objects : highGuidOf, HighGuid;
+        import std.algorithm.comparison : among;
+        import std.algorithm.searching : any;
+
+        if (channelSpell is null)
+            return false;
+        if (followingNamedCreature)
+            return true;
+        if (channelSpell.hasEffect(SpellEffect.persistentAreaAura))
+            return persistentAreas.length != 0;
+        if (bobber && channelTarget == bobber && !bobberLooted)
+            if (auto go = map.gameObjectAt(bobber))
+                return go.owner == player.guid;
+        if (player.values.get!PLAYER_FARSIGHT || channelSpell.hasEffect(SpellEffect.bindSight)
+            || !highGuidOf(channelTarget).among(HighGuid.player, HighGuid.unit, HighGuid.pet))
+            return false;
+        return !channelSpell.casting.applyAuraName[].any!(a => a.among(AuraType.bindSight, AuraType.modCharm,
+            AuraType.modPossess, AuraType.modPossessPet));
+    }
+
+    private const(ubyte)[] takeFishingHandoff()
+    {
+        import dmangos.serialization : serialize;
+
+        auto go = map.gameObjectAt(bobber);
+        if (go is null || go.owner != player.guid || bobberLooted || channelSpell is null || channelTarget != bobber)
+            return null;
+        ByteWriter state;
+        serialize(state, go.spawn);
+        state.put(bobberAge);
+        state.put(bobberBite);
+        state.put(bobberGone);
+        go.saveState(state, context.transportNow());
+        // The destination sends the create block again, using the original GUID.
+        removeBobber();
+        return state.data;
+    }
+
+    private void restoreFishingHandoff(ref ByteReader reader)
+    {
+        import dmangos.serialization : deserialize;
+        import dmangos.world.gameobject : GameObjectSpawn, GameObjectType;
+        import dmangos.world.objects : temporaryCounterStart;
+
+        auto state = ByteReader(reader.readBytes(reader.read!uint));
+        if (state.empty || channelSpell is null)
+            return;
+        const spawn = deserialize!GameObjectSpawn(state);
+        const proto = spawn.entry in context.data.gameObjectTemplates;
+        if (proto is null || proto.type != GameObjectType.fishingNode || spawn.guid < temporaryCounterStart
+            || spawn.guid > 0xFF_FFFF || spawn.map != map.id
+            || !context.client.isValidMapCoord(spawn.map, spawn.x, spawn.y, spawn.z, spawn.orientation))
+            return;
+        auto go = new GameObject(spawn, proto);
+        if (go.guid != channelTarget)
+            return;
+        bobberAge = state.read!int;
+        bobberBite = state.read!int;
+        bobberGone = state.read!int;
+        bobber = go.guid;
+        go.owner = player.guid;
+        go.instanceId = map.instanceId;
+        go.loadState(state, context.transportNow());
+        map.addObject(go);
+    }
+
     private void writeChannelAndGroundHandoff(ref ByteWriter writer)
     {
         import dmangos.world.spellareas : detachGroundAreas, writeGroundAreas;
 
-        const ground = channelSpell !is null && channelSpell.hasEffect(SpellEffect.persistentAreaAura);
-        const active = channelSpell !is null && (followingNamedCreature || (ground && persistentAreas.length));
+        const active = channelSpell !is null;
         if (!persistentAreas.length && !active)
         {
-            if (ground)
-                endChannel(true);
             writer.put(0u);
             return;
         }
@@ -1670,6 +1735,8 @@ private:
             flushPlayerChanges();
             if (followingNamedCreature && namedChannelPeer)
                 map.holdCasterReplica(player.guid, namedChannelPeer, cast(uint) channelTimer + 5_000, true);
+            else if (auto target = cast(Replica) map.findObject(channelTarget))
+                map.holdCasterReplica(player.guid, target.owner, cast(uint) channelTimer + 5_000, true);
         }
     }
 
@@ -5870,6 +5937,44 @@ unittest
     assert(opcodesOf(reelIn()).canFind(Opcode.SMSG_FISH_ESCAPED), "it got away");
     context.config.skillFailLootFishing = true;
     assert(opcodesOf(reelIn()).canFind(Opcode.SMSG_LOOT_RESPONSE), "junk");
+
+    import dmangos.world.context : WorldContext;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.inworld : ArrivalAction;
+    import dmangos.world.replication : encodeState;
+
+    now += 2000.msecs;
+    cast_();
+    bob = bobberNow();
+    assert(bob !is null);
+    const originalBobber = bob.guid;
+    tick(1500);
+    auto destination = new WorldContext(context.config, db, context.data, context.client);
+    destination.clock = () => now;
+    auto relay = new TestPlayerRelay(context, destination);
+    auto nextMap = destination.map(0);
+    auto anchor = destination.spawnGameObjectAt(nextMap, school.entry, at, false);
+    map.replicaCreated(2, cellKeyAt(at.x, at.y), anchor.guid, encodeState(anchor, 0));
+    assert(anduin.session.inWorld.actAtReplica(anchor.guid, ArrivalAction.init));
+    assert(relay.remote !is null && map.gameObjectAt(originalBobber) is null);
+    auto moved = nextMap.gameObjectAt(originalBobber);
+    assert(moved !is null && moved.owner == me.guid && moved.position == bob.position);
+    assert(relay.remote.character.values.get!UNIT_FIELD_CHANNEL_OBJECT == originalBobber);
+    anduin.read();
+    bool movedSplash;
+    foreach (_; 0 .. 16)
+    {
+        now += 1000.msecs;
+        relay.remote.update(1000.msecs);
+        if (opcodesOf(anduin.read()).canFind(Opcode.SMSG_GAMEOBJECT_CUSTOM_ANIM))
+        {
+            movedSplash = true;
+            break;
+        }
+    }
+    assert(movedSplash, "the original bobber splashes on the new owner");
+    anduin.write(Opcode.CMSG_GAMEOBJ_USE, ClientGuid(originalBobber));
+    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_LOOT_RESPONSE));
 }
 
 /**
