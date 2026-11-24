@@ -1044,6 +1044,8 @@ python3 tools/harness/spell_cast_recovery.py --channel
 python3 tools/harness/spell_cast_recovery.py --channel-canceled
 python3 tools/harness/spell_cast_recovery.py --camera
 python3 tools/harness/spell_cast_recovery.py --camera-canceled
+python3 tools/harness/spell_cast_recovery.py --cooldown
+python3 tools/harness/spell_cast_recovery.py --cooldown-reset
 python3 tools/harness/party_summon_recovery.py --open-ritual
 python3 tools/harness/environment_recovery.py
 python3 tools/harness/environment_recovery.py --fall
@@ -1162,6 +1164,8 @@ An unfinished player or creature cast resumes after a clean handoff with its ori
 remaining cast time. The new owner also keeps active spell-school lockouts and the player's global
 cooldown. A gateway player can resume an unfinished cast after a worker crash. The replacement
 uses the original deadline and removes the checkpoint before resolving the cast.
+Finite spell cooldowns and explicit resets for gateway players are saved when they change.
+The replacement enforces the saved cooldown deadline when the player next casts.
 Player projectiles, including supported cross-node spell effects, keep their flight time when
 the caster moves or their gateway worker crashes in the same map and copy. The replacement
 retires the pending impact before dispatch. Supported direct damage, healing and aura effects can

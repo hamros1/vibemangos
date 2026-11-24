@@ -284,6 +284,61 @@ def camera_channel(fixture, canceled):
           ("the canceled Far Sight stayed gone" if canceled else "restored the original Far Sight viewpoint"))
 
 
+def cooldown(fixture, reset):
+    world = fixture.world_with_writable_tables("spell_template", "creature")
+    guid, x, y, z = fixture.query(f"SELECT guid,position_x,position_y,position_z FROM creature WHERE map=0 "
+                                  f"AND id={TARGET} ORDER BY guid LIMIT 1", world).split()
+    x = float(x) + 4
+    fixture.query(f"UPDATE spell_template SET CastingTimeIndex=1,RecoveryTime=60000 WHERE Id={SPELL}; "
+                  f"UPDATE creature SET MovementType=0,spawndist=0 WHERE guid={guid}", world)
+    characters, names, leader, client, nodes, _ = start_cluster(
+        fixture, new_party=True, world=world, leader_appearance=(1, 8))
+    fixture.query(f"UPDATE characters SET map=0,position_x={x},position_y={y},position_z={z},orientation=PI() "
+                  f"WHERE guid={leader}", characters)
+    cast, clear, again, finish = (fixture.directory / flag for flag in ("cast", "clear", "again", "finish"))
+    reset_actions = (wait(clear), "cmd:.cheat cooldown on", "cmd:.cheat cooldown off") if reset else ()
+    spell = f"cast:{SPELL}:{TARGET}"
+    player = client("player", 0, f"login:{names[0]}", "cmd:.cheat god", "cmd:.cheat power", wait(cast),
+                    spell, *reset_actions, wait(again), spell, wait(finish), "logout")
+
+    def log():
+        output = fixture.log("player")
+        if player.poll() is not None:
+            raise RuntimeError(output[-3000:])
+        return output
+
+    arrival = f"'{names[0]}' arrived from another node (map 0 at {x:.1f} {float(y):.1f})"
+    host = wait_for("the caster's worker", lambda: next((tag for tag in ("node1", "node2", "node3")
+                    if arrival in fixture.log(tag)), ""), 30)
+    cast.touch()
+    launch = f"[spell go] {SPELL} by {leader}"
+    wait_for("the first cast to launch", lambda: launch in log(), 7)
+    row = f"SELECT SpellExpireTime FROM character_spell_cooldown WHERE guid={leader} AND SpellId={SPELL}"
+    deadline = int(wait_for("the fresh cooldown to be durable", lambda: fixture.query(row, characters), 4))
+    if reset:
+        clear.touch()
+        wait_for("the cleared cooldown to be durable", lambda: not fixture.query(row, characters)
+                 and "deactivated the cooldown cheat" in log(), 8)
+    offset = len(log())
+    nodes[host].kill()
+    assert nodes[host].wait(timeout=10) == -signal.SIGKILL
+
+    def recovered():
+        return log()[offset:].partition("[new world] map 0 ")[2]
+
+    wait_for("the same client to recover", lambda: "[appears] player" in recovered(), 35)
+    again.touch()
+    result = launch if reset else f"[cast result] {SPELL}: failed 0x3c"
+    wait_for("the second cast to respect the saved cooldown state", lambda: result in recovered(), 9)
+    if not reset:
+        assert launch not in recovered()
+        assert fixture.query(row, characters) == str(deadline)
+    finish.touch()
+    assert player.wait(timeout=20) == 0
+    print(f"PASS: killed {host} and the original socket still saw the "
+          + ("cleared cooldown" if reset else "original cooldown deadline"))
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     phase = parser.add_mutually_exclusive_group()
@@ -294,6 +349,8 @@ if __name__ == "__main__":
     phase.add_argument("--channel-canceled", action="store_true", help="kill the worker after Arcane Missiles is canceled")
     phase.add_argument("--camera", action="store_true", help="recover the distant Far Sight camera")
     phase.add_argument("--camera-canceled", action="store_true", help="verify a canceled Far Sight channel stays gone")
+    phase.add_argument("--cooldown", action="store_true", help="verify a fresh cooldown survives the loss")
+    phase.add_argument("--cooldown-reset", action="store_true", help="verify a reset cooldown stays clear")
     args = parser.parse_args()
     if args.remote_bounce:
         test = remote_bounce
@@ -303,6 +360,9 @@ if __name__ == "__main__":
     elif args.camera or args.camera_canceled:
         def test(fixture):
             return camera_channel(fixture, args.camera_canceled)
+    elif args.cooldown or args.cooldown_reset:
+        def test(fixture):
+            return cooldown(fixture, args.cooldown_reset)
     else:
         def test(fixture):
             return run(fixture, args.finished, args.projectile)

@@ -690,11 +690,13 @@ final class CharacterStatements
     /// See `WorldDatabase.saveCooldowns`.
     void saveCooldowns(uint player, const(CooldownRecord)[] cooldowns)
     {
-        characters.execute!"DELETE FROM character_spell_cooldown WHERE guid = ?"(player);
-        foreach (ref c; cooldowns)
-            characters.execute!("INSERT INTO character_spell_cooldown (guid, SpellId, SpellExpireTime, Category, "
-                ~ "CategoryExpireTime, ItemId) VALUES (?, ?, ?, ?, ?, ?)")(player, c.spell, c.spellExpires, c.category,
-                c.categoryExpires, c.item);
+        characters.transaction({
+            characters.execute!"DELETE FROM character_spell_cooldown WHERE guid = ?"(player);
+            foreach (ref c; cooldowns)
+                characters.execute!("INSERT INTO character_spell_cooldown (guid, SpellId, SpellExpireTime, Category, "
+                    ~ "CategoryExpireTime, ItemId) VALUES (?, ?, ?, ?, ?, ?)")(player, c.spell, c.spellExpires, c.category,
+                    c.categoryExpires, c.item);
+        });
     }
 
     /// See `WorldDatabase.loadCooldowns`.

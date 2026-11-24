@@ -682,7 +682,8 @@ private:
     /// only its category's hour), with the talents' (Improved Reincarnation).
     package void startCooldown(const(SpellInfo)* spell)
     {
-        startCooldown(spell, 0, context.clock());
+        if (startCooldown(spell, 0, context.clock()))
+            checkpointCooldowns();
     }
 
     /// An auto-repeating spell (`SPELL_ATTR_EX2_AUTOREPEAT_FLAG`) cast by the client.
@@ -2981,6 +2982,7 @@ private:
         }
         const now = context.clock();
         int paid; // the power it cost: most of it back for each target it missed (`DISCOUNT_POWER_ON_MISS`)
+        bool cooldownStarted;
         if (!c.triggered)
         {
             // The cooldowns start: the item's, else the spell's; one that starts on an event (Presence of Mind,
@@ -2993,7 +2995,7 @@ private:
                 spellReadyAt[spell.id] = MonoTime.max;
             }
             else
-                startCooldown(spell, c.castItemEntry, now);
+                cooldownStarted = startCooldown(spell, c.castItemEntry, now);
             // The power and reagents taken, and an item used up (`spellcharges` -1: one use).
             if (c.castItemEntry == 0)
             {
@@ -3243,6 +3245,8 @@ private:
         {
             if (!(spell.attributesEx2 & notAnAction))
                 interruptAurasOnCast(AuraInterrupt.actionLate, spell); // what a cast ends as it completes
+            if (cooldownStarted)
+                checkpointCooldowns();
             deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, SpellCastResult.ok));
         }
         auto displayedResults = results;
@@ -3749,6 +3753,8 @@ private:
         CooldownRecord[] rows;
         foreach (spellId, category; cooldownCategory)
         {
+            if (spellId in eventCooldowns)
+                continue;
             CooldownRecord r;
             r.spell = spellId;
             r.item = cooldownItem.get(spellId, 0);
@@ -3827,17 +3833,19 @@ private:
     /// A spell's cooldown cleared: `SMSG_CLEAR_COOLDOWN`, and the spell ready again.
     package void clearCooldownFor(uint spell)
     {
+        bool changed = spellReadyAt.remove(spell);
+        // The category it started (an item's own, as a potion's), else the spell's.
+        if (const category = cooldownCategory.get(spell, 0))
+            changed |= categoryReadyAt.remove(category);
+        if (const info = context.data.spells.spell(spell))
+            if (info.category)
+                changed |= categoryReadyAt.remove(info.category);
+        if (changed)
+            checkpointCooldowns();
         ByteWriter w;
         w.put(spell);
         w.put(player.guid);
         deliver(Opcode.SMSG_CLEAR_COOLDOWN, w.data);
-        spellReadyAt.remove(spell);
-        // The category it started (an item's own, as a potion's), else the spell's.
-        if (const category = cooldownCategory.get(spell, 0))
-            categoryReadyAt.remove(category);
-        if (const info = context.data.spells.spell(spell))
-            if (info.category)
-                categoryReadyAt.remove(info.category);
     }
 
     /// Clears the cooldowns of the spells known of a skill line, but `calledFrom`.
@@ -3863,7 +3871,7 @@ private:
     }
 
     /// The cooldowns of a cast of `spell` (from the item `itemEntry`, 0: none) start at `now`: the item's, else the spell's.
-    private void startCooldown(const(SpellInfo)* spell, uint itemEntry, MonoTime now)
+    private bool startCooldown(const(SpellInfo)* spell, uint itemEntry, MonoTime now)
     {
         int recovery = spell.recoveryTime, categoryRecovery = spell.categoryRecoveryTime;
         const category = cooldownCategoryOf(spell, itemEntry);
@@ -3880,14 +3888,23 @@ private:
                     }
         recovery = spellMod(SpellModOp.cooldown, spell, recovery);
         categoryRecovery = spellMod(SpellModOp.cooldown, spell, categoryRecovery);
-        if (recovery > 0 && !cooldownCheat)
+        if (cooldownCheat || (recovery <= 0 && (!category || categoryRecovery <= 0)))
+            return false;
+        if (recovery > 0)
             spellReadyAt[spell.id] = now + recovery.msecs;
-        if (category && categoryRecovery > 0 && !cooldownCheat)
+        if (category && categoryRecovery > 0)
             categoryReadyAt[category] = now + categoryRecovery.msecs;
-        if ((recovery > 0 || (category && categoryRecovery > 0)) && !cooldownCheat)
+        cooldownCategory[spell.id] = category && categoryRecovery > 0 ? category : 0;
+        cooldownItem[spell.id] = itemEntry;
+        return true;
+    }
+
+    private void checkpointCooldowns()
+    {
+        if (connection.gatewayHome.node && context.canWrite())
         {
-            cooldownCategory[spell.id] = category && categoryRecovery > 0 ? category : 0;
-            cooldownItem[spell.id] = itemEntry;
+            saveCooldowns();
+            context.settleWrites();
         }
     }
 
@@ -3984,7 +4001,8 @@ private:
         const itemEntry = *item;
         eventCooldowns.remove(spell.id);
         spellReadyAt.remove(spell.id);
-        startCooldown(spell, itemEntry, context.clock());
+        if (startCooldown(spell, itemEntry, context.clock()))
+            checkpointCooldowns();
         ByteWriter w;
         w.put(spell.id);
         w.put(player.guid);
