@@ -402,6 +402,10 @@ same gateway connection.
 Loot-bearing outdoor scripted summons that leave a corpse, including Thunderaan, keep their
 original body and loot on the replacement worker. Their expiry never schedules a respawn.
 
+Outdoor creature scripts using the escort or follower component save the actor's active progress
+and nearby living summons. The replacement waits for the player to return before continuing the
+script. A planned handoff supplies the current actors for its region.
+
 * **The same spawns everywhere.** Pools, spawn groups and spawn entries are chosen with a seed made
   from the cluster's name and the realm, so every node agrees on which creature a spawn is.
 * **After a node is lost**, the new owner loads saved respawn deadlines, discovers spawns added
@@ -981,6 +985,7 @@ python3 tools/harness/outdoor_corpse_recovery.py
 python3 tools/harness/outdoor_chest_recovery.py
 python3 tools/harness/outdoor_chest_recovery.py --pooled
 python3 tools/harness/dreadsteed_recovery.py
+python3 tools/harness/escort_recovery.py
 ```
 
 Both map options also accept `--cross-realm`. The Arathi Basin test checks the resource score,
@@ -1005,6 +1010,8 @@ reopen the original chest. MariaDB must record both original drops once and the 
 The pooled version also checks that the respawn is recorded for the original selected placement.
 The Dreadsteed check kills the worker just after calling the Keeper and J'eevee. Both existing
 clients see the same actors finish placing the ritual supplies and spawn the first wave once.
+The escort check kills the Defias Traitor's worker after the quest starts. The original client
+reloads the same actor, sees the route finish, and keeps the completed quest in MariaDB.
 
 ## Monitoring
 

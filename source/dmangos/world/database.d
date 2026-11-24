@@ -349,6 +349,15 @@ struct PickpocketRecord
     string loot;
 }
 
+/// A live quest escort or follower and the temporary creatures it owns in its region.
+struct QuestActorCheckpoint
+{
+    uint map;
+    ulong actor, home, player;
+    long savedAt;
+    string state;
+}
+
 /// A `character_honor_cp` row: honor from a kill or another source, on a day.
 struct HonorPointRecord
 {
@@ -800,6 +809,9 @@ interface WorldDatabase
     @DatabaseRead InstanceCorpseRecord[] loadOutdoorCorpses();
     @DatabaseRead PickpocketRecord loadPickpocket(uint instance, uint spawn);
     void savePickpocket(const PickpocketRecord pocket);
+    @DatabaseRead QuestActorCheckpoint[] loadQuestActors(uint realm);
+    void saveQuestActor(uint realm, const QuestActorCheckpoint actor);
+    void deleteQuestActor(uint realm, ulong actor);
 
     /// The map of instance `id`; uint.max if there is no such instance.
     @DatabaseRead uint instanceMapOf(uint id);
@@ -1092,6 +1104,7 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
         statements.prepareInstanceCorpses();
         statements.preparePickpockets();
         statements.prepareGameObjectPools();
+        statements.prepareQuestActors();
         statements.prepareLootAwards();
         characterDb.execute!("CREATE TABLE IF NOT EXISTS `dmangos_write_applied` ("
             ~ "`stream` INT UNSIGNED NOT NULL, `seq` BIGINT UNSIGNED NOT NULL, PRIMARY KEY (`stream`)"
@@ -1295,6 +1308,9 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     InstanceCorpseRecord[] loadOutdoorCorpses() { return statements.loadOutdoorCorpses(); }
     PickpocketRecord loadPickpocket(uint instance, uint spawn) { return statements.loadPickpocket(instance, spawn); }
     void savePickpocket(const PickpocketRecord pocket) { statements.savePickpocket(pocket); }
+    QuestActorCheckpoint[] loadQuestActors(uint realm) { return statements.loadQuestActors(realm); }
+    void saveQuestActor(uint realm, const QuestActorCheckpoint actor) { statements.saveQuestActor(realm, actor); }
+    void deleteQuestActor(uint realm, ulong actor) { statements.deleteQuestActor(realm, actor); }
     uint instanceMapOf(uint id) { return statements.instanceMapOf(id); }
     uint[uint] instanceBindsOf(uint player) { return statements.instanceBindsOf(player); }
     bool instanceLimitReached(uint account, uint instance, long now)
@@ -2913,6 +2929,15 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
     }
 
     private PickpocketRecord[uint[2]] pockets;
+    private QuestActorCheckpoint[ulong][uint] questActors;
+
+    QuestActorCheckpoint[] loadQuestActors(uint realm) { return questActors.get(realm, null).values; }
+    void saveQuestActor(uint realm, const QuestActorCheckpoint actor) { questActors[realm][actor.actor] = actor; }
+    void deleteQuestActor(uint realm, ulong actor)
+    {
+        if (auto actors = realm in questActors)
+            (*actors).remove(actor);
+    }
 
     PickpocketRecord loadPickpocket(uint instance, uint spawn)
     {

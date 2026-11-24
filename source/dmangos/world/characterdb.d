@@ -1347,6 +1347,37 @@ final class CharacterStatements
         characters.execute!"DELETE FROM dmangos_pickpocket WHERE instance = ? AND spawn = ?"(instance, spawn);
     }
 
+    void prepareQuestActors()
+    {
+        characters.execute!("CREATE TABLE IF NOT EXISTS dmangos_quest_actor ("
+            ~ "realm INT UNSIGNED NOT NULL, actor BIGINT UNSIGNED NOT NULL, map INT UNSIGNED NOT NULL, "
+            ~ "home BIGINT UNSIGNED NOT NULL, player BIGINT UNSIGNED NOT NULL, saved_at BIGINT NOT NULL, "
+            ~ "state MEDIUMTEXT CHARACTER SET ascii NOT NULL, PRIMARY KEY (realm, actor)) ENGINE=InnoDB")();
+    }
+
+    imported!"dmangos.world.database".QuestActorCheckpoint[] loadQuestActors(uint realm)
+    {
+        import dmangos.world.database : QuestActorCheckpoint;
+
+        QuestActorCheckpoint[] actors;
+        foreach (row; characters.query!("SELECT map, actor, home, player, saved_at, state FROM dmangos_quest_actor "
+                ~ "WHERE realm = ?")(realm))
+            actors ~= QuestActorCheckpoint(row.get!uint(0), row.get!ulong(1), row.get!ulong(2), row.get!ulong(3),
+                row.get!long(4), row.get!string(5));
+        return actors;
+    }
+
+    void saveQuestActor(uint realm, const imported!"dmangos.world.database".QuestActorCheckpoint actor)
+    {
+        characters.execute!("REPLACE INTO dmangos_quest_actor (realm, actor, map, home, player, saved_at, state) "
+            ~ "VALUES (?, ?, ?, ?, ?, ?, ?)")(realm, actor.actor, actor.map, actor.home, actor.player, actor.savedAt, actor.state);
+    }
+
+    void deleteQuestActor(uint realm, ulong actor)
+    {
+        characters.execute!"DELETE FROM dmangos_quest_actor WHERE realm = ? AND actor = ?"(realm, actor);
+    }
+
     /// See `WorldDatabase.deleteInstance`.
     void deleteInstance(uint id)
     {

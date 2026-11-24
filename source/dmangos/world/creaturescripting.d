@@ -98,6 +98,7 @@ mixin template CreatureScripting()
         }
         static if (!is(E == Spawned))
             scripts_.raise(behaviour, context, event);
+        checkpointQuestActor(is(E == MovementDone) || is(E == Died) || is(E == SummonedDied));
     }
 
     /// Its script's schedules, `diff` milliseconds on.
@@ -112,12 +113,27 @@ mixin template CreatureScripting()
             scripts_.raise(behaviour, context, Spawned());
         }
         scripts_.tick(behaviour, context, diff);
+        checkpointQuestActor(false);
     }
 
     /// Whether its script has steps pending: it must tick even out of combat.
     private @property bool behaviourBusy() const
     {
         return behaviour && (cast() scripts_).busy(behaviour); // reads only
+    }
+
+    package ulong questActorPlayer() const
+    {
+        return behaviour ? (cast() scripts_).questActorPlayer(behaviour) : 0;
+    }
+
+    private void checkpointQuestActor(bool immediate)
+    {
+        import dmangos.world.map : Map;
+
+        if (auto map = cast(Map) world_)
+            if (map.checkpointQuestActor !is null)
+                map.checkpointQuestActor(me, questActorPlayer(), immediate);
     }
 
     /// Raises `event` from outside its own moments (a player's gossip, a quest): its world as given.
@@ -135,6 +151,7 @@ mixin template CreatureScripting()
             scripts_.raise(behaviour, context, Spawned());
         }
         scripts_.raise(behaviour, context, event);
+        checkpointQuestActor(true);
         if (world_ !is null)
             world_.wake(me.guid);
         return context.consumed;

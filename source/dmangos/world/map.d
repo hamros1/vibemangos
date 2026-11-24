@@ -943,6 +943,7 @@ final class Map : CombatWorld, GameObjectWorld
             if (creature !is null && ((creature.keepSpawnLoaded && creature.alive)
                 || (!creature.alive && creature.summon.type != TempSpawnType.none
                     && (creature.loot !is null || creature.skinnable))
+                || (creature.alive && creature.ai !is null && creature.ai.questActorPlayer())
                 || (creature.ai !is null && (creature.ai.inCombat || creature.ai.evading))
                 || e.cell in localInterest || e.cell in peerCells))
             {
@@ -2437,6 +2438,7 @@ final class Map : CombatWorld, GameObjectWorld
 
     /// Told when a creature reaches a waypoint with a script.
     void delegate(Creature creature, uint scriptId) onWaypointScript;
+    package void delegate(Creature creature, ulong player, bool immediate) checkpointQuestActor;
 
     /// See `MotionWorld.waypointScript`.
     void waypointScript(Creature creature, uint scriptId)

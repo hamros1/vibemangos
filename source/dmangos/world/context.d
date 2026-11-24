@@ -67,7 +67,7 @@ import dmangos.world.characterdb : DeleteOptions, GuidCounters;
 import dmangos.world.transports : ShipObject, mapAt, transportClock;
 import dmangos.world.clientdata : ClientData;
 import dmangos.world.config : WorldConfig;
-import dmangos.world.database : InstanceChestRecord, InstanceCorpseRecord, PickpocketRecord, WorldDatabase;
+import dmangos.world.database : InstanceChestRecord, InstanceCorpseRecord, PickpocketRecord, QuestActorCheckpoint, WorldDatabase;
 import dmangos.world.creaturepools : CreaturePools;
 import dmangos.vmap.gameobjectmodels : GameObjectModels;
 import dmangos.world.gameobjectcollision : GameObjectCollision;
@@ -4312,6 +4312,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
             startScript(DbScriptType.creatureMovement, scriptId, created, creature.guid, creature.guid);
         };
+        if (!instance && config.cluster.enabled)
+            created.checkpointQuestActor = (Creature creature, ulong player, bool immediate) {
+                checkpointQuestActor(created, creature, player, immediate);
+            };
         created.onGameObjectUsedUp = &gameObjectUsedUp;
         created.onObjectGone = (MapObject object) => objectGone(created, object);
         created.onObjectArrived = (MapObject o) { // open-world round 2: a scripted game object's `Spawned`
@@ -5251,7 +5255,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private void objectGone(Map map, MapObject object)
     {
         if (auto creature = cast(Creature) object)
+        {
+            discardQuestActor(creature);
             creature.ai.releaseBehaviour();
+        }
         else if (auto go = cast(GameObject) object)
         {
             auto key = GameObjectOnMap(map, go.guid);
@@ -5506,6 +5513,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 creatureLoanGained(r, arriving.get(r.id, null));
         refreshOutdoorCorpses(gained, lost);
         refreshOutdoorChests(gained, lost);
+        refreshQuestActors(gained, lost, arriving);
         bool[uint] looked;
         foreach (ref r; gained)
             if (r.map !in looked)
@@ -5527,6 +5535,150 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
         return regions.any!(r => physicalWorldRegion(r) && r.map == spawn.map
             && r.rect.containsKey(cellKeyAt(spawn.x, spawn.y)));
+    }
+
+    private QuestActorCheckpoint[ulong] outdoorQuestActors;
+
+    private bool ownsQuestActor(const Creature creature)
+    {
+        return canWrite() && !creature.instanceId && !creatureOnLoan(creature.spawn.guid)
+            && (ownsCell is null || ownsCell(creature.spawn.map, cellKeyAt(creature.spawn.x, creature.spawn.y)));
+    }
+
+    private void discardQuestActor(const Creature creature)
+    {
+        if (const actor = creature.guid in outdoorQuestActors)
+            if (ownsQuestActor(creature))
+            {
+                if (auto player = onlinePlayer(actor.player))
+                    player.saveQuests();
+                outdoorQuestActors.remove(creature.guid);
+                database.deleteQuestActor(config.realmId, creature.guid);
+            }
+    }
+
+    private void checkpointQuestActor(Map map, Creature creature, ulong player, bool immediate)
+    {
+        import dmangos.world.instancescripting : toHex;
+
+        if (!player || !creature.alive)
+            return discardQuestActor(creature);
+        if (!ownsQuestActor(creature))
+            return;
+        const previous = outdoorQuestActors.get(creature.guid, QuestActorCheckpoint.init);
+        if (!immediate && previous.player == player && previous.savedAt + 2 > unixTime)
+            return;
+        auto root = saveMigratingObject(creature, false);
+        root.home = cellKeyAt(creature.spawn.x, creature.spawn.y);
+        Migrant[] actors = [root];
+        foreach (child; map.creaturesNear(creature.position, 150))
+            if (child.alive && child.summon.summoner == creature.guid && ownsQuestActor(child))
+            {
+                auto snapshot = saveMigratingObject(child, false);
+                snapshot.home = cellKeyAt(child.spawn.x, child.spawn.y);
+                actors ~= snapshot;
+            }
+        if (auto session = onlinePlayer(player))
+            if (session.character !is null && session.currentMap is map && !session.transferring)
+            {
+                session.saveQuests();
+                const progress = session.character.progress(session.secondsInWorld());
+                database.saveProgress(progress);
+            }
+        const state = QuestActorCheckpoint(map.id, creature.guid, root.home, player, unixTime,
+            toHex(encodeBundle(null, actors)));
+        outdoorQuestActors[creature.guid] = state;
+        database.saveQuestActor(config.realmId, state);
+    }
+
+    private void refreshQuestActors(const(Region)[] gained, const(Region)[] lost, const(ubyte)[][uint] arriving)
+    {
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
+        import dmangos.world.instancescripting : fromHex;
+        import dmangos.world.migration : decodeBundle;
+        import dmangos.world.objects : counterOf;
+        import std.algorithm.searching : any;
+
+        if (!config.cluster.enabled)
+            return;
+        bool covers(const ref Region region, uint map, ulong home)
+        {
+            return physicalWorldRegion(region) && region.map == map && region.rect.containsKey(home);
+        }
+        foreach (guid; outdoorQuestActors.keys)
+        {
+            const actor = outdoorQuestActors[guid];
+            if (lost.any!(r => covers(r, actor.map, actor.home)))
+                outdoorQuestActors.remove(guid);
+        }
+        if (!gained.any!(r => physicalWorldRegion(r)))
+            return;
+        QuestActorCheckpoint[] actors;
+        try
+            actors = database.loadQuestActors(config.realmId);
+        catch (DatabaseException error)
+        {
+            warning!"migration: could not load outdoor quest actors: %s"(error.msg);
+            return;
+        }
+        foreach (actor; actors)
+        {
+            if (!gained.any!(r => covers(r, actor.map, actor.home)))
+                continue;
+            const spawn = counterOf(actor.actor);
+            if (actor.savedAt + 300 <= unixTime || awaitingRespawn(spawn) || spawn in outdoorCorpses)
+            {
+                database.deleteQuestActor(config.realmId, actor.actor);
+                continue;
+            }
+            auto where = map(actor.map);
+            if (where.creatureAt(actor.actor) !is null)
+            {
+                outdoorQuestActors[actor.actor] = actor;
+                continue;
+            }
+            if (gained.any!(r => covers(r, actor.map, actor.home) && arriving.get(r.id, null).length))
+            {
+                database.deleteQuestActor(config.realmId, actor.actor);
+                continue; // the clean bundle has the newer state and did not carry this actor
+            }
+            try
+            {
+                bool restoredActor;
+                const recoveryWait = cast(int)((long(config.cluster.leaseMs) + config.cluster.failureTimeoutMs + 10_000));
+                where.migrateIn(fromHex(actor.state), (const ref Migrant saved) {
+                    const root = saved.spawn == spawn;
+                    if ((!root && !restoredActor)
+                        || !gained.any!(r => covers(r, actor.map, saved.home) && !arriving.get(r.id, null).length))
+                        return null;
+                    auto creature = cast(Creature) restoreWorldMigrant(saved, where);
+                    if (creature is null || !creature.alive)
+                        return null;
+                    if (root)
+                    {
+                        if (creature.guid != actor.actor || creature.ai.questActorPlayer() != actor.player)
+                        {
+                            creature.ai.releaseBehaviour();
+                            return null;
+                        }
+                        restoredActor = true;
+                    }
+                    else if (where.creatureAt(creature.guid) !is null)
+                    {
+                        creature.ai.releaseBehaviour();
+                        return null;
+                    }
+                    creature.questActorWait = recoveryWait;
+                    creature.questActorWaitFor = actor.player;
+                    return cast(MapObject) creature;
+                });
+                if (restoredActor)
+                    outdoorQuestActors[actor.actor] = actor;
+            }
+            catch (Exception error)
+                warning!"map %s: could not restore quest actor %s: %s"(actor.map, actor.actor, error.msg);
+        }
     }
 
     private void refreshOutdoorCorpses(const(Region)[] gained, const(Region)[] lost)

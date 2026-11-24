@@ -778,6 +778,16 @@ CREATE TABLE IF NOT EXISTS `dmangos_gameobject_pool` (
   `placements` mediumtext CHARACTER SET ascii NOT NULL,
   PRIMARY KEY (`realm`, `pool`)
 ) ENGINE=InnoDB;
+CREATE TABLE IF NOT EXISTS `dmangos_quest_actor` (
+  `realm` int unsigned NOT NULL,
+  `actor` bigint unsigned NOT NULL,
+  `map` int unsigned NOT NULL,
+  `home` bigint unsigned NOT NULL,
+  `player` bigint unsigned NOT NULL,
+  `saved_at` bigint NOT NULL,
+  `state` mediumtext CHARACTER SET ascii NOT NULL,
+  PRIMARY KEY (`realm`, `actor`)
+) ENGINE=InnoDB;
 CREATE TABLE `item_instance` (
   `guid` int(11) unsigned NOT NULL DEFAULT 0,
   `owner_guid` int(11) unsigned NOT NULL DEFAULT 0,

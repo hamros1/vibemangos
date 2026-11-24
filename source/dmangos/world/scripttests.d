@@ -339,6 +339,87 @@ unittest
     assert(map.findObject(him.guid) is null, "gone home (to come back at his spawn)");
 }
 
+/// A replacement restores the Defias Traitor and waits for the player before continuing the escort.
+unittest
+{
+    import dmangos.cluster.regions : CellRect, Region, RegionState;
+    import dmangos.script.api : Location, Waypoint;
+    import dmangos.world.creature : TempSpawnType;
+    import dmangos.world.grid : cellCoordinate;
+    import dmangos.world.migration : encodeBundle;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.quests : Quest, QuestState;
+
+    enum uint entry = 467, quest = 155, counter = 90020;
+    const at = Position(-8949.95f, -132.49f, 83.53f);
+    auto db = newDatabase();
+    auto now = MonoTime.currTime;
+    const spawn = CreatureSpawn(counter, entry, mapEasternKingdoms, at.x + 2, at.y, at.z);
+    db.insertCreatureSpawn(spawn);
+    const x = cellCoordinate(spawn.x), y = cellCoordinate(spawn.y);
+    const home = cellKeyAt(spawn.x, spawn.y);
+
+    auto worker(ushort id, bool clean = false)
+    {
+        auto world = newCreationContext(db, (ref config) { config.cluster.nodeId = id; });
+        world.clock = () => now;
+        auto prototype = cast() world.data.creatureTemplates[creatureInnkeeper];
+        prototype.entry = entry;
+        prototype.npcFlags = 2;
+        world.data.creatureTemplates[entry] = prototype;
+        world.data.creatureScriptNames[entry] = "npc_defias_traitor";
+        world.data.escortPaths[entry] = [Waypoint(Location(at.x + 6, at.y, at.z)),
+            Waypoint(Location(at.x + 6, at.y + 6, at.z)), Waypoint(Location(at.x + 3, at.y + 6, at.z), 2000)];
+        Quest q = {id: quest, method: 2, maxLevel: 60, specialFlags: 0x2, title: "The Defias Brotherhood"};
+        world.data.quests.quests[quest] = q;
+        world.data.quests.creatureStarts[entry] = [quest];
+        const region = Region(1, mapEasternKingdoms, CellRect(x, y, x + 1, y + 1), id, id, RegionState.granted);
+        ubyte[][uint] unused;
+        const(ubyte)[][uint] arriving;
+        if (clean)
+            arriving[region.id] = encodeBundle(null, null);
+        world.regionsChanged([region], null, arriving, unused);
+        world.map(mapEasternKingdoms).loadCell(home);
+        return world;
+    }
+
+    auto original = worker(1);
+    auto hero = loggedIn(original, db, 7, "Varian", at, AccountLevel.player, raceHuman, mapEasternKingdoms, 20);
+    const guid = makeGuid(HighGuid.unit, entry, counter);
+    ByteWriter accept;
+    accept.put(guid);
+    accept.put(quest);
+    hero.write(Opcode.CMSG_QUESTGIVER_ACCEPT_QUEST, accept.data);
+    assert(db.loadQuestActors(original.config.realmId).length == 1);
+    auto source = original.map(mapEasternKingdoms);
+    auto helper = original.summonCreature(source, creatureInnkeeper, at, TempSpawnType.timed, 30_000, guid);
+    foreach (_; 0 .. 12)
+        original.update(now += 250.msecs);
+    const saved = db.loadQuestActors(original.config.realmId)[0];
+    assert(hero.session.character.questStatus[quest].status == QuestState.incomplete);
+
+    auto recovered = worker(2);
+    auto destination = recovered.map(mapEasternKingdoms);
+    auto escort = destination.creatureAt(guid);
+    assert(escort !is null && escort.values.get!UNIT_NPC_FLAGS == 0 && escort.questActorWait > 0);
+    assert(destination.creatureAt(helper.guid) !is null);
+    foreach (_; 0 .. 16)
+        recovered.update(now += 250.msecs);
+    assert(escort.questActorWait > 0 && escort.ai.questActorPlayer() == 7);
+    auto before = db.questRows[7].values;
+    auto restored = loggedIn(recovered, db, 7, "Varian", at, AccountLevel.player, raceHuman, mapEasternKingdoms, 20,
+        (ref character) { character.quests = before; });
+    foreach (_; 0 .. 90)
+        recovered.update(now += 250.msecs);
+    assert(restored.session.character.questStatus[quest].status == QuestState.complete);
+    assert(db.loadQuestActors(recovered.config.realmId).length == 0);
+
+    db.saveQuestActor(recovered.config.realmId, saved); // a stale checkpoint predating the clean handoff
+    auto clean = worker(3, true);
+    assert(clean.map(mapEasternKingdoms).creatureAt(guid).values.get!UNIT_NPC_FLAGS == 2);
+    assert(db.loadQuestActors(clean.config.realmId).length == 0);
+}
+
 /// Life Tap (`spell_life_tap`): the warlock's health becomes as much mana; a tap that would kill does nothing.
 unittest
 {

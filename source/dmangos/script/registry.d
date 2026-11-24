@@ -330,6 +330,7 @@ struct ScriptType
     void*[maxEvents] handlers;                      /// `void function(void*, ref Context, const ref Event)`, by event index
     void function(void* state, void* context, int ms) tick; /// its schedules; null if it has none
     bool function(const(void)* state) busy;         /// whether a schedule has something pending
+    ulong function(const(void)* state) questActorPlayer; /// player of an active escort or follower
     void function(const(void)* state, ref ByteWriter w) save;
     bool function(void* state, ref ByteReader r) load;
 }
@@ -425,6 +426,22 @@ ScriptType describe(S, ScriptKind kind)(string name)
     }
     t.save = (const(void)* p, ref ByteWriter w) => saveScript(*cast(const(S)*) p, w);
     t.load = (void* p, ref ByteReader r) => loadScript(*cast(S*) p, r);
+    static if (kind == ScriptKind.creature)
+    {
+        import dmangos.script.escort : Escort;
+        import dmangos.script.follower : Follower;
+
+        static foreach (T; typeof(S.tupleof))
+            static if (is(T == Escort) || is(T == Follower))
+                t.questActorPlayer = (const(void)* p) {
+                    const s = cast(const(S)*) p;
+                    static foreach (i, Field; typeof(S.tupleof))
+                        static if (is(Field == Escort) || is(Field == Follower))
+                            if (s.tupleof[i].active)
+                                return s.tupleof[i].player.guid;
+                    return 0;
+                };
+    }
     return t;
 }
 
@@ -638,6 +655,17 @@ final class ScriptRuntime
         const t = &types[h.script - 1];
         auto state = pools[h.script - 1].at(h.slot, h.generation);
         return state !is null && t.busy !is null && t.busy(state);
+    }
+
+    package(dmangos) ulong questActorPlayer(ScriptHandle h)
+    {
+        if (!h)
+            return 0;
+        const read = types[h.script - 1].questActorPlayer;
+        if (read !is null)
+            if (auto state = pools[h.script - 1].at(h.slot, h.generation))
+                return read(state);
+        return 0;
     }
 
     /// Writes the script's state (nothing for no script).

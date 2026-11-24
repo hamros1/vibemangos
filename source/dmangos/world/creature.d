@@ -1335,6 +1335,14 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
      */
     void tick(MotionWorld world, int diff)
     {
+        if (questActorWait > 0)
+        {
+            auto combat = cast(CombatWorld) world;
+            if (combat !is null && combat.unit(questActorWaitFor))
+                questActorWait = 0;
+            else if ((questActorWait -= diff) > 0)
+                return;
+        }
         if (!motionStarted)
         {
             motionStarted = true;
@@ -1387,6 +1395,10 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         followSpline(this, diff);
         generator.update(this, world, diff);
     }
+
+    /// Before replaying an outdoor escort or follower, allow its player to reconnect through the gateway.
+    package int questActorWait;
+    package ulong questActorWaitFor;
 
     /// What a create block shows of it: a unit with its movement, its walk and public fields.
     UpdateData appearance(uint serverTime) const
