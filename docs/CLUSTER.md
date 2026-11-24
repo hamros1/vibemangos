@@ -387,8 +387,9 @@ and visibility deadline. Scripted chests keep the contents and claims they saved
 looting. Depleting or removing a scripted chest retires its loot and placement together.
 An immediate scripted despawn of one of those objects removes the checkpoint before publishing its
 removal. A parent on another worker waits for that result before it continues.
-When a delayed script starts a relay on its worker, the parent cursor and the new relay commit
-together. The replacement resumes the relay on its original schedule.
+When a delayed script starts a local relay or starts one on a static creature on another worker,
+the parent cursor and the new relay commit together. For a remote relay, the same transaction queues
+delivery to the creature's spawn cell. The replacement resumes the relay on its original schedule.
 Other commands claim their step before executing it, so a crash during their effects can leave the
 step incomplete.
 Finite wild objects of the generic and spell-focus types use the same durable queue from placement.

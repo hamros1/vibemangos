@@ -623,7 +623,7 @@ mixin template DbScriptRunner()
         return reader.read!uint;
     }
 
-    private OutdoorScriptCheckpoint outdoorScriptState(ScriptRun run, Map map)
+    private OutdoorScriptCheckpoint outdoorScriptState(ScriptRun run, Map map, bool localPlayers = true)
     {
         import dmangos.world.instancescripting : toHex;
 
@@ -635,8 +635,8 @@ mixin template DbScriptRunner()
         state.put(run.source);
         state.put(run.target);
         state.put(run.anchor);
-        state.put(map.find(run.source) !is null);
-        state.put(map.find(run.target) !is null);
+        state.put(localPlayers && map.find(run.source) !is null);
+        state.put(localPlayers && map.find(run.target) !is null);
         return OutdoorScriptCheckpoint(run.outdoorOrigin, run.outdoorSequence, run.mapId, cast(uint) run.next,
             run.home, toHex(state.data));
     }
@@ -1035,6 +1035,13 @@ mixin template DbScriptRunner()
         import dmangos.world.instancescripting : fromHex;
         import dmangos.serialization : deserialize;
 
+        if (request.kind == OutdoorSummonKind.relay)
+        {
+            // The sender committed the child with its own cursor. Its new owner only needs to load it.
+            retryOutdoorScriptRecovery = true;
+            database.retireOutdoorSummon(config.realmId, request);
+            return;
+        }
         auto where = map(request.map);
         if (request.actor)
         {
@@ -1532,13 +1539,6 @@ mixin template DbScriptRunner()
         {
             if (planned is null)
                 return dispatchScriptCommand(type, step, map, source, target);
-            if (step.command == ScriptCommand.startRelayScript && source.mirror !is null)
-            {
-                // A creature replica starts its relay on its owner, as it does outside a durable script.
-                const row = step;
-                planned.afterCommit ~= () { dispatchScriptCommand(type, row, map, source, target); };
-                return false;
-            }
             return executeScriptCommand(type, step, map, source, target, false, planned);
         }
         bool stop;
@@ -1581,6 +1581,22 @@ mixin template DbScriptRunner()
             map.id, step.id, step.fingerprint, transportNow(), cast(ubyte) type);
         sendScriptCreatureStep(actor.mirror.owner, message);
         return false;
+    }
+
+    /// A known static buddy's relay follows its spawn cell, even if the destination changes workers.
+    private ulong forwardedRelayHome(Map map, const ref ScriptThing source)
+    {
+        import dmangos.world.grid : cellKeyAt;
+        import dmangos.world.objects : counterOf, highGuidOf, HighGuid;
+
+        const counter = counterOf(source.guid);
+        if (highGuidOf(source.guid) != HighGuid.unit || counter >= temporaryCounterStart || regionOwnerAround is null)
+            return noCell;
+        const spawn = creatureSpawnOf(counter);
+        if (spawn is null || spawn.map != map.id || creatureOnLoan(counter)
+            || regionOwnerAround(map.id, Position(spawn.x, spawn.y, spawn.z), 0) != source.mirror.owner)
+            return noCell;
+        return cellKeyAt(spawn.x, spawn.y);
     }
 
     /// `SCRIPT_COMMAND_TERMINATE_SCRIPT`: stops when its buddy is not near (or, with the additional flag, when it is).
@@ -2368,6 +2384,17 @@ mixin template DbScriptRunner()
         }
         case ScriptCommand.startRelayScript:
         {
+            ulong remoteHome = noCell;
+            if (planned !is null && source.mirror !is null)
+            {
+                remoteHome = forwardedRelayHome(map, source);
+                if (remoteHome == noCell)
+                {
+                    const row = step;
+                    planned.afterCommit ~= () { dispatchScriptCommand(type, row, map, source, target); };
+                    break;
+                }
+            }
             const relay = step.datalong2 ? data.dbScripts.randomRelay(step.datalong2) : step.datalong;
             if (!relay)
                 break;
@@ -2376,12 +2403,20 @@ mixin template DbScriptRunner()
             else if (const steps = data.dbScripts.steps(DbScriptType.relay, relay))
             {
                 auto run = prepareScriptRun(DbScriptType.relay, relay, map, source.guid, target.guid, steps);
-                if (run.home == noCell)
+                if (remoteHome != noCell)
+                {
+                    run.home = remoteHome;
+                    run.anchor = source.guid;
+                    planned.forwards ~= OutdoorSummonRequest(map: map.id, home: remoteHome,
+                        kind: OutdoorSummonKind.relay);
+                }
+                else if (run.home == noCell)
                     run.home = planned.parentHome;
                 trackOutdoorScript(run, true);
                 run.outdoorSaved = true;
-                planned.relayCheckpoints ~= outdoorScriptState(run, map);
-                planned.relays ~= run;
+                planned.relayCheckpoints ~= outdoorScriptState(run, map, remoteHome == noCell);
+                if (remoteHome == noCell)
+                    planned.relays ~= run;
             }
             break;
         }
