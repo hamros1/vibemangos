@@ -1414,6 +1414,27 @@ final class CharacterStatements
             realm, origin, sequence, cursor) == 1;
     }
 
+    void preparePlayerSummons()
+    {
+        characters.execute!("CREATE TABLE IF NOT EXISTS dmangos_player_summons ("
+            ~ "player INT UNSIGNED NOT NULL PRIMARY KEY, state MEDIUMTEXT CHARACTER SET ascii NOT NULL) ENGINE=InnoDB")();
+    }
+
+    string loadPlayerSummons(uint player)
+    {
+        const rows = characters.query!"SELECT state FROM dmangos_player_summons WHERE player = ?"(player);
+        return rows.length ? rows[0].get!string(0) : null;
+    }
+
+    void savePlayerSummons(uint player, string state)
+    {
+        if (state.length)
+            characters.execute!("INSERT INTO dmangos_player_summons (player, state) VALUES (?, ?) "
+                ~ "ON DUPLICATE KEY UPDATE state = VALUES(state)")(player, state);
+        else
+            characters.execute!"DELETE FROM dmangos_player_summons WHERE player = ?"(player);
+    }
+
     /// See `WorldDatabase.deleteInstance`.
     void deleteInstance(uint id)
     {
@@ -2307,6 +2328,7 @@ final class CharacterStatements
         characters.transaction({
             characters.execute!"DELETE FROM dmangos_loot_coin WHERE player = ?"(guid);
             characters.execute!"DELETE FROM dmangos_loot_award WHERE player = ?"(guid);
+            savePlayerSummons(guid, null);
             foreach (pet; pets)
             {
                 characters.execute!"DELETE FROM character_pet WHERE id = ?"(pet);

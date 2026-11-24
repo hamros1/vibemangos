@@ -23,7 +23,7 @@ BEASTS = {8925: 4, 8926: 2, 8927: 5, 8928: 3, 8933: 3, 8932: 7}
 CHAMPIONS = set(range(9027, 9033))
 
 
-def start_cluster(fixture, new_party, *, world=None):
+def start_cluster(fixture, new_party, *, world=None, leader_appearance=(1, 1)):
     login = fixture.fresh_schema("login", "classicrealmd.sql")
     characters = fixture.fresh_schema("chars", "classiccharacters.sql")
     ports = available_ports(9)
@@ -55,7 +55,8 @@ def start_cluster(fixture, new_party, *, world=None):
     guids = []
     for side, name in enumerate(names):
         label = f"create{side}"
-        creating = client(label, side, "enum", f"create:{name}:1:1", "drop", node=1)
+        race, class_id = (1, 1) if side else leader_appearance
+        creating = client(label, side, "enum", f"create:{name}:{race}:{class_id}", "drop", node=1)
         if creating.wait(timeout=25) or "(success)" not in fixture.log(label):
             raise RuntimeError(fixture.log(label))
         guids.append(int(wait_for(f"{name} saved", lambda: fixture.query(

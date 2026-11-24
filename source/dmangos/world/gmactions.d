@@ -177,6 +177,7 @@ private:
         savePlayerDetails();
         if (context.config.cluster.enabled)
             checkpointPet();
+        checkpointSummons();
         saveTimer.reset();
     }
 

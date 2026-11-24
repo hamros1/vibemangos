@@ -419,8 +419,11 @@ script. A planned handoff supplies the current actors for its region.
   currently absent. Only the node owning a spawn's home cell clears its due respawn timer.
 * **Scripted summons** keep their GUID, placement, state and remaining lifetime during a clean
   handoff. Active player guardians and totems follow their player on the same map and retain their
-  GUIDs, position, health and timers. Dungeon scripts can checkpoint selected summons for crash
-  recovery. Cluster nodes reserve temporary GUID ranges in the character database so a restarted
+  GUIDs, position, health and timers. The gateway's replacement worker also restores these
+  summons from the last save for the current login on the same map and copy. Their original
+  lifetime continues through the outage, and a totem resumes at its next scheduled pulse. Death,
+  dismissal, and expiry remove the summon from the checkpoint. Dungeon scripts can checkpoint
+  selected summons for crash recovery. Cluster nodes reserve temporary GUID ranges so a restarted
   node does not reuse the IDs of objects it handed off. A player's corpse
   keeps its original location and reclaim deadline when the player changes nodes. The current owner
   replicates the body and its removal to nearby observers on other nodes.
@@ -992,6 +995,10 @@ python3 tools/harness/dreadsteed_recovery.py
 python3 tools/harness/escort_recovery.py
 python3 tools/harness/outdoor_script_recovery.py
 python3 tools/harness/outdoor_script_recovery.py --clean
+python3 tools/harness/player_summon_recovery.py
+python3 tools/harness/player_summon_recovery.py --scenario guardian
+python3 tools/harness/player_summon_recovery.py --scenario dead-guardian
+python3 tools/harness/player_summon_recovery.py --scenario expired-totem
 ```
 
 Both map options also accept `--cross-realm`. The Arathi Basin test checks the resource score,
@@ -1021,6 +1028,10 @@ reloads the same actor, sees the route finish, and keeps the completed quest in 
 The outdoor script check kills the worker after the first quest script step. The original client
 sees the delayed summon and emote once each, and MariaDB has no steps pending for that script.
 `--clean` checks the same sequence during a clean handoff.
+The summon checks kill the player's worker after Magma Totem first pulses or after a Battle
+Chicken appears. The totem keeps its GUID, pulses again and expires on schedule. The guardian
+keeps its GUID while alive and stays gone if killed before takeover.
+The expiry case crashes just before the totem would despawn and checks it stays gone after takeover.
 
 ## Monitoring
 

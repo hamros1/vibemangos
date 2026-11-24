@@ -317,6 +317,7 @@ private:
             endChannel(true);
         releaseNpcCharm();
         savePlayerDetails();
+        checkpointSummons();
         if (!context.settleWrites())
             return; // the new owner must load the completed writes before processing packets
 
@@ -555,6 +556,7 @@ private:
         readQuestOffer(r);
         readSummonOffer(r);
         petsOnArrival(readPetPossession(r));
+        checkpointSummons();
         pendingArrival = action; // done at the first tick here, once the move is complete everywhere
         battlegroundCheckDue = action.teleportMap == uint.max; // not on its way into a copy
         info!"%s: '%s' arrived from another node (map %s at %.1f %.1f)"(remoteAddress, character.name, character.map,

@@ -1430,6 +1430,8 @@ mixin template PetHandlers()
         {
             removeGuardians(player is null || player.alive); // at its death, only those not fighting
             unsummonTotems();
+            if (player !is null && map !is null)
+                checkpointSummons(true);
         }
         if (pet_ !is null)
             unsummonPet(PetSlot.current);
@@ -1523,8 +1525,10 @@ mixin template PetHandlers()
     }
 
     private enum ubyte loneTotemSlot = 4, guardianSlot = 5;
+    private enum ubyte summonCheckpointVersion = 1;
+    private bool summonCheckpointExists, detachingSummons;
 
-    private const(ubyte)[] takeSummonsOnHandoff()
+    private const(ubyte)[] playerSummonState(bool departing, ulong removed = 0)
     {
         ByteWriter state;
         state.put(map.id);
@@ -1539,10 +1543,12 @@ mixin template PetHandlers()
         {
             import dmangos.world.migration : MigrantKind;
 
+            if (guid == removed)
+                return;
             auto creature = map.creatureAt(guid);
             if (creature is null || !creature.alive)
                 return;
-            const moved = context.savePlayerSummon(creature);
+            const moved = context.savePlayerSummon(creature, departing);
             if (moved.kind != MigrantKind.summonedCreature)
                 return;
             state.put(slot);
@@ -1574,25 +1580,102 @@ mixin template PetHandlers()
             carry(loneTotem, loneTotemSlot);
         foreach (guid; guardians_)
             carry(guid, guardianSlot);
-        unsummonTotems();
-        removeGuardians(true);
         if (!count)
             return null;
         state.patch(countAt, count);
         return state.data;
     }
 
+    private const(ubyte)[] takeSummonsOnHandoff()
+    {
+        const state = playerSummonState(true);
+        detachingSummons = true;
+        scope(exit) detachingSummons = false;
+        unsummonTotems();
+        removeGuardians(true);
+        return state;
+    }
+
+    /// Save active summons for this gateway's current login. A pending removal is still on the map during its callback.
+    package void checkpointSummons(bool immediate = false, ulong removed = 0)
+    {
+        import dmangos.world.instancescripting : toHex;
+
+        const home = connection.gatewayHome;
+        if (!home.node || detachingSummons || !context.canWrite())
+            return;
+        const state = player.alive ? playerSummonState(false, removed) : null;
+        if (!state.length && !summonCheckpointExists)
+            return;
+        ByteWriter checkpoint;
+        if (state.length)
+        {
+            if (immediate && !removed)
+            {
+                const progress = player.progress(secondsInWorld());
+                context.database.saveProgress(progress);
+            }
+            checkpoint.put(summonCheckpointVersion);
+            checkpoint.put(home.node);
+            checkpoint.put(home.incarnation);
+            checkpoint.putBytes(state);
+        }
+        context.database.savePlayerSummons(player.data.guid, state.length ? toHex(checkpoint.data) : null);
+        if (immediate && !context.settleWrites())
+            summonCheckpointExists = true;
+        else
+            summonCheckpointExists = state.length != 0;
+    }
+
+    private void openSummonCheckpoint(bool recovered)
+    {
+        import dmangos.log : warning;
+        import dmangos.world.instancescripting : fromHex;
+
+        if (!context.config.cluster.enabled)
+            return;
+        if (!recovered)
+        {
+            context.database.savePlayerSummons(player.data.guid, null);
+            context.settleWrites();
+            return;
+        }
+        try
+        {
+            const saved = context.database.loadPlayerSummons(player.data.guid);
+            summonCheckpointExists = saved.length != 0;
+            if (!summonCheckpointExists)
+                return;
+            auto state = ByteReader(fromHex(saved));
+            const home = connection.gatewayHome;
+            if (state.read!ubyte == summonCheckpointVersion && state.read!ushort == home.node
+                && state.read!ulong == home.incarnation && player.alive && !flying)
+                restorePlayerSummons(state, true);
+            checkpointSummons();
+        }
+        catch (Exception error)
+            warning!"could not restore temporary summons for player %s: %s"(player.data.guid, error.msg);
+    }
+
     private void restoreSummonsOnHandoff(ref ByteReader reader)
     {
+        auto state = ByteReader(reader.readBytes(reader.read!uint));
+        summonCheckpointExists = !state.empty;
+        restorePlayerSummons(state, false);
+    }
+
+    private void restorePlayerSummons(ref ByteReader state, bool recovered)
+    {
         import core.time : msecs;
+        import dmangos.world.auras : AuraType;
         import dmangos.world.creatureai : ReactState;
         import dmangos.world.migration : Migrant, MigrantKind;
 
-        auto state = ByteReader(reader.readBytes(reader.read!uint));
         if (state.empty || state.read!uint != map.id || state.read!uint != map.instanceId)
             return;
         const elapsed = cast(int)(context.transportNow() - state.read!uint);
-        const then = context.clock() - (elapsed > 0 ? elapsed : 0).msecs;
+        const now = context.clock();
+        const then = now - (elapsed > 0 ? elapsed : 0).msecs;
         foreach (_; 0 .. state.read!uint)
         {
             const slot = state.read!ubyte;
@@ -1629,7 +1712,19 @@ mixin template PetHandlers()
                     while (!ticks.empty)
                     {
                         const aura = ticks.read!uint;
-                        totemTickAt[TotemTick(creature.guid, aura)] = then + ticks.read!int.msecs;
+                        auto deadline = then + ticks.read!int.msecs;
+                        // Pulses that fell during downtime are skipped. Keep the next original tick.
+                        if (recovered && deadline <= now)
+                            if (const activeAura = creature.auras.find(aura, creature.guid))
+                                foreach (i, period; activeAura.period)
+                                    if (period > 0 && activeAura.effects & (1 << i)
+                                        && activeAura.type(i) == AuraType.periodicTriggerSpell)
+                                    {
+                                        const past = (now - deadline).total!"msecs";
+                                        deadline = now + (period - past % period).msecs;
+                                        break;
+                                    }
+                        totemTickAt[TotemTick(creature.guid, aura)] = deadline;
                     }
                 }
                 creature.controllerPlayerFlags = player.values.get!PLAYER_FLAGS;
@@ -1918,6 +2013,7 @@ mixin template PetHandlers()
             totems[slot] = totem.guid;
         else
             loneTotem = totem.guid;
+        checkpointSummons(true);
     }
 
     /// The totem in `slot` goes.
@@ -1977,6 +2073,7 @@ mixin template PetHandlers()
         import dmangos.world.spells : SpellEffect;
 
         const now = context.clock();
+        bool initializedPulse;
         foreach (totem; ownTotems())
             foreach (aura; totem.auras.list)
                 foreach (k; 0 .. 3)
@@ -1996,6 +2093,7 @@ mixin template PetHandlers()
                     else if (!trigger.hasEffect(SpellEffect.enchantHeldItem))
                     {
                         totemTickAt[key] = now + period.msecs; // its first tick a period after it stands
+                        initializedPulse = true;
                         continue;
                     }
                     totemTickAt[key] = now + period.msecs;
@@ -2010,6 +2108,8 @@ mixin template PetHandlers()
                         if (trigger.effect[i] == SpellEffect.enchantHeldItem)
                             applyTotemWeaponPulse(totem, aura.spell.id, k, trigger, i, period * 2);
                 }
+        if (initializedPulse)
+            checkpointSummons();
     }
 
     private MonoTime[TotemTick] totemTickAt; // a totem's aura -> when it ticks again

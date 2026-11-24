@@ -668,6 +668,8 @@ interface WorldDatabase
 
     /// `character_pet` and `pet_spell`: every pet of `owner`, in id order.
     @DatabaseRead PetRecord[] loadPets(uint owner);
+    @DatabaseRead string loadPlayerSummons(uint player);
+    @Replaces void savePlayerSummons(uint player, string state);
     /// A pet's row and spells, written whole.
     void savePet(const ref PetRecord pet);
     /// A pet moved to another slot.
@@ -1119,6 +1121,7 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
         statements.prepareGameObjectPools();
         statements.prepareQuestActors();
         statements.prepareOutdoorScripts();
+        statements.preparePlayerSummons();
         statements.prepareLootAwards();
         characterDb.execute!("CREATE TABLE IF NOT EXISTS `dmangos_write_applied` ("
             ~ "`stream` INT UNSIGNED NOT NULL, `seq` BIGINT UNSIGNED NOT NULL, PRIMARY KEY (`stream`)"
@@ -1237,6 +1240,8 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     void loadTalentReset(uint player, out uint cost, out long time) { statements.loadTalentReset(player, cost, time); }
     CooldownRecord[] loadCooldowns(uint player) { return statements.loadCooldowns(player); }
     PetRecord[] loadPets(uint owner) { return statements.loadPets(owner); }
+    string loadPlayerSummons(uint player) { return statements.loadPlayerSummons(player); }
+    void savePlayerSummons(uint player, string state) { statements.savePlayerSummons(player, state); }
     void savePet(const ref PetRecord pet) { statements.savePet(pet); }
     void setPetSlot(uint owner, uint pet, uint slot) { statements.setPetSlot(owner, pet, slot); }
     void deletePet(uint owner, uint pet) { statements.deletePet(owner, pet); }
@@ -2954,6 +2959,17 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
     private PickpocketRecord[uint[2]] pockets;
     private QuestActorCheckpoint[ulong][uint] questActors;
     private OutdoorScriptCheckpoint[ulong][ushort][uint] outdoorScripts;
+    private string[uint] playerSummons;
+
+    string loadPlayerSummons(uint player) { return playerSummons.get(player, null); }
+
+    void savePlayerSummons(uint player, string state)
+    {
+        if (state.length)
+            playerSummons[player] = state;
+        else
+            playerSummons.remove(player);
+    }
 
     OutdoorScriptCheckpoint[] loadOutdoorScripts(uint realm)
     {

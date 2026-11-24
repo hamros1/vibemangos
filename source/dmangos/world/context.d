@@ -4317,7 +4317,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 checkpointQuestActor(created, creature, player, immediate);
             };
         created.onGameObjectUsedUp = &gameObjectUsedUp;
-        created.onObjectGone = (MapObject object) => objectGone(created, object);
+        created.onObjectGone = (MapObject object) {
+            if (auto creature = cast(Creature) object)
+                ownedSummonGone(created, creature);
+            objectGone(created, object);
+        };
         created.onObjectArrived = (MapObject o) { // open-world round 2: a scripted game object's `Spawned`
             if (auto go = cast(GameObject) o)
                 if (go.behaviour && scripts.handles!(imported!"dmangos.script.api".Spawned)(go.behaviour))
@@ -4326,6 +4330,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         created.onCreatureDeath = (Creature c) {
             linkedDeath(created, c); // its pack's part first, while it is still known
             c.die(created, unixTime);
+            ownedSummonGone(created, c);
             created.creatureDeaths.put(c);
             battlegroundCreatureKilled(created, c.template_.entry, 0);
         };
@@ -5266,6 +5271,15 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             scriptedGameObjects.remove(key);
             scripts.destroy(go.behaviour);
         }
+    }
+
+    private void ownedSummonGone(Map map, Creature creature)
+    {
+        const owner = creature.totemOwner ? creature.totemOwner : creature.guardianOwner;
+        if (owner)
+            if (auto session = onlinePlayer(owner))
+                if (session.currentMap is map)
+                    session.checkpointSummons(true, creature.guid);
     }
 
     /// The script of dungeon copy `id`; null if it has none here.
@@ -6333,18 +6347,18 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return saveMigratingObject(object);
     }
 
-    package Migrant savePlayerSummon(Creature creature)
+    package Migrant savePlayerSummon(Creature creature, bool departing)
     {
         if (!(creature.guardianOwner || creature.totemOwner) || creature.summon.type == TempSpawnType.none
             || creature.spawn.guid < temporaryCounterStart)
             return Migrant.init;
-        auto migrant = saveMigratingObject(creature);
+        auto migrant = saveMigratingObject(creature, departing, carryImpacts: departing);
         migrant.home = cellKeyAt(creature.spawn.x, creature.spawn.y);
         return migrant;
     }
 
     private Migrant saveMigratingObject(MapObject object, bool departing = true,
-        const LootItem claimed = null, ulong looter = 0, long expiresOverride = 0)
+        const LootItem claimed = null, ulong looter = 0, long expiresOverride = 0, bool carryImpacts = true)
     {
         import dmangos.bytes : ByteWriter;
         import dmangos.serialization : serialize;
@@ -6369,7 +6383,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             creature.saveState(state, now, claimed, looter);
             w.put(cast(uint) state.data.length);
             w.putBytes(state.data);
-            writeReplicaImpacts(creature.guid, w, departing);
+            if (carryImpacts)
+                writeReplicaImpacts(creature.guid, w, departing);
+            else
+                w.put(0u);
             if (departing)
                 creature.ai.detachGroundHandoff();
             return Migrant(kind, creature.spawn.guid, 0, w.data);
@@ -6405,7 +6422,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return null;
         auto reader = ByteReader(migrant.state);
         deserialize!CreatureSpawn(reader);
-        if (deserialize!TempSpawn(reader).summoner != owner)
+        const summon = deserialize!TempSpawn(reader);
+        const elapsed = cast(int) (transportNow() - reader.read!uint);
+        if (summon.summoner != owner || (summon.timed && summon.timer <= elapsed))
             return null;
         return cast(Creature) restoreWorldMigrant(migrant, destination);
     }

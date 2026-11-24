@@ -131,6 +131,7 @@ mixin template GuardianSummons()
         const spread = radius(*spell, i, context.client);
         foreach (n; 0 .. count)
             makeGuardian(spell, entry, guardianSpot(targets, n, spread), level, ms);
+        checkpointSummons(true);
     }
 
     /// Where guardian `n` stands: the first at the destination, the others around it within `spread`; without one,
