@@ -589,8 +589,10 @@ final class BattlegroundQueue
     /// Give connections and presence from a moving player time to reach this host.
     void nodeLost(uint realm, ushort node)
     {
-        lostNodes[(cast(ulong) realm << 16) | node] = clock() + 5.seconds;
+        lostNodes[(cast(ulong) realm << 16) | node] = clock() + nodeLossGrace;
     }
+
+    private Duration nodeLossGrace = 5.seconds;
 
     /// The `SMSG_BATTLEFIELD_LIST`: the copies of `type` in the bracket of `level`.
     void list(ulong guid, ushort node, ulong battlemaster, BattlegroundType type, uint level)
@@ -1106,11 +1108,18 @@ struct BattlegroundQueueHost
 
     this(BattlegroundQueue queue, const(ubyte)[] state, bool clockOwner = true, WorldContext context = null)
     {
+        import core.time : msecs;
+
         this.queue = queue;
         this.context = context;
         this.clockOwner = clockOwner;
         if (!clockOwner)
             return;
+        if (context !is null && context.config.cluster.enabled)
+        {
+            const config = context.config.cluster;
+            queue.nodeLossGrace = (cast(long) config.leaseMs + config.failureTimeoutMs).msecs + 30.seconds;
+        }
         queue.durable = RealmServiceCheckpoint(context, ServiceKind.battlegroundQueue);
         ushort previousNode;
         Duration elapsed;

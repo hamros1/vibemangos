@@ -1171,6 +1171,9 @@ When a battleground map moves, the players follow it, including during combat. A
 the new map owner reports the matches it recovered from MariaDB. Unused invitations stay valid for
 matches that recovered and those that had yet to open. The queue closes missing copies, clears
 their slots, and returns affected players to their entry points.
+After the gateway reloads a player, the queue rebinds their delivery route and sends their
+current tickets. A worker loss gives recovering players time to reclaim their places within
+the original invitation deadline.
 
 ## Testing
 

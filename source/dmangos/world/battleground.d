@@ -2697,9 +2697,17 @@ private:
     @Handles(Opcode.CMSG_BATTLEFIELD_STATUS, WorldState.inWorld)
     void handleBattlefieldStatus()
     {
+        refreshBattlegroundQueue();
+    }
+
+package:
+    /// Rebind the queue's delivery route after the gateway reloads this character.
+    void refreshBattlegroundQueue()
+    {
         context.services.call!(BattlegroundQueueHost.status)(BattlegroundPlayer(player.guid, context.nodeId));
     }
 
+private:
     /// Leaving the battleground: not in combat, unless the battle is over.
     @Handles(Opcode.CMSG_LEAVE_BATTLEFIELD, WorldState.inWorld)
     void handleLeaveBattlefield(ref ByteReader reader)

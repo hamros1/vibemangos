@@ -368,6 +368,8 @@ mixin template CharacterLogin()
         battlegroundOnLogin();
         if (player is null)
             return;
+        if (recovered && !transferring)
+            refreshBattlegroundQueue();
         // Another node's ground (a dungeon it hosts, say): there at once, not after the first look.
         if (const target = migrationTarget())
             migrateTo(target);

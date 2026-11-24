@@ -65,7 +65,10 @@ def run(fixture):
     wait_for("auth listening", lambda: "listening on" in fixture.log("auth"), 10)
 
     def client(label, realm, *actions):
-        env = dict(os.environ, REALM=realms[realm], WORLD=f"127.0.0.1:{ports[8*realm+gateway-1]}")
+        # The lease takeover (35s) and the old host's fencing (15s) can outlast
+        # the test client's default 15s wait before it sends the original accept.
+        env = dict(os.environ, REALM=realms[realm], WORLD=f"127.0.0.1:{ports[8*realm+gateway-1]}",
+                   DMANGOS_TEST_WAITFILE_SECONDS="65")
         return fixture.start(label, [sys.executable, "-u", REPO / "tools/testclient.py", str(ports[-1]),
                                      accounts[realm], password, *actions], env=env)
 
@@ -88,11 +91,14 @@ def run(fixture):
         commands = ["login:Echo", f"waitfile:{join}", f"bgjoin:{battlemaster}:489", f"waitfile:{invited}"]
         if i == 0:
             commands += ["cmd:.battleground forcestart"] * 2
-        commands += [f"waitfile:{accept}", "bgstatus", "bgport:489:1",
+        commands += [f"waitfile:{accept}", "bgport:489:1",
                      f"waitfile:{scoreboard}", "pvplog:names", "listen:2", "bgleave:489", "listen:1", "logout"]
         clients.append(client(f"battle{i}", i, *commands))
 
     def both(value):
+        for i, process in enumerate(clients):
+            if process.poll() is not None:
+                raise RuntimeError(f"battle{i} exited before {value!r}:\n" + fixture.log(f"battle{i}")[-2000:])
         return all(value in fixture.log(f"battle{i}") for i in range(2))
 
     wait_for("both clients near the battlemaster", lambda: both(f"[creature] {battlemaster} guid"), 20)
@@ -118,6 +124,12 @@ def run(fixture):
     if primary.wait(timeout=15) != 2 or "shared lease lost" not in fixture.log("primary"):
         raise RuntimeError("the paused host did not fence itself after resuming")
 
+    def original_invites_restored():
+        if not both(" invited ["):
+            return False
+        return all(fixture.log(f"battle{i}").count("copy 1 invited [") >= 2 for i in range(2))
+
+    wait_for("both original invites redisplayed without a client request", original_invites_restored, 17)
     accept.touch()
     wait_for("both original clients entered Warsong Gulch", lambda: both("[new world] map 489 "), 18)
     scoreboard.touch()
