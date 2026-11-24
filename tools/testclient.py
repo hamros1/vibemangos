@@ -611,6 +611,9 @@ def describe(op, p):
     elif op == 0x1DB:
         timer, = struct.unpack("<I", p)
         print(f"  [mirror timer stopped] {timer}")
+    elif op == 0x1FC:
+        _, kind, damage, _, _ = struct.unpack("<QBIIi", p)
+        print(f"  [environment damage] type {kind}: {damage}")
     elif op == 0x0B3:
         guid, slot = struct.unpack("<QI", p)
         print(f"  [game object animation] {guid:#018x} slot {slot}")
@@ -738,8 +741,8 @@ def listen_for(seconds):
         if select.select([w], [], [], max(0, end - time.time()))[0]:
             op, p = wrecv(); describe(op, p)
 
-def movement(op, x, y, z, o=0.0, flags=0):
-    wsend(op, struct.pack("<II4fI", flags, 1000, x, y, z, o, 0))
+def movement(op, x, y, z, o=0.0, flags=0, fall_time=0):
+    wsend(op, struct.pack("<II4fI", flags, 1000, x, y, z, o, fall_time))
 
 npc = None  # the creature the NPC actions talk to (`npc:ENTRY`)
 pending_roll = None
@@ -1133,6 +1136,12 @@ for action in actions:
         x, y, z = map(float, args); movement(0x0B5, x, y, z, flags=1); movement(0x0EE, x, y, z, flags=1); movement(0x0B7, x, y, z)
         here[:] = [x, y, z]
         print(f"moved to {x} {y} {z}")
+    elif kind in ("fall", "land"):
+        x, y, z = map(float, args[:3])
+        landing = kind == "land"
+        movement(0x0C9 if landing else 0x0EE, x, y, z, flags=0 if landing else 0x4000,
+                 fall_time=int(args[3]))
+        here[:] = [x, y, z]
     elif kind == "gchat":
         wsend(0x095, struct.pack("<II", 3, 7) + args[0].encode() + b"\0"); print(f"guild chat '{args[0]}'"); listen_for(1)
     elif kind == "say":

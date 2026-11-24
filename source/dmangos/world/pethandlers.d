@@ -1619,14 +1619,14 @@ mixin template PetHandlers()
         const active = summons.length || fishing.length || ground.length || casting.length || environmentState.length;
         if (!active && !summonCheckpointExists)
             return true;
+        if (immediate && !removed)
+        {
+            const progress = player.progress(secondsInWorld());
+            context.database.saveProgress(progress);
+        }
         ByteWriter checkpoint;
         if (active)
         {
-            if (immediate && !removed)
-            {
-                const progress = player.progress(secondsInWorld());
-                context.database.saveProgress(progress);
-            }
             checkpoint.put(summonCheckpointVersion);
             checkpoint.put(home.node);
             checkpoint.put(home.incarnation);

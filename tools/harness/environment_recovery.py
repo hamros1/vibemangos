@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check that a worker crash preserves the gateway client's breath timer."""
 
+import argparse
 import re
 import time
 
@@ -53,5 +54,47 @@ def run(fixture):
     print(f"PASS: killed {host}, preserved the remaining breath on the same socket, and cleared it after surfacing")
 
 
+def interrupted_fall(fixture):
+    characters, names, leader, client, nodes, _ = start_cluster(fixture, new_party=True)
+    x, y, start, falling, ground = -8901.6, -162.6, 112.0, 90.0, 82.0
+    fixture.query(f"UPDATE characters SET map=0,position_x={x},position_y={y},position_z={start} "
+                  f"WHERE guid={leader}", characters)
+    fall, land, finish = (fixture.directory / name for name in ("fall", "land", "finish"))
+    landing = f"land:{x}:{y}:{ground}:650"
+    player = client("faller", 0, f"login:{names[0]}", wait(fall), f"fall:{x}:{y}:{falling}:500",
+                    wait(land), landing, landing, wait(finish), "logout")
+
+    def log():
+        output = fixture.log("faller")
+        if player.poll() is not None:
+            raise RuntimeError(output[-3000:])
+        return output
+
+    arrival = f"'{names[0]}' arrived from another node (map 0 at {x:.1f} {y:.1f})"
+    host = wait_for("the falling player's worker", lambda: next((tag for tag in ("node1", "node2", "node3")
+                    if arrival in fixture.log(tag)), ""), 30)
+    fall.touch()
+    checkpoint = f"SELECT COUNT(*) FROM dmangos_player_summons WHERE player={leader}"
+    wait_for("the fall to be checkpointed", lambda: fixture.query(checkpoint, characters) == "1", 5)
+    offset = len(log())
+    nodes[host].kill()
+    assert nodes[host].wait(timeout=10) < 0
+    wait_for("the same client to reload at its last falling position",
+             lambda: f"[new world] map 0 at {x:.1f} {y:.1f} {falling:.1f};" in log()[offset:]
+             and "[appears] player" in log()[offset:], 35)
+    land.touch()
+    damage = re.compile(r"\[environment damage\] type 2: ([1-9]\d*)")
+    wait_for("the original fall to do damage", lambda: damage.search(log()[offset:]), 8)
+    wait_for("the landing to clear the fall checkpoint", lambda: fixture.query(checkpoint, characters) == "0", 6)
+    assert fixture.query(f"SELECT ROUND(position_z) FROM characters WHERE guid={leader}", characters) == str(int(ground))
+    finish.touch()
+    assert player.wait(timeout=20) == 0
+    assert len(damage.findall(fixture.log("faller")[offset:])) == 1
+    print(f"PASS: killed {host} mid-fall and the original landing dealt damage once")
+
+
 if __name__ == "__main__":
-    run_test("environment-recovery", run)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--fall", action="store_true", help="kill the worker partway through a damaging fall")
+    args = parser.parse_args()
+    run_test("environment-recovery", interrupted_fall if args.fall else run)

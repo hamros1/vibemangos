@@ -810,6 +810,7 @@ An open Ritual of Summoning restores the same portal and both the owner's and he
 with their remaining time. The party can finish it and receive the original target's summon request.
 Active environmental timers resume on the same connection. Time spent waiting for recovery counts
 toward the original timer. Damage pulses due during the outage are skipped.
+A player reloaded in the middle of a fall keeps the original fall height for landing damage.
 
 If the worker and coordinator both fail, a gateway linked to the standby reports its last
 acknowledged simulation owner when it accepts the takeover. The standby restores the original
@@ -1041,6 +1042,7 @@ python3 tools/harness/spell_cast_recovery.py --channel
 python3 tools/harness/spell_cast_recovery.py --channel-canceled
 python3 tools/harness/party_summon_recovery.py --open-ritual
 python3 tools/harness/environment_recovery.py
+python3 tools/harness/environment_recovery.py --fall
 python3 tools/harness/hunter_trap_recovery.py
 python3 tools/harness/hunter_trap_recovery.py --clean
 ```

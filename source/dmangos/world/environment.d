@@ -509,6 +509,8 @@ mixin template EnvironmentHandlers()
         uint lastLiquid;            // the `LiquidType.dbc` entry the player was last in, if it has a spell
         FallStart fallStart;
         MonoTime nextEnvironmentCheckpoint;
+        bool fallingAtCheckpoint;
+        MonoTime nextFallCheckpoint;
     }
 
     private static struct EnvironmentHandoff
@@ -531,6 +533,8 @@ mixin template EnvironmentHandlers()
 
         const state = deserialize!EnvironmentHandoff(reader);
         applyEnvironmentHandoff(state);
+        fallingAtCheckpoint = player.movement.has(MovementFlags.jumping)
+            || player.movement.has(MovementFlags.fallingFar);
     }
 
     private void applyEnvironmentHandoff(const ref EnvironmentHandoff state)
@@ -551,13 +555,14 @@ mixin template EnvironmentHandlers()
 
     private const(ubyte)[] environmentRecoveryState()
     {
-        if (!activeEnvironmentTimers())
+        if (!activeEnvironmentTimers() && !fallingAtCheckpoint)
             return null;
         ByteWriter state;
         state.put(map.id);
         state.put(map.instanceId);
         state.put(context.transportNow());
         writeEnvironmentHandoff(state);
+        state.put(fallingAtCheckpoint);
         return state.data;
     }
 
@@ -580,6 +585,7 @@ mixin template EnvironmentHandlers()
                 timer.pulse = (pulse + elapsed - remaining) % MirrorTimer.pulseInterval;
         }
         applyEnvironmentHandoff(snapshot);
+        fallingAtCheckpoint = !state.empty && state.read!bool;
     }
 
     /// Game masters with their tag on (CMaNGOS `IsGameMaster`) and `.cheat god` take no environmental damage.
@@ -903,6 +909,11 @@ mixin template EnvironmentHandlers()
     package void startFallAt(float z)
     {
         fallStart.reset(z);
+        if (fallingAtCheckpoint)
+        {
+            fallingAtCheckpoint = false;
+            checkpointSummons(true);
+        }
     }
 
     /**
@@ -925,8 +936,21 @@ mixin template EnvironmentHandlers()
     /// After a movement packet: the fall's start (not after a knockback's acknowledgement).
     package void trackFall(const MovementInfo movement, Opcode opcode)
     {
-        if (opcode != Opcode.CMSG_MOVE_KNOCK_BACK_ACK)
-            fallStart.moved(movement, opcode == Opcode.MSG_MOVE_FALL_LAND);
+        if (opcode == Opcode.CMSG_MOVE_KNOCK_BACK_ACK)
+            return;
+        const landed = opcode == Opcode.MSG_MOVE_FALL_LAND;
+        fallStart.moved(movement, landed);
+        if (!connection.gatewayHome.node)
+            return;
+        const falling = !landed && (movement.has(MovementFlags.jumping) || movement.has(MovementFlags.fallingFar));
+        const changed = fallingAtCheckpoint != falling;
+        fallingAtCheckpoint = falling;
+        const now = context.clock();
+        if (changed || (falling && now >= nextFallCheckpoint))
+        {
+            nextFallCheckpoint = now + 1.seconds;
+            checkpointSummons(true);
+        }
     }
 
     /**
