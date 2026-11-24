@@ -280,11 +280,12 @@ mixin template PetHandlers()
 
     /**
      * Loading a saved pet or making a new one: a creature of `entry` beside the player, made
-     * its pet with `state`, at `level`, with `health` and `mana` (0: as the stats for the level
-     * leave it, full). It is saved as the player's current pet, and its bar is sent.
+     * its pet with `state`, at `level`, with `health` and `mana`. New pets start full.
+     * `restoreMana` preserves zero mana on a saved pet. Loading callers finish after restoring its effects.
      */
     private Creature bringPet(PetState state, uint entry, uint modelId, uint level, uint exp, ReactState react,
-        uint health, uint mana, uint focus = maxFocus, const PetPossessionHandoff handoff = PetPossessionHandoff.init)
+        uint health, uint mana, uint focus = maxFocus, const PetPossessionHandoff handoff = PetPossessionHandoff.init,
+        bool restoreMana = false, bool loading = false)
     {
         import dmangos.world.objects : counterOf;
 
@@ -341,7 +342,7 @@ mixin template PetHandlers()
             const most = v.get!UNIT_FIELD_MAXHEALTH;
             v.set!UNIT_FIELD_HEALTH(health > most ? most : health);
         }
-        if (state.type != PetType.hunter && mana)
+        if (state.type != PetType.hunter && (mana || restoreMana))
         {
             const most = v.get!UNIT_FIELD_MAXPOWER1(0);
             v.set!UNIT_FIELD_POWER1(0, mana > most ? most : mana);
@@ -366,8 +367,11 @@ mixin template PetHandlers()
         map.flushObjectChanges(creature);
         player.values.set!UNIT_FIELD_SUMMON(creature.guid);
         flushPlayerChanges();
-        writePet(PetSlot.current);
-        sendPetSpells();
+        if (!loading)
+        {
+            writePet(PetSlot.current);
+            sendPetSpells();
+        }
         return creature;
     }
 
@@ -396,23 +400,21 @@ mixin template PetHandlers()
         const savedAuras = context.database.loadPetAuras(r.id), savedCooldowns = context.database.loadPetCooldowns(r.id);
         auto state = PetState.from(r, player.guid);
         auto creature = bringPet(state, r.entry, r.modelId, level, r.exp, cast(ReactState) r.reactState,
-            r.health == 0 && healthPercent ? 1 : health, mana, focus, handoff);
+            r.health == 0 && healthPercent ? 1 : health, mana, focus, handoff,
+            restoreMana: !fullHealth && r.health != 0, loading: true);
         if (creature is null)
             return false;
         if (r.health != 0 || fullHealth)
-        {
             restorePetAurasAndCooldowns(savedAuras, savedCooldowns);
-            if (savedAuras.length || savedCooldowns.length)
-                writePet(PetSlot.current); // as it is now
-        }
         if (r.health == 0 && healthPercent)
         {
             const most = creature.values.get!UNIT_FIELD_MAXHEALTH;
             creature.values.set!UNIT_FIELD_HEALTH(cast(uint)(ulong(most) * healthPercent / 100 > 0
                 ? ulong(most) * healthPercent / 100 : 1));
             map.flushObjectChanges(creature);
-            writePet(PetSlot.current);
         }
+        writePet(PetSlot.current);
+        sendPetSpells();
         return true;
     }
 
@@ -421,7 +423,7 @@ mixin template PetHandlers()
      * stable slot taken by another pet has that one set aside; a hunter has only one pet out or set
      * aside, so any other there goes.
      */
-    private void writePet(uint slot)
+    private void writePet(uint slot, bool reconcileSlots = true)
     {
         auto state = petState();
         if (state is null || (pet_ is charmed_ && state.type == PetType.guardian))
@@ -435,18 +437,25 @@ mixin template PetHandlers()
         auto r = state.record(pet_.template_.entry, v.get!UNIT_FIELD_NATIVEDISPLAYID, v.get!UNIT_FIELD_LEVEL,
             v.get!UNIT_FIELD_PETEXPERIENCE, pet_.ai.react, pet_.alive ? v.get!UNIT_FIELD_HEALTH : 0, power, slot,
             context.unixTime);
-        foreach (other; savedPets())
-        {
-            if (other.id == r.id)
-                continue;
-            if (slot >= PetSlot.firstStable && slot <= PetSlot.lastStable && other.slot == slot)
-                context.database.setPetSlot(player.data.guid, other.id, PetSlot.notInSlot);
-            else if (state.type == PetType.hunter && (slot == PetSlot.current || slot > PetSlot.lastStable)
-                && (other.slot == PetSlot.current || other.slot > PetSlot.lastStable))
-                context.database.deletePet(player.data.guid, other.id);
-        }
+        if (reconcileSlots)
+            foreach (other; savedPets())
+            {
+                if (other.id == r.id)
+                    continue;
+                if (slot >= PetSlot.firstStable && slot <= PetSlot.lastStable && other.slot == slot)
+                    context.database.setPetSlot(player.data.guid, other.id, PetSlot.notInSlot);
+                else if (state.type == PetType.hunter && (slot == PetSlot.current || slot > PetSlot.lastStable)
+                    && (other.slot == PetSlot.current || other.slot > PetSlot.lastStable))
+                    context.database.deletePet(player.data.guid, other.id);
+            }
         context.database.savePet(r);
         savePetAurasAndCooldowns(r.id);
+    }
+
+    package void checkpointPet()
+    {
+        if (pet_ !is null && pet_.alive)
+            writePet(PetSlot.current, false);
     }
 
     /// The pet's auras that last and its cooldowns still running, saved with it (`pet_aura`, `pet_spell_cooldown`).

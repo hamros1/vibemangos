@@ -774,7 +774,8 @@ a replacement. The former incarnation cannot reconnect to renew its lease. The s
 that owns the saved position loads the latest database checkpoint and sends a world transfer
 over the gateway's existing client connection. The character enters the replacement's map
 after the client acknowledges the transfer. Gateway-hosted characters use a checkpoint
-interval capped at 15 seconds. Work since the latest durable save can be lost in a crash.
+interval capped at 15 seconds. Clustered player saves also include the active permanent pet's
+health, power, auras and cooldowns. Work since the latest durable save can be lost in a crash.
 
 If the worker and coordinator both fail, a gateway linked to the standby reports its last
 acknowledged simulation owner when it accepts the takeover. The standby restores the original

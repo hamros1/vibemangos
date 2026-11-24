@@ -175,6 +175,8 @@ private:
         const progress = player.progress(secondsInWorld());
         context.database.saveProgress(progress);
         savePlayerDetails();
+        if (context.config.cluster.enabled)
+            checkpointPet();
         saveTimer.reset();
     }
 

@@ -87,6 +87,39 @@ version (unittest)
     }
 }
 
+/// A replacement worker restores the active pet from the last periodic player save.
+unittest
+{
+    auto db = newDatabase();
+    auto first = newCreationContext(db, (ref config) {
+        config.cluster.nodeId = 1;
+        config.playerSaveInterval = 1;
+    });
+    const at = Position(-8949.95f, -132.49f, 83.53f, 0);
+    auto client = loggedIn(first, db, 7, "Guldan", at, AccountLevel.player, raceHuman, 0, 1,
+        (ref c) { c.classId = classMage; });
+    addPetData(&client, first);
+    auto summon = effectSpell(spellSummonImp, 56, imp);
+    auto session = client.session.inWorld;
+    session.summonPetEffect(&summon, 0);
+    auto pet = session.ownPet;
+    assert(pet !is null);
+    pet.values.set!UNIT_FIELD_HEALTH(57u);
+    pet.values.set!UNIT_FIELD_POWER1(0, 0u);
+    pet.ai.petCooldowns[spellSummonImp] = 120_000;
+    const number = pet.petData.number;
+    session.update(1_001.msecs);
+
+    auto next = newCreationContext(db, (ref config) { config.cluster.nodeId = 2; });
+    addPetData(&client, next);
+    auto recovered = loggedIn(next, db, 7, "Guldan", at, AccountLevel.player, raceHuman, 0, 1,
+        (ref c) { c.classId = classMage; });
+    auto restored = recovered.session.inWorld.ownPet;
+    assert(restored !is null && restored.petData.number == number);
+    assert(restored.values.get!UNIT_FIELD_HEALTH == 57 && restored.values.get!UNIT_FIELD_POWER1(0) == 0);
+    assert(restored.ai.petCooldowns.get(spellSummonImp, 0) > 110_000);
+}
+
 /// A demon: summoned with its name and spells, following, named on query, sent back and summoned again.
 unittest
 {
