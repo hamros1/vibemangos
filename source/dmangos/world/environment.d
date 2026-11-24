@@ -771,12 +771,7 @@ mixin template EnvironmentHandlers()
             || (context.clock() >= nextEnvironmentCheckpoint && activeEnvironmentTimers())))
         {
             nextEnvironmentCheckpoint = context.clock() + 1.seconds;
-            if (!changed && !pulsed)
-            {
-                const progress = player.progress(secondsInWorld());
-                context.database.saveProgress(progress);
-            }
-            checkpointSummons(changed || pulsed);
+            checkpointSummons(changed || pulsed, 0, true);
         }
         sendMirrorTimers();
     }

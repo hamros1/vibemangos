@@ -684,6 +684,8 @@ interface WorldDatabase
     @DatabaseRead PetRecord[] loadPets(uint owner);
     @DatabaseRead string loadPlayerSummons(uint player);
     @Replaces void savePlayerSummons(uint player, string state);
+    /// Update position and active effects atomically when they describe the same transition.
+    void savePlayerRecovery(const ref CharacterProgress progress, string state);
     @DatabaseRead PartySummonCheckpoint loadPartySummonOffer(uint player);
     @DatabaseWrite bool publishPartySummonOffer(uint player, ulong sequence, string state);
     @DatabaseWrite bool consumePartySummonOffer(uint player, ulong sequence);
@@ -1265,6 +1267,13 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     PetRecord[] loadPets(uint owner) { return statements.loadPets(owner); }
     string loadPlayerSummons(uint player) { return statements.loadPlayerSummons(player); }
     void savePlayerSummons(uint player, string state) { statements.savePlayerSummons(player, state); }
+    void savePlayerRecovery(const ref CharacterProgress progress, string state)
+    {
+        characterDb.transaction({
+            statements.saveProgress(progress);
+            statements.savePlayerSummons(progress.guid, state);
+        });
+    }
     PartySummonCheckpoint loadPartySummonOffer(uint player) { return statements.loadPartySummonOffer(player); }
     bool publishPartySummonOffer(uint player, ulong sequence, string state)
     {
@@ -3030,6 +3039,12 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
             playerSummons[player] = state;
         else
             playerSummons.remove(player);
+    }
+
+    void savePlayerRecovery(const ref CharacterProgress progress, string state)
+    {
+        saveProgress(progress);
+        savePlayerSummons(progress.guid, state);
     }
 
     OutdoorScriptCheckpoint[] loadOutdoorScripts(uint realm)

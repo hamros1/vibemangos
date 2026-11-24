@@ -9,7 +9,7 @@ from cluster_fixture import run_test, wait_for
 from dungeon_recovery import start_cluster, wait
 
 
-def run(fixture):
+def run(fixture, retry_db):
     world = fixture.world_with_writable_tables("spell_template")
     # Cast the real ritual's post-completion effect directly in this two-client test.
     fixture.query("UPDATE spell_template SET RangeIndex=4 WHERE Id=7720", world)
@@ -40,8 +40,20 @@ def run(fixture):
     saved = fixture.query("SELECT sequence FROM dmangos_party_summon_offer WHERE state <> ''", characters)
     assert saved.isdigit()
     offset = len(log("recipient", recipient))
-    nodes[host].send_signal(signal.SIGKILL)
-    assert nodes[host].wait(timeout=10) == -signal.SIGKILL
+    if retry_db:
+        fixture.query("RENAME TABLE dmangos_party_summon_offer TO held_summon_offer", characters)
+    try:
+        nodes[host].send_signal(signal.SIGKILL)
+        assert nodes[host].wait(timeout=10) == -signal.SIGKILL
+        if retry_db:
+            guid = fixture.query(f"SELECT guid FROM characters WHERE name='{names[1]}'", characters)
+            failure = f"could not read character {guid}'s recovery checkpoint"
+            wait_for("the replacement's failed summon offer read",
+                     lambda: any(failure in fixture.log(tag) for tag in ("node1", "node2", "node3") if tag != host), 35)
+            assert "[new world] map 0 " not in log("recipient", recipient)[offset:]
+    finally:
+        if retry_db:
+            fixture.query("RENAME TABLE held_summon_offer TO dmangos_party_summon_offer", characters)
 
     def recovered():
         return log("recipient", recipient)[offset:]
@@ -123,6 +135,8 @@ def open_ritual(fixture):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--open-ritual", action="store_true", help="kill the owner after the first helper joins the portal")
+    scenario = parser.add_mutually_exclusive_group()
+    scenario.add_argument("--open-ritual", action="store_true", help="kill the owner after the first helper joins the portal")
+    scenario.add_argument("--retry-db", action="store_true", help="fail the replacement's first read of the saved request")
     args = parser.parse_args()
-    run_test("party-summon-recovery", open_ritual if args.open_ritual else run)
+    run_test("party-summon-recovery", open_ritual if args.open_ritual else lambda fixture: run(fixture, args.retry_db))

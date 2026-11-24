@@ -800,7 +800,9 @@ a replacement. The former incarnation cannot reconnect to renew its lease. The s
 that owns the saved position loads the latest database checkpoint and sends a world transfer
 over the gateway's existing client connection. The character enters the replacement's map
 after the client acknowledges the transfer. The gateway and replacement worker retry a failed
-checkpoint read while the existing connection waits. Gateway-hosted characters use a checkpoint
+checkpoint read while the existing connection waits. The replacement reads the saved active
+effects and pending summon offer before starting the world transfer. Checkpoints that record
+a change in both position and effects commit those records together. Gateway-hosted characters use a checkpoint
 interval capped at 15 seconds. Clustered player saves also include the active permanent pet's
 health, power, auras and cooldowns. Work since the latest durable save can be lost in a crash.
 An open party summon request belongs to the gateway login. The replacement worker presents the
@@ -1045,6 +1047,9 @@ python3 tools/harness/spell_cast_recovery.py --camera-canceled
 python3 tools/harness/party_summon_recovery.py --open-ritual
 python3 tools/harness/environment_recovery.py
 python3 tools/harness/environment_recovery.py --fall
+python3 tools/harness/environment_recovery.py --atomic
+python3 tools/harness/party_summon_recovery.py --retry-db
+python3 tools/harness/player_summon_recovery.py --scenario guardian --retry-db
 python3 tools/harness/hunter_trap_recovery.py
 python3 tools/harness/hunter_trap_recovery.py --clean
 ```

@@ -115,7 +115,7 @@ mixin template RitualSummoning()
         summonPoint = deserialize!PartySummon(reader);
     }
 
-    private void openPartySummonCheckpoint(bool recovered)
+    private void openPartySummonCheckpoint(scope const(imported!"dmangos.world.session".GatewayRecoveryCheckpoints)* checkpoints)
     {
         import dmangos.log : warning;
         import dmangos.serialization : deserialize;
@@ -123,14 +123,14 @@ mixin template RitualSummoning()
 
         if (!context.config.cluster.enabled)
             return;
-        if (!recovered)
+        if (checkpoints is null)
         {
             context.database.deletePartySummonOffer(player.data.guid);
             return;
         }
         try
         {
-            const checkpoint = context.database.loadPartySummonOffer(player.data.guid);
+            const checkpoint = checkpoints.summonOffer;
             latestSummon = checkpoint.sequence;
             if (!checkpoint.state.length)
                 return;

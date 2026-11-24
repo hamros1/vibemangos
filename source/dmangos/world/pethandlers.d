@@ -1599,8 +1599,8 @@ mixin template PetHandlers()
         return state;
     }
 
-    /// Save active summons for this gateway's current login. A pending removal is still on the map during its callback.
-    package bool checkpointSummons(bool immediate = false, ulong removed = 0)
+    /// Save transient effects for this gateway login. A pending removal is still on the map during its callback.
+    package bool checkpointSummons(bool immediate = false, ulong removed = 0, bool savePosition = false)
     {
         import dmangos.world.instancescripting : toHex;
 
@@ -1619,11 +1619,6 @@ mixin template PetHandlers()
         const active = summons.length || fishing.length || ground.length || casting.length || environmentState.length;
         if (!active && !summonCheckpointExists)
             return true;
-        if (immediate && !removed)
-        {
-            const progress = player.progress(secondsInWorld());
-            context.database.saveProgress(progress);
-        }
         ByteWriter checkpoint;
         if (active)
         {
@@ -1640,7 +1635,14 @@ mixin template PetHandlers()
             checkpoint.putBytes(environmentState);
             checkpoint.putBytes(casting);
         }
-        context.database.savePlayerSummons(player.data.guid, active ? toHex(checkpoint.data) : null);
+        const state = active ? toHex(checkpoint.data) : null;
+        if ((immediate || savePosition) && !removed)
+        {
+            const progress = player.progress(secondsInWorld());
+            context.database.savePlayerRecovery(progress, state);
+        }
+        else
+            context.database.savePlayerSummons(player.data.guid, state);
         if (immediate && !context.settleWrites())
         {
             summonCheckpointExists = true;
@@ -1650,14 +1652,14 @@ mixin template PetHandlers()
         return true;
     }
 
-    private void openSummonCheckpoint(bool recovered)
+    private void openSummonCheckpoint(scope const(imported!"dmangos.world.session".GatewayRecoveryCheckpoints)* checkpoints)
     {
         import dmangos.log : warning;
         import dmangos.world.instancescripting : fromHex;
 
         if (!context.config.cluster.enabled)
             return;
-        if (!recovered)
+        if (checkpoints is null)
         {
             context.database.savePlayerSummons(player.data.guid, null);
             context.settleWrites();
@@ -1665,7 +1667,7 @@ mixin template PetHandlers()
         }
         try
         {
-            const saved = context.database.loadPlayerSummons(player.data.guid);
+            const saved = checkpoints.ongoingEffects;
             summonCheckpointExists = saved.length != 0;
             if (!summonCheckpointExists)
                 return;

@@ -302,6 +302,7 @@ mixin template CharacterLogin()
     import dmangos.world.packets;
     import dmangos.world.player : CharacterData, Player;
     import dmangos.world.playercreate : CharacterBuilder, KnownAbilities;
+    import dmangos.world.session : GatewayRecoveryCheckpoints;
 
     /// Enters the world as `character`, which the connection loaded and checked.
     /**
@@ -321,8 +322,9 @@ mixin template CharacterLogin()
             }
     }
 
-    package void enterWorldAtLogin(CharacterData character, bool recovered = false)
+    package void enterWorldAtLogin(CharacterData character, scope const(GatewayRecoveryCheckpoints)* checkpoints = null)
     {
+        const recovered = checkpoints !is null;
         const guid = character.guid;
         player = makePlayer(character, !recovered);
         loadCooldowns(); // before the spellbook is sent: it shows them
@@ -357,8 +359,8 @@ mixin template CharacterLogin()
         applyPassiveSpells();
         petsOnArrival(); // the saved current pet comes back
         resumeSavedFlight(); // logged out in flight: it flies on
-        openPartySummonCheckpoint(recovered);
-        openSummonCheckpoint(recovered);
+        openPartySummonCheckpoint(checkpoints);
+        openSummonCheckpoint(checkpoints);
         info!"%s: '%s' entered the world as '%s' (guid %s, map %s at %.1f %.1f %.1f)"(remoteAddress,
             account.username, character.name, guid, character.map, character.position.x, character.position.y,
             character.position.z);

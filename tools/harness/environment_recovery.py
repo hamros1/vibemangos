@@ -9,7 +9,7 @@ from cluster_fixture import run_test, wait_for
 from dungeon_recovery import start_cluster, wait
 
 
-def run(fixture):
+def run(fixture, atomic=False):
     characters, names, leader, client, nodes, _ = start_cluster(fixture, new_party=True)
     x, y, surface, submerged = -9410.0, -2170.0, 56.2, 53.0
     fixture.query(f"UPDATE characters SET map=0,position_x={x},position_y={y},position_z={surface} "
@@ -27,6 +27,9 @@ def run(fixture):
     arrival = f"'{names[0]}' arrived from another node (map 0 at {x:.1f} {y:.1f})"
     host = wait_for("the swimmer's worker", lambda: next((tag for tag in ("node1", "node2", "node3")
                     if arrival in fixture.log(tag)), ""), 30)
+    if atomic:
+        return blocked_checkpoint(fixture, characters, leader, host, nodes, player, (x, y, surface),
+                                  dive, rise, finish, log)
     dive.touch()
     breath = re.compile(r"\[mirror timer\] 1: (\d+)/(\d+) ms, speed -1")
     initial = wait_for("the breath timer to start", lambda: breath.search(log()), 9)
@@ -52,6 +55,36 @@ def run(fixture):
     finish.touch()
     assert player.wait(timeout=20) == 0
     print(f"PASS: killed {host}, preserved the remaining breath on the same socket, and cleared it after surfacing")
+
+
+def blocked_checkpoint(fixture, characters, leader, host, nodes, player, surface, dive, rise, finish, log):
+    x, y, z = surface
+    schema = characters.rsplit(";", 1)[-1]
+    position = f"SELECT ROUND(position_z*10) FROM characters WHERE guid={leader}"
+    fixture.query("CREATE TRIGGER hold_swim_checkpoint BEFORE INSERT ON dmangos_player_summons "
+                  "FOR EACH ROW SET @hold_swim = SLEEP(60)", characters)
+    offset = len(log())
+    dive.touch()
+    blocker = wait_for("the worker blocked inside the effect write", lambda: fixture.query(
+        f"SELECT ID FROM information_schema.PROCESSLIST WHERE DB='{schema}' AND STATE='User sleep'"), 12)
+    assert blocker.isdecimal()
+    assert fixture.query(position, characters) == str(round(z * 10)), "the new position leaked without the effect"
+    nodes[host].kill()
+    assert nodes[host].wait(timeout=10) < 0
+    try:
+        if fixture.query(f"SELECT ID FROM information_schema.PROCESSLIST WHERE ID={blocker}"):
+            fixture.query(f"KILL CONNECTION {blocker}")
+    finally:
+        fixture.query("DROP TRIGGER hold_swim_checkpoint", characters)
+    worldport = f"[new world] map 0 at {x:.1f} {y:.1f} {z:.1f};"
+    wait_for("the original client to return to the committed position",
+             lambda: worldport in log()[offset:] and "[appears] player" in log()[offset:], 35)
+    rise.touch()
+    finish.touch()
+    assert player.wait(timeout=20) == 0
+    assert "[mirror timer] 1" not in fixture.log("swimmer")[offset:]
+    assert fixture.query(f"SELECT COUNT(*) FROM dmangos_player_summons WHERE player={leader}", characters) == "0"
+    print(f"PASS: killed {host} inside the recovery write, rolled back both the dive and its breath timer")
 
 
 def interrupted_fall(fixture):
@@ -95,6 +128,8 @@ def interrupted_fall(fixture):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--fall", action="store_true", help="kill the worker partway through a damaging fall")
+    phase = parser.add_mutually_exclusive_group()
+    phase.add_argument("--fall", action="store_true", help="kill the worker partway through a damaging fall")
+    phase.add_argument("--atomic", action="store_true", help="kill the worker midway through saving a dive")
     args = parser.parse_args()
-    run_test("environment-recovery", interrupted_fall if args.fall else run)
+    run_test("environment-recovery", interrupted_fall if args.fall else lambda fixture: run(fixture, args.atomic))

@@ -14,7 +14,7 @@ TOTEM, TOTEM_CAST, PULSE = 5929, 8190, 8187
 GUARDIAN, GUARDIAN_CAST = 8836, 13166
 
 
-def run(fixture, scenario):
+def run(fixture, scenario, retry_db):
     x, y, z = -9459.0, 97.0, 59.0
     world = fixture.world_with_writable_tables("creature")
     # Nearby hostiles can destroy a five-health totem before the harness reaches the worker kill.
@@ -66,8 +66,19 @@ def run(fixture, scenario):
         time.sleep(max(0, seen + 19 - time.monotonic()))
         assert checkpoint_count() == "1", "the worker must die before the totem expires"
     offset = len(log())
-    nodes[host].send_signal(signal.SIGKILL)
-    assert nodes[host].wait(timeout=10) == -signal.SIGKILL
+    if retry_db:
+        fixture.query("RENAME TABLE dmangos_player_summons TO held_summons", characters)
+    try:
+        nodes[host].send_signal(signal.SIGKILL)
+        assert nodes[host].wait(timeout=10) == -signal.SIGKILL
+        if retry_db:
+            failure = f"could not read character {leader}'s recovery checkpoint"
+            wait_for("the replacement's failed summon read",
+                     lambda: any(failure in fixture.log(tag) for tag in ("node1", "node2", "node3") if tag != host), 35)
+            assert "[new world] map 0 " not in log()[offset:]
+    finally:
+        if retry_db:
+            fixture.query("RENAME TABLE held_summons TO dmangos_player_summons", characters)
 
     def recovered():
         output = log()[offset:]
@@ -100,5 +111,6 @@ def run(fixture, scenario):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scenario", choices=("totem", "guardian", "dead-guardian", "expired-totem"), default="totem")
+    parser.add_argument("--retry-db", action="store_true", help="fail the replacement's first read of summon state")
     args = parser.parse_args()
-    run_test(f"player-summon-{args.scenario}", lambda fixture: run(fixture, args.scenario))
+    run_test(f"player-summon-{args.scenario}", lambda fixture: run(fixture, args.scenario, args.retry_db))

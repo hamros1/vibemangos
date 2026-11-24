@@ -47,7 +47,7 @@ import dmangos.world.addons : buildAddonInfo, parseAddons;
 import dmangos.world.charscreen : CharacterScreenHandlers;
 import dmangos.world.context : Kickable, WorldContext;
 import dmangos.world.crypt : clientHeaderLength, HeaderCrypt;
-import dmangos.world.database : WorldAccount;
+import dmangos.world.database : PartySummonCheckpoint, WorldAccount;
 import dmangos.world.objects : UpdateData, UpdatePacket;
 import dmangos.world.map : deliverUpdate, Inhabitant, Map;
 import dmangos.world.player : CharacterData, DeathState, Player, PlayerFlags, Viewer;
@@ -73,6 +73,12 @@ private enum minimumPingInterval = 27.seconds;
 /// The most unprocessed input buffered: two maximum-size packets.
 private enum maxBufferedInput = 2 * (clientHeaderLength + maxClientPacketSize);
 
+package struct GatewayRecoveryCheckpoints
+{
+    string ongoingEffects;
+    PartySummonCheckpoint summonOffer;
+}
+
 /// See the module documentation.
 final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
 {
@@ -91,6 +97,7 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
     package uint gatewayCharacter;         // owner: the simulated character, including while loading
     package ulong gatewayToken;            // owner: the coordinator's route for this simulation
     private CharacterData recovery;        // owner: durable state while recovering, until the client loads the map
+    private GatewayRecoveryCheckpoints recoveryCheckpoints;
     private MonoTime recoveryReadyBy;      // owner: waiting for the checkpoint and ownership grant
     private MonoTime recoveryReadAt;
 
@@ -264,6 +271,9 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
             if (loaded.isNull || loaded.get.account != account.id || !loaded.get.position.isFinite
                 || context.data.createInfo(loaded.get.race, loaded.get.classId) is null)
                 return false;
+            const ongoing = context.database.loadPlayerSummons(gatewayCharacter);
+            const offer = context.database.loadPartySummonOffer(gatewayCharacter);
+            recoveryCheckpoints = GatewayRecoveryCheckpoints(ongoing, offer);
             recovery = loaded.get;
         }
         catch (DatabaseException error)
@@ -311,9 +321,11 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
         if (!ownsRecoveryPosition(recovery))
             return clientGone();
         auto saved = recovery;
+        const checkpoints = recoveryCheckpoints;
         recovery = CharacterData.init;
+        recoveryCheckpoints = GatewayRecoveryCheckpoints.init;
         auto entering = new Character(this, context);
-        entering.enterWorldAtLogin(saved, true);
+        entering.enterWorldAtLogin(saved, &checkpoints);
     }
 
     /// Owner: the client is gone; the player leaves the world here, saved.
@@ -324,6 +336,7 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
         else if (recovery.guid || recoveryReadyBy != MonoTime.init)
         {
             recovery = CharacterData.init;
+            recoveryCheckpoints = GatewayRecoveryCheckpoints.init;
             recoveryReadyBy = MonoTime.init;
             context.playerRelay.left(homeNode, account.id, false);
             context.playerRelay.remoteDone(account.id);
