@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Kill the recipient's worker with a party summon request open, then accept it once."""
 
+import argparse
 import re
 import signal
 
@@ -60,5 +61,68 @@ def run(fixture):
     print(f"PASS: killed {host}, kept the original summon request, and teleported once on the same socket")
 
 
+def open_ritual(fixture):
+    spell, portal = 698, 36727
+    world = fixture.world_with_writable_tables("spell_template")
+    fixture.query(f"UPDATE spell_template SET DurationIndex=3 WHERE Id={spell}", world)
+    characters, names, leader, client, nodes, _ = start_cluster(
+        fixture, new_party=False, world=world, leader_appearance=(1, 9), extra_member=True)
+    x, y, z = -8901.6, -162.6, 82.0
+    fixture.query(f"UPDATE characters SET map=0,position_x={x},position_y={y},position_z={z}", characters)
+    fixture.query(f"INSERT IGNORE INTO character_spell (guid,spell) VALUES ({leader},{spell})", characters)
+    member = int(fixture.query(f"SELECT guid FROM characters WHERE name='{names[1]}'", characters))
+    cast, join, complete, finish = (fixture.directory / flag for flag in ("cast", "join", "complete", "finish"))
+    players = [
+        client("owner", 0, f"login:{names[0]}", "cmd:.cheat power", "cmd:.character additem 6265 1", wait(cast),
+               f"targetplayer:{member}", f"cast:{spell}", wait(finish), "logout"),
+        client("member", 1, f"login:{names[1]}", wait(join), f"usego:{portal}", wait(finish), "logout"),
+        client("helper", 2, f"login:{names[2]}", wait(complete), f"usego:{portal}", wait(finish), "logout"),
+    ]
+    labels = ("owner", "member", "helper")
+
+    def logs():
+        output = [fixture.log(label) for label in labels]
+        for i, process in enumerate(players):
+            if process.poll() is not None:
+                raise RuntimeError(f"{labels[i]} exited:\n" + output[i][-2800:])
+        return output
+
+    host = wait_for("all three party members on the ritual's worker",
+                    lambda: next((tag for tag in ("node1", "node2", "node3")
+                        if all(f"'{name}' arrived from another node" in fixture.log(tag) for name in names)), ""), 30)
+    cast.touch()
+    channel = re.compile(rf"\[channel start\] {spell} for (\d+) ms")
+    game_object = re.compile(rf"\[game object\] {portal} guid (\d+)")
+    original = wait_for("the original summoning portal", lambda: game_object.search(logs()[0]), 12)[1]
+    wait_for("the first helper to see the same portal", lambda: game_object.search(logs()[1]), 10)
+    join.touch()
+    wait_for("the first helper to join the original ritual", lambda: all(channel.search(log) for log in logs()[:2]), 10)
+    request = f"[summon request] {leader} "
+    assert not any(request in log for log in logs())
+    offsets = [len(log) for log in logs()]
+    nodes[host].kill()
+    assert nodes[host].wait(timeout=10) == -signal.SIGKILL
+
+    def recovered():
+        return [log[offset:].partition("[new world] map 0 ")[2] for log, offset in zip(logs(), offsets)]
+
+    wait_for("both original channels and the same portal on every original socket",
+             lambda: all(channel.search(log) for log in recovered()[:2])
+             and all(set(game_object.findall(log)) == {original} for log in recovered()), 38)
+    complete.touch()
+    wait_for("the third helper to finish the ritual and send one request",
+             lambda: request in recovered()[1] and "[channel update] 0 ms" in recovered()[0], 15)
+    finish.touch()
+    for process in players:
+        assert process.wait(timeout=20) == 0
+    assert fixture.log("member").count(request) == 1
+    assert fixture.log("owner").count(f"[spell go] {spell} by {leader}") == 1
+    print(f"PASS: killed {host} after the first helper joined, restored the original portal, "
+          "and produced one summon request after the third member joined")
+
+
 if __name__ == "__main__":
-    run_test("party-summon-recovery", run)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--open-ritual", action="store_true", help="kill the owner after the first helper joins the portal")
+    args = parser.parse_args()
+    run_test("party-summon-recovery", open_ritual if args.open_ritual else run)

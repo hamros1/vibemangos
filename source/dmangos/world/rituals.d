@@ -93,6 +93,7 @@ mixin template RitualSummoning()
     }
 
     private ulong ritualPortal; /// the portal of the ritual this player channels; 0: none
+    private ulong ritualChannelOwner; /// also set for a participant whose portal is owned by another player
 
     private PartySummon summonPoint; // a summons waiting for the player's answer
     private ulong latestSummon;
@@ -191,17 +192,31 @@ mixin template RitualSummoning()
     /// Only a player-owned ritual follows its caster. An altar belongs to its own map.
     private bool carriesRitualChannel()
     {
+        return ritualChannelOwner != 0;
+    }
+
+    private ulong currentRitualOwner()
+    {
         import dmangos.world.replication : Replica;
 
         if (auto go = map.gameObjectAt(channelTarget))
-            return go.owner && isRitualPortal(go.template_);
+            return isRitualPortal(go.template_) ? go.owner : 0;
         if (auto mirror = cast(Replica) map.findObject(channelTarget))
-            if (mirror.fields.type == TypeId.gameObject && mirror.fields.get!OBJECT_FIELD_CREATED_BY)
-                return isRitualPortal(mirror.fields.get!OBJECT_FIELD_ENTRY in context.data.gameObjectTemplates);
-        return false;
+            if (mirror.fields.type == TypeId.gameObject
+                && isRitualPortal(mirror.fields.get!OBJECT_FIELD_ENTRY in context.data.gameObjectTemplates))
+                return mirror.fields.get!OBJECT_FIELD_CREATED_BY;
+        return 0;
     }
 
     private const(ubyte)[] takeRitualHandoff()
+    {
+        const state = ritualPortalState();
+        if (state.length)
+            closeRitualPortal();
+        return state;
+    }
+
+    private const(ubyte)[] ritualPortalState()
     {
         import dmangos.serialization : serialize;
 
@@ -217,40 +232,48 @@ mixin template RitualSummoning()
         foreach (guid; go.ritualUsers)
             state.put(guid);
         go.saveState(state, context.transportNow());
-        closeRitualPortal();
         return state.data;
     }
 
     private void restoreRitualHandoff(ref ByteReader reader)
     {
+        auto state = ByteReader(reader.readBytes(reader.read!uint));
+        if (!state.empty)
+            restoreRitualPortal(state);
+        if (channelSpell !is null && !ritualChannelOwner)
+            ritualChannelOwner = currentRitualOwner();
+    }
+
+    private bool restoreRitualPortal(ref ByteReader state)
+    {
         import dmangos.serialization : deserialize;
         import dmangos.world.objects : temporaryCounterStart;
 
-        auto state = ByteReader(reader.readBytes(reader.read!uint));
         if (state.empty || channelSpell is null || state.read!uint != map.instanceId)
-            return;
+            return false;
         const spawn = deserialize!GameObjectSpawn(state);
         const proto = spawn.entry in context.data.gameObjectTemplates;
         if (!isRitualPortal(proto) || spawn.guid < temporaryCounterStart || spawn.guid > 0xFF_FFFF
             || spawn.map != map.id || !context.client.isValidMapCoord(spawn.map, spawn.x, spawn.y, spawn.z, spawn.orientation))
-            return;
+            return false;
         auto go = new GameObject(spawn, proto);
         if (go.guid != channelTarget)
-            return;
+            return false;
         go.ritualSpell = state.read!uint;
         go.ritualTarget = state.read!ulong;
         const count = state.read!uint;
         if (go.ritualSpell != channelSpell.id || !count || count > RitualData.of(proto.data[]).participants)
-            return;
+            return false;
         foreach (_; 0 .. count)
             go.ritualUsers ~= state.read!ulong;
         if (go.ritualUsers[0] != player.guid)
-            return;
+            return false;
         go.owner = player.guid;
         go.instanceId = map.instanceId;
         go.loadState(state, context.transportNow());
         map.addObject(go);
         ritualPortal = go.guid;
+        return true;
     }
 
     import std.math : cos, sin;
@@ -292,6 +315,8 @@ mixin template RitualSummoning()
         }
         if (go.ritualUsers.length >= r.participants)
             completeRitual(go, r, owner);
+        else if (owner !is null)
+            owner.checkpointSummons(true);
     }
 
     private void pruneRitualChannels(GameObject go)

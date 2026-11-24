@@ -803,6 +803,8 @@ health, power, auras and cooldowns. Work since the latest durable save can be lo
 An open party summon request belongs to the gateway login. The replacement worker presents the
 same request with the time left on its original deadline. It records acceptance before teleporting
 the player so a second response cannot trigger the same teleport again.
+An open Ritual of Summoning restores the same portal and both the owner's and helpers' channels
+with their remaining time. The party can finish it and receive the original target's summon request.
 
 If the worker and coordinator both fail, a gateway linked to the standby reports its last
 acknowledged simulation owner when it accepts the takeover. The standby restores the original
@@ -1028,6 +1030,10 @@ python3 tools/harness/ground_spell_recovery.py --native-enemy
 python3 tools/harness/spell_cast_recovery.py
 python3 tools/harness/spell_cast_recovery.py --finished
 python3 tools/harness/spell_cast_recovery.py --projectile
+python3 tools/harness/spell_cast_recovery.py --remote-bounce
+python3 tools/harness/spell_cast_recovery.py --channel
+python3 tools/harness/spell_cast_recovery.py --channel-canceled
+python3 tools/harness/party_summon_recovery.py --open-ritual
 python3 tools/harness/hunter_trap_recovery.py
 python3 tools/harness/hunter_trap_recovery.py --clean
 ```
@@ -1140,12 +1146,14 @@ An unfinished player or creature cast resumes after a clean handoff with its ori
 remaining cast time. The new owner also keeps active spell-school lockouts and the player's global
 cooldown. A gateway player can resume an unfinished cast after a worker crash. The replacement
 uses the original deadline and removes the checkpoint before resolving the cast.
-Player projectiles launched at a local target keep their flight time when the caster moves or
-their gateway worker crashes in the same map and copy. The replacement retires the pending
-impact before applying it. Supported
-direct damage, healing and aura effects can also follow the target to its new owner.
-Player channels such as Arcane Missiles keep their remaining time and next pulse when the caster
-moves. A far-seeing player keeps the same camera viewpoint and watches replicas around it.
+Player projectiles, including supported cross-node spell effects, keep their flight time when
+the caster moves or their gateway worker crashes in the same map and copy. The replacement
+retires the pending impact before dispatch. Supported direct damage, healing and aura effects can
+also follow the target to its new owner.
+Player channels with a periodic aura on the caster, such as Arcane Missiles, preserve their
+remaining time and next pulse through a handoff or worker crash. Pulses due during the outage
+are skipped. A far-seeing player keeps the same camera viewpoint and watches replicas around it
+during a clean handoff.
 Mind Vision can find a distant player on another node. The target's owner supplies its current
 position for the usual spell checks. The caster's body stays at its original position while the
 cast starts on the target's node.

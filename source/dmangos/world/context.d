@@ -1322,6 +1322,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         AreaDamage hit;
         MonoTime retryUntil; // time allowed to resolve the target across a handoff
         ushort sentTo; // a completed channel can follow a replica to a different owner
+        bool retired; // omitted from checkpoints before committing the impact
     }
 
     private enum replicaImpactGrace = 2.seconds;
@@ -1354,7 +1355,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         else if (local || sendAreaDamage !is null)
         {
             const due = clock() + delay.msecs;
-            replicaSpellImpacts ~= ReplicaSpellImpact(due, hit, due + replicaImpactGrace);
+            queueReplicaSpellImpact(ReplicaSpellImpact(due, hit, due + replicaImpactGrace));
         }
     }
 
@@ -1363,25 +1364,17 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         import dmangos.serialization : serialize;
 
-        uint count;
-        foreach (ref impact; replicaSpellImpacts)
-            if (impact.hit.caster == caster)
-                ++count;
+        const count = replicaImpactCount(caster);
         writer.put(count);
         if (!count)
             return;
 
         const now = clock();
         const transferTime = transportNow();
-        size_t kept;
-        foreach (impact; replicaSpellImpacts)
+        foreach (ref impact; replicaSpellImpacts)
         {
-            if (impact.hit.caster != caster)
-            {
-                if (departing)
-                    replicaSpellImpacts[kept++] = impact;
+            if (impact.retired || impact.hit.caster != caster)
                 continue;
-            }
             writer.put(transferTime + cast(uint)(impact.due - now).total!"msecs");
             const waiting = impact.retryUntil != MonoTime.init;
             writer.put(waiting);
@@ -1389,9 +1382,30 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 writer.put(transferTime + cast(uint)(impact.retryUntil - now).total!"msecs");
             writer.put(impact.sentTo);
             serialize(writer, impact.hit);
+            if (departing)
+                impact.retired = true;
         }
-        if (departing)
-            replicaSpellImpacts.length = kept;
+    }
+
+    package uint replicaImpactCount(ulong caster) const
+    {
+        uint count;
+        foreach (ref impact; replicaSpellImpacts)
+            if (!impact.retired && impact.hit.caster == caster)
+                ++count;
+        return count;
+    }
+
+    package bool discardReplicaImpacts(ulong caster)
+    {
+        bool discarded;
+        foreach (ref impact; replicaSpellImpacts)
+            if (!impact.retired && impact.hit.caster == caster)
+            {
+                impact.retired = true;
+                discarded = true;
+            }
+        return discarded;
     }
 
     /// Adopt impacts for the caster on the same map and instance from which they were launched.
@@ -1435,7 +1449,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (hit.playerProjectile)
         {
             if (!sendReplicaSpellImpact(map_, peer, hit, true))
-                replicaSpellImpacts ~= ReplicaSpellImpact(clock(), hit, MonoTime.init, hit.redirectOwner);
+                queueReplicaSpellImpact(ReplicaSpellImpact(clock(), hit, MonoTime.init, hit.redirectOwner));
             return true;
         }
         if (!hit.channelled && spell.casting.speed > 0)
@@ -1456,11 +1470,18 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     return false;
                 if (time >= 1)
                 {
-                    replicaSpellImpacts ~= ReplicaSpellImpact(clock() + (cast(int) time).msecs, hit);
+                    queueReplicaSpellImpact(ReplicaSpellImpact(clock() + (cast(int) time).msecs, hit));
                     return true;
                 }
             }
         return sendReplicaSpellImpact(map_, peer, hit);
+    }
+
+    private void queueReplicaSpellImpact(ReplicaSpellImpact impact)
+    {
+        replicaSpellImpacts ~= impact;
+        if (auto caster = onlinePlayer(impact.hit.caster))
+            caster.checkpointSummons(true);
     }
 
     private bool sendReplicaSpellImpact(Map map_, ushort peer, AreaDamage hit, bool projectile = false)
@@ -1481,32 +1502,48 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     private void deliverReplicaSpells(MonoTime now)
     {
+        import std.algorithm.mutation : SwapStrategy, remove;
         import dmangos.world.unit : UnitKind;
 
-        if (!replicaSpellImpacts.length)
+        const queued = replicaSpellImpacts.length;
+        if (!queued)
             return;
-        auto pending = replicaSpellImpacts;
-        replicaSpellImpacts = null;
-        foreach (impact; pending)
+        foreach (i; 0 .. queued)
         {
-            if (impact.due > now)
+            auto impact = replicaSpellImpacts[i];
+            if (impact.retired || impact.due > now)
+                continue;
+            auto map_ = existingMap(impact.hit.map, impact.hit.instance);
+            auto caster = onlinePlayer(impact.hit.caster);
+            bool retire()
             {
-                replicaSpellImpacts ~= impact;
+                replicaSpellImpacts[i].retired = true;
+                if (caster is null || caster.checkpointSummons(true))
+                    return true;
+                replicaSpellImpacts[i].retired = false;
+                replicaSpellImpacts[i].due = now + 1.seconds;
+                return false;
+            }
+            if (map_ is null || !map_.unit(impact.hit.caster) || !canWrite()
+                || (impact.retryUntil != MonoTime.init && impact.retryUntil <= now))
+            {
+                retire();
                 continue;
             }
-            auto map_ = existingMap(impact.hit.map, impact.hit.instance);
-            if (map_ is null || !map_.unit(impact.hit.caster) || !canWrite())
-                continue;
             const completion = impact.hit.channelOperation == AreaDamage.ChannelUpdate.complete;
-            if (impact.retryUntil != MonoTime.init && impact.retryUntil <= now)
-                continue;
             if (auto copy = cast(Replica) map_.findObject(impact.hit.target))
             {
-                if (copy.owner != impact.sentTo && sendReplicaSpellImpact(map_, copy.owner, impact.hit, !completion))
+                if (copy.owner != impact.sentTo)
                 {
-                    if (!completion)
+                    if (!retire())
                         continue;
-                    impact.sentTo = copy.owner;
+                    if (sendReplicaSpellImpact(map_, copy.owner, impact.hit, !completion))
+                    {
+                        if (!completion)
+                            continue;
+                        impact.sentTo = copy.owner;
+                    }
+                    impact.retired = false;
                 }
             }
             else
@@ -1514,7 +1551,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 auto target = map_.unit(impact.hit.target);
                 if (target && (target.kind != UnitKind.player || !target.session.transferring))
                 {
-                    applyAreaDamage(0, map_, impact.hit);
+                    if (retire())
+                        applyAreaDamage(0, map_, impact.hit);
                     continue;
                 }
                 if (completion)
@@ -1522,8 +1560,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             }
             if (impact.retryUntil == MonoTime.init)
                 impact.retryUntil = now + replicaImpactGrace;
-            replicaSpellImpacts ~= impact;
+            const retry = replicaSpellImpacts[i].retired;
+            replicaSpellImpacts[i] = impact;
+            if (retry && caster !is null)
+                caster.checkpointSummons(true);
         }
+        replicaSpellImpacts = replicaSpellImpacts.remove!(impact => impact.retired, SwapStrategy.stable);
     }
 
     bool delegate(ushort, const ref CreatureSwing) sendCreatureSwing;

@@ -1517,6 +1517,10 @@ unittest
     assert(remaining >= 59_000 && remaining <= 61_000, "outage time counts against the invitation");
     later += 5.seconds;
     second.tick(5.seconds);
+    assert(recovered.ticketsOf(1).length, "keep the invitation through the gateway's recovery window");
+    const rest = recovered.nodeLossGrace - 5.seconds;
+    later += rest;
+    second.tick(rest);
     assert(!recovered.ticketsOf(1).length && recovered.ticketsOf(2)[0].instance == accepted.instance);
     assert(recovered.copies[accepted.instance].invited == [1, 2]);
 }

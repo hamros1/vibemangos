@@ -32,7 +32,7 @@ mixin template SpellHandlers()
     import dmangos.log : info, warning;
     import dmangos.world.combat : AttackType, armorAgainst, armorReducedDamage, creatureTypeHumanoid, blockChance, critChance, dodgeChance, missChance,
         parryChance, weaponDamage;
-    import dmangos.world.auras : AuraInterrupt;
+    import dmangos.world.auras : Aura, AuraInterrupt;
     import dmangos.world.inworld : ArrivalAction;
     import dmangos.world.inventory : Item;
     import dmangos.world.creature : Creature;
@@ -1052,6 +1052,8 @@ private:
                 delay = channelTimer;
             channelTimer -= delay;
             shortenChannelAuras(delay);
+            if (activeRecoveryChannelAura() !is null)
+                checkpointSummons();
             ByteWriter w;
             w.put(cast(uint) channelTimer);
             deliver(Opcode.MSG_CHANNEL_UPDATE, w.data);
@@ -1121,7 +1123,9 @@ private:
         channelObject = 0;
         channelTimer = ms;
         channelCostTimer = 1000;
-        if ((bobber && bobber == channelTarget) || (persistentAreas.length && spell.hasEffect(SpellEffect.persistentAreaAura)))
+        ritualChannelOwner = currentRitualOwner();
+        if ((bobber && bobber == channelTarget) || (persistentAreas.length && spell.hasEffect(SpellEffect.persistentAreaAura))
+            || activeRecoveryChannelAura() !is null || ritualChannelOwner)
             checkpointSummons(true);
         showChannelStart();
         // Mind Vision (`SPELL_AURA_BIND_SIGHT`): the player sees through the channel's target while it lasts.
@@ -1296,7 +1300,11 @@ private:
         if (channelSpell is null)
             return;
         const spell = channelSpell;
+        const checkpointedChannel = activeRecoveryChannelAura() !is null || ritualChannelOwner;
         channelSpell = null;
+        ritualChannelOwner = 0;
+        if (checkpointedChannel)
+            checkpointSummons(true);
         const canCredit = !followingNamedCreature || namedChannelConfirmed;
         followingNamedCreature = false;
         namedChannelConfirmed = false;
@@ -1720,7 +1728,7 @@ private:
         endChannel(true);
         endGroundCasts();
         removeTraps();
-        if (leavingMap && pendingHits.length)
+        if (leavingMap && (context.discardReplicaImpacts(player.guid) || pendingHits.length))
         {
             pendingHits = null;
             missileSpends = null;
@@ -2010,6 +2018,7 @@ private:
             }
         }
         writeGroundAreas(persistentAreas, state);
+        state.put(ritualChannelOwner);
         detachGroundAreas(map, persistentAreas);
         writer.put(cast(uint) state.data.length);
         writer.putBytes(state.data);
@@ -2041,6 +2050,8 @@ private:
         }
         auto caster = Caster.of(this);
         persistentAreas = readGroundAreas(caster, state);
+        if (!state.empty)
+            ritualChannelOwner = state.read!ulong;
         if (channelSpell !is null)
         {
             player.values.set!UNIT_CHANNEL_SPELL(channelSpell.id);
@@ -2099,6 +2110,19 @@ private:
         state.put(context.transportNow());
         writeCastHandoff(state);
         writeFlightHandoff(state);
+        context.writeReplicaImpacts(player.guid, state, false);
+        auto aura = activeRecoveryChannelAura();
+        state.put(aura !is null);
+        if (aura !is null)
+        {
+            state.put(channelTarget);
+            state.put(channelTimer);
+            state.put(channelCostTimer);
+            state.put(pushbacks);
+            aura.saveState(state);
+        }
+        if (ritualChannelOwner)
+            writeRitualRecovery(state);
         return state.data;
     }
 
@@ -2110,9 +2134,103 @@ private:
         readCastHandoff(state, elapsed);
         if (!state.empty)
             readFlightHandoff(state);
+        if (!state.empty)
+            context.readReplicaImpacts(player.guid, map.id, map.instanceId, state);
+        if (!state.empty && state.read!bool)
+            restorePeriodicChannel(state, elapsed);
+        if (!state.empty)
+            readRitualRecovery(state, elapsed);
         if (generic.active)
             map.sendToWatchers(this, Opcode.SMSG_SPELL_START, spellStartPacket(player.guid, generic.spell.id,
                 cast(uint) max(0, generic.timer), generic.targets), true);
+    }
+
+    private void writeRitualRecovery(ref ByteWriter state)
+    {
+        state.put(ritualChannelOwner);
+        state.put(channelSpell.id);
+        state.put(channelTarget);
+        state.put(channelTimer);
+        state.put(channelCostTimer);
+        state.put(pushbacks);
+        state.putBytes(ritualPortalState());
+    }
+
+    private void readRitualRecovery(ref ByteReader state, int elapsed)
+    {
+        const owner = state.read!ulong;
+        const spell = context.spellInfo(state.read!uint);
+        const target = state.read!ulong;
+        const remaining = state.read!int - elapsed;
+        const nextCost = state.read!int;
+        const delays = state.read!uint;
+        if (!owner || spell is null || !target || remaining <= 0 || channelSpell !is null)
+            return;
+        channelSpell = spell;
+        channelTarget = target;
+        if (owner == player.guid && !restoreRitualPortal(state))
+        {
+            channelSpell = null;
+            return;
+        }
+        ritualChannelOwner = owner;
+        channelTimer = remaining;
+        channelCostTimer = elapsed < nextCost ? nextCost - elapsed : 1000 - (elapsed - nextCost) % 1000;
+        pushbacks = delays;
+        showChannelStart();
+    }
+
+    /// Channels whose timed effect runs on the caster can recover their periodic aura with the cast.
+    private bool recoverableChannelAura(const ref SpellInfo spell)
+    {
+        import std.algorithm.comparison : among;
+
+        enum uint channeled = 0x04, selfChanneled = 0x40;
+        if (!(spell.attributesEx & (channeled | selfChanneled)))
+            return false;
+        foreach (i, effect; spell.effect)
+            if (effect == SpellEffect.applyAura && spell.implicitTargetA[i] == ImplicitTarget.caster
+                && (cast(AuraType) spell.casting.applyAuraName[i]).among(AuraType.periodicTriggerSpell,
+                    AuraType.periodicEnergize, AuraType.obsModMana, AuraType.periodicHeal))
+                return true;
+        return false;
+    }
+
+    private Aura activeRecoveryChannelAura()
+    {
+        if (channelSpell is null || !recoverableChannelAura(*channelSpell))
+            return null;
+        return player.auras.find(channelSpell.id, player.guid);
+    }
+
+    private void restorePeriodicChannel(ref ByteReader state, int elapsed)
+    {
+        const target = state.read!ulong;
+        const remaining = state.read!int - elapsed;
+        const nextCost = state.read!int;
+        const delays = state.read!uint;
+        auto aura = Aura.loadState(state, &context.spellInfo);
+        if (remaining <= 0 || aura.duration <= elapsed || channelSpell !is null || aura.spell is null
+            || aura.caster != player.guid || !recoverableChannelAura(*aura.spell))
+            return;
+        aura.duration -= elapsed;
+        foreach (i, period; aura.period)
+            if (period > 0)
+            {
+                const next = aura.periodTimer[i] - elapsed;
+                aura.periodTimer[i] = next > 0 ? next : period - (-next % period);
+            }
+        channelSpell = aura.spell;
+        channelTarget = target;
+        channelTimer = remaining;
+        channelCostTimer = elapsed < nextCost ? nextCost - elapsed : 1000 - (elapsed - nextCost) % 1000;
+        pushbacks = delays;
+        if (!addAura(aura))
+        {
+            channelSpell = null;
+            return;
+        }
+        showChannelStart();
     }
 
     private CastHandoff snapshotCast(const ref Casting c)

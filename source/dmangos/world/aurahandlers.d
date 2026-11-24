@@ -924,7 +924,7 @@ private:
     }
 
     /// Loads the auras saved at the last logout, with the time they had left.
-    package void loadAuras()
+    package void loadAuras(bool recovered = false)
     {
         import dmangos.world.auras : enableAuraEffect;
 
@@ -933,6 +933,8 @@ private:
             const spell = context.data.spells.spell(row.spell);
             if (spell is null || row.remaining == 0 || (partyAreaAura(spell) && row.caster != player.guid))
                 continue;
+            if (recovered && row.caster == player.guid && recoverableChannelAura(*spell))
+                continue; // the gateway's channel checkpoint supplies its current timing
             auto aura = makeAura(spell, row.caster, player.data.level, row.maxDuration,
                 Aura.savedPositive(*spell, row.effectMask), row.amount);
             ubyte groundEffects;

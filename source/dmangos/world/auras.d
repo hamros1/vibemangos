@@ -277,7 +277,7 @@ final class Aura
         "stacks", "charges", "effects", "amount", "period", "periodTimer", "heartbeatChance",
         "heartbeatInterval", "heartbeatTimer"];
 
-    private void saveState(ref ByteWriter writer) const
+    package void saveState(ref ByteWriter writer) const
     {
         import std.traits : isStaticArray;
 
@@ -292,7 +292,7 @@ final class Aura
         }
     }
 
-    private static Aura loadState(ref ByteReader reader, const(SpellInfo)* delegate(uint) lookup)
+    package static Aura loadState(ref ByteReader reader, const(SpellInfo)* delegate(uint) lookup)
     {
         import std.traits : isStaticArray;
 

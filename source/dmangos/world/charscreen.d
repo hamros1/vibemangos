@@ -349,7 +349,7 @@ mixin template CharacterLogin()
         }
         updateLeaderFlag(); // as saved, or not
         deathOnLogin();
-        loadAuras();
+        loadAuras(recovered);
         loadHonor();
         loadEnchantmentTimers();
         // Timed items that run in real time lose the time logged out.

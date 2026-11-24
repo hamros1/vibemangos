@@ -195,7 +195,7 @@ bool isHostileChainEffect(const ref SpellInfo spell, size_t i)
 {
     import std.algorithm.searching : count;
 
-    return instantaneous(spell) && isDirectMagicDamageEffect(spell, i)
+    return !(spell.attributesEx & (0x04 | 0x40)) && isDirectMagicDamageEffect(spell, i)
         && spell.effect[].count(SpellEffect.none) == spell.effect.length - 1
         && spell.implicitTargetA[i] == ImplicitTarget.enemy && spell.casting.implicitTargetB[i] == ImplicitTarget.none
         && spell.casting.chainTarget[i] > 1;

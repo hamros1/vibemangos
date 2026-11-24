@@ -602,6 +602,9 @@ def describe(op, p):
     elif op == 0x139:
         spell, duration = struct.unpack("<II", p)
         print(f"  [channel start] {spell} for {duration} ms")
+    elif op == 0x13A:
+        duration, = struct.unpack("<I", p)
+        print(f"  [channel update] {duration} ms")
     elif op == 0x0B3:
         guid, slot = struct.unpack("<QI", p)
         print(f"  [game object animation] {guid:#018x} slot {slot}")
@@ -821,6 +824,9 @@ for action in actions:
             print(f"target {entry}: not in sight"); continue
         target = min(found, key=lambda g: (seen_positions[g][0] - here[0]) ** 2 + (seen_positions[g][1] - here[1]) ** 2)
         wsend(0x13D, struct.pack("<Q", target)); print(f"target {entry}: {target & 0xFFFFFF}"); pet_info["target"] = target
+    elif kind == "targetplayer":
+        target = int(args[0], 0)
+        wsend(0x13D, struct.pack("<Q", target))
     elif kind == "approach":
         # Walk to DIST yards of the nearest creature of ENTRY, without attacking it.
         import math

@@ -23,7 +23,7 @@ BEASTS = {8925: 4, 8926: 2, 8927: 5, 8928: 3, 8933: 3, 8932: 7}
 CHAMPIONS = set(range(9027, 9033))
 
 
-def start_cluster(fixture, new_party, *, world=None, leader_appearance=(1, 1)):
+def start_cluster(fixture, new_party, *, world=None, leader_appearance=(1, 1), extra_member=False):
     login = fixture.fresh_schema("login", "classicrealmd.sql")
     characters = fixture.fresh_schema("chars", "classiccharacters.sql")
     ports = available_ports(9)
@@ -36,6 +36,9 @@ def start_cluster(fixture, new_party, *, world=None, leader_appearance=(1, 1)):
 
     accounts = ("RINGKEEPER", "RINGWATCHER")
     names = ("Ringkeeper", "Ringwatcher")
+    if extra_member:
+        accounts += ("RINGHELPER",)
+        names += ("Ringhelper",)
     password = "TESTRINGRECOVERY"
     auth = fixture.directory / "auth.json"
     auth.write_text(json.dumps(dict(login_database=login, mysql_library=fixture.base["mysql_library"],
@@ -64,7 +67,7 @@ def start_cluster(fixture, new_party, *, world=None, leader_appearance=(1, 1)):
     seed.terminate()
     if seed.wait(timeout=25):
         raise RuntimeError("the seed world did not shut down cleanly")
-    leader, member = guids
+    leader = guids[0]
     dbc = (Path(fixture.base["data_dir"]) / "dbc" / "AreaTrigger.dbc").read_bytes()
     count, _, size, _ = struct.unpack_from("<4I", dbc, 4)
 
@@ -76,8 +79,9 @@ def start_cluster(fixture, new_party, *, world=None, leader_appearance=(1, 1)):
     fixture.query(f"UPDATE characters SET level=60,health=2000,map=0,position_x={x},position_y={y},position_z={z}",
                   characters)
     if not new_party:
+        members = ",".join(f"(1,{guid},0,0)" for guid in guids)
         fixture.query(f"INSERT INTO groups VALUES (1,{leader},0,0,3,{leader},2,0,0,0,0,0,0,0,0,0); "
-                      f"INSERT INTO group_member VALUES (1,{leader},0,0),(1,{member},0,0)", characters)
+                      f"INSERT INTO group_member VALUES {members}", characters)
     assert fixture.query("SELECT COUNT(*) FROM instance", characters) == "0"
 
     roster = [{"node_id": node, "address": f"127.0.0.1:{ports[node+3]}"} for node in (1, 2, 3)]

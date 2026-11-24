@@ -1612,7 +1612,9 @@ mixin template PetHandlers()
         const summons = player.alive ? playerSummonState(false, removed) : null;
         const fishing = player.alive && bobber && bobber != removed ? fishingRecoveryState() : null;
         const ground = player.alive && persistentAreas.length ? groundRecoveryState() : null;
-        const casting = player.alive && (generic.active || pendingHits.length) ? castRecoveryState() : null;
+        const casting = player.alive && (generic.active || pendingHits.length || context.replicaImpactCount(player.guid)
+            || activeRecoveryChannelAura() !is null || ritualChannelOwner)
+            ? castRecoveryState() : null;
         const active = summons.length || fishing.length || ground.length || casting.length;
         if (!active && !summonCheckpointExists)
             return true;
