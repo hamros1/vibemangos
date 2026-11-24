@@ -32,7 +32,7 @@ def configure_world(fixture):
     relay = SCRIPT + len(LANDMARKS)
     fixture.query(f"INSERT INTO creature_spawn_data_template (Entry,Name,RelayId) VALUES ({relay},'Forwarded relay',{relay}); "
                   f"INSERT INTO dbscripts_on_relay (id,delay,command,datalong,comments) "
-                  f"VALUES ({relay},6000,1,24,'Forwarded summon emote')", world)
+                  f"VALUES ({relay},16000,1,24,'Forwarded summon emote after observer recovery')", world)
     destinations = {}
     for index, landmark in enumerate(LANDMARKS):
         _, (x, y, z) = position(landmark)

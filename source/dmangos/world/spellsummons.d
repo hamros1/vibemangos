@@ -6,6 +6,7 @@
 module dmangos.world.spellsummons;
 
 import dmangos.world.caster : Caster;
+import dmangos.world.movement : Position;
 import dmangos.world.spellcast : SpellTargets;
 import dmangos.world.spells : SpellInfo;
 
@@ -16,14 +17,31 @@ import dmangos.world.spells : SpellInfo;
  */
 void summonWildObject(ref Caster caster, const(SpellInfo)* spell, size_t i, const ref SpellTargets targets)
 {
-    import std.math : cos, sin;
-    import dmangos.world.movement : Position;
-    import dmangos.world.spellcast : duration, TargetFlags;
-
     auto context = caster.context;
     const entry = cast(uint) spell.miscValue[i];
     if (entry !in context.data.gameObjectTemplates)
         return;
+    context.placeWildGameObject(caster.map, entry, wildObjectDestination(caster, targets), wildObjectDuration(caster, spell));
+}
+
+package enum OutdoorObjectCast { ordinary, committed, failed }
+
+/// Saves an immediate object-only spell's placement before its cast success goes to the client.
+package OutdoorObjectCast commitWildObjectCast(ref Caster caster, const(SpellInfo)* spell, const ref SpellTargets targets)
+{
+    const entry = cast(uint) spell.miscValue[0];
+    const seconds = wildObjectDuration(caster, spell);
+    if (!caster.context.usesOutdoorObjectQueue(caster.map, entry, seconds))
+        return OutdoorObjectCast.ordinary;
+    return caster.context.queueOutdoorObject(caster.map, entry, wildObjectDestination(caster, targets), seconds)
+        ? OutdoorObjectCast.committed : OutdoorObjectCast.failed;
+}
+
+private Position wildObjectDestination(ref Caster caster, const ref SpellTargets targets)
+{
+    import std.math : cos, sin;
+    import dmangos.world.spellcast : TargetFlags;
+
     const me = caster.position;
     auto at = Position(me.x + cos(me.orientation), me.y + sin(me.orientation), me.z, me.orientation);
     if (targets.mask & TargetFlags.destLocation)
@@ -34,8 +52,15 @@ void summonWildObject(ref Caster caster, const(SpellInfo)* spell, size_t i, cons
         if (ground > -100_000 && (ground - at.z) ^^ 2 < 25)
             at.z = ground;
     }
-    const ms = caster.modDuration(spell, duration(*spell, context.client, caster.level));
-    context.placeWildGameObject(caster.map, entry, at, ms > 0 ? cast(uint)(ms / 1000) : 0);
+    return at;
+}
+
+private uint wildObjectDuration(ref Caster caster, const(SpellInfo)* spell)
+{
+    import dmangos.world.spellcast : duration;
+
+    const ms = caster.modDuration(spell, duration(*spell, caster.context.client, caster.level));
+    return ms > 0 ? cast(uint)(ms / 1000) : 0;
 }
 
 /**

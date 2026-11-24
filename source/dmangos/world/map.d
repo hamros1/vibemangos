@@ -940,12 +940,13 @@ final class Map : CombatWorld, GameObjectWorld
                 due.remove(e.home); // a corpse
                 continue;
             }
-            if (creature !is null && ((creature.keepSpawnLoaded && creature.alive)
+            if ((keepIdleObjectLoaded !is null && keepIdleObjectLoaded(e.object))
+                || (creature !is null && ((creature.keepSpawnLoaded && creature.alive)
                 || (!creature.alive && creature.summon.type != TempSpawnType.none
                     && (creature.loot !is null || creature.skinnable))
                 || (creature.alive && creature.ai !is null && creature.ai.questActorPlayer())
                 || (creature.ai !is null && (creature.ai.inCombat || creature.ai.evading))
-                || e.cell in localInterest || e.cell in peerCells))
+                || e.cell in localInterest || e.cell in peerCells)))
             {
                 due.remove(e.home);
                 continue;
@@ -2505,6 +2506,9 @@ final class Map : CombatWorld, GameObjectWorld
 
     /// Told when an object leaves this map for good (gone, or handed to another node) after its state was saved.
     void delegate(MapObject object) onObjectGone;
+
+    /// Objects with a durable lifetime keep their cell loaded until they expire or leave the map.
+    bool delegate(MapObject object) keepIdleObjectLoaded;
 
     /// Open-world round 2: an object became this map's own (spawned with its cell, put here, or handed over).
     void delegate(MapObject object) onObjectArrived;

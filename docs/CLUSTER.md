@@ -381,8 +381,11 @@ a receipt, which it retires after publishing the creature. A replacement can fin
 or publish the actor from a committed receipt. The parent script waits for delivery before running
 its following steps. Other commands still claim their step before executing it, so a crash during
 their effects can leave the step incomplete.
-Temporary outdoor objects of the generic and spell-focus types also keep their GUIDs, state and
-original expiry time. The worker retries pending region recovery if its first database read fails.
+Finite wild objects of the generic and spell-focus types use the same durable queue from placement.
+An immediate object-only player spell saves the request before reporting a successful cast.
+The objects keep their GUIDs, state, and original expiry during recovery. Timed outdoor summons and saved
+quest objects keep their grid loaded through idle cleanup until they leave the map. The worker retries
+pending region recovery if its first database read fails.
 
 On a clean dungeon handoff, queued database scripts resume at their next step with the elapsed
 time intact. The receiving node waits briefly for players who were participating when the copy

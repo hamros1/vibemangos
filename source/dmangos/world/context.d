@@ -4361,6 +4361,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         };
         if (!instance && config.cluster.enabled)
         {
+            created.keepIdleObjectLoaded = (MapObject object) {
+                if (object.guid !in outdoorQuestActors)
+                    return false;
+                if (auto creature = cast(Creature) object)
+                    return creature.alive && creature.summon.timed;
+                return (cast(GameObject) object) !is null;
+            };
             created.checkpointQuestActor = (Creature creature, ulong player, bool immediate) {
                 checkpointQuestActor(created, creature, player, immediate);
             };
@@ -5907,21 +5914,31 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     private void checkpointOutdoorScriptObject(Map map, GameObject go, bool immediate = false)
     {
+        const expires = scriptedGameObjects.get(GameObjectOnMap(map, go.guid), 0L);
+        const state = outdoorObjectCheckpoint(map, go, expires);
+        if (state.actor)
+            saveOutdoorScriptActor(state, immediate);
+    }
+
+    private bool durableOutdoorObject(Map map, uint type)
+    {
         import std.algorithm.comparison : among;
 
-        if (!config.cluster.enabled || map.instanceId || !canWrite() || go.owner
-            || !go.type.among(GameObjectType.generic, GameObjectType.spellFocus))
-            return;
-        const expires = scriptedGameObjects.get(GameObjectOnMap(map, go.guid), 0L);
+        return config.cluster.enabled && !map.instanceId && type.among(GameObjectType.generic, GameObjectType.spellFocus);
+    }
+
+    private QuestActorCheckpoint outdoorObjectCheckpoint(Map map, GameObject go, long expires)
+    {
+        if (!durableOutdoorObject(map, go.type) || !canWrite() || go.owner)
+            return QuestActorCheckpoint.init;
         const home = cellKeyAt(go.spawn.x, go.spawn.y);
         if (expires <= unixTime || (ownsCell !is null && !ownsCell(map.id, home)))
-            return;
-        auto migrant = saveMigratingObject(go, false);
+            return QuestActorCheckpoint.init;
+        auto migrant = saveMigratingObject(go, false, expiresOverride: expires);
         if (migrant.kind != MigrantKind.summonedGameObject)
-            return;
+            return QuestActorCheckpoint.init;
         migrant.home = home;
-        const state = outdoorScriptActorState(map.id, go.guid, migrant);
-        saveOutdoorScriptActor(state, immediate);
+        return outdoorScriptActorState(map.id, go.guid, migrant);
     }
 
     private QuestActorCheckpoint outdoorScriptActorState(uint map, ulong guid, ref Migrant migrant)
@@ -6828,7 +6845,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (departing && gameObject.loot !is null)
             gameObject.loot.sendReleaseForAll();
         long expires = expiresOverride;
-        if (!gameObject.instanceId)
+        if (!gameObject.instanceId && !expires)
             if (auto active = existingMap(gameObject.spawn.map))
                 expires = scriptedGameObjects.get(GameObjectOnMap(active, gameObject.guid), 0L);
         auto kind = MigrantKind.gameObject;
@@ -9087,6 +9104,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     private GameObject summonGameObjectAt(Map map, uint entry, Location at, uint seconds)
     {
+        auto go = prepareGameObjectSummon(map, entry, at);
+        if (go !is null)
+            publishGameObjectSummon(map, go, seconds ? unixTime + seconds : 0);
+        return go;
+    }
+
+    private GameObject prepareGameObjectSummon(Map map, uint entry, Location at)
+    {
         import std.math : cos, sin;
 
         if (entry !in data.gameObjectTemplates)
@@ -9096,10 +9121,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         spawn.rotation = [0, 0, sin(at.orientation / 2), cos(at.orientation / 2)];
         auto go = makeGameObject(spawn);
         go.instanceId = map.instanceId;
-        map.addObject(go);
-        if (seconds)
-            scriptedGameObjects[GameObjectOnMap(map, go.guid)] = unixTime + seconds;
         return go;
+    }
+
+    private void publishGameObjectSummon(Map map, GameObject go, long expires)
+    {
+        if (expires)
+            scriptedGameObjects[GameObjectOnMap(map, go.guid)] = expires;
+        map.addObject(go);
     }
 
     /// See `CreatureLore.askDungeon`.

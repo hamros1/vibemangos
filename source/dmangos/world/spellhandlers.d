@@ -3244,8 +3244,36 @@ private:
                 interruptAurasOnCast(AuraInterrupt.actionLate, spell); // what a cast ends as it completes
             if (cooldownStarted)
                 checkpointCooldowns();
-            deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, SpellCastResult.ok));
         }
+        if (spell.effect[0] == SpellEffect.summonObjectWild && spell.effect[1] == SpellEffect.none
+            && spell.effect[2] == SpellEffect.none && spell.casting.speed <= 0)
+        {
+            import dmangos.world.caster : Caster;
+            import dmangos.world.spellsummons : OutdoorObjectCast, commitWildObjectCast;
+            import std.algorithm.searching : any;
+
+            if (effectTargets[0].any!(target => missOf[target] == SpellMissInfo.none))
+            {
+                auto caster = Caster.of(this);
+                final switch (commitWildObjectCast(caster, spell, c.targets))
+                {
+                case OutdoorObjectCast.ordinary: break;
+                case OutdoorObjectCast.committed:
+                    c.once(0);
+                    break;
+                case OutdoorObjectCast.failed:
+                    if (!c.triggered)
+                    {
+                        map.sendToWatchers(this, Opcode.SMSG_SPELL_FAILURE,
+                            spellFailurePacket(player.guid, spell.id, SpellCastResult.error), true);
+                        deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, SpellCastResult.error, spell));
+                    }
+                    return SpellCastResult.error;
+                }
+            }
+        }
+        if (!c.triggered)
+            deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, SpellCastResult.ok));
         auto displayedResults = results;
         if (remoteChannel !is null)
             displayedResults ~= TargetResult(remoteChannel.guid, SpellMissInfo.none);

@@ -808,6 +808,7 @@ CREATE TABLE IF NOT EXISTS `dmangos_outdoor_summon` (
   `home` bigint unsigned NOT NULL,
   `state` text CHARACTER SET ascii NOT NULL,
   `actor` bigint unsigned NOT NULL DEFAULT 0,
+  `kind` tinyint unsigned NOT NULL DEFAULT 0,
   PRIMARY KEY (`realm`, `origin`, `sequence`, `cursor`, `ordinal`)
 ) ENGINE=InnoDB;
 CREATE TABLE IF NOT EXISTS `dmangos_dungeon_fight` (

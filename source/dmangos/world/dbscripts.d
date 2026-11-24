@@ -383,6 +383,13 @@ package struct ScriptSummonPayload
     ulong source, target;
 }
 
+package struct OutdoorObjectPayload
+{
+    uint entry;
+    long expiresAt;
+    Position at;
+}
+
 package struct OutdoorScriptStep
 {
     private QuestStatus[uint][Character] rows;
@@ -434,9 +441,9 @@ mixin template DbScriptRunner()
     import std.random : uniform;
     import dmangos.log : trace;
     import dmangos.world.dbscripts;
-    import dmangos.world.dbscripts : OutdoorScriptStep, ScriptCreatureSpawn, ScriptQuestEffect, ScriptSummonPayload;
+    import dmangos.world.dbscripts : OutdoorObjectPayload, OutdoorScriptStep, ScriptCreatureSpawn, ScriptQuestEffect, ScriptSummonPayload;
     import dmangos.world.creature : Creature;
-    import dmangos.world.database : OutdoorScriptCheckpoint, OutdoorSummonRequest;
+    import dmangos.world.database : OutdoorScriptCheckpoint, OutdoorSummonKind, OutdoorSummonRequest;
     import dmangos.world.gameobject : GameObject;
     import dmangos.world.grid : noCell;
     import dmangos.world.map : Map;
@@ -997,7 +1004,7 @@ mixin template DbScriptRunner()
         auto where = map(request.map);
         if (request.actor)
         {
-            if (request.checkpoint.actor && where.creatureAt(request.actor) is null)
+            if (request.checkpoint.actor && where.creatureAt(request.actor) is null && where.gameObjectAt(request.actor) is null)
             {
                 if (!restoreQueuedSummon(where, request.checkpoint))
                     return;
@@ -1008,6 +1015,9 @@ mixin template DbScriptRunner()
                 database.retireOutdoorSummon(config.realmId, request);
             return;
         }
+
+        if (request.kind == OutdoorSummonKind.gameObject)
+            return deliverOutdoorObject(where, request);
 
         ScriptSummonPayload payload;
         try
@@ -1045,6 +1055,52 @@ mixin template DbScriptRunner()
         if (canWrite() && ownsCell(request.map, request.home))
         {
             publishOutdoorStep(where, planned);
+            database.retireOutdoorSummon(config.realmId, request);
+        }
+    }
+
+    private void deliverOutdoorObject(Map where, ref OutdoorSummonRequest request)
+    {
+        import dmangos.log : warning;
+        import dmangos.script.api : Location;
+        import dmangos.serialization : deserialize;
+        import dmangos.world.grid : cellKeyAt;
+        import dmangos.world.instancescripting : fromHex;
+
+        OutdoorObjectPayload payload;
+        try
+        {
+            auto bytes = ByteReader(fromHex(request.state));
+            payload = deserialize!OutdoorObjectPayload(bytes);
+        }
+        catch (Exception error)
+        {
+            warning!"map %s: could not decode an outdoor object summon: %s"(request.map, error.msg);
+            database.retireOutdoorSummon(config.realmId, request);
+            return;
+        }
+        const proto = payload.entry in data.gameObjectTemplates;
+        const at = payload.at;
+        if (payload.expiresAt <= unixTime || proto is null || !durableOutdoorObject(where, proto.type)
+            || cellKeyAt(at.x, at.y) != request.home || !client.isValidMapCoord(where.id, at.x, at.y, at.z, at.orientation))
+        {
+            database.retireOutdoorSummon(config.realmId, request);
+            return;
+        }
+        auto object = prepareGameObjectSummon(where, payload.entry, Location(at.x, at.y, at.z, at.orientation));
+        bool published;
+        scope (exit)
+            if (!published)
+                scripts.destroy(object.behaviour);
+        const state = outdoorObjectCheckpoint(where, object, payload.expiresAt);
+        if (!state.actor || !database.commitOutdoorSummon(config.realmId, request, state, null))
+            return;
+        request.actor = state.actor;
+        if (canWrite() && ownsCell(request.map, request.home))
+        {
+            outdoorQuestActors[state.actor] = state;
+            published = true;
+            publishGameObjectSummon(where, object, payload.expiresAt);
             database.retireOutdoorSummon(config.realmId, request);
         }
     }
@@ -1590,9 +1646,15 @@ mixin template DbScriptRunner()
     package void placeWildGameObject(Map map, uint entry, Position at, uint duration, ushort from = 0,
         bool forwarded = false)
     {
-        if (entry !in data.gameObjectTemplates || !canWrite()
+        const proto = entry in data.gameObjectTemplates;
+        if (proto is null || !canWrite()
             || !client.isValidMapCoord(map.id, at.x, at.y, at.z, at.orientation))
             return;
+        if (usesOutdoorObjectQueue(map, entry, duration))
+        {
+            queueOutdoorObject(map, entry, at, duration);
+            return;
+        }
         if (!map.instanceId && regionOwnerAround !is null)
         {
             const owner = regionOwnerAround(map.id, at, 0);
@@ -1609,6 +1671,38 @@ mixin template DbScriptRunner()
         }
         if (auto object = summonWildGameObject(map, entry, at, duration))
             checkpointOutdoorScriptObject(map, object, true);
+    }
+
+    package bool usesOutdoorObjectQueue(Map map, uint entry, uint duration)
+    {
+        const proto = entry in data.gameObjectTemplates;
+        return duration && ownsCell !is null && proto !is null && durableOutdoorObject(map, proto.type);
+    }
+
+    package bool queueOutdoorObject(Map map, uint entry, Position at, uint duration)
+    {
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
+        import dmangos.serialization : serialize;
+        import dmangos.world.grid : cellKeyAt;
+        import dmangos.world.instancescripting : toHex;
+
+        if (!canWrite() || !client.isValidMapCoord(map.id, at.x, at.y, at.z, at.orientation))
+            return false;
+        ByteWriter state;
+        serialize(state, OutdoorObjectPayload(entry, unixTime + duration, at));
+        auto request = OutdoorSummonRequest(origin: nodeId, sequence: nextGameplaySequence(), map: map.id,
+            home: cellKeyAt(at.x, at.y), state: toHex(state.data), kind: OutdoorSummonKind.gameObject);
+        bool stored;
+        try
+        {
+            stored = database.enqueueOutdoorSummon(config.realmId, request);
+            if (stored && canWrite() && ownsCell(map.id, request.home))
+                deliverOutdoorObject(map, request);
+        }
+        catch (DatabaseException error)
+            warning!"map %s: could not place outdoor object %s: %s"(map.id, entry, error.msg);
+        return stored;
     }
 
     private void placeScriptCreature(Map map, const ref DbScriptStep step, Position at, ulong source, ulong target,

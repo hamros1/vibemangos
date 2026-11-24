@@ -376,6 +376,8 @@ struct OutdoorScriptCheckpoint
     bool waitingForSummons;
 }
 
+enum OutdoorSummonKind : ubyte { creature, gameObject }
+
 /// A durable summon routed by destination cell, with a receipt after the actor commits.
 struct OutdoorSummonRequest
 {
@@ -386,6 +388,7 @@ struct OutdoorSummonRequest
     string state;
     ulong actor;
     QuestActorCheckpoint checkpoint;
+    OutdoorSummonKind kind;
 
     bool sameRequest(const ref OutdoorSummonRequest other) const
     {
@@ -878,6 +881,7 @@ interface WorldDatabase
         const(OutdoorQuestUpdate)[] updates = null, const(QuestActorCheckpoint)[] summons = null,
         const(OutdoorScriptCheckpoint)[] relays = null, const(OutdoorSummonRequest)[] forwards = null);
     @DatabaseRead OutdoorSummonRequest[] loadOutdoorSummons(uint realm);
+    @DatabaseWrite bool enqueueOutdoorSummon(uint realm, const ref OutdoorSummonRequest request);
     @DatabaseRead bool outdoorSummonsPending(uint realm, ushort origin, ulong sequence);
     @DatabaseWrite bool commitOutdoorSummon(uint realm, const ref OutdoorSummonRequest request,
         const ref QuestActorCheckpoint actor, const(OutdoorScriptCheckpoint)[] relays);
@@ -1443,6 +1447,11 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     }
 
     OutdoorSummonRequest[] loadOutdoorSummons(uint realm) { return statements.loadOutdoorSummons(realm); }
+    bool enqueueOutdoorSummon(uint realm, const ref OutdoorSummonRequest request)
+    {
+        statements.insertOutdoorSummon(realm, request);
+        return true;
+    }
     bool outdoorSummonsPending(uint realm, ushort origin, ulong sequence)
     {
         return statements.outdoorSummonsPending(realm, origin, sequence);
@@ -3191,6 +3200,15 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
         foreach (ref request; requests)
             request.checkpoint = questActors.get(realm, null).get(request.actor, QuestActorCheckpoint.init);
         return requests;
+    }
+
+    bool enqueueOutdoorSummon(uint realm, const ref OutdoorSummonRequest request)
+    {
+        import std.algorithm.searching : any;
+
+        if (!outdoorSummons.get(realm, null).any!(r => r.sameRequest(request)))
+            outdoorSummons[realm] ~= request;
+        return true;
     }
 
     bool outdoorSummonsPending(uint realm, ushort origin, ulong sequence)
