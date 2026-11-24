@@ -118,7 +118,7 @@ struct BlackrockSpire
 
     enum Step : ubyte { dragonspine, flamewreathWave, stadium, combatDoorClose }
     Schedule!(Step, 4) steps;
-    @transient bool rookeryRecovering, stadiumRecovering;
+    @transient bool rookeryRecovering, stadiumRecovering, beastRecovering;
     @transient EntityRef[] recoveredOpponents;
 
     void on(ref InstanceContext brs, const ref ObjectLoaded e)
@@ -258,6 +258,14 @@ struct BlackrockSpire
             else
                 failStadium(brs); // Older saves did not keep the stadium actors.
         }
+        if (beastIntroDone || beastOut)
+        {
+            beastRecovering = brs.hasSavedCreature(theBeast);
+            if (beastRecovering || brs.hasSavedCreature(blackhandElite))
+                brs.waitForPlayer();
+            if (beastOut && !beastRecovering && !brs.entryKilled(theBeast))
+                beastOut = false;
+        }
     }
 
     void on(ref InstanceContext brs, const ref PlayerEntered e)
@@ -271,6 +279,9 @@ struct BlackrockSpire
                 if (brs.alive(guard) && !brs.alive(brs.victimOf(guard)))
                     brs.attack(guard, e.player);
         }
+        if (beastRecovering && beastOut && brs.alive(beastRef) && !brs.alive(brs.victimOf(beastRef)))
+            brs.attack(beastRef, e.player);
+        beastRecovering = false;
         rookeryRecovering = stadiumRecovering = false;
         foreach (creature; recoveredOpponents)
             if (brs.alive(creature) && !brs.alive(brs.victimOf(creature)))
@@ -300,12 +311,15 @@ struct BlackrockSpire
             {
                 beastIntroDone = true;
                 foreach (at; beastLocs)
-                    brs.summon(blackhandElite, at, 0, e.from);
+                    if (const ambusher = brs.summon(blackhandElite, at, 0, e.from))
+                        brs.checkpointCreature(ambusher);
+                brs.checkpoint();
             }
             if (e.id == Signals.beastAggro && !beastOut && beastRef)
             {
                 beastOut = true;
                 brs.attack(beastRef, e.from);
+                brs.checkpointCreature(beastRef);
             }
             break;
         case Signals.fatherFlameUsed:
@@ -347,6 +361,11 @@ struct BlackrockSpire
 
     void on(ref InstanceContext brs, const ref CreatureEngaged e)
     {
+        if (e.creature.entry == theBeast)
+        {
+            beastOut = true;
+            brs.checkpointCreature(e.creature);
+        }
         if (e.creature.entry == incarcerator && emberseerFight != Fight.inProgress && emberseerFight != Fight.done)
         {
             emberseerFight = Fight.inProgress;
@@ -385,6 +404,10 @@ struct BlackrockSpire
                 steps.cancel(Step.flamewreathWave);
                 brs.checkpoint();
             }
+            break;
+        case theBeast:
+            beastOut = false;
+            brs.checkpoint();
             break;
         case chromaticWhelp, chromaticDragon, blackhandHandler, gyth, rend:
             if (stadium == Fight.inProgress && (stadiumMobs.has(e.creature) || e.creature == gythRef))
@@ -442,6 +465,13 @@ struct BlackrockSpire
             foreach (door; [drakkisath1, drakkisath2])
                 if (door)
                     brs.door(door, true);
+            break;
+        case theBeast:
+            brs.checkpoint();
+            break;
+        case blackhandElite:
+            if (beastIntroDone && !brs.entryKilled(theBeast))
+                brs.checkpoint();
             break;
         case chromaticWhelp, chromaticDragon, blackhandHandler, gyth, rend:
             if (stadium != Fight.inProgress || !stadiumMobs.died(e.creature))

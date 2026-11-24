@@ -435,6 +435,7 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   and the replacement restores the confinement runes and doors for that phase.
   The Rookery resumes its remaining wave timer and living hatchers, guardians, or Solakar.
   Rend's stadium restores its wave, gates and surviving opponents, including Rend after his dismount.
+  The Beast resumes combat, and the replacement keeps the surviving Blackhand ambushers.
   Both of Drakkisath's gates reopen from his saved death.
   In Dire Maul North, Mizzle resumes his walk or remains available for the tribute at the throne.
 * **GM commands.** `.instance info`, `.instance shutdown` and `.instance reset` of a copy another node

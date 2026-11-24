@@ -1685,6 +1685,41 @@ unittest
         assert(Dungeon.isOpen(d.objectOf(entry)), "a gate reopened from Drakkisath's saved death");
 }
 
+/// The Beast and its ambush remain in the same copy when their worker dies.
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint elite = 10317, beast = 10430;
+    auto d = Dungeon.enter(229, 60);
+    d.trigger(2067);
+    ulong[] ambush;
+    foreach (summon; d.summons)
+        if (summon.entry == elite)
+            ambush ~= summon.guid;
+    assert(ambush.length == 3, "the three elite ambushers appeared");
+    d.kill(d.map.creatureAt(ambush[0]));
+    auto boss = d.spawned(beast, 0, 25);
+    const guid = boss.guid;
+    d.pull(boss);
+    d.hit(boss, boss.values.get!UNIT_FIELD_HEALTH / 4);
+    d.run(2100.msecs);
+    const health = boss.values.get!UNIT_FIELD_HEALTH;
+    d.restartAfterCrash();
+    boss = d.map.creatureAt(guid);
+    assert(boss !is null && boss.ai.inCombat && boss.values.get!UNIT_FIELD_HEALTH == health);
+    auto dead = d.map.creatureAt(ambush[0]);
+    assert(dead is null || !dead.alive);
+    foreach (survivor; ambush[1 .. $])
+    {
+        auto guard = d.map.creatureAt(survivor);
+        assert(guard !is null && guard.alive, "the surviving ambusher kept its GUID");
+    }
+    d.forget();
+    d.trigger(2067);
+    assert(d.summoned(elite) == 0, "the ambush cannot be triggered twice");
+}
+
 /// The stadium keeps its current wave and Gyth's dismount across a worker crash.
 unittest
 {
