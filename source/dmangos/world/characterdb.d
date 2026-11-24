@@ -1378,6 +1378,42 @@ final class CharacterStatements
         characters.execute!"DELETE FROM dmangos_quest_actor WHERE realm = ? AND actor = ?"(realm, actor);
     }
 
+    void prepareOutdoorScripts()
+    {
+        characters.execute!("CREATE TABLE IF NOT EXISTS dmangos_outdoor_script ("
+            ~ "realm INT UNSIGNED NOT NULL, origin SMALLINT UNSIGNED NOT NULL, sequence BIGINT UNSIGNED NOT NULL, "
+            ~ "map INT UNSIGNED NOT NULL, home BIGINT UNSIGNED NOT NULL, `cursor` INT UNSIGNED NOT NULL, "
+            ~ "state TEXT CHARACTER SET ascii NOT NULL, PRIMARY KEY (realm, origin, sequence)) ENGINE=InnoDB")();
+    }
+
+    imported!"dmangos.world.database".OutdoorScriptCheckpoint[] loadOutdoorScripts(uint realm)
+    {
+        import dmangos.world.database : OutdoorScriptCheckpoint;
+
+        OutdoorScriptCheckpoint[] scripts;
+        foreach (row; characters.query!("SELECT origin, sequence, map, `cursor`, home, state "
+                ~ "FROM dmangos_outdoor_script WHERE realm = ? ORDER BY sequence, origin")(realm))
+            scripts ~= OutdoorScriptCheckpoint(row.get!ushort(0), row.get!ulong(1), row.get!uint(2),
+                row.get!uint(3), row.get!ulong(4), row.get!string(5));
+        return scripts;
+    }
+
+    bool beginOutdoorScript(uint realm, const ref imported!"dmangos.world.database".OutdoorScriptCheckpoint script)
+    {
+        return characters.execute!("INSERT IGNORE INTO dmangos_outdoor_script "
+            ~ "(realm, origin, sequence, map, home, `cursor`, state) VALUES (?, ?, ?, ?, ?, ?, ?)")(
+                realm, script.origin, script.sequence, script.map, script.home, script.cursor, script.state) == 1;
+    }
+
+    bool advanceOutdoorScript(uint realm, ushort origin, ulong sequence, uint cursor, bool finished)
+    {
+        enum key = " WHERE realm = ? AND origin = ? AND sequence = ? AND `cursor` = ?";
+        if (finished)
+            return characters.execute!("DELETE FROM dmangos_outdoor_script" ~ key)(realm, origin, sequence, cursor) == 1;
+        return characters.execute!("UPDATE dmangos_outdoor_script SET `cursor` = `cursor` + 1" ~ key)(
+            realm, origin, sequence, cursor) == 1;
+    }
+
     /// See `WorldDatabase.deleteInstance`.
     void deleteInstance(uint id)
     {

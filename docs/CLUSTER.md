@@ -366,8 +366,12 @@ resolves that path from its world data, including when the spawn normally stands
 route suspended by combat resumes when the creature goes home.
 
 An outdoor database script anchored to a creature or game object moves with that object's home
-region. The new owner resumes at the next pending step and counts time spent in transit. Completed
-steps stay consumed.
+region. Scripts with delayed steps save their next step in the characters database before they start.
+After a clean handoff or a worker crash, the new owner resumes the pending steps using the original
+schedule and waits briefly for participants to reconnect. Each step is claimed in the database before
+it runs, so a replacement never runs a claimed step again. A crash between claiming a step and
+finishing its effects can leave that step incomplete. Steps that depend on a temporary actor
+require that actor to recover separately, as active escorts do.
 
 On a clean dungeon handoff, queued database scripts resume at their next step with the elapsed
 time intact. The receiving node waits briefly for players who were participating when the copy
@@ -986,6 +990,8 @@ python3 tools/harness/outdoor_chest_recovery.py
 python3 tools/harness/outdoor_chest_recovery.py --pooled
 python3 tools/harness/dreadsteed_recovery.py
 python3 tools/harness/escort_recovery.py
+python3 tools/harness/outdoor_script_recovery.py
+python3 tools/harness/outdoor_script_recovery.py --clean
 ```
 
 Both map options also accept `--cross-realm`. The Arathi Basin test checks the resource score,
@@ -1012,6 +1018,9 @@ The Dreadsteed check kills the worker just after calling the Keeper and J'eevee.
 clients see the same actors finish placing the ritual supplies and spawn the first wave once.
 The escort check kills the Defias Traitor's worker after the quest starts. The original client
 reloads the same actor, sees the route finish, and keeps the completed quest in MariaDB.
+The outdoor script check kills the worker after the first quest script step. The original client
+sees the delayed summon and emote once each, and MariaDB has no steps pending for that script.
+`--clean` checks the same sequence during a clean handoff.
 
 ## Monitoring
 

@@ -5514,6 +5514,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         refreshOutdoorCorpses(gained, lost);
         refreshOutdoorChests(gained, lost);
         refreshQuestActors(gained, lost, arriving);
+        restoreOutdoorScripts(gained);
         bool[uint] looked;
         foreach (ref r; gained)
             if (r.map !in looked)

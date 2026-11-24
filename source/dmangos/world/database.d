@@ -358,6 +358,16 @@ struct QuestActorCheckpoint
     string state;
 }
 
+/// The next unclaimed step of a delayed script on an outdoor region.
+struct OutdoorScriptCheckpoint
+{
+    ushort origin;
+    ulong sequence;
+    uint map, cursor;
+    ulong home;
+    string state;
+}
+
 /// A `character_honor_cp` row: honor from a kill or another source, on a day.
 struct HonorPointRecord
 {
@@ -812,6 +822,9 @@ interface WorldDatabase
     @DatabaseRead QuestActorCheckpoint[] loadQuestActors(uint realm);
     void saveQuestActor(uint realm, const QuestActorCheckpoint actor);
     void deleteQuestActor(uint realm, ulong actor);
+    @DatabaseRead OutdoorScriptCheckpoint[] loadOutdoorScripts(uint realm);
+    @DatabaseWrite bool beginOutdoorScript(uint realm, const ref OutdoorScriptCheckpoint script);
+    @DatabaseWrite bool advanceOutdoorScript(uint realm, ushort origin, ulong sequence, uint cursor, bool finished);
 
     /// The map of instance `id`; uint.max if there is no such instance.
     @DatabaseRead uint instanceMapOf(uint id);
@@ -1105,6 +1118,7 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
         statements.preparePickpockets();
         statements.prepareGameObjectPools();
         statements.prepareQuestActors();
+        statements.prepareOutdoorScripts();
         statements.prepareLootAwards();
         characterDb.execute!("CREATE TABLE IF NOT EXISTS `dmangos_write_applied` ("
             ~ "`stream` INT UNSIGNED NOT NULL, `seq` BIGINT UNSIGNED NOT NULL, PRIMARY KEY (`stream`)"
@@ -1311,6 +1325,15 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     QuestActorCheckpoint[] loadQuestActors(uint realm) { return statements.loadQuestActors(realm); }
     void saveQuestActor(uint realm, const QuestActorCheckpoint actor) { statements.saveQuestActor(realm, actor); }
     void deleteQuestActor(uint realm, ulong actor) { statements.deleteQuestActor(realm, actor); }
+    OutdoorScriptCheckpoint[] loadOutdoorScripts(uint realm) { return statements.loadOutdoorScripts(realm); }
+    bool beginOutdoorScript(uint realm, const ref OutdoorScriptCheckpoint script)
+    {
+        return statements.beginOutdoorScript(realm, script);
+    }
+    bool advanceOutdoorScript(uint realm, ushort origin, ulong sequence, uint cursor, bool finished)
+    {
+        return statements.advanceOutdoorScript(realm, origin, sequence, cursor, finished);
+    }
     uint instanceMapOf(uint id) { return statements.instanceMapOf(id); }
     uint[uint] instanceBindsOf(uint player) { return statements.instanceBindsOf(player); }
     bool instanceLimitReached(uint account, uint instance, long now)
@@ -2930,6 +2953,39 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
 
     private PickpocketRecord[uint[2]] pockets;
     private QuestActorCheckpoint[ulong][uint] questActors;
+    private OutdoorScriptCheckpoint[ulong][ushort][uint] outdoorScripts;
+
+    OutdoorScriptCheckpoint[] loadOutdoorScripts(uint realm)
+    {
+        OutdoorScriptCheckpoint[] scripts;
+        foreach (origin; outdoorScripts.get(realm, null))
+            scripts ~= origin.values;
+        return scripts;
+    }
+
+    bool beginOutdoorScript(uint realm, const ref OutdoorScriptCheckpoint script)
+    {
+        auto scripts = &outdoorScripts.require(realm, null).require(script.origin, null);
+        if (script.sequence in *scripts)
+            return false;
+        (*scripts)[script.sequence] = script;
+        return true;
+    }
+
+    bool advanceOutdoorScript(uint realm, ushort origin, ulong sequence, uint cursor, bool finished)
+    {
+        auto scripts = origin in outdoorScripts.get(realm, null);
+        if (scripts is null)
+            return false;
+        auto script = sequence in *scripts;
+        if (script is null || script.cursor != cursor)
+            return false;
+        if (finished)
+            (*scripts).remove(sequence);
+        else
+            ++script.cursor;
+        return true;
+    }
 
     QuestActorCheckpoint[] loadQuestActors(uint realm) { return questActors.get(realm, null).values; }
     void saveQuestActor(uint realm, const QuestActorCheckpoint actor) { questActors[realm][actor.actor] = actor; }

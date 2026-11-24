@@ -322,6 +322,11 @@ final class ScriptRun
     ulong home = noCell;    /// also retained if the anchor despawns during the run
     bool waitForSource, waitForTarget; /// players present when the old owner released the copy
     long waitForPlayersUntil;
+    ushort outdoorOrigin;
+    ulong outdoorSequence;
+    long outdoorStartedAt;
+    long outdoorRetryAt;
+    bool outdoorSaved;
 
     this(DbScriptType type, uint id, uint mapId, uint instanceId, ulong source, ulong target,
         const(DbScriptStep)[] steps)
@@ -355,6 +360,8 @@ mixin template DbScriptRunner()
     import dmangos.world.replication : Replica;
 
     private ScriptRun[] scriptRuns;
+    private bool retryOutdoorScriptRecovery;
+    private long nextOutdoorScriptRecovery;
 
     bool delegate(ushort, const ref ScriptGameObject) sendScriptGameObject;
     private ulong[ushort] lastScriptGameObject;
@@ -461,8 +468,180 @@ mixin template DbScriptRunner()
                 run.anchor = target;
             }
         }
+        trackOutdoorScript(run);
         scriptRuns ~= run;
         return true;
+    }
+
+    private long scriptClock()
+    {
+        return startUnixMillis + (clock() - startClock).total!"msecs";
+    }
+
+    private void trackOutdoorScript(ScriptRun run)
+    {
+        if (config.cluster.enabled && !run.instanceId && run.home != noCell && run.steps[$ - 1].delay)
+        {
+            run.outdoorOrigin = config.cluster.nodeId;
+            run.outdoorSequence = nextGameplaySequence();
+            run.outdoorStartedAt = scriptClock() - run.elapsed;
+        }
+    }
+
+    private static uint outdoorScriptFingerprint(const(DbScriptStep)[] steps)
+    {
+        import dmangos.serialization : serialize;
+        import std.digest.crc : crc32Of;
+
+        ByteWriter rows;
+        foreach (ref step; steps)
+            serialize(rows, step);
+        const checksum = crc32Of(rows.data);
+        auto reader = ByteReader(checksum[]);
+        return reader.read!uint;
+    }
+
+    private bool beginOutdoorRun(ScriptRun run, Map map)
+    {
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
+        import dmangos.world.database : OutdoorScriptCheckpoint;
+        import dmangos.world.instancescripting : toHex;
+
+        ByteWriter state;
+        state.put(cast(ubyte) run.type);
+        state.put(run.id);
+        state.put(outdoorScriptFingerprint(run.steps));
+        state.put(run.outdoorStartedAt);
+        state.put(run.source);
+        state.put(run.target);
+        state.put(run.anchor);
+        state.put(map.find(run.source) !is null);
+        state.put(map.find(run.target) !is null);
+        const row = OutdoorScriptCheckpoint(run.outdoorOrigin, run.outdoorSequence, run.mapId, cast(uint) run.next,
+            run.home, toHex(state.data));
+        try
+        {
+            foreach (guid; [run.source, run.target])
+                if (auto session = onlinePlayer(guid))
+                    if (session.character !is null && session.currentMap is map && !session.transferring)
+                    {
+                        session.saveQuests();
+                        const progress = session.character.progress(session.secondsInWorld());
+                        database.saveProgress(progress);
+                    }
+            if (!database.beginOutdoorScript(config.realmId, row))
+            {
+                // A rejected write can also mean that an earlier attempt committed before its connection broke.
+                run.next = run.steps.length;
+                retryOutdoorScriptRecovery = true;
+                return false;
+            }
+            run.outdoorSaved = true;
+            return true;
+        }
+        catch (DatabaseException error)
+        {
+            warning!"outdoor script %s: could not save its start: %s"(run.id, error.msg);
+            run.outdoorRetryAt = unixTime + 1;
+            return false;
+        }
+    }
+
+    private bool claimOutdoorStep(ScriptRun run, bool finished)
+    {
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
+
+        try
+        {
+            if (database.advanceOutdoorScript(config.realmId, run.outdoorOrigin, run.outdoorSequence,
+                    cast(uint) run.next, finished))
+                return true;
+            run.next = run.steps.length;
+            retryOutdoorScriptRecovery = true;
+        }
+        catch (DatabaseException error)
+        {
+            warning!"outdoor script %s: could not claim step %s: %s"(run.id, run.next, error.msg);
+            run.outdoorRetryAt = unixTime + 1;
+        }
+        return false;
+    }
+
+    private void restoreOutdoorScripts(const(imported!"dmangos.cluster.regions".Region)[] gained = null)
+    {
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
+        import dmangos.world.database : OutdoorScriptCheckpoint;
+        import dmangos.world.instancescripting : fromHex;
+        import std.algorithm.comparison : clamp;
+        import std.algorithm.searching : any;
+
+        if (!config.cluster.enabled)
+            return;
+        const allOwned = retryOutdoorScriptRecovery && ownsCell !is null;
+        if (!allOwned && !gained.any!(r => physicalWorldRegion(r)))
+            return;
+        if (!canWrite())
+        {
+            retryOutdoorScriptRecovery = true;
+            return;
+        }
+        OutdoorScriptCheckpoint[] saved;
+        try
+        {
+            saved = database.loadOutdoorScripts(config.realmId);
+            retryOutdoorScriptRecovery = false;
+        }
+        catch (DatabaseException error)
+        {
+            warning!"outdoor scripts: could not read pending work: %s"(error.msg);
+            retryOutdoorScriptRecovery = true;
+            nextOutdoorScriptRecovery = unixTime + 1;
+            return;
+        }
+        foreach (ref row; saved)
+        {
+            if (allOwned ? !ownsCell(row.map, row.home)
+                : !gained.any!(r => physicalWorldRegion(r) && r.map == row.map && r.rect.containsKey(row.home)))
+                continue;
+            if (scriptRuns.any!(run => run.outdoorOrigin == row.origin && run.outdoorSequence == row.sequence))
+                continue;
+            try
+            {
+                auto reader = ByteReader(fromHex(row.state));
+                const type = cast(DbScriptType) reader.read!ubyte;
+                const id = reader.read!uint, fingerprint = reader.read!uint, started = reader.read!long;
+                const source = reader.read!ulong, target = reader.read!ulong, anchor = reader.read!ulong;
+                const waitForSource = reader.read!bool, waitForTarget = reader.read!bool;
+                const steps = type <= DbScriptType.max ? data.dbScripts.steps(type, id) : null;
+                if (row.cursor >= steps.length || fingerprint != outdoorScriptFingerprint(steps))
+                {
+                    warning!"outdoor script %s changed while pending; discarding checkpoint"(id);
+                    database.advanceOutdoorScript(config.realmId, row.origin, row.sequence, row.cursor, true);
+                    continue;
+                }
+                map(row.map).loadCell(row.home);
+                auto run = new ScriptRun(type, id, row.map, 0, source, target, steps);
+                run.next = row.cursor;
+                run.elapsed = cast(uint) clamp(scriptClock() - started, 0L, cast(long) uint.max);
+                run.anchor = anchor;
+                run.home = row.home;
+                run.outdoorOrigin = row.origin;
+                run.outdoorSequence = row.sequence;
+                run.outdoorStartedAt = started;
+                run.outdoorSaved = true;
+                run.waitForSource = waitForSource;
+                run.waitForTarget = waitForTarget;
+                if (waitForSource || waitForTarget)
+                    run.waitForPlayersUntil = unixTime + (long(config.cluster.leaseMs) + config.cluster.failureTimeoutMs
+                        + 6_999) / 1000;
+                scriptRuns ~= run;
+            }
+            catch (Exception error)
+                warning!"outdoor script %s/%s could not be restored: %s"(row.origin, row.sequence, error.msg);
+        }
     }
 
     /// Move outdoor scripts with their first local world object and keep their completed steps consumed.
@@ -479,10 +658,10 @@ mixin template DbScriptRunner()
             if (run.mapId != map.id || run.instanceId || run.home == noCell || run.next >= run.steps.length)
                 continue;
             const knownHome = map.migrantHome(run.anchor);
-            const home = knownHome == noCell ? run.home : knownHome;
+            const home = run.outdoorSaved || knownHome == noCell ? run.home : knownHome;
             if (!region.rect.containsKey(home))
                 continue;
-            if (region.next)
+            if (region.next && !run.outdoorSaved)
             {
                 ByteWriter w;
                 w.put(cast(ubyte) run.type);
@@ -519,6 +698,7 @@ mixin template DbScriptRunner()
         run.elapsed = cast(uint) min(uint.max, cast(ulong) elapsed + transit);
         run.anchor = anchor;
         run.home = migrant.home;
+        trackOutdoorScript(run);
         scriptRuns ~= run;
     }
 
@@ -594,11 +774,17 @@ mixin template DbScriptRunner()
     /// Runs the steps whose time has come, `diff` milliseconds on.
     package void updateScripts(uint diff)
     {
+        if (retryOutdoorScriptRecovery && unixTime >= nextOutdoorScriptRecovery)
+            restoreOutdoorScripts();
         // A copy: a step may start a relay script.
         foreach (run; scriptRuns.dup)
         {
-            run.elapsed += diff;
+            run.elapsed += diff > uint.max - run.elapsed ? uint.max - run.elapsed : diff;
             auto map = existingMap(run.mapId, run.instanceId);
+            if (map !is null && run.outdoorSequence && (unixTime < run.outdoorRetryAt || !canWrite()
+                    || (ownsCell !is null && !ownsCell(run.mapId, run.home))
+                    || (!run.outdoorSaved && !beginOutdoorRun(run, map))))
+                continue;
             if (map !is null && run.waitForPlayersUntil)
             {
                 if (unixTime < run.waitForPlayersUntil
@@ -609,11 +795,26 @@ mixin template DbScriptRunner()
             }
             while (map !is null && run.next < run.steps.length && run.steps[run.next].delay <= run.elapsed)
             {
-                const step = &run.steps[run.next++];
-                if (runScriptStep(run.type, *step, map, run.source, run.target))
+                const step = &run.steps[run.next];
+                if (run.outdoorSaved)
                 {
-                    run.next = run.steps.length; // terminated
-                    break;
+                    // A termination check has no side effects. Decide it before committing the cursor.
+                    const terminator = step.command == ScriptCommand.terminateScript;
+                    const stops = terminator && runScriptStep(run.type, *step, map, run.source, run.target);
+                    if (!claimOutdoorStep(run, stops || run.next + 1 == run.steps.length))
+                        break;
+                    run.next = stops ? run.steps.length : run.next + 1;
+                    if (!terminator && canWrite())
+                        runScriptStep(run.type, *step, map, run.source, run.target);
+                }
+                else
+                {
+                    ++run.next;
+                    if (runScriptStep(run.type, *step, map, run.source, run.target))
+                    {
+                        run.next = run.steps.length;
+                        break;
+                    }
                 }
             }
             if (map is null)
