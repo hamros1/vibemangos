@@ -232,7 +232,7 @@ final class InstanceScript : InstanceHost
             context.savedSummons = durableSummons;
         runtime.raise(handle, context, event);
         checkpoint = context.checkpointRequested;
-        durableSummons ~= context.checkpointSummons;
+        rememberCheckpointCreatures(context.checkpointSummons);
         static if (is(E == Restored))
         {
             waitForPlayer = context.waitingForPlayer;
@@ -299,7 +299,7 @@ final class InstanceScript : InstanceHost
             auto context = InstanceContext(this);
             runtime.tick(handle, context, ms);
             checkpoint = context.checkpointRequested;
-            durableSummons ~= context.checkpointSummons;
+            rememberCheckpointCreatures(context.checkpointSummons);
         }
         raising = false;
         save(checkpoint);
@@ -309,6 +309,15 @@ final class InstanceScript : InstanceHost
             pending = pending[1 .. $];
             next();
         }
+    }
+
+    private void rememberCheckpointCreatures(EntityRef[] creatures)
+    {
+        import std.algorithm.searching : canFind;
+
+        foreach (creature; creatures)
+            if (!durableSummons.canFind(creature))
+                durableSummons ~= creature;
     }
 
     private void save(bool checkpoint)

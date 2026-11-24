@@ -1578,13 +1578,28 @@ unittest
     d.run(2.seconds);
     auto guards = d.all(incarcerator);
     assert(guards.length > 0, "his incarcerators");
-    foreach (g; guards)
+    const bossGuid = boss.guid, defeated = guards[0].guid;
+    d.pull(guards[0]);
+    d.run(12.seconds);
+    d.kill(guards[0]);
+    d.restartAfterCrash();
+    assert(d.map.findObject(defeated) is null, "the defeated incarcerator stays gone");
+    boss = d.map.creatureAt(bossGuid);
+    assert(boss !is null && !boss.ai.inCombat, "Emberseer is still growing");
+    foreach (g; d.all(incarcerator))
     {
         d.pull(g);
         d.kill(g);
     }
     bool fighting() { return boss.ai.inCombat; }
-    assert(d.runUntil(&fighting, 60.seconds), "he breaks free and fights\n" ~ d.story);
+    assert(d.runUntil(&fighting, 20.seconds), "he finishes the original growth timer and fights\n" ~ d.story);
+    d.hit(boss, boss.values.get!UNIT_FIELD_HEALTH / 4);
+    d.run(2100.msecs);
+    const woundedHealth = boss.values.get!UNIT_FIELD_HEALTH;
+    d.restartAfterCrash();
+    boss = d.map.creatureAt(bossGuid);
+    assert(boss !is null && boss.ai.inCombat && boss.values.get!UNIT_FIELD_HEALTH == woundedHealth,
+        "the same wounded Emberseer resumes combat");
     d.kill(boss);
     d.run(2.seconds);
     assert(Dungeon.isOpen(d.objectOf(outDoor)), "his way out opens");

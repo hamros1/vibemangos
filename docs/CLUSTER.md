@@ -431,6 +431,8 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   saves the party's current positions and health.
   The Tomb of the Seven keeps its active dwarves, the current round and its timer. The entrance
   stays closed through combat, and the doors and reward survive a crash after Doom'rel falls.
+  In Blackrock Spire, Pyroguard Emberseer resumes his growth or fight with the surviving guards,
+  and the replacement restores the confinement runes and doors for that phase.
 * **GM commands.** `.instance info`, `.instance shutdown` and `.instance reset` of a copy another node
   hosts go to that node and its answer comes back; `.instance resetall` goes to every node.
 

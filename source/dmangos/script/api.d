@@ -1308,6 +1308,15 @@ struct InstanceContext
         return false;
     }
 
+    /// Finds a checkpointed creature type before the copy has loaded its spawns.
+    bool hasSavedCreature(uint entry) const
+    {
+        foreach (saved; savedSummons_)
+            if (saved.entry == entry)
+                return true;
+        return false;
+    }
+
     package(dmangos) @property EntityRef[] checkpointSummons() { return summons_; }
     package(dmangos) @property void savedSummons(const(EntityRef)[] creatures) { savedSummons_ = creatures; }
 

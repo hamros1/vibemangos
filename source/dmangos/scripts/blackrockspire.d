@@ -114,6 +114,7 @@ struct BlackrockSpire
         gythExit, drakkisath1, drakkisath2, emberseerRef, beastRef;
     @transient Pack!48 roomCandidates;
     @transient Pack!8 incarcerators;
+    @transient bool emberseerRecovering, emberseerRunesLit;
 
     enum Step : ubyte { dragonspine, flamewreathWave, stadium, combatDoorClose }
     Schedule!(Step, 4) steps;
@@ -131,7 +132,7 @@ struct BlackrockSpire
         if (entry >= emberseerRune1 && entry < emberseerRune1 + 7)
         {
             emberseerRunes[entry - emberseerRune1] = e.object;
-            if (emberseerFight == Fight.done)
+            if (emberseerFight == Fight.done || emberseerRunesLit)
                 brs.door(e.object, true);
         }
         if (entry >= brazier1 && entry < brazier1 + 6)
@@ -152,7 +153,11 @@ struct BlackrockSpire
             if (rooms == Fight.done)
                 brs.door(e.object, true);
             break;
-        case emberseerDoors: emberseerDoorsRef = e.object; break;
+        case emberseerDoors:
+            emberseerDoorsRef = e.object;
+            if (emberseerFight != Fight.notStarted)
+                brs.door(e.object, emberseerFight != Fight.inProgress);
+            break;
         case emberseerOut:
             emberseerOutDoor = e.object;
             if (emberseerFight == Fight.done)
@@ -179,7 +184,11 @@ struct BlackrockSpire
         {
         case blackhandSummoner, blackhandVeteran: roomCandidates.add(e.creature); break;
         case incarcerator: incarcerators.add(e.creature); break;
-        case emberseer: emberseerRef = e.creature; break;
+        case emberseer:
+            emberseerRef = e.creature;
+            if (emberseerRecovering && emberseerIsFree(brs))
+                setEmberseerRunes(brs, true);
+            break;
         case theBeast: beastRef = e.creature; break;
         case rend:
             // Rend, knocked off Gyth's back, joins the fight: the stadium counts him.
@@ -188,6 +197,33 @@ struct BlackrockSpire
             break;
         default: break;
         }
+    }
+
+    void on(ref InstanceContext brs, const ref Restored e)
+    {
+        if (emberseerFight != Fight.inProgress)
+            return;
+        if (brs.entryKilled(emberseer))
+            return finishEmberseer(brs);
+        if (!brs.hasSavedCreature(emberseer))
+        {
+            emberseerFight = Fight.failed;
+            return;
+        }
+        emberseerRecovering = true;
+        brs.waitForPlayer();
+    }
+
+    void on(ref InstanceContext brs, const ref PlayerEntered e)
+    {
+        if (!emberseerRecovering)
+            return;
+        emberseerRecovering = false;
+        if (emberseerIsFree(brs) && !brs.alive(brs.victimOf(emberseerRef)))
+            brs.attack(emberseerRef, e.player);
+        foreach (guard; incarcerators)
+            if (brs.alive(guard) && !brs.alive(brs.victimOf(guard)))
+                brs.attack(guard, e.player);
     }
 
     void on(ref InstanceContext brs, const ref Signal e)
@@ -230,6 +266,7 @@ struct BlackrockSpire
             break;
         case Signals.emberseerFree:
             setEmberseerRunes(brs, true);
+            brs.checkpoint();
             break;
         case Signals.gythHalf:
             if (nefariusRef && gythRef)
@@ -262,6 +299,11 @@ struct BlackrockSpire
             emberseerFight = Fight.inProgress;
             if (emberseerDoorsRef)
                 brs.door(emberseerDoorsRef, false);
+            if (emberseerRef && brs.alive(emberseerRef))
+                brs.checkpointCreature(emberseerRef);
+            foreach (guard; incarcerators)
+                if (brs.alive(guard))
+                    brs.checkpointCreature(guard);
         }
     }
 
@@ -280,6 +322,7 @@ struct BlackrockSpire
                 setEmberseerRunes(brs, false);
                 if (emberseerRef && e.creature != emberseerRef)
                     brs.signal(emberseerRef, Emberseer.Signals.reset);
+                brs.checkpoint();
             }
             break;
         case solakar, rookeryGuardian, rookeryHatcher:
@@ -326,13 +369,12 @@ struct BlackrockSpire
                     brs.door(emberseerInDoor, true);
             }
             break;
+        case incarcerator:
+            if (emberseerFight == Fight.inProgress)
+                brs.checkpoint();
+            break;
         case emberseer:
-            emberseerFight = Fight.done;
-            setEmberseerRunes(brs, true);
-            if (emberseerDoorsRef)
-                brs.door(emberseerDoorsRef, true);
-            if (emberseerOutDoor)
-                brs.door(emberseerOutDoor, true);
+            finishEmberseer(brs);
             break;
         case solakar:
             flamewreath = Fight.done;
@@ -416,9 +458,27 @@ struct BlackrockSpire
 
     private void setEmberseerRunes(ref InstanceContext brs, bool lit)
     {
+        emberseerRunesLit = lit;
         foreach (rune; emberseerRunes)
             if (rune)
                 brs.door(rune, lit);
+    }
+
+    private bool emberseerIsFree(ref InstanceContext brs)
+    {
+        return emberseerRef && brs.alive(emberseerRef)
+            && !(brs.unitFlagsOf(emberseerRef) & (UnitFlag.uninteractible | UnitFlag.immuneToPlayer));
+    }
+
+    private void finishEmberseer(ref InstanceContext brs)
+    {
+        emberseerFight = Fight.done;
+        setEmberseerRunes(brs, true);
+        if (emberseerDoorsRef)
+            brs.door(emberseerDoorsRef, true);
+        if (emberseerOutDoor)
+            brs.door(emberseerOutDoor, true);
+        brs.checkpoint();
     }
 
     /// Six waves of rookery guardians and hatchers, then Solakar.

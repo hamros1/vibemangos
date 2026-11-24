@@ -65,9 +65,10 @@ describes how players use the systems available today.
   Creatures do not hover, water walk or slow fall (`SMSG_SPLINE_MOVE_*`).
 * **Instances:** a group's dungeon copy is saved with its binds, defeated spawns, and script state.
   A raid's copies reset together at fixed times with warnings. A planned cluster handoff carries
-  the live creatures and objects. After a worker crash, Blackrock Depths can resume a checkpointed
-  Ring of Law wave with its surviving opponents. Other encounters follow their scripts' restore
-  rules. See [dungeon failover](CLUSTER.md#dungeons-and-battlegrounds).
+  the live creatures and objects. Worker crash recovery includes active Ring of Law waves and
+  Tomb of the Seven rounds in Blackrock Depths, plus Pyroguard Emberseer's growth and combat in
+  Blackrock Spire. Other encounters follow their scripts' restore rules.
+  See [dungeon failover](CLUSTER.md#dungeons-and-battlegrounds).
 * **Groups:** an offline leader is not replaced after a while (that needs a timer). Loot
   settings decide who loots. Two-faction groups do not show the other faction as friendly.
 * **Chat:** channels have no restricted language mode (one language per faction); the ignore list stops whispers and invitations
