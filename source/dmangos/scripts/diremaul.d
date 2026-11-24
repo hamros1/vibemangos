@@ -122,12 +122,16 @@ struct DireMaul
 
     enum Step : ubyte { ritualCheck, ritualPulse, trap }
     Schedule!(Step, 4) steps;
+    @transient EntityRef restoredHerald;
 
     static immutable uint[6] tributeBosses = [14326, 14321, guardSlipkik, kromcrush, chorush, 14322];
 
     void on(ref InstanceContext dm, const ref Restored e)
     {
+        gordokDead = gordokDead || dm.entryKilled(kingGordok);
         restoreTribute = gordokDead;
+        if (gordokDead && dm.hasSavedCreature(mizzle))
+            dm.waitForPlayer();
     }
 
     void on(ref InstanceContext dm, const ref PlayerEntered e)
@@ -135,7 +139,11 @@ struct DireMaul
         if (restoreTribute)
         {
             restoreTribute = false;
-            bringMizzle(dm);
+            if (restoredHerald)
+                dm.signal(restoredHerald, MizzleTheCrafty.recovered);
+            else
+                bringMizzle(dm);
+            restoredHerald = EntityRef.init;
         }
     }
 
@@ -152,7 +160,10 @@ struct DireMaul
     private void bringMizzle(ref InstanceContext dm)
     {
         if (const herald = dm.summon(mizzle, mizzleSpawn))
+        {
             dm.signal(herald, MizzleTheCrafty.start);
+            dm.checkpointCreature(herald);
+        }
     }
 
     void on(ref InstanceContext dm, const ref ObjectLoaded e)
@@ -348,6 +359,10 @@ struct DireMaul
             if (gordokDead)
                 dm.setFaction(e.creature, factionFriendly);
             break;
+        case mizzle:
+            if (restoreTribute)
+                restoredHerald = e.creature;
+            break;
         case ritualKeeper: keeperRef = e.creature; break;
         case jeevee: jeeveeRef = e.creature; break;
         case xorothianImp, dreadGuard:
@@ -416,6 +431,7 @@ struct DireMaul
             // Mizzle comes for the tribute whether Cho'Rush lives or not (ScriptDev2 has him summoned by Cho'Rush's
             // creature, dead or alive).
             bringMizzle(dm);
+            dm.checkpoint();
             break;
         default:
             break;
@@ -525,14 +541,23 @@ struct DireMaul
 @creature("npc_mizzle_crafty")
 struct MizzleTheCrafty
 {
-    enum uint start = 1, questGiverFlag = 2;
+    enum uint start = 1, recovered = 2, questGiverFlag = 2, gossipFlag = 1;
+    static immutable Location throne = Location(816.53f, 482.302f, 37.3182f); // Waypoints 7 and 8.
 
     void on(ref CreatureContext me, const ref Signal e)
     {
-        if (e.id != start)
-            return;
-        me.npcFlags(questGiverFlag);
-        me.walkPath();
+        if (e.id == start)
+        {
+            me.npcFlags(questGiverFlag);
+            me.walkPath();
+        }
+        else if (e.id == recovered)
+        {
+            const at = me.location;
+            // The delayed gossip step may have been lost while the herald was preparing the chest.
+            if ((at.x - throne.x) ^^ 2 + (at.y - throne.y) ^^ 2 + (at.z - throne.z) ^^ 2 < 1)
+                me.npcFlags(questGiverFlag | gossipFlag);
+        }
     }
 }
 

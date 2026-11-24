@@ -436,6 +436,7 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   The Rookery resumes its remaining wave timer and living hatchers, guardians, or Solakar.
   Rend's stadium restores its wave, gates and surviving opponents, including Rend after his dismount.
   Both of Drakkisath's gates reopen from his saved death.
+  In Dire Maul North, Mizzle resumes his walk or remains available for the tribute at the throne.
 * **GM commands.** `.instance info`, `.instance shutdown` and `.instance reset` of a copy another node
   hosts go to that node and its answer comes back; `.instance resetall` goes to every node.
 
@@ -951,6 +952,8 @@ worker between waves. `--new-party` forms the group through an invitation after 
 handoff. `--active-wave` tests a crash with some opponents still alive. Both clients must
 finish the same copy on their existing connections. Gerstahn stays dead and the party keeps
 the one Prison Cell Key it looted before the crash.
+The Tomb checks kill the worker during combat, before opening the reward, and after the first
+claim. Both clients stay in the same copy, and MariaDB records each claimed item once.
 
 ## Monitoring
 

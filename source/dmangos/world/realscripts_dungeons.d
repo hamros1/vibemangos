@@ -1792,7 +1792,7 @@ unittest
         assert(d.summoned(mizzle) == 1, "Mizzle comes\n" ~ d.story);
         assert(!(d.find(mizzle).values.get!UNIT_NPC_FLAGS & 1), "the coronation opens at the throne");
         const heraldGuid = d.find(mizzle).guid;
-        if (run == 0)
+        if (run <= 1)
         {
             bool onTheWay()
             {
@@ -1802,7 +1802,13 @@ unittest
                 return route !is null && route.lastWaypoint == 2 && herald.position.x > 730;
             }
             assert(d.runUntil(&onTheWay, 45.seconds), "Mizzle starts his route");
-            d.handoff();
+            if (run == 0)
+                d.handoff();
+            else
+            {
+                d.run(2100.msecs); // A periodic creature checkpoint captures the partially completed route.
+                d.restartAfterCrash();
+            }
             auto arrived = d.find(mizzle);
             assert(arrived !is null && arrived.guid == heraldGuid, "the same herald arrived");
             auto route = cast(WaypointMovement) arrived.generator;
@@ -1822,6 +1828,15 @@ unittest
             assert(waiting !is null && waiting.guid == heraldGuid && d.summoned(mizzle) == 1, "only one herald");
             auto route = cast(WaypointMovement) waiting.generator;
             assert(route !is null && route.paused && route.lastWaypoint == 7, "he still waits for the tribute dialogue");
+        }
+        else if (run == 1)
+        {
+            d.run(2100.msecs);
+            d.restartAfterCrash();
+            auto waiting = d.find(mizzle);
+            assert(waiting !is null && waiting.guid == heraldGuid && d.all(mizzle).length == 1,
+                "the same herald remains at the throne after worker loss");
+            assert(atThrone(), "the coronation is immediately available");
         }
         auto herald = d.find(mizzle);
         assert(d.loadedObject(tribute) is null, "tribute awaits Mizzle's dialogue");

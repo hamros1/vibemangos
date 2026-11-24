@@ -68,7 +68,7 @@ describes how players use the systems available today.
   the live creatures and objects. Worker crash recovery includes active Ring of Law waves and
   Tomb of the Seven rounds in Blackrock Depths. Blackrock Spire restores Pyroguard Emberseer's
   growth and combat, the Rookery waves and Solakar, Rend's stadium, and both gates after
-  Drakkisath dies.
+  Drakkisath dies. Dire Maul North keeps Mizzle's progress after King Gordok falls.
   Other encounters follow their scripts' restore rules.
   See [dungeon failover](CLUSTER.md#dungeons-and-battlegrounds).
 * **Groups:** an offline leader is not replaced after a while (that needs a timer). Loot
