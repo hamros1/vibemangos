@@ -1525,7 +1525,7 @@ mixin template PetHandlers()
     }
 
     private enum ubyte loneTotemSlot = 4, guardianSlot = 5;
-    private enum ubyte summonCheckpointVersion = 5;
+    private enum ubyte summonCheckpointVersion = 6;
     private bool summonCheckpointExists, detachingSummons;
 
     private const(ubyte)[] playerSummonState(bool departing, ulong removed = 0)
@@ -1614,7 +1614,7 @@ mixin template PetHandlers()
         const ground = player.alive && persistentAreas.length ? groundRecoveryState() : null;
         const environmentState = player.alive ? environmentRecoveryState() : null;
         const casting = player.alive && (generic.active || pendingHits.length || context.replicaImpactCount(player.guid)
-            || activeRecoveryChannelAura() !is null || ritualChannelOwner)
+            || activeRecoveryChannelAura() !is null || ritualChannelOwner || cameraChannel())
             ? castRecoveryState() : null;
         const active = summons.length || fishing.length || ground.length || casting.length || environmentState.length;
         if (!active && !summonCheckpointExists)
@@ -1697,7 +1697,7 @@ mixin template PetHandlers()
                                 auto environmentState = ByteReader(state.readBytes(state.read!uint));
                                 restoreEnvironmentRecovery(environmentState);
                             }
-                            restoreCastRecovery(state);
+                            restoreCastRecovery(state, version_ >= 6);
                         }
                     }
                 }

@@ -889,6 +889,10 @@ for action in actions:
     elif kind == "cancelchannel":
         wsend(0x13B, struct.pack("<I", int(args[0])))
         print(f"cancel channel {args[0]}")
+    elif kind == "castat":
+        spell = int(args[0])
+        wsend(0x12E, struct.pack("<IH3f", spell, 0x0040, *map(float, args[1:])))
+        print(f"cast {spell} at {args[1:]}")
     elif kind in ("ahello", "ahsell", "ahlist", "ahbid"):
         # ahello:NPC, ahsell:NPC:ITEM:BID:BUYOUT:HOURS (the first of ITEM in the bags), ahlist:NPC[:NAME],
         # ahbid:NPC:AUCTION:PRICE, at the nearest creature of entry NPC.

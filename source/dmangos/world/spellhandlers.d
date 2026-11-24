@@ -1135,6 +1135,8 @@ private:
             if (spell.effect[j] == SpellEffect.applyAura && spell.casting.applyAuraName[j] == AuraType.bindSight
                     && channelTarget != player.guid)
                 seeFrom(channelTarget);
+        if (cameraChannel())
+            checkpointSummons(true);
     }
 
     private void showChannelStart()
@@ -1300,7 +1302,7 @@ private:
         if (channelSpell is null)
             return;
         const spell = channelSpell;
-        const checkpointedChannel = activeRecoveryChannelAura() !is null || ritualChannelOwner;
+        const checkpointedChannel = activeRecoveryChannelAura() !is null || ritualChannelOwner || cameraChannel();
         channelSpell = null;
         ritualChannelOwner = 0;
         if (checkpointedChannel)
@@ -1764,23 +1766,26 @@ private:
     {
         import std.algorithm.searching : canFind;
 
-        return channelTarget && player.values.get!PLAYER_FARSIGHT == channelTarget
+        return channelSpell !is null && channelTarget && player.values.get!PLAYER_FARSIGHT == channelTarget
             && (farSightSpot == channelTarget || channelSpell.hasEffect(SpellEffect.bindSight)
                 || channelSpell.casting.applyAuraName[].canFind(AuraType.bindSight));
     }
 
     private CameraHandoff takeCameraHandoff()
     {
-        if (channelSpell is null || !cameraChannel())
+        const camera = cameraHandoffState();
+        if (camera.owned)
+            removeFarSightSpot();
+        return camera;
+    }
+
+    private CameraHandoff cameraHandoffState()
+    {
+        if (!cameraChannel())
             return CameraHandoff.init;
         bool watching;
         const at = map.eyeOf(this, watching);
-        if (!watching)
-            return CameraHandoff.init;
-        const ownsSpot = farSightSpot != 0;
-        if (ownsSpot)
-            removeFarSightSpot();
-        return CameraHandoff(channelTarget, at, ownsSpot);
+        return watching ? CameraHandoff(channelTarget, at, farSightSpot != 0) : CameraHandoff.init;
     }
 
     private void restoreCameraHandoff(ref ByteReader reader)
@@ -2104,6 +2109,8 @@ private:
 
     private const(ubyte)[] castRecoveryState()
     {
+        import dmangos.serialization : serialize;
+
         ByteWriter state;
         state.put(map.id);
         state.put(map.instanceId);
@@ -2121,12 +2128,23 @@ private:
             state.put(pushbacks);
             aura.saveState(state);
         }
+        state.put(ritualChannelOwner != 0);
         if (ritualChannelOwner)
             writeRitualRecovery(state);
+        const camera = cameraHandoffState();
+        if (camera.guid)
+        {
+            state.put(channelSpell.id);
+            state.put(channelTimer);
+            state.put(channelCostTimer);
+            state.put(pushbacks);
+            state.put(camera.guid);
+            serialize(state, camera);
+        }
         return state.data;
     }
 
-    private void restoreCastRecovery(ref ByteReader state)
+    private void restoreCastRecovery(ref ByteReader state, bool cameraFormat)
     {
         if (state.empty || state.read!uint != map.id || state.read!uint != map.instanceId)
             return;
@@ -2138,11 +2156,36 @@ private:
             context.readReplicaImpacts(player.guid, map.id, map.instanceId, state);
         if (!state.empty && state.read!bool)
             restorePeriodicChannel(state, elapsed);
-        if (!state.empty)
+        if (!state.empty && (!cameraFormat || state.read!bool))
             readRitualRecovery(state, elapsed);
+        if (cameraFormat && !state.empty)
+            readCameraRecovery(state, elapsed);
         if (generic.active)
             map.sendToWatchers(this, Opcode.SMSG_SPELL_START, spellStartPacket(player.guid, generic.spell.id,
                 cast(uint) max(0, generic.timer), generic.targets), true);
+    }
+
+    private void readCameraRecovery(ref ByteReader state, int elapsed)
+    {
+        const spell = context.spellInfo(state.read!uint);
+        const remaining = state.read!int - elapsed;
+        const nextCost = state.read!int;
+        const delays = state.read!uint;
+        const target = state.read!ulong;
+        if (spell is null || !target || remaining <= 0 || channelSpell !is null)
+            return;
+        channelSpell = spell;
+        channelTarget = target;
+        restoreCameraHandoff(state);
+        if (!cameraChannel())
+        {
+            channelSpell = null;
+            return;
+        }
+        channelTimer = remaining;
+        channelCostTimer = elapsed < nextCost ? nextCost - elapsed : 1000 - (elapsed - nextCost) % 1000;
+        pushbacks = delays;
+        showChannelStart();
     }
 
     private void writeRitualRecovery(ref ByteWriter state)

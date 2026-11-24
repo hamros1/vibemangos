@@ -1040,6 +1040,8 @@ python3 tools/harness/spell_cast_recovery.py --projectile
 python3 tools/harness/spell_cast_recovery.py --remote-bounce
 python3 tools/harness/spell_cast_recovery.py --channel
 python3 tools/harness/spell_cast_recovery.py --channel-canceled
+python3 tools/harness/spell_cast_recovery.py --camera
+python3 tools/harness/spell_cast_recovery.py --camera-canceled
 python3 tools/harness/party_summon_recovery.py --open-ritual
 python3 tools/harness/environment_recovery.py
 python3 tools/harness/environment_recovery.py --fall
@@ -1161,8 +1163,8 @@ retires the pending impact before dispatch. Supported direct damage, healing and
 also follow the target to its new owner.
 Player channels with a periodic aura on the caster, such as Arcane Missiles, preserve their
 remaining time and next pulse through a handoff or worker crash. Pulses due during the outage
-are skipped. A far-seeing player keeps the same camera viewpoint and watches replicas around it
-during a clean handoff.
+are skipped. A far-seeing gateway player also keeps the original camera viewpoint and sees its
+surroundings again after a handoff or worker crash. Canceling removes that checkpoint.
 Mind Vision can find a distant player on another node. The target's owner supplies its current
 position for the usual spell checks. The caster's body stays at its original position while the
 cast starts on the target's node.

@@ -226,6 +226,64 @@ def periodic_channel(fixture, canceled):
     print(f"PASS: killed caster worker {host} with Arcane Missiles " + ("canceled" if canceled else "still channeling"))
 
 
+def camera_channel(fixture, canceled):
+    spell = 6196  # Far Sight
+    world = fixture.world_with_writable_tables("spell_template")
+    fixture.query(f"UPDATE spell_template SET Attributes=Attributes & ~0x8000 WHERE Id={spell}", world)
+    characters, names, leader, client, nodes, _ = start_cluster(
+        fixture, new_party=True, world=world, leader_appearance=(2, 7))
+    x, y, z = -8901.6, -162.6, 82.0
+    fixture.query(f"INSERT IGNORE INTO character_spell (guid,spell) VALUES ({leader},{spell}); "
+                  f"UPDATE characters SET map=0,position_x={x},position_y={y},position_z={z} WHERE guid={leader}",
+                  characters)
+    cast, cancel, finish = (fixture.directory / flag for flag in ("cast", "cancel", "finish"))
+    actions = (wait(cancel), f"cancelchannel:{spell}") if canceled else ()
+    player = client("seer", 0, f"login:{names[0]}", "cmd:.cheat god", "cmd:.cheat power", wait(cast),
+                    f"castat:{spell}:-9410:-2170:56.2", *actions, wait(finish), "logout")
+
+    def log():
+        output = fixture.log("seer")
+        if player.poll() is not None:
+            raise RuntimeError(output[-3000:])
+        return output
+
+    arrival = f"'{names[0]}' arrived from another node (map 0 at {x:.1f} {y:.1f})"
+    host = wait_for("the camera owner's worker", lambda: next((tag for tag in ("node1", "node2", "node3")
+                    if arrival in fixture.log(tag)), ""), 30)
+    cast.touch()
+    spot = re.compile(rf"\[ground effect\] {spell} guid (\d+)")
+    channel = re.compile(rf"\[channel start\] {spell} for (\d+) ms")
+    original = wait_for("the original camera and its active channel", lambda: channel.search(log()) and spot.search(log()), 12)[1]
+    far = "[creature] 1070 guid 6713:"
+    wait_for("the distant view in Lakeshire", lambda: far in log(), 12)
+    checkpoint = f"SELECT COUNT(*) FROM dmangos_player_summons WHERE player={leader}"
+    wait_for("the saved view", lambda: fixture.query(checkpoint, characters) == "1", 5)
+    if canceled:
+        cancel.touch()
+        wait_for("the canceled view to clear its checkpoint", lambda: fixture.query(checkpoint, characters) == "0", 5)
+    offset = len(log())
+    nodes[host].kill()
+    assert nodes[host].wait(timeout=10) == -signal.SIGKILL
+
+    def recovered():
+        return log()[offset:].partition(f"[new world] map 0 at {x:.1f} {y:.1f} {z:.1f};")[2]
+
+    wait_for("the same body to reload at its original location", lambda: "[appears] player" in recovered(), 35)
+    if not canceled:
+        resumed = wait_for("the same camera and distant view on the original socket",
+                           lambda: set(spot.findall(recovered())) == {original} and far in recovered()
+                           and channel.search(recovered()), 12)
+        assert 0 < int(resumed[1]) < 60_000
+    finish.touch()
+    assert player.wait(timeout=20) == 0
+    output = fixture.log("seer")
+    assert output.count(f"[spell go] {spell} by {leader}") == 1
+    if canceled:
+        assert not (spot.search(output[offset:]) or channel.search(output[offset:]) or far in output[offset:])
+    print(f"PASS: killed {host}, kept the original socket and " +
+          ("the canceled Far Sight stayed gone" if canceled else "restored the original Far Sight viewpoint"))
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     phase = parser.add_mutually_exclusive_group()
@@ -234,12 +292,17 @@ if __name__ == "__main__":
     phase.add_argument("--remote-bounce", action="store_true", help="recover a Chain Lightning bolt to another worker")
     phase.add_argument("--channel", action="store_true", help="recover active Arcane Missiles")
     phase.add_argument("--channel-canceled", action="store_true", help="kill the worker after Arcane Missiles is canceled")
+    phase.add_argument("--camera", action="store_true", help="recover the distant Far Sight camera")
+    phase.add_argument("--camera-canceled", action="store_true", help="verify a canceled Far Sight channel stays gone")
     args = parser.parse_args()
     if args.remote_bounce:
         test = remote_bounce
     elif args.channel or args.channel_canceled:
         def test(fixture):
             return periodic_channel(fixture, args.channel_canceled)
+    elif args.camera or args.camera_canceled:
+        def test(fixture):
+            return camera_channel(fixture, args.camera_canceled)
     else:
         def test(fixture):
             return run(fixture, args.finished, args.projectile)
