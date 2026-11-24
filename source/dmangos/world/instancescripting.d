@@ -85,7 +85,8 @@ final class InstanceScript : InstanceHost
      * `persist` writes its state back. Null if no script serves `name`.
      */
     static InstanceScript make(ScriptRuntime runtime, string name, uint id, uint mapId, string data,
-        void delegate(string data, bool checkpoint) persist, scope EntityRef delegate(uint) nativeSpawn)
+        void delegate(string data, bool checkpoint) persist, scope EntityRef delegate(uint) nativeSpawn,
+        scope bool delegate(uint) defeated)
     {
         if (runtime is null || !runtime.serves(ScriptKind.instance, name))
             return null;
@@ -103,7 +104,7 @@ final class InstanceScript : InstanceHost
             if (runtime.load(script.handle, r))
             {
                 script.fromSave = true;
-                script.loadCreatures(data, nativeSpawn);
+                script.loadCreatures(data, nativeSpawn, defeated);
             }
             else
                 info!"instance %s: the saved state of script %s has another layout; it starts afresh"(id, name);
@@ -111,7 +112,7 @@ final class InstanceScript : InstanceHost
         return script;
     }
 
-    private void loadCreatures(string data, scope EntityRef delegate(uint) nativeSpawn)
+    private void loadCreatures(string data, scope EntityRef delegate(uint) nativeSpawn, scope bool delegate(uint) defeated)
     {
         import std.algorithm.searching : findSplit;
         import dmangos.world.migration : MigrantKind;
@@ -132,6 +133,8 @@ final class InstanceScript : InstanceHost
             Migrant[] accepted;
             foreach (ref migrant; saved)
             {
+                if (defeated(migrant.spawn))
+                    continue;
                 EntityRef creature;
                 if (migrant.kind == MigrantKind.creature)
                     creature = nativeSpawn(migrant.spawn);

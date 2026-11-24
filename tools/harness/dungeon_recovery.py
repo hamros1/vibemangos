@@ -169,8 +169,9 @@ def run(fixture, new_party, active_wave):
     copy, logs, clients = open_party(fixture, characters, names, leader, client, nodes, new_party, actions)
 
     def creature_guids(log, entries):
-        return {int(guid): int(entry) for entry, guid in re.findall(r"\[creature\] (\d+) guid (\d+):", log)
-                if int(entry) in entries}
+        return {int(guid): int(entry) for entry, guid, health in
+                re.findall(r"\[creature\] (\d+) guid (\d+): .*health (\d+),", log)
+                if int(entry) in entries and int(health) > 0}
 
     def durable_key():
         return fixture.query(f"SELECT IFNULL(SUM(count),0) FROM item_instance WHERE itemEntry={KEY}", characters)
@@ -246,7 +247,9 @@ def run(fixture, new_party, active_wave):
     wait_for("both players back in Gerstahn's room", lambda: all(
         boss_arrival in log and "query time:" in log.rsplit(boss_arrival, 1)[1] for log in recovered()), 14)
     tail = [log.rsplit(boss_arrival, 1)[1] for log in recovered()]
-    assert all(not creature_guids(log, {BOSS}) for log in tail), "the looted boss came back"
+    for log in tail:
+        assert all(health == "0" for health in re.findall(rf"\[creature\] {BOSS} guid \d+: .*health (\d+),", log)), \
+            "the defeated boss came back alive"
     assert durable_key() == "1" and fixture.query(f"SELECT COUNT(*) FROM instance WHERE id={copy}", characters) == "1"
     finish.touch()
     for i, process in enumerate(clients):

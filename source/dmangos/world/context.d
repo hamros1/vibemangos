@@ -4352,7 +4352,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                         const spawn = creatureSpawnOf(guid);
                         return spawn is null || spawn.map != id || deadInInstance(instance, guid) ? EntityRef.init
                             : EntityRef(makeGuid(HighGuid.unit, spawn.entry, guid));
-                    });
+                    }, (uint guid) => deadInInstance(instance, guid));
                 if (script !is null)
                 {
                     script.map = created;
@@ -4405,11 +4405,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 if (auto s = instance in instanceScripts)
                     s.raise(PlayerEntered(EntityRef(who.character.guid)));
                 if (const state = instance in instances)
-                    foreach (guid, corpse; state.corpses)
-                        if (const spawn = creatureSpawnOf(guid))
-                            if (auto creature = created.creatureAt(makeGuid(HighGuid.unit, spawn.entry, guid)))
-                                if (creature.loot !is null)
-                                    creature.loot.resumeRollsFor(who.character.guid);
+                    if (state.corpses.length)
+                        created.forEachObject((MapObject object) {
+                            if (auto corpse = cast(Creature) object)
+                                if (corpse.loot !is null && corpse.spawn.guid in state.corpses)
+                                    corpse.loot.resumeRollsFor(who.character.guid);
+                        });
             };
         if (instance == 0) // open-world round 2: the continent's script (`world_template`)
             if (const name = id in data.worldScriptNames)
@@ -4711,6 +4712,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// The saved instances of the maps `which` accepts, read anew (replacing what was known of them).
     private void loadInstancesOf(scope bool delegate(uint mapId) which)
     {
+        import std.algorithm.comparison : max;
         import dmangos.cluster.ownership : IdKind;
 
         const saved = database.loadInstances();
@@ -4739,6 +4741,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     else
                     {
                         state.dead[r.spawnGuid] = true;
+                        if (!config.cluster.enabled && r.spawnGuid >= temporaryCounterStart)
+                            summonsMade = max(summonsMade, r.spawnGuid - temporaryCounterStart);
                         if (const spawn = creatureSpawnOf(r.spawnGuid))
                             if (moltenCoreTrash(*spawn) && r.until > 0 && (!state.resetAt || r.until < state.resetAt))
                                 state.trashRespawns[r.spawnGuid] = r.until;
@@ -6647,8 +6651,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     package bool canCheckpointCorpse(const Creature creature)
     {
         return creature.instanceId && creature.instanceId in instances && !battlegroundOfMap(creature.spawn.map)
-            && !creature.alive && creature.corpseTimer > 0 && !creature.petOwner
-            && creature.summon.type == TempSpawnType.none;
+            && !creature.alive && creature.corpseTimer > 0 && !creature.petOwner && !creature.guardianOwner
+            && !creature.totemOwner;
     }
 
     private long instanceDeathDeadline(ref InstanceState state, const Creature creature)
@@ -6699,6 +6703,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private void restoreInstanceCorpses(Map map)
     {
         import dmangos.log : warning;
+        import dmangos.serialization : deserialize;
         import dmangos.world.instancescripting : fromHex;
         import dmangos.world.migration : MigrantKind;
 
@@ -6707,18 +6712,34 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return;
         Migrant[] corpses;
         foreach (guid, corpse; state.corpses)
-            if (const spawn = creatureSpawnOf(guid))
-                if (corpse.expiresAt > unixTime && spawn.map == map.id && guid in state.dead)
-                    try
-                        corpses ~= Migrant(MigrantKind.creature, guid, cellKeyAt(spawn.x, spawn.y), fromHex(corpse.state));
-                    catch (Exception error)
-                        warning!"instance %s: could not read corpse %s: %s"(map.instanceId, guid, error.msg);
+        {
+            if (corpse.expiresAt <= unixTime || guid !in state.dead)
+                continue;
+            try
+            {
+                const bytes = fromHex(corpse.state);
+                if (guid >= temporaryCounterStart)
+                {
+                    auto reader = ByteReader(bytes);
+                    const spawn = deserialize!CreatureSpawn(reader);
+                    if (spawn.map == map.id && spawn.guid == guid)
+                        corpses ~= Migrant(MigrantKind.summonedCreature, guid, cellKeyAt(spawn.x, spawn.y), bytes);
+                }
+                else if (const spawn = creatureSpawnOf(guid))
+                {
+                    if (spawn.map == map.id)
+                        corpses ~= Migrant(MigrantKind.creature, guid, cellKeyAt(spawn.x, spawn.y), bytes);
+                }
+            }
+            catch (Exception error)
+                warning!"instance %s: could not read corpse %s: %s"(map.instanceId, guid, error.msg);
+        }
         if (corpses.length)
             map.migrateIn(encodeBundle(null, corpses), (const ref Migrant migrant) {
                 try
                 {
                     auto creature = cast(Creature) restoreWorldMigrant(migrant, map);
-                    if (creature is null || creature.alive)
+                    if (creature is null || creature.alive || creature.summon.update(creature, 0))
                         return null;
                     // A loot transaction can be the last saved state, before the in-memory cleanup ran.
                     if (creature.loot !is null && creature.loot.lootedForEveryone())

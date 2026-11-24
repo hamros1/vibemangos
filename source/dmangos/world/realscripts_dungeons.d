@@ -1446,7 +1446,8 @@ unittest
     assert(d.saved!BlackrockDepths.ringMobs.alive == count - 1);
     d.restartAfterCrash();
     assert(d.saved!BlackrockDepths.ringStage == 5);
-    assert(d.map.findObject(defeated) is null, "the dead beast did not return");
+    auto deadBeast = d.map.creatureAt(defeated);
+    assert(deadBeast is null || !deadBeast.alive, "the dead beast did not return alive");
     assert(d.map.creatureAt(wounded).values.get!UNIT_FIELD_HEALTH == health, "the same wounded beast resumed");
     assert(d.all(BlackrockDepths.beasts[resumed.ringBeast]).length == count - 1);
     bool champion()
@@ -1756,12 +1757,19 @@ unittest
     boss = d.map.creatureAt(bossGuid);
     assert(boss !is null && boss.alive && boss.values.get!UNIT_FIELD_HEALTH == bossHealth);
     d.kill(boss);
+    assert(boss.loot !is null && boss.corpseTimer > 0, "the summoned boss leaves time to loot");
+    const drops = boss.loot.items.dup;
     d.restartAfterCrash();
     assert(d.saved!BlackrockSpire.flamewreath == Fight.done);
+    boss = d.map.creatureAt(bossGuid);
+    assert(boss !is null && !boss.alive && boss.loot !is null, "Solakar's original corpse recovered");
+    assert(boss.loot.items.length == drops.length);
+    foreach (drop; drops)
+        assert(boss.loot.itemInSlot(drop.slot).itemId == drop.itemId);
     d.forget();
     d.use(d.objectOf(flame));
     d.run(3.seconds);
-    assert(d.find(solakar) is null && d.summoned(hatcher) + d.summoned(guardian) + d.summoned(solakar) == 0,
+    assert(d.all(solakar).length == 0 && d.summoned(hatcher) + d.summoned(guardian) + d.summoned(solakar) == 0,
         "the Father Flame cannot repeat the completed fight");
 }
 
@@ -1874,7 +1882,7 @@ unittest
     d.restartAfterCrash();
     assert(d.saved!BlackrockSpire.stadium == Fight.done);
     assert(Dungeon.isOpen(d.objectOf(entryGate)) && Dungeon.isOpen(d.objectOf(exitGate)));
-    assert(d.find(gyth) is null && d.find(rend) is null);
+    assert(d.all(gyth).length == 0 && d.all(rend).length == 0);
 }
 
 /**

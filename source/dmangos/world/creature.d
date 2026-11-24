@@ -1284,10 +1284,9 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
 
         // Its corpse lasts by its rank, at most 90% of its
         // respawn time (random between the spawn's two), which counts from now; it no longer offers its services.
-        static immutable uint[5] decayByRank = [60, 300, 300, 3600, 300]; // normal, elite, rare elite, boss, rare
         const respawnDelay = spawn.respawnSecondsMax > spawn.respawnSeconds
             ? uniform!"[]"(spawn.respawnSeconds, spawn.respawnSecondsMax) : spawn.respawnSeconds;
-        uint decay = decayByRank[template_.rank < decayByRank.length ? template_.rank : 0];
+        uint decay = corpseLifetime;
         if (decay > respawnDelay * 9 / 10)
             decay = respawnDelay * 9 / 10;
         corpseTimer = decay * 1000;
@@ -1308,6 +1307,26 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         values.set!UNIT_FIELD_FLAGS(values.get!UNIT_FIELD_FLAGS & ~UnitFlags.inCombat);
         if (ai !is null)
             ai.died(cast(CombatWorld) world);
+    }
+
+    private uint corpseLifetime() const
+    {
+        static immutable uint[5] decayByRank = [60, 300, 300, 3600, 300]; // normal, elite, rare elite, boss, rare
+        return decayByRank[template_.rank < decayByRank.length ? template_.rank : 0];
+    }
+
+    /// A summon has no respawn delay. If its summon type leaves a corpse, keep it for its loot.
+    package bool retainSummonedLootCorpse()
+    {
+        import std.algorithm.comparison : among, min;
+
+        with (TempSpawnType)
+            if (!instanceId || corpseTimer || summon.type.among(none, corpse, timedOrCorpse, timedOutOfCombatOrCorpse))
+                return false;
+        corpseTimer = corpseLifetime * 1000;
+        if (summon.type.among(TempSpawnType.corpseTimed, TempSpawnType.timed))
+            corpseTimer = min(corpseTimer, summon.timer);
+        return corpseTimer > 0;
     }
 
     /**

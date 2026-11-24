@@ -379,7 +379,8 @@ characters database stores the expiry first and the rolled contents when the che
 inventory award and its consumed loot slot are written in the same transaction. The lockout keeps
 the record until reset, including after the chest is exhausted or expires.
 
-Native dungeon and raid corpses with loot have a saved record alongside the spawn death. A
+Dungeon and raid corpses with loot have a saved record alongside the spawn death, including
+scripted summons whose despawn rules leave a corpse. A
 replacement worker restores the corpse's original GUID, location, decay deadline, rolled contents,
 eligible players and pending rolls. Only players who still need to vote receive the original roll
 prompt. Item claims and the inventory award commit together. Coin shares use a durable payout

@@ -905,7 +905,7 @@ private:
     private static void prepareBodyLootFor(WorldContext context, Map map, Creature victim, ulong tapper)
     {
         import dmangos.world.character : Character;
-        import dmangos.world.loothandlers : bindCreatureLoot;
+        import dmangos.world.loothandlers : bindCreatureLoot, bindLootDelivery;
 
         enum uint noLoot = 0x4; // the static flag for no loot
         const t = victim.template_;
@@ -942,6 +942,12 @@ private:
             loot.fill(template_, context.data.loot, context.data.items, map.random, &meets, &allowed);
         }
         loot.generateMoney(t.minLootGold, t.maxLootGold, map.random);
+        if (!loot.lootedForEveryone() && victim.retainSummonedLootCorpse())
+        {
+            bindCreatureLoot(context, map, victim, loot);
+            bindLootDelivery(context, map, loot, loot.rule == LootRule.groupLoot || loot.rule == LootRule.needBeforeGreed,
+                loot.rule == LootRule.masterLoot);
+        }
         victim.loot = loot;
         loot.beginQuestLootChecks(map.id, &context.nextGameplaySequence, context.sendQuestLootCheck);
         if (victim.loot !is null && loot.lootedForEveryone())
