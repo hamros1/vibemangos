@@ -130,6 +130,23 @@ package void bindCreatureLoot(WorldContext context, Map map, Creature creature, 
             creature.pocketsEmptied = true;
             creature.pocketsRestockAt = context.unixTime + context.config.creaturePickpocketRestockDelay;
         };
+        if (context.canCheckpointPickpocket(creature))
+        {
+            loot.changed = () {
+                if (creature.alive && creature.loot is loot)
+                    context.database.savePickpocket(context.checkpointPickpocket(creature));
+            };
+            loot.checkpoint = () {
+                loot.changed();
+                return context.settleWrites();
+            };
+            loot.storeReward = (Looter looter, imported!"dmangos.world.loot".LootItem item, bool sendError) {
+                auto player = cast(Character) looter;
+                return player.storeLootItem(item.itemId, item.count, item.randomPropertyId, sendError,
+                    pocketCheckpoint: () => context.checkpointPickpocket(creature, item, looter.looterGuid));
+            };
+            bindLootDelivery(context, map, loot, false, false);
+        }
         return;
     }
     if (context.canCheckpointCorpse(creature))
@@ -1102,7 +1119,8 @@ private:
     package uint storeLootItem(uint entry, uint count, int randomPropertyId, bool sendError,
         scope imported!"dmangos.world.database".InstanceChestRecord delegate() checkpoint = null,
         const LootAwardKey award = LootAwardKey.init,
-        scope imported!"dmangos.world.database".InstanceCorpseRecord delegate() corpseCheckpoint = null)
+        scope imported!"dmangos.world.database".InstanceCorpseRecord delegate() corpseCheckpoint = null,
+        scope imported!"dmangos.world.database".PickpocketRecord delegate() pocketCheckpoint = null)
     {
         ItemPosCount[] dest;
         const result = player.inventory.canStoreNew(nullBag, nullSlot, dest, entry, count);
@@ -1123,7 +1141,8 @@ private:
             send(pushed);
         flushInventory(false, checkpoint is null ? imported!"dmangos.world.database".InstanceChestRecord.init
             : checkpoint(), award, corpse: corpseCheckpoint is null
-                ? imported!"dmangos.world.database".InstanceCorpseRecord.init : corpseCheckpoint());
+                ? imported!"dmangos.world.database".InstanceCorpseRecord.init : corpseCheckpoint(),
+            pocket: pocketCheckpoint is null ? imported!"dmangos.world.database".PickpocketRecord.init : pocketCheckpoint());
         return InventoryResult.ok;
     }
 

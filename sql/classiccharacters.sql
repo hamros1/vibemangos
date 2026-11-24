@@ -764,6 +764,13 @@ CREATE TABLE `instance_reset` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8mb4 */;
+CREATE TABLE IF NOT EXISTS `dmangos_pickpocket` (
+  `instance` int unsigned NOT NULL,
+  `spawn` int unsigned NOT NULL,
+  `restock_at` bigint NOT NULL,
+  `loot` mediumtext CHARACTER SET ascii NOT NULL,
+  PRIMARY KEY (`instance`, `spawn`)
+) ENGINE=InnoDB;
 CREATE TABLE `item_instance` (
   `guid` int(11) unsigned NOT NULL DEFAULT 0,
   `owner_guid` int(11) unsigned NOT NULL DEFAULT 0,

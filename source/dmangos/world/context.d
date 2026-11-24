@@ -66,7 +66,7 @@ import dmangos.world.characterdb : DeleteOptions, GuidCounters;
 import dmangos.world.transports : ShipObject, mapAt, transportClock;
 import dmangos.world.clientdata : ClientData;
 import dmangos.world.config : WorldConfig;
-import dmangos.world.database : InstanceChestRecord, InstanceCorpseRecord, WorldDatabase;
+import dmangos.world.database : InstanceChestRecord, InstanceCorpseRecord, PickpocketRecord, WorldDatabase;
 import dmangos.world.creaturepools : CreaturePools;
 import dmangos.vmap.gameobjectmodels : GameObjectModels;
 import dmangos.world.gameobjectcollision : GameObjectCollision;
@@ -6901,6 +6901,44 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     const progress = session.character.progress(session.secondsInWorld());
                     database.saveProgress(progress);
                 }
+    }
+
+    package bool canCheckpointPickpocket(const Creature creature)
+    {
+        return config.cluster.enabled && creature.alive && creature.summon.type == TempSpawnType.none
+            && !creature.petOwner && creature.spawn.guid < temporaryCounterStart
+            && (!creature.instanceId || (creature.instanceId in instances && !battlegroundOfMap(creature.spawn.map)));
+    }
+
+    package PickpocketRecord checkpointPickpocket(Creature creature, const LootItem claimed = null, ulong looter = 0)
+    {
+        import dmangos.world.instancescripting : toHex;
+        import std.algorithm.searching : all;
+
+        ByteWriter state;
+        auto loot = creature.loot;
+        loot.saveHandoff(state, claimed, looter, true);
+        auto restock = creature.pocketsRestockAt;
+        if (!restock && !loot.gold && loot.items.all!(item => item is claimed || !item.allowed.length))
+            restock = unixTime + config.creaturePickpocketRestockDelay;
+        return PickpocketRecord(creature.instanceId, creature.spawn.guid, restock, toHex(state.data));
+    }
+
+    package void restorePickpocket(Map map, Creature creature)
+    {
+        import dmangos.world.instancescripting : fromHex;
+        import dmangos.world.loothandlers : bindCreatureLoot;
+
+        if (!canCheckpointPickpocket(creature))
+            return;
+        const record = database.loadPickpocket(creature.instanceId, creature.spawn.guid);
+        if (!record.spawn || (record.restockAt && record.restockAt <= unixTime))
+            return;
+        auto state = ByteReader(fromHex(record.loot));
+        creature.loot = Loot.loadHandoff(creature.guid, state, true);
+        creature.pocketsRestockAt = record.restockAt;
+        creature.pocketsEmptied = record.restockAt != 0;
+        bindCreatureLoot(this, map, creature, creature.loot);
     }
 
     package InstanceCorpseRecord checkpointCorpse(Creature creature, const LootItem claimed = null, ulong looter = 0)

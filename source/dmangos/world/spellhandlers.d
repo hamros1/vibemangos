@@ -2422,6 +2422,8 @@ private:
         auto creature = cast(Creature) map.findObject(target);
         if (creature is null || !creature.alive || !creature.template_.pickpocketLootId)
             return;
+        if (creature.loot is null)
+            context.restorePickpocket(map, creature);
         enum ubyte lootErrorAlreadyPickpocketed = 15;
         if (creature.loot !is null && creature.pocketsEmptied)
         {
@@ -2435,6 +2437,7 @@ private:
             }
             creature.loot = null;
             creature.pocketsEmptied = false;
+            creature.pocketsRestockAt = 0;
         }
         if (creature.loot is null)
         {
@@ -2453,6 +2456,8 @@ private:
             creature.loot = loot;
             bindCreatureLoot(context, map, creature, loot);
         }
+        if (creature.loot.checkpoint !is null && !creature.loot.checkpoint())
+            return;
         if (lootTarget && lootTarget != creature.guid)
             if (auto other = lootOf(lootTarget))
                 other.release(this);

@@ -328,6 +328,14 @@ struct InstanceCorpseRecord
     string state;
 }
 
+/// One living creature's rolled pockets, or the deadline when its emptied pockets refill.
+struct PickpocketRecord
+{
+    uint instance, spawn;
+    long restockAt;
+    string loot;
+}
+
 /// A `character_honor_cp` row: honor from a kill or another source, on a day.
 struct HonorPointRecord
 {
@@ -774,6 +782,8 @@ interface WorldDatabase
     void saveInstanceCorpse(const InstanceCorpseRecord corpse, long respawnAt);
     void deleteInstanceCorpse(uint instance, uint spawn);
     @DatabaseRead InstanceCorpseRecord[] loadOutdoorCorpses();
+    @DatabaseRead PickpocketRecord loadPickpocket(uint instance, uint spawn);
+    void savePickpocket(const PickpocketRecord pocket);
 
     /// The map of instance `id`; uint.max if there is no such instance.
     @DatabaseRead uint instanceMapOf(uint id);
@@ -982,6 +992,9 @@ interface WorldDatabase
     void saveCorpseAward(uint owner, uint money, uint playerBytes2, const(ItemChange)[] changes,
         const InstanceCorpseRecord corpse);
 
+    void savePickpocketAward(uint owner, uint money, uint playerBytes2, const(ItemChange)[] changes,
+        const PickpocketRecord pocket);
+
     @DatabaseRead LootAwardResult loadLootAward(const ref LootAwardKey key);
     /// Records the result and any new inventory rows in the same transaction.
     void saveLootAward(const ref LootAwardKey key, ubyte error, long now, uint money, uint playerBytes2,
@@ -1061,6 +1074,7 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     {
         statements.prepareInstanceChests();
         statements.prepareInstanceCorpses();
+        statements.preparePickpockets();
         statements.prepareLootAwards();
         characterDb.execute!("CREATE TABLE IF NOT EXISTS `dmangos_write_applied` ("
             ~ "`stream` INT UNSIGNED NOT NULL, `seq` BIGINT UNSIGNED NOT NULL, PRIMARY KEY (`stream`)"
@@ -1115,12 +1129,16 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     bool updateCreaturePoolState(uint realm, uint pool, ulong revision, uint spawn, long due,
         const InstanceCorpseRecord corpse = InstanceCorpseRecord.init)
     {
-        if (!corpse.spawn)
+        if (!corpse.spawn && !due)
             return statements.updateCreaturePoolState(realm, pool, revision, spawn, due);
         bool changed;
         characterDb.transaction({
             changed = statements.updateCreaturePoolState(realm, pool, revision, spawn, due);
-            if (changed)
+            if (!changed)
+                return;
+            if (due)
+                statements.deletePickpocket(0, spawn);
+            if (corpse.spawn)
                 statements.saveInstanceCorpse(corpse);
         });
         return changed;
@@ -1243,6 +1261,8 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     }
     void deleteInstanceCorpse(uint instance, uint spawn) { statements.deleteInstanceCorpse(instance, spawn); }
     InstanceCorpseRecord[] loadOutdoorCorpses() { return statements.loadOutdoorCorpses(); }
+    PickpocketRecord loadPickpocket(uint instance, uint spawn) { return statements.loadPickpocket(instance, spawn); }
+    void savePickpocket(const PickpocketRecord pocket) { statements.savePickpocket(pocket); }
     uint instanceMapOf(uint id) { return statements.instanceMapOf(id); }
     uint[uint] instanceBindsOf(uint player) { return statements.instanceBindsOf(player); }
     bool instanceLimitReached(uint account, uint instance, long now)
@@ -1556,6 +1576,15 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
         characterDb.transaction({
             statements.saveInventory(owner, money, playerBytes2, changes);
             statements.saveInstanceCorpse(corpse);
+        });
+    }
+
+    void savePickpocketAward(uint owner, uint money, uint playerBytes2, const(ItemChange)[] changes,
+        const PickpocketRecord pocket)
+    {
+        characterDb.transaction({
+            statements.saveInventory(owner, money, playerBytes2, changes);
+            statements.savePickpocket(pocket);
         });
     }
 
@@ -2085,6 +2114,13 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
     {
         saveInventory(owner, money, playerBytes2, changes);
         saveInstanceCorpse(corpse, 0);
+    }
+
+    void savePickpocketAward(uint owner, uint money, uint playerBytes2, const(ItemChange)[] changes,
+        const PickpocketRecord pocket)
+    {
+        saveInventory(owner, money, playerBytes2, changes);
+        savePickpocket(pocket);
     }
 
     private LootAwardResult[LootAwardKey] lootAwards;
@@ -2724,7 +2760,10 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
     void saveCreatureRespawn(uint spawnGuid, long respawnTime)
     {
         if (respawnTime)
+        {
             creatureRespawns[spawnGuid] = respawnTime;
+            pockets.remove([0, spawnGuid]);
+        }
         else
             creatureRespawns.remove(spawnGuid);
     }
@@ -2742,6 +2781,8 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
         if ((previous is null ? 0 : previous.revision) != revision)
             return false;
         creaturePoolStates[realm][pool] = CreaturePoolState(spawn, due, revision + 1);
+        if (due)
+            pockets.remove([0, spawn]);
         if (corpse.spawn)
             saveInstanceCorpse(corpse, 0);
         return true;
@@ -2816,6 +2857,18 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
         return instanceRows.corpses.filter!(row => !row.instance).array;
     }
 
+    private PickpocketRecord[uint[2]] pockets;
+
+    PickpocketRecord loadPickpocket(uint instance, uint spawn)
+    {
+        return pockets.get([instance, spawn], PickpocketRecord.init);
+    }
+
+    void savePickpocket(const PickpocketRecord pocket)
+    {
+        pockets[[pocket.instance, pocket.spawn]] = pocket;
+    }
+
     uint instanceMapOf(uint id)
     {
         foreach (ref r; instanceRows.instances)
@@ -2846,6 +2899,9 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
         instanceRows.respawns = instanceRows.respawns.filter!(r => r.instance != id).array;
         instanceRows.chests = instanceRows.chests.filter!(r => r.instance != id).array;
         instanceRows.corpses = instanceRows.corpses.filter!(r => r.instance != id).array;
+        foreach (key; pockets.keys)
+            if (key[0] == id)
+                pockets.remove(key);
     }
     private import dmangos.world.context : InstanceEntry;
     private InstanceEntry[][uint] instanceEntries;
@@ -2878,6 +2934,8 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
     void saveInstanceRespawn(bool gameObject, uint spawnGuid, uint instance, long until)
     {
         instanceRows.respawns ~= InstanceRespawnRecord(gameObject, spawnGuid, instance, until);
+        if (!gameObject)
+            pockets.remove([instance, spawnGuid]);
     }
     void deleteInstanceRespawn(uint spawnGuid, uint instance)
     {

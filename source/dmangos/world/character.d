@@ -1220,6 +1220,67 @@ unittest
     assert(response(0) && !victim.pocketsEmptied, "full again after the restock delay");
 }
 
+// A replacement worker can reopen picked pockets and keeps the restock deadline after the last claim.
+unittest
+{
+    import dmangos.world.creature : Creature;
+    import dmangos.world.loot : lootRow;
+    import dmangos.world.loothandlers : ClientLootSlot;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields : UNIT_FIELD_LEVEL;
+
+    auto db = newDatabase();
+    auto worker(ushort id)
+    {
+        auto node = newCreationContext(db, (ref config) { config.cluster.nodeId = id; });
+        node.next.item = id * 1000;
+        node.data.loot.pickpocketing.add(300, lootRow(itemJerky, 100, 0, 1, 1, 0));
+        node.data.loot.pickpocketing.add(300, lootRow(itemSword, 100, 0, 1, 1, 0));
+        node.data.creatureTemplates.edit(creatureInnkeeper).pickpocketLootId = 300;
+        return node;
+    }
+
+    const guid = makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn);
+    const position = Position(-8949.95f, -132.49f, 83.53f, 1.97f);
+    auto original = worker(1);
+    auto first = loggedIn(original, db, 7, "Anduin", position);
+    auto creature = original.map(0).creatureAt(guid);
+    creature.values.set!UNIT_FIELD_LEVEL(1u);
+    first.session.inWorld.pickPocket(guid);
+    assert(creature.loot.gold == 0 && creature.loot.items.length == 2);
+    const firstSlot = creature.loot.items[0].slot;
+    const remainingSlot = creature.loot.items[1].slot;
+    first.write(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, ClientLootSlot(firstSlot));
+    assert(db.itemRows.length == 1 && db.loadPickpocket(0, innkeeperSpawn).restockAt == 0);
+
+    auto replacement = worker(2);
+    auto second = loggedIn(replacement, db, 7, "Anduin", position);
+    second.session.inWorld.pickPocket(guid);
+    auto restored = replacement.map(0).creatureAt(guid);
+    assert(restored.loot.items[0].allowed.length == 0 && 7 in restored.loot.items[1].allowed);
+    second.write(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, ClientLootSlot(firstSlot));
+    assert(db.itemRows.length == 1);
+    second.session.inWorld.pickPocket(guid);
+    second.write(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, ClientLootSlot(remainingSlot));
+    assert(db.itemRows.length == 2);
+    const restockAt = db.loadPickpocket(0, innkeeperSpawn).restockAt;
+    assert(restockAt > replacement.unixTime);
+
+    auto restarted = worker(3);
+    auto third = loggedIn(restarted, db, 7, "Anduin", position);
+    third.session.inWorld.pickPocket(guid);
+    auto emptied = restarted.map(0).creatureAt(guid);
+    assert(emptied.pocketsEmptied && emptied.pocketsRestockAt == restockAt);
+    emptied.values.set!UNIT_FIELD_HEALTH(0u);
+    restarted.map(0).creatureDeath(emptied);
+    restarted.update(restarted.clock());
+    assert(!db.loadPickpocket(0, innkeeperSpawn).spawn, "a new lifetime starts with fresh pockets");
+}
+
 // A random property: a new item gets one of its template's, with the property's enchantment, which counts worn.
 unittest
 {

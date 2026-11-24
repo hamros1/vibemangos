@@ -388,6 +388,9 @@ eligible players and pending rolls. Only players who still need to vote receive 
 prompt. Item claims and the inventory award commit together. Coin shares use a durable payout
 token, so retrying a payout pays each player once.
 The record also preserves a corpse ready for skinning and any unclaimed skinning loot.
+On a clustered realm, the replacement also reopens a native living creature's original
+pickpocket loot, with any previous claims applied. Once emptied, the pockets keep their saved
+restock deadline. Death starts a new lifetime with fresh pockets.
 
 Ordinary outdoor creature spawns also save their corpses and respawn deadlines together. The
 replacement region owner restores the original loot and rolls. A player on another worker can

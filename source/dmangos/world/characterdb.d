@@ -1000,8 +1000,11 @@ final class CharacterStatements
     void saveCreatureRespawn(uint spawnGuid, long respawnTime)
     {
         if (respawnTime)
-            characters.execute!"REPLACE INTO creature_respawn (guid, respawntime, instance) VALUES (?, ?, 0)"(spawnGuid,
-                respawnTime);
+            characters.transaction({
+                characters.execute!"REPLACE INTO creature_respawn (guid, respawntime, instance) VALUES (?, ?, 0)"(
+                    spawnGuid, respawnTime);
+                deletePickpocket(0, spawnGuid);
+            });
         else
             characters.execute!"DELETE FROM creature_respawn WHERE guid = ? AND instance = 0"(spawnGuid);
     }
@@ -1265,6 +1268,39 @@ final class CharacterStatements
         characters.execute!"DELETE FROM dmangos_instance_corpse WHERE instance = ? AND spawn = ?"(instance, spawn);
     }
 
+    void preparePickpockets()
+    {
+        characters.execute!("CREATE TABLE IF NOT EXISTS dmangos_pickpocket ("
+            ~ "instance INT UNSIGNED NOT NULL, spawn INT UNSIGNED NOT NULL, restock_at BIGINT NOT NULL, "
+            ~ "loot MEDIUMTEXT CHARACTER SET ascii NOT NULL, PRIMARY KEY (instance, spawn)) ENGINE=InnoDB")();
+    }
+
+    imported!"dmangos.world.database".PickpocketRecord loadPickpocket(uint instance, uint spawn)
+    {
+        import dmangos.world.database : PickpocketRecord;
+
+        const rows = characters.query!("SELECT restock_at, loot FROM dmangos_pickpocket "
+            ~ "WHERE instance = ? AND spawn = ?")(instance, spawn);
+        return rows.length ? PickpocketRecord(instance, spawn, rows[0].get!long(0), rows[0].get!string(1))
+            : PickpocketRecord.init;
+    }
+
+    void savePickpocket(const imported!"dmangos.world.database".PickpocketRecord pocket)
+    {
+        enum insert = "INSERT INTO dmangos_pickpocket (instance, spawn, restock_at, loot) ";
+        enum update = " ON DUPLICATE KEY UPDATE restock_at = VALUES(restock_at), loot = VALUES(loot)";
+        if (pocket.instance)
+            characters.execute!(insert ~ "SELECT id, ?, ?, ? FROM instance WHERE id = ?" ~ update)(
+                pocket.spawn, pocket.restockAt, pocket.loot, pocket.instance);
+        else
+            characters.execute!(insert ~ "VALUES (0, ?, ?, ?)" ~ update)(pocket.spawn, pocket.restockAt, pocket.loot);
+    }
+
+    void deletePickpocket(uint instance, uint spawn)
+    {
+        characters.execute!"DELETE FROM dmangos_pickpocket WHERE instance = ? AND spawn = ?"(instance, spawn);
+    }
+
     /// See `WorldDatabase.deleteInstance`.
     void deleteInstance(uint id)
     {
@@ -1275,6 +1311,7 @@ final class CharacterStatements
         characters.execute!"DELETE FROM gameobject_respawn WHERE instance = ?"(id);
         characters.execute!"DELETE FROM dmangos_instance_chest WHERE instance = ?"(id);
         characters.execute!"DELETE FROM dmangos_instance_corpse WHERE instance = ?"(id);
+        characters.execute!"DELETE FROM dmangos_pickpocket WHERE instance = ?"(id);
     }
 
     /// See `WorldDatabase.saveInstanceBind`.
@@ -1307,8 +1344,11 @@ final class CharacterStatements
             characters.execute!"REPLACE INTO gameobject_respawn (guid, respawntime, instance) VALUES (?, ?, ?)"(spawnGuid,
                 until, instance);
         else
-            characters.execute!"REPLACE INTO creature_respawn (guid, respawntime, instance) VALUES (?, ?, ?)"(spawnGuid,
-                until, instance);
+            characters.transaction({
+                characters.execute!"REPLACE INTO creature_respawn (guid, respawntime, instance) VALUES (?, ?, ?)"(
+                    spawnGuid, until, instance);
+                deletePickpocket(instance, spawnGuid);
+            });
     }
 
     /// See `WorldDatabase.loadCreatureRespawns`.

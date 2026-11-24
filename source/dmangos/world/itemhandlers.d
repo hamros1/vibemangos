@@ -97,7 +97,8 @@ private:
     void flushInventory(bool moneyChanged = false,
         const imported!"dmangos.world.database".InstanceChestRecord chest = imported!"dmangos.world.database".InstanceChestRecord.init,
         const LootAwardKey award = LootAwardKey.init, bool alreadySaved = false,
-        const imported!"dmangos.world.database".InstanceCorpseRecord corpse = imported!"dmangos.world.database".InstanceCorpseRecord.init)
+        const imported!"dmangos.world.database".InstanceCorpseRecord corpse = imported!"dmangos.world.database".InstanceCorpseRecord.init,
+        const imported!"dmangos.world.database".PickpocketRecord pocket = imported!"dmangos.world.database".PickpocketRecord.init)
     {
         if (inventory.equipmentChanged)
         {
@@ -123,6 +124,9 @@ private:
             context.database.saveChestAward(player.data.guid, player.money.amount, player.values[PLAYER_BYTES_2], changes, chest);
         else if (corpse.spawn)
             context.database.saveCorpseAward(player.data.guid, player.money.amount, player.values[PLAYER_BYTES_2], changes, corpse);
+        else if (pocket.spawn)
+            context.database.savePickpocketAward(player.data.guid, player.money.amount, player.values[PLAYER_BYTES_2], changes,
+                pocket);
         else if (award.token)
             context.database.saveLootAward(award, 0, context.unixTime, player.money.amount, player.values[PLAYER_BYTES_2],
                 changes);
