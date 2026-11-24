@@ -413,6 +413,9 @@ original body and loot on the replacement worker. Their expiry never schedules a
 Outdoor creature scripts using the escort or follower component save the actor's active progress
 and nearby living summons. The replacement waits for the player to return before continuing the
 script. A planned handoff supplies the current actors for its region.
+Ordinary living outdoor enemies also checkpoint their health and combat state when damaged.
+The replacement resumes the original spawn and allows time for its opponent to reconnect through
+the gateway. Evading back to full health or dying retires the combat checkpoint.
 
 * **The same spawns everywhere.** Pools, spawn groups and spawn entries are chosen with a seed made
   from the cluster's name and the realm, so every node agrees on which creature a spawn is.
@@ -1021,6 +1024,7 @@ python3 tools/harness/fishing_recovery.py
 python3 tools/harness/fishing_recovery.py --canceled
 python3 tools/harness/ground_spell_recovery.py
 python3 tools/harness/ground_spell_recovery.py --channeled
+python3 tools/harness/ground_spell_recovery.py --native-enemy
 python3 tools/harness/spell_cast_recovery.py
 python3 tools/harness/spell_cast_recovery.py --finished
 python3 tools/harness/spell_cast_recovery.py --projectile

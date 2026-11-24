@@ -13,7 +13,7 @@ from dungeon_recovery import start_cluster, wait
 TARGET = 38  # Defias Thug
 
 
-def run(fixture, channeled):
+def run(fixture, channeled, native_enemy):
     spell = 10 if channeled else 26573  # Blizzard or Consecration
     world = fixture.world_with_writable_tables("spell_template", "creature")
     guid, x, y, z = fixture.query(f"SELECT guid,position_x,position_y,position_z FROM creature WHERE map=0 "
@@ -41,12 +41,18 @@ def run(fixture, channeled):
     host = wait_for("the caster's worker", lambda: next((tag for tag in ("node1", "node2", "node3")
                     if arrival in fixture.log(tag)), ""), 30)
     cast.touch()
+    health = re.compile(rf"\[creature\] {TARGET} guid {guid}: .*?health (\d+),")
+    initial_health = int(wait_for("the original enemy", lambda: health.search(log()), 10)[1])
     original, = wait_for("the original ground spell", lambda: spots(log()), 12)
     seen = time.monotonic()
     tick = re.compile(rf"\[spell damage\] {spell}: \d+ to {guid}\b")
     wait_for("a tick on the Defias Thug", lambda: tick.search(log()), 6)
     checkpoint = f"SELECT COUNT(*) FROM dmangos_player_summons WHERE player={leader}"
     assert fixture.query(checkpoint, characters) == "1"
+    if native_enemy:
+        wait_for("the wounded native creature's checkpoint", lambda: fixture.query(
+            "SELECT COUNT(*) FROM dmangos_quest_actor WHERE realm=1 AND player=0 "
+            f"AND (actor & 16777215)={guid}", characters) == "1", 4)
     offset = len(log())
     nodes[host].send_signal(signal.SIGKILL)
     assert nodes[host].wait(timeout=10) == -signal.SIGKILL
@@ -57,6 +63,9 @@ def run(fixture, channeled):
 
     wait_for("the original ground spell and a new tick on the same socket",
              lambda: spots(recovered()) == {original} and tick.search(recovered()), 28)
+    if native_enemy:
+        saved_health = health.search(recovered())
+        assert saved_health and 0 < int(saved_health[1]) < initial_health, "the native creature healed on takeover"
     if channeled:
         channel = re.search(rf"\[channel start\] {spell} for (\d+) ms", recovered())
         assert channel and 0 < int(channel[1]) < 20_000
@@ -74,5 +83,6 @@ def run(fixture, channeled):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--channeled", action="store_true", help="recover Blizzard's ground effect and active channel")
+    parser.add_argument("--native-enemy", action="store_true", help="also check the enemy's saved health")
     args = parser.parse_args()
-    run_test("ground-spell-recovery", lambda fixture: run(fixture, args.channeled))
+    run_test("ground-spell-recovery", lambda fixture: run(fixture, args.channeled, args.native_enemy))

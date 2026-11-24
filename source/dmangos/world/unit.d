@@ -634,6 +634,8 @@ private void creatureDamaged(UnitRef attacker, UnitRef victim, uint damage, cons
     if (credited !is null && !creature.petOwner)
         credited.tapCreature(creature);
     const killed = creature.takeDamage(damage);
+    if (!killed && map.checkpointCreatureFight !is null)
+        map.checkpointCreatureFight(creature);
     map.flushObjectChanges(creature);
     if (!killed)
         return;

@@ -1394,7 +1394,7 @@ mixin template DbScriptRunner()
         auto summoned = summonCreature(map, step.datalong, at, lifetime, step.datalong2, source);
         if (summoned is null)
             return;
-        checkpointOutdoorScriptActor(summoned, true);
+        checkpointOutdoorCreature(summoned, true);
         if (step.dataint[3] > 0)
             if (const relay = cast(uint) step.dataint[3] in data.dbScripts.summonRelays)
                 startScript(DbScriptType.relay, *relay, map, summoned.guid, target);

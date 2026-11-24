@@ -2287,6 +2287,8 @@ final class Map : CombatWorld, GameObjectWorld
     /// Told to let a creature die (`WorldContext`: `die`, and the death queued).
     void delegate(Creature creature) onCreatureDeath;
 
+    package void delegate(Creature creature) checkpointCreatureFight;
+
     /// A player's damage aura ticked on a creature here after the caster left this map.
     void delegate(UnitRef victim, imported!"dmangos.world.auras".Aura aura, size_t effect) remotePeriodicTick;
 

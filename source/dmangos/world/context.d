@@ -4313,9 +4313,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             startScript(DbScriptType.creatureMovement, scriptId, created, creature.guid, creature.guid);
         };
         if (!instance && config.cluster.enabled)
+        {
             created.checkpointQuestActor = (Creature creature, ulong player, bool immediate) {
                 checkpointQuestActor(created, creature, player, immediate);
             };
+            created.checkpointCreatureFight = &checkpointOutdoorFight;
+        }
         created.onGameObjectUsedUp = &gameObjectUsedUp;
         created.onObjectGone = (MapObject object) {
             if (auto creature = cast(Creature) object)
@@ -5613,7 +5616,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if (previous.player)
             {
                 if (creature.summon.type != TempSpawnType.none)
-                    checkpointOutdoorScriptActor(creature);
+                    checkpointOutdoorCreature(creature);
                 else
                     discardQuestActor(creature);
             }
@@ -5644,13 +5647,29 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         database.saveQuestActor(config.realmId, state);
     }
 
-    /// The player field is zero for an outdoor database script's living summon.
-    private void checkpointOutdoorScriptActor(Creature creature, bool immediate = false)
+    private void checkpointOutdoorFight(Creature creature)
+    {
+        import dmangos.world.updatefields : UNIT_FIELD_HEALTH, UNIT_FIELD_MAXHEALTH;
+
+        if (creature.spawn.guid >= temporaryCounterStart || creature.summon.type != TempSpawnType.none
+            || creature.ai is null || !creature.alive || !ownsQuestActor(creature))
+            return;
+        const saved = creature.guid in outdoorQuestActors;
+        if (saved !is null && saved.player)
+            return; // the active escort or follower also owns this creature's checkpoint
+        if (!creature.ai.inCombat && creature.values.get!UNIT_FIELD_HEALTH >= creature.values.get!UNIT_FIELD_MAXHEALTH)
+            return discardQuestActor(creature);
+        if (saved is null || saved.savedAt + 2 <= unixTime)
+            checkpointOutdoorCreature(creature);
+    }
+
+    /// The player field is zero for a living scripted summon or native outdoor combatant.
+    private void checkpointOutdoorCreature(Creature creature, bool immediate = false)
     {
         if (!config.cluster.enabled || !creature.alive || !ownsQuestActor(creature))
             return;
         auto migrant = saveMigratingObject(creature, false, carryImpacts: false);
-        if (migrant.kind != MigrantKind.summonedCreature)
+        if (migrant.kind != MigrantKind.summonedCreature && migrant.kind != MigrantKind.creature)
             return;
         migrant.home = cellKeyAt(creature.spawn.x, creature.spawn.y);
         saveOutdoorScriptMigrant(creature.spawn.map, creature.guid, migrant, immediate);
@@ -5696,7 +5715,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 if (auto where = existingMap(actor.map))
                 {
                     if (auto creature = where.creatureAt(actor.actor))
-                        checkpointOutdoorScriptActor(creature);
+                    {
+                        if (creature.summon.type == TempSpawnType.none)
+                            checkpointOutdoorFight(creature);
+                        else
+                            checkpointOutdoorCreature(creature);
+                    }
                     else if (auto object = where.gameObjectAt(actor.actor))
                         checkpointOutdoorScriptObject(where, object);
                 }
@@ -5762,18 +5786,23 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if (!grants.any!(grant => questActorRegion(grant.region, actor.map, actor.home)))
                 continue;
             const spawn = counterOf(actor.actor);
-            if ((actor.player && actor.savedAt + 300 <= unixTime) || awaitingRespawn(spawn) || spawn in outdoorCorpses)
+            const nativeFight = !actor.player && highGuidOf(actor.actor) == HighGuid.unit && spawn < temporaryCounterStart;
+            if ((actor.player && actor.savedAt + 300 <= unixTime) || awaitingRespawn(spawn) || spawn in outdoorCorpses
+                || (nativeFight && (creatureOnLoan(spawn) || !creatureInEvents(spawn)
+                    || !upInPool(PoolMember.Kind.creature, spawn))))
             {
                 database.deleteQuestActor(config.realmId, actor.actor);
                 continue;
             }
             auto where = map(actor.map);
-            if (where.creatureAt(actor.actor) !is null || where.gameObjectAt(actor.actor) !is null)
+            const clean = grants.any!(grant => grant.clean && questActorRegion(grant.region, actor.map, actor.home));
+            if ((where.creatureAt(actor.actor) !is null || where.gameObjectAt(actor.actor) !is null)
+                && (!nativeFight || clean || actor.actor in outdoorQuestActors))
             {
                 outdoorQuestActors[actor.actor] = actor;
                 continue;
             }
-            if (grants.any!(grant => grant.clean && questActorRegion(grant.region, actor.map, actor.home)))
+            if (clean)
             {
                 database.deleteQuestActor(config.realmId, actor.actor);
                 continue; // the clean bundle has the newer state and did not carry this actor
@@ -5785,7 +5814,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 where.migrateIn(fromHex(actor.state), (const ref Migrant saved) {
                     const root = saved.spawn == spawn;
                     const kind = highGuidOf(actor.actor) == HighGuid.gameObject ? MigrantKind.summonedGameObject
-                        : MigrantKind.summonedCreature;
+                        : nativeFight ? MigrantKind.creature : MigrantKind.summonedCreature;
                     if ((!root && !restoredActor) || (!actor.player && (!root || saved.kind != kind))
                         || !grants.any!(grant => !grant.clean && questActorRegion(grant.region, actor.map, saved.home)))
                         return null;
@@ -5823,6 +5852,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                         creature.questActorWait = recoveryWait;
                         creature.questActorWaitFor = actor.player;
                     }
+                    else if (nativeFight && creature.ai.inCombat)
+                        foreach (target; creature.ai.threatList.byKey)
+                            if (highGuidOf(target) == HighGuid.player)
+                            {
+                                creature.questActorWait = recoveryWait;
+                                creature.questActorWaitFor = target;
+                                break;
+                            }
                     return cast(MapObject) creature;
                 });
                 if (restoredActor)
