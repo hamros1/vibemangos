@@ -14,7 +14,7 @@ ACTOR, QUEST, SUMMON = 197, 7, 5955
 QUEST_START = 0  # DbScriptType.questStart
 
 
-def run(fixture, clean, after_summon):
+def run(fixture, clean, after_summon, retry_actor_db, killed_actor):
     world = fixture.world_with_writable_tables("quest_template", "dbscripts_on_quest_start")
     guid, map_id, x, y, z = fixture.query(
         f"SELECT guid,map,position_x,position_y,position_z FROM creature WHERE id={ACTOR} ORDER BY guid LIMIT 1",
@@ -40,9 +40,10 @@ def run(fixture, clean, after_summon):
     if clean and after_summon:
         fixture.query(f"UPDATE characters SET map={map_id},position_x={player_x},position_y={y},position_z={z} "
                       f"WHERE guid<>{leader}", characters)
-    start, finish = (fixture.directory / flag for flag in ("start", "finish"))
+    start, finish, kill = (fixture.directory / flag for flag in ("start", "finish", "kill"))
+    actions = (wait(kill), f"targetnpc:{SUMMON}", "cmd:.kill") if killed_actor else ()
     player = client("player", 0, f"login:{names[0]}", wait(start), f"questaccept:{ACTOR}:{QUEST}",
-                    wait(finish), "logout")
+                    *actions, wait(finish), "logout")
 
     def log():
         output = fixture.log("player")
@@ -62,23 +63,34 @@ def run(fixture, clean, after_summon):
 
     if after_summon:
         original, = wait_for("the original actor", lambda: actor_guids(log()), 8)
-        wait_for("the original actor checkpoint", lambda: fixture.query(
-            "SELECT COUNT(*) FROM dmangos_quest_actor WHERE realm=1 AND player=0 "
-            f"AND (actor & 16777215)={original}", characters) == "1", 8)
+        actor_checkpoint = ("SELECT COUNT(*) FROM dmangos_quest_actor WHERE realm=1 AND player=0 "
+                            f"AND (actor & 16777215)={original}")
+        wait_for("the original actor checkpoint", lambda: fixture.query(actor_checkpoint, characters) == "1", 8)
+        if killed_actor:
+            kill.touch()
+            wait_for("the dead actor checkpoint to be retired", lambda: fixture.query(actor_checkpoint, characters) == "0", 8)
     assert fixture.query(f"SELECT `cursor` {checkpoint}", characters) == ("2" if after_summon else "1")
     assert last not in log()
     offset = len(log())
+    if retry_actor_db:
+        fixture.query("RENAME TABLE dmangos_quest_actor TO held_quest_actor", characters)
     nodes[host].send_signal(signal.SIGTERM if clean else signal.SIGKILL)
     assert nodes[host].wait(timeout=25) == (0 if clean else -signal.SIGKILL)
     if not clean:
         wait_for("the existing client to reload through the gateway",
                  lambda: f"[new world] map {map_id} " in log()[offset:], 40)
+    if retry_actor_db:
+        wait_for("the replacement's failed first checkpoint read", lambda: any(
+            "could not load outdoor quest actors" in fixture.log(tag) for tag in nodes if tag != host), 10)
+        fixture.query("RENAME TABLE held_quest_actor TO dmangos_quest_actor", characters)
     wait_for("the delayed summon and emote to resume",
-             lambda: last in log()[offset:] and (after_summon and clean or actor_guids(log()[offset:])), 20)
+             lambda: last in log()[offset:] and (killed_actor or (after_summon and clean) or actor_guids(log()[offset:])), 20)
     assert log().count(first) == log().count(last) == 1
     if after_summon:
         assert actor_guids(log()) == {original}
-        if clean:
+        if killed_actor:
+            assert not actor_guids(log()[offset:]), "the dead actor was resurrected"
+        elif clean:
             observing = client("observer", 1, f"login:{names[1]}", wait(finish), "logout")
             wait_for("a new client to see the original actor on its new worker",
                      lambda: actor_guids(fixture.log("observer")) == {original}, 15)
@@ -100,8 +112,12 @@ def run(fixture, clean, after_summon):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--clean", action="store_true", help="drain the worker instead of killing it")
+    transfer = parser.add_mutually_exclusive_group()
+    transfer.add_argument("--clean", action="store_true", help="drain the worker instead of killing it")
+    transfer.add_argument("--retry-actor-db", action="store_true", help="interrupt the replacement's first actor checkpoint read")
+    transfer.add_argument("--dead-actor", action="store_true", help="kill the script's actor before killing the worker")
     parser.add_argument("--after-summon", action="store_true", help="crash after the script created its actor")
     args = parser.parse_args()
     label = "outdoor-script-handoff" if args.clean else "outdoor-script-recovery"
-    run_test(label, lambda fixture: run(fixture, args.clean, args.after_summon))
+    run_test(label, lambda fixture: run(fixture, args.clean, args.after_summon or args.retry_actor_db or args.dead_actor,
+                                      args.retry_actor_db, args.dead_actor))

@@ -91,7 +91,8 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
     package uint gatewayCharacter;         // owner: the simulated character, including while loading
     package ulong gatewayToken;            // owner: the coordinator's route for this simulation
     private CharacterData recovery;        // owner: durable state while recovering, until the client loads the map
-    private MonoTime recoveryReadyBy;      // owner: waiting for the ownership grant to take effect
+    private MonoTime recoveryReadyBy;      // owner: waiting for the checkpoint and ownership grant
+    private MonoTime recoveryReadAt;
 
     /// The character in the world (docs/DESIGN.md, step 3); null at the character screen.
     package Character playing;
@@ -242,17 +243,35 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
     /// Prepares the replacement world. Gameplay resumes with the existing client's worldport acknowledgement.
     package bool beginGatewayRecovery(uint guid, uint clientBuild)
     {
-        auto loaded = context.database.loadCharacter(guid);
-        if (loaded.isNull || loaded.get.account != account.id || !loaded.get.position.isFinite
-            || context.data.createInfo(loaded.get.race, loaded.get.classId) is null
-            || context.ownsCell is null)
+        if (!guid || context.ownsCell is null)
             return false;
         build = clientBuild;
         gatewayCharacter = guid;
-        recovery = loaded.get;
         const now = context.clock();
         recoveryReadyBy = now + 15.seconds;
         return pollGatewayRecovery(now);
+    }
+
+    private bool readGatewayCheckpoint(MonoTime now)
+    {
+        import dmangos.mysql : DatabaseException;
+
+        if (now < recoveryReadAt)
+            return true;
+        try
+        {
+            auto loaded = context.database.loadCharacter(gatewayCharacter);
+            if (loaded.isNull || loaded.get.account != account.id || !loaded.get.position.isFinite
+                || context.data.createInfo(loaded.get.race, loaded.get.classId) is null)
+                return false;
+            recovery = loaded.get;
+        }
+        catch (DatabaseException error)
+        {
+            recoveryReadAt = now + 1.seconds;
+            warning!"%s: could not read character %s's recovery checkpoint: %s"(remoteAddress, gatewayCharacter, error.msg);
+        }
+        return true;
     }
 
     /// The gateway can see the replacement's grant before its map is ready to simulate.
@@ -262,10 +281,12 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
             return true;
         if (now >= recoveryReadyBy)
         {
-            warning!"%s: timed out restoring character %s on map %s"(remoteAddress, recovery.guid, recovery.map);
+            warning!"%s: timed out restoring character %s"(remoteAddress, gatewayCharacter);
             return false;
         }
-        if (ownsRecoveryPosition(recovery))
+        if (!recovery.guid && !readGatewayCheckpoint(now))
+            return false;
+        if (recovery.guid && ownsRecoveryPosition(recovery))
         {
             recoveryReadyBy = MonoTime.init;
             const at = recovery.position;
@@ -300,7 +321,7 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
     {
         if (playing !is null)
             playing.leave("disconnected", false);
-        else if (recovery.guid)
+        else if (recovery.guid || recoveryReadyBy != MonoTime.init)
         {
             recovery = CharacterData.init;
             recoveryReadyBy = MonoTime.init;
@@ -537,7 +558,7 @@ package:
         DispatchResult result;
         try
         {
-            if ((gatewayPaused || recovery.guid) && !gatewayNameQuery)
+            if ((gatewayPaused || recovery.guid || recoveryReadyBy != MonoTime.init) && !gatewayNameQuery)
             {
                 if (recovery.guid && recoveryReadyBy == MonoTime.init
                     && opcode == Opcode.MSG_MOVE_WORLDPORT_ACK && reader.empty)

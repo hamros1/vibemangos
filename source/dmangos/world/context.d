@@ -5539,7 +5539,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 creatureLoanGained(r, arriving.get(r.id, null));
         refreshOutdoorCorpses(gained, lost);
         refreshOutdoorChests(gained, lost);
-        refreshQuestActors(gained, arriving);
+        queueQuestActorRecovery(gained, arriving);
         restoreOutdoorScripts(gained);
         bool[uint] looked;
         foreach (ref r; gained)
@@ -5565,6 +5565,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     private QuestActorCheckpoint[ulong] outdoorQuestActors;
+    private struct QuestActorRegionGrant
+    {
+        Region region;
+        bool clean;
+    }
+    private QuestActorRegionGrant[uint] pendingQuestActorRegions;
+    private long retryQuestActorRecoveryAt;
 
     private bool ownsQuestActor(const Creature creature)
     {
@@ -5703,6 +5710,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
         if (!lost.length)
             return;
+        foreach (ref region; lost)
+            pendingQuestActorRegions.remove(region.id);
         foreach (guid; outdoorQuestActors.keys)
         {
             const actor = outdoorQuestActors[guid];
@@ -5711,7 +5720,17 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         }
     }
 
-    private void refreshQuestActors(const(Region)[] gained, const(ubyte)[][uint] arriving)
+    private void queueQuestActorRecovery(const(Region)[] gained, const(ubyte)[][uint] arriving)
+    {
+        if (!config.cluster.enabled)
+            return;
+        foreach (ref region; gained)
+            if (physicalWorldRegion(region))
+                pendingQuestActorRegions[region.id] = QuestActorRegionGrant(region, arriving.get(region.id, null).length != 0);
+        refreshQuestActors();
+    }
+
+    private void refreshQuestActors()
     {
         import dmangos.log : warning;
         import dmangos.mysql : DatabaseException;
@@ -5720,9 +5739,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.objects : counterOf;
         import std.algorithm.searching : any;
 
-        if (!config.cluster.enabled)
-            return;
-        if (!gained.any!(r => physicalWorldRegion(r)))
+        if (!pendingQuestActorRegions.length || unixTime < retryQuestActorRecoveryAt || !canWrite())
             return;
         QuestActorCheckpoint[] actors;
         try
@@ -5730,11 +5747,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         catch (DatabaseException error)
         {
             warning!"migration: could not load outdoor quest actors: %s"(error.msg);
+            retryQuestActorRecoveryAt = unixTime + 1;
             return;
         }
+        const grants = pendingQuestActorRegions.values;
+        pendingQuestActorRegions = null;
         foreach (actor; actors)
         {
-            if (!gained.any!(r => questActorRegion(r, actor.map, actor.home)))
+            if (!grants.any!(grant => questActorRegion(grant.region, actor.map, actor.home)))
                 continue;
             const spawn = counterOf(actor.actor);
             if ((actor.player && actor.savedAt + 300 <= unixTime) || awaitingRespawn(spawn) || spawn in outdoorCorpses)
@@ -5748,7 +5768,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 outdoorQuestActors[actor.actor] = actor;
                 continue;
             }
-            if (gained.any!(r => questActorRegion(r, actor.map, actor.home) && arriving.get(r.id, null).length))
+            if (grants.any!(grant => grant.clean && questActorRegion(grant.region, actor.map, actor.home)))
             {
                 database.deleteQuestActor(config.realmId, actor.actor);
                 continue; // the clean bundle has the newer state and did not carry this actor
@@ -5762,7 +5782,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     const kind = highGuidOf(actor.actor) == HighGuid.gameObject ? MigrantKind.summonedGameObject
                         : MigrantKind.summonedCreature;
                     if ((!root && !restoredActor) || (!actor.player && (!root || saved.kind != kind))
-                        || !gained.any!(r => questActorRegion(r, actor.map, saved.home) && !arriving.get(r.id, null).length))
+                        || !grants.any!(grant => !grant.clean && questActorRegion(grant.region, actor.map, saved.home)))
                         return null;
                     auto object = restoreWorldMigrant(saved, where);
                     if (auto go = cast(GameObject) object)
@@ -9905,6 +9925,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         if (instances.length)
             unloadEmptyInstances(now);
+        refreshQuestActors();
         updateScripts(cast(uint) elapsed.total!"msecs");
         updateOutdoorScriptActors();
         foreach (script; instanceScripts) // the dungeon scripts' own timers

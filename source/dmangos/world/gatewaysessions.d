@@ -152,13 +152,22 @@ package mixin template GatewaySessions()
 
     private SimulationOwner checkpointOwner(GatewayRoute route, uint account)
     {
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
         import dmangos.world.grid : cellKeyAt;
 
-        const loaded = context.database.loadCharacter(route.character);
-        if (loaded.isNull || loaded.get.account != account || !loaded.get.position.isFinite)
-            return SimulationOwner.init;
-        const saved = loaded.get;
-        return node.simulationOwner(node.regions.ownerAt(saved.map, cellKeyAt(saved.position.x, saved.position.y)));
+        try
+        {
+            const loaded = context.database.loadCharacter(route.character);
+            if (!loaded.isNull && loaded.get.account == account && loaded.get.position.isFinite)
+            {
+                const saved = loaded.get;
+                return node.simulationOwner(node.regions.ownerAt(saved.map, cellKeyAt(saved.position.x, saved.position.y)));
+            }
+        }
+        catch (DatabaseException error)
+            warning!"gateway: could not read character %s's recovery position: %s"(route.character, error.msg);
+        return SimulationOwner.init;
     }
 
     private void gatewayTick(MonoTime now)

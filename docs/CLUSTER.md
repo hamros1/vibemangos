@@ -375,7 +375,7 @@ creature, the region also saves that actor's GUID, state, and lifetime. That let
 with the original actor after takeover. The new owner continues the summon timer and respects a
 saved death or despawn.
 Temporary outdoor objects of the generic and spell-focus types also keep their GUIDs, state and
-original expiry time. Loot-bearing objects use their own recovery records.
+original expiry time. The worker retries pending region recovery if its first database read fails.
 
 On a clean dungeon handoff, queued database scripts resume at their next step with the elapsed
 time intact. The receiving node waits briefly for players who were participating when the copy
@@ -790,7 +790,8 @@ If the coordinator loses the owner, it waits for the old write lease and margin 
 a replacement. The former incarnation cannot reconnect to renew its lease. The surviving worker
 that owns the saved position loads the latest database checkpoint and sends a world transfer
 over the gateway's existing client connection. The character enters the replacement's map
-after the client acknowledges the transfer. Gateway-hosted characters use a checkpoint
+after the client acknowledges the transfer. The gateway and replacement worker retry a failed
+checkpoint read while the existing connection waits. Gateway-hosted characters use a checkpoint
 interval capped at 15 seconds. Clustered player saves also include the active permanent pet's
 health, power, auras and cooldowns. Work since the latest durable save can be lost in a crash.
 An open party summon request belongs to the gateway login. The replacement worker presents the
@@ -983,6 +984,7 @@ python3 tools/harness/battlegroup.py
 python3 tools/harness/battlegroup_failover.py
 python3 tools/harness/group_invite_recovery.py
 python3 tools/harness/party_summon_recovery.py
+python3 tools/harness/gateway_checkpoint_retry.py
 python3 tools/harness/battleground_recovery.py
 python3 tools/harness/battleground_recovery.py --cross-realm
 python3 tools/harness/battleground_recovery.py --map arathi
@@ -1005,6 +1007,8 @@ python3 tools/harness/outdoor_script_recovery.py
 python3 tools/harness/outdoor_script_recovery.py --clean
 python3 tools/harness/outdoor_script_recovery.py --after-summon
 python3 tools/harness/outdoor_script_recovery.py --after-summon --clean
+python3 tools/harness/outdoor_script_recovery.py --retry-actor-db
+python3 tools/harness/outdoor_script_recovery.py --dead-actor
 python3 tools/harness/outdoor_object_recovery.py
 python3 tools/harness/player_summon_recovery.py
 python3 tools/harness/player_summon_recovery.py --scenario guardian
@@ -1019,6 +1023,8 @@ The party invitation test kills the coordinator with an invitation open. The ori
 accepts it on the same connection, and MariaDB records one party with the two original players.
 The party summon test kills the recipient's worker with the request open and sends two responses.
 The original client teleports to the original destination once.
+The gateway checkpoint test temporarily makes the fixture's character table unavailable during
+takeover. Once the table returns, the same client reloads and can send chat.
 The dungeon test takes an unbound party through the Blackrock Depths portal and kills its
 worker between waves. `--new-party` forms the group through an invitation after a worker
 handoff. `--active-wave` tests a crash with some opponents still alive. Both clients must
