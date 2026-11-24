@@ -186,7 +186,8 @@ def enum():
 
 OBJECT_END, ITEM_END, CONTAINER_END, UNIT_END, PLAYER_END = 6, 48, 122, 188, 1282
 GAMEOBJECT_END = OBJECT_END + 0x1A
-COUNTS = {1: ITEM_END, 2: CONTAINER_END, 3: UNIT_END, 4: PLAYER_END, 5: GAMEOBJECT_END, 7: 0x26}  # 7: CORPSE_END
+COUNTS = {1: ITEM_END, 2: CONTAINER_END, 3: UNIT_END, 4: PLAYER_END, 5: GAMEOBJECT_END,
+          6: 0x10, 7: 0x26}  # DYNAMICOBJECT_END and CORPSE_END
 seen_objects = {}
 seen_positions = {}   # creature guid -> where it was created
 last_roll_offer = None
@@ -358,6 +359,8 @@ def describe(op, p):
             elif kind in (2, 3) and t == 7:
                 print(f"  [corpse appears] {g & 0xFFFFFF} at {move[0]:.1f} {move[1]:.1f} {move[2]:.1f}" if move else
                       f"  [corpse appears] {g & 0xFFFFFF}")
+            elif kind in (2, 3) and t == 6:
+                print(f"  [ground effect] {v.get(0x9)} guid {g & 0xFFFFFF}")
             elif kind in (2, 3) and t in (3, 5):
                 entry = v.get(3, 0); seen_objects[g] = (t, entry)
                 if move: seen_positions[g] = move[:3]

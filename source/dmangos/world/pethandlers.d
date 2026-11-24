@@ -1525,7 +1525,7 @@ mixin template PetHandlers()
     }
 
     private enum ubyte loneTotemSlot = 4, guardianSlot = 5;
-    private enum ubyte summonCheckpointVersion = 2;
+    private enum ubyte summonCheckpointVersion = 3;
     private bool summonCheckpointExists, detachingSummons;
 
     private const(ubyte)[] playerSummonState(bool departing, ulong removed = 0)
@@ -1608,7 +1608,8 @@ mixin template PetHandlers()
             return false;
         const summons = player.alive ? playerSummonState(false, removed) : null;
         const fishing = player.alive && bobber && bobber != removed ? fishingRecoveryState() : null;
-        const active = summons.length || fishing.length;
+        const ground = player.alive && persistentAreas.length ? groundRecoveryState() : null;
+        const active = summons.length || fishing.length || ground.length;
         if (!active && !summonCheckpointExists)
             return true;
         ByteWriter checkpoint;
@@ -1624,7 +1625,9 @@ mixin template PetHandlers()
             checkpoint.put(home.incarnation);
             checkpoint.put(cast(uint) summons.length);
             checkpoint.putBytes(summons);
+            checkpoint.put(cast(uint) fishing.length);
             checkpoint.putBytes(fishing);
+            checkpoint.putBytes(ground);
         }
         context.database.savePlayerSummons(player.data.guid, active ? toHex(checkpoint.data) : null);
         if (immediate && !context.settleWrites())
@@ -1662,11 +1665,18 @@ mixin template PetHandlers()
             {
                 if (version_ == 1)
                     restorePlayerSummons(state, true);
-                else if (version_ == summonCheckpointVersion)
+                else if (version_ == 2 || version_ == summonCheckpointVersion)
                 {
                     auto summons = ByteReader(state.readBytes(state.read!uint));
                     restorePlayerSummons(summons, true);
-                    restoreFishingRecovery(state);
+                    if (version_ == 2)
+                        restoreFishingRecovery(state);
+                    else
+                    {
+                        auto fishing = ByteReader(state.readBytes(state.read!uint));
+                        restoreFishingRecovery(fishing);
+                        restoreGroundRecovery(state);
+                    }
                 }
             }
             checkpointSummons();

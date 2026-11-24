@@ -1104,7 +1104,7 @@ private:
         channelObject = 0;
         channelTimer = ms;
         channelCostTimer = 1000;
-        if (bobber && bobber == channelTarget)
+        if ((bobber && bobber == channelTarget) || (persistentAreas.length && spell.hasEffect(SpellEffect.persistentAreaAura)))
             checkpointSummons(true);
         showChannelStart();
         // Mind Vision (`SPELL_AURA_BIND_SIGHT`): the player sees through the channel's target while it lasts.
@@ -1342,7 +1342,10 @@ private:
             import dmangos.world.spellareas : endPersistentAreas;
 
             auto me = Caster.of(this);
+            const count = persistentAreas.length;
             endPersistentAreas(me, persistentAreas, spell);
+            if (count != persistentAreas.length)
+                checkpointSummons(true);
         }
         // Far Sight, Eagle Eye, Mind Vision: the camera comes back, the spot goes.
         seeFrom(0);
@@ -1496,7 +1499,10 @@ private:
         static import dmangos.world.spellareas;
 
         auto me = Caster.of(this);
+        const count = persistentAreas.length;
         dmangos.world.spellareas.makePersistentArea(me, persistentAreas, spell, i, targets, value);
+        if (count != persistentAreas.length)
+            checkpointSummons(true);
     }
 
 
@@ -1508,7 +1514,10 @@ private:
         static import dmangos.world.spellareas;
 
         auto me = Caster.of(this);
+        const count = persistentAreas.length;
         dmangos.world.spellareas.updatePersistentAreas(me, persistentAreas, diff);
+        if (count != persistentAreas.length)
+            checkpointSummons(true);
     }
 
 
@@ -1709,6 +1718,7 @@ private:
 
             auto me = Caster.of(this);
             endPersistentAreas(me, persistentAreas);
+            checkpointSummons(true);
         }
     }
 
@@ -1892,6 +1902,60 @@ private:
         if (age < bite && bobberAge >= bite)
             bobberSplash(go);
         return true;
+    }
+
+    private const(ubyte)[] groundRecoveryState()
+    {
+        import dmangos.world.spellareas : writeGroundAreas;
+        import std.algorithm.searching : any;
+
+        const channel = channelSpell !is null && persistentAreas.any!(area => area.spell is channelSpell);
+        ByteWriter state;
+        state.put(map.id);
+        state.put(map.instanceId);
+        state.put(context.transportNow());
+        state.put(channel ? channelSpell.id : 0u);
+        if (channel)
+        {
+            state.put(channelTarget);
+            state.put(channelTimer);
+            state.put(channelCostTimer);
+        }
+        writeGroundAreas(persistentAreas, state);
+        return state.data;
+    }
+
+    private void restoreGroundRecovery(ref ByteReader state)
+    {
+        import dmangos.world.caster : Caster;
+        import dmangos.world.spellareas : readGroundAreas;
+        import std.algorithm.comparison : max;
+        import std.algorithm.searching : any;
+
+        if (state.empty || state.read!uint != map.id || state.read!uint != map.instanceId)
+            return;
+        const elapsed = max(0, cast(int)(context.transportNow() - state.read!uint));
+        const id = state.read!uint;
+        ulong target;
+        int remaining, nextCost;
+        if (id)
+        {
+            target = state.read!ulong;
+            remaining = state.read!int - elapsed;
+            nextCost = state.read!int;
+        }
+        auto caster = Caster.of(this);
+        persistentAreas = readGroundAreas(caster, state, elapsed);
+        if (remaining > 0 && channelSpell is null)
+            if (const spell = context.spellInfo(id))
+                if (persistentAreas.any!(area => area.spell is spell))
+                {
+                    channelSpell = spell;
+                    channelTarget = target;
+                    channelTimer = remaining;
+                    channelCostTimer = elapsed < nextCost ? nextCost - elapsed : 1000 - (elapsed - nextCost) % 1000;
+                    showChannelStart();
+                }
     }
 
     private void writeChannelAndGroundHandoff(ref ByteWriter writer)

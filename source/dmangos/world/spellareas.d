@@ -155,7 +155,8 @@ package void detachGroundAreas(imported!"dmangos.world.map".Map map, ref Persist
 }
 
 /// Recreate ground objects with their original GUID, duration and next tick time.
-package PersistentArea[] readGroundAreas(ref Caster caster, ref imported!"dmangos.bytes".ByteReader reader)
+package PersistentArea[] readGroundAreas(ref Caster caster, ref imported!"dmangos.bytes".ByteReader reader,
+    int elapsed = 0)
 {
     import dmangos.serialization : deserialize;
     import dmangos.world.spellids : SpellEffect;
@@ -172,13 +173,14 @@ package PersistentArea[] readGroundAreas(ref Caster caster, ref imported!"dmango
         const holders = reader.read!uint;
         reader.ensureAvailable(cast(size_t) holders * ulong.sizeof);
         if (spell is null || effect >= spell.effect.length || spell.effect[effect] != SpellEffect.persistentAreaAura
-            || amplitude <= 0 || timer <= 0 || left <= 0 || !(radius > 0))
+            || amplitude <= 0 || timer <= 0 || left <= elapsed || !(radius > 0))
         {
             reader.readBytes(cast(size_t) holders * ulong.sizeof);
             continue;
         }
         auto spot = new DynamicObject(counter, caster.guid, spell.id, effect, radius, at);
-        auto area = PersistentArea(spot, spell, effect, value, amplitude, timer, left);
+        const nextTick = elapsed < timer ? timer - elapsed : amplitude - (elapsed - timer) % amplitude;
+        auto area = PersistentArea(spot, spell, effect, value, amplitude, nextTick, left - elapsed);
         foreach (j; 0 .. holders)
             area.holding[reader.read!ulong] = true;
         caster.map.addObject(spot);

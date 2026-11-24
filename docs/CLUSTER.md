@@ -595,6 +595,9 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   visible across nodes. Effects such as slows expire unless the next pulse renews them.
   A clean handoff on the same map and copy preserves the ground objects and their next tick for
   players and NPCs. An active player ground channel moves too. Cancelling it still removes its ground objects.
+  After a worker crash, the gateway's replacement also recovers the player's ground effects and
+  active ground channel in the same copy. The original expiry still applies. Pulses that fell
+  during the outage are skipped.
 * **Creature melee.** An NPC keeps threat on a player it can still see after the player's
   handoff. The fight keeps nearby replicas available even when the last local player leaves.
   A pet, charmed creature or guardian can melee nearby players and creatures across the
@@ -1016,6 +1019,8 @@ python3 tools/harness/player_summon_recovery.py --scenario dead-guardian
 python3 tools/harness/player_summon_recovery.py --scenario expired-totem
 python3 tools/harness/fishing_recovery.py
 python3 tools/harness/fishing_recovery.py --canceled
+python3 tools/harness/ground_spell_recovery.py
+python3 tools/harness/ground_spell_recovery.py --channeled
 ```
 
 Both map options also accept `--cross-realm`. The Arathi Basin test checks the resource score,
@@ -1057,6 +1062,8 @@ Chicken appears. The totem keeps its GUID, pulses again and expires on schedule.
 keeps its GUID while alive and stays gone if killed before takeover.
 The expiry case crashes just before the totem would despawn and checks it stays gone after takeover.
 The fishing checks recover the original bobber and catch, then verify that a canceled cast stays gone.
+The ground-spell checks kill the caster's worker after Consecration or Blizzard starts ticking and
+verify the same effect resumes and expires on schedule. Blizzard also restores the channel timer.
 
 ## Monitoring
 
