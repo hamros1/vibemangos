@@ -387,6 +387,11 @@ prompt. Item claims and the inventory award commit together. Coin shares use a d
 token, so retrying a payout pays each player once.
 The record also preserves a corpse ready for skinning and any unclaimed skinning loot.
 
+Ordinary outdoor creature spawns also save their corpses and respawn deadlines together. The
+replacement region owner restores the original loot and rolls. A player on another worker can
+answer the same roll, including when the coordinator election makes that player reload on the
+same gateway connection.
+
 * **The same spawns everywhere.** Pools, spawn groups and spawn entries are chosen with a seed made
   from the cluster's name and the realm, so every node agrees on which creature a spawn is.
 * **After a node is lost**, the new owner loads saved respawn deadlines, discovers spawns added
@@ -956,6 +961,7 @@ python3 tools/harness/tomb_recovery.py --after-claim
 python3 tools/harness/corpse_recovery.py
 python3 tools/harness/corpse_recovery.py --after-claim
 python3 tools/harness/corpse_recovery.py --during-roll
+python3 tools/harness/outdoor_corpse_recovery.py
 python3 tools/harness/dreadsteed_recovery.py
 ```
 
@@ -972,6 +978,8 @@ claim. Both clients stay in the same copy, and MariaDB records each claimed item
 The corpse checks kill Gerstahn's worker before opening his loot, after claiming one drop, and
 after the first player casts a group loot vote. The original client connections reload the same
 copy and the same corpse. The claims and the winner's item are checked in MariaDB.
+The outdoor check starts a roll with players on separate workers, kills the corpse owner after
+the first vote, and verifies that the second player can use the original roll to win one item.
 The Dreadsteed check kills the worker just after calling the Keeper and J'eevee. Both existing
 clients see the same actors finish placing the ritual supplies and spawn the first wave once.
 

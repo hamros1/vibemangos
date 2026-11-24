@@ -320,7 +320,7 @@ struct InstanceChestRecord
     string loot;
 }
 
-/// An unexpired creature corpse in a dungeon or raid, including its original loot state.
+/// An unexpired creature corpse and its original loot. Instance zero means an outdoor spawn.
 struct InstanceCorpseRecord
 {
     uint instance, spawn;
@@ -769,6 +769,7 @@ interface WorldDatabase
     /// When recording a native creature's death, commit its respawn deadline with the corpse.
     void saveInstanceCorpse(const InstanceCorpseRecord corpse, long respawnAt);
     void deleteInstanceCorpse(uint instance, uint spawn);
+    @DatabaseRead InstanceCorpseRecord[] loadOutdoorCorpses();
 
     /// The map of instance `id`; uint.max if there is no such instance.
     @DatabaseRead uint instanceMapOf(uint id);
@@ -1210,13 +1211,17 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     {
         if (respawnAt)
             characterDb.transaction({
-                statements.saveInstanceRespawn(false, corpse.spawn, corpse.instance, respawnAt);
+                if (corpse.instance)
+                    statements.saveInstanceRespawn(false, corpse.spawn, corpse.instance, respawnAt);
+                else
+                    statements.saveCreatureRespawn(corpse.spawn, respawnAt);
                 statements.saveInstanceCorpse(corpse);
             });
         else
             statements.saveInstanceCorpse(corpse);
     }
     void deleteInstanceCorpse(uint instance, uint spawn) { statements.deleteInstanceCorpse(instance, spawn); }
+    InstanceCorpseRecord[] loadOutdoorCorpses() { return statements.loadOutdoorCorpses(); }
     uint instanceMapOf(uint id) { return statements.instanceMapOf(id); }
     uint[uint] instanceBindsOf(uint player) { return statements.instanceBindsOf(player); }
     bool instanceLimitReached(uint account, uint instance, long now)
@@ -2741,7 +2746,12 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
     void saveInstanceCorpse(const InstanceCorpseRecord corpse, long respawnAt)
     {
         if (respawnAt)
-            saveInstanceRespawn(false, corpse.spawn, corpse.instance, respawnAt);
+        {
+            if (corpse.instance)
+                saveInstanceRespawn(false, corpse.spawn, corpse.instance, respawnAt);
+            else
+                saveCreatureRespawn(corpse.spawn, respawnAt);
+        }
         foreach (ref row; instanceRows.corpses)
             if (row.instance == corpse.instance && row.spawn == corpse.spawn)
             {
@@ -2756,6 +2766,14 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
         import std.algorithm.mutation : remove;
 
         instanceRows.corpses = instanceRows.corpses.remove!(r => r.instance == instance && r.spawn == spawn);
+    }
+
+    InstanceCorpseRecord[] loadOutdoorCorpses()
+    {
+        import std.algorithm.iteration : filter;
+        import std.array : array;
+
+        return instanceRows.corpses.filter!(row => !row.instance).array;
     }
 
     uint instanceMapOf(uint id)

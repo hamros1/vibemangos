@@ -121,7 +121,7 @@ private:
         flushPlayerChanges(false);
         if (chest.instance)
             context.database.saveChestAward(player.data.guid, player.money.amount, player.values[PLAYER_BYTES_2], changes, chest);
-        else if (corpse.instance)
+        else if (corpse.spawn)
             context.database.saveCorpseAward(player.data.guid, player.money.amount, player.values[PLAYER_BYTES_2], changes, corpse);
         else if (award.token)
             context.database.saveLootAward(award, 0, context.unixTime, player.money.amount, player.values[PLAYER_BYTES_2],

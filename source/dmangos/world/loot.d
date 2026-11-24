@@ -434,6 +434,7 @@ final class Loot
     LootAwardResult delegate(const ref LootAwardKey) loadRemoteAward;
     ushort localAwardNode;
     private long checkAwardsAt;
+    private long nextRecoveredOffer;
     void delegate(ushort, ulong, Opcode, const(ubyte)[]) tellRemoteRoller;
     ushort delegate(ulong) coinNode; /// where a remote member can receive a share now
     ushort coinIssuer;
@@ -1427,6 +1428,12 @@ final class Loot
             }
     }
 
+    package void resumeRemoteRolls()
+    {
+        if (rolls.length && sendRemoteRoll !is null)
+            nextRecoveredOffer = nowSeconds();
+    }
+
     /// The master can arrive after another member opened the loot, or reopen it after a handoff.
     private void sendMasterList(Looter master)
     {
@@ -1475,6 +1482,13 @@ final class Loot
                 check();
         }
         recoverRemoteAwards(now);
+        if (nextRecoveredOffer && now >= nextRecoveredOffer)
+        {
+            nextRecoveredOffer = rolls.length ? now + 1 : 0;
+            foreach (slot; rolls.keys)
+                if (auto roll = slot in rolls)
+                    (*roll).resendRemoteOffers(now);
+        }
         foreach (slot; rolls.keys)
             if (rolls[slot].update(now))
                 rolls.remove(slot);
@@ -1507,7 +1521,7 @@ final class Loot
     private ushort rollMemberNode(ulong guid)
     {
         const initial = remoteMembers.get(guid, 0);
-        if (initial && remoteMemberNode !is null)
+        if ((initial || checkpoint !is null) && remoteMemberNode !is null)
             if (const current = remoteMemberNode(guid))
                 return current;
         return initial;
@@ -1554,7 +1568,7 @@ final class LootRoll
             votes[guid] = Vote(RollVote.notEmittedYet);
             ++players;
         }
-        if (!item.freeForAll && loot.sendRemoteRoll !is null && loot.remoteMembers.length)
+        if (!item.freeForAll && loot.sendRemoteRoll !is null && (loot.remoteMembers.length || loot.checkpoint !is null))
         {
             serial = loot.nextRoll();
             foreach (guid, _; loot.remoteMembers)
@@ -1636,6 +1650,19 @@ final class LootRoll
                     votes[guid].vote = RollVote.pass;
             }
         }
+    }
+
+    private void resendRemoteOffers(long now)
+    {
+        if (!started || !serial || now >= endTime)
+            return;
+        foreach (guid; votes.keys)
+            if (votes[guid].vote == RollVote.notEmittedYet && loot.find(guid) is null)
+                if (const node = loot.rollMemberNode(guid))
+                {
+                    const message = remoteMessage(GroupLootRoll.Action.offer, guid);
+                    loot.sendRemoteRoll(node, message);
+                }
     }
 
     private GroupLootRoll remoteMessage(GroupLootRoll.Action action, ulong guid) const

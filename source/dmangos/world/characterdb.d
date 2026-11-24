@@ -1170,7 +1170,7 @@ final class CharacterStatements
         foreach (row; characters.query!"SELECT instance, spawn, expires_at, loot FROM dmangos_instance_chest"())
             all.chests ~= InstanceChestRecord(row.get!uint(0), row.get!uint(1), row.get!long(2), row.get!string(3));
         foreach (row; characters.query!("SELECT instance, spawn, expires_at, state FROM dmangos_instance_corpse "
-                ~ "WHERE expires_at > UNIX_TIMESTAMP()")())
+                ~ "WHERE instance <> 0 AND expires_at > UNIX_TIMESTAMP()")())
             all.corpses ~= InstanceCorpseRecord(row.get!uint(0), row.get!uint(1), row.get!long(2), row.get!string(3));
         return all;
     }
@@ -1215,10 +1215,27 @@ final class CharacterStatements
 
     void saveInstanceCorpse(const imported!"dmangos.world.database".InstanceCorpseRecord corpse)
     {
-        characters.execute!("INSERT INTO dmangos_instance_corpse (instance, spawn, expires_at, state) "
-            ~ "SELECT id, ?, ?, ? FROM instance WHERE id = ? "
-            ~ "ON DUPLICATE KEY UPDATE expires_at = VALUES(expires_at), state = VALUES(state)")(
-                corpse.spawn, corpse.expiresAt, corpse.state, corpse.instance);
+        if (corpse.instance)
+            characters.execute!("INSERT INTO dmangos_instance_corpse (instance, spawn, expires_at, state) "
+                ~ "SELECT id, ?, ?, ? FROM instance WHERE id = ? "
+                ~ "ON DUPLICATE KEY UPDATE expires_at = VALUES(expires_at), state = VALUES(state)")(
+                    corpse.spawn, corpse.expiresAt, corpse.state, corpse.instance);
+        else
+            characters.execute!("INSERT INTO dmangos_instance_corpse (instance, spawn, expires_at, state) "
+                ~ "VALUES (0, ?, ?, ?) ON DUPLICATE KEY UPDATE expires_at = VALUES(expires_at), state = VALUES(state)")(
+                    corpse.spawn, corpse.expiresAt, corpse.state);
+    }
+
+    imported!"dmangos.world.database".InstanceCorpseRecord[] loadOutdoorCorpses()
+    {
+        import dmangos.world.database : InstanceCorpseRecord;
+
+        prepareInstanceCorpses();
+        InstanceCorpseRecord[] result;
+        foreach (row; characters.query!("SELECT spawn, expires_at, state FROM dmangos_instance_corpse "
+                ~ "WHERE instance = 0 AND expires_at > UNIX_TIMESTAMP()")())
+            result ~= InstanceCorpseRecord(0, row.get!uint(0), row.get!long(1), row.get!string(2));
+        return result;
     }
 
     void deleteInstanceCorpse(uint instance, uint spawn)

@@ -30,7 +30,8 @@ package void bindLootDelivery(WorldContext context, Map map, Loot loot, bool rol
 
     const crossNodeRolls = rolls && context.sendRemoteGroupLoot !is null && context.deliverRemote !is null;
     const crossNodeMaster = master && context.sendRemoteGroupLoot !is null;
-    if (loot.remoteMembers.length && (crossNodeRolls || crossNodeMaster))
+    const canResumeOutdoorRoll = !map.instanceId && loot.checkpoint !is null;
+    if ((loot.remoteMembers.length || canResumeOutdoorRoll) && (crossNodeRolls || crossNodeMaster))
     {
         loot.rollMap = map.id;
         loot.nextRoll = &context.nextGameplaySequence;
@@ -618,8 +619,21 @@ private:
                 remoteLootOffers.remove(key);
         const key = RemoteLootKey(message.loot, message.slot);
         if (auto previous = key in remoteLootOffers)
-            if (previous.message.roll == message.roll || (previous.node == node && previous.message.roll > message.roll))
+        {
+            if (previous.message.roll == message.roll)
+            {
+                if (previous.node != node && remoteLootOwner(message.loot) == node)
+                {
+                    if (!previous.voted)
+                        previous.node = node;
+                    else if (!previous.awardHandled)
+                        sendRemoteLootVote(*previous, node);
+                }
                 return;
+            }
+            if (previous.node == node && previous.message.roll > message.roll)
+                return;
+        }
         remoteLootOffers[key] = RemoteLootOffer(message, node, context.unixTime + lootRollSeconds + 30);
         if ((message.condition && !conditionMet(message.condition))
             || (message.needBeforeGreed && !canUseItem(message.item)))
