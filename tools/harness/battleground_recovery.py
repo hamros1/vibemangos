@@ -125,6 +125,11 @@ def run(fixture, cross_realm=False, battleground="warsong", finish_phase=None):
                                 f"WHERE id={entry} AND map={map_id} ORDER BY guid LIMIT 1", world_db).split()
         return f"worldport:{map_id}:{float(x)+1}:{y}:{z}"
 
+    def visible_pickups(log):
+        return stables_pickups.keys() & {
+            tuple(map(int, match)) for match in re.findall(r"\[game object\] (\d+) guid (\d+):", log)
+        }
+
     join, force, accept, play, next_objective, resume, finish = (fixture.directory / name for name in
         ("join", "force", "accept", "play", "next-objective", "resume", "finish"))
     before_crash = [[], []]
@@ -162,6 +167,22 @@ def run(fixture, cross_realm=False, battleground="warsong", finish_phase=None):
     if not after_crash[1]:
         after_crash[1] = ["bgstatus", "pvplog:scores"]
     if cross_realm_arathi:
+        # Identify just the Stables variants, even if the clients also visit another power-up pad.
+        rows = fixture.query("SELECT pickup.id,pickup.guid,t.data3,pickup.position_x,pickup.position_y,pickup.position_z "
+                             "FROM gameobject pickup JOIN gameobject_template t ON t.entry=pickup.id "
+                             "JOIN gameobject banner ON banner.map=pickup.map AND banner.id=180087 "
+                             "WHERE pickup.map=529 AND pickup.id IN (179871,179904,179905) "
+                             "AND POW(pickup.position_x-banner.position_x,2) "
+                             "+ POW(pickup.position_y-banner.position_y,2) < 2500", world_db)
+        stables_pickups = {}
+        positions = set()
+        for line in rows.splitlines():
+            entry, guid, spell, *position = line.split()
+            stables_pickups[int(entry), int(guid)] = int(spell)
+            positions.add(tuple(map(float, position)))
+        assert len(stables_pickups) == 3 and len(positions) == 1, rows
+        (px, py, pz), = positions
+        take_pickup = fixture.directory / "take-pickup"
         stables = port_to("gameobject", 180087)
         _, _, x, y, z = stables.split(":")
         spells = [stables, "listen:2"] + ["castplayer:133", "listen:2.5"] * 3
@@ -170,6 +191,8 @@ def run(fixture, cross_realm=False, battleground="warsong", finish_phase=None):
         for actions in (before_crash, after_crash):
             actions[0] = ["bgstatus", *spells, *actions[0]]
             actions[1] = ["bgstatus", *melee, *actions[1]]
+        after_crash[0] += [f"waitfile:{take_pickup}", f"worldport:{map_id}:{px+5}:{py}:{pz}",
+                           f"move:{px}:{py}:{pz}"]
 
     def check_combat(read_logs):
         def client_kept_columns(log):
@@ -224,6 +247,9 @@ def run(fixture, cross_realm=False, battleground="warsong", finish_phase=None):
     play.touch()
     if cross_realm_arathi:
         check_combat(logs)
+        blue_seen, red_seen = map(visible_pickups, logs())
+        assert len(blue_seen) == 1 and blue_seen == red_seen, (blue_seen, red_seen)
+        active_pickup, = blue_seen
     dropped = []
     if battleground == "warsong":
         score_marker = "[world state] 1581=1"
@@ -349,6 +375,21 @@ def run(fixture, cross_realm=False, battleground="warsong", finish_phase=None):
         result = "30–0 resources with Stables held and Farm still contested, then accrued resources and finished capturing Farm"
         if cross_realm_arathi:
             result += "; melee and spell damage worked across realms and status kept the objective columns before and after takeover"
+            assert [visible_pickups(log) for log in recovered()] == [{active_pickup}] * 2
+            take_pickup.touch()
+            entry, spawn = active_pickup
+            reported_guid = (entry << 24 | spawn) & 0xFFFFFFFF  # testclient prints the low 32 bits on removal
+            spell = stables_pickups[active_pickup]
+
+            def collected():
+                _, moved, log = recovered()[0].partition(f"moved to {px} {py} {pz}")
+                if not moved or f"[spell go] {spell} by" not in log or "[aura duration]" not in log:
+                    return False
+                removed = re.findall(r"\[out of range\] ([\d, ]+)", log)
+                return any(str(reported_guid) in group.split(", ") for group in removed)
+
+            wait_for("walking onto the original Stables pickup to cast its spell and despawn it", collected, 10)
+            result += "; only the original Stables pickup appeared and it triggered on approach"
     elif battleground == "alterac":
         wait_for("the original scoreboard and the Alliance mine boss on the recovered map",
                  lambda: all(s in recovered()[0] for s in ("objectives=[0, 0, 1, 0, 1, 0, 0]", "[creature] 13078 guid")), 15)

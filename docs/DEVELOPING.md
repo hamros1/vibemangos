@@ -320,6 +320,11 @@ the majority after release, the original gateway client recovers from its durabl
 and the old owners rejoin without overwriting the replacement's progress. The proxy runs
 without firewall changes or elevated privileges.
 
+Run `python3 tools/harness/battleground_recovery.py --cross-realm --map arathi` to kill the
+active match worker and check the same match's objectives, scoreboard and PvP on its standby.
+Both scripted clients verify that Stables still shows a single pickup, then one walks onto it
+and checks that its buff fires and the object disappears.
+
 ### Live tests against real data
 
 For two players, run two clients at once: one listening, one acting.
