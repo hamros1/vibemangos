@@ -1525,7 +1525,7 @@ mixin template PetHandlers()
     }
 
     private enum ubyte loneTotemSlot = 4, guardianSlot = 5;
-    private enum ubyte summonCheckpointVersion = 1;
+    private enum ubyte summonCheckpointVersion = 2;
     private bool summonCheckpointExists, detachingSummons;
 
     private const(ubyte)[] playerSummonState(bool departing, ulong removed = 0)
@@ -1597,18 +1597,22 @@ mixin template PetHandlers()
     }
 
     /// Save active summons for this gateway's current login. A pending removal is still on the map during its callback.
-    package void checkpointSummons(bool immediate = false, ulong removed = 0)
+    package bool checkpointSummons(bool immediate = false, ulong removed = 0)
     {
         import dmangos.world.instancescripting : toHex;
 
         const home = connection.gatewayHome;
-        if (!home.node || detachingSummons || !context.canWrite())
-            return;
-        const state = player.alive ? playerSummonState(false, removed) : null;
-        if (!state.length && !summonCheckpointExists)
-            return;
+        if (!home.node || detachingSummons)
+            return true;
+        if (!context.canWrite())
+            return false;
+        const summons = player.alive ? playerSummonState(false, removed) : null;
+        const fishing = player.alive && bobber && bobber != removed ? fishingRecoveryState() : null;
+        const active = summons.length || fishing.length;
+        if (!active && !summonCheckpointExists)
+            return true;
         ByteWriter checkpoint;
-        if (state.length)
+        if (active)
         {
             if (immediate && !removed)
             {
@@ -1618,13 +1622,18 @@ mixin template PetHandlers()
             checkpoint.put(summonCheckpointVersion);
             checkpoint.put(home.node);
             checkpoint.put(home.incarnation);
-            checkpoint.putBytes(state);
+            checkpoint.put(cast(uint) summons.length);
+            checkpoint.putBytes(summons);
+            checkpoint.putBytes(fishing);
         }
-        context.database.savePlayerSummons(player.data.guid, state.length ? toHex(checkpoint.data) : null);
+        context.database.savePlayerSummons(player.data.guid, active ? toHex(checkpoint.data) : null);
         if (immediate && !context.settleWrites())
+        {
             summonCheckpointExists = true;
-        else
-            summonCheckpointExists = state.length != 0;
+            return false;
+        }
+        summonCheckpointExists = active;
+        return true;
     }
 
     private void openSummonCheckpoint(bool recovered)
@@ -1648,9 +1657,18 @@ mixin template PetHandlers()
                 return;
             auto state = ByteReader(fromHex(saved));
             const home = connection.gatewayHome;
-            if (state.read!ubyte == summonCheckpointVersion && state.read!ushort == home.node
-                && state.read!ulong == home.incarnation && player.alive && !flying)
-                restorePlayerSummons(state, true);
+            const version_ = state.read!ubyte;
+            if (state.read!ushort == home.node && state.read!ulong == home.incarnation && player.alive && !flying)
+            {
+                if (version_ == 1)
+                    restorePlayerSummons(state, true);
+                else if (version_ == summonCheckpointVersion)
+                {
+                    auto summons = ByteReader(state.readBytes(state.read!uint));
+                    restorePlayerSummons(summons, true);
+                    restoreFishingRecovery(state);
+                }
+            }
             checkpointSummons();
         }
         catch (Exception error)

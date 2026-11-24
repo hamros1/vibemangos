@@ -23,6 +23,7 @@ in order:
     approach:ENTRY:DIST       walk to DIST yards of the nearest creature of ENTRY
     cast:SPELL[:ENTRY]       cast a spell, optionally at a creature by entry
     summonaccept:GUID        accept a player's summon request
+    fish                     reel in the visible fishing bobber and loot the catch
     cancelchannel:SPELL      cancel the specified channel
     loot[:N]                  take the last creature's loot, or only N items and leave the money
     killpack:[one:]ENTRY...    select and kill matching visible living creatures (GM)
@@ -1026,6 +1027,20 @@ for action in actions:
             wsend(0x141, struct.pack("<Q", target)); print(f"attack player {target & 0xFFFFFF}")
     elif kind == "summonaccept":
         wsend(0x2AC, struct.pack("<Q", int(args[0], 0)))
+    elif kind == "fish":
+        bobber = next((g for g, (t, entry) in seen_objects.items() if t == 5 and entry == 35591), None)
+        if bobber is None:
+            raise RuntimeError("the fishing bobber is gone")
+        wsend(0x0B1, struct.pack("<Q", bobber))
+        _, catch = expect(0x160)
+        if len(catch) < 14:
+            raise RuntimeError(f"fishing failed ({catch.hex()})")
+        count = catch[13]
+        items = [struct.unpack_from("<BII", catch, 14 + i * 22) for i in range(count)]
+        for slot, _, _ in items:
+            wsend(0x108, bytes([slot]))
+        wsend(0x15F, struct.pack("<Q", bobber))
+        print(f"  [fish loot] {items}")
     elif kind == "duelaccept":
         wsend(0x16C, struct.pack("<Q", duel_flag[0])); print("accept the duel")
     elif kind in ("queststatus", "questhello", "questaccept", "questcomplete", "questreward"):

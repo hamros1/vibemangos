@@ -1014,6 +1014,8 @@ python3 tools/harness/player_summon_recovery.py
 python3 tools/harness/player_summon_recovery.py --scenario guardian
 python3 tools/harness/player_summon_recovery.py --scenario dead-guardian
 python3 tools/harness/player_summon_recovery.py --scenario expired-totem
+python3 tools/harness/fishing_recovery.py
+python3 tools/harness/fishing_recovery.py --canceled
 ```
 
 Both map options also accept `--cross-realm`. The Arathi Basin test checks the resource score,
@@ -1054,6 +1056,7 @@ The summon checks kill the player's worker after Magma Totem first pulses or aft
 Chicken appears. The totem keeps its GUID, pulses again and expires on schedule. The guardian
 keeps its GUID while alive and stays gone if killed before takeover.
 The expiry case crashes just before the totem would despawn and checks it stays gone after takeover.
+The fishing checks recover the original bobber and catch, then verify that a canceled cast stays gone.
 
 ## Monitoring
 
@@ -1127,7 +1130,8 @@ region is reassigned, control ends before the creature's state moves to the new 
 player move releases a native creature. Eyes of the Beast can resume after a clean move on the
 same map. The hunter controls the same pet at its current position for the rest of the channel.
 An angler can finish the original cast after moving. Their bobber keeps its GUID and bite timer
-until the catch begins.
+until the catch begins. A replacement worker recovers the same active cast while the original
+bite window is still available. Reeling it in closes that checkpoint before rolling the catch.
 
 Party area auras reach nearby players in the same raid subgroup across region boundaries. The
 recipient's node checks membership and distance. It removes the aura when those checks fail or the

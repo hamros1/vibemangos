@@ -1104,13 +1104,9 @@ private:
         channelObject = 0;
         channelTimer = ms;
         channelCostTimer = 1000;
-        ByteWriter w;
-        w.put(spell.id);
-        w.put(cast(uint) ms);
-        deliver(Opcode.MSG_CHANNEL_START, w.data);
-        player.values.set!UNIT_CHANNEL_SPELL(spell.id);
-        player.values.set!UNIT_FIELD_CHANNEL_OBJECT(channelTarget);
-        flushPlayerChanges();
+        if (bobber && bobber == channelTarget)
+            checkpointSummons(true);
+        showChannelStart();
         // Mind Vision (`SPELL_AURA_BIND_SIGHT`): the player sees through the channel's target while it lasts.
         import dmangos.world.spellids : AuraType;
 
@@ -1118,6 +1114,17 @@ private:
             if (spell.effect[j] == SpellEffect.applyAura && spell.casting.applyAuraName[j] == AuraType.bindSight
                     && channelTarget != player.guid)
                 seeFrom(channelTarget);
+    }
+
+    private void showChannelStart()
+    {
+        ByteWriter w;
+        w.put(channelSpell.id);
+        w.put(cast(uint) channelTimer);
+        deliver(Opcode.MSG_CHANNEL_START, w.data);
+        player.values.set!UNIT_CHANNEL_SPELL(channelSpell.id);
+        player.values.set!UNIT_FIELD_CHANNEL_OBJECT(channelTarget);
+        flushPlayerChanges();
     }
 
     private int channelCostTimer; // ms to the channel's next second's cost
@@ -1464,17 +1471,22 @@ private:
         bobberAge += diff;
         if (before < bobberBite && bobberAge >= bobberBite)
         {
-            go.values.set!GAMEOBJECT_STATE(0u); // GO_STATE_ACTIVE
-            map.flushGameObject(go);
-            import dmangos.world.gameobject : gameObjectAnimation;
-
-            map.sendToObservers(go.guid, Opcode.SMSG_GAMEOBJECT_CUSTOM_ANIM, gameObjectAnimation(go.guid, 0));
+            bobberSplash(go);
         }
         if (!bobberLooted && bobberAge >= bobberGone)
         {
             deliver(Opcode.SMSG_FISH_NOT_HOOKED, null);
             endChannel(false);
         }
+    }
+
+    private void bobberSplash(GameObject go)
+    {
+        import dmangos.world.gameobject : gameObjectAnimation;
+
+        go.values.set!GAMEOBJECT_STATE(0u); // GO_STATE_ACTIVE
+        map.flushGameObject(go);
+        map.sendToObservers(go.guid, Opcode.SMSG_GAMEOBJECT_CUSTOM_ANIM, gameObjectAnimation(go.guid, 0));
     }
 
     /// A persistent area aura's spot (`dmangos.world.spellareas.makePersistentArea`).
@@ -1527,12 +1539,16 @@ private:
     }
 
     /// The bobber goes.
-    void removeBobber()
+    void removeBobber(bool departing = false)
     {
-        if (bobber)
-            map.removeObject(bobber);
+        const removed = bobber;
+        if (!removed)
+            return;
+        map.removeObject(removed);
         bobber = 0;
         bobberLooted = false;
+        if (!departing)
+            checkpointSummons(true, removed);
     }
 
     /**
@@ -1548,12 +1564,18 @@ private:
         import dmangos.world.professions : fishingSkillUpChance;
 
         enum uint skillFishing = 356;
-        if (go.owner != player.guid || go.guid != bobber)
+        if (go.owner != player.guid || go.guid != bobber || bobberLooted)
             return;
         if (bobberAge < bobberBite)
         {
             deliver(Opcode.SMSG_FISH_NOT_HOOKED, null);
             return endChannel(false);
+        }
+        if (!checkpointSummons(true, go.guid))
+            return;
+        bool allowsCatch(ulong guid, const LootItem item)
+        {
+            return (!item.quest || hasQuestForItem(item.itemId)) && (item.condition == 0 || conditionMet(item.condition));
         }
         const area = player.area, zone = player.data.zone;
         int zoneSkill = context.data.fishingBaseSkill.get(area, 0);
@@ -1576,7 +1598,7 @@ private:
             }
             auto loot = makeGameObjectLoot(go);
             loot.fill(junk, context.data.loot, context.data.items, map.random, (uint c) => conditionMet(c),
-                (ulong guid, const LootItem item) => item.condition == 0 || conditionMet(item.condition));
+                &allowsCatch);
             loot.lootedForAll = () { removeBobber(); };
             go.loot = loot;
             bobberLooted = true;
@@ -1631,12 +1653,7 @@ private:
                 return conditionMet(condition);
             }
 
-            bool allowed(ulong guid, const LootItem item)
-            {
-                return item.condition == 0 || conditionMet(item.condition);
-            }
-
-            loot.fill(template_, context.data.loot, context.data.items, map.random, &meets, &allowed);
+            loot.fill(template_, context.data.loot, context.data.items, map.random, &meets, &allowsCatch);
         }
         loot.lootedForAll = () { removeBobber(); };
         go.loot = loot;
@@ -1780,7 +1797,7 @@ private:
         return !channelSpell.casting.applyAuraName[].any!(a => a == AuraType.bindSight);
     }
 
-    private const(ubyte)[] takeFishingHandoff()
+    private const(ubyte)[] fishingHandoffState()
     {
         import dmangos.serialization : serialize;
 
@@ -1793,37 +1810,88 @@ private:
         state.put(bobberBite);
         state.put(bobberGone);
         go.saveState(state, context.transportNow());
-        // The destination sends the create block again, using the original GUID.
-        removeBobber();
         return state.data;
     }
 
+    private const(ubyte)[] takeFishingHandoff()
+    {
+        const state = fishingHandoffState();
+        if (state.length)
+            removeBobber(true); // the destination sends the original bobber's create block
+        return state;
+    }
+
     private void restoreFishingHandoff(ref ByteReader reader)
+    {
+        auto state = ByteReader(reader.readBytes(reader.read!uint));
+        if (channelSpell !is null)
+            restoreFishingState(state, channelTarget);
+    }
+
+    private const(ubyte)[] fishingRecoveryState()
+    {
+        const fishing = fishingHandoffState();
+        if (!fishing.length)
+            return null;
+        ByteWriter state;
+        state.put(map.id);
+        state.put(map.instanceId);
+        state.put(context.transportNow());
+        state.put(channelSpell.id);
+        state.put(channelTarget);
+        state.put(channelTimer);
+        state.putBytes(fishing);
+        return state.data;
+    }
+
+    private void restoreFishingRecovery(ref ByteReader state)
+    {
+        import std.algorithm.comparison : max;
+
+        if (state.empty || state.read!uint != map.id || state.read!uint != map.instanceId)
+            return;
+        const elapsed = max(0, cast(int)(context.transportNow() - state.read!uint));
+        const spell = context.spellInfo(state.read!uint);
+        const target = state.read!ulong;
+        const remaining = state.read!int - elapsed;
+        if (spell is null || channelSpell !is null || remaining <= 0 || !restoreFishingState(state, target, elapsed))
+            return;
+        channelSpell = spell;
+        channelTarget = target;
+        channelTimer = remaining;
+        channelCostTimer = 1000;
+        showChannelStart();
+    }
+
+    private bool restoreFishingState(ref ByteReader state, ulong target, int elapsed = 0)
     {
         import dmangos.serialization : deserialize;
         import dmangos.world.gameobject : GameObjectSpawn, GameObjectType;
         import dmangos.world.objects : temporaryCounterStart;
 
-        auto state = ByteReader(reader.readBytes(reader.read!uint));
-        if (state.empty || channelSpell is null)
-            return;
+        if (state.empty)
+            return false;
         const spawn = deserialize!GameObjectSpawn(state);
         const proto = spawn.entry in context.data.gameObjectTemplates;
         if (proto is null || proto.type != GameObjectType.fishingNode || spawn.guid < temporaryCounterStart
             || spawn.guid > 0xFF_FFFF || spawn.map != map.id
             || !context.client.isValidMapCoord(spawn.map, spawn.x, spawn.y, spawn.z, spawn.orientation))
-            return;
+            return false;
         auto go = new GameObject(spawn, proto);
-        if (go.guid != channelTarget)
-            return;
-        bobberAge = state.read!int;
-        bobberBite = state.read!int;
-        bobberGone = state.read!int;
+        const age = state.read!int, bite = state.read!int, gone = state.read!int;
+        if (go.guid != target || age + elapsed >= gone)
+            return false;
+        bobberAge = age + elapsed;
+        bobberBite = bite;
+        bobberGone = gone;
         bobber = go.guid;
         go.owner = player.guid;
         go.instanceId = map.instanceId;
         go.loadState(state, context.transportNow());
         map.addObject(go);
+        if (age < bite && bobberAge >= bite)
+            bobberSplash(go);
+        return true;
     }
 
     private void writeChannelAndGroundHandoff(ref ByteWriter writer)
