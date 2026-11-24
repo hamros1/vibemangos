@@ -851,14 +851,15 @@ coordinator's start-up partition and costs too and, like every member, holds the
   database (the old coordinator saved every change) and sent to every mirror; ids come from this
   node's counters, raised to what the database holds and what members report; the node speaks for the
   realm (its `realmlist` row, steering new clients) and keeps the honor week. Services the old
-  coordinator hosted are dealt out with its other regions.
+  coordinator hosted are dealt out with its other regions. Saved party invitations and meeting
+  stone queues are restored on promotion.
 
 **Limits.** There is one standby, and none after a takeover until one is configured again. There is
 no quorum: a coordinator that is alive but cut off from the standby while members still reach it is
 not told apart from a dead one, so run the two where that cannot happen (one machine or one switch).
 The old coordinator must come back as a member of the new one (its `coordinator` pointing there).
-Players whose client was connected to the old coordinator lose their connection and log in again;
-group invitations in flight are lost.
+Players whose client was connected directly to the old coordinator lose their connection and log in
+again. Players behind a surviving gateway can accept their original pending party invitations.
 
 ### A clean stop: draining
 
@@ -960,6 +961,7 @@ described in [Developing](DEVELOPING.md).
 ```sh
 python3 tools/harness/battlegroup.py
 python3 tools/harness/battlegroup_failover.py
+python3 tools/harness/group_invite_recovery.py
 python3 tools/harness/battleground_recovery.py
 python3 tools/harness/battleground_recovery.py --cross-realm
 python3 tools/harness/battleground_recovery.py --map arathi
@@ -982,6 +984,8 @@ python3 tools/harness/dreadsteed_recovery.py
 Both map options also accept `--cross-realm`. The Arathi Basin test checks the resource score,
 the Stables, and a Farm capture in progress. The Alterac Valley test checks the scorecard,
 Irondeep Mine, and a contested Iceblood Tower that the Horde can still defend after takeover.
+The party invitation test kills the coordinator with an invitation open. The original member
+accepts it on the same connection, and MariaDB records one party with the two original players.
 The dungeon test takes an unbound party through the Blackrock Depths portal and kills its
 worker between waves. `--new-party` forms the group through an invitation after a worker
 handoff. `--active-wave` tests a crash with some opponents still alive. Both clients must
