@@ -376,7 +376,7 @@ struct OutdoorScriptCheckpoint
     bool waitingForSummons;
 }
 
-enum OutdoorSummonKind : ubyte { creature, gameObject, openable, scriptedObject, scriptedDespawn, relay }
+enum OutdoorSummonKind : ubyte { creature, gameObject, openable, scriptedObject, scriptedDespawn, relay, staticDespawn }
 
 /// A durable summon routed by destination cell, with a receipt after the actor commits.
 struct OutdoorSummonRequest
@@ -887,7 +887,8 @@ interface WorldDatabase
     @DatabaseRead bool outdoorSummonsPending(uint realm, ushort origin, ulong sequence);
     @DatabaseWrite bool commitOutdoorSummon(uint realm, const ref OutdoorSummonRequest request,
         const ref QuestActorCheckpoint actor, const(OutdoorScriptCheckpoint)[] relays, uint chest = 0);
-    @DatabaseWrite bool commitOutdoorDespawn(uint realm, const ref OutdoorSummonRequest request, ulong actor, uint chest = 0);
+    @DatabaseWrite bool commitOutdoorDespawn(uint realm, const ref OutdoorSummonRequest request, ulong actor, uint chest = 0,
+        long respawnAt = 0);
     @DatabaseWrite bool retireOutdoorSummon(uint realm, const ref OutdoorSummonRequest request);
 
     /// The map of instance `id`; uint.max if there is no such instance.
@@ -1489,8 +1490,11 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
         return statements.retireOutdoorSummon(realm, request);
     }
 
-    bool commitOutdoorDespawn(uint realm, const ref OutdoorSummonRequest request, ulong actor, uint chest = 0)
+    bool commitOutdoorDespawn(uint realm, const ref OutdoorSummonRequest request, ulong actor, uint chest = 0,
+        long respawnAt = 0)
     {
+        import dmangos.world.objects : counterOf;
+
         bool removed;
         characterDb.transaction({
             if (!statements.completeOutdoorSummon(realm, request, actor))
@@ -1498,6 +1502,8 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
             if (chest)
                 statements.deleteOutdoorChest(chest);
             statements.deleteQuestActor(realm, actor);
+            if (respawnAt)
+                statements.saveGameObjectRespawn(counterOf(actor), respawnAt);
             removed = true;
         });
         return removed;
@@ -3282,8 +3288,11 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
         return false;
     }
 
-    bool commitOutdoorDespawn(uint realm, const ref OutdoorSummonRequest request, ulong actor, uint chest = 0)
+    bool commitOutdoorDespawn(uint realm, const ref OutdoorSummonRequest request, ulong actor, uint chest = 0,
+        long respawnAt = 0)
     {
+        import dmangos.world.objects : counterOf;
+
         foreach (ref pending; outdoorSummons.get(realm, null))
             if (pending.sameRequest(request) && !pending.actor)
             {
@@ -3291,6 +3300,8 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
                 if (chest)
                     deleteOutdoorChest(chest);
                 deleteQuestActor(realm, actor);
+                if (respawnAt)
+                    saveGameObjectRespawn(counterOf(actor), respawnAt);
                 return true;
             }
         return false;

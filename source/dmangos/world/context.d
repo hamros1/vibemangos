@@ -5958,6 +5958,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return outdoorScriptActorState(map.id, go.guid, migrant);
     }
 
+    private bool durableStaticDespawn(const ref GameObjectSpawn spawn, const ref GameObjectTemplate proto)
+    {
+        return spawn.guid < temporaryCounterStart && spawn.respawnSeconds >= 0
+            && proto.type != GameObjectType.transport && proto.type != GameObjectType.moTransport
+            && spawn.guid !in unsavedGameObjectSpawns && !gameObjectPools.manages(spawn.guid)
+            && (data.pools is null || !data.pools.inPool(PoolMember.Kind.gameObject, spawn.guid));
+    }
+
     private QuestActorCheckpoint outdoorScriptActorState(uint map, ulong guid, ref Migrant migrant)
     {
         import dmangos.world.instancescripting : toHex;
@@ -9664,9 +9672,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         }
         if (go.spawn.respawnSeconds < 0)
             return;
-        const saved = go.spawn.guid in outdoorChests;
-        const finished = saved !is null && saved.expiresAt && saved.expiresAt < unixTime ? saved.expiresAt : unixTime;
-        const at = finished + (go.spawn.respawnSeconds > 0 ? go.spawn.respawnSeconds : 0);
+        const at = outdoorObjectRespawnDeadline(go);
         const hadChest = outdoorChests.remove(go.spawn.guid);
         if (gameObjectPools.manages(go.spawn.guid))
             return gameObjectPools.exhausted(go.spawn.guid, at, hadChest);
@@ -9675,6 +9681,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             database.finishOutdoorChest(go.spawn.guid, at);
         else
             database.saveGameObjectRespawn(go.spawn.guid, at);
+    }
+
+    private long outdoorObjectRespawnDeadline(const GameObject go)
+    {
+        const saved = go.spawn.guid in outdoorChests;
+        const finished = saved !is null && saved.expiresAt && saved.expiresAt < unixTime ? saved.expiresAt : unixTime;
+        return finished + (go.spawn.respawnSeconds > 0 ? go.spawn.respawnSeconds : 0);
     }
 
     /// Whether a game object spawn is used up and waiting to come back.
