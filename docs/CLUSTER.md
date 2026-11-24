@@ -383,6 +383,8 @@ its following steps. Scripted toggles of outdoor doors and buttons also use the 
 restores the active door state and resets it at the original deadline. The same queue saves timed
 respawns of outdoor quest givers, goobers, generic objects, and spell focuses that scripts place at
 their database spawn. The replacement restores their original spawn GUID and visibility deadline.
+An immediate scripted despawn of one of those objects removes the checkpoint before publishing its
+removal. A parent on another worker waits for that result before it continues.
 Other commands claim their step before executing it, so a crash during their effects can leave the
 step incomplete.
 Finite wild objects of the generic and spell-focus types use the same durable queue from placement.

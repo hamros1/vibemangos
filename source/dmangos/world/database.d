@@ -376,7 +376,7 @@ struct OutdoorScriptCheckpoint
     bool waitingForSummons;
 }
 
-enum OutdoorSummonKind : ubyte { creature, gameObject, openable, scriptedObject }
+enum OutdoorSummonKind : ubyte { creature, gameObject, openable, scriptedObject, scriptedDespawn }
 
 /// A durable summon routed by destination cell, with a receipt after the actor commits.
 struct OutdoorSummonRequest
@@ -885,6 +885,7 @@ interface WorldDatabase
     @DatabaseRead bool outdoorSummonsPending(uint realm, ushort origin, ulong sequence);
     @DatabaseWrite bool commitOutdoorSummon(uint realm, const ref OutdoorSummonRequest request,
         const ref QuestActorCheckpoint actor, const(OutdoorScriptCheckpoint)[] relays);
+    @DatabaseWrite bool commitOutdoorDespawn(uint realm, const ref OutdoorSummonRequest request, ulong actor);
     @DatabaseWrite bool retireOutdoorSummon(uint realm, const ref OutdoorSummonRequest request);
 
     /// The map of instance `id`; uint.max if there is no such instance.
@@ -1474,6 +1475,18 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     bool retireOutdoorSummon(uint realm, const ref OutdoorSummonRequest request)
     {
         return statements.retireOutdoorSummon(realm, request);
+    }
+
+    bool commitOutdoorDespawn(uint realm, const ref OutdoorSummonRequest request, ulong actor)
+    {
+        bool removed;
+        characterDb.transaction({
+            if (!statements.completeOutdoorSummon(realm, request, actor))
+                return;
+            statements.deleteQuestActor(realm, actor);
+            removed = true;
+        });
+        return removed;
     }
     uint instanceMapOf(uint id) { return statements.instanceMapOf(id); }
     uint[uint] instanceBindsOf(uint player) { return statements.instanceBindsOf(player); }
@@ -3229,6 +3242,18 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
                 saveQuestActor(realm, actor);
                 foreach (ref relay; relays)
                     beginOutdoorScript(realm, relay);
+                return true;
+            }
+        return false;
+    }
+
+    bool commitOutdoorDespawn(uint realm, const ref OutdoorSummonRequest request, ulong actor)
+    {
+        foreach (ref pending; outdoorSummons.get(realm, null))
+            if (pending.sameRequest(request) && !pending.actor)
+            {
+                pending.actor = actor;
+                deleteQuestActor(realm, actor);
                 return true;
             }
         return false;
