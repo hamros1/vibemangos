@@ -1607,6 +1607,84 @@ unittest
     assert(Dungeon.isOpen(d.objectOf(outDoor)), "open after a restart");
 }
 
+/// The Rookery resumes its current wave and Solakar instead of consuming the Father Flame forever.
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.scripts.blackrockspire : BlackrockSpire, Fight;
+
+    enum uint flame = 175245, hatcher = 10683, guardian = 10258, solakar = 10264;
+    auto d = Dungeon.enter(229, 60);
+    d.use(d.objectOf(flame));
+    bool firstWave() { return d.all(hatcher).length >= 2; }
+    assert(d.runUntil(&firstWave, 2.seconds), "the Father Flame starts the waves");
+    auto wave = d.all(hatcher);
+    auto survivor = wave[1];
+    const defeated = wave[0].guid, survivorGuid = survivor.guid;
+    d.kill(wave[0]);
+    d.hit(survivor, survivor.values.get!UNIT_FIELD_HEALTH / 4);
+    d.run(12.seconds);
+    const woundedHealth = survivor.values.get!UNIT_FIELD_HEALTH;
+    d.restartAfterCrash();
+    survivor = d.map.creatureAt(survivorGuid);
+    assert(survivor !is null && survivor.values.get!UNIT_FIELD_HEALTH == woundedHealth);
+    auto dead = d.map.creatureAt(defeated);
+    assert(dead is null || !dead.alive, "the defeated actor did not return");
+    assert(d.saved!BlackrockSpire.flamewreathWave == 1);
+    d.kill(survivor);
+    d.forget();
+    bool nextWave() { return d.summoned(hatcher) + d.summoned(guardian) == 2; }
+    assert(d.runUntil(&nextWave, 23.seconds), "the next wave keeps the original deadline");
+
+    foreach (_; 0 .. 20)
+    {
+        if (d.find(solakar) !is null)
+            break;
+        foreach (entry; [hatcher, guardian])
+            foreach (enemy; d.all(entry))
+                if (enemy.alive)
+                    d.kill(enemy);
+        d.run(10.seconds);
+        assert(d.saved!BlackrockSpire.flamewreath == Fight.inProgress, "the Rookery is still active");
+    }
+    auto boss = d.find(solakar);
+    assert(boss !is null && d.summoned(hatcher) + d.summoned(guardian) == 10, "one boss after the five remaining waves");
+    const bossGuid = boss.guid;
+    d.hit(boss, boss.values.get!UNIT_FIELD_HEALTH / 4);
+    d.run(3.seconds);
+    const bossHealth = boss.values.get!UNIT_FIELD_HEALTH;
+    d.restartAfterCrash();
+    boss = d.map.creatureAt(bossGuid);
+    assert(boss !is null && boss.alive && boss.values.get!UNIT_FIELD_HEALTH == bossHealth);
+    d.kill(boss);
+    d.restartAfterCrash();
+    assert(d.saved!BlackrockSpire.flamewreath == Fight.done);
+    d.forget();
+    d.use(d.objectOf(flame));
+    d.run(3.seconds);
+    assert(d.find(solakar) is null && d.summoned(hatcher) + d.summoned(guardian) + d.summoned(solakar) == 0,
+        "the Father Flame cannot repeat the completed fight");
+}
+
+/// Drakkisath's durable spawn death keeps both gates open when they load on a replacement worker.
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint general = 10363;
+    static immutable uint[2] gates = [175946, 175947];
+    auto d = Dungeon.enter(229, 60);
+    foreach (entry; gates)
+        assert(!Dungeon.isOpen(d.objectOf(entry)));
+    d.kill(d.spawned(general, 0, 25));
+    foreach (entry; gates)
+        assert(Dungeon.isOpen(d.objectOf(entry)));
+    d.restartAfterCrash();
+    foreach (entry; gates)
+        assert(Dungeon.isOpen(d.objectOf(entry)), "a gate reopened from Drakkisath's saved death");
+}
+
 /**
  * Overlord Wyrmthalak (9568): below half his health (51%) he calls two guards (9583, 9268, 9216) to his side.
  */

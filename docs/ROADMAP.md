@@ -66,8 +66,9 @@ describes how players use the systems available today.
 * **Instances:** a group's dungeon copy is saved with its binds, defeated spawns, and script state.
   A raid's copies reset together at fixed times with warnings. A planned cluster handoff carries
   the live creatures and objects. Worker crash recovery includes active Ring of Law waves and
-  Tomb of the Seven rounds in Blackrock Depths, plus Pyroguard Emberseer's growth and combat in
-  Blackrock Spire. Other encounters follow their scripts' restore rules.
+  Tomb of the Seven rounds in Blackrock Depths. Blackrock Spire restores Pyroguard Emberseer's
+  growth and combat, the Rookery waves and Solakar, and both gates after Drakkisath dies.
+  Other encounters follow their scripts' restore rules.
   See [dungeon failover](CLUSTER.md#dungeons-and-battlegrounds).
 * **Groups:** an offline leader is not replaced after a while (that needs a timer). Loot
   settings decide who loots. Two-faction groups do not show the other faction as friendly.

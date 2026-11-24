@@ -118,6 +118,8 @@ struct BlackrockSpire
 
     enum Step : ubyte { dragonspine, flamewreathWave, stadium, combatDoorClose }
     Schedule!(Step, 4) steps;
+    @transient bool rookeryRecovering;
+    @transient EntityRef[] rookeryRecovered;
 
     void on(ref InstanceContext brs, const ref ObjectLoaded e)
     {
@@ -172,6 +174,8 @@ struct BlackrockSpire
             break;
         case drakkisathDoor1, drakkisathDoor2:
             (entry == drakkisathDoor1 ? drakkisath1 : drakkisath2) = e.object;
+            if (brs.entryKilled(drakkisath))
+                brs.door(e.object, true);
             break;
         default:
             break;
@@ -190,6 +194,10 @@ struct BlackrockSpire
                 setEmberseerRunes(brs, true);
             break;
         case theBeast: beastRef = e.creature; break;
+        case solakar, rookeryGuardian, rookeryHatcher:
+            if (rookeryRecovering)
+                rookeryRecovered ~= e.creature;
+            break;
         case rend:
             // Rend, knocked off Gyth's back, joins the fight: the stadium counts him.
             if (stadium == Fight.inProgress && stadiumWave > 7)
@@ -201,29 +209,49 @@ struct BlackrockSpire
 
     void on(ref InstanceContext brs, const ref Restored e)
     {
-        if (emberseerFight != Fight.inProgress)
-            return;
-        if (brs.entryKilled(emberseer))
-            return finishEmberseer(brs);
-        if (!brs.hasSavedCreature(emberseer))
+        if (emberseerFight == Fight.inProgress)
         {
-            emberseerFight = Fight.failed;
-            return;
+            if (brs.entryKilled(emberseer))
+                finishEmberseer(brs);
+            else if (brs.hasSavedCreature(emberseer))
+            {
+                emberseerRecovering = true;
+                brs.waitForPlayer();
+            }
+            else
+                emberseerFight = Fight.failed;
         }
-        emberseerRecovering = true;
-        brs.waitForPlayer();
+        if (flamewreath == Fight.inProgress)
+        {
+            if (steps.pending(Step.flamewreathWave) || brs.hasSavedCreature(solakar))
+            {
+                rookeryRecovering = true;
+                brs.waitForPlayer();
+            }
+            else
+                flamewreath = Fight.failed; // Older saves did not keep Solakar.
+        }
     }
 
     void on(ref InstanceContext brs, const ref PlayerEntered e)
     {
-        if (!emberseerRecovering)
-            return;
-        emberseerRecovering = false;
-        if (emberseerIsFree(brs) && !brs.alive(brs.victimOf(emberseerRef)))
-            brs.attack(emberseerRef, e.player);
-        foreach (guard; incarcerators)
-            if (brs.alive(guard) && !brs.alive(brs.victimOf(guard)))
-                brs.attack(guard, e.player);
+        if (emberseerRecovering)
+        {
+            emberseerRecovering = false;
+            if (emberseerIsFree(brs) && !brs.alive(brs.victimOf(emberseerRef)))
+                brs.attack(emberseerRef, e.player);
+            foreach (guard; incarcerators)
+                if (brs.alive(guard) && !brs.alive(brs.victimOf(guard)))
+                    brs.attack(guard, e.player);
+        }
+        if (rookeryRecovering)
+        {
+            rookeryRecovering = false;
+            foreach (creature; rookeryRecovered)
+                if (brs.alive(creature) && !brs.alive(brs.victimOf(creature)))
+                    brs.attack(creature, e.player);
+            rookeryRecovered = null;
+        }
     }
 
     void on(ref InstanceContext brs, const ref Signal e)
@@ -262,6 +290,7 @@ struct BlackrockSpire
                 flamewreath = Fight.inProgress;
                 flamewreathWave = 0;
                 steps.after(Step.flamewreathWave, 1.msecs);
+                brs.checkpoint();
             }
             break;
         case Signals.emberseerFree:
@@ -330,6 +359,7 @@ struct BlackrockSpire
             {
                 flamewreath = Fight.failed;
                 steps.cancel(Step.flamewreathWave);
+                brs.checkpoint();
             }
             break;
         case chromaticWhelp, chromaticDragon, blackhandHandler, gyth, rend:
@@ -378,6 +408,11 @@ struct BlackrockSpire
             break;
         case solakar:
             flamewreath = Fight.done;
+            brs.checkpoint();
+            break;
+        case rookeryGuardian, rookeryHatcher:
+            if (flamewreath == Fight.inProgress)
+                brs.checkpoint();
             break;
         case drakkisath:
             foreach (door; [drakkisath1, drakkisath2])
@@ -496,6 +531,8 @@ struct BlackrockSpire
                 at.x += (cast(int) brs.random(5) - 2);
                 at.y += (cast(int) brs.random(5) - 2);
                 last = brs.summon(brs.random(2) && flamewreathWave ? rookeryGuardian : rookeryHatcher, at, 300_000, target);
+                if (last)
+                    brs.checkpointCreature(last);
             }
             if (flamewreathWave == 0 && last)
                 brs.say(last, sayRookeryStart);
@@ -504,7 +541,13 @@ struct BlackrockSpire
         }
         else
         {
-            brs.summon(solakar, rookerySpawn, 3_600_000, target);
+            if (const boss = brs.summon(solakar, rookerySpawn, 3_600_000, target))
+                brs.checkpointCreature(boss);
+            else
+            {
+                flamewreath = Fight.failed;
+                brs.checkpoint();
+            }
             steps.cancel(Step.flamewreathWave);
         }
     }
