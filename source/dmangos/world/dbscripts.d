@@ -1364,7 +1364,8 @@ mixin template DbScriptRunner()
                 return;
             }
         }
-        summonWildGameObject(map, entry, at, duration);
+        if (auto object = summonWildGameObject(map, entry, at, duration))
+            checkpointOutdoorScriptObject(map, object, true);
     }
 
     private void placeScriptCreature(Map map, const ref DbScriptStep step, Position at, ulong source, ulong target,
@@ -1391,7 +1392,10 @@ mixin template DbScriptRunner()
         }
         const lifetime = step.datalong2 ? TempSpawnType.timedOutOfCombatOrDead : TempSpawnType.dead;
         auto summoned = summonCreature(map, step.datalong, at, lifetime, step.datalong2, source);
-        if (summoned !is null && step.dataint[3] > 0)
+        if (summoned is null)
+            return;
+        checkpointOutdoorScriptActor(summoned, true);
+        if (step.dataint[3] > 0)
             if (const relay = cast(uint) step.dataint[3] in data.dbScripts.summonRelays)
                 startScript(DbScriptType.relay, *relay, map, summoned.guid, target);
     }
