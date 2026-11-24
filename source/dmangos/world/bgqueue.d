@@ -545,15 +545,18 @@ final class BattlegroundQueue
     {
         nodes[guid] = node;
         auto mine = guid in tickets;
-        const now = clock();
+        // The 1.12 client clears its objective columns on an empty-slot packet, even
+        // for another slot. Clear stale slots before announcing the active match.
         foreach (uint i; 0 .. queueSlots)
-        {
-            const t = mine is null ? Ticket.init : (*mine)[i];
-            if (t.type == BattlegroundType.none)
-            {
+            if (mine is null || (*mine)[i].type == BattlegroundType.none)
                 send(guid, battlefieldStatus(i, BattlegroundType.none, 0, BattlegroundStatus.none));
+        if (mine is null)
+            return;
+        const now = clock();
+        foreach (i, const ref t; *mine)
+        {
+            if (t.type == BattlegroundType.none)
                 continue;
-            }
             final switch (t.stage)
             {
             case Stage.queued:
@@ -566,12 +569,17 @@ final class BattlegroundQueue
                     BattlegroundStatus.waitJoin, cast(uint) left));
                 break;
             case Stage.inside:
-                if (auto copy = t.instance in running)
-                    send(guid, battlefieldStatus(cast(uint) i, t.type, copy.clientId, BattlegroundStatus.inProgress,
-                        0, sinceMs(copy.made)));
+                sendMatchStatus(guid, cast(uint) i, t);
                 break;
             }
         }
+    }
+
+    private void sendMatchStatus(ulong guid, uint slot, const ref Ticket ticket)
+    {
+        if (auto copy = ticket.instance in running)
+            send(guid, battlefieldStatus(slot, ticket.type, copy.clientId, BattlegroundStatus.inProgress,
+                0, sinceMs(copy.made)));
     }
 
     /// The player logged out: it leaves every queue (a copy it is in keeps it a while).
@@ -851,7 +859,13 @@ private:
         }
         *ticket = Ticket.init;
         if (tell)
+        {
             send(guid, battlefieldStatus(slot, type, 0, BattlegroundStatus.none));
+            // Declining or dropping another queue also clears the active scoreboard at the client.
+            foreach (i, const ref t; tickets[guid])
+                if (t.type != BattlegroundType.none && t.stage == Stage.inside)
+                    sendMatchStatus(guid, cast(uint) i, t);
+        }
         if (refill && g !is null)
             update(type, g.bracket);
     }
@@ -1322,6 +1336,16 @@ unittest
     assert(e.enter && e.instance == 100 && e.team == 0);
     assert(q.ticketsOf(1)[0].stage == BattlegroundQueue.Stage.inside);
     assert(sent[$ - 1].status == BattlegroundStatus.inProgress);
+    q.status(1, 1);
+    assert(sent[$ - 3].status == BattlegroundStatus.none && sent[$ - 2].status == BattlegroundStatus.none
+        && sent[$ - 1].status == BattlegroundStatus.inProgress, "the client keeps its objective columns");
+    alias AB = BattlegroundType.arathiBasin;
+    q.templates[AB] = BattlegroundTemplate(3, 2, 3, 10, 60);
+    q.join(1, 1, 0, 15, AB, 0);
+    assert(sent[$ - 1].status == BattlegroundStatus.waitQueue);
+    q.port(1, 1, AB, false);
+    assert(sent[$ - 2].status == BattlegroundStatus.none && sent[$ - 1].status == BattlegroundStatus.inProgress,
+        "dropping a different queue restores the active scoreboard");
     assert(q.invited(100) == 4, "four invited (two of each, and the late fifth), not in yet");
     // Declining frees the place: the waiting seventh is invited.
     q.port(2, 1, WS, false);
@@ -1367,6 +1391,8 @@ unittest
 // Hand a live queue to a service host with a different monotonic clock.
 unittest
 {
+    import std.algorithm.searching : find;
+
     import dmangos.bytes : ByteReader;
     import dmangos.cluster.services : ServiceHost;
 
@@ -1421,7 +1447,9 @@ unittest
     assert(sent.length == 0, "already-sent reminders stay sent");
     moved.status(2, 2);
     assert(sent.length == queueSlots);
-    auto invite = ByteReader(sent[1].body_);
+    auto invitations = sent.find!(p => p.status == BattlegroundStatus.waitJoin);
+    assert(invitations.length);
+    auto invite = ByteReader(invitations[0].body_);
     assert(invite.read!uint == 1, "the invitation stays in the same client slot");
     invite.skip(13);
     assert(invite.read!uint == 19_000, "the client sees the invitation time remaining");
@@ -1476,6 +1504,8 @@ unittest
 // Recover without a service handoff. The queue remembers an acceptance whose reply was lost.
 unittest
 {
+    import std.algorithm.searching : find;
+
     import dmangos.bytes : ByteReader;
     import dmangos.world.config : WorldConfig;
     import dmangos.world.movement : Position;
@@ -1511,7 +1541,9 @@ unittest
     sent = null;
     recovered.status(4, 4);
     assert(sent.length == queueSlots);
-    auto invite = ByteReader(sent[0].body_);
+    auto invitations = sent.find!(p => p.status == BattlegroundStatus.waitJoin);
+    assert(invitations.length);
+    auto invite = ByteReader(invitations[0].body_);
     invite.skip(17);
     const remaining = invite.read!uint;
     assert(remaining >= 59_000 && remaining <= 61_000, "outage time counts against the invitation");

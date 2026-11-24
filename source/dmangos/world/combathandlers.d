@@ -27,6 +27,13 @@ mixin template CombatHandlers()
     import dmangos.world.updatefields;
     import dmangos.world.unit : Blow, BlowKind, dealDamage, UnitKind, UnitRef;
 
+    /// The shared map can contain players from other realms in the same battleground.
+    package typeof(this) playerOnMap(ulong guid)
+    {
+        auto other = cast(typeof(this)) map.find(guid);
+        return other !is null && other.player !is null && other.map is map ? other : null;
+    }
+
     // -----------------------------------------------------------------------
     // The player as creatures and the rules of units see it (`dmangos.world.unit`)
     // -----------------------------------------------------------------------
@@ -66,7 +73,7 @@ mixin template CombatHandlers()
         if (attacker.kind == UnitKind.player)
             pvpHitBy(attacker.session, attacker.session.isPvP);
         else if (attacker.kind == UnitKind.creature && attacker.creature.petOwner)
-            pvpHitBy(context.onlinePlayer(attacker.creature.petOwner),
+            pvpHitBy(playerOnMap(attacker.creature.petOwner),
                 (attacker.creature.values.get!UNIT_FIELD_FLAGS & UnitFlags.pvp) != 0);
         else if (blow.remotePlayer)
             flagFromPvPHit(blow.remotePlayerPvP);
@@ -122,7 +129,7 @@ mixin template CombatHandlers()
             if (attacker.kind == UnitKind.player)
                 killer = attacker.session;
             else if (attacker.kind == UnitKind.creature && attacker.creature.petOwner)
-                killer = context.onlinePlayer(attacker.creature.petOwner);
+                killer = playerOnMap(attacker.creature.petOwner);
             if (killer !is null && killer !is this)
                 killer.playerKilledByMe(this);
             if (auto copy = currentBattleground()) // the battleground counts the death and the kill
@@ -196,8 +203,8 @@ private:
         if (enemy is null)
         {
             // A player here (a duel's opponent, an enemy flagged for PvP)?
-            auto other = context.onlinePlayer(request.guid);
-            if (other !is null && other !is this && other.player !is null && other.map is map)
+            auto other = playerOnMap(request.guid);
+            if (other !is null && other !is this)
             {
                 if (!canAttackNow(relatingNow, other.relatingNow, context.client))
                     return map.sendToWatchers(this, Opcode.SMSG_ATTACKSTOP, attackStop(player.guid, other.player.guid,
@@ -470,8 +477,8 @@ private:
         auto victim = cast(Creature) map.findObject(attacking);
         if (victim is null)
         {
-            auto other = context.onlinePlayer(attacking);
-            if (other is null || other.player is null || other.map !is map)
+            auto other = playerOnMap(attacking);
+            if (other is null)
                 return stopAttack(false);
             return updateMeleeAgainstPlayer(other);
         }
@@ -729,7 +736,7 @@ private:
             procAuras(ProcFlag.kill, UnitRef.init);
 
         foreach (guid, _; victim.attackers)
-            if (auto other = context.onlinePlayer(guid))
+            if (auto other = playerOnMap(guid))
                 if (other !is this)
                     other.stopAttack(false);
         stopAttack(false);

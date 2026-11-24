@@ -24,6 +24,7 @@ MAPS = {
 
 def run(fixture, cross_realm=False, battleground="warsong", finish_phase=None):
     map_id, type_name, masters = MAPS[battleground]
+    test_combat = cross_realm and battleground == "arathi"
     login = fixture.fresh_schema("login", "classicrealmd.sql")
     databases = [fixture.fresh_schema("chars1", "classiccharacters.sql")]
     realms = ["First"]
@@ -98,8 +99,9 @@ def run(fixture, cross_realm=False, battleground="warsong", finish_phase=None):
     world_db = fixture.base["world_database"]
     for side, name in enumerate(names):
         race = 1 if side == 0 else 2
+        class_id = 8 if test_combat and side == 0 else 1
         label = f"create{side}"
-        if client(label, side, "enum", f"create:{name}:{race}:1", "drop").wait(timeout=25):
+        if client(label, side, "enum", f"create:{name}:{race}:{class_id}", "drop").wait(timeout=25):
             raise RuntimeError(fixture.log(label))
         x, y, z = fixture.query("SELECT position_x,position_y,position_z FROM creature "
                                 f"WHERE id={masters[side]} AND map=0 LIMIT 1", world_db).split()
@@ -159,9 +161,39 @@ def run(fixture, cross_realm=False, battleground="warsong", finish_phase=None):
             after_crash = [["pvplog:scores"], ["pvplog:scores"]]
     if not after_crash[1]:
         after_crash[1] = ["bgstatus", "pvplog:scores"]
+    if test_combat:
+        stables = port_to("gameobject", 180087)
+        _, _, x, y, z = stables.split(":")
+        spells = [stables, "listen:2"] + ["castplayer:133", "listen:2.5"] * 3
+        melee = [f"worldport:{map_id}:{float(x)+2}:{y}:{z}:3.14159", "listen:2", "attackplayer",
+                 "listen:7", "stopattack"]
+        for actions in (before_crash, after_crash):
+            actions[0] = ["bgstatus", *spells, *actions[0]]
+            actions[1] = ["bgstatus", *melee, *actions[1]]
+
+    def check_combat(read_logs):
+        def client_kept_columns(log):
+            if "battlefield status\n" not in log:
+                return False
+            reply = log.split("battlefield status\n", 1)[1]
+            statuses = re.findall(r"\[battlefield status\] slot \d+: (.+)", reply)
+            return len(statuses) >= 3 and statuses[0] == statuses[1] == "none" and "in progress" in statuses[2]
+
+        def verified():
+            parts = read_logs()
+            if not parts or not all(client_kept_columns(log) for log in parts):
+                return False
+            return (re.search(r"\[spell damage\] 133: [1-9]\d* to", parts[0])
+                    and re.search(r"\[swing\] \d+ -> \d+: (?:hit|crit|block) for [1-9]\d*", parts[1]))
+
+        wait_for("both clients retaining objective columns and taking cross-realm damage without /pvp", verified, 20)
+
     battle = []
     for side, name in enumerate(names):
-        actions = [f"login:{name}", f"waitfile:{join}", f"bgjoin:{masters[side]}:{map_id}", f"waitfile:{force}"]
+        actions = [f"login:{name}"]
+        if test_combat and side == 1:
+            actions += ["cmd:.character increaseweaponskill 300"]
+        actions += [f"waitfile:{join}", f"bgjoin:{masters[side]}:{map_id}", f"waitfile:{force}"]
         if side == 0:
             actions += ["cmd:.battleground forcestart"]
         actions += [f"waitfile:{accept}", f"bgport:{map_id}:1", f"waitfile:{play}", *before_crash[side],
@@ -189,6 +221,8 @@ def run(fixture, cross_realm=False, battleground="warsong", finish_phase=None):
 
     host, instance = wait_for(f"{type_name} to start", started, 140)
     play.touch()
+    if test_combat:
+        check_combat(logs)
     dropped = []
     if battleground == "warsong":
         score_marker = "[world state] 1581=1"
@@ -263,6 +297,8 @@ def run(fixture, cross_realm=False, battleground="warsong", finish_phase=None):
         states = ast.literal_eval(log.split(f"[initial battlefield states] {map_id}: ", 1)[1].splitlines()[0])
         assert {key: states.get(key) for key in expected} == expected, log[-4000:]
     resume.touch()
+    if test_combat:
+        check_combat(recovered)
     if finish_phase:
         wait_for("both final scoreboards on the original connections",
                  lambda: all("[scoreboard] over, winner 1, 2 players" in log for log in recovered()), 16)
@@ -310,6 +346,8 @@ def run(fixture, cross_realm=False, battleground="warsong", finish_phase=None):
 
         wait_for("resources to keep ticking and the pending Farm capture to finish", arathi_continued, 53)
         result = "30–0 resources with Stables held and Farm still contested, then accrued resources and finished capturing Farm"
+        if test_combat:
+            result += "; melee and spell damage worked across realms and status kept the objective columns before and after takeover"
     elif battleground == "alterac":
         wait_for("the original scoreboard and the Alliance mine boss on the recovered map",
                  lambda: all(s in recovered()[0] for s in ("objectives=[0, 0, 1, 0, 1, 0, 0]", "[creature] 13078 guid")), 15)

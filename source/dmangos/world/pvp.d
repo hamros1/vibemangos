@@ -221,7 +221,7 @@ mixin template PvPHandlers()
     package void updatePvPTimers(int diff)
     {
         const kept = pvpInCombat || pvpEnforcedArea || hasPlayerFlag(PlayerFlagsPvP.desired);
-        if (!kept && pvpTimer > 0)
+        if (!kept && pvpTimer > 0 && currentBattleground() is null)
             pvpTimer = pvpTimer > diff ? pvpTimer - diff : 0;
         if (!pvpInCombat && pvpContestedTimer > 0)
             pvpContestedTimer = pvpContestedTimer > diff ? pvpContestedTimer - diff : 0;

@@ -128,6 +128,7 @@ unittest
     import dmangos.world.group : GroupUpdate, MemberStatus;
     import dmangos.world.opcodes : ChatType, Language;
     import dmangos.world.packets : ClientTextEmote;
+    import dmangos.world.pvp : pvpFlagMs;
     import dmangos.world.testclient;
     import dmangos.world.testdata : mapEasternKingdoms, mapWarsongGulch, testClientData, testWorldData;
 
@@ -187,6 +188,13 @@ unittest
     assert(match is b.battlegrounds.find(copyId) && match.members.length == 2);
     assert(left.session.inWorld.currentMap is right.session.inWorld.currentMap);
     assert(match.memberSession(l) is left.session.inWorld && match.memberSession(r) is right.session.inWorld);
+    foreach (user; [&left, &right])
+    {
+        auto who = user.session.inWorld;
+        assert(who.isPvP);
+        who.updatePvPTimers(pvpFlagMs + 1);
+        assert(who.isPvP, "the flag stays on for the entire match without /pvp");
+    }
     void checkName(ref TestClient user, ulong guid, string expectedName, string expectedRealm)
     {
         user.write(Opcode.CMSG_NAME_QUERY, ClientNameQuery(guid));

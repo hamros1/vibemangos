@@ -2189,6 +2189,8 @@ mixin template BattlegroundHandlers()
                 context.settleWrites(); // recovery must be able to find the character on this map
             }
             copy.arrived(player, battleground_.team); // its world states went with the map's packets
+            updatePvP(true);
+            flushPlayerChanges();
             joinTeamRaid(copy);
         }
     }
@@ -2269,6 +2271,8 @@ mixin template BattlegroundHandlers()
             {
                 const rejoined = member.offlineSince != MonoTime.init;
                 copy.arrived(player, battleground_.team);
+                updatePvP(true);
+                flushPlayerChanges();
                 copy.rules.playerRestored(copy, player.guid);
                 // A gateway's login packets cannot see the temporary raid on the shared match host.
                 if (rejoined && context.battlegroup !is null)

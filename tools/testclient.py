@@ -41,7 +41,7 @@ in order:
     listen:SECONDS            print what other players do for a while
     cmd:TEXT                  say a chat command (".recall port Goldshire") and print what follows
     trigger:ID                walk into an area trigger (78 = the Deadmines entrance)
-    worldport:MAP:X:Y:Z       the client's worldport command (administrators)
+    worldport:MAP:X:Y:Z[:O]   the client's worldport command (administrators)
     invite:NAME  accept  decline  leave  raid
                               group invitations, leaving, converting to a raid
     lootmethod:N              set the party loot method (0 is free-for-all)
@@ -1202,7 +1202,8 @@ for action in actions:
         wsend(0x136, struct.pack("<I", int(args[0]))); print(f"cancel aura {args[0]}"); listen_for(1)
     elif kind == "worldport":
         m, x, y, z = int(args[0]), *map(float, args[1:4])
-        wsend(0x008, struct.pack("<II4f", 0, m, x, y, z, 0)); print(f"worldport {m} {x} {y} {z}"); listen_for(1.5)
+        orientation = float(args[4]) if len(args) > 4 else 0
+        wsend(0x008, struct.pack("<II4f", 0, m, x, y, z, orientation)); print(f"worldport {m} {x} {y} {z}"); listen_for(1.5)
     elif kind == "invite":
         wsend(0x06E, args[0].encode() + b"\0"); print(f"invite {args[0]}")
     elif kind in ("accept", "decline", "leave", "raid"):
