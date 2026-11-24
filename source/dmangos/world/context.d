@@ -5938,7 +5938,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import std.algorithm.comparison : among;
 
         return spawn.guid < temporaryCounterStart && spawn.respawnSeconds < 0
-            && (proto.type.among(GameObjectType.generic, GameObjectType.spellFocus, GameObjectType.questGiver, GameObjectType.goober)
+            && (proto.type.among(GameObjectType.generic, GameObjectType.spellFocus, GameObjectType.questGiver,
+                    GameObjectType.goober, GameObjectType.button)
                 || (proto.type == GameObjectType.chest && proto.data[3] && !proto.data[4] && !proto.data[5]));
     }
 
@@ -6002,7 +6003,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     }
                     else if (auto object = where.gameObjectAt(actor.actor))
                     {
-                        if (!outdoorOpenableActor(actor.actor))
+                        if (!outdoorOpenableActor(actor))
                         {
                             // Opened chests save their loot atomically with item claims. Their actor row holds placement.
                             if (object.type != GameObjectType.chest)
@@ -6010,18 +6011,26 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                         }
                         else if (object.lootState == GoLootState.ready)
                         {
-                            outdoorQuestActors.remove(actor.actor);
-                            database.deleteQuestActor(config.realmId, actor.actor);
+                            if (GameObjectOnMap(where, object.guid) in scriptedGameObjects)
+                                checkpointOutdoorScriptObject(where, object);
+                            else
+                            {
+                                outdoorQuestActors.remove(actor.actor);
+                                database.deleteQuestActor(config.realmId, actor.actor);
+                            }
                         }
                     }
                 }
     }
 
-    private bool outdoorOpenableActor(ulong guid)
+    private bool outdoorOpenableActor(const ref QuestActorCheckpoint actor)
     {
         import dmangos.world.objects : counterOf;
         import std.algorithm.comparison : among;
 
+        if (!savedOpenableToggle(actor.state))
+            return false;
+        const guid = actor.actor;
         const counter = counterOf(guid);
         if (highGuidOf(guid) != HighGuid.gameObject || counter >= temporaryCounterStart)
             return false;
@@ -6090,7 +6099,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if (!grants.any!(grant => questActorRegion(grant.region, actor.map, actor.home)))
                 continue;
             const spawn = counterOf(actor.actor);
-            const openable = outdoorOpenableActor(actor.actor);
+            const openable = outdoorOpenableActor(actor);
             const nativeFight = !actor.player && highGuidOf(actor.actor) == HighGuid.unit && spawn < temporaryCounterStart;
             if (highGuidOf(actor.actor) != HighGuid.gameObject
                 && ((actor.player && actor.savedAt + 300 <= unixTime) || awaitingRespawn(spawn) || spawn in outdoorCorpses

@@ -407,6 +407,7 @@ package struct OutdoorOpenableState
 {
     long resetAt;
     bool open;
+    long expiresAt;
 }
 
 package struct OutdoorScriptStep
@@ -1061,7 +1062,12 @@ mixin template DbScriptRunner()
                 {
                     const installed = request.actor in outdoorQuestActors;
                     if (installed is null || installed.state != request.checkpoint.state)
-                        restoreOutdoorOpenable(where, request.checkpoint);
+                    {
+                        if (savedOpenableToggle(request.checkpoint.state))
+                            restoreOutdoorOpenable(where, request.checkpoint);
+                        else if (where.gameObjectAt(request.actor) is null && !restoreQueuedSummon(where, request.checkpoint))
+                            return;
+                    }
                 }
             }
             else if (request.checkpoint.actor && where.creatureAt(request.actor) is null && where.gameObjectAt(request.actor) is null)
@@ -1283,7 +1289,8 @@ mixin template DbScriptRunner()
         }
         // Opening and closing both use the same toggle as a live door.
         ByteWriter bytes;
-        serialize(bytes, OutdoorOpenableState(unixTime + action.seconds, door.goState == goStateReady));
+        const expires = scriptedGameObjects.get(GameObjectOnMap(where, door.guid), 0L);
+        serialize(bytes, OutdoorOpenableState(unixTime + action.seconds, door.goState == goStateReady, expires));
         const checkpoint = QuestActorCheckpoint(request.map, action.guid, request.home, 0, unixTime, toHex(bytes.data));
         if (!database.commitOutdoorSummon(config.realmId, request, checkpoint, null))
             return;
@@ -1295,18 +1302,30 @@ mixin template DbScriptRunner()
         }
     }
 
+    private static bool savedOpenableToggle(string state)
+    {
+        // The compact toggle has a deadline and a bool, with the visibility deadline appended in newer rows.
+        enum toggleSize = (long.sizeof + bool.sizeof) * 2;
+        return state.length == toggleSize || state.length == toggleSize + long.sizeof * 2;
+    }
+
     private void restoreOutdoorOpenable(Map where, const ref QuestActorCheckpoint checkpoint)
     {
         import dmangos.log : warning;
-        import dmangos.serialization : deserialize;
+        import dmangos.world.gameobject : GameObjectType;
+        import dmangos.world.grid : cellKeyAt;
         import dmangos.world.instancescripting : fromHex;
+        import dmangos.world.objects : counterOf;
         import std.algorithm.comparison : clamp;
 
         OutdoorOpenableState state;
         try
         {
             auto bytes = ByteReader(fromHex(checkpoint.state));
-            state = deserialize!OutdoorOpenableState(bytes);
+            state.resetAt = bytes.read!long;
+            state.open = bytes.read!bool;
+            if (bytes.remaining)
+                state.expiresAt = bytes.read!long;
         }
         catch (Exception error)
         {
@@ -1316,15 +1335,35 @@ mixin template DbScriptRunner()
         }
         where.loadCell(checkpoint.home);
         auto door = where.gameObjectAt(checkpoint.actor);
-        if (door !is null && door.doorOrButton && where.migrantHome(door.guid) == checkpoint.home)
+        bool publish;
+        if (door is null && state.expiresAt > unixTime)
+            if (const spawn = gameObjectSpawnOf(counterOf(checkpoint.actor)))
+                if (const proto = spawn.entry in data.gameObjectTemplates)
+                    if (proto.type == GameObjectType.button && durableScriptedSpawn(*spawn, *proto) && spawn.map == where.id
+                        && cellKeyAt(spawn.x, spawn.y) == checkpoint.home
+                        && scriptGameObjectGuid(spawn.guid, where.id) == checkpoint.actor)
+                    {
+                        door = makeGameObject(*spawn);
+                        publish = true;
+                    }
+        if ((!state.expiresAt || state.expiresAt > unixTime) && door !is null && door.doorOrButton
+            && (publish || where.migrantHome(door.guid) == checkpoint.home))
         {
             const remaining = cast(int)(clamp(state.resetAt - unixTime, 0L, int.max / 1000L) * 1000);
             door.installOpenableState(state.open, remaining);
-            where.flushGameObject(door);
+            if (publish)
+                publishGameObjectSummon(where, door, state.expiresAt);
+            else
+                where.flushGameObject(door);
             if (remaining)
             {
                 outdoorQuestActors[door.guid] = checkpoint;
                 where.wake(door.guid);
+                return;
+            }
+            if (state.expiresAt)
+            {
+                checkpointOutdoorScriptObject(where, door);
                 return;
             }
         }
