@@ -489,7 +489,7 @@ unittest
 /// See the module documentation.
 mixin template EnvironmentHandlers()
 {
-    import core.time : Duration;
+    import core.time : Duration, MonoTime, seconds;
     import std.random : uniform;
     import dmangos.bytes : ByteReader, ByteWriter;
     import dmangos.world.environment;
@@ -508,6 +508,7 @@ mixin template EnvironmentHandlers()
         float breathingMultiplier = 1; // 0: breathes under water
         uint lastLiquid;            // the `LiquidType.dbc` entry the player was last in, if it has a spell
         FallStart fallStart;
+        MonoTime nextEnvironmentCheckpoint;
     }
 
     private static struct EnvironmentHandoff
@@ -529,11 +530,56 @@ mixin template EnvironmentHandlers()
         import dmangos.serialization : deserialize;
 
         const state = deserialize!EnvironmentHandoff(reader);
+        applyEnvironmentHandoff(state);
+    }
+
+    private void applyEnvironmentHandoff(const ref EnvironmentHandoff state)
+    {
         environment = state.flags;
         lastLiquid = state.liquid;
         mirrorTimers = state.timers;
         fallStart = state.fall;
         refreshWaterBreathing(true);
+    }
+
+    private bool activeEnvironmentTimers() const
+    {
+        import std.algorithm.searching : any;
+
+        return mirrorTimers[].any!(timer => timer.active);
+    }
+
+    private const(ubyte)[] environmentRecoveryState()
+    {
+        if (!activeEnvironmentTimers())
+            return null;
+        ByteWriter state;
+        state.put(map.id);
+        state.put(map.instanceId);
+        state.put(context.transportNow());
+        writeEnvironmentHandoff(state);
+        return state.data;
+    }
+
+    private void restoreEnvironmentRecovery(ref ByteReader state)
+    {
+        import dmangos.serialization : deserialize;
+        import std.algorithm.comparison : max;
+
+        if (state.empty || state.read!uint != map.id || state.read!uint != map.instanceId)
+            return;
+        const elapsed = cast(uint) max(0, cast(int)(context.transportNow() - state.read!uint));
+        auto snapshot = deserialize!EnvironmentHandoff(state);
+        foreach (ref timer; snapshot.timers)
+        {
+            if (!timer.active || timer.isFrozen)
+                continue;
+            const remaining = timer.remaining(), pulse = timer.pulse;
+            timer.update(elapsed);
+            if (!timer.regenerating && elapsed >= remaining)
+                timer.pulse = (pulse + elapsed - remaining) % MirrorTimer.pulseInterval;
+        }
+        applyEnvironmentHandoff(snapshot);
     }
 
     /// Game masters with their tag on (CMaNGOS `IsGameMaster`) and `.cheat god` take no environmental damage.
@@ -694,6 +740,7 @@ mixin template EnvironmentHandlers()
     package void updateMirrorTimers(Duration elapsed)
     {
         const ms = cast(uint) elapsed.total!"msecs";
+        bool changed, pulsed;
         foreach (ref timer; mirrorTimers)
         {
             if (player is null)
@@ -706,10 +753,26 @@ mixin template EnvironmentHandlers()
             else if (!timer.active)
                 timer.start(mirrorTimerDuration(type));
             else if (!timer.update(ms))
+            {
+                pulsed = true;
                 mirrorTimerRanOut(type);
+            }
+            changed |= timer.status != MirrorTimerStatus.unchanged;
         }
-        if (player !is null)
-            sendMirrorTimers();
+        if (player is null)
+            return;
+        if (connection.gatewayHome.node && (changed || pulsed
+            || (context.clock() >= nextEnvironmentCheckpoint && activeEnvironmentTimers())))
+        {
+            nextEnvironmentCheckpoint = context.clock() + 1.seconds;
+            if (!changed && !pulsed)
+            {
+                const progress = player.progress(secondsInWorld());
+                context.database.saveProgress(progress);
+            }
+            checkpointSummons(changed || pulsed);
+        }
+        sendMirrorTimers();
     }
 
     /// A timer ran out (and every two seconds after): drowning, exhaustion, lava.

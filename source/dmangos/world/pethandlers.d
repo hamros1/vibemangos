@@ -1525,7 +1525,7 @@ mixin template PetHandlers()
     }
 
     private enum ubyte loneTotemSlot = 4, guardianSlot = 5;
-    private enum ubyte summonCheckpointVersion = 4;
+    private enum ubyte summonCheckpointVersion = 5;
     private bool summonCheckpointExists, detachingSummons;
 
     private const(ubyte)[] playerSummonState(bool departing, ulong removed = 0)
@@ -1612,10 +1612,11 @@ mixin template PetHandlers()
         const summons = player.alive ? playerSummonState(false, removed) : null;
         const fishing = player.alive && bobber && bobber != removed ? fishingRecoveryState() : null;
         const ground = player.alive && persistentAreas.length ? groundRecoveryState() : null;
+        const environmentState = player.alive ? environmentRecoveryState() : null;
         const casting = player.alive && (generic.active || pendingHits.length || context.replicaImpactCount(player.guid)
             || activeRecoveryChannelAura() !is null || ritualChannelOwner)
             ? castRecoveryState() : null;
-        const active = summons.length || fishing.length || ground.length || casting.length;
+        const active = summons.length || fishing.length || ground.length || casting.length || environmentState.length;
         if (!active && !summonCheckpointExists)
             return true;
         ByteWriter checkpoint;
@@ -1635,6 +1636,8 @@ mixin template PetHandlers()
             checkpoint.putBytes(fishing);
             checkpoint.put(cast(uint) ground.length);
             checkpoint.putBytes(ground);
+            checkpoint.put(cast(uint) environmentState.length);
+            checkpoint.putBytes(environmentState);
             checkpoint.putBytes(casting);
         }
         context.database.savePlayerSummons(player.data.guid, active ? toHex(checkpoint.data) : null);
@@ -1689,6 +1692,11 @@ mixin template PetHandlers()
                         {
                             auto ground = ByteReader(state.readBytes(state.read!uint));
                             restoreGroundRecovery(ground);
+                            if (version_ >= 5)
+                            {
+                                auto environmentState = ByteReader(state.readBytes(state.read!uint));
+                                restoreEnvironmentRecovery(environmentState);
+                            }
                             restoreCastRecovery(state);
                         }
                     }

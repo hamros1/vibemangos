@@ -140,7 +140,7 @@ def remote_bounce(fixture):
     payload = bytes.fromhex(wait_for("the projectile checkpoint", lambda: fixture.query(checkpoint, characters), 4))
     # Skip the gateway identity, summons, fishing, ground spell, cast header, and local missiles.
     offset = struct.calcsize("<BHQ")
-    for _ in range(3):
+    for _ in range(4 if payload[0] >= 5 else 3):
         length, = struct.unpack_from("<I", payload, offset)
         offset += 4 + length
     offset += struct.calcsize("<IIIi7i")

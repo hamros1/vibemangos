@@ -605,6 +605,12 @@ def describe(op, p):
     elif op == 0x13A:
         duration, = struct.unpack("<I", p)
         print(f"  [channel update] {duration} ms")
+    elif op == 0x1D9:
+        timer, left, maximum, speed = struct.unpack_from("<IIIi", p)
+        print(f"  [mirror timer] {timer}: {left}/{maximum} ms, speed {speed}")
+    elif op == 0x1DB:
+        timer, = struct.unpack("<I", p)
+        print(f"  [mirror timer stopped] {timer}")
     elif op == 0x0B3:
         guid, slot = struct.unpack("<QI", p)
         print(f"  [game object animation] {guid:#018x} slot {slot}")
