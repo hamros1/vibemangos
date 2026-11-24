@@ -798,6 +798,18 @@ CREATE TABLE IF NOT EXISTS `dmangos_outdoor_script` (
   `state` text CHARACTER SET ascii NOT NULL,
   PRIMARY KEY (`realm`, `origin`, `sequence`)
 ) ENGINE=InnoDB;
+CREATE TABLE IF NOT EXISTS `dmangos_outdoor_summon` (
+  `realm` int unsigned NOT NULL,
+  `origin` smallint unsigned NOT NULL,
+  `sequence` bigint unsigned NOT NULL,
+  `cursor` int unsigned NOT NULL,
+  `ordinal` int unsigned NOT NULL,
+  `map` int unsigned NOT NULL,
+  `home` bigint unsigned NOT NULL,
+  `state` text CHARACTER SET ascii NOT NULL,
+  `actor` bigint unsigned NOT NULL DEFAULT 0,
+  PRIMARY KEY (`realm`, `origin`, `sequence`, `cursor`, `ordinal`)
+) ENGINE=InnoDB;
 CREATE TABLE IF NOT EXISTS `dmangos_dungeon_fight` (
   `instance` int unsigned NOT NULL,
   `spawn` int unsigned NOT NULL,

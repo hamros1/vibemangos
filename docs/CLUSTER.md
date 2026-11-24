@@ -375,8 +375,12 @@ A delayed step that summons a creature on the same worker commits the script cur
 GUID and state, and any relay it starts in one transaction. The worker publishes the creature after
 the commit. During recovery, the new owner either retries the pending summon step or restores the
 saved creature and its relay. Its original lifetime continues and saved deaths and despawns still
-apply. Other commands and summons forwarded to another worker still claim their step before
-executing or forwarding it. A crash during those effects can leave the step incomplete.
+apply. When a delayed script summons on another worker, the sending worker commits a request with
+the script cursor. The worker that owns the destination cell commits the actor and its relay with
+a receipt, which it retires after publishing the creature. A replacement can finish an open request
+or publish the actor from a committed receipt. The parent script waits for delivery before running
+its following steps. Other commands still claim their step before executing it, so a crash during
+their effects can leave the step incomplete.
 Temporary outdoor objects of the generic and spell-focus types also keep their GUIDs, state and
 original expiry time. The worker retries pending region recovery if its first database read fails.
 

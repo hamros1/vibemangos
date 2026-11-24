@@ -23,7 +23,8 @@ import dmangos.world.playercreate : NewCharacter, NewSkill, NewSpell, maxEnchant
 import dmangos.world.database : AuraRecord, TicketRecord, BattlegroundData, PvpStatsBattleground, PvpStatsPlayer, HonorColumns, HonorPointRecord, HonorRecord, CooldownRecord, PetRecord, PetSpellRecord, GuildEventRecord, GuildMemberRecord, GuildRankRecord, GuildRecord,
     PetitionRecord, SocialRow, CorpseRecord, InstanceBindRecord, InstanceRecord, InstanceRecords,
     InstanceRespawnRecord, MailRecord, ServiceCheckpoint, GroupLootRotation, LootCoinCredit, LootCoinRedemption,
-    LootAwardKey, LootAwardResult, BattlegroundCheckpoint, BattlegroundReward, BattlegroundPayment;
+    LootAwardKey, LootAwardResult, BattlegroundCheckpoint, BattlegroundReward, BattlegroundPayment,
+    OutdoorSummonRequest, QuestActorCheckpoint;
 import dmangos.world.reputation : ReputationRecord;
 import dmangos.world.auctionhouse : AuctionRecord;
 import dmangos.world.quests : QuestState, QuestStatus;
@@ -1414,6 +1415,11 @@ final class CharacterStatements
             ~ "realm INT UNSIGNED NOT NULL, origin SMALLINT UNSIGNED NOT NULL, sequence BIGINT UNSIGNED NOT NULL, "
             ~ "map INT UNSIGNED NOT NULL, home BIGINT UNSIGNED NOT NULL, `cursor` INT UNSIGNED NOT NULL, "
             ~ "state TEXT CHARACTER SET ascii NOT NULL, PRIMARY KEY (realm, origin, sequence)) ENGINE=InnoDB")();
+        characters.execute!("CREATE TABLE IF NOT EXISTS dmangos_outdoor_summon ("
+            ~ "realm INT UNSIGNED NOT NULL, origin SMALLINT UNSIGNED NOT NULL, sequence BIGINT UNSIGNED NOT NULL, "
+            ~ "`cursor` INT UNSIGNED NOT NULL, ordinal INT UNSIGNED NOT NULL, map INT UNSIGNED NOT NULL, "
+            ~ "home BIGINT UNSIGNED NOT NULL, state TEXT CHARACTER SET ascii NOT NULL, "
+            ~ "actor BIGINT UNSIGNED NOT NULL DEFAULT 0, PRIMARY KEY (realm, origin, sequence, `cursor`, ordinal)) ENGINE=InnoDB")();
     }
 
     imported!"dmangos.world.database".OutdoorScriptCheckpoint[] loadOutdoorScripts(uint realm)
@@ -1421,10 +1427,12 @@ final class CharacterStatements
         import dmangos.world.database : OutdoorScriptCheckpoint;
 
         OutdoorScriptCheckpoint[] scripts;
-        foreach (row; characters.query!("SELECT origin, sequence, map, `cursor`, home, state "
-                ~ "FROM dmangos_outdoor_script WHERE realm = ? ORDER BY sequence, origin")(realm))
+        foreach (row; characters.query!("SELECT s.origin, s.sequence, s.map, s.`cursor`, s.home, s.state, "
+                ~ "EXISTS(SELECT 1 FROM dmangos_outdoor_summon q WHERE q.realm = s.realm AND q.origin = s.origin "
+                ~ "AND q.sequence = s.sequence) FROM dmangos_outdoor_script s WHERE s.realm = ? "
+                ~ "ORDER BY s.sequence, s.origin")(realm))
             scripts ~= OutdoorScriptCheckpoint(row.get!ushort(0), row.get!ulong(1), row.get!uint(2),
-                row.get!uint(3), row.get!ulong(4), row.get!string(5));
+                row.get!uint(3), row.get!ulong(4), row.get!string(5), row.get!bool(6));
         return scripts;
     }
 
@@ -1442,6 +1450,52 @@ final class CharacterStatements
             return characters.execute!("DELETE FROM dmangos_outdoor_script" ~ key)(realm, origin, sequence, cursor) == 1;
         return characters.execute!("UPDATE dmangos_outdoor_script SET `cursor` = `cursor` + 1" ~ key)(
             realm, origin, sequence, cursor) == 1;
+    }
+
+    void insertOutdoorSummon(uint realm, const ref OutdoorSummonRequest request)
+    {
+        characters.execute!("INSERT INTO dmangos_outdoor_summon "
+            ~ "(realm, origin, sequence, `cursor`, ordinal, map, home, state) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")(
+                realm, request.origin, request.sequence, request.cursor, request.ordinal, request.map, request.home,
+                request.state);
+    }
+
+    OutdoorSummonRequest[] loadOutdoorSummons(uint realm)
+    {
+        OutdoorSummonRequest[] requests;
+        foreach (row; characters.query!("SELECT q.origin, q.sequence, q.`cursor`, q.ordinal, q.map, q.home, q.state, "
+                ~ "q.actor, a.saved_at, a.state FROM dmangos_outdoor_summon q LEFT JOIN dmangos_quest_actor a "
+                ~ "ON a.realm = q.realm AND a.actor = q.actor AND a.player = 0 AND a.map = q.map AND a.home = q.home "
+                ~ "WHERE q.realm = ? ORDER BY q.sequence, q.origin, q.`cursor`, q.ordinal")(realm))
+        {
+            auto request = OutdoorSummonRequest(row.get!ushort(0), row.get!ulong(1), row.get!uint(2), row.get!uint(3),
+                row.get!uint(4), row.get!ulong(5), row.get!string(6), row.get!ulong(7));
+            if (!row.isNull(8))
+                request.checkpoint = QuestActorCheckpoint(request.map, request.actor, request.home, 0,
+                    row.get!long(8), row.get!string(9));
+            requests ~= request;
+        }
+        return requests;
+    }
+
+    bool outdoorSummonsPending(uint realm, ushort origin, ulong sequence)
+    {
+        return characters.query!("SELECT 1 FROM dmangos_outdoor_summon WHERE realm = ? AND origin = ? "
+            ~ "AND sequence = ? LIMIT 1")(realm, origin, sequence).length != 0;
+    }
+
+    private enum outdoorSummonKey = " WHERE realm = ? AND origin = ? AND sequence = ? AND `cursor` = ? AND ordinal = ?";
+
+    bool completeOutdoorSummon(uint realm, const ref OutdoorSummonRequest request, ulong actor)
+    {
+        return characters.execute!("UPDATE dmangos_outdoor_summon SET actor = ?" ~ outdoorSummonKey ~ " AND actor = 0")(
+            actor, realm, request.origin, request.sequence, request.cursor, request.ordinal) == 1;
+    }
+
+    bool retireOutdoorSummon(uint realm, const ref OutdoorSummonRequest request)
+    {
+        return characters.execute!("DELETE FROM dmangos_outdoor_summon" ~ outdoorSummonKey ~ " AND actor = ?")(
+            realm, request.origin, request.sequence, request.cursor, request.ordinal, request.actor) == 1;
     }
 
     void preparePlayerSummons()

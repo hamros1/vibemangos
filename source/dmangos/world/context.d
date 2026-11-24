@@ -5998,8 +5998,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         import dmangos.log : warning;
         import dmangos.mysql : DatabaseException;
-        import dmangos.world.instancescripting : fromHex;
-        import dmangos.world.migration : decodeBundle;
         import dmangos.world.objects : counterOf;
         import std.algorithm.searching : any;
 
@@ -6042,63 +6040,88 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 database.deleteQuestActor(config.realmId, actor.actor);
                 continue; // the clean bundle has the newer state and did not carry this actor
             }
-            try
-            {
-                bool restoredActor;
-                const recoveryWait = cast(int)((long(config.cluster.leaseMs) + config.cluster.failureTimeoutMs + 10_000));
-                where.migrateIn(fromHex(actor.state), (const ref Migrant saved) {
-                    const root = saved.spawn == spawn;
-                    const kind = highGuidOf(actor.actor) == HighGuid.gameObject ? MigrantKind.summonedGameObject
-                        : nativeFight ? MigrantKind.creature : MigrantKind.summonedCreature;
-                    if ((!root && !restoredActor) || (!actor.player && (!root || saved.kind != kind))
-                        || !grants.any!(grant => !grant.clean && questActorRegion(grant.region, actor.map, saved.home)))
-                        return null;
-                    auto object = restoreWorldMigrant(saved, where);
-                    if (auto go = cast(GameObject) object)
+            restoreQuestActor(where, actor, nativeFight,
+                home => grants.any!(grant => !grant.clean && questActorRegion(grant.region, actor.map, home)));
+        }
+    }
+
+    private bool restoreQueuedSummon(Map where, const ref QuestActorCheckpoint actor)
+    {
+        import dmangos.world.objects : counterOf;
+
+        const spawn = counterOf(actor.actor);
+        if (!awaitingRespawn(spawn) && spawn !in outdoorCorpses)
+            return restoreQuestActor(where, actor, false, home => home == actor.home);
+        database.deleteQuestActor(config.realmId, actor.actor);
+        return true;
+    }
+
+    private bool restoreQuestActor(Map where, const ref QuestActorCheckpoint actor, bool nativeFight,
+        scope bool delegate(ulong) ownsHome)
+    {
+        import dmangos.log : warning;
+        import dmangos.world.instancescripting : fromHex;
+        import dmangos.world.objects : counterOf;
+
+        const spawn = counterOf(actor.actor);
+        try
+        {
+            bool restoredActor;
+            const recoveryWait = cast(int)((long(config.cluster.leaseMs) + config.cluster.failureTimeoutMs + 10_000));
+            where.migrateIn(fromHex(actor.state), (const ref Migrant saved) {
+                const root = saved.spawn == spawn;
+                const kind = highGuidOf(actor.actor) == HighGuid.gameObject ? MigrantKind.summonedGameObject
+                    : nativeFight ? MigrantKind.creature : MigrantKind.summonedCreature;
+                if ((!root && !restoredActor) || (!actor.player && (!root || saved.kind != kind))
+                    || !ownsHome(saved.home))
+                    return null;
+                auto object = restoreWorldMigrant(saved, where);
+                if (auto go = cast(GameObject) object)
+                {
+                    if (actor.player || go.guid != actor.actor)
                     {
-                        if (actor.player || go.guid != actor.actor)
-                        {
-                            objectGone(where, go);
-                            return null;
-                        }
-                        restoredActor = true;
-                        return object;
-                    }
-                    auto creature = cast(Creature) object;
-                    if (creature is null || !creature.alive)
+                        objectGone(where, go);
                         return null;
-                    if (root)
-                    {
-                        if (creature.guid != actor.actor || (actor.player ? creature.ai.questActorPlayer() != actor.player
-                                : creature.summon.update(creature, 0)))
-                        {
-                            creature.ai.releaseBehaviour();
-                            return null;
-                        }
-                        restoredActor = true;
                     }
-                    else if (where.creatureAt(creature.guid) !is null)
+                    restoredActor = true;
+                    return object;
+                }
+                auto creature = cast(Creature) object;
+                if (creature is null || !creature.alive)
+                    return null;
+                if (root)
+                {
+                    if (creature.guid != actor.actor || (actor.player ? creature.ai.questActorPlayer() != actor.player
+                            : creature.summon.update(creature, 0)))
                     {
                         creature.ai.releaseBehaviour();
                         return null;
                     }
-                    if (actor.player)
-                    {
-                        creature.questActorWait = recoveryWait;
-                        creature.questActorWaitFor = actor.player;
-                    }
-                    else if (nativeFight)
-                        waitForCombatPlayer(creature);
-                    return cast(MapObject) creature;
-                });
-                if (restoredActor)
-                    outdoorQuestActors[actor.actor] = actor;
-                else if (!actor.player)
-                    database.deleteQuestActor(config.realmId, actor.actor);
-            }
-            catch (Exception error)
-                warning!"map %s: could not restore quest actor %s: %s"(actor.map, actor.actor, error.msg);
+                    restoredActor = true;
+                }
+                else if (where.creatureAt(creature.guid) !is null)
+                {
+                    creature.ai.releaseBehaviour();
+                    return null;
+                }
+                if (actor.player)
+                {
+                    creature.questActorWait = recoveryWait;
+                    creature.questActorWaitFor = actor.player;
+                }
+                else if (nativeFight)
+                    waitForCombatPlayer(creature);
+                return cast(MapObject) creature;
+            });
+            if (restoredActor)
+                outdoorQuestActors[actor.actor] = actor;
+            else if (!actor.player)
+                database.deleteQuestActor(config.realmId, actor.actor);
+            return true;
         }
+        catch (Exception error)
+            warning!"map %s: could not restore quest actor %s: %s"(actor.map, actor.actor, error.msg);
+        return false;
     }
 
     private void refreshOutdoorCorpses(const(Region)[] gained, const(Region)[] lost)
