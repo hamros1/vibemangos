@@ -4258,6 +4258,7 @@ private:
     ulong[] areaTargets(const(SpellInfo)* spell, size_t i, const ref SpellTargets targets, bool remoteEnemies = false)
     {
         import std.math : atan2, PI;
+        import dmangos.world.spellselection : excludedAreaTarget;
 
         const a = spell.implicitTargetA[i], b = spell.casting.implicitTargetB[i];
         auto kind = b != ImplicitTarget.none && isAreaTargetKind(b) ? b : a;
@@ -4298,18 +4299,20 @@ private:
         ulong[] found;
         with (ImplicitTarget) if (kind == enemiesAroundSource || kind == enemiesAroundDest || kind == enemiesInCone)
         {
+            const excluded = excludedAreaTarget(spell.id, i, targets.unit);
             foreach (creature; map.creaturesNear(center, r))
-                if (spellEnemy(creature) && within(creature.position))
+                if (creature.guid != excluded && spellEnemy(creature) && within(creature.position))
                     found ~= creature.guid;
             foreach (who; map.near(center, r))
-                if (auto other = enemyPlayer(who.character.guid))
-                    if (other.player !is null && other.player.alive && within(other.player.position))
-                        found ~= other.player.guid;
+                if (who.character.guid != excluded)
+                    if (auto other = enemyPlayer(who.character.guid))
+                        if (other.player.alive && within(other.player.position))
+                            found ~= other.player.guid;
             if (remoteEnemies)
                 foreach (object; map.objectsNear(center, r))
                 {
                     auto replica = cast(Replica) object;
-                    if (remoteEnemy(replica) && within(replica.position))
+                    if (object.guid != excluded && remoteEnemy(replica) && within(replica.position))
                         found ~= replica.guid;
                 }
             // At most `MaxAffectedTargets` ("Up to 5 total nearby enemies", Thunder Clap's "up to 4 targets"): the one

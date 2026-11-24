@@ -15,6 +15,12 @@ import dmangos.world.spells : SpellInfo;
 import dmangos.world.unit : UnitRef;
 import dmangos.world.worlddata : SpellScriptObject, SpellTarget, WorldData;
 
+/// Intimidating Shout's selected enemy cowers; only the surrounding enemies flee.
+package ulong excludedAreaTarget(uint spell, size_t effect, ulong primary) pure nothrow @nogc @safe
+{
+    return spell == 5246 && effect != 0 ? primary : 0;
+}
+
 /// Activate-object animation slots 0 through 3 are encoded as actions 1 through 4.
 private enum uint firstObjectAnimation = 1, lastObjectAnimation = 4;
 

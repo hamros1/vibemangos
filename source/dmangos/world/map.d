@@ -1918,6 +1918,9 @@ final class Map : CombatWorld, GameObjectWorld
     {
         import std.math : abs, isFinite;
 
+        version (unittest)
+            if (testGroundHeight !is null)
+                return testGroundHeight(x, y, z);
         const floor = terrain is null ? invalidHeightValue
             : terrain.heightStatic(x, y, z, true, swim ? defaultWaterSearch : defaultHeightSearch);
         if (swim || objectCollision is null)
@@ -1930,6 +1933,7 @@ final class Map : CombatWorld, GameObjectWorld
     {
         /// Movement maps for a test: the way between two points.
         Vector3[] delegate(Vector3 from, Vector3 to) testPaths;
+        float delegate(float x, float y, float z) testGroundHeight;
         bool delegate(Vector3 point, float tolerance) testStaticGround;
     }
 
@@ -1942,6 +1946,56 @@ final class Map : CombatWorld, GameObjectWorld
         if (terrain is null)
             return null;
         return terrain.pathBetween(from, to);
+    }
+
+    /// A short, grounded walk for a player whose movement the server controls.
+    package Vector3[] controlledGroundPath(Vector3 from, Vector3 to)
+    {
+        import std.algorithm.comparison : min;
+        import std.math : abs, ceil, isFinite, sqrt;
+
+        const distance = sqrt((to.x - from.x) ^^ 2 + (to.y - from.y) ^^ 2);
+        if (!distance.isFinite || distance < 0.01f)
+            return null;
+        auto route = pathBetween(from, to);
+        if (route.length < 2)
+            route = [from, to];
+        Vector3[] path = [from];
+        enum float spacing = 0.75f, maxHeightChange = 1.25f;
+        float left = min(distance, 10.0f);
+        foreach (corner; route[1 .. $])
+        {
+            const start = path[$ - 1];
+            const length = sqrt((corner.x - start.x) ^^ 2 + (corner.y - start.y) ^^ 2);
+            if (!length.isFinite)
+                break;
+            if (length < 0.01f)
+                continue;
+            const span = min(left, length);
+            const steps = cast(uint) ceil(span / spacing);
+            foreach (step; 1 .. steps + 1)
+            {
+                const along = (span * step / steps) / length;
+                const last = path[$ - 1];
+                auto next = Vector3(start.x + (corner.x - start.x) * along,
+                    start.y + (corner.y - start.y) * along, last.z);
+                if (terrain !is null)
+                {
+                    next.z = groundHeight(next.x, next.y, last.z, false);
+                    if (!(next.z > invalidHeightValue && abs(next.z - last.z) <= maxHeightChange))
+                        return path;
+                }
+                // Check the current collision as well as the baked movement map, including closed doors.
+                if (!lineOfSightBetween(Position(last.x, last.y, last.z + 0.75f),
+                        Position(next.x, next.y, next.z + 0.75f)))
+                    return path;
+                path ~= next;
+            }
+            left -= span;
+            if (left <= 0)
+                break;
+        }
+        return path;
     }
 
     private bool hasStaticGround(Vector3 p, float step)

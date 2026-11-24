@@ -864,6 +864,12 @@ private struct Sweeper
                 if (!unit)
                     break;
                 auto seen = unitGuid in auraSeen[i];
+                if (s.id == 5246 && i != 0)
+                {
+                    if (seen !is null)
+                        problem("Intimidating Shout's primary target also received the area aura");
+                    break;
+                }
                 if (seen is null)
                 {
                     if (effect == persistentAreaAura && leastHealth[i] < healthOf[i])

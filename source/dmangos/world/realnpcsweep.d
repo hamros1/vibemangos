@@ -790,6 +790,12 @@ private final class NpcSweeper
                 if (!unit)
                     break;
                 const kind = s.casting.applyAuraName[i];
+                if (s.id == 5246 && i != 0)
+                {
+                    if (auraSeen[i].get(x, false))
+                        failed = "Intimidating Shout's primary target also received the area aura";
+                    break;
+                }
                 if (!auraSeen[i].get(x, false))
                 {
                     string elsewhere;

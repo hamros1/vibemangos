@@ -17,7 +17,7 @@ mixin template CrowdControlHandlers()
     import dmangos.vmap.math : Vector3;
     import dmangos.world.auras : Aura, AuraType;
     import dmangos.world.defines : UnitFlags;
-    import dmangos.world.movement : MoveType, Position;
+    import dmangos.world.movement : MovementFlags, MoveType, Position;
     import dmangos.world.opcodes : Opcode;
     import dmangos.world.spline : MoveSpline, monsterMove, monsterStop, SplineFlags;
     import dmangos.world.updatefields : UNIT_FIELD_FLAGS;
@@ -26,6 +26,7 @@ mixin template CrowdControlHandlers()
     private bool controlLost;            // the client was told it has no control
     private uint controlledWalkId;
     private int controlledRelocate;      // until the map is next told where it is, in milliseconds
+    private int controlledRetry;         // delay before trying a blocked route again
 
     private ulong npcCharmer;
     private uint factionBeforeCharm;
@@ -90,8 +91,7 @@ mixin template CrowdControlHandlers()
         if ((charmDecision -= ms) > 0 || castingSpell)
             return;
         charmDecision = 1000;
-        const flags = player.values.get!UNIT_FIELD_FLAGS;
-        if (flags & UnitFlags.stunned)
+        if (player.values.get!UNIT_FIELD_FLAGS & UnitFlags.stunned)
             return;
         UnitRef enemy;
         float best = float.max;
@@ -138,11 +138,8 @@ mixin template CrowdControlHandlers()
             return;
         const distance = sqrt(best);
         const fraction = distance <= speed ? 1 : speed / distance;
-        auto next = Vector3(at.x + fraction * (to.x - at.x), at.y + fraction * (to.y - at.y), at.z + fraction * (to.z - at.z));
-        if (!map.inLineOfSight(at, Position(next.x, next.y, next.z)))
-            return;
-        controlledWalk = MoveSpline([Vector3(at.x, at.y, at.z), next], SplineFlags.runMode, speed, ++controlledWalkId);
-        map.sendToWatchers(this, Opcode.SMSG_MONSTER_MOVE, monsterMove(player.guid, controlledWalk), true);
+        beginControlledWalk(Vector3(at.x + fraction * (to.x - at.x), at.y + fraction * (to.y - at.y),
+            at.z + fraction * (to.z - at.z)), true);
     }
 
     /// Whether the client has control of its character (not feared, not disoriented).
@@ -166,7 +163,19 @@ mixin template CrowdControlHandlers()
             return;
         }
         if (!controlLost)
+        {
+            // Let a jump or fall finish before taking over the player's movement.
+            if (player.movement.flags & (MovementFlags.jumping | MovementFlags.fallingFar))
+                return;
             loseControl();
+        }
+        const immobilized = (player.values.get!UNIT_FIELD_FLAGS & UnitFlags.stunned)
+            || player.auras.hasType(AuraType.modRoot);
+        if (immobilized && !controlledWalk.finalized)
+        {
+            stopControlledWalk();
+            map.relocated(this);
+        }
         if (!controlledWalk.finalized)
         {
             controlledWalk.update(ms);
@@ -182,7 +191,10 @@ mixin template CrowdControlHandlers()
             map.relocated(this);
         }
         if (feared || confused)
-            walkOn(feared);
+        {
+            if (!immobilized && (controlledRetry -= ms) <= 0)
+                walkOn(feared);
+        }
         else
             obeyNpc(ms);
     }
@@ -199,15 +211,19 @@ mixin template CrowdControlHandlers()
     private void regainControl()
     {
         controlLost = false;
-        if (!controlledWalk.finalized)
-        {
-            controlledWalk.update(int.max / 4); // no further: it stops where the server has it now
-            map.sendToWatchers(this, Opcode.SMSG_MONSTER_MOVE, monsterStop(player.guid, player.position,
-                controlledWalkId), true);
-        }
-        controlledWalk = MoveSpline.init;
+        stopControlledWalk();
+        controlledRetry = 0;
+        resetMovementCheck();
         map.relocated(this);
         sendClientControl(true);
+    }
+
+    private void stopControlledWalk()
+    {
+        if (!controlledWalk.finalized)
+            map.sendToWatchers(this, Opcode.SMSG_MONSTER_MOVE, monsterStop(player.guid, player.position,
+                controlledWalkId), true);
+        controlledWalk = MoveSpline.init;
     }
 
     private void sendClientControl(bool enabled)
@@ -248,13 +264,29 @@ mixin template CrowdControlHandlers()
             angle = uniform(0.0f, 2 * PI, map.random);
             distance = uniform(3.0f, 6.0f, map.random);
         }
-        const x = at.x + distance * cos(angle), y = at.y + distance * sin(angle);
-        auto z = map.groundHeight(x, y, at.z + 2, false);
-        if (!(z > -100_000) || z > at.z + 4) // nowhere to stand, or a wall: stay a moment and try again
-            z = at.z;
-        const speed = feared ? player.speeds[MoveType.run] : player.speeds[MoveType.walk];
-        controlledWalk = MoveSpline([Vector3(at.x, at.y, at.z), Vector3(x, y, z)],
-            feared ? SplineFlags.runMode : SplineFlags.none, speed > 0 ? speed : 2.5f, ++controlledWalkId);
+        beginControlledWalk(Vector3(at.x + distance * cos(angle), at.y + distance * sin(angle), at.z), feared);
+    }
+
+    private void beginControlledWalk(Vector3 destination, bool run)
+    {
+        const at = player.position;
+        const from = Vector3(at.x, at.y, at.z);
+        Vector3[] path;
+        if (!player.movement.has(MovementFlags.onTransport))
+        {
+            if (player.movement.has(MovementFlags.swimming))
+                map.pathInWater(from, destination, 1.0f, path);
+            else
+                path = map.controlledGroundPath(from, destination);
+        }
+        if (path.length < 2)
+        {
+            controlledRetry = 250;
+            return;
+        }
+        const speed = player.speeds[run ? MoveType.run : MoveType.walk];
+        controlledWalk = MoveSpline(path, run ? SplineFlags.runMode : SplineFlags.none,
+            speed > 0 ? speed : 2.5f, ++controlledWalkId);
         controlledRelocate = 500;
         map.sendToWatchers(this, Opcode.SMSG_MONSTER_MOVE, monsterMove(player.guid, controlledWalk), true);
     }
@@ -288,11 +320,16 @@ unittest
     bolt.effect[0] = SpellEffect.dummy;
     bolt.implicitTargetA[0] = ImplicitTarget.caster;
     context.data.spells.spells[90001] = bolt;
+    auto stun = SpellInfo(90002);
+    stun.effect[0] = SpellEffect.applyAura;
+    stun.casting.applyAuraName[0] = AuraType.modStun;
+    context.data.spells.spells[90002] = stun;
 
     auto priest = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.player);
     priest.read();
     auto session = priest.session.inWorld;
     auto me = cast(Player) priest.session.character;
+    session.currentMap.testGroundHeight = (float x, float y, float z) => 83.53f;
     auto fear = makeAura((8122 in context.data.spells.spells), 0, 10, 8000, false, [0, 0, 0]);
     session.addAura(fear);
     assert(me.values.get!UNIT_FIELD_FLAGS & UnitFlags.fleeing, "fleeing on its flags");
@@ -308,9 +345,53 @@ unittest
     priest.session.update(1000.msecs);
     assert(me.position.x != start.x || me.position.y != start.y, "the server moves it");
 
+    auto cower = makeAura((90002 in context.data.spells.spells), 0, 10, 4000, false, [0, 0, 0]);
+    session.addAura(cower);
+    const stoppedAt = me.position;
+    priest.session.update(1000.msecs);
+    assert(me.position == stoppedAt, "a stun stops a fear spline at the player's current position");
+    session.removeAura(cower);
+    priest.session.update(100.msecs);
+    priest.session.update(1000.msecs);
+    assert(me.position != stoppedAt, "fleeing continues if the stun expires before the fear");
+
     session.removeAura(fear);
     assert(!(me.values.get!UNIT_FIELD_FLAGS & UnitFlags.fleeing));
     priest.read();
     priest.session.update(100.msecs);
     assert(opcodesOf(priest.read()).canFind(Opcode.SMSG_CLIENT_CONTROL_UPDATE) && session.inControl, "control back");
+}
+
+/// The straight line near the Farm passes below the sloping ground even though both ends are on it.
+unittest
+{
+    import std.math : abs;
+    import dmangos.vmap.math : Vector3;
+    import dmangos.world.realspelltests : haveRealData, RealWorld;
+
+    if (!haveRealData())
+        return;
+    auto world = RealWorld.make(529, true);
+    auto map = world.context.map(529);
+    assert(map.collision !is null);
+    map.testPaths = (Vector3 start, Vector3 end) => null; // loaded terrain while movement tiles load
+    Vector3 from = Vector3(720.224f, 732.896f, -29.7667f);
+    Vector3 to = Vector3(725.224f, 741.5563f, -33.7533f);
+    from.z = map.groundHeight(from.x, from.y, from.z, false);
+    to.z = map.groundHeight(to.x, to.y, to.z, false);
+    bool straightPathBuried;
+    foreach (sample; 1 .. 20)
+    {
+        const at = from + (to - from) * (sample / 20.0f);
+        straightPathBuried |= map.groundHeight(at.x, at.y, at.z, false) > at.z + 0.15f;
+    }
+    assert(straightPathBuried);
+    const path = map.controlledGroundPath(from, to);
+    assert(path.length > 2 && (path[$ - 1] - to).magnitude < 0.1f);
+    foreach (i; 1 .. path.length)
+    {
+        const at = (path[i - 1] + path[i]) * 0.5f;
+        assert(abs(map.groundHeight(at.x, at.y, at.z, false) - at.z) < 0.15f,
+            "every short segment stays on the Arathi Basin slope");
+    }
 }

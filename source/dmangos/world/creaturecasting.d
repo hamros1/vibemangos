@@ -897,6 +897,7 @@ mixin template CreatureCasting()
     private ulong[] targetsFor(const(SpellInfo)* spell, size_t i, ulong target)
     {
         import dmangos.world.spelldamage : namedCreatureShape;
+        import dmangos.world.spellselection : excludedAreaTarget;
 
         const a = spell.implicitTargetA[i], b = spell.casting.implicitTargetB[i];
         if (spell.casting.chainTarget[i] > 1 && nextWeaponSwingEffect(*spell) == i)
@@ -925,11 +926,12 @@ mixin template CreatureCasting()
                         center = fixed.at;
             }
             const r = radius(*spell, i, lore.clientData);
+            const excluded = excludedAreaTarget(spell.id, i, target);
             ulong[] found;
             foreach (other; world_.playersNear(center, r))
             {
                 const f = other.fighter;
-                if (!f.alive || !canAttack(relating, other.relating, me.client))
+                if (other.combatGuid == excluded || !f.alive || !canAttack(relating, other.relating, me.client))
                     continue;
                 if (frostBreath && (!world_.inLineOfSight(center, other.position)
                     || (f.stealthed && !detects(me.fighter, f, r))))
@@ -1335,6 +1337,7 @@ mixin template CreatureCasting()
         import dmangos.world.map : Map;
         import dmangos.world.replication : Replica;
         import dmangos.world.spelldamage : creatureAreaShape;
+        import dmangos.world.spellselection : excludedAreaTarget;
         import dmangos.world.unit : combatRelations;
 
         auto context = cast(WorldContext) lore;
@@ -1354,12 +1357,14 @@ mixin template CreatureCasting()
             const reach = radius(*spell, i, lore.clientData);
             if (!(reach > 0))
                 continue;
+            const excluded = excludedAreaTarget(spell.id, i, target);
             foreach (object; map.objectsNear(at, reach))
                 if (auto copy = cast(Replica) object)
                     if (copy.fields.type == TypeId.player || copy.fields.type == TypeId.unit)
                     {
                         auto other = UnitRef.observed(copy, map);
-                        if (other.alive && canAttack(relating, other.combatRelations(me.client), me.client)
+                        if (other.combatGuid != excluded && other.alive
+                            && canAttack(relating, other.combatRelations(me.client), me.client)
                             && (shape != ImplicitTarget.enemiesInCone || hasInArc(me.position, other.position, PI / 2)))
                             sent |= sendCreatureTargetSpell(context, spell, other, triggered, auraAbsent,
                                 cast(int) i, at, reach);

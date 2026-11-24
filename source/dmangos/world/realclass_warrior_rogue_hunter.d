@@ -1263,6 +1263,7 @@ unittest
     assert(r == SpellCastResult.ok, format!"%s"(r));
     auto target = creatureOf(w, foes[0]);
     assert(target.auras.find(20511) !is null && target.auras.find(20511).maxDuration == 8000, "the target cowers");
+    assert(target.auras.find(5246) is null, "the selected target receives no fleeing aura");
     uint fleeing;
     foreach (f; foes)
         fleeing += creatureOf(w, f).auras.find(5246) !is null;
