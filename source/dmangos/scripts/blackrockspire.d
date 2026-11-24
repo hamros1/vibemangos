@@ -118,8 +118,8 @@ struct BlackrockSpire
 
     enum Step : ubyte { dragonspine, flamewreathWave, stadium, combatDoorClose }
     Schedule!(Step, 4) steps;
-    @transient bool rookeryRecovering;
-    @transient EntityRef[] rookeryRecovered;
+    @transient bool rookeryRecovering, stadiumRecovering;
+    @transient EntityRef[] recoveredOpponents;
 
     void on(ref InstanceContext brs, const ref ObjectLoaded e)
     {
@@ -165,8 +165,16 @@ struct BlackrockSpire
             if (emberseerFight == Fight.done)
                 brs.door(e.object, true);
             break;
-        case gythEntryDoor: gythEntry = e.object; break;
-        case gythCombatDoor: gythCombat = e.object; break;
+        case gythEntryDoor:
+            gythEntry = e.object;
+            if (stadium != Fight.notStarted)
+                brs.door(e.object, stadium != Fight.inProgress);
+            break;
+        case gythCombatDoor:
+            gythCombat = e.object;
+            if (stadium == Fight.inProgress)
+                brs.door(e.object, steps.pending(Step.combatDoorClose));
+            break;
         case gythExitDoor:
             gythExit = e.object;
             if (stadium == Fight.done)
@@ -196,12 +204,21 @@ struct BlackrockSpire
         case theBeast: beastRef = e.creature; break;
         case solakar, rookeryGuardian, rookeryHatcher:
             if (rookeryRecovering)
-                rookeryRecovered ~= e.creature;
+                recoveredOpponents ~= e.creature;
+            break;
+        case chromaticWhelp, chromaticDragon, blackhandHandler, gyth:
+            if (stadiumRecovering)
+                recoveredOpponents ~= e.creature;
             break;
         case rend:
             // Rend, knocked off Gyth's back, joins the fight: the stadium counts him.
-            if (stadium == Fight.inProgress && stadiumWave > 7)
+            if (stadium == Fight.inProgress && stadiumWave > 7 && e.creature != rendRef)
+            {
+                if (stadiumRecovering)
+                    recoveredOpponents ~= e.creature;
                 stadiumMobs.add(e.creature);
+                brs.checkpointCreature(e.creature);
+            }
             break;
         default: break;
         }
@@ -231,6 +248,16 @@ struct BlackrockSpire
             else
                 flamewreath = Fight.failed; // Older saves did not keep Solakar.
         }
+        if (stadium == Fight.inProgress)
+        {
+            if (brs.hasSavedCreature(nefarius))
+            {
+                stadiumRecovering = true;
+                brs.waitForPlayer();
+            }
+            else
+                failStadium(brs); // Older saves did not keep the stadium actors.
+        }
     }
 
     void on(ref InstanceContext brs, const ref PlayerEntered e)
@@ -244,14 +271,11 @@ struct BlackrockSpire
                 if (brs.alive(guard) && !brs.alive(brs.victimOf(guard)))
                     brs.attack(guard, e.player);
         }
-        if (rookeryRecovering)
-        {
-            rookeryRecovering = false;
-            foreach (creature; rookeryRecovered)
-                if (brs.alive(creature) && !brs.alive(brs.victimOf(creature)))
-                    brs.attack(creature, e.player);
-            rookeryRecovered = null;
-        }
+        rookeryRecovering = stadiumRecovering = false;
+        foreach (creature; recoveredOpponents)
+            if (brs.alive(creature) && !brs.alive(brs.victimOf(creature)))
+                brs.attack(creature, e.player);
+        recoveredOpponents = null;
     }
 
     void on(ref InstanceContext brs, const ref Signal e)
@@ -434,6 +458,7 @@ struct BlackrockSpire
                     steps.after(Step.stadium, 1.msecs);
                 }
             }
+            brs.checkpoint();
             break;
         default:
             break;
@@ -561,13 +586,20 @@ struct BlackrockSpire
         stadiumMobs.clear();
         nefariusRef = brs.summon(nefarius, nefariusSpawn);
         if (nefariusRef)
+        {
             brs.setFaction(nefariusRef, factionBlackDragon);
+            brs.checkpointCreature(nefariusRef);
+        }
         rendRef = brs.summon(rend, rendSpawn);
         if (rendRef)
+        {
             brs.unitFlags(rendRef, UnitFlag.immuneToPlayer);
+            brs.checkpointCreature(rendRef);
+        }
         if (gythEntry)
             brs.door(gythEntry, false);
         steps.after(Step.stadium, 1.seconds);
+        brs.checkpoint();
     }
 
     /// The stadium: Nefarius's words, seven waves, Gyth, and the end.
@@ -595,6 +627,7 @@ struct BlackrockSpire
                 brs.door(gythEntry, true);
             if (gythExit)
                 brs.door(gythExit, true);
+            brs.checkpoint();
             return;
         }
         if (stadiumWave < 7)
@@ -607,7 +640,10 @@ struct BlackrockSpire
                     at.x -= brs.random(7);
                     at.y += cast(int) brs.random(15) - 7;
                     if (const made = brs.summon(entry, at, 0, stadiumPlayer && brs.alive(stadiumPlayer) ? stadiumPlayer : brs.anyPlayer()))
+                    {
                         stadiumMobs.add(made);
+                        brs.checkpointCreature(made);
+                    }
                 }
             openCombatDoor(brs);
             ++stadiumWave;
@@ -631,7 +667,10 @@ struct BlackrockSpire
             stadiumMobs.clear();
             gythRef = brs.summon(gyth, gythSpawn, 0, stadiumPlayer && brs.alive(stadiumPlayer) ? stadiumPlayer : brs.anyPlayer());
             if (gythRef)
+            {
                 stadiumMobs.add(gythRef);
+                brs.checkpointCreature(gythRef);
+            }
             openCombatDoor(brs);
         }
     }
@@ -649,6 +688,7 @@ struct BlackrockSpire
     {
         stadium = Fight.failed;
         steps.cancel(Step.stadium);
+        steps.cancel(Step.combatDoorClose);
         foreach (who; [nefariusRef, rendRef, gythRef])
             if (who)
                 brs.despawn(who);
@@ -658,6 +698,7 @@ struct BlackrockSpire
         nefariusRef = rendRef = gythRef = EntityRef.init;
         if (gythEntry)
             brs.door(gythEntry, true);
+        brs.checkpoint();
     }
 }
 

@@ -1685,6 +1685,65 @@ unittest
         assert(Dungeon.isOpen(d.objectOf(entry)), "a gate reopened from Drakkisath's saved death");
 }
 
+/// The stadium keeps its current wave and Gyth's dismount across a worker crash.
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.scripts.blackrockspire : BlackrockSpire, Fight;
+
+    enum uint entryGate = 164726, exitGate = 175186, whelp = 10442, dragon = 10447, handler = 10742;
+    enum uint gyth = 10339, rend = 10429;
+    auto d = Dungeon.enter(229, 60);
+    d.trigger(2026);
+    bool waveHasStarted() { return d.all(whelp).length >= 3 && d.find(dragon) !is null; }
+    assert(d.runUntil(&waveHasStarted, 20.seconds), "the first stadium wave starts");
+    auto whelps = d.all(whelp);
+    auto survivor = whelps[1];
+    const defeated = whelps[0].guid, survivorGuid = survivor.guid;
+    d.kill(whelps[0]);
+    d.hit(survivor, survivor.values.get!UNIT_FIELD_HEALTH / 4);
+    d.run(2100.msecs);
+    const woundedHealth = survivor.values.get!UNIT_FIELD_HEALTH;
+    d.restartAfterCrash();
+    survivor = d.map.creatureAt(survivorGuid);
+    assert(survivor !is null && survivor.alive && survivor.values.get!UNIT_FIELD_HEALTH == woundedHealth);
+    auto dead = d.map.creatureAt(defeated);
+    assert(dead is null || !dead.alive, "the defeated whelp stays gone");
+    assert(d.saved!BlackrockSpire.stadiumWave == 1);
+    assert(!Dungeon.isOpen(d.objectOf(entryGate)) && !Dungeon.isOpen(d.objectOf(exitGate)));
+
+    foreach (_; 0 .. 8)
+    {
+        if (d.find(gyth) !is null)
+            break;
+        foreach (entry; [whelp, dragon, handler])
+            foreach (mob; d.all(entry))
+                d.kill(mob);
+        d.run(2.seconds);
+    }
+    auto mount = d.find(gyth);
+    assert(mount !is null && d.saved!BlackrockSpire.stadiumWave == 8, "the fight reaches Gyth");
+    d.pull(mount);
+    d.hurtTo(mount, 8);
+    d.run(6.seconds);
+    auto rider = d.find(rend);
+    assert(rider !is null && d.all(rend).length == 1, "only the dismounted Rend remains");
+    const mountGuid = mount.guid, riderGuid = rider.guid;
+    d.restartAfterCrash();
+    mount = d.map.creatureAt(mountGuid);
+    rider = d.map.creatureAt(riderGuid);
+    assert(mount !is null && mount.alive && rider !is null && rider.alive && d.all(rend).length == 1);
+    d.kill(mount);
+    assert(!Dungeon.isOpen(d.objectOf(exitGate)), "Rend still defends the exit");
+    d.kill(rider);
+    assert(Dungeon.isOpen(d.objectOf(exitGate)), "both bosses must die");
+    d.restartAfterCrash();
+    assert(d.saved!BlackrockSpire.stadium == Fight.done);
+    assert(Dungeon.isOpen(d.objectOf(entryGate)) && Dungeon.isOpen(d.objectOf(exitGate)));
+    assert(d.find(gyth) is null && d.find(rend) is null);
+}
+
 /**
  * Overlord Wyrmthalak (9568): below half his health (51%) he calls two guards (9583, 9268, 9216) to his side.
  */

@@ -67,7 +67,8 @@ describes how players use the systems available today.
   A raid's copies reset together at fixed times with warnings. A planned cluster handoff carries
   the live creatures and objects. Worker crash recovery includes active Ring of Law waves and
   Tomb of the Seven rounds in Blackrock Depths. Blackrock Spire restores Pyroguard Emberseer's
-  growth and combat, the Rookery waves and Solakar, and both gates after Drakkisath dies.
+  growth and combat, the Rookery waves and Solakar, Rend's stadium, and both gates after
+  Drakkisath dies.
   Other encounters follow their scripts' restore rules.
   See [dungeon failover](CLUSTER.md#dungeons-and-battlegrounds).
 * **Groups:** an offline leader is not replaced after a while (that needs a timer). Loot

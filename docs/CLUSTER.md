@@ -434,6 +434,7 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   In Blackrock Spire, Pyroguard Emberseer resumes his growth or fight with the surviving guards,
   and the replacement restores the confinement runes and doors for that phase.
   The Rookery resumes its remaining wave timer and living hatchers, guardians, or Solakar.
+  Rend's stadium restores its wave, gates and surviving opponents, including Rend after his dismount.
   Both of Drakkisath's gates reopen from his saved death.
 * **GM commands.** `.instance info`, `.instance shutdown` and `.instance reset` of a copy another node
   hosts go to that node and its answer comes back; `.instance resetall` goes to every node.
