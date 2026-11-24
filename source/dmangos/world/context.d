@@ -5068,17 +5068,26 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             m = map(mapId, id);
         }
         const before = m.objectCount - m.replicaCount;
+        auto copy = battlegroundOfMap(mapId) ? battlegrounds.find(id) : null;
         m.migrateIn(bundle, (const ref Migrant migrant) {
             auto object = restoreWorldMigrant(migrant, m);
             if (auto creature = cast(Creature) object)
                 creature.instanceId = id;
             else if (auto go = cast(GameObject) object)
+            {
+                if (copy !is null && go.spawn.battlegroundPowerUp
+                    && !copy.powerUpAvailable(go.spawn.guid, true))
+                    return null;
                 go.instanceId = id;
+            }
             return object;
         });
         if (ownsDungeonFights(m))
             restoreDungeonFights(m, true);
-        return m.objectCount - m.replicaCount - before;
+        const restored = m.objectCount - m.replicaCount - before;
+        if (copy !is null)
+            copy.reconcilePowerUps(m);
+        return restored;
     }
 
     /// An instance gone from this node's memory only (another node hosts it).

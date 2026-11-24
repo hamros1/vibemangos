@@ -1105,13 +1105,36 @@ final class Battleground
         return pool ? cast(ulong) pool << 32 : spawn;
     }
 
-    package bool powerUpAvailable(uint spawn)
+    /// The first active variant belongs to the match, just as each later respawn does.
+    package bool powerUpAvailable(uint spawn, bool fromCheckpoint = false)
     {
         import dmangos.world.worlddata : PoolMember;
 
-        if (const slot = powerUpSlot(spawn) in powerUps)
+        const key = powerUpSlot(spawn);
+        if (const slot = key in powerUps)
             return slot.readyAt == MonoTime.init && slot.spawn == spawn;
-        return context.upInPool(PoolMember.Kind.gameObject, spawn);
+        if (!fromCheckpoint && !context.upInPool(PoolMember.Kind.gameObject, spawn))
+            return false;
+        if (key >> 32)
+        {
+            // Older checkpoints recorded the active object even before saving its pool choice.
+            powerUps[key] = PowerUp(spawn, MonoTime.init);
+            checkpointDirty = true;
+        }
+        return true;
+    }
+
+    /// A loaded destination cell may still contain the local worker's initial roll.
+    package void reconcilePowerUps(Map map)
+    {
+        map.forEachObject((MapObject object) {
+            if (auto pickup = cast(GameObject) object)
+                if (pickup.spawn.battlegroundPowerUp && !powerUpAvailable(pickup.spawn.guid))
+                    map.removeObject(pickup.guid);
+        });
+        foreach (ref slot; powerUps)
+            if (slot.readyAt == MonoTime.init)
+                spawnPowerUp(map, slot.spawn);
     }
 
     package bool takePowerUp(Map map, GameObject pickup, ulong member)
@@ -1128,8 +1151,6 @@ final class Battleground
 
     private void refreshPowerUps(MonoTime now)
     {
-        import dmangos.world.grid : cellKeyAt;
-
         auto map = context.existingMap(mapId, instance);
         if (map is null)
             return;
@@ -1145,16 +1166,23 @@ final class Battleground
                 slot.spawn = next;
             slot.readyAt = MonoTime.init;
             checkpointDirty = true;
-            const spawn = context.gameObjectSpawnOf(slot.spawn);
-            if (spawn !is null && context.gameObjectInEvents(spawn.guid)
-                && spawnAllowed(spawn.guid in context.data.gameObjectBattleEvents)
-                && map.cellLoaded(cellKeyAt(spawn.x, spawn.y)))
-            {
-                auto go = context.makeGameObject(*spawn);
-                go.instanceId = instance;
-                map.addObject(go);
-            }
+            spawnPowerUp(map, slot.spawn);
         }
+    }
+
+    private void spawnPowerUp(Map map, uint guid)
+    {
+        import dmangos.world.grid : cellKeyAt;
+        import dmangos.world.objects : HighGuid, makeGuid;
+
+        const spawn = context.gameObjectSpawnOf(guid);
+        if (spawn is null || !map.cellLoaded(cellKeyAt(spawn.x, spawn.y)) || !context.gameObjectInEvents(guid)
+            || !spawnAllowed(guid in context.data.gameObjectBattleEvents)
+            || map.gameObjectAt(makeGuid(HighGuid.gameObject, spawn.entry, guid)) !is null)
+            return;
+        auto go = context.makeGameObject(*spawn);
+        go.instanceId = instance;
+        map.addObject(go);
     }
 
     /// Whether the doors are open (the battle began).
@@ -1510,6 +1538,9 @@ unittest
     import dmangos.world.realspelltests : haveRealData, RealWorld;
     import dmangos.world.movement : Position;
     import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.worlddata : PoolChooser, PoolMember;
+    import std.random : Random;
 
     if (!haveRealData())
         return;
@@ -1596,6 +1627,48 @@ unittest
     }
 
     assert(pickups(me.currentMap).length == 1);
+    {
+        const selected = pickups(me.currentMap)[0].spawn.guid;
+        const bytes = w.context.snapshotBattleground(basin);
+        const key = basin.powerUpSlot(selected);
+        const active = basin.powerUps[key];
+        basin.powerUps.remove(key); // older matches capture the object with no recorded pool slot
+        const legacy = w.context.snapshotBattleground(basin);
+        basin.powerUps[key] = active;
+        auto originalPools = w.context.data.pools;
+        scope (exit) w.context.data.pools = originalPools;
+        const pool = originalPools.singleGameObjectPool(selected);
+        auto differentPools = new PoolChooser;
+        differentPools.limits[pool] = 1;
+        uint alternate;
+        foreach (ref option; w.context.data.gameObjectSpawns)
+            if (option.map == arathi && option.battlegroundPowerUp && originalPools.singleGameObjectPool(option.guid) == pool)
+            {
+                const chosen = option.guid != selected && !alternate;
+                if (chosen)
+                    alternate = option.guid;
+                differentPools.add(pool, PoolMember(PoolMember.Kind.gameObject, option.guid, chosen ? 100 : 0));
+            }
+        auto rng = Random(1);
+        differentPools.choose(rng);
+        w.context.data.pools = differentPools;
+        foreach (snapshot; [bytes, legacy])
+        {
+            auto successor = RealWorld.make();
+            successor.context.battlegrounds.open(basin.instance, basin.type);
+            auto map = successor.context.map(arathi, basin.instance);
+            map.loadCell(cellKeyAt(pos.x, pos.y));
+            auto warm = pickups(map);
+            assert(warm.length == 1 && warm[0].spawn.guid == alternate);
+
+            successor.context.restoreBattleground(arathi, basin.instance, snapshot);
+            auto restored = pickups(map);
+            assert(restored.length == 1 && restored[0].spawn.guid == selected,
+                "the checkpoint's active pickup replaces the variant already loaded by this worker");
+            auto copy = successor.context.battlegrounds.find(basin.instance);
+            assert(copy.powerUpAvailable(selected) && !copy.powerUpAvailable(alternate));
+        }
+    }
     step(pos);
     assert(!pickups(me.currentMap).length);
     w.now += 90.seconds;
@@ -1603,9 +1676,12 @@ unittest
     auto replacement = RealWorld.make();
     auto clock = w.now + 30.seconds;
     replacement.context.clock = () => clock;
+    replacement.context.battlegrounds.open(basin.instance, basin.type);
+    auto map = replacement.context.map(arathi, basin.instance);
+    map.loadCell(cellKeyAt(pos.x, pos.y));
+    assert(pickups(map).length == 1);
     replacement.context.restoreBattleground(arathi, basin.instance, bytes);
     auto recovered = replacement.context.battlegrounds.find(basin.instance);
-    auto map = replacement.context.existingMap(arathi, basin.instance);
     clock += 89.seconds;
     recovered.tick(Duration.zero);
     assert(!pickups(map).length, "no early respawn after recovery");
