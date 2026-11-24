@@ -857,7 +857,8 @@ interface WorldDatabase
     @DatabaseRead OutdoorScriptCheckpoint[] loadOutdoorScripts(uint realm);
     @DatabaseWrite bool beginOutdoorScript(uint realm, const ref OutdoorScriptCheckpoint script);
     @DatabaseWrite bool advanceOutdoorScript(uint realm, ushort origin, ulong sequence, uint cursor, bool finished,
-        const(OutdoorQuestUpdate)[] updates = null);
+        const(OutdoorQuestUpdate)[] updates = null, const(QuestActorCheckpoint)[] summons = null,
+        const(OutdoorScriptCheckpoint)[] relays = null);
 
     /// The map of instance `id`; uint.max if there is no such instance.
     @DatabaseRead uint instanceMapOf(uint id);
@@ -1389,9 +1390,10 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
         return statements.beginOutdoorScript(realm, script);
     }
     bool advanceOutdoorScript(uint realm, ushort origin, ulong sequence, uint cursor, bool finished,
-        const(OutdoorQuestUpdate)[] updates = null)
+        const(OutdoorQuestUpdate)[] updates = null, const(QuestActorCheckpoint)[] summons = null,
+        const(OutdoorScriptCheckpoint)[] relays = null)
     {
-        if (!updates.length)
+        if (!updates.length && !summons.length && !relays.length)
             return statements.advanceOutdoorScript(realm, origin, sequence, cursor, finished);
         bool advanced;
         characterDb.transaction({
@@ -1399,6 +1401,11 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
                 return;
             foreach (ref update; updates)
                 statements.saveQuestStatus(update.player, update.quests);
+            foreach (ref summon; summons)
+                statements.saveQuestActor(realm, summon);
+            foreach (ref relay; relays)
+                if (!statements.beginOutdoorScript(realm, relay))
+                    throw new imported!"dmangos.mysql".DatabaseException("summon relay checkpoint already exists");
             // Retain this on a retry if COMMIT succeeded but its response was lost.
             advanced = true;
         });
@@ -3085,7 +3092,8 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
     }
 
     bool advanceOutdoorScript(uint realm, ushort origin, ulong sequence, uint cursor, bool finished,
-        const(OutdoorQuestUpdate)[] updates = null)
+        const(OutdoorQuestUpdate)[] updates = null, const(QuestActorCheckpoint)[] summons = null,
+        const(OutdoorScriptCheckpoint)[] relays = null)
     {
         auto scripts = origin in outdoorScripts.get(realm, null);
         if (scripts is null)
@@ -3093,12 +3101,19 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
         auto script = sequence in *scripts;
         if (script is null || script.cursor != cursor)
             return false;
+        foreach (ref relay; relays)
+            if (relay.sequence in outdoorScripts.get(realm, null).get(relay.origin, null))
+                throw new imported!"dmangos.mysql".DatabaseException("summon relay checkpoint already exists");
         if (finished)
             (*scripts).remove(sequence);
         else
             ++script.cursor;
         foreach (ref update; updates)
             saveQuestStatus(update.player, update.quests);
+        foreach (ref summon; summons)
+            saveQuestActor(realm, summon);
+        foreach (ref relay; relays)
+            beginOutdoorScript(realm, relay);
         return true;
     }
 

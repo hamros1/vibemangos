@@ -371,11 +371,12 @@ After a clean handoff or a worker crash, the new owner resumes the pending steps
 schedule and waits briefly for participants to reconnect. Scripted kill and exploration credit commit
 the quest progress and the script cursor in one transaction. The worker sends the quest update after
 the commit. A crash during that write rolls it back so the replacement can grant the credit once.
-Other commands still claim their step before executing it. A crash during their effects can leave
-the step incomplete. When a database script creates an outdoor
-creature, the region also saves that actor's GUID, state, and lifetime. That lets pending steps work
-with the original actor after takeover. The new owner continues the summon timer and respects a
-saved death or despawn.
+A delayed step that summons a creature on the same worker commits the script cursor, the creature's
+GUID and state, and any relay it starts in one transaction. The worker publishes the creature after
+the commit. During recovery, the new owner either retries the pending summon step or restores the
+saved creature and its relay. Its original lifetime continues and saved deaths and despawns still
+apply. Other commands and summons forwarded to another worker still claim their step before
+executing or forwarding it. A crash during those effects can leave the step incomplete.
 Temporary outdoor objects of the generic and spell-focus types also keep their GUIDs, state and
 original expiry time. The worker retries pending region recovery if its first database read fails.
 

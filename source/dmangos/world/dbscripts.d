@@ -27,7 +27,8 @@ import dmangos.world.spellids;
 
 import dmangos.mysql : MySqlConnection;
 import dmangos.world.character : Character;
-import dmangos.world.database : OutdoorQuestUpdate;
+import dmangos.world.creature : Creature;
+import dmangos.world.database : OutdoorQuestUpdate, OutdoorScriptCheckpoint, QuestActorCheckpoint;
 import dmangos.world.grid : noCell;
 import dmangos.world.quests : QuestStatus;
 
@@ -364,10 +365,22 @@ package struct ScriptQuestEffect
     }
 }
 
-package struct OutdoorQuestStep
+package struct ScriptCreatureSpawn
+{
+    Creature creature;
+    uint relay;
+    ulong target;
+    QuestActorCheckpoint checkpoint;
+    ScriptRun relayRun;
+}
+
+package struct OutdoorScriptStep
 {
     private QuestStatus[uint][Character] rows;
     ScriptQuestEffect[] effects;
+    ScriptCreatureSpawn[] summons;
+    OutdoorScriptCheckpoint[] relayCheckpoints;
+    void delegate()[] forwards;
 
     void add(ScriptQuestEffect effect)
     {
@@ -383,6 +396,22 @@ package struct OutdoorQuestStep
                 result ~= OutdoorQuestUpdate(player.player.data.guid, quests.values);
         return result;
     }
+
+    QuestActorCheckpoint[] actorCheckpoints()
+    {
+        QuestActorCheckpoint[] result;
+        foreach (ref summon; summons)
+            if (summon.checkpoint.actor)
+                result ~= summon.checkpoint;
+        return result;
+    }
+
+    void discardUnpublishedSummons()
+    {
+        foreach (ref summon; summons)
+            if (summon.creature !is null)
+                summon.creature.ai.releaseBehaviour();
+    }
 }
 
 /**
@@ -396,9 +425,9 @@ mixin template DbScriptRunner()
     import std.random : uniform;
     import dmangos.log : trace;
     import dmangos.world.dbscripts;
-    import dmangos.world.dbscripts : OutdoorQuestStep, ScriptQuestEffect;
+    import dmangos.world.dbscripts : OutdoorScriptStep, ScriptCreatureSpawn, ScriptQuestEffect;
     import dmangos.world.creature : Creature;
-    import dmangos.world.database : OutdoorQuestUpdate;
+    import dmangos.world.database : OutdoorScriptCheckpoint;
     import dmangos.world.gameobject : GameObject;
     import dmangos.world.grid : noCell;
     import dmangos.world.map : Map;
@@ -524,9 +553,9 @@ mixin template DbScriptRunner()
         return startUnixMillis + (clock() - startClock).total!"msecs";
     }
 
-    private void trackOutdoorScript(ScriptRun run)
+    private void trackOutdoorScript(ScriptRun run, bool fromDurableSummon = false)
     {
-        if (config.cluster.enabled && !run.instanceId && run.home != noCell && run.steps[$ - 1].delay)
+        if (config.cluster.enabled && !run.instanceId && run.home != noCell && (fromDurableSummon || run.steps[$ - 1].delay))
         {
             run.outdoorOrigin = config.cluster.nodeId;
             run.outdoorSequence = nextGameplaySequence();
@@ -547,11 +576,8 @@ mixin template DbScriptRunner()
         return reader.read!uint;
     }
 
-    private bool beginOutdoorRun(ScriptRun run, Map map)
+    private OutdoorScriptCheckpoint outdoorScriptState(ScriptRun run, Map map)
     {
-        import dmangos.log : warning;
-        import dmangos.mysql : DatabaseException;
-        import dmangos.world.database : OutdoorScriptCheckpoint;
         import dmangos.world.instancescripting : toHex;
 
         ByteWriter state;
@@ -564,8 +590,16 @@ mixin template DbScriptRunner()
         state.put(run.anchor);
         state.put(map.find(run.source) !is null);
         state.put(map.find(run.target) !is null);
-        const row = OutdoorScriptCheckpoint(run.outdoorOrigin, run.outdoorSequence, run.mapId, cast(uint) run.next,
+        return OutdoorScriptCheckpoint(run.outdoorOrigin, run.outdoorSequence, run.mapId, cast(uint) run.next,
             run.home, toHex(state.data));
+    }
+
+    private bool beginOutdoorRun(ScriptRun run, Map map)
+    {
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
+
+        const row = outdoorScriptState(run, map);
         try
         {
             foreach (guid; [run.source, run.target])
@@ -594,15 +628,20 @@ mixin template DbScriptRunner()
         }
     }
 
-    private bool claimOutdoorStep(ScriptRun run, bool finished, const(OutdoorQuestUpdate)[] updates = null)
+    private bool claimOutdoorStep(ScriptRun run, Map map, const ref DbScriptStep step, bool finished,
+        OutdoorScriptStep* planned)
     {
         import dmangos.log : warning;
         import dmangos.mysql : DatabaseException;
 
         try
         {
+            if (planned !is null)
+                runScriptStep(run.type, step, map, run.source, run.target, planned);
             if (database.advanceOutdoorScript(config.realmId, run.outdoorOrigin, run.outdoorSequence,
-                    cast(uint) run.next, finished, updates))
+                    cast(uint) run.next, finished, planned is null ? null : planned.updates(),
+                    planned is null ? null : planned.actorCheckpoints(),
+                    planned is null ? null : planned.relayCheckpoints))
                 return true;
             run.next = run.steps.length;
             retryOutdoorScriptRecovery = true;
@@ -847,18 +886,18 @@ mixin template DbScriptRunner()
                     // A termination check has no side effects. Decide it before committing the cursor.
                     const terminator = step.command == ScriptCommand.terminateScript;
                     const stops = terminator && runScriptStep(run.type, *step, map, run.source, run.target);
-                    const grantsCredit = step.command == ScriptCommand.questExplored || step.command == ScriptCommand.killCredit;
-                    OutdoorQuestStep quest;
-                    if (grantsCredit)
-                        runScriptStep(run.type, *step, map, run.source, run.target, &quest);
-                    if (!claimOutdoorStep(run, stops || run.next + 1 == run.steps.length, quest.updates()))
+                    const stagesEffects = step.command == ScriptCommand.questExplored || step.command == ScriptCommand.killCredit
+                        || step.command == ScriptCommand.tempSpawnCreature;
+                    OutdoorScriptStep planned;
+                    scope (exit) planned.discardUnpublishedSummons();
+                    if (!claimOutdoorStep(run, map, *step, stops || run.next + 1 == run.steps.length,
+                            stagesEffects ? &planned : null))
                         break;
                     run.next = stops ? run.steps.length : run.next + 1;
                     if (!terminator && canWrite())
                     {
-                        if (grantsCredit)
-                            foreach (ref effect; quest.effects)
-                                effect.apply();
+                        if (stagesEffects)
+                            publishOutdoorStep(map, planned);
                         else
                             runScriptStep(run.type, *step, map, run.source, run.target);
                     }
@@ -879,6 +918,20 @@ mixin template DbScriptRunner()
         import std.algorithm.mutation : remove;
 
         scriptRuns = scriptRuns.remove!(r => r.next >= r.steps.length);
+    }
+
+    private void publishOutdoorStep(Map map, ref OutdoorScriptStep planned)
+    {
+        foreach (ref effect; planned.effects)
+            effect.apply();
+        foreach (ref effect; planned.summons)
+        {
+            auto summon = effect;
+            effect.creature = null;
+            publishScriptCreature(map, summon);
+        }
+        foreach (forward; planned.forwards)
+            forward();
     }
 
     /// Run the immediate, target-only spell steps on the map that owns the target.
@@ -1073,7 +1126,7 @@ mixin template DbScriptRunner()
 
     /// Runs the step for each source and target it comes to; true if the script stops here.
     private bool runScriptStep(DbScriptType type, const ref DbScriptStep step, Map map, ulong sourceGuid, ulong targetGuid,
-        OutdoorQuestStep* quest = null)
+        OutdoorScriptStep* planned = null)
     {
         auto source = scriptObject(map, sourceGuid), target = scriptObject(map, targetGuid);
         ScriptThing[] buddies;
@@ -1097,9 +1150,9 @@ mixin template DbScriptRunner()
                 targets.length ? targets[0] : ScriptThing.init, buddies.length > 0);
         bool dispatch(ScriptThing source, ScriptThing target)
         {
-            if (quest is null)
+            if (planned is null)
                 return dispatchScriptCommand(type, step, map, source, target);
-            return executeScriptCommand(type, step, map, source, target, false, quest);
+            return executeScriptCommand(type, step, map, source, target, false, planned);
         }
         bool stop;
         if (targets.length)
@@ -1432,7 +1485,7 @@ mixin template DbScriptRunner()
     }
 
     private void placeScriptCreature(Map map, const ref DbScriptStep step, Position at, ulong source, ulong target,
-        DbScriptType type, ushort from = 0, bool forwarded = false)
+        DbScriptType type, ushort from = 0, bool forwarded = false, OutdoorScriptStep* planned = null)
     {
         import dmangos.world.creature : TempSpawnType;
 
@@ -1446,21 +1499,58 @@ mixin template DbScriptRunner()
             {
                 if (owner && owner != from && !forwarded && sendScriptCreatureStep !is null)
                 {
-                    const message = ScriptCreatureStep(nextGameplaySequence(), source, source, target, map.id, step.id,
-                        step.fingerprint, transportNow(), cast(ubyte) type, from != 0, at.x, at.y, at.z, at.orientation);
-                    sendScriptCreatureStep(owner, message);
+                    const script = step.id, fingerprint = step.fingerprint;
+                    auto send = () {
+                        const message = ScriptCreatureStep(nextGameplaySequence(), source, source, target, map.id, script,
+                            fingerprint, transportNow(), cast(ubyte) type, from != 0, at.x, at.y, at.z, at.orientation);
+                        sendScriptCreatureStep(owner, message);
+                    };
+                    if (planned is null)
+                        send();
+                    else
+                        planned.forwards ~= send;
                 }
                 return;
             }
         }
         const lifetime = step.datalong2 ? TempSpawnType.timedOutOfCombatOrDead : TempSpawnType.dead;
-        auto summoned = summonCreature(map, step.datalong, at, lifetime, step.datalong2, source);
+        auto summoned = prepareCreatureSummon(map, step.datalong, at, lifetime, step.datalong2, source);
         if (summoned is null)
             return;
-        checkpointOutdoorCreature(summoned, true);
-        if (step.dataint[3] > 0)
-            if (const relay = cast(uint) step.dataint[3] in data.dbScripts.summonRelays)
-                startScript(DbScriptType.relay, *relay, map, summoned.guid, target);
+        const relay = step.dataint[3] > 0 ? data.dbScripts.summonRelays.get(cast(uint) step.dataint[3], 0) : 0;
+        auto spawn = ScriptCreatureSpawn(summoned, relay, target);
+        if (planned is null)
+            publishScriptCreature(map, spawn);
+        else
+        {
+            scope (failure) summoned.ai.releaseBehaviour();
+            spawn.checkpoint = outdoorCreatureCheckpoint(summoned);
+            if (spawn.checkpoint.actor && relay)
+                if (auto steps = data.dbScripts.steps(DbScriptType.relay, relay))
+                {
+                    auto run = new ScriptRun(DbScriptType.relay, relay, map.id, 0, summoned.guid, target, steps);
+                    run.home = spawn.checkpoint.home;
+                    run.anchor = summoned.guid;
+                    trackOutdoorScript(run, true);
+                    run.outdoorSaved = true;
+                    spawn.relayRun = run;
+                    planned.relayCheckpoints ~= outdoorScriptState(run, map);
+                }
+            planned.summons ~= spawn;
+        }
+    }
+
+    private void publishScriptCreature(Map map, ScriptCreatureSpawn summon)
+    {
+        if (summon.checkpoint.actor)
+            outdoorQuestActors[summon.creature.guid] = summon.checkpoint;
+        publishCreatureSummon(map, summon.creature);
+        if (!summon.checkpoint.actor)
+            checkpointOutdoorCreature(summon.creature, true);
+        if (summon.relayRun !is null)
+            scriptRuns ~= summon.relayRun;
+        else if (summon.relay)
+            startScript(DbScriptType.relay, summon.relay, map, summon.creature.guid, summon.target);
     }
 
     /// The game objects a script spawned whose time is up, gone again.
@@ -1481,7 +1571,7 @@ mixin template DbScriptRunner()
 
     /// Carries out a step's command; true if the script should stop.
     private bool executeScriptCommand(DbScriptType type, const ref DbScriptStep step, Map map, ScriptThing source,
-        ScriptThing target, bool conditionChecked = false, OutdoorQuestStep* quest = null)
+        ScriptThing target, bool conditionChecked = false, OutdoorScriptStep* planned = null)
     {
         import dmangos.world.updatefields;
 
@@ -1489,7 +1579,7 @@ mixin template DbScriptRunner()
         if (!conditionChecked && step.conditionId && (player is null || !player.conditionMet(step.conditionId)))
             return false;
         auto creature = source.creature;
-        if (quest is null && creature !is null && creature.ai !is null)
+        if (planned is null && creature !is null && creature.ai !is null)
             creature.ai.bind(map);
         switch (step.command)
         {
@@ -1552,8 +1642,8 @@ mixin template DbScriptRunner()
                 fail = distanceSq(place.position, player.character.position) > float(step.datalong2) ^^ 2;
             alias Kind = ScriptQuestEffect.Kind;
             auto effect = ScriptQuestEffect(player, fail ? Kind.failed : Kind.explored, step.datalong);
-            if (quest !is null)
-                quest.add(effect);
+            if (planned !is null)
+                planned.add(effect);
             else
                 effect.apply();
             break;
@@ -1567,8 +1657,8 @@ mixin template DbScriptRunner()
             if (entry == 0)
                 break;
             auto effect = ScriptQuestEffect(player, ScriptQuestEffect.Kind.kill, entry, rewarder !is null ? rewarder.guid : 0);
-            if (quest !is null)
-                quest.add(effect);
+            if (planned !is null)
+                planned.add(effect);
             else
                 effect.apply();
             break;
@@ -1584,7 +1674,7 @@ mixin template DbScriptRunner()
         {
             auto at = Position(step.x, step.y, step.z, step.o);
             if (source.exists && resolveCreatureSummonPosition(map, source.guid, at))
-                placeScriptCreature(map, step, at, source.guid, target.guid, type);
+                placeScriptCreature(map, step, at, source.guid, target.guid, type, 0, false, planned);
             break;
         }
         case ScriptCommand.openDoor, ScriptCommand.closeDoor:

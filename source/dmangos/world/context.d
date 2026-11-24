@@ -5889,13 +5889,20 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// The player field is zero for a living scripted summon or native outdoor combatant.
     private void checkpointOutdoorCreature(Creature creature, bool immediate = false)
     {
+        const state = outdoorCreatureCheckpoint(creature);
+        if (state.actor)
+            saveOutdoorScriptActor(state, immediate);
+    }
+
+    private QuestActorCheckpoint outdoorCreatureCheckpoint(Creature creature)
+    {
         if (!config.cluster.enabled || !creature.alive || !ownsQuestActor(creature))
-            return;
+            return QuestActorCheckpoint.init;
         auto migrant = saveMigratingObject(creature, false, carryImpacts: false);
         if (migrant.kind != MigrantKind.summonedCreature && migrant.kind != MigrantKind.creature)
-            return;
+            return QuestActorCheckpoint.init;
         migrant.home = cellKeyAt(creature.spawn.x, creature.spawn.y);
-        saveOutdoorScriptMigrant(creature.spawn.map, creature.guid, migrant, immediate);
+        return outdoorScriptActorState(creature.spawn.map, creature.guid, migrant);
     }
 
     private void checkpointOutdoorScriptObject(Map map, GameObject go, bool immediate = false)
@@ -5913,16 +5920,21 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (migrant.kind != MigrantKind.summonedGameObject)
             return;
         migrant.home = home;
-        saveOutdoorScriptMigrant(map.id, go.guid, migrant, immediate);
+        const state = outdoorScriptActorState(map.id, go.guid, migrant);
+        saveOutdoorScriptActor(state, immediate);
     }
 
-    private void saveOutdoorScriptMigrant(uint map, ulong guid, ref Migrant migrant, bool immediate)
+    private QuestActorCheckpoint outdoorScriptActorState(uint map, ulong guid, ref Migrant migrant)
     {
         import dmangos.world.instancescripting : toHex;
 
-        const state = QuestActorCheckpoint(map, guid, migrant.home, 0, unixTime,
+        return QuestActorCheckpoint(map, guid, migrant.home, 0, unixTime,
             toHex(encodeBundle(null, [migrant])));
-        outdoorQuestActors[guid] = state;
+    }
+
+    private void saveOutdoorScriptActor(const ref QuestActorCheckpoint state, bool immediate)
+    {
+        outdoorQuestActors[state.actor] = state;
         database.saveQuestActor(config.realmId, state);
         if (immediate)
             settleWrites();
@@ -7740,7 +7752,19 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         ulong summoner)
     {
         auto map = cast(Map) world;
-        if (map is null || entry !in data.creatureTemplates || !resolveCreatureSummonPosition(map, summoner, at))
+        if (map is null)
+            return null;
+        auto creature = prepareCreatureSummon(map, entry, at, type, durationMs, summoner);
+        if (creature !is null)
+            publishCreatureSummon(map, creature);
+        return creature;
+    }
+
+    /// Makes a summon that can be checkpointed before the map or clients see it.
+    private Creature prepareCreatureSummon(Map map, uint entry, Position at, TempSpawnType type, uint durationMs,
+        ulong summoner)
+    {
+        if (entry !in data.creatureTemplates || !resolveCreatureSummonPosition(map, summoner, at))
             return null;
         const counter = nextTemporaryCounter();
         CreatureSpawn spawn = {guid: counter, entry: entry, map: map.id, x: at.x, y: at.y, z: at.z,
@@ -7750,6 +7774,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return null;
         creature.summon = TempSpawn(type, durationMs, durationMs, summoner);
         creature.instanceId = map.instanceId;
+        return creature;
+    }
+
+    private void publishCreatureSummon(Map map, Creature creature)
+    {
         map.addObject(creature);
         map.wake(creature.guid);
         if (map.instanceId) // the dungeon's script hears of it as of any creature of the copy
@@ -7759,7 +7788,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
                 script.raise(CreatureLoaded(EntityRef(creature.guid)));
             }
-        return creature;
     }
 
     private bool resolveCreatureSummonPosition(Map map, ulong summoner, ref Position at)
