@@ -414,8 +414,10 @@ package struct OutdoorScriptStep
     private QuestStatus[uint][Character] rows;
     ScriptQuestEffect[] effects;
     ScriptCreatureSpawn[] summons;
+    ScriptRun[] relays;
     OutdoorScriptCheckpoint[] relayCheckpoints;
     OutdoorSummonRequest[] forwards;
+    ulong parentHome;
     void delegate()[] afterCommit;
 
     void add(ScriptQuestEffect effect)
@@ -570,6 +572,15 @@ mixin template DbScriptRunner()
                         && run.instanceId == map.instanceId
                         && (unique == ScriptUnique.bySource ? run.source == source : run.target == target))
                     return true;
+        auto run = prepareScriptRun(type, id, map, source, target, steps);
+        trackOutdoorScript(run);
+        scriptRuns ~= run;
+        return true;
+    }
+
+    private static ScriptRun prepareScriptRun(DbScriptType type, uint id, Map map, ulong source, ulong target,
+        const(DbScriptStep)[] steps)
+    {
         auto run = new ScriptRun(type, id, map.id, map.instanceId, source, target, steps);
         if (!run.instanceId)
         {
@@ -581,9 +592,7 @@ mixin template DbScriptRunner()
                 run.anchor = target;
             }
         }
-        trackOutdoorScript(run);
-        scriptRuns ~= run;
-        return true;
+        return run;
     }
 
     private long scriptClock()
@@ -591,9 +600,9 @@ mixin template DbScriptRunner()
         return startUnixMillis + (clock() - startClock).total!"msecs";
     }
 
-    private void trackOutdoorScript(ScriptRun run, bool fromDurableSummon = false)
+    private void trackOutdoorScript(ScriptRun run, bool force = false)
     {
-        if (config.cluster.enabled && !run.instanceId && run.home != noCell && (fromDurableSummon || run.steps[$ - 1].delay))
+        if (config.cluster.enabled && !run.instanceId && run.home != noCell && (force || run.steps[$ - 1].delay))
         {
             run.outdoorOrigin = config.cluster.nodeId;
             run.outdoorSequence = nextGameplaySequence();
@@ -676,6 +685,7 @@ mixin template DbScriptRunner()
         {
             if (planned !is null)
             {
+                planned.parentHome = run.home;
                 runScriptStep(run.type, step, map, run.source, run.target, planned);
                 foreach (i, ref request; planned.forwards)
                 {
@@ -944,7 +954,7 @@ mixin template DbScriptRunner()
 
                     const stagesEffects = step.command.among(ScriptCommand.questExplored, ScriptCommand.killCredit,
                         ScriptCommand.tempSpawnCreature, ScriptCommand.openDoor, ScriptCommand.closeDoor,
-                        ScriptCommand.respawnGameObject, ScriptCommand.despawnGameObject);
+                        ScriptCommand.respawnGameObject, ScriptCommand.despawnGameObject, ScriptCommand.startRelayScript);
                     OutdoorScriptStep planned;
                     scope (exit) planned.discardUnpublishedSummons();
                     if (!claimOutdoorStep(run, map, *step, stops || run.next + 1 == run.steps.length,
@@ -1289,6 +1299,7 @@ mixin template DbScriptRunner()
             effect.creature = null;
             publishScriptCreature(map, summon);
         }
+        scriptRuns ~= planned.relays;
         foreach (action; planned.afterCommit)
             action();
     }
@@ -1511,6 +1522,13 @@ mixin template DbScriptRunner()
         {
             if (planned is null)
                 return dispatchScriptCommand(type, step, map, source, target);
+            if (step.command == ScriptCommand.startRelayScript && source.mirror !is null)
+            {
+                // A creature replica starts its relay on its owner, as it does outside a durable script.
+                const row = step;
+                planned.afterCommit ~= () { dispatchScriptCommand(type, row, map, source, target); };
+                return false;
+            }
             return executeScriptCommand(type, step, map, source, target, false, planned);
         }
         bool stop;
@@ -2341,8 +2359,20 @@ mixin template DbScriptRunner()
         case ScriptCommand.startRelayScript:
         {
             const relay = step.datalong2 ? data.dbScripts.randomRelay(step.datalong2) : step.datalong;
-            if (relay)
+            if (!relay)
+                break;
+            if (planned is null)
                 startScript(DbScriptType.relay, relay, map, source.guid, target.guid);
+            else if (const steps = data.dbScripts.steps(DbScriptType.relay, relay))
+            {
+                auto run = prepareScriptRun(DbScriptType.relay, relay, map, source.guid, target.guid, steps);
+                if (run.home == noCell)
+                    run.home = planned.parentHome;
+                trackOutdoorScript(run, true);
+                run.outdoorSaved = true;
+                planned.relayCheckpoints ~= outdoorScriptState(run, map);
+                planned.relays ~= run;
+            }
             break;
         }
         default:
