@@ -274,19 +274,19 @@ private:
     }
 
     /// Whether `quest` is complete: taken, and every objective met (kills, items, money).
-    package bool canCompleteQuest(uint id)
+    package bool canCompleteQuest(uint id, const(QuestStatus)* proposed = null)
     {
         const quest = context.data.quests.quest(id);
         if (quest is null)
             return false;
-        const status = questState(id);
+        const status = proposed is null ? questState(id) : proposed.status;
         if (status == QuestState.complete)
             return false;
         if (quest.autoComplete && canTakeQuest(*quest))
             return true;
         if (status != QuestState.incomplete)
             return false;
-        const q = id in player.questStatus;
+        const q = proposed is null ? id in player.questStatus : proposed;
         foreach (i; 0 .. questObjectives)
         {
             if (quest.reqItemCount[i] && q.itemCount[i] < quest.reqItemCount[i])
@@ -844,9 +844,21 @@ private:
     }
 
     /// The quest's place found (or its event happened); complete if that was all.
-    package void areaExploredOrEventHappens(uint id)
+    package void areaExploredOrEventHappens(uint id, QuestStatus[uint]* proposed = null)
     {
         const slot = questSlot(id);
+        if (proposed !is null)
+        {
+            auto q = (*proposed).get(id, player.questStatus.get(id, QuestStatus(id)));
+            const previous = q;
+            if (slot < maxQuestLogSize)
+                q.explored = true;
+            if (canCompleteQuest(id, &q))
+                q.status = QuestState.complete;
+            if (q.status != previous.status || q.explored != previous.explored)
+                (*proposed)[id] = q;
+            return;
+        }
         if (slot < maxQuestLogSize)
         {
             auto q = &statusOf(id);
@@ -866,21 +878,32 @@ private:
     }
 
     /// A script's kill credit, sent.
-    package void scriptKillCredit(uint entry, ulong guid)
+    package void scriptKillCredit(uint entry, ulong guid, QuestStatus[uint]* proposed = null)
     {
-        killedMonster(entry, guid);
-        flushPlayerChanges();
+        creditCreatureOrGo(cast(int) entry, 0, guid, true, proposed);
     }
 
     /// A quest under way failed (a script found the player too far, or its creature dead).
-    package void failQuest(uint id)
+    package void failQuest(uint id, QuestStatus[uint]* proposed = null)
     {
-        questObjectsStale = true;
+        if (proposed is null)
+            questObjectsStale = true;
         auto q = id in player.questStatus;
+        QuestStatus preview;
+        if (proposed !is null && q !is null)
+        {
+            preview = (*proposed).get(id, *q);
+            q = &preview;
+        }
         if (q is null || q.status != QuestState.incomplete)
             return;
         q.status = QuestState.failed;
         q.changed = true;
+        if (proposed !is null)
+        {
+            (*proposed)[id] = *q;
+            return;
+        }
         const slot = questSlot(id);
         if (slot < maxQuestLogSize)
             setQuestSlotState(slot, 2, true); // failed
@@ -1435,7 +1458,8 @@ private:
      * Credit for a kill, or a spell cast on a creature or game object: `target` (a creature's entry, or minus a game
      * object's) counts for the objectives that ask for it with `spell` (0: killed, or used).
      */
-    package void creditCreatureOrGo(int target, uint spell, ulong guid, bool kill = false)
+    package void creditCreatureOrGo(int target, uint spell, ulong guid, bool kill = false,
+        QuestStatus[uint]* proposed = null)
     {
         foreach (slot; 0 .. maxQuestLogSize)
         {
@@ -1444,6 +1468,12 @@ private:
                 continue;
             const quest = context.data.quests.quest(id);
             auto q = id in player.questStatus;
+            QuestStatus preview;
+            if (proposed !is null && q !is null)
+            {
+                preview = (*proposed).get(id, *q);
+                q = &preview;
+            }
             if (quest is null || q is null || q.status != QuestState.incomplete || !quest.killOrCast)
                 continue;
             if (kill && !questAllowedHere(*quest))
@@ -1456,6 +1486,13 @@ private:
                     continue;
                 ++q.mobCount[i];
                 q.changed = true;
+                if (proposed !is null)
+                {
+                    if (canCompleteQuest(id, q))
+                        q.status = QuestState.complete;
+                    (*proposed)[id] = *q;
+                    continue;
+                }
                 questObjectsStale = true;
                 ByteWriter w;
                 w.put(id);
@@ -1470,7 +1507,8 @@ private:
                     completeQuest(id);
             }
         }
-        flushPlayerChanges();
+        if (proposed is null)
+            flushPlayerChanges();
     }
 
     /// The quest objects the client has may sparkle otherwise now: set when the quests or their items change.

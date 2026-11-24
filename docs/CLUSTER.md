@@ -368,9 +368,11 @@ route suspended by combat resumes when the creature goes home.
 An outdoor database script anchored to a creature or game object moves with that object's home
 region. Scripts with delayed steps save their next step in the characters database before they start.
 After a clean handoff or a worker crash, the new owner resumes the pending steps using the original
-schedule and waits briefly for participants to reconnect. Each step is claimed in the database before
-it runs, so a replacement never runs a claimed step again. A crash between claiming a step and
-finishing its effects can leave that step incomplete. When a database script creates an outdoor
+schedule and waits briefly for participants to reconnect. Scripted kill and exploration credit commit
+the quest progress and the script cursor in one transaction. The worker sends the quest update after
+the commit. A crash during that write rolls it back so the replacement can grant the credit once.
+Other commands still claim their step before executing it. A crash during their effects can leave
+the step incomplete. When a database script creates an outdoor
 creature, the region also saves that actor's GUID, state, and lifetime. That lets pending steps work
 with the original actor after takeover. The new owner continues the summon timer and respects a
 saved death or despawn.

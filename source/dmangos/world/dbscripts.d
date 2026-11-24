@@ -26,7 +26,10 @@ module dmangos.world.dbscripts;
 import dmangos.world.spellids;
 
 import dmangos.mysql : MySqlConnection;
+import dmangos.world.character : Character;
+import dmangos.world.database : OutdoorQuestUpdate;
 import dmangos.world.grid : noCell;
+import dmangos.world.quests : QuestStatus;
 
 /// Which table a script comes from.
 enum DbScriptType : ubyte
@@ -341,6 +344,47 @@ final class ScriptRun
     }
 }
 
+package struct ScriptQuestEffect
+{
+    enum Kind { explored, failed, kill }
+
+    Character player;
+    Kind kind;
+    uint id;
+    ulong rewarder;
+
+    void apply(QuestStatus[uint]* proposed = null)
+    {
+        final switch (kind)
+        {
+        case Kind.explored: player.areaExploredOrEventHappens(id, proposed); break;
+        case Kind.failed: player.failQuest(id, proposed); break;
+        case Kind.kill: player.scriptKillCredit(id, rewarder, proposed); break;
+        }
+    }
+}
+
+package struct OutdoorQuestStep
+{
+    private QuestStatus[uint][Character] rows;
+    ScriptQuestEffect[] effects;
+
+    void add(ScriptQuestEffect effect)
+    {
+        effect.apply(&rows.require(effect.player, null));
+        effects ~= effect;
+    }
+
+    OutdoorQuestUpdate[] updates()
+    {
+        OutdoorQuestUpdate[] result;
+        foreach (player, quests; rows)
+            if (quests.length)
+                result ~= OutdoorQuestUpdate(player.player.data.guid, quests.values);
+        return result;
+    }
+}
+
 /**
  * The database scripts' side of `WorldContext`: starting a script, the steps due each tick, and
  * the commands.
@@ -352,7 +396,9 @@ mixin template DbScriptRunner()
     import std.random : uniform;
     import dmangos.log : trace;
     import dmangos.world.dbscripts;
+    import dmangos.world.dbscripts : OutdoorQuestStep, ScriptQuestEffect;
     import dmangos.world.creature : Creature;
+    import dmangos.world.database : OutdoorQuestUpdate;
     import dmangos.world.gameobject : GameObject;
     import dmangos.world.grid : noCell;
     import dmangos.world.map : Map;
@@ -548,7 +594,7 @@ mixin template DbScriptRunner()
         }
     }
 
-    private bool claimOutdoorStep(ScriptRun run, bool finished)
+    private bool claimOutdoorStep(ScriptRun run, bool finished, const(OutdoorQuestUpdate)[] updates = null)
     {
         import dmangos.log : warning;
         import dmangos.mysql : DatabaseException;
@@ -556,7 +602,7 @@ mixin template DbScriptRunner()
         try
         {
             if (database.advanceOutdoorScript(config.realmId, run.outdoorOrigin, run.outdoorSequence,
-                    cast(uint) run.next, finished))
+                    cast(uint) run.next, finished, updates))
                 return true;
             run.next = run.steps.length;
             retryOutdoorScriptRecovery = true;
@@ -801,11 +847,21 @@ mixin template DbScriptRunner()
                     // A termination check has no side effects. Decide it before committing the cursor.
                     const terminator = step.command == ScriptCommand.terminateScript;
                     const stops = terminator && runScriptStep(run.type, *step, map, run.source, run.target);
-                    if (!claimOutdoorStep(run, stops || run.next + 1 == run.steps.length))
+                    const grantsCredit = step.command == ScriptCommand.questExplored || step.command == ScriptCommand.killCredit;
+                    OutdoorQuestStep quest;
+                    if (grantsCredit)
+                        runScriptStep(run.type, *step, map, run.source, run.target, &quest);
+                    if (!claimOutdoorStep(run, stops || run.next + 1 == run.steps.length, quest.updates()))
                         break;
                     run.next = stops ? run.steps.length : run.next + 1;
                     if (!terminator && canWrite())
-                        runScriptStep(run.type, *step, map, run.source, run.target);
+                    {
+                        if (grantsCredit)
+                            foreach (ref effect; quest.effects)
+                                effect.apply();
+                        else
+                            runScriptStep(run.type, *step, map, run.source, run.target);
+                    }
                 }
                 else
                 {
@@ -1016,7 +1072,8 @@ mixin template DbScriptRunner()
     }
 
     /// Runs the step for each source and target it comes to; true if the script stops here.
-    private bool runScriptStep(DbScriptType type, const ref DbScriptStep step, Map map, ulong sourceGuid, ulong targetGuid)
+    private bool runScriptStep(DbScriptType type, const ref DbScriptStep step, Map map, ulong sourceGuid, ulong targetGuid,
+        OutdoorQuestStep* quest = null)
     {
         auto source = scriptObject(map, sourceGuid), target = scriptObject(map, targetGuid);
         ScriptThing[] buddies;
@@ -1038,20 +1095,26 @@ mixin template DbScriptRunner()
         if (step.command == ScriptCommand.terminateScript)
             return terminates(step, map, sources.length ? sources[0] : ScriptThing.init,
                 targets.length ? targets[0] : ScriptThing.init, buddies.length > 0);
+        bool dispatch(ScriptThing source, ScriptThing target)
+        {
+            if (quest is null)
+                return dispatchScriptCommand(type, step, map, source, target);
+            return executeScriptCommand(type, step, map, source, target, false, quest);
+        }
         bool stop;
         if (targets.length)
         {
             foreach (s; sources)
                 foreach (t; targets)
-                    stop |= dispatchScriptCommand(type, step, map, s, t);
+                    stop |= dispatch(s, t);
         }
         else
             foreach (s; sources)
-                stop |= dispatchScriptCommand(type, step, map, s, ScriptThing.init);
+                stop |= dispatch(s, ScriptThing.init);
         // A step with no source at all may still act on its target (kill credit, quest explored).
         if (sources.length == 0 && targets.length)
             foreach (t; targets)
-                stop |= dispatchScriptCommand(type, step, map, ScriptThing.init, t);
+                stop |= dispatch(ScriptThing.init, t);
         return stop;
     }
 
@@ -1418,7 +1481,7 @@ mixin template DbScriptRunner()
 
     /// Carries out a step's command; true if the script should stop.
     private bool executeScriptCommand(DbScriptType type, const ref DbScriptStep step, Map map, ScriptThing source,
-        ScriptThing target, bool conditionChecked = false)
+        ScriptThing target, bool conditionChecked = false, OutdoorQuestStep* quest = null)
     {
         import dmangos.world.updatefields;
 
@@ -1426,7 +1489,7 @@ mixin template DbScriptRunner()
         if (!conditionChecked && step.conditionId && (player is null || !player.conditionMet(step.conditionId)))
             return false;
         auto creature = source.creature;
-        if (creature !is null && creature.ai !is null)
+        if (quest is null && creature !is null && creature.ai !is null)
             creature.ai.bind(map);
         switch (step.command)
         {
@@ -1487,10 +1550,12 @@ mixin template DbScriptRunner()
             bool fail = place.creature !is null && !place.creature.alive;
             if (!fail && step.datalong2)
                 fail = distanceSq(place.position, player.character.position) > float(step.datalong2) ^^ 2;
-            if (fail)
-                player.failQuest(step.datalong);
+            alias Kind = ScriptQuestEffect.Kind;
+            auto effect = ScriptQuestEffect(player, fail ? Kind.failed : Kind.explored, step.datalong);
+            if (quest !is null)
+                quest.add(effect);
             else
-                player.areaExploredOrEventHappens(step.datalong);
+                effect.apply();
             break;
         }
         case ScriptCommand.killCredit:
@@ -1501,7 +1566,11 @@ mixin template DbScriptRunner()
             const entry = step.datalong ? step.datalong : (rewarder !is null ? rewarder.template_.entry : 0);
             if (entry == 0)
                 break;
-            player.scriptKillCredit(entry, rewarder !is null ? rewarder.guid : 0);
+            auto effect = ScriptQuestEffect(player, ScriptQuestEffect.Kind.kill, entry, rewarder !is null ? rewarder.guid : 0);
+            if (quest !is null)
+                quest.add(effect);
+            else
+                effect.apply();
             break;
         }
         case ScriptCommand.respawnGameObject:

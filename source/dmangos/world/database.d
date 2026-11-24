@@ -375,6 +375,13 @@ struct OutdoorScriptCheckpoint
     string state;
 }
 
+/// Quest rows advanced by one durable outdoor script step.
+struct OutdoorQuestUpdate
+{
+    uint player;
+    const(QuestStatus)[] quests;
+}
+
 /// A gateway player's latest summon request, including a consumed request's sequence.
 struct PartySummonCheckpoint
 {
@@ -849,7 +856,8 @@ interface WorldDatabase
     void deleteDungeonFight(uint instance, uint spawn);
     @DatabaseRead OutdoorScriptCheckpoint[] loadOutdoorScripts(uint realm);
     @DatabaseWrite bool beginOutdoorScript(uint realm, const ref OutdoorScriptCheckpoint script);
-    @DatabaseWrite bool advanceOutdoorScript(uint realm, ushort origin, ulong sequence, uint cursor, bool finished);
+    @DatabaseWrite bool advanceOutdoorScript(uint realm, ushort origin, ulong sequence, uint cursor, bool finished,
+        const(OutdoorQuestUpdate)[] updates = null);
 
     /// The map of instance `id`; uint.max if there is no such instance.
     @DatabaseRead uint instanceMapOf(uint id);
@@ -1380,9 +1388,21 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     {
         return statements.beginOutdoorScript(realm, script);
     }
-    bool advanceOutdoorScript(uint realm, ushort origin, ulong sequence, uint cursor, bool finished)
+    bool advanceOutdoorScript(uint realm, ushort origin, ulong sequence, uint cursor, bool finished,
+        const(OutdoorQuestUpdate)[] updates = null)
     {
-        return statements.advanceOutdoorScript(realm, origin, sequence, cursor, finished);
+        if (!updates.length)
+            return statements.advanceOutdoorScript(realm, origin, sequence, cursor, finished);
+        bool advanced;
+        characterDb.transaction({
+            if (!statements.advanceOutdoorScript(realm, origin, sequence, cursor, finished))
+                return;
+            foreach (ref update; updates)
+                statements.saveQuestStatus(update.player, update.quests);
+            // Retain this on a retry if COMMIT succeeded but its response was lost.
+            advanced = true;
+        });
+        return advanced;
     }
     uint instanceMapOf(uint id) { return statements.instanceMapOf(id); }
     uint[uint] instanceBindsOf(uint player) { return statements.instanceBindsOf(player); }
@@ -3064,7 +3084,8 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
         return true;
     }
 
-    bool advanceOutdoorScript(uint realm, ushort origin, ulong sequence, uint cursor, bool finished)
+    bool advanceOutdoorScript(uint realm, ushort origin, ulong sequence, uint cursor, bool finished,
+        const(OutdoorQuestUpdate)[] updates = null)
     {
         auto scripts = origin in outdoorScripts.get(realm, null);
         if (scripts is null)
@@ -3076,6 +3097,8 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
             (*scripts).remove(sequence);
         else
             ++script.cursor;
+        foreach (ref update; updates)
+            saveQuestStatus(update.player, update.quests);
         return true;
     }
 
