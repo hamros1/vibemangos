@@ -381,8 +381,10 @@ a receipt, which it retires after publishing the creature. A replacement can fin
 or publish the actor from a committed receipt. The parent script waits for delivery before running
 its following steps. Scripted toggles of outdoor doors and buttons also use the queue. The new owner
 restores the active door state and resets it at the original deadline. The same queue saves timed
-respawns of outdoor quest givers, goobers, generic objects, and spell focuses that scripts place at
-their database spawn. The replacement restores their original spawn GUID and visibility deadline.
+respawns of outdoor quest givers, goobers, generic objects, spell focuses, and consumable non-gathering
+chests that scripts place at their database spawn. The replacement restores their original spawn GUID
+and visibility deadline. Scripted chests keep the contents and claims they saved during opening and
+looting. Depleting or removing a scripted chest retires its loot and placement together.
 An immediate scripted despawn of one of those objects removes the checkpoint before publishing its
 removal. A parent on another worker waits for that result before it continues.
 When a delayed script starts a relay on its worker, the parent cursor and the new relay commit

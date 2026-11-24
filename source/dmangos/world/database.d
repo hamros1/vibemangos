@@ -861,8 +861,10 @@ interface WorldDatabase
 
     void saveInstanceChest(const InstanceChestRecord chest);
     @DatabaseRead InstanceChestRecord[] loadOutdoorChests();
+    @DatabaseRead InstanceChestRecord loadOutdoorChest(uint spawn);
     /// Retire the original chest and record its respawn together.
     void finishOutdoorChest(uint spawn, long respawnAt);
+    void finishScriptedOutdoorChest(uint realm, ulong actor, uint spawn);
     /// When recording a native creature's death, commit its respawn deadline with the corpse.
     void saveInstanceCorpse(const InstanceCorpseRecord corpse, long respawnAt);
     void deleteInstanceCorpse(uint instance, uint spawn);
@@ -884,8 +886,8 @@ interface WorldDatabase
     @DatabaseWrite bool enqueueOutdoorSummon(uint realm, const ref OutdoorSummonRequest request);
     @DatabaseRead bool outdoorSummonsPending(uint realm, ushort origin, ulong sequence);
     @DatabaseWrite bool commitOutdoorSummon(uint realm, const ref OutdoorSummonRequest request,
-        const ref QuestActorCheckpoint actor, const(OutdoorScriptCheckpoint)[] relays);
-    @DatabaseWrite bool commitOutdoorDespawn(uint realm, const ref OutdoorSummonRequest request, ulong actor);
+        const ref QuestActorCheckpoint actor, const(OutdoorScriptCheckpoint)[] relays, uint chest = 0);
+    @DatabaseWrite bool commitOutdoorDespawn(uint realm, const ref OutdoorSummonRequest request, ulong actor, uint chest = 0);
     @DatabaseWrite bool retireOutdoorSummon(uint realm, const ref OutdoorSummonRequest request);
 
     /// The map of instance `id`; uint.max if there is no such instance.
@@ -1382,11 +1384,19 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     void saveInstanceData(uint id, string data) { statements.saveInstanceData(id, data); }
     void saveInstanceChest(const InstanceChestRecord chest) { statements.saveInstanceChest(chest); }
     InstanceChestRecord[] loadOutdoorChests() { return statements.loadOutdoorChests(); }
+    InstanceChestRecord loadOutdoorChest(uint spawn) { return statements.loadOutdoorChest(spawn); }
     void finishOutdoorChest(uint spawn, long respawnAt)
     {
         characterDb.transaction({
             statements.saveGameObjectRespawn(spawn, respawnAt);
             statements.deleteOutdoorChest(spawn);
+        });
+    }
+    void finishScriptedOutdoorChest(uint realm, ulong actor, uint spawn)
+    {
+        characterDb.transaction({
+            statements.deleteOutdoorChest(spawn);
+            statements.deleteQuestActor(realm, actor);
         });
     }
     void saveInstanceCorpse(const InstanceCorpseRecord corpse, long respawnAt)
@@ -1459,12 +1469,14 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     }
 
     bool commitOutdoorSummon(uint realm, const ref OutdoorSummonRequest request,
-        const ref QuestActorCheckpoint actor, const(OutdoorScriptCheckpoint)[] relays)
+        const ref QuestActorCheckpoint actor, const(OutdoorScriptCheckpoint)[] relays, uint chest = 0)
     {
         bool saved;
         characterDb.transaction({
             if (!statements.completeOutdoorSummon(realm, request, actor.actor))
                 return;
+            if (chest)
+                statements.deleteOutdoorChest(chest);
             statements.saveQuestActor(realm, actor);
             saveSummonRelays(realm, relays);
             saved = true;
@@ -1477,12 +1489,14 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
         return statements.retireOutdoorSummon(realm, request);
     }
 
-    bool commitOutdoorDespawn(uint realm, const ref OutdoorSummonRequest request, ulong actor)
+    bool commitOutdoorDespawn(uint realm, const ref OutdoorSummonRequest request, ulong actor, uint chest = 0)
     {
         bool removed;
         characterDb.transaction({
             if (!statements.completeOutdoorSummon(realm, request, actor))
                 return;
+            if (chest)
+                statements.deleteOutdoorChest(chest);
             statements.deleteQuestActor(realm, actor);
             removed = true;
         });
@@ -3064,11 +3078,30 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
         return instanceRows.chests.filter!(row => !row.instance).array;
     }
 
+    InstanceChestRecord loadOutdoorChest(uint spawn)
+    {
+        foreach (ref row; instanceRows.chests)
+            if (!row.instance && row.spawn == spawn)
+                return row;
+        return InstanceChestRecord.init;
+    }
+
     void finishOutdoorChest(uint spawn, long respawnAt)
+    {
+        saveGameObjectRespawn(spawn, respawnAt);
+        deleteOutdoorChest(spawn);
+    }
+
+    void finishScriptedOutdoorChest(uint realm, ulong actor, uint spawn)
+    {
+        deleteOutdoorChest(spawn);
+        deleteQuestActor(realm, actor);
+    }
+
+    private void deleteOutdoorChest(uint spawn)
     {
         import std.algorithm.mutation : remove;
 
-        saveGameObjectRespawn(spawn, respawnAt);
         instanceRows.chests = instanceRows.chests.remove!(row => row.instance == 0 && row.spawn == spawn);
     }
 
@@ -3232,13 +3265,15 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
     }
 
     bool commitOutdoorSummon(uint realm, const ref OutdoorSummonRequest request,
-        const ref QuestActorCheckpoint actor, const(OutdoorScriptCheckpoint)[] relays)
+        const ref QuestActorCheckpoint actor, const(OutdoorScriptCheckpoint)[] relays, uint chest = 0)
     {
         foreach (ref pending; outdoorSummons.get(realm, null))
             if (pending.sameRequest(request) && !pending.actor)
             {
                 checkSummonRelays(realm, relays);
                 pending.actor = actor.actor;
+                if (chest)
+                    deleteOutdoorChest(chest);
                 saveQuestActor(realm, actor);
                 foreach (ref relay; relays)
                     beginOutdoorScript(realm, relay);
@@ -3247,12 +3282,14 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
         return false;
     }
 
-    bool commitOutdoorDespawn(uint realm, const ref OutdoorSummonRequest request, ulong actor)
+    bool commitOutdoorDespawn(uint realm, const ref OutdoorSummonRequest request, ulong actor, uint chest = 0)
     {
         foreach (ref pending; outdoorSummons.get(realm, null))
             if (pending.sameRequest(request) && !pending.actor)
             {
                 pending.actor = actor;
+                if (chest)
+                    deleteOutdoorChest(chest);
                 deleteQuestActor(realm, actor);
                 return true;
             }

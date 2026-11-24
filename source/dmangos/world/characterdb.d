@@ -1287,6 +1287,16 @@ final class CharacterStatements
         characters.execute!"DELETE FROM dmangos_instance_chest WHERE instance = 0 AND spawn = ?"(spawn);
     }
 
+    imported!"dmangos.world.database".InstanceChestRecord loadOutdoorChest(uint spawn)
+    {
+        import dmangos.world.database : InstanceChestRecord;
+
+        foreach (row; characters.query!("SELECT expires_at, loot FROM dmangos_instance_chest "
+                ~ "WHERE instance = 0 AND spawn = ?")(spawn))
+            return InstanceChestRecord(0, spawn, row.get!long(0), row.get!string(1));
+        return InstanceChestRecord.init;
+    }
+
     void saveInstanceCorpse(const imported!"dmangos.world.database".InstanceCorpseRecord corpse)
     {
         if (corpse.instance)

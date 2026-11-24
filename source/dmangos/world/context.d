@@ -33,7 +33,7 @@ import dmangos.cluster.protocol : PresenceEntry;
 import dmangos.world.whisper : WhisperFrom;
 import dmangos.cluster.regions : Region, RegionState;
 import dmangos.world.creature : Creature, CreatureParts, CreatureSpawn, CreatureTemplate, Npc, NpcStandIn, TempSpawn, TempSpawnType, VirtualItem;
-import dmangos.world.gameobject : GameObject, GameObjectSpawn, GameObjectType, GoLootState;
+import dmangos.world.gameobject : GameObject, GameObjectSpawn, GameObjectTemplate, GameObjectType, GoLootState;
 import dmangos.world.gameobjectpools : GameObjectPools;
 import dmangos.world.auctionhouse;
 import dmangos.world.database : MailRecord;
@@ -5355,7 +5355,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 && (ownsCell is null || ownsCell(go.spawn.map, checkpoint.home)))
             {
                 outdoorQuestActors.remove(go.guid);
-                database.deleteQuestActor(config.realmId, go.guid);
+                if (go.type == GameObjectType.chest)
+                {
+                    outdoorChests.remove(go.spawn.guid);
+                    database.finishScriptedOutdoorChest(config.realmId, go.guid, go.spawn.guid);
+                }
+                else
+                    database.deleteQuestActor(config.realmId, go.guid);
                 settleWrites();
             }
             auto key = GameObjectOnMap(map, go.guid);
@@ -5927,17 +5933,18 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return config.cluster.enabled && !map.instanceId && type.among(GameObjectType.generic, GameObjectType.spellFocus);
     }
 
-    private static bool durableScriptedSpawn(const ref GameObjectSpawn spawn, uint type)
+    private static bool durableScriptedSpawn(const ref GameObjectSpawn spawn, const ref GameObjectTemplate proto)
     {
         import std.algorithm.comparison : among;
 
         return spawn.guid < temporaryCounterStart && spawn.respawnSeconds < 0
-            && type.among(GameObjectType.generic, GameObjectType.spellFocus, GameObjectType.questGiver, GameObjectType.goober);
+            && (proto.type.among(GameObjectType.generic, GameObjectType.spellFocus, GameObjectType.questGiver, GameObjectType.goober)
+                || (proto.type == GameObjectType.chest && proto.data[3] && !proto.data[4] && !proto.data[5]));
     }
 
     private QuestActorCheckpoint outdoorObjectCheckpoint(Map map, GameObject go, long expires)
     {
-        const nativeSpawn = durableScriptedSpawn(go.spawn, go.type);
+        const nativeSpawn = durableScriptedSpawn(go.spawn, *go.template_);
         if ((!nativeSpawn && !durableOutdoorObject(map, go.type)) || map.instanceId || !config.cluster.enabled
             || !canWrite() || go.owner)
             return QuestActorCheckpoint.init;
@@ -5988,7 +5995,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     else if (auto object = where.gameObjectAt(actor.actor))
                     {
                         if (!outdoorOpenableActor(actor.actor))
-                            checkpointOutdoorScriptObject(where, object);
+                        {
+                            // Opened chests save their loot atomically with item claims. Their actor row holds placement.
+                            if (object.type != GameObjectType.chest)
+                                checkpointOutdoorScriptObject(where, object);
+                        }
                         else if (object.lootState == GoLootState.ready)
                         {
                             outdoorQuestActors.remove(actor.actor);
@@ -6099,8 +6110,17 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 database.deleteQuestActor(config.realmId, actor.actor);
                 continue; // the clean bundle has the newer state and did not carry this actor
             }
-            restoreQuestActor(where, actor, nativeFight,
-                home => grants.any!(grant => !grant.clean && questActorRegion(grant.region, actor.map, home)));
+            try
+                restoreQuestActor(where, actor, nativeFight,
+                    home => grants.any!(grant => !grant.clean && questActorRegion(grant.region, actor.map, home)));
+            catch (DatabaseException error)
+            {
+                warning!"migration: could not load loot for outdoor actor %s: %s"(actor.actor, error.msg);
+                foreach (ref grant; grants)
+                    if (questActorRegion(grant.region, actor.map, actor.home))
+                        pendingQuestActorRegions[grant.region.id] = grant;
+                retryQuestActorRecoveryAt = unixTime + 1;
+            }
         }
     }
 
@@ -6123,6 +6143,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.objects : counterOf;
 
         const spawn = counterOf(actor.actor);
+        InstanceChestRecord savedChest;
+        if (highGuidOf(actor.actor) == HighGuid.gameObject && spawn < temporaryCounterStart)
+            if (const placement = gameObjectSpawnOf(spawn))
+                if (const proto = placement.entry in data.gameObjectTemplates)
+                    if (proto.type == GameObjectType.chest)
+                        savedChest = database.loadOutdoorChest(spawn);
         try
         {
             bool restoredActor;
@@ -6142,6 +6168,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     {
                         objectGone(where, go);
                         return null;
+                    }
+                    if (savedChest.spawn)
+                    {
+                        outdoorChests[spawn] = savedChest;
+                        restoreOutdoorChest(go, savedChest);
                     }
                     restoredActor = true;
                     return object;
@@ -6175,6 +6206,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             });
             if (restoredActor)
                 outdoorQuestActors[actor.actor] = actor;
+            else if (savedChest.spawn)
+            {
+                outdoorChests.remove(spawn);
+                database.finishScriptedOutdoorChest(config.realmId, actor.actor, spawn);
+            }
             else if (!actor.player)
                 database.deleteQuestActor(config.realmId, actor.actor);
             return true;
@@ -9470,11 +9506,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         if (go.instanceId)
             return isInstanceReward(go);
-        return config.cluster.enabled && go.spawn.guid < temporaryCounterStart
-            && go.type == GameObjectType.chest && go.consumable && go.spawn.respawnSeconds >= 0
-            && go.spawn.guid !in unsavedGameObjectSpawns
-            && (gameObjectPools.manages(go.spawn.guid)
-                || data.pools is null || !data.pools.inPool(PoolMember.Kind.gameObject, go.spawn.guid));
+        if (!config.cluster.enabled || go.spawn.guid >= temporaryCounterStart || go.type != GameObjectType.chest
+            || !go.consumable || go.spawn.guid in unsavedGameObjectSpawns)
+            return false;
+        if (go.spawn.respawnSeconds < 0)
+            return durableScriptedSpawn(go.spawn, *go.template_)
+                && GameObjectOnMap(existingMap(go.spawn.map), go.guid) in scriptedGameObjects;
+        return gameObjectPools.manages(go.spawn.guid)
+            || data.pools is null || !data.pools.inPool(PoolMember.Kind.gameObject, go.spawn.guid);
     }
 
     package void saveOpenedChest(Map map, GameObject go)
@@ -9500,12 +9539,15 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
         if (!go.instanceId)
         {
+            import std.algorithm.comparison : min;
+
+            const visibleUntil = scriptedGameObjects.get(GameObjectOnMap(map, go.guid), long.max);
             ByteWriter w;
             go.saveState(w, transportNow(), 0, claimed, looter);
             const previous = outdoorChests.get(go.spawn.guid, InstanceChestRecord.init);
             const openedUntil = go.despawnTimer > 0 ? unixTime + (go.despawnTimer + 999L) / 1000 : 0;
             auto record = InstanceChestRecord(0, go.spawn.guid,
-                openedUntil && previous.expiresAt ? previous.expiresAt : openedUntil, toHex(w.data));
+                min(visibleUntil, openedUntil && previous.expiresAt ? previous.expiresAt : openedUntil), toHex(w.data));
             outdoorChests[go.spawn.guid] = record;
             return record;
         }

@@ -1144,6 +1144,7 @@ mixin template DbScriptRunner()
     {
         import dmangos.log : warning;
         import dmangos.serialization : deserialize;
+        import dmangos.world.gameobject : GameObjectType;
         import dmangos.world.grid : cellKeyAt;
         import dmangos.world.instancescripting : fromHex;
         import dmangos.world.objects : counterOf;
@@ -1165,11 +1166,12 @@ mixin template DbScriptRunner()
         {
             const spawn = &data.gameObjectSpawns[gameObjectSpawnIndex[counter]];
             const proto = spawn.entry in data.gameObjectTemplates;
-            if (proto !is null && durableScriptedSpawn(*spawn, proto.type) && cellKeyAt(spawn.x, spawn.y) == request.home)
+            if (proto !is null && durableScriptedSpawn(*spawn, *proto) && cellKeyAt(spawn.x, spawn.y) == request.home)
             {
                 if (request.kind == OutdoorSummonKind.scriptedDespawn)
                 {
-                    if (database.commitOutdoorDespawn(config.realmId, request, action.guid)
+                    const chest = proto.type == GameObjectType.chest ? spawn.guid : 0u;
+                    if (database.commitOutdoorDespawn(config.realmId, request, action.guid, chest)
                         && canWrite() && ownsCell(request.map, request.home))
                     {
                         request.actor = action.guid;
@@ -1187,25 +1189,33 @@ mixin template DbScriptRunner()
 
     private void publishOutdoorDespawn(Map where, ulong guid)
     {
+        import dmangos.world.objects : counterOf;
+
         // The checkpoint is already gone. A clean bundle can still have the former owner's visible copy.
         outdoorQuestActors.remove(guid);
+        outdoorChests.remove(counterOf(guid));
         if (auto object = where.gameObjectAt(guid))
             object.forceDespawn(where, 0);
     }
 
     private void commitOutdoorGameObject(Map where, ref OutdoorSummonRequest request, GameObject object, long expires)
     {
+        import dmangos.world.gameobject : GameObjectType;
+
         bool published;
         scope (exit)
             if (!published)
                 scripts.destroy(object.behaviour);
         const state = outdoorObjectCheckpoint(where, object, expires);
-        if (!state.actor || !database.commitOutdoorSummon(config.realmId, request, state, null))
+        const chest = object.type == GameObjectType.chest ? object.spawn.guid : 0u;
+        if (!state.actor || !database.commitOutdoorSummon(config.realmId, request, state, null, chest))
             return;
         request.actor = state.actor;
         if (canWrite() && ownsCell(request.map, request.home))
         {
             outdoorQuestActors[state.actor] = state;
+            if (chest)
+                outdoorChests.remove(chest);
             published = true;
             publishGameObjectSummon(where, object, expires);
             database.retireOutdoorSummon(config.realmId, request);
@@ -1826,7 +1836,7 @@ mixin template DbScriptRunner()
         {
             const spawn = &data.gameObjectSpawns[gameObjectSpawnIndex[counter]];
             if (const proto = spawn.entry in data.gameObjectTemplates)
-                if (durableScriptedSpawn(*spawn, proto.type))
+                if (durableScriptedSpawn(*spawn, *proto))
                 {
                     ByteWriter bytes;
                     serialize(bytes, OutdoorScriptedObject(guid, delay));
