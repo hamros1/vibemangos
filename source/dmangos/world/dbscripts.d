@@ -523,9 +523,11 @@ mixin template DbScriptRunner()
     }
 
     /// Saves pending database script steps. A transfer detaches them from the old map.
-    private void saveDungeonScriptRuns(uint mapId, ref ByteWriter w, bool departing, uint onlyInstance = 0)
+    private void saveDungeonScriptRuns(uint mapId, ref ByteWriter w, bool departing, uint onlyInstance = 0,
+        const(uint)[] selected = null)
     {
         import std.algorithm.mutation : remove;
+        import std.algorithm.searching : canFind;
 
         const countAt = w.length;
         w.put(0u);
@@ -534,7 +536,7 @@ mixin template DbScriptRunner()
         foreach (run; scriptRuns)
         {
             if (run.mapId != mapId || run.instanceId == 0 || (onlyInstance && run.instanceId != onlyInstance)
-                || run.next >= run.steps.length)
+                || run.next >= run.steps.length || (selected.length && !selected.canFind(run.id)))
                 continue;
             auto copy = instanceMap(run.instanceId);
             if (copy is null)
@@ -561,7 +563,7 @@ mixin template DbScriptRunner()
     }
 
     /// Rebuilds transferred runs from the receiver's database without replaying their completed steps.
-    private void restoreDungeonScriptRuns(uint mapId, ref ByteReader r)
+    private void restoreDungeonScriptRuns(uint mapId, ref ByteReader r, bool cold = false)
     {
         foreach (_; 0 .. r.read!uint)
         {
@@ -584,7 +586,7 @@ mixin template DbScriptRunner()
             run.elapsed = elapsed;
             run.waitForSource = waitForSource;
             run.waitForTarget = waitForTarget;
-            run.waitForPlayersUntil = waitUntil;
+            run.waitForPlayersUntil = cold && (waitForSource || waitForTarget) ? unixTime + 10 : waitUntil;
             scriptRuns ~= run;
         }
     }

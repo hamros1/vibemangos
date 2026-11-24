@@ -16,18 +16,19 @@ import dmangos.world.creatureai : CreatureLore;
 import dmangos.world.movement : Position;
 import dmangos.world.gameobject : GameObject;
 import dmangos.world.map : Map, MapObject;
-import dmangos.world.migration : Migrant, decodeBundle, encodeBundle;
+import dmangos.world.migration : Migrant, MigrantKind, decodeBundle, encodeBundle;
 
 /// What `instance.data` starts with when a dungeon script wrote it.
 enum string instanceDataPrefix = "dmangos-script:";
 private enum string instanceSummonPrefix = ":summons1:";
+private enum string instanceScriptRunsPrefix = ":steps1:";
 
 /// The script bytes from a row written by a dungeon script, including older rows without summons.
 package ubyte[] instanceScriptBytes(string data)
 {
     import std.algorithm.searching : findSplit;
 
-    return fromHex(data[instanceDataPrefix.length .. $].findSplit(instanceSummonPrefix)[0]);
+    return fromHex(data[instanceDataPrefix.length .. $].findSplit(":")[0]);
 }
 
 /// See the module documentation. It is also the core's side of the script's context.
@@ -45,6 +46,8 @@ final class InstanceScript : InstanceHost
         Migrant[] pendingSummons;
         bool summonsPending;
         int sinceSummonSave;
+        const(uint)[] durableScripts;
+        const(ubyte)[] pendingScriptRuns;
     }
 
     /// The copy's map, once it is made.
@@ -59,6 +62,9 @@ final class InstanceScript : InstanceHost
     /// Read-only capture and cold restore of creatures that the encounter opted to checkpoint.
     Migrant delegate(EntityRef) captureSummon;
     MapObject delegate(const ref Migrant) restoreSummon;
+    const(ubyte)[] delegate(const(uint)[]) captureScriptRuns;
+    void delegate(const(ubyte)[]) restoreScriptRuns;
+    void delegate(uint, EntityRef, EntityRef) startDatabaseEvent;
 
     /// A `Signal` for a game object's script (`InstanceContext.signal` to an object).
     bool delegate(GameObject go, Map map, EntityRef from, uint id, int value) signalObject;
@@ -85,7 +91,7 @@ final class InstanceScript : InstanceHost
      * `persist` writes its state back. Null if no script serves `name`.
      */
     static InstanceScript make(ScriptRuntime runtime, string name, uint id, uint mapId, string data,
-        void delegate(string data, bool checkpoint) persist, scope EntityRef delegate(uint) nativeSpawn,
+        void delegate(string data, bool checkpoint) persist, scope EntityRef delegate(MigrantKind, uint) nativeSpawn,
         scope bool delegate(uint) defeated)
     {
         if (runtime is null || !runtime.serves(ScriptKind.instance, name))
@@ -105,6 +111,7 @@ final class InstanceScript : InstanceHost
             {
                 script.fromSave = true;
                 script.loadCreatures(data, nativeSpawn, defeated);
+                script.loadScriptRuns(data);
             }
             else
                 info!"instance %s: the saved state of script %s has another layout; it starts afresh"(id, name);
@@ -112,16 +119,17 @@ final class InstanceScript : InstanceHost
         return script;
     }
 
-    private void loadCreatures(string data, scope EntityRef delegate(uint) nativeSpawn, scope bool delegate(uint) defeated)
+    private void loadCreatures(string data, scope EntityRef delegate(MigrantKind, uint) nativeSpawn,
+        scope bool delegate(uint) defeated)
     {
         import std.algorithm.searching : findSplit;
-        import dmangos.world.migration : MigrantKind;
         import dmangos.world.creature : CreatureSpawn;
+        import dmangos.world.gameobject : GameObjectSpawn;
         import dmangos.world.objects : HighGuid, makeGuid;
         import dmangos.serialization : deserialize;
         import dmangos.log : warning;
 
-        const section = data.findSplit(instanceSummonPrefix)[2];
+        const section = data.findSplit(instanceSummonPrefix)[2].findSplit(":")[0];
         if (!section.length)
             return;
         try
@@ -133,20 +141,26 @@ final class InstanceScript : InstanceHost
             Migrant[] accepted;
             foreach (ref migrant; saved)
             {
-                if (defeated(migrant.spawn))
-                    continue;
-                EntityRef creature;
-                if (migrant.kind == MigrantKind.creature)
-                    creature = nativeSpawn(migrant.spawn);
+                EntityRef object;
+                if (migrant.kind == MigrantKind.creature || migrant.kind == MigrantKind.gameObject)
+                    object = nativeSpawn(migrant.kind, migrant.spawn);
                 else if (migrant.kind == MigrantKind.summonedCreature)
                 {
+                    if (defeated(migrant.spawn))
+                        continue;
                     auto r = ByteReader(migrant.state);
                     const spawn = deserialize!CreatureSpawn(r);
-                    creature = EntityRef(makeGuid(HighGuid.unit, spawn.entry, spawn.guid));
+                    object = EntityRef(makeGuid(HighGuid.unit, spawn.entry, spawn.guid));
                 }
-                if (creature)
+                else if (migrant.kind == MigrantKind.summonedGameObject)
                 {
-                    refs ~= creature;
+                    auto r = ByteReader(migrant.state);
+                    const spawn = deserialize!GameObjectSpawn(r);
+                    object = EntityRef(makeGuid(HighGuid.gameObject, spawn.entry, spawn.guid));
+                }
+                if (object)
+                {
+                    refs ~= object;
                     accepted ~= migrant;
                 }
             }
@@ -155,6 +169,27 @@ final class InstanceScript : InstanceHost
         }
         catch (Exception error)
             warning!"instance %s: could not load its encounter creatures: %s"(id, error.msg);
+    }
+
+    private void loadScriptRuns(string data)
+    {
+        import dmangos.log : warning;
+        import std.algorithm.searching : findSplit;
+
+        const section = data.findSplit(instanceScriptRunsPrefix)[2];
+        if (!section.length)
+            return;
+        try
+        {
+            auto reader = ByteReader(fromHex(section));
+            uint[] ids;
+            foreach (_; 0 .. reader.read!ubyte)
+                ids ~= reader.read!uint;
+            durableScripts = ids;
+            pendingScriptRuns = reader.readBytes(reader.remaining()).dup;
+        }
+        catch (Exception error)
+            warning!"instance %s: could not read the saved database script steps: %s"(id, error.msg);
     }
 
     /// Whether its state was read from `instance.data` (and `restored` has not been called since).
@@ -183,24 +218,32 @@ final class InstanceScript : InstanceHost
         map.migrateIn(encodeBundle(null, pending), (const ref Migrant migrant) {
             const guid = durableSummons[index++];
             auto object = restoreSummon(migrant);
-            if (object is null)
+            if (object is null && guid.isCreature)
                 missing ~= guid;
-            else
+            else if (object !is null)
                 restored ~= guid;
             return object;
         });
-        foreach (creature; restored)
-            raise(CreatureLoaded(creature));
+        if (pendingScriptRuns.length && restoreScriptRuns !is null)
+        {
+            restoreScriptRuns(pendingScriptRuns);
+            pendingScriptRuns = null;
+        }
+        foreach (entity; restored)
+            if (entity.isCreature)
+                raise(CreatureLoaded(entity));
+            else
+                raise(ObjectLoaded(entity));
         foreach (creature; missing)
             raise(CreatureEvaded(creature));
     }
 
     /// The checkpoint supplies this creature when the first player enters the copy.
-    bool restoringCreature(EntityRef creature) const
+    bool restoringEntity(EntityRef entity) const
     {
         if (summonsPending)
             foreach (saved; durableSummons)
-                if (saved == creature)
+                if (saved == entity)
                     return true;
         return false;
     }
@@ -236,14 +279,17 @@ final class InstanceScript : InstanceHost
         runtime.raise(handle, context, event);
         checkpoint = context.checkpointRequested;
         rememberCheckpointCreatures(context.checkpointSummons);
+        if (context.changedDatabaseScripts)
+            durableScripts = context.databaseScripts;
         static if (is(E == Restored))
         {
             waitForPlayer = context.waitingForPlayer;
-            summonsPending = waitForPlayer && pendingSummons.length && restoreSummon !is null;
+            summonsPending = waitForPlayer && (pendingSummons.length || pendingScriptRuns.length);
             if (!summonsPending)
             {
                 pendingSummons = null;
                 durableSummons = null;
+                pendingScriptRuns = null;
             }
         }
         return context.consumed;
@@ -269,24 +315,20 @@ final class InstanceScript : InstanceHost
         bool checkpoint;
         const consumed = dispatch(event, checkpoint);
         raising = false;
-        save(checkpoint);
-        while (pending.length)
-        {
-            auto next = pending[0];
-            pending = pending[1 .. $];
-            next();
-        }
+        saveAfterEvents(checkpoint);
         return consumed;
     }
 
     private bool raising;              // a handler runs
     private void delegate()[] pending; // events its actions caused, for after it
     private bool waitForPlayer;
+    private bool drainingEvents, needsCheckpoint;
 
     /// Its schedules, `ms` milliseconds on (nothing to do when none is pending).
     void tick(int ms)
     {
-        if ((!runtime.busy(handle) && !durableSummons.length) || (waitForPlayer && !map.population))
+        if ((!runtime.busy(handle) && !durableSummons.length && !durableScripts.length)
+            || (waitForPlayer && !map.population))
             return;
         waitForPlayer = false;
         sinceSummonSave += ms;
@@ -303,15 +345,29 @@ final class InstanceScript : InstanceHost
             runtime.tick(handle, context, ms);
             checkpoint = context.checkpointRequested;
             rememberCheckpointCreatures(context.checkpointSummons);
+            if (context.changedDatabaseScripts)
+                durableScripts = context.databaseScripts;
         }
         raising = false;
-        save(checkpoint);
+        saveAfterEvents(checkpoint);
+    }
+
+    private void saveAfterEvents(bool checkpoint)
+    {
+        needsCheckpoint |= checkpoint;
+        if (drainingEvents)
+            return;
+        drainingEvents = true;
         while (pending.length)
         {
             auto next = pending[0];
             pending = pending[1 .. $];
             next();
         }
+        drainingEvents = false;
+        const durable = needsCheckpoint;
+        needsCheckpoint = false;
+        save(durable);
     }
 
     private void rememberCheckpointCreatures(EntityRef[] creatures)
@@ -328,10 +384,10 @@ final class InstanceScript : InstanceHost
         if (persist is null || summonsPending) // wait for the saved actors before writing another checkpoint
             return;
         string summons;
+        if ((durableSummons.length || durableScripts.length) && !checkpoint && sinceSummonSave < 2_000)
+            return;
         if (durableSummons.length && captureSummon !is null)
         {
-            if (!checkpoint && sinceSummonSave < 2_000)
-                return;
             Migrant[] migrants;
             EntityRef[] living;
             foreach (creature; durableSummons)
@@ -349,6 +405,15 @@ final class InstanceScript : InstanceHost
         sinceSummonSave = 0;
         ByteWriter w;
         runtime.save(handle, w);
+        if (durableScripts.length && captureScriptRuns !is null)
+        {
+            ByteWriter runs;
+            runs.put(cast(ubyte) durableScripts.length);
+            foreach (id; durableScripts)
+                runs.put(id);
+            runs.putBytes(captureScriptRuns(durableScripts));
+            summons ~= instanceScriptRunsPrefix ~ toHex(runs.data);
+        }
         const data = instanceDataPrefix ~ toHex(w.data) ~ summons;
         if (data != saved)
         {
@@ -381,6 +446,12 @@ final class InstanceScript : InstanceHost
     bool hostEntryKilled(uint entry)
     {
         return entryKilled !is null && entryKilled(id, entry);
+    }
+
+    void hostStartDatabaseEvent(uint event, EntityRef source, EntityRef target)
+    {
+        if (startDatabaseEvent !is null)
+            startDatabaseEvent(event, source, target);
     }
 
     void hostRespawnKilled(uint entry)

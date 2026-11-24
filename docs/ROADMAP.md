@@ -69,6 +69,7 @@ describes how players use the systems available today.
   Tomb of the Seven rounds in Blackrock Depths. Blackrock Spire restores Pyroguard Emberseer's
   growth and combat, the Rookery waves and Solakar, Rend's stadium, The Beast and its ambush,
   and both gates after Drakkisath dies. Dire Maul North keeps Mizzle's progress after King Gordok falls.
+  Dire Maul West keeps the Dreadsteed ritual's active waves and final summon.
   Other encounters follow their scripts' restore rules.
   See [dungeon failover](CLUSTER.md#dungeons-and-battlegrounds).
 * **Groups:** an offline leader is not replaced after a while (that needs a timer). Loot

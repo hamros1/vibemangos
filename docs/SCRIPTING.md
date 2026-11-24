@@ -93,8 +93,9 @@ struct MrSmite
   (which capture pointers). A boss fight is a set of steps and a phase variable: plain data.
 * **Persistence by reflection.** `saveScript`/`loadScript` serialize every field of the struct
   except those marked `@transient`, recursively, with a layout fingerprint computed at compile time
-  from field names, types, and enum values. Loading a different layout starts the script fresh.
-  Existing dungeon saves load when their layout matches the one recorded during the upgrade.
+  from field names, types, and enum values. Existing saves load against matching layouts.
+  Fields added at the end and marked `@appended` use their defaults when the saved layout ends
+  before those fields. An unknown layout starts the script fresh.
   The same bytes move creatures between nodes and save dungeon scripts in `instance.data`.
 
 ### Entities are handles
@@ -200,6 +201,9 @@ Law and the Tomb of the Seven save their living opponents with `checkpointCreatu
 worker. The restore handler verifies the living opponents have all been saved and uses
 `waitForPlayer()` to hold their timers for the party. The script rebuilds the encounter doors
 and the Ring of Law's announcer on arrival.
+The Dreadsteed ritual also registers spawned objects with `checkpointObject()` and selects its
+database script IDs with `checkpointDatabaseScripts()`. `checkpointEvent()` queues an event's
+database steps before the script saves its new phase, so recovery can resume its remaining steps.
 During a planned move to another node, the copy keeps its creatures and fights and skips `Restored`.
 
 ### Gossip menus of a script's own

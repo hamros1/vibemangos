@@ -37,7 +37,7 @@ import dmangos.world.gameobject : GameObject, GameObjectSpawn, GameObjectType;
 import dmangos.world.auctionhouse;
 import dmangos.world.database : MailRecord;
 import dmangos.world.movement : Position;
-import dmangos.world.migration : Migrant, encodeBundle;
+import dmangos.world.migration : Migrant, MigrantKind, encodeBundle;
 import dmangos.world.replication : Replica, Replicator;
 import dmangos.world.channel : ChannelSettings;
 import dmangos.world.grid : cellKeyAt;
@@ -4348,7 +4348,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
                             info!"instance %s of map %s saved an encounter checkpoint"(instance, id);
                         }
-                    }, (uint guid) {
+                    }, (MigrantKind kind, uint guid) {
+                        if (kind == MigrantKind.gameObject)
+                        {
+                            const spawn = gameObjectSpawnOf(guid);
+                            return spawn is null || spawn.map != id ? EntityRef.init
+                                : EntityRef(makeGuid(HighGuid.gameObject, spawn.entry, guid));
+                        }
                         const spawn = creatureSpawnOf(guid);
                         return spawn is null || spawn.map != id || deadInInstance(instance, guid) ? EntityRef.init
                             : EntityRef(makeGuid(HighGuid.unit, spawn.entry, guid));
@@ -4359,27 +4365,37 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     script.lore = this;
                     script.spawnObjects = &spawnDungeonObjects;
                     script.captureSummon = (EntityRef ref_) {
-                        auto creature = created.creatureAt(ref_.guid);
-                        if (creature is null || !creature.alive || creature.petOwner || creature.meleeController)
-                            return Migrant.init;
-                        auto migrant = saveMigratingObject(creature, false);
-                        migrant.home = cellKeyAt(creature.spawn.x, creature.spawn.y);
-                        return migrant;
+                        auto object = created.findObject(ref_.guid);
+                        if (auto creature = cast(Creature) object)
+                        {
+                            if (!creature.alive || creature.petOwner || creature.meleeController)
+                                return Migrant.init;
+                            auto migrant = saveMigratingObject(creature, false);
+                            migrant.home = cellKeyAt(creature.spawn.x, creature.spawn.y);
+                            return migrant;
+                        }
+                        if (auto go = cast(GameObject) object)
+                        {
+                            const expires = scriptedGameObjects.get(GameObjectOnMap(created, go.guid), 0L);
+                            auto migrant = saveMigratingObject(go, false, expiresOverride: expires);
+                            migrant.home = cellKeyAt(go.spawn.x, go.spawn.y);
+                            return migrant;
+                        }
+                        return Migrant.init;
                     };
                     script.restoreSummon = (const ref Migrant migrant) {
                         import dmangos.log : warning;
 
                         try
                         {
-                            auto creature = cast(Creature) restoreWorldMigrant(migrant, created);
-                            if (creature !is null && !config.cluster.enabled
-                                && creature.spawn.guid >= temporaryCounterStart)
+                            auto object = restoreWorldMigrant(migrant, created);
+                            if (object !is null && !config.cluster.enabled && migrant.spawn >= temporaryCounterStart)
                             {
                                 import std.algorithm.comparison : max;
 
-                                summonsMade = max(summonsMade, creature.spawn.guid - temporaryCounterStart);
+                                summonsMade = max(summonsMade, migrant.spawn - temporaryCounterStart);
                             }
-                            return cast(MapObject) creature;
+                            return object;
                         }
                         catch (Exception error)
                         {
@@ -4387,6 +4403,19 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                                 migrant.spawn, error.msg);
                             return cast(MapObject) null;
                         }
+                    };
+                    script.captureScriptRuns = (const(uint)[] selected) {
+                        ByteWriter work;
+                        saveDungeonScriptRuns(id, work, false, instance, selected);
+                        return work.data;
+                    };
+                    script.restoreScriptRuns = (const(ubyte)[] saved) {
+                        auto work = ByteReader(saved);
+                        restoreDungeonScriptRuns(id, work, true);
+                    };
+                    script.startDatabaseEvent = (uint event, EntityRef source, EntityRef target) {
+                        startScript(imported!"dmangos.world.dbscripts".DbScriptType.event, event,
+                            created, source.guid, target.guid);
                     };
                     script.entryKilled = &entryKilledInInstance;
                     script.respawnKilled = &respawnKilledInCopy;
@@ -5019,7 +5048,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             {
                 if (state !is null && data.creatureSpawns[index].guid in state.dead)
                     continue;
-                if (script !is null && script.restoringCreature(EntityRef(makeGuid(HighGuid.unit,
+                if (script !is null && script.restoringEntity(EntityRef(makeGuid(HighGuid.unit,
                     data.creatureSpawns[index].entry, data.creatureSpawns[index].guid))))
                     continue;
                 if (!creatureInEvents(data.creatureSpawns[index].guid)
@@ -5040,6 +5069,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             foreach (index; (*cells).get(cell, null))
             {
                 const spawn = &data.gameObjectSpawns[index];
+                if (script !is null && script.restoringEntity(EntityRef(makeGuid(HighGuid.gameObject, spawn.entry, spawn.guid))))
+                    continue;
                 const reward = state is null ? null : spawn.guid in state.chests;
                 if ((spawn.respawnSeconds < 0 && reward is null) || (state !is null && spawn.guid in state.usedUp)
                     || !gameObjectInEvents(spawn.guid))
@@ -5983,7 +6014,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     private Migrant saveMigratingObject(MapObject object, bool departing = true,
-        const LootItem claimed = null, ulong looter = 0)
+        const LootItem claimed = null, ulong looter = 0, long expiresOverride = 0)
     {
         import dmangos.bytes : ByteWriter;
         import dmangos.serialization : serialize;
@@ -6021,7 +6052,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return Migrant.init; // follows its player's handoff
         if (departing && gameObject.loot !is null)
             gameObject.loot.sendReleaseForAll();
-        long expires;
+        long expires = expiresOverride;
         if (!gameObject.instanceId)
             if (auto active = existingMap(gameObject.spawn.map))
                 expires = scriptedGameObjects.get(GameObjectOnMap(active, gameObject.guid), 0L);

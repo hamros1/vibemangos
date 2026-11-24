@@ -1240,6 +1240,7 @@ interface InstanceHost
     ActionResult hostWalkPath(EntityRef creature, uint pathId);
     bool hostHasAura(EntityRef creature, uint spell);
     bool hostEntryKilled(uint entry);
+    void hostStartDatabaseEvent(uint event, EntityRef source, EntityRef target);
     void hostRespawnKilled(uint entry);
 }
 
@@ -1299,6 +1300,35 @@ struct InstanceContext
         checkpoint();
     }
 
+    /// Include a spawned encounter object, with its current state and removal deadline.
+    void checkpointObject(EntityRef object)
+    {
+        summons_ ~= object;
+        checkpoint();
+    }
+
+    private const(uint)[] databaseScripts_;
+    private bool changedDatabaseScripts_;
+
+    /// Keep the pending steps of these database script IDs with the encounter checkpoint.
+    void checkpointDatabaseScripts(const(uint)[] scripts)
+    {
+        databaseScripts_ = scripts.dup;
+        changedDatabaseScripts_ = true;
+        checkpoint();
+    }
+
+    /// Take over an event's default database steps so they can be saved with this handler's state.
+    void checkpointEvent(const ref EventHappened event)
+    {
+        host.hostStartDatabaseEvent(event.event, event.source, event.target);
+        consume();
+        checkpoint();
+    }
+
+    package(dmangos) @property bool changedDatabaseScripts() const { return changedDatabaseScripts_; }
+    package(dmangos) @property const(uint)[] databaseScripts() const { return databaseScripts_; }
+
     /// Whether this creature was included in the checkpoint being restored.
     bool hasSavedCreature(EntityRef creature) const
     {
@@ -1312,7 +1342,7 @@ struct InstanceContext
     bool hasSavedCreature(uint entry) const
     {
         foreach (saved; savedSummons_)
-            if (saved.entry == entry)
+            if (saved.isCreature && saved.entry == entry)
                 return true;
         return false;
     }

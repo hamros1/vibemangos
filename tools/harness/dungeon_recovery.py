@@ -94,11 +94,11 @@ def start_cluster(fixture, new_party, *, world=None):
     return characters, names, leader, client, nodes, trigger_position
 
 
-def open_party(fixture, characters, names, leader, client, nodes, new_party, actions):
+def open_party(fixture, characters, names, leader, client, nodes, new_party, actions, *, map_id=MAP, entrance=None):
     invite, accept, enter, inside = (fixture.directory / name for name in ("invite", "accept", "enter", "inside"))
     assemble_leader = (wait(invite), f"invite:{names[1]}") if new_party else ()
     assemble_member = (wait(accept), "accept") if new_party else ()
-    portal = (wait(enter), "cmd:.cheat god", f"trigger:{ENTRANCE}", wait(inside))
+    portal = (wait(enter), "cmd:.cheat god", entrance or f"trigger:{ENTRANCE}", wait(inside))
     clients = [
         client("party0", 0, f"login:{names[0]}", *assemble_leader, *portal, *actions[0]),
         client("party1", 1, f"login:{names[1]}", *assemble_member, *portal, *actions[1]),
@@ -121,8 +121,8 @@ def open_party(fixture, characters, names, leader, client, nodes, new_party, act
         accept.touch()
         wait_for("both clients to see the new party", lambda: all("[group list] party" in log for log in logs()), 12)
     enter.touch()
-    wait_for("both players through the real dungeon portal",
-             lambda: all(f"[new world] map {MAP} " in log for log in logs()), 20)
+    wait_for("both players entered the dungeon",
+             lambda: all(f"[new world] map {map_id} " in log for log in logs()), 20)
     binds = wait_for("both character binds written",
                      lambda: fixture.query("SELECT instance FROM character_instance ORDER BY guid", characters)
                      if fixture.query("SELECT COUNT(*) FROM character_instance", characters) == "2" else "", 12)

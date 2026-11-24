@@ -1905,6 +1905,75 @@ unittest
 // Dire Maul (429)
 // ---------------------------------------------------------------------------------------------------------------
 
+/// The Dreadsteed's keeper, supplies, waves and pending final summon survive worker loss.
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.scripts.diremaul : DireMaul;
+
+    enum uint keeper = 14501, jeevee = 14500, imp = 14482, guard = 14483, steed = 14502;
+    enum uint bell = 179674, circle = 179668, portal = 179681;
+    static immutable uint[3] supplies = [bell, 179672, 179673];
+    auto d = Dungeon.enter(429, 60, 9, 1, Position(-38.5f, 811.8f, -29.5f));
+    d.event(DireMaul.releaseJeeveeEvent);
+    d.run(200.msecs);
+    assert(d.find(keeper) !is null && d.find(jeevee) !is null);
+    const keeperGuid = d.find(keeper).guid, jeeveeGuid = d.find(jeevee).guid;
+    d.restartAfterCrash();
+    assert(d.saved!DireMaul.ritual == DireMaul.Ritual.inProgress);
+    assert(d.map.creatureAt(keeperGuid) !is null && d.map.creatureAt(jeeveeGuid) !is null,
+        "the original ritual actors resume before the bell is placed");
+    assert(d.runUntil(() => d.loadedObject(bell) !is null, 25.seconds));
+
+    bool firstWave() { return d.summoned(imp) + d.summoned(guard) >= 10; }
+    assert(d.runUntil(&firstWave, 45.seconds), "the first wave emerges on schedule");
+    const bellGuid = d.loadedObject(bell).guid;
+    const circleGuid = d.loadedObject(circle).guid;
+    auto firstDemon = d.find(imp);
+    assert(firstDemon !is null && firstDemon.alive);
+    const demonGuid = firstDemon.guid;
+    d.hit(firstDemon, firstDemon.values.get!UNIT_FIELD_HEALTH / 4);
+    d.run(2100.msecs);
+    const health = firstDemon.values.get!UNIT_FIELD_HEALTH;
+    const waveSize = d.all(imp).length + d.all(guard).length;
+    d.restartAfterCrash();
+    firstDemon = d.map.creatureAt(demonGuid);
+    assert(firstDemon !is null && firstDemon.values.get!UNIT_FIELD_HEALTH == health);
+    assert(d.loadedObject(bell).guid == bellGuid && d.loadedObject(circle).guid == circleGuid);
+    assert(d.all(imp).length + d.all(guard).length == waveSize, "the saved wave is not spawned again");
+
+    bool complete()
+    {
+        const state = d.saved!DireMaul;
+        if (state.ritual == DireMaul.Ritual.complete)
+            return true;
+        assert(state.ritual == DireMaul.Ritual.inProgress, "the ritual remains in progress");
+        foreach (i, entry; supplies)
+            if (auto supply = d.loadedObject(entry))
+                if (!state.ritualActive[i])
+                    d.use(supply);
+        foreach (entry; [imp, guard])
+            foreach (demon; d.all(entry))
+                d.kill(demon);
+        return false;
+    }
+    assert(d.runUntil(&complete, 7.minutes, 2.seconds), "the surviving ritual reaches its final stage");
+    d.restartAfterCrash();
+    assert(d.saved!DireMaul.ritual == DireMaul.Ritual.complete && d.loadedObject(circle).guid == circleGuid);
+
+    d.event(DireMaul.summonDreadsteedEvent);
+    d.run(2.seconds);
+    const bossPortal = d.loadedObject(portal).guid;
+    assert(d.find(steed) is null, "the database script still has a pending summon");
+    d.restartAfterCrash();
+    assert(d.loadedObject(portal).guid == bossPortal);
+    assert(d.runUntil(() => d.find(steed) !is null, 7.seconds), "the original pending summon completes");
+    const original = d.find(steed).guid;
+    d.restartAfterCrash();
+    assert(d.all(steed).length == 1 && d.find(steed).guid == original, "the ritual summons exactly one Dreadsteed");
+}
+
 /**
  * Dire Maul North: Mizzle arrives even if Cho'Rush is dead. The coronation enables the tribute
  * dialogue, and the chest gives only the loot tiers unlocked by survivors.

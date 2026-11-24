@@ -17,6 +17,7 @@
 module dmangos.scripts.diremaul;
 
 import dmangos.script;
+import dmangos.script.state : appended;
 
 /// Creatures of Dire Maul.
 enum : uint
@@ -36,6 +37,8 @@ enum : uint
     mizzle = 14353,
     jeevee = 14500,
     ritualKeeper = 14501,
+    dreadsteed = 14502,
+    dreadsteedSpirit = 14504,
     xorothianImp = 14482,
     dreadGuard = 14483,
     lordHelnurath = 14506,
@@ -97,7 +100,7 @@ struct DireMaul
     enum uint releaseJeeveeEvent = 8420, summonDreadsteedEvent = 8428;
     enum : int { sayUnsummonDemon = -1429005, saySlipkikTrap = -1429004 }
     enum uint teleportOut = 29216, iceLock = 22856;
-    /// How the Dreadsteed's ritual stands (forgotten with a restart, as CMaNGOS forgets one under way).
+    /// How the Dreadsteed's ritual stands.
     enum Ritual : ubyte { notStarted, inProgress, complete, done, failed }
     enum : int { sayFreeImmolthar = -1429000, sayKillImmolthar = -1429001, sayIronbarkRedeem = -1429002, sayChorushKingDead = -1429003 }
     enum : uint { factionHostile = 14, factionFriendly = 35 }
@@ -112,17 +115,22 @@ struct DireMaul
     @transient Pack!24 summoners;
     @transient bool restoreTribute;
 
-    // The Dreadsteed's ritual.
-    @transient Ritual ritual;
-    @transient bool[3] ritualActive;
-    @transient EntityRef[3] ritualUser, ritualObjectRefs;
-    @transient EntityRef keeperRef, jeeveeRef, circleRef, trapRef;
-    @transient Pack!64 demons;
-    @transient Pack!32 scenery; /// the portals and symbols the ritual lit
+    @transient EntityRef trapRef;
 
     enum Step : ubyte { ritualCheck, ritualPulse, trap }
     Schedule!(Step, 4) steps;
     @transient EntityRef restoredHerald;
+
+    @appended Ritual ritual;
+    @appended bool[3] ritualActive;
+    @appended EntityRef[3] ritualUser, ritualObjectRefs;
+    @appended EntityRef keeperRef, jeeveeRef, circleRef;
+    @appended Pack!64 demons;
+    @appended Pack!32 scenery;
+
+    static immutable uint[16] ritualDatabaseScripts = [releaseJeeveeEvent, summonDreadsteedEvent,
+        1450004, 1450005, 1450006, 1450007, 1450008,
+        1450101, 1450102, 1450103, 1450104, 1450105, 1450106, 1450107, 1450108, 1450109];
 
     static immutable uint[6] tributeBosses = [14326, 14321, guardSlipkik, kromcrush, chorush, 14322];
 
@@ -131,6 +139,10 @@ struct DireMaul
         gordokDead = gordokDead || dm.entryKilled(kingGordok);
         restoreTribute = gordokDead;
         if (gordokDead && dm.hasSavedCreature(mizzle))
+            dm.waitForPlayer();
+        if (ritual == Ritual.inProgress && !dm.hasSavedCreature(ritualKeeper))
+            failRitual(dm);
+        if (ritual == Ritual.inProgress || ritual == Ritual.complete || ritual == Ritual.done)
             dm.waitForPlayer();
     }
 
@@ -204,14 +216,27 @@ struct DireMaul
             foreach (i, o; ritualObjects)
                 if (o == entry)
                 {
+                    if (ritualObjectRefs[i] != e.object)
+                        ritualActive[i] = ritual == Ritual.inProgress;
                     ritualObjectRefs[i] = e.object;
-                    ritualActive[i] = ritual == Ritual.inProgress;
                 }
-            if (ritual != Ritual.inProgress)
+            if (ritual == Ritual.inProgress)
+                dm.checkpointObject(e.object);
+            else
                 dm.despawnObject(e.object);
             break;
-        case ritualCircle: circleRef = e.object; break;
-        case dreadsteedPortal, 179669, 179670, 179671: scenery.add(e.object); break;
+        case ritualCircle:
+            circleRef = e.object;
+            if (ritual == Ritual.inProgress || ritual == Ritual.complete)
+                dm.checkpointObject(e.object);
+            break;
+        case dreadsteedPortal, 179669, 179670, 179671:
+            if (ritual != Ritual.notStarted && ritual != Ritual.failed)
+            {
+                scenery.add(e.object);
+                dm.checkpointObject(e.object);
+            }
+            break;
         case fixedTrap:
             trapRef = e.object;
             steps.every(Step.trap, 250.msecs);
@@ -233,15 +258,24 @@ struct DireMaul
             ritualUser[] = e.source;
             demons.clear();
             scenery.clear();
-            dm.summon(ritualKeeper, ritualPlace);
+            if (const keeper = dm.summon(ritualKeeper, ritualPlace))
+                dm.signal(keeper, WarlockMountRitual.begin);
+            else
+            {
+                failRitual(dm);
+                return dm.consume();
+            }
             steps.every(Step.ritualCheck, 1.seconds);
             steps.every(Step.ritualPulse, 6.seconds);
+            dm.checkpointDatabaseScripts(ritualDatabaseScripts[]);
+            dm.checkpointEvent(e);
         }
         else if (e.event == summonDreadsteedEvent)
         {
             if (ritual != Ritual.complete)
                 return dm.consume(); // no Dreadsteed before the ritual is over
             ritual = Ritual.done; // the database script brings his portal and the Dreadsteed
+            dm.checkpointEvent(e);
         }
     }
 
@@ -252,6 +286,7 @@ struct DireMaul
             {
                 ritualActive[i] = true;
                 ritualUser[i] = e.player;
+                dm.checkpoint();
             }
     }
 
@@ -318,6 +353,7 @@ struct DireMaul
         foreach (o; scenery)
             dm.despawnObject(o);
         scenery.clear();
+        dm.checkpointDatabaseScripts(null);
     }
 
     /// The waves are over: the demons go back through, and the circle is ready for the Dreadsteed.
@@ -335,6 +371,7 @@ struct DireMaul
         demons.clear();
         if (circleRef)
             dm.useObject(circleRef);
+        dm.checkpoint();
     }
 
     void on(ref InstanceContext dm, const ref CreatureLoaded e)
@@ -363,16 +400,32 @@ struct DireMaul
             if (restoreTribute)
                 restoredHerald = e.creature;
             break;
-        case ritualKeeper: keeperRef = e.creature; break;
-        case jeevee: jeeveeRef = e.creature; break;
+        case ritualKeeper:
+            keeperRef = e.creature;
+            if (ritual == Ritual.inProgress)
+                dm.checkpointCreature(e.creature);
+            break;
+        case jeevee:
+            jeeveeRef = e.creature;
+            if (ritual == Ritual.inProgress)
+                dm.checkpointCreature(e.creature);
+            break;
+        case dreadsteed, lordHelnurath, dreadsteedSpirit:
+            if (ritual == Ritual.done)
+                dm.checkpointCreature(e.creature);
+            break;
         case xorothianImp, dreadGuard:
             // A wave's demon (the keeper's relay script brought it): to the pedestal.
             if (ritual == Ritual.inProgress)
             {
-                demons.add(e.creature);
-                Location at;
-                if (dm.locationOf(e.creature, at))
-                    dm.moveTo(e.creature, Location((at.x + ritualPedestal.x) / 2, (at.y + ritualPedestal.y) / 2, -32.0f));
+                if (!demons.has(e.creature))
+                {
+                    demons.add(e.creature);
+                    Location at;
+                    if (dm.locationOf(e.creature, at))
+                        dm.moveTo(e.creature, Location((at.x + ritualPedestal.x) / 2, (at.y + ritualPedestal.y) / 2, -32.0f));
+                }
+                dm.checkpointCreature(e.creature);
             }
             break;
         default:
@@ -418,6 +471,12 @@ struct DireMaul
             break;
         case lordHelnurath:
             ritual = Ritual.done;
+            dm.checkpoint();
+            break;
+        case dreadsteed, xorothianImp, dreadGuard:
+            demons.died(e.creature);
+            if (ritual == Ritual.inProgress || ritual == Ritual.done)
+                dm.checkpoint();
             break;
         case kingGordok:
             gordokDead = true;
@@ -462,6 +521,7 @@ struct DireMaul
                 {
                     ritualActive[i] = false;
                     dm.door(ritualObjectRefs[i], false);
+                    dm.checkpoint();
                     break;
                 }
             }
@@ -603,14 +663,17 @@ struct WarlockMountRitual
     static immutable uint[5] jeeveeScripts = [1_450_004, 1_450_005, 1_450_006, 1_450_007, 1_450_008];
     static immutable uint[5] jeeveeWaits = [8000, 7000, 7000, 7000, 30_000];
     enum uint firstWaveRelay = 1_450_100;
+    enum uint begin = 1;
 
     enum Step : ubyte { jeeveeOn, phase, deactivate }
     Schedule!Step steps;
     EntityRef jeeveeRef;
     ubyte jeeveePoint, phase;
 
-    void on(ref CreatureContext me, const ref Spawned e)
+    void on(ref CreatureContext me, const ref Signal e)
     {
+        if (e.id != begin)
+            return;
         me.reactState(Reaction.passive);
         me.combatMovement(false);
         jeeveeRef = me.summon(jeevee, ritualPlace);
@@ -645,26 +708,26 @@ struct WarlockMountRitual
             const k = ++phase;
             if (k == 1)
             {
-                me.signalDungeon(DireMaul.Signals.ritualStart);
                 steps.after(step, 1.seconds);
+                me.signalDungeon(DireMaul.Signals.ritualStart);
             }
             else if (k <= 10)
             {
                 // Waves one to nine; the last a short one.
+                steps.after(step, k < 10 ? 45.seconds : 17_500.msecs);
                 me.relay(firstWaveRelay + (k - 1), me.self);
                 me.signalDungeon(DireMaul.Signals.ritualWave, k - 1);
-                steps.after(step, k < 10 ? 45.seconds : 17_500.msecs);
             }
             else
             {
-                me.signalDungeon(DireMaul.Signals.ritualEnd);
                 steps.clear();
+                me.signalDungeon(DireMaul.Signals.ritualEnd);
                 me.despawn();
             }
             break;
         case Step.deactivate:
-            me.signalDungeon(DireMaul.Signals.ritualDeactivate);
             steps.after(step, (30_000 + me.random(15_001)).msecs);
+            me.signalDungeon(DireMaul.Signals.ritualDeactivate);
             break;
         }
     }
@@ -744,8 +807,8 @@ unittest
     dm.raise(CreatureLoaded(creatureRef(xorothianImp, 5)));
     dm.raise(Signal(creatureRef(ritualKeeper), DireMaul.Signals.ritualEnd));
     assert(dm.host.done("despawn 14482"));
-    assert(!dm.raise(EventHappened(DireMaul.summonDreadsteedEvent, playerRef, EntityRef.init)),
-        "the database script brings the Dreadsteed");
+    assert(dm.raise(EventHappened(DireMaul.summonDreadsteedEvent, playerRef, EntityRef.init))
+        && dm.host.done("event 8428"), "the database script brings the Dreadsteed");
 
     // Another copy: the three go out, the ritual fails.
     auto dm2 = runInstance!self("instance_dire_maul");

@@ -445,6 +445,8 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   The Beast resumes combat, and the replacement keeps the surviving Blackhand ambushers.
   Both of Drakkisath's gates reopen from his saved death.
   In Dire Maul North, Mizzle resumes his walk or remains available for the tribute at the throne.
+  The Dreadsteed ritual in Dire Maul West resumes with its actors, supplies, wave timers and
+  pending database steps. The final summons continue from the saved step.
 * **GM commands.** `.instance info`, `.instance shutdown` and `.instance reset` of a copy another node
   hosts go to that node and its answer comes back; `.instance resetall` goes to every node.
 
@@ -953,6 +955,7 @@ python3 tools/harness/tomb_recovery.py --after-claim
 python3 tools/harness/corpse_recovery.py
 python3 tools/harness/corpse_recovery.py --after-claim
 python3 tools/harness/corpse_recovery.py --during-roll
+python3 tools/harness/dreadsteed_recovery.py
 ```
 
 Both map options also accept `--cross-realm`. The Arathi Basin test checks the resource score,
@@ -968,6 +971,8 @@ claim. Both clients stay in the same copy, and MariaDB records each claimed item
 The corpse checks kill Gerstahn's worker before opening his loot, after claiming one drop, and
 after the first player casts a group loot vote. The original client connections reload the same
 copy and the same corpse. The claims and the winner's item are checked in MariaDB.
+The Dreadsteed check kills the worker just after calling the Keeper and J'eevee. Both existing
+clients see the same actors finish placing the ritual supplies and spawn the first wave once.
 
 ## Monitoring
 
