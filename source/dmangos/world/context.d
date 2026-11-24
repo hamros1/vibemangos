@@ -5927,15 +5927,25 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return config.cluster.enabled && !map.instanceId && type.among(GameObjectType.generic, GameObjectType.spellFocus);
     }
 
+    private static bool durableScriptedSpawn(const ref GameObjectSpawn spawn, uint type)
+    {
+        import std.algorithm.comparison : among;
+
+        return spawn.guid < temporaryCounterStart && spawn.respawnSeconds < 0
+            && type.among(GameObjectType.generic, GameObjectType.spellFocus, GameObjectType.questGiver, GameObjectType.goober);
+    }
+
     private QuestActorCheckpoint outdoorObjectCheckpoint(Map map, GameObject go, long expires)
     {
-        if (!durableOutdoorObject(map, go.type) || !canWrite() || go.owner)
+        const nativeSpawn = durableScriptedSpawn(go.spawn, go.type);
+        if ((!nativeSpawn && !durableOutdoorObject(map, go.type)) || map.instanceId || !config.cluster.enabled
+            || !canWrite() || go.owner)
             return QuestActorCheckpoint.init;
         const home = cellKeyAt(go.spawn.x, go.spawn.y);
         if (expires <= unixTime || (ownsCell !is null && !ownsCell(map.id, home)))
             return QuestActorCheckpoint.init;
         auto migrant = saveMigratingObject(go, false, expiresOverride: expires);
-        if (migrant.kind != MigrantKind.summonedGameObject)
+        if (migrant.kind != (nativeSpawn ? MigrantKind.gameObject : MigrantKind.summonedGameObject))
             return QuestActorCheckpoint.init;
         migrant.home = home;
         return outdoorScriptActorState(map.id, go.guid, migrant);
@@ -5988,11 +5998,19 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 }
     }
 
-    private static bool outdoorOpenableActor(ulong guid)
+    private bool outdoorOpenableActor(ulong guid)
     {
         import dmangos.world.objects : counterOf;
+        import std.algorithm.comparison : among;
 
-        return highGuidOf(guid) == HighGuid.gameObject && counterOf(guid) < temporaryCounterStart;
+        const counter = counterOf(guid);
+        if (highGuidOf(guid) != HighGuid.gameObject || counter >= temporaryCounterStart)
+            return false;
+        indexSpawns();
+        if (const index = counter in gameObjectSpawnIndex)
+            if (const proto = data.gameObjectSpawns[*index].entry in data.gameObjectTemplates)
+                return proto.type.among(GameObjectType.door, GameObjectType.button) != 0;
+        return false;
     }
 
     private long nextScriptActorCheckpoint;
@@ -6055,7 +6073,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             const spawn = counterOf(actor.actor);
             const openable = outdoorOpenableActor(actor.actor);
             const nativeFight = !actor.player && highGuidOf(actor.actor) == HighGuid.unit && spawn < temporaryCounterStart;
-            if (!openable && ((actor.player && actor.savedAt + 300 <= unixTime) || awaitingRespawn(spawn) || spawn in outdoorCorpses
+            if (highGuidOf(actor.actor) != HighGuid.gameObject
+                && ((actor.player && actor.savedAt + 300 <= unixTime) || awaitingRespawn(spawn) || spawn in outdoorCorpses
                 || (nativeFight && (creatureOnLoan(spawn) || !creatureInEvents(spawn)
                     || !upInPool(PoolMember.Kind.creature, spawn)))))
             {
@@ -6090,7 +6109,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.objects : counterOf;
 
         const spawn = counterOf(actor.actor);
-        if (!awaitingRespawn(spawn) && spawn !in outdoorCorpses)
+        if (highGuidOf(actor.actor) == HighGuid.gameObject || (!awaitingRespawn(spawn) && spawn !in outdoorCorpses))
             return restoreQuestActor(where, actor, false, home => home == actor.home);
         database.deleteQuestActor(config.realmId, actor.actor);
         return true;
@@ -6110,7 +6129,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             const recoveryWait = cast(int)((long(config.cluster.leaseMs) + config.cluster.failureTimeoutMs + 10_000));
             where.migrateIn(fromHex(actor.state), (const ref Migrant saved) {
                 const root = saved.spawn == spawn;
-                const kind = highGuidOf(actor.actor) == HighGuid.gameObject ? MigrantKind.summonedGameObject
+                const kind = highGuidOf(actor.actor) == HighGuid.gameObject
+                    ? (spawn < temporaryCounterStart ? MigrantKind.gameObject : MigrantKind.summonedGameObject)
                     : nativeFight ? MigrantKind.creature : MigrantKind.summonedCreature;
                 if ((!root && !restoredActor) || (!actor.player && (!root || saved.kind != kind))
                     || !ownsHome(saved.home))

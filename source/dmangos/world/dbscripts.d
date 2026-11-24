@@ -397,6 +397,12 @@ package struct OutdoorOpenableAction
     bool open;
 }
 
+package struct OutdoorScriptedObject
+{
+    ulong guid;
+    uint seconds;
+}
+
 package struct OutdoorOpenableState
 {
     long resetAt;
@@ -455,7 +461,7 @@ mixin template DbScriptRunner()
     import std.random : uniform;
     import dmangos.log : trace;
     import dmangos.world.dbscripts;
-    import dmangos.world.dbscripts : OutdoorObjectPayload, OutdoorOpenableAction, OutdoorOpenableState,
+    import dmangos.world.dbscripts : OutdoorObjectPayload, OutdoorOpenableAction, OutdoorOpenableState, OutdoorScriptedObject,
         OutdoorScriptStep, ScriptCreatureSpawn, ScriptQuestEffect, ScriptSummonPayload;
     import dmangos.world.creature : Creature;
     import dmangos.world.database : OutdoorScriptCheckpoint, OutdoorSummonKind, OutdoorSummonRequest, QuestActorCheckpoint;
@@ -937,7 +943,8 @@ mixin template DbScriptRunner()
                     import std.algorithm.comparison : among;
 
                     const stagesEffects = step.command.among(ScriptCommand.questExplored, ScriptCommand.killCredit,
-                        ScriptCommand.tempSpawnCreature, ScriptCommand.openDoor, ScriptCommand.closeDoor);
+                        ScriptCommand.tempSpawnCreature, ScriptCommand.openDoor, ScriptCommand.closeDoor,
+                        ScriptCommand.respawnGameObject);
                     OutdoorScriptStep planned;
                     scope (exit) planned.discardUnpublishedSummons();
                     if (!claimOutdoorStep(run, map, *step, stops || run.next + 1 == run.steps.length,
@@ -1046,6 +1053,8 @@ mixin template DbScriptRunner()
             return deliverOutdoorObject(where, request);
         if (request.kind == OutdoorSummonKind.openable)
             return deliverOutdoorOpenable(where, request);
+        if (request.kind == OutdoorSummonKind.scriptedObject)
+            return deliverOutdoorScriptedObject(where, request);
 
         ScriptSummonPayload payload;
         try
@@ -1116,11 +1125,51 @@ mixin template DbScriptRunner()
             return;
         }
         auto object = prepareGameObjectSummon(where, payload.entry, Location(at.x, at.y, at.z, at.orientation));
+        commitOutdoorGameObject(where, request, object, payload.expiresAt);
+    }
+
+    private void deliverOutdoorScriptedObject(Map where, ref OutdoorSummonRequest request)
+    {
+        import dmangos.log : warning;
+        import dmangos.serialization : deserialize;
+        import dmangos.world.grid : cellKeyAt;
+        import dmangos.world.instancescripting : fromHex;
+        import dmangos.world.objects : counterOf;
+
+        OutdoorScriptedObject action;
+        try
+        {
+            auto bytes = ByteReader(fromHex(request.state));
+            action = deserialize!OutdoorScriptedObject(bytes);
+        }
+        catch (Exception error)
+        {
+            warning!"map %s: could not decode an outdoor scripted object: %s"(request.map, error.msg);
+            database.retireOutdoorSummon(config.realmId, request);
+            return;
+        }
+        const counter = counterOf(action.guid);
+        if (action.guid && action.seconds && scriptGameObjectGuid(counter, where.id) == action.guid)
+        {
+            const spawn = &data.gameObjectSpawns[gameObjectSpawnIndex[counter]];
+            const proto = spawn.entry in data.gameObjectTemplates;
+            if (proto !is null && durableScriptedSpawn(*spawn, proto.type) && cellKeyAt(spawn.x, spawn.y) == request.home
+                && where.findObject(action.guid) is null)
+            {
+                commitOutdoorGameObject(where, request, makeGameObject(*spawn), unixTime + action.seconds);
+                return;
+            }
+        }
+        database.retireOutdoorSummon(config.realmId, request);
+    }
+
+    private void commitOutdoorGameObject(Map where, ref OutdoorSummonRequest request, GameObject object, long expires)
+    {
         bool published;
         scope (exit)
             if (!published)
                 scripts.destroy(object.behaviour);
-        const state = outdoorObjectCheckpoint(where, object, payload.expiresAt);
+        const state = outdoorObjectCheckpoint(where, object, expires);
         if (!state.actor || !database.commitOutdoorSummon(config.realmId, request, state, null))
             return;
         request.actor = state.actor;
@@ -1128,7 +1177,7 @@ mixin template DbScriptRunner()
         {
             outdoorQuestActors[state.actor] = state;
             published = true;
-            publishGameObjectSummon(where, object, payload.expiresAt);
+            publishGameObjectSummon(where, object, expires);
             database.retireOutdoorSummon(config.realmId, request);
         }
     }
@@ -1724,6 +1773,38 @@ mixin template DbScriptRunner()
             planned.afterCommit ~= () => scriptGameObjectAction(map, guid, delay, action);
     }
 
+    private void scriptRespawnObject(Map map, ulong guid, uint delay, OutdoorScriptStep* planned)
+    {
+        import dmangos.serialization : serialize;
+        import dmangos.world.grid : cellKeyAt;
+        import dmangos.world.instancescripting : toHex;
+        import dmangos.world.objects : counterOf;
+
+        const counter = counterOf(guid);
+        if (config.cluster.enabled && !map.instanceId && ownsCell !is null && canWrite() && guid && delay
+            && scriptGameObjectGuid(counter, map.id) == guid)
+        {
+            const spawn = &data.gameObjectSpawns[gameObjectSpawnIndex[counter]];
+            if (const proto = spawn.entry in data.gameObjectTemplates)
+                if (durableScriptedSpawn(*spawn, proto.type))
+                {
+                    ByteWriter bytes;
+                    serialize(bytes, OutdoorScriptedObject(guid, delay));
+                    auto request = OutdoorSummonRequest(map: map.id, home: cellKeyAt(spawn.x, spawn.y),
+                        state: toHex(bytes.data), kind: OutdoorSummonKind.scriptedObject);
+                    if (planned !is null)
+                        planned.forwards ~= request;
+                    else
+                        enqueueOutdoorPlacement(request, spawn.entry);
+                    return;
+                }
+        }
+        if (planned is null)
+            scriptGameObjectAction(map, guid, delay, ScriptGameObject.Action.respawn);
+        else
+            planned.afterCommit ~= () => scriptGameObjectAction(map, guid, delay, ScriptGameObject.Action.respawn);
+    }
+
     private void scriptGameObjectAction(Map map, ulong guid, uint delay, ScriptGameObject.Action action,
         ushort from = 0, bool forwarded = false)
     {
@@ -2048,8 +2129,8 @@ mixin template DbScriptRunner()
             break;
         }
         case ScriptCommand.respawnGameObject:
-            scriptGameObjectAction(map, step.datalong ? scriptGameObjectGuid(step.datalong, map.id) : source.guid,
-                step.datalong2, ScriptGameObject.Action.respawn);
+            scriptRespawnObject(map, step.datalong ? scriptGameObjectGuid(step.datalong, map.id) : source.guid,
+                step.datalong2, planned);
             break;
         case ScriptCommand.despawnGameObject:
             scriptGameObjectAction(map, target.guid, step.datalong, ScriptGameObject.Action.despawn);
