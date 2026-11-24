@@ -24,7 +24,7 @@ MAPS = {
 
 def run(fixture, cross_realm=False, battleground="warsong", finish_phase=None):
     map_id, type_name, masters = MAPS[battleground]
-    test_combat = cross_realm and battleground == "arathi"
+    cross_realm_arathi = cross_realm and battleground == "arathi"
     login = fixture.fresh_schema("login", "classicrealmd.sql")
     databases = [fixture.fresh_schema("chars1", "classiccharacters.sql")]
     realms = ["First"]
@@ -99,7 +99,7 @@ def run(fixture, cross_realm=False, battleground="warsong", finish_phase=None):
     world_db = fixture.base["world_database"]
     for side, name in enumerate(names):
         race = 1 if side == 0 else 2
-        class_id = 8 if test_combat and side == 0 else 1
+        class_id = 8 if cross_realm_arathi and side == 0 else 1
         label = f"create{side}"
         if client(label, side, "enum", f"create:{name}:{race}:{class_id}", "drop").wait(timeout=25):
             raise RuntimeError(fixture.log(label))
@@ -161,7 +161,7 @@ def run(fixture, cross_realm=False, battleground="warsong", finish_phase=None):
             after_crash = [["pvplog:scores"], ["pvplog:scores"]]
     if not after_crash[1]:
         after_crash[1] = ["bgstatus", "pvplog:scores"]
-    if test_combat:
+    if cross_realm_arathi:
         stables = port_to("gameobject", 180087)
         _, _, x, y, z = stables.split(":")
         spells = [stables, "listen:2"] + ["castplayer:133", "listen:2.5"] * 3
@@ -191,13 +191,14 @@ def run(fixture, cross_realm=False, battleground="warsong", finish_phase=None):
     battle = []
     for side, name in enumerate(names):
         actions = [f"login:{name}"]
-        if test_combat and side == 1:
+        if cross_realm_arathi and side == 1:
             actions += ["cmd:.character increaseweaponskill 300"]
         actions += [f"waitfile:{join}", f"bgjoin:{masters[side]}:{map_id}", f"waitfile:{force}"]
         if side == 0:
             actions += ["cmd:.battleground forcestart"]
         actions += [f"waitfile:{accept}", f"bgport:{map_id}:1", f"waitfile:{play}", *before_crash[side],
-                    f"waitfile:{resume}", *after_crash[side], f"waitfile:{finish}", f"bgleave:{map_id}", "listen:1", "logout"]
+                    f"waitfile:{resume}", *after_crash[side], f"waitfile:{finish}"]
+        actions += ["drop"] if cross_realm_arathi else [f"bgleave:{map_id}", "listen:1", "logout"]
         battle.append(client(f"battle{side}", side, *actions))
 
     def logs():
@@ -221,7 +222,7 @@ def run(fixture, cross_realm=False, battleground="warsong", finish_phase=None):
 
     host, instance = wait_for(f"{type_name} to start", started, 140)
     play.touch()
-    if test_combat:
+    if cross_realm_arathi:
         check_combat(logs)
     dropped = []
     if battleground == "warsong":
@@ -297,7 +298,7 @@ def run(fixture, cross_realm=False, battleground="warsong", finish_phase=None):
         states = ast.literal_eval(log.split(f"[initial battlefield states] {map_id}: ", 1)[1].splitlines()[0])
         assert {key: states.get(key) for key in expected} == expected, log[-4000:]
     resume.touch()
-    if test_combat:
+    if cross_realm_arathi:
         check_combat(recovered)
     if finish_phase:
         wait_for("both final scoreboards on the original connections",
@@ -346,7 +347,7 @@ def run(fixture, cross_realm=False, battleground="warsong", finish_phase=None):
 
         wait_for("resources to keep ticking and the pending Farm capture to finish", arathi_continued, 53)
         result = "30–0 resources with Stables held and Farm still contested, then accrued resources and finished capturing Farm"
-        if test_combat:
+        if cross_realm_arathi:
             result += "; melee and spell damage worked across realms and status kept the objective columns before and after takeover"
     elif battleground == "alterac":
         wait_for("the original scoreboard and the Alliance mine boss on the recovered map",
@@ -366,6 +367,34 @@ def run(fixture, cross_realm=False, battleground="warsong", finish_phase=None):
     for i, process in enumerate(battle):
         if process.wait(timeout=30):
             raise RuntimeError(logs()[i][-4000:])
+    if cross_realm_arathi:
+        wait_for("both players to be offline in the same match", lambda: all(
+            fixture.query(f"SELECT online FROM characters WHERE name='{name}'", db) == "0"
+            for name, db in zip(names, databases)), 15)
+        done = fixture.directory / "relogin-done"
+        relogged = [client(f"relogin{side}", side, f"login:{name}", f"waitfile:{done}",
+                           f"bgleave:{map_id}", "listen:1", "logout") for side, name in enumerate(names)]
+
+        def initial_match_states():
+            for side, (name, db) in enumerate(zip(names, databases)):
+                log = fixture.log(f"relogin{side}")
+                frames = re.findall(rf"\[initial battlefield states\] {map_id}: (.+)", log)
+                if not frames:
+                    return False
+                states = ast.literal_eval(frames[-1])
+                if (states.get(1779), states.get(1778), states.get(1767), states.get(1772)) != (2, 0, 1, 1):
+                    return False
+                assert states.get(1776, 0) >= 40 and states.get(1777) == 0
+                assert fixture.query("SELECT b.instance_id FROM character_battleground_data b "
+                                     f"JOIN characters c USING (guid) WHERE c.name='{name}'", db) == str(instance)
+            return True
+
+        wait_for("both fresh gateway logins to receive the same match's two Alliance bases", initial_match_states, 15)
+        done.touch()
+        for side, process in enumerate(relogged):
+            if process.wait(timeout=30):
+                raise RuntimeError(fixture.log(f"relogin{side}")[-4000:])
+        result += "; both fresh logins received the full base and resource state"
     print(f"PASS: killed worker {host}, resumed {type_name} copy {instance} on the same connections with {result}")
 
 

@@ -2271,6 +2271,9 @@ mixin template BattlegroundHandlers()
             {
                 const rejoined = member.offlineSince != MonoTime.init;
                 copy.arrived(player, battleground_.team);
+                // A login on another node can send an empty world-state packet before this handoff.
+                if (migrated)
+                    sendInitWorldStates(player.data.zone);
                 updatePvP(true);
                 flushPlayerChanges();
                 copy.rules.playerRestored(copy, player.guid);
