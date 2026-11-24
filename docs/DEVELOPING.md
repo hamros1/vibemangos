@@ -305,6 +305,21 @@ failures in `regression/lease-failures.log` before the deliberate shutdown. Runs
 merge and a player handoff. Set `EXPECT_BALANCING=1` to check these events in a shorter run or
 `EXPECT_BALANCING=0` to skip those assertions.
 
+### Cluster chaos suite
+
+After harness setup and a release build, run the opt-in suite with
+`python3 tools/harness/chaos.py`. It runs the quorum partition and heal, coordinator kill,
+paused battlegroup host, and gateway checkpoint retry cases against isolated fixtures.
+Use `--repeat 3` to check repeatability. Each case prints the harness directory containing
+its process logs and uses fresh login and character schemas.
+
+Run the partition alone with `python3 tools/harness/quorum_partition.py`. Its loopback TCP
+proxy cuts voter links between the two groups while the minority coordinator, its worker,
+and the nonvoting gateway stay connected. The case checks that minority regions move to
+the majority after release, the original gateway client recovers from its durable checkpoint,
+and the old owners rejoin without overwriting the replacement's progress. The proxy runs
+without firewall changes or elevated privileges.
+
 ### Live tests against real data
 
 For two players, run two clients at once: one listening, one acting.
