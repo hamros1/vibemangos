@@ -23,11 +23,12 @@ in order:
     approach:ENTRY:DIST       walk to DIST yards of the nearest creature of ENTRY
     cast:SPELL[:ENTRY]       cast a spell, optionally at a creature by entry
     cancelchannel:SPELL      cancel the specified channel
-    loot                      walk to the creature last attacked, take its money and items
+    loot[:N]                  take the last creature's loot, or only N items and leave the money
     killpack:[one:]ENTRY...    select and kill matching visible living creatures (GM)
     castopen:SPELL:ENTRY      cast at the nearest game object of ENTRY without taking its loot
     castgo:SPELL:ENTRY[:N]    cast at a game object and take up to N loot slots (all if omitted)
     rolloffer  rollvote:N     keep the next group loot prompt, then pass (0), need (1) or greed (2)
+    rollcast:N                vote on the last group loot prompt without waiting for the result
     waitfile:PATH             keep receiving packets until another test process creates this file
     release  corpse  tocorpse  reclaim  spirithealer
                               dead: release the spirit, ask where the corpse is, go there, take it
@@ -186,6 +187,7 @@ GAMEOBJECT_END = OBJECT_END + 0x1A
 COUNTS = {1: ITEM_END, 2: CONTAINER_END, 3: UNIT_END, 4: PLAYER_END, 5: GAMEOBJECT_END, 7: 0x26}  # 7: CORPSE_END
 seen_objects = {}
 seen_positions = {}   # creature guid -> where it was created
+last_roll_offer = None
 living_creatures = set()
 here = [0.0, 0.0, 0.0]  # where this client last put its character
 corpse_at = [0.0, 0.0, 0.0]
@@ -321,8 +323,10 @@ def describe_creature_auras(guid, fields):
 
 def describe(op, p):
     """Prints a packet that another player caused."""
+    global last_roll_offer
     if op == 0x2A1:  # SMSG_LOOT_START_ROLL
         loot, slot, item = struct.unpack_from("<QII", p)
+        last_roll_offer = loot, slot, item
         print(f"  [roll offer] {loot:#x} slot {slot} item {item}")
     elif op == 0x29F:  # SMSG_LOOT_ROLL_WON
         loot, slot, item, _, _, winner = struct.unpack_from("<QIIIIQ", p)
@@ -824,7 +828,7 @@ for action in actions:
         movement(0x0B5, x, y, cz, o, flags=1); movement(0x0B7, x, y, cz, o); here[:] = [x, y, cz]
         print(f"approach {entry}: {dist} yards from {target & 0xFFFFFF}")
     elif kind == "loot":
-        # Walk to the last creature attacked and open its loot; take the money and every item, then close.
+        # Open the last target's loot. With a limit, take that many items and leave the money.
         import math
         target = last_target[0]
         cx, cy, cz = seen_positions[target]
@@ -841,9 +845,9 @@ for action in actions:
             slot, item, count = struct.unpack_from("<BII", p, 14 + i * 22); slots.append(slot)
             print(f"  loot slot {slot}: item {item} x{count} (slot type {p[14 + i * 22 + 21]})")
         print(f"  loot gold {gold}")
-        if gold:
+        if gold and not args:
             wsend(0x15E, b"")
-        for slot in slots:
+        for slot in slots[:int(args[0]) if args else len(slots)]:
             wsend(0x108, bytes([slot]))
         listen_for(1.0)
         wsend(0x15F, struct.pack("<Q", target))
@@ -962,6 +966,12 @@ for action in actions:
             raise RuntimeError("the roll result did not match the prompt")
         describe(op, outcome)
         pending_roll = None
+    elif kind == "rollcast":
+        if last_roll_offer is None:
+            raise RuntimeError("rollcast needs a seen group loot prompt")
+        loot, slot, _ = last_roll_offer
+        wsend(0x2A0, struct.pack("<QIB", loot, slot, int(args[0])))
+        listen_for(0.5)
     elif kind == "waitfile":
         from pathlib import Path
         path = Path(":".join(args))

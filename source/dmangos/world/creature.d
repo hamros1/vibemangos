@@ -14,7 +14,7 @@ import dmangos.world.pet : PetState;
 
 import dmangos.world.combat : Fighter;
 import dmangos.world.auras : AuraSet, AuraTick, Aura, AuraType;
-import dmangos.world.loot : Loot;
+import dmangos.world.loot : Loot, LootItem;
 import dmangos.world.creatureai : CombatWorld, CreatureAI;
 import dmangos.world.clientdata : FactionTemplateEntry;
 import dmangos.world.defines : UnitFlags;
@@ -1419,7 +1419,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
      * with (docs/CLUSTER.md): every field, its movement and walk, its movement generator's
      * state and its vendor stock.
      */
-    void saveState(ref ByteWriter w, uint now) const
+    void saveState(ref ByteWriter w, uint now, const LootItem claimed = null, ulong looter = 0) const
     {
         w.put(cast(ushort) values.length);
         foreach (slot; 0 .. values.length)
@@ -1456,7 +1456,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         w.put(pocketsRestockAt);
         w.put(loot !is null);
         if (loot !is null)
-            loot.saveHandoff(w, null, 0, true);
+            loot.saveHandoff(w, claimed, looter, true);
         const channel = ai.hasCreatureChannel;
         if (expiredChannels.length || channel)
         {

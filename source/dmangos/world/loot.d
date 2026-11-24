@@ -451,6 +451,8 @@ final class Loot
     void delegate() lootedForAll;
     /// A lockout reward persists the spent slot together with the inventory award.
     uint delegate(Looter, LootItem, bool) storeReward;
+    /// Write the current state before exposing a roll, a vote or an award to another session.
+    bool delegate() checkpoint;
     /// Told first when a looter releases it (a disenchanted item's loot: what is left goes into the bags).
     void delegate(Looter) beforeRelease;
 
@@ -542,6 +544,8 @@ final class Loot
         }
         foreach (slot, roll; rolls)
         {
+            if (!roll.started)
+                continue;
             HandoffRoll saved = {slot: slot, endTime: roll.endTime, started: roll.started, serial: roll.serial};
             foreach (guid, vote; roll.votes)
                 saved.votes ~= HandoffVote(guid, vote.vote, vote.number);
@@ -946,6 +950,13 @@ final class Loot
     /// Whether nothing is left for any of the owners still here.
     bool lootedForEveryone()
     {
+        if (checkpoint !is null)
+        {
+            import std.algorithm.searching : any;
+
+            // Eligible players can be offline or loading into a recovered copy.
+            return !gold && !items.any!(item => item.allowed.length || item.remoteAward);
+        }
         if ((masterStartsRemote && canLoot(masterLooter)) || (remoteTapper && canLoot(remoteTapper)))
             return false;
         foreach (item; items)
@@ -1175,12 +1186,16 @@ final class Loot
         item.remoteMasterTarget = recipient;
         item.remoteAwardNode = node;
         item.blocked = true;
+        if (checkpoint !is null && !checkpoint())
+            return true; // retry the original assignment when the database becomes available
         if (sendRemoteRoll(node, message))
             return true;
         item.remoteAward = 0;
         item.remoteMasterTarget = 0;
         item.remoteAwardNode = 0;
         item.blocked = false;
+        if (checkpoint !is null)
+            checkpoint();
         return false;
     }
 
@@ -1279,16 +1294,17 @@ final class Loot
     {
         if (gold == 0 || looter.looterGuid !in owners)
             return;
-        const grouped = rule != LootRule.notGroup || coinNode !is null;
+        const grouped = rule != LootRule.notGroup || coinNode !is null || checkpoint !is null;
         auto recipients = pendingCoins.token ? pendingCoins.recipients : grouped ? divideGold(looter) : null;
         if (!pendingCoins.token && saveCoinPayout !is null)
         {
             import std.algorithm.searching : any;
 
-            if (recipients.any!(recipient => recipient.node != 0))
+            if (checkpoint !is null || recipients.any!(recipient => recipient.node != 0))
                 pendingCoins = CoinPayout(coinIssuer, nextCoinPayout(), recipients);
         }
-        if (pendingCoins.token && (saveCoinPayout is null || !saveCoinPayout(pendingCoins)))
+        if (pendingCoins.token && ((checkpoint !is null && !checkpoint())
+            || saveCoinPayout is null || !saveCoinPayout(pendingCoins)))
             return; // the loot keeps its exact payout for the next attempt, including after a handoff
         const copper = gold;
         gold = 0;
@@ -1374,6 +1390,7 @@ final class Loot
     void groupCheck()
     {
         checked = true;
+        LootRoll[] started;
         foreach (guid, _; owners)
         {
             if (find(guid) is null)
@@ -1384,10 +1401,30 @@ final class Loot
                     continue;
                 auto roll = new LootRoll(this, item);
                 rolls[item.slot] = roll;
-                if (!roll.tryToStart(nowSeconds()))
+                if (roll.tryToStart(nowSeconds(), false))
+                    started ~= roll;
+                else
                     rolls.remove(item.slot);
             }
         }
+        if (checkpoint !is null)
+            checkpoint();
+        foreach (roll; started)
+            roll.announceStart();
+    }
+
+    /// A returning player can answer the original, still pending roll.
+    package void resumeRollsFor(ulong guid)
+    {
+        if (auto looter = find(guid))
+            foreach (roll; rolls)
+            {
+                const vote = guid in roll.votes;
+                const remaining = roll.endTime - nowSeconds();
+                if (roll.started && remaining > 0 && vote !is null && vote.vote == RollVote.notEmittedYet)
+                    looter.deliver(Opcode.SMSG_LOOT_START_ROLL, startRollPacket(target, roll.item.slot,
+                        roll.item.itemId, roll.item.randomPropertyId, cast(uint) remaining * 1000));
+            }
     }
 
     /// The master can arrive after another member opened the loot, or reopen it after a handoff.
@@ -1501,7 +1538,7 @@ final class LootRoll
     }
 
     /// Starts the roll if more than one owner may take it; otherwise it is no longer held.
-    bool tryToStart(long now)
+    bool tryToStart(long now, bool announce = true)
     {
         if (item.quest)
             return false;
@@ -1531,26 +1568,29 @@ final class LootRoll
         {
             // Need before greed: "'Pass' is automatically selected for party members who can't use an item"
             // (WoWWiki "Loot", 2006-10): they get no roll window, only their pass (docs/FORMULAS.md "Group loot").
-            ulong[] autoPassed;
             if (loot.rule == LootRule.needBeforeGreed)
                 foreach (guid, ref v; votes)
                     if (v.vote == RollVote.notEmittedYet)
                         if (auto local = loot.find(guid))
                             if (!local.canUseItem(item.itemId))
-                            {
                                 v.vote = RollVote.pass;
-                                autoPassed ~= guid;
-                            }
             endTime = now + lootRollSeconds;
             started = true;
-            sendStartRoll();
-            foreach (guid; autoPassed)
-                sendRoll(guid, 128, 128, true);
+            if (announce)
+                announceStart();
             return true;
         }
         item.underThreshold = true;
         item.blocked = false;
         return false;
+    }
+
+    private void announceStart()
+    {
+        sendStartRoll();
+        foreach (guid, vote; votes)
+            if (vote.vote == RollVote.pass && loot.find(guid) !is null)
+                sendRoll(guid, 128, 128, true);
     }
 
     private void head(ref ByteWriter w)
@@ -1626,6 +1666,8 @@ final class LootRoll
         if (choice == RollVote.notValid)
         {
             v.vote = choice; // the remote owner checked the item's condition
+            if (loot.checkpoint !is null)
+                loot.checkpoint();
             return true;
         }
         if (loot.rule == LootRule.needBeforeGreed && choice != RollVote.pass)
@@ -1635,6 +1677,8 @@ final class LootRoll
         v.vote = choice;
         if (choice != RollVote.pass)
             v.number = cast(ubyte) uniform!"[]"(1, 100);
+        if (loot.checkpoint !is null)
+            loot.checkpoint();
         switch (choice)
         {
         case RollVote.pass:
@@ -1659,6 +1703,7 @@ final class LootRoll
         bool any;
         if (started && (allVoted(winner, any) || now >= endTime))
         {
+            started = false;
             finish(winner, any);
             return true;
         }
@@ -1753,6 +1798,8 @@ final class LootRoll
                     item.remoteAward = serial;
                     item.remoteAwardNode = node;
                     const message = remoteMessage(GroupLootRoll.Action.award, winner);
+                    if (loot.checkpoint !is null && !loot.checkpoint())
+                        return;
                     if (!loot.sendRemoteRoll(node, message))
                     {
                         item.blocked = false;
@@ -1762,14 +1809,13 @@ final class LootRoll
                 }
             }
         }
-        started = false;
         if (loot.changed !is null)
             loot.changed();
     }
 }
 
 /// The same roll prompt is sent to local and remote clients.
-ubyte[] startRollPacket(ulong target, ubyte slot, uint item, int randomProperty)
+ubyte[] startRollPacket(ulong target, ubyte slot, uint item, int randomProperty, uint ms = lootRollSeconds * 1000)
 {
     ByteWriter w;
     w.put(target);
@@ -1777,7 +1823,7 @@ ubyte[] startRollPacket(ulong target, ubyte slot, uint item, int randomProperty)
     w.put(item);
     w.put(0u); // random suffix
     w.put(randomProperty);
-    w.put(uint(lootRollSeconds * 1000));
+    w.put(ms);
     w.put(ubyte(0x0F));
     return w.data.dup;
 }

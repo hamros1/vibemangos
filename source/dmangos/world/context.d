@@ -66,7 +66,7 @@ import dmangos.world.characterdb : DeleteOptions, GuidCounters;
 import dmangos.world.transports : ShipObject, mapAt, transportClock;
 import dmangos.world.clientdata : ClientData;
 import dmangos.world.config : WorldConfig;
-import dmangos.world.database : InstanceChestRecord, WorldDatabase;
+import dmangos.world.database : InstanceChestRecord, InstanceCorpseRecord, WorldDatabase;
 import dmangos.world.creaturepools : CreaturePools;
 import dmangos.vmap.gameobjectmodels : GameObjectModels;
 import dmangos.world.gameobjectcollision : GameObjectCollision;
@@ -77,7 +77,7 @@ import dmangos.world.group : GroupDirectory, Groups, memberStatus, MemberStatus;
 import dmangos.world.groupservice : groupCommand, GroupOp, GroupService;
 import dmangos.cluster.protocol : AreaDamage, CreatureLoan, CreatureSwing, GameObjectSpell, GmRemote, GroupCommand, GroupLootRoll,
     KillShare, LootCoinShare, PartyHeal, PeriodicResult, QuestLootCheck, ScriptSignal, SwingRetaliation;
-import dmangos.world.loot : Loot, maxLootItems;
+import dmangos.world.loot : Loot, LootItem, maxLootItems;
 import dmangos.world.map : Inhabitant, Map, MapObject, MapSettings, VisibilityFacts;
 import dmangos.world.online : OnlinePlayer;
 import dmangos.world.character : Character;
@@ -755,7 +755,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.log : warning;
         import dmangos.mysql : DatabaseException;
 
-        if (sendRemoteLootCoins is null || !online.length || now < nextLootCoinPoll || !canWrite())
+        if ((sendRemoteLootCoins is null && !retryLootCoinRedemption.length) || !online.length
+            || now < nextLootCoinPoll || !canWrite())
             return;
         nextLootCoinPoll = now + 1.seconds;
         try
@@ -4211,7 +4212,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return *found;
         if (instance !in instances)
             instances[instance] = InstanceState(id, 0, unixTime);
-        return instanceMaps[instance] = makeMap(id, instance);
+        auto created = instanceMaps[instance] = makeMap(id, instance);
+        if (!copyArriving)
+            restoreInstanceCorpses(created);
+        return created;
     }
 
     /// The map `who` is on.
@@ -4392,14 +4396,21 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     instanceScripts[instance] = script;
                     if (!copyArriving) // a copy from another node brings its creatures: their fights go on
                         script.restored();
-                    created.onPlayerAdded = (Inhabitant who) {
-                        import dmangos.script.api : PlayerEntered;
-
-                        if (auto s = instance in instanceScripts)
-                            s.raise(PlayerEntered(EntityRef(who.character.guid)));
-                    };
                 }
             }
+        if (instance)
+            created.onPlayerAdded = (Inhabitant who) {
+                import dmangos.script.api : PlayerEntered;
+
+                if (auto s = instance in instanceScripts)
+                    s.raise(PlayerEntered(EntityRef(who.character.guid)));
+                if (const state = instance in instances)
+                    foreach (guid, corpse; state.corpses)
+                        if (const spawn = creatureSpawnOf(guid))
+                            if (auto creature = created.creatureAt(makeGuid(HighGuid.unit, spawn.entry, guid)))
+                                if (creature.loot !is null)
+                                    creature.loot.resumeRollsFor(who.character.guid);
+            };
         if (instance == 0) // open-world round 2: the continent's script (`world_template`)
             if (const name = id in data.worldScriptNames)
                 if (auto script = InstanceScript.makeWorld(scripts, *name, id))
@@ -4461,6 +4472,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         bool[uint] usedUp;     /// game object spawns used up there
         string data;           /// its dungeon script's state (`instance.data`)
         InstanceChestRecord[uint] chests; /// scripted reward loot, by spawn
+        InstanceCorpseRecord[uint] corpses; /// unexpired defeated creatures, by spawn
         long[uint] trashRespawns;         /// Molten Core trash deadlines, by spawn
     }
 
@@ -4736,6 +4748,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if (auto state = chest.instance in instances)
                 if (which(state.mapId))
                     state.chests[chest.spawn] = chest;
+        foreach (corpse; saved.corpses)
+            if (auto state = corpse.instance in instances)
+                if (which(state.mapId) && corpse.expiresAt > unixTime && corpse.spawn in state.dead)
+                    state.corpses[corpse.spawn] = corpse;
     }
 
     /**
@@ -5962,7 +5978,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return migrant;
     }
 
-    private Migrant saveMigratingObject(MapObject object, bool departing = true)
+    private Migrant saveMigratingObject(MapObject object, bool departing = true,
+        const LootItem claimed = null, ulong looter = 0)
     {
         import dmangos.bytes : ByteWriter;
         import dmangos.serialization : serialize;
@@ -5984,7 +6001,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 w.put(now);
             }
             ByteWriter state;
-            creature.saveState(state, now);
+            creature.saveState(state, now, claimed, looter);
             w.put(cast(uint) state.data.length);
             w.putBytes(state.data);
             writeReplicaImpacts(creature.guid, w, departing);
@@ -6218,7 +6235,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         }
         if (loot !is null)
         {
-            if (loot.rule != LootRule.notGroup)
+            if (loot.rule != LootRule.notGroup || loot.checkpoint !is null)
                 bindLootDelivery(this, destination, loot,
                     loot.rule == LootRule.groupLoot || loot.rule == LootRule.needBeforeGreed, loot.rule == LootRule.masterLoot);
             loot.resumeQuestLootChecks(destination.id, sendQuestLootCheck);
@@ -6604,12 +6621,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     state.dead[guid] = true;
                     if (auto copy = battlegrounds.find(creature.instanceId))
                         copy.objectiveChanged();
-                    else
+                    else if (guid !in state.corpses)
                     {
-                        long until = state.resetAt ? state.resetAt : unixTime + 86_400;
-                        if (moltenCoreTrash(creature.spawn) && creature.respawnAt < until)
-                            state.trashRespawns[guid] = until = creature.respawnAt;
-                        database.saveInstanceRespawn(false, guid, creature.instanceId, until);
+                        database.saveInstanceRespawn(false, guid, creature.instanceId,
+                            instanceDeathDeadline(*state, creature));
                     }
                 }
             if (auto script = creature.instanceId in instanceScripts)
@@ -6629,6 +6644,95 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         }
     }
 
+    package bool canCheckpointCorpse(const Creature creature)
+    {
+        return creature.instanceId && creature.instanceId in instances && !battlegroundOfMap(creature.spawn.map)
+            && !creature.alive && creature.corpseTimer > 0 && !creature.petOwner
+            && creature.summon.type == TempSpawnType.none;
+    }
+
+    private long instanceDeathDeadline(ref InstanceState state, const Creature creature)
+    {
+        auto until = state.resetAt ? state.resetAt : unixTime + 86_400;
+        if (moltenCoreTrash(creature.spawn) && creature.respawnAt < until)
+            state.trashRespawns[creature.spawn.guid] = until = creature.respawnAt;
+        return until;
+    }
+
+    /// Record the original loot and the death before exposing the loot to players.
+    package void saveNewCorpse(Creature creature)
+    {
+        if (!canCheckpointCorpse(creature))
+            return;
+        auto state = creature.instanceId in instances;
+        state.dead[creature.spawn.guid] = true;
+        database.saveInstanceCorpse(checkpointCorpse(creature), instanceDeathDeadline(*state, creature));
+    }
+
+    package InstanceCorpseRecord checkpointCorpse(Creature creature, const LootItem claimed = null, ulong looter = 0)
+    {
+        import dmangos.world.instancescripting : toHex;
+
+        auto state = creature.instanceId in instances;
+        const expiresAt = unixTime + (creature.corpseTimer + 999L) / 1000;
+        const record = InstanceCorpseRecord(creature.instanceId, creature.spawn.guid, expiresAt,
+            toHex(saveMigratingObject(creature, false, claimed, looter).state));
+        state.corpses[record.spawn] = record;
+        return record;
+    }
+
+    package void saveCorpseLoot(Creature creature)
+    {
+        if (auto state = creature.instanceId in instances)
+            if (creature.spawn.guid in state.corpses)
+            {
+                if (creature.loot is null && !creature.skinnable)
+                {
+                    state.corpses.remove(creature.spawn.guid);
+                    database.deleteInstanceCorpse(creature.instanceId, creature.spawn.guid);
+                }
+                else
+                    database.saveInstanceCorpse(checkpointCorpse(creature), 0);
+            }
+    }
+
+    private void restoreInstanceCorpses(Map map)
+    {
+        import dmangos.log : warning;
+        import dmangos.world.instancescripting : fromHex;
+        import dmangos.world.migration : MigrantKind;
+
+        const state = map.instanceId in instances;
+        if (state is null)
+            return;
+        Migrant[] corpses;
+        foreach (guid, corpse; state.corpses)
+            if (const spawn = creatureSpawnOf(guid))
+                if (corpse.expiresAt > unixTime && spawn.map == map.id && guid in state.dead)
+                    try
+                        corpses ~= Migrant(MigrantKind.creature, guid, cellKeyAt(spawn.x, spawn.y), fromHex(corpse.state));
+                    catch (Exception error)
+                        warning!"instance %s: could not read corpse %s: %s"(map.instanceId, guid, error.msg);
+        if (corpses.length)
+            map.migrateIn(encodeBundle(null, corpses), (const ref Migrant migrant) {
+                try
+                {
+                    auto creature = cast(Creature) restoreWorldMigrant(migrant, map);
+                    if (creature is null || creature.alive)
+                        return null;
+                    // A loot transaction can be the last saved state, before the in-memory cleanup ran.
+                    if (creature.loot !is null && creature.loot.lootedForEveryone())
+                        creature.lootedOut();
+                    return creature.loot !is null || creature.skinnable ? cast(MapObject) creature : null;
+                }
+                catch (Exception error)
+                {
+                    warning!"instance %s: could not restore corpse %s: %s"(map.instanceId, migrant.spawn, error.msg);
+                    return null;
+                }
+            });
+    }
+
     /// A corpse went; if it died elsewhere, restore the original respawn deadline.
     private void corpseRemoved(Creature creature)
     {
@@ -6641,7 +6745,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     owner.petCorpseGone(creature);
             return;
         }
-        if (creature.summon.type != TempSpawnType.none || creature.instanceId)
+        if (creature.instanceId)
+        {
+            if (auto state = creature.instanceId in instances)
+                if (state.corpses.remove(creature.spawn.guid))
+                    database.deleteInstanceCorpse(creature.instanceId, creature.spawn.guid);
+            return;
+        }
+        if (creature.summon.type != TempSpawnType.none)
             return;
         if (creaturePools.manages(creature.spawn.guid))
         {
@@ -9001,8 +9112,24 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         void drain(Map map_)
         {
+            bool savedCorpse;
             foreach (creature; map_.creatureDeaths.take())
+            {
                 creatureDied(creature);
+                if (config.cluster.enabled)
+                    if (const state = creature.instanceId in instances)
+                        savedCorpse |= (creature.spawn.guid in state.corpses) !is null;
+            }
+            if (savedCorpse && canWrite())
+            {
+                foreach (who; map_.playersNow())
+                    if (auto session = cast(Character) who)
+                    {
+                        const progress = who.character.progress(session.secondsInWorld());
+                        database.saveProgress(progress);
+                    }
+                settleWrites();
+            }
         }
         foreach (map_; maps)
             drain(map_);

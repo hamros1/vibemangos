@@ -1137,12 +1137,25 @@ final class CharacterStatements
         instanceChestsReady = true;
     }
 
+    private bool instanceCorpsesReady;
+
+    void prepareInstanceCorpses()
+    {
+        if (instanceCorpsesReady)
+            return;
+        characters.execute!("CREATE TABLE IF NOT EXISTS dmangos_instance_corpse ("
+            ~ "instance INT UNSIGNED NOT NULL, spawn INT UNSIGNED NOT NULL, expires_at BIGINT NOT NULL, "
+            ~ "state MEDIUMTEXT CHARACTER SET ascii NOT NULL, PRIMARY KEY (instance, spawn), KEY (expires_at)) ENGINE=InnoDB")();
+        instanceCorpsesReady = true;
+    }
+
     /// See `WorldDatabase.loadInstances`.
     InstanceRecords loadInstances()
     {
-        import dmangos.world.database : InstanceChestRecord;
+        import dmangos.world.database : InstanceChestRecord, InstanceCorpseRecord;
 
         prepareInstanceChests();
+        prepareInstanceCorpses();
         InstanceRecords all;
         foreach (row; characters.query!"SELECT id, map, resettime, IFNULL(data, '') FROM instance"())
             all.instances ~= InstanceRecord(row.get!uint(0), row.get!uint(1), row.get!long(2), row.get!string(3));
@@ -1156,6 +1169,9 @@ final class CharacterStatements
             all.respawns ~= InstanceRespawnRecord(true, row.get!uint(0), row.get!uint(1), row.get!long(2));
         foreach (row; characters.query!"SELECT instance, spawn, expires_at, loot FROM dmangos_instance_chest"())
             all.chests ~= InstanceChestRecord(row.get!uint(0), row.get!uint(1), row.get!long(2), row.get!string(3));
+        foreach (row; characters.query!("SELECT instance, spawn, expires_at, state FROM dmangos_instance_corpse "
+                ~ "WHERE expires_at > UNIX_TIMESTAMP()")())
+            all.corpses ~= InstanceCorpseRecord(row.get!uint(0), row.get!uint(1), row.get!long(2), row.get!string(3));
         return all;
     }
 
@@ -1197,6 +1213,19 @@ final class CharacterStatements
                 chest.spawn, chest.expiresAt, chest.loot, chest.instance);
     }
 
+    void saveInstanceCorpse(const imported!"dmangos.world.database".InstanceCorpseRecord corpse)
+    {
+        characters.execute!("INSERT INTO dmangos_instance_corpse (instance, spawn, expires_at, state) "
+            ~ "SELECT id, ?, ?, ? FROM instance WHERE id = ? "
+            ~ "ON DUPLICATE KEY UPDATE expires_at = VALUES(expires_at), state = VALUES(state)")(
+                corpse.spawn, corpse.expiresAt, corpse.state, corpse.instance);
+    }
+
+    void deleteInstanceCorpse(uint instance, uint spawn)
+    {
+        characters.execute!"DELETE FROM dmangos_instance_corpse WHERE instance = ? AND spawn = ?"(instance, spawn);
+    }
+
     /// See `WorldDatabase.deleteInstance`.
     void deleteInstance(uint id)
     {
@@ -1206,6 +1235,7 @@ final class CharacterStatements
         characters.execute!"DELETE FROM creature_respawn WHERE instance = ?"(id);
         characters.execute!"DELETE FROM gameobject_respawn WHERE instance = ?"(id);
         characters.execute!"DELETE FROM dmangos_instance_chest WHERE instance = ?"(id);
+        characters.execute!"DELETE FROM dmangos_instance_corpse WHERE instance = ?"(id);
     }
 
     /// See `WorldDatabase.saveInstanceBind`.

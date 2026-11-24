@@ -64,16 +64,18 @@ package void bindLootDelivery(WorldContext context, Map map, Loot loot, bool rol
                 context.deliverRemote(node, guid, cast(ushort) opcode, body_);
             };
     }
-    if (!map.instanceId && context.nodeId && context.sendRemoteLootCoins !is null && context.canSendLootCoins !is null)
+    const remoteCoins = !map.instanceId && context.nodeId && context.sendRemoteLootCoins !is null && context.canSendLootCoins !is null;
+    if (loot.checkpoint !is null || remoteCoins)
     {
-        loot.coinNode = (ulong guid) {
-            if (auto remote = cast(Replica) map.findObject(guid))
-                if (remote.fields.type == TypeId.player && remote.owner != context.nodeId
-                    && context.canSendLootCoins(remote.owner))
-                    return remote.owner;
-            return ushort(0);
-        };
-        loot.coinIssuer = context.nodeId;
+        if (remoteCoins)
+            loot.coinNode = (ulong guid) {
+                if (auto remote = cast(Replica) map.findObject(guid))
+                    if (remote.fields.type == TypeId.player && remote.owner != context.nodeId
+                        && context.canSendLootCoins(remote.owner))
+                        return remote.owner;
+                return ushort(0);
+            };
+        loot.coinIssuer = context.nodeId ? context.nodeId : 1;
         loot.nextCoinPayout = &context.nextGameplaySequence;
         loot.saveCoinPayout = (const ref CoinPayout payout) {
             LootCoinCredit[] shares;
@@ -96,7 +98,7 @@ package void bindLootDelivery(WorldContext context, Map map, Loot loot, bool rol
                 {
                     if (context.onlinePlayer(recipient.guid) !is null)
                         context.redeemLootCoinShare(lowGuid(recipient.guid));
-                    else if (recipient.node)
+                    else if (recipient.node && context.sendRemoteLootCoins !is null)
                     {
                         const message = LootCoinShare(payout.token, recipient.guid, map.id, recipient.copper);
                         context.sendRemoteLootCoins(recipient.node, message);
@@ -129,7 +131,20 @@ package void bindCreatureLoot(WorldContext context, Map map, Creature creature, 
         };
         return;
     }
+    if (context.canCheckpointCorpse(creature))
+    {
+        loot.checkpoint = () {
+            context.saveCorpseLoot(creature);
+            return context.settleWrites();
+        };
+        loot.storeReward = (Looter looter, imported!"dmangos.world.loot".LootItem item, bool sendError) {
+            auto player = cast(Character) looter;
+            return player.storeLootItem(item.itemId, item.count, item.randomPropertyId, sendError,
+                corpseCheckpoint: () => context.checkpointCorpse(creature, item, looter.looterGuid));
+        };
+    }
     loot.changed = () {
+        context.saveCorpseLoot(creature);
         map.refreshViewers(creature);
         if (!skin && loot.replicatesLootView)
             map.refreshReplicaLootView(creature);
@@ -374,8 +389,9 @@ private:
         interruptAuras(AuraInterrupt.looting); // CMaNGOS's `DoLoot`
         recheckQuestLoot(creature.loot);
         recheckRemoteMasterLoot(creature.loot);
-        creature.loot.showContentTo(this);
         creature.inspectingLoot();
+        creature.loot.showContentTo(this);
+        context.saveCorpseLoot(creature);
     }
 
     /// The client takes the money from the open window.
@@ -930,8 +946,12 @@ private:
         loot.beginQuestLootChecks(map.id, &context.nextGameplaySequence, context.sendQuestLootCheck);
         if (victim.loot !is null && loot.lootedForEveryone())
             lootedOutNow(map, victim);
-        else if (loot.replicatesLootView)
-            map.refreshReplicaLootView(victim);
+        else if (victim.loot !is null)
+        {
+            context.saveNewCorpse(victim);
+            if (loot.replicatesLootView)
+                map.refreshReplicaLootView(victim);
+        }
     }
 
     /// Nothing (more) to loot from `victim`: skinnable if it has a skin, its viewers told.
@@ -968,6 +988,8 @@ private:
                 if (context.sendQuestLootCheck !is null)
                     loot.remoteMembers[tapper] = owner;
             }
+            if (loot.checkpoint !is null)
+                bindLootDelivery(context, map, loot, false, false);
             return;
         }
         loot.rule = cast(LootRule) group.lootMethod;
@@ -1057,7 +1079,8 @@ private:
 
     package uint storeLootItem(uint entry, uint count, int randomPropertyId, bool sendError,
         scope imported!"dmangos.world.database".InstanceChestRecord delegate() checkpoint = null,
-        const LootAwardKey award = LootAwardKey.init)
+        const LootAwardKey award = LootAwardKey.init,
+        scope imported!"dmangos.world.database".InstanceCorpseRecord delegate() corpseCheckpoint = null)
     {
         ItemPosCount[] dest;
         const result = player.inventory.canStoreNew(nullBag, nullSlot, dest, entry, count);
@@ -1077,7 +1100,8 @@ private:
         else
             send(pushed);
         flushInventory(false, checkpoint is null ? imported!"dmangos.world.database".InstanceChestRecord.init
-            : checkpoint(), award);
+            : checkpoint(), award, corpse: corpseCheckpoint is null
+                ? imported!"dmangos.world.database".InstanceCorpseRecord.init : corpseCheckpoint());
         return InventoryResult.ok;
     }
 

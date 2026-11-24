@@ -379,6 +379,12 @@ characters database stores the expiry first and the rolled contents when the che
 inventory award and its consumed loot slot are written in the same transaction. The lockout keeps
 the record until reset, including after the chest is exhausted or expires.
 
+Native dungeon and raid corpses with loot have a saved record alongside the spawn death. A
+replacement worker restores the corpse's original GUID, location, decay deadline, rolled contents,
+eligible players and pending rolls. Only players who still need to vote receive the original roll
+prompt. Item claims and the inventory award commit together. Coin shares use a durable payout
+token, so retrying a payout pays each player once.
+
 * **The same spawns everywhere.** Pools, spawn groups and spawn entries are chosen with a seed made
   from the cluster's name and the realm, so every node agrees on which creature a spawn is.
 * **After a node is lost**, the new owner loads saved respawn deadlines, discovers spawns added
@@ -943,6 +949,9 @@ python3 tools/harness/dungeon_recovery.py --new-party --active-wave
 python3 tools/harness/tomb_recovery.py
 python3 tools/harness/tomb_recovery.py --after-reward
 python3 tools/harness/tomb_recovery.py --after-claim
+python3 tools/harness/corpse_recovery.py
+python3 tools/harness/corpse_recovery.py --after-claim
+python3 tools/harness/corpse_recovery.py --during-roll
 ```
 
 Both map options also accept `--cross-realm`. The Arathi Basin test checks the resource score,
@@ -955,6 +964,9 @@ finish the same copy on their existing connections. Gerstahn stays dead and the 
 the one Prison Cell Key it looted before the crash.
 The Tomb checks kill the worker during combat, before opening the reward, and after the first
 claim. Both clients stay in the same copy, and MariaDB records each claimed item once.
+The corpse checks kill Gerstahn's worker before opening his loot, after claiming one drop, and
+after the first player casts a group loot vote. The original client connections reload the same
+copy and the same corpse. The claims and the winner's item are checked in MariaDB.
 
 ## Monitoring
 

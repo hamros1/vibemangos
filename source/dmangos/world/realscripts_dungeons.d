@@ -1465,6 +1465,103 @@ unittest
     assert(d.saved!BlackrockDepths.ring == Fight.done, "the ring is won");
 }
 
+/// Gerstahn's original drops, coins and pending group vote survive a worker crash.
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.world.group : LootMethod;
+    import dmangos.world.loot : RollVote;
+    import dmangos.world.loothandlers : ClientLootRoll, ClientLootSlot;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.packets : ClientGroupName, ClientGuid;
+
+    enum uint gerstahn = 9018, prisonKey = 11140;
+    foreach (groupLoot; [false, true])
+    {
+        auto d = Dungeon.enter(230, 60, 1, groupLoot ? 2 : 1);
+        auto boss = d.spawned(gerstahn, 0, 5);
+        d.pull(boss);
+        if (groupLoot)
+        {
+            d.party[0].write(Opcode.CMSG_GROUP_INVITE, ClientGroupName("Delverb"));
+            d.party[1].write(Opcode.CMSG_GROUP_ACCEPT, null);
+            auto group = d.w.context.groups.of(d.player.guid);
+            assert(group !is null && group.isMember(d.player(1).guid));
+            group.lootMethod = LootMethod.groupLoot;
+            d.port(d.party[1], 230, d.player.position, d.instanceId);
+        }
+        const guid = boss.guid;
+        d.kill(boss);
+        assert(boss.loot !is null && boss.loot.gold > 0 && boss.loot.items.length >= 2);
+        const copper = boss.loot.gold;
+        const template_ = boss.loot.items.dup;
+        const expires = boss.corpseTimer;
+        d.restartAfterCrash();
+        boss = d.map.creatureAt(guid);
+        assert(boss !is null && !boss.alive && boss.loot !is null, "the original unopened corpse recovered");
+        assert(boss.corpseTimer <= expires && boss.loot.gold == copper);
+        assert(boss.loot.items.length == template_.length);
+        foreach (drop; template_)
+        {
+            const restored = boss.loot.itemInSlot(drop.slot);
+            assert(restored.itemId == drop.itemId && restored.count == drop.count
+                && restored.randomPropertyId == drop.randomPropertyId && restored.allowed.keys == drop.allowed.keys);
+        }
+
+        void open() { d.party[0].write(Opcode.CMSG_LOOT, ClientGuid(guid)); }
+        uint awards(uint entry, size_t member = 0)
+        {
+            uint count;
+            foreach (itemGuid, item; d.w.db.itemRows)
+                if (item.entry == entry && d.w.db.itemOwners[itemGuid] == d.player(member).data.guid)
+                    count += item.count;
+            return count;
+        }
+        open();
+        if (groupLoot)
+        {
+            uint slot, item;
+            foreach (drop; boss.loot.items)
+                if (drop.blocked && drop.allowed.length == 2)
+                {
+                    slot = drop.slot;
+                    item = drop.itemId;
+                    break;
+                }
+            assert(item, "the boss's equipment starts a group roll");
+            d.party[0].write(Opcode.CMSG_LOOT_ROLL, ClientLootRoll(guid, slot, RollVote.greed));
+            d.restartAfterCrash();
+            d.party[1].write(Opcode.CMSG_LOOT_ROLL, ClientLootRoll(guid, slot, RollVote.need));
+            assert(awards(item, 1) == 1 && awards(item) == 0, "the original roll ends with one winner");
+            d.restartAfterCrash();
+            open();
+            d.party[0].write(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, ClientLootSlot(cast(ubyte) slot));
+            d.party[1].write(Opcode.CMSG_LOOT_ROLL, ClientLootRoll(guid, slot, RollVote.need));
+            assert(awards(item, 1) == 1 && awards(item) == 0, "a completed roll cannot pay again");
+        }
+        else
+        {
+            ubyte keySlot;
+            foreach (drop; boss.loot.items)
+                if (drop.itemId == prisonKey)
+                    keySlot = drop.slot;
+            d.party[0].write(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, ClientLootSlot(keySlot));
+            const wallet = d.player.money.amount;
+            d.party[0].write(Opcode.CMSG_LOOT_MONEY, null);
+            assert(awards(prisonKey) == 1 && d.player.money.amount == wallet + copper);
+            d.restartAfterCrash();
+            boss = d.map.creatureAt(guid);
+            assert(boss !is null && boss.loot !is null && boss.loot.gold == 0);
+            assert(boss.loot.itemInSlot(keySlot).allowed.length == 0);
+            open();
+            d.party[0].write(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, ClientLootSlot(keySlot));
+            d.party[0].write(Opcode.CMSG_LOOT_MONEY, null);
+            assert(awards(prisonKey) == 1 && d.w.db.moneySaves[d.player.data.guid][0] == wallet + copper);
+        }
+    }
+}
+
 /**
  * The Tomb of the Seven: Doom'rel (9039) challenged (his gossip), the dwarves (9034 .. 9038, 9040) turn on the party one
  * after another, Doom'rel last; all dead, the copy remembers the tomb done.
@@ -1583,7 +1680,8 @@ unittest
     d.run(12.seconds);
     d.kill(guards[0]);
     d.restartAfterCrash();
-    assert(d.map.findObject(defeated) is null, "the defeated incarcerator stays gone");
+    auto defeatedGuard = d.map.creatureAt(defeated);
+    assert(defeatedGuard is null || !defeatedGuard.alive, "the defeated incarcerator stays dead");
     boss = d.map.creatureAt(bossGuid);
     assert(boss !is null && !boss.ai.inCombat, "Emberseer is still growing");
     foreach (g; d.all(incarcerator))

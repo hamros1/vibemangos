@@ -320,6 +320,14 @@ struct InstanceChestRecord
     string loot;
 }
 
+/// An unexpired creature corpse in a dungeon or raid, including its original loot state.
+struct InstanceCorpseRecord
+{
+    uint instance, spawn;
+    long expiresAt;
+    string state;
+}
+
 /// A `character_honor_cp` row: honor from a kill or another source, on a day.
 struct HonorPointRecord
 {
@@ -463,6 +471,7 @@ struct InstanceRecords
     InstanceBindRecord[] binds;
     InstanceRespawnRecord[] respawns;
     InstanceChestRecord[] chests;
+    InstanceCorpseRecord[] corpses;
 }
 
 interface WorldDatabase
@@ -757,6 +766,9 @@ interface WorldDatabase
     void saveInstanceData(uint id, string data);
 
     void saveInstanceChest(const InstanceChestRecord chest);
+    /// When recording a native creature's death, commit its respawn deadline with the corpse.
+    void saveInstanceCorpse(const InstanceCorpseRecord corpse, long respawnAt);
+    void deleteInstanceCorpse(uint instance, uint spawn);
 
     /// The map of instance `id`; uint.max if there is no such instance.
     @DatabaseRead uint instanceMapOf(uint id);
@@ -961,6 +973,10 @@ interface WorldDatabase
     void saveChestAward(uint owner, uint money, uint playerBytes2, const(ItemChange)[] changes,
         const InstanceChestRecord chest);
 
+    /// Commits the inventory award and the remaining corpse loot together.
+    void saveCorpseAward(uint owner, uint money, uint playerBytes2, const(ItemChange)[] changes,
+        const InstanceCorpseRecord corpse);
+
     @DatabaseRead LootAwardResult loadLootAward(const ref LootAwardKey key);
     /// Records the result and any new inventory rows in the same transaction.
     void saveLootAward(const ref LootAwardKey key, ubyte error, long now, uint money, uint playerBytes2,
@@ -1039,6 +1055,7 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     void prepareLedger()
     {
         statements.prepareInstanceChests();
+        statements.prepareInstanceCorpses();
         statements.prepareLootAwards();
         characterDb.execute!("CREATE TABLE IF NOT EXISTS `dmangos_write_applied` ("
             ~ "`stream` INT UNSIGNED NOT NULL, `seq` BIGINT UNSIGNED NOT NULL, PRIMARY KEY (`stream`)"
@@ -1189,6 +1206,17 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     void deleteInstance(uint id) { statements.deleteInstance(id); }
     void saveInstanceData(uint id, string data) { statements.saveInstanceData(id, data); }
     void saveInstanceChest(const InstanceChestRecord chest) { statements.saveInstanceChest(chest); }
+    void saveInstanceCorpse(const InstanceCorpseRecord corpse, long respawnAt)
+    {
+        if (respawnAt)
+            characterDb.transaction({
+                statements.saveInstanceRespawn(false, corpse.spawn, corpse.instance, respawnAt);
+                statements.saveInstanceCorpse(corpse);
+            });
+        else
+            statements.saveInstanceCorpse(corpse);
+    }
+    void deleteInstanceCorpse(uint instance, uint spawn) { statements.deleteInstanceCorpse(instance, spawn); }
     uint instanceMapOf(uint id) { return statements.instanceMapOf(id); }
     uint[uint] instanceBindsOf(uint player) { return statements.instanceBindsOf(player); }
     bool instanceLimitReached(uint account, uint instance, long now)
@@ -1493,6 +1521,15 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
         characterDb.transaction({
             statements.saveInventory(owner, money, playerBytes2, changes);
             statements.saveInstanceChest(chest);
+        });
+    }
+
+    void saveCorpseAward(uint owner, uint money, uint playerBytes2, const(ItemChange)[] changes,
+        const InstanceCorpseRecord corpse)
+    {
+        characterDb.transaction({
+            statements.saveInventory(owner, money, playerBytes2, changes);
+            statements.saveInstanceCorpse(corpse);
         });
     }
 
@@ -2015,6 +2052,13 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
     {
         saveInventory(owner, money, playerBytes2, changes);
         saveInstanceChest(chest);
+    }
+
+    void saveCorpseAward(uint owner, uint money, uint playerBytes2, const(ItemChange)[] changes,
+        const InstanceCorpseRecord corpse)
+    {
+        saveInventory(owner, money, playerBytes2, changes);
+        saveInstanceCorpse(corpse, 0);
     }
 
     private LootAwardResult[LootAwardKey] lootAwards;
@@ -2694,6 +2738,26 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
         instanceRows.chests ~= chest;
     }
 
+    void saveInstanceCorpse(const InstanceCorpseRecord corpse, long respawnAt)
+    {
+        if (respawnAt)
+            saveInstanceRespawn(false, corpse.spawn, corpse.instance, respawnAt);
+        foreach (ref row; instanceRows.corpses)
+            if (row.instance == corpse.instance && row.spawn == corpse.spawn)
+            {
+                row = corpse;
+                return;
+            }
+        instanceRows.corpses ~= corpse;
+    }
+
+    void deleteInstanceCorpse(uint instance, uint spawn)
+    {
+        import std.algorithm.mutation : remove;
+
+        instanceRows.corpses = instanceRows.corpses.remove!(r => r.instance == instance && r.spawn == spawn);
+    }
+
     uint instanceMapOf(uint id)
     {
         foreach (ref r; instanceRows.instances)
@@ -2723,6 +2787,7 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
         instanceRows.binds = instanceRows.binds.filter!(b => b.instance != id).array;
         instanceRows.respawns = instanceRows.respawns.filter!(r => r.instance != id).array;
         instanceRows.chests = instanceRows.chests.filter!(r => r.instance != id).array;
+        instanceRows.corpses = instanceRows.corpses.filter!(r => r.instance != id).array;
     }
     private import dmangos.world.context : InstanceEntry;
     private InstanceEntry[][uint] instanceEntries;
