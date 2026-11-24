@@ -916,6 +916,13 @@ private:
                 (hit.left > 0 || waiting ? still : due) ~= hit;
             }
             pendingHits = still;
+            if (due.length && !checkpointSummons(true))
+            {
+                foreach (ref hit; due)
+                    hit.left = 1000;
+                pendingHits ~= due;
+                return;
+            }
             PendingHit[] local;
             foreach (hit; due)
             {
@@ -1705,7 +1712,7 @@ private:
     }
 
     /// Death, logging out, a far teleport: casts end.
-    void spellsOnLeave()
+    void spellsOnLeave(bool leavingMap = true)
     {
         areaAurasOnLeave();
         if (generic.active)
@@ -1713,6 +1720,12 @@ private:
         endChannel(true);
         endGroundCasts();
         removeTraps();
+        if (leavingMap && pendingHits.length)
+        {
+            pendingHits = null;
+            missileSpends = null;
+            checkpointSummons(true);
+        }
         nextSwing.active = false;
     }
 
@@ -2085,6 +2098,7 @@ private:
         state.put(map.instanceId);
         state.put(context.transportNow());
         writeCastHandoff(state);
+        writeFlightHandoff(state);
         return state.data;
     }
 
@@ -2094,6 +2108,8 @@ private:
             return;
         const elapsed = max(0, cast(int)(context.transportNow() - state.read!uint));
         readCastHandoff(state, elapsed);
+        if (!state.empty)
+            readFlightHandoff(state);
         if (generic.active)
             map.sendToWatchers(this, Opcode.SMSG_SPELL_START, spellStartPacket(player.guid, generic.spell.id,
                 cast(uint) max(0, generic.timer), generic.targets), true);
@@ -3137,6 +3153,7 @@ private:
                     c.auraEffects[target] |= cast(ubyte)(1 << i);
         }
         // A missile (`speed`) reaches each target after its flight: the effects then.
+        const pendingBefore = pendingHits.length;
         foreach (i; 0 .. 3)
             foreach (target; effectTargets[i])
                 if (missOf[target] == SpellMissInfo.none)
@@ -3269,6 +3286,8 @@ private:
         classAfterEffects(spell, landed, dodgedBy);
         harmlessHitProcs(spell, landed);
         flushPlayerChanges();
+        if (pendingHits.length > pendingBefore)
+            checkpointSummons(true);
         return SpellCastResult.ok;
     }
 

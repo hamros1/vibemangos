@@ -1023,6 +1023,7 @@ python3 tools/harness/ground_spell_recovery.py
 python3 tools/harness/ground_spell_recovery.py --channeled
 python3 tools/harness/spell_cast_recovery.py
 python3 tools/harness/spell_cast_recovery.py --finished
+python3 tools/harness/spell_cast_recovery.py --projectile
 python3 tools/harness/hunter_trap_recovery.py
 python3 tools/harness/hunter_trap_recovery.py --clean
 ```
@@ -1070,6 +1071,8 @@ The ground-spell checks kill the caster's worker after Consecration or Blizzard 
 verify the same effect resumes and expires on schedule. Blizzard also restores the channel timer.
 The unfinished-cast check preserves a Fireball's original target, then checks that the spell
 resolves once even if the worker dies just after it lands.
+The projectile check kills the worker after Fireball launches and verifies that the missile
+hits once on the original client connection.
 The hunter-trap checks keep an armed Freezing Trap through both kinds of transfer and verify
 that it can freeze the new target once.
 
@@ -1133,7 +1136,9 @@ An unfinished player or creature cast resumes after a clean handoff with its ori
 remaining cast time. The new owner also keeps active spell-school lockouts and the player's global
 cooldown. A gateway player can resume an unfinished cast after a worker crash. The replacement
 uses the original deadline and removes the checkpoint before resolving the cast.
-Player projectiles launched at a local target keep their flight time when the caster moves. Supported
+Player projectiles launched at a local target keep their flight time when the caster moves or
+their gateway worker crashes in the same map and copy. The replacement retires the pending
+impact before applying it. Supported
 direct damage, healing and aura effects can also follow the target to its new owner.
 Player channels such as Arcane Missiles keep their remaining time and next pulse when the caster
 moves. A far-seeing player keeps the same camera viewpoint and watches replicas around it.

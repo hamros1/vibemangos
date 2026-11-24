@@ -216,7 +216,7 @@ private:
         // A way back of its own (a Soulstone, Reincarnation): the client offers it while it lies dead.
         player.values.set!PLAYER_SELF_RES_SPELL(selfResurrectionSpell());
         petsOnLeave(); // the pet goes with its owner's death, and comes back with its life
-        spellsOnLeave();
+        spellsOnLeave(false);
         worldPvpDied(); // Silithyst falls where its carrier does
         removeAurasOnDeath();
         cancelTrade(true);
