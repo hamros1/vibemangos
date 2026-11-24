@@ -33,7 +33,7 @@ import dmangos.cluster.protocol : PresenceEntry;
 import dmangos.world.whisper : WhisperFrom;
 import dmangos.cluster.regions : Region, RegionState;
 import dmangos.world.creature : Creature, CreatureParts, CreatureSpawn, CreatureTemplate, Npc, NpcStandIn, TempSpawn, TempSpawnType, VirtualItem;
-import dmangos.world.gameobject : GameObject, GameObjectSpawn, GameObjectType;
+import dmangos.world.gameobject : GameObject, GameObjectSpawn, GameObjectType, GoLootState;
 import dmangos.world.auctionhouse;
 import dmangos.world.database : MailRecord;
 import dmangos.world.movement : Position;
@@ -4434,19 +4434,33 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 if (auto s = instance in instanceScripts)
                     s.raise(PlayerEntered(EntityRef(who.character.guid)));
                 if (const state = instance in instances)
-                    if (state.corpses.length)
+                    if (state.corpses.length || state.chests.length)
                         created.forEachObject((MapObject object) {
                             if (auto corpse = cast(Creature) object)
                                 if (corpse.loot !is null && corpse.spawn.guid in state.corpses)
                                     corpse.loot.resumeRollsFor(who.character.guid);
+                            if (auto chest = cast(GameObject) object)
+                                if (chest.loot !is null && chest.spawn.guid in state.chests)
+                                    chest.loot.resumeRollsFor(who.character.guid);
                         });
                 if (!instance)
+                {
                     foreach (guid; outdoorCorpses.keys)
                         if (const spawn = creatureSpawnOf(guid))
                             if (spawn.map == id)
                                 if (auto creature = created.creatureAt(makeGuid(HighGuid.unit, spawn.entry, guid)))
                                     if (creature.loot !is null)
                                         creature.loot.resumeRollsFor(who.character.guid);
+                    foreach (guid; outdoorChests.byKey)
+                        if (const index = guid in gameObjectSpawnIndex)
+                        {
+                            const spawn = &data.gameObjectSpawns[*index];
+                            if (spawn.map == id)
+                                if (auto chest = created.gameObjectAt(makeGuid(HighGuid.gameObject, spawn.entry, guid)))
+                                    if (chest.loot !is null)
+                                        chest.loot.resumeRollsFor(who.character.guid);
+                        }
+                }
             };
         if (instance == 0) // open-world round 2: the continent's script (`world_template`)
             if (const name = id in data.worldScriptNames)
@@ -5484,6 +5498,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if (r.creature.spawn)
                 creatureLoanGained(r, arriving.get(r.id, null));
         refreshOutdoorCorpses(gained, lost);
+        refreshOutdoorChests(gained, lost);
         bool[uint] looked;
         foreach (ref r; gained)
             if (r.map !in looked)
@@ -5499,23 +5514,25 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return !region.creature.spawn && client.maps.lookup(region.map) !is null && !instanceable(region.map);
     }
 
+    private bool outdoorRegionCovers(Spawn)(const(Spawn)* spawn, const(Region)[] regions)
+    {
+        import std.algorithm.searching : any;
+
+        return regions.any!(r => physicalWorldRegion(r) && r.map == spawn.map
+            && r.rect.containsKey(cellKeyAt(spawn.x, spawn.y)));
+    }
+
     private void refreshOutdoorCorpses(const(Region)[] gained, const(Region)[] lost)
     {
         import dmangos.log : warning;
         import dmangos.mysql : DatabaseException;
-        import dmangos.world.instancescripting : fromHex;
         import std.algorithm.searching : any;
 
         if (!config.cluster.enabled)
             return;
-        bool covers(const(CreatureSpawn)* spawn, const(Region)[] regions)
-        {
-            return regions.any!(r => physicalWorldRegion(r) && r.map == spawn.map
-                && r.rect.containsKey(cellKeyAt(spawn.x, spawn.y)));
-        }
         foreach (guid; outdoorCorpses.keys)
             if (const spawn = creatureSpawnOf(guid))
-                if (covers(spawn, lost))
+                if (outdoorRegionCovers(spawn, lost))
                     outdoorCorpses.remove(guid);
         if (!gained.any!(r => physicalWorldRegion(r)))
             return;
@@ -5531,7 +5548,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         {
             const spawn = creatureSpawnOf(corpse.spawn);
             if (spawn is null || corpse.expiresAt <= unixTime || creatureOnLoan(corpse.spawn)
-                || !covers(spawn, gained) || respawnAt.get(corpse.spawn, 0) <= unixTime)
+                || !outdoorRegionCovers(spawn, gained) || corpse.spawn !in respawnAt)
                 continue;
             auto where = map(spawn.map);
             outdoorCorpses[corpse.spawn] = corpse;
@@ -5539,12 +5556,44 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 continue; // the clean bundle contains the newer live state
             try
             {
-                const migrant = Migrant(MigrantKind.creature, corpse.spawn, cellKeyAt(spawn.x, spawn.y), fromHex(corpse.state));
+                const migrant = outdoorCorpseMigrant(*spawn, corpse);
                 where.migrateIn(encodeBundle(null, [migrant]), (const ref Migrant saved) => restoreSavedCorpse(where, saved));
             }
             catch (Exception error)
                 warning!"migration: could not read outdoor corpse %s: %s"(corpse.spawn, error.msg);
         }
+    }
+
+    private static Migrant outdoorCorpseMigrant(const ref CreatureSpawn spawn, const ref InstanceCorpseRecord corpse)
+    {
+        import dmangos.world.instancescripting : fromHex;
+
+        return Migrant(MigrantKind.creature, corpse.spawn, cellKeyAt(spawn.x, spawn.y), fromHex(corpse.state));
+    }
+
+    private void refreshOutdoorChests(const(Region)[] gained, const(Region)[] lost)
+    {
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
+        import std.algorithm.searching : any;
+
+        if (!config.cluster.enabled)
+            return;
+        foreach (guid; outdoorChests.keys)
+            if (const index = guid in gameObjectSpawnIndex)
+                if (outdoorRegionCovers(&data.gameObjectSpawns[*index], lost))
+                    outdoorChests.remove(guid);
+        if (!gained.any!(r => physicalWorldRegion(r)))
+            return;
+        try
+        {
+            foreach (chest; database.loadOutdoorChests())
+                if (const index = chest.spawn in gameObjectSpawnIndex)
+                    if (outdoorRegionCovers(&data.gameObjectSpawns[*index], gained))
+                        outdoorChests[chest.spawn] = chest;
+        }
+        catch (DatabaseException error)
+            warning!"migration: could not refresh outdoor chests: %s"(error.msg);
     }
 
     private void releaseRegionCharms(const ref Region region)
@@ -5809,13 +5858,37 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (auto cells = mapId in data.creatureCells)
             foreach (index; (*cells).get(cell, null))
             {
-                if (awaitingRespawn(data.creatureSpawns[index].guid) || creatureOnLoan(data.creatureSpawns[index].guid))
+                const spawn = &data.creatureSpawns[index];
+                if (creatureOnLoan(spawn.guid))
+                    continue;
+                if (const corpse = spawn.guid in outdoorCorpses)
+                    if (corpse.expiresAt > unixTime)
+                    {
+                        auto where = existingMap(mapId);
+                        if (where is null || where.creatureAt(loanGuid(spawn)) !is null)
+                            continue;
+                        try
+                        {
+                            const migrant = outdoorCorpseMigrant(*spawn, *corpse);
+                            if (auto restored = restoreSavedCorpse(where, migrant))
+                            {
+                                spawned ~= restored;
+                                continue;
+                            }
+                        }
+                        catch (Exception error)
+                        {
+                            import dmangos.log : warning;
+                            warning!"map %s: could not read outdoor corpse %s: %s"(mapId, spawn.guid, error.msg);
+                        }
+                    }
+                if (awaitingRespawn(spawn.guid))
                     continue; // dead: it comes back when its time is up
-                if (!creatureInEvents(data.creatureSpawns[index].guid))
+                if (!creatureInEvents(spawn.guid))
                     continue; // its game event says it is away
-                if (!upInPool(PoolMember.Kind.creature, data.creatureSpawns[index].guid))
+                if (!upInPool(PoolMember.Kind.creature, spawn.guid))
                     continue; // another of its pool is up
-                if (auto creature = makeCreature(&data.creatureSpawns[index]))
+                if (auto creature = makeCreature(spawn))
                 {
                     spawned ~= creature;
                     queueLinked(mapId, 0, creature);
@@ -5834,7 +5907,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if ((spawn.respawnSeconds < 0 && !eventActivatesObject(spawn.guid)) || gameObjectAwaitingRespawn(spawn.guid)
             || !gameObjectInEvents(spawn.guid) || !upInPool(PoolMember.Kind.gameObject, spawn.guid))
             return null;
-        return makeGameObject(spawn);
+        auto object = makeGameObject(spawn);
+        if (const saved = spawn.guid in outdoorChests)
+            restoreOutdoorChest(object, *saved);
+        return object;
     }
 
     /**
@@ -6768,17 +6844,23 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         }
         else
         {
-            if (creature.loot !is null)
-                foreach (guid; creature.loot.owners.keys)
-                    if (auto session = onlinePlayer(guid))
-                        if (session.character !is null && session.currentMap.id == creature.spawn.map && !session.transferring)
-                        {
-                            const progress = session.character.progress(session.secondsInWorld());
-                            database.saveProgress(progress);
-                        }
+            saveOutdoorLootPositions(existingMap(creature.spawn.map), creature.loot);
             respawnAt[creature.spawn.guid] = creature.respawnAt;
             database.saveInstanceCorpse(checkpointCorpse(creature), creature.respawnAt);
         }
+    }
+
+    private void saveOutdoorLootPositions(Map map, Loot loot)
+    {
+        if (loot is null)
+            return;
+        foreach (guid; loot.owners.byKey)
+            if (auto session = onlinePlayer(guid))
+                if (session.character !is null && session.currentMap is map && !session.transferring)
+                {
+                    const progress = session.character.progress(session.secondsInWorld());
+                    database.saveProgress(progress);
+                }
     }
 
     package InstanceCorpseRecord checkpointCorpse(Creature creature, const LootItem claimed = null, ulong looter = 0)
@@ -8522,6 +8604,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     /// Game objects used up: spawn guid -> when they come back (Unix time), as `gameobject_respawn` has it.
     private long[uint] gameObjectRespawnAt;
+    private InstanceChestRecord[uint] outdoorChests;
 
     /// A game object from its spawn, with what it needs to show players their quests' objects.
     GameObject makeGameObject(scope const ref GameObjectSpawn spawn)
@@ -8573,12 +8656,48 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             && !go.template_.data[4] && !go.template_.data[5];
     }
 
+    package bool canCheckpointChest(const GameObject go)
+    {
+        if (go.instanceId)
+            return isInstanceReward(go);
+        return config.cluster.enabled && go.spawn.guid < temporaryCounterStart
+            && go.type == GameObjectType.chest && go.consumable && go.spawn.respawnSeconds >= 0
+            && go.spawn.guid !in unsavedGameObjectSpawns
+            && (data.pools is null || !data.pools.inPool(PoolMember.Kind.gameObject, go.spawn.guid));
+    }
+
+    package void saveOpenedChest(Map map, GameObject go)
+    {
+        if (!canCheckpointChest(go))
+            return;
+        if (!go.instanceId)
+            saveOutdoorLootPositions(map, go.loot);
+        database.saveInstanceChest(checkpointReward(map, go));
+    }
+
+    package void saveRefilledChest(Map map, GameObject go)
+    {
+        if (!go.instanceId && go.spawn.guid in outdoorChests)
+            database.saveInstanceChest(checkpointReward(map, go));
+    }
+
     package InstanceChestRecord checkpointReward(Map map, GameObject go,
         const imported!"dmangos.world.loot".LootItem claimed = null, ulong looter = 0)
     {
         import dmangos.bytes : ByteWriter;
         import dmangos.world.instancescripting : toHex;
 
+        if (!go.instanceId)
+        {
+            ByteWriter w;
+            go.saveState(w, transportNow(), 0, claimed, looter);
+            const previous = outdoorChests.get(go.spawn.guid, InstanceChestRecord.init);
+            const openedUntil = go.despawnTimer > 0 ? unixTime + (go.despawnTimer + 999L) / 1000 : 0;
+            auto record = InstanceChestRecord(0, go.spawn.guid,
+                openedUntil && previous.expiresAt ? previous.expiresAt : openedUntil, toHex(w.data));
+            outdoorChests[go.spawn.guid] = record;
+            return record;
+        }
         auto state = go.instanceId in instances;
         if (state is null)
             return InstanceChestRecord.init;
@@ -8610,7 +8729,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.bytes : ByteReader, PacketException;
         import dmangos.log : warning;
         import dmangos.world.gameobject : GoLootState;
-        import dmangos.world.gameobjecthandlers : bindChestLoot;
         import dmangos.world.instancescripting : fromHex;
         import dmangos.world.loot : Loot;
         import std.algorithm.searching : all;
@@ -8634,7 +8752,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             go.loot = loot;
             go.lootState = GoLootState.activated;
             go.despawnTimer = cast(int)(remaining > int.max / 1000 ? int.max : remaining * 1000);
-            bindChestLoot(this, instanceMaps[go.instanceId], go, loot);
+            bindMigrantLoot(go, instanceMaps[go.instanceId]);
             return true;
         }
         catch (PacketException e)
@@ -8642,6 +8760,36 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             warning!"could not restore reward chest %s of instance %s: %s"(reward.spawn, reward.instance, e.msg);
             return false;
         }
+    }
+
+    private void restoreOutdoorChest(GameObject go, const ref InstanceChestRecord chest)
+    {
+        import dmangos.log : warning;
+        import dmangos.world.instancescripting : fromHex;
+
+        if (!canCheckpointChest(go))
+            return;
+        try
+        {
+            auto bytes = ByteReader(fromHex(chest.loot));
+            go.loadState(bytes, transportNow());
+            if (chest.expiresAt && chest.expiresAt <= unixTime)
+            {
+                go.loot = null;
+                go.lootState = GoLootState.justDeactivated;
+                return;
+            }
+            if (go.loot is null)
+                return;
+            go.despawnTimer = cast(int)((chest.expiresAt - unixTime) * 1000);
+            bindMigrantLoot(go, existingMap(go.spawn.map));
+            if (go.lootState == GoLootState.activated && go.loot.lootedForEveryone())
+                go.loot.lootedForAll();
+            else
+                go.loot.resumeRemoteRolls();
+        }
+        catch (Exception error)
+            warning!"map %s: could not restore outdoor chest %s: %s"(go.spawn.map, chest.spawn, error.msg);
     }
 
     /// A game object used up: it comes back after its spawn's respawn time.
@@ -8663,9 +8811,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         }
         if (go.spawn.respawnSeconds < 0)
             return;
-        const at = unixTime + (go.spawn.respawnSeconds > 0 ? go.spawn.respawnSeconds : 0);
+        const saved = go.spawn.guid in outdoorChests;
+        const finished = saved !is null && saved.expiresAt && saved.expiresAt < unixTime ? saved.expiresAt : unixTime;
+        const at = finished + (go.spawn.respawnSeconds > 0 ? go.spawn.respawnSeconds : 0);
         gameObjectRespawnAt[go.spawn.guid] = at;
-        database.saveGameObjectRespawn(go.spawn.guid, at);
+        if (outdoorChests.remove(go.spawn.guid))
+            database.finishOutdoorChest(go.spawn.guid, at);
+        else
+            database.saveGameObjectRespawn(go.spawn.guid, at);
     }
 
     /// Whether a game object spawn is used up and waiting to come back.
@@ -8909,6 +9062,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     if (!corpse.alive)
                         continue;
             respawnAt.remove(guid);
+            if (outdoorCorpses.remove(guid))
+                database.deleteInstanceCorpse(0, guid);
             database.saveCreatureRespawn(guid, 0);
             if (spawn is null)
                 continue;

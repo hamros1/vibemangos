@@ -766,6 +766,9 @@ interface WorldDatabase
     void saveInstanceData(uint id, string data);
 
     void saveInstanceChest(const InstanceChestRecord chest);
+    @DatabaseRead InstanceChestRecord[] loadOutdoorChests();
+    /// Retire the original chest and record its respawn together.
+    void finishOutdoorChest(uint spawn, long respawnAt);
     /// When recording a native creature's death, commit its respawn deadline with the corpse.
     void saveInstanceCorpse(const InstanceCorpseRecord corpse, long respawnAt);
     void deleteInstanceCorpse(uint instance, uint spawn);
@@ -1207,6 +1210,14 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     void deleteInstance(uint id) { statements.deleteInstance(id); }
     void saveInstanceData(uint id, string data) { statements.saveInstanceData(id, data); }
     void saveInstanceChest(const InstanceChestRecord chest) { statements.saveInstanceChest(chest); }
+    InstanceChestRecord[] loadOutdoorChests() { return statements.loadOutdoorChests(); }
+    void finishOutdoorChest(uint spawn, long respawnAt)
+    {
+        characterDb.transaction({
+            statements.saveGameObjectRespawn(spawn, respawnAt);
+            statements.deleteOutdoorChest(spawn);
+        });
+    }
     void saveInstanceCorpse(const InstanceCorpseRecord corpse, long respawnAt)
     {
         if (respawnAt)
@@ -2741,6 +2752,22 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
                 return;
             }
         instanceRows.chests ~= chest;
+    }
+
+    InstanceChestRecord[] loadOutdoorChests()
+    {
+        import std.algorithm.iteration : filter;
+        import std.array : array;
+
+        return instanceRows.chests.filter!(row => !row.instance).array;
+    }
+
+    void finishOutdoorChest(uint spawn, long respawnAt)
+    {
+        import std.algorithm.mutation : remove;
+
+        saveGameObjectRespawn(spawn, respawnAt);
+        instanceRows.chests = instanceRows.chests.remove!(row => row.instance == 0 && row.spawn == spawn);
     }
 
     void saveInstanceCorpse(const InstanceCorpseRecord corpse, long respawnAt)

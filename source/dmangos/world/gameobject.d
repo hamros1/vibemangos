@@ -538,7 +538,8 @@ final class GameObject : Replicable, Moving, PerViewer
     }
 
     /// Its fields and pending door, goober or trap state, for its next owner (docs/CLUSTER.md).
-    void saveState(ref ByteWriter w, uint now, long expires = 0) const
+    void saveState(ref ByteWriter w, uint now, long expires = 0,
+        const imported!"dmangos.world.loot".LootItem claimed = null, ulong looter = 0) const
     {
         w.put(cast(ushort) values.length);
         foreach (slot; 0 .. values.length)
@@ -564,7 +565,7 @@ final class GameObject : Replicable, Moving, PerViewer
                 w.put(guid);
             w.put(loot !is null);
             if (loot !is null)
-                loot.saveHandoff(w, null, 0, true);
+                loot.saveHandoff(w, claimed, looter, true);
             return;
         }
         if (type == GameObjectType.door || type == GameObjectType.button

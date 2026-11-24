@@ -1167,7 +1167,8 @@ final class CharacterStatements
             all.respawns ~= InstanceRespawnRecord(false, row.get!uint(0), row.get!uint(1), row.get!long(2));
         foreach (row; characters.query!"SELECT guid, instance, respawntime FROM gameobject_respawn WHERE instance <> 0"())
             all.respawns ~= InstanceRespawnRecord(true, row.get!uint(0), row.get!uint(1), row.get!long(2));
-        foreach (row; characters.query!"SELECT instance, spawn, expires_at, loot FROM dmangos_instance_chest"())
+        foreach (row; characters.query!("SELECT instance, spawn, expires_at, loot FROM dmangos_instance_chest "
+                ~ "WHERE instance <> 0")())
             all.chests ~= InstanceChestRecord(row.get!uint(0), row.get!uint(1), row.get!long(2), row.get!string(3));
         foreach (row; characters.query!("SELECT instance, spawn, expires_at, state FROM dmangos_instance_corpse "
                 ~ "WHERE instance <> 0 AND expires_at > UNIX_TIMESTAMP()")())
@@ -1207,10 +1208,31 @@ final class CharacterStatements
 
     void saveInstanceChest(const imported!"dmangos.world.database".InstanceChestRecord chest)
     {
-        characters.execute!("INSERT INTO dmangos_instance_chest (instance, spawn, expires_at, loot) "
-            ~ "SELECT id, ?, ?, ? FROM instance WHERE id = ? "
-            ~ "ON DUPLICATE KEY UPDATE expires_at = VALUES(expires_at), loot = VALUES(loot)")(
-                chest.spawn, chest.expiresAt, chest.loot, chest.instance);
+        if (chest.instance)
+            characters.execute!("INSERT INTO dmangos_instance_chest (instance, spawn, expires_at, loot) "
+                ~ "SELECT id, ?, ?, ? FROM instance WHERE id = ? "
+                ~ "ON DUPLICATE KEY UPDATE expires_at = VALUES(expires_at), loot = VALUES(loot)")(
+                    chest.spawn, chest.expiresAt, chest.loot, chest.instance);
+        else
+            characters.execute!("INSERT INTO dmangos_instance_chest (instance, spawn, expires_at, loot) "
+                ~ "VALUES (0, ?, ?, ?) ON DUPLICATE KEY UPDATE expires_at = VALUES(expires_at), loot = VALUES(loot)")(
+                    chest.spawn, chest.expiresAt, chest.loot);
+    }
+
+    imported!"dmangos.world.database".InstanceChestRecord[] loadOutdoorChests()
+    {
+        import dmangos.world.database : InstanceChestRecord;
+
+        prepareInstanceChests();
+        InstanceChestRecord[] result;
+        foreach (row; characters.query!"SELECT spawn, expires_at, loot FROM dmangos_instance_chest WHERE instance = 0"())
+            result ~= InstanceChestRecord(0, row.get!uint(0), row.get!long(1), row.get!string(2));
+        return result;
+    }
+
+    void deleteOutdoorChest(uint spawn)
+    {
+        characters.execute!"DELETE FROM dmangos_instance_chest WHERE instance = 0 AND spawn = ?"(spawn);
     }
 
     void saveInstanceCorpse(const imported!"dmangos.world.database".InstanceCorpseRecord corpse)

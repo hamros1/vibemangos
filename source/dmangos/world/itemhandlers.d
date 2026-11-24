@@ -119,7 +119,7 @@ private:
             sendUpdate(update);
         const changes = inventory.takeChanges();
         flushPlayerChanges(false);
-        if (chest.instance)
+        if (chest.spawn)
             context.database.saveChestAward(player.data.guid, player.money.amount, player.values[PLAYER_BYTES_2], changes, chest);
         else if (corpse.spawn)
             context.database.saveCorpseAward(player.data.guid, player.money.amount, player.values[PLAYER_BYTES_2], changes, corpse);
