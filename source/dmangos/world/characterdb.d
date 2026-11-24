@@ -1378,6 +1378,34 @@ final class CharacterStatements
         characters.execute!"DELETE FROM dmangos_quest_actor WHERE realm = ? AND actor = ?"(realm, actor);
     }
 
+    void prepareDungeonFights()
+    {
+        characters.execute!("CREATE TABLE IF NOT EXISTS dmangos_dungeon_fight ("
+            ~ "instance INT UNSIGNED NOT NULL, spawn INT UNSIGNED NOT NULL, "
+            ~ "state MEDIUMTEXT CHARACTER SET ascii NOT NULL, PRIMARY KEY (instance, spawn)) ENGINE=InnoDB")();
+    }
+
+    imported!"dmangos.world.database".DungeonFightCheckpoint[] loadDungeonFights(uint instance)
+    {
+        import dmangos.world.database : DungeonFightCheckpoint;
+
+        DungeonFightCheckpoint[] fights;
+        foreach (row; characters.query!"SELECT spawn, state FROM dmangos_dungeon_fight WHERE instance = ?"(instance))
+            fights ~= DungeonFightCheckpoint(row.get!uint(0), row.get!string(1));
+        return fights;
+    }
+
+    void saveDungeonFight(uint instance, const imported!"dmangos.world.database".DungeonFightCheckpoint fight)
+    {
+        characters.execute!"REPLACE INTO dmangos_dungeon_fight (instance, spawn, state) VALUES (?, ?, ?)"(
+            instance, fight.spawn, fight.state);
+    }
+
+    void deleteDungeonFight(uint instance, uint spawn)
+    {
+        characters.execute!"DELETE FROM dmangos_dungeon_fight WHERE instance = ? AND spawn = ?"(instance, spawn);
+    }
+
     void prepareOutdoorScripts()
     {
         characters.execute!("CREATE TABLE IF NOT EXISTS dmangos_outdoor_script ("
@@ -1480,6 +1508,7 @@ final class CharacterStatements
         characters.execute!"DELETE FROM dmangos_instance_chest WHERE instance = ?"(id);
         characters.execute!"DELETE FROM dmangos_instance_corpse WHERE instance = ?"(id);
         characters.execute!"DELETE FROM dmangos_pickpocket WHERE instance = ?"(id);
+        characters.execute!"DELETE FROM dmangos_dungeon_fight WHERE instance = ?"(id);
     }
 
     /// See `WorldDatabase.saveInstanceBind`.

@@ -265,9 +265,66 @@ def run(fixture, new_party, active_wave):
           "with its boss death and one prison key intact")
 
 
+def native_fight(fixture):
+    spell, entry = 133, 8889
+    world = fixture.world_with_writable_tables("creature", "spell_template")
+    creature, tx, ty, tz = fixture.query(f"SELECT guid,position_x,position_y,position_z FROM creature "
+                                         f"WHERE map={MAP} AND id={entry} ORDER BY guid LIMIT 1", world).split()
+    x, y, z = float(tx) + 1, float(ty), float(tz)
+    fixture.query(f"UPDATE creature SET spawndist=0,MovementType=0 WHERE guid={creature}; "
+                  f"UPDATE spell_template SET CastingTimeIndex=1 WHERE Id={spell}", world)
+    characters, names, leader, client, nodes, _ = start_cluster(
+        fixture, new_party=True, world=world, leader_appearance=(1, 8))
+    enter, cast, finish = (fixture.directory / flag for flag in ("enter", "cast", "finish"))
+    player = client("player", 0, f"login:{names[0]}", "cmd:.cheat god", "cmd:.cheat power", wait(enter),
+                    f"trigger:{ENTRANCE}", f"worldport:{MAP}:{x}:{y}:{z}", wait(cast),
+                    f"approach:{entry}:2", f"cast:{spell}:{entry}", wait(finish), "logout")
+
+    def log():
+        output = fixture.log("player")
+        if player.poll() is not None:
+            raise RuntimeError(output[-3300:])
+        return output
+
+    wait_for("the entrance session to reach a worker",
+             lambda: any(f"'{names[0]}' arrived from another node" in fixture.log(tag)
+                         for tag in ("node1", "node2", "node3")), 25)
+    enter.touch()
+    wait_for("the original player entering Blackrock Depths", lambda: f"[new world] map {MAP} " in log(), 15)
+    position = f"{x:.1f} {y:.1f} {z:.1f}"
+    wait_for("the player near the native dungeon spawn", lambda: f"[teleport] to {position};" in log(), 9)
+    host = wait_for("the dungeon worker",
+                    lambda: next((tag for tag in ("node1", "node2", "node3")
+                        if f"'{names[0]}' teleported to map {MAP} ({x:.1f}, {y:.1f}, {z:.1f})" in fixture.log(tag)), ""),
+                    12)
+    health = re.compile(rf"\[creature\] {entry} guid {creature}: .*?health (\d+),")
+    initial = int(wait_for("the original Anvilrage Overseer", lambda: health.search(log()), 8)[1])
+    cast.touch()
+    hit = re.compile(rf"\[spell damage\] {spell}: \d+ to {creature}\b")
+    wait_for("Fireball to wound the Overseer", lambda: hit.search(log()), 10)
+    row = f"SELECT instance FROM dmangos_dungeon_fight WHERE spawn={creature}"
+    copy = wait_for("the native fight checkpoint", lambda: fixture.query(row, characters), 5)
+    offset = len(log())
+    nodes[host].kill()
+    assert nodes[host].wait(timeout=10) < 0
+
+    def recovered():
+        return log()[offset:].partition(f"[new world] map {MAP} ")[2]
+
+    injured = wait_for("the same injured creature in the same copy", lambda: health.search(recovered()), 40)
+    assert 0 < int(injured[1]) < initial
+    assert fixture.query(row, characters) == copy
+    assert fixture.query(f"SELECT id FROM instance WHERE map={MAP}", characters) == copy
+    finish.touch()
+    assert player.wait(timeout=20) == 0
+    print(f"PASS: killed {host}, restored the original injured Overseer and player in Blackrock Depths copy {copy}")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--new-party", action="store_true", help="form the party through an in-game invite")
     parser.add_argument("--active-wave", action="store_true", help="kill the worker with part of the first wave still alive")
+    parser.add_argument("--native-fight", action="store_true", help="kill the worker during a fight outside a scripted encounter")
     args = parser.parse_args()
-    run_test("blackrock-depths-recovery", lambda fixture: run(fixture, args.new_party, args.active_wave))
+    run_test("blackrock-depths-recovery", native_fight if args.native_fight
+             else lambda fixture: run(fixture, args.new_party, args.active_wave))

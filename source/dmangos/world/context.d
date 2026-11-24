@@ -67,7 +67,8 @@ import dmangos.world.characterdb : DeleteOptions, GuidCounters;
 import dmangos.world.transports : ShipObject, mapAt, transportClock;
 import dmangos.world.clientdata : ClientData;
 import dmangos.world.config : WorldConfig;
-import dmangos.world.database : InstanceChestRecord, InstanceCorpseRecord, PickpocketRecord, QuestActorCheckpoint, WorldDatabase;
+import dmangos.world.database : DungeonFightCheckpoint, InstanceChestRecord, InstanceCorpseRecord, PickpocketRecord,
+    QuestActorCheckpoint, WorldDatabase;
 import dmangos.world.creaturepools : CreaturePools;
 import dmangos.vmap.gameobjectmodels : GameObjectModels;
 import dmangos.world.gameobjectcollision : GameObjectCollision;
@@ -4261,7 +4262,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             instances[instance] = InstanceState(id, 0, unixTime);
         auto created = instanceMaps[instance] = makeMap(id, instance);
         if (!copyArriving)
+        {
             restoreInstanceCorpses(created);
+            if (ownsDungeonFights(created))
+                restoreDungeonFights(created, false);
+        }
         return created;
     }
 
@@ -4361,6 +4366,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             };
             created.checkpointCreatureFight = &checkpointOutdoorFight;
         }
+        else if (instance && config.cluster.enabled && !battlegroundOfMap(id))
+            created.checkpointCreatureFight = (Creature creature) => checkpointDungeonFight(created, creature);
         created.onGameObjectUsedUp = &gameObjectUsedUp;
         created.onObjectGone = (MapObject object) {
             if (auto creature = cast(Creature) object)
@@ -5069,6 +5076,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 go.instanceId = id;
             return object;
         });
+        if (ownsDungeonFights(m))
+            restoreDungeonFights(m, true);
         return m.objectCount - m.replicaCount - before;
     }
 
@@ -5138,6 +5147,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             {
                 if (state !is null && data.creatureSpawns[index].guid in state.dead)
                     continue;
+                if (const tracking = instance in dungeonFights)
+                    if (const fight = data.creatureSpawns[index].guid in *tracking)
+                        if (instanceMaps[instance].creatureAt(fight.guid) !is null)
+                            continue;
                 if (script !is null && script.restoringEntity(EntityRef(makeGuid(HighGuid.unit,
                     data.creatureSpawns[index].entry, data.creatureSpawns[index].guid))))
                     continue;
@@ -5299,6 +5312,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// A copy's map goes from memory (unloaded, reset, shut down, another node's now): its scripts too.
     private void dropInstanceMap(uint id)
     {
+        dungeonFights.remove(id);
+        pendingDungeonFights.remove(id);
         if (auto m = instanceMaps.get(id, null))
             m.forEachObject((MapObject o) => objectGone(m, o));
         instanceMaps.remove(id);
@@ -5705,6 +5720,163 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             checkpointOutdoorCreature(creature);
     }
 
+    private struct ActiveDungeonFight
+    {
+        ulong guid;
+        long savedAt;
+    }
+    private ActiveDungeonFight[uint][uint] dungeonFights;
+    private bool[uint] pendingDungeonFights; // whether the map already has its live handoff bundle
+    private long retryDungeonFightsAt;
+
+    private bool ownsDungeonFights(Map where)
+    {
+        return config.cluster.enabled && where.instanceId && !battlegroundOfMap(where.id)
+            && canWrite() && hostsDungeon(where.id);
+    }
+
+    private void checkpointDungeonFight(Map where, Creature creature)
+    {
+        import dmangos.world.instancescripting : toHex;
+        import dmangos.world.updatefields : UNIT_FIELD_HEALTH, UNIT_FIELD_MAXHEALTH;
+
+        const spawn = creature.spawn.guid, instance = where.instanceId;
+        if (!ownsDungeonFights(where) || spawn >= temporaryCounterStart || creature.summon.type != TempSpawnType.none
+            || creature.ai is null || !creature.alive)
+            return;
+        const current = dungeonFights.get(instance, null);
+        const tracked = spawn in current;
+        if (!creature.ai.inCombat && creature.values.get!UNIT_FIELD_HEALTH >= creature.values.get!UNIT_FIELD_MAXHEALTH)
+        {
+            if (tracked !is null)
+                discardDungeonFight(instance, spawn);
+            return;
+        }
+        if (tracked !is null && tracked.savedAt + 2 > unixTime)
+            return;
+        auto migrant = saveMigratingObject(creature, false);
+        migrant.home = cellKeyAt(creature.spawn.x, creature.spawn.y);
+        dungeonFights[instance][spawn] = ActiveDungeonFight(creature.guid, unixTime);
+        database.saveDungeonFight(instance, DungeonFightCheckpoint(spawn, toHex(encodeBundle(null, [migrant]))));
+        if (tracked is null)
+        {
+            foreach (who; where.playersNow())
+                if (auto session = cast(Character) who)
+                {
+                    const progress = who.character.progress(session.secondsInWorld());
+                    database.saveProgress(progress);
+                }
+            settleWrites();
+        }
+    }
+
+    private void discardDungeonFight(uint instance, uint spawn)
+    {
+        if (auto fights = instance in dungeonFights)
+            if ((*fights).remove(spawn))
+                database.deleteDungeonFight(instance, spawn);
+    }
+
+    private void restoreDungeonFights(Map where, bool clean)
+    {
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
+        import dmangos.world.instancescripting : fromHex;
+
+        const instance = where.instanceId;
+        DungeonFightCheckpoint[] records;
+        try
+            records = database.loadDungeonFights(instance);
+        catch (DatabaseException error)
+        {
+            warning!"instance %s: could not read native fights: %s"(instance, error.msg);
+            pendingDungeonFights[instance] = clean;
+            retryDungeonFightsAt = unixTime + 1;
+            return;
+        }
+        pendingDungeonFights.remove(instance);
+        foreach (ref saved; records)
+        {
+            const spawn = creatureSpawnOf(saved.spawn);
+            if (spawn is null || spawn.map != where.id || deadInInstance(instance, saved.spawn)
+                || !creatureInEvents(saved.spawn) || !upInPool(PoolMember.Kind.creature, saved.spawn)
+                || cantSpawnWhileBossDead(*spawn, instance in instances))
+            {
+                database.deleteDungeonFight(instance, saved.spawn);
+                continue;
+            }
+            const guid = makeGuid(HighGuid.unit, spawn.entry, spawn.guid);
+            if (auto script = instance in instanceScripts)
+                if (script.restoringEntity(EntityRef(guid)))
+                {
+                    database.deleteDungeonFight(instance, saved.spawn);
+                    continue; // the encounter's own snapshot carries this creature and its encounter state
+                }
+            if (clean)
+            {
+                if (auto creature = where.creatureAt(guid))
+                {
+                    dungeonFights[instance][saved.spawn] = ActiveDungeonFight(guid, unixTime - 2);
+                    checkpointDungeonFight(where, creature);
+                }
+                else
+                    database.deleteDungeonFight(instance, saved.spawn);
+                continue;
+            }
+            if (saved.spawn in dungeonFights.get(instance, null))
+                continue; // a new fight already superseded the checkpoint while the read was retried
+            try
+                where.migrateIn(fromHex(saved.state), (const ref Migrant migrant) {
+                    if (migrant.kind != MigrantKind.creature || migrant.spawn != saved.spawn)
+                        return null;
+                    auto creature = cast(Creature) restoreWorldMigrant(migrant, where);
+                    if (creature is null || !creature.alive)
+                        return null;
+                    waitForCombatPlayer(creature);
+                    dungeonFights[instance][saved.spawn] = ActiveDungeonFight(guid, unixTime);
+                    return cast(MapObject) creature;
+                });
+            catch (Exception error)
+                warning!"instance %s: could not restore creature %s: %s"(instance, saved.spawn, error.msg);
+        }
+    }
+
+    private void updateDungeonFights()
+    {
+        if (pendingDungeonFights.length && unixTime >= retryDungeonFightsAt)
+            foreach (instance; pendingDungeonFights.keys)
+                if (auto where = instanceMaps.get(instance, null))
+                    if (ownsDungeonFights(where))
+                        restoreDungeonFights(where, pendingDungeonFights[instance]);
+        foreach (instance, ref active; dungeonFights)
+            if (auto where = instanceMaps.get(instance, null))
+                if (ownsDungeonFights(where))
+                    foreach (spawn; active.keys)
+                    {
+                        const saved = active[spawn];
+                        if (saved.savedAt + 2 <= unixTime)
+                        {
+                            auto creature = where.creatureAt(saved.guid);
+                            if (creature is null)
+                                discardDungeonFight(instance, spawn);
+                            else if (creature.alive)
+                                checkpointDungeonFight(where, creature);
+                        }
+                    }
+    }
+
+    private void waitForCombatPlayer(Creature creature)
+    {
+        if (creature.ai !is null && creature.ai.inCombat)
+            foreach (target; creature.ai.threatList.byKey)
+                if (highGuidOf(target) == HighGuid.player)
+                {
+                    creature.questActorWait = cast(int)((long(config.cluster.leaseMs) + config.cluster.failureTimeoutMs + 10_000));
+                    creature.questActorWaitFor = target;
+                    break;
+                }
+    }
+
     /// The player field is zero for a living scripted summon or native outdoor combatant.
     private void checkpointOutdoorCreature(Creature creature, bool immediate = false)
     {
@@ -5894,14 +6066,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                         creature.questActorWait = recoveryWait;
                         creature.questActorWaitFor = actor.player;
                     }
-                    else if (nativeFight && creature.ai.inCombat)
-                        foreach (target; creature.ai.threatList.byKey)
-                            if (highGuidOf(target) == HighGuid.player)
-                            {
-                                creature.questActorWait = recoveryWait;
-                                creature.questActorWaitFor = target;
-                                break;
-                            }
+                    else if (nativeFight)
+                        waitForCombatPlayer(creature);
                     return cast(MapObject) creature;
                 });
                 if (restoredActor)
@@ -7259,6 +7425,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                         database.saveInstanceRespawn(false, guid, creature.instanceId,
                             instanceDeathDeadline(*state, creature));
                     }
+                    discardDungeonFight(creature.instanceId, guid);
                 }
             if (auto script = creature.instanceId in instanceScripts)
                 script.raise(CreatureDied(EntityRef(creature.guid), EntityRef(creature.lootRecipient), summoned));
@@ -10012,6 +10179,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         refreshQuestActors();
         updateScripts(cast(uint) elapsed.total!"msecs");
         updateOutdoorScriptActors();
+        updateDungeonFights();
         foreach (script; instanceScripts) // the dungeon scripts' own timers
             script.tick(cast(int) elapsed.total!"msecs");
         foreach (script; worldScripts) // open-world round 2: the continents'

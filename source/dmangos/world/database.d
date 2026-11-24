@@ -358,6 +358,13 @@ struct QuestActorCheckpoint
     string state;
 }
 
+/// A living native creature in a specific copy of a dungeon or raid.
+struct DungeonFightCheckpoint
+{
+    uint spawn;
+    string state;
+}
+
 /// The next unclaimed step of a delayed script on an outdoor region.
 struct OutdoorScriptCheckpoint
 {
@@ -835,6 +842,9 @@ interface WorldDatabase
     @DatabaseRead QuestActorCheckpoint[] loadQuestActors(uint realm);
     void saveQuestActor(uint realm, const QuestActorCheckpoint actor);
     void deleteQuestActor(uint realm, ulong actor);
+    @DatabaseRead DungeonFightCheckpoint[] loadDungeonFights(uint instance);
+    void saveDungeonFight(uint instance, const DungeonFightCheckpoint fight);
+    void deleteDungeonFight(uint instance, uint spawn);
     @DatabaseRead OutdoorScriptCheckpoint[] loadOutdoorScripts(uint realm);
     @DatabaseWrite bool beginOutdoorScript(uint realm, const ref OutdoorScriptCheckpoint script);
     @DatabaseWrite bool advanceOutdoorScript(uint realm, ushort origin, ulong sequence, uint cursor, bool finished);
@@ -1131,6 +1141,7 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
         statements.preparePickpockets();
         statements.prepareGameObjectPools();
         statements.prepareQuestActors();
+        statements.prepareDungeonFights();
         statements.prepareOutdoorScripts();
         statements.preparePlayerSummons();
         statements.preparePartySummonOffers();
@@ -1352,6 +1363,9 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     QuestActorCheckpoint[] loadQuestActors(uint realm) { return statements.loadQuestActors(realm); }
     void saveQuestActor(uint realm, const QuestActorCheckpoint actor) { statements.saveQuestActor(realm, actor); }
     void deleteQuestActor(uint realm, ulong actor) { statements.deleteQuestActor(realm, actor); }
+    DungeonFightCheckpoint[] loadDungeonFights(uint instance) { return statements.loadDungeonFights(instance); }
+    void saveDungeonFight(uint instance, const DungeonFightCheckpoint fight) { statements.saveDungeonFight(instance, fight); }
+    void deleteDungeonFight(uint instance, uint spawn) { statements.deleteDungeonFight(instance, spawn); }
     OutdoorScriptCheckpoint[] loadOutdoorScripts(uint realm) { return statements.loadOutdoorScripts(realm); }
     bool beginOutdoorScript(uint realm, const ref OutdoorScriptCheckpoint script)
     {
@@ -3058,6 +3072,15 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
             (*actors).remove(actor);
     }
 
+    private DungeonFightCheckpoint[uint][uint] dungeonFights;
+    DungeonFightCheckpoint[] loadDungeonFights(uint instance) { return dungeonFights.get(instance, null).values; }
+    void saveDungeonFight(uint instance, const DungeonFightCheckpoint fight) { dungeonFights[instance][fight.spawn] = fight; }
+    void deleteDungeonFight(uint instance, uint spawn)
+    {
+        if (auto fights = instance in dungeonFights)
+            (*fights).remove(spawn);
+    }
+
     PickpocketRecord loadPickpocket(uint instance, uint spawn)
     {
         return pockets.get([instance, spawn], PickpocketRecord.init);
@@ -3098,6 +3121,7 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
         instanceRows.respawns = instanceRows.respawns.filter!(r => r.instance != id).array;
         instanceRows.chests = instanceRows.chests.filter!(r => r.instance != id).array;
         instanceRows.corpses = instanceRows.corpses.filter!(r => r.instance != id).array;
+        dungeonFights.remove(id);
         foreach (key; pockets.keys)
             if (key[0] == id)
                 pockets.remove(key);

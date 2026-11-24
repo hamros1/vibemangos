@@ -398,6 +398,9 @@ replacement worker restores the corpse's original GUID, location, decay deadline
 eligible players and pending rolls. Only players who still need to vote receive the original roll
 prompt. Item claims and the inventory award commit together. Coin shares use a durable payout
 token, so retrying a payout pays each player once.
+Ordinary native enemies checkpoint active fights by spawn and dungeon copy. A replacement
+restores the original creature's health and combat state. A recorded death or copy reset retires
+the fight. Encounters with their own actor snapshots use that state on recovery.
 The record also preserves a corpse ready for skinning and any unclaimed skinning loot.
 On a clustered realm, the replacement also reopens a native living creature's original
 pickpocket loot, with any previous claims applied. Once emptied, the pockets keep their saved
@@ -1002,6 +1005,7 @@ python3 tools/harness/battleground_recovery.py --map alterac
 python3 tools/harness/battleground_recovery.py --map alterac --cross-realm --finish-phase during
 python3 tools/harness/dungeon_recovery.py
 python3 tools/harness/dungeon_recovery.py --new-party --active-wave
+python3 tools/harness/dungeon_recovery.py --native-fight
 python3 tools/harness/tomb_recovery.py
 python3 tools/harness/tomb_recovery.py --after-reward
 python3 tools/harness/tomb_recovery.py --after-claim
