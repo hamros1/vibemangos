@@ -301,6 +301,22 @@ final class GameObject : Replicable, Moving, PerViewer
         useDoorOrButton(world, restoreMs);
     }
 
+    package bool canScriptToggleOpenable(bool open) const
+    {
+        return doorOrButton && lootState == GoLootState.ready && goState != (open ? goStateActive : goStateReady);
+    }
+
+    /// Installs the state of a saved timed toggle on an outdoor door or button.
+    package void installOpenableState(bool open, int remainingMs)
+    {
+        const active = remainingMs > 0;
+        const flags = values.get!GAMEOBJECT_FLAGS;
+        values.set!GAMEOBJECT_FLAGS(active ? flags | goFlagInUse : flags & ~goFlagInUse);
+        setDoorOpen(active ? open : !open);
+        lootState = active ? GoLootState.activated : GoLootState.ready;
+        restoreTimer = active ? remainingMs : 0;
+    }
+
     /// Apply a state-only spell action. No normal use event, trap, or loot is triggered.
     package bool applySpellState(GameObjectWorld world, GameObjectAction action)
     {

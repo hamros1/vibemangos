@@ -390,6 +390,19 @@ package struct OutdoorObjectPayload
     Position at;
 }
 
+package struct OutdoorOpenableAction
+{
+    ulong guid;
+    uint seconds;
+    bool open;
+}
+
+package struct OutdoorOpenableState
+{
+    long resetAt;
+    bool open;
+}
+
 package struct OutdoorScriptStep
 {
     private QuestStatus[uint][Character] rows;
@@ -397,6 +410,7 @@ package struct OutdoorScriptStep
     ScriptCreatureSpawn[] summons;
     OutdoorScriptCheckpoint[] relayCheckpoints;
     OutdoorSummonRequest[] forwards;
+    void delegate()[] afterCommit;
 
     void add(ScriptQuestEffect effect)
     {
@@ -441,9 +455,10 @@ mixin template DbScriptRunner()
     import std.random : uniform;
     import dmangos.log : trace;
     import dmangos.world.dbscripts;
-    import dmangos.world.dbscripts : OutdoorObjectPayload, OutdoorScriptStep, ScriptCreatureSpawn, ScriptQuestEffect, ScriptSummonPayload;
+    import dmangos.world.dbscripts : OutdoorObjectPayload, OutdoorOpenableAction, OutdoorOpenableState,
+        OutdoorScriptStep, ScriptCreatureSpawn, ScriptQuestEffect, ScriptSummonPayload;
     import dmangos.world.creature : Creature;
-    import dmangos.world.database : OutdoorScriptCheckpoint, OutdoorSummonKind, OutdoorSummonRequest;
+    import dmangos.world.database : OutdoorScriptCheckpoint, OutdoorSummonKind, OutdoorSummonRequest, QuestActorCheckpoint;
     import dmangos.world.gameobject : GameObject;
     import dmangos.world.grid : noCell;
     import dmangos.world.map : Map;
@@ -919,8 +934,10 @@ mixin template DbScriptRunner()
                     // A termination check has no side effects. Decide it before committing the cursor.
                     const terminator = step.command == ScriptCommand.terminateScript;
                     const stops = terminator && runScriptStep(run.type, *step, map, run.source, run.target);
-                    const stagesEffects = step.command == ScriptCommand.questExplored || step.command == ScriptCommand.killCredit
-                        || step.command == ScriptCommand.tempSpawnCreature;
+                    import std.algorithm.comparison : among;
+
+                    const stagesEffects = step.command.among(ScriptCommand.questExplored, ScriptCommand.killCredit,
+                        ScriptCommand.tempSpawnCreature, ScriptCommand.openDoor, ScriptCommand.closeDoor);
                     OutdoorScriptStep planned;
                     scope (exit) planned.discardUnpublishedSummons();
                     if (!claimOutdoorStep(run, map, *step, stops || run.next + 1 == run.steps.length,
@@ -1004,7 +1021,16 @@ mixin template DbScriptRunner()
         auto where = map(request.map);
         if (request.actor)
         {
-            if (request.checkpoint.actor && where.creatureAt(request.actor) is null && where.gameObjectAt(request.actor) is null)
+            if (request.kind == OutdoorSummonKind.openable)
+            {
+                if (request.checkpoint.actor)
+                {
+                    const installed = request.actor in outdoorQuestActors;
+                    if (installed is null || installed.state != request.checkpoint.state)
+                        restoreOutdoorOpenable(where, request.checkpoint);
+                }
+            }
+            else if (request.checkpoint.actor && where.creatureAt(request.actor) is null && where.gameObjectAt(request.actor) is null)
             {
                 if (!restoreQueuedSummon(where, request.checkpoint))
                     return;
@@ -1018,6 +1044,8 @@ mixin template DbScriptRunner()
 
         if (request.kind == OutdoorSummonKind.gameObject)
             return deliverOutdoorObject(where, request);
+        if (request.kind == OutdoorSummonKind.openable)
+            return deliverOutdoorOpenable(where, request);
 
         ScriptSummonPayload payload;
         try
@@ -1105,6 +1133,83 @@ mixin template DbScriptRunner()
         }
     }
 
+    private void deliverOutdoorOpenable(Map where, ref OutdoorSummonRequest request)
+    {
+        import dmangos.log : warning;
+        import dmangos.serialization : deserialize, serialize;
+        import dmangos.world.gameobject : goStateReady;
+        import dmangos.world.instancescripting : fromHex, toHex;
+
+        OutdoorOpenableAction action;
+        try
+        {
+            auto bytes = ByteReader(fromHex(request.state));
+            action = deserialize!OutdoorOpenableAction(bytes);
+        }
+        catch (Exception error)
+        {
+            warning!"map %s: could not decode an outdoor door action: %s"(request.map, error.msg);
+            database.retireOutdoorSummon(config.realmId, request);
+            return;
+        }
+        where.loadCell(request.home);
+        auto door = where.gameObjectAt(action.guid);
+        if (door is null || where.migrantHome(action.guid) != request.home || !door.canScriptToggleOpenable(action.open))
+        {
+            database.retireOutdoorSummon(config.realmId, request);
+            return;
+        }
+        // Opening and closing both use the same toggle as a live door.
+        ByteWriter bytes;
+        serialize(bytes, OutdoorOpenableState(unixTime + action.seconds, door.goState == goStateReady));
+        const checkpoint = QuestActorCheckpoint(request.map, action.guid, request.home, 0, unixTime, toHex(bytes.data));
+        if (!database.commitOutdoorSummon(config.realmId, request, checkpoint, null))
+            return;
+        request.actor = action.guid;
+        if (canWrite() && ownsCell(request.map, request.home))
+        {
+            restoreOutdoorOpenable(where, checkpoint);
+            database.retireOutdoorSummon(config.realmId, request);
+        }
+    }
+
+    private void restoreOutdoorOpenable(Map where, const ref QuestActorCheckpoint checkpoint)
+    {
+        import dmangos.log : warning;
+        import dmangos.serialization : deserialize;
+        import dmangos.world.instancescripting : fromHex;
+        import std.algorithm.comparison : clamp;
+
+        OutdoorOpenableState state;
+        try
+        {
+            auto bytes = ByteReader(fromHex(checkpoint.state));
+            state = deserialize!OutdoorOpenableState(bytes);
+        }
+        catch (Exception error)
+        {
+            warning!"map %s: could not restore outdoor door %s: %s"(where.id, checkpoint.actor, error.msg);
+            database.deleteQuestActor(config.realmId, checkpoint.actor);
+            return;
+        }
+        where.loadCell(checkpoint.home);
+        auto door = where.gameObjectAt(checkpoint.actor);
+        if (door !is null && door.doorOrButton && where.migrantHome(door.guid) == checkpoint.home)
+        {
+            const remaining = cast(int)(clamp(state.resetAt - unixTime, 0L, int.max / 1000L) * 1000);
+            door.installOpenableState(state.open, remaining);
+            where.flushGameObject(door);
+            if (remaining)
+            {
+                outdoorQuestActors[door.guid] = checkpoint;
+                where.wake(door.guid);
+                return;
+            }
+        }
+        outdoorQuestActors.remove(checkpoint.actor);
+        database.deleteQuestActor(config.realmId, checkpoint.actor);
+    }
+
     private void publishOutdoorStep(Map map, ref OutdoorScriptStep planned)
     {
         foreach (ref effect; planned.effects)
@@ -1115,6 +1220,8 @@ mixin template DbScriptRunner()
             effect.creature = null;
             publishScriptCreature(map, summon);
         }
+        foreach (action; planned.afterCommit)
+            action();
     }
 
     /// Run the immediate, target-only spell steps on the map that owns the target.
@@ -1582,6 +1689,41 @@ mixin template DbScriptRunner()
         return 0;
     }
 
+    private void scriptOpenable(Map map, ulong guid, uint delay, bool open, OutdoorScriptStep* planned)
+    {
+        import dmangos.serialization : serialize;
+        import dmangos.world.gameobject : GameObjectType;
+        import dmangos.world.grid : cellKeyAt;
+        import dmangos.world.instancescripting : toHex;
+        import dmangos.world.objects : counterOf;
+        import std.algorithm.comparison : among, max;
+
+        const action = open ? ScriptGameObject.Action.open : ScriptGameObject.Action.close;
+        const counter = counterOf(guid);
+        if (config.cluster.enabled && !map.instanceId && ownsCell !is null && canWrite() && guid
+            && scriptGameObjectGuid(counter, map.id) == guid)
+        {
+            const spawn = &data.gameObjectSpawns[gameObjectSpawnIndex[counter]];
+            if (const proto = spawn.entry in data.gameObjectTemplates)
+                if (proto.type.among(GameObjectType.door, GameObjectType.button))
+                {
+                    ByteWriter bytes;
+                    serialize(bytes, OutdoorOpenableAction(guid, max(delay, 15u), open));
+                    auto request = OutdoorSummonRequest(map: map.id, home: cellKeyAt(spawn.x, spawn.y),
+                        state: toHex(bytes.data), kind: OutdoorSummonKind.openable);
+                    if (planned !is null)
+                        planned.forwards ~= request;
+                    else
+                        enqueueOutdoorPlacement(request, spawn.entry);
+                    return;
+                }
+        }
+        if (planned is null)
+            scriptGameObjectAction(map, guid, delay, action);
+        else
+            planned.afterCommit ~= () => scriptGameObjectAction(map, guid, delay, action);
+    }
+
     private void scriptGameObjectAction(Map map, ulong guid, uint delay, ScriptGameObject.Action action,
         ushort from = 0, bool forwarded = false)
     {
@@ -1681,8 +1823,6 @@ mixin template DbScriptRunner()
 
     package bool queueOutdoorObject(Map map, uint entry, Position at, uint duration)
     {
-        import dmangos.log : warning;
-        import dmangos.mysql : DatabaseException;
         import dmangos.serialization : serialize;
         import dmangos.world.grid : cellKeyAt;
         import dmangos.world.instancescripting : toHex;
@@ -1691,17 +1831,27 @@ mixin template DbScriptRunner()
             return false;
         ByteWriter state;
         serialize(state, OutdoorObjectPayload(entry, unixTime + duration, at));
-        auto request = OutdoorSummonRequest(origin: nodeId, sequence: nextGameplaySequence(), map: map.id,
+        auto request = OutdoorSummonRequest(map: map.id,
             home: cellKeyAt(at.x, at.y), state: toHex(state.data), kind: OutdoorSummonKind.gameObject);
+        return enqueueOutdoorPlacement(request, entry);
+    }
+
+    private bool enqueueOutdoorPlacement(ref OutdoorSummonRequest request, uint entry)
+    {
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
+
+        request.origin = nodeId;
+        request.sequence = nextGameplaySequence();
         bool stored;
         try
         {
             stored = database.enqueueOutdoorSummon(config.realmId, request);
-            if (stored && canWrite() && ownsCell(map.id, request.home))
-                deliverOutdoorObject(map, request);
+            if (stored && canWrite() && ownsCell(request.map, request.home))
+                deliverOutdoorSummon(request);
         }
         catch (DatabaseException error)
-            warning!"map %s: could not place outdoor object %s: %s"(map.id, entry, error.msg);
+            warning!"map %s: could not save outdoor object work for %s: %s"(request.map, entry, error.msg);
         return stored;
     }
 
@@ -1917,8 +2067,7 @@ mixin template DbScriptRunner()
 
             const guid = step.datalong ? scriptGameObjectGuid(step.datalong, map.id)
                 : highGuidOf(source.guid) == HighGuid.gameObject ? source.guid : target.guid;
-            const action = step.command == ScriptCommand.openDoor ? ScriptGameObject.Action.open : ScriptGameObject.Action.close;
-            scriptGameObjectAction(map, guid, step.datalong2, action);
+            scriptOpenable(map, guid, step.datalong2, step.command == ScriptCommand.openDoor, planned);
             break;
         }
         case ScriptCommand.removeAura:

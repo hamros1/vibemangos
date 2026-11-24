@@ -5959,6 +5959,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     private void updateOutdoorScriptActors()
     {
+        import dmangos.world.gameobject : GoLootState;
+
         if (unixTime < nextScriptActorCheckpoint || !outdoorQuestActors.length || !canWrite())
             return;
         nextScriptActorCheckpoint = unixTime + 1;
@@ -5974,8 +5976,23 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                             checkpointOutdoorCreature(creature);
                     }
                     else if (auto object = where.gameObjectAt(actor.actor))
-                        checkpointOutdoorScriptObject(where, object);
+                    {
+                        if (!outdoorOpenableActor(actor.actor))
+                            checkpointOutdoorScriptObject(where, object);
+                        else if (object.lootState == GoLootState.ready)
+                        {
+                            outdoorQuestActors.remove(actor.actor);
+                            database.deleteQuestActor(config.realmId, actor.actor);
+                        }
+                    }
                 }
+    }
+
+    private static bool outdoorOpenableActor(ulong guid)
+    {
+        import dmangos.world.objects : counterOf;
+
+        return highGuidOf(guid) == HighGuid.gameObject && counterOf(guid) < temporaryCounterStart;
     }
 
     private long nextScriptActorCheckpoint;
@@ -6036,16 +6053,22 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if (!grants.any!(grant => questActorRegion(grant.region, actor.map, actor.home)))
                 continue;
             const spawn = counterOf(actor.actor);
+            const openable = outdoorOpenableActor(actor.actor);
             const nativeFight = !actor.player && highGuidOf(actor.actor) == HighGuid.unit && spawn < temporaryCounterStart;
-            if ((actor.player && actor.savedAt + 300 <= unixTime) || awaitingRespawn(spawn) || spawn in outdoorCorpses
+            if (!openable && ((actor.player && actor.savedAt + 300 <= unixTime) || awaitingRespawn(spawn) || spawn in outdoorCorpses
                 || (nativeFight && (creatureOnLoan(spawn) || !creatureInEvents(spawn)
-                    || !upInPool(PoolMember.Kind.creature, spawn))))
+                    || !upInPool(PoolMember.Kind.creature, spawn)))))
             {
                 database.deleteQuestActor(config.realmId, actor.actor);
                 continue;
             }
             auto where = map(actor.map);
             const clean = grants.any!(grant => grant.clean && questActorRegion(grant.region, actor.map, actor.home));
+            if (!clean && openable)
+            {
+                restoreOutdoorOpenable(where, actor);
+                continue;
+            }
             if ((where.creatureAt(actor.actor) !is null || where.gameObjectAt(actor.actor) !is null)
                 && (!nativeFight || clean || actor.actor in outdoorQuestActors))
             {

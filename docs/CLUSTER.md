@@ -379,8 +379,9 @@ apply. When a delayed script summons on another worker, the sending worker commi
 the script cursor. The worker that owns the destination cell commits the actor and its relay with
 a receipt, which it retires after publishing the creature. A replacement can finish an open request
 or publish the actor from a committed receipt. The parent script waits for delivery before running
-its following steps. Other commands still claim their step before executing it, so a crash during
-their effects can leave the step incomplete.
+its following steps. Scripted toggles of outdoor doors and buttons also use the queue. The new owner
+restores the active door state and resets it at the original deadline. Other commands claim their
+step before executing it, so a crash during their effects can leave the step incomplete.
 Finite wild objects of the generic and spell-focus types use the same durable queue from placement.
 An immediate object-only player spell saves the request before reporting a successful cast.
 The objects keep their GUIDs, state, and original expiry during recovery. Timed outdoor summons and saved

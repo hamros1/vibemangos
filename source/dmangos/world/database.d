@@ -376,7 +376,7 @@ struct OutdoorScriptCheckpoint
     bool waitingForSummons;
 }
 
-enum OutdoorSummonKind : ubyte { creature, gameObject }
+enum OutdoorSummonKind : ubyte { creature, gameObject, openable }
 
 /// A durable summon routed by destination cell, with a receipt after the actor commits.
 struct OutdoorSummonRequest
