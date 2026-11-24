@@ -611,6 +611,63 @@ mixin template EffectHandlers()
     package ulong[4] trapSlots;   /// this player's traps by slot (fire, frost, nature, ...): their guids
     private int[4] trapTimes;     /// ... and ms each lasts yet
 
+    private const(ubyte)[] playerTrapState(ulong removed)
+    {
+        import dmangos.serialization : serialize;
+
+        ByteWriter state;
+        state.put(ubyte(0));
+        ubyte count;
+        foreach (slot, guid; trapSlots)
+            if (guid && guid != removed)
+                if (auto trap = map.gameObjectAt(guid))
+                {
+                    ByteWriter object;
+                    serialize(object, trap.spawn);
+                    trap.saveState(object, context.transportNow());
+                    state.put(cast(ubyte) slot);
+                    state.put(trapTimes[slot]);
+                    state.put(cast(uint) object.length);
+                    state.putBytes(object.data);
+                    ++count;
+                }
+        if (!count)
+            return null;
+        state.patch(0, count);
+        return state.data;
+    }
+
+    private void restorePlayerTraps(ref ByteReader state, int elapsed)
+    {
+        import dmangos.serialization : deserialize;
+        import dmangos.world.gameobject : GameObjectSpawn, GameObjectType;
+        import dmangos.world.objects : temporaryCounterStart;
+
+        if (state.empty)
+            return;
+        foreach (_; 0 .. state.read!ubyte)
+        {
+            const slot = state.read!ubyte;
+            const left = state.read!int;
+            auto object = ByteReader(state.readBytes(state.read!uint));
+            if (slot >= trapSlots.length || trapSlots[slot] || left <= elapsed)
+                continue;
+            const spawn = deserialize!GameObjectSpawn(object);
+            const proto = spawn.entry in context.data.gameObjectTemplates;
+            if (proto is null || proto.type != GameObjectType.trap || spawn.guid < temporaryCounterStart
+                || spawn.guid > 0xFF_FFFF || spawn.map != map.id
+                || !context.client.isValidMapCoord(spawn.map, spawn.x, spawn.y, spawn.z, spawn.orientation))
+                continue;
+            auto trap = new GameObject(spawn, proto);
+            trap.owner = player.guid;
+            trap.instanceId = map.instanceId;
+            trap.loadState(object, context.transportNow());
+            trapSlots[slot] = trap.guid;
+            trapTimes[slot] = left == int.max ? left : left - elapsed;
+            map.addObject(trap);
+        }
+    }
+
     /**
      * A trap is put down (`SPELL_EFFECT_SUMMON_OBJECT_SLOT1` .. 4: Freezing, Frost, Immolation and Explosive
      * Trap): the game object of the effect's entry at the spot thrown at, else at the player's feet (its
@@ -651,6 +708,7 @@ mixin template EffectHandlers()
         const ms = modDuration(spell, duration(*spell, context.client, player.data.level));
         trapSlots[slot] = go.guid;
         trapTimes[slot] = ms > 0 ? ms : int.max;
+        checkpointSummons(true);
     }
 
     /// The trap of `slot` goes (if any).
@@ -696,10 +754,19 @@ mixin template EffectHandlers()
             const victim = trapVictim(go.position, radius);
             if (!victim)
                 continue;
+            const oldReady = go.trapReadyAt;
+            const oldUses = go.trapUses;
             go.trapReadyAt = context.unixTime + (go.template_.data[5] > 0 ? go.template_.data[5] : 4);
-            springTrap(go, spellId, victim);
             const charges = go.template_.data[4];
-            if (charges > 0 && ++go.trapUses >= charges)
+            const spent = charges > 0 && ++go.trapUses >= charges;
+            if (!checkpointSummons(true, spent ? guid : 0))
+            {
+                go.trapReadyAt = oldReady;
+                go.trapUses = oldUses;
+                continue;
+            }
+            springTrap(go, spellId, victim);
+            if (spent)
                 removeTrap(slot);
         }
     }

@@ -1580,9 +1580,11 @@ mixin template PetHandlers()
             carry(loneTotem, loneTotemSlot);
         foreach (guid; guardians_)
             carry(guid, guardianSlot);
-        if (!count)
+        const traps = playerTrapState(removed);
+        if (!count && !traps.length)
             return null;
         state.patch(countAt, count);
+        state.putBytes(traps);
         return state.data;
     }
 
@@ -1593,6 +1595,7 @@ mixin template PetHandlers()
         scope(exit) detachingSummons = false;
         unsummonTotems();
         removeGuardians(true);
+        removeTraps();
         return state;
     }
 
@@ -1769,6 +1772,7 @@ mixin template PetHandlers()
                 map.addObject(creature);
             }
         }
+        restorePlayerTraps(state, elapsed > 0 ? elapsed : 0);
     }
 
     /// At login, after a teleport or move, and on coming back to life: the pet saved out with the player comes back (not to the dead).

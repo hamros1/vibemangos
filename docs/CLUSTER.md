@@ -1023,6 +1023,8 @@ python3 tools/harness/ground_spell_recovery.py
 python3 tools/harness/ground_spell_recovery.py --channeled
 python3 tools/harness/spell_cast_recovery.py
 python3 tools/harness/spell_cast_recovery.py --finished
+python3 tools/harness/hunter_trap_recovery.py
+python3 tools/harness/hunter_trap_recovery.py --clean
 ```
 
 Both map options also accept `--cross-realm`. The Arathi Basin test checks the resource score,
@@ -1068,6 +1070,8 @@ The ground-spell checks kill the caster's worker after Consecration or Blizzard 
 verify the same effect resumes and expires on schedule. Blizzard also restores the channel timer.
 The unfinished-cast check preserves a Fireball's original target, then checks that the spell
 resolves once even if the worker dies just after it lands.
+The hunter-trap checks keep an armed Freezing Trap through both kinds of transfer and verify
+that it can freeze the new target once.
 
 ## Monitoring
 
@@ -1144,6 +1148,9 @@ same map. The hunter controls the same pet at its current position for the rest 
 An angler can finish the original cast after moving. Their bobber keeps its GUID and bite timer
 until the catch begins. A replacement worker recovers the same active cast while the original
 bite window is still available. Reeling it in closes that checkpoint before rolling the catch.
+A hunter's armed trap follows its owner within the same map and copy during a handoff or worker
+recovery. It keeps its original expiry, remaining charges and cooldown. A charge is saved as
+spent before the trap casts its spell.
 
 Party area auras reach nearby players in the same raid subgroup across region boundaries. The
 recipient's node checks membership and distance. It removes the aura when those checks fail or the

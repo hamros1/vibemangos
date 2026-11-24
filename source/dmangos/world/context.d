@@ -4320,6 +4320,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         created.onObjectGone = (MapObject object) {
             if (auto creature = cast(Creature) object)
                 ownedSummonGone(created, creature);
+            else if (auto trap = cast(GameObject) object)
+                if (trap.type == GameObjectType.trap && trap.owner)
+                    if (auto session = onlinePlayer(trap.owner))
+                        if (session.currentMap is created)
+                            session.checkpointSummons(true, trap.guid);
             objectGone(created, object);
         };
         created.onObjectArrived = (MapObject o) { // open-world round 2: a scripted game object's `Spawned`
@@ -6529,7 +6534,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (gameObject is null)
             return Migrant.init;
         if (gameObject.owner && (gameObject.type == GameObjectType.fishingNode
-            || gameObject.type == GameObjectType.summoningRitual))
+            || gameObject.type == GameObjectType.summoningRitual || gameObject.type == GameObjectType.trap))
             return Migrant.init; // follows its player's handoff
         if (departing && gameObject.loot !is null)
             gameObject.loot.sendReleaseForAll();
