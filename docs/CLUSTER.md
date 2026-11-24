@@ -421,7 +421,10 @@ fell until its corpse expires.
 The reservation follows the creature even if its home cell changes owners. The current owner of
 the home cell skips that spawn until the helper comes home and the lease retires. If the borrower
 is lost, the coordinator waits for its lease to expire and recovers the spawn on the current home
-owner. Recovery uses the saved respawn time if the creature died.
+owner. If the creature died, the home owner restores the original corpse and its unclaimed loot
+until the decay deadline. The spawn remains dead until its saved respawn time. For a single-choice
+creature pool, the corpse and the pool's death record commit together, so another placement in
+the pool cannot appear while the corpse is still available.
 
 ### Dungeons and battlegrounds
 

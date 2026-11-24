@@ -4,7 +4,7 @@ module dmangos.world.creaturepools;
 import std.random : Random;
 import dmangos.log : warning;
 import dmangos.mysql : DatabaseException;
-import dmangos.world.database : CreaturePoolState, WorldDatabase;
+import dmangos.world.database : CreaturePoolState, InstanceCorpseRecord, WorldDatabase;
 import dmangos.world.worlddata : PoolChooser, PoolMember, WorldData;
 
 package final class CreaturePools
@@ -14,7 +14,12 @@ package final class CreaturePools
     private PoolChooser chooser;
     private uint[uint] poolOf;
     private CreaturePoolState[uint] saved;
-    private CreaturePoolState[uint] pending;
+    private struct PoolDeath
+    {
+        CreaturePoolState state;
+        InstanceCorpseRecord corpse;
+    }
+    private PoolDeath[uint] pending;
 
     this(WorldDatabase delegate() database, uint realm, WorldData world, ref long[uint] oldTimers)
     {
@@ -81,7 +86,7 @@ package final class CreaturePools
     }
 
     /// Records the original deadline once. GM or linked respawns may bring an existing one forward.
-    void dead(uint spawn, long due, bool earlier = false)
+    void dead(uint spawn, long due, bool earlier = false, const InstanceCorpseRecord corpse = InstanceCorpseRecord.init)
     {
         const pool = poolOf.get(spawn, 0);
         if (!pool || !selected(spawn))
@@ -90,9 +95,9 @@ package final class CreaturePools
         if (old.spawn == spawn && old.due && (!earlier || old.due <= due))
             return;
         if (const previous = spawn in pending)
-            if (!earlier || previous.due <= due)
+            if (!earlier || previous.state.due <= due)
                 return;
-        const attempt = CreaturePoolState(spawn, due, old.revision);
+        const attempt = PoolDeath(CreaturePoolState(spawn, due, old.revision), corpse);
         pending[spawn] = attempt;
         savePending(attempt);
     }
@@ -124,11 +129,11 @@ package final class CreaturePools
         return chooser.rollSingleCreature(pool, spawn, rng);
     }
 
-    bool change(uint pool, ulong revision, uint spawn, long due)
+    bool change(uint pool, ulong revision, uint spawn, long due, const InstanceCorpseRecord corpse = InstanceCorpseRecord.init)
     {
         try
         {
-            if (!database().updateCreaturePoolState(realm, pool, revision, spawn, due))
+            if (!database().updateCreaturePoolState(realm, pool, revision, spawn, due, corpse))
                 return false;
             saved[pool] = CreaturePoolState(spawn, due, revision + 1);
             return true;
@@ -143,12 +148,13 @@ package final class CreaturePools
 private:
     void read() { saved = database().loadCreaturePoolStates(realm); }
 
-    void savePending(CreaturePoolState attempt)
+    void savePending(const ref PoolDeath death)
     {
+        const attempt = death.state;
         const pool = poolOf[attempt.spawn];
         const state = saved.get(pool, CreaturePoolState.init);
         if (state.revision != attempt.revision || !selected(attempt.spawn)
-            || change(pool, attempt.revision, attempt.spawn, attempt.due))
+            || change(pool, attempt.revision, attempt.spawn, attempt.due, death.corpse))
             pending.remove(attempt.spawn);
     }
 }

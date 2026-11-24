@@ -5548,7 +5548,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         {
             const spawn = creatureSpawnOf(corpse.spawn);
             if (spawn is null || corpse.expiresAt <= unixTime || creatureOnLoan(corpse.spawn)
-                || !outdoorRegionCovers(spawn, gained) || corpse.spawn !in respawnAt)
+                || !outdoorRegionCovers(spawn, gained) || !hasOutdoorRespawn(corpse.spawn))
                 continue;
             auto where = map(spawn.map);
             outdoorCorpses[corpse.spawn] = corpse;
@@ -5562,6 +5562,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             catch (Exception error)
                 warning!"migration: could not read outdoor corpse %s: %s"(corpse.spawn, error.msg);
         }
+    }
+
+    private bool hasOutdoorRespawn(uint spawn) const
+    {
+        return creaturePools.manages(spawn) ? creaturePools.waiting(spawn) : (spawn in respawnAt) !is null;
     }
 
     private static Migrant outdoorCorpseMigrant(const ref CreatureSpawn spawn, const ref InstanceCorpseRecord corpse)
@@ -6597,6 +6602,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 bindMigrantLoot(restored, map_);
                 return restored;
             });
+            if (auto corpse = map_.creatureAt(guid))
+                if (canCheckpointCorpse(corpse) && (corpse.loot !is null || corpse.skinnable))
+                    database.saveInstanceCorpse(checkpointCorpse(corpse), 0);
         }
         else if (r.creature.returning && ownsCell(spawn.map, cellKey(r.rect.x0, r.rect.y0))
             && map_.creatureAt(guid) is null)
@@ -6612,9 +6620,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 else
                 {
                     const saved = database.loadCreatureRespawns().get(spawn.guid, 0);
-                    if (saved > unixTime)
+                    if (saved)
                         respawnAt[spawn.guid] = saved;
                 }
+                if (hasOutdoorRespawn(spawn.guid) && restoreLoanCorpse(map_, *spawn))
+                    return;
             }
             if (!awaitingRespawn(spawn.guid) && creatureInEvents(spawn.guid)
                 && upInPool(PoolMember.Kind.creature, spawn.guid))
@@ -6625,6 +6635,27 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if (auto helper = map_.creatureAt(guid))
                 if (helper.ai !is null)
                     helper.ai.answerRemoteAssistance(map_.creatureAt(r.creature.caller), map_.unit(r.creature.enemy), map_);
+    }
+
+    private bool restoreLoanCorpse(Map where, const ref CreatureSpawn spawn)
+    {
+        import dmangos.log : warning;
+
+        try
+        {
+            foreach (corpse; database.loadOutdoorCorpses())
+                if (corpse.spawn == spawn.guid && corpse.expiresAt > unixTime)
+                {
+                    const migrant = outdoorCorpseMigrant(spawn, corpse);
+                    outdoorCorpses[spawn.guid] = corpse;
+                    where.migrateIn(encodeBundle(null, [migrant]),
+                        (const ref Migrant saved) => restoreSavedCorpse(where, saved));
+                    return true; // the same death still owns this spawn
+                }
+        }
+        catch (Exception error)
+            warning!"migration: could not read borrowed corpse %s: %s"(spawn.guid, error.msg);
+        return false;
     }
 
     private void creatureLoanLost(const ref Region r)
@@ -6642,8 +6673,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             const guid = loanGuid(spawn);
             if (!creatureLease(spawn.guid).creature.spawn && local.creature.returning && canWrite())
                 map_.giveCreatureHome(guid, cellKey(r.rect.x0, r.rect.y0));
-            else if (map_.creatureAt(guid) !is null)
-                map_.removeObject(guid); // lease expired without a clean release
+            else
+            {
+                outdoorCorpses.remove(spawn.guid);
+                if (map_.creatureAt(guid) !is null)
+                    map_.removeObject(guid); // lease expired without a clean release
+            }
         }
     }
 
@@ -6820,8 +6855,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return false;
         if (creature.instanceId)
             return (creature.instanceId in instances) !is null && !battlegroundOfMap(creature.spawn.map);
-        return config.cluster.enabled && creature.summon.type == TempSpawnType.none
-            && !creaturePools.manages(creature.spawn.guid) && !creatureOnLoan(creature.spawn.guid);
+        return config.cluster.enabled && creature.summon.type == TempSpawnType.none;
     }
 
     private long instanceDeathDeadline(ref InstanceState state, const Creature creature)
@@ -6845,8 +6879,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         else
         {
             saveOutdoorLootPositions(existingMap(creature.spawn.map), creature.loot);
-            respawnAt[creature.spawn.guid] = creature.respawnAt;
-            database.saveInstanceCorpse(checkpointCorpse(creature), creature.respawnAt);
+            const record = checkpointCorpse(creature);
+            if (creaturePools.manages(record.spawn))
+                creaturePools.dead(record.spawn, creature.respawnAt, false, record);
+            else
+            {
+                respawnAt[record.spawn] = creature.respawnAt;
+                database.saveInstanceCorpse(record, creature.respawnAt);
+            }
         }
     }
 
@@ -9138,6 +9178,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 continue; // a corpse is still waiting for loot or the live creature is already here
             if (state.due)
             {
+                if (outdoorCorpses.remove(state.spawn))
+                    database.deleteInstanceCorpse(0, state.spawn);
                 const next = creatureSpawnOf(creaturePools.roll(pool, state.spawn, spawnRandom));
                 if (next is null)
                     continue;
@@ -10706,17 +10748,24 @@ unittest
         assert(false, "no test seed chose the wanted pool member");
     }
 
-    enum Scenario { standalone, split, clean, cold }
-    foreach (scenario; [Scenario.standalone, Scenario.split, Scenario.clean, Scenario.cold])
+    enum Scenario { standalone, split, clean, cold, coldWithLoot }
+    foreach (scenario; [Scenario.standalone, Scenario.split, Scenario.clean, Scenario.cold, Scenario.coldWithLoot])
     {
+        const recoverLoot = scenario == Scenario.coldWithLoot;
+        const cold = scenario == Scenario.cold || recoverLoot;
         auto db = newDatabase();
         auto oldOwner = newNode(db);
         auto remote = scenario == Scenario.standalone ? oldOwner : newNode(db);
-        auto winner = scenario == Scenario.clean || scenario == Scenario.cold ? newNode(db) : oldOwner;
+        auto winner = scenario == Scenario.clean || cold ? newNode(db) : oldOwner;
         foreach (node; [oldOwner, remote, winner])
         {
             node.startClock = clock;
             node.startUnixTime = oldOwner.startUnixTime;
+        }
+        if (recoverLoot)
+        {
+            oldOwner.config.cluster.nodeId = 1;
+            winner.config.cluster.nodeId = 2;
         }
         const first = oldOwner.upInPool(kind, placements[0].guid) ? 0 : 1;
         const second = 1 - first;
@@ -10726,10 +10775,10 @@ unittest
         bool moved;
         if (scenario != Scenario.standalone)
         {
-            oldOwner.ownsCell = (uint mapId, ulong cell) => (!moved || scenario == Scenario.cold)
+            oldOwner.ownsCell = (uint mapId, ulong cell) => (!moved || cold)
                 && !mapId && cell == homes[first];
             remote.ownsCell = (uint mapId, ulong cell) => !mapId && cell == homes[second];
-            if (scenario == Scenario.cold)
+            if (cold)
                 oldOwner.database = new FencedDatabase(oldOwner.database, () => !moved);
             if (winner !is oldOwner)
                 winner.ownsCell = (uint mapId, ulong cell) => moved && !mapId && cell == homes[first];
@@ -10740,8 +10789,24 @@ unittest
         auto rare = firstMap.creatureAt(startingGuid);
         assert(rare !is null && secondMap.creatureAt(alternateGuid) is null);
         rare.values.set!UNIT_FIELD_HEALTH(0u);
-        firstMap.creatureDeath(rare);
-        firstMap.corpseExpired(rare);
+        if (recoverLoot)
+        {
+            rare.die(firstMap, oldOwner.unixTime);
+            rare.loot = new Loot(rare.guid, null);
+            rare.loot.gold = 25;
+            rare.loot.owners[7] = true;
+            oldOwner.saveNewCorpse(rare);
+            const corpse = db.loadOutdoorCorpses();
+            assert(corpse.length == 1 && corpse[0].spawn == start && start !in db.creatureRespawns);
+            assert(!db.updateCreaturePoolState(realm, pool, 0, alternate, 0,
+                InstanceCorpseRecord(0, alternate, corpse[0].expiresAt, corpse[0].state)));
+            assert(db.loadOutdoorCorpses() == corpse, "a rejected pool write must not create a corpse");
+        }
+        else
+        {
+            firstMap.creatureDeath(rare);
+            firstMap.corpseExpired(rare);
+        }
         const dead = db.loadCreaturePoolStates(realm)[pool];
         assert(dead.spawn == start && dead.due == oldOwner.unixTime + 10 && dead.revision == 1);
         assert(!db.updateCreaturePoolState(realm, pool, 0, alternate, 0), "a stale initial claim loses");
@@ -10762,8 +10827,20 @@ unittest
             const(ubyte)[][uint] arriving = scenario == Scenario.clean
                 ? [region.id: cast(const(ubyte)[]) leaving[region.id]] : null;
             winner.regionsChanged([region], null, arriving, unused);
-            winner.map(0).loadCell(homes[first]);
-            assert(winner.awaitingRespawn(start) && winner.map(0).creatureAt(startingGuid) is null);
+            auto destination = winner.map(0);
+            destination.loadCell(homes[first]);
+            assert(winner.awaitingRespawn(start));
+            auto restored = destination.creatureAt(startingGuid);
+            if (recoverLoot)
+            {
+                assert(restored !is null && !restored.alive && restored.loot !is null);
+                assert(restored.loot.gold == 25 && 7 in restored.loot.owners);
+                assert(secondMap.creatureAt(alternateGuid) is null);
+                destination.corpseExpired(restored);
+                assert(db.loadOutdoorCorpses().length == 0);
+            }
+            else
+                assert(restored is null);
         }
 
         clock += 11.seconds;

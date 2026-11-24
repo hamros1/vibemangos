@@ -2858,7 +2858,7 @@ unittest
     }
 }
 
-// An assistance loan survives a change of home owner and recovers after either participant is lost.
+// Live helpers and their loot can return home even after the borrower or home owner fails.
 unittest
 {
     import dmangos.dbc : buildDbc;
@@ -2867,9 +2867,9 @@ unittest
     import dmangos.world.objects : HighGuid, makeGuid;
     import dmangos.world.replication : encodeState;
     import dmangos.world.testclient;
-    import dmangos.world.updatefields : UNIT_FIELD_FACTIONTEMPLATE;
+    import dmangos.world.updatefields : UNIT_FIELD_FACTIONTEMPLATE, UNIT_FIELD_HEALTH;
 
-    foreach (scenario; 0 .. 3)
+    foreach (scenario; 0 .. 5)
     {
         enum uint worldMap = 0;
         const homeCell = cellKeyAt(-8948, -134);
@@ -2886,7 +2886,7 @@ unittest
         WorldContext[ushort] worlds;
         foreach (node; [coordinator, borrower, original])
         {
-            auto world = newCreationContext(db);
+            auto world = newCreationContext(db, (ref config) { config.cluster.nodeId = node.id; });
             worlds[node.id] = world;
             world.clock = () => cluster.now;
             world.nodeId = node.id;
@@ -2902,12 +2902,17 @@ unittest
             connect(node, world);
             foreach (ref spawn; world.data.creatureSpawns)
                 if (spawn.guid == trainerSpawn)
+                {
                     spawn.y = -134;
+                    spawn.respawnSeconds = 300;
+                }
             world.data.creatureCells[worldMap] = null;
             foreach (i, ref spawn; world.data.creatureSpawns)
                 world.data.creatureCells.require(worldMap, null).require(cellKeyAt(spawn.x, spawn.y), null) ~= i;
             world.data.creatureTemplates.edit(creatureTrainer).faction = 14;
             world.data.creatureTemplates.edit(creatureTrainer).detection = 0;
+            world.data.creatureTemplates.edit(creatureTrainer).minLootGold = 25;
+            world.data.creatureTemplates.edit(creatureTrainer).maxLootGold = 25;
             world.data.creatureTemplates.edit(creatureInnkeeper).faction = 14;
         }
 
@@ -2940,13 +2945,24 @@ unittest
         helper = field.creatureAt(helperGuid);
         assert(helper !is null && helper.ai.inCombat && helper.ai.currentVictim == 7);
 
-        if (scenario == 0)
+        const died = scenario >= 3;
+        const playerGuid = client.session.character.guid;
+        if (died)
+        {
+            helper.setLootRecipient(playerGuid, 0);
+            helper.values.set!UNIT_FIELD_HEALTH(0);
+            battlefield.onlinePlayer(playerGuid).killedCreature(helper);
+            assert(helper.loot !is null && helper.loot.gold == 25);
+            assert(db.loadOutdoorCorpses().length == 1 && trainerSpawn in db.creatureRespawns);
+        }
+        const homeMoved = scenario == 0 || scenario == 1 || scenario == 4;
+        if (scenario == 0 || scenario == 4)
             coordinator.authority.drain(original.id);
         else if (scenario == 1)
             cluster.isolated[original] = true; // its process still ticks until its lease expires
         else
             cluster.isolated[borrower] = true;
-        if (scenario != 2)
+        if (homeMoved)
         {
             cluster.run(12000, coordinator, borrower, original);
             const newHome = coordinator.regions.ownerAt(worldMap, homeCell);
@@ -2955,7 +2971,10 @@ unittest
             auto newHomeMap = worlds[newHome].map(worldMap);
             newHomeMap.peerInterest(2, [homeCell], null);
             assert(newHomeMap.creatureAt(helperGuid) is null, "the moved home cannot spawn an active loan");
-            client.session.clientGone();
+            if (died)
+                cluster.isolated[borrower] = true;
+            else
+                client.session.clientGone();
         }
 
         foreach (_; 0 .. 480)
@@ -2971,7 +2990,17 @@ unittest
                 break;
         }
         const home = coordinator.regions.ownerAt(worldMap, homeCell);
-        assert(home && worlds[home].map(worldMap).creatureAt(helperGuid) !is null, "the creature returned home");
+        assert(home);
+        auto returned = worlds[home].map(worldMap).creatureAt(helperGuid);
+        assert(returned !is null, "the creature returned home");
+        if (died)
+        {
+            assert(!returned.alive && returned.loot !is null && returned.loot.gold == 25);
+            assert(returned.loot.owners[playerGuid]);
+            assert(worlds[home].awaitingRespawn(trainerSpawn), "the same death still owns the spawn");
+        }
+        else
+            assert(returned.alive);
         assert(!coordinator.regions.creatureRegion(trainerSpawn).creature.spawn, "the temporary lease was retired");
     }
 }

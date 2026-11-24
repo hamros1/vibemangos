@@ -565,7 +565,8 @@ interface WorldDatabase
     @DatabaseRead CreaturePoolState[uint] loadCreaturePoolStates(uint realm);
 
     /// Claim the initial row (revision 0) or update the expected revision. A stale owner cannot renew it.
-    @DatabaseWrite bool updateCreaturePoolState(uint realm, uint pool, ulong revision, uint spawn, long due);
+    @DatabaseWrite bool updateCreaturePoolState(uint realm, uint pool, ulong revision, uint spawn, long due,
+        const InstanceCorpseRecord corpse = InstanceCorpseRecord.init);
 
     /// The player's auras, replacing those saved before.
     @Replaces void saveAuras(uint player, const(AuraRecord)[] auras);
@@ -1111,9 +1112,18 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     Nullable!CorpseRecord loadCorpse(uint player) { return statements.loadCorpse(player); }
     void saveCreatureRespawn(uint spawnGuid, long respawnTime) { statements.saveCreatureRespawn(spawnGuid, respawnTime); }
     CreaturePoolState[uint] loadCreaturePoolStates(uint realm) { return statements.loadCreaturePoolStates(realm); }
-    bool updateCreaturePoolState(uint realm, uint pool, ulong revision, uint spawn, long due)
+    bool updateCreaturePoolState(uint realm, uint pool, ulong revision, uint spawn, long due,
+        const InstanceCorpseRecord corpse = InstanceCorpseRecord.init)
     {
-        return statements.updateCreaturePoolState(realm, pool, revision, spawn, due);
+        if (!corpse.spawn)
+            return statements.updateCreaturePoolState(realm, pool, revision, spawn, due);
+        bool changed;
+        characterDb.transaction({
+            changed = statements.updateCreaturePoolState(realm, pool, revision, spawn, due);
+            if (changed)
+                statements.saveInstanceCorpse(corpse);
+        });
+        return changed;
     }
     void saveAuras(uint player, const(AuraRecord)[] auras) { statements.saveAuras(player, auras); }
     void saveCooldowns(uint player, const(CooldownRecord)[] cooldowns) { statements.saveCooldowns(player, cooldowns); }
@@ -2724,13 +2734,16 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
 
     CreaturePoolState[uint] loadCreaturePoolStates(uint realm) { return creaturePoolStates.get(realm, null).dup; }
 
-    bool updateCreaturePoolState(uint realm, uint pool, ulong revision, uint spawn, long due)
+    bool updateCreaturePoolState(uint realm, uint pool, ulong revision, uint spawn, long due,
+        const InstanceCorpseRecord corpse = InstanceCorpseRecord.init)
     {
         auto states = realm in creaturePoolStates;
         const previous = states is null ? null : pool in *states;
         if ((previous is null ? 0 : previous.revision) != revision)
             return false;
         creaturePoolStates[realm][pool] = CreaturePoolState(spawn, due, revision + 1);
+        if (corpse.spawn)
+            saveInstanceCorpse(corpse, 0);
         return true;
     }
     InstanceRecords instanceRows;    /// what the instance methods keep
