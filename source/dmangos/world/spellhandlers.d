@@ -861,6 +861,7 @@ private:
         if (c.timer <= 0)
             return go(c);
         generic = c;
+        checkpointSummons(true);
         return SpellCastResult.ok;
     }
 
@@ -970,6 +971,12 @@ private:
             return;
         auto c = generic;
         generic.active = false;
+        if (!checkpointSummons(true))
+        {
+            generic = c;
+            generic.timer = 1000;
+            return;
+        }
         go(c);
     }
 
@@ -1018,6 +1025,8 @@ private:
                 if (generic.timer + delay > generic.castTime)
                     delay = generic.castTime - generic.timer;
                 generic.timer += delay;
+                if (delay)
+                    checkpointSummons();
                 ByteWriter w;
                 w.put(player.guid);
                 w.put(cast(uint) delay);
@@ -1073,6 +1082,7 @@ private:
             return;
         const id = generic.spell.id;
         generic.active = false;
+        checkpointSummons(true);
         map.sendToWatchers(this, Opcode.SMSG_SPELL_FAILURE, spellFailurePacket(player.guid, id, reason), true);
         deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(id, reason));
     }
@@ -2049,22 +2059,44 @@ private:
         writer.putBytes(state);
     }
 
-    private void readCastHandoff(ref ByteReader reader)
+    private void readCastHandoff(ref ByteReader reader, int elapsed = 0)
     {
         import dmangos.plaindata : decode;
 
         const now = context.clock();
-        gcdReadyAt = now + reader.read!int.msecs;
+        gcdReadyAt = now + (reader.read!int - elapsed).msecs;
         foreach (ref deadline; schoolLockedUntil)
-            deadline = now + reader.read!int.msecs;
+            deadline = now + (reader.read!int - elapsed).msecs;
         auto state = reader.readBytes(reader.read!uint);
         if (!state.length)
             return;
         CastHandoff snapshot;
         decode(state, snapshot);
+        snapshot.remaining -= elapsed;
         generic = restoreCast(snapshot);
         if (generic.active)
             pushbacks = snapshot.pushbacks;
+    }
+
+    private const(ubyte)[] castRecoveryState()
+    {
+        ByteWriter state;
+        state.put(map.id);
+        state.put(map.instanceId);
+        state.put(context.transportNow());
+        writeCastHandoff(state);
+        return state.data;
+    }
+
+    private void restoreCastRecovery(ref ByteReader state)
+    {
+        if (state.empty || state.read!uint != map.id || state.read!uint != map.instanceId)
+            return;
+        const elapsed = max(0, cast(int)(context.transportNow() - state.read!uint));
+        readCastHandoff(state, elapsed);
+        if (generic.active)
+            map.sendToWatchers(this, Opcode.SMSG_SPELL_START, spellStartPacket(player.guid, generic.spell.id,
+                cast(uint) max(0, generic.timer), generic.targets), true);
     }
 
     private CastHandoff snapshotCast(const ref Casting c)

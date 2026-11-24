@@ -1525,7 +1525,7 @@ mixin template PetHandlers()
     }
 
     private enum ubyte loneTotemSlot = 4, guardianSlot = 5;
-    private enum ubyte summonCheckpointVersion = 3;
+    private enum ubyte summonCheckpointVersion = 4;
     private bool summonCheckpointExists, detachingSummons;
 
     private const(ubyte)[] playerSummonState(bool departing, ulong removed = 0)
@@ -1609,7 +1609,8 @@ mixin template PetHandlers()
         const summons = player.alive ? playerSummonState(false, removed) : null;
         const fishing = player.alive && bobber && bobber != removed ? fishingRecoveryState() : null;
         const ground = player.alive && persistentAreas.length ? groundRecoveryState() : null;
-        const active = summons.length || fishing.length || ground.length;
+        const casting = player.alive && generic.active ? castRecoveryState() : null;
+        const active = summons.length || fishing.length || ground.length || casting.length;
         if (!active && !summonCheckpointExists)
             return true;
         ByteWriter checkpoint;
@@ -1627,7 +1628,9 @@ mixin template PetHandlers()
             checkpoint.putBytes(summons);
             checkpoint.put(cast(uint) fishing.length);
             checkpoint.putBytes(fishing);
+            checkpoint.put(cast(uint) ground.length);
             checkpoint.putBytes(ground);
+            checkpoint.putBytes(casting);
         }
         context.database.savePlayerSummons(player.data.guid, active ? toHex(checkpoint.data) : null);
         if (immediate && !context.settleWrites())
@@ -1665,7 +1668,7 @@ mixin template PetHandlers()
             {
                 if (version_ == 1)
                     restorePlayerSummons(state, true);
-                else if (version_ == 2 || version_ == summonCheckpointVersion)
+                else if (version_ >= 2 && version_ <= summonCheckpointVersion)
                 {
                     auto summons = ByteReader(state.readBytes(state.read!uint));
                     restorePlayerSummons(summons, true);
@@ -1675,7 +1678,14 @@ mixin template PetHandlers()
                     {
                         auto fishing = ByteReader(state.readBytes(state.read!uint));
                         restoreFishingRecovery(fishing);
-                        restoreGroundRecovery(state);
+                        if (version_ == 3)
+                            restoreGroundRecovery(state);
+                        else
+                        {
+                            auto ground = ByteReader(state.readBytes(state.read!uint));
+                            restoreGroundRecovery(ground);
+                            restoreCastRecovery(state);
+                        }
                     }
                 }
             }
