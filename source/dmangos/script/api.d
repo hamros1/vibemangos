@@ -1292,15 +1292,15 @@ struct InstanceContext
     void waitForPlayer() { waitForPlayer_ = true; }
     package(dmangos) @property bool waitingForPlayer() const { return waitForPlayer_; }
 
-    /// Include a living encounter summon in the copy's durable checkpoints.
-    void checkpointSummon(EntityRef creature)
+    /// Include a living encounter creature in the copy's durable checkpoints.
+    void checkpointCreature(EntityRef creature)
     {
         summons_ ~= creature;
         checkpoint();
     }
 
-    /// Whether this summon was included in the checkpoint being restored.
-    bool hasSavedSummon(EntityRef creature) const
+    /// Whether this creature was included in the checkpoint being restored.
+    bool hasSavedCreature(EntityRef creature) const
     {
         foreach (saved; savedSummons_)
             if (saved == creature)

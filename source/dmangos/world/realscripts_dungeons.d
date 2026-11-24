@@ -1474,13 +1474,37 @@ unittest
     if (!haveRealData())
         return;
     import dmangos.scripts.blackrockdepths : BlackrockDepths, Fight;
+    import dmangos.bytes : ByteWriter;
+    import dmangos.world.loothandlers : ClientLootSlot;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.spellcast : TargetFlags;
 
-    enum uint doomrel = 9039;
+    enum uint doomrel = 9039, tombEnter = 170576, tombExit = 170577, reward = 169243, opening = 3365;
     auto d = Dungeon.enter(230, 55);
     auto him = d.spawned(doomrel, 0, 15);
     d.talkTo(him);
     d.choose(him, 0);
     d.run(3.seconds);
+    auto first = d.spawned(BlackrockDepths.tombDwarves[0], 0, 15);
+    const defeated = first.guid;
+    d.kill(first);
+    auto second = d.spawned(BlackrockDepths.tombDwarves[1], 0, 15);
+    const active = second.guid;
+    d.hit(second, second.values.get!UNIT_FIELD_HEALTH / 4);
+    d.run(2100.msecs);
+    const health = second.values.get!UNIT_FIELD_HEALTH;
+    const remaining = d.saved!BlackrockDepths.steps.remaining(BlackrockDepths.Step.nextDwarf);
+    assert(remaining > 0 && d.saved!BlackrockDepths.dwarfRound == 2);
+    d.restartAfterCrash();
+    const recovered = d.saved!BlackrockDepths;
+    assert(recovered.tomb == Fight.inProgress && recovered.dwarfRound == 2);
+    assert(recovered.steps.remaining(BlackrockDepths.Step.nextDwarf) <= remaining);
+    assert(remaining - recovered.steps.remaining(BlackrockDepths.Step.nextDwarf) < 1000);
+    assert(d.map.findObject(defeated) is null, "the defeated dwarf stays gone");
+    second = d.map.creatureAt(active);
+    assert(second !is null && second.ai.inCombat && second.values.get!UNIT_FIELD_HEALTH == health,
+        "the same wounded dwarf continues the fight");
+    assert(d.objectOf(tombEnter).values.get!GAMEOBJECT_STATE == 1);
     bool done()
     {
         foreach (dwarf; BlackrockDepths.tombDwarves)
@@ -1490,6 +1514,49 @@ unittest
         return d.saved!BlackrockDepths.tomb == Fight.done;
     }
     assert(d.runUntil(&done, 400.seconds), format!"the seven fall (round %s, tomb %s)\n%s"(d.saved!BlackrockDepths.dwarfRound, d.saved!BlackrockDepths.tomb, d.story));
+
+    const guid = d.objectOf(reward).guid;
+    d.restartAfterCrash();
+    auto chest = d.objectOf(reward);
+    assert(chest.guid == guid && chest.loot is null, "the original chest survives before its first opening");
+    assert(d.objectOf(tombEnter).values.get!GAMEOBJECT_STATE == 0
+        && d.objectOf(tombExit).values.get!GAMEOBJECT_STATE == 0);
+
+    void openReward()
+    {
+        d.goTo(chest.position);
+        if (!d.player.knowsSpell(opening))
+            d.player.spells ~= opening;
+        ByteWriter request;
+        request.put(opening);
+        request.put(cast(ushort) TargetFlags.locked);
+        request.putPackedGuid(chest.guid);
+        d.party[0].write(Opcode.CMSG_CAST_SPELL, request.data);
+        assert(d.runUntil(() => chest.loot !is null, 12.seconds), d.story);
+    }
+    openReward();
+    const drop = chest.loot.items[0];
+    const quantity = d.itemCount(drop.itemId);
+    d.party[0].write(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, ClientLootSlot(drop.slot));
+    assert(d.itemCount(drop.itemId) == quantity + drop.count, "the chest awarded the item");
+    uint durableAwards()
+    {
+        uint total;
+        foreach (itemGuid, item; d.w.db.itemRows)
+            if (item.entry == drop.itemId && d.w.db.itemOwners[itemGuid] == d.player.data.guid)
+                total += item.count;
+        return total;
+    }
+    const awarded = durableAwards();
+    assert(awarded == quantity + drop.count);
+    d.restartAfterCrash();
+    chest = d.objectOf(reward);
+    assert(chest.guid == guid && chest.loot !is null);
+    assert(chest.loot.itemInSlot(drop.slot).allowed.length == 0, "the consumed slot stayed claimed");
+    openReward();
+    d.run(6.seconds);
+    d.party[0].write(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, ClientLootSlot(drop.slot));
+    assert(durableAwards() == awarded, "the claim could not pay twice");
 }
 
 // ---------------------------------------------------------------------------------------------------------------

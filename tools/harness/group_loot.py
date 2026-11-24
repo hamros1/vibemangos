@@ -16,20 +16,7 @@ CHEST, LOOT_ID, HERBALISM, PRIZE = 1618, 8_910_001, 2366, 1214
 
 
 def world_with_chest(fixture):
-    base = fixture.base["world_database"]
-    source = base.rsplit(";", 1)[-1]
-    schema = fixture.directory.name.replace("-", "_") + "_world"
-    fixture.query(f"CREATE DATABASE `{schema}`")
-    fixture.schemas.append(schema)
-    world = base.rsplit(";", 1)[0] + ";" + schema
-    writable = ("gameobject", "gameobject_template", "gameobject_loot_template")
-    tables = fixture.query(f"SHOW TABLES FROM `{source}`").splitlines()
-    fixture.query("; ".join(
-        f"CREATE SQL SECURITY INVOKER VIEW `{schema}`.`{table}` AS SELECT * FROM `{source}`.`{table}`"
-        for table in tables if table not in writable))
-    for table in writable:
-        fixture.query(f"CREATE TABLE {table} LIKE `{source}`.{table}; "
-                      f"INSERT INTO {table} SELECT * FROM `{source}`.{table}", world)
+    world = fixture.world_with_writable_tables("gameobject", "gameobject_template", "gameobject_loot_template")
     fixture.query(f"UPDATE gameobject_template SET data1 = {LOOT_ID} WHERE entry = {CHEST}; "
                   f"INSERT INTO gameobject_loot_template (entry, item) VALUES ({LOOT_ID}, {PRIZE})", world)
     return world

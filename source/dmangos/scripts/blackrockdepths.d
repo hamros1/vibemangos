@@ -161,6 +161,7 @@ struct BlackrockDepths
     @transient EntityRef tombIn, tombOut, golemN, golemS, throne, secretDoorRef, safe, barDoorRef, kegShot;
     @transient EntityRef[7] runeObjects;
     @transient EntityRef[7] dwarves;
+    @transient bool tombRecovering;
     @transient EntityRef magmusRef, emperorRef, pluggerRef, phalanxRef, rocknotRef, nagmaraRef, loregrainRef;
     @transient Pack!16 constructs;
     @transient Pack!80 patrons;
@@ -194,7 +195,11 @@ struct BlackrockDepths
                 }
             }
             break;
-        case tombEnter: tombIn = e.object; break;
+        case tombEnter:
+            tombIn = e.object;
+            if (tomb == Fight.inProgress || tomb == Fight.done)
+                brd.door(e.object, tomb == Fight.done);
+            break;
         case tombExit:
             tombOut = e.object;
             if (tomb == Fight.done)
@@ -236,11 +241,16 @@ struct BlackrockDepths
 
     void on(ref InstanceContext brd, const ref Restored e)
     {
+        if (tomb == Fight.inProgress)
+        {
+            tombRecovering = true;
+            brd.waitForPlayer();
+        }
         if (ring != Fight.inProgress)
             return;
         // An older or incomplete checkpoint cannot safely resume a wave with missing opponents.
         foreach (mob; ringMobs)
-            if (!brd.hasSavedSummon(mob))
+            if (!brd.hasSavedCreature(mob))
                 return failRing(brd);
         if (!ringMobs.alive && !steps.pending(Step.ring))
         {
@@ -253,6 +263,23 @@ struct BlackrockDepths
 
     void on(ref InstanceContext brd, const ref PlayerEntered e)
     {
+        if (tombRecovering)
+        {
+            tombRecovering = false;
+            if (brd.entryKilled(doomrel))
+                finishTomb(brd);
+            else
+            {
+                foreach (dwarf; dwarves[0 .. dwarfRound])
+                {
+                    const victim = brd.victimOf(dwarf);
+                    awakenDwarf(brd, dwarf, !victim || !brd.alive(victim) ? e.player : EntityRef.init);
+                }
+                // The spawn death can reach the database just before its encounter checkpoint.
+                if (dwarfRound && brd.entryKilled(tombDwarves[dwarfRound - 1]))
+                    callNextDwarf(brd);
+            }
+        }
         if (ring == Fight.inProgress && !grimstoneRef)
         {
             grimstoneRef = brd.summon(grimstone, grimstonePlace);
@@ -464,20 +491,16 @@ struct BlackrockDepths
             }
             break;
         case haterel, angerrel, vilerel, gloomrel, seethrel, doperel:
-            if (tomb == Fight.inProgress && dwarfRound > 0 && entry == tombDwarves[dwarfRound - 1])
-                callNextDwarf(brd);
+            if (tomb == Fight.inProgress)
+            {
+                if (dwarfRound && entry == tombDwarves[dwarfRound - 1])
+                    callNextDwarf(brd);
+                brd.checkpoint();
+            }
             break;
         case doomrel:
             if (tomb != Fight.done)
-            {
-                tomb = Fight.done;
-                steps.cancel(Step.nextDwarf);
-                if (tombIn)
-                    brd.door(tombIn, true);
-                if (tombOut)
-                    brd.door(tombOut, true);
-                brd.spawnObjects(chestSeven, 3600);
-            }
+                finishTomb(brd);
             break;
         case magmus:
             ironHall = Fight.done;
@@ -630,7 +653,7 @@ struct BlackrockDepths
         const target = ringPlayer && brd.alive(ringPlayer) ? ringPlayer : brd.anyPlayer();
         if (const made = brd.summon(entry, at, 0, target))
             if (ringMobs.add(made))
-                brd.checkpointSummon(made);
+                brd.checkpointCreature(made);
     }
 
     private void failRing(ref InstanceContext brd)
@@ -676,17 +699,42 @@ struct BlackrockDepths
     /// The next of the Seven comes down to fight; the one after him in half a minute at most.
     private void callNextDwarf(ref InstanceContext brd)
     {
+        while (dwarfRound < tombDwarves.length && brd.entryKilled(tombDwarves[dwarfRound]))
+            ++dwarfRound;
         if (dwarfRound >= tombDwarves.length)
             return;
-        const dwarf = dwarves[dwarfRound++];
-        if (dwarf && brd.alive(dwarf))
+        const dwarf = dwarves[dwarfRound];
+        if (!dwarf || !brd.alive(dwarf))
         {
-            brd.setFaction(dwarf, factionDwarfHostile);
-            brd.unitFlags(dwarf, UnitFlag.immuneToPlayer, false); // their templates are immune to players
-            if (const target = brd.anyPlayer())
-                brd.attack(dwarf, target);
+            steps.after(Step.nextDwarf, 250.msecs);
+            return;
         }
+        ++dwarfRound;
+        awakenDwarf(brd, dwarf, brd.anyPlayer());
+        brd.checkpointCreature(dwarf);
         steps.after(Step.nextDwarf, 30.seconds);
+    }
+
+    private void awakenDwarf(ref InstanceContext brd, EntityRef dwarf, EntityRef target)
+    {
+        if (!dwarf || !brd.alive(dwarf))
+            return;
+        brd.setFaction(dwarf, factionDwarfHostile);
+        brd.unitFlags(dwarf, UnitFlag.immuneToPlayer, false);
+        if (target)
+            brd.attack(dwarf, target);
+    }
+
+    private void finishTomb(ref InstanceContext brd)
+    {
+        tomb = Fight.done;
+        steps.cancel(Step.nextDwarf);
+        if (tombIn)
+            brd.door(tombIn, true);
+        if (tombOut)
+            brd.door(tombOut, true);
+        brd.spawnObjects(chestSeven, 3600);
+        brd.checkpoint();
     }
 
     private void failTomb(ref InstanceContext brd)
@@ -696,6 +744,7 @@ struct BlackrockDepths
         dwarfRound = 0;
         if (tombIn)
             brd.door(tombIn, true);
+        brd.checkpoint();
         foreach (dwarf; dwarves)
             if (dwarf && brd.alive(dwarf))
             {

@@ -368,7 +368,10 @@ unittest
         source.context.nodeId = 1;
         owner.context.nodeId = 2;
         successor.context.nodeId = 3;
+        // All three workers observe the same instant, independent of fixture construction time.
+        source.now = owner.now = successor.now;
         source.context.clock = () => source.now;
+        owner.context.clock = () => owner.now;
         successor.context.clock = () => successor.now;
         const origin = Position(2 * cellSize - 2, 100, 40), at = Position(2 * cellSize + 2, 100, 40);
         const originCell = cellKeyAt(origin.x, origin.y), targetCell = cellKeyAt(at.x, at.y);

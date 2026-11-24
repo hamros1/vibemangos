@@ -1048,7 +1048,11 @@ mixin template DbScriptRunner()
         made.instanceId = map.instanceId;
         // A static spawn just comes back; one that is not there by default goes again after a while.
         if (spawn.respawnSeconds < 0)
-            scriptedGameObjects[GameObjectOnMap(map, made.guid)] = unixTime + despawnSeconds;
+        {
+            const deadline = unixTime + despawnSeconds;
+            scriptedGameObjects[GameObjectOnMap(map, made.guid)] = deadline;
+            rememberUnopenedReward(made, deadline);
+        }
         if (!map.instanceId && gameObjectRespawnAt.remove(spawn.guid))
             database.saveGameObjectRespawn(spawn.guid, 0);
         map.addObject(made);

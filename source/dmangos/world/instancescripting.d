@@ -56,7 +56,7 @@ final class InstanceScript : InstanceHost
     /// The world's creatures (summons); null in tests without one.
     CreatureLore lore;
 
-    /// Read-only capture and cold restore of summons that the encounter opted to checkpoint.
+    /// Read-only capture and cold restore of creatures that the encounter opted to checkpoint.
     Migrant delegate(EntityRef) captureSummon;
     MapObject delegate(const ref Migrant) restoreSummon;
 
@@ -85,7 +85,7 @@ final class InstanceScript : InstanceHost
      * `persist` writes its state back. Null if no script serves `name`.
      */
     static InstanceScript make(ScriptRuntime runtime, string name, uint id, uint mapId, string data,
-        void delegate(string data, bool checkpoint) persist)
+        void delegate(string data, bool checkpoint) persist, scope EntityRef delegate(uint) nativeSpawn)
     {
         if (runtime is null || !runtime.serves(ScriptKind.instance, name))
             return null;
@@ -103,7 +103,7 @@ final class InstanceScript : InstanceHost
             if (runtime.load(script.handle, r))
             {
                 script.fromSave = true;
-                script.loadSummons(data);
+                script.loadCreatures(data, nativeSpawn);
             }
             else
                 info!"instance %s: the saved state of script %s has another layout; it starts afresh"(id, name);
@@ -111,7 +111,7 @@ final class InstanceScript : InstanceHost
         return script;
     }
 
-    private void loadSummons(string data)
+    private void loadCreatures(string data, scope EntityRef delegate(uint) nativeSpawn)
     {
         import std.algorithm.searching : findSplit;
         import dmangos.world.migration : MigrantKind;
@@ -129,19 +129,29 @@ final class InstanceScript : InstanceHost
             Migrant[] saved;
             decodeBundle(fromHex(section), cells, saved);
             EntityRef[] refs;
+            Migrant[] accepted;
             foreach (ref migrant; saved)
             {
-                if (migrant.kind != MigrantKind.summonedCreature)
-                    return;
-                auto r = ByteReader(migrant.state);
-                const spawn = deserialize!CreatureSpawn(r);
-                refs ~= EntityRef(makeGuid(HighGuid.unit, spawn.entry, spawn.guid));
+                EntityRef creature;
+                if (migrant.kind == MigrantKind.creature)
+                    creature = nativeSpawn(migrant.spawn);
+                else if (migrant.kind == MigrantKind.summonedCreature)
+                {
+                    auto r = ByteReader(migrant.state);
+                    const spawn = deserialize!CreatureSpawn(r);
+                    creature = EntityRef(makeGuid(HighGuid.unit, spawn.entry, spawn.guid));
+                }
+                if (creature)
+                {
+                    refs ~= creature;
+                    accepted ~= migrant;
+                }
             }
             durableSummons = refs;
-            pendingSummons = saved;
+            pendingSummons = accepted;
         }
         catch (Exception error)
-            warning!"instance %s: could not load its encounter summons: %s"(id, error.msg);
+            warning!"instance %s: could not load its encounter creatures: %s"(id, error.msg);
     }
 
     /// Whether its state was read from `instance.data` (and `restored` has not been called since).
@@ -166,15 +176,30 @@ final class InstanceScript : InstanceHost
         pendingSummons = null;
         size_t index;
         EntityRef[] missing;
+        EntityRef[] restored;
         map.migrateIn(encodeBundle(null, pending), (const ref Migrant migrant) {
             const guid = durableSummons[index++];
             auto object = restoreSummon(migrant);
             if (object is null)
                 missing ~= guid;
+            else
+                restored ~= guid;
             return object;
         });
+        foreach (creature; restored)
+            raise(CreatureLoaded(creature));
         foreach (creature; missing)
             raise(CreatureEvaded(creature));
+    }
+
+    /// The checkpoint supplies this creature when the first player enters the copy.
+    bool restoringCreature(EntityRef creature) const
+    {
+        if (summonsPending)
+            foreach (saved; durableSummons)
+                if (saved == creature)
+                    return true;
+        return false;
     }
 
     /// Open-world round 2: the script `name` (`world_template.ScriptName`) of continent `mapId`; null if none serves it.

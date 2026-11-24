@@ -4344,6 +4344,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
                             info!"instance %s of map %s saved an encounter checkpoint"(instance, id);
                         }
+                    }, (uint guid) {
+                        const spawn = creatureSpawnOf(guid);
+                        return spawn is null || spawn.map != id || deadInInstance(instance, guid) ? EntityRef.init
+                            : EntityRef(makeGuid(HighGuid.unit, spawn.entry, guid));
                     });
                 if (script !is null)
                 {
@@ -4352,7 +4356,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     script.spawnObjects = &spawnDungeonObjects;
                     script.captureSummon = (EntityRef ref_) {
                         auto creature = created.creatureAt(ref_.guid);
-                        if (creature is null || !creature.alive || creature.summon.type == TempSpawnType.none)
+                        if (creature is null || !creature.alive || creature.petOwner || creature.meleeController)
                             return Migrant.init;
                         auto migrant = saveMigratingObject(creature, false);
                         migrant.home = cellKeyAt(creature.spawn.x, creature.spawn.y);
@@ -4364,7 +4368,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                         try
                         {
                             auto creature = cast(Creature) restoreWorldMigrant(migrant, created);
-                            if (creature !is null && !config.cluster.enabled)
+                            if (creature !is null && !config.cluster.enabled
+                                && creature.spawn.guid >= temporaryCounterStart)
                             {
                                 import std.algorithm.comparison : max;
 
@@ -4985,6 +4990,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.gameobject : GameObject;
 
         auto state = instance in instances;
+        auto script = instanceScripts.get(instance, null);
         // A battleground's copy: only the spawns of its events now.
         auto copy = battlegroundOfMap(mapId) ? battlegrounds.find(instance) : null;
         MapObject[] spawned;
@@ -4992,6 +4998,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             foreach (index; (*cells).get(cell, null))
             {
                 if (state !is null && data.creatureSpawns[index].guid in state.dead)
+                    continue;
+                if (script !is null && script.restoringCreature(EntityRef(makeGuid(HighGuid.unit,
+                    data.creatureSpawns[index].entry, data.creatureSpawns[index].guid))))
                     continue;
                 if (!creatureInEvents(data.creatureSpawns[index].guid)
                         || !upInPool(PoolMember.Kind.creature, data.creatureSpawns[index].guid))
@@ -5033,7 +5042,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     go.setDoorOpen(true); // a door loading after the start is open
                 spawned ~= go;
             }
-        if (auto script = instance in instanceScripts)
+        if (script !is null)
         {
             import dmangos.script.api : CreatureLoaded, EntityRef, ObjectLoaded;
 
@@ -6587,28 +6596,30 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         const summoned = creature.summon.type != TempSpawnType.none;
         if (creature.instanceId)
         {
+            // A script can flush a checkpoint in its death handler. Queue the spawn death first.
+            if (!summoned)
+                if (auto state = creature.instanceId in instances)
+                {
+                    const guid = creature.spawn.guid;
+                    state.dead[guid] = true;
+                    if (auto copy = battlegrounds.find(creature.instanceId))
+                        copy.objectiveChanged();
+                    else
+                    {
+                        long until = state.resetAt ? state.resetAt : unixTime + 86_400;
+                        if (moltenCoreTrash(creature.spawn) && creature.respawnAt < until)
+                            state.trashRespawns[guid] = until = creature.respawnAt;
+                        database.saveInstanceRespawn(false, guid, creature.instanceId, until);
+                    }
+                }
             if (auto script = creature.instanceId in instanceScripts)
                 script.raise(CreatureDied(EntityRef(creature.guid), EntityRef(creature.lootRecipient), summoned));
-        }
-        else if (auto script = creature.spawn.map in worldScripts) // open-world round 2
-            script.raise(CreatureDied(EntityRef(creature.guid), EntityRef(creature.lootRecipient), summoned));
-        if (creature.summon.type != TempSpawnType.none)
-            return; // a summon never comes back
-        if (creature.instanceId)
-        {
-            if (auto state = creature.instanceId in instances)
-            {
-                const guid = creature.spawn.guid;
-                state.dead[guid] = true;
-                if (auto copy = battlegrounds.find(creature.instanceId))
-                    return copy.objectiveChanged(); // the match checkpoint includes its dead spawns
-                long until = state.resetAt ? state.resetAt : unixTime + 86_400;
-                if (moltenCoreTrash(creature.spawn) && creature.respawnAt < until)
-                    state.trashRespawns[guid] = until = creature.respawnAt;
-                database.saveInstanceRespawn(false, guid, creature.instanceId, until);
-            }
             return;
         }
+        if (auto script = creature.spawn.map in worldScripts) // open-world round 2
+            script.raise(CreatureDied(EntityRef(creature.guid), EntityRef(creature.lootRecipient), summoned));
+        if (summoned)
+            return;
         if (creaturePools.manages(creature.spawn.guid))
             creaturePools.dead(creature.spawn.guid, creature.respawnAt);
         else
@@ -8299,7 +8310,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return false;
     }
 
-    /// Persistent rewards are one-shot database-spawned dungeon chests with no gathering refills.
+    /// Persistent rewards are one-shot dungeon chest spawns with no gathering refills.
     package bool isInstanceReward(const GameObject go)
     {
         import dmangos.world.gameobject : GameObjectType;
@@ -8321,14 +8332,24 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         const now = unixTime;
         const visibleUntil = scriptedGameObjects.get(GameObjectOnMap(map, go.guid), long.max);
         const openedUntil = now + (go.despawnTimer + 999) / 1000;
-        const deadline = state.chests.get(go.spawn.guid, InstanceChestRecord.init).expiresAt;
+        const previous = state.chests.get(go.spawn.guid, InstanceChestRecord.init);
         ByteWriter w;
         w.put(ubyte(1));
         go.loot.saveHandoff(w, claimed, looter);
         auto record = InstanceChestRecord(go.instanceId, go.spawn.guid,
-            deadline ? deadline : visibleUntil < openedUntil ? visibleUntil : openedUntil, toHex(w.data));
+            previous.loot.length ? previous.expiresAt : visibleUntil < openedUntil ? visibleUntil : openedUntil,
+            toHex(w.data));
         state.chests[go.spawn.guid] = record;
         return record;
+    }
+
+    private void rememberUnopenedReward(GameObject go, long deadline)
+    {
+        if (!isInstanceReward(go))
+            return;
+        auto record = InstanceChestRecord(go.instanceId, go.spawn.guid, deadline, null);
+        instances[go.instanceId].chests[go.spawn.guid] = record;
+        database.saveInstanceChest(record);
     }
 
     private bool restoreReward(GameObject go, const ref InstanceChestRecord reward)
@@ -8344,6 +8365,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         const remaining = reward.expiresAt - unixTime;
         if (remaining <= 0 || !isInstanceReward(go))
             return false;
+        if (!reward.loot.length)
+        {
+            scriptedGameObjects[GameObjectOnMap(instanceMaps[go.instanceId], go.guid)] = reward.expiresAt;
+            return true;
+        }
         auto r = ByteReader(fromHex(reward.loot));
         try
         {

@@ -23,12 +23,14 @@ BEASTS = {8925: 4, 8926: 2, 8927: 5, 8928: 3, 8933: 3, 8932: 7}
 CHAMPIONS = set(range(9027, 9033))
 
 
-def run(fixture, new_party, active_wave):
+def start_cluster(fixture, new_party, *, world=None):
     login = fixture.fresh_schema("login", "classicrealmd.sql")
     characters = fixture.fresh_schema("chars", "classiccharacters.sql")
     ports = available_ports(9)
     base = dict(fixture.base, realm_id=1, login_database=login, character_database=characters,
                 bind_address="127.0.0.1", idle_timeout=240)
+    if world is not None:
+        base["world_database"] = world
     seed = fixture.start_world("seed", dict(base, port=ports[0], write_log="seed.writes"))
     wait_for("the seed world", lambda: "listening on" in fixture.log("seed"), 30)
 
@@ -89,37 +91,17 @@ def run(fixture, new_party, active_wave):
         nodes[tag] = fixture.start_world(tag, config)
     wait_for("gateway and its initial lease", lambda: "lease holds" in fixture.log("node4"), 60)
 
-    world_db = fixture.base["world_database"]
-    boss_guid, x, y, z = fixture.query(f"SELECT guid,position_x,position_y,position_z FROM creature WHERE id={BOSS} "
-                                      f"AND map={MAP} ORDER BY guid LIMIT 1", world_db).split()
-    boss_room = f"worldport:{MAP}:{float(x)+1}:{y}:{z}"
-    boss_arrival = f"[teleport] to {float(x)+1:.1f} {float(y):.1f} {float(z):.1f};"
-    arena = trigger_position(TRIGGER, MAP)
-    ring = f"worldport:{MAP}:" + ":".join(map(str, arena))
-    arena_floor = f"worldport:{MAP}:608.960:-231.322:-53.907"
-    checkpoint_floor = f"worldport:{MAP}:608.460:-231.322:-53.907"
-    checkpoint_arrival = "608.5 -231.3 -53.9"
-    paths = [fixture.directory / name for name in
-             ("invite", "accept", "enter", "inside", "follow", "start-ring", "move", "first-wave", "second-wave",
-              "resume-wave", "champion", "check-boss", "finish")]
-    invite, accept, enter, inside, follow, start, move, first, second, resume, champion, check_boss, finish = paths
-    wait = lambda flag: f"waitfile:{flag}"
-    kill_beasts = "killpack:" + ":".join(map(str, BEASTS))
-    kill_champion = "killpack:" + ":".join(map(str, sorted(CHAMPIONS)))
-    first_wave = (kill_beasts.replace("killpack:", "killpack:one:"), wait(resume), kill_beasts) if active_wave else (kill_beasts,)
+    return characters, names, leader, client, nodes, trigger_position
+
+
+def open_party(fixture, characters, names, leader, client, nodes, new_party, actions):
+    invite, accept, enter, inside = (fixture.directory / name for name in ("invite", "accept", "enter", "inside"))
     assemble_leader = (wait(invite), f"invite:{names[1]}") if new_party else ()
     assemble_member = (wait(accept), "accept") if new_party else ()
-    portal = ("cmd:.cheat god", f"trigger:{ENTRANCE}", wait(inside))
+    portal = (wait(enter), "cmd:.cheat god", f"trigger:{ENTRANCE}", wait(inside))
     clients = [
-        client("party0", 0, f"login:{names[0]}", *assemble_leader, wait(enter), *portal, boss_room,
-               f"attack:{BOSS}", f"targetnpc:{BOSS}", "cmd:.kill", "loot",
-               ring, wait(start), f"trigger:{TRIGGER}", arena_floor, wait(move), checkpoint_floor,
-               wait(first), *first_wave,
-               wait(second), kill_beasts, wait(champion), kill_champion, wait(check_boss), boss_room, "query",
-               wait(finish), "logout"),
-        client("party1", 1, f"login:{names[1]}", *assemble_member, wait(enter), *portal, wait(follow), ring,
-               wait(start), arena_floor, wait(move), checkpoint_floor,
-               wait(check_boss), boss_room, "query", wait(finish), "logout"),
+        client("party0", 0, f"login:{names[0]}", *assemble_leader, *portal, *actions[0]),
+        client("party1", 1, f"login:{names[1]}", *assemble_member, *portal, *actions[1]),
     ]
 
     def logs():
@@ -128,13 +110,6 @@ def run(fixture, new_party, active_wave):
             if process.poll():
                 raise RuntimeError(f"party client {i} failed:\n{output[i][-2000:]}")
         return output
-
-    def creature_guids(log, entries):
-        return {int(guid): int(entry) for entry, guid in re.findall(r"\[creature\] (\d+) guid (\d+):", log)
-                if int(entry) in entries}
-
-    def durable_key():
-        return fixture.query(f"SELECT IFNULL(SUM(count),0) FROM item_instance WHERE itemEntry={KEY}", characters)
 
     wait_for("both party members logged in", lambda: all("[appears] player" in log for log in logs()), 30)
     wait_for("both players routed from the gateway to workers",
@@ -157,6 +132,49 @@ def run(fixture, new_party, active_wave):
     assert fixture.query(f"SELECT instance FROM group_instance WHERE leaderGuid={leader}", characters) == str(copy)
     wait_for("both clients to see the same party", lambda: all("[group list] party" in log for log in logs()), 12)
     inside.touch()
+    return copy, logs, clients
+
+
+def wait(flag):
+    return f"waitfile:{flag}"
+
+
+def run(fixture, new_party, active_wave):
+    characters, names, leader, client, nodes, trigger_position = start_cluster(fixture, new_party)
+    world_db = fixture.base["world_database"]
+    boss_guid, x, y, z = fixture.query(f"SELECT guid,position_x,position_y,position_z FROM creature WHERE id={BOSS} "
+                                      f"AND map={MAP} ORDER BY guid LIMIT 1", world_db).split()
+    boss_room = f"worldport:{MAP}:{float(x)+1}:{y}:{z}"
+    boss_arrival = f"[teleport] to {float(x)+1:.1f} {float(y):.1f} {float(z):.1f};"
+    arena = trigger_position(TRIGGER, MAP)
+    ring = f"worldport:{MAP}:" + ":".join(map(str, arena))
+    arena_floor = f"worldport:{MAP}:608.960:-231.322:-53.907"
+    checkpoint_floor = f"worldport:{MAP}:608.460:-231.322:-53.907"
+    checkpoint_arrival = "608.5 -231.3 -53.9"
+    paths = [fixture.directory / name for name in
+             ("follow", "start-ring", "move", "first-wave", "second-wave", "resume-wave",
+              "champion", "check-boss", "finish")]
+    follow, start, move, first, second, resume, champion, check_boss, finish = paths
+    kill_beasts = "killpack:" + ":".join(map(str, BEASTS))
+    kill_champion = "killpack:" + ":".join(map(str, sorted(CHAMPIONS)))
+    first_wave = (kill_beasts.replace("killpack:", "killpack:one:"), wait(resume), kill_beasts) if active_wave else (kill_beasts,)
+    actions = [
+        (boss_room, f"attack:{BOSS}", f"targetnpc:{BOSS}", "cmd:.kill", "loot",
+         ring, wait(start), f"trigger:{TRIGGER}", arena_floor, wait(move), checkpoint_floor, wait(first), *first_wave,
+         wait(second), kill_beasts, wait(champion), kill_champion, wait(check_boss), boss_room, "query",
+         wait(finish), "logout"),
+        (wait(follow), ring, wait(start), arena_floor, wait(move), checkpoint_floor,
+         wait(check_boss), boss_room, "query", wait(finish), "logout"),
+    ]
+    copy, logs, clients = open_party(fixture, characters, names, leader, client, nodes, new_party, actions)
+
+    def creature_guids(log, entries):
+        return {int(guid): int(entry) for entry, guid in re.findall(r"\[creature\] (\d+) guid (\d+):", log)
+                if int(entry) in entries}
+
+    def durable_key():
+        return fixture.query(f"SELECT IFNULL(SUM(count),0) FROM item_instance WHERE itemEntry={KEY}", characters)
+
     wait_for("Gerstahn's key in the saved inventory", lambda: durable_key() == "1", 30)
     assert fixture.query(f"SELECT COUNT(*) FROM creature_respawn WHERE instance={copy} AND guid={boss_guid}",
                          characters) == "1"

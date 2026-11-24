@@ -85,6 +85,23 @@ class ClusterFixture:
             subprocess.run([*self.mysql, name], stdin=source, env=self.mysql_env, check=True)
         return f".;{self.socket};mangos;harness;{name}"
 
+    def world_with_writable_tables(self, *writable):
+        """Use the harness world through views with private copies of test-specific tables."""
+        base = self.base["world_database"]
+        source = base.rsplit(";", 1)[-1]
+        schema = self.directory.name.replace("-", "_") + "_world"
+        self.query(f"CREATE DATABASE `{schema}`")
+        self.schemas.append(schema)
+        world = base.rsplit(";", 1)[0] + ";" + schema
+        tables = self.query(f"SHOW TABLES FROM `{source}`").splitlines()
+        self.query("; ".join(
+            f"CREATE SQL SECURITY INVOKER VIEW `{schema}`.`{table}` AS SELECT * FROM `{source}`.`{table}`"
+            for table in tables if table not in writable))
+        for table in writable:
+            self.query(f"CREATE TABLE {table} LIKE `{source}`.{table}; "
+                       f"INSERT INTO {table} SELECT * FROM `{source}`.{table}", world)
+        return world
+
     def start(self, name, args, *, env=None):
         with (self.directory / (name + ".log")).open("wb") as log:
             process = subprocess.Popen(args, cwd=self.directory, env=env, stdout=log, stderr=subprocess.STDOUT)

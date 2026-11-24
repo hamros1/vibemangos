@@ -26,6 +26,7 @@ in order:
     loot                      walk to the creature last attacked, take its money and items
     killpack:[one:]ENTRY...    select and kill matching visible living creatures (GM)
     castopen:SPELL:ENTRY      cast at the nearest game object of ENTRY without taking its loot
+    castgo:SPELL:ENTRY[:N]    cast at a game object and take up to N loot slots (all if omitted)
     rolloffer  rollvote:N     keep the next group loot prompt, then pass (0), need (1) or greed (2)
     waitfile:PATH             keep receiving packets until another test process creates this file
     release  corpse  tocorpse  reclaim  spirithealer
@@ -40,6 +41,7 @@ in order:
     worldport:MAP:X:Y:Z       the client's worldport command (administrators)
     invite:NAME  accept  decline  leave  raid
                               group invitations, leaving, converting to a raid
+    lootmethod:N              set the party loot method (0 is free-for-all)
     party:TEXT  raidsay:TEXT  party and raid chat
     partystats:GUID            ask for a group member's full stats
     join:CHANNEL  part:CHANNEL  chan:CHANNEL:TEXT  chanlist:CHANNEL
@@ -971,7 +973,7 @@ for action in actions:
     elif kind in ("castgo", "castopen", "usego"):
         # Walk next to the nearest game object of ENTRY to cast at it or use it. castgo also takes its loot.
         import math
-        entry = int(args[-1])
+        entry = int(args[0] if kind == "usego" else args[1])
         found = [g for g, (t, e) in seen_objects.items() if t == 5 and e == entry and g in seen_positions]
         if not found:
             print(f"{kind}: no {entry} in sight"); continue
@@ -994,7 +996,7 @@ for action in actions:
         for i in range(n):
             slot, item, count = struct.unpack_from("<BII", p, 14 + i * 22); slots.append(slot)
             print(f"  loot slot {slot}: item {item} x{count}")
-        for slot in slots:
+        for slot in slots[:int(args[2])] if len(args) > 2 else slots:
             wsend(0x108, bytes([slot]))
         listen_for(1.0)
         wsend(0x15F, struct.pack("<Q", target)); print("  released"); listen_for(1.5)
@@ -1149,6 +1151,9 @@ for action in actions:
     elif kind == "partystats":
         wsend(0x27F, struct.pack("<Q", int(args[0])))
         describe(*expect(0x2F2))
+    elif kind == "lootmethod":
+        wsend(0x07A, struct.pack("<IQI", int(args[0]), 0, 2))
+        listen_for(0.5)
     elif kind in ("party", "raidsay"):
         wsend(0x095, struct.pack("<II", 1 if kind == "party" else 2, 7) + ":".join(args).encode() + b"\0"); print(f"{kind} '{':'.join(args)}'")
     elif kind == "join":

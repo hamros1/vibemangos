@@ -374,10 +374,10 @@ time intact. The receiving node waits briefly for players who were participating
 moved. Script-spawned game objects, including temporary unowned objects, keep their original
 expiry deadlines. An object whose deadline passes in transit is removed on arrival.
 
-Opened one-shot dungeon reward chests spawned by database scripts also survive a host crash. The
-characters database stores their rolled contents and expiry. An inventory award and its consumed
-loot slot are written in the same transaction. The lockout keeps the record until reset, including
-after the chest is exhausted or expires, so the encounter cannot roll another reward.
+One-shot dungeon reward chests survive a host crash from the moment a script spawns them. The
+characters database stores the expiry first and the rolled contents when the chest opens. An
+inventory award and its consumed loot slot are written in the same transaction. The lockout keeps
+the record until reset, including after the chest is exhausted or expires.
 
 * **The same spawns everywhere.** Pools, spawn groups and spawn entries are chosen with a seed made
   from the cluster's name and the realm, so every node agrees on which creature a spawn is.
@@ -429,6 +429,8 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   timer, and living opponents. The script checkpoints each wave's summons and deaths and saves
   changes to surviving opponents every two seconds. At each wave checkpoint the worker also
   saves the party's current positions and health.
+  The Tomb of the Seven keeps its active dwarves, the current round and its timer. The entrance
+  stays closed through combat, and the doors and reward survive a crash after Doom'rel falls.
 * **GM commands.** `.instance info`, `.instance shutdown` and `.instance reset` of a copy another node
   hosts go to that node and its answer comes back; `.instance resetall` goes to every node.
 
@@ -931,6 +933,9 @@ python3 tools/harness/battleground_recovery.py --map alterac
 python3 tools/harness/battleground_recovery.py --map alterac --cross-realm --finish-phase during
 python3 tools/harness/dungeon_recovery.py
 python3 tools/harness/dungeon_recovery.py --new-party --active-wave
+python3 tools/harness/tomb_recovery.py
+python3 tools/harness/tomb_recovery.py --after-reward
+python3 tools/harness/tomb_recovery.py --after-claim
 ```
 
 Both map options also accept `--cross-realm`. The Arathi Basin test checks the resource score,
