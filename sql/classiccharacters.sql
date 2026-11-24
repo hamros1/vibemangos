@@ -771,6 +771,13 @@ CREATE TABLE IF NOT EXISTS `dmangos_pickpocket` (
   `loot` mediumtext CHARACTER SET ascii NOT NULL,
   PRIMARY KEY (`instance`, `spawn`)
 ) ENGINE=InnoDB;
+CREATE TABLE IF NOT EXISTS `dmangos_gameobject_pool` (
+  `realm` int unsigned NOT NULL,
+  `pool` int unsigned NOT NULL,
+  `revision` bigint unsigned NOT NULL,
+  `placements` mediumtext CHARACTER SET ascii NOT NULL,
+  PRIMARY KEY (`realm`, `pool`)
+) ENGINE=InnoDB;
 CREATE TABLE `item_instance` (
   `guid` int(11) unsigned NOT NULL DEFAULT 0,
   `owner_guid` int(11) unsigned NOT NULL DEFAULT 0,

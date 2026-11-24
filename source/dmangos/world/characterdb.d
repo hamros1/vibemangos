@@ -1042,6 +1042,52 @@ final class CharacterStatements
             ~ "WHERE realm = ? AND pool = ? AND revision = ?")(spawn, due, realm, pool, revision) == 1;
     }
 
+    void prepareGameObjectPools()
+    {
+        characters.execute!("CREATE TABLE IF NOT EXISTS dmangos_gameobject_pool ("
+            ~ "realm INT UNSIGNED NOT NULL, pool INT UNSIGNED NOT NULL, revision BIGINT UNSIGNED NOT NULL, "
+            ~ "placements MEDIUMTEXT CHARACTER SET ascii NOT NULL, PRIMARY KEY (realm, pool)) ENGINE=InnoDB")();
+    }
+
+    imported!"dmangos.world.database".GameObjectPoolState[uint] loadGameObjectPoolStates(uint realm)
+    {
+        import dmangos.bytes : ByteReader;
+        import dmangos.world.database : GameObjectPoolPlacement, GameObjectPoolState;
+        import dmangos.world.instancescripting : fromHex;
+
+        GameObjectPoolState[uint] states;
+        foreach (row; characters.query!("SELECT pool, revision, placements FROM dmangos_gameobject_pool "
+                ~ "WHERE realm = ?")(realm))
+        {
+            auto bytes = ByteReader(fromHex(row.get!string(2)));
+            GameObjectPoolState state;
+            state.revision = row.get!ulong(1);
+            while (bytes.remaining)
+                state.placements ~= GameObjectPoolPlacement(bytes.read!uint, bytes.read!long);
+            states[row.get!uint(0)] = state;
+        }
+        return states;
+    }
+
+    bool updateGameObjectPoolState(uint realm, uint pool, const ref imported!"dmangos.world.database".GameObjectPoolState state)
+    {
+        import dmangos.bytes : ByteWriter;
+        import dmangos.world.instancescripting : toHex;
+
+        ByteWriter bytes;
+        foreach (placement; state.placements)
+        {
+            bytes.put(placement.spawn);
+            bytes.put(placement.due);
+        }
+        const placements = toHex(bytes.data);
+        if (!state.revision)
+            return characters.execute!("INSERT IGNORE INTO dmangos_gameobject_pool (realm, pool, revision, placements) "
+                ~ "VALUES (?, ?, 1, ?)")(realm, pool, placements) == 1;
+        return characters.execute!("UPDATE dmangos_gameobject_pool SET revision = revision + 1, placements = ? "
+            ~ "WHERE realm = ? AND pool = ? AND revision = ?")(placements, realm, pool, state.revision) == 1;
+    }
+
     /// The `auction` columns, in `AuctionRecord` order.
     enum auctionColumns = "id, houseid, itemguid, item_template, item_count, item_randompropertyid, itemowner, "
         ~ "buyoutprice, time, buyguid, lastbid, startbid, deposit";

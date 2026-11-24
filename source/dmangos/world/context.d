@@ -34,6 +34,7 @@ import dmangos.world.whisper : WhisperFrom;
 import dmangos.cluster.regions : Region, RegionState;
 import dmangos.world.creature : Creature, CreatureParts, CreatureSpawn, CreatureTemplate, Npc, NpcStandIn, TempSpawn, TempSpawnType, VirtualItem;
 import dmangos.world.gameobject : GameObject, GameObjectSpawn, GameObjectType, GoLootState;
+import dmangos.world.gameobjectpools : GameObjectPools;
 import dmangos.world.auctionhouse;
 import dmangos.world.database : MailRecord;
 import dmangos.world.movement : Position;
@@ -2979,6 +2980,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         respawnAt = database.loadCreatureRespawns();
         creaturePools = new CreaturePools(() => this.database, config.realmId, data, respawnAt);
         gameObjectRespawnAt = database.loadGameObjectRespawns();
+        gameObjectPools = new GameObjectPools(() => this.database, config.realmId, data, gameObjectRespawnAt,
+            config.cluster.enabled);
         groups.load(database.loadGroups());
         guilds = new Guilds;
         guilds.load(database.loadGuilds());
@@ -3470,6 +3473,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         if (kind == PoolMember.Kind.creature && creaturePools.manages(guid))
             return creaturePools.selected(guid);
+        if (kind == PoolMember.Kind.gameObject && gameObjectPools.manages(guid))
+            return gameObjectPools.selected(guid);
         return data.pools is null || data.pools.spawns(kind, guid);
     }
 
@@ -5723,6 +5728,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (!gained.length)
             return;
         creaturePools.refresh();
+        gameObjectPools.refresh();
         const(Region)[] cold;
         foreach (ref region; gained)
         {
@@ -5744,8 +5750,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             bool here(uint guid)
             {
                 static if (is(Spawn == CreatureSpawn))
+                {
                     if (creaturePools.manages(guid))
                         return false; // the durable pool row owns this deadline
+                }
+                else
+                    if (gameObjectPools.manages(guid))
+                        return false;
                 ulong home;
                 return cold.any!(region => timerHome(region, guid, spawns, index, home));
             }
@@ -8682,6 +8693,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     /// Game objects used up: spawn guid -> when they come back (Unix time), as `gameobject_respawn` has it.
     private long[uint] gameObjectRespawnAt;
+    private GameObjectPools gameObjectPools;
     private InstanceChestRecord[uint] outdoorChests;
 
     /// A game object from its spawn, with what it needs to show players their quests' objects.
@@ -8741,7 +8753,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return config.cluster.enabled && go.spawn.guid < temporaryCounterStart
             && go.type == GameObjectType.chest && go.consumable && go.spawn.respawnSeconds >= 0
             && go.spawn.guid !in unsavedGameObjectSpawns
-            && (data.pools is null || !data.pools.inPool(PoolMember.Kind.gameObject, go.spawn.guid));
+            && (gameObjectPools.manages(go.spawn.guid)
+                || data.pools is null || !data.pools.inPool(PoolMember.Kind.gameObject, go.spawn.guid));
     }
 
     package void saveOpenedChest(Map map, GameObject go)
@@ -8892,8 +8905,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         const saved = go.spawn.guid in outdoorChests;
         const finished = saved !is null && saved.expiresAt && saved.expiresAt < unixTime ? saved.expiresAt : unixTime;
         const at = finished + (go.spawn.respawnSeconds > 0 ? go.spawn.respawnSeconds : 0);
+        const hadChest = outdoorChests.remove(go.spawn.guid);
+        if (gameObjectPools.manages(go.spawn.guid))
+            return gameObjectPools.exhausted(go.spawn.guid, at, hadChest);
         gameObjectRespawnAt[go.spawn.guid] = at;
-        if (outdoorChests.remove(go.spawn.guid))
+        if (hadChest)
             database.finishOutdoorChest(go.spawn.guid, at);
         else
             database.saveGameObjectRespawn(go.spawn.guid, at);
@@ -8902,6 +8918,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// Whether a game object spawn is used up and waiting to come back.
     bool gameObjectAwaitingRespawn(uint spawnGuid)
     {
+        if (gameObjectPools.manages(spawnGuid))
+            return gameObjectPools.waiting(spawnGuid);
         if (auto at = spawnGuid in gameObjectRespawnAt)
             return *at > unixTime;
         return false;
@@ -8911,6 +8929,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private void gameObjectsDue()
     {
         const time = unixTime;
+        gameObjectPoolsDue(time);
         uint[] due;
         foreach (guid, at; gameObjectRespawnAt)
             if (at <= time)
@@ -8939,6 +8958,41 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if (there !is null && there.cellLoaded(cellKeyAt(spawn.x, spawn.y)))
                 there.addObject(makeGameObject(*spawn));
         }
+    }
+
+    private void gameObjectPoolsDue(long time)
+    {
+        import dmangos.world.database : GameObjectPoolPlacement, GameObjectPoolState;
+
+        if (!gameObjectPools.refresh())
+            return;
+        foreach (pool, state; gameObjectPools.states())
+            foreach (i, slot; state.placements)
+            {
+                if (!slot.due || slot.due > time)
+                    continue;
+                const spawn = gameObjectSpawnOf(slot.spawn);
+                if (spawn is null)
+                    continue;
+                const home = cellKeyAt(spawn.x, spawn.y);
+                if (ownsCell !is null && !ownsCell(spawn.map, home))
+                    continue;
+                const next = gameObjectSpawnOf(gameObjectPools.roll(pool, slot.spawn, state, spawnRandom));
+                if (next is null)
+                    continue;
+                const due = next.guid == slot.spawn ? 0 : time + next.respawnSeconds;
+                auto placements = state.placements.dup;
+                placements[i] = GameObjectPoolPlacement(next.guid, due);
+                const selection = GameObjectPoolState(state.revision, placements);
+                if (!gameObjectPools.change(pool, selection))
+                    continue;
+                if (!due)
+                    if (auto where = existingMap(spawn.map))
+                        if (where.cellLoaded(home))
+                            if (auto object = spawnWorldGameObject(*spawn))
+                                where.addObject(object);
+                break;
+            }
     }
 
     // -----------------------------------------------------------------------
@@ -10938,6 +10992,102 @@ unittest
     auto upgraded = newNode(legacy);
     assert(upgraded.upInPool(kind, unseeded) && upgraded.awaitingRespawn(unseeded));
     assert(legacy.loadCreaturePoolStates(realm)[pool].due == inherited);
+}
+
+// Opened chests and concurrent uses in a multi-slot pool survive replacement of their workers.
+unittest
+{
+    import dmangos.cluster.regions : CellRect;
+    import dmangos.world.gameobject : GameObjectTemplate;
+    import dmangos.world.grid : cellCoordinate;
+    import dmangos.world.testclient;
+    import dmangos.world.worlddata : PoolChooser;
+    import std.algorithm.searching : all;
+
+    enum uint pool = 100, entry = 8010, realm = 9;
+    enum kind = PoolMember.Kind.gameObject;
+    auto db = newDatabase();
+    auto clock = MonoTime.currTime;
+    auto epoch = 2_000_000_000L;
+    immutable GameObjectSpawn[] placements = [
+        GameObjectSpawn(91, entry, 0, -8930, -120, 83.53, respawnSeconds: 30),
+        GameObjectSpawn(92, entry, 0, -8930, -180, 83.53, respawnSeconds: 30),
+        GameObjectSpawn(93, entry, 0, -8930, -240, 83.53, respawnSeconds: 30),
+    ];
+
+    WorldContext worker(ushort id)
+    {
+        auto client = testClientData();
+        auto data = testWorldData(client);
+        GameObjectTemplate chest = {entry: entry, type: GameObjectType.chest};
+        chest.data[3] = 1;
+        data.gameObjectTemplates[entry] = chest;
+        data.pools = new PoolChooser;
+        data.pools.limits[pool] = 2;
+        foreach (spawn; placements)
+        {
+            data.pools.add(pool, PoolMember(kind, spawn.guid));
+            data.gameObjectCells[0][cellKeyAt(spawn.x, spawn.y)] ~= data.gameObjectSpawns.length;
+            data.gameObjectSpawns ~= spawn;
+        }
+        auto rng = Random(13);
+        data.pools.choose(rng);
+        WorldConfig config;
+        config.realmId = realm;
+        config.cluster.nodeId = id;
+        auto node = new WorldContext(config, db, data, client);
+        node.startUnixTime = epoch;
+        node.startClock = clock;
+        node.clock = () => clock;
+        return node;
+    }
+
+    auto original = worker(1), other = worker(2);
+    GameObjectSpawn[] active;
+    foreach (spawn; placements)
+        if (original.upInPool(kind, spawn.guid))
+            active ~= spawn;
+    assert(active.length == 2);
+    GameObject place(WorldContext node, const ref GameObjectSpawn spawn)
+    {
+        auto map = node.map(0);
+        map.loadCell(cellKeyAt(spawn.x, spawn.y));
+        return map.gameObjectAt(makeGuid(HighGuid.gameObject, spawn.entry, spawn.guid));
+    }
+    auto opened = place(original, active[0]);
+    auto neighboring = place(other, active[1]);
+    assert(opened !is null && neighboring !is null);
+    opened.loot = new Loot(opened.guid, null);
+    opened.loot.gold = 25;
+    opened.loot.owners[7] = true;
+    opened.lootState = GoLootState.activated;
+    opened.despawnTimer = 300_000;
+    original.saveOpenedChest(original.map(0), opened);
+    assert(db.loadOutdoorChests().length == 1);
+
+    auto replacement = worker(3);
+    const x = cellCoordinate(active[0].x), y = cellCoordinate(active[0].y);
+    ubyte[][uint] unused;
+    replacement.regionsChanged([Region(1, 0, CellRect(x, y, x + 1, y + 1), 3, 1, RegionState.granted)],
+        null, null, unused);
+    auto resumed = place(replacement, active[0]);
+    assert(resumed !is null && resumed.loot.gold == 25 && resumed.loot.owners[7]);
+    replacement.map(0).gameObjectUsedUp(resumed);
+    assert(db.loadOutdoorChests().length == 0, "depletion and its cooldown commit together");
+
+    other.map(0).gameObjectUsedUp(neighboring); // its cached pool revision predates the first use
+    assert(db.loadGameObjectPoolStates(realm)[pool].revision == 1);
+    assert(other.gameObjectPools.refresh());
+    const state = db.loadGameObjectPoolStates(realm)[pool];
+    assert(state.revision == 2 && state.placements.length == 2 && state.placements.all!(slot => slot.due == epoch + 30));
+
+    auto restarted = worker(4);
+    foreach (spawn; placements)
+        assert(place(restarted, spawn) is null, "no placement may appear during the saved cooldown");
+    clock += 31.seconds;
+    restarted.respawnDue(clock);
+    const next = db.loadGameObjectPoolStates(realm)[pool];
+    assert(next.revision == 3 && next.placements.length == 2 && next.placements[0].spawn != next.placements[1].spawn);
 }
 
 // A lost node supplies no bundle, but its durable additions still belong to the next owner.

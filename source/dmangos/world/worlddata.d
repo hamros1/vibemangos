@@ -1583,6 +1583,25 @@ final class PoolChooser
         return roll(pool, PoolMember.Kind.gameObject, id, rng, true);
     }
 
+    package uint[][uint] gameObjectPools() const
+    {
+        import std.algorithm.searching : all;
+
+        uint[][uint] result;
+        foreach (pool, group; members)
+            if (pool && group.all!(member => member.kind == PoolMember.Kind.gameObject))
+                foreach (member; group)
+                    result[pool] ~= member.id;
+        return result;
+    }
+
+    package uint rollWorldGameObject(uint pool, uint id, const(uint)[] occupied, ref Random rng) const
+    {
+        import std.algorithm.searching : canFind;
+
+        return roll(pool, PoolMember.Kind.gameObject, id, rng, false, (uint spawn) => occupied.canFind(spawn));
+    }
+
     /**
      * Member `id`'s respawn time is up: its pool rolls again (CMaNGOS's `RollOne` with it as the trigger), among
      * itself and the members of its kind not up. Returns the one that spawns: `id` itself, or another that is up
@@ -1601,7 +1620,8 @@ final class PoolChooser
         return found;
     }
 
-    private uint roll(uint pool, PoolMember.Kind kind, uint id, ref Random rng, bool singleChoice = false) const
+    private uint roll(uint pool, PoolMember.Kind kind, uint id, ref Random rng, bool singleChoice = false,
+        scope bool delegate(uint) occupied = null) const
     {
         import std.random : randomShuffle, uniform01;
 
@@ -1609,7 +1629,8 @@ final class PoolChooser
         randomShuffle(candidates, rng);
         bool eligible(const ref PoolMember m)
         {
-            return m.kind == kind && (singleChoice || m.id == id || !spawns(kind, m.id));
+            return m.kind == kind
+                && (singleChoice || m.id == id || !(occupied is null ? spawns(kind, m.id) : occupied(m.id)));
         }
         uint found;
         uint fallback; // the first with a chance, if no roll hits one and none is without

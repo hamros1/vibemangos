@@ -378,8 +378,11 @@ One-shot dungeon reward chests survive a host crash from the moment a script spa
 characters database stores the expiry first and the rolled contents when the chest opens. An
 inventory award and its consumed loot slot are written in the same transaction. The lockout keeps
 the record until reset, including after the chest is exhausted or expires.
-Opened, unpooled outdoor consumable chests also retain their contents, claims and expiry on the
-replacement worker. The chest checkpoint is retired in the transaction that starts its respawn.
+Opened outdoor consumable chests also retain their contents, claims and expiry on the replacement
+worker. This covers unpooled chests and gathering nodes in outdoor pools made entirely of game
+objects. The chest checkpoint is retired in the transaction that starts its respawn. These pools
+save their selected placements together, including each placement's cooldown, so workers can
+use different placements without overwriting each other's changes.
 
 Dungeon and raid corpses with loot have a saved record alongside the spawn death, including
 scripted summons whose despawn rules leave a corpse. A
@@ -971,6 +974,7 @@ python3 tools/harness/corpse_recovery.py --after-claim
 python3 tools/harness/corpse_recovery.py --during-roll
 python3 tools/harness/outdoor_corpse_recovery.py
 python3 tools/harness/outdoor_chest_recovery.py
+python3 tools/harness/outdoor_chest_recovery.py --pooled
 python3 tools/harness/dreadsteed_recovery.py
 ```
 
@@ -991,6 +995,7 @@ The outdoor check starts a roll with players on separate workers, kills the corp
 the first vote, and verifies that the second player can use the original roll to win one item.
 The chest check kills the owner after a partial claim and uses the same client connection to
 reopen the original chest. MariaDB must record both original drops once and the chest's respawn.
+The pooled version also checks that the respawn is recorded for the original selected placement.
 The Dreadsteed check kills the worker just after calling the Keeper and J'eevee. Both existing
 clients see the same actors finish placing the ritual supplies and spawn the first wave once.
 

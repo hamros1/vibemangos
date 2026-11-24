@@ -15,8 +15,8 @@ from named_objects import CELL, adjacent_boundary
 CHEST, LOOT_ID, HERBALISM, PRIZE = 1618, 8_910_001, 2366, 1214
 
 
-def world_with_chest(fixture):
-    world = fixture.world_with_writable_tables("gameobject", "gameobject_template", "gameobject_loot_template")
+def world_with_chest(fixture, *other_tables):
+    world = fixture.world_with_writable_tables("gameobject", "gameobject_template", "gameobject_loot_template", *other_tables)
     fixture.query(f"UPDATE gameobject_template SET data1 = {LOOT_ID} WHERE entry = {CHEST}; "
                   f"INSERT INTO gameobject_loot_template (entry, item) VALUES ({LOOT_ID}, {PRIZE})", world)
     return world

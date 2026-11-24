@@ -312,6 +312,19 @@ struct CreaturePoolState
     ulong revision;
 }
 
+struct GameObjectPoolPlacement
+{
+    uint spawn;
+    long due;
+}
+
+/// Every selected placement in one outdoor object pool, including any waiting to respawn.
+struct GameObjectPoolState
+{
+    ulong revision;
+    GameObjectPoolPlacement[] placements;
+}
+
 /// The rolled contents and expiry of one scripted reward chest in a lockout.
 struct InstanceChestRecord
 {
@@ -575,6 +588,9 @@ interface WorldDatabase
     /// Claim the initial row (revision 0) or update the expected revision. A stale owner cannot renew it.
     @DatabaseWrite bool updateCreaturePoolState(uint realm, uint pool, ulong revision, uint spawn, long due,
         const InstanceCorpseRecord corpse = InstanceCorpseRecord.init);
+    @DatabaseRead GameObjectPoolState[uint] loadGameObjectPoolStates(uint realm);
+    @DatabaseWrite bool updateGameObjectPoolState(uint realm, uint pool, const ref GameObjectPoolState state,
+        uint exhaustedChest = 0);
 
     /// The player's auras, replacing those saved before.
     @Replaces void saveAuras(uint player, const(AuraRecord)[] auras);
@@ -1075,6 +1091,7 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
         statements.prepareInstanceChests();
         statements.prepareInstanceCorpses();
         statements.preparePickpockets();
+        statements.prepareGameObjectPools();
         statements.prepareLootAwards();
         characterDb.execute!("CREATE TABLE IF NOT EXISTS `dmangos_write_applied` ("
             ~ "`stream` INT UNSIGNED NOT NULL, `seq` BIGINT UNSIGNED NOT NULL, PRIMARY KEY (`stream`)"
@@ -1140,6 +1157,21 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
                 statements.deletePickpocket(0, spawn);
             if (corpse.spawn)
                 statements.saveInstanceCorpse(corpse);
+        });
+        return changed;
+    }
+
+    GameObjectPoolState[uint] loadGameObjectPoolStates(uint realm) { return statements.loadGameObjectPoolStates(realm); }
+
+    bool updateGameObjectPoolState(uint realm, uint pool, const ref GameObjectPoolState state, uint exhaustedChest = 0)
+    {
+        if (!exhaustedChest)
+            return statements.updateGameObjectPoolState(realm, pool, state);
+        bool changed;
+        characterDb.transaction({
+            changed = statements.updateGameObjectPoolState(realm, pool, state);
+            if (changed)
+                statements.deleteOutdoorChest(exhaustedChest);
         });
         return changed;
     }
@@ -2770,6 +2802,7 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
     long[uint] loadCreatureRespawns() { return creatureRespawns.dup; }
 
     private CreaturePoolState[uint][uint] creaturePoolStates;
+    private GameObjectPoolState[uint][uint] gameObjectPoolStates;
 
     CreaturePoolState[uint] loadCreaturePoolStates(uint realm) { return creaturePoolStates.get(realm, null).dup; }
 
@@ -2785,6 +2818,28 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
             pockets.remove([0, spawn]);
         if (corpse.spawn)
             saveInstanceCorpse(corpse, 0);
+        return true;
+    }
+
+    GameObjectPoolState[uint] loadGameObjectPoolStates(uint realm)
+    {
+        GameObjectPoolState[uint] copies;
+        foreach (pool, state; gameObjectPoolStates.get(realm, null))
+            copies[pool] = GameObjectPoolState(state.revision, state.placements.dup);
+        return copies;
+    }
+
+    bool updateGameObjectPoolState(uint realm, uint pool, const ref GameObjectPoolState state, uint exhaustedChest = 0)
+    {
+        if (gameObjectPoolStates.get(realm, null).get(pool, GameObjectPoolState.init).revision != state.revision)
+            return false;
+        gameObjectPoolStates[realm][pool] = GameObjectPoolState(state.revision + 1, state.placements.dup);
+        if (exhaustedChest)
+        {
+            import std.algorithm.mutation : remove;
+
+            instanceRows.chests = instanceRows.chests.remove!(row => row.instance == 0 && row.spawn == exhaustedChest);
+        }
         return true;
     }
     InstanceRecords instanceRows;    /// what the instance methods keep
