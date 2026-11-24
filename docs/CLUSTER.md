@@ -399,6 +399,8 @@ Ordinary outdoor creature spawns also save their corpses and respawn deadlines t
 replacement region owner restores the original loot and rolls. A player on another worker can
 answer the same roll, including when the coordinator election makes that player reload on the
 same gateway connection.
+Loot-bearing outdoor scripted summons that leave a corpse, including Thunderaan, keep their
+original body and loot on the replacement worker. Their expiry never schedules a respawn.
 
 * **The same spawns everywhere.** Pools, spawn groups and spawn entries are chosen with a seed made
   from the cluster's name and the realm, so every node agrees on which creature a spawn is.

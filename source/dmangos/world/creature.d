@@ -1321,7 +1321,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         import std.algorithm.comparison : among, min;
 
         with (TempSpawnType)
-            if (!instanceId || corpseTimer || summon.type.among(none, corpse, timedOrCorpse, timedOutOfCombatOrCorpse))
+            if (corpseTimer || summon.type.among(none, corpse, timedOrCorpse, timedOutOfCombatOrCorpse))
                 return false;
         corpseTimer = corpseLifetime * 1000;
         if (summon.type.among(TempSpawnType.corpseTimed, TempSpawnType.timed))

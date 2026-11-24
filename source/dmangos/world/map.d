@@ -52,7 +52,7 @@ import dmangos.world.grid : cellCoordinate, cellKey, cellKeyAt, noCell;
 import dmangos.world.creatureai : LinkEvent;
 import dmangos.world.creatureai : CombatWorld;
 import dmangos.world.unit : UnitRef;
-import dmangos.world.creature : Creature;
+import dmangos.world.creature : Creature, TempSpawnType;
 import dmangos.world.elevators : ElevatorPath;
 import dmangos.world.gameobject : GameObject, GameObjectTemplate, GameObjectType, GameObjectWorld, goStateReady;
 import dmangos.world.gameobjectcollision : GameObjectCollision;
@@ -941,6 +941,8 @@ final class Map : CombatWorld, GameObjectWorld
                 continue;
             }
             if (creature !is null && ((creature.keepSpawnLoaded && creature.alive)
+                || (!creature.alive && creature.summon.type != TempSpawnType.none
+                    && (creature.loot !is null || creature.skinnable))
                 || (creature.ai !is null && (creature.ai.inCombat || creature.ai.evading))
                 || e.cell in localInterest || e.cell in peerCells))
             {

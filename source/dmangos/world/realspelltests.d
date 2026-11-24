@@ -693,6 +693,7 @@ unittest
     import dmangos.world.dbscripts : DbScriptType, ScriptCommand;
     import dmangos.world.grid : cellCoordinate, cellKeyAt;
     import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.updatefields : UNIT_FIELD_HEALTH;
 
     if (!haveRealData())
         return;
@@ -757,6 +758,26 @@ unittest
     const transit = max(0, cast(int)(next.context.transportNow() - owner.context.transportNow()));
     assert(resumed.summon.timer == 130_000 - transit);
     assert(current.creaturesNear(at, 1).length == 1, "the same temporary boss keeps its remaining lifetime");
+
+    next.context.config.cluster.nodeId = 3;
+    auto witness = loggedIn(next.context, next.db, 7, "Anduin", at, AccountLevel.player, raceHuman, kalimdor, 60,
+        (ref c) { c.rewardedQuests[quest] = true; });
+    resumed.values.set!UNIT_FIELD_HEALTH(0u);
+    witness.session.inWorld.killedCreature(resumed);
+    assert(resumed.loot !is null && resumed.loot.items.length == 1 && resumed.loot.items[0].itemId == 19018);
+    const gold = resumed.loot.gold;
+
+    auto replacement = RealWorld.make();
+    replacement.context.config.cluster.nodeId = 4;
+    replacement.context.database = next.db;
+    replacement.context.clock = () => frozen;
+    region.owner = 4;
+    replacement.context.regionsChanged([region], null, null, unused);
+    auto fresh = replacement.context.map(kalimdor);
+    auto corpse = fresh.creatureAt(guid);
+    assert(corpse !is null && !corpse.alive && corpse.loot.gold == gold);
+    assert(corpse.loot.items[0].itemId == 19018 && corpse.loot.items[0].allowed[7]);
+    assert(fresh.creaturesNear(at, 1).length == 1, "the same defeated Thunderaan and his loot survived");
 }
 
 /// The Binding sends each acolyte the real ritual steps that affect it.

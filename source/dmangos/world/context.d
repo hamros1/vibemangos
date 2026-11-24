@@ -4450,12 +4450,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                         });
                 if (!instance)
                 {
-                    foreach (guid; outdoorCorpses.keys)
-                        if (const spawn = creatureSpawnOf(guid))
-                            if (spawn.map == id)
-                                if (auto creature = created.creatureAt(makeGuid(HighGuid.unit, spawn.entry, guid)))
-                                    if (creature.loot !is null)
-                                        creature.loot.resumeRollsFor(who.character.guid);
+                    foreach (ref corpse; outdoorCorpses.byValue)
+                    {
+                        const spawn = outdoorCorpseSpawn(corpse);
+                        if (spawn.guid && spawn.map == id)
+                            if (auto creature = created.creatureAt(loanGuid(&spawn)))
+                                if (creature.loot !is null)
+                                    creature.loot.resumeRollsFor(who.character.guid);
+                    }
                     foreach (guid; outdoorChests.byKey)
                         if (const index = guid in gameObjectSpawnIndex)
                         {
@@ -5536,9 +5538,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (!config.cluster.enabled)
             return;
         foreach (guid; outdoorCorpses.keys)
-            if (const spawn = creatureSpawnOf(guid))
-                if (outdoorRegionCovers(spawn, lost))
-                    outdoorCorpses.remove(guid);
+        {
+            const spawn = outdoorCorpseSpawn(outdoorCorpses[guid]);
+            if (spawn.guid && outdoorRegionCovers(&spawn, lost))
+                outdoorCorpses.remove(guid);
+        }
         if (!gained.any!(r => physicalWorldRegion(r)))
             return;
         InstanceCorpseRecord[] records;
@@ -5551,22 +5555,46 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         }
         foreach (corpse; records)
         {
-            const spawn = creatureSpawnOf(corpse.spawn);
-            if (spawn is null || corpse.expiresAt <= unixTime || creatureOnLoan(corpse.spawn)
-                || !outdoorRegionCovers(spawn, gained) || !hasOutdoorRespawn(corpse.spawn))
+            const spawn = outdoorCorpseSpawn(corpse);
+            if (!spawn.guid || corpse.expiresAt <= unixTime || !outdoorRegionCovers(&spawn, gained))
+                continue;
+            if (spawn.guid < temporaryCounterStart && (creatureOnLoan(spawn.guid) || !hasOutdoorRespawn(spawn.guid)))
                 continue;
             auto where = map(spawn.map);
             outdoorCorpses[corpse.spawn] = corpse;
-            if (where.creatureAt(makeGuid(HighGuid.unit, spawn.entry, corpse.spawn)) !is null)
+            if (where.creatureAt(loanGuid(&spawn)) !is null)
                 continue; // the clean bundle contains the newer live state
             try
             {
-                const migrant = outdoorCorpseMigrant(*spawn, corpse);
+                const migrant = outdoorCorpseMigrant(spawn, corpse);
                 where.migrateIn(encodeBundle(null, [migrant]), (const ref Migrant saved) => restoreSavedCorpse(where, saved));
             }
             catch (Exception error)
                 warning!"migration: could not read outdoor corpse %s: %s"(corpse.spawn, error.msg);
         }
+    }
+
+    private CreatureSpawn outdoorCorpseSpawn(const ref InstanceCorpseRecord corpse)
+    {
+        import dmangos.log : warning;
+        import dmangos.serialization : deserialize;
+        import dmangos.world.instancescripting : fromHex;
+
+        if (corpse.spawn < temporaryCounterStart)
+        {
+            const spawn = creatureSpawnOf(corpse.spawn);
+            return spawn is null ? CreatureSpawn.init : *spawn;
+        }
+        try
+        {
+            auto bytes = ByteReader(fromHex(corpse.state));
+            const spawn = deserialize!CreatureSpawn(bytes);
+            if (spawn.guid == corpse.spawn && client.isValidMapCoord(spawn.map, spawn.x, spawn.y, spawn.z))
+                return spawn;
+        }
+        catch (Exception error)
+            warning!"migration: could not read outdoor summon %s: %s"(corpse.spawn, error.msg);
+        return CreatureSpawn.init;
     }
 
     private bool hasOutdoorRespawn(uint spawn) const
@@ -5578,7 +5606,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         import dmangos.world.instancescripting : fromHex;
 
-        return Migrant(MigrantKind.creature, corpse.spawn, cellKeyAt(spawn.x, spawn.y), fromHex(corpse.state));
+        const kind = corpse.spawn < temporaryCounterStart ? MigrantKind.creature : MigrantKind.summonedCreature;
+        return Migrant(kind, corpse.spawn, cellKeyAt(spawn.x, spawn.y), fromHex(corpse.state));
     }
 
     private void refreshOutdoorChests(const(Region)[] gained, const(Region)[] lost)
@@ -6866,7 +6895,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return false;
         if (creature.instanceId)
             return (creature.instanceId in instances) !is null && !battlegroundOfMap(creature.spawn.map);
-        return config.cluster.enabled && creature.summon.type == TempSpawnType.none;
+        return config.cluster.enabled;
     }
 
     private long instanceDeathDeadline(ref InstanceState state, const Creature creature)
@@ -6891,7 +6920,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         {
             saveOutdoorLootPositions(existingMap(creature.spawn.map), creature.loot);
             const record = checkpointCorpse(creature);
-            if (creaturePools.manages(record.spawn))
+            if (creature.summon.type != TempSpawnType.none)
+                database.saveInstanceCorpse(record, 0);
+            else if (creaturePools.manages(record.spawn))
                 creaturePools.dead(record.spawn, creature.respawnAt, false, record);
             else
             {
@@ -7063,10 +7094,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     database.deleteInstanceCorpse(creature.instanceId, creature.spawn.guid);
             return;
         }
-        if (creature.summon.type != TempSpawnType.none)
-            return;
         if (outdoorCorpses.remove(creature.spawn.guid))
             database.deleteInstanceCorpse(0, creature.spawn.guid);
+        if (creature.summon.type != TempSpawnType.none)
+            return;
         if (creaturePools.manages(creature.spawn.guid))
         {
             const next = creature.respawnAt ? max(unixTime, creature.respawnAt) : unixTime + creature.spawn.respawnSeconds;
@@ -10478,6 +10509,44 @@ unittest
     assert(db.savedCreatureSpawn(summon.spawn.guid).isNull);
     cold.regionsChanged([region], null, null, unused);
     assert(cold.map(0).findObject(summon.guid) is null);
+}
+
+// A loot-bearing outdoor summon can lose its worker while its original corpse is still available.
+unittest
+{
+    import dmangos.cluster.regions : CellRect;
+    import dmangos.world.grid : cellCoordinate;
+    import dmangos.world.testclient : newCreationContext, newDatabase;
+    import dmangos.world.testdata : creatureInnkeeper;
+    import dmangos.world.updatefields : UNIT_FIELD_HEALTH;
+
+    auto db = newDatabase();
+    auto owner = newCreationContext(db, (ref config) { config.cluster.nodeId = 1; });
+    auto replacement = newCreationContext(db, (ref config) { config.cluster.nodeId = 2; });
+    const spot = Position(-8949.95f, -132.49f, 83.53f);
+    auto source = owner.map(0);
+    auto summon = owner.summonCreature(source, creatureInnkeeper, spot, TempSpawnType.timed, 120_000, 0);
+    summon.values.set!UNIT_FIELD_HEALTH(0u);
+    summon.die(source, owner.unixTime);
+    assert(summon.retainSummonedLootCorpse());
+    auto loot = new Loot(summon.guid, null);
+    loot.owners[7] = true;
+    loot.gold = 25;
+    summon.loot = loot;
+    owner.saveNewCorpse(summon);
+    assert(db.loadOutdoorCorpses().length == 1 && summon.spawn.guid !in db.creatureRespawns);
+
+    const x = cellCoordinate(spot.x), y = cellCoordinate(spot.y);
+    const region = Region(1, 0, CellRect(x, y, x + 1, y + 1), 2, 1, RegionState.granted);
+    ubyte[][uint] unused;
+    replacement.regionsChanged([region], null, null, unused);
+    auto destination = replacement.map(0);
+    auto same = destination.creatureAt(summon.guid);
+    assert(same !is null && same !is summon && !same.alive && same.spawn == summon.spawn);
+    assert(same.loot.gold == 25 && same.loot.owners[7]);
+    destination.corpseExpired(same);
+    assert(db.loadOutdoorCorpses().length == 0);
+    assert(destination.creatureAt(summon.guid) is null && summon.spawn.guid !in db.creatureRespawns);
 }
 
 // The same player can reopen a partially emptied chest on its new owner, without rerolling it.
