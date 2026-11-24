@@ -22,6 +22,7 @@ in order:
     targetnpc:ENTRY           select a creature in sight as the player's target
     approach:ENTRY:DIST       walk to DIST yards of the nearest creature of ENTRY
     cast:SPELL[:ENTRY]       cast a spell, optionally at a creature by entry
+    summonaccept:GUID        accept a player's summon request
     cancelchannel:SPELL      cancel the specified channel
     loot[:N]                  take the last creature's loot, or only N items and leave the money
     killpack:[one:]ENTRY...    select and kill matching visible living creatures (GM)
@@ -607,6 +608,9 @@ def describe(op, p):
         t, pos = packed_guid(p, 0); a, pos = packed_guid(p, pos); spell, amount = struct.unpack_from("<II", p, pos)
         print(f"  [spell heal] {spell}: {amount}")
     elif op == 0x24B: print(f"  [spell missed] {struct.unpack_from('<I', p, 0)[0]} ({p[-1]})")
+    elif op == 0x2AB:
+        summoner, zone, timeout = struct.unpack("<QII", p)
+        print(f"  [summon request] {summoner} in {zone}, {timeout} ms left")
     elif op == 0x137: print(f"  [aura duration] slot {p[0]}: {struct.unpack_from('<i', p, 1)[0]} ms")
     elif op == 0x24E:
         t, pos = packed_guid(p, 0); c, pos = packed_guid(p, pos); spell, n, aura = struct.unpack_from("<III", p, pos)
@@ -1020,6 +1024,8 @@ for action in actions:
             wsend(0x12E, struct.pack("<IH", int(args[0]), 2) + packed(target)); print(f"cast {args[0]} at player {target & 0xFFFFFF}")
         else:
             wsend(0x141, struct.pack("<Q", target)); print(f"attack player {target & 0xFFFFFF}")
+    elif kind == "summonaccept":
+        wsend(0x2AC, struct.pack("<Q", int(args[0], 0)))
     elif kind == "duelaccept":
         wsend(0x16C, struct.pack("<Q", duel_flag[0])); print("accept the duel")
     elif kind in ("queststatus", "questhello", "questaccept", "questcomplete", "questreward"):

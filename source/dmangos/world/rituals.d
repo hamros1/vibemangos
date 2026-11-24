@@ -96,6 +96,7 @@ mixin template RitualSummoning()
 
     private PartySummon summonPoint; // a summons waiting for the player's answer
     private ulong latestSummon;
+    private enum ubyte summonOfferVersion = 1;
 
     package void writeSummonOffer(ref ByteWriter writer)
     {
@@ -111,6 +112,38 @@ mixin template RitualSummoning()
 
         latestSummon = reader.read!ulong;
         summonPoint = deserialize!PartySummon(reader);
+    }
+
+    private void openPartySummonCheckpoint(bool recovered)
+    {
+        import dmangos.log : warning;
+        import dmangos.serialization : deserialize;
+        import dmangos.world.instancescripting : fromHex;
+
+        if (!context.config.cluster.enabled)
+            return;
+        if (!recovered)
+        {
+            context.database.deletePartySummonOffer(player.data.guid);
+            return;
+        }
+        try
+        {
+            const checkpoint = context.database.loadPartySummonOffer(player.data.guid);
+            latestSummon = checkpoint.sequence;
+            if (!checkpoint.state.length)
+                return;
+            auto state = ByteReader(fromHex(checkpoint.state));
+            const home = connection.gatewayHome;
+            if (state.read!ubyte != summonOfferVersion || state.read!ushort != home.node
+                || state.read!ulong != home.incarnation)
+                return;
+            const offer = deserialize!PartySummon(state);
+            if (offer.target == player.guid && offer.sequence == latestSummon && offer.expires > context.unixTime)
+                showPartySummon(offer);
+        }
+        catch (Exception error)
+            warning!"could not restore the party summon offer for player %s: %s"(player.data.guid, error.msg);
     }
 
     /// Whether `t` is a summoning portal (`SPELL_EFFECT_TRANS_DOOR` makes one instead of a bobber).
@@ -344,6 +377,11 @@ mixin template RitualSummoning()
 
     package void offerPartySummon(const ref PartySummon offer)
     {
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
+        import dmangos.serialization : serialize;
+        import dmangos.world.instancescripting : toHex;
+
         if (offer.action == PartySummon.Action.finishRitual)
         {
             if (offer.portal && map.id == offer.map && map.instanceId == offer.instance && channelsRitualAt(offer.portal))
@@ -353,7 +391,31 @@ mixin template RitualSummoning()
         enum uint evilTwin = 23445;
         if (offer.sequence <= latestSummon || player.auras.find(evilTwin) !is null)
             return;
+        const home = connection.gatewayHome;
+        if (home.node)
+        {
+            ByteWriter checkpoint;
+            checkpoint.put(summonOfferVersion);
+            checkpoint.put(home.node);
+            checkpoint.put(home.incarnation);
+            serialize(checkpoint, offer);
+            try
+            {
+                if (!context.database.publishPartySummonOffer(player.data.guid, offer.sequence, toHex(checkpoint.data)))
+                    return;
+            }
+            catch (DatabaseException error)
+            {
+                warning!"could not save a party summon for player %s: %s"(player.data.guid, error.msg);
+                return;
+            }
+        }
         latestSummon = offer.sequence;
+        showPartySummon(offer);
+    }
+
+    private void showPartySummon(const ref PartySummon offer)
+    {
         summonPoint = offer;
         const ms = cast(uint) (offer.expires - context.unixTime) * 1000;
         deliver(Opcode.SMSG_SUMMON_REQUEST, summonRequest(offer.summoner, offer.area, ms));
@@ -366,6 +428,8 @@ mixin template RitualSummoning()
     @Handles(Opcode.CMSG_SUMMON_RESPONSE, WorldState.inWorld)
     void handleSummonResponse(const imported!"dmangos.world.packets".ClientSummonResponse response)
     {
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
         import dmangos.world.defines : UnitFlags;
 
         if (acceptGmSummonOffer())
@@ -374,8 +438,19 @@ mixin template RitualSummoning()
         if (!player.alive || inCombat)
             return;
         const point = summonPoint;
-        if (summoner != point.summoner || point.summoner == 0 || point.expires < context.unixTime)
+        if (summoner != point.summoner || point.summoner == 0 || point.expires <= context.unixTime)
             return;
+        if (connection.gatewayHome.node)
+            try
+            {
+                if (!context.database.consumePartySummonOffer(player.data.guid, point.sequence))
+                    return;
+            }
+            catch (DatabaseException error)
+            {
+                warning!"could not consume the party summon for player %s: %s"(player.data.guid, error.msg);
+                return;
+            }
         summonPoint = PartySummon.init;
         if (flying) // the flight stops (`TaxiFlightInterrupt`)
         {

@@ -803,6 +803,12 @@ CREATE TABLE IF NOT EXISTS `dmangos_player_summons` (
   `state` mediumtext CHARACTER SET ascii NOT NULL,
   PRIMARY KEY (`player`)
 ) ENGINE=InnoDB;
+CREATE TABLE IF NOT EXISTS `dmangos_party_summon_offer` (
+  `player` int unsigned NOT NULL,
+  `sequence` bigint unsigned NOT NULL,
+  `state` text CHARACTER SET ascii NOT NULL,
+  PRIMARY KEY (`player`)
+) ENGINE=InnoDB;
 CREATE TABLE `item_instance` (
   `guid` int(11) unsigned NOT NULL DEFAULT 0,
   `owner_guid` int(11) unsigned NOT NULL DEFAULT 0,

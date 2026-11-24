@@ -1435,6 +1435,40 @@ final class CharacterStatements
             characters.execute!"DELETE FROM dmangos_player_summons WHERE player = ?"(player);
     }
 
+    void preparePartySummonOffers()
+    {
+        characters.execute!("CREATE TABLE IF NOT EXISTS dmangos_party_summon_offer ("
+            ~ "player INT UNSIGNED NOT NULL PRIMARY KEY, sequence BIGINT UNSIGNED NOT NULL, "
+            ~ "state TEXT CHARACTER SET ascii NOT NULL) ENGINE=InnoDB")();
+    }
+
+    imported!"dmangos.world.database".PartySummonCheckpoint loadPartySummonOffer(uint player)
+    {
+        import dmangos.world.database : PartySummonCheckpoint;
+
+        const rows = characters.query!"SELECT sequence, state FROM dmangos_party_summon_offer WHERE player = ?"(player);
+        return rows.length ? PartySummonCheckpoint(rows[0].get!ulong(0), rows[0].get!string(1))
+            : PartySummonCheckpoint.init;
+    }
+
+    bool publishPartySummonOffer(uint player, ulong sequence, string state)
+    {
+        return characters.execute!("INSERT INTO dmangos_party_summon_offer (player, sequence, state) VALUES (?, ?, ?) "
+            ~ "ON DUPLICATE KEY UPDATE state = IF(sequence < VALUES(sequence), VALUES(state), state), "
+            ~ "sequence = GREATEST(sequence, VALUES(sequence))")(player, sequence, state) != 0;
+    }
+
+    bool consumePartySummonOffer(uint player, ulong sequence)
+    {
+        return characters.execute!("UPDATE dmangos_party_summon_offer SET state = '' "
+            ~ "WHERE player = ? AND sequence = ? AND state <> ''")(player, sequence) == 1;
+    }
+
+    void deletePartySummonOffer(uint player)
+    {
+        characters.execute!"DELETE FROM dmangos_party_summon_offer WHERE player = ?"(player);
+    }
+
     /// See `WorldDatabase.deleteInstance`.
     void deleteInstance(uint id)
     {
@@ -2329,6 +2363,7 @@ final class CharacterStatements
             characters.execute!"DELETE FROM dmangos_loot_coin WHERE player = ?"(guid);
             characters.execute!"DELETE FROM dmangos_loot_award WHERE player = ?"(guid);
             savePlayerSummons(guid, null);
+            deletePartySummonOffer(guid);
             foreach (pet; pets)
             {
                 characters.execute!"DELETE FROM character_pet WHERE id = ?"(pet);

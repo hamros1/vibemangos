@@ -368,6 +368,13 @@ struct OutdoorScriptCheckpoint
     string state;
 }
 
+/// A gateway player's latest summon request, including a consumed request's sequence.
+struct PartySummonCheckpoint
+{
+    ulong sequence;
+    string state;
+}
+
 /// A `character_honor_cp` row: honor from a kill or another source, on a day.
 struct HonorPointRecord
 {
@@ -670,6 +677,10 @@ interface WorldDatabase
     @DatabaseRead PetRecord[] loadPets(uint owner);
     @DatabaseRead string loadPlayerSummons(uint player);
     @Replaces void savePlayerSummons(uint player, string state);
+    @DatabaseRead PartySummonCheckpoint loadPartySummonOffer(uint player);
+    @DatabaseWrite bool publishPartySummonOffer(uint player, ulong sequence, string state);
+    @DatabaseWrite bool consumePartySummonOffer(uint player, ulong sequence);
+    void deletePartySummonOffer(uint player);
     /// A pet's row and spells, written whole.
     void savePet(const ref PetRecord pet);
     /// A pet moved to another slot.
@@ -1122,6 +1133,7 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
         statements.prepareQuestActors();
         statements.prepareOutdoorScripts();
         statements.preparePlayerSummons();
+        statements.preparePartySummonOffers();
         statements.prepareLootAwards();
         characterDb.execute!("CREATE TABLE IF NOT EXISTS `dmangos_write_applied` ("
             ~ "`stream` INT UNSIGNED NOT NULL, `seq` BIGINT UNSIGNED NOT NULL, PRIMARY KEY (`stream`)"
@@ -1242,6 +1254,16 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     PetRecord[] loadPets(uint owner) { return statements.loadPets(owner); }
     string loadPlayerSummons(uint player) { return statements.loadPlayerSummons(player); }
     void savePlayerSummons(uint player, string state) { statements.savePlayerSummons(player, state); }
+    PartySummonCheckpoint loadPartySummonOffer(uint player) { return statements.loadPartySummonOffer(player); }
+    bool publishPartySummonOffer(uint player, ulong sequence, string state)
+    {
+        return statements.publishPartySummonOffer(player, sequence, state);
+    }
+    bool consumePartySummonOffer(uint player, ulong sequence)
+    {
+        return statements.consumePartySummonOffer(player, sequence);
+    }
+    void deletePartySummonOffer(uint player) { statements.deletePartySummonOffer(player); }
     void savePet(const ref PetRecord pet) { statements.savePet(pet); }
     void setPetSlot(uint owner, uint pet, uint slot) { statements.setPetSlot(owner, pet, slot); }
     void deletePet(uint owner, uint pet) { statements.deletePet(owner, pet); }
@@ -2960,6 +2982,31 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
     private QuestActorCheckpoint[ulong][uint] questActors;
     private OutdoorScriptCheckpoint[ulong][ushort][uint] outdoorScripts;
     private string[uint] playerSummons;
+    private PartySummonCheckpoint[uint] partySummonOffers;
+
+    PartySummonCheckpoint loadPartySummonOffer(uint player)
+    {
+        return partySummonOffers.get(player, PartySummonCheckpoint.init);
+    }
+
+    bool publishPartySummonOffer(uint player, ulong sequence, string state)
+    {
+        if (loadPartySummonOffer(player).sequence >= sequence)
+            return false;
+        partySummonOffers[player] = PartySummonCheckpoint(sequence, state);
+        return true;
+    }
+
+    bool consumePartySummonOffer(uint player, ulong sequence)
+    {
+        auto offer = player in partySummonOffers;
+        if (offer is null || offer.sequence != sequence || !offer.state.length)
+            return false;
+        offer.state = null;
+        return true;
+    }
+
+    void deletePartySummonOffer(uint player) { partySummonOffers.remove(player); }
 
     string loadPlayerSummons(uint player) { return playerSummons.get(player, null); }
 
