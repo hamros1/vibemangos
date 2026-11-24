@@ -2400,6 +2400,7 @@ private:
         creature.skinned = true;
         creature.loot = loot;
         bindCreatureLoot(context, map, creature, loot);
+        context.saveCorpseLoot(creature);
         map.flushObjectChanges(creature);
         if (lootTarget && lootTarget != creature.guid)
             if (auto other = lootOf(lootTarget))

@@ -385,6 +385,7 @@ replacement worker restores the corpse's original GUID, location, decay deadline
 eligible players and pending rolls. Only players who still need to vote receive the original roll
 prompt. Item claims and the inventory award commit together. Coin shares use a durable payout
 token, so retrying a payout pays each player once.
+The record also preserves a corpse ready for skinning and any unclaimed skinning loot.
 
 * **The same spawns everywhere.** Pools, spawn groups and spawn entries are chosen with a seed made
   from the cluster's name and the realm, so every node agrees on which creature a spawn is.

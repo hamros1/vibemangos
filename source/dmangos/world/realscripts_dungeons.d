@@ -1826,6 +1826,50 @@ unittest
     assert(d.summoned(elite) == 0, "the ambush cannot be triggered twice");
 }
 
+/// A skinnable corpse and its rolled skin remain after replacement of the dungeon worker.
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.world.loothandlers : ClientLootSlot;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.packets : ClientGuid;
+
+    enum uint beastEntry = 10430;
+    auto d = Dungeon.enter(229, 60);
+    auto beast = d.spawned(beastEntry, 0, 5);
+    d.pull(beast);
+    const guid = beast.guid;
+    d.kill(beast);
+    d.party[0].write(Opcode.CMSG_LOOT, ClientGuid(guid));
+    auto body = beast.loot;
+    foreach (item; body.items)
+        if (d.player.guid in item.allowed)
+            d.party[0].write(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, ClientLootSlot(item.slot));
+    assert(beast.skinnable);
+    d.restartAfterCrash();
+    beast = d.map.creatureAt(guid);
+    assert(beast !is null && beast.skinnable, "the remaining skin is available after worker loss");
+
+    d.party[0].session.inWorld.skinCreature(guid);
+    assert(beast.skinned && beast.loot !is null && beast.loot.items.length == 1);
+    const entry = beast.loot.items[0].itemId, count = beast.loot.items[0].count;
+    d.restartAfterCrash();
+    beast = d.map.creatureAt(guid);
+    assert(beast !is null && beast.skinned && !beast.skinnable && beast.loot !is null);
+    const drop = beast.loot.items[0];
+    assert(drop.itemId == entry && drop.count == count, "the original skin roll survives before pickup");
+    d.party[0].write(Opcode.CMSG_LOOT, ClientGuid(guid));
+    d.party[0].write(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, ClientLootSlot(drop.slot));
+    d.restartAfterCrash();
+    assert(d.map.creatureAt(guid) is null, "the claimed skin cannot be rolled again");
+    uint received;
+    foreach (itemGuid, item; d.w.db.itemRows)
+        if (d.w.db.itemOwners[itemGuid] == d.player.data.guid && item.entry == entry)
+            received += item.count;
+    assert(received == count, "one award of the original skin");
+}
+
 /// The stadium keeps its current wave and Gyth's dismount across a worker crash.
 unittest
 {

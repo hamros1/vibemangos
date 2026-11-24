@@ -910,14 +910,14 @@ private:
         enum uint noLoot = 0x4; // the static flag for no loot
         const t = victim.template_;
         if (t.staticFlags1 & noLoot)
-            return lootedOutNow(map, victim);
+            return lootedOutNow(context, map, victim);
         auto loot = new Loot(victim.guid, null);
         bindCreatureLoot(context, map, victim, loot);
         setLootRightsFor(context, map, tapper, loot, victim.position, (ulong guid) => victim.ai.threatOf(guid) > 0);
 
         const(LootTemplate) template_ = t.lootId ? context.data.loot.creature[t.lootId] : null;
         if (template_ is null && t.maxLootGold == 0)
-            return lootedOutNow(map, victim);
+            return lootedOutNow(context, map, victim);
         if (template_ !is null)
         {
             bool meets(uint condition)
@@ -951,7 +951,7 @@ private:
         victim.loot = loot;
         loot.beginQuestLootChecks(map.id, &context.nextGameplaySequence, context.sendQuestLootCheck);
         if (victim.loot !is null && loot.lootedForEveryone())
-            lootedOutNow(map, victim);
+            lootedOutNow(context, map, victim);
         else if (victim.loot !is null)
         {
             context.saveNewCorpse(victim);
@@ -961,9 +961,11 @@ private:
     }
 
     /// Nothing (more) to loot from `victim`: skinnable if it has a skin, its viewers told.
-    static void lootedOutNow(Map map, Creature victim)
+    static void lootedOutNow(WorldContext context, Map map, Creature victim)
     {
         victim.lootedOut();
+        if (victim.skinnable)
+            context.saveNewCorpse(victim);
         map.flushObjectChanges(victim);
     }
 
