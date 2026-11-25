@@ -255,6 +255,7 @@ final class Group
     GroupType type;
     ulong leader;
     string leaderName;
+    private long leaderOfflineSince;
     ulong mainTank;
     ulong mainAssistant;
     LootMethod lootMethod = LootMethod.groupLoot;
@@ -777,6 +778,29 @@ private:
     /// A new leader: an online assistant in a raid, any online member in a party, else the first.
     void chooseLeader()
     {
+        const chosen = onlineLeaderCandidate();
+        if (chosen)
+            setLeader(chosen);
+        else if (slots.length)
+            setLeader(slots[0].guid);
+    }
+
+    package void updateOfflineLeader(long now, uint delay)
+    {
+        if (!delay || owner.directory.statusOf(leader) != MemberStatus.offline)
+        {
+            leaderOfflineSince = 0;
+            return;
+        }
+        if (!leaderOfflineSince)
+            leaderOfflineSince = now;
+        if (now - leaderOfflineSince >= delay)
+            if (const chosen = onlineLeaderCandidate())
+                changeLeader(chosen);
+    }
+
+    private ulong onlineLeaderCandidate()
+    {
         ulong first, chosen;
         foreach (ref slot; slots)
         {
@@ -791,12 +815,7 @@ private:
             chosen = slot.guid;
             break;
         }
-        if (chosen == 0)
-            chosen = first;
-        if (chosen == 0 && slots.length)
-            chosen = slots[0].guid;
-        if (chosen)
-            setLeader(chosen);
+        return chosen ? chosen : first;
     }
 
     /// Sets the leader and saves it; the old and new leaders are told.
@@ -807,6 +826,7 @@ private:
             return;
         const previous = leader;
         leader = guid;
+        leaderOfflineSince = 0;
         leaderName = slots[i].name;
         save();
         foreach (who; only(previous, guid))
@@ -1251,6 +1271,36 @@ version (unittest)
         ubyte statusOf(ulong guid) { return memberStatus(players.get(guid, null)); }
         bool seeEachOther(ulong a, ulong b) { return false; }
     }
+}
+
+/// A brief disconnect keeps leadership. A longer one promotes an online member and saves it.
+unittest
+{
+    auto db = new MemoryWorldDatabase;
+    auto directory = new FakeDirectory;
+    auto groups = new Groups(db, directory, 10);
+    auto leader = new FakePlayer(1, "Anduin");
+    auto member = new FakePlayer(2, "Jaina");
+    directory.players[1] = leader;
+    directory.players[2] = member;
+    auto group = groups.newGroup();
+    assert(group.addLeaderInvite(1, "Anduin"));
+    group.create();
+    assert(group.addMember(2, "Jaina"));
+
+    directory.players.remove(1);
+    group.updateOfflineLeader(100, 5);
+    group.updateOfflineLeader(104, 5);
+    assert(group.leader == 1);
+    directory.players[1] = leader;
+    group.updateOfflineLeader(105, 5);
+    directory.players.remove(1);
+    group.updateOfflineLeader(106, 5);
+    group.updateOfflineLeader(111, 0);
+    assert(group.leader == 1);
+    group.updateOfflineLeader(112, 5);
+    group.updateOfflineLeader(117, 5);
+    assert(group.leader == 2 && db.groups[10].leader == 2);
 }
 
 /// Inviting, creating, joining, leading, raids, and disbanding, with the rows they write.

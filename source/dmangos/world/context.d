@@ -83,6 +83,7 @@ import dmangos.world.loot : Loot, LootItem, maxLootItems;
 import dmangos.world.map : Inhabitant, Map, MapObject, MapSettings, VisibilityFacts;
 import dmangos.world.online : OnlinePlayer;
 import dmangos.world.character : Character;
+import dmangos.world.player : Player;
 import dmangos.world.playercreate : CreationSettings;
 import dmangos.world.spellids : ImplicitTarget, SpellEffect;
 import dmangos.world.worlddata : EventCreature, EventMail, PoolMember, Ship, SpellListEntry, WorldData;
@@ -1889,7 +1890,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         }
         const attacker = caster.combatRelations(client);
         const casterFields = caster.replica is null ? caster.fields : &caster.replica.fieldsOf();
-        const hostile = canAttack(attacker, victim.relating(), client);
+        const hostile = canAttack(attacker, victim.relating(), client,
+            groups.sameGroup(message.caster, message.target));
         const spell = data.spells.spell(message.spell);
         if (spell is null)
             return;
@@ -3687,7 +3689,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                         {
                             const spawn = &data.creatureSpawns[index];
                             if (spawn.guid !in data.creatureGameEvents || !creatureInEvents(spawn.guid)
-                                    || !upInPool(PoolMember.Kind.creature, spawn.guid))
+                                    || !groupSpawnAllowed(m, 0, spawn.guid) || !upInPool(PoolMember.Kind.creature, spawn.guid))
                                 continue;
                             if (awaitingRespawn(spawn.guid) || creatureOnLoan(spawn.guid))
                                 continue;
@@ -3871,6 +3873,93 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     uint[2][] warEffortWorldStates(uint zone)
     {
         return warEffort.worldStates(zone, unixTime);
+    }
+
+    package bool mapConditionMet(Map where, uint id)
+    {
+        import dmangos.world.conditions : ConditionSubject;
+
+        ConditionSubject subject;
+        subject.worldCondition = &conditionWorldScript;
+        subject.worldState = (uint state) => conditionMapWorldState(where, state);
+        subject.completedEncounter = (uint encounter) => conditionEncounterCompleted(where, encounter);
+        if (auto instance = instanceScript(where.instanceId))
+            subject.instanceCondition = &instance.condition;
+        return data.npcs.conditions.satisfied(id, subject, client);
+    }
+
+    package int conditionMapWorldState(Map where, uint id)
+    {
+        if (auto value = id in where.scriptedWorldStates)
+            return *value;
+        if (auto copy = battlegrounds.find(where.instanceId))
+            if (copy.mapId == where.id)
+                return cast(int) copy.worldStates.get(id, 0);
+        if (where.instanceId)
+        {
+            if (where.id == 70 && id == 700001)
+            {
+                if (!data.annoraScorpidSpawns.length)
+                    return 0;
+                foreach (guid; data.annoraScorpidSpawns)
+                    if (!deadInInstance(where.instanceId, guid))
+                        return 0;
+                return 1;
+            }
+            if (const states = where.id in data.encounterCreatureByWorldState)
+                if (const boss = id in *states)
+                    return entryKilledInInstance(where.instanceId, *boss);
+        }
+        return conditionRealmState(id);
+    }
+
+    package bool conditionEncounterCompleted(Map where, uint id)
+    {
+        if (where.instanceId)
+            if (const encounters = where.id in data.encounterCreatureById)
+                if (const boss = id in *encounters)
+                    return entryKilledInInstance(where.instanceId, *boss);
+        return false;
+    }
+
+    package int conditionRealmState(uint id)
+    {
+        import dmangos.world.scourge : invasionZones;
+        import dmangos.world.wareffort : resources, worldStateDaysLeft;
+
+        if (id == worldStateDaysLeft)
+            return cast(int) warEffort.daysLeft(unixTime);
+        foreach (i, ref resource; resources)
+        {
+            if (resource.nowState == id)
+                return cast(int) warEffort.counters[i];
+            if (resource.goalState == id)
+                return cast(int) resource.goal;
+        }
+        foreach (i, ref zone; invasionZones)
+        {
+            if (zone.marker == id)
+                return invasion.remaining(i) != 0;
+            if (zone.remaining == id)
+                return cast(int) invasion.remaining(i);
+        }
+        return 0;
+    }
+
+    package bool conditionWorldScript(uint id, uint expected)
+    {
+        import dmangos.world.scourge : invasionZones;
+        import dmangos.world.wareffort : resources, worldStateDaysLeft;
+
+        if (id == worldStateDaysLeft)
+            return warEffort.daysLeft(unixTime) == expected;
+        foreach (i, ref resource; resources)
+            if (resource.nowState == id)
+                return warEffort.counters[i] >= resource.goal;
+        foreach (i, ref zone; invasionZones)
+            if (zone.marker == id)
+                return invasion.remaining(i) != 0;
+        return false;
     }
 
     /// See `CreatureLore.warEffortHandIn`: the quest's first required items, for the service to count.
@@ -4565,7 +4654,20 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             auto group = groups.of(player);
             return group is null ? 0 : group.id;
         };
+        created.groupViewerFaction = &groupViewerFaction;
         return created;
+    }
+
+    /// Per-viewer faction for an opposite-faction party member. The authoritative faction never changes.
+    package uint groupViewerFaction(ulong target, const ref UpdateValues fields, const Player viewer) const
+    {
+        import dmangos.world.updatefields : UNIT_FIELD_BYTES_0, UNIT_FIELD_FACTIONTEMPLATE;
+
+        if (!config.allowTwoSideInteractionGroup
+            || client.teamForRace(fields.getByte!UNIT_FIELD_BYTES_0(0)) == client.teamForRace(viewer.data.race)
+            || !groups.sameGroup(target, viewer.guid))
+            return 0;
+        return viewer.values.get!UNIT_FIELD_FACTIONTEMPLATE;
     }
 
     /// Battleground objectives use the player credited with the killing blow, independently of the loot tap.
@@ -5148,6 +5250,70 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return instances.length;
     }
 
+    private bool groupSpawnAllowed(Map where, uint type, uint guid)
+    {
+        if (const condition = guid in data.spawnConditions[type])
+            return where !is null && mapConditionMet(where, *condition);
+        return true;
+    }
+
+    /// Activate or retire conditional placements in owned, already-loaded cells.
+    private void refreshConditionalSpawns()
+    {
+        void refresh(Map where)
+        {
+            const selected = where.id in data.conditionalSpawns;
+            if (selected is null)
+                return;
+            const instance = where.instanceId;
+            foreach (index; selected.creatures)
+            {
+                const spawn = &data.creatureSpawns[index];
+                const home = cellKeyAt(spawn.x, spawn.y);
+                if (!where.cellLoaded(home))
+                    continue;
+                const guid = makeGuid(HighGuid.unit, spawn.entry, spawn.guid);
+                auto alive = where.creatureAt(guid);
+                if (!groupSpawnAllowed(where, 0, spawn.guid))
+                {
+                    if (alive !is null && alive.alive && (alive.ai is null || !alive.ai.inCombat))
+                        where.removeObject(guid);
+                    continue;
+                }
+                if (alive !is null || (instance ? deadInInstance(instance, spawn.guid)
+                        : awaitingRespawn(spawn.guid) || creatureOnLoan(spawn.guid))
+                    || !creatureInEvents(spawn.guid) || !upInPool(PoolMember.Kind.creature, spawn.guid))
+                    continue;
+                if (auto creature = makeCreature(spawn))
+                {
+                    creature.instanceId = instance;
+                    where.addObject(creature);
+                    queueLinked(where.id, instance, creature);
+                }
+            }
+            foreach (index; selected.objects)
+            {
+                const ref spawn = data.gameObjectSpawns[index];
+                if (!where.cellLoaded(cellKeyAt(spawn.x, spawn.y)))
+                    continue;
+                const guid = makeGuid(HighGuid.gameObject, spawn.entry, spawn.guid);
+                auto present = cast(GameObject) where.findObject(guid);
+                if (!groupSpawnAllowed(where, 1, spawn.guid))
+                {
+                    if (present !is null)
+                        where.removeObject(guid);
+                }
+                else if (present is null && !instance)
+                    if (auto object = spawnWorldGameObject(spawn))
+                        where.addObject(object);
+            }
+        }
+        foreach (where; maps)
+            refresh(where);
+        foreach (where; instanceMaps)
+            refresh(where);
+    }
+
     /// A cell of an instance loading: the cell's spawns but those killed or used up in it.
     private MapObject[] spawnCellIn(uint mapId, uint instance, ulong cell)
     {
@@ -5171,6 +5337,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     data.creatureSpawns[index].entry, data.creatureSpawns[index].guid))))
                     continue;
                 if (!creatureInEvents(data.creatureSpawns[index].guid)
+                        || !groupSpawnAllowed(existingMap(mapId, instance), 0, data.creatureSpawns[index].guid)
                         || !upInPool(PoolMember.Kind.creature, data.creatureSpawns[index].guid))
                     continue;
                 if (copy !is null && !copy.spawnAllowed(data.creatureSpawns[index].guid in data.creatureBattleEvents))
@@ -5192,7 +5359,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     continue;
                 const reward = state is null ? null : spawn.guid in state.chests;
                 if ((spawn.respawnSeconds < 0 && reward is null) || (state !is null && spawn.guid in state.usedUp)
-                    || !gameObjectInEvents(spawn.guid))
+                    || !gameObjectInEvents(spawn.guid) || !groupSpawnAllowed(existingMap(mapId, instance), 1, spawn.guid))
                     continue;
                 const available = copy !is null && spawn.battlegroundPowerUp ? copy.powerUpAvailable(spawn.guid)
                     : upInPool(PoolMember.Kind.gameObject, spawn.guid);
@@ -6646,8 +6813,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     }
                 if (awaitingRespawn(spawn.guid))
                     continue; // dead: it comes back when its time is up
-                if (!creatureInEvents(spawn.guid))
-                    continue; // its game event says it is away
+                if (!creatureInEvents(spawn.guid) || !groupSpawnAllowed(existingMap(mapId), 0, spawn.guid))
+                    continue; // its game event or spawn group says it is away
                 if (!upInPool(PoolMember.Kind.creature, spawn.guid))
                     continue; // another of its pool is up
                 if (auto creature = makeCreature(spawn))
@@ -6667,7 +6834,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         // Negative respawn times reserve the spawn for an event, a script or world PvP.
         if ((spawn.respawnSeconds < 0 && !eventActivatesObject(spawn.guid)) || gameObjectAwaitingRespawn(spawn.guid)
-            || !gameObjectInEvents(spawn.guid) || !upInPool(PoolMember.Kind.gameObject, spawn.guid))
+            || !gameObjectInEvents(spawn.guid) || !upInPool(PoolMember.Kind.gameObject, spawn.guid)
+            || !groupSpawnAllowed(existingMap(spawn.map), 1, spawn.guid))
             return null;
         auto object = makeGameObject(spawn);
         if (const saved = spawn.guid in outdoorChests)
@@ -7391,7 +7559,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     return;
             }
             if (!awaitingRespawn(spawn.guid) && creatureInEvents(spawn.guid)
-                && upInPool(PoolMember.Kind.creature, spawn.guid))
+                && groupSpawnAllowed(map_, 0, spawn.guid) && upInPool(PoolMember.Kind.creature, spawn.guid))
                 if (auto creature = makeCreature(spawn))
                     map_.addObject(creature);
         }
@@ -9300,13 +9468,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// See `CreatureLore.conditionMet`.
     bool conditionMet(uint id, ulong player)
     {
-        import dmangos.world.conditions : ConditionSubject;
-
         auto c = onlinePlayer(player);
         if (c is null || c.player is null)
             return false;
-        const subject = ConditionSubject(c.player, null);
-        return data.npcs.conditions.satisfied(id, subject, client);
+        return c.conditionMet(id);
     }
 
     /// See `CreatureLore.zoneAndAreaAt`.
@@ -10002,7 +10167,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     }
                 }))
                 continue;
-            if (there is null || !there.cellLoaded(home))
+            if (there is null || !there.cellLoaded(home) || !groupSpawnAllowed(there, 0, spawn.guid))
                 continue;
             if (auto creature = makeCreature(spawn))
             {
@@ -10077,7 +10242,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 if (!creaturePools.change(pool, state.revision, next.guid, due) || due)
                     continue;
             }
-            if (there !is null && there.cellLoaded(home) && creatureInEvents(spawn.guid))
+            if (there !is null && there.cellLoaded(home) && creatureInEvents(spawn.guid)
+                && groupSpawnAllowed(there, 0, spawn.guid))
                 if (auto creature = makeCreature(spawn))
                 {
                     there.addObject(creature);
@@ -10379,6 +10545,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         }
     }
 
+    private MonoTime lastConditionalSpawnCheck;
+
     private void worldPhase(MonoTime now, Duration elapsed)
     {
         if (instances.length)
@@ -10404,6 +10572,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (battlegroup is null || battlegroup.host is this) battlegrounds.tick(elapsed);
         landObjectAnimations(now);
         updateGameEvents(now);
+        if (lastConditionalSpawnCheck == MonoTime.init || now - lastConditionalSpawnCheck >= 1.seconds)
+        {
+            lastConditionalSpawnCheck = now;
+            refreshConditionalSpawns();
+        }
         removeExpiredBones();
         if (forwardGroup is null) // the coordinator, or alone (not while starting: who coordinates is not known yet)
         {
@@ -10664,6 +10837,34 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     private CreaturePools creaturePools;
+}
+
+/// A scripted world-state gate can spawn and remove an eligible creature in a cell that is already loaded.
+unittest
+{
+    import dmangos.world.conditions : Condition, Conditions, ConditionType;
+    import dmangos.world.testclient : newCreationContext, newDatabase;
+
+    auto context = newCreationContext(newDatabase());
+    const ref spawn = context.data.creatureSpawns[0];
+    const home = cellKeyAt(spawn.x, spawn.y);
+    const guid = makeGuid(HighGuid.unit, spawn.entry, spawn.guid);
+    enum uint condition = 88, flag = 99;
+    context.data.npcs.conditions = new Conditions([Condition(condition, ConditionType.worldState, flag, 1, 1)]);
+    context.data.conditionalSpawns[spawn.map] = WorldData.ConditionalSpawns([0], null);
+    context.data.spawnConditions[0][spawn.guid] = condition;
+    auto where = context.map(spawn.map);
+    where.loadCell(home);
+    assert(where.creatureAt(guid) is null);
+    where.scriptedWorldStates[flag] = 1;
+    context.refreshConditionalSpawns();
+    auto shown = where.creatureAt(guid);
+    assert(shown !is null);
+    context.refreshConditionalSpawns();
+    assert(where.creatureAt(guid) is shown);
+    where.scriptedWorldStates[flag] = 0;
+    context.refreshConditionalSpawns();
+    assert(where.creatureAt(guid) is null);
 }
 
 /// NPC services across nodes: a replica of a creature is served through a stand-in.

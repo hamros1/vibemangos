@@ -703,7 +703,7 @@ mixin template EnvironmentHandlers()
         case MirrorTimerType.breath:
             return (environment & E.underwater) && breathingInterval;
         case MirrorTimerType.feignDeath:
-            return false; // feigning death does not end in death here yet
+            return feigningDeath && player.deathState == DeathState.alive;
         case MirrorTimerType.environmental:
             const liquid = context.client.liquidTypes.lookup(lastLiquid);
             return (environment & E.liquidHazard) && !(liquid !is null && liquid.spellId);
@@ -722,7 +722,7 @@ mixin template EnvironmentHandlers()
         case MirrorTimerType.breath, MirrorTimerType.environmental:
             return !inLiquid || !alive;
         case MirrorTimerType.feignDeath:
-            return true;
+            return !mirrorTimerStarts(type);
         }
     }
 
@@ -752,6 +752,12 @@ mixin template EnvironmentHandlers()
             if (player is null)
                 return;
             const type = timer.type;
+            if (type == MirrorTimerType.feignDeath)
+            {
+                updateFeignDeathTimer(timer);
+                changed |= timer.status != MirrorTimerStatus.unchanged;
+                continue;
+            }
             if (!timer.active && !mirrorTimerStarts(type))
                 continue;
             if (mirrorTimerStops(type))
@@ -774,6 +780,25 @@ mixin template EnvironmentHandlers()
             checkpointSummons(changed || pulsed, 0, true);
         }
         sendMirrorTimers();
+    }
+
+    private void updateFeignDeathTimer(ref MirrorTimer timer)
+    {
+        import dmangos.world.auras : Aura;
+        import std.typecons : Rebindable;
+
+        Rebindable!(const Aura) active;
+        if (mirrorTimerStarts(timer.type))
+            foreach (aura; player.auras.list)
+                if (aura.duration > 0 && aura.has(AuraType.feignDeath)
+                    && (active is null || aura.maxDuration > active.maxDuration))
+                    active = aura;
+        if (active is null)
+            return timer.stop();
+        if (!timer.active || timer.spellId != active.spell.id || timer.interval != active.maxDuration
+            || timer.remaining() < active.duration)
+            timer.start(active.maxDuration, active.spell.id);
+        timer.current = timer.interval - active.duration;
     }
 
     /// A timer ran out (and every two seconds after): drowning, exhaustion, lava.

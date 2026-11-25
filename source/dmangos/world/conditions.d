@@ -91,6 +91,9 @@ struct ConditionSubject
     /// An instance-defined condition, and the source creature's last visited waypoint.
     bool delegate(uint id) instanceCondition;
     uint waypoint;
+    bool delegate(uint id, uint expected) worldCondition;
+    int delegate(uint id) worldState;
+    bool delegate(uint id) completedEncounter;
 }
 
 /// See the module documentation.
@@ -118,7 +121,8 @@ final class Conditions
     /// Whether condition `id` holds; 0 always does, an unknown id never.
     bool satisfied(uint id, const ref ConditionSubject subject, const ClientData client)
     {
-        return id == 0 || meets(id, subject, client, 0);
+        return id == 0 || (subject.player !is null || canCheckWithoutPlayer(id, 0))
+            && meets(id, subject, client, 0);
     }
 
 private:
@@ -131,6 +135,29 @@ private:
             return unsupported(condition.type, "with swapped targets");
         const result = evaluate(*condition, subject, client, depth);
         return (condition.flags & conditionFlagReverseResult) ? !result : result;
+    }
+
+    private bool canCheckWithoutPlayer(uint id, uint depth) const
+    {
+        auto condition = id in entries;
+        if (condition is null || depth > 16)
+            return false;
+        const ref c = *condition;
+        with (ConditionType) switch (c.type)
+        {
+        case not:
+            return canCheckWithoutPlayer(c.value1, depth + 1);
+        case or, and:
+            return canCheckWithoutPlayer(c.value1, depth + 1) && canCheckWithoutPlayer(c.value2, depth + 1)
+                && (!c.value3 || canCheckWithoutPlayer(c.value3, depth + 1))
+                && (!c.value4 || canCheckWithoutPlayer(c.value4, depth + 1));
+        case none, worldScript, worldState, instanceScript, lastWaypoint, creatureInRange, activeGameEvent,
+            completedEncounter,
+            activeHoliday:
+            return true;
+        default:
+            return false;
+        }
     }
 
     static bool isLogic(int type)
@@ -251,6 +278,27 @@ private:
             return subject.creatureInRange !is null && subject.creatureInRange(c.value1, c.value2);
         case instanceScript:
             return subject.instanceCondition !is null && subject.instanceCondition(c.value1);
+        case completedEncounter:
+            return subject.completedEncounter !is null
+                && (subject.completedEncounter(c.value1) || (c.value2 && subject.completedEncounter(c.value2)));
+        case worldScript:
+            return subject.worldCondition !is null && subject.worldCondition(c.value1, c.value2);
+        case worldState:
+        {
+            if (subject.worldState is null)
+                return false;
+            const value = subject.worldState(c.value1), operand = cast(int) c.value3;
+            switch (c.value2)
+            {
+            case 1: return value == operand;
+            case 2: return value != operand;
+            case 3: return value < operand;
+            case 4: return value <= operand;
+            case 5: return value > operand;
+            case 6: return value >= operand;
+            default: return false;
+            }
+        }
         case lastWaypoint:
             if (c.value2 == 0)
                 return subject.waypoint != 0 && subject.waypoint == c.value1;
@@ -349,4 +397,29 @@ unittest
     bool isNew;
     player.auras.apply(makeAura(spell, 1, 10, 60_000, true, [1, 0, 0]), player.values, isNew);
     assert(conditions.satisfied(7, subject, client), "the aura is on");
+}
+
+/// Map and realm script conditions also work when no player is involved.
+unittest
+{
+    import dmangos.world.testdata : testClientData;
+
+    auto client = testClientData();
+    auto conditions = new Conditions([
+        Condition(1, ConditionType.worldState, 20, 1, 0),
+        Condition(2, ConditionType.worldState, 20, 3, 0),
+        Condition(3, ConditionType.worldScript, 30, 5),
+        Condition(4, ConditionType.and, 2, 3),
+        Condition(5, ConditionType.level, 10, 1),
+        Condition(6, ConditionType.not, 5),
+    ]);
+    ConditionSubject subject;
+    assert(!conditions.satisfied(1, subject, client));
+    int state;
+    subject.worldState = (uint id) => id == 20 ? state : 0;
+    subject.worldCondition = (uint id, uint expected) => id == 30 && expected == 5;
+    assert(conditions.satisfied(1, subject, client) && !conditions.satisfied(4, subject, client));
+    state = -1;
+    assert(!conditions.satisfied(1, subject, client) && conditions.satisfied(4, subject, client));
+    assert(!conditions.satisfied(5, subject, client) && !conditions.satisfied(6, subject, client));
 }

@@ -33,6 +33,9 @@ enum MovementFlags : uint
     pitchDown = 0x00000080,
     onTransport = 0x02000000, /// adds the transport guid and offset
     splineElevation = 0x04000000, /// adds one float
+    waterWalking = 0x10000000,
+    safeFall = 0x20000000,
+    hover = 0x40000000,
 }
 
 /// The moving flags with the turning flags: the player is moving or turning, so it stands up and

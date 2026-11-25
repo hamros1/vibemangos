@@ -126,6 +126,8 @@ struct WorldConfig
     @JsonName("battleground_premature_finish") uint battlegroundPrematureFinish = 300;
     /// `AllowTwoSide.Interaction.Group`: allow groups with both factions.
     @JsonName("allow_two_side_interaction_group") bool allowTwoSideInteractionGroup = false;
+    /// Seconds before an offline group's leader is replaced. Zero disables automatic promotion.
+    @JsonName("offline_group_leader_delay") uint offlineGroupLeaderDelay = 300;
     /// `AllowTwoSide.Interaction.Auction`: one auction house (the Alliance's) for both factions.
     @JsonName("allow_two_side_interaction_auction") bool allowTwoSideInteractionAuction = false;
     /// `Rate.Auction.Deposit`, `Rate.Auction.Cut`, `Rate.Auction.Time`, `Auction.Deposit.Min`: the auction houses'

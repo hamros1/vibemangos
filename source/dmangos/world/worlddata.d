@@ -484,6 +484,16 @@ final class WorldData
     LevelRewardMail[][uint] levelRewardMails;       /// `mail_level_reward`: by level
     ushort[][uint] questGameEvents;                 /// `game_event_quest`: the events a quest is given during
     CreatureLinks creatureLinks;                    /// `creature_linking` and `creature_linking_template`
+    /// Selected gated spawns, by map. The indices refer to creatureSpawns and gameObjectSpawns.
+    struct ConditionalSpawns
+    {
+        size_t[] creatures, objects;
+    }
+    ConditionalSpawns[uint] conditionalSpawns;
+    uint[uint][2] spawnConditions;
+    uint[] annoraScorpidSpawns;
+    uint[uint][uint] encounterCreatureById, encounterCreatureByWorldState;
+
     Formation[uint] formations;                     /// `spawn_group_formation`, by spawn group
     uint[2][uint] formationSlots;                   /// a formation member's spawn -> (its group, its slot)
     uint[3][uint] propertyEnchantments;             /// a random property's enchantments (`ItemRandomProperties.dbc`)
@@ -974,16 +984,21 @@ final class WorldData
         pools.choose(rng);
         this.pools = pools; // every member is loaded; those not chosen wait for a roll (`PoolChooser.reroll`)
 
-        // Spawn groups: at most MaxCount members up at once, entries for members without one;
-        // groups that depend on a world state stay down, as no world state is kept yet.
+        // Spawn groups select at most MaxCount placements. Map-local conditions gate the selection in play.
         auto groups = new SpawnGroups;
         foreach (row; world.query!"SELECT Id, Type, MaxCount, WorldState, WorldStateExpression FROM spawn_group"())
-            groups.add(row.get!uint(0), row.get!uint(1), row.get!int(2), row.get!int(3) != 0 || row.get!int(4) != 0);
+            groups.add(row.get!uint(0), row.get!uint(1), row.get!int(2), row.get!int(4) != 0, row.get!uint(3));
         foreach (row; world.query!"SELECT Id, Guid FROM spawn_group_spawn"())
-            groups.addSpawn(row.get!uint(0), row.get!uint(1));
+        {
+            const group = row.get!uint(0), guid = row.get!uint(1);
+            groups.addSpawn(group, guid);
+            if (group == 700000 || group == 7000000)
+                annoraScorpidSpawns ~= guid;
+        }
         foreach (row; world.query!"SELECT Id, Entry, Chance, MinCount, MaxCount FROM spawn_group_entry"())
             groups.addEntry(row.get!uint(0), row.get!uint(1), row.get!uint(2), row.get!uint(3), row.get!uint(4));
         groups.choose(rng);
+        loadEncounterConditions(world);
 
         // Spawns without an entry take one of `creature_spawn_entry`'s, or their group's.
         uint[][uint] spawnEntries;
@@ -1018,6 +1033,11 @@ final class WorldData
                 row.wanderDistance = 0;
             if (row.movementType > MotionType.max)
                 row.movementType = MotionType.idle;
+            if (const condition = groups.condition(0, row.guid))
+            {
+                conditionalSpawns.require(row.map, ConditionalSpawns.init).creatures ~= creatureSpawns.length;
+                spawnConditions[0][row.guid] = condition;
+            }
             creatureCells[row.map][cellKeyAt(row.x, row.y)] ~= creatureSpawns.length;
             creatureSpawns ~= row;
         }
@@ -1046,12 +1066,40 @@ final class WorldData
                 ++skipped;
                 continue;
             }
+            if (const condition = groups.condition(1, s.guid))
+            {
+                conditionalSpawns.require(s.map, ConditionalSpawns.init).objects ~= gameObjectSpawns.length;
+                spawnConditions[1][s.guid] = condition;
+            }
             gameObjectCells[s.map][cellKeyAt(s.x, s.y)] ~= gameObjectSpawns.length;
             gameObjectSpawns ~= s;
         }
         info!"loaded %s creature and %s game object templates; %s creatures and %s game objects spawn (%s skipped)"(
             creatureTemplates.length, gameObjectTemplates.length, creatureSpawns.length, gameObjectSpawns.length,
             skipped);
+    }
+
+    /// Kill-credited encounters use each copy's persisted creature deaths.
+    private void loadEncounterConditions(MySqlConnection world)
+    {
+        import dmangos.mysql : DatabaseException;
+
+        try
+        {
+            foreach (row; world.query!("SELECT d.Id, d.MapId, d.CompleteWorldStateID, e.creditEntry "
+                ~ "FROM instance_dungeon_encounters d JOIN instance_encounters e ON e.entry = d.Id WHERE e.creditType = 0")())
+            {
+                const map = row.get!uint(1), state = row.get!uint(2), creature = row.get!uint(3);
+                encounterCreatureById[map][row.get!uint(0)] = creature;
+                if (state)
+                    encounterCreatureByWorldState[map][state] = creature;
+            }
+        }
+        catch (DatabaseException error)
+        {
+            if (error.code != 1146) // older ClassicDB versions can omit encounter metadata
+                throw error;
+        }
     }
 
     /**
@@ -1774,9 +1822,8 @@ unittest
 }
 
 /**
- * Spawn groups (`spawn_group`, `spawn_group_spawn`, `spawn_group_entry`), as far as a
- * world without world states needs them: which members are up, and what a member without its own
- * entry is.
+ * Spawn groups (`spawn_group`, `spawn_group_spawn`, `spawn_group_entry`): selected placements,
+ * their conditions and entries for placements without their own.
  */
 final class SpawnGroups
 {
@@ -1784,7 +1831,8 @@ final class SpawnGroups
     {
         uint type;          // 0 creatures, 1 game objects
         int maxCount;       // 0: every member
-        bool conditional;   // depends on a world state
+        bool hasExpression; // binary WorldStateExpression, a separate format
+        uint condition;     // WorldState is a condition entry, not a state variable ID
         uint[] guids;
         uint[] entries;
         uint[] chances;
@@ -1798,9 +1846,9 @@ final class SpawnGroups
     private bool[uint][2] active;      // type -> spawn guids that are up
 
     ///
-    void add(uint id, uint type, int maxCount, bool conditional)
+    void add(uint id, uint type, int maxCount, bool hasExpression, uint condition = 0)
     {
-        groups[id] = Group(type, maxCount, conditional);
+        groups[id] = Group(type, maxCount, hasExpression, condition);
     }
 
     ///
@@ -1831,17 +1879,41 @@ final class SpawnGroups
     {
         import std.random : randomShuffle;
 
-        foreach (ref group; groups)
+        foreach (id, ref group; groups)
         {
-            if (group.conditional || group.type >= 2)
+            if (group.hasExpression || group.type >= 2)
                 continue;
             auto members = group.guids.dup;
-            randomShuffle(members, rng);
-            const count = group.maxCount > 0 && group.maxCount < members.length ? group.maxCount : members.length;
-            foreach (guid; members[0 .. count])
+            // Each worker selects the same placements for a gate that can open in several regions.
+            if (group.condition)
+            {
+                import std.algorithm.sorting : sort;
+                members.sort();
+                auto seeded = Random(id);
+                randomShuffle(members, seeded);
+                assignEntries(group, selected(group, members), seeded);
+            }
+            else
+            {
+                randomShuffle(members, rng);
+                assignEntries(group, selected(group, members), rng);
+            }
+            foreach (guid; selected(group, members))
                 active[group.type][guid] = true;
-            assignEntries(group, members[0 .. count], rng);
         }
+    }
+
+    private static uint[] selected(const ref Group group, uint[] members)
+    {
+        return group.maxCount > 0 && group.maxCount < members.length ? members[0 .. group.maxCount] : members;
+    }
+
+    /// The condition that selected placement checks when its map is loaded.
+    uint condition(uint type, uint guid) const
+    {
+        if (const id = guid in groupOf[type])
+            return groups[*id].condition;
+        return 0;
     }
 
     /**
@@ -1949,6 +2021,8 @@ unittest
     auto groups = new SpawnGroups;
     groups.add(1, 0, 1, false);
     groups.add(2, 0, 0, true);
+    groups.add(3, 1, 0, false, 100);
+    groups.addSpawn(3, 27);
     foreach (guid; [5u, 6, 7])
         groups.addSpawn(1, guid);
     groups.addSpawn(2, 9);
@@ -1958,6 +2032,7 @@ unittest
     groups.choose(rng);
     assert(groups.spawns(0, 5) + groups.spawns(0, 6) + groups.spawns(0, 7) == 1, "MaxCount 1");
     assert(!groups.spawns(0, 9) && groups.spawns(0, 42) && groups.spawns(1, 5));
+    assert(groups.spawns(1, 27) && groups.condition(1, 27) == 100);
     const entry = groups.entryFor(5, rng);
 
     // `MinCount` and `MaxCount`: one Lady Anacondra and three Druids of the Fang among four spots.

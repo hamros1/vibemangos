@@ -135,6 +135,7 @@ version (unittest)
 unittest
 {
     import dmangos.world.channel : ChatNotify;
+    import dmangos.world.opcodes : Language;
 
     auto db = newDatabase();
     auto context = newCreationContext(db);
@@ -157,13 +158,26 @@ unittest
         && heard[0].body_[0] == ChatType.CHAT_MSG_CHANNEL);
     jaina.read();
 
+    // A language is usable in a channel once learned. Racial languages are retained on the wire.
+    jaina.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_CHANNEL, "unlearned", "Stormwind",
+        Language.LANG_DARNASSIAN));
+    assert(anduin.read().length == 0);
+    assert(bodyOf(jaina.read(), Opcode.SMSG_MESSAGECHAT)[0] == ChatType.CHAT_MSG_SYSTEM);
+    assert(jaina.session.inWorld.player.setSkill(113, 300, 300));
+    jaina.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_CHANNEL, "learned", "Stormwind",
+        Language.LANG_DARNASSIAN));
+    const translated = bodyOf(anduin.read(), Opcode.SMSG_MESSAGECHAT);
+    assert(translated[0] == ChatType.CHAT_MSG_CHANNEL && translated[1] == Language.LANG_DARNASSIAN);
+    jaina.read();
+
     // The list: Anduin (owner and moderator) and Jaina.
     jaina.write(Opcode.CMSG_CHANNEL_LIST, ClientChannelName("Stormwind"));
     const list = bodyOf(jaina.read(), Opcode.SMSG_CHANNEL_LIST);
     assert(list[0 .. 10] == "Stormwind\0" && list[11 .. 15] == [2, 0, 0, 0]);
 
     // The Horde has channels of its own with the same names.
-    thrall.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_CHANNEL, "lok'tar", "Stormwind"));
+    assert(thrall.session.inWorld.player.setSkill(109, 300, 300));
+    thrall.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_CHANNEL, "lok'tar", "Stormwind", Language.LANG_ORCISH));
     assert(thrall.read()[0].body_[0] == ChatNotify.notMember && anduin.read().length == 0);
 
     // Kicking takes a moderator; Anduin owns the channel.
@@ -175,4 +189,19 @@ unittest
     // Leaving, and logging out, empties the channel, which then goes away.
     anduin.write(Opcode.CMSG_LOGOUT_REQUEST, null);
     assert(context.channelService.channels.alliance.count == 0);
+}
+
+
+/// GM language skills are visible to the client and remain temporary.
+unittest
+{
+    import dmangos.world.opcodes : languageSkills;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto gm = loggedIn(context, db, 7, "Anduin", Position(0, 0, 0), AccountLevel.gameMaster);
+    auto character = gm.session.inWorld.player;
+    foreach (skill; languageSkills)
+        assert(character.skillValue(skill)[1] != 0);
+    assert(character.data.skills.length == 0);
 }

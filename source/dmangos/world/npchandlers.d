@@ -149,6 +149,7 @@ private:
         import dmangos.world.motion : WaypointMovement;
 
         ConditionSubject subject = { player: player };
+        subject.worldCondition = &context.conditionWorldScript;
         if (source !is null)
         {
             subject.creatureInRange = &creatureInRange;
@@ -157,8 +158,12 @@ private:
                     subject.waypoint = path.lastWaypoint;
         }
         if (auto where = map)
+        {
+            subject.worldState = &conditionWorldState;
+            subject.completedEncounter = (uint encounter) => context.conditionEncounterCompleted(where, encounter);
             if (auto copy = context.instanceScript(where.instanceId))
                 subject.instanceCondition = &copy.condition;
+        }
         return subject;
     }
 
@@ -873,6 +878,8 @@ private:
             send(ServerSetProficiency(2, player.proficiency[0])); // ITEM_CLASS_WEAPON
             send(ServerSetProficiency(4, player.proficiency[1])); // ITEM_CLASS_ARMOR
         }
+        if (canUseCommand('c'))
+            player.learnGmLanguages();
         flushPlayerChanges();
     }
 

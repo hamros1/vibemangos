@@ -260,6 +260,12 @@ struct UpdateValues
         return changed.any!(word => word != 0);
     }
 
+    /// Whether a specific field changed since `clearChanges`.
+    bool slotChanged(size_t slot) const pure nothrow @nogc @safe
+    {
+        return (changed[slot / 32] & (1u << (slot % 32))) != 0;
+    }
+
     /// Forgets the changes, e.g. once they have been sent.
     void clearChanges() pure nothrow @nogc @safe
     {

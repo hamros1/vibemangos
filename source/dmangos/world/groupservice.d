@@ -402,6 +402,9 @@ final class GroupService
             return;
         const ms = sinceMeetingStones;
         sinceMeetingStones = 0;
+        if (context.canWrite())
+            foreach (group; context.groups.byId)
+                group.updateOfflineLeader(context.unixTime, context.config.offlineGroupLeaderDelay);
         if (meetingStones.parties.length == 0 && meetingStones.players.length == 0)
             return;
         auto groups = context.groups;

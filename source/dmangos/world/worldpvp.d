@@ -1161,6 +1161,14 @@ mixin template WorldPvpHandlers()
         return context.worldPvp.state.worldStates(zone, zone == zoneEasternPlaguelands ? worldPvpTower : -1);
     }
 
+    package int conditionWorldState(uint id)
+    {
+        foreach (field; worldPvpStates(player.data.zone))
+            if (field[0] == id)
+                return cast(int) field[1];
+        return context.conditionMapWorldState(map, id);
+    }
+
     /**
      * Each second (the zone check): the tower in range and the capture bar, the zones' buffs, and the Silithyst (the
      * PvP flag while it is carried; a mound where it was lost otherwise than at its camp).

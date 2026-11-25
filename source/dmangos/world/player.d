@@ -334,12 +334,17 @@ final class Player : InventoryOwner
      * health in percent; a group mate sees the real values and the
      * group-only fields.
      */
-    UpdateData createForOthers(uint serverTime, bool groupMate) const
+    UpdateData createForOthers(uint serverTime, bool groupMate, uint viewerFaction = 0) const
     {
+        uint groupValue(size_t slot, uint value) const
+        {
+            return slot == UNIT_FIELD_FACTIONTEMPLATE ? viewerFaction : value;
+        }
+
         UpdateData update;
         const other = motionForOthers(serverTime);
         update.addCreate(UpdateType.createObject, guid, other, values, groupMate ? seenByGroup : seenByEveryone,
-            groupMate ? null : &strangerValue);
+            viewerFaction ? &groupValue : groupMate ? null : &strangerValue);
         return update;
     }
 
@@ -386,14 +391,20 @@ final class Player : InventoryOwner
      * Health, maximum health and the group-only fields as
      * `viewer` should now see them, for a player who joined or left the viewer's group.
      */
-    UpdateData groupView(Viewer viewer) const
+    UpdateData groupView(Viewer viewer, uint viewerFaction = 0) const
     in (viewer != Viewer.self)
     {
-        size_t[] slots = [size_t(UNIT_FIELD_HEALTH), size_t(UNIT_FIELD_MAXHEALTH)];
+        uint groupValue(size_t slot, uint value) const
+        {
+            return slot == UNIT_FIELD_FACTIONTEMPLATE ? viewerFaction : value;
+        }
+
+        size_t[] slots = [size_t(UNIT_FIELD_HEALTH), size_t(UNIT_FIELD_MAXHEALTH), size_t(UNIT_FIELD_FACTIONTEMPLATE)];
         if (viewer == Viewer.groupMate)
             slots ~= values.slotsOnlyFor(seenByGroup);
         UpdateData update;
-        update.addSlots(guid, values, slots, viewer == Viewer.stranger ? &strangerValue : null);
+        update.addSlots(guid, values, slots,
+            viewerFaction ? &groupValue : viewer == Viewer.stranger ? &strangerValue : null);
         return update;
     }
 
@@ -1023,6 +1034,16 @@ final class Player : InventoryOwner
             values.setSlot(PLAYER_SKILL_INFO_1_1 + 3 * i + 2,
                 cast(uint) cast(ushort) cast(short) temporary | cast(uint) cast(ushort) cast(short) permanent << 16);
         }
+    }
+
+    /// The c permission grants languages for this session without writing character_skills.
+    package void learnGmLanguages()
+    {
+        import dmangos.world.opcodes : languageSkills;
+
+        foreach (skill; languageSkills)
+            if (skillSlot(skill) < 0)
+                setSkill(skill, 300, 300);
     }
 
     /// The skills the player has: id, value and maximum.

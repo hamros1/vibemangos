@@ -552,6 +552,7 @@ unittest
     import dmangos.world.testdata;
 
     enum Report { onPath, unacknowledged, offPath, expired }
+    foreach (knockback; [false, true])
     foreach (report; [Report.onPath, Report.unacknowledged, Report.offPath, Report.expired])
     {
         auto db = newDatabase();
@@ -564,7 +565,10 @@ unittest
         Position goal = start;
         goal.x += 40;
         client.read();
-        me.pulledToward(goal, 1, 30);
+        if (knockback)
+            me.knockedBack(Position(start.x - 10, start.y, start.z), 30, 5);
+        else
+            me.pulledToward(goal, 1, 30);
         assert(me.spellPull.speed == 30);
         if (report != Report.unacknowledged)
         {
@@ -578,13 +582,31 @@ unittest
             client.write(Opcode.CMSG_MOVE_KNOCK_BACK_ACK, ack.data);
             assert(me.spellPull.acknowledged);
         }
-        now += (report == Report.expired ? 2000 : 600).msecs;
+        now += (report == Report.expired ? 2500 : 600).msecs;
         MovementInfo move;
         move.position = start;
-        move.position.x += report == Report.expired ? 32 : 18;
+        move.position.x += report == Report.expired ? 40 : 18;
         if (report == Report.offPath)
             move.position.y += 15;
         move.flags = MovementFlags.jumping;
         assert(me.takeMovement(move, Opcode.MSG_MOVE_HEARTBEAT) == (report == Report.onPath));
     }
+
+    auto db = newDatabase();
+    auto world = newCreationContext(db, (ref WorldConfig config) {
+        config.movementSpeedTolerance = 1;
+        config.movementSpeedSlack = 0;
+    });
+    auto now = MonoTime.currTime;
+    world.clock = () => now;
+    const start = Position(-8950, -140, 84, 0);
+    auto client = loggedIn(world, db, 7, "Anduin", start, AccountLevel.player);
+    auto me = client.session.inWorld;
+    me.player.speeds[MoveType.run] = 14;
+    now += 1000.msecs;
+    MovementInfo move;
+    move.position = Position(start.x + 12, start.y, start.z);
+    assert(me.takeMovement(move, Opcode.MSG_MOVE_HEARTBEAT));
+    move.position.x = start.x + 15;
+    assert(!me.takeMovement(move, Opcode.MSG_MOVE_HEARTBEAT));
 }

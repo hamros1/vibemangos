@@ -280,13 +280,17 @@ final class Character : OnlinePlayer, Looter
     /// The create block a player who just came into sight gets: group mates see real health.
     UpdateData appearanceFor(const Inhabitant viewer, uint serverTime) const
     {
-        return player.createForOthers(serverTime, appearanceKind(viewer) == 1);
+        const kind = appearanceKind(viewer);
+        return player.createForOthers(serverTime, kind != 0, kind > 1 ? kind - 2 : 0);
     }
 
-    /// 1 for a member of this player's group (who sees its group fields), 0 for anyone else.
+    /// 0 for a stranger, 1 for a group member, or the substituted faction plus 2.
     uint appearanceKind(const Inhabitant viewer) const
     {
-        return context.groups.sameGroup(player.guid, viewer.character.guid) ? 1 : 0;
+        if (!context.groups.sameGroup(player.guid, viewer.character.guid))
+            return 0;
+        const faction = context.groupViewerFaction(player.guid, player.values, viewer.character);
+        return faction ? faction + 2 : 1;
     }
 
     /// The player's body while it is dead and released (`DeathHandlers`); null otherwise.
@@ -566,14 +570,23 @@ final class Character : OnlinePlayer, Looter
     /// Thrown from `from` (a creature's knockback): its client is told how, and moves.
     void knockedBack(Position from, float horizontal, float vertical)
     {
+        import dmangos.world.movement : jumpGravity, SpellPullMotion;
+        import std.algorithm.comparison : max;
         import std.math : atan2, cos, sin;
 
         if (player is null)
             return;
         const p = player.position;
         const angle = atan2(p.y - from.y, p.x - from.x);
-        spellPull = typeof(spellPull).init;
-        launchKnockback(cos(angle), sin(angle), horizontal, vertical);
+        const x = cos(angle), y = sin(angle);
+        if (horizontal > 0)
+        {
+            const airtime = 1 + max(0.0f, 2 * vertical / jumpGravity);
+            spellPull = SpellPullMotion(p, x, y, horizontal, horizontal * airtime, context.clock(), moveOrderCounter);
+        }
+        else
+            spellPull = typeof(spellPull).init;
+        launchKnockback(x, y, horizontal, vertical);
     }
 
     /// Pulled toward the caster, stopping at contact range.
@@ -781,9 +794,13 @@ final class Character : OnlinePlayer, Looter
             return context.groups.sameGroup(player.guid, other.character.guid) ? Viewer.groupMate : Viewer.stranger;
         }
         foreach (watcher; map.watchers(this))
-            deliverUpdate(watcher, player.groupView(viewOf(watcher)));
+            deliverUpdate(watcher, player.groupView(viewOf(watcher),
+                context.groupViewerFaction(player.guid, player.values, watcher.character)));
         foreach (seen; map.seenBy(this))
-            deliverUpdate(this, seen.character.groupView(viewOf(seen)));
+            deliverUpdate(this, seen.character.groupView(viewOf(seen),
+                context.groupViewerFaction(seen.character.guid, seen.character.values, player)));
+        if (context.config.allowTwoSideInteractionGroup)
+            map.refreshReplicaGroupFactions(this);
     }
 
 
@@ -813,6 +830,8 @@ private:
      */
     package void flushPlayerChanges(bool toSelf = true)
     {
+        import dmangos.world.updatefields : UNIT_FIELD_FACTIONTEMPLATE;
+
         UpdateData forSelf;
         if (toSelf && player.addChanges(forSelf, Viewer.self))
             sendUpdate(forSelf);
@@ -831,8 +850,13 @@ private:
             }
             const packet = built[view];
             if (packet.body_.length)
+            {
                 watcher.deliver(packet.compressed ? Opcode.SMSG_COMPRESSED_UPDATE_OBJECT : Opcode.SMSG_UPDATE_OBJECT,
                     packet.body_);
+                if (const faction = context.groupViewerFaction(player.guid, player.values, watcher.character))
+                    if (player.values.slotChanged(UNIT_FIELD_FACTIONTEMPLATE))
+                        deliverUpdate(watcher, player.groupView(view, faction));
+            }
         });
         if (!transferring)
             map.playerChanged(this); // nodes holding a replica of this player
@@ -1018,6 +1042,43 @@ unittest
     orc.pvpLeftCombat();
     orc.updatePvPTimers(30_000);
     assert(!orc.isPvPContested && pvpFlagged(thrall), "30 s out of combat: not contested; flagged 5 minutes");
+}
+
+/// Mixed-faction groups see the ally template and cannot attack each other after grouping.
+unittest
+{
+    import dmangos.world.config : WorldConfig;
+    import dmangos.world.packets : ClientGuid;
+    import dmangos.world.updatefields : UNIT_FIELD_FACTIONTEMPLATE;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db, (ref WorldConfig settings) { settings.allowTwoSideInteractionGroup = true; });
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(0, 0, 0), AccountLevel.player);
+    auto thrall = loggedIn(context, db, 9, "Thrall", Position(2, 0, 0), AccountLevel.player, raceOrc);
+    auto ally = anduin.session.inWorld, horde = thrall.session.inWorld;
+    enum uint original = 2, friendly = 1;
+    horde.player.values.set!UNIT_FIELD_FACTIONTEMPLATE(original);
+    ally.player.values.set!UNIT_FIELD_FACTIONTEMPLATE(friendly);
+    anduin.read();
+    auto group = context.groups.newGroup();
+    assert(group.addLeaderInvite(ally.player.guid, "Anduin"));
+    group.create();
+    assert(group.addMember(horde.player.guid, "Thrall"));
+    ClientView viewed;
+    foreach (packet; anduin.read())
+        if (packet.opcode == Opcode.SMSG_UPDATE_OBJECT || packet.opcode == Opcode.SMSG_COMPRESSED_UPDATE_OBJECT)
+            viewed.apply(packet.opcode, packet.body_);
+    assert(viewed.fields[horde.player.guid][UNIT_FIELD_FACTIONTEMPLATE] == friendly);
+    assert(horde.player.values.get!UNIT_FIELD_FACTIONTEMPLATE == original);
+    thrall.write(Opcode.CMSG_TOGGLE_PVP, null);
+    anduin.write(Opcode.CMSG_ATTACKSWING, ClientGuid(horde.player.guid));
+    assert(ally.attacking == 0 && ally.enemyPlayer(horde.player.guid) is null);
+    group.disband();
+    foreach (packet; anduin.read())
+        if (packet.opcode == Opcode.SMSG_UPDATE_OBJECT || packet.opcode == Opcode.SMSG_COMPRESSED_UPDATE_OBJECT)
+            viewed.apply(packet.opcode, packet.body_);
+    assert(viewed.fields[horde.player.guid][UNIT_FIELD_FACTIONTEMPLATE] == original);
+    assert(ally.enemyPlayer(horde.player.guid) is horde);
 }
 
 // Healing a flagged player flags the healer, though neither is fighting (it needed the flagged one in combat).

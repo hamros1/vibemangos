@@ -65,7 +65,7 @@ import dmangos.world.opcodes : Opcode;
 import dmangos.world.packets : ServerDestroyObject;
 import dmangos.world.player : DeathState, Player;
 import dmangos.world.quests : QuestSpawnPhase;
-import dmangos.world.updatefields : GAMEOBJECT_FACING, GAMEOBJECT_STATE, TypeId, UNIT_FIELD_FLAGS;
+import dmangos.world.updatefields : GAMEOBJECT_FACING, GAMEOBJECT_STATE, TypeId, UNIT_FIELD_FACTIONTEMPLATE, UNIT_FIELD_FLAGS;
 import dmangos.world.migration : decodeBundle, encodeBundle, Migrant, MigrantKind;
 import dmangos.world.replication : decodeSlots, encodeMotion, encodePlayerSlots, encodePlayerState, encodeSlots, encodeState, Replica,
     Replicable, Replicator;
@@ -723,6 +723,8 @@ final class Map : CombatWorld, GameObjectWorld
                         commonBuilt = true;
                     }
                     deliverBuilt(who, common);
+                    if (object.fields.type == TypeId.player && object.fields.slotChanged(UNIT_FIELD_FACTIONTEMPLATE))
+                        personalizeGroupFaction(who, object, false);
                 }
             }
         }
@@ -731,6 +733,37 @@ final class Map : CombatWorld, GameObjectWorld
 
     /// The group a player is in (0: none), for what a `PerViewer` shows it; null: nobody is.
     uint delegate(ulong player) groupOf;
+
+    /// Map-local variables set by database scripts. The instance's encounter conditions read their saved state.
+    int[uint] scriptedWorldStates;
+    uint delegate(ulong, const ref UpdateValues, const Player) const groupViewerFaction;
+
+    private void personalizeGroupFaction(Inhabitant who, MapObject object, bool reset)
+    {
+        if (groupViewerFaction is null)
+            return;
+        const faction = groupViewerFaction(object.guid, object.fields, who.character);
+        if (!faction && !reset)
+            return;
+        uint adjusted(size_t, uint value) const { return faction ? faction : value; }
+        UpdateData update;
+        update.addSlots(object.guid, object.fields, [size_t(UNIT_FIELD_FACTIONTEMPLATE)], &adjusted);
+        deliverUpdate(who, update);
+    }
+
+    package void refreshReplicaGroupFactions(Inhabitant who)
+    {
+        const slot = slotFor(who.character.guid);
+        if (slot == uint.max)
+            return;
+        auto known = borrowList();
+        scope (exit) giveBackList(known);
+        knownInto(slot, false, known);
+        foreach (other; known)
+            if (auto object = at(other).object)
+                if (at(other).replica && object.fields.type == TypeId.player)
+                    personalizeGroupFaction(who, object, true);
+    }
 
     /**
      * What each viewer sees of a `PerViewer`'s personal fields is sent again: who may loot a corpse
@@ -763,6 +796,8 @@ final class Map : CombatWorld, GameObjectWorld
     /// After `object`'s create block: `who`'s own view of its personal fields, if it differs (or `always`).
     private void personalize(Inhabitant who, MapObject object, bool always = false)
     {
+        if (object.fields.type == TypeId.player)
+            personalizeGroupFaction(who, object, false);
         auto personal = cast(PerViewer) object;
         if (personal is null || (!always && !personal.personalized))
             return;
@@ -2055,7 +2090,7 @@ final class Map : CombatWorld, GameObjectWorld
         import dmangos.world.spline : wrapAngle;
         import dmangos.world.defines : UnitFlags;
 
-        if (!rider.alive || !rider.spline.finalized || rider.scriptFlying || rider.meleeController
+        if (!rider.alive || !rider.spline.finalized || rider.flyingMovement || rider.meleeController
             || rider.movement.has(MovementFlags.swimming) || (rider.values.get!UNIT_FIELD_FLAGS & UnitFlags.playerControlled))
             return;
         const p = rider.position;
@@ -3451,7 +3486,7 @@ private:
                 created = UpdateData.init;
             }
             created.append(block);
-            if (cast(PerViewer) object !is null)
+            if (object.fields.type == TypeId.player || cast(PerViewer) object !is null)
                 personalAfter ~= object;
         }
         if (!created.empty)

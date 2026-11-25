@@ -393,6 +393,12 @@ enum Opcode : uint
     SMSG_SPLINE_SET_RUN_SPEED = 0x2FE,
     SMSG_SPLINE_SET_WALK_SPEED = 0x301,
     SMSG_SPLINE_MOVE_UNROOT = 0x304,
+    SMSG_SPLINE_MOVE_FEATHER_FALL = 0x305,
+    SMSG_SPLINE_MOVE_NORMAL_FALL = 0x306,
+    SMSG_SPLINE_MOVE_SET_HOVER = 0x307,
+    SMSG_SPLINE_MOVE_UNSET_HOVER = 0x308,
+    SMSG_SPLINE_MOVE_WATER_WALK = 0x309,
+    SMSG_SPLINE_MOVE_LAND_WALK = 0x30A,
     SMSG_SPLINE_MOVE_ROOT = 0x31A,
     SMSG_DISPEL_FAILED = 0x262,
     SMSG_SPELLDISPELLOG = 0x27B,
@@ -702,9 +708,28 @@ enum Language : uint
 {
     LANG_UNIVERSAL = 0,
     LANG_ORCISH = 1,
+    LANG_DARNASSIAN = 2,
+    LANG_TAURAHE = 3,
+    LANG_DWARVISH = 6,
     LANG_COMMON = 7,
+    LANG_DEMONIC = 8,
+    LANG_TITAN = 9,
+    LANG_THALASSIAN = 10,
+    LANG_DRACONIC = 11,
+    LANG_KALIMAG = 12,
+    LANG_GNOMISH = 13,
+    LANG_TROLL = 14,
+    LANG_GUTTERSPEAK = 33,
     LANG_ADDON = 0xFFFFFFFF,
 }
+
+package immutable uint[Language] languageSkills = [
+    Language.LANG_COMMON: 98u, Language.LANG_ORCISH: 109u, Language.LANG_DARNASSIAN: 113u,
+    Language.LANG_TAURAHE: 115u, Language.LANG_DWARVISH: 111u, Language.LANG_DEMONIC: 139u,
+    Language.LANG_TITAN: 140u, Language.LANG_THALASSIAN: 137u, Language.LANG_DRACONIC: 138u,
+    Language.LANG_KALIMAG: 141u, Language.LANG_GNOMISH: 313u, Language.LANG_TROLL: 315u,
+    Language.LANG_GUTTERSPEAK: 673u,
+];
 
 /**
  * The client's movement opcodes, whose bodies are a `MovementInfo` and nothing

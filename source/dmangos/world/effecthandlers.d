@@ -1106,6 +1106,8 @@ unittest
     import dmangos.world.auras : AuraSet, AuraType;
     import dmangos.world.defines : UnitFlags;
     import dmangos.world.packets : ClientGuid;
+    import dmangos.world.testclient : opcodesOf;
+    import std.algorithm.searching : canFind;
     import dmangos.world.updatefields;
 
     auto a = new Arena;
@@ -1138,8 +1140,19 @@ unittest
     assert(a.me.values.get!UNIT_DYNAMIC_FLAGS & AuraSet.dynDead, "it looks dead");
     if (session.feigningDeath)
         assert((a.me.guid in a.keeper.ai.threatList) is null && session.unit.untouchable);
+    session.removeAura(a.me.auras.find(feign));
+    assert(a.me.alive && !(a.me.values.get!UNIT_DYNAMIC_FLAGS & AuraSet.dynDead) && !session.feigningDeath);
+
+    session.leaveAllFights();
+    a.cast_(feign);
+    assert(session.feigningDeath);
+    a.hero.read();
+    a.tick(1);
+    assert(opcodesOf(a.hero.read()).canFind(Opcode.SMSG_START_MIRROR_TIMER));
     a.tick(10_000);
-    assert(!(a.me.values.get!UNIT_DYNAMIC_FLAGS & AuraSet.dynDead) && !session.feigningDeath, "up again");
+    const expired = opcodesOf(a.hero.read());
+    assert(!a.me.alive && !session.feigningDeath && expired.canFind(Opcode.SMSG_STOP_MIRROR_TIMER));
+    assert(!expired.canFind(Opcode.SMSG_DURABILITY_DAMAGE_DEATH));
 }
 
 /// Distract: the creature stands facing the spot for the effect's seconds, then moves as before.

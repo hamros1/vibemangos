@@ -38,61 +38,27 @@ describes how players use the systems available today.
 | Creature movement | Wandering (`spawndist`) and waypoint paths (`creature_movement`, `creature_movement_template`; round, or back and forth) with waits and facings; `SMSG_MONSTER_MOVE`; walks in create blocks; moving creatures change cell and come into and out of sight | `spline.d`, `motion.d`, `map.d` |
 | NPC services | Gossip menus with their texts, conditions, map flags and scripts (`gossip_menu.script_id`, options' `action_script_id`; `box_money` is TBC's and unused, as in CMaNGOS classic); trainers (lists with each spell's state, lessons that teach spells, ranks and profession skills); innkeepers (binding the hearthstone); bankers (opening the bank); vendors' lists | `npchandlers.d`, `npcdata.d`, `conditions.d` |
 | Inventory and trade | The inventory rules, shared by creation and the world: moving, swapping, splitting, equipping (two-handers, dual wield, quivers, unique items), bags, the bank and its bag slots, the keyring, destroying, ammo; buying (with vendors' limited stock), selling, buyback and repairs; every change saved at once with the money; reputation-gated items, item use checks, bind on use, charges, the equip cooldown, timed items, wear on hit, ammo damage and quiver haste | `inventory.d`, `itemhandlers.d`, `itemuse.d` |
-| Movement checks | Speed checked against running speed; offenders put back. Positions outside the map disconnect | `world/inworld.d` |
+| Movement checks | Speed checked against server-authorized run and swim speeds, including mounts and auras. Acknowledged pulls and knockbacks have a short directional allowance. Taxi routes are server-driven | `world/inworld.d` |
 | Movement orders and environment | Speeds (auras, mounts, snares), roots, knockbacks, water walk, slow fall and hover ordered and shown to others on the client's acknowledgement; breath, fatigue, drowning, lava, falling damage; riding's rules (no casting but `ALLOW_WHILE_MOUNTED` spells, no melee, dismounted by game objects and mountless dungeons, the pet's bar greyed out) | `world/moveorders.d`, `world/environment.d`, `world/mounting.d` |
 
 ### Known gaps in what exists
 
-* **Stats:** item bonuses, auras (talents' and racials' passive ones included) and the crit, dodge,
-  parry and block chances are applied; passives bound to a kind of weapon or armour are not yet.
-* **Creatures** wander, walk their waypoints (running their scripts), fight, die and respawn. Type 3 paths (flying) are walked as waypoints; linked creatures
-  (`creature_linking`) aggro together and follow their master, and formations (`spawn_group_formation`) walk their
-  path with their members in place, and water creatures spawned in deep enough water swim. Conditions
-  that need world states or scripts are never met. Ships and zeppelins sail and carry their passengers
-  across (`transports.d`). A loaded elevator carries players between movement packets. Elevators and
-  ships use the shared transport clock. Idle cells unload after `grid_cleanup_delay_seconds`.
-* **Terrain:** heights put wandering creatures on the ground. Line of sight checks use
-  static vmaps, closed doors and loaded elevator meshes at their animated position. Movement maps
-  give creatures paths round buildings and hills. Creatures already swimming can follow submerged
-  paths at their swim speed and approach targets at the surface. Amphibious creatures and
-  pets use the movement map to cross shorelines and change speed while pursuing or following
-  a target. Scripted point movement, waypoint routes and return trips after combat also cross shorelines.
-  Water-only creatures stay submerged.
-* **Movement:** the speed check assumes running speed; it must learn mounts, speed auras,
-  knockbacks and taxis when those exist.
-* **Environment:** mirror timers and the current fall continue through a clean cluster handoff.
-  The feign death timer remains open. Game masters keep running timers and take no environmental damage.
-  Creatures do not hover, water walk or slow fall (`SMSG_SPLINE_MOVE_*`).
-* **Instances:** a group's dungeon copy is saved with its binds, defeated spawns, and script state.
-  A raid's copies reset together at fixed times with warnings. A planned cluster handoff carries
-  the live creatures and objects. Worker crash recovery includes active Ring of Law waves and
-  Tomb of the Seven rounds in Blackrock Depths. Blackrock Spire restores Pyroguard Emberseer's
-  growth and combat, the Rookery waves and Solakar, Rend's stadium, The Beast and its ambush,
-  and both gates after Drakkisath dies. Dire Maul North keeps Mizzle's progress after King Gordok falls.
-  Dire Maul West keeps the Dreadsteed ritual's active waves and final summon.
-  Other encounters follow their scripts' restore rules.
-  See [dungeon failover](CLUSTER.md#dungeons-and-battlegrounds).
-* **Groups:** an offline leader is not replaced after a while (that needs a timer). Loot
-  settings decide who loots. Two-faction groups do not show the other faction as friendly.
-* **Chat:** channels have no restricted language mode (one language per faction); the ignore list stops whispers and invitations
-  (the client hides an ignored player's other chat itself).
-  LocalDefense and WorldDefense need PvP ranks, which do not exist, so WorldDefense is read-only.
-  The GM tag and `.gm allowwhispers` are not kept between logins (as the GM contract specifies).
-* **Inventory:** an off-hand item with no room left when a two-hander is put on is mailed to the player
-  (`AutoUnequipOffhandIfNeed`'s letter); at character creation, where there is no mail, it stays worn.
-  * Random properties are done, and so are enchantments' stats, resistances, weapon damage and equip
-    spells.
-  * Enchanting is done: permanent enchantments, and temporary ones (stones, oils, poisons) that
-    run down and expire. Crafting raises professions. Spell foci and tools are enforced; disenchanting
-    and picking lockboxes are done.
-  * Weapon enchantments' procs (poisons, Crusader) are done.
-  * Enchanting another player's item through trade and gift wrapping are implemented.
-    Readable items and pages (`page_text`): done. Loot in items is done (`CMSG_OPEN_ITEM`). Dying and the spirit healer
-    wear gear down (the spirit healer what is in the bags too); a broken worn item's stats come back when it is repaired.
-    Unlearning a primary profession forgets all its spells and gives its slot back.
-* **GM system:** commands that need missing systems answer "Not yet implemented."
-  (COMMANDS.md lists them); GM invisibility (`.invisible`) needs sight to be one-sided first. The
-  `c` letter makes speech universal but does not also teach the language skills, as the GM contract does.
+* **World conditions:** ClassicDB's realm-script, world-state comparison and kill-credited encounter
+  conditions can gate scripts and spawns. Timed world-state variables written by database scripts are
+  currently local to the map on the worker running the script. They still need synchronization and
+  recovery across outdoor workers. The separate binary `WorldStateExpression` format is pending.
+* **Creature movement:** air-capable creatures use flying splines on type 3 paths. Water-only
+  creatures on the same path type continue swimming. Hover, water walking and slow fall auras send
+  the flags and spline packets to clients. Server-side surface routing for water walking and
+  falling physics for creatures still need coverage.
+* **Instances:** crash recovery depends on the encounter script. See
+  [dungeon failover](CLUSTER.md#dungeons-and-battlegrounds) for which encounters resume in progress.
+* **GM commands:** commands tied to missing systems are listed in [Commands](COMMANDS.md).
+
+Offline group leaders are replaced after `offline_group_leader_delay` seconds (300 by default,
+0 disables it). Mixed-faction group members see one another as friendly when enabled. Channels
+validate spoken languages, and the GM `c` permission grants the language skills for the session.
+Feign Death shows a timer and kills the hunter if an uninterrupted successful feign expires.
 
 ## Next milestones
 

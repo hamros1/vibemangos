@@ -206,7 +206,8 @@ private:
             auto other = playerOnMap(request.guid);
             if (other !is null && other !is this)
             {
-                if (!canAttackNow(relatingNow, other.relatingNow, context.client))
+                if (!canAttackNow(relatingNow, other.relatingNow, context.client,
+                    context.groups.sameGroup(player.guid, other.player.guid)))
                     return map.sendToWatchers(this, Opcode.SMSG_ATTACKSTOP, attackStop(player.guid, other.player.guid,
                         false), true);
                 attackPlayer(other);
@@ -432,7 +433,8 @@ private:
             error = SwingError.badFacing;
         else if (!target.alive)
             error = SwingError.targetNotAlive;
-        else if (!canAttack(relatingNow, other.relatingNow, context.client))
+        else if (!canAttack(relatingNow, other.relatingNow, context.client,
+            context.groups.sameGroup(player.guid, other.player.guid)))
             return stopAttack(false); // the duel is over
         else
         {

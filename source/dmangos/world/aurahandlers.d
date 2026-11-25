@@ -1030,7 +1030,12 @@ private:
             }
         }
         foreach (aura; expired)
+        {
+            if (aura.maxDuration > 0 && aura.duration <= 0 && aura.has(AuraType.feignDeath) && feigningDeath
+                && player.deathState == DeathState.alive)
+                return playerDied(false);
             removeAura(aura, true);
+        }
         if (ticks.length || drink > 0)
             flushPlayerChanges();
     }

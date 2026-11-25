@@ -2884,10 +2884,12 @@ private:
             {
                 if (other.transferring)
                     return SpellCastResult.badTargets;
-                if (!needsEnemy && !isFriend(relatingNow(), other.relatingNow(), context.client))
+                if (!needsEnemy && !isFriend(relatingNow(), other.relatingNow(), context.client,
+                    context.groups.sameGroup(player.guid, other.player.guid)))
                     return SpellCastResult.targetEnemy;
             }
-            if (needsEnemy && !canAttack(relatingNow(), other.relatingNow(), context.client))
+            if (needsEnemy && !canAttack(relatingNow(), other.relatingNow(), context.client,
+                context.groups.sameGroup(player.guid, other.player.guid)))
                 return SpellCastResult.targetFriendly;
             if (raising)
             {
@@ -2907,9 +2909,11 @@ private:
             if (playerHandoff)
             {
                 const other = targetReplica.playerRelations(context.client);
-                if (needsEnemy && !canAttack(relatingNow(), other, context.client))
+                if (needsEnemy && !canAttack(relatingNow(), other, context.client,
+                    context.groups.sameGroup(player.guid, targetReplica.guid)))
                     return SpellCastResult.targetFriendly;
-                if (!needsEnemy && !isFriend(relatingNow(), other, context.client))
+                if (!needsEnemy && !isFriend(relatingNow(), other, context.client,
+                    context.groups.sameGroup(player.guid, guid)))
                     return SpellCastResult.targetEnemy;
             }
             else if (fields.get!PLAYER_DUEL_ARBITER)
@@ -3311,7 +3315,8 @@ private:
         foreach (r; results)
             if (r.miss == SpellMissInfo.none && r.guid != player.guid)
                 if (auto other = playerOnMap(r.guid))
-                    if (canAttack(relatingNow(), other.relatingNow(), context.client))
+                    if (canAttack(relatingNow(), other.relatingNow(), context.client,
+                        context.groups.sameGroup(player.guid, other.player.guid)))
                         other.interruptAuras(AuraInterrupt.hostileAction);
         foreach (r; results)
             if (r.miss != SpellMissInfo.none)
@@ -3418,7 +3423,8 @@ private:
                 if (r.guid != player.guid)
                     if (auto u = map.unit(r.guid))
                     {
-                        harmful |= canAttack(relatingNow(), u.relating, context.client);
+                        harmful |= canAttack(relatingNow(), u.relating, context.client,
+                            context.groups.sameGroup(player.guid, r.guid));
                         if (!first)
                             first = u;
                     }
@@ -4246,7 +4252,8 @@ private:
         auto other = playerOnMap(target);
         if (other is null)
             return null;
-        return canAttack(relatingNow(), other.relatingNow(), context.client) ? other : null;
+        return canAttack(relatingNow(), other.relatingNow(), context.client,
+            context.groups.sameGroup(player.guid, other.player.guid)) ? other : null;
     }
 
     /// Whether effect `i` of the spell picks its targets in an area (around a point, in a cone, the party).
@@ -4391,7 +4398,8 @@ private:
     private bool assistable(ulong guid)
     {
         auto unit = map.unit(guid);
-        return unit && unit.alive && !canAttack(relatingNow(), unit.relating(), context.client);
+        return unit && unit.alive && !canAttack(relatingNow(), unit.relating(), context.client,
+            context.groups.sameGroup(player.guid, guid));
     }
 
     private bool remoteEnemy(Replica target)
@@ -4402,7 +4410,8 @@ private:
         if (target.fields.type == TypeId.player && (context.onlinePlayer(target.guid) !is null || duelingWith(target.guid)))
             return false;
         const other = target.unitRelations(context.client);
-        return other.alive && canAttack(relatingNow(), other, context.client);
+        return other.alive && canAttack(relatingNow(), other, context.client,
+            context.groups.sameGroup(player.guid, target.guid));
     }
 
     private static struct SpellJump
@@ -4452,7 +4461,7 @@ private:
                     const guid = replica.guid;
                     if (guid in taken || !group.isMember(guid) || context.onlinePlayer(guid) !is null || duelingWith(guid))
                         continue;
-                    if (!canAttack(caster, replica.playerRelations(context.client), context.client))
+                    if (!canAttack(caster, replica.playerRelations(context.client), context.client, true))
                         consider(SpellJump(guid, replica.position, replica.owner), replica.missingHealth);
                 }
             if (!next.target)

@@ -399,6 +399,8 @@ mixin template CharacterLogin()
             character.spells, abilities);
         auto made = new Player(character, abilities, context.data, context.client, &context.nextItemGuid,
             context.playerGuid(character.guid));
+        if (canUseCommand('c'))
+            made.learnGmLanguages();
         const offline = offlineRest && character.logoutTime > 0 ? context.unixTime - character.logoutTime : 0;
         const rate = character.logoutResting ? context.config.rateRestOfflineInTavernOrCity
             : context.config.rateRestOfflineInWilderness / 4;

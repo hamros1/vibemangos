@@ -1356,7 +1356,7 @@ private:
     {
         import std.algorithm.comparison : min;
 
-        const canSwim = me.canSwim && !me.scriptFlying;
+        const canSwim = me.canSwim && !me.flyingMovement;
         const waterOnly = me.waterOnly;
         me.refreshSwimming(world);
         const self = me.fighter, other = target.fighter;

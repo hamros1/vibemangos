@@ -986,9 +986,8 @@ private:
     }
 
     /**
-     * Whether the player can have got to `position` since the last checkpoint, running (the fastest
-     * it can move without spells or mounts), give or take the configured tolerance. A player that
-     * could not is put back at the checkpoint. The checkpoint moves on every two seconds.
+     * Whether the player can reach the reported position at its server-authorized speeds, with
+     * the configured tolerance. A rejected move returns the player to the checkpoint.
      */
     bool passesSpeedCheck(Position position)
     {
@@ -1000,7 +999,8 @@ private:
             return true;
         const now = context.clock();
         const elapsed = (now - checkpointTime).total!"msecs" / 1000.0;
-        const fastest = max(baseMoveSpeed[MoveType.run], baseMoveSpeed[MoveType.swim]);
+        // This window can include movement before entering or leaving water.
+        const fastest = max(player.speeds[MoveType.run], player.speeds[MoveType.swim]);
         const allowed = fastest * context.config.movementSpeedTolerance * elapsed + context.config.movementSpeedSlack;
         const moved = distance2d(checkpoint, position);
         if (moved > allowed)
@@ -1650,8 +1650,27 @@ private:
                 player.chatTag));
             break;
         case ChatType.CHAT_MSG_CHANNEL:
+        {
+            import dmangos.world.clientdata : Team;
+            import dmangos.world.opcodes : languageSkills;
+
+            if (!canUseCommand('c') && !config.allowTwoSideInteractionChat)
+            {
+                if (chat.language != Language.LANG_UNIVERSAL)
+                {
+                    const skill = chat.language in languageSkills;
+                    if (skill is null)
+                        return systemMessage("Unknown language.");
+                    if (!player.skillValue(*skill)[1])
+                        return systemMessage("You have not learned that language.");
+                }
+                if (language == Language.LANG_UNIVERSAL)
+                    language = context.client.teamForRace(player.data.race) == Team.horde
+                        ? Language.LANG_ORCISH : Language.LANG_COMMON;
+            }
             context.channelCommand(this, ChannelOp.say, chat.channel, chat.text, language);
             break;
+        }
         case ChatType.CHAT_MSG_BATTLEGROUND, ChatType.CHAT_MSG_BATTLEGROUND_LEADER:
             if (parseCommands(chat.text))
                 return;

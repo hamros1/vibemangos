@@ -30,6 +30,7 @@
 	"allow_two_side_interaction_chat": false,
 	"allow_two_side_interaction_channel": false,
 	"allow_two_side_interaction_group": false,
+	"offline_group_leader_delay": 300,
 	"skip_cinematics": 0,
 	"motd": "Welcome to dmangos.@Players see each other, group up, chat, fight, cast spells, die, loot, quest, gather, learn talents, send mail and trade at the auction house.",
 	"visibility_distance": 100,

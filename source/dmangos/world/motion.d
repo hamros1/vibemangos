@@ -14,7 +14,7 @@
  *
  * A point's script (`ScriptId`) runs when the creature gets there. What is not here yet: AI being
  * told of arrivals, scripts pausing the path or changing it, formations,
- * and type 3 (a flying path, which here walks as type 2 does). Without movement maps, paths are
+ * and type 3 (an air or water path for creatures with that habitat). Without movement maps, paths are
  * straight lines; a random point's height is always taken from the terrain (`allowedPositionZ`),
  * not from movement maps.
  */
@@ -553,7 +553,7 @@ private:
         if (path.length == 1)
             lastReached = 0;
         creature.refreshSwimming(world);
-        const habitat = creature.canSwim && !creature.scriptFlying;
+        const habitat = creature.canSwim && !creature.flyingMovement;
         if (habitat)
         {
             bool underwater;
@@ -574,7 +574,7 @@ private:
         const at = creature.spline.finalized ? creature.position : creature.spline.position;
         const from = Vector3(at.x, at.y, at.z);
         Vector3[] dock;
-        const dockLeg = creature.scriptFlying ? DockRoute.unrelated
+        const dockLeg = creature.flyingMovement ? DockRoute.unrelated
             : world.pathAtDock(from, Vector3(next.x, next.y, next.z), creature.speeds[MoveType.walk], dock);
         if (dockLeg != DockRoute.unrelated || creature.ridingPlatform)
         {
@@ -620,7 +620,7 @@ private:
             const end = Vector3(candidate.x, candidate.y, candidate.z);
             Vector3 submerged;
             if ((habitat && world.swimmingTarget(end, creature.collisionHeight, submerged))
-                || (!creature.scriptFlying && world.pathAtDock(points[$ - 1], end, creature.speeds[MoveType.walk], dock)
+                || (!creature.flyingMovement && world.pathAtDock(points[$ - 1], end, creature.speeds[MoveType.walk], dock)
                     != DockRoute.unrelated))
             {
                 mustFinish = true;
@@ -945,7 +945,7 @@ package Vector3 followDestination(const Creature creature, MotionWorld world, Po
 {
     const destination = Vector3(x, y, leader.z);
     Vector3 submerged;
-    underwater = creature.canSwim && !creature.scriptFlying && (
+    underwater = creature.canSwim && !creature.flyingMovement && (
         world.swimmingTarget(destination, creature.collisionHeight, submerged)
         || world.swimmingTarget(Vector3(leader.x, leader.y, leader.z), creature.collisionHeight, submerged));
     return underwater ? submerged : destination;
@@ -955,7 +955,7 @@ package Vector3 followDestination(const Creature creature, MotionWorld world, Po
 package Vector3 habitatDestination(const Creature creature, MotionWorld world, Vector3 point, out bool underwater)
 {
     Vector3 submerged;
-    underwater = creature.canSwim && !creature.scriptFlying
+    underwater = creature.canSwim && !creature.flyingMovement
         && world.swimmingTarget(point, creature.collisionHeight, submerged);
     return underwater ? submerged : point;
 }
@@ -990,7 +990,7 @@ package HabitatStep launchHabitatPath(Creature creature, MotionWorld world, Vect
         stopMoving(creature, world);
         return HabitatStep.init;
     }
-    if (creature.canSwim && !creature.scriptFlying && swimming != underwater)
+    if (creature.canSwim && !creature.flyingMovement && swimming != underwater)
         return HabitatStep(launchShoreLeg(creature, world, destination, walk), true);
     HabitatStep step;
     step.duration = launchPath(creature, world, [Vector3.init, destination], walk, facing, true,
@@ -1033,7 +1033,7 @@ in (points.length > 1)
     const at = creature.spline.finalized ? creature.position : creature.spline.position;
     points[0] = Vector3(at.x, at.y, at.z);
     bool swimming;
-    const riding = creature.ridingPlatform && !creature.scriptFlying;
+    const riding = creature.ridingPlatform && !creature.flyingMovement;
     const groundSpeed = isNaN(speed) ? creature.speeds[walk ? MoveType.walk : MoveType.run] : speed;
     if (riding && (!generatePath || points.length != 2))
     {
@@ -1046,7 +1046,7 @@ in (points.length > 1)
         points = dock;
     }
     // A generated route can use the underwater volume or the regular movement maps.
-    if (generatePath && points.length == 2 && !creature.scriptFlying)
+    if (generatePath && points.length == 2 && !creature.flyingMovement)
     {
         Vector3[] way;
         swimming = creature.movement.has(MovementFlags.swimming)
@@ -1093,7 +1093,7 @@ private int launchSpline(Creature creature, MotionWorld world, const(Vector3)[] 
     bool swimming, float facing, float speed)
 {
     uint flags = walk ? SplineFlags.none : SplineFlags.runMode;
-    if (creature.scriptFlying)
+    if (creature.flyingMovement)
         flags |= SplineFlags.flying;
     float angle = 0;
     if (!isNaN(facing))
@@ -1230,7 +1230,7 @@ version (unittest)
         bool positionOf(ulong guid, out Position at) { return false; }
     }
 
-    private Creature testCreature(CreatureSpawn spawn, uint extraFlags = 0)
+    private Creature testCreature(CreatureSpawn spawn, uint extraFlags = 0, uint habitat = 1)
     {
         import dmangos.world.testdata : testClientData;
 
@@ -1238,7 +1238,7 @@ version (unittest)
         t.entry = spawn.entry;
         t.minLevel = t.maxLevel = 1;
         t.modelId1 = 1;
-        t.inhabitType = 1;
+        t.inhabitType = habitat;
         t.extraFlags = extraFlags;
         CreatureParts parts;
         return new Creature(spawn, t, 1, 1, parts, testClientData());
@@ -1488,6 +1488,47 @@ unittest
     creature.tick(world, 1);
     assert(world.sent.canFind(Opcode.SMSG_SPLINE_MOVE_UNROOT) && near(creature.speeds[MoveType.walk], walk));
     assert(launch(creature, world, [Vector3(0, 0, 0), Vector3(60, 50, 0)], true) > 0, "free again");
+}
+
+/// Path-type birds launch flying splines. Water-only creatures keep the swimming path.
+unittest
+{
+    auto world = new TestWorld;
+    auto spawn = CreatureSpawn(1, 100, 0, 50, 50, 25, 0);
+    spawn.movementType = MotionType.path;
+    auto bird = testCreature(spawn, 0, 4);
+    auto shark = testCreature(spawn, 0, 2);
+    assert(bird.flyingMovement && !shark.flyingMovement && shark.waterOnly);
+    launch(bird, world, [Vector3.init, Vector3(60, 50, 40)], true);
+    assert(bird.spline.flags & SplineFlags.flying);
+    launch(shark, world, [Vector3.init, Vector3(60, 50, 20)], true);
+    assert(!(shark.spline.flags & SplineFlags.flying));
+}
+
+/// Server-driven aura modes are included in movement creates and sent as packed-GUID spline orders.
+unittest
+{
+    import dmangos.world.auras : AuraType, makeAura;
+    import dmangos.world.spells : SpellInfo;
+
+    auto world = new TestWorld;
+    auto creature = testCreature(CreatureSpawn(1, 100, 0, 50, 50, 0, 0));
+    static SpellInfo modes;
+    modes.id = 3;
+    modes.effect[] = SpellEffect.applyAura;
+    modes.casting.applyAuraName[] = [AuraType.hover, AuraType.waterWalk, AuraType.featherFall];
+    bool isNew;
+    auto aura = creature.auras.apply(makeAura(&modes, 1, 1, -1, true, [0, 0, 0]), creature.values, isNew);
+    creature.refreshAuraMovement(world);
+    assert(creature.movement.has(MovementFlags.hover) && creature.movement.has(MovementFlags.waterWalking)
+        && creature.movement.has(MovementFlags.safeFall));
+    assert(world.sent == [Opcode.SMSG_SPLINE_MOVE_WATER_WALK, Opcode.SMSG_SPLINE_MOVE_FEATHER_FALL,
+        Opcode.SMSG_SPLINE_MOVE_SET_HOVER]);
+    creature.auras.remove(aura, creature.values);
+    creature.refreshAuraMovement(world);
+    assert(!(creature.movement.flags & (MovementFlags.waterWalking | MovementFlags.safeFall | MovementFlags.hover)));
+    assert(world.sent[3 .. $] == [Opcode.SMSG_SPLINE_MOVE_LAND_WALK, Opcode.SMSG_SPLINE_MOVE_NORMAL_FALL,
+        Opcode.SMSG_SPLINE_MOVE_UNSET_HOVER]);
 }
 
 // A script's path by id: the entry's, or `waypoint_path`'s; 0 the spawn's own.

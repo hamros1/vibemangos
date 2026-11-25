@@ -3,8 +3,8 @@
  * the clients once with `SMSG_MONSTER_MOVE`, and then only follows the unit along it in time, so it
  * knows where the unit is when someone asks.
  *
- * Only linear paths are kept: catmull-rom (flying) paths, falling and cyclic paths come with what
- * needs them.
+ * The server tracks progress along the segments. Flying packets carry the full path for the client's
+ * Catmull-Rom interpolation.
  */
 module dmangos.world.spline;
 
@@ -289,6 +289,15 @@ in (spline.initialized)
     w.put(uint((spline.flags & ~SplineFlags.noMonsterMove) | SplineFlags.runMode));
     w.put(spline.duration);
 
+    if (spline.flags & SplineFlags.flying)
+    {
+        const destinations = path[1 .. $ - 1];
+        w.put(cast(uint) destinations.length);
+        foreach (point; destinations)
+            putVector(w, point);
+        return w.data;
+    }
+
     // The destination, then the offsets to it of the points between, if not tiny.
     const destination = path[$ - 2];
     uint[] offsets;
@@ -410,6 +419,17 @@ unittest
     assert(r.read!uint == SplineFlags.runMode, "the final facing is not among the flags");
     r.read!uint;
     assert(r.read!uint == 1 && r.readBytes(12).length == 12 && r.empty);
+
+    auto flight = MoveSpline(path, SplineFlags.flying, 10, 5);
+    r = ByteReader(monsterMove(1, flight));
+    r.readPackedGuid();
+    r.readBytes(16);
+    assert(r.read!ubyte == MonsterMoveType.normal);
+    assert(r.read!uint == (SplineFlags.flying | SplineFlags.runMode));
+    assert(r.read!uint == flight.duration && r.read!uint == path.length - 1);
+    foreach (point; path[1 .. $])
+        assert(Vector3(r.read!float, r.read!float, r.read!float) == point);
+    assert(r.empty);
 
     r = ByteReader(monsterStop(1, Position(1, 2, 3, 0), 5));
     r.readPackedGuid();

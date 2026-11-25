@@ -83,6 +83,7 @@ enum ScriptCommand : uint
     setFacing = 36,
     despawnGameObject = 40,
     startRelayScript = 45,
+    setWorldState = 53,
 }
 
 /// A step's `data_flags`.
@@ -1641,7 +1642,7 @@ mixin template DbScriptRunner()
         if (step.conditionId)
         {
             auto player = scriptPlayer(source, target);
-            if (player is null || !player.conditionMet(step.conditionId))
+            if (!scriptConditionMet(map, step.conditionId, player))
                 return false;
         }
         const message = ScriptCreatureStep(nextGameplaySequence(), actor.guid, source.guid, target.guid,
@@ -2171,6 +2172,11 @@ mixin template DbScriptRunner()
         }
     }
 
+    private bool scriptConditionMet(Map map, uint id, Character player)
+    {
+        return player is null ? mapConditionMet(map, id) : player.conditionMet(id);
+    }
+
     /// Carries out a step's command; true if the script should stop.
     private bool executeScriptCommand(DbScriptType type, const ref DbScriptStep step, Map map, ScriptThing source,
         ScriptThing target, bool conditionChecked = false, OutdoorScriptStep* planned = null)
@@ -2178,7 +2184,7 @@ mixin template DbScriptRunner()
         import dmangos.world.updatefields;
 
         auto player = scriptPlayer(source, target);
-        if (!conditionChecked && step.conditionId && (player is null || !player.conditionMet(step.conditionId)))
+        if (!conditionChecked && step.conditionId && !scriptConditionMet(map, step.conditionId, player))
             return false;
         auto creature = source.creature;
         if (planned is null && creature !is null && creature.ai !is null)
@@ -2484,6 +2490,10 @@ mixin template DbScriptRunner()
                 map.wake(creature.guid);
             break;
         }
+        case ScriptCommand.setWorldState:
+            if (step.dataint[0] > 0)
+                map.scriptedWorldStates[cast(uint) step.dataint[0]] = step.dataint[1];
+            break;
         case ScriptCommand.startRelayScript:
         {
             ulong remoteHome = noCell;

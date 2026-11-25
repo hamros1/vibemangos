@@ -732,6 +732,14 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     bool keepSpawnLoaded; /// A battleground escort must keep its original spawn while it is away from home.
     bool scriptFlying; /// its script has it fly: its ways go straight through the air (raid scripts)
 
+    /// An air-capable creature following a database spline flies along its recorded coordinates.
+    package @property bool flyingMovement() const
+    {
+        import dmangos.world.motion : MotionType;
+
+        return scriptFlying || (spawn.movementType == MotionType.path && (template_.inhabitType & 4));
+    }
+
     /// Its habitat and template allow it to swim, with the walk-in-water exception for creatures such as crabs.
     package @property bool canSwim() const
     {
@@ -743,7 +751,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     package @property bool waterOnly() const
     {
         enum uint inhabitLandOrAir = 1 | 4;
-        return canSwim && !(template_.inhabitType & inhabitLandOrAir) && !scriptFlying;
+        return canSwim && !(template_.inhabitType & inhabitLandOrAir) && !flyingMovement;
     }
 
     /// Change the movement mode and its public flag together.
@@ -793,7 +801,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     /// Switch movement mode between splines when the creature reaches a shoreline.
     package void refreshSwimming(MotionWorld world)
     {
-        if (!canSwim || scriptFlying || !spline.finalized)
+        if (!canSwim || flyingMovement || !spline.finalized)
             return;
         const at = position;
         const point = Vector3(at.x, at.y, at.z);
@@ -859,6 +867,34 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
                 if (auto combat = cast(CombatWorld) world)
                     combat.flushCreature(this);
             }
+        }
+        struct MovementAura
+        {
+            AuraType aura;
+            MovementFlags flag;
+            Opcode enable, disable;
+        }
+
+        static immutable MovementAura[] modes = [
+            MovementAura(AuraType.waterWalk, MovementFlags.waterWalking,
+                Opcode.SMSG_SPLINE_MOVE_WATER_WALK, Opcode.SMSG_SPLINE_MOVE_LAND_WALK),
+            MovementAura(AuraType.featherFall, MovementFlags.safeFall,
+                Opcode.SMSG_SPLINE_MOVE_FEATHER_FALL, Opcode.SMSG_SPLINE_MOVE_NORMAL_FALL),
+            MovementAura(AuraType.hover, MovementFlags.hover,
+                Opcode.SMSG_SPLINE_MOVE_SET_HOVER, Opcode.SMSG_SPLINE_MOVE_UNSET_HOVER),
+        ];
+        foreach (mode; modes)
+        {
+            const enabled = auras.has(mode.aura);
+            if (enabled == movement.has(mode.flag))
+                continue;
+            if (enabled)
+                movement.flags |= mode.flag;
+            else
+                movement.flags &= ~mode.flag;
+            ByteWriter packet;
+            packet.putPackedGuid(guid);
+            world.sendToObservers(guid, enabled ? mode.enable : mode.disable, packet.data);
         }
         const held = immobilized;
         const stunned = auras.has(AuraType.modStun);
