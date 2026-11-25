@@ -1450,11 +1450,12 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
      * with (docs/CLUSTER.md): every field, its movement and walk, its movement generator's
      * state and its vendor stock.
      */
-    void saveState(ref ByteWriter w, uint now, const LootItem claimed = null, ulong looter = 0) const
+    void saveState(ref ByteWriter w, uint now, const LootItem claimed = null, ulong looter = 0,
+        scope const uint* factionOverride = null) const
     {
         w.put(cast(ushort) values.length);
         foreach (slot; 0 .. values.length)
-            w.put(values[slot]);
+            w.put(factionOverride !is null && slot == UNIT_FIELD_FACTIONTEMPLATE ? *factionOverride : values[slot]);
         movement.write(w);
         foreach (speed; speeds)
             w.put(speed);

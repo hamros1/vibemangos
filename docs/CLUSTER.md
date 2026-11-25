@@ -393,6 +393,10 @@ it continues.
 When a delayed script starts a local relay or starts one on a static creature on another worker,
 the parent cursor and the new relay commit together. For a remote relay, the same transaction queues
 delivery to the creature's spawn cell. The replacement resumes the relay on its original schedule.
+A checkpointed outdoor script saves a locally owned creature's faction change with its cursor
+when the creature has no active player escort checkpoint. The replacement restores the faction
+used for client updates and combat. A native creature with a saved faction change keeps its grid
+loaded until its faction resets or it despawns.
 Other commands claim their step before executing it, so a crash during their effects can leave the
 step incomplete.
 Finite wild objects of the generic and spell-focus types use the same durable queue from placement.

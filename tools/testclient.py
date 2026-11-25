@@ -385,6 +385,8 @@ def describe(op, p):
                 health = f", health {v[OBJECT_END + 0x10]}/{v.get(OBJECT_END + 0x16, '?')}" if OBJECT_END + 0x10 in v else ""
                 print(f"  [changes] {g}: fields {sorted(v)}{health}")
                 if seen_objects.get(g, (0, 0))[0] == 3:
+                    if OBJECT_END + 0x1D in v:
+                        print(f"  [creature faction] {g:#018x} faction {v[OBJECT_END + 0x1D]}")
                     if OBJECT_END + 0x10 in v:
                         if v[OBJECT_END + 0x10]:
                             living_creatures.add(g)

@@ -415,6 +415,7 @@ package struct OutdoorScriptStep
     private QuestStatus[uint][Character] rows;
     ScriptQuestEffect[] effects;
     ScriptCreatureSpawn[] summons;
+    QuestActorCheckpoint[] changedActors;
     ScriptRun[] relays;
     OutdoorScriptCheckpoint[] relayCheckpoints;
     OutdoorSummonRequest[] forwards;
@@ -438,7 +439,7 @@ package struct OutdoorScriptStep
 
     QuestActorCheckpoint[] actorCheckpoints()
     {
-        QuestActorCheckpoint[] result;
+        auto result = changedActors;
         foreach (ref summon; summons)
             if (summon.checkpoint.actor)
                 result ~= summon.checkpoint;
@@ -955,7 +956,8 @@ mixin template DbScriptRunner()
 
                     const stagesEffects = step.command.among(ScriptCommand.questExplored, ScriptCommand.killCredit,
                         ScriptCommand.tempSpawnCreature, ScriptCommand.openDoor, ScriptCommand.closeDoor,
-                        ScriptCommand.respawnGameObject, ScriptCommand.despawnGameObject, ScriptCommand.startRelayScript);
+                        ScriptCommand.respawnGameObject, ScriptCommand.despawnGameObject, ScriptCommand.startRelayScript,
+                        ScriptCommand.setFaction);
                     OutdoorScriptStep planned;
                     scope (exit) planned.discardUnpublishedSummons();
                     if (!claimOutdoorStep(run, map, *step, stops || run.next + 1 == run.steps.length,
@@ -2326,13 +2328,45 @@ mixin template DbScriptRunner()
             break;
         }
         case ScriptCommand.setFaction:
+        {
+            if (planned !is null && source.mirror !is null)
+            {
+                const row = step;
+                planned.afterCommit ~= () { dispatchScriptCommand(type, row, map, source, target); };
+                break;
+            }
             if (creature is null)
                 break;
             const faction = step.datalong ? step.datalong : creature.template_.faction;
-            creature.factionTemplate = client.factionTemplates.lookup(faction);
-            creature.values.set!UNIT_FIELD_FACTIONTEMPLATE(faction);
-            map.flushCreature(creature);
+            void apply()
+            {
+                creature.factionTemplate = client.factionTemplates.lookup(faction);
+                creature.values.set!UNIT_FIELD_FACTIONTEMPLATE(faction);
+                map.flushCreature(creature);
+            }
+            if (planned is null)
+                apply();
+            else
+            {
+                QuestActorCheckpoint saved;
+                const current = creature.guid in outdoorQuestActors;
+                if (creature.ai !is null && (current is null || !current.player)
+                    && faction != creature.values.get!UNIT_FIELD_FACTIONTEMPLATE)
+                    saved = outdoorCreatureCheckpoint(creature, &faction);
+                if (saved.actor)
+                    planned.changedActors ~= saved;
+                planned.afterCommit ~= () {
+                    if (saved.actor)
+                    {
+                        if (!ownsQuestActor(creature))
+                            return;
+                        outdoorQuestActors[saved.actor] = saved;
+                    }
+                    apply();
+                };
+            }
             break;
+        }
         case ScriptCommand.morphToEntryOrModel, ScriptCommand.mountToEntryOrModel:
         {
             // A model (with the additional flag), or the model of a creature entry; 0 puts its own back (or dismounts).

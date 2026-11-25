@@ -4365,7 +4365,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 if (object.guid !in outdoorQuestActors)
                     return false;
                 if (auto creature = cast(Creature) object)
-                    return creature.alive && creature.summon.timed;
+                    return creature.alive && (creature.summon.timed || hasOutdoorFactionChange(creature));
                 return (cast(GameObject) object) !is null;
             };
             created.checkpointQuestActor = (Creature creature, ulong player, bool immediate) {
@@ -5694,7 +5694,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         {
             if (previous.player)
             {
-                if (creature.summon.type != TempSpawnType.none)
+                if (creature.summon.type != TempSpawnType.none || hasOutdoorFactionChange(creature))
                     checkpointOutdoorCreature(creature);
                 else
                     discardQuestActor(creature);
@@ -5736,10 +5736,19 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         const saved = creature.guid in outdoorQuestActors;
         if (saved !is null && saved.player)
             return; // the active escort or follower also owns this creature's checkpoint
-        if (!creature.ai.inCombat && creature.values.get!UNIT_FIELD_HEALTH >= creature.values.get!UNIT_FIELD_MAXHEALTH)
+        if ((saved is null || !hasOutdoorFactionChange(creature)) && !creature.ai.inCombat
+            && creature.values.get!UNIT_FIELD_HEALTH >= creature.values.get!UNIT_FIELD_MAXHEALTH)
             return discardQuestActor(creature);
         if (saved is null || saved.savedAt + 2 <= unixTime)
             checkpointOutdoorCreature(creature);
+    }
+
+    private static bool hasOutdoorFactionChange(const Creature creature)
+    {
+        import dmangos.world.updatefields : UNIT_FIELD_FACTIONTEMPLATE;
+
+        return creature.summon.type == TempSpawnType.none
+            && creature.values.get!UNIT_FIELD_FACTIONTEMPLATE != creature.template_.faction;
     }
 
     private struct ActiveDungeonFight
@@ -5907,11 +5916,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             saveOutdoorScriptActor(state, immediate);
     }
 
-    private QuestActorCheckpoint outdoorCreatureCheckpoint(Creature creature)
+    private QuestActorCheckpoint outdoorCreatureCheckpoint(Creature creature, scope const uint* faction = null)
     {
         if (!config.cluster.enabled || !creature.alive || !ownsQuestActor(creature))
             return QuestActorCheckpoint.init;
-        auto migrant = saveMigratingObject(creature, false, carryImpacts: false);
+        auto migrant = saveMigratingObject(creature, false, carryImpacts: false, factionOverride: faction);
         if (migrant.kind != MigrantKind.summonedCreature && migrant.kind != MigrantKind.creature)
             return QuestActorCheckpoint.init;
         migrant.home = cellKeyAt(creature.spawn.x, creature.spawn.y);
@@ -6899,7 +6908,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     private Migrant saveMigratingObject(MapObject object, bool departing = true,
-        const LootItem claimed = null, ulong looter = 0, long expiresOverride = 0, bool carryImpacts = true)
+        const LootItem claimed = null, ulong looter = 0, long expiresOverride = 0, bool carryImpacts = true,
+        scope const uint* factionOverride = null)
     {
         import dmangos.bytes : ByteWriter;
         import dmangos.serialization : serialize;
@@ -6921,7 +6931,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 w.put(now);
             }
             ByteWriter state;
-            creature.saveState(state, now, claimed, looter);
+            creature.saveState(state, now, claimed, looter, factionOverride);
             w.put(cast(uint) state.data.length);
             w.putBytes(state.data);
             if (carryImpacts)
@@ -7009,9 +7019,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     private void loadMigrantCreature(Creature creature, uint instance, uint now, ref ByteReader reader)
     {
+        import dmangos.world.updatefields : UNIT_FIELD_FACTIONTEMPLATE;
+
         auto state = ByteReader(reader.readBytes(reader.read!uint));
         creature.instanceId = instance;
         creature.loadState(state, now, &spellInfo, data.waypoints);
+        creature.factionTemplate = client.factionTemplates.lookup(creature.values.get!UNIT_FIELD_FACTIONTEMPLATE);
         readReplicaImpacts(creature.guid, creature.spawn.map, instance, reader);
     }
 
@@ -7023,7 +7036,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.mysql : DatabaseException;
         import dmangos.serialization : deserialize;
         import dmangos.world.migration : MigrantKind;
-        import dmangos.world.updatefields : UNIT_FIELD_FACTIONTEMPLATE;
 
         indexSpawns();
         const durable = migrant.spawn < temporaryCounterStart;
@@ -7066,7 +7078,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 return null;
             restored.summon = summon;
             loadMigrantCreature(restored, destination.instanceId, now, state);
-            restored.factionTemplate = client.factionTemplates.lookup(restored.values.get!UNIT_FIELD_FACTIONTEMPLATE);
             if (transit > 0)
                 restored.summon.update(restored, transit);
             bindMigrantLoot(restored, destination);
