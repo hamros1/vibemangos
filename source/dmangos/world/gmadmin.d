@@ -1586,6 +1586,18 @@ unittest
     assert(unarmed[1] == 0 ? victim.skillValue(162)[0] == 1
         : victim.skillValue(162)[0] == (unarmed[0] + 2 < unarmed[1] ? unarmed[0] + 2 : unarmed[1]));
 
+    // `.character getskillinfo`: the bonus is what the auras add, both halves of the skill's third field.
+    {
+        import std.format : format;
+        import dmangos.world.updatefields : PLAYER_SKILL_INFO_1_1;
+
+        victim.values.setSlot(PLAYER_SKILL_INFO_1_1 + 3 * cast(uint) victim.skillSlot(162) + 2, 3u | 2u << 16);
+        const skill = victim.skillValue(162);
+        gm.say(".character getskillinfo");
+        assert(systemMessages(gm.read()).canFind!(m => m.canFind(format!"Value: %u, MaxValue: %u. (+ 5 bonus)"(
+            skill[0], skill[1]))));
+    }
+
     // `.character resetspells` and `resetskills`: what was learned since creation goes.
     {
         gm.write(Opcode.CMSG_SET_SELECTION, ClientGuid(victim.guid));

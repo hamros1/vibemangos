@@ -271,7 +271,7 @@ private:
         return line is null ? null : line.name[0];
     }
 
-    /// `.character getskillinfo`: the selected player's skills with their values and caps.
+    /// `.character getskillinfo`: the selected player's skills with their values, caps and what auras add.
     bool handleGetSkillsInfoCommand()
     {
         auto target = selectedCharacter(true);
@@ -280,11 +280,11 @@ private:
         blueSystemMessage(format!"Player: %s has skills"(target.player.data.name));
         foreach (skill; target.player.skillList)
         {
-            const name = skillName(skill[0]);
-            if (name is null)
+            if (context.client.skillLines.lookup(skill[0]) is null)
                 redSystemMessage(format!"Invalid skill: %u"(skill[0]));
             else
-                blueSystemMessage(format!"  %s: Value: %u, MaxValue: %u. (+ %d bonus)"(name, skill[1], skill[2], 0));
+                blueSystemMessage(format!"  %s: Value: %u, MaxValue: %u. (+ %d bonus)"(skillName(skill[0]), skill[1],
+                    skill[2], cast(int) target.player.skillWithBonus(skill[0]) - cast(int) skill[1]));
         }
         return true;
     }
