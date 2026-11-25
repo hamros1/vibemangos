@@ -266,6 +266,8 @@ final class InstanceScript : InstanceHost
                 raise(ObjectLoaded(actor.entity));
         foreach (creature; missing)
             raise(CreatureEvaded(creature));
+        // What `Restored` settled while the actors waited (no save was written meanwhile) is a checkpoint now.
+        save(true);
     }
 
     /// The checkpoint supplies this creature or object when the first player enters the copy.
@@ -309,7 +311,10 @@ final class InstanceScript : InstanceHost
         }
         auto context = InstanceContext(this);
         static if (is(E == Restored))
+        {
             context.savedSummons = durableSummons;
+            const savedActors = durableSummons.dup; // in the order of `pendingSummons`
+        }
         runtime.raise(handle, context, event);
         checkpoint = context.checkpointRequested;
         updateCheckpointActors(context);
@@ -317,6 +322,25 @@ final class InstanceScript : InstanceHost
             durableScripts = context.databaseScripts;
         static if (is(E == Restored))
         {
+            // What the script let go of as it reconciled its saved progress (a ritual failed, its actors and database
+            // steps released) is not brought back when a player returns for what it kept (another encounter's).
+            import std.algorithm.searching : canFind;
+
+            Migrant[] keptSummons;
+            EntityRef[] keptActors;
+            foreach (i, actor; savedActors)
+                if (i < pendingSummons.length && keepsCheckpoint(actor))
+                {
+                    keptSummons ~= pendingSummons[i];
+                    keptActors ~= actor;
+                }
+            foreach (actor; durableSummons)
+                if (!savedActors.canFind(actor))
+                    keptActors ~= actor; // checkpointed by the handler itself: after those the save restores
+            pendingSummons = keptSummons;
+            durableSummons = keptActors;
+            if (context.changedDatabaseScripts && !durableScripts.length)
+                pendingScriptRuns = null;
             waitForPlayer = context.waitingForPlayer;
             summonsPending = waitForPlayer && (pendingSummons.length || pendingScriptRuns.length);
             if (!summonsPending)

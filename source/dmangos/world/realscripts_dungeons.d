@@ -2211,6 +2211,53 @@ unittest
 // Dire Maul (429)
 // ---------------------------------------------------------------------------------------------------------------
 
+/**
+ * The Dreadsteed's ritual fails on restore (its keeper missing from the save, as in an older one) while Mizzle, kept in
+ * the same checkpoint, holds the copy's saved actors until a player returns: the failed ritual's J'eevee, demons and
+ * database steps stay gone, and Mizzle comes back.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import std.algorithm.searching : findSplit;
+    import dmangos.scripts.diremaul : DireMaul;
+    import dmangos.world.instancescripting : fromHex, toHex;
+    import dmangos.world.migration : Migrant, decodeBundle, encodeBundle;
+
+    enum uint king = 11501, mizzle = 14353, keeper = 14501, jeevee = 14500, imp = 14482, guard = 14483, bell = 179674;
+    auto d = Dungeon.enter(429, 60, 9, 1, Position(-38.5f, 811.8f, -29.5f));
+    d.kill(d.spawned(king, 0, 25));
+    assert(d.summoned(mizzle) == 1, "Mizzle comes\n" ~ d.story);
+    d.goTo(Position(-38.5f, 811.8f, -29.5f));
+    d.event(DireMaul.releaseJeeveeEvent);
+    d.run(2500.msecs);
+    assert(d.find(keeper) !is null && d.find(jeevee) !is null);
+    const keeperSpawn = cast(uint)(d.find(keeper).guid & 0xFF_FFFF);
+
+    // The save loses the keeper.
+    const data = d.data;
+    const parts = data.findSplit(":summons1:");
+    assert(parts[1].length, "the copy keeps its actors");
+    const rest = parts[2].findSplit(":");
+    ulong[] cells;
+    Migrant[] saved, kept;
+    decodeBundle(fromHex(rest[0]), cells, saved);
+    foreach (m; saved)
+        if (m.spawn != keeperSpawn)
+            kept ~= m;
+    assert(kept.length + 1 == saved.length);
+    d.w.db.saveInstanceData(d.instanceId, parts[0] ~ parts[1] ~ toHex(encodeBundle(cells, kept)) ~ rest[1] ~ rest[2]);
+
+    d.restartAfterCrash();
+    assert(d.saved!DireMaul.ritual == DireMaul.Ritual.failed, format!"the ritual cannot go on without its keeper (%s, keeper %s, jeevee %s)"(d.saved!DireMaul.ritual, d.all(keeper).length, d.all(jeevee).length));
+    assert(d.all(mizzle).length == 1, "Mizzle is back");
+    assert(d.all(jeevee).length == 0 && d.all(keeper).length == 0, "the failed ritual's actors stay gone");
+    d.run(45.seconds);
+    assert(d.all(imp).length + d.all(guard).length == 0 && d.loadedObject(bell) is null,
+        "no step of the failed ritual plays\n" ~ d.story);
+}
+
 /// The Dreadsteed's keeper, supplies, waves and pending final summon survive worker loss.
 unittest
 {

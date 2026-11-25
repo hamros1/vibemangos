@@ -337,21 +337,37 @@ struct DireMaul
     {
         ritual = Ritual.failed;
         dm.log("the Dreadsteed's ritual failed");
-        if (keeperRef)
-            dm.despawn(keeperRef);
-        if (jeeveeRef)
-            dm.despawn(jeeveeRef);
+        // Its actors leave the copy's checkpoint too: a restore that failed it must not bring them back.
+        foreach (actor; [keeperRef, jeeveeRef])
+            if (actor)
+            {
+                dm.despawn(actor);
+                dm.releaseCheckpointActor(actor);
+            }
+        foreach (demon; demons)
+        {
+            dm.despawn(demon);
+            dm.releaseCheckpointActor(demon);
+        }
+        demons.clear();
         foreach (ref o; ritualObjectRefs)
             if (o)
             {
                 dm.despawnObject(o);
+                dm.releaseCheckpointActor(o);
                 o = EntityRef.init;
             }
         ritualActive[] = false;
         if (circleRef)
+        {
             dm.despawnObject(circleRef);
+            dm.releaseCheckpointActor(circleRef);
+        }
         foreach (o; scenery)
+        {
             dm.despawnObject(o);
+            dm.releaseCheckpointActor(o);
+        }
         scenery.clear();
         dm.checkpointDatabaseScripts(null);
     }
