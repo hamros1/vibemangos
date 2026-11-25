@@ -10251,12 +10251,30 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         }
     }
 
+    private uint[uint] rollsInDoubt; // pool -> the placement a refused roll kept (`gameObjectPoolsDue`)
+
     private void gameObjectPoolsDue(long time)
     {
+        import std.algorithm.searching : canFind;
         import dmangos.world.database : GameObjectPoolPlacement, GameObjectPoolState;
 
         if (!gameObjectPools.refresh())
             return;
+        // A roll that kept its placement whose answer was lost reads as refused, though it committed: the saved
+        // selection, read again, says so, and the object comes back now rather than when its cell next loads.
+        foreach (pool, kept; rollsInDoubt)
+            if (const state = pool in gameObjectPools.states())
+                if (state.placements.canFind!(slot => slot.spawn == kept && !slot.due))
+                    if (const spawn = gameObjectSpawnOf(kept))
+                    {
+                        const home = cellKeyAt(spawn.x, spawn.y);
+                        auto where = existingMap(spawn.map);
+                        if (where !is null && where.cellLoaded(home) && (ownsCell is null || ownsCell(spawn.map, home))
+                            && where.gameObjectAt(makeGuid(HighGuid.gameObject, spawn.entry, spawn.guid)) is null)
+                            if (auto object = spawnWorldGameObject(*spawn))
+                                where.addObject(object);
+                    }
+        rollsInDoubt = null;
         foreach (pool, state; gameObjectPools.states())
             foreach (i, slot; state.placements)
             {
@@ -10276,7 +10294,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 placements[i] = GameObjectPoolPlacement(next.guid, due);
                 const selection = GameObjectPoolState(state.revision, placements);
                 if (!gameObjectPools.change(pool, selection))
+                {
+                    if (!due)
+                        rollsInDoubt[pool] = next.guid;
                     continue;
+                }
                 if (!due)
                     if (auto where = existingMap(spawn.map))
                         if (where.cellLoaded(home))
@@ -12838,4 +12860,80 @@ unittest
     after.incarnation = before.incarnation + 1;
     assert(after.nextGameplaySequence() > last);
     assert(newCreationContext(db).nextGameplaySequence() != 0, "outside a cluster, from the clock as before");
+}
+
+// A gathering node's roll that keeps its placement, committed though its answer was lost, still brings the node back:
+// the next pass reads the selection again instead of leaving the node away until its cell next loads.
+unittest
+{
+    import dmangos.world.database : GameObjectPoolState, WorldDatabase;
+    import dmangos.world.gameobject : GameObjectTemplate;
+    import dmangos.world.testclient;
+    import dmangos.world.worlddata : PoolChooser;
+    import std.typecons : AutoImplement;
+
+    static abstract class AnswerLost : WorldDatabase
+    {
+        WorldDatabase inner;
+        bool loseNext;
+
+        this(WorldDatabase inner) { this.inner = inner; }
+
+        override bool updateGameObjectPoolState(uint realm, uint pool, const ref GameObjectPoolState state,
+            uint exhaustedChest)
+        {
+            const changed = inner.updateGameObjectPoolState(realm, pool, state, exhaustedChest);
+            if (loseNext && changed)
+            {
+                loseNext = false;
+                return false; // the retry on a new connection matched no row: the first attempt had committed
+            }
+            return changed;
+        }
+    }
+    enum string forward(C, alias method) = "return inner." ~ __traits(identifier, method) ~ "(args);";
+    alias Flaky = AutoImplement!(AnswerLost, forward);
+
+    enum uint pool = 101, entry = 8012, realm = 9;
+    enum kind = PoolMember.Kind.gameObject;
+    auto db = newDatabase();
+    auto flaky = new Flaky(db);
+    auto clock = MonoTime.currTime;
+    const spawn = GameObjectSpawn(96, entry, 0, -8930, -120, 83.53, respawnSeconds: 30);
+    auto client = testClientData();
+    auto data = testWorldData(client);
+    GameObjectTemplate vein = {entry: entry, type: GameObjectType.chest};
+    vein.data[3] = 1;
+    data.gameObjectTemplates[entry] = vein;
+    data.pools = new PoolChooser;
+    data.pools.limits[pool] = 1;
+    data.pools.add(pool, PoolMember(kind, spawn.guid));
+    data.gameObjectCells[0][cellKeyAt(spawn.x, spawn.y)] ~= data.gameObjectSpawns.length;
+    data.gameObjectSpawns ~= spawn;
+    auto rng = Random(13);
+    data.pools.choose(rng);
+    WorldConfig config;
+    config.realmId = realm;
+    config.cluster.nodeId = 1;
+    auto node = new WorldContext(config, flaky, data, client);
+    node.startUnixTime = 2_000_000_000L;
+    node.startClock = clock;
+    node.clock = () => clock;
+    const guid = makeGuid(HighGuid.gameObject, spawn.entry, spawn.guid);
+    const home = cellKeyAt(spawn.x, spawn.y);
+    auto map = node.map(0);
+    map.loadCell(home);
+    auto used = map.gameObjectAt(guid);
+    assert(used !is null);
+    map.gameObjectUsedUp(used);
+    assert(map.gameObjectAt(guid) is null);
+
+    clock += 31.seconds;
+    flaky.loseNext = true;
+    node.respawnDue(clock); // the only member is rolled again, kept, and the answer lost
+    assert(db.loadGameObjectPoolStates(realm)[pool].placements[0].due == 0, "the roll committed");
+    assert(map.gameObjectAt(guid) is null);
+    clock += 1.seconds;
+    node.respawnDue(clock);
+    assert(map.gameObjectAt(guid) !is null, "back, by the selection read again");
 }
