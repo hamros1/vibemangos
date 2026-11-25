@@ -1178,6 +1178,10 @@ final class Loot
     /// Give a master loot slot to an eligible member whose inventory is on another node.
     bool sendRemoteMasterAward(ulong recipient, LootItem item)
     {
+        // The same members as a local assignment: whoever may still take the item, or a remote party member
+        // near the kill. Any other player online elsewhere is not a recipient.
+        if (recipient !in item.allowed && recipient !in remoteMembers)
+            return false;
         const node = rollMemberNode(recipient);
         if (!node || sendRemoteRoll is null)
             return false;

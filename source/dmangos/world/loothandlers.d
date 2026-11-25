@@ -1974,6 +1974,10 @@ unittest
         });
         corpseNode.map(0).replicaCreated(2, cellKeyAt(nearCorpse.x, nearCorpse.y), 8,
             encodePlayerState(jaina.session.character, 0));
+        // Online on the same node as the member, but in no group.
+        auto varian = loggedIn(otherNode, db, 9, "Varian", nearCorpse);
+        corpseNode.map(0).replicaCreated(2, cellKeyAt(nearCorpse.x, nearCorpse.y), 9,
+            encodePlayerState(varian.session.character, 0));
 
         GroupLootRoll[] awards, results;
         corpseNode.sendRemoteGroupLoot = (ushort node, const ref GroupLootRoll message) {
@@ -1997,7 +2001,12 @@ unittest
         auto roster = ByteReader(bodyOf(anduin.read(), Opcode.SMSG_LOOT_MASTER_LIST));
         assert(roster.read!ubyte == 2 && roster.read!ulong == 7 && roster.read!ulong == 8);
         anduin.write(Opcode.CMSG_LOOT_MASTER_GIVE, ClientLootMasterGive(victim.guid, 0, 9));
-        assert(awards.length == 0, "a non-member cannot receive the item");
+        assert(awards.length == 0 && !item.remoteAward, "a non-member cannot receive the item");
+        const stray = GroupLootRoll(GroupLootRoll.Action.masterAward, 0, victim.guid, 9, 12_345, 0, itemJerky, 1);
+        otherNode.groupLootRollArrived(1, stray);
+        assert(results.length == 1 && !results[0].stored && !varian.session.character.inventory.count(itemJerky),
+            "the recipient's node refuses a master award for a player in no group");
+        results = null;
 
         const assignment = ClientLootMasterGive(victim.guid, 0, 8);
         anduin.write(Opcode.CMSG_LOOT_MASTER_GIVE, assignment);

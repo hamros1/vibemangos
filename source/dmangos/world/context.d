@@ -680,7 +680,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             GroupLootRoll result = message;
             result.action = GroupLootRoll.Action.result;
             result.inventoryError = InventoryResult.itemNotFound;
-            if (!master || !message.condition || player.conditionMet(message.condition))
+            // A master award is for a group member: the loot's node checks the drop's members, and this node
+            // refuses a player who is in no group at all.
+            if (!master || (groups.of(message.player) !is null
+                && (!message.condition || player.conditionMet(message.condition))))
                 result.inventoryError = cast(ubyte) player.storeLootItem(message.item, message.count,
                     message.randomProperty, !master, award: key);
             result.stored = result.inventoryError == InventoryResult.ok;
