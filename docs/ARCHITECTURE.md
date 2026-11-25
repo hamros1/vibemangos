@@ -241,8 +241,11 @@ method is handled without anyone remembering to.
   lost or refused, a lock wait timeout, a deadlock) is tried again, the same one so that the order
   holds, after 0.25 s, then twice as long each time up to 5 s; the batch stays in the log meanwhile.
   The metrics line shows the retries and that the database is unavailable. Writes queue meanwhile; past
-  200,000 waiting, the game waits for room. `settle` (reads, handovers) waits at most a second for a
-  writer that cannot reach the database, so the game loop goes on and keeps the node's cluster lease;
+  200,000 waiting, the game waits for room. `settle` (reads, handovers) gives up once the writer has
+  finished no write for 300 ms (a write held by a lock counts from when it began, before MySQL reports
+  anything), or after a second of slow progress, and later calls return at once until the queue has
+  emptied: however many reads and settles one action makes, the game loop stops for that long at most
+  once per stall, well inside the cluster's failure timeout, so the node keeps its links and its lease;
   the loop also renews the writer's lease time every tick, so a write waiting for the database stays
   writable while the lease holds, and one made before a lapse is never written. Stopping the server
   while the database is away gives it 30 s, then leaves the unwritten writes in the log for the next

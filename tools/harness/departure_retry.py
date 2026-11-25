@@ -41,10 +41,8 @@ def hold_row(fixture, characters, guid):
 
 
 def exercise(fixture):
-    # Each read or settle on the worker's loop waits up to a second for the stalled writer, and a logout
-    # makes several: longer link and lease timeouts keep the stalled worker in the cluster meanwhile.
-    characters, names, guid, client, nodes, _ = start_cluster(
-        fixture, new_party=True, cluster=dict(failure_timeout_ms=10_000, lease_ms=15_000))
+    # The default link and lease timeouts: the stalled database must not cost the worker its membership.
+    characters, names, guid, client, nodes, _ = start_cluster(fixture, new_party=True)
     x, y, z = -8901.6, -162.6, 82.0
     fixture.query(f"UPDATE characters SET map=0,position_x={x},position_y={y},position_z={z},money=0 "
                   f"WHERE guid={guid}", characters)
@@ -96,6 +94,9 @@ def exercise(fixture):
         raise RuntimeError(fixture.log("again")[-2500:])
     assert "heard: 'after the departure'" in fixture.log("again"), "the account could not play again"
     assert all(process.poll() is None for process in nodes.values()), "a node exited"
+    assert not any("closed: heartbeats stopped" in fixture.log(tag) for tag in ("node1", "node2", "node3", "node4")), \
+        "a link timed out while the database stalled"
+    assert "lease LAPSED" not in fixture.log(host)[offset:], "the worker's lease lapsed while the database stalled"
     print(f"PASS: {host} held account {account}'s departure until its stalled save was written, "
           "then the account logged in and played again")
 

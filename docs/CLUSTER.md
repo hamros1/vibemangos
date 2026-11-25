@@ -857,6 +857,9 @@ A node must never write over a character that has since played elsewhere.
   which boot wrote each entry; after the machine restarts, entries made under a lease are dropped.
 * Before an account is released to the coordinator and before a player moves to another node, the node
   waits until everything queued has been written: the next node loads the character from the database.
+  While the database stalls, that wait does not stop the game loop: the release, a gateway player's
+  departure and the move wait for the writes instead, and the node keeps its heartbeats and its lease
+  meanwhile. Its queued writes stay fenced by that lease: they are written only while it holds.
 
 ### Gateway recovery
 

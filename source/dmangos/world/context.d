@@ -10670,6 +10670,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         checkHonorWeek(now);
         services.tick(elapsed);
         pollLootCoinCredits(now);
+        releaseSettledSessions();
         pollBattlegroundRewards(now);
         worldPvp.tick(elapsed);
         if (battlegroup is null || battlegroup.host is this) battlegrounds.tick(elapsed);
@@ -10835,27 +10836,66 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         {
             if (releaseSession !is null)
             {
-                settleWrites(); // another node may load the account's characters next: they are saved first
-                releaseSession(accountId, *serial);
+                // Another node may load the account's characters next: they are saved first. While the
+                // database stalls, the release waits for the writes (`releaseSettledSessions`), not the game.
+                if (releasesAfterWrites.length || !settleWrites())
+                {
+                    releasesAfterWrites ~= PendingRelease(accountId, *serial);
+                    imported!"dmangos.log".info!"account %s left before its saves were written; its release waits for them"(
+                        accountId);
+                }
+                else
+                    releaseSession(accountId, *serial);
             }
             serials.remove(session);
+        }
+    }
+
+    private static struct PendingRelease
+    {
+        uint account;
+        ulong serial;
+    }
+    private PendingRelease[] releasesAfterWrites;
+
+    /// Releases, in order, the accounts `removeSession` kept once nothing written for them waits.
+    private void releaseSettledSessions()
+    {
+        if (!releasesAfterWrites.length || (writer !is null && !writer.settled))
+            return;
+        auto pending = releasesAfterWrites;
+        releasesAfterWrites = null;
+        foreach (release; pending)
+        {
+            imported!"dmangos.log".info!"account %s released now that its saves are written"(release.account);
+            releaseSession(release.account, release.serial);
         }
     }
 
     /**
      * Waits until every write queued so far is in the database (docs/DESIGN.md, step 6): before another
      * node may load what this one saved. False if the database refused one of them (it is kept in the
-     * file of failed writes, `dmangos.world.writebehind.failedPath`).
+     * file of failed writes, `dmangos.world.writebehind.failedPath`), or if the writer does not get through
+     * them soon (the database is away or slow: `Writer.settle`); the game goes on meanwhile.
      */
     bool settleWrites()
     {
-        if (writer !is null && !writer.settle())
-        {
+        if (writer is null)
+            return true;
+        const failedBefore = writer.statistics.failed;
+        if (writer.settle())
+            return true;
+        if (writer.statistics.failed != failedBefore)
             imported!"dmangos.log".error!"the database refused a write while waiting for the writes (kept in the file of failed writes)"();
-            return false;
+        else if (MonoTime.currTime - lastSettleWarning >= 5.seconds)
+        {
+            lastSettleWarning = MonoTime.currTime;
+            imported!"dmangos.log".warning!"the database is slow or away: going on without waiting for %s queued write(s)"(
+                writer.statistics.waiting);
         }
-        return true;
+        return false;
     }
+    private MonoTime lastSettleWarning;
 
     /// See `SessionHandler.sessionGranted`.
     void sessionGranted(uint account, ulong serial)

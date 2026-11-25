@@ -23,7 +23,10 @@
  *
  * While the database is unavailable, the writer tries the same write again (so the order holds), waiting
  * longer each time (`retryDelayMs`); the queue grows meanwhile, up to `Writer.maxQueued`. `settle` (reads,
- * handovers) does not wait for it beyond `Writer.stalledWaitMs`, so the game and its cluster lease go on. A write the
+ * handovers) gives up once the writer has gone `Writer.stalledWaitMs` without finishing a write (a write held by a
+ * lock counts from when it began, before the database reports anything), and later calls do not wait again until
+ * the queue has emptied: however many reads and settles one game action makes, the game loop, and with it the
+ * cluster's heartbeats and lease, stops for that long at most once per stall. A write the
  * database refuses outright is kept in a file beside the log (`failedPath`) and the writer goes on.
  *
  * Each queued write carries the time until which this node may write (its cluster lease, docs/CLUSTER.md);
@@ -41,6 +44,7 @@ import core.atomic : atomicLoad, atomicStore;
 import core.sync.condition : Condition;
 import core.sync.mutex : Mutex;
 import core.thread : Thread;
+import core.time : MonoTime;
 import std.meta : AliasSeq, staticMap;
 import std.traits : FunctionAttribute, functionAttributes, hasUDA, isArray, isDynamicArray, isFloatingPoint,
     isIntegral, isSomeChar, isStaticArray, OriginalType, Parameters, ParameterStorageClass,
@@ -329,8 +333,14 @@ final class Writer
     enum size_t maxQueued = 200_000;
     /// While stopping, how long the writer goes on trying an unavailable database before it leaves the rest in the log.
     long giveUpAfterMs = 30_000;
-    /// How long `settle` waits for a writer that cannot reach the database before it returns.
-    long stalledWaitMs = 1_000;
+    /**
+     * How long `settle` waits for a writer that finishes no write (the database is away, or a write waits on a
+     * lock) before it returns. The game loop, which carries the cluster's heartbeats and lease renewals, waits
+     * that long at most once until the queue empties again: well under the cluster's failure timeout.
+     */
+    long stalledWaitMs = 300;
+    /// How long one `settle` waits at most for a writer that is slow but still finishing writes.
+    long slowWaitMs = 1_000;
 
     private
     {
@@ -344,6 +354,8 @@ final class Writer
         size_t inFlight;       // taken, being written
         bool stopping;
         WriterStats stats;
+        MonoTime progressAt;   // when the writer last took a batch or finished a write
+        bool gaveUp;           // a `settle` gave up: the next ones do not wait until the queue empties
         // Set by the game loop, read by the writer's thread; both on `clock`.
         shared long leaseUntil; // the newest `writableUntil` given or renewed: the lease has held until at least then
         shared long lapsedAt;   // when the lease last lapsed: a write made before is never written
@@ -430,6 +442,8 @@ final class Writer
             (*bySig)[key] = queue.length;
         }
         write.seq = ++lastSeq;
+        if (queue.length == 0 && inFlight == 0)
+            progressAt = MonoTime.currTime; // an idle writer starts on it now
         queue ~= write;
         ++stats.queued;
         work.notify();
@@ -437,27 +451,29 @@ final class Writer
 
     /**
      * Waits until everything queued so far is written or dropped. Returns false if the database refused
-     * one of the writes meanwhile, or if it is unavailable: then `settle` returns after `stalledWaitMs`
-     * (the game goes on; the writes wait, in order, and are written when it is back).
+     * one of the writes meanwhile, or if the writer does not get through the queue: once it has finished no
+     * write for `stalledWaitMs` (the database is away, or a write waits on a lock), or after `slowWaitMs`.
+     * The game goes on; the writes wait, in order, and are written when the database is back. Once a
+     * `settle` gave up, the next ones return false at once until the queue has emptied.
      */
     bool settle()
     {
-        import core.time : msecs, MonoTime;
+        import core.time : msecs;
 
         lock.lock_nothrow();
         scope (exit)
             lock.unlock_nothrow();
         const failedBefore = stats.failed;
-        MonoTime stalledSince;
+        const start = MonoTime.currTime;
         while (queue.length || inFlight)
         {
-            finished.wait(50.msecs);
-            if (!stats.stalled)
-                stalledSince = MonoTime.init;
-            else if (stalledSince == MonoTime.init)
-                stalledSince = MonoTime.currTime;
-            else if (MonoTime.currTime - stalledSince >= stalledWaitMs.msecs)
+            const now = MonoTime.currTime;
+            if (gaveUp || now - progressAt >= stalledWaitMs.msecs || now - start >= slowWaitMs.msecs)
+            {
+                gaveUp = true;
                 return false;
+            }
+            finished.wait(20.msecs);
         }
         return stats.failed == failedBefore;
     }
@@ -549,6 +565,7 @@ private:
                 queue = null;
                 latest = null;
                 inFlight = batch.length;
+                progressAt = MonoTime.currTime;
                 room.notifyAll();
             }
             if (logPath.length)
@@ -563,7 +580,7 @@ private:
                     if (w.writableUntil && (clock() >= atomicLoad(leaseUntil)
                             || w.writableUntil <= atomicLoad(lapsedAt)))
                     {
-                        count((ref s) { ++s.refused; });
+                        count((ref s) { ++s.refused; progressAt = MonoTime.currTime; });
                         if (statistics.refused % 100 == 1)
                             warning!"fenced: this node's lease has lapsed, so a queued '%s' was not written"(
                                 nameOf(w.signature));
@@ -572,14 +589,14 @@ private:
                     const outcome = carryOutLogged(db, ledger, stream, w);
                     if (outcome == Outcome.written)
                     {
-                        count((ref s) { ++s.written; s.stalled = false; });
+                        count((ref s) { ++s.written; s.stalled = false; progressAt = MonoTime.currTime; });
                         if (attempt > 1)
                             info!"the database is back: writing again"();
                         break;
                     }
                     if (outcome == Outcome.failed)
                     {
-                        count((ref s) { ++s.failed; });
+                        count((ref s) { ++s.failed; progressAt = MonoTime.currTime; });
                         keepFailed(w);
                         break;
                     }
@@ -620,6 +637,7 @@ private:
                     appendToLog(logPath, queue); // queued meanwhile: after the batch, in order
                 inFlight = 0;
                 queue = null;
+                gaveUp = false;
                 finished.notifyAll();
                 return;
             }
@@ -630,6 +648,9 @@ private:
                 scope (exit)
                     lock.unlock_nothrow();
                 inFlight = 0;
+                progressAt = MonoTime.currTime;
+                if (queue.length == 0)
+                    gaveUp = false;
                 finished.notifyAll();
             }
         }
@@ -1093,6 +1114,7 @@ version (unittest)
     {
         MemoryWorldDatabase inner;
         shared int failures;
+        shared int holdMs; // each call first waits this long, as a write held by a lock does
         uint code = 2013; // the connection lost
 
         this(MemoryWorldDatabase inner)
@@ -1107,6 +1129,11 @@ version (unittest)
         protected void maybeFail()
         {
             import core.atomic : atomicOp;
+            import core.thread : Thread;
+            import core.time : msecs;
+
+            if (const hold = atomicLoad(holdMs))
+                Thread.sleep(hold.msecs);
 
             if (atomicLoad(failures) > 0)
             {
@@ -1140,6 +1167,7 @@ unittest
     auto writer = new Writer(flaky, null);
     scope (exit)
         writer.stop();
+    writer.stalledWaitMs = writer.slowWaitMs = 5_000; // 0.25 + 0.5 s of retries: settle waits them out
     WorldDatabase db = new WriteBehind(inner, writer, null);
     db.setMuteTime(id, 21);
     db.setMuteTime(id, 22);
@@ -1295,6 +1323,57 @@ unittest
         Thread.sleep(50.msecs);
     }
     assert(inner.findAccount("PLAYER").get.muteTime == 80 && writer.statistics.refused == 1);
+}
+
+// A write held by a lock stops the game loop once, for `stalledWaitMs` from when the writer began it, however
+// many settles (reads, handovers) follow; once the queue is written, settle waits for it again.
+unittest
+{
+    import core.thread : Thread;
+    import core.time : msecs, MonoTime;
+
+    auto inner = newDatabase();
+    auto flaky = new Flaky(inner);
+    atomicStore(flaky.holdMs, 600);
+    auto writer = new Writer(flaky, null);
+    scope (exit)
+        writer.stop();
+    writer.stalledWaitMs = 200;
+    WorldDatabase db = new WriteBehind(inner, writer, null);
+    const id = inner.findAccount("PLAYER").get.id;
+    db.setMuteTime(id, 40);
+    Thread.sleep(100.msecs); // the writer is held, though nothing has failed yet
+    auto start = MonoTime.currTime;
+    assert(!writer.settle(), "a held write is not waited for");
+    assert(MonoTime.currTime - start < 400.msecs, "counted from when the writer began the write");
+    assert(!writer.statistics.stalled, "nothing reported the database away yet");
+    start = MonoTime.currTime;
+    foreach (i; 0 .. 5)
+    {
+        assert(!writer.settle());
+        db.findAccount("PLAYER"); // a read waits for the queue: not again
+    }
+    assert(MonoTime.currTime - start < 50.msecs, "the later settles do not wait again");
+    atomicStore(flaky.holdMs, 0);
+    foreach (i; 0 .. 50)
+    {
+        if (writer.settled)
+            break;
+        Thread.sleep(20.msecs);
+    }
+    db.setMuteTime(id, 41);
+    assert(writer.settle(), "the queue emptied: settle waits again");
+    assert(inner.findAccount("PLAYER").get.muteTime == 41);
+
+    // A writer that keeps finishing writes, slowly, is waited for no longer than `slowWaitMs`.
+    atomicStore(flaky.holdMs, 100);
+    writer.slowWaitMs = 250;
+    foreach (minutes; 50 .. 60)
+        db.setMuteTime(id, minutes);
+    start = MonoTime.currTime;
+    assert(!writer.settle());
+    assert(MonoTime.currTime - start < 450.msecs);
+    atomicStore(flaky.holdMs, 0);
 }
 
 // The fence is on the writer's monotonic clock, not the wall clock: a lease that ran out there has run out
