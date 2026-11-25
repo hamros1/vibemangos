@@ -389,13 +389,13 @@ immutable ChatCommand[] kickCommandTable = [
 
 immutable ChatCommand[] banCommandTable = [
     action("ip", permit("character.modify"), "handleIPBanCommand", "<ip-address> <duration> [reason]", "Ban an IP address."),
-    action("character", permit("staff.discipline"), "handleBanCharacterCommand", "<character> <duration> <reason>", "Ban a character's account."),
+    action("character", permit("account.moderate"), "handleBanCharacterCommand", "<character> <duration> <reason>", "Ban a character's account."),
     action("account", permit("account.moderate"), "handleAccountBannedCommand", "<account> <duration> [reason]", "Ban an account."),
 ];
 
 immutable ChatCommand[] unbanCommandTable = [
     action("ip", permit("character.modify"), "handleIPUnBanCommand", "<ip-address>", "Remove a ban from an IP address."),
-    action("character", permit("staff.discipline"), "handleUnBanCharacterCommand", "<character>", "Remove a ban from a character's account."),
+    action("character", permit("staff.admin"), "handleUnBanCharacterCommand", "<character>", "Remove a ban from a character's account."),
     action("account", permit("staff.admin"), "handleAccountUnbanCommand", "<account>", "Remove a ban from an account."),
 ];
 

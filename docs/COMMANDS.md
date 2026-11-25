@@ -132,7 +132,7 @@ Generated from the command tables by `python3 tools/commands_doc.py`.
 | `.announce [message]` | Send a realm-wide chat announcement. | `staff.announce` |
 | `.appear <name>` | Teleport to a player. | `world.teleport` |
 | `.ban account <account> <duration> [reason]` | Ban an account. | `account.moderate` |
-| `.ban character <character> <duration> <reason>` | Ban a character's account. | `staff.discipline` |
+| `.ban character <character> <duration> <reason>` | Ban a character's account. | `account.moderate` |
 | `.ban ip <ip-address> <duration> [reason]` | Ban an IP address. | `character.modify` |
 | `.bg battleground` (also `.battleground battleground`) | Show the current match and available tools. | `battleground.manage` |
 | `.bg forcestart` (also `.battleground forcestart`) | Start all queued battlegrounds. | `staff.admin` |
@@ -393,7 +393,7 @@ Generated from the command tables by `python3 tools/commands_doc.py`.
 | `.ticket toggle` (also `.gmTicket toggle`) | Enable or disable player tickets. | `staff.admin` |
 | `.transport-period <period-ms>` (also `.modperiod`) | Save the current ship or zeppelin’s circuit time. | `character.modify` |
 | `.unban account <account>` | Remove a ban from an account. | `staff.admin` |
-| `.unban character <character>` | Remove a ban from a character's account. | `staff.discipline` |
+| `.unban character <character>` | Remove a ban from a character's account. | `staff.admin` |
 | `.unban ip <ip-address>` | Remove a ban from an IP address. | `character.modify` |
 | `.unparalyze` | Release the selected player's root. | `staff.discipline` |
 | `.wannounce <message>` | Send a realm-wide on-screen announcement. | `staff.announce` |

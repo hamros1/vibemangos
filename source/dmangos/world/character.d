@@ -733,7 +733,7 @@ final class Character : OnlinePlayer, Looter
 
 
 
-    /// Rank used only by the staff presence and who-list displays.
+    /// Rank used by the staff presence and who-list displays, and to keep bans off equal or higher staff.
     @property AccountLevel security() const
     {
         return gmAccess.rank();

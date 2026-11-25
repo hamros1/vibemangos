@@ -440,6 +440,11 @@ private:
             accountId = sessionOf(online).account.id;
             systemMessage(format!"Banning player '%s' ingame for '%s'."(name, reason));
         }
+        if (!outranksAccount(accountId))
+        {
+            redSystemMessage(format!"You cannot ban %s, as they are a staff member of your rank or higher."(name));
+            return true;
+        }
         // Bans apply to accounts: the character's account is banned.
         context.accounts.banAccount(accountId, banTime, player.data.name, reason);
         systemMessage(format!"This ban is due to expire %s%s."("on ",
@@ -455,12 +460,28 @@ private:
         return true;
     }
 
+    /// Whether this GM may ban `accountId`: its staff rank is below theirs. A failed policy read never is.
+    private bool outranksAccount(uint accountId)
+    {
+        import dmangos.mysql : DatabaseException;
+
+        try
+            return context.database.gmAccessFor(accountId).rank() < security;
+        catch (DatabaseException)
+            return false;
+    }
+
     bool handleAccountBannedCommand(string name, string duration, Rest reason = Rest.init)
     {
         const period = getTimePeriodFromString(duration);
         if (period < 0)
             return false;
         const found = context.accounts.findAccount(name);
+        if (!found.isNull && !outranksAccount(found.get.id))
+        {
+            redSystemMessage(format!"You cannot ban %s, as they are a staff member of your rank or higher."(name));
+            return true;
+        }
         if (!found.isNull)
             context.accounts.banAccount(found.get.id, period, player.data.name, reason); // 0: for ever
         const until = period ? convertTimeStampToDataTime(context.unixTime + period) : "";
@@ -1619,4 +1640,48 @@ unittest
     assert(context.guilds.named("Kirin Tor") is null);
     gm.say(".guild create Dal4ran");
     assert(systemMessages(gm.read()).canFind!(m => m.canFind("Error, name can only contain chars A-Z and a-z.")));
+}
+
+/// Support cannot ban or unban characters; nobody bans an account of their own staff rank or higher.
+unittest
+{
+    import dmangos.auth.accounts : BanState;
+    import dmangos.world.commands : ChatColor;
+    import dmangos.world.testclient;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto support = loggedIn(context, db, 6, "Tirion", Position(0, 0, 0), AccountLevel.moderator);
+    auto gm = loggedIn(context, db, 7, "Jaina", Position(0, 0, 0), AccountLevel.gameMaster);
+    auto admin = loggedIn(context, db, 8, "Varian", Position(0, 0, 0), AccountLevel.administrator);
+    auto peer = loggedIn(context, db, 9, "Thrall", Position(0, 0, 0), AccountLevel.gameMaster);
+    auto player = loggedIn(context, db, 10, "Anduin", Position(0, 0, 0));
+    foreach (c; [&support, &gm, &admin, &peer, &player])
+        c.read();
+    BanState banOf(string account) { return context.accounts.findAccount(account).get.ban; }
+    support.say(".ban character Anduin 1d spam");
+    assert(systemMessages(support.read()) == [ChatColor.softRed ~ "Command unavailable. Try .commands.|r"]);
+    support.say(".unban character Anduin");
+    assert(systemMessages(support.read()) == [ChatColor.softRed ~ "Command unavailable. Try .commands.|r"]);
+    assert(banOf("ANDUIN") == BanState.none);
+
+    foreach (target; ["Varian", "Thrall"])
+    {
+        gm.say(".ban character " ~ target ~ " 1d spam");
+        assert(systemMessages(gm.read()).canFind!(m => m.canFind("You cannot ban " ~ target
+            ~ ", as they are a staff member of your rank or higher.")));
+    }
+    gm.say(".ban account VARIAN 1d spam");
+    assert(systemMessages(gm.read()).canFind!(m => m.canFind(
+        "You cannot ban VARIAN, as they are a staff member of your rank or higher.")));
+    assert(banOf("VARIAN") == BanState.none && banOf("THRALL") == BanState.none);
+
+    gm.say(".ban character Anduin 1d spam");
+    gm.read();
+    assert(banOf("ANDUIN") == BanState.suspended);
+    gm.say(".unban character Anduin");
+    assert(systemMessages(gm.read()) == [ChatColor.softRed ~ "Command unavailable. Try .commands.|r"]);
+    admin.say(".unban character Anduin");
+    admin.read();
+    assert(banOf("ANDUIN") == BanState.none);
 }
