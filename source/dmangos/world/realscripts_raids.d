@@ -784,7 +784,8 @@ unittest
     vael = s.the(vaelEntry);
     assert(s.ask(1) == 4, format!"the trigger did not begin his scene (%s)"(s.ask(1)));
     assert(vael.guid == dragon && s.the(nefarius).guid == corruptor, "the original scene actors returned");
-    assert(s.runUntil(() => s.said(-1_469_032) && s.cast_(19484), 20.seconds), "the scene did not resume\n" ~ s.seen());
+    assert(s.runUntil(() => s.said(-1_469_032) && s.castCount(19484, corruptor) == 1, 20.seconds),
+        "the original actor did not finish Red Lightning\n" ~ s.seen());
     assert(!s.said(-1_469_006), "the first line did not repeat");
     s.stayWith = vael;
     s.moveHeroes(vael.position);

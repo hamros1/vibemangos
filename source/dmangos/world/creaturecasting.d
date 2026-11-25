@@ -699,6 +699,7 @@ mixin template CreatureCasting()
         castTimer = time;
         castAuraMustBeAbsent = (flags & castAuraNotPresent) != 0;
         castAtSelectedChannelTarget = selectedChannelTarget;
+        world_.wake(me.guid);
         if (!me.spline.finalized)
             stopMoving(me, world_);
         auto targets = targetsOf(target);
