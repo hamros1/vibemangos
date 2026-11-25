@@ -4109,6 +4109,10 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
         import std.algorithm.iteration : filter;
         import std.array : array;
 
+        if (options.method != 1) // as the database does: an unpaid battleground reward goes with its character
+            foreach (key; battlegroundRewards.keys)
+                if (key[2] == guid)
+                    battlegroundRewards.remove(key);
         auto list = accountId in characterLists;
         if (list is null)
             return;

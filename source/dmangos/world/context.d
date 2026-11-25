@@ -88,6 +88,14 @@ import dmangos.world.playercreate : CreationSettings;
 import dmangos.world.spellids : ImplicitTarget, SpellEffect;
 import dmangos.world.worlddata : EventCreature, EventMail, PoolMember, Ship, SpawnGroupCondition, SpellListEntry, WorldData;
 
+/// A cluster member has no ids of a kind left (`WorldContext.nextItemGuid`): the coordinator's next block has not come.
+class IdsExhausted : Exception
+{
+    import std.exception : basicExceptionCtors;
+
+    mixin basicExceptionCtors;
+}
+
 /// How a player simulated on another node than its client's talks to the other node.
 interface PlayerRelay
 {
@@ -787,6 +795,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         }
         catch (DatabaseException error)
             warning!"could not deliver battleground rewards: %s"(error.msg);
+        catch (IdsExhausted error) // nothing was paid: the reward waits for the next poll, the tick goes on
+            warning!"could not deliver battleground rewards yet: %s"(error.msg);
     }
 
     private void pollLootCoinCredits(MonoTime now)
@@ -10874,7 +10884,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
         uint id;
         if (!takeId(kind, id))
-            throw new Exception("no " ~ kind.to!string ~ " ids: the coordinator's next block has not come");
+            throw new IdsExhausted("no " ~ kind.to!string ~ " ids: the coordinator's next block has not come");
         return id;
     }
 

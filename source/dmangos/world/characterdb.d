@@ -2509,12 +2509,15 @@ final class CharacterStatements
         returnMail(guid, accountId, options, nextMailId);
         prepareLootCoins();
         prepareLootAwards();
+        prepareBattlegroundRewards();
         const pets = characters.query!"SELECT id FROM character_pet WHERE owner = ?"(guid)
             .map!(row => row.get!uint(0)).array;
 
         characters.transaction({
             characters.execute!"DELETE FROM dmangos_loot_coin WHERE player = ?"(guid);
             characters.execute!"DELETE FROM dmangos_loot_award WHERE player = ?"(guid);
+            // An unpaid battleground reward goes with its character: a new one given the same guid gets none of it.
+            characters.execute!"DELETE FROM dmangos_bg_reward WHERE player = ?"(guid);
             savePlayerSummons(guid, null);
             deletePartySummonOffer(guid);
             foreach (pet; pets)

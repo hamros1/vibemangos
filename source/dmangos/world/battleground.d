@@ -3449,6 +3449,48 @@ unittest
     assert(db.loadHonor(7).points.length == 1, "the honor is not withheld");
 }
 
+/// A cluster member out of item ids pays a mark later: the reward waits, unpaid, and the rest of the tick goes on.
+/// A deleted character's unpaid reward goes with it, for no new character of the same guid to collect.
+unittest
+{
+    import core.time : seconds;
+    import dmangos.cluster.ownership : IdPool;
+    import dmangos.world.characterdb : DeleteOptions;
+    import dmangos.world.movement : Position;
+    import dmangos.world.spells : SpellEffect, SpellInfo;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata : itemJerky;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    context.battlegroundMapEpoch = (uint) => 1UL;
+    enum uint mark = 91_509;
+    SpellInfo makesMark;
+    makesMark.id = mark;
+    makesMark.effect[0] = SpellEffect.createItem;
+    makesMark.itemType[0] = itemJerky;
+    context.data.spells.spells[mark] = makesMark;
+    auto varian = loggedIn(context, db, 7, "Varian", Position(-8949.95f, -132.49f, 83.53f));
+    varian.read();
+    context.idPool = new IdPool(8); // no block has come
+    const reward = BattlegroundReward(context.config.realmId, 1, 7, mark, 24, 1);
+    db.publishBattlegroundResult(reward.realm, reward.match, PvpStatsBattleground.init, null, [reward], false);
+    {
+        import std.exception : assertThrown;
+        import dmangos.world.context : IdsExhausted;
+
+        assertThrown!IdsExhausted(varian.session.inWorld.payBattlegroundReward(reward), "no id for the mark");
+    }
+    now += 2.seconds;
+    context.update(now); // the poll meets the same: it does not escape the tick
+    assert(db.pendingBattlegroundRewards().length == 1, "nothing paid without an id for the mark");
+
+    db.deleteCharacter(7, 1, DeleteOptions.init, () => 0u);
+    assert(!db.pendingBattlegroundRewards().length, "the reward goes with its character");
+}
+
 /// A match recovered after a crash that ends before its players reconnect still keeps their final rewards.
 unittest
 {
