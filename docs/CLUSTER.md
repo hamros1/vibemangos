@@ -541,6 +541,10 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   and ability timers. Firemaw's Flame Buffet stacks and Shadow of Ebonroc keep their original
   expiration deadlines. Ebonroc keeps healing already received through his mark, and Flamegor
   keeps the Frenzy already in progress.
+  In Naxxramas, Gothik keeps his upcoming waves and the living and spectral adds that survived.
+  The first players back resume the saved timers. On the floor he keeps his health, side and
+  remaining teleports. The central gate stays in its saved state and opens after four side changes
+  or when he reaches 30% health. His death opens the exit for the rest of the lockout.
 * **GM commands.** `.instance info`, `.instance shutdown` and `.instance reset` of a copy another node
   hosts go to that node and its answer comes back; `.instance resetall` goes to every node.
 

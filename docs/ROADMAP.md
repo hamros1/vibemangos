@@ -47,6 +47,7 @@ describes how players use the systems available today.
   checkpoints. Blackwing Lair has active recovery tests for Razorgore, Vaelastrasz, Firemaw,
   Ebonroc, Flamegor, Chromaggus, and Nefarian.
   The Suppression Room keeps disarmed device timers and Lashlayer's room-wide shutdown.
+  Naxxramas has Gothik recovery tests for both the wave phase and the ground fight.
   See [dungeon failover](CLUSTER.md#dungeons-and-battlegrounds) for coverage across instances.
 * **GM commands.** The [command reference](COMMANDS.md#edit-a-route-or-trainer) documents native
   waypoint and trainer editing, NPC formations, battleground pause and quest catalog reload.

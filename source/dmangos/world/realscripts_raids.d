@@ -1443,7 +1443,7 @@ unittest
             Stage(0, 106, [29_204])]),
         Boss("Instructor Razuvious", 533, 16_061, 6, [], [Stage(0, 32, [29_107, 26_613])]),
         Boss("Gothik the Harvester", 533, 16_060, 7, [], [Stage(0, 26, null, null, [[trainee, 1]]),
-            // at 4:34 he comes down (the gate opens: "special"): Shadow Bolt, Harvest Soul
+            // At 4:34 he comes down and casts Shadow Bolt and Harvest Soul.
             Stage(0, 255, [29_317, 28_679], null, null, null, null)], 0, 0, 2, Position.init,
             [classWarrior, classMage], (Scene s, Creature boss) {}, 60),
         Boss("Patchwerk", 533, 16_028, 9, [], [Stage(0, 5, [28_308]), Stage(4, 2, [28_131])]),
@@ -1458,6 +1458,91 @@ unittest
         fight(b);
         wipe(b);
     }
+}
+
+/// Gothik recovers the wave and ground phases from the same raid lockout.
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.script.api : EncounterState;
+    import dmangos.scripts.naxxramas;
+    import dmangos.world.defines : UnitFlags;
+
+    enum uint entryGate = 181124, exitGate = 181125;
+    const encounter = Boss("Gothik the Harvester", 533, npcGothik, NaxxEncounter.gothik, [npcSubBossTrigger]);
+    Scene s;
+    auto boss = setUp(encounter, s);
+    s.pressing = false;
+    s.stayWith = null;
+    s.engage(boss);
+    const bossGuid = boss.guid, instance = s.instance;
+    s.moveHero(0, Position(2692, -3410, 268));
+    s.moveHero(1, Position(2692, -3322, 268));
+    assert(s.runUntil(() => s.all(npcUnrelentingTrainee).length == 2, 26.seconds), "the first living wave");
+    auto living = s.all(npcUnrelentingTrainee);
+    const killed = living[0].guid, survivor = living[1].guid;
+    assert(living[0].position.y < -3360.78 && living[1].position.y < -3360.78);
+    s.hurtTo(living[1], 65);
+    s.kill(living[0]);
+    s.run(200.msecs);
+    auto spectral = s.the(npcSpectralTrainee);
+    assert(spectral.position.y > -3360.78, "a living trainee's death sends one spectral trainee across the gate");
+    s.hurtTo(spectral, 58);
+    s.run(2.seconds);
+    const spectralGuid = spectral.guid;
+    const livingHealth = living[1].values.get!UNIT_FIELD_HEALTH, spectralHealth = spectral.values.get!UNIT_FIELD_HEALTH;
+    assert(!s.doorOpen(entryGate) && !s.doorOpen(goGothikCombatGate) && !s.doorOpen(exitGate));
+
+    s.restartAfterCrash();
+    boss = s.the(npcGothik);
+    assert(s.instance == instance && boss.guid == bossGuid && boss.ai.inCombat);
+    assert(boss.values.get!UNIT_FIELD_FLAGS & UnitFlags.uninteractible);
+    assert(s.ask(NaxxEncounter.gothik) == EncounterState.inProgress && !s.doorOpen(goGothikCombatGate));
+    assert(!s.doorOpen(entryGate) && !s.doorOpen(exitGate));
+    assert(s.map.creatureAt(killed) is null);
+    auto sameLiving = s.all(npcUnrelentingTrainee), sameSpectral = s.all(npcSpectralTrainee);
+    assert(sameLiving.length == 1 && sameLiving[0].guid == survivor
+        && sameLiving[0].values.get!UNIT_FIELD_HEALTH == livingHealth);
+    assert(sameSpectral.length == 1 && sameSpectral[0].guid == spectralGuid
+        && sameSpectral[0].values.get!UNIT_FIELD_HEALTH == spectralHealth);
+    s.run(12.seconds);
+    assert(s.all(npcUnrelentingTrainee).length == 1, "no wave ran ahead of its saved timer");
+    assert(s.runUntil(() => s.all(npcUnrelentingTrainee).length == 3, 9.seconds),
+        "the next wave resumes on the saved cadence");
+    assert(s.all(npcSpectralTrainee).length == 1, "restoring the living wave did not replay its earlier death");
+
+    assert(s.runUntil(() => boss.position.y > -3330 && boss.position.z < 280, 260.seconds),
+        "Gothik reaches the floor and makes his first side change");
+    assert(!s.doorOpen(goGothikCombatGate) && !s.doorOpen(entryGate));
+    s.hurtTo(boss, 64);
+    s.run(2.seconds);
+    const health = boss.values.get!UNIT_FIELD_HEALTH, location = boss.position;
+    s.forget();
+    s.restartAfterCrash();
+    boss = s.the(npcGothik);
+    assert(s.instance == instance && boss.guid == bossGuid && boss.ai.inCombat && boss.position.y > -3360.78,
+        format!"Gothik on the spectral side in combat at %s recovered at %s, in combat %s"(
+            location, boss.position, boss.ai.inCombat));
+    assert(boss.values.get!UNIT_FIELD_HEALTH == health && s.healthOf(boss) < 65);
+    assert(!(boss.values.get!UNIT_FIELD_FLAGS & UnitFlags.uninteractible));
+    assert(!s.doorOpen(goGothikCombatGate), "the central gate stays closed during side changes");
+    foreach (side; [0, 1, 0])
+    {
+        const destination = Gothik.sides[side];
+        assert(s.runUntil(() => (boss.position.x - destination.x) ^^ 2
+            + (boss.position.y - destination.y) ^^ 2 < 0.04f, 21.seconds),
+            format!"no saved teleport to %s by %s ms, Gothik at %s in combat %s"(
+                destination.y, s.elapsedMs, boss.position, boss.ai.inCombat));
+    }
+    assert(s.doorOpen(goGothikCombatGate) && !s.doorOpen(entryGate) && !s.doorOpen(exitGate));
+    assert(s.ask(NaxxEncounter.gothik) == EncounterState.special && s.castBy(npcGothik, Gothik.shadowBolt));
+
+    s.kill(boss);
+    s.run(400.msecs);
+    s.restartAfterCrash();
+    assert(s.ask(NaxxEncounter.gothik) == EncounterState.done && s.doorOpen(exitGate));
+    assert(s.find(npcGothik) is null && !s.all(npcSpectralTrainee).length && !s.all(npcUnrelentingTrainee).length);
 }
 
 /**

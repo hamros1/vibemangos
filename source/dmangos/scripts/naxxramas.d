@@ -18,6 +18,7 @@ module dmangos.scripts.naxxramas;
 import core.time : Duration;
 
 import dmangos.script;
+import dmangos.script.state : appended;
 
 /// Where `who` is, as `ctx` sees it (`Location.init` if it is not here).
 private Location where(C)(ref C ctx, EntityRef who)
@@ -78,6 +79,11 @@ enum : uint
     npcUnrelentingTrainee = 16_124,
     npcUnrelentingKnight = 16_125,
     npcUnrelentingRider = 16_126,
+    npcSpectralTrainee = 16_127,
+    npcSpectralKnight = 16_148,
+    npcSpectralHorse = 16_149,
+    npcSpectralRider = 16_150,
+    goGothikCombatGate = 181_170,
     npcSoldierFrozen = 16_427,
     npcUnstoppableAbom = 16_428,
     npcSoulWeaver = 16_429,
@@ -101,6 +107,8 @@ enum NaxxSignal : uint
     clearShackles = 107, /// the copy to Kel'Thuzad: too many of his guardians are shackled
     freezePlayer = 108, clearIceBlocks = 109, chains = 110,
     magneticPull = 111, /// the copy to an add: its victim was pulled away (`value`: incoming player's guid)
+    gothikWave = 112,    /// a scheduled wave of living adds (`value`: their entry)
+    saveGothik = 113,    /// the boss moved to the floor or changed sides
     triggerBase = 1000, /// an area trigger: `triggerBase + id`
 }
 
@@ -172,7 +180,7 @@ private static immutable NaxxDoor[] naxxDoors = [
     NaxxDoor(181_496, NaxxEncounter.heigan, -1),               // the hallway past Heigan
     NaxxDoor(181_241, -1, NaxxEncounter.loatheb),              // Loatheb's door
     NaxxDoor(181_124, -1, NaxxEncounter.gothik),               // Gothik's entry gate
-    NaxxDoor(181_170, -1, NaxxEncounter.gothik),               // his combat gate
+    NaxxDoor(goGothikCombatGate, -1, NaxxEncounter.gothik),               // his combat gate
     NaxxDoor(181_125, NaxxEncounter.gothik, -1),               // his exit
     NaxxDoor(181_119, NaxxEncounter.gothik, NaxxEncounter.fourHorsemen), // the Horsemen's door
     NaxxDoor(181_123, NaxxEncounter.patchwerk, -1),            // past Patchwerk
@@ -220,15 +228,26 @@ struct Naxxramas
     enum Step : ubyte { sapphiron, shackles, tankSwap }
     Schedule!Step steps;
 
+    // Appended to keep earlier lockout saves readable.
+    @appended EntityRef[] gothikAdds;
+    @transient EntityRef gothik;
+    @transient bool recoveringGothik;
+    @transient float gothikDividerY = -3360.78f; // center of the combat gate in Classic-DB
+
+    private bool gothikActive() const
+    {
+        const state = encounters[NaxxEncounter.gothik];
+        return state == EncounterState.inProgress || state == EncounterState.special;
+    }
+
     private bool doorOpen(size_t i) const
     {
         const d = naxxDoors[i];
         if (d.after >= 0 && encounters[d.after] != EncounterState.done)
             return false;
-        if (d.during >= 0 && (encounters[d.during] == EncounterState.inProgress
-                || (d.during == NaxxEncounter.gothik && encounters[d.during] == EncounterState.special)))
-            return false;
-        return true;
+        if (d.during == NaxxEncounter.gothik && gothikActive)
+            return d.entry == goGothikCombatGate && encounters[NaxxEncounter.gothik] == EncounterState.special;
+        return d.during < 0 || encounters[d.during] != EncounterState.inProgress;
     }
 
     private void updateDoors(ref InstanceContext copy)
@@ -244,6 +263,12 @@ struct Naxxramas
             if (e.object.entry == d.entry)
             {
                 doors[i] = e.object;
+                if (d.entry == goGothikCombatGate)
+                {
+                    Location gate;
+                    if (copy.locationOf(e.object, gate))
+                        gothikDividerY = gate.y;
+                }
                 copy.door(e.object, doorOpen(i));
             }
     }
@@ -252,6 +277,9 @@ struct Naxxramas
     {
         switch (e.creature.entry)
         {
+        case npcGothik:
+            gothik = e.creature;
+            break;
         case npcThaddius:
             thaddius = e.creature;
             break;
@@ -277,6 +305,19 @@ struct Naxxramas
                 copy.respawnObject(portals[i]);
         if (encounters[NaxxEncounter.sapphiron] == EncounterState.special && !sapphiron)
             steps.after(Step.sapphiron, 0.msecs);
+        if (gothikActive)
+        {
+            if (recoveringGothik)
+            {
+                recoveringGothik = false;
+                if (gothik && !copy.alive(copy.victimOf(gothik)))
+                    copy.attack(gothik, e.player);
+            }
+            foreach (add; gothikAdds)
+                if (copy.alive(add) && !copy.alive(copy.victimOf(add)))
+                    if (const target = gothikTarget(copy, where(copy, add)))
+                        copy.attack(add, target);
+        }
     }
 
     /// A restore during Stalagg and Feugen's fight keeps their swap going: adds restored still fighting
@@ -289,6 +330,21 @@ struct Naxxramas
         tankSwapRestored = encounters[NaxxEncounter.thaddius] == EncounterState.inProgress;
         if (tankSwapRestored)
             steps.every(Step.tankSwap, 21.seconds);
+        if (gothikActive)
+        {
+            import std.algorithm.mutation : remove;
+
+            if (copy.entryKilled(npcGothik))
+                setGothik(copy, EncounterState.done);
+            else if (copy.hasSavedCreature(npcGothik))
+            {
+                recoveringGothik = true;
+                gothikAdds = gothikAdds.remove!(add => !copy.hasSavedCreature(add));
+                copy.waitForPlayer();
+            }
+            else
+                setGothik(copy, EncounterState.failed);
+        }
     }
 
     /// The question whether the way to Sapphiron is open (every quarter ended).
@@ -318,6 +374,27 @@ struct Naxxramas
                 copy.despawnObject(block);
             iceBlocks = null;
             return;
+        }
+        if (e.from.entry == npcGothik)
+        {
+            if (e.id == NaxxEncounter.gothik)
+            {
+                gothik = e.from;
+                setGothik(copy, cast(EncounterState) e.value);
+                return;
+            }
+            if (gothikActive && (e.id == NaxxSignal.gothikWave || e.id == NaxxSignal.saveGothik))
+            {
+                gothik = e.from;
+                if (e.id == NaxxSignal.gothikWave)
+                {
+                    spawnGothikAdd(copy, cast(uint) e.value, true);
+                    if (e.value == npcUnrelentingTrainee)
+                        spawnGothikAdd(copy, npcUnrelentingTrainee, true);
+                }
+                copy.checkpointCreature(gothik);
+                return;
+            }
         }
         if (e.id > NaxxSignal.triggerBase)
             return trigger(copy, e.id - NaxxSignal.triggerBase);
@@ -361,6 +438,107 @@ struct Naxxramas
         if (which == NaxxEncounter.thaddius && state == EncounterState.special && thaddius)
             copy.signal(thaddius, NaxxSignal.addsDone);
         updateDoors(copy);
+    }
+
+    private void setGothik(ref InstanceContext copy, EncounterState state)
+    {
+        if (encounters[NaxxEncounter.gothik] == EncounterState.done)
+            return;
+        encounters[NaxxEncounter.gothik] = state;
+        updateDoors(copy);
+        if (gothikActive)
+        {
+            if (gothik)
+                copy.checkpointCreature(gothik);
+        }
+        else
+        {
+            if (gothik)
+                copy.releaseCheckpointActor(gothik);
+            foreach (add; gothikAdds)
+            {
+                copy.releaseCheckpointActor(add);
+                if (copy.alive(add))
+                    copy.despawn(add);
+            }
+            gothikAdds = null;
+        }
+        copy.checkpoint();
+    }
+
+    void on(ref InstanceContext copy, const ref CreatureDied e)
+    {
+        import std.algorithm.mutation : remove;
+        import std.algorithm.searching : countUntil;
+
+        if (e.creature.entry == npcGothik && !e.summoned)
+            return setGothik(copy, EncounterState.done);
+
+        const index = gothikAdds.countUntil(e.creature);
+        if (index < 0)
+            return;
+        gothikAdds = gothikAdds.remove(index);
+        copy.releaseCheckpointActor(e.creature);
+        switch (e.creature.entry)
+        {
+        case npcUnrelentingTrainee:
+            spawnGothikAdd(copy, npcSpectralTrainee, false);
+            break;
+        case npcUnrelentingKnight:
+            spawnGothikAdd(copy, npcSpectralKnight, false);
+            break;
+        case npcUnrelentingRider:
+            spawnGothikAdd(copy, npcSpectralRider, false);
+            spawnGothikAdd(copy, npcSpectralHorse, false);
+            break;
+        default:
+            break;
+        }
+    }
+
+    private EntityRef gothikTarget(ref InstanceContext copy, Location from)
+    {
+        EntityRef[40] raid;
+        EntityRef target;
+        float nearest = 100.0f ^^ 2;
+        foreach (player; raid[0 .. copy.players(raid[])])
+        {
+            Location at;
+            if (!copy.alive(player) || !copy.locationOf(player, at))
+                continue;
+            if (encounters[NaxxEncounter.gothik] != EncounterState.special
+                && (at.y <= gothikDividerY) != (from.y <= gothikDividerY))
+                continue;
+            const distance = (at.x - from.x) ^^ 2 + (at.y - from.y) ^^ 2 + (at.z - from.z) ^^ 2;
+            if (distance < nearest)
+            {
+                nearest = distance;
+                target = player;
+            }
+        }
+        return target;
+    }
+
+    private void spawnGothikAdd(ref InstanceContext copy, uint entry, bool livingSide)
+    {
+        // Use the floor anchors in that half of the room. The higher triggers are on the balconies.
+        Location at = Gothik.sides[livingSide ? 0 : 1];
+        EntityRef[13] anchors;
+        Location[13] points;
+        uint count;
+        foreach (anchor; anchors[0 .. copy.creaturesNear(at, npcSubBossTrigger, 90, anchors[])])
+        {
+            const where_ = where(copy, anchor);
+            if ((where_.y <= gothikDividerY) == livingSide && where_.z < at.z + 5)
+                points[count++] = where_;
+        }
+        if (count)
+            at = points[copy.random(count)];
+        if (const add = copy.summon(entry, at, 0, gothikTarget(copy, at)))
+        {
+            gothikAdds ~= add;
+            copy.checkpointCreature(add);
+        }
     }
 
     private void trigger(ref InstanceContext copy, uint id)
@@ -1229,46 +1407,53 @@ struct Gothik
     Schedule!Step steps;
     ubyte speechStep, teleports, side;
 
-    mixin(encounterOf!"NaxxEncounter.gothik");
-
-    void engaged(ref CreatureContext me, const ref EnteredCombat e)
+    void on(ref CreatureContext me, const ref EnteredCombat e)
     {
         me.castSelf(immuneAll, true);
         me.unitFlags(UnitFlag.uninteractible, true);
         me.rooted(true);
         me.melee(false);
-        speechStep = 0;
-        teleports = 0;
+        speechStep = teleports = side = 0;
         steps.after(Step.speech, 1.seconds);
         steps.after(Step.trainee, 24.seconds);
         steps.after(Step.knight, 74.seconds);
         steps.after(Step.rider, 134.seconds);
         steps.after(Step.groundPhase, 274.seconds);
+        me.signalDungeon(NaxxEncounter.gothik, EncounterState.inProgress);
     }
 
-    void reset(ref CreatureContext me)
+    void on(ref CreatureContext me, const ref Died e)
     {
+        steps.clear();
+        me.sayText(deathLine);
+    }
+
+    void on(ref CreatureContext me, const ref KilledUnit e)
+    {
+        if (e.victim.isPlayer)
+            me.sayText(slayLine);
+    }
+
+    void on(ref CreatureContext me, const ref Reset e)
+    {
+        steps.clear();
         me.removeAura(me.self, immuneAll);
         me.unitFlags(UnitFlag.uninteractible, false);
         me.rooted(false);
         me.melee(true);
-        EntityRef[40] adds;
-        foreach (entry; [npcUnrelentingTrainee, npcUnrelentingKnight, npcUnrelentingRider])
-            foreach (a; adds[0 .. me.creaturesNearby(entry, 200, adds[])])
-                me.despawn(a);
+        me.signalDungeon(NaxxEncounter.gothik, EncounterState.failed);
     }
 
-    /// One of `entry` at each of the anchors on the living side (or by a random player).
-    private void wave(ref CreatureContext me, uint entry, uint count)
+    void on(ref CreatureContext me, const ref Damaged e)
     {
-        EntityRef[13] anchors;
-        const n = me.creaturesNearby(npcSubBossTrigger, 120, anchors[]);
-        foreach (i; 0 .. count)
-        {
-            const target = me.selectTarget(Pick.random, PickFilter.player);
-            const at = n ? where(me, anchors[me.random(cast(uint) n)]) : where(me, target);
-            me.summon(entry, at, 0, target);
-        }
+        if (e.after <= 30 && steps.pending(Step.teleport))
+            steps.after(Step.teleport, 0.msecs); // open after the hit is applied
+    }
+
+    private void openGate(ref CreatureContext me)
+    {
+        steps.cancel(Step.teleport);
+        me.signalDungeon(NaxxEncounter.gothik, EncounterState.special);
     }
 
     void on(ref CreatureContext me, Step step)
@@ -1283,16 +1468,16 @@ struct Gothik
             }
             break;
         case Step.trainee:
-            wave(me, npcUnrelentingTrainee, 2);
             steps.after(step, 20.seconds);
+            me.signalDungeon(NaxxSignal.gothikWave, npcUnrelentingTrainee);
             break;
         case Step.knight:
-            wave(me, npcUnrelentingKnight, 1);
             steps.after(step, 25.seconds);
+            me.signalDungeon(NaxxSignal.gothikWave, npcUnrelentingKnight);
             break;
         case Step.rider:
-            wave(me, npcUnrelentingRider, 1);
             steps.after(step, 30.seconds);
+            me.signalDungeon(NaxxSignal.gothikWave, npcUnrelentingRider);
             break;
         case Step.groundPhase:
             foreach (s; [Step.trainee, Step.knight, Step.rider])
@@ -1303,13 +1488,13 @@ struct Gothik
             me.rooted(false);
             me.melee(true);
             me.teleport(sides[side]);
-            me.signalDungeon(NaxxEncounter.gothik, EncounterState.special); // the combat gate opens
             me.resetThreat();
             if (const target = me.selectTarget(Pick.nearest))
                 me.attack(target);
             steps.after(Step.bolt, 2.seconds);
             steps.after(Step.harvest, 2.seconds);
             steps.after(Step.teleport, 20.seconds);
+            me.signalDungeon(NaxxSignal.saveGothik);
             break;
         case Step.bolt:
             steps.after(step, me.castSpell(shadowBolt) == ActionResult.ok ? between(me, 1000, 2000) : retry);
@@ -1318,15 +1503,24 @@ struct Gothik
             steps.after(step, me.castSelf(harvestSoul) == ActionResult.ok ? 15.seconds : retry);
             break;
         case Step.teleport:
-            if (teleports >= 4 || me.healthPercent <= 30)
+            if (me.healthPercent <= 30)
+            {
+                openGate(me);
                 break;
+            }
             ++teleports;
             side ^= 1;
             me.teleport(sides[side]);
             me.resetThreat();
             if (const target = me.selectTarget(Pick.nearest))
                 me.attack(target);
-            steps.after(step, 20.seconds);
+            if (teleports == 4)
+                openGate(me);
+            else
+            {
+                steps.after(step, 20.seconds);
+                me.signalDungeon(NaxxSignal.saveGothik);
+            }
             break;
         }
     }
