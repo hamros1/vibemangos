@@ -1563,3 +1563,84 @@ unittest
     marked.updateAuras(map, 100);
     assert(marked.auras.find(99_002) is null && trainers() == before + 1, "it ran out, and the script heard");
 }
+
+/// A step's claim that committed though its answer was lost (and the retry could not reconnect) is read back, not
+/// abandoned: its quest credit reaches the player, once, and the run goes on to its next step.
+unittest
+{
+    import core.time : msecs, seconds;
+    import std.algorithm.searching : canFind;
+    import std.typecons : AutoImplement;
+    import dmangos.mysql : DatabaseException;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.database : OutdoorQuestUpdate, OutdoorScriptCheckpoint, OutdoorSummonRequest,
+        OutdoorWorldState, QuestActorCheckpoint, WorldDatabase;
+    import dmangos.world.dbscripts : DbScriptStep, DbScriptType, ScriptCommand;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.player : Player;
+    import dmangos.world.quests : Quest, QuestState;
+
+    static abstract class AnswerLost : WorldDatabase
+    {
+        WorldDatabase inner;
+        bool loseNext;
+        int claims;
+
+        this(WorldDatabase inner) { this.inner = inner; }
+
+        override bool advanceOutdoorScript(uint realm, ushort origin, ulong sequence, uint cursor, bool finished,
+            const(OutdoorQuestUpdate)[] updates, const(QuestActorCheckpoint)[] summons,
+            const(OutdoorScriptCheckpoint)[] relays, const(OutdoorSummonRequest)[] forwards,
+            const(OutdoorWorldState)[] worldStates)
+        {
+            const advanced = inner.advanceOutdoorScript(realm, origin, sequence, cursor, finished, updates, summons,
+                relays, forwards, worldStates);
+            claims += advanced;
+            if (loseNext && updates.length)
+            {
+                loseNext = false;
+                throw new DatabaseException("the COMMIT's answer was lost, and so was the connection");
+            }
+            return advanced;
+        }
+    }
+    enum string forward(C, alias method) = "return inner." ~ __traits(identifier, method) ~ "(args);";
+    alias Flaky = AutoImplement!(AnswerLost, forward);
+
+    enum uint relay = 520, questId = 9410;
+    auto db = newDatabase();
+    auto now = MonoTime.currTime;
+    auto context = newCreationContext(db, (ref config) { config.cluster.nodeId = 1; });
+    context.clock = () => now;
+    Quest q = {id: questId, method: 2, maxLevel: 60, title: "Witness", specialFlags: 0x02};
+    context.data.quests.quests[questId] = q;
+    with (context.data.dbScripts)
+    {
+        add(DbScriptType.relay, DbScriptStep(relay, 1000, 1, ScriptCommand.questExplored, questId));
+        add(DbScriptType.relay, DbScriptStep(relay, 3000, 0, ScriptCommand.emote, 5));
+    }
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
+    auto map = context.map(0);
+    auto keeper = cast(Creature) map.findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
+    anduin.session.inWorld.addQuest(context.data.quests.quests[questId]);
+    anduin.read();
+    auto flaky = new Flaky(db);
+    flaky.loseNext = true;
+    context.database = flaky;
+
+    assert(context.startScript(DbScriptType.relay, relay, map, keeper.guid, anduin.session.character.guid));
+    context.updateScripts(0);
+    assert(db.loadOutdoorScripts(context.config.realmId).length == 1, "tracked outdoors");
+    context.updateScripts(1000); // claimed and committed, but the answer is lost
+    const me = cast(Player) anduin.session.character;
+    assert(flaky.claims == 1 && me.questStatus[questId].status != QuestState.complete, "not applied yet");
+    now += 2.seconds; // past the retry's second, whatever part of a second the clock had begun on
+    context.updateScripts(0); // read back: the step is this run's
+    assert(me.questStatus[questId].status == QuestState.complete, "the committed credit reaches the player");
+    assert(flaky.claims == 1, "not claimed twice");
+    assert(context.runningScripts == 1, "the run goes on");
+    anduin.read();
+    context.updateScripts(2000);
+    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_EMOTE), "its next step runs");
+    assert(context.runningScripts == 0 && db.loadOutdoorScripts(context.config.realmId).length == 0);
+}

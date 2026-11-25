@@ -335,6 +335,10 @@ final class ScriptRun
     long outdoorRetryAt;
     bool outdoorSaved;
     bool waitingForSummons;
+    /// The claim of step `next` failed without an answer, and may have committed (`claimOutdoorStep`).
+    bool claimInDoubt;
+    /// What that step staged: published as it was if the claim did commit (its summons' rows name their guids).
+    OutdoorScriptStep* stagedInDoubt;
 
     this(DbScriptType type, uint id, uint mapId, uint instanceId, ulong source, ulong target,
         const(DbScriptStep)[] steps)
@@ -688,6 +692,31 @@ mixin template DbScriptRunner()
 
         try
         {
+            if (run.claimInDoubt)
+                final switch (earlierClaim(run, finished))
+                {
+                case EarlierClaim.committed:
+                    run.claimInDoubt = false;
+                    if (planned !is null && run.stagedInDoubt !is null)
+                        *planned = *run.stagedInDoubt;
+                    run.stagedInDoubt = null;
+                    run.waitingForSummons = planned !is null && planned.forwards.length != 0;
+                    return true;
+                case EarlierClaim.notCommitted:
+                    run.claimInDoubt = false;
+                    if (run.stagedInDoubt !is null)
+                        run.stagedInDoubt.discardUnpublishedSummons();
+                    run.stagedInDoubt = null;
+                    break; // claimed again below, staged afresh
+                case EarlierClaim.elsewhere:
+                    run.claimInDoubt = false;
+                    if (run.stagedInDoubt !is null)
+                        run.stagedInDoubt.discardUnpublishedSummons();
+                    run.stagedInDoubt = null;
+                    run.next = run.steps.length;
+                    retryOutdoorScriptRecovery = true;
+                    return false;
+                }
             if (planned !is null)
             {
                 planned.parentHome = run.home;
@@ -714,10 +743,39 @@ mixin template DbScriptRunner()
         }
         catch (DatabaseException error)
         {
+            // The COMMIT may have gone through with its answer lost and the retry unable to reconnect: whether the
+            // step is ours is read back before it is claimed again (`earlierClaim`), and what it staged is kept.
             warning!"outdoor script %s: could not claim step %s: %s"(run.id, run.next, error.msg);
+            if (!run.claimInDoubt && planned !is null)
+            {
+                run.stagedInDoubt = new OutdoorScriptStep;
+                *run.stagedInDoubt = *planned;
+                *planned = OutdoorScriptStep.init; // kept, not discarded with the caller's copy
+            }
+            run.claimInDoubt = true;
             run.outdoorRetryAt = unixTime + 1;
         }
         return false;
+    }
+
+    private enum EarlierClaim
+    {
+        committed,    /// the cursor moved past the step (or the finished run's row is gone): the step is this run's
+        notCommitted, /// the cursor still waits at the step
+        elsewhere,    /// anything else: another owner has taken the run on
+    }
+
+    /// Reads back whether a claim of `run.next` whose answer was lost committed. Throws if it cannot read.
+    private EarlierClaim earlierClaim(ScriptRun run, bool finished)
+    {
+        foreach (ref row; database.loadOutdoorScripts(config.realmId))
+            if (row.origin == run.outdoorOrigin && row.sequence == run.outdoorSequence)
+            {
+                if (row.cursor == run.next)
+                    return EarlierClaim.notCommitted;
+                return !finished && row.cursor == run.next + 1 ? EarlierClaim.committed : EarlierClaim.elsewhere;
+            }
+        return finished ? EarlierClaim.committed : EarlierClaim.elsewhere;
     }
 
     private void restoreOutdoorScripts(const(imported!"dmangos.cluster.regions".Region)[] gained = null)
