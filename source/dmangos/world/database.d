@@ -1474,8 +1474,10 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
         const(OutdoorScriptCheckpoint)[] relays = null, const(OutdoorSummonRequest)[] forwards = null,
         const(OutdoorWorldState)[] worldStates = null)
     {
-        if (!updates.length && !summons.length && !relays.length && !forwards.length && !worldStates.length)
-            return statements.advanceOutdoorScript(realm, origin, sequence, cursor, finished);
+        // Always in a transaction, even alone: a lost reply to a bare claim would be retried on a new
+        // connection, match no row (the first attempt moved the cursor) and read as claimed elsewhere.
+        // A transaction rolls back on the lost connection and runs again whole, and `advanced` survives
+        // a lost COMMIT reply.
         bool advanced;
         characterDb.transaction({
             if (!statements.advanceOutdoorScript(realm, origin, sequence, cursor, finished))
