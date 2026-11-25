@@ -172,6 +172,34 @@ final class InstanceScript : InstanceHost
             warning!"instance %s: could not load its encounter creatures: %s"(id, error.msg);
     }
 
+    /**
+     * The highest temporary GUID counter among the summons a copy's saved state (`instance.data`) keeps: a standalone
+     * server's next summons count from above it, or one made before a player returns to the copy could take the
+     * GUID of a saved actor. 0 if it keeps none.
+     */
+    static uint highestSavedSummon(string data)
+    {
+        import std.algorithm.searching : findSplit;
+
+        const section = data.findSplit(instanceSummonPrefix)[2].findSplit(":")[0];
+        uint highest;
+        if (!section.length)
+            return highest;
+        try
+        {
+            ulong[] cells;
+            Migrant[] saved;
+            decodeBundle(fromHex(section), cells, saved);
+            foreach (ref migrant; saved)
+                if ((migrant.kind == MigrantKind.summonedCreature || migrant.kind == MigrantKind.summonedGameObject)
+                    && migrant.spawn > highest)
+                    highest = migrant.spawn;
+        }
+        catch (Exception)
+            return 0;
+        return highest;
+    }
+
     private void loadScriptRuns(string data)
     {
         import dmangos.log : warning;

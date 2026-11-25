@@ -5017,6 +5017,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 instances[r.id] = InstanceState(r.map, r.resetTime, unixTime);
                 instances[r.id].data = r.data;
                 raise(IdKind.instance, r.id + 1);
+                if (!config.cluster.enabled) // its saved actors keep their GUIDs: the next summons count from above
+                {
+                    const highest = InstanceScript.highestSavedSummon(r.data);
+                    if (highest >= temporaryCounterStart)
+                        summonsMade = max(summonsMade, highest - temporaryCounterStart);
+                }
             }
         foreach (b; saved.binds)
             if (auto state = b.instance in instances)

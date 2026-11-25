@@ -1857,6 +1857,27 @@ unittest
     assert(d.all(hurleyBlackbreath).length == 0, "a defeated Hurley stays gone");
 }
 
+/// A standalone server restarted with Hurley kept in a copy's checkpoint: its next summons, made before anyone goes
+/// back into the copy, do not take his GUID.
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.script.api : EntityRef;
+    import dmangos.scripts.blackrockdepths : BlackrockDepths, hurleyBlackbreath;
+    import dmangos.world.context : WorldContext;
+
+    auto d = Dungeon.enter(230, 60);
+    const at = BlackrockDepths.hurleyPlace;
+    d.goTo(Position(at.x + 5, at.y, at.z));
+    foreach (_; 0 .. 3)
+        d.w.context.signalDungeon(d.instanceId, EntityRef.init, BlackrockDepths.Signals.kegBroken, 0);
+    d.run(2500.msecs);
+    const hurley = cast(uint)(d.find(hurleyBlackbreath).guid & 0xFF_FFFF);
+    auto restarted = new WorldContext(d.w.context.config, d.w.db, d.w.context.data, d.w.context.client);
+    assert(restarted.nextTemporaryCounter() > hurley, "the next summon counts from above the saved Hurley");
+}
+
 /**
  * Blackrock Depths: a boss's death can reach the database before the save that settles his encounter. Magmus dead
  * with the Iron Hall's fight still under way in the copy's state: his throne room opens all the same. Moira, out of
