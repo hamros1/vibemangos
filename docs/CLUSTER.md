@@ -1053,9 +1053,13 @@ coordinator's start-up partition and costs too and, like every member, holds the
 * **Members follow** (`Takeover`, sent again each second until accepted). A member takes the standby
   as its coordinator once it has lost the old one itself; while its own link to the old one is alive,
   it waits. The standby's heartbeat echoes on the link they already have renew the member's lease at
-  once; the member re-claims its sessions, reports its ids, and from then on dials the new
-  coordinator's address. With heartbeats every 500 ms, a failure timeout of 3 s and a lease of 5 s,
-  about a second and a half is left to spare. The gateways linked to the standby report their
+  once: the standby's first table replaces the old coordinator's, and the old lease with it, and the
+  member renews its lease from those echoes as the table arrives, not at its next tick, so the lease
+  holds throughout. (In between, the world server would fence out the players it simulates for a
+  gateway, unsaved, and the gateway would restore them from their last checkpoint.) The member
+  re-claims its sessions, reports its ids, and from then on dials the new coordinator's address.
+  With heartbeats every 500 ms, a failure timeout of 3 s and a lease of 5 s, about a second and a
+  half is left to spare. The gateways linked to the standby report their
   confirmed routes with `TakeoverAccepted`, before re-claiming their sessions.
 * **The world server's part** (`onPromoted` in `world/main.d`). The groups are loaded from the
   database (the old coordinator saved every change) and sent to every mirror; ids come from this

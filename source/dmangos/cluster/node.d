@@ -1801,8 +1801,14 @@ final class ClusterNode : LinkOwner
             case MessageType.regionTable:
                 auto table = decode!RegionTable(payload);
                 if ((quorumId ? electedTerm : link.peer.incarnation) == table.coordinatorIncarnation
-                    && (!quorumId || peer == coordinatorId))
-                    regions_.take(table.coordinatorIncarnation, table.version_, table.regions);
+                    && (!quorumId || peer == coordinatorId)
+                    && regions_.take(table.coordinatorIncarnation, table.version_, table.regions) && !quorumId)
+                {
+                    // A new coordinator's table drops the old one's lease; its own echoes, already on this link,
+                    // renew it now, as the next tick would. In between, a gateway's player would be fenced out
+                    // unsaved (`ClusterBridge.fenceGatewaySimulations` runs first in the world's tick).
+                    regions_.confirm(link.confirmedAt);
+                }
                 return;
             case MessageType.idGrant:
                 const grant = decode!IdGrant(payload);
@@ -2879,6 +2885,40 @@ unittest
     uint taken;
     assert(member.pool.take(IdKind.item, taken), "a block came from the new coordinator");
     assert(taken >= 100 && taken < standbyCounters.next[IdKind.item]);
+}
+
+/**
+ * A standby of its own incarnation takes over: its first table replaces the old coordinator's, and with it the
+ * old lease. The member's lease holds even between that table's arrival and its next tick, when the world server
+ * fences out (unsaved) the players it simulates for a gateway if it does not (docs/CLUSTER.md, "The single standby
+ * coordinator").
+ */
+unittest
+{
+    import dmangos.world.grid : cellKey;
+
+    CellCosts costs;
+    foreach (x; -40 .. 40)
+        costs[0][cellKey(x, x % 7)] = 10;
+    auto regions = partition([0u], costs, 8);
+    ulong[uint] cost;
+    foreach (r; regions)
+        cost[r.id] = costOf(costs, r.map, r.rect);
+
+    auto cluster = new TestCluster;
+    auto coordinator = cluster.add(1, 9000, 1, CoordinatorSetup(regions.dup, cost.dup, new TestCounters));
+    auto standby = cluster.add(2, 9001, 2, CoordinatorSetup(regions.dup, cost.dup, new TestCounters), true);
+    auto member = cluster.add(3, 9002);
+    cluster.run(8000, coordinator, standby, member);
+    assert(member.regions.coordinator == 1 && member.regions.ownedRegions.length);
+
+    cluster.kill(coordinator);
+    foreach (_; 0 .. 120)
+    {
+        cluster.run(50, standby, member); // each step ends with what arrived, before the nodes' next tick
+        assert(member.regions.leaseHolds(cluster.now), "the member's lease holds as the new table comes");
+    }
+    assert(standby.isCoordinator && member.regions.coordinator == 2, "the member took the standby's table");
 }
 
 
