@@ -155,36 +155,26 @@ have the same type, and a contract checks that. To show an object to *another* p
 
 ### Write a GM command
 
-GM commands are a compatibility contract: they behave exactly as ArcEmu 2.4.3's, with its command
-tables, permission letters, checks and messages, word for word. ArcEmu's handlers are therefore the
-specification for each command.
-
-Every command is already in `commandtable.d`; the ones not written answer "Not yet
-implemented.". To write one, find its row (say `.npc come`, handler `HandleNpcComeCommand`), read
-the specification's handler, and add the method with the same name, first letter in lower case, to
-the mixin of the matching command file (`gmlevel2.d` for `Level2.cpp` if it does not exist yet: a
-new mixin template mixed into `Character` like the others):
+Add the handler to the appropriate `gm*.d` mixin and register it in `commandtable.d`.
+The catalog supplies the in-game usage, permission checks and generated reference. For example,
+this is the action for `.wp move`.
 
 ```d
-bool handleNpcComeCommand(uint distance = 5)     // the command's words, as typed parameters
-{
-    auto creature = getSelectedCreature(true);   // the selected creature, or an error
-    if (creature is null)
-        return true;
-    ...
-    blueSystemMessage("...");                    // the specified message, word for word
-    return true;                                 // false shows the row's help
-}
+action("movehere", permit('w'), "handleWPMoveHereCommand", "<point>",
+    "Move a draft point to your position.", "move"),
 ```
 
-That is all: the compile-time `switch` finds the method. Its parameters are the command's words,
-converted with `std.conv.to`: a parameter with a default is optional, a `Nullable` one is null when
-missing, a `Rest` takes the rest of the line (a name, a reason), and `OnOff` reads "on" or "off". A
-word that is missing or does not convert shows the row's help, so the handler never sees bad input.
-Keep the specified checks and messages; use
-`getSelectedChar(showError)` for its "selected player" and call that session's methods to change it.
-Where the database schema forces a difference, say so in the module comment. Then run
-`python3 tools/commands_doc.py` to update `docs/COMMANDS.md`.
+The last argument is the preferred spelling. The original name stays in existing permission
+paths, so `.wp move` uses `command.waypoint movehere`. Use `shortcut` to link to an action in
+another group. Use an explicit named capability when the legacy permission letter and the role
+capability cover different duties.
+
+The dispatch code converts arguments to the handler’s parameter types. A default value makes an
+argument optional. An omitted `Nullable` argument is null. `Rest` takes the rest of the line and
+`OnOff` accepts `on` or `off`. Return false to show usage, or send a message and return true if
+the input is valid but the action cannot run.
+
+Run `python3 tools/commands_doc.py` after editing the catalog.
 
 ### Write a script
 

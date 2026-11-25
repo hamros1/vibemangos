@@ -1,17 +1,22 @@
 # GM commands
 
-Type `.` or `!` before a command in chat. Use `.commands` to discover the commands you can run and
-`.help <command>` for its syntax. Typing a group by itself, such as `.npc`, lists its available
-subcommands. Exact names take priority and existing abbreviations still work.
+Type a command in chat with a leading `.` or `!`. Start with `.commands` or open a group such as
+`.wp` to see the actions you can use. Use `.help <command>` to see its arguments and what it does.
+The catalog shows the shorter spellings first. Existing spellings and their abbreviations still work.
 
 | Task | Command |
 |---|---|
-| Show location | `.gps` or `.debug dumpcoords` |
-| Travel to a map coordinate | `.travel coords <map> <x> <y> <z>` |
-| Visit or summon a player | `.travel player <name>`, `.travel summon <name>` |
+| Show your location | `.where` |
+| Travel to a map coordinate | `.go coords <map> <x> <y> <z>` |
+| Visit or summon a player | `.go player <name>`, `.go summon <name>` |
 | Teach a spell to the selected player or yourself | `.learn <spell-id>` |
-| Find a support ticket | `.gmTicket list` |
-| Check your access | `.access whoami` |
+| Find a support ticket | `.ticket list` |
+| Check your access | `.access status` |
+| Inspect the battleground queue | `.bg queue` |
+| See uptime and player counts | `.server status` |
+
+Use `.modify hp 400` to set both health and maximum health to 400. Use
+`.modify hp 300 400` to set them separately.
 
 ## Give someone staff access
 
@@ -55,16 +60,16 @@ VALUES ('npc-inspector', 'command.npc info');
 Then use `.access grant <login> npc-inspector`. A capability such as `world.creatures` grants
 every command with that capability in the reference below. For one command, use
 `command.<full command path>` with lowercase words, for example `command.character learn`.
-Shortcuts share their original permission path. For `.travel coords` use `command.worldport`,
+Shortcuts share their original permission path. For `.go coords` use `command.worldport`,
 and for `.npc traineradd` use `command.addtrainerspell`.
 
 ## Edit a route or trainer
 
-* Select a saved creature. Stand at each waypoint and use `.waypoint add [wait-ms]`. Use
-  `.waypoint show` to review your draft and `.waypoint save` to commit the route. Use
-  `.waypoint hide` to discard unsaved edits. Selecting a different spawn starts a new draft.
+* Select a saved creature. Stand at each waypoint and use `.wp add [wait-ms]`. Use
+  `.wp list` to review your draft and `.wp save` to commit the route. Use
+  `.wp discard` to discard unsaved edits. Selecting a different spawn starts a new draft.
   A saved empty route makes the spawn idle. Attach existing movement scripts with
-  `.waypoint script <point> <script-id>`.
+  `.wp script <point> <script-id>`.
 * If you imported Classic-DB before this change, run
   `mariadb -u root -p classicmangos < sql/gm-waypoints.sql` against the world database.
   It converts the spawn and route tables to InnoDB. Run this migration during maintenance,
@@ -73,7 +78,7 @@ and for `.npc traineradd` use `command.addtrainerspell`.
   Use the spell that teaches the lesson. The selected worker uses it immediately, and the other
   workers pick it up on their next catalog refresh.
 
-Use `.quest load` after updating quest definitions or giver relationships in the world database.
+Use `.quest reload` after updating quest definitions or giver relationships in the world database.
 Workers switch to the new catalog after it loads.
 
 ## Design references
@@ -89,323 +94,322 @@ Workers switch to the new catalog after it loads.
   and chat-based staff feedback. [Aion command reference](https://power.ncsoft.jp/aion/powerWiki/操作方法およびコマンド)
   [WildStar Redmoon Rising patch notes](https://store.steampowered.com/news/posts/?appids=376570&enddate=1472591462)
 
-## Working commands (280)
+## Working commands (278)
 
 Generated from the command tables by `python3 tools/commands_doc.py`.
 
-| Command | Capability | Help |
+| Command | Effect | Capability |
 |---|---|---|
-| `.commands` | `public` | Shows Commands |
-| `.help` | `public` | Shows help for command |
-| `.announce` | `staff.announce` | Sends Msg To All |
-| `.wannounce` | `staff.announce` | Sends Widescreen Msg To All |
-| `.appear` | `world.teleport` | Teleports to x's position. |
-| `.summon` | `world.teleport` | Summons x to your position |
-| `.kill` | `character.combat` | .kill - Kills selected unit. |
-| `.killplr` | `character.combat` | .killplr <name> - Kills specified player |
-| `.revive` | `character.combat` | Revives you. |
-| `.reviveplr` | `character.combat` | Revives player specified. |
-| `.demorph` | `character.modify` | Demorphs from morphed model. |
-| `.mount` | `character.modify` | Mounts into modelid x. |
-| `.dismount` | `character.mount` | Dismounts. |
-| `.gps` | `public` | Shows Position |
-| `.scourge` | `staff.admin` | .scourge start\|stop\|status |
-| `.worldport` | `world.teleport` |  |
-| `.start` | `character.modify` | Teleport's you to a starting location |
-| `.invincible` | `staff.presence` | .invincible - Toggles INVINCIBILITY (mobs won't attack you) |
-| `.invisible` | `staff.presence` | .invisible - Toggles INVINCIBILITY and INVISIBILITY (mobs won't attack you and nobody can see you, but they can see your chat messages) |
-| `.playerinfo` | `character.modify` | .playerinfo - Displays informations about the selected character (account...) |
-| `.levelup` | `character.modify` | Levelup x lvls |
-| `.modify hp` | `character.modify` | Modifies health points (HP) of selected target |
-| `.modify gender` | `character.modify` | Changes gender of selected target. Usage: 0=male, 1=female. |
-| `.modify mana` | `character.modify` | Modifies mana points (MP) of selected target. |
-| `.modify rage` | `character.modify` | Modifies rage points of selected target. |
-| `.modify energy` | `character.modify` | Modifies energy points of selected target. |
-| `.modify level` | `character.modify` | Modifies the level of selected target. |
-| `.modify strength` | `character.modify` | Modifies the strength value of the selected target. |
-| `.modify agility` | `character.modify` | Modifies the agility value of the selected target. |
-| `.modify intelligence` | `character.modify` | Modifies the intelligence value of the selected target. |
-| `.modify spirit` | `character.modify` | Modifies the spirit value of the selected target. |
-| `.modify armor` | `character.modify` | Modifies the armor of selected target. |
-| `.modify holy` | `character.modify` | Modifies the holy resistance of selected target. |
-| `.modify fire` | `character.modify` | Modifies the fire resistance of selected target. |
-| `.modify nature` | `character.modify` | Modifies the nature resistance of selected target. |
-| `.modify frost` | `character.modify` | Modifies the frost resistance of selected target. |
-| `.modify shadow` | `character.modify` | Modifies the shadow resistance of selected target. |
-| `.modify arcane` | `character.modify` | Modifies the arcane resistance of selected target. |
-| `.modify damage` | `character.modify` | Modifies the damage done by the selected target. |
-| `.modify ap` | `character.modify` | Modifies the attack power of the selected target. |
-| `.modify rangeap` | `character.modify` | Modifies the range attack power of the selected target. |
-| `.modify scale` | `character.modify` | Modifies the scale of the selected target. |
-| `.modify gold` | `character.modify` | Modifies the gold amount of the selected target. Copper value. |
-| `.modify speed` | `character.modify` | Modifies the movement speed of the selected target. |
-| `.modify nativedisplayid` | `character.modify` | Modifies the native display identifier of the target. |
-| `.modify displayid` | `character.modify` | Modifies the display identifier (DisplayID) of the target. |
-| `.modify flags` | `character.modify` | Modifies the flags of the selected target. |
-| `.modify faction` | `character.modify` | Modifies the faction template of the selected target. |
-| `.modify dynamicflags` | `character.modify` | Modifies the dynamic flags of the selected target. |
-| `.modify talentpoints` | `character.modify` | Modifies the available talent points of the selected target. |
-| `.modify happiness` | `character.modify` | Modifies the happiness value of the selected target. |
-| `.modify boundingraidius` | `character.modify` | Modifies the bounding radius of the selected target. |
-| `.modify combatreach` | `character.modify` | Modifies the combat reach of the selected target. |
-| `.modify npcemotestate` | `character.modify` | Modifies the NPC emote state of the selected target. |
-| `.modify bytes` | `character.modify` | WARNING! Modifies the bytes entry of selected target. |
-| `.waypoint add` | `world.waypoints` | .waypoint add [wait-ms] — Adds your position to the draft |
-| `.waypoint show` | `world.waypoints` | .waypoint show — Lists the selected spawn’s draft |
-| `.waypoint hide` | `world.waypoints` | .waypoint hide — Closes the draft and discards unsaved edits |
-| `.waypoint delete` | `world.waypoints` | .waypoint delete <point> |
-| `.waypoint movehere` | `world.waypoints` | .waypoint movehere <point> |
-| `.waypoint waittime` | `world.waypoints` | .waypoint waittime <point> <milliseconds> |
-| `.waypoint change` | `world.waypoints` | .waypoint change <point> <new-point> |
-| `.waypoint info` | `world.waypoints` | .waypoint info <point> |
-| `.waypoint movetype` | `world.waypoints` | .waypoint movetype <loop\|linear> |
-| `.waypoint generate` | `world.waypoints` | .waypoint generate — Extends the draft to your position using the navigation mesh. |
-| `.waypoint script` | `world.waypoints` | .waypoint script <point> <script-id\|0> — Attaches or clears a movement script |
-| `.waypoint save` | `world.waypoints` | .waypoint save — Persists the selected route |
-| `.waypoint deleteall` | `world.waypoints` | .waypoint deleteall — Clears the selected draft |
-| `.debug infront` | `debug.use` |  |
-| `.debug showreact` | `debug.use` |  |
-| `.debug aimove` | `debug.use` | .debug aimove <x> <y> <z> |
-| `.debug dist` | `debug.use` |  |
-| `.debug face` | `debug.use` |  |
-| `.debug moveinfo` | `debug.use` |  |
-| `.debug setbytes` | `debug.use` |  |
-| `.debug getbytes` | `debug.use` |  |
-| `.debug unroot` | `debug.use` |  |
-| `.debug root` | `debug.use` |  |
-| `.debug landwalk` | `debug.use` |  |
-| `.debug waterwalk` | `debug.use` |  |
-| `.debug castspell` | `debug.use` | .castspell <spellid> - Casts spell on target. |
-| `.debug castself` | `debug.use` | .castself <spellId> - Target casts spell <spellId>Â on itself. |
-| `.debug castspellne` | `debug.use` | .castspellne <spellid> - Casts spell on target (only plays animations, doesnt handle effects or range/facing/etc. |
-| `.debug aggrorange` | `debug.use` | .aggrorange - Shows aggro Range of the selected Creature. |
-| `.debug knockback` | `debug.use` | .knockback <value> - Knocks you back. |
-| `.debug fade` | `debug.use` | .debug fade <0-100> — Reduces your threat on the selected creature by a percentage. |
-| `.debug threatMod` | `debug.use` | .debug threatMod <-100–100> — Adjusts your threat on the selected creature by a percentage. |
-| `.debug calcThreat` | `debug.use` | .debug calcThreat <damage> <spell-id> — Estimates threat with your current modifiers. |
-| `.debug threatList` | `debug.use` | .threatList  - returns all AI_Targets of the selected Creature. |
-| `.debug gettptime` | `debug.use` | Shows the current ship or zeppelin circuit time. |
-| `.debug itempushresult` | `debug.use` | sends item push result |
-| `.debug setbit` | `debug.use` |  |
-| `.debug setvalue` | `debug.use` |  |
-| `.debug dumpcoords` | `debug.use` |  |
-| `.debug sendpacket` | `debug.use` | <opcode ID>, <data> |
-| `.debug rangecheck` | `debug.use` | Checks the 'yard' range and internal range between the player and the target. |
-| `.debug testlos` | `debug.use` | tests los |
-| `.debug testindoor` | `debug.use` | tests indoor |
-| `.debug getheight` | `debug.use` | Gets height |
-| `.debug getpos` | `debug.use` |  |
-| `.debug getUint32Value` | `debug.use` |  |
-| `.gm list` | `public` | Shows active GM's |
-| `.gm off` | `staff.tag` | Sets GM tag off |
-| `.gm on` | `staff.tag` | Sets GM tag on |
-| `.gm whisperblock` | `world.objects.move` | Blocks like .gmon except without the <GM> tag |
-| `.gm allowwhispers` | `staff.support` | Allows whispers from player <s> while in gmon mode. |
-| `.gm blockwhispers` | `staff.support` | Blocks whispers from player <s> while in gmon mode. |
-| `.gmTicket list` | `support.tickets` | Lists all active GM Tickets. |
-| `.gmTicket get` | `support.tickets` | Gets GM Ticket with ID x. |
-| `.gmTicket remove` | `support.tickets` | Removes GM Ticket with ID x. |
-| `.gmTicket deletepermanent` | `staff.admin` | Deletes GM Ticket with ID x permanently. |
-| `.gmTicket assign` | `support.tickets` | Assignes GM Ticket with id x to GM y (if empty to your self). |
-| `.gmTicket release` | `support.tickets` | Releases assigned GM Ticket with ID x. |
-| `.gmTicket comment` | `support.tickets` | Sets comment x to GM Ticket with ID y. |
-| `.gmTicket toggle` | `staff.admin` | Toggles the ticket system status. |
-| `.gobject select` | `world.objects` | Selects the nearest GameObject to you |
-| `.gobject delete` | `world.objects` | Deletes selected GameObject |
-| `.gobject spawn` | `world.objects` | Spawns a GameObject by ID |
-| `.gobject info` | `world.objects` | Gives you informations about selected GO |
-| `.gobject activate` | `world.objects` | Activates/Opens the selected GO. |
-| `.gobject enable` | `world.objects` | Enables the selected GO for use. |
-| `.gobject scale` | `world.objects` | Sets scale of selected GO |
-| `.gobject animprogress` | `world.objects` | Sets anim progress |
-| `.gobject export` | `world.objects` | Prints coordinates and rotation of the selected game object. |
-| `.gobject move` | `world.objects.move` | Moves gameobject to player xyz |
-| `.gobject rotate` | `world.objects.move` | <Axis> <Value> - Rotates the object. <Axis> x,y, Default o. |
-| `.battleground setbgscore` | `battleground.manage` | .battleground setbgscore <alliance\|horde> <score> — Sets a below-win score in Warsong Gulch or Arathi Basin. |
-| `.battleground startbg` | `battleground.manage` | Starts current battleground match. |
-| `.battleground bginfo` | `battleground.manage` | Displays information about current battleground. |
-| `.battleground battleground` | `battleground.manage` | Shows the current match and how to list match commands. |
-| `.battleground setworldstate` | `battleground.manage` | <var> <val> - Var can be in hex. WS Value. |
-| `.battleground setworldstates` | `battleground.manage` | <var> <val> - Var can be in hex. WS Value. |
-| `.battleground playsound` | `battleground.manage` | <val>. Val can be in hex. |
-| `.battleground setbfstatus` | `battleground.manage` | .battleground setbfstatus start — Starts the current match. |
-| `.battleground leave` | `battleground.manage` | Leaves the current battleground. |
-| `.battleground getqueue` | `staff.admin` | Shows queue and match counts from the battlegroup coordinator. |
-| `.battleground forcestart` | `staff.admin` | Forces initialitation of all battlegrounds with active queue. |
-| `.npc vendoradditem` | `world.creatures` | Adds to vendor |
-| `.npc vendorremoveitem` | `world.creatures` | Removes from vendor. |
-| `.npc flags` | `world.creatures` | Changes NPC flags |
-| `.npc emote` | `world.creatures` | .emote - Sets emote state |
-| `.npc delete` | `world.creatures` | Deletes mob from db and world. |
-| `.npc info` | `world.creatures` | Displays NPC information |
-| `.npc traineradd` | `world.trainers` | .npc traineradd <teaching-spell-id> [cost-in-copper] [required-level] |
-| `.npc listAgent` | `world.creatures` | .npc listAgent — Shows the selected creature’s scripts and combat spells |
-| `.npc say` | `world.creatures` | .npc say <text> - Makes selected mob say text <text>. |
-| `.npc yell` | `world.creatures` | .npc yell <Text> - Makes selected mob yell text <text>. |
-| `.npc come` | `world.creatures` | .npc come - Makes npc move to your position |
-| `.npc return` | `world.creatures` | .npc return - Returns ncp to spawnpoint. |
-| `.npc spawn` | `world.creatures` | .npc spawn - Spawns npc of entry <id> |
-| `.npc respawn` | `world.creatures` | .respawn - Respawns a dead npc from it's corpse. |
-| `.npc possess` | `world.creatures` | .npc possess - Possess an npc (mind control) |
-| `.npc unpossess` | `world.creatures` | .npc unpossess - Unposses any currently possessed npc. |
-| `.npc select` | `world.creatures` | .npc select - selects npc closest |
-| `.npc npcfollow` | `character.modify` | Sets npc to follow you |
-| `.npc nullfollow` | `character.modify` | Sets npc to not follow anything |
-| `.cheat status` | `testing.cheats` | Shows active cheats. |
-| `.cheat taxi` | `testing.cheats` | Enables all taxi nodes. |
-| `.cheat cooldown` | `testing.cheats` | Enables no cooldown cheat. |
-| `.cheat casttime` | `testing.cheats` | Enables no cast time cheat. |
-| `.cheat power` | `testing.cheats` | Disables mana consumption etc. |
-| `.cheat god` | `testing.cheats` | Sets god mode, prevents you from taking damage. |
-| `.cheat explore` | `testing.cheats` | Reveals the unexplored parts of the map. |
-| `.cheat triggerpass` | `testing.cheats` | Ignores area trigger prerequisites. |
-| `.account level` | `staff.admin` | Sets gm level on account. Pass it username and 0,1,2,3,az, etc. |
-| `.account mute` | `account.moderate` | Mutes account for <timeperiod>. |
-| `.account unmute` | `account.moderate` | Unmutes account <x> |
-| `.honor addpoints` | `character.modify` | Adds x amount of honor points/currency |
-| `.honor addkills` | `character.modify` | Adds x amount of honor kills |
-| `.honor globaldailyupdate` | `character.modify` | Daily honor field moves |
-| `.honor singledailyupdate` | `character.modify` | Daily honor field moves for selected player only |
-| `.honor pvpcredit` | `character.modify` | Sends PVP credit packet, with specified rank and points |
-| `.quest addboth` | `world.quests` | Add quest <id> to the targeted NPC as start & finish |
-| `.quest addfinish` | `world.quests` | Add quest <id> to the targeted NPC as finisher |
-| `.quest addstart` | `world.quests` | Add quest <id> to the targeted NPC as starter |
-| `.quest delboth` | `world.quests` | Delete quest <id> from the targeted NPC as start & finish |
-| `.quest delfinish` | `world.quests` | Delete quest <id> from the targeted NPC as finisher |
-| `.quest delstart` | `world.quests` | Delete quest <id> from the targeted NPC as starter |
-| `.quest complete` | `world.quests` | Complete/Finish quest <id> |
-| `.quest finisher` | `world.quests` | Lookup quest finisher for quest <id> |
-| `.quest item` | `world.quests` | Lookup itemid necessary for quest <id> |
-| `.quest list` | `world.quests` | Lists the quests for the npc <id> |
-| `.quest load` | `world.quests` | Reloads quest definitions and giver relationships on all workers. |
-| `.quest lookup` | `world.quests` | Looks up quest string x |
-| `.quest giver` | `world.quests` | Lookup quest giver for quest <id> |
-| `.quest remove` | `world.quests` | Removes the quest <id> from the targeted player |
-| `.quest reward` | `world.quests` | Shows reward for quest <id> |
-| `.quest status` | `world.quests` | Lists the status of quest <id> |
-| `.quest spawn` | `world.quests` | Port to spawn location for quest <id> |
-| `.quest start` | `world.quests` | Starts quest <id> |
-| `.pet createpet` | `character.modify` | Creates a pet with <entry>. |
-| `.pet renamepet` | `character.modify` | Renames a pet to <name>. |
-| `.pet addspell` | `character.modify` | Teaches pet <spell>. |
-| `.pet removespell` | `character.modify` | Removes pet spell <spell>. |
-| `.recall list` | `world.quests` | List recall locations |
-| `.recall port` | `world.quests` | Port to recalled location |
-| `.recall add` | `world.quests` | Add recall location |
-| `.recall del` | `world.quests` | Remove a recall location |
-| `.recall portplayer` | `character.modify` | recall ports player |
-| `.guild create` | `guild.manage` | Creates a guild. |
-| `.guild rename` | `guild.manage` | Renames a guild. |
-| `.guild members` | `guild.manage` | Lists guildmembers and their ranks. |
-| `.guild removeplayer` | `guild.manage` | Removes a player from a guild. |
-| `.guild disband` | `guild.manage` | Disbands the guild of your target. |
-| `.server setmotd` | `character.modify` | Sets MOTD |
-| `.server rehash` | `staff.admin` | Reloads config file. |
-| `.server reloadtable` | `character.modify` | Reloads some of the database tables |
-| `.server shutdown` | `staff.admin` | Initiates server shutdown in <x> seconds (5 by default). |
-| `.server restart` | `staff.admin` | Initiates server restart in <x> seconds (5 by default). |
-| `.server cancelshutdown` | `staff.admin` | Cancels a Server Restart/Shutdown. |
-| `.server save` | `server.save` | Save's target character |
-| `.server saveall` | `server.save` | Save's all playing characters |
-| `.server info` | `public` | Server info |
-| `.server netstatus` | `public` | Shows network status. |
-| `.character learn` | `character.learn` | Learns spell |
-| `.character unlearn` | `character.learn` | Unlearns spell |
-| `.character getskillinfo` | `character.modify` | Gets all the skills from a player |
-| `.character learnskill` | `character.learn` | .learnskill <skillid> (optional) <value> <maxvalue> - Learns skill id skillid. |
-| `.character advanceskill` | `character.learn` | advanceskill <skillid> <amount, optional, default = 1> - Advances skill line x times.. |
-| `.character removeskill` | `character.learn` | .removeskill <skillid> - Removes skill |
-| `.character increaseweaponskill` | `character.learn` | .increaseweaponskill <count> - Increase eqipped weapon skill x times (defaults to 1). |
-| `.character resetreputation` | `world.creatures` | .resetreputation - Resets reputation to start levels. (use on characters that were made before reputation fixes.) |
-| `.character resetspells` | `character.learn` | .resetspells - Resets all spells to starting spells of targeted player. DANGEROUS. |
-| `.character resettalents` | `character.learn` | .resettalents - Resets all talents of targeted player to that of their current level. DANGEROUS. |
-| `.character resetskills` | `character.learn` | .resetskills - Resets all skills. |
-| `.character additem` | `character.modify` | Adds item x count y |
-| `.character removeitem` | `character.modify` | Removes item %u count %u. |
-| `.character additemset` | `character.modify` | Adds item set to inv. |
-| `.character advanceallskills` | `character.learn` | Advances all skills <x> points. |
-| `.character getstanding` | `character.modify` | Gets standing of faction %u. |
-| `.character setstanding` | `character.modify` | Sets stanging of faction %u. |
-| `.character showitems` | `character.modify` | Shows items of selected Player |
-| `.character showskills` | `character.modify` | Shows skills of selected Player |
-| `.character showinstances` | `staff.admin` | Shows persistent instances of selected Player |
-| `.character rename` | `character.modify` | Renames character x to y. |
-| `.character forcerename` | `character.modify` | Forces character x to rename his char next login |
-| `.character repairitems` | `world.creatures` | .repairitems - Repair all items from selected player |
-| `.lookup item` | `support.lookup` | Looks up item string x. |
-| `.lookup quest` | `support.lookup` | Looks up quest string x. |
-| `.lookup creature` | `support.lookup` | Looks up item string x. |
-| `.lookup object` | `support.lookup` | Looks up gameobject string x. |
-| `.lookup spell` | `support.lookup` | Looks up spell string x. |
-| `.lookup skill` | `support.lookup` | Looks up skill string x. |
-| `.lookup faction` | `support.lookup` | Looks up faction string x. |
-| `.admin castall` | `staff.admin` | Makes all players online cast spell <x>. |
-| `.admin dispelall` | `staff.admin` | Dispels all negative (or positive w/ 1) auras on all players. |
-| `.admin masssummon` | `staff.admin` | .masssummon - Summons all players. |
-| `.admin playall` | `staff.admin` | Plays a sound to the entire server. |
-| `.kick byplayer` | `staff.disconnect` | Disconnects the player with name <s>. |
-| `.kick byaccount` | `staff.disconnect` | Disconnects the session with account name <s>. |
-| `.kick byip` | `staff.disconnect` | Disconnects the session with the ip <s>. |
-| `.ban ip` | `character.modify` | Adds an address to the IP ban table: <address> [duration] Duration must be a number optionally followed by a character representing the calendar subdivision to use (h>hours, d>days, w>weeks, m>months, y>years, default minutes) Lack of duration results in a permanent ban. |
-| `.ban character` | `staff.discipline` | Bans character x with or without reason |
-| `.ban account` | `account.moderate` | Ban account. .account ban name timeperiod |
-| `.unban ip` | `character.modify` | Deletes an address from the IP ban table: <address> |
-| `.unban character` | `staff.discipline` | Unbans character x |
-| `.unban account` | `staff.admin` | Unbans account x. |
-| `.instance reset` | `staff.admin` | Removes instance ID x from target player. |
-| `.instance resetall` | `character.modify` | Removes all instance IDs from target player. |
-| `.instance shutdown` | `staff.admin` | Shutdown instance with ID x (default is current instance). |
-| `.instance info` | `character.modify` | Gets info about instance with ID x (default is current instance). |
-| `.instance exit` | `character.modify` | Exits current instance, return to entry point. |
-| `.kickplayer` | `staff.discipline` | Kicks player from server |
-| `.gmannounce` | `staff.announce` | Sends Msg to all online GMs |
-| `.clearcooldowns` | `character.modify` | Clears all cooldowns for your class. |
-| `.removeauras` | `character.modify` | Removes all auras from target |
-| `.paralyze` | `staff.discipline` | Roots/Paralyzes the target. |
-| `.unparalyze` | `staff.discipline` | Unroots/Unparalyzes the target. |
-| `.gotrig` | `world.teleport` | Warps to areatrigger <id> |
-| `.logcomment` | `support.lookup` | Adds a comment to the GM log for the admins to read. |
-| `.removesickness` | `character.modify` | Removes ressurrection sickness from the target |
-| `.fixscale` | `character.modify` |  |
-| `.addtrainerspell` | `world.trainers` | .addtrainerspell <teaching-spell-id> [cost-in-copper] [required-level] |
-| `.travel coords` | `world.teleport` | Usage: .travel coords <map> <x> <y> <z> |
-| `.travel player` | `world.teleport` | Usage: .travel player <name> |
-| `.travel summon` | `world.teleport` | Usage: .travel summon <name> |
-| `.access whoami` | `public` | Shows your active staff roles and capabilities. |
-| `.access grant` | `staff.admin + roles.manage` | Usage: .access grant <account> <role> |
-| `.access revoke` | `staff.admin + roles.manage` | Usage: .access revoke <account> <role> |
-| `.learn` | `character.learn` | Usage: .learn <spell-id\|all> |
+| `.access grant <account> <role>` | Assign a role to an account. | `staff.admin + roles.manage` |
+| `.access revoke <account> <role>` | Remove a role from an account. | `staff.admin + roles.manage` |
+| `.access status` (also `.access whoami`) | Show your roles and capabilities. | `public` |
+| `.account level <account> <0\|1\|2\|3>` | Set an account's legacy staff level. | `staff.admin` |
+| `.account mute <account> <duration>` | Mute an account for a duration. | `account.moderate` |
+| `.account unmute <account>` | Remove an account mute. | `account.moderate` |
+| `.addtrainerspell <teaching-spell-id> [copper] [level]` | Add a lesson to the selected trainer. | `world.trainers` |
+| `.admin castall <spell-id>` | Make online players on this worker cast a spell. | `staff.admin` |
+| `.admin dispelall [all: 0\|1]` | Remove harmful or helpful auras from players on this worker. | `staff.admin` |
+| `.admin masssummon` | Summon online players to your position. | `staff.admin` |
+| `.admin playall <sound-id>` | Play a sound for all players. | `staff.admin` |
+| `.announce [message]` | Send a realm-wide chat announcement. | `staff.announce` |
+| `.appear <name>` | Teleport to a player. | `world.teleport` |
+| `.ban account <account> <duration> [reason]` | Ban an account. | `account.moderate` |
+| `.ban character <character> <duration> <reason>` | Ban a character's account. | `staff.discipline` |
+| `.ban ip <ip-address> <duration> [reason]` | Ban an IP address. | `character.modify` |
+| `.bg battleground` (also `.battleground battleground`) | Show the current match and available tools. | `battleground.manage` |
+| `.bg forcestart` (also `.battleground forcestart`) | Start all queued battlegrounds. | `staff.admin` |
+| `.bg leave` (also `.battleground leave`) | Leave the current battleground. | `battleground.manage` |
+| `.bg queue` (also `.battleground getqueue`) | Show battlegroup queue and match counts. | `staff.admin` |
+| `.bg score <alliance\|horde> <score>` (also `.battleground setbgscore`) | Set a below-win score in Warsong Gulch or Arathi Basin. | `battleground.manage` |
+| `.bg setbfstatus start` (also `.battleground setbfstatus`) | Start the current battleground with the start action. | `battleground.manage` |
+| `.bg setworldstates <id> <value>` (also `.battleground setworldstates`) | Set a world state in the current battleground. | `battleground.manage` |
+| `.bg sound <sound-id>` (also `.battleground playsound`) | Play a sound in the current battleground. | `battleground.manage` |
+| `.bg start` (also `.battleground startbg`) | Start the current battleground. | `battleground.manage` |
+| `.bg status` (also `.battleground bginfo`) | Show the current match and its status. | `battleground.manage` |
+| `.bg worldstate <id> <value>` (also `.battleground setworldstate`) | Set a world state in the current battleground. | `battleground.manage` |
+| `.character additemset <set-id>` | Give an item set to the selected player. | `character.modify` |
+| `.character advanceallskills <points>` | Raise all skills by the given number of points. | `character.learn` |
+| `.character advanceskill <skill-id> [points]` | Raise a skill by the given number of points. | `character.learn` |
+| `.character forcerename <name>` | Require a character to take a new name at login. | `character.modify` |
+| `.character getskillinfo` | Show the selected player's skills. | `character.modify` |
+| `.character getstanding <faction-id>` | Show standing with a faction. | `character.modify` |
+| `.character give <item-id> [count] [random-property]` (also `.character additem`) | Give items to the selected player. | `character.modify` |
+| `.character increaseweaponskill [points]` | Raise the equipped weapon skill. | `character.learn` |
+| `.character items` (also `.character showitems`) | List the selected player's items. | `character.modify` |
+| `.character learn <spell-id\|all>` | Teach a spell or the character's class spells. | `character.learn` |
+| `.character learnskill <skill-id> <value> [max]` | Teach a skill and set its value and cap. | `character.learn` |
+| `.character removeskill <skill>` | Remove a skill. | `character.learn` |
+| `.character rename <old-name> <new-name>` | Rename a character. | `character.modify` |
+| `.character repair` (also `.character repairitems`) | Repair the selected player's equipment. | `world.creatures` |
+| `.character resetreputation` | Reset reputation to starting values. | `world.creatures` |
+| `.character resetskills` | Restore the character's starting skills. | `character.learn` |
+| `.character resetspells` | Restore the character's starting spells. | `character.learn` |
+| `.character resettalents` | Reset the character's talents. | `character.learn` |
+| `.character setstanding <faction-id> <standing>` | Set standing with a faction. | `character.modify` |
+| `.character showinstances` | List the selected player's saved instances. | `staff.admin` |
+| `.character skills` (also `.character showskills`) | List the selected player's skills. | `character.modify` |
+| `.character take <item-id> [count]` (also `.character removeitem`) | Remove items from the selected player. | `character.modify` |
+| `.character unlearn <spell-id>` | Remove a spell from the selected player. | `character.learn` |
+| `.cheat casttime [on\|off]` | Toggle instant casts. | `testing.cheats` |
+| `.cheat cooldown [on\|off]` | Toggle spell cooldowns. | `testing.cheats` |
+| `.cheat explore <on\|off>` | Reveal or clear map exploration. | `testing.cheats` |
+| `.cheat god [on\|off]` | Toggle damage immunity. | `testing.cheats` |
+| `.cheat power [on\|off]` | Toggle free spell casts. | `testing.cheats` |
+| `.cheat skip-requirements [on\|off]` (also `.cheat triggerpass`) | Toggle bypass of area trigger requirements. | `testing.cheats` |
+| `.cheat status` | Show active testing toggles. | `testing.cheats` |
+| `.cheat taxi <on\|off>` | Toggle access to all flight paths. | `testing.cheats` |
+| `.clearcooldowns` | Clear the selected player's spell cooldowns. | `character.modify` |
+| `.commands [command or prefix]` | Find commands you can use. | `public` |
+| `.debug aggro` (also `.debug aggrorange`) | Show the selected creature's aggro range. | `debug.use` |
+| `.debug aimove <x> <y> <z>` | Move the selected creature to coordinates on this map. | `debug.use` |
+| `.debug calcThreat <damage> <spell-id>` | Estimate spell threat from damage and your modifiers. | `debug.use` |
+| `.debug cast <spell-id>` (also `.debug castspell`) | Cast a spell on the selected unit. | `debug.use` |
+| `.debug castself <spell-id>` | Make the selected unit cast a spell on itself. | `debug.use` |
+| `.debug castspellne <spell-id>` | Preview a spell's animation. | `debug.use` |
+| `.debug distance` (also `.debug dist`) | Show the distance to the selected unit. | `debug.use` |
+| `.debug face <degrees>` | Turn the selected creature to an angle in degrees. | `debug.use` |
+| `.debug fade <percent>` | Reduce your threat by a percentage. | `debug.use` |
+| `.debug getbytes <field>` | Read the four bytes of a unit field. | `debug.use` |
+| `.debug getheight` | Show terrain and collision heights at your position. | `debug.use` |
+| `.debug getpos <area-id>` | Show coordinates for a world area. | `debug.use` |
+| `.debug gettptime` | Show the circuit time of the ship or zeppelin aboard. | `debug.use` |
+| `.debug getUint32Value <field>` | Read a unit update field as an unsigned integer. | `debug.use` |
+| `.debug infront` | Check whether the target is in front of you. | `debug.use` |
+| `.debug itempushresult <item-id> [count] [type] [flag-1] [flag-2] [flag-3]` | Send a test item acquisition notification. | `debug.use` |
+| `.debug knockback [speed]` | Apply a knockback for testing. | `debug.use` |
+| `.debug landwalk` | Send a land-walking movement order. | `debug.use` |
+| `.debug los` (also `.debug testlos`) | Check line of sight to the selected unit. | `debug.use` |
+| `.debug moveinfo` | Inspect the selected creature's movement. | `debug.use` |
+| `.debug position` (also `.debug dumpcoords`) | Show map, instance, coordinates and facing. | `debug.use` |
+| `.debug rangecheck` | Show distance and combat reach against the selected unit. | `debug.use` |
+| `.debug root` | Send a root movement order. | `debug.use` |
+| `.debug setbit <field> <bit>` | Toggle a bit in an update field. | `debug.use` |
+| `.debug setbytes <index> <b0> <b1> <b2> <b3>` | Set four bytes in a unit field. | `debug.use` |
+| `.debug setvalue <field> <value>` | Set a unit update field. | `debug.use` |
+| `.debug showreact <reaction-id>` | Preview a reaction on the selected unit. | `debug.use` |
+| `.debug testindoor` | Check whether your position is indoors. | `debug.use` |
+| `.debug threatList` | List the selected creature's threat entries. | `debug.use` |
+| `.debug threatMod <percent>` | Change your threat by a signed percentage. | `debug.use` |
+| `.debug unroot` | Send an unroot movement order. | `debug.use` |
+| `.debug waterwalk` | Send a water-walking movement order. | `debug.use` |
+| `.demorph` | Restore your normal appearance. | `character.modify` |
+| `.dismount` | Dismount the selected unit or yourself. | `character.mount` |
+| `.fixscale [scale]` | Set the selected unit's scale. | `character.modify` |
+| `.gm allow <name>` (also `.gm allowwhispers`) | Allow whispers from a player while in GM mode. | `staff.support` |
+| `.gm block <name>` (also `.gm blockwhispers`) | Remove a player's whisper exception. | `staff.support` |
+| `.gm list` | List online staff. | `public` |
+| `.gm off` | Turn off the GM tag and whisper blocking. | `staff.tag` |
+| `.gm on` | Turn on the GM tag and whisper blocking. | `staff.tag` |
+| `.gm quiet` (also `.gm whisperblock`) | Block whispers while keeping the visible GM tag off. | `world.objects.move` |
+| `.gmannounce <message>` | Send a message to online staff. | `staff.announce` |
+| `.go coords <map> <x> <y> <z>` (also `.travel coords`) | Teleport to map coordinates. | `world.teleport` |
+| `.go player <name>` (also `.travel player`) | Teleport to a player. | `world.teleport` |
+| `.go summon <name>` (also `.travel summon`) | Bring a player to your location. | `world.teleport` |
+| `.gotrig <trigger-id> [instance-id]` | Teleport to an area trigger. | `world.teleport` |
+| `.guild create <name>` | Create a guild for the selected player. | `guild.manage` |
+| `.guild disband` | Disband the selected player's guild. | `guild.manage` |
+| `.guild members` | List members and ranks in the selected player's guild. | `guild.manage` |
+| `.guild removeplayer` | Remove the selected player from their guild. | `guild.manage` |
+| `.guild rename <name>` | Rename the selected player's guild. | `guild.manage` |
+| `.help [command]` | Show syntax and details for a command. | `public` |
+| `.honor addkills <kills>` | Add honorable kills to the selected player. | `character.modify` |
+| `.honor addpoints <points>` | Add honor to the selected player. | `character.modify` |
+| `.honor globaldailyupdate` | Run the daily honor update for the realm. | `character.modify` |
+| `.honor pvpcredit <points> [rank]` | Send a test PvP credit notification. | `character.modify` |
+| `.honor singledailyupdate` | Run the daily honor update for the selected player. | `character.modify` |
+| `.instance exit` | Return to the instance entrance. | `character.modify` |
+| `.instance info [instance-id]` | Inspect an instance by ID, or the current instance. | `character.modify` |
+| `.instance reset [instance-id]` | Remove one saved instance from the selected player. | `staff.admin` |
+| `.instance resetall` | Remove all saved instances from the selected player. | `character.modify` |
+| `.instance shutdown [instance-id]` | Close an instance by ID, or the current instance. | `staff.admin` |
+| `.invincible` | Toggle invincibility. | `staff.presence` |
+| `.invisible` | Toggle invisibility and invincibility. | `staff.presence` |
+| `.kick account <account>` (also `.kick byaccount`) | Disconnect a session by account name. | `staff.disconnect` |
+| `.kick ip <ip-address>` (also `.kick byip`) | Disconnect sessions from an IP address. | `staff.disconnect` |
+| `.kick player <character>` (also `.kick byplayer`) | Disconnect a player by character name. | `staff.disconnect` |
+| `.kickplayer <name> [kick-reason]` | Disconnect a player with an optional reason. | `staff.discipline` |
+| `.kill` | Kill the selected unit. | `character.combat` |
+| `.killplr <character>` | Kill a player by name. | `character.combat` |
+| `.learn <spell-id\|all>` | Teach a spell or the character's class spells. | `character.learn` |
+| `.levelup [levels]` | Raise the selected player's level. | `character.modify` |
+| `.logcomment <comment>` | Write a note to the GM log. | `support.lookup` |
+| `.lookup creature <search>` | Search creature templates by name. | `support.lookup` |
+| `.lookup faction <search>` | Search factions by name. | `support.lookup` |
+| `.lookup item <search>` | Search items by name. | `support.lookup` |
+| `.lookup object <search>` | Search game object templates by name. | `support.lookup` |
+| `.lookup quest <search>` | Search quests by title. | `support.lookup` |
+| `.lookup skill <search>` | Search skills by name. | `support.lookup` |
+| `.lookup spell <search>` | Search spells by name. | `support.lookup` |
+| `.modify agility <value>` | Set agility. | `character.modify` |
+| `.modify ap <value>` | Set melee attack power. | `character.modify` |
+| `.modify arcane <value>` | Set Arcane resistance. | `character.modify` |
+| `.modify armor <value>` | Set armor. | `character.modify` |
+| `.modify bytes <value>` | Set the first packed unit field. | `character.modify` |
+| `.modify damage <min> <max>` | Set minimum and maximum melee damage. | `character.modify` |
+| `.modify displayid <value>` | Set the current display ID. | `character.modify` |
+| `.modify dynamicflags <value>` | Set dynamic flags. | `character.modify` |
+| `.modify energy <value> [max]` | Set energy and maximum energy. | `character.modify` |
+| `.modify faction <value>` | Set the faction template ID. | `character.modify` |
+| `.modify fire <value>` | Set Fire resistance. | `character.modify` |
+| `.modify flags <value>` | Set unit flags. | `character.modify` |
+| `.modify frost <value>` | Set Frost resistance. | `character.modify` |
+| `.modify gender [0\|1]` | Set the selected player's gender. | `character.modify` |
+| `.modify gold <copper>` | Adjust money by an amount in copper. | `character.modify` |
+| `.modify happiness <value> [max]` | Set pet happiness and its maximum. | `character.modify` |
+| `.modify holy <value>` | Set Holy resistance. | `character.modify` |
+| `.modify hp <value> [max]` | Set health and maximum health. | `character.modify` |
+| `.modify intelligence <value>` | Set intellect. | `character.modify` |
+| `.modify level <level>` | Set the selected unit's level. | `character.modify` |
+| `.modify mana <value> [max]` | Set mana and maximum mana. | `character.modify` |
+| `.modify nativedisplayid <value>` | Set the native display ID. | `character.modify` |
+| `.modify nature <value>` | Set Nature resistance. | `character.modify` |
+| `.modify npcemotestate <value>` | Set the NPC's emote state. | `character.modify` |
+| `.modify radius <value>` (also `.modify boundingraidius`) | Set the unit's bounding radius. | `character.modify` |
+| `.modify rage <value> [max]` | Set rage and maximum rage. | `character.modify` |
+| `.modify rangeap <value>` | Set ranged attack power. | `character.modify` |
+| `.modify reach <value>` (also `.modify combatreach`) | Set the unit's combat reach. | `character.modify` |
+| `.modify scale <value>` | Set object scale. | `character.modify` |
+| `.modify shadow <value>` | Set Shadow resistance. | `character.modify` |
+| `.modify speed <speed>` | Set movement speed. | `character.modify` |
+| `.modify spirit <value>` | Set spirit. | `character.modify` |
+| `.modify strength <value>` | Set strength. | `character.modify` |
+| `.modify talentpoints <value>` | Set unspent talent points. | `character.modify` |
+| `.mount <display-id>` | Mount the selected player with a display ID. | `character.modify` |
+| `.npc ai` (also `.npc listAgent`) | Show the selected creature's scripts and combat spells. | `world.creatures` |
+| `.npc come` | Move the selected NPC to your position. | `world.creatures` |
+| `.npc delete` | Delete the selected creature and its saved spawn. | `world.creatures` |
+| `.npc emote [emote]` | Set the selected NPC's emote state. | `world.creatures` |
+| `.npc flags <flags>` | Set the selected NPC's flags. | `world.creatures` |
+| `.npc follow` (also `.npc npcfollow`) | Make the selected NPC follow you. | `character.modify` |
+| `.npc info` | Inspect the selected NPC. | `world.creatures` |
+| `.npc possess` | Take control of the selected NPC. | `world.creatures` |
+| `.npc respawn` | Respawn the selected creature. | `world.creatures` |
+| `.npc return` | Send the selected NPC back to its spawn point. | `world.creatures` |
+| `.npc say <message>` | Make the selected NPC say a message. | `world.creatures` |
+| `.npc select` | Select the closest NPC. | `world.creatures` |
+| `.npc sell <item-id> [quantity] [extended-cost-id]` (also `.npc vendoradditem`) | Add an item to the selected vendor. | `world.creatures` |
+| `.npc spawn <entry-id>` | Create a saved creature spawn. | `world.creatures` |
+| `.npc traineradd <teaching-spell-id> [copper] [level]` | Add a lesson to the selected trainer. | `world.trainers` |
+| `.npc unfollow` (also `.npc nullfollow`) | Stop the selected NPC from following. | `character.modify` |
+| `.npc unpossess` | Release control of a possessed NPC. | `world.creatures` |
+| `.npc unsell <item-id>` (also `.npc vendorremoveitem`) | Remove an item from the selected vendor. | `world.creatures` |
+| `.npc yell <message>` | Make the selected NPC yell a message. | `world.creatures` |
+| `.object activate` (also `.gobject activate`) | Activate the selected game object. | `world.objects` |
+| `.object animation [progress]` (also `.gobject animprogress`) | Set the selected game object's animation progress. | `world.objects` |
+| `.object delete` (also `.gobject delete`) | Delete the selected game object. | `world.objects` |
+| `.object enable` (also `.gobject enable`) | Toggle whether the selected game object is usable. | `world.objects` |
+| `.object export` (also `.gobject export`) | Show the selected game object's placement and rotation. | `world.objects` |
+| `.object info` (also `.gobject info`) | Inspect the selected game object. | `world.objects` |
+| `.object move` (also `.gobject move`) | Move the selected game object to your position. | `world.objects.move` |
+| `.object rotate <x\|y\|o> <degrees>` (also `.gobject rotate`) | Set rotation around an axis in degrees. | `world.objects.move` |
+| `.object scale <scale>` (also `.gobject scale`) | Set the selected game object's scale. | `world.objects` |
+| `.object select [name]` (also `.gobject select`) | Select the nearest game object. | `world.objects` |
+| `.object spawn <entry-id> [save: 0\|1]` (also `.gobject spawn`) | Spawn a game object by entry ID. | `world.objects` |
+| `.paralyze` | Root the selected player. | `staff.discipline` |
+| `.pet forget <spell-id>` (also `.pet removespell`) | Remove a spell from the selected player's pet. | `character.modify` |
+| `.pet rename <name>` (also `.pet renamepet`) | Rename your pet. | `character.modify` |
+| `.pet teach <spell-id>` (also `.pet addspell`) | Teach a spell to the selected player's pet. | `character.modify` |
+| `.playerinfo [name]` | Inspect a character and their account. | `character.modify` |
+| `.quest add-both <quest-id>` (also `.quest addboth`) | Make the selected NPC start and finish a quest. | `world.quests` |
+| `.quest add-finish <quest-id>` (also `.quest addfinish`) | Make the selected NPC finish a quest. | `world.quests` |
+| `.quest add-start <quest-id>` (also `.quest addstart`) | Make the selected NPC start a quest. | `world.quests` |
+| `.quest complete <quest-id>` | Complete a quest for the selected player. | `world.quests` |
+| `.quest finisher <quest-id>` | Find NPCs or objects that finish a quest. | `world.quests` |
+| `.quest giver <quest-id>` | Find NPCs or objects that start a quest. | `world.quests` |
+| `.quest item <quest-id>` | List the items a quest requires. | `world.quests` |
+| `.quest list [entry-id]` | List quests for a player or quest giver. | `world.quests` |
+| `.quest lookup <search>` | Search quests by title. | `world.quests` |
+| `.quest reload` (also `.quest load`) | Reload quest definitions and giver relationships. | `world.quests` |
+| `.quest remove <quest-id>` | Remove a quest from the selected player's log. | `world.quests` |
+| `.quest remove-both <quest-id>` (also `.quest delboth`) | Remove both quest relationships from the selected NPC. | `world.quests` |
+| `.quest remove-finish <quest-id>` (also `.quest delfinish`) | Remove a quest's finish relationship from the selected NPC. | `world.quests` |
+| `.quest remove-start <quest-id>` (also `.quest delstart`) | Remove a quest's start relationship from the selected NPC. | `world.quests` |
+| `.quest reward <quest-id>` | Show a quest's rewards. | `world.quests` |
+| `.quest spawn <quest-id>` | Teleport to a spawn associated with a quest. | `world.quests` |
+| `.quest start <quest-id>` | Start a quest for the selected player. | `world.quests` |
+| `.quest status <quest-id>` | Show the selected player's status for a quest. | `world.quests` |
+| `.recall add <name>` | Save your current location. | `world.quests` |
+| `.recall delete <name>` (also `.recall del`) | Delete a saved location. | `world.quests` |
+| `.recall go <name>` (also `.recall port`) | Teleport to a saved location. | `world.quests` |
+| `.recall list` | List saved locations. | `world.quests` |
+| `.recall portplayer <name> <location>` | Send a player to a saved location. | `character.modify` |
+| `.removeauras` | Remove auras from the selected unit. | `character.modify` |
+| `.removesickness` | Remove resurrection sickness. | `character.modify` |
+| `.revive` | Resurrect the selected player or yourself. | `character.combat` |
+| `.reviveplr <character>` | Resurrect a player by name. | `character.combat` |
+| `.scourge [status\|start\|stop]` | Check or control the Scourge Invasion. | `staff.admin` |
+| `.server cancel` (also `.server cancelshutdown`) | Cancel a scheduled shutdown or restart. | `staff.admin` |
+| `.server motd [message]` (also `.server setmotd`) | Set the message of the day. | `character.modify` |
+| `.server network` (also `.server netstatus`) | Show connection counts. | `public` |
+| `.server reload-config` (also `.server rehash`) | Reload server configuration. | `staff.admin` |
+| `.server reload-data <table>` (also `.server reloadtable`) | Reload supported world data. | `character.modify` |
+| `.server restart [seconds]` | Schedule a server restart in seconds. | `staff.admin` |
+| `.server save` | Save the selected player. | `server.save` |
+| `.server save-all` (also `.server saveall`) | Save online characters. | `server.save` |
+| `.server shutdown [seconds]` | Schedule a server shutdown in seconds. | `staff.admin` |
+| `.server status` (also `.server info`) | Show uptime and player counts. | `public` |
+| `.start [race]` | Teleport to a racial starting area. | `character.modify` |
+| `.summon <name>` | Bring a player to your location. | `world.teleport` |
+| `.ticket assign <id> [character]` (also `.gmTicket assign`) | Assign a ticket to a staff member or yourself. | `support.tickets` |
+| `.ticket close <id>` (also `.gmTicket remove`) | Close a ticket. | `support.tickets` |
+| `.ticket comment <id> <note>` (also `.gmTicket comment`) | Add a note to a ticket. | `support.tickets` |
+| `.ticket delete <id>` (also `.gmTicket deletepermanent`) | Permanently delete a ticket. | `staff.admin` |
+| `.ticket list [all]` (also `.gmTicket list`) | List open player tickets. | `support.tickets` |
+| `.ticket release <id>` (also `.gmTicket release`) | Clear a ticket's assignment. | `support.tickets` |
+| `.ticket show <id>` (also `.gmTicket get`) | Read a ticket by ID. | `support.tickets` |
+| `.ticket toggle` (also `.gmTicket toggle`) | Enable or disable player tickets. | `staff.admin` |
+| `.unban account <account>` | Remove a ban from an account. | `staff.admin` |
+| `.unban character <character>` | Remove a ban from a character's account. | `staff.discipline` |
+| `.unban ip <ip-address>` | Remove a ban from an IP address. | `character.modify` |
+| `.unparalyze` | Release the selected player's root. | `staff.discipline` |
+| `.wannounce <message>` | Send a realm-wide on-screen announcement. | `staff.announce` |
+| `.where` (also `.gps`) | Show your position or the selected unit’s position. | `public` |
+| `.worldport <map> <x> <y> <z>` | Teleport to map coordinates. | `world.teleport` |
+| `.wp add [wait-ms]` (also `.waypoint add`) | Add your position to the route draft. | `world.waypoints` |
+| `.wp clear` (also `.waypoint deleteall`) | Remove all points from the draft. | `world.waypoints` |
+| `.wp delete <point>` (also `.waypoint delete`) | Remove a point from the draft. | `world.waypoints` |
+| `.wp discard` (also `.waypoint hide`) | Discard unsaved route edits. | `world.waypoints` |
+| `.wp generate` (also `.waypoint generate`) | Extend the draft to your position using the navigation mesh. | `world.waypoints` |
+| `.wp info <point>` (also `.waypoint info`) | Show one draft point. | `world.waypoints` |
+| `.wp list` (also `.waypoint show`) | List points in the route draft. | `world.waypoints` |
+| `.wp mode <loop\|linear>` (also `.waypoint movetype`) | Set the route to loop or run in a line. | `world.waypoints` |
+| `.wp move <point>` (also `.waypoint movehere`) | Move a draft point to your position. | `world.waypoints` |
+| `.wp renumber <point> <replacement>` (also `.waypoint change`) | Renumber a draft point. | `world.waypoints` |
+| `.wp save` (also `.waypoint save`) | Save the route for the selected spawn. | `world.waypoints` |
+| `.wp script <point> <script-id\|0>` (also `.waypoint script`) | Attach a movement script to a point or clear it with 0. | `world.waypoints` |
+| `.wp wait <point> <wait-ms>` (also `.waypoint waittime`) | Set a point's wait time in milliseconds. | `world.waypoints` |
 
-## Unavailable commands (25)
+## Unavailable commands (27)
 
-These legacy entries return “Not yet implemented.” This includes features that depend on systems
-outside the 1.12 client, such as rated arena teams and player flight. Per-point animations and
-model changes can use native waypoint movement scripts. SQL maintenance uses the MariaDB client.
+These entries remain callable by their existing names and explain what is unavailable.
+In-game command menus list working actions.
 
-| Command | Capability | Help |
+| Command | Effect | Capability |
 |---|---|---|
-| `.waypoint flags` | `world.waypoints` | Wp flags |
-| `.waypoint emote` | `world.waypoints` | Emote at this wp |
-| `.waypoint skin` | `world.waypoints` | Skin at this wp |
-| `.waypoint addfly` | `world.waypoints` | Adds a flying waypoint |
-| `.debug aispelltestbegin` | `debug.use` |  |
-| `.debug aispelltestcontinue` | `debug.use` |  |
-| `.debug aispelltestskip` | `debug.use` |  |
-| `.debug sqlquery` | `debug.use` | <sql query> |
-| `.debug setallratings` | `debug.use` | Sets rating values to incremental numbers based on their index. |
-| `.battleground pausebg` | `battleground.manage` | Pauses current battleground match. |
-| `.npc addAgent` | `world.creatures` | .npc addAgent <agent> <procEvent> <procChance> <procCount> <spellId> <spellType> <spelltargetType> <spellCooldown> <floatMisc1> <Misc2> |
-| `.npc spawnlink` | `world.creatures` | .spawnlink sqlentry |
-| `.npc formationlink1` | `character.modify` | Sets formation master. |
-| `.npc formationlink2` | `character.modify` | Sets formation slave with distance and angle |
-| `.npc formationclear` | `character.modify` | Removes formation from creature |
-| `.cheat fly` | `testing.cheats` | Sets fly mode |
-| `.cheat flyspeed` | `testing.cheats` | Modifies fly speed. |
-| `.cheat stack` | `testing.cheats` | Enables aura stacking cheat. |
-| `.pet spawnbot` | `account.moderate` | .pet spawnbot <type> - spawn a helper bot for your aid |
-| `.character settitle` | `character.modify` | Adds title to a player |
-| `.admin renameallinvalidchars` | `staff.admin` | Renames all invalid character names |
-| `.arena createteam` | `battleground.manage` | Creates arena team |
-| `.arena setteamleader` | `battleground.manage` | Sets the arena team leader |
-| `.arena resetallratings` | `staff.admin` | Resets all area teams to their default rating |
-| `.modperiod` | `character.modify` | Changes period of current transporter. |
+| `.admin renameallinvalidchars` | Use .character forcerename for individual characters. | `staff.admin` |
+| `.arena createteam` | Rated arena teams are unavailable in this client. | `battleground.manage` |
+| `.arena resetallratings` | Rated arena teams are unavailable in this client. | `staff.admin` |
+| `.arena setteamleader` | Rated arena teams are unavailable in this client. | `battleground.manage` |
+| `.bg pausebg` (also `.battleground pausebg`) | Battleground pause is unavailable. | `battleground.manage` |
+| `.character settitle` | Custom character titles are unavailable in this client. | `character.modify` |
+| `.cheat fly` | Player flight is unavailable in this client. | `testing.cheats` |
+| `.cheat flyspeed` | Player flight is unavailable in this client. | `testing.cheats` |
+| `.cheat stack` | The aura stacking override is unavailable. | `testing.cheats` |
+| `.debug aispelltestbegin` | The automated creature spell tester is unavailable. | `debug.use` |
+| `.debug aispelltestcontinue` | The automated creature spell tester is unavailable. | `debug.use` |
+| `.debug aispelltestskip` | The automated creature spell tester is unavailable. | `debug.use` |
+| `.debug sendpacket` | Sending raw packets from chat is disabled. | `debug.use` |
+| `.debug setallratings` | Combat ratings are unavailable in this client. | `debug.use` |
+| `.debug sqlquery` | Use the MariaDB client for SQL. | `debug.use` |
+| `.modperiod` | Changing a transport schedule in chat is unavailable. | `character.modify` |
+| `.npc addAgent` | Editing creature AI spells in chat is unavailable. | `world.creatures` |
+| `.npc formationclear` | Editing NPC formations in chat is unavailable. | `character.modify` |
+| `.npc formationlink1` | Editing NPC formations in chat is unavailable. | `character.modify` |
+| `.npc formationlink2` | Editing NPC formations in chat is unavailable. | `character.modify` |
+| `.npc spawnlink` | Editing spawn links in chat is unavailable. | `world.creatures` |
+| `.pet createpet` | Creating pets from chat is unavailable. | `character.modify` |
+| `.pet spawnbot` | Helper bots are unavailable. | `account.moderate` |
+| `.wp addfly` (also `.waypoint addfly`) | This route editor saves ground waypoints. | `world.waypoints` |
+| `.wp emote` (also `.waypoint emote`) | Use a movement script with .wp script to play an emote. | `world.waypoints` |
+| `.wp flags` (also `.waypoint flags`) | This route format has no per-point flags. | `world.waypoints` |
+| `.wp skin` (also `.waypoint skin`) | Use a movement script with .wp script to change the model. | `world.waypoints` |

@@ -160,7 +160,7 @@ private:
         if (plr is null)
         {
             plr = this;
-            systemMessage("Auto-targeting self.");
+            systemMessage("Targeting yourself.");
         }
         if (sicmp(spellOrAll, "all") == 0)
         {
@@ -184,12 +184,13 @@ private:
         const info = context.data.spells.spell(spell);
         if (info is null)
         {
-            systemMessage(format!"Invalid spell %u"(spell));
+            systemMessage(format!"Unknown spell ID %u."(spell));
             return true;
         }
         if (!plr.hasGMPermissions && info.effect[].canFind(SpellEffect.instantKill))
         {
-            systemMessage("don't be an idiot and teach players instakill spells. this action has been logged.");
+            redSystemMessage("Only staff characters can learn instant-kill spells.");
+            gmLog(format!"refused instant-kill spell %s for %s"(spell, plr.player.data.name));
             return true;
         }
         if (plr.player.knowsSpell(spell))
@@ -199,8 +200,8 @@ private:
         }
         plr.learn(spell);
         gmLog(format!"taught %s spell %u"(plr.player.data.name, spell));
-        plr.blueSystemMessage(format!"%s taught you Spell %u"(player.data.name, spell));
-        greenSystemMessage(format!"Taught %s Spell %u"(plr.player.data.name, spell));
+        plr.blueSystemMessage(format!"%s taught you spell %u."(player.data.name, spell));
+        greenSystemMessage(format!"Taught %s spell %u."(plr.player.data.name, spell));
         return true;
     }
 }

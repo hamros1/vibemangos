@@ -6,6 +6,7 @@ mixin template WaypointCommands()
     import std.algorithm.searching : countUntil;
     import std.algorithm.sorting : sort;
     import std.format : format;
+    import dmangos.world.commands : MSG_COLOR_LIGHTBLUE;
     import dmangos.world.creature : Creature, TempSpawnType;
     import dmangos.mysql : DatabaseException;
     import dmangos.world.motion : MotionType, WaypointNode;
@@ -38,15 +39,16 @@ private:
 
     private void showWaypoint(const ref WaypointNode node)
     {
-        systemMessage(format!"Point %s at %.3f %.3f %.3f, wait %s ms, script %s."
-            (node.point, node.x, node.y, node.z, node.delay, node.scriptId));
+        systemMessage(format!"%sPoint %s|r  ·  %.3f, %.3f, %.3f  ·  Wait %s ms%s"
+            (MSG_COLOR_LIGHTBLUE, node.point, node.x, node.y, node.z, node.delay,
+                node.scriptId ? format!"  ·  Script %s"(node.scriptId) : ""));
     }
 
     bool handleWPShowCommand()
     {
         if (!waypointTarget())
             return true;
-        systemMessage(format!"Draft for spawn %s (%s points)." (waypointSpawn, waypointDraft.length));
+        greenSystemMessage(format!"Route draft  ·  Spawn %s  ·  %s points"(waypointSpawn, waypointDraft.length));
         foreach (ref node; waypointDraft)
             showWaypoint(node);
         return true;
@@ -56,7 +58,7 @@ private:
     {
         waypointSpawn = 0;
         waypointDraft = null;
-        systemMessage("Closed the draft and discarded unsaved edits.");
+        greenSystemMessage("Unsaved route edits discarded.");
         return true;
     }
 
@@ -204,7 +206,7 @@ private:
         if (waypointTarget())
         {
             waypointDraft = null;
-            systemMessage("Cleared the draft. Use .waypoint save to apply.");
+            systemMessage("Draft cleared. Use .wp save to apply.");
         }
         return true;
     }
@@ -222,7 +224,7 @@ private:
                 return true;
             }
             gmLog(format!"saved %s waypoint(s) for spawn %s"(waypointDraft.length, waypointSpawn));
-            systemMessage("Route saved. Restart the world workers to load the new route.");
+            greenSystemMessage("Route saved. World workers load it on restart.");
         }
         catch (DatabaseException)
         {
@@ -250,15 +252,15 @@ unittest
     gm.read();
     const spawn = db.creatureSpawnRows.values[0];
     gm.write(Opcode.CMSG_SET_SELECTION, ClientGuid(makeGuid(HighGuid.unit, spawn.entry, spawn.guid)));
-    gm.say(".waypoint add 150");
+    gm.say(".wp add 150");
     assert(systemMessages(gm.read()).length == 1 && spawn.guid !in db.waypointRows);
-    gm.say(".waypoint movetype linear");
+    gm.say(".wp mode linear");
     gm.say(".waypoint save");
     gm.read();
     assert(db.waypointRows[spawn.guid].length == 1 && db.waypointRows[spawn.guid][0].delay == 150);
     assert(db.creatureSpawnRows[spawn.guid].movementType == MotionType.linearWaypoint);
 
-    gm.say(".waypoint deleteall");
+    gm.say(".wp clear");
     gm.say(".waypoint save");
     gm.read();
     assert(!db.waypointRows[spawn.guid].length && db.creatureSpawnRows[spawn.guid].movementType == MotionType.idle);

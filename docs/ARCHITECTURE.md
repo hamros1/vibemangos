@@ -956,13 +956,13 @@ is an `SMSG_CHANNEL_NOTIFY`, built by `notice(type, channel, extra...)`. `Channe
 
 The [GM command reference](COMMANDS.md) covers setup, roles and command syntax.
 
-* `commandtable.d` registers commands. `commands.d` resolves exact names before existing
-  abbreviations and converts arguments from the handler's parameter types. A group menu and
-  `.help` apply the same permissions as execution.
-* `gmaccess.d` defines named capabilities and maps shortcuts to their canonical permission paths.
-  The shared login database stores roles, their capabilities and enrolled accounts. Enrolled
-  accounts combine the grants of their roles. Unenrolled accounts use the legacy configuration.
-  Command authorization rereads the database before dispatch and survives worker handoffs.
+* `commandtable.d` declares each action’s arguments, description, permission and preferred name.
+  `commands.d` uses the same lookup for execution, help and group menus. It resolves exact names
+  before existing abbreviations and converts arguments from the handler’s parameter types.
+* Shortcuts point to the original permission path in the catalog. `gmaccess.d` reads roles and
+  capabilities from the shared login database. Enrolled accounts combine their role grants.
+  Unenrolled accounts use their legacy configuration. Workers reread access before dispatch
+  and after handoff.
 * Command handlers live in modules named for their duties, including `gmlearn.d`, `gmcheat.d`,
   `gmguild.d`, `gmticket.d` and `gmwaypoint.d`. `gmactions.d` holds reusable gameplay actions.
   `gmtargets.d` routes supported remote commands to the target player's worker.

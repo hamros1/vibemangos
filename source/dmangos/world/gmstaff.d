@@ -69,7 +69,7 @@ private:
 
         if (message.length < 4 || message.canFind('%'))
         {
-            systemMessage("Announces cannot contain the % character and must be at least 4 characters.");
+            systemMessage("Announcements require at least four characters and cannot contain a percent sign.");
             return true;
         }
         const config = context.config;
@@ -108,34 +108,26 @@ private:
 
     bool handleGMOnCommand()
     {
-        greenSystemMessage("Setting GM Flag on yourself...");
-        if (player.gmTagOn)
-            redSystemMessage("GM Flag is already set on. Use !gm off to disable it.");
-        else
-        {
-            player.gmTagOn = true;
-            player.setFlag(PlayerFlags.gm, true); // <GM>
-            flushPlayerChanges();
-            map.refreshVisibility(this); // with the tag on, ghosts are seen
-            blueSystemMessage("GM Flag Set. It will appear above your name and in chat messages until you use "
-                ~ "!gm off.");
-        }
-        return true;
+        return setGmMode(true);
     }
 
     bool handleGMOffCommand()
     {
-        greenSystemMessage("Unsetting GM Flag on yourself...");
-        if (!player.gmTagOn)
-            redSystemMessage("GM Flag not set. Use !gm on to enable it.");
-        else
+        return setGmMode(false);
+    }
+
+    private bool setGmMode(bool enabled)
+    {
+        if (player.gmTagOn == enabled && player.hasFlag(PlayerFlags.gm) == enabled)
         {
-            player.gmTagOn = false;
-            player.setFlag(PlayerFlags.gm, false);
-            flushPlayerChanges();
-            map.refreshVisibility(this); // with the tag on, ghosts are seen
-            blueSystemMessage("GM Flag Removed. <GM> Will no longer show in chat messages or above your name.");
+            blueSystemMessage(enabled ? "GM mode is already on." : "GM mode is already off.");
+            return true;
         }
+        player.gmTagOn = enabled;
+        player.setFlag(PlayerFlags.gm, enabled);
+        flushPlayerChanges();
+        map.refreshVisibility(this);
+        greenSystemMessage(enabled ? "GM mode on. Your GM tag is visible." : "GM mode off. Your GM tag is hidden.");
         return true;
     }
 
@@ -155,13 +147,12 @@ private:
                 at = object.position; // creatures have no area without map data: the GM's zone, close by
             else
             {
-                systemMessage("You should select a character or a creature.");
+                systemMessage("Select a player or creature first.");
                 return true;
             }
         }
-        systemMessage(format!("|cff00ff00Current Position: |cffffffffMap: |cff00ff00%d |cffffffffZone: |cff00ff00%u "
-            ~ "|cffffffffX: |cff00ff00%f |cffffffffY: |cff00ff00%f |cffffffffZ: |cff00ff00%f |cffffffffOrientation: "
-            ~ "|cff00ff00%f|r")(mapId, zone, at.x, at.y, at.z, at.orientation));
+        systemMessage(format!"%sPosition|r  ·  Map %s  ·  Zone %s  ·  %.3f, %.3f, %.3f  ·  Facing %.3f"
+            (MSG_COLOR_GREEN, mapId, zone, at.x, at.y, at.z, at.orientation));
         return true;
     }
 
@@ -289,7 +280,7 @@ private:
         const now = plr.player.skillValue(skill);
         if (now[1] == 0)
         {
-            systemMessage("Does not have skill line, adding.");
+            systemMessage("The player does not know this skill. Adding it now.");
             plr.applySkill(skill, 1, 300);
         }
         else // `_AdvanceSkillLine`: up to the maximum
@@ -417,7 +408,7 @@ private:
             plr.unlearn(spellId);
         }
         else
-            redSystemMessage(format!"That player does not have spell %u learnt."(spellId));
+            redSystemMessage(format!"The player does not know spell %u."(spellId));
         return true;
     }
 }

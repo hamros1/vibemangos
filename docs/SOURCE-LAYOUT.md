@@ -60,10 +60,11 @@ source/dmangos/world/       the world server
   moveorders.d                speed, root, knockback, water walk, slow fall, hover orders and their acknowledgements
   inventory.d                 items and bags, and the rules for storing, equipping, swapping, saving them
   conditions.d                the conditions table: requirements of menus, lessons and wares
-  commandtable.d              the GM command tables
-  commands.d                  command lookup, permission letters, messages, .modify fields
-  gmactions.d                 what GM commands do to players: levels, speeds, items, skills, saving
-  gmlevel0.d .. gmlevel3.d    GM commands, grouped by permission level
+  commandtable.d              command names, arguments, help and permission declarations
+  commands.d                  shared command lookup, argument parsing, dispatch and color formatting
+  gmaccess.d                  database-backed staff roles and legacy account fallback
+  gmactions.d                 shared actions for levels, speeds, items, skills and saving
+  gmlearn.d, gmcheat.d, gmguild.d, gmwaypoint.d and other gm modules group handlers by task
   gminstance.d                GM commands: .instance
   gmquest.d                   GM commands: .quest (those quests support)
   gmdebug.d                   GM commands: debugging, .recall, .battleground

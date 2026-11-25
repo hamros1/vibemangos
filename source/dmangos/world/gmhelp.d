@@ -6,7 +6,7 @@ mixin template SupportCommands()
 {
     import dmangos.world.context : PresenceFlags;
     import core.time : seconds;
-    import std.algorithm.searching : canFind, countUntil;
+    import std.algorithm.searching : countUntil;
     import std.format : format;
     import std.math : sqrt;
     import std.uni : toLower;
@@ -17,80 +17,32 @@ mixin template SupportCommands()
     import dmangos.world.updatefields;
 
 private:
-    /// Help uses the same exact-name priority and permissions as dispatch.
-    bool showHelpForCommand(immutable(ChatCommand)[] table, string path, ref string words, string cmd)
+    bool handleHelpCommand(Rest command = Rest.init)
     {
-        if (!cmd.length)
-            return false;
-        const exact = table.canFind!(row => row.name.length == cmd.length && hasStringAbbr(row.name, cmd));
-        foreach (ref row; table)
-        {
-            if ((exact && row.name.length != cmd.length) || !hasStringAbbr(row.name, cmd))
-                continue;
-            const rowPath = path.length ? path ~ " " ~ row.name : row.name;
-            if (!canRunCommand(rowPath, row))
-                continue;
-            if (row.children.length)
-            {
-                const next = nextWord(words);
-                if (next !is null && showHelpForCommand(row.children, rowPath, words, next))
-                    return true;
-            }
-            if (row.help.length == 0)
-            {
-                systemMessage("There is no help for that command");
-                return true;
-            }
-            sendMultilineMessage(row.help);
-            return true;
-        }
-        return false;
-    }
-
-    bool handleHelpCommand(Rest command)
-    {
-        string words = command;
-        const cmd = nextWord(words);
-        if (!showHelpForCommand(commandTable, null, words, cmd))
-            redSystemMessage("Sorry, no help was found for this command, or that command does not exist.");
-        return true;
+        return browseCommands(command, true);
     }
 
     bool handleCommandsCommand(Rest filter = Rest.init)
     {
-        string output = "Available commands: \n\n";
-        uint count;
-        foreach (ref row; commandTable)
-        {
-            if (filter.length && !hasStringAbbr(row.name, filter))
-                continue;
-            const group = commandGroup(row.name, row);
-            if (!canRunCommand(row.name, row))
-                continue;
-            switch (group)
-            {
-            case 'z':
-                output ~= MSG_COLOR_LIGHTRED ~ row.name ~ "|r, ";
-                break;
-            case 'm':
-                output ~= MSG_COLOR_CYAN ~ row.name ~ ", "; // this colour is left open, without `|r`
-                break;
-            case 'c':
-                output ~= MSG_COLOR_GREEN ~ row.name ~ "|r, ";
-                break;
-            default:
-                output ~= MSG_COLOR_LIGHTBLUE ~ row.name ~ "|r, ";
-                break;
-            }
-            if (++count == 5) // 5 per line
-            {
-                output ~= "\n";
-                count = 0;
-            }
-        }
-        if (count)
-            output ~= "\n";
-        sendMultilineMessage(output);
+        return browseCommands(filter, false);
+    }
+
+    private bool browseCommands(string query, bool help)
+    {
+        if (query.length && query[0] == '.')
+            query = query[1 .. $];
+        string args = query;
+        const match = readCommand(args, help);
+        if (!query.length)
+            showCommandList(CommandMatch.init);
+        else if (match.row is null && !help)
+            showCommandList(CommandMatch.init, query);
+        else if (match.row is null || trimSpaces(args).length)
+            unknownCommand();
+        else if (match.row.children.length)
+            showCommandList(match);
+        else
+            showCommandHelp(match);
         return true;
     }
 
@@ -133,7 +85,7 @@ private:
             redSystemMessage("Internal error: Could not find create info.");
             return false;
         }
-        greenSystemMessage(format!"Telporting %s to %s starting location."(plr.player.data.name, race));
+        greenSystemMessage(format!"Sending %s to the %s starting area."(plr.player.data.name, race));
         plr.commandTeleport(info.map, Position(info.x, info.y, info.z, 0));
         return true;
     }
@@ -154,32 +106,19 @@ private:
         foreach (ref r; elsewhere)
             if (r.entry.flags & PresenceFlags.permissions)
                 ++gm;
-        greenSystemMessage(format!"Server Revision: |r%sdmangos %s(a World of Warcraft 1.12 server in D)"(
-            MSG_COLOR_WHITE, MSG_COLOR_LIGHTBLUE));
-        greenSystemMessage("Server Uptime: |r" ~ uptimeString());
-        greenSystemMessage(format!"Current Players: |r%d (%d GMs, %d queued)"(context.sessionCount + elsewhere.length,
-            gm, 0));
-        greenSystemMessage(format!"Active Thread Count: |r%u"(1)); // one thread runs the world
-        greenSystemMessage(format!"Free Thread Count: |r%u"(0));
-        greenSystemMessage(format!"Average Latency: |r%.3fms"(cast(float) latency / count));
-        greenSystemMessage(format!"SQL Query Cache Size (World): |r%u queries delayed"(0)); // queries run at once
-        greenSystemMessage(format!"SQL Query Cache Size (Character): |r%u queries delayed"(0));
+        const up = context.unixTime - context.startTime;
+        greenSystemMessage("dmangos  ·  Server status");
+        systemMessage(format!"%s players online  ·  %s staff  ·  Uptime %sd %02d:%02d:%02d"
+            (count + elsewhere.length, gm, up / 86_400, up / 3600 % 24, up / 60 % 60, up % 60));
+        if (count)
+            systemMessage(format!"Local latency averages %.1f ms."(cast(double) latency / count));
         return true;
     }
 
-    /// How long the server has been up, in days, hours, minutes and seconds.
-    string uptimeString()
-    {
-        const up = context.unixTime - context.startTime;
-        return format!"%u days, %u hours, %u minutes, %u seconds."(up / 86_400 % 365, up / 3600 % 24, up / 60 % 60,
-            up % 60);
-    }
-
-    /// The network status, written to the server's console only.
     bool handleNetworkStatusCommand()
     {
-        info!"Network status: %s sessions (at most %s since start-up), %s accepted"(context.sessionCount,
-            context.peakSessions, context.acceptedSessions);
+        blueSystemMessage(format!"Local connections: %s active  ·  %s peak  ·  %s accepted"
+            (context.sessionCount, context.peakSessions, context.acceptedSessions));
         return true;
     }
 
@@ -217,7 +156,7 @@ private:
         if (target.saveTimer.interval - target.saveTimer.elapsed < 300.seconds)
         {
             target.savePlayer();
-            greenSystemMessage(format!"Player %s saved to DB"(target.player.data.name));
+            greenSystemMessage(format!"Saved %s."(target.player.data.name));
         }
         else
             redSystemMessage("You can only save once every 5 minutes.");
@@ -286,7 +225,7 @@ private:
 
     bool handleGmLogCommentCommand(Rest comment)
     {
-        blueSystemMessage("Added Logcomment: " ~ comment);
+        blueSystemMessage("GM log updated: " ~ comment);
         gmLog("Logcomment: " ~ comment);
         return true;
     }

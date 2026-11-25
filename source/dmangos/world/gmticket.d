@@ -12,6 +12,23 @@ mixin template TicketCommands()
     import dmangos.world.queries : chatMessage;
 
 private:
+    /// Reads the numeric ticket prefix used by the legacy GM client.
+    private static long leadingNumber(string text)
+    {
+        import std.ascii : isDigit;
+
+        size_t n;
+        while (n < text.length && (text[n] == ' ' || text[n] == '\t'))
+            ++n;
+        bool negative;
+        if (n < text.length && (text[n] == '-' || text[n] == '+'))
+            negative = text[n++] == '-';
+        long value;
+        while (n < text.length && text[n].isDigit && value < uint.max)
+            value = value * 10 + (text[n++] - '0');
+        return negative ? -value : value;
+    }
+
     /// The ticket `id` (closed ones too); false if none.
     private bool ticketById(uint id, out TicketRecord ticket)
     {
@@ -289,5 +306,4 @@ private:
         return true;
     }
 
-    /// `.pet createpet`: its body does nothing (it was disabled), so the command answers nothing.
 }

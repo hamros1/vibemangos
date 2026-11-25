@@ -14,27 +14,17 @@ private:
         auto plyr = getSelectedChar(true);
         if (plyr is null)
             return true;
-        uint active, inactive;
+        greenSystemMessage("Testing toggles  ·  " ~ plyr.player.data.name);
         void status(string name, bool on)
         {
-            systemMessage(format!"%s%s: %s%s"(MSG_COLOR_LIGHTBLUE, name, on ? MSG_COLOR_LIGHTRED : MSG_COLOR_GREEN,
-                on ? "Active" : "Inactive"));
-            if (on)
-                ++active;
-            else
-                ++inactive;
+            systemMessage(format!"%s  %s%s|r"(name, on ? MSG_COLOR_GREEN : MSG_COLOR_GREY, on ? "On" : "Off"));
         }
 
-        greenSystemMessage("Showing cheat status for: " ~ plyr.player.data.name);
-        // Flying and stacking auras do not exist yet: never on.
-        status("Cooldown", plyr.cooldownCheat);
-        status("CastTime", plyr.castTimeCheat);
-        status("GodMode", plyr.godModeCheat);
-        status("Power", plyr.powerCheat);
-        status("Fly", false);
-        status("AuraStack", false);
-        status("TriggerPass", plyr.triggerpassCheat);
-        systemMessage(format!"%u cheats active, %u inactive."(active, inactive));
+        status("No cooldowns", plyr.cooldownCheat);
+        status("Instant casts", plyr.castTimeCheat);
+        status("Damage immunity", plyr.godModeCheat);
+        status("Free casts", plyr.powerCheat);
+        status("Skip area requirements", plyr.triggerpassCheat);
         return true;
     }
 
@@ -64,7 +54,7 @@ private:
         if (chr is null)
         {
             chr = this;
-            systemMessage("Auto-targeting self.");
+            systemMessage("Targeting yourself.");
         }
         const name = chr.player.data.name;
         // The first message goes to the GM, the second to the player it is meant for.
@@ -86,47 +76,35 @@ private:
         return true;
     }
 
-    /**
-     * The shape of the cheat toggles: on, off, or (with nothing said) the other way; the GM and
-     * the player told, and the GM log when it goes off for another.
-     */
-    bool toggleCheat(Nullable!OnOff state, string name, string logLine, bool* delegate(Character) flag,
+    /// An omitted state flips the test flag. Explicit states can be applied repeatedly.
+    bool toggleCheat(Nullable!OnOff state, string name, bool* delegate(Character) flag,
         void delegate(Character) whenOn = null)
     {
-        auto plyr = getSelectedChar(true);
-        if (plyr is null)
+        auto target = getSelectedChar(true);
+        if (target is null)
             return true;
-        auto on = flag(plyr);
-        if (state.isNull)
-            state = *on ? OnOff.off : OnOff.on;
-        if (state.get == OnOff.on)
-        {
-            *on = true;
-            if (whenOn !is null)
-                whenOn(plyr);
-            blueSystemMessage(format!"activated the %s cheat on %s."(name, plyr.player.data.name));
-            plyr.greenSystemMessage(format!"activated the %s cheat on you."(name));
-        }
-        else
-        {
-            *on = false;
-            blueSystemMessage(format!"deactivated the %s cheat on %s."(name, plyr.player.data.name));
-            plyr.greenSystemMessage(format!"deactivated the %s cheat on you."(name));
-            if (plyr !is this)
-                gmLog(format!"%s on %s set to %s"(logLine, plyr.player.data.name, state.get));
-        }
+        auto enabled = flag(target);
+        *enabled = state.isNull ? !*enabled : state.get == OnOff.on;
+        if (*enabled && whenOn !is null)
+            whenOn(target);
+
+        const value = *enabled ? "on" : "off";
+        blueSystemMessage(format!"%s: %s for %s."(name, value, target.player.data.name));
+        if (target !is this)
+            target.greenSystemMessage(format!"%s turned %s %s."(player.data.name, value, name));
+        gmLog(format!"set %s %s for %s"(name, value, target.player.data.name));
         return true;
     }
 
     bool handleCastTimeCheatCommand(Nullable!OnOff state)
     {
-        return toggleCheat(state, "cast time", "god cast time", (Character p) => &p.castTimeCheat);
+        return toggleCheat(state, "Instant casts", (Character p) => &p.castTimeCheat);
     }
 
     bool handleCooldownCheatCommand(Nullable!OnOff state)
     {
         // On, every spell known has its cooldown cleared.
-        return toggleCheat(state, "cooldown", "cooldown cheat", (Character p) => &p.cooldownCheat,
+        return toggleCheat(state, "No cooldowns", (Character p) => &p.cooldownCheat,
             (Character p) {
                 foreach (spell; p.player.spells)
                     p.clearCooldownFor(spell);
@@ -135,17 +113,17 @@ private:
 
     bool handleGodModeCommand(Nullable!OnOff state)
     {
-        return toggleCheat(state, "god mode", "god mode cheat", (Character p) => &p.godModeCheat);
+        return toggleCheat(state, "Damage immunity", (Character p) => &p.godModeCheat);
     }
 
     bool handlePowerCheatCommand(Nullable!OnOff state)
     {
-        return toggleCheat(state, "power", "power cheat", (Character p) => &p.powerCheat);
+        return toggleCheat(state, "Free casts", (Character p) => &p.powerCheat);
     }
 
     bool handleTriggerpassCheatCommand(Nullable!OnOff state)
     {
-        return toggleCheat(state, "triggerpass", "triggerpass cheat", (Character p) => &p.triggerpassCheat);
+        return toggleCheat(state, "Skip area requirements", (Character p) => &p.triggerpassCheat);
     }
 
     // -----------------------------------------------------------------------

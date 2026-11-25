@@ -64,7 +64,7 @@ private:
         auto creature = cast(Creature) map.findObject(guid);
         if (creature is null)
         {
-            systemMessage("You should select a creature.");
+            systemMessage("Select a creature first.");
             return true;
         }
         if (amount == -1)
@@ -112,7 +112,7 @@ private:
         auto creature = cast(Creature) map.findObject(guid);
         if (creature is null)
         {
-            systemMessage("You should select a creature.");
+            systemMessage("Select a creature first.");
             return true;
         }
         const entry = creature.spawn.entry;
@@ -306,7 +306,7 @@ private:
         auto go = selectedGameObject();
         if (go is null)
         {
-            redSystemMessage("No selected GameObject...");
+            redSystemMessage("Select a game object first.");
             return true;
         }
         const v = &go.values;
@@ -341,7 +341,7 @@ private:
         auto go = selectedGameObject();
         if (go is null)
         {
-            redSystemMessage("No selected GameObject...");
+            redSystemMessage("Select a game object first.");
             return true;
         }
         auto v = &go.values;
@@ -373,7 +373,7 @@ private:
         auto unit = cast(Creature) map.findObject(guid);
         if (unit is null)
         {
-            systemMessage("You should select a creature.");
+            systemMessage("Select a creature first.");
             return true;
         }
         const at = unit.position;
@@ -415,7 +415,7 @@ private:
         auto go = selectedGameObject();
         if (go is null)
         {
-            redSystemMessage("No selected GameObject...");
+            redSystemMessage("Select a game object first.");
             return true;
         }
         if (!context.deleteGameObjectSpawn(map, go))
@@ -433,7 +433,7 @@ private:
         auto go = selectedGameObject();
         if (go is null)
         {
-            redSystemMessage("No selected GameObject...");
+            redSystemMessage("Select a game object first.");
             return true;
         }
         if (go.values.get!GAMEOBJECT_DYN_FLAGS == 1)
@@ -456,7 +456,7 @@ private:
         auto go = selectedGameObject();
         if (go is null)
         {
-            redSystemMessage("No selected GameObject...");
+            redSystemMessage("Select a game object first.");
             return true;
         }
         if (!scale)
@@ -488,7 +488,7 @@ private:
         auto go = selectedGameObject();
         if (go is null)
         {
-            redSystemMessage("No selected GameObject...");
+            redSystemMessage("Select a game object first.");
             return true;
         }
         GameObjectSpawn changed = go.spawn;
@@ -514,7 +514,7 @@ private:
         auto go = selectedGameObject();
         if (go is null)
         {
-            redSystemMessage("No selected GameObject...");
+            redSystemMessage("Select a game object first.");
             return true;
         }
         const rad = degrees * (cast(float) PI / 180.0f);
@@ -533,7 +533,7 @@ private:
             changed.rotation[3] = cos(o / 2);
             break;
         default:
-            redSystemMessage("Invalid Axis, Please use x, y, or o.");
+            redSystemMessage("Choose an axis: x, y, or o.");
             return true;
         }
         if (auto rotated = context.respawnGameObjectAs(map, go, changed))
@@ -701,7 +701,7 @@ private:
         auto creature = plr is null ? cast(Creature) map.findObject(guid) : null;
         if (plr is null && creature is null)
         {
-            redSystemMessage("A valid selection is required.");
+            redSystemMessage("Select a unit first.");
             return true;
         }
         if (plr !is null)
@@ -963,7 +963,7 @@ private:
         auto creature = getSelectedCreature(false);
         if (creature is null)
         {
-            systemMessage("You should select a creature.");
+            systemMessage("Select a creature first.");
             return true;
         }
         creature.values.set!UNIT_NPC_FLAGS(flags);
@@ -1022,7 +1022,7 @@ unittest
     import std.algorithm.searching : canFind;
     import std.format : format;
     import dmangos.auth.accounts : AccountLevel;
-    import dmangos.world.commands : MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, MSG_COLOR_LIGHTRED;
+    import dmangos.world.commands : MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, MSG_COLOR_LIGHTRED, MSG_COLOR_GREY;
     import dmangos.world.creature : Creature;
     import dmangos.world.movement : Position;
     import dmangos.world.objects : HighGuid, makeGuid;
@@ -1050,7 +1050,7 @@ unittest
 
     // Nothing selected.
     gm.say(".kill");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "A valid selection is required.|r"]);
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Select a unit first.|r"]);
 
     // `.npc select`: the nearest creature.
     gm.say(".npc select");
@@ -1114,17 +1114,17 @@ unittest
     // God mode: no damage taken.
     gm.write(Opcode.CMSG_SET_SELECTION, ClientGuid(victim.guid));
     gm.say(".cheat god");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "activated the god mode cheat on Anduin.|r"]);
-    assert(systemMessages(anduin.read()) == [MSG_COLOR_GREEN ~ "activated the god mode cheat on you.|r"]);
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "Damage immunity: on for Anduin.|r"]);
+    assert(systemMessages(anduin.read()) == [MSG_COLOR_GREEN ~ "Varian turned on Damage immunity.|r"]);
     const health = victim.values.get!UNIT_FIELD_HEALTH;
     anduin.session.inWorld.unit.spellHitBy(keeper.guid, 50);
     assert(victim.values.get!UNIT_FIELD_HEALTH == health);
     gm.say(".cheat casttime on");
     gm.say(".cheat status");
     const status = systemMessages(gm.read());
-    assert(status.canFind(MSG_COLOR_LIGHTBLUE ~ "GodMode: " ~ MSG_COLOR_LIGHTRED ~ "Active"));
-    assert(status.canFind(MSG_COLOR_LIGHTBLUE ~ "CastTime: " ~ MSG_COLOR_LIGHTRED ~ "Active"));
-    assert(status[$ - 1] == "2 cheats active, 5 inactive.");
+    assert(status.canFind("Damage immunity  " ~ MSG_COLOR_GREEN ~ "On|r"));
+    assert(status.canFind("Instant casts  " ~ MSG_COLOR_GREEN ~ "On|r"));
+    assert(status.canFind("Skip area requirements  " ~ MSG_COLOR_GREY ~ "Off|r"));
 }
 
 /// `.npc come` walks the selected creature to the GM; `.npc return` walks it back to its spawn point.
@@ -1170,7 +1170,7 @@ unittest
     auto gm = loggedIn(context, db, 7, "Varian", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.administrator);
     gm.read();
     gm.say(".gobject info");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "No selected GameObject...|r"]);
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Select a game object first.|r"]);
 
     GameObjectTemplate door = {entry: 9001, type: GameObjectType.door, displayId: 1, name: "Door"};
     context.data.gameObjectTemplates[9001] = door;
@@ -1249,7 +1249,7 @@ unittest
     assert(db.gameObjectSpawnRows.values[0].rotation[0] > 1.5f, "turned and saved");
     assert(db.gameObjectSpawnRows[chairRow].respawnSeconds == 100);
     gm.say(".gobject rotate q 90");
-    assert(systemMessages(gm.read()).canFind(MSG_COLOR_LIGHTRED ~ "Invalid Axis, Please use x, y, or o.|r"));
+    assert(systemMessages(gm.read()).canFind(MSG_COLOR_LIGHTRED ~ "Choose an axis: x, y, or o.|r"));
     gm.say(".gobject move");
     assert(db.gameObjectSpawnRows.length == 1);
     gm.read();

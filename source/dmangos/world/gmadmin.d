@@ -31,49 +31,17 @@ mixin template AdminCommands()
     import dmangos.world.updatefields;
 
 private:
-    // -----------------------------------------------------------------------
-    // Players
-    // -----------------------------------------------------------------------
-
-    // -----------------------------------------------------------------------
-    // `.gmTicket`: answered in the GM channel (`gm_client_channel`), as "GmTicket:<what>:..." lines
-    // -----------------------------------------------------------------------
-
-    bool handleCreatePetCommand(Rest args = Rest.init)
+    bool handleAddPetSpellCommand(uint spell)
     {
-        return true;
+        return petSpellCommand(spell, true);
     }
 
-    /// `atol` of a command's argument: its leading digits (after spaces and a sign), 0 if none.
-    private static long leadingNumber(string text)
+    bool handleRemovePetSpellCommand(uint spell)
     {
-        import std.ascii : isDigit;
-
-        size_t n;
-        while (n < text.length && (text[n] == ' ' || text[n] == '\t'))
-            ++n;
-        bool negative;
-        if (n < text.length && (text[n] == '-' || text[n] == '+'))
-            negative = text[n++] == '-';
-        long value;
-        while (n < text.length && text[n].isDigit && value < uint.max)
-            value = value * 10 + (text[n++] - '0');
-        return negative ? -value : value;
+        return petSpellCommand(spell, false);
     }
 
-    /// `.pet addspell <spell>`: the selected player's pet learns a spell.
-    bool handleAddPetSpellCommand(Rest args = Rest.init)
-    {
-        return petSpellCommand(args, true);
-    }
-
-    /// `.pet removespell <spell>`: the selected player's pet forgets a spell (answered as adding is).
-    bool handleRemovePetSpellCommand(Rest args = Rest.init)
-    {
-        return petSpellCommand(args, false);
-    }
-
-    private bool petSpellCommand(string args, bool learns)
+    private bool petSpellCommand(uint spell, bool teach)
     {
         auto plr = getSelectedChar(false);
         if (plr is null)
@@ -83,14 +51,13 @@ private:
             redSystemMessage(format!"%s has no pet."(plr.player.data.name));
             return true;
         }
-        const id = cast(uint) leadingNumber(args);
-        if (!id || context.data.spells.spell(id) is null)
+        if (context.data.spells.spell(spell) is null)
         {
-            redSystemMessage("Invalid spell id requested.");
+            redSystemMessage(format!"Unknown spell ID %s."(spell));
             return true;
         }
-        plr.petLearnsSpell(id, learns);
-        greenSystemMessage(format!"Added spell %u to %s's pet."(id, plr.player.data.name));
+        plr.petLearnsSpell(spell, teach);
+        greenSystemMessage(format!"%s's pet %s spell %s."(plr.player.data.name, teach ? "learned" : "forgot", spell));
         return true;
     }
 
@@ -119,7 +86,7 @@ private:
             return true;
         if (level == 0 || level > context.config.maxPlayerLevel)
         {
-            redSystemMessage("A level (numeric) is required to be specified after this command.");
+            redSystemMessage("Enter a level within the server’s level range.");
             return true;
         }
         blueSystemMessage(format!"Setting the level of %s to %u."(plr.player.data.name, level));
@@ -134,7 +101,7 @@ private:
         auto found = context.onlinePlayer(player.values.get!UNIT_FIELD_TARGET);
         if (found is null)
         {
-            systemMessage("Select A Player first.");
+            systemMessage("Select a player first.");
             return true;
         }
         auto target = sessionOf(found);
@@ -756,7 +723,7 @@ private:
         if (plr is null)
         {
             plr = this;
-            systemMessage("Auto-targeting self.");
+            systemMessage("Targeting yourself.");
         }
         if (plr !is this)
             gmLog("Cleared all cooldowns for player " ~ plr.player.data.name);
@@ -846,7 +813,7 @@ private:
             skill = 162; // unarmed
         if (skill == 0)
         {
-            redSystemMessage("Can't find skill ID :-/");
+            redSystemMessage("Unknown skill ID.");
             return false;
         }
         blueSystemMessage(format!"Modifying skill line %d. Advancing %d times."(skill, cnt));
@@ -854,7 +821,7 @@ private:
         const now = pr.player.skillValue(skill);
         if (now[1] == 0)
         {
-            systemMessage("Does not have skill line, adding.");
+            systemMessage("The player does not know this skill. Adding it now.");
             pr.applySkill(skill, 1, 300);
         }
         else // `_AdvanceSkillLine`: up to the maximum
@@ -948,7 +915,7 @@ private:
         auto plr = getSelectedChar(true);
         if (plr is null)
             return false;
-        blueSystemMessage("Removing ressurection sickness...");
+        blueSystemMessage("Removed resurrection sickness.");
         if (auto aura = plr.player.auras.find(resurrectionSickness))
             plr.removeAura(aura);
         if (plr !is this)
@@ -1254,7 +1221,7 @@ private:
         if (checkPlayerName(name2, config.minPlayerName, config.strictPlayerNames, config.realmZone)
             != CharNameResult.CHAR_NAME_SUCCESS)
         {
-            redSystemMessage("That name is invalid or contains invalid characters.");
+            redSystemMessage("Enter a valid character name.");
             return true;
         }
         const guid = context.database.characterGuid(normalizedName(name1));
@@ -1660,7 +1627,7 @@ unittest
     assert(victim.auras.find(sickness) !is null);
     gm.write(Opcode.CMSG_SET_SELECTION, ClientGuid(victim.guid));
     gm.say(".removesickness");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "Removing ressurection sickness...|r"]);
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "Removed resurrection sickness.|r"]);
     assert(victim.auras.find(sickness) is null);
 }
 

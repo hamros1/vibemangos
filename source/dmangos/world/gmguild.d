@@ -50,7 +50,7 @@ private:
         if (plr is null || plr.ownGuild() is null || plr.ownGuild().leader == plr.player.data.guid)
             return false;
         const guildName = plr.ownGuild().name;
-        greenSystemMessage(format!"Kicked %s from Guild: %s"(plr.player.data.name, guildName));
+        greenSystemMessage(format!"Removed %s from %s."(plr.player.data.name, guildName));
         if (plr !is this)
             gmLog(format!"Kicked %s from Guild %s"(plr.player.data.name, guildName));
         plr.gmLeaveGuild();
@@ -65,7 +65,7 @@ private:
             return false;
         const guildName = plr.ownGuild().name;
         greenSystemMessage(format!"Disbanded Guild: %s"(guildName));
-        gmLog(format!"Disbaned Guild %s"(guildName)); // ArcEmu's spelling
+        gmLog(format!"Disbanded guild %s"(guildName)); // ArcEmu's spelling
         plr.gmDisbandGuild();
         return true;
     }

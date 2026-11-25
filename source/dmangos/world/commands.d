@@ -105,109 +105,115 @@ unittest
     assert(!canUseCommand("", 'b') && hasGMPermissions("bca") && !hasGMPermissions("bc"));
 }
 
-/**
- * The rows a `command_overrides` row gives a new letter: the command `command` ("name" or "name sub",
- * each the start of a row's name; "name *" for every row of a sub-table). Returns the full paths of
- * the rows changed, which are empty if none matched.
- */
+/// Expands a legacy permission override, including a whole group via `group *`.
 string[] overrideTargets(string command) pure @safe
 {
-    import std.string : indexOf;
-    import std.uni : sicmp;
-
-    const space = command.indexOf(' ');
-    const name = space < 0 ? command : command[0 .. space];
-    const sub = space < 0 ? null : command[space + 1 .. $];
-    // The typed text starts the row's name, in any case.
-    static bool starts(string row, string typed)
+    auto root = catalogWord(commandTable, nextWord(command), true);
+    if (root is null)
+        return null;
+    const leaf = nextWord(command);
+    if (!leaf.length)
+        return [root.target.length ? root.target : root.name];
+    if (leaf == "*")
     {
-        return typed.length <= row.length && sicmp(row[0 .. typed.length], typed) == 0;
-    }
-
-    foreach (ref row; commandTable)
-    {
-        if (!starts(row.name, name))
-            continue;
-        if (sub is null)
-            return [row.name];
         string[] paths;
-        foreach (ref child; row.children)
-        {
-            if (sub.length && sub[0] == '*')
-                paths ~= row.name ~ " " ~ child.name;
-            else if (starts(child.name, sub))
-                return [row.name ~ " " ~ child.name];
-        }
+        foreach (ref row; root.children)
+            paths ~= row.target.length ? row.target : childPath(root.name, row.name);
         return paths;
     }
-    return null;
+    const child = catalogWord(root.children, leaf, true);
+    if (child is null)
+        return null;
+    return [child.target.length ? child.target : childPath(root.name, child.name)];
 }
 
 unittest
 {
     assert(overrideTargets("gm on") == ["gm on"] && overrideTargets("modify h") == ["modify hp"]);
     assert(overrideTargets("gm *").length == 6 && overrideTargets("nosuch").length == 0);
+    assert(overrideTargets("go coords") == ["worldport"] && overrideTargets("where") == ["gps"]);
+    assert(overrideTargets("wp wait") == ["waypoint waittime"]);
 }
 
-/// The method that runs the handler `handler`: `HandleGMOnCommand` is `handleGMOnCommand`.
-string handlerMethod(string handler) pure @safe
-{
-    import std.ascii : toLower;
-
-    return toLower(handler[0]) ~ handler[1 .. $];
-}
-
-/// Every handler named in `table` and its sub-tables, once each.
-string[] collectHandlers(immutable(ChatCommand)[] table) pure @safe
+/// Distinct method names for the compile-time dispatch switch.
+package string[] commandMethods(immutable(ChatCommand)[] table) pure @safe
 {
     import std.algorithm.searching : canFind;
 
-    string[] found;
+    string[] methods;
     foreach (ref row; table)
     {
-        if (row.handler.length && !found.canFind(row.handler))
-            found ~= row.handler;
-        foreach (handler; collectHandlers(row.children))
-            if (!found.canFind(handler))
-                found ~= handler;
+        if (row.handler.length && !methods.canFind(row.handler))
+            methods ~= row.handler;
+        foreach (method; commandMethods(row.children))
+            if (!methods.canFind(method))
+                methods ~= method;
     }
-    return found;
+    return methods;
 }
 
-/// Every update field the `.modify` rows name.
-string[] collectFields(immutable(ChatCommand)[] table) pure @safe
+package string childPath(string parent, string name) pure @safe
 {
-    import std.algorithm.searching : canFind;
-
-    string[] found;
-    foreach (ref row; table)
-        foreach (field; [row.field, row.fieldMax])
-            if (field.length && !found.canFind(field))
-                found ~= field;
-    return found;
+    return parent.length ? parent ~ " " ~ name : name;
 }
 
-private enum string[] modifyFields = collectFields(modifyCommandTable);
-
-/// The slot of an update field as a `.modify` row names it ("UNIT_FIELD_RESISTANCES + 1").
-size_t fieldSlot(string field) pure @safe
+package bool exactWord(string name, string word) pure nothrow @safe @nogc
 {
-    switch (field)
+    return name.length == word.length && hasStringAbbr(name, word);
+}
+
+package bool named(ref const ChatCommand row, string word) pure nothrow @safe @nogc
+{
+    return exactWord(row.name, word) || exactWord(row.alternate, word);
+}
+
+private const(ChatCommand)* catalogWord(immutable(ChatCommand)[] rows, string word, bool abbreviations) pure @safe
+{
+    if (!word.length)
+        return null;
+    const(ChatCommand)* prefix;
+    foreach (i, ref row; rows)
     {
-        static foreach (name; modifyFields)
-        {
-    case name:
-            return mixin(name);
-        }
-    default:
-        assert(0, "not a .modify field: " ~ field);
+        if (named(row, word))
+            return &rows[i];
+        if (abbreviations && prefix is null && hasStringAbbr(row.name, word))
+            prefix = &rows[i];
     }
+    return prefix;
+}
+
+/// Looks up a catalog link by its stable permission path.
+package const(ChatCommand)* declaredCommand(string path) pure @safe
+{
+    immutable(ChatCommand)[] table = commandTable;
+    while (const word = nextWord(path))
+    {
+        const found = catalogWord(table, word, false);
+        if (found is null || trimSpaces(path).length == 0)
+            return found;
+        table = found.children;
+    }
+    return null;
 }
 
 unittest
 {
-    assert(fieldSlot("UNIT_FIELD_RESISTANCES + 1") == UNIT_FIELD_RESISTANCES + 1);
-    assert(fieldSlot("UNIT_FIELD_HEALTH") == UNIT_FIELD_HEALTH);
+    static void validate(immutable(ChatCommand)[] rows)
+    {
+        foreach (i, ref row; rows)
+        {
+            foreach (ref other; rows[0 .. i])
+                assert(!named(other, row.name) && !named(other, row.label), row.name);
+            if (row.target.length)
+            {
+                const target = declaredCommand(row.target);
+                assert(target !is null && !target.target.length && !target.children.length, row.target);
+            }
+            validate(row.children);
+        }
+    }
+
+    validate(commandTable);
 }
 
 /**
@@ -413,163 +419,188 @@ mixin template ChatCommands()
     import dmangos.world.updatefields;
 
 private:
-    /// Every handler the command tables name.
-    enum string[] commandHandlers = collectHandlers(commandTable);
+    private enum methods = commandMethods(commandTable);
 
-    /// `handle...Command` methods that no row names on purpose (the "Not yet implemented." answer itself).
-    enum string[] unlistedHandlers = ["handleNYICommand"];
-
-    // -----------------------------------------------------------------------
-    // Permissions
-    // -----------------------------------------------------------------------
-
-    /// A row's letter, after `command_overrides`.
-    char commandGroup(string path, ref immutable ChatCommand row) const
+    private struct CommandMatch
     {
-        if (auto overridden = path in context.commandOverrides)
-            return *overridden;
-        return row.group;
+        const(ChatCommand)* row;
+        string path;
+        string label;
     }
 
-    private bool canRunCommand(string path, ref immutable ChatCommand row) const
+    private bool canRunCommand(ref const ChatCommand row, string path) const
     {
         import std.uni : toLower;
 
-        import dmangos.world.gmaccess : gmCanonicalCommand, gmCommandCapability;
-
-        const canonical = gmCanonicalCommand(path);
+        if (row.target.length)
+            return canRunCommand(*declaredCommand(row.target), row.target);
+        const permission = row.permission;
         if (!gmAccess.managed)
         {
-            const group = commandGroup(canonical, row);
+            const override_ = path in context.commandOverrides;
+            const group = override_ is null ? permission.legacy : *override_;
             return group == '0' || canUseCommand(group);
         }
         if (row.children.length)
         {
             foreach (ref child; row.children)
-                if (canRunCommand(path ~ " " ~ child.name, child))
+                if (canRunCommand(child, childPath(path, child.name)))
                     return true;
             return false;
         }
-        // Account delegation can only be granted by an administrator.
-        if (path == "access grant" || path == "access revoke")
-            return gmAccess.allows("staff.admin") && gmAccess.allows("roles.manage");
-        if (path == "account level")
-            return gmAccess.allows("staff.admin");
-        return row.group == '0' || gmAccess.allows(gmCommandCapability(canonical, row.group)) || gmAccess.allows("command." ~ toLower(canonical));
+        if (permission.alsoRequires.length && !gmAccess.allows(permission.alsoRequires))
+            return false;
+        return !permission.capability.length || gmAccess.allows(permission.capability)
+            || (permission.delegable && gmAccess.allows("command." ~ toLower(path)));
     }
 
-    // -----------------------------------------------------------------------
-    // Parsing and running commands
-    // -----------------------------------------------------------------------
+    private const(ChatCommand)* matchCommand(immutable(ChatCommand)[] table, string parent, string word,
+        bool abbreviations) const
+    {
+        const(ChatCommand)* prefix;
+        foreach (ref row; table)
+        {
+            if (named(row, word))
+                return canRunCommand(row, childPath(parent, row.name)) ? &row : null;
+            if (abbreviations && prefix is null && hasStringAbbr(row.name, word)
+                && canRunCommand(row, childPath(parent, row.name)))
+                prefix = &row;
+        }
+        return prefix;
+    }
 
-    /// True if `text` was a command (run or refused), false if it is to be said.
+    private CommandMatch readCommand(ref string text, bool abbreviations = true) const
+    {
+        CommandMatch match;
+        immutable(ChatCommand)[] table = commandTable;
+        while (const word = nextWord(text))
+        {
+            auto row = matchCommand(table, match.path, word, abbreviations);
+            if (row is null)
+                return CommandMatch.init;
+            match = CommandMatch(row, childPath(match.path, row.name), childPath(match.label, row.label));
+            if (row.children.length == 0)
+                return match;
+            table = row.children;
+        }
+        return match;
+    }
+
+    /// True if this message was handled as a command.
     bool parseCommands(string text)
     {
-        if (text.length == 0)
-            return false;
-        if (text[0] != '!' && text[0] != '.')
-            return false;
-        if (text.length > 1 && text[1] == '.') // skip '..'
+        if (!text.length || (text[0] != '!' && text[0] != '.') || (text.length > 1 && text[1] == '.'))
             return false;
         refreshGmAccess();
         const canOpen = gmAccess.managed ? gmAccess.grants.length != 0 : hasPermissions;
         if (!canOpen && !context.config.allowPlayerCommands)
             return false;
         trace!"%s: '%s' (%s) typed %s"(remoteAddress, player.data.name, account.username, text);
-        if (!executeCommandInTable(commandTable, null, text[1 .. $]))
-            systemMessage("There is no such command, or you do not have access to it.");
+
+        string args = text[1 .. $];
+        const match = readCommand(args);
+        if (match.row is null)
+            unknownCommand();
+        else if (match.row.children.length)
+            showCommandList(match);
+        else
+        {
+            const row = actionFor(*match.row);
+            if (row.unavailableReason.length)
+                redSystemMessage(row.unavailableReason);
+            else if (!runCommand(*row, args))
+                showCommandHelp(match);
+        }
         return true;
     }
 
-    /// Finds the row of `table` the first word of `text` abbreviates and runs it, or the sub-table's row
-    /// for the next word; false if no row matches. `path` is the names of the tables above, for overrides.
-    bool executeCommandInTable(immutable(ChatCommand)[] table, string path, string text)
+    private const(ChatCommand)* actionFor(ref const ChatCommand row) const
     {
-        size_t i;
-        while (i < text.length && text[i] != ' ')
-            ++i;
-        const cmd = text[0 .. i];
-        while (i < text.length && text[i] == ' ')
-            ++i;
-        const args = text[i .. $];
-        if (cmd.length == 0)
-            return false;
-
-        const exact = table.canFind!(row => row.name.length == cmd.length && hasStringAbbr(row.name, cmd));
-        foreach (ref row; table)
-        {
-            if ((exact && row.name.length != cmd.length) || !hasStringAbbr(row.name, cmd))
-                continue;
-            const rowPath = path.length ? path ~ " " ~ row.name : row.name;
-            if (!canRunCommand(rowPath, row))
-                continue;
-
-            if (row.children.length)
-            {
-                if (!executeCommandInTable(row.children, rowPath, args))
-                {
-                    if (row.help.length)
-                        sendMultilineMessage(row.help);
-                    else
-                    {
-                        greenSystemMessage("Available Subcommands:");
-                        foreach (ref child; row.children)
-                        {
-                            if (canRunCommand(rowPath ~ " " ~ child.name, child))
-                                blueSystemMessage(format!" %s - %s"(child.name,
-                                    child.help.length ? child.help : "No Help Available"));
-                        }
-                    }
-                }
-                return true;
-            }
-
-            if (row.handler is null && (row.field.length || row.fieldMax.length))
-            {
-                if (args.length == 0)
-                    redSystemMessage("No values specified.");
-                const result = row.valueType == 2 ? cmdSetField!float(row.field, row.fieldMax, row.name, args)
-                    : cmdSetField!uint(row.field, row.fieldMax, row.name, args);
-                if (!result)
-                    redSystemMessage("Must be in the form of (command) <value>, or, (command) <value> <maxvalue>");
-            }
-            else if (!callHandler(row.handler, args))
-            {
-                if (row.help.length)
-                    sendMultilineMessage(row.help);
-                else
-                    redSystemMessage(format!"Incorrect syntax specified. Try .help %s for the correct syntax."(
-                        row.name));
-            }
-            return true;
-        }
-        return false;
+        return row.target.length ? declaredCommand(row.target) : &row;
     }
 
-    /// Runs the handler `handler` with the text after the command's words.
-    bool callHandler(string handler, string args)
+    private bool runCommand(ref const ChatCommand row, string args)
     {
-        // Every `handle...Command` method is named by a row of the tables: one misspelled would never run,
-        // and its command would answer "Not yet implemented." instead.
-        static foreach (member; __traits(allMembers, typeof(this)))
-            static if (member.length > "handleCommand".length && member[0 .. 6] == "handle"
-                && member[$ - 7 .. $] == "Command" && !unlistedHandlers.canFind(member))
-                static assert(commandHandlers.canFind!((name, m) => handlerMethod(name) == m)(member),
-                    member ~ " is not named by any row of the command tables (dmangos.world.commandtable)");
-
-        switch (handler)
+        if (row.field >= 0)
+            return row.decimal ? cmdSetField!float(row, args) : cmdSetField!uint(row, args);
+        switch (row.handler)
         {
-            static foreach (name; commandHandlers)
+            static foreach (method; methods)
             {
-                static if (__traits(hasMember, typeof(this), handlerMethod(name)))
-                {
-        case name:
-                    return invoke!(handlerMethod(name))(args);
-                }
+        case method:
+                return invoke!method(args);
             }
         default:
-            return handleNYICommand();
+            assert(0, "A command action must declare a handler or field.");
         }
+    }
+
+    private void unknownCommand()
+    {
+        redSystemMessage("Command unavailable. Try .commands.");
+    }
+
+    private string commandUsage(string label, ref const ChatCommand row) const
+    {
+        return "." ~ label ~ (row.arguments.length ? " " ~ row.arguments : "");
+    }
+
+    private void showCommandHelp(const ref CommandMatch match)
+    {
+        const row = actionFor(*match.row);
+        systemMessage(MSG_COLOR_LIGHTBLUE ~ commandUsage(match.label, *row) ~ "|r");
+        if (row.unavailableReason.length)
+            redSystemMessage(row.unavailableReason);
+        else if (row.description.length)
+            systemMessage(row.description);
+    }
+
+    private void showCommandList(CommandMatch match, string filter = null)
+    {
+        import std.algorithm.sorting : sort;
+        import std.array : join;
+
+        const rows = match.row is null ? commandTable : match.row.children;
+        string[] lines;
+        foreach (ref row; rows)
+        {
+            if (filter.length && !hasStringAbbr(row.name, filter) && !hasStringAbbr(row.label, filter))
+                continue;
+            const action = actionFor(row);
+            if (action.unavailableReason.length || !canRunCommand(row, childPath(match.path, row.name)))
+                continue;
+            if (match.row !is null)
+                lines ~= MSG_COLOR_LIGHTBLUE ~ commandUsage(childPath(match.label, row.label), *action) ~ "|r  "
+                    ~ action.description;
+            else if (!row.children.length || rowsHaveActions(row.children, row.name))
+                lines ~= MSG_COLOR_LIGHTBLUE ~ "." ~ row.label ~ "|r";
+        }
+        if (!lines.length)
+        {
+            redSystemMessage("No matching commands are available.");
+            return;
+        }
+        lines.sort();
+        if (match.row !is null)
+        {
+            greenSystemMessage("." ~ match.label ~ " commands");
+            foreach (line; lines)
+                systemMessage(line);
+        }
+        else
+        {
+            greenSystemMessage("Commands  ·  .help <command> for syntax");
+            for (size_t i; i < lines.length; i += 5)
+                systemMessage(lines[i .. (i + 5 < lines.length ? i + 5 : lines.length)].join("  "));
+        }
+    }
+
+    private bool rowsHaveActions(immutable(ChatCommand)[] rows, string parent) const
+    {
+        foreach (ref row; rows)
+            if (!actionFor(row).unavailableReason.length && canRunCommand(row, childPath(parent, row.name)))
+                return true;
+        return false;
     }
 
     /**
@@ -621,13 +652,6 @@ private:
         return __traits(getMember, this, member)(values);
     }
 
-    /// What a command whose system does not exist yet answers.
-    bool handleNYICommand()
-    {
-        redSystemMessage("Not yet implemented.");
-        return true;
-    }
-
     // -----------------------------------------------------------------------
     // System messages
     // -----------------------------------------------------------------------
@@ -642,7 +666,8 @@ private:
     /// A system message in the colour `color`.
     void colorSystemMessage(string color, string text)
     {
-        systemMessage(color ~ (text.length > 1023 ? text[0 .. 1023] : text) ~ "|r");
+        const limit = 1023 - color.length - "|r".length;
+        systemMessage(color ~ (text.length > limit ? text[0 .. limit] : text) ~ "|r");
     }
 
     /// A system message in light red.
@@ -693,12 +718,12 @@ private:
         if (guid == 0)
         {
             if (showError)
-                greenSystemMessage("Auto-targeting self.");
+                greenSystemMessage("Targeting yourself.");
             return this;
         }
         auto found = cast(Character) map.find(guid);
         if (found is null && showError)
-            redSystemMessage("This command requires that you select a player.");
+            redSystemMessage("Select a player first.");
         return found;
     }
 
@@ -710,7 +735,7 @@ private:
         if (highGuidOf(guid) == HighGuid.unit)
             creature = cast(Creature) map.findObject(guid);
         if (creature is null && showError)
-            redSystemMessage("This command requires that you select a creature.");
+            redSystemMessage("Select a creature first.");
         return creature;
     }
 
@@ -718,18 +743,18 @@ private:
     // .modify's field rows
     // -----------------------------------------------------------------------
 
-    /**
-     * A `.modify` row that sets a field, as an integer (`T` is `uint`) or a `float`: the selected
-     * player's, or creature's, field set to the first word of `args`, and `fieldMax` to the second.
-     */
-    bool cmdSetField(T)(string field, string fieldMax, string fieldName, string args)
+    /// Sets a typed update field. Resource maxima default to the requested value.
+    bool cmdSetField(T)(ref const ChatCommand row, string args)
     {
         import std.conv : ConvException, to;
+        import std.math : isFinite;
 
-        const hasMax = fieldMax.length > 0;
-        const value = nextWord(args), maximum = hasMax ? nextWord(args) : "0";
-        if (value is null || maximum is null)
+        const hasMax = row.maximum >= 0;
+        const value = nextWord(args);
+        const maximumArg = hasMax ? nextWord(args) : null;
+        if (value is null || (row.field == UNIT_FIELD_MINDAMAGE && maximumArg is null) || trimSpaces(args).length)
             return false;
+        const maximum = !hasMax ? "0" : maximumArg.length ? maximumArg : value;
         T av, mv;
         try
         {
@@ -740,12 +765,12 @@ private:
             return false;
         // Integer and float values are checked a little differently.
         static if (is(T == float))
-            const invalidValue = av <= 0;
+            const invalidValue = !av.isFinite || !mv.isFinite || av <= 0;
         else
             const invalidValue = av == 0 && mv > 0;
         if (invalidValue || hasMax && (mv < av || mv <= 0))
         {
-            redSystemMessage("Values are invalid. Value must be < max (if max exists), and both must be > 0.");
+            redSystemMessage("Enter a valid value. A maximum must be positive and at least as large as the value.");
             return true;
         }
 
@@ -762,8 +787,9 @@ private:
                 return number;
         }
 
-        const slot = fieldSlot(field);
-        const maxSlot = hasMax ? fieldSlot(fieldMax) : 0;
+        const slot = cast(size_t) row.field;
+        const maxSlot = hasMax ? cast(size_t) row.maximum : 0;
+        const fieldName = row.label;
         static if (is(T == uint))
             const stored = slot == UNIT_FIELD_STAT1 ? av / 2 : av; // the agility row stores half the value
         else
@@ -792,7 +818,7 @@ private:
             map.flushObjectChanges(cr);
         }
         else
-            redSystemMessage("Invalid Selection.");
+            redSystemMessage("Select a player or creature first.");
         return true;
     }
 }
@@ -830,24 +856,22 @@ unittest
 
     // The moderator's letters ("bcghiltuv") have no `m`: `.modify` is not there for it.
     mod.say(".modify hp 5");
-    assert(systemMessages(mod.read()) == ["There is no such command, or you do not have access to it."]);
+    assert(systemMessages(mod.read()) == [MSG_COLOR_LIGHTRED ~ "Command unavailable. Try .commands.|r"]);
 
-    // A group name alone lists what the player may use in it: `.gm` for the moderator.
+    // A group name lists the allowed actions with their preferred spelling and syntax.
     mod.say(".gm");
-    assert(systemMessages(mod.read()) == [MSG_COLOR_GREEN ~ "Available Subcommands:|r",
-        MSG_COLOR_LIGHTBLUE ~ " list - Shows active GM's|r", MSG_COLOR_LIGHTBLUE ~ " off - Sets GM tag off|r",
-        MSG_COLOR_LIGHTBLUE ~ " on - Sets GM tag on|r",
-        MSG_COLOR_LIGHTBLUE ~ " whisperblock - Blocks like .gmon except without the <GM> tag|r",
-        MSG_COLOR_LIGHTBLUE ~ " allowwhispers - Allows whispers from player <s> while in gmon mode.|r",
-        MSG_COLOR_LIGHTBLUE ~ " blockwhispers - Blocks whispers from player <s> while in gmon mode.|r"]);
+    const menu = systemMessages(mod.read());
+    assert(menu.length == 7 && menu[0] == MSG_COLOR_GREEN ~ ".gm commands|r");
+    assert(menu[1] == MSG_COLOR_LIGHTBLUE ~ ".gm allow <name>|r  Allow whispers from a player while in GM mode.");
+    assert(menu.canFind(MSG_COLOR_LIGHTBLUE ~ ".gm off|r  Turn off the GM tag and whisper blocking."));
 
     // The first row in table order wins: `.k` is `.kill`, which needs a selection.
     gm.say(".k");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "A valid selection is required.|r"]);
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Select a unit first.|r"]);
 
     // A command whose system does not exist yet says so.
     gm.say(".cheat fly");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Not yet implemented.|r"]);
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Player flight is unavailable in this client.|r"]);
 
     // `.invisible`, both ways, in ArcEmu's words (its double space included).
     gm.say(".invisible");
@@ -860,7 +884,7 @@ unittest
 
     // A handler refusing its arguments shows the row's help.
     gm.say(".levelup -2");
-    assert(systemMessages(gm.read()) == ["Levelup x lvls"]);
+    assert(systemMessages(gm.read())[0] == MSG_COLOR_LIGHTBLUE ~ ".levelup [levels]|r");
 
     // Levels raise the caps of the skills that go with the level, not their values.
     {
@@ -875,10 +899,10 @@ unittest
 
     // `.help`, with abbreviations.
     gm.say(".help gm of");
-    assert(systemMessages(gm.read()) == ["Sets GM tag off"]);
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ ".gm off|r", "Turn off the GM tag and whisper blocking."]);
     gm.say("!he nosuch");
     assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED
-        ~ "Sorry, no help was found for this command, or that command does not exist.|r"]);
+        ~ "Command unavailable. Try .commands.|r"]);
 
     // `..` is never a command.
     gm.say("..what");
@@ -898,14 +922,14 @@ unittest
     gm.read();
 
     gm.say(".learn 99999999");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_GREEN ~ "Auto-targeting self.|r", "Invalid spell 99999999"]);
+    assert(systemMessages(gm.read()) == [MSG_COLOR_GREEN ~ "Targeting yourself.|r", "Unknown spell ID 99999999."]);
     assert(!gm.session.inWorld.hasPermissions && gm.session.inWorld.security == AccountLevel.player);
     gm.say(".character learn 99999999");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_GREEN ~ "Auto-targeting self.|r", "Invalid spell 99999999"]);
+    assert(systemMessages(gm.read()) == [MSG_COLOR_GREEN ~ "Targeting yourself.|r", "Unknown spell ID 99999999."]);
     gm.say(".travel coords 0 0 0 0");
-    assert(systemMessages(gm.read()) == ["There is no such command, or you do not have access to it."]);
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Command unavailable. Try .commands.|r"]);
     gm.say(".account level JAINA 3");
-    assert(systemMessages(gm.read()) == ["There is no such command, or you do not have access to it."]);
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Command unavailable. Try .commands.|r"]);
 
     db.gmAccessRows[id] = GmAccess(true);
     gm.say(".learn 99999999");
@@ -924,14 +948,12 @@ unittest
     gm.read();
 
     gm.say(".gm on");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_GREEN ~ "Setting GM Flag on yourself...|r", MSG_COLOR_LIGHTBLUE
-        ~ "GM Flag Set. It will appear above your name and in chat messages until you use !gm off.|r"]);
+    assert(systemMessages(gm.read()) == [MSG_COLOR_GREEN ~ "GM mode on. Your GM tag is visible.|r"]);
     const jaina = gm.session.character;
     assert(jaina.gmTagOn && jaina.hasFlag(PlayerFlags.gm));
     player.read();
     gm.say(".gm on");
-    assert(systemMessages(gm.read())[1] == MSG_COLOR_LIGHTRED
-        ~ "GM Flag is already set on. Use !gm off to disable it.|r");
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "GM mode is already on.|r"]);
 
     // Her words carry the GM tag.
     gm.say("hello");
@@ -981,17 +1003,21 @@ unittest
     assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "You set the hp of Anduin to 400/500.|r",
         MSG_COLOR_GREEN ~ "Anduin set your hp to 400/500.|r"]);
     gm.say(".modify hp 600 500");
-    assert(systemMessages(gm.read())[0].canFind("Values are invalid"));
+    assert(systemMessages(gm.read())[0].canFind("Enter a valid value"));
     gm.say(".modify scale 2.5");
     assert(me.values.get!OBJECT_FIELD_SCALE_X == 2.5f);
     gm.read();
     assert(context.gmLogLines[0].canFind("Player Anduin :: used modify field value: hp, 400 on Anduin"));
 
-    // command_overrides made `.gps` an administrator's command.
-    gm.say(".gps");
-    assert(systemMessages(gm.read()) == ["There is no such command, or you do not have access to it."]);
-    admin.say(".gps");
-    assert(systemMessages(admin.read())[0].canFind("Current Position"));
+    gm.say(".modify hp 300");
+    assert(me.values[UNIT_FIELD_HEALTH] == 300 && me.values[UNIT_FIELD_MAXHEALTH] == 300);
+    gm.read();
+
+    // A legacy override also governs the preferred alias.
+    gm.say(".where");
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Command unavailable. Try .commands.|r"]);
+    admin.say(".where");
+    assert(systemMessages(admin.read())[0].canFind("Position"));
 
     // A `z` account cannot be kicked by an `a` one.
     gm.say(".kickplayer varian spamming");
@@ -1027,9 +1053,9 @@ unittest
 
     // A word that does not convert, or a missing one, shows the command's help.
     gm.say(".modify speed fast");
-    assert(systemMessages(gm.read()) == ["Modifies the movement speed of the selected target."]);
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ ".modify speed <speed>|r", "Set movement speed."]);
     gm.say(".modify speed");
-    assert(systemMessages(gm.read()) == ["Modifies the movement speed of the selected target."]);
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ ".modify speed <speed>|r", "Set movement speed."]);
     gm.say(".modify speed 14");
     assert(gm.session.character.speeds[MoveType.run] == 14);
     gm.read();
@@ -1038,7 +1064,7 @@ unittest
     gm.say(".character additem 117");
     assert(gm.session.character.inventory.count(itemJerky) == 1);
     gm.say(".character additem 117 x");
-    assert(systemMessages(gm.read())[$ - 1] == "Adds item x count y" && gm.session.character.inventory.count(itemJerky) == 1);
+    assert(systemMessages(gm.read())[$ - 1] == "Give items to the selected player." && gm.session.character.inventory.count(itemJerky) == 1);
 
     // `Rest` takes the rest of the line; a missing `Rest` with a default takes the default.
     gm.say(".kickplayer jaina was rude to the guards");
@@ -1051,9 +1077,9 @@ unittest
 
     // `OnOff` reads "on" and "off" only; an optional `Nullable!OnOff` toggles when it is missing.
     gm.say(".cheat explore maybe");
-    assert(systemMessages(gm.read()) == ["Reveals the unexplored parts of the map."]);
-    enum activated = MSG_COLOR_LIGHTBLUE ~ "activated the triggerpass cheat on Anduin.|r";
-    enum deactivated = MSG_COLOR_LIGHTBLUE ~ "deactivated the triggerpass cheat on Anduin.|r";
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ ".cheat explore <on|off>|r", "Reveal or clear map exploration."]);
+    enum activated = MSG_COLOR_LIGHTBLUE ~ "Skip area requirements: on for Anduin.|r";
+    enum deactivated = MSG_COLOR_LIGHTBLUE ~ "Skip area requirements: off for Anduin.|r";
     gm.say(".cheat triggerpass");
     assert(systemMessages(gm.read()).canFind(activated));
     gm.say(".cheat triggerpass");
@@ -1063,7 +1089,7 @@ unittest
     assert(systemMessages(gm.read()).count(activated) == 2);
 }
 
-/// `.pet`: without a pet, its commands say so as ArcEmu's do; `createpet` (disabled there) answers nothing.
+/// Pet commands report a missing pet or an unavailable action.
 unittest
 {
     auto db = newDatabase();
@@ -1075,7 +1101,7 @@ unittest
     gm.say(".pet addspell 133");
     assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Jaina has no pet.|r"]);
     gm.say(".pet createpet 299");
-    assert(systemMessages(gm.read()).length == 0);
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Creating pets from chat is unavailable.|r"]);
 }
 
 /// GM tickets: a player asks for help; the GM channel's `.gmTicket` commands list and remove tickets, as ArcEmu's.
@@ -1094,7 +1120,7 @@ unittest
     // Without a GM channel the commands show their help.
     gm.say(".gmTicket list");
     const help = systemMessages(gm.read());
-    assert(help.length && !help.canFind(MSG_COLOR_LIGHTRED ~ "Not yet implemented.|r"));
+    assert(help.length && !help.canFind(MSG_COLOR_LIGHTRED ~ "Player flight is unavailable in this client.|r"));
 
     // A ticket: made, then read back.
     ByteWriter w;

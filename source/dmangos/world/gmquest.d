@@ -39,14 +39,14 @@ private:
         return true;
     }
 
-    /// The selected player, else the GM itself ("Auto-targeting self.").
+    /// The selected player, else the GM itself ("Targeting yourself.").
     auto questTarget()
     {
         auto plr = getSelectedChar(true);
         if (plr is null)
         {
             plr = this;
-            systemMessage("Auto-targeting self.");
+            systemMessage("Targeting yourself.");
         }
         return plr;
     }

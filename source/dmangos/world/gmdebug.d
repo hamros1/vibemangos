@@ -45,7 +45,7 @@ private:
         }
     }
 
-    /// The selected unit, oneself without a selection; not found after "You should select a character or a creature.".
+    /// The selected unit, oneself without a selection; not found after "Select a player or creature first.".
     SelectedUnit selectedUnit()
     {
         SelectedUnit unit;
@@ -59,7 +59,7 @@ private:
                 unit.creature = cast(Creature) map.findObject(guid);
         }
         if (!unit.found)
-            systemMessage("You should select a character or a creature.");
+            systemMessage("Select a player or creature first.");
         return unit;
     }
 
@@ -153,7 +153,7 @@ private:
         auto target = cast(Creature) map.findObject(guid);
         if (target is null || target.ai is null)
         {
-            systemMessage("You should select a creature.");
+            systemMessage("Select a creature first.");
             return true;
         }
         string text = format!"threatlist of creature: %s %s\n"(guid & 0xFFFF_FFFF, guid >> 32);
@@ -171,7 +171,7 @@ private:
         auto creature = guid ? cast(Creature) map.findObject(guid) : null;
         if (creature is null || creature.ai is null)
         {
-            systemMessage("You should select a character or a creature.");
+            systemMessage("Select a player or creature first.");
             return true;
         }
         systemMessage(format!"Aggrorange is: %s"(creature.ai.aggroRangeFor(unit)));
@@ -192,7 +192,7 @@ private:
                 at = who.character.position;
             else
             {
-                systemMessage("You should select a character or a creature.");
+                systemMessage("Select a player or creature first.");
                 return true;
             }
         }
@@ -241,7 +241,7 @@ private:
         auto creature = getSelectedCreature(false);
         if (creature is null)
         {
-            systemMessage("You should select a creature.");
+            systemMessage("Select a creature first.");
             return true;
         }
         ByteWriter w;
@@ -282,7 +282,7 @@ private:
         auto creature = getSelectedCreature(false);
         if (creature is null)
         {
-            systemMessage("You should select a creature.");
+            systemMessage("Select a creature first.");
             return true;
         }
         creature.movement.position.orientation = degrees / (360 / 6.28f);
@@ -346,7 +346,7 @@ private:
                 at = object.position;
             else
             {
-                systemMessage("You should select a character or a creature.");
+                systemMessage("Select a player or creature first.");
                 return true;
             }
         }
@@ -452,19 +452,13 @@ private:
             return true;
         if (field < 1 || field >= PLAYER_END || field >= unit.values.length)
         {
-            systemMessage("Incorrect Field.");
+            systemMessage("Choose a valid update field.");
             return true;
         }
         const oldValue = unit.values[field];
         unit.values.setSlot(field, value);
         unit.flush(this);
         systemMessage(format!"Set Field %d from %d to %d."(field, oldValue, value));
-        return true;
-    }
-
-    /// Does nothing: sending raw packets is disabled.
-    bool handleSendpacket()
-    {
         return true;
     }
 
@@ -604,7 +598,7 @@ private:
     {
         import dmangos.world.bgqueue : BattlegroundInstance, BattlegroundQueueHost;
 
-        systemMessage("Forcing initialitation of all battlegrounds...");
+        systemMessage("Starting queued battlegrounds.");
         context.services.call!(BattlegroundQueueHost.forceStart)(BattlegroundInstance(0));
         systemMessage("...done");
         return true;
@@ -616,7 +610,7 @@ private:
         auto copy = currentBattleground();
         if (copy is null)
         {
-            systemMessage("You're not in a battleground!");
+            systemMessage("Join a battleground first.");
             return true;
         }
         leaveBattleground(true);
@@ -628,7 +622,7 @@ private:
         if (auto copy = currentBattleground())
             copy.start();
         else
-            systemMessage("You're not in a battleground!");
+            systemMessage("Join a battleground first.");
         return true;
     }
 
@@ -637,14 +631,14 @@ private:
         if (auto copy = currentBattleground())
             systemMessage(format!"%s, copy %s, %s."(copy.type, copy.instance, copy.status));
         else
-            systemMessage("You're not in a battleground!");
+            systemMessage("Join a battleground first.");
         return true;
     }
 
     bool handleBattlegroundCommand()
     {
         handleBGInfoCommnad();
-        systemMessage("Use .battleground to list match-management commands.");
+        systemMessage("Use .bg to see battleground commands.");
         return true;
     }
 
@@ -694,7 +688,7 @@ private:
         if (auto copy = currentBattleground())
             copy.setWorldState(id, value);
         else
-            systemMessage("You're not in a battleground!");
+            systemMessage("Join a battleground first.");
         return true;
     }
 
@@ -708,7 +702,7 @@ private:
         if (auto copy = currentBattleground())
             copy.playSound(sound);
         else
-            systemMessage("You're not in a battleground!");
+            systemMessage("Join a battleground first.");
         return true;
     }
 }
@@ -734,7 +728,7 @@ unittest
     gm.read();
     auto keeper = cast(Creature) context.map(0).findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
     gm.say(".debug threatList");
-    assert(systemMessages(gm.read()) == ["You should select a creature."]);
+    assert(systemMessages(gm.read()) == ["Select a creature first."]);
     gm.write(Opcode.CMSG_SET_SELECTION, ClientGuid(keeper.guid));
     gm.say(".debug threatList");
     assert(systemMessages(gm.read())[0].startsWith("threatlist of creature: "));

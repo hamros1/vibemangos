@@ -75,50 +75,10 @@ string gmCapability(char group) pure nothrow @safe @nogc
     }
 }
 
-/// Public shortcuts and their original permission paths.
-string gmCanonicalCommand(string path) pure nothrow @safe @nogc
-{
-    switch (path)
-    {
-    case "learn": return "character learn";
-    case "travel coords": return "worldport";
-    case "travel player": return "appear";
-    case "travel summon": return "summon";
-    case "npc traineradd": return "addtrainerspell";
-    default: return path;
-    }
-}
-
-/// Named domains for staff tasks that used to share the same compatibility letter.
-string gmCommandCapability(string path, char legacyGroup) pure @safe
-{
-    import std.algorithm.searching : startsWith;
-
-    if (path == "access grant" || path == "access revoke")
-        return "roles.manage";
-    if (legacyGroup == 'z')
-        return "staff.admin";
-    if (path.startsWith("cheat "))
-        return "testing.cheats";
-    if (path.startsWith("guild "))
-        return "guild.manage";
-    if (path.startsWith("gmTicket "))
-        return "support.tickets";
-    if (path == "addtrainerspell")
-        return "world.trainers";
-    switch (path)
-    {
-    case "character learn", "character unlearn", "character learnskill", "character advanceskill",
-        "character removeskill", "character resetspells", "character resettalents",
-        "character resetskills", "character advanceallskills", "character increaseweaponskill":
-        return "character.learn";
-    default: return gmCapability(legacyGroup);
-    }
-}
-
 mixin template AccessCommands()
 {
-    import std.conv : to;
+    import std.algorithm.searching : canFind;
+    import std.array : join;
     import std.format : format;
 
 private:
@@ -126,11 +86,18 @@ private:
     {
         if (!gmAccess.managed)
         {
-            systemMessage("This account currently uses its legacy account level.");
+            blueSystemMessage("Staff access comes from your legacy account level.");
             return true;
         }
-        systemMessage("Roles: " ~ (gmAccess.roles.length ? gmAccess.roles.to!string : "none"));
-        systemMessage("Capabilities: " ~ (gmAccess.grants.length ? gmAccess.grants.to!string : "none"));
+        greenSystemMessage("Staff access");
+        systemMessage("Roles: " ~ (gmAccess.roles.length ? gmAccess.roles.join(", ") : "None"));
+        if (gmAccess.grants.canFind("*"))
+            systemMessage("Capabilities: All");
+        else if (gmAccess.grants.length)
+            foreach (capability; gmAccess.grants)
+                blueSystemMessage(capability);
+        else
+            systemMessage("Capabilities: None");
         return true;
     }
 
@@ -151,14 +118,19 @@ private:
         try
         {
             const target = context.database.findAccount(username);
-            if (!context.canWrite() || target.isNull || !context.database.changeGmRole(target.get.id, role, grant))
-                return false;
-            gmLog(format!"role %s %s for %s"(role, grant ? "granted" : "revoked", target.get.username));
-            systemMessage(format!"Role %s %s for %s."(role, grant ? "granted" : "revoked", target.get.username));
+            if (target.isNull)
+                redSystemMessage(format!"Account %s was not found."(username));
+            else if (!context.canWrite() || !context.database.changeGmRole(target.get.id, role, grant))
+                redSystemMessage(format!"Could not %s %s for %s."(grant ? "grant" : "revoke", role, target.get.username));
+            else
+            {
+                gmLog(format!"role %s %s for %s"(role, grant ? "granted" : "revoked", target.get.username));
+                greenSystemMessage(format!"Role %s %s for %s."(role, grant ? "granted" : "revoked", target.get.username));
+            }
         }
         catch (DatabaseException)
         {
-            systemMessage("The login database could not update the role.");
+            redSystemMessage("The login database could not update the role.");
         }
         return true;
     }

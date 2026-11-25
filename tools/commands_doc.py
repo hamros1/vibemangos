@@ -1,109 +1,120 @@
 #!/usr/bin/env python3
-"""Writes docs/COMMANDS.md from the command table and the handlers written.
+"""Writes docs/COMMANDS.md from the in-game command catalog.
 
     python3 tools/commands_doc.py
 
-Reads the D command tables, capability definitions and available handlers.
+Reads the D command catalog and capability definitions.
 """
-import glob
-import os
+import ast
+from pathlib import Path
 import re
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-WORLD = os.path.join(ROOT, "source", "dmangos", "world")
+ROOT = Path(__file__).resolve().parents[1]
+WORLD = ROOT / "source" / "dmangos" / "world"
 
-ROW = re.compile(r'ChatCommand\(("(?:[^"\\]|\\.)*"), \'(.)\', (null|"\w+"), ("(?:[^"\\]|\\.)*"), (\w+), '
-                 r'(null|"[^"]*"), (null|"[^"]*"), (\d)\)')
 
 def capabilities():
-    with open(os.path.join(WORLD, "gmaccess.d")) as file:
-        text = file.read()
-    groups = {}
-    command_groups = {}
-    prefixes = []
-    for names, capability in re.findall('case ([^:]+):\\s*return "([^"]+)";', text):
-        for group in re.findall("'(.)'", names):
-            groups[group] = capability
-        for path in re.findall('"([^"]+)"', names):
-            command_groups[path] = capability
-    for prefix, capability in re.findall(r'path\.startsWith\("([^"]+)"\)\)\s+return "([^"]+)";', text):
-        prefixes.append((prefix, capability))
-    return groups, command_groups, prefixes
+    text = (WORLD / "gmaccess.d").read_text()
+    return {
+        letter: capability
+        for group, capability in re.findall(r'case ([^:]+): return "([^"]+)";', text)
+        for letter in re.findall(r"'(.)'", group)
+    }
 
 
-def tables():
-    text = open(os.path.join(WORLD, "commandtable.d")).read()
-    found = {}
-    for match in re.finditer(r"immutable ChatCommand\[\] (\w+) = \[(.*?)\n\];", text, re.S):
+def command_catalog():
+    source = (WORLD / "commandtable.d").read_text()
+    tables = {}
+    groups = capabilities()
+
+    def capability(node):
+        if isinstance(node, ast.Name):
+            return {
+                "roleAdministration": "staff.admin + roles.manage",
+                "legacyAdministration": "staff.admin",
+            }[node.id]
+        value = ast.literal_eval(node.args[0])
+        return groups.get(value, "public") if len(node.args) == 1 else value
+
+    for name, content in re.findall(r"immutable ChatCommand\[\] (\w+) = \[(.*?)\n\];", source, re.S):
         rows = []
-        for row in ROW.finditer(match.group(2)):
-            name, group, handler, help_, child, field, _, _ = row.groups()
-            rows.append({
-                "name": name.strip('"'),
-                "group": group,
-                "handler": None if handler == "null" else handler.strip('"'),
-                "help": help_[1:-1].replace('\\"', '"').replace("\\n", " "),
-                "child": None if child == "null" else child,
-                "field": field != "null",
-            })
-        found[match.group(1)] = rows
-    return found
+        for line in content.strip().splitlines():
+            call = ast.parse(line.strip().removesuffix(","), mode="eval").body
+            args = call.args
+            word = ast.literal_eval(args[0])
+            row = dict(name=word, label=word, args="", description="", capability="public",
+                       children=None, target=None, unavailable=False)
+            match call.func.id:
+                case "section":
+                    row["children"] = args[2].id
+                    if len(args) > 3:
+                        row["label"] = ast.literal_eval(args[3])
+                case "shortcut":
+                    row["target"] = ast.literal_eval(args[1])
+                case "unavailable":
+                    row.update(capability=capability(args[1]), description=ast.literal_eval(args[2]),
+                               unavailable=True)
+                case "action":
+                    row.update(capability=capability(args[1]), args=ast.literal_eval(args[3]),
+                               description=ast.literal_eval(args[4]))
+                    if len(args) > 5:
+                        row["label"] = ast.literal_eval(args[5])
+                case "stat":
+                    maximum = len(args) > 3 and not isinstance(args[3], ast.UnaryOp)
+                    syntax = "<min> <max>" if word == "damage" else "<value> [max]" if maximum else "<value>"
+                    row.update(capability=groups["m"], args=syntax, description=ast.literal_eval(args[2]))
+                    if len(args) > 5:
+                        row["label"] = ast.literal_eval(args[5])
+                case _:
+                    raise ValueError(line)
+            rows.append(row)
+        tables[name] = rows
+    return tables
 
 
-def implemented():
-    names = set()
-    # Most handlers live in gm*.d; a few with the system they command (honor.d's `.honor`).
-    for path in glob.glob(os.path.join(WORLD, "gm*.d")) + [os.path.join(WORLD, n) for n in ("commands.d", "honor.d")]:
-        for name in re.findall(r"bool ([a-z]\w*)\(", open(path).read()):
-            names.add(name[0].upper() + name[1:])
-    return names
+def command_rows(tables, table="commandTable", path="", label=""):
+    for entry in tables[table]:
+        name = path + entry["name"]
+        shown = label + entry["label"]
+        if entry["children"]:
+            yield from command_rows(tables, entry["children"], name + " ", shown + " ")
+        else:
+            yield name, shown, entry
 
 
 def main():
-    all_tables = tables()
-    done = implemented()
-    groups, command_groups, prefixes = capabilities()
+    catalog = list(command_rows(command_catalog()))
+    by_name = {name: entry for name, _, entry in catalog}
     rows_done, rows_todo = [], []
-    for row in all_tables["commandTable"]:
-        children = all_tables[row["child"]] if row["child"] else [None]
-        for child in children:
-            entry = child or row
-            name = "." + row["name"] + ("" if child is None else " " + child["name"])
-            path = name[1:]
-            canonical = command_groups.get(path, path) if path in {
-                "learn", "travel coords", "travel player", "travel summon", "npc traineradd"
-            } else path
-            letter = entry["group"]
-            if path in {"access grant", "access revoke"}:
-                capability = "staff.admin + roles.manage"
-            elif letter == "z":
-                capability = groups[letter]
-            elif canonical == "addtrainerspell":
-                capability = "world.trainers"
-            else:
-                capability = command_groups.get(canonical)
-                if not capability:
-                    capability = next((cap for prefix, cap in prefixes if canonical.startswith(prefix)),
-                                      groups.get(letter, "public"))
-            works = entry["field"] or (entry["handler"] in done)
-            line = "| `%s` | `%s` | %s |" % (name, capability, entry["help"].replace("|", "\\|"))
-            (rows_done if works else rows_todo).append(line)
+    for name, label, row in sorted(catalog, key=lambda item: item[1].lower()):
+        action = by_name[row["target"]] if row["target"] else row
+        args = (" " + action["args"]).replace("|", "\\|") if action["args"] else ""
+        syntax = f"`.{label}{args}`"
+        if label != name:
+            syntax += f" (also `.{name}`)"
+        line = f"| {syntax} | {action['description']} | `{action['capability']}` |"
+        (rows_todo if action["unavailable"] else rows_done).append(line)
 
-    with open(os.path.join(ROOT, "docs", "COMMANDS.md"), "w") as out:
+    with (ROOT / "docs" / "COMMANDS.md").open("w") as out:
         out.write("""# GM commands
 
-Type `.` or `!` before a command in chat. Use `.commands` to discover the commands you can run and
-`.help <command>` for its syntax. Typing a group by itself, such as `.npc`, lists its available
-subcommands. Exact names take priority and existing abbreviations still work.
+Type a command in chat with a leading `.` or `!`. Start with `.commands` or open a group such as
+`.wp` to see the actions you can use. Use `.help <command>` to see its arguments and what it does.
+The catalog shows the shorter spellings first. Existing spellings and their abbreviations still work.
 
 | Task | Command |
 |---|---|
-| Show location | `.gps` or `.debug dumpcoords` |
-| Travel to a map coordinate | `.travel coords <map> <x> <y> <z>` |
-| Visit or summon a player | `.travel player <name>`, `.travel summon <name>` |
+| Show your location | `.where` |
+| Travel to a map coordinate | `.go coords <map> <x> <y> <z>` |
+| Visit or summon a player | `.go player <name>`, `.go summon <name>` |
 | Teach a spell to the selected player or yourself | `.learn <spell-id>` |
-| Find a support ticket | `.gmTicket list` |
-| Check your access | `.access whoami` |
+| Find a support ticket | `.ticket list` |
+| Check your access | `.access status` |
+| Inspect the battleground queue | `.bg queue` |
+| See uptime and player counts | `.server status` |
+
+Use `.modify hp 400` to set both health and maximum health to 400. Use
+`.modify hp 300 400` to set them separately.
 
 ## Give someone staff access
 
@@ -147,16 +158,16 @@ VALUES ('npc-inspector', 'command.npc info');
 Then use `.access grant <login> npc-inspector`. A capability such as `world.creatures` grants
 every command with that capability in the reference below. For one command, use
 `command.<full command path>` with lowercase words, for example `command.character learn`.
-Shortcuts share their original permission path. For `.travel coords` use `command.worldport`,
+Shortcuts share their original permission path. For `.go coords` use `command.worldport`,
 and for `.npc traineradd` use `command.addtrainerspell`.
 
 ## Edit a route or trainer
 
-* Select a saved creature. Stand at each waypoint and use `.waypoint add [wait-ms]`. Use
-  `.waypoint show` to review your draft and `.waypoint save` to commit the route. Use
-  `.waypoint hide` to discard unsaved edits. Selecting a different spawn starts a new draft.
+* Select a saved creature. Stand at each waypoint and use `.wp add [wait-ms]`. Use
+  `.wp list` to review your draft and `.wp save` to commit the route. Use
+  `.wp discard` to discard unsaved edits. Selecting a different spawn starts a new draft.
   A saved empty route makes the spawn idle. Attach existing movement scripts with
-  `.waypoint script <point> <script-id>`.
+  `.wp script <point> <script-id>`.
 * If you imported Classic-DB before this change, run
   `mariadb -u root -p classicmangos < sql/gm-waypoints.sql` against the world database.
   It converts the spawn and route tables to InnoDB. Run this migration during maintenance,
@@ -165,7 +176,7 @@ and for `.npc traineradd` use `command.addtrainerspell`.
   Use the spell that teaches the lesson. The selected worker uses it immediately, and the other
   workers pick it up on their next catalog refresh.
 
-Use `.quest load` after updating quest definitions or giver relationships in the world database.
+Use `.quest reload` after updating quest definitions or giver relationships in the world database.
 Workers switch to the new catalog after it loads.
 
 ## Design references
@@ -185,17 +196,16 @@ Workers switch to the new catalog after it loads.
 
 Generated from the command tables by `python3 tools/commands_doc.py`.
 
-| Command | Capability | Help |
+| Command | Effect | Capability |
 |---|---|---|
 %s
 
 ## Unavailable commands (%d)
 
-These legacy entries return “Not yet implemented.” This includes features that depend on systems
-outside the 1.12 client, such as rated arena teams and player flight. Per-point animations and
-model changes can use native waypoint movement scripts. SQL maintenance uses the MariaDB client.
+These entries remain callable by their existing names and explain what is unavailable.
+In-game command menus list working actions.
 
-| Command | Capability | Help |
+| Command | Effect | Capability |
 |---|---|---|
 %s
 """ % (len(rows_done), "\n".join(rows_done), len(rows_todo), "\n".join(rows_todo)))
