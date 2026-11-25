@@ -386,3 +386,44 @@ unittest
     TempleOfAhnQiraj restored;
     assert(loadScript(restored, reader) && restored.cthunAdds == temple.cthunAdds);
 }
+
+unittest
+{
+    // Naxxramas' ice blocks of Sapphiron's fight were appended after Gothik's adds: lockouts saved before Gothik's
+    // list (and the enum-blind saves of 219ecf7 keyed off that layout), and those saved with it, still load, with no
+    // blocks to restore.
+    import dmangos.script.api : EncounterState, EntityRef;
+    import dmangos.scripts.naxxramas : Naxxramas, NaxxEncounter;
+
+    static assert(fnv1a(layoutOf!(Naxxramas, 0)) == 0xf681f342534aff66UL);
+    static assert(legacyDungeonLayout(0xf681f342534aff66UL) == 0x2edbb9bc0f083bfeUL);
+    static assert(fnv1a(layoutOf!(Naxxramas, 1)) == 0x5506193a617504baUL, "Gothik's layout, as main saved it");
+    static assert(layoutFingerprint!Naxxramas == 0xfc3a35330ae6391dUL);
+
+    Naxxramas copy;
+    copy.encounters[NaxxEncounter.sapphiron] = EncounterState.inProgress;
+    copy.encounters[NaxxEncounter.gothik] = EncounterState.done;
+    ByteWriter current;
+    saveScript(copy, current);
+    const body = current.data[ulong.sizeof .. $ - uint.sizeof]; // without the empty list of blocks
+
+    foreach (const stored; [0x5506193a617504baUL, 0xf681f342534aff66UL, 0x2edbb9bc0f083bfeUL])
+    {
+        ByteWriter old;
+        old.put(stored);
+        // Before Gothik's list the layout ended with the schedule: no empty list of his adds either.
+        old.putBytes(stored == 0x5506193a617504baUL ? body : body[0 .. $ - uint.sizeof]);
+        auto reader = ByteReader(old.data);
+        Naxxramas restored;
+        assert(loadScript(restored, reader), "an earlier Naxxramas lockout no longer loads");
+        assert(restored.encounters[NaxxEncounter.sapphiron] == EncounterState.inProgress
+            && restored.encounters[NaxxEncounter.gothik] == EncounterState.done && !restored.iceBlocks.length);
+    }
+
+    copy.iceBlocks = [EntityRef(0xF110_02C3_1F00_0201UL)];
+    ByteWriter withBlocks;
+    saveScript(copy, withBlocks);
+    auto reader = ByteReader(withBlocks.data);
+    Naxxramas restored;
+    assert(loadScript(restored, reader) && restored.iceBlocks == copy.iceBlocks);
+}

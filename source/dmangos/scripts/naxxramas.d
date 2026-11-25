@@ -18,7 +18,7 @@ module dmangos.scripts.naxxramas;
 import core.time : Duration;
 
 import dmangos.script;
-import dmangos.script.state : appended;
+import dmangos.script.state : AppendedSince, appended;
 
 /// Where `who` is, as `ctx` sees it (`Location.init` if it is not here).
 private Location where(C)(ref C ctx, EntityRef who)
@@ -91,6 +91,7 @@ enum : uint
     npcInvisibleMan = 17_286,
 
     goSapphironBirth = 181_356,
+    goIceBlock = 181_247,
     goChestHorsemen = 181_366,
 }
 
@@ -109,6 +110,7 @@ enum NaxxSignal : uint
     magneticPull = 111, /// the copy to an add: its victim was pulled away (`value`: incoming player's guid)
     gothikWave = 112,    /// a scheduled wave of living adds (`value`: their entry)
     saveGothik = 113,    /// the boss moved to the floor or changed sides
+    saveSapphiron = 114, /// Sapphiron to the copy: a phase, a timer or a cast changed (checkpoint me)
     triggerBase = 1000, /// an area trigger: `triggerBase + id`
 }
 
@@ -217,7 +219,6 @@ struct Naxxramas
 
     @transient EntityRef[naxxDoors.length] doors;
     @transient EntityRef thaddius, kelthuzad, faerlina, sapphiron;
-    @transient EntityRef[] iceBlocks;
 
     /// The events of `event_naxxramas`: Gluth's Decimate; Kel'Thuzad's guardians counted from now; a guardian shackled.
     enum uint decimateEvent = 10_495, clearShacklesEvent = 10_536, guardianShackleEvent = 10_537;
@@ -233,6 +234,8 @@ struct Naxxramas
     @transient EntityRef gothik;
     @transient bool recoveringGothik;
     @transient float gothikDividerY = -3360.78f; // center of the combat gate in Classic-DB
+    /// The ice blocks of Sapphiron's air phase (saved with his fight under way; appended after Gothik's adds).
+    @AppendedSince(2) EntityRef[] iceBlocks;
 
     private bool gothikActive() const
     {
@@ -259,6 +262,8 @@ struct Naxxramas
 
     void on(ref InstanceContext copy, const ref ObjectLoaded e)
     {
+        import std.algorithm.searching : canFind;
+
         foreach (i, d; naxxDoors)
             if (e.object.entry == d.entry)
             {
@@ -271,6 +276,9 @@ struct Naxxramas
                 }
                 copy.door(e.object, doorOpen(i));
             }
+        // A clean handoff brings the air phase's blocks in without a signal: they stay in the checkpoint.
+        if (e.object.entry == goIceBlock && sapphironActive && iceBlocks.canFind(e.object))
+            copy.checkpointObject(e.object);
     }
 
     void on(ref InstanceContext copy, const ref CreatureLoaded e)
@@ -291,6 +299,8 @@ struct Naxxramas
             break;
         case npcSapphiron:
             sapphiron = e.creature;
+            if (sapphironActive) // a clean handoff brings him in without a signal: he stays in the checkpoint
+                copy.checkpointCreature(sapphiron);
             break;
         default:
             break;
@@ -303,8 +313,13 @@ struct Naxxramas
         foreach (i, wing; wingEnds)
             if (encounters[wing] == EncounterState.done)
                 copy.respawnObject(portals[i]);
-        if (encounters[NaxxEncounter.sapphiron] == EncounterState.special && !sapphiron)
-            steps.after(Step.sapphiron, 0.msecs);
+        const frostwyrm = encounters[NaxxEncounter.sapphiron];
+        const sapphironHere = sapphiron && copy.alive(sapphiron);
+        if ((frostwyrm == EncounterState.special || frostwyrm == EncounterState.failed) && !sapphironHere
+            && !steps.pending(Step.sapphiron))
+            steps.after(Step.sapphiron, 0.msecs); // born, and gone with the copy (a restart, a crash): he comes again
+        else if (frostwyrm == EncounterState.inProgress && sapphironHere)
+            copy.zoneCombat(sapphiron); // back in the copy (after a crash, say): back in his fight
         if (gothikActive)
         {
             if (recoveringGothik)
@@ -345,6 +360,76 @@ struct Naxxramas
             else
                 setGothik(copy, EncounterState.failed);
         }
+        restoreSapphiron(copy);
+    }
+
+    private bool sapphironActive() const
+    {
+        return encounters[NaxxEncounter.sapphiron] == EncounterState.inProgress;
+    }
+
+    /**
+     * Sapphiron's encounter in `state`. Born (`special`), he comes 22 seconds later. While his fight is under way he
+     * and the ice blocks of his air phase are saved with the copy (a worker's crash resumes it, `Restored`); a
+     * wipe or his death lets them go, and the blocks melt. His death is for the rest of the lockout.
+     */
+    private void setSapphiron(ref InstanceContext copy, EncounterState state)
+    {
+        const was = encounters[NaxxEncounter.sapphiron];
+        if (was == EncounterState.done || (state == EncounterState.special && was != EncounterState.notStarted))
+            return;
+        encounters[NaxxEncounter.sapphiron] = state;
+        if (state == EncounterState.special)
+            steps.after(Step.sapphiron, 22.seconds);
+        else if (sapphironActive)
+        {
+            if (sapphiron && copy.alive(sapphiron))
+                copy.checkpointCreature(sapphiron);
+        }
+        else
+        {
+            if (sapphiron)
+                copy.releaseCheckpointActor(sapphiron);
+            meltIceBlocks(copy);
+        }
+        updateDoors(copy);
+        copy.checkpoint();
+    }
+
+    /// The air phase's ice blocks go (he lands, a wipe, his death), and out of the checkpoint.
+    private void meltIceBlocks(ref InstanceContext copy)
+    {
+        foreach (block; iceBlocks)
+        {
+            copy.releaseCheckpointActor(block);
+            copy.despawnObject(block);
+        }
+        iceBlocks = null;
+    }
+
+    /**
+     * The copy came back from its save. Born and not come yet, his timer waits for the raid. His fight under way
+     * resumes from its checkpoint when a player comes back, with the ice blocks it kept; a fight saved without him
+     * (an older save) failed, and he comes again (`PlayerEntered`), as after a wipe.
+     */
+    private void restoreSapphiron(ref InstanceContext copy)
+    {
+        import std.algorithm.mutation : remove;
+
+        const state = encounters[NaxxEncounter.sapphiron];
+        if (state == EncounterState.special)
+            copy.waitForPlayer();
+        else if (state == EncounterState.inProgress && copy.hasSavedCreature(npcSapphiron))
+        {
+            iceBlocks = iceBlocks.remove!(block => !copy.hasSavedCreature(block));
+            copy.waitForPlayer();
+        }
+        else if (state == EncounterState.inProgress)
+        {
+            encounters[NaxxEncounter.sapphiron] = EncounterState.failed;
+            meltIceBlocks(copy);
+            copy.checkpoint();
+        }
     }
 
     /// The question whether the way to Sapphiron is open (every quarter ended).
@@ -362,19 +447,39 @@ struct Naxxramas
     {
         if (e.id == NaxxSignal.freezePlayer)
         {
+            // The block stands until he lands (`clearIceBlocks`): his breath, held for the raid's return after a
+            // crash, must find it there, as it finds the frozen player still frozen.
             Location at;
             if (e.from == sapphiron && copy.locationOf(EntityRef(cast(uint) e.value), at))
-                if (const block = copy.summonObject(181247, at, 22))
+                if (const block = copy.summonObject(goIceBlock, at))
+                {
                     iceBlocks ~= block;
+                    if (sapphironActive)
+                        copy.checkpointObject(block); // saved with him as he froze its player
+                }
             return;
         }
         if (e.id == NaxxSignal.clearIceBlocks)
+            return meltIceBlocks(copy);
+        if (e.from.isCreature && e.from.entry == npcSapphiron)
         {
-            foreach (block; iceBlocks)
-                copy.despawnObject(block);
-            iceBlocks = null;
-            return;
+            if (e.id == NaxxEncounter.sapphiron)
+            {
+                sapphiron = e.from;
+                return setSapphiron(copy, cast(EncounterState) e.value);
+            }
+            if (e.id == NaxxSignal.saveSapphiron)
+            {
+                if (sapphironActive && copy.alive(e.from))
+                {
+                    sapphiron = e.from;
+                    copy.checkpointCreature(sapphiron);
+                }
+                return;
+            }
         }
+        if (e.id == NaxxEncounter.sapphiron)
+            return setSapphiron(copy, cast(EncounterState) e.value); // his birth
         if (e.from.entry == npcGothik)
         {
             if (e.id == NaxxEncounter.gothik)
@@ -433,8 +538,6 @@ struct Naxxramas
         foreach (i, wing; wingEnds)
             if (wing == which && state == EncounterState.done)
                 copy.respawnObject(portals[i], 30 * 60);
-        if (which == NaxxEncounter.sapphiron && state == EncounterState.special)
-            steps.after(Step.sapphiron, 22.seconds);
         if (which == NaxxEncounter.thaddius && state == EncounterState.special && thaddius)
             copy.signal(thaddius, NaxxSignal.addsDone);
         updateDoors(copy);
@@ -445,6 +548,8 @@ struct Naxxramas
     {
         if (e.creature.entry == npcGothik && gothikActive)
             setGothik(copy, EncounterState.failed);
+        if (e.creature.entry == npcSapphiron && sapphironActive)
+            setSapphiron(copy, EncounterState.failed); // he comes again for the next pull (`PlayerEntered`)
     }
 
     private void setGothik(ref InstanceContext copy, EncounterState state)
@@ -480,6 +585,8 @@ struct Naxxramas
 
         if (e.creature.entry == npcGothik && !e.summoned)
             return setGothik(copy, EncounterState.done);
+        if (e.creature.entry == npcSapphiron)
+            return setSapphiron(copy, EncounterState.done);
 
         const index = gothikAdds.countUntil(e.creature);
         if (index < 0)
@@ -605,7 +712,14 @@ struct Naxxramas
         final switch (step)
         {
         case Step.sapphiron:
-            if (!sapphiron && encounters[NaxxEncounter.sapphiron] != EncounterState.done && copy.playerCount)
+            // Born, or failed and gone with the copy: he comes (once: one a clean handoff brought is kept).
+            const state = encounters[NaxxEncounter.sapphiron];
+            EntityRef[1] here;
+            if ((state != EncounterState.special && state != EncounterState.failed) || !copy.playerCount)
+                break;
+            if (copy.creaturesNear(sapphironAt, npcSapphiron, 150, here[]))
+                sapphiron = here[0];
+            else
                 sapphiron = copy.summon(npcSapphiron, sapphironAt);
             break;
         case Step.shackles:
@@ -2159,6 +2273,10 @@ struct Thaddius
 /**
  * Sapphiron: his frost aura, Cleave, Tail Sweep, Life Drain, blizzards; above a tenth of his health he
  * returns to the center, freezes players and breathes frost across the room before landing.
+ *
+ * The copy saves him while he fights (`Naxxramas.setSapphiron`); he asks it to (`NaxxSignal.saveSapphiron`) as each
+ * timer or phase moves on, after the change, so that a worker's crash resumes him where he was: his breath begun
+ * is cast on (`Creature.saveState` keeps the cast), and lands once.
  */
 @creature("boss_sapphiron")
 struct Sapphiron
@@ -2191,7 +2309,23 @@ struct Sapphiron
     {
         if (!me.hasAura(me.self, doubleAttack))
             me.castSelf(doubleAttack, true);
-        me.zoneCombat();
+        // Born, he takes the raid in his lair at once; come again after a wipe and a restart, he waits to be pulled.
+        if (me.askDungeon(NaxxEncounter.sapphiron) == EncounterState.special)
+            me.zoneCombat();
+    }
+
+    void on(ref CreatureContext me, const ref CreatureCastFinished e)
+    {
+        if (e.spell == frostBreath)
+            me.signalDungeon(NaxxSignal.saveSapphiron); // landed: a crash from now on must not breathe it again
+    }
+
+    /// `step` again after `interval` (one whose cast failed: soon), the change saved.
+    private void again(ref CreatureContext me, Step step, bool casted, Duration interval)
+    {
+        steps.after(step, casted ? interval : retry);
+        if (casted)
+            me.signalDungeon(NaxxSignal.saveSapphiron);
     }
 
     void engaged(ref CreatureContext me, const ref EnteredCombat e)
@@ -2200,6 +2334,7 @@ struct Sapphiron
         steps.after(Step.berserk, 15 * 60.seconds);
         steps.after(Step.air, 46.seconds);
         groundSteps(me);
+        me.signalDungeon(NaxxSignal.saveSapphiron); // his timers with the fight the copy saved as it began
     }
 
     private void groundSteps(ref CreatureContext me)
@@ -2224,7 +2359,8 @@ struct Sapphiron
 
     void died(ref CreatureContext me) { clearIce(me); }
 
-    private void freeze(ref CreatureContext me)
+    /// An Icebolt at one of the raid not frozen and not beside a block; whether it froze one (the copy saved him).
+    private bool freeze(ref CreatureContext me)
     {
         import std.algorithm.searching : canFind;
         EntityRef[40] raid;
@@ -2234,23 +2370,24 @@ struct Sapphiron
             if (who.isPlayer && me.alive(who) && !frozen.canFind(who) && !splashed.canFind(who))
                 eligible ~= who;
         if (!eligible.length)
-            return;
+            return false;
         const target = eligible[me.random(cast(uint) eligible.length)];
         if (me.castSpell(icebolt, target, true) != ActionResult.ok || !me.hasAura(target, icebolt))
-            return;
+            return false;
         frozen ~= target;
         me.castAs(target, iceboltImmunity, target, true);
-        me.signalDungeon(NaxxSignal.freezePlayer, cast(int) target.guid);
         Location block;
-        if (!me.locationOf(target, block))
-            return;
-        foreach (who; raid[0 .. count])
-        {
-            Location at;
-            if (who.isPlayer && me.locationOf(who, at) && (at.x - block.x) ^^ 2
-                + (at.y - block.y) ^^ 2 + (at.z - block.z) ^^ 2 <= 100 && !splashed.canFind(who))
-                splashed ~= who;
-        }
+        if (me.locationOf(target, block))
+            foreach (who; raid[0 .. count])
+            {
+                Location at;
+                if (who.isPlayer && me.locationOf(who, at) && (at.x - block.x) ^^ 2
+                    + (at.y - block.y) ^^ 2 + (at.z - block.z) ^^ 2 <= 100 && !splashed.canFind(who))
+                    splashed ~= who;
+            }
+        // Last: the copy makes the block and saves it with him, as he is now.
+        me.signalDungeon(NaxxSignal.freezePlayer, cast(int) target.guid);
+        return true;
     }
 
     void reset(ref CreatureContext me)
@@ -2268,7 +2405,10 @@ struct Sapphiron
         {
         case Step.berserk:
             if (me.castSelf(berserk) == ActionResult.ok)
+            {
                 me.sayText(emoteEnraged);
+                me.signalDungeon(NaxxSignal.saveSapphiron);
+            }
             else
                 steps.after(step, retry);
             break;
@@ -2286,20 +2426,23 @@ struct Sapphiron
             me.castSelf(dragonHover, true);
             icebolts = 0;
             steps.after(Step.icebolt, 8.seconds);
+            me.signalDungeon(NaxxSignal.saveSapphiron);
             break;
         case Step.icebolt:
             if (icebolts < 5)
             {
-                freeze(me);
                 ++icebolts;
                 steps.after(step, 3.seconds);
+                if (!freeze(me)) // last: it has the copy save him
+                    me.signalDungeon(NaxxSignal.saveSapphiron); // nobody to freeze: his count moved on
             }
             else
             {
                 me.sayText(emoteBreath);
                 me.castSelf(frostBreathDummy, true);
-                me.castSelf(frostBreath);
                 steps.after(Step.land, 8.seconds);
+                me.castSelf(frostBreath);
+                me.signalDungeon(NaxxSignal.saveSapphiron); // his breath begun: a crash resumes its cast
             }
             break;
         case Step.land:
@@ -2308,6 +2451,7 @@ struct Sapphiron
             me.emote(293); // EMOTE_ONESHOT_LAND
             me.flying(false);
             steps.after(Step.ground, 2.seconds);
+            me.signalDungeon(NaxxSignal.saveSapphiron);
             break;
         case Step.ground:
             inAir = false;
@@ -2317,20 +2461,23 @@ struct Sapphiron
                 me.attack(t);
             groundSteps(me);
             steps.after(Step.air, 67.seconds);
+            me.signalDungeon(NaxxSignal.saveSapphiron);
             break;
         case Step.cleave:
-            steps.after(step, me.castSpell(cleave) == ActionResult.ok ? between(me, 5000, 10_000) : retry);
+            const cleaved = me.castSpell(cleave) == ActionResult.ok;
+            again(me, step, cleaved, cleaved ? between(me, 5000, 10_000) : retry);
             break;
         case Step.tail:
-            steps.after(step, me.castSelf(tailSweep) == ActionResult.ok ? between(me, 15_000, 20_000) : retry);
+            const swept = me.castSelf(tailSweep) == ActionResult.ok;
+            again(me, step, swept, swept ? between(me, 15_000, 20_000) : retry);
             break;
         case Step.drain:
-            steps.after(step, me.castSelf(lifeDrain) == ActionResult.ok ? 24.seconds : retry);
+            again(me, step, me.castSelf(lifeDrain) == ActionResult.ok, 24.seconds);
             break;
         case Step.blizzard:
             if (const target = me.selectTarget(Pick.random, PickFilter.player))
                 me.castSpell(summonBlizzard, target, true);
-            steps.after(step, 20.seconds);
+            again(me, step, true, 20.seconds);
             break;
         }
     }
@@ -3067,4 +3214,256 @@ unittest
     assert(!host.opened[entryGate.guid], "shut while he fights");
     runtime.raise(h, copy, CreatureEvaded(gothik));
     assert(host.opened[entryGate.guid], "open once he is gone from the fight");
+}
+
+version (unittest)
+{
+    /// Sapphiron's lair for the copy's script: what it made, fought and let go of.
+    class FakeLair : FakeNecropolis
+    {
+        EntityRef[] objects, despawnedObjects, zoned;
+        uint[] objectSeconds;
+        override EntityRef hostSummonObject(uint entry, Location, uint seconds)
+        {
+            objects ~= EntityRef(0xF110_0000_0000_0200UL | (ulong(entry) << 24) | objects.length);
+            objectSeconds ~= seconds;
+            return objects[$ - 1];
+        }
+        override ActionResult hostDespawnObject(EntityRef o) { despawnedObjects ~= o; return ActionResult.ok; }
+        override bool hostLocationOf(EntityRef, out Location at) { at = Location(3532, -5236, 137.7f); return true; }
+        override ActionResult hostZoneCombat(EntityRef c) { zoned ~= c; return ActionResult.ok; }
+    }
+}
+
+/**
+ * Sapphiron's fight in the copy's checkpoint: under way, he and his ice blocks are saved (the blocks stand until he
+ * lands). A copy restored mid-fight waits for the raid with them, and each player back joins his fight; one saved
+ * without him (an older save) fails, and he comes again as the raid returns, as he does after a wipe. Born and not
+ * come yet, his timer waits for the raid; slain, he comes no more.
+ */
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import dmangos.bytes : ByteReader, ByteWriter;
+
+    alias self = dmangos.scripts.naxxramas;
+    auto runtime = ScriptRuntime.of!self();
+    auto lair = new FakeLair;
+    auto h = runtime.create(ScriptKind.instance, "instance_naxxramas");
+    int ask(FakeLair host, typeof(h) of)
+    {
+        auto c = InstanceContext(host);
+        runtime.raise(of, c, Asked(EntityRef.init, NaxxEncounter.sapphiron));
+        return c.answerGiven;
+    }
+    {
+        auto c = InstanceContext(lair);
+        runtime.raise(h, c, Signal(EntityRef.init, NaxxEncounter.sapphiron, EncounterState.special));
+        assert(c.checkpointRequested, "his birth is saved at once");
+    }
+    ByteWriter born;
+    runtime.save(h, born);
+    {
+        auto c = InstanceContext(lair);
+        runtime.tick(h, c, 22_000);
+    }
+    assert(lair.summoned.length == 1 && lair.summoned[0].entry == npcSapphiron);
+    const sap = lair.summoned[0];
+    {
+        auto c = InstanceContext(lair);
+        runtime.raise(h, c, CreatureLoaded(sap, true));
+        runtime.raise(h, c, Signal(sap, NaxxEncounter.sapphiron, EncounterState.inProgress));
+        assert(c.checkpointSummons == [sap], "his fight under way: he is saved with the copy");
+    }
+    {
+        auto c = InstanceContext(lair);
+        runtime.raise(h, c, Signal(sap, NaxxSignal.freezePlayer, 7));
+        assert(lair.objects.length == 1 && lair.objects[0].entry == goIceBlock && lair.objectSeconds == [0],
+            "the block stands until he lands");
+        assert(c.checkpointSummons == lair.objects, "the block is saved with him");
+    }
+    const block = lair.objects[0];
+    ByteWriter fighting;
+    runtime.save(h, fighting);
+
+    // A worker's crash with the player frozen: he and the block come back; each player back joins his fight.
+    auto lair2 = new FakeLair;
+    auto h2 = runtime.create(ScriptKind.instance, "instance_naxxramas");
+    auto reader = ByteReader(fighting.data);
+    assert(runtime.load(h2, reader));
+    {
+        auto c = InstanceContext(lair2);
+        c.savedSummons = [sap, block];
+        runtime.raise(h2, c, Restored());
+        assert(c.waitingForPlayer && !c.releasedCheckpointActors.length);
+    }
+    assert(ask(lair2, h2) == EncounterState.inProgress);
+    {
+        auto c = InstanceContext(lair2);
+        runtime.raise(h2, c, CreatureLoaded(sap, true));
+        runtime.raise(h2, c, ObjectLoaded(block));
+        runtime.raise(h2, c, PlayerEntered(EntityRef(7)));
+        runtime.raise(h2, c, PlayerEntered(EntityRef(8)));
+        runtime.tick(h2, c, 1000);
+    }
+    assert(lair2.zoned == [sap, sap] && !lair2.summoned.length, "back in his fight, and no second Sapphiron");
+    {
+        auto c = InstanceContext(lair2);
+        runtime.raise(h2, c, Signal(sap, NaxxSignal.clearIceBlocks));
+        assert(lair2.despawnedObjects == [block] && c.releasedCheckpointActors == [block], "he landed: the block melts");
+    }
+    {
+        auto c = InstanceContext(lair2);
+        runtime.raise(h2, c, Signal(sap, NaxxSignal.freezePlayer, 8));
+        runtime.raise(h2, c, Signal(sap, NaxxEncounter.sapphiron, EncounterState.failed));
+        assert(lair2.despawnedObjects.length == 2 && c.releasedCheckpointActors.canFind(sap)
+            && c.releasedCheckpointActors.canFind(lair2.objects[0]), "a wipe lets him and his blocks go");
+    }
+    assert(ask(lair2, h2) == EncounterState.failed);
+
+    // A save of his fight without him (an older one, or he was lost): the fight failed, and he comes again.
+    auto lair3 = new FakeLair;
+    auto h3 = runtime.create(ScriptKind.instance, "instance_naxxramas");
+    reader = ByteReader(fighting.data);
+    assert(runtime.load(h3, reader));
+    {
+        auto c = InstanceContext(lair3);
+        c.savedSummons = [block];
+        runtime.raise(h3, c, Restored());
+        assert(c.releasedCheckpointActors == [block], "the block of a fight not resumed is let go");
+        runtime.raise(h3, c, PlayerEntered(EntityRef(7)));
+        runtime.tick(h3, c, 200);
+    }
+    assert(ask(lair3, h3) == EncounterState.failed && lair3.summoned.length == 1
+        && lair3.summoned[0].entry == npcSapphiron, "the wing is shut: no Sapphiron to fight again");
+    {
+        auto c = InstanceContext(lair3);
+        runtime.raise(h3, c, CreatureLoaded(lair3.summoned[0], true));
+        runtime.raise(h3, c, PlayerEntered(EntityRef(8)));
+        runtime.tick(h3, c, 200);
+    }
+    assert(lair3.summoned.length == 1, "he came twice");
+
+    // Born before the crash, not come yet: he comes on the birth's timer, once.
+    auto lair4 = new FakeLair;
+    auto h4 = runtime.create(ScriptKind.instance, "instance_naxxramas");
+    reader = ByteReader(born.data);
+    assert(runtime.load(h4, reader));
+    {
+        auto c = InstanceContext(lair4);
+        runtime.raise(h4, c, Restored());
+        assert(c.waitingForPlayer, "his timer waits for the raid");
+        runtime.raise(h4, c, PlayerEntered(EntityRef(7)));
+        runtime.tick(h4, c, 21_000);
+    }
+    assert(!lair4.summoned.length, "he came before the birth's 22 seconds");
+    {
+        auto c = InstanceContext(lair4);
+        runtime.tick(h4, c, 1000);
+    }
+    assert(lair4.summoned.length == 1);
+
+    // Slain: his death is for the lockout, and nothing comes back.
+    {
+        auto c = InstanceContext(lair2);
+        runtime.raise(h2, c, Signal(sap, NaxxEncounter.sapphiron, EncounterState.inProgress));
+        runtime.raise(h2, c, CreatureDied(sap, EntityRef(7), true));
+        assert(c.releasedCheckpointActors.canFind(sap));
+    }
+    ByteWriter slain;
+    runtime.save(h2, slain);
+    auto lair5 = new FakeLair;
+    auto h5 = runtime.create(ScriptKind.instance, "instance_naxxramas");
+    reader = ByteReader(slain.data);
+    assert(runtime.load(h5, reader));
+    {
+        auto c = InstanceContext(lair5);
+        runtime.raise(h5, c, Restored());
+        runtime.raise(h5, c, PlayerEntered(EntityRef(7)));
+        runtime.tick(h5, c, 30_000);
+    }
+    assert(ask(lair5, h5) == EncounterState.done && !lair5.summoned.length);
+}
+
+/**
+ * Sapphiron asks the copy to save him after each change his crash must not lose, never before it: as he freezes a
+ * player his saved state already counts the Icebolt and has the next one pending. Born he takes the raid at once;
+ * come again after a wipe and a restart, he waits to be pulled. His breath, landed, is saved.
+ */
+unittest
+{
+    import dmangos.bytes : ByteReader, ByteWriter;
+    import dmangos.script.state : loadScript;
+
+    static class FakeFrostwyrm : BlackHole!CreatureHost
+    {
+        int lair = EncounterState.failed;
+        bool zoned;
+        Signal[] dungeon;
+        void delegate(uint id) onSignal;
+        override EntityRef hostSelf() { return EntityRef(0xF130_0000_0000_0100UL | (ulong(npcSapphiron) << 24)); }
+        override uint hostHealthPercent() { return 80; }
+        override int hostAskDungeon(uint) { return lair; }
+        override void hostZoneCombat() { zoned = true; }
+        override ActionResult hostCast(uint, EntityRef, bool) { return ActionResult.ok; }
+        override ActionResult hostCastAs(EntityRef, uint, EntityRef, bool) { return ActionResult.ok; }
+        override bool hostHasAura(EntityRef who, uint spell) { return who.isPlayer && spell == Sapphiron.icebolt; }
+        override bool hostAlive(EntityRef) { return true; }
+        override bool hostLocationOf(EntityRef who, out Location at)
+        {
+            at = Location(3532, -5236 + cast(float)(who.guid % 100), 137.7f);
+            return true;
+        }
+        override size_t hostThreatList(EntityRef[] into)
+        {
+            into[0] = EntityRef(7);
+            into[1] = EntityRef(8);
+            return 2;
+        }
+        override void hostSignalDungeon(uint id, int value)
+        {
+            dungeon ~= Signal(EntityRef.init, id, value);
+            if (onSignal !is null)
+                onSignal(id);
+        }
+    }
+
+    alias self = dmangos.scripts.naxxramas;
+    auto runtime = ScriptRuntime.of!self();
+    auto host = new FakeFrostwyrm;
+    auto me = CreatureContext(host);
+    auto h = runtime.create(ScriptKind.creature, "boss_sapphiron");
+    runtime.raise(h, me, Spawned());
+    assert(!host.zoned, "come again after a wipe, he waits to be pulled");
+    auto born = new FakeFrostwyrm;
+    born.lair = EncounterState.special;
+    auto bornMe = CreatureContext(born);
+    auto bh = runtime.create(ScriptKind.creature, "boss_sapphiron");
+    runtime.raise(bh, bornMe, Spawned());
+    assert(born.zoned, "born, he takes the raid in his lair");
+
+    runtime.raise(h, me, EnteredCombat(EntityRef(7)));
+    assert(host.dungeon[$ - 1].id == NaxxSignal.saveSapphiron, "his timers saved as the fight begins");
+    runtime.tick(h, me, 46_000);
+    assert(host.dungeon[$ - 1].id == NaxxSignal.saveSapphiron, "his rise saved");
+
+    // What the copy saves as it makes the block.
+    Sapphiron atFreeze;
+    host.onSignal = (uint id) {
+        if (id != NaxxSignal.freezePlayer)
+            return;
+        ByteWriter w;
+        runtime.save(h, w);
+        auto r = ByteReader(w.data);
+        assert(loadScript(atFreeze, r));
+    };
+    runtime.tick(h, me, 8000);
+    assert(host.dungeon[$ - 1].id == NaxxSignal.freezePlayer, "nobody frozen");
+    assert(atFreeze.icebolts == 1 && atFreeze.frozen.length == 1 && atFreeze.splashed.length == 2
+        && atFreeze.steps.remaining(Sapphiron.Step.icebolt) == 3000,
+        "saved with the block before he counted the Icebolt and timed the next: a crash leaves him in the air for good");
+    host.onSignal = null;
+    host.dungeon = null;
+    runtime.raise(h, me, CreatureCastFinished(Sapphiron.frostBreath));
+    assert(host.dungeon == [Signal(EntityRef.init, NaxxSignal.saveSapphiron, 0)], "his breath landed is not saved");
 }

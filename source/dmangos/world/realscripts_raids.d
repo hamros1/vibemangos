@@ -2366,6 +2366,18 @@ unittest
 /// Sapphiron's lair: where the characters stand, eleven yards from his birth (its trap springs as they are seen).
 private enum frostwyrmLair = Position(3521.48f, -5225.87f, 137.626f);
 
+/// The characters made mortal, with a million health: a breath that strikes one shows, and kills nobody.
+private void mortal(Scene s)
+{
+    s.godlike = false;
+    foreach (k; 0 .. s.heroes.length)
+    {
+        s.heroes[k].session.inWorld.godModeCheat = false;
+        s.hero(k).values.set!UNIT_FIELD_MAXHEALTH(1_000_000);
+        s.hero(k).values.set!UNIT_FIELD_HEALTH(1_000_000);
+    }
+}
+
 /**
  * Sapphiron's birth (181356, a trap with no spell of its own) springs as the raid comes into his lair, for its script
  * alone: his encounter is born, and he comes once, 22 seconds later.
@@ -2387,6 +2399,271 @@ unittest
         !is null, 1600.msecs), "Sapphiron did not come 22 seconds after his birth");
     s.run(30.seconds);
     assert(s.all(npcSapphiron).length == 1, "the birth brought him twice");
+}
+
+/// Whether Sapphiron is in his air phase (Dragon Hover on him).
+private bool hovering(Scene s)
+{
+    import dmangos.scripts.naxxramas : npcSapphiron, Sapphiron;
+
+    auto sap = s.find(npcSapphiron);
+    return sap !is null && sap.auras.find(Sapphiron.dragonHover) !is null;
+}
+
+/**
+ * Sapphiron's air phase survives a worker's crash in the same raid copy. Killed after his Icebolt froze a player and
+ * before his Frost Breath, the worker comes back with the same Sapphiron in the air and the same ice block, and the
+ * breath begins on his saved timer. Killed again with the breath begun, the breath is cast on and lands once: the
+ * player behind the block is spared and the one in the open is struck. He lands, the block melts, the ground fight
+ * resumes, and his death opens the waterfall for good.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import std.algorithm.searching : canFind;
+    import std.math : abs;
+    import dmangos.script.api : EncounterState;
+    import dmangos.scripts.naxxramas;
+
+    enum uint waterfall = 181_225;
+    auto s = new Scene(533, frostwyrmLair, [classWarrior, classMage, classPriest], withTerrain: true, cluster: true);
+    s.run(400.msecs);
+    s.moveHeroes(frostwyrmLair); // they come into the lair: the birth springs
+    assert(s.runUntil(() => s.find(npcSapphiron) !is null, 30.seconds), "no Sapphiron");
+    auto sap = s.the(npcSapphiron);
+    const sapGuid = sap.guid, instance = s.instance;
+    s.stayWith = sap;
+    s.stayWithin = 60;
+    assert(s.runUntil(() => sap.ai.inCombat, 10.seconds), "Sapphiron does not fight");
+    assert(s.runUntil(() => hovering(s), 50.seconds), "Sapphiron did not take to the air\n" ~ s.seen());
+    const airAt = s.elapsedMs;
+    s.stayWith = null;
+
+    // Within ten yards of each other: his first Icebolt freezes one, and the next find nobody to freeze.
+    const hover = sap.position;
+    foreach (k; 0 .. 3)
+        s.placeHero(k, Position(hover.x + 10, hover.y + (cast(float) k - 1) * 3, hover.z));
+    size_t frozen = size_t.max;
+    assert(s.runUntil(() {
+        foreach (k; 0 .. 3)
+            if (s.hero(k).auras.find(Sapphiron.icebolt) !is null)
+                frozen = k;
+        return frozen != size_t.max;
+    }, 10.seconds), "nobody frozen\n" ~ s.seen());
+    assert(s.hero(frozen).auras.find(Sapphiron.iceboltImmunity) !is null, "frozen without the immunity");
+    auto blocks = s.objects(goIceBlock);
+    assert(blocks.length == 1, format!"%s ice blocks for one frozen player"(blocks.length));
+    const blockGuid = blocks[0].guid, blockAt = blocks[0].position;
+
+    // One hides behind the block, five yards on from him; the other stands in the open, twelve yards aside.
+    const hider = frozen == 0 ? 1 : 0, exposed = frozen == 2 ? 1 : 2;
+    const dx = blockAt.x - hover.x, dy = blockAt.y - hover.y, length = (dx ^^ 2 + dy ^^ 2) ^^ 0.5f;
+    const behind = Position(blockAt.x + 5 * dx / length, blockAt.y + 5 * dy / length, blockAt.z);
+    s.placeHero(hider, behind);
+    s.placeHero(exposed, Position(behind.x, behind.y + 12, behind.z));
+    s.run(2.seconds);
+    assert(!s.map.inLineOfSight(hover, s.hero(hider).position) && s.map.inLineOfSight(hover, s.hero(exposed).position),
+        "the block shelters only the one behind it");
+    assert(s.objects(goIceBlock).length == 1 && !s.castCount(Sapphiron.frostBreath), "a second block, or the breath");
+    assert(s.runUntilSaved());
+    const health = sap.values.get!UNIT_FIELD_HEALTH;
+
+    // (i) The worker dies with the player frozen, before the breath, just after a checkpoint.
+    s.forget();
+    s.restartAfterCrash();
+    sap = s.the(npcSapphiron);
+    assert(s.instance == instance && sap.guid == sapGuid && s.all(npcSapphiron).length == 1, "another Sapphiron");
+    assert(sap.ai.inCombat && hovering(s) && sap.values.get!UNIT_FIELD_HEALTH == health,
+        format!"Sapphiron back in combat %s, in the air %s, at %s of %s health"(sap.ai.inCombat, hovering(s),
+        sap.values.get!UNIT_FIELD_HEALTH, health));
+    assert(s.ask(NaxxEncounter.sapphiron) == EncounterState.inProgress && !s.doorOpen(waterfall));
+    blocks = s.objects(goIceBlock);
+    assert(blocks.length == 1 && blocks[0].guid == blockGuid && Scene.distance(blocks[0].position, blockAt) < 0.1f,
+        format!"%s ice blocks after the crash"(blocks.length));
+    mortal(s);
+    assert(s.runUntil(() => s.casts.canFind!(c => c.spell == Sapphiron.frostBreath && c.started), 25.seconds),
+        format!"no Frost Breath begun after the crash (he rose at %s, now %s, in the air %s, in combat %s)\n%s"(airAt,
+        s.elapsedMs, hovering(s), sap.ai.inCombat, s.seen()));
+    const breathAt = s.elapsedMs;
+    assert(abs(breathAt - (airAt + 23_000)) <= 600, format!"the breath began %s ms after he rose, not 23000"(
+        breathAt - airAt));
+    assert(s.objects(goIceBlock).length == 1, "the block melted before the breath");
+
+    // (ii) The worker dies again with the breath begun.
+    s.run(2.seconds);
+    assert(s.runUntilSaved() && !s.castCount(Sapphiron.frostBreath), "the breath landed early");
+    s.forget();
+    s.restartAfterCrash();
+    sap = s.the(npcSapphiron);
+    assert(sap.guid == sapGuid && s.all(npcSapphiron).length == 1 && s.objects(goIceBlock).length == 1);
+    mortal(s);
+    assert(s.runUntil(() => s.castCount(Sapphiron.frostBreath) > 0, 6.seconds),
+        "the breath begun before the crash never landed\n" ~ s.seen());
+    const landedAt = s.elapsedMs;
+    assert(landedAt - breathAt <= 7_600, format!"the breath landed %s ms after it began"(landedAt - breathAt));
+    assert(s.hero(hider).values.get!UNIT_FIELD_HEALTH > 990_000, format!"the player behind the block at %s health"(
+        s.hero(hider).values.get!UNIT_FIELD_HEALTH));
+    assert(s.hero(exposed).values.get!UNIT_FIELD_HEALTH < 950_000, format!"the player in the open at %s health"(
+        s.hero(exposed).values.get!UNIT_FIELD_HEALTH));
+    assert(s.runUntil(() => !hovering(s) && !s.objects(goIceBlock).length, 3.seconds), "he did not land");
+    assert(s.castCount(Sapphiron.frostBreath) == 1, format!"%s breaths"(s.castCount(Sapphiron.frostBreath)));
+    assert(s.hero(frozen).auras.find(Sapphiron.icebolt) is null, "still frozen after he landed");
+    s.godlike = true;
+    s.moveHeroes(sap.position);
+    s.stayWith = sap;
+    s.forget();
+    assert(s.runUntil(() => s.castBy(npcSapphiron, Sapphiron.cleave), 12.seconds), format!(
+        "no ground fight after landing: at %s, victim %s, in combat %s, flying %s, heroes at %s %s %s\n%s")(
+        sap.position, sap.ai.hostVictim.guid, sap.ai.inCombat, sap.scriptFlying, s.hero(0).position, s.hero(1).position,
+        s.hero(2).position, s.seen()));
+    assert(s.all(npcSapphiron).length == 1 && s.castCount(Sapphiron.frostBreath) == 0);
+
+    s.kill(sap);
+    s.run(400.msecs);
+    assert(s.ask(NaxxEncounter.sapphiron) == EncounterState.done && s.doorOpen(waterfall));
+    s.restartAfterCrash();
+    assert(s.ask(NaxxEncounter.sapphiron) == EncounterState.done && s.doorOpen(waterfall), "the waterfall shut again");
+    assert(s.find(npcSapphiron) is null && !s.objects(goIceBlock).length, "Sapphiron or a block back after his death");
+}
+
+/**
+ * Sapphiron's ground phase survives a worker's crash: his birth springs as the raid comes into his lair, and after the
+ * crash the same Sapphiron fights on with his health and Frost Aura. He takes to the air on his first timer and
+ * enrages on his, not on timers the crash restarted.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import std.math : abs;
+    import dmangos.script.api : EncounterState;
+    import dmangos.scripts.naxxramas;
+
+    auto s = new Scene(533, frostwyrmLair, [classWarrior, classMage], cluster: true);
+    s.run(400.msecs);
+    s.moveHeroes(frostwyrmLair); // they come into the lair: the birth springs
+    assert(s.runUntil(() => s.ask(NaxxEncounter.sapphiron) == EncounterState.special, 2.seconds),
+        "the birth did not spring as the raid came");
+    assert(s.runUntil(() => s.find(npcSapphiron) !is null, 23.seconds), "no Sapphiron");
+    auto sap = s.the(npcSapphiron);
+    const sapGuid = sap.guid;
+    s.stayWith = sap;
+    s.stayWithin = 60;
+    assert(s.runUntil(() => sap.ai.inCombat, 2.seconds), "Sapphiron does not fight");
+    const engagedAt = s.elapsedMs;
+    s.run(20.seconds);
+    foreach (spell; [Sapphiron.frostAura, Sapphiron.cleave, Sapphiron.tailSweep, Sapphiron.lifeDrain,
+            Sapphiron.summonBlizzard])
+        assert(s.castBy(npcSapphiron, spell), format!"Sapphiron: %s not cast\n%s"(spell, s.seen()));
+    s.hurtTo(sap, 60);
+    s.run(2.seconds);
+    assert(s.runUntilSaved());
+    const health = sap.values.get!UNIT_FIELD_HEALTH;
+
+    s.forget();
+    s.restartAfterCrash();
+    sap = s.the(npcSapphiron);
+    assert(sap.guid == sapGuid && s.all(npcSapphiron).length == 1 && sap.ai.inCombat
+        && abs(cast(long) sap.values.get!UNIT_FIELD_HEALTH - health) * 100 < sap.values.get!UNIT_FIELD_MAXHEALTH, format!"Sapphiron %s (was %s), %s of him, in combat %s, %s of %s health"(
+        sap.guid, sapGuid, s.all(npcSapphiron).length, sap.ai.inCombat, sap.values.get!UNIT_FIELD_HEALTH, health));
+    assert(sap.auras.find(Sapphiron.frostAura) !is null && !hovering(s), "no Frost Aura on him, or in the air");
+    assert(s.ask(NaxxEncounter.sapphiron) == EncounterState.inProgress && !s.doorOpen(181_225));
+    s.stayWith = sap;
+    const sinceEngaged = s.elapsedMs - engagedAt;
+    assert(!s.runUntil(() => hovering(s), (46_000 - sinceEngaged - 800).msecs), "he rose before his first timer");
+    assert(s.runUntil(() => hovering(s), 1600.msecs), format!"he did not rise on his first timer (%s ms after the pull)"(
+        s.elapsedMs - engagedAt));
+    assert(s.runUntil(() => s.castBy(npcSapphiron, Sapphiron.cleave) && !hovering(s), 50.seconds), "he did not land");
+    s.forget();
+    assert(!s.runUntil(() => s.castBy(npcSapphiron, Sapphiron.berserk), (900_000 - (s.elapsedMs - engagedAt)
+        - 800).msecs), "he enraged before fifteen minutes");
+    assert(s.runUntil(() => s.castBy(npcSapphiron, Sapphiron.berserk), 1600.msecs), "he did not enrage on his timer");
+    assert(s.all(npcSapphiron).length == 1);
+}
+
+/**
+ * A worker's crash in the 22 seconds between Sapphiron's birth and his coming: he comes once, on the birth's timer,
+ * and the birth springs no second time; a crash just after he came brings back the same one.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.script.api : EncounterState;
+    import dmangos.scripts.naxxramas;
+
+    auto s = new Scene(533, frostwyrmLair, [classWarrior, classMage], cluster: true);
+    s.run(400.msecs);
+    s.moveHeroes(frostwyrmLair); // they come into the lair: the birth springs
+    assert(s.runUntil(() => s.ask(NaxxEncounter.sapphiron) == EncounterState.special, 2.seconds), "no birth");
+    const bornAt = s.elapsedMs;
+    s.run(10.seconds);
+    assert(s.find(npcSapphiron) is null);
+    s.restartAfterCrash();
+    assert(s.ask(NaxxEncounter.sapphiron) == EncounterState.special && s.find(npcSapphiron) is null);
+    assert(!s.runUntil(() => s.find(npcSapphiron) !is null, (22_000 - (s.elapsedMs - bornAt) - 800).msecs),
+        "he came before the birth's timer");
+    assert(s.runUntil(() => s.find(npcSapphiron) !is null, 1600.msecs), "he did not come on the birth's timer");
+    auto sap = s.the(npcSapphiron);
+    const sapGuid = sap.guid;
+    assert(s.runUntil(() => sap.ai.inCombat, 2.seconds), "he did not take the raid at once");
+    s.run(1.seconds);
+    s.restartAfterCrash();
+    assert(s.all(npcSapphiron).length == 1 && s.the(npcSapphiron).guid == sapGuid, "another Sapphiron after the crash");
+    s.run(25.seconds);
+    assert(s.all(npcSapphiron).length == 1, "the birth brought a second Sapphiron");
+}
+
+/**
+ * A wipe in Sapphiron's air phase, then a worker's crash: the ice blocks melt with the wipe, the copy comes back with
+ * the encounter failed and one Sapphiron at home, out of combat, and he can be fought again.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.script.api : EncounterState;
+    import dmangos.scripts.naxxramas;
+
+    auto s = new Scene(533, frostwyrmLair, [classWarrior, classMage], cluster: true);
+    s.signalCopy(NaxxEncounter.sapphiron, EncounterState.special);
+    assert(s.runUntil(() => s.find(npcSapphiron) !is null, 30.seconds), "no Sapphiron");
+    auto sap = s.the(npcSapphiron);
+    const home = sap.position;
+    s.stayWith = sap;
+    s.stayWithin = 60;
+    assert(s.runUntil(() => hovering(s), 60.seconds), "Sapphiron did not take to the air");
+    s.stayWith = null;
+    foreach (k; 0 .. 2)
+        s.placeHero(k, Position(home.x + 10, home.y + k * 3, home.z));
+    assert(s.runUntil(() => s.objects(goIceBlock).length > 0, 10.seconds), "nobody frozen");
+    s.wipe(sap);
+    assert(s.runUntil(() => !sap.ai.inCombat && !sap.ai.evading && s.healthOf(sap) >= 100, 60.seconds),
+        "Sapphiron not home and whole after the wipe");
+    assert(s.ask(NaxxEncounter.sapphiron) == EncounterState.failed && !s.objects(goIceBlock).length && !hovering(s),
+        "the encounter not failed, a block left, or he is still in the air");
+    s.revive();
+    foreach (k; 0 .. 2)
+        s.placeHero(k, Position(home.x, home.y + 60 + k, home.z)); // out of his reach
+    s.godlike = true;
+    s.run(1.seconds);
+
+    s.restartAfterCrash();
+    assert(s.ask(NaxxEncounter.sapphiron) == EncounterState.failed);
+    assert(s.runUntil(() => s.find(npcSapphiron) !is null, 2.seconds), "no Sapphiron after the crash: the wing is shut");
+    s.run(3.seconds);
+    sap = s.the(npcSapphiron);
+    assert(s.all(npcSapphiron).length == 1 && !sap.ai.inCombat && Scene.distance(sap.position, home) < 1
+        && s.healthOf(sap) >= 100, "Sapphiron not alone, at home and whole");
+    s.moveHeroes(Position(home.x + 3, home.y, home.z));
+    s.engage(sap);
+    s.stayWith = sap;
+    assert(s.runUntil(() => s.ask(NaxxEncounter.sapphiron) == EncounterState.inProgress
+        && s.castBy(npcSapphiron, Sapphiron.frostAura), 3.seconds), "he cannot be fought again");
+    s.kill(sap);
+    s.run(400.msecs);
+    assert(s.ask(NaxxEncounter.sapphiron) == EncounterState.done && s.doorOpen(181_225));
 }
 
 /// The priest uses the same spellbook command as the possession bar in the client.

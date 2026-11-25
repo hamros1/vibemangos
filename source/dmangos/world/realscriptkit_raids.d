@@ -219,6 +219,31 @@ final class Scene
         heroes[k].write(Opcode.MSG_MOVE_TELEPORT_ACK, ClientTeleportAck(me.player.guid, 0, 0));
     }
 
+    /// Character `k` moved (a teleport on the map) to `at` itself.
+    void placeHero(size_t k, Position at)
+    {
+        moveHero(k, Position(at.x - 2, at.y - k, at.z, at.orientation));
+    }
+
+    /// The dead characters resurrected where they lie, at full health.
+    void revive()
+    {
+        import dmangos.bytes : ByteWriter;
+
+        foreach (k, ref h; heroes)
+        {
+            if (hero(k).alive)
+                continue;
+            h.session.inWorld.resurrectRequested(1, mapId, hero(k).position,
+                hero(k).values.get!UNIT_FIELD_MAXHEALTH, 0, false);
+            ByteWriter b;
+            b.put(ulong(1));
+            b.put(ubyte(1));
+            h.write(Opcode.CMSG_RESURRECT_RESPONSE, b.data.dup);
+        }
+        listen();
+    }
+
     /// Runs until `done` holds or `limit` is over; whether it held.
     bool runUntil(scope bool delegate() done, Duration limit, Duration step = 200.msecs)
     {
@@ -670,6 +695,13 @@ final class Scene
     {
         const st = w.context.instanceState(instance);
         return st is null ? null : st.data;
+    }
+
+    /// Runs until the copy saves its state again (a worker's crash just after loses nothing); whether it did in `limit`.
+    bool runUntilSaved(Duration limit = 3.seconds)
+    {
+        const before = savedData();
+        return runUntil(() => savedData() != before, limit, 50.msecs);
     }
 
     // -----------------------------------------------------------------------------------------------------------
