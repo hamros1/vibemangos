@@ -916,12 +916,13 @@ private:
                 (hit.left > 0 || waiting ? still : due) ~= hit;
             }
             pendingHits = still;
+            // A failed checkpoint holds only the landing back: the channel and the cast still count this tick.
             if (due.length && !checkpointSummons(true))
             {
                 foreach (ref hit; due)
                     hit.left = 1000;
                 pendingHits ~= due;
-                return;
+                due = null;
             }
             PendingHit[] local;
             foreach (hit; due)
