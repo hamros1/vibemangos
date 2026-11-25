@@ -12768,3 +12768,46 @@ unittest
     assert(corpse !is null && !corpse.alive, "dead at home, not risen");
     assert(corpse.loot !is null && corpse.loot.gold == 25 && 7 in corpse.loot.owners, "with its loot");
 }
+
+// A database script's kill credit for a player another worker simulates (the player's region and the script's went
+// to two different survivors) reaches the player there as a shared kill.
+unittest
+{
+    import dmangos.cluster.protocol : KillShare;
+    import dmangos.world.dbscripts : DbScriptStep, DbScriptType, ScriptCommand;
+    import dmangos.world.quests : Quest, QuestState;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    enum uint relay = 530, questId = 9420, credited = 12346;
+    auto db = newDatabase();
+    auto scripted = newCreationContext(db, (ref config) { config.cluster.nodeId = 1; });
+    auto elsewhere = newCreationContext(db, (ref config) { config.cluster.nodeId = 2; });
+    Quest q = {id: questId, method: 2, maxLevel: 60, title: "Greet", specialFlags: 0x20};
+    q.reqCreatureOrGoId[0] = credited;
+    q.reqCreatureOrGoCount[0] = 1;
+    foreach (node; [scripted, elsewhere])
+        node.data.quests.quests[questId] = q;
+    scripted.data.dbScripts.add(DbScriptType.relay, DbScriptStep(relay, 0, 0, ScriptCommand.killCredit, credited));
+    auto anduin = loggedIn(elsewhere, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
+    anduin.session.inWorld.addQuest(elsewhere.data.quests.quests[questId]);
+    const player = anduin.session.character.guid;
+
+    KillShare[] sent;
+    ushort[] to;
+    scripted.killShareElsewhere = (ushort node, const ref KillShare share) {
+        to ~= node;
+        sent ~= share;
+    };
+    scripted.lastHeard[player] = WorldContext.Heard(2, MonoTime.currTime, 10); // presence: the player is on node 2
+    auto map = scripted.map(0);
+    const spawn = scripted.loanSpawn(innkeeperSpawn, 0);
+    map.loadCell(cellKeyAt(spawn.x, spawn.y));
+    auto keeper = cast(Creature) map.findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
+    assert(keeper !is null);
+    assert(scripted.startScript(DbScriptType.relay, relay, map, keeper.guid, player));
+    scripted.updateScripts(0);
+    assert(sent.length == 1 && to == [2] && sent[0].target == player && sent[0].entry == credited);
+    elsewhere.killShareArrived(sent[0]);
+    assert(anduin.session.character.questStatus[questId].status == QuestState.complete, "credited where it plays");
+}

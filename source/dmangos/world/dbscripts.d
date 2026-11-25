@@ -1647,6 +1647,9 @@ mixin template DbScriptRunner()
         OutdoorScriptStep* planned = null)
     {
         auto source = scriptObject(map, sourceGuid), target = scriptObject(map, targetGuid);
+        stepObjects = [targetGuid, sourceGuid]; // a player not on this map is not in `source` or `target`
+        scope (exit)
+            stepObjects = null;
         ScriptThing[] buddies;
         if (!scriptBuddies(step, map, source, target, buddies))
             return false;
@@ -1777,6 +1780,40 @@ mixin template DbScriptRunner()
                 if (auto session = onlinePlayer(o.guid))
                     return session;
         return null;
+    }
+
+    /**
+     * A kill-credit step whose player another worker simulates: after a crash the player's region and the
+     * script's can go to two different survivors, so the script runs on, its player elsewhere. The credit
+     * goes to that worker as a shared kill, after the step's claim when it has one.
+     */
+    private ulong[] stepObjects; // the guids the running step began with (`runScriptStep`)
+
+    private void creditRemoteScriptPlayer(Map map, uint entry, Creature rewarder, OutdoorScriptStep* planned)
+    {
+        import dmangos.cluster.protocol : KillShare;
+        import dmangos.world.objects : highGuidOf, HighGuid;
+        import dmangos.world.updatefields : UNIT_FIELD_LEVEL;
+
+        if (killShareElsewhere is null)
+            return;
+        foreach (guid; stepObjects)
+        {
+            if (!guid || highGuidOf(guid) != HighGuid.player || onlinePlayer(guid) !is null)
+                continue;
+            const route = remoteKillRecipient(guid, map);
+            if (!route.node || route.node == config.cluster.nodeId)
+                continue;
+            const share = KillShare(target: guid, victim: rewarder !is null ? rewarder.guid : 0, entry: entry,
+                level: rewarder !is null ? rewarder.values.get!UNIT_FIELD_LEVEL : 0);
+            const node = route.node;
+            auto send = () { killShareElsewhere(node, share); };
+            if (planned !is null)
+                planned.afterCommit ~= send;
+            else
+                send();
+            return;
+        }
     }
 
     /**
@@ -2321,12 +2358,15 @@ mixin template DbScriptRunner()
         }
         case ScriptCommand.killCredit:
         {
-            if (player is null)
-                break;
             auto rewarder = source.creature !is null ? source.creature : target.creature;
             const entry = step.datalong ? step.datalong : (rewarder !is null ? rewarder.template_.entry : 0);
             if (entry == 0)
                 break;
+            if (player is null)
+            {
+                creditRemoteScriptPlayer(map, entry, rewarder, planned);
+                break;
+            }
             auto effect = ScriptQuestEffect(player, ScriptQuestEffect.Kind.kill, entry, rewarder !is null ? rewarder.guid : 0);
             if (planned !is null)
                 planned.add(effect);
