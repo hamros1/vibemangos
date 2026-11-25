@@ -167,7 +167,7 @@ private:
         return true;
     }
 
-    bool handleGOSelect(string arg = null)
+    bool handleGameObjectSelectCommand(string arg = null)
     {
         import std.math : sqrt;
 
@@ -228,7 +228,7 @@ private:
         import dmangos.world.npcdata : trainerLesson;
         import std.algorithm.searching : canFind;
 
-        auto creature = getSelectedCreature(true);
+        auto creature = selectedCreature(true);
         if (creature is null)
             return true;
         if (!(creature.values.get!UNIT_NPC_FLAGS & NpcFlag.trainer))
@@ -266,9 +266,9 @@ private:
         return true;
     }
 
-    bool handleListAIAgentCommand()
+    bool handleListAiAgentCommand()
     {
-        auto creature = getSelectedCreature(true);
+        auto creature = selectedCreature(true);
         if (creature is null)
             return true;
         const entry = creature.template_.entry, spawn = creature.spawn.guid, list = creature.template_.spellList;
@@ -283,7 +283,7 @@ private:
         return true;
     }
 
-    bool handleGOExport()
+    bool handleGameObjectExportCommand()
     {
         if (auto go = selectedGameObject())
         {
@@ -298,7 +298,7 @@ private:
         return true;
     }
 
-    bool handleGOInfo()
+    bool handleGameObjectInfoCommand()
     {
         import std.math : sqrt;
         import dmangos.world.gameobject : GameObjectType;
@@ -330,7 +330,7 @@ private:
         return true;
     }
 
-    bool handleGOActivate()
+    bool handleGameObjectActivateCommand()
     {
         auto go = selectedGameObject();
         if (go is null)
@@ -382,7 +382,7 @@ private:
         return true;
     }
 
-    bool handleGOSpawn(uint entryId = 0, int save = 0)
+    bool handleGameObjectSpawnCommand(uint entryId = 0, int save = 0)
     {
         if (entryId == 0)
             return false;
@@ -404,7 +404,7 @@ private:
         return true;
     }
 
-    bool handleGODelete()
+    bool handleGameObjectDeleteCommand()
     {
         auto go = selectedGameObject();
         if (go is null)
@@ -422,7 +422,7 @@ private:
         return true;
     }
 
-    bool handleGOEnable()
+    bool handleGameObjectEnableCommand()
     {
         auto go = selectedGameObject();
         if (go is null)
@@ -445,7 +445,7 @@ private:
         return true;
     }
 
-    bool handleGOScale(float scale = 0)
+    bool handleGameObjectScaleCommand(float scale = 0)
     {
         auto go = selectedGameObject();
         if (go is null)
@@ -464,7 +464,7 @@ private:
         return true;
     }
 
-    bool handleGOAnimProgress(uint progress = 0)
+    bool handleGameObjectAnimProgressCommand(uint progress = 0)
     {
         auto go = selectedGameObject();
         if (go is null)
@@ -475,7 +475,7 @@ private:
         return true;
     }
 
-    bool handleGOMove()
+    bool handleGameObjectMoveCommand()
     {
         import dmangos.world.gameobject : GameObjectSpawn;
 
@@ -498,7 +498,7 @@ private:
         return true;
     }
 
-    bool handleGORotate(string axis = null, float degrees = 0)
+    bool handleGameObjectRotateCommand(string axis = null, float degrees = 0)
     {
         import std.math : cos, sin, PI;
         import dmangos.world.gameobject : GameObjectSpawn;
@@ -539,7 +539,7 @@ private:
 
     bool handleNpcComeCommand()
     {
-        auto creature = getSelectedCreature(true);
+        auto creature = selectedCreature(true);
         if (creature is null)
             return true;
         npcWalkTo(creature, player.position);
@@ -549,7 +549,7 @@ private:
 
     bool handleNpcPossessCommand()
     {
-        auto creature = getSelectedCreature(true);
+        auto creature = selectedCreature(true);
         if (creature is null)
             return true;
         if (!player.alive || !creature.alive || creature.ai is null || (creature.petOwner && creature !is ownPet)
@@ -570,7 +570,7 @@ private:
 
     bool handleNpcReturnCommand()
     {
-        auto creature = getSelectedCreature(false);
+        auto creature = selectedCreature(false);
         if (creature is null)
             return true;
         // Its fight forgotten, back to its spawn point.
@@ -605,7 +605,7 @@ private:
 
     bool handleResetReputationCommand()
     {
-        auto plr = getSelectedChar(false);
+        auto plr = selectedCharacter(false);
         if (plr is null)
         {
             systemMessage("Select a player or yourself first.");
@@ -623,7 +623,7 @@ private:
 
     bool handleRepairItemsCommand()
     {
-        auto plr = getSelectedChar(false);
+        auto plr = selectedCharacter(false);
         if (plr is null)
             return false;
         foreach (item; plr.player.inventory.all()) // back to full durability
@@ -642,7 +642,7 @@ private:
 
     bool handleDeMorphCommand()
     {
-        auto target = getSelectedChar(true);
+        auto target = selectedCharacter(true);
         if (target is null)
             target = this;
         auto values = &target.player.values; // back to its own model
@@ -658,8 +658,8 @@ private:
             redSystemMessage("No model specified");
             return true;
         }
-        auto plr = getSelectedChar(false);
-        auto creature = plr is null ? getSelectedCreature(false) : null;
+        auto plr = selectedCharacter(false);
+        auto creature = plr is null ? selectedCreature(false) : null;
         if (plr is null && creature is null)
         {
             redSystemMessage("No target found.");
@@ -737,7 +737,7 @@ private:
         return true;
     }
 
-    bool handleReviveStringcommand(Rest args = Rest.init)
+    bool handleReviveByNameCommand(Rest args = Rest.init)
     {
         auto found = context.onlinePlayer(args);
         if (found is null)
@@ -758,12 +758,12 @@ private:
         return true;
     }
 
-    /// `getSelectedChar(false)`, else `getSelectedCreature(false)`: the cast commands' target, or null after the message.
+    /// `selectedCharacter(false)`, else `selectedCreature(false)`: the cast commands' target, or null after the message.
     Object castTarget()
     {
-        if (auto plr = getSelectedChar(false))
+        if (auto plr = selectedCharacter(false))
             return plr;
-        if (auto creature = getSelectedCreature(false))
+        if (auto creature = selectedCreature(false))
             return creature;
         redSystemMessage("Must select a char or creature.");
         return null;
@@ -818,7 +818,7 @@ private:
         return true;
     }
 
-    bool handleCastSpellNECommand(Rest args = Rest.init)
+    bool handleCastSpellPreviewCommand(Rest args = Rest.init)
     {
         auto target = castTarget();
         if (target is null)
@@ -897,7 +897,7 @@ private:
 
         if (name.length == 0)
             return false;
-        auto target = getSelectedChar(true);
+        auto target = selectedCharacter(true);
         if (target is null)
             return false;
         if (target.ownGuild() !is null)
@@ -929,7 +929,7 @@ private:
 
     bool handleInvincibleCommand()
     {
-        auto chr = getSelectedChar(true);
+        auto chr = selectedCharacter(true);
         string message;
         if (chr !is null)
         {
@@ -946,7 +946,7 @@ private:
         return true;
     }
 
-    bool handleNPCFlagCommand(uint flags)
+    bool handleNpcFlagCommand(uint flags)
     {
         const guid = player.values.get!UNIT_FIELD_TARGET;
         if (guid == 0)
@@ -954,7 +954,7 @@ private:
             systemMessage("No selection.");
             return true;
         }
-        auto creature = getSelectedCreature(false);
+        auto creature = selectedCreature(false);
         if (creature is null)
         {
             systemMessage("Select a creature first.");
@@ -972,7 +972,7 @@ private:
     /// `.npc say` and `.npc yell`: the selected creature (or player) says it.
     bool monsterChat(string text, bool yell)
     {
-        if (auto creature = getSelectedCreature(false))
+        if (auto creature = selectedCreature(false))
         {
             const range = yell ? context.config.listenRangeYell : context.config.listenRangeSay;
             const type = yell ? ChatType.CHAT_MSG_MONSTER_YELL : ChatType.CHAT_MSG_MONSTER_SAY;
@@ -980,7 +980,7 @@ private:
                 monsterChatMessage(type, creature.guid, creature.template_.name, text));
             return true;
         }
-        if (auto plr = getSelectedChar(false))
+        if (auto plr = selectedCharacter(false))
         {
             const body_ = chatMessage(yell ? ChatType.CHAT_MSG_YELL : ChatType.CHAT_MSG_SAY, Language.LANG_UNIVERSAL,
                 plr.player.guid, text);

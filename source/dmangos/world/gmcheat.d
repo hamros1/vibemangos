@@ -11,7 +11,7 @@ mixin template CheatCommands()
 private:
     bool handleShowCheatsCommand()
     {
-        auto plyr = getSelectedChar(true);
+        auto plyr = selectedCharacter(true);
         if (plyr is null)
             return true;
         greenSystemMessage("Testing toggles  ·  " ~ plyr.player.data.name);
@@ -31,7 +31,7 @@ private:
 
     bool handleTaxiCheatCommand(OnOff state)
     {
-        auto chr = getSelectedChar(true);
+        auto chr = selectedCharacter(true);
         if (chr is null)
             return true;
         // The first message goes to the GM, the second to the player it is meant for.
@@ -51,7 +51,7 @@ private:
 
     bool handleExploreCheatCommand(OnOff state)
     {
-        auto chr = getSelectedChar(true);
+        auto chr = selectedCharacter(true);
         if (chr is null)
         {
             chr = this;
@@ -81,7 +81,7 @@ private:
     bool toggleCheat(Nullable!OnOff state, string name, bool* delegate(Character) flag,
         void delegate(Character) whenOn = null)
     {
-        auto target = getSelectedChar(true);
+        auto target = selectedCharacter(true);
         if (target is null)
             return true;
         auto enabled = flag(target);
@@ -101,7 +101,7 @@ private:
     {
         if (stacks < 1 || stacks > 255)
             return false;
-        auto target = getSelectedChar(true);
+        auto target = selectedCharacter(true);
         if (target is null)
             return true;
         auto auras = &target.player.auras;

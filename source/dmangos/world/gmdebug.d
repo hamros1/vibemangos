@@ -67,18 +67,18 @@ private:
     // .debug
     // -----------------------------------------------------------------------
 
-    bool handleAIMoveCommand(float x, float y, float z)
+    bool handleAiMoveCommand(float x, float y, float z)
     {
         if (!context.client.isValidMapCoord(map.id, x, y, z))
             return false;
-        if (auto creature = getSelectedCreature(true))
+        if (auto creature = selectedCreature(true))
             npcWalkTo(creature, Position(x, y, z));
         return true;
     }
 
     bool handleMoveInfoCommand()
     {
-        if (auto creature = getSelectedCreature(true))
+        if (auto creature = selectedCreature(true))
         {
             const at = creature.position;
             systemMessage(format!"Spawn %s, movement %s, position %.3f %.3f %.3f, orientation %.3f, combat %s."
@@ -87,7 +87,7 @@ private:
         return true;
     }
 
-    bool handleGetTransporterTime()
+    bool handleGetTransporterTimeCommand()
     {
         import dmangos.world.objects : HighGuid, counterOf, highGuidOf;
 
@@ -104,7 +104,7 @@ private:
         return true;
     }
 
-    bool handleDebugDumpCoordsCommmand()
+    bool handleDebugDumpCoordsCommand()
     {
         const at = player.position;
         systemMessage(format!"Map %s, copy %s, x %.6f, y %.6f, z %.6f, facing %.6f."
@@ -121,7 +121,7 @@ private:
     {
         if (percent < -100 || percent > 100)
             return false;
-        if (auto creature = getSelectedCreature(true))
+        if (auto creature = selectedCreature(true))
         {
             const before = creature.ai.threatOf(player.guid);
             creature.ai.modifyThreatPercent(player.guid, percent);
@@ -210,11 +210,11 @@ private:
         return true;
     }
 
-    bool handleCollisionTestLOS()
+    bool handleCollisionTestLineOfSightCommand()
     {
         const guid = player.values.get!UNIT_FIELD_TARGET;
         Position at;
-        if (auto creature = getSelectedCreature(false))
+        if (auto creature = selectedCreature(false))
             at = creature.position;
         else if (auto who = guid ? map.find(guid) : null)
             at = who.character.position;
@@ -238,7 +238,7 @@ private:
         import dmangos.bytes : ByteWriter;
         import dmangos.world.opcodes : Opcode;
 
-        auto creature = getSelectedCreature(false);
+        auto creature = selectedCreature(false);
         if (creature is null)
         {
             systemMessage("Select a creature first.");
@@ -253,7 +253,7 @@ private:
     }
 
     /// `.debug itempushresult`: an `SMSG_ITEM_PUSH_RESULT` laid out as in 2.4.3.
-    bool handleSendItemPushResult(uint itemId, uint count = 0, uint type = 0, uint unk1 = 0, uint unk2 = 0,
+    bool handleSendItemPushResultCommand(uint itemId, uint count = 0, uint type = 0, uint unk1 = 0, uint unk2 = 0,
         uint unk3 = 0, uint unk4 = 0)
     {
         import dmangos.bytes : ByteWriter;
@@ -279,7 +279,7 @@ private:
     /// `.debug face`: the creature's facing, in degrees, changed here only (the clients are not told).
     bool handleFaceCommand(uint degrees = 0)
     {
-        auto creature = getSelectedCreature(false);
+        auto creature = selectedCreature(false);
         if (creature is null)
         {
             systemMessage("Select a creature first.");
@@ -289,7 +289,7 @@ private:
         return true;
     }
 
-    bool handleCollisionTestIndoor()
+    bool handleCollisionTestIndoorCommand()
     {
         auto terrain = map.collision;
         if (terrain is null || !terrain.hasVmaps)
@@ -303,7 +303,7 @@ private:
         return true;
     }
 
-    bool handleCollisionGetHeight()
+    bool handleCollisionGetHeightCommand()
     {
         import std.math : cos, sin;
 
@@ -385,7 +385,7 @@ private:
     /// The four movement tests: an order to the selected player, then "... Test Ran.".
     bool movementTest(Opcode opcode)(string what, bool failWithoutSelection)
     {
-        auto chr = getSelectedChar(true);
+        auto chr = selectedCharacter(true);
         if (chr is null)
         {
             systemMessage("No character selected.");
@@ -396,22 +396,22 @@ private:
         return true;
     }
 
-    bool handleDebugUnroot()
+    bool handleDebugUnrootCommand()
     {
         return movementTest!(Opcode.SMSG_FORCE_MOVE_UNROOT)("UnRoot", true);
     }
 
-    bool handleDebugRoot()
+    bool handleDebugRootCommand()
     {
         return movementTest!(Opcode.SMSG_FORCE_MOVE_ROOT)("Root", false);
     }
 
-    bool handleDebugLandWalk()
+    bool handleDebugLandWalkCommand()
     {
         return movementTest!(Opcode.SMSG_MOVE_LAND_WALK)("Land Walk", true);
     }
 
-    bool handleDebugWaterWalk()
+    bool handleDebugWaterWalkCommand()
     {
         return movementTest!(Opcode.SMSG_MOVE_WATER_WALK)("Water Walk", true);
     }
@@ -646,7 +646,7 @@ private:
         return true;
     }
 
-    bool handleBGInfoCommnad()
+    bool handleBattlegroundInfoCommand()
     {
         import std.conv : to;
 
@@ -659,7 +659,7 @@ private:
 
     bool handleBattlegroundCommand()
     {
-        handleBGInfoCommnad();
+        handleBattlegroundInfoCommand();
         systemMessage("Use .bg to see battleground commands.");
         return true;
     }

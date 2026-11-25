@@ -599,7 +599,7 @@ private:
     // -----------------------------------------------------------------------
 
     /// The selected player on this map, oneself if nothing is selected.
-    Character getSelectedChar(bool showError)
+    Character selectedCharacter(bool showError)
     {
         const guid = player.values.get!UNIT_FIELD_TARGET;
         if (guid == 0)
@@ -615,7 +615,7 @@ private:
     }
 
     /// The selected creature, or null (with an error message if `showError`).
-    Creature getSelectedCreature(bool showError)
+    Creature selectedCreature(bool showError)
     {
         const guid = player.values.get!UNIT_FIELD_TARGET;
         Creature creature;
@@ -681,7 +681,7 @@ private:
             const stored = slot == UNIT_FIELD_STAT1 ? av / 2 : av; // the agility row stores half the value
         else
             const stored = av;
-        if (auto plr = getSelectedChar(false))
+        if (auto plr = selectedCharacter(false))
         {
             const name = plr.player.data.name;
             gmLog(format!("used modify field value: %s, " ~ logFormat ~ " on %s")(fieldName, av, name));
@@ -692,7 +692,7 @@ private:
                 plr.player.values.setSlot(maxSlot, raw(mv));
             plr.flushPlayerChanges();
         }
-        else if (auto cr = getSelectedCreature(false))
+        else if (auto cr = selectedCreature(false))
         {
             if (!(slot < UNIT_END && maxSlot < UNIT_END))
                 return false;

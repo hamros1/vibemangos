@@ -20,7 +20,7 @@ private:
 
     private Creature waypointTarget()
     {
-        auto creature = getSelectedCreature(true);
+        auto creature = selectedCreature(true);
         if (creature is null)
             return null;
         if (!creature.spawn.guid || creature.spawn.guid >= temporaryCounterStart || creature.summon.type != TempSpawnType.none)
@@ -52,7 +52,7 @@ private:
             (colored(ChatColor.sky, format!"Point %s"(node.point)), node.x, node.y, node.z, node.delay, details));
     }
 
-    bool handleWPShowCommand()
+    bool handleWaypointShowCommand()
     {
         if (!waypointTarget())
             return true;
@@ -62,7 +62,7 @@ private:
         return true;
     }
 
-    bool handleWPHideCommand()
+    bool handleWaypointHideCommand()
     {
         waypointSpawn = 0;
         waypointDraft = null;
@@ -70,7 +70,7 @@ private:
         return true;
     }
 
-    bool handleWPScriptCommand(uint point, uint script)
+    bool handleWaypointScriptCommand(uint point, uint script)
     {
         import dmangos.world.dbscripts : DbScriptType;
 
@@ -86,7 +86,7 @@ private:
         return true;
     }
 
-    bool handleGenerateWaypoints()
+    bool handleGenerateWaypointsCommand()
     {
         import dmangos.vmap.math : Vector3;
 
@@ -114,7 +114,7 @@ private:
         return true;
     }
 
-    bool handleWPInfoCommand(uint point)
+    bool handleWaypointInfoCommand(uint point)
     {
         if (waypointTarget())
         {
@@ -127,12 +127,12 @@ private:
         return true;
     }
 
-    bool handleWPAddCommand(uint waitMs = 0)
+    bool handleWaypointAddCommand(uint waitMs = 0)
     {
         return addDraftPoint(waitMs, WaypointGait.default_);
     }
 
-    bool handleWPAddFlyCommand(uint waitMs = 0)
+    bool handleWaypointAddFlyCommand(uint waitMs = 0)
     {
         return addDraftPoint(waitMs, WaypointGait.fly);
     }
@@ -168,7 +168,7 @@ private:
         return null;
     }
 
-    bool handleWPGaitCommand(uint point, string mode)
+    bool handleWaypointGaitCommand(uint point, string mode)
     {
         WaypointGait gait;
         switch (mode)
@@ -186,7 +186,7 @@ private:
         return true;
     }
 
-    bool handleWPEmoteCommand(uint point, uint emote)
+    bool handleWaypointEmoteCommand(uint point, uint emote)
     {
         if (emote && context.client.emotes.lookup(emote) is null)
         {
@@ -201,7 +201,7 @@ private:
         return true;
     }
 
-    bool handleWPModelCommand(uint point, uint display)
+    bool handleWaypointModelCommand(uint point, uint display)
     {
         if (display && context.client.creatureDisplays.lookup(display) is null)
         {
@@ -216,7 +216,7 @@ private:
         return true;
     }
 
-    bool handleWPDeleteCommand(uint point)
+    bool handleWaypointDeleteCommand(uint point)
     {
         import std.algorithm.mutation : remove;
 
@@ -231,7 +231,7 @@ private:
         return true;
     }
 
-    bool handleWPMoveHereCommand(uint point)
+    bool handleWaypointMoveHereCommand(uint point)
     {
         if (waypointTarget())
         {
@@ -249,7 +249,7 @@ private:
         return true;
     }
 
-    bool handleWPWaitCommand(uint point, uint waitMs)
+    bool handleWaypointWaitCommand(uint point, uint waitMs)
     {
         if (waypointTarget())
         {
@@ -261,7 +261,7 @@ private:
         return true;
     }
 
-    bool handleWPChangeNoCommand(uint point, uint replacement)
+    bool handleWaypointChangeNoCommand(uint point, uint replacement)
     {
         if (waypointTarget())
         {
@@ -274,7 +274,7 @@ private:
         return true;
     }
 
-    bool handleWPMoveTypeCommand(string mode)
+    bool handleWaypointMoveTypeCommand(string mode)
     {
         if (mode != "loop" && mode != "linear")
             return false;
@@ -283,7 +283,7 @@ private:
         return true;
     }
 
-    bool handleDeleteWaypoints()
+    bool handleDeleteWaypointsCommand()
     {
         if (waypointTarget())
         {
@@ -293,7 +293,7 @@ private:
         return true;
     }
 
-    bool handleSaveWaypoints()
+    bool handleSaveWaypointsCommand()
     {
         if (!waypointTarget())
             return true;

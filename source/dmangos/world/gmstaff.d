@@ -58,7 +58,7 @@ private:
         return true;
     }
 
-    bool handleGMAnnounceCommand(Rest message)
+    bool handleGmAnnounceCommand(Rest message)
     {
         sendGMWorldText(colored(ChatColor.red, "[Team]") ~ " " ~ colored(ChatColor.green, playerChatLink(player.data.name))
             ~ ": " ~ colored(ChatColor.yellow, message));
@@ -66,19 +66,19 @@ private:
         return true;
     }
 
-    bool handleWAnnounceCommand(Rest message)
+    bool handleScreenAnnounceCommand(Rest message)
     {
         sendWorldWideScreenText(announcement(message, true));
         gmLog(format!"announced on screen [%s]"(message));
         return true;
     }
 
-    bool handleGMOnCommand()
+    bool handleGmOnCommand()
     {
         return setGmMode(true);
     }
 
-    bool handleGMOffCommand()
+    bool handleGmOffCommand()
     {
         return setGmMode(false);
     }
@@ -98,7 +98,7 @@ private:
         return true;
     }
 
-    bool handleGPSCommand()
+    bool handleGpsCommand()
     {
         const guid = player.values.get!UNIT_FIELD_TARGET;
         Position at = player.position;
@@ -145,7 +145,7 @@ private:
 
     bool handleAddInvItemCommand(uint itemId, uint count = 1, int randomProperty = 0)
     {
-        auto chr = getSelectedChar(false);
+        auto chr = selectedCharacter(false);
         if (chr is null)
             chr = this;
         const item = itemId in context.data.items;
@@ -212,7 +212,7 @@ private:
             redSystemMessage("Incorrect value. Range is 1..255");
             return true;
         }
-        auto chr = getSelectedChar(true);
+        auto chr = selectedCharacter(true);
         if (chr is null)
             return true;
         if (chr !is this)
@@ -226,7 +226,7 @@ private:
     bool handleLearnSkillCommand(uint skill, uint min_, uint max_ = 1)
     {
         blueSystemMessage(format!"Adding skill line %d"(skill));
-        auto plr = getSelectedChar(true);
+        auto plr = selectedCharacter(true);
         if (plr is null)
             return false;
         gmLog(format!"used add skill of %u %u %u on %s"(skill, min_, max_, plr.player.data.name));
@@ -240,7 +240,7 @@ private:
     bool handleModifySkillCommand(uint skill, uint cnt = 1)
     {
         blueSystemMessage(format!"Modifying skill line %d. Advancing %d times."(skill, cnt));
-        auto plr = getSelectedChar(true);
+        auto plr = selectedCharacter(true);
         if (plr is null)
             plr = this;
         gmLog(format!"used modify skill of %u %u on %s"(skill, cnt, plr.player.data.name));
@@ -264,7 +264,7 @@ private:
 
     bool handleGetSkillsInfoCommand()
     {
-        auto plr = getSelectedChar(true);
+        auto plr = selectedCharacter(true);
         if (plr is null)
             return false;
         blueSystemMessage(format!"Player: %s has skills"(plr.player.data.name));
@@ -284,7 +284,7 @@ private:
     bool handleRemoveSkillCommand(uint skill)
     {
         blueSystemMessage(format!"Removing skill line %d"(skill));
-        auto plr = getSelectedChar(true);
+        auto plr = selectedCharacter(true);
         if (plr !is null && plr.player.skillValue(skill)[1] != 0)
         {
             plr.applySkill(skill, 0, 0);
@@ -298,7 +298,7 @@ private:
 
     bool handleEmoteCommand(uint emote = 0)
     {
-        auto target = getSelectedCreature(true);
+        auto target = selectedCreature(true);
         if (target is null)
             return false;
         target.values.set!UNIT_NPC_EMOTESTATE(emote);
@@ -308,7 +308,7 @@ private:
 
     bool handleModifyGoldCommand(int total)
     {
-        auto chr = getSelectedChar(true);
+        auto chr = selectedCharacter(true);
         if (chr is null)
             return true;
         const magnitude = total < 0 ? -long(total) : long(total);
@@ -359,7 +359,7 @@ private:
 
     bool handleUnlearnCommand(uint spellId = 0)
     {
-        auto plr = getSelectedChar(true);
+        auto plr = selectedCharacter(true);
         if (plr is null)
             return true;
         if (spellId == 0)

@@ -591,7 +591,7 @@ mixin template HonorHandlers()
         import std.format : format;
 
         const amount = cast(uint) arcEmuAtol(args);
-        auto plr = getSelectedChar(true);
+        auto plr = selectedCharacter(true);
         if (plr is null)
             return true;
         blueSystemMessage(format!"Adding %u honor to player %s."(amount, plr.player.data.name));
@@ -606,7 +606,7 @@ mixin template HonorHandlers()
         import std.format : format;
 
         const amount = cast(uint) arcEmuAtol(args);
-        auto plr = getSelectedChar(true);
+        auto plr = selectedCharacter(true);
         if (plr is null)
             return true;
         blueSystemMessage(format!"Adding %u kills to player %s."(amount, plr.player.data.name));
@@ -615,7 +615,7 @@ mixin template HonorHandlers()
     }
 
     /// `.honor pvpcredit`: `SMSG_PVP_CREDIT` to oneself, for the selection, the points times ten.
-    bool handlePVPCreditCommand(Rest args = Rest(""))
+    bool handlePvpCreditCommand(Rest args = Rest(""))
     {
         import std.conv : to;
         import std.format : format;

@@ -48,7 +48,7 @@ private:
     }
 
     /// `.gmTicket list`: every open ticket, a line each, to this GM.
-    bool handleGMTicketListCommand(Rest args = Rest.init)
+    bool handleGmTicketListCommand(Rest args = Rest.init)
     {
         if (context.config.gmClientChannel.length == 0)
             return false;
@@ -76,7 +76,7 @@ private:
     }
 
     /// `.gmTicket get <id>`: the ticket's words, a line each, to this GM.
-    bool handleGMTicketGetByIdCommand(Rest args = Rest.init)
+    bool handleGmTicketGetByIdCommand(Rest args = Rest.init)
     {
         import std.string : split;
 
@@ -106,7 +106,7 @@ private:
     }
 
     /// `.gmTicket remove <id>`: the ticket is closed, the channel told, its author told.
-    bool handleGMTicketRemoveByIdCommand(Rest args = Rest.init)
+    bool handleGmTicketRemoveByIdCommand(Rest args = Rest.init)
     {
         const id = cast(uint) leadingNumber(args);
         if (!id)
@@ -145,7 +145,7 @@ private:
     }
 
     /// `.gmTicket assign <id> [name]`: the ticket to a GM online (this one by default).
-    bool handleGMTicketAssignToCommand(Rest args = Rest.init)
+    bool handleGmTicketAssignToCommand(Rest args = Rest.init)
     {
         import std.array : split;
 
@@ -201,7 +201,7 @@ private:
     }
 
     /// `.gmTicket release <id>`: the ticket no longer assigned.
-    bool handleGMTicketReleaseCommand(Rest args = Rest.init)
+    bool handleGmTicketReleaseCommand(Rest args = Rest.init)
     {
         const id = cast(uint) leadingNumber(args);
         if (!id)
@@ -235,7 +235,7 @@ private:
     }
 
     /// `.gmTicket comment <id> [comment]`: the ticket's comment set (none without one).
-    bool handleGMTicketCommentCommand(Rest args = Rest.init)
+    bool handleGmTicketCommentCommand(Rest args = Rest.init)
     {
         import std.string : indexOf;
 
@@ -267,7 +267,7 @@ private:
     }
 
     /// `.gmTicket deletepermanent <id>`: the ticket gone for good (closed first if it was open).
-    bool handleGMTicketDeletePermanentCommand(Rest args = Rest.init)
+    bool handleGmTicketDeletePermanentCommand(Rest args = Rest.init)
     {
         const id = cast(uint) leadingNumber(args);
         if (!id)
@@ -299,7 +299,7 @@ private:
     }
 
     /// `.gmTicket toggle`: the ticket system on or off.
-    bool handleGMTicketToggleTicketSystemStatusCommand(Rest args = Rest.init)
+    bool handleGmTicketToggleTicketSystemStatusCommand(Rest args = Rest.init)
     {
         context.gmTicketsOn = !context.gmTicketsOn;
         greenSystemMessage(context.gmTicketsOn ? "TicketSystem enabled." : "TicketSystem disabled.");

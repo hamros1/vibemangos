@@ -42,7 +42,7 @@ private:
     /// The selected player, else the GM itself ("Targeting yourself.").
     auto questTarget()
     {
-        auto plr = getSelectedChar(true);
+        auto plr = selectedCharacter(true);
         if (plr is null)
         {
             plr = this;

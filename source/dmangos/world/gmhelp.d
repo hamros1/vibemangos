@@ -50,7 +50,7 @@ private:
     {
         static immutable string[12] races = ["", "human", "orc", "dwarf", "nightelf", "undead", "tauren", "gnome",
             "troll", "", "bloodelf", "draenei"];
-        auto plr = getSelectedChar(false);
+        auto plr = selectedCharacter(false);
         uint raceId;
         string race;
         if (plr !is null && raceName.length < 2)
@@ -124,8 +124,8 @@ private:
 
     bool handleDismountCommand()
     {
-        auto target = getSelectedChar(false);
-        auto creature = target is null ? getSelectedCreature(false) : null;
+        auto target = selectedCharacter(false);
+        auto creature = target is null ? selectedCreature(false) : null;
         if (target is null && creature is null)
         {
             redSystemMessage("No target found.");
@@ -148,7 +148,7 @@ private:
 
     bool handleSaveCommand()
     {
-        auto target = getSelectedChar(false);
+        auto target = selectedCharacter(false);
         if (target is null)
             return false;
         // Only when the next periodic save (every `player_save_interval`) is less than 5 minutes
@@ -163,7 +163,7 @@ private:
         return true;
     }
 
-    bool handleGMListCommand()
+    bool handleGmListCommand()
     {
         bool first = true;
         const isGM = isStaff;

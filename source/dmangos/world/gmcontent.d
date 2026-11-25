@@ -19,7 +19,7 @@ private:
 
     private Creature selectedSavedSpawn()
     {
-        auto creature = getSelectedCreature(true);
+        auto creature = selectedCreature(true);
         if (creature !is null && (!creature.spawnId || creature.spawnId >= temporaryCounterStart
             || creature.petOwner))
         {
@@ -133,7 +133,7 @@ private:
             redSystemMessage(format!"Unknown spell ID %s."(spell));
             return true;
         }
-        auto creature = getSelectedCreature(true);
+        auto creature = selectedCreature(true);
         if (creature is null)
             return true;
         const list = creature.template_.spellList;
@@ -162,7 +162,7 @@ private:
         testingCreature = 0;
         testSpells = null;
         nextTestSpell = 0;
-        auto creature = getSelectedCreature(true);
+        auto creature = selectedCreature(true);
         if (creature is null)
             return true;
         const list = creature.template_.spellList;
@@ -216,7 +216,7 @@ private:
 
     bool handleCreatePetCommand(uint entry)
     {
-        auto target = getSelectedChar(true);
+        auto target = selectedCharacter(true);
         if (target is null)
             return true;
         if (!target.createStaffPet(entry))

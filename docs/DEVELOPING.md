@@ -160,7 +160,7 @@ The catalog supplies the in-game usage, permission checks and generated referenc
 this is the action for `.wp move`.
 
 ```d
-action("movehere", permit("world.waypoints"), "handleWPMoveHereCommand", "<point>",
+action("movehere", permit("world.waypoints"), "handleWaypointMoveHereCommand", "<point>",
     "Move a draft point to your position.", "move"),
 ```
 

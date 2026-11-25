@@ -47,7 +47,7 @@ private:
 
     bool handleResetAllInstancesCommand()
     {
-        auto plr = getSelectedChar(true);
+        auto plr = selectedCharacter(true);
         if (plr is null)
             return true;
         systemMessage(format!"Trying to reset all instances of player %s..."(plr.player.data.name));
@@ -74,7 +74,7 @@ private:
     {
         if (instanceId == 0)
             return false;
-        auto plr = getSelectedChar(true);
+        auto plr = selectedCharacter(true);
         if (plr is null)
             return true;
         if (!instanceElsewhere(instanceId, GmRemoteOp.instanceReset, plr.player.guid))
@@ -136,7 +136,7 @@ private:
     {
         import dmangos.world.gminstance : mapName, mapTypeString;
 
-        auto plr = getSelectedChar(true);
+        auto plr = selectedCharacter(true);
         if (plr is null)
             return true;
         systemMessage("Persistent instances for " ~ colored(ChatColor.cyan, plr.player.data.name));

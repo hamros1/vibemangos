@@ -156,7 +156,7 @@ mixin template LearningCommands()
 private:
     bool handleLearnCommand(string spellOrAll)
     {
-        auto plr = getSelectedChar(true);
+        auto plr = selectedCharacter(true);
         if (plr is null)
         {
             plr = this;

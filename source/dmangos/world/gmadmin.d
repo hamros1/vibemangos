@@ -43,7 +43,7 @@ private:
 
     private bool petSpellCommand(uint spell, bool teach)
     {
-        auto plr = getSelectedChar(false);
+        auto plr = selectedCharacter(false);
         if (plr is null)
             return false;
         if (plr.ownPet is null)
@@ -81,7 +81,7 @@ private:
 
     bool handleModifyLevelCommand(uint level = 0)
     {
-        auto plr = getSelectedChar(true);
+        auto plr = selectedCharacter(true);
         if (plr is null)
             return true;
         if (level == 0 || level > context.config.maxPlayerLevel)
@@ -96,7 +96,7 @@ private:
         return true;
     }
 
-    bool handleGenderChanger(Nullable!int requested)
+    bool handleGenderChangeCommand(Nullable!int requested)
     {
         auto found = context.onlinePlayer(player.values.get!UNIT_FIELD_TARGET);
         if (found is null)
@@ -149,7 +149,7 @@ private:
     {
         if (levels <= 0)
             return false;
-        auto plr = getSelectedChar(true);
+        auto plr = selectedCharacter(true);
         if (plr is null)
             plr = this;
         gmLog(format!"used level up command on %s, with %u levels"(plr.player.data.name, levels));
@@ -168,7 +168,7 @@ private:
             seconds / TIME_MINUTE % 60, seconds % 60);
     }
 
-    bool handlePlayerInfo(Rest name = Rest.init)
+    bool handlePlayerInfoCommand(Rest name = Rest.init)
     {
         Character plr;
         if (name.length >= 2) // char name can be 2 letters
@@ -183,7 +183,7 @@ private:
             plr = sessionOf(found);
         }
         else
-            plr = getSelectedChar(true);
+            plr = selectedCharacter(true);
         if (plr is null)
             return true;
         plr.describeTo(gmSink);
@@ -192,7 +192,7 @@ private:
 
     bool handleReviveCommand()
     {
-        auto plr = getSelectedChar(true);
+        auto plr = selectedCharacter(true);
         if (plr is null)
             return true;
         plr.sendMovementOrder!(Opcode.SMSG_FORCE_MOVE_UNROOT)();
@@ -368,7 +368,7 @@ private:
         return true;
     }
 
-    bool handleKillByIPCommand(Rest ip = Rest.init)
+    bool handleKillByIpCommand(Rest ip = Rest.init)
     {
         if (ip.length < 2)
         {
@@ -384,7 +384,7 @@ private:
     // Bans
     // -----------------------------------------------------------------------
 
-    bool handleIPBanCommand(string ip, string duration, Rest reason = Rest.init)
+    bool handleIpBanCommand(string ip, string duration, Rest reason = Rest.init)
     {
         const period = getTimePeriodFromString(duration);
         if (period < 1)
@@ -492,7 +492,7 @@ private:
         return true;
     }
 
-    bool handleIPUnBanCommand(string ip)
+    bool handleIpUnbanCommand(string ip)
     {
         if (!ip.canFind('/'))
         {
@@ -570,7 +570,7 @@ private:
         return true;
     }
 
-    bool handleDBReloadCommand(string table)
+    bool handleDbReloadCommand(string table)
     {
         import dmangos.world.worldcatalog : WorldCatalog, WorldCatalogKey;
 
@@ -704,7 +704,7 @@ private:
     bool handleClearCooldownsCommand()
     {
         const guid = cast(uint) player.values.get!UNIT_FIELD_TARGET;
-        auto plr = getSelectedChar(true);
+        auto plr = selectedCharacter(true);
         if (plr is null)
         {
             plr = this;
@@ -729,7 +729,7 @@ private:
 
     bool handleRemoveAurasCommand()
     {
-        auto plr = getSelectedChar(true);
+        auto plr = selectedCharacter(true);
         if (plr is null)
             return false;
         blueSystemMessage("Removing all auras...");
@@ -744,7 +744,7 @@ private:
 
     bool handleResetTalentsCommand()
     {
-        auto plr = getSelectedChar(true);
+        auto plr = selectedCharacter(true);
         if (plr is null)
             return true;
         plr.resetTalents();
@@ -774,12 +774,12 @@ private:
 
     import dmangos.world.playercreate : NewCharacter;
 
-    bool handleIncreaseWeaponSkill(uint cnt = 1)
+    bool handleIncreaseWeaponSkillCommand(uint cnt = 1)
     {
         import std.algorithm.comparison : min;
         import dmangos.world.defines : equipmentSlotMainhand, equipmentSlotRanged;
 
-        auto pr = getSelectedChar(true);
+        auto pr = selectedCharacter(true);
         if (pr is null)
             pr = this;
         auto it = pr.player.inventory.equipped(equipmentSlotMainhand);
@@ -831,7 +831,7 @@ private:
     {
         import std.algorithm.searching : canFind;
 
-        auto plr = getSelectedChar(true);
+        auto plr = selectedCharacter(true);
         if (plr is null)
             return true;
         // Back to the spells a new character of its race and class has.
@@ -855,7 +855,7 @@ private:
     {
         import std.algorithm.searching : canFind;
 
-        auto plr = getSelectedChar(true);
+        auto plr = selectedCharacter(true);
         if (plr is null)
             return true;
         NewCharacter fresh;
@@ -880,7 +880,7 @@ private:
     {
         import dmangos.world.updatefields : OBJECT_FIELD_SCALE_X;
 
-        auto creature = getSelectedCreature(true);
+        auto creature = selectedCreature(true);
         if (creature is null)
             return true;
         if (sc < 0.1f)
@@ -897,7 +897,7 @@ private:
     bool handleRemoveRessurectionSickessAuraCommand()
     {
         enum uint resurrectionSickness = 15007;
-        auto plr = getSelectedChar(true);
+        auto plr = selectedCharacter(true);
         if (plr is null)
             return false;
         blueSystemMessage("Removed resurrection sickness.");
@@ -950,7 +950,7 @@ private:
 
     bool handleCreatureRespawnCommand()
     {
-        auto corpse = getSelectedCreature(false);
+        auto corpse = selectedCreature(false);
         if (corpse !is null && !corpse.alive && corpse.spawn.guid != 0)
         {
             const line = format!"Respawning a Creature: `%s` with entry: %u on map: %u sqlid: %u"(corpse.template_.name,
@@ -1039,7 +1039,7 @@ private:
         if (count == 0)
             return false;
         const ocount = count;
-        auto plr = getSelectedChar(true);
+        auto plr = selectedCharacter(true);
         if (plr is null)
             return true;
         if (count > 0)
@@ -1065,7 +1065,7 @@ private:
             redSystemMessage("You must specify a setid.");
             return true;
         }
-        auto chr = getSelectedChar(true);
+        auto chr = selectedCharacter(true);
         if (chr is null)
         {
             redSystemMessage("Unable to select character.");
@@ -1102,7 +1102,7 @@ private:
             redSystemMessage("An amount to increment is required.");
             return true;
         }
-        auto plr = getSelectedChar(true);
+        auto plr = selectedCharacter(true);
         if (plr is null)
             return true;
         foreach (skill; plr.player.skillList) // `_AdvanceAllSkills`: each up to its maximum
@@ -1112,9 +1112,9 @@ private:
         return true;
     }
 
-    bool handleShowItems()
+    bool handleShowItemsCommand()
     {
-        auto plr = getSelectedChar(true);
+        auto plr = selectedCharacter(true);
         if (plr is null)
             return true;
         foreach (item; plr.player.inventory.all()) // each item as a link, with its count
@@ -1124,9 +1124,9 @@ private:
         return true;
     }
 
-    bool handleShowSkills()
+    bool handleShowSkillsCommand()
     {
-        auto plr = getSelectedChar(true);
+        auto plr = selectedCharacter(true);
         if (plr is null)
             return true;
         foreach (skill; plr.player.skillList)
@@ -1141,7 +1141,7 @@ private:
         import dmangos.script.api : EntityRef;
         import std.math : PI;
 
-        auto creature = getSelectedCreature(true);
+        auto creature = selectedCreature(true);
         if (creature is null)
             return true;
         creature.ai.hostFollow(EntityRef(player.guid), 2.0f, PI / 2);
@@ -1154,7 +1154,7 @@ private:
     {
         import dmangos.script.api : EntityRef;
 
-        auto creature = getSelectedCreature(true);
+        auto creature = selectedCreature(true);
         if (creature is null)
             return true;
         creature.ai.hostFollow(EntityRef.init, 0, 0);
@@ -1312,7 +1312,7 @@ private:
 
     bool handleGetStandingCommand(uint faction = 0)
     {
-        auto plr = getSelectedChar(true);
+        auto plr = selectedCharacter(true);
         if (plr is null)
             return true;
         const entry = context.client.factions.lookup(faction);
@@ -1327,7 +1327,7 @@ private:
 
     bool handleSetStandingCommand(uint faction, int standing)
     {
-        auto plr = getSelectedChar(true);
+        auto plr = selectedCharacter(true);
         if (plr is null)
             return true;
         blueSystemMessage(format!"Setting standing of %u to %d on %s."(faction, standing, plr.player.data.name));
@@ -1454,7 +1454,7 @@ private:
     {
         import dmangos.world.objects : counterOf;
 
-        auto crt = getSelectedCreature(true);
+        auto crt = selectedCreature(true);
         if (crt is null)
             return false;
         auto v = &crt.values;
