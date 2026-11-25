@@ -280,13 +280,29 @@ private enum Outcome
     written,
     failed,  /// refused by the database: it would be again
     away,    /// the database is unavailable: try again later
+    fenced,  /// the lease lapsed before the write was committed: rolled back, and never written
+}
+
+/// Thrown in a write's transaction, just before its commit, when the lease that allowed the write has lapsed.
+private final class LeaseLapsedAtCommit : Exception
+{
+    this()
+    {
+        super("the lease lapsed before the write was committed");
+    }
 }
 
 /**
  * Carries out `w` on `db`, recording it in `ledger` (if any, and if `w` is numbered) in the same
  * transaction. Logs a failure.
+ *
+ * `lapsed` is asked in that transaction, after the write and just before its commit: if the lease that
+ * allowed the write has lapsed by then (a statement waited on a lock, say, while the regions and the
+ * accounts went to another node), the transaction is rolled back and the write is `Outcome.fenced`. A
+ * write without a ledger is not in a transaction and is only checked before it is begun.
  */
-private Outcome carryOutLogged(WorldDatabase db, WriteLedger ledger, uint stream, const ref Write w)
+private Outcome carryOutLogged(WorldDatabase db, WriteLedger ledger, uint stream, const ref Write w,
+    scope bool delegate() lapsed = null)
 {
     import dmangos.mysql : DatabaseException;
 
@@ -299,11 +315,16 @@ private Outcome carryOutLogged(WorldDatabase db, WriteLedger ledger, uint stream
     try
     {
         if (ledger !is null && w.seq)
-            ledger.applying(stream, w.seq, { method.carryOut(db, w.args); });
+            ledger.applying(stream, w.seq, { method.carryOut(db, w.args); }, {
+                if (lapsed !is null && lapsed())
+                    throw new LeaseLapsedAtCommit;
+            });
         else
             method.carryOut(db, w.args);
         return Outcome.written;
     }
+    catch (LeaseLapsedAtCommit)
+        return Outcome.fenced;
     catch (DatabaseException e)
     {
         if (e.transient)
@@ -577,8 +598,15 @@ private:
                     continue;
                 for (uint attempt = 1;; ++attempt)
                 {
-                    if (w.writableUntil && (clock() >= atomicLoad(leaseUntil)
-                            || w.writableUntil <= atomicLoad(lapsedAt)))
+                    // Asked before the write is begun, and again in its transaction just before the commit.
+                    bool lapsed()
+                    {
+                        return w.writableUntil && (clock() >= atomicLoad(leaseUntil)
+                            || w.writableUntil <= atomicLoad(lapsedAt));
+                    }
+
+                    const outcome = lapsed() ? Outcome.fenced : carryOutLogged(db, ledger, stream, w, &lapsed);
+                    if (outcome == Outcome.fenced)
                     {
                         count((ref s) { ++s.refused; progressAt = MonoTime.currTime; });
                         if (statistics.refused % 100 == 1)
@@ -586,7 +614,6 @@ private:
                                 nameOf(w.signature));
                         break;
                     }
-                    const outcome = carryOutLogged(db, ledger, stream, w);
                     if (outcome == Outcome.written)
                     {
                         count((ref s) { ++s.written; s.stalled = false; progressAt = MonoTime.currTime; });
@@ -672,7 +699,7 @@ private:
             keepFailedWrite(failedPath(logPath), w);
         if (ledger !is null && w.seq)
             try
-                ledger.applying(stream, w.seq, {});
+                ledger.applying(stream, w.seq, {}, {});
             catch (Exception e)
             {
             }
@@ -869,9 +896,12 @@ size_t replayLog(string path, WorldDatabase db, uint stream = 0, long patienceMs
             }
             for (uint attempt = 1;; ++attempt)
             {
-                const outcome = carryOutLogged(db, ledger, stream, w);
+                const outcome = carryOutLogged(db, ledger, stream, w,
+                    () => w.writableUntil && bootClock() >= w.writableUntil);
                 if (outcome == Outcome.written)
                     ++written;
+                else if (outcome == Outcome.fenced)
+                    ++expired;
                 else if (outcome == Outcome.failed)
                 {
                     ++failed;
@@ -1124,7 +1154,19 @@ version (unittest)
 
         void prepareLedger() {}
         ulong appliedUpTo(uint stream) { return inner.appliedUpTo(stream); }
-        void applying(uint stream, ulong seq, scope void delegate() work) { inner.applying(stream, seq, work); }
+        shared int commitHoldMs; // each transaction waits this long before its commit, as one held by a lock does
+
+        void applying(uint stream, ulong seq, scope void delegate() work, scope void delegate() beforeCommit)
+        {
+            import core.thread : Thread;
+            import core.time : msecs;
+
+            // As a transaction would: what `beforeCommit` refuses is rolled back, so it never reaches `inner`.
+            if (const hold = atomicLoad(commitHoldMs))
+                Thread.sleep(hold.msecs);
+            beforeCommit();
+            inner.applying(stream, seq, work, () {});
+        }
 
         protected void maybeFail()
         {
@@ -1404,6 +1446,34 @@ unittest
     db.setMuteTime(id, 91);
     writer.settle();
     assert(inner.findAccount("PLAYER").get.muteTime == 91 && writer.statistics.refused == 1);
+}
+
+// A write held in its transaction (by a lock, say) while the lease lapses is rolled back at its commit. Checked
+// only before it began, it would be written after the node's regions and accounts had gone to another node.
+unittest
+{
+    auto inner = newDatabase();
+    auto flaky = new Flaky(inner);
+    atomicStore(flaky.commitHoldMs, 300);
+    auto writer = new Writer(flaky, null);
+    scope (exit)
+        writer.stop();
+    writer.stalledWaitMs = writer.slowWaitMs = 5_000;
+    long until = writer.now + 1_000_000; // a tenth of a second of lease left as the write is made
+    auto db = new WriteBehind(inner, writer, () => until);
+    const id = inner.findAccount("PLAYER").get.id;
+    db.setMuteTime(id, 70);
+    assert(writer.settle());
+    assert(inner.findAccount("PLAYER").get.muteTime != 70, "the lease lapsed before the commit: rolled back");
+    assert(writer.statistics.refused == 1 && writer.statistics.written == 0 && inner.appliedUpTo(0) == 0);
+
+    // Under a lease that holds through the commit, the same write is written.
+    atomicStore(flaky.commitHoldMs, 0);
+    until = writer.now + 50_000_000;
+    writer.renewLease(until);
+    db.setMuteTime(id, 71);
+    assert(writer.settle());
+    assert(inner.findAccount("PLAYER").get.muteTime == 71 && writer.statistics.written == 1);
 }
 
 // The log's deadlines are on the boot clock: a restart in the same boot keeps the lease's time left; a log

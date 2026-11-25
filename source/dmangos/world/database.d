@@ -544,8 +544,12 @@ interface WriteLedger
     /// The number of the newest write of `stream` carried out (0: none).
     ulong appliedUpTo(uint stream);
 
-    /// Runs `work` (one write) and records write `seq` of `stream` as carried out, in one transaction.
-    void applying(uint stream, ulong seq, scope void delegate() work);
+    /**
+     * Runs `work` (one write) and records write `seq` of `stream` as carried out, in one transaction.
+     * `beforeCommit` runs last in that transaction, just before its commit: if it throws, the transaction
+     * is rolled back (nothing of the write is in the database) and the exception goes on to the caller.
+     */
+    void applying(uint stream, ulong seq, scope void delegate() work, scope void delegate() beforeCommit);
 }
 
 /// A `gm_tickets` row: a player's request for help.
@@ -1248,12 +1252,13 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
         return rows.length ? rows[0].get!ulong(0) : 0;
     }
 
-    void applying(uint stream, ulong seq, scope void delegate() work)
+    void applying(uint stream, ulong seq, scope void delegate() work, scope void delegate() beforeCommit)
     {
         characterDb.transaction({
             work();
             characterDb.execute!("INSERT INTO dmangos_write_applied (stream, seq) VALUES (?, ?) "
                 ~ "ON DUPLICATE KEY UPDATE seq = VALUES(seq)")(stream, seq);
+            beforeCommit();
         });
     }
 
@@ -2243,8 +2248,9 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
     void prepareLedger() {}
     ulong appliedUpTo(uint stream) { return appliedWrites.get(stream, 0); }
 
-    void applying(uint stream, ulong seq, scope void delegate() work)
+    void applying(uint stream, ulong seq, scope void delegate() work, scope void delegate() beforeCommit)
     {
+        beforeCommit(); // nothing to roll back: what it refuses is not carried out
         work(); // a write that throws records nothing
         appliedWrites[stream] = seq;
     }

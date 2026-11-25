@@ -858,6 +858,11 @@ A node must never write over a character that has since played elsewhere.
   time until which the node's lease held when it was made. The writer drops a write it reaches after
   that time, and so does the replay of the write-ahead log at start-up. A node restarted after its
   lease lapsed therefore never writes over the regions' new owner.
+* The writer asks again in each write's transaction, after its statements and just before its commit:
+  a write that waited on a lock (or a slow database) while the lease lapsed is rolled back there, not
+  committed late. What can still land after the lapse is a commit sent while the lease held; the
+  coordinator gives the node's regions and accounts away only once the lease and its 500 ms margin
+  have passed, and the next node loads them later still.
 * That time is on the host's boot clock (`CLOCK_BOOTTIME`), never the wall clock, so stepping the wall
   clock back (NTP, an operator) cannot let a fenced node's queued writes through. The log records
   which boot wrote each entry; after the machine restarts, entries made under a lease are dropped.

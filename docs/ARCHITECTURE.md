@@ -247,9 +247,10 @@ method is handled without anyone remembering to.
   emptied: however many reads and settles one action makes, the game loop stops for that long at most
   once per stall, well inside the cluster's failure timeout, so the node keeps its links and its lease;
   the loop also renews the writer's lease time every tick, so a write waiting for the database stays
-  writable while the lease holds, and one made before a lapse is never written. Stopping the server
-  while the database is away gives it 30 s, then leaves the unwritten writes in the log for the next
-  start; a start-up replay waits up to two minutes for the database, then stops with the log kept.
+  writable while the lease holds, and one made before a lapse is never written: the lease is asked before
+  each write and again just before its transaction commits, so one held by a lock across the lapse is
+  rolled back. Stopping the server while the database is away gives it 30 s, then leaves the unwritten
+  writes in the log for the next start; a start-up replay waits up to two minutes for the database, then stops with the log kept.
 * **Refused writes.** A write MySQL refuses outright (a bad value, a duplicate key) would be refused
   again: it is logged and kept in `<write_log>.failed` (the log's format), counted as dealt with, and
   the writer goes on. `settle` reports it to its callers.
