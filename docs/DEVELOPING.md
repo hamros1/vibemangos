@@ -302,7 +302,8 @@ merge and a player handoff. Set `EXPECT_BALANCING=1` to check these events in a 
 After harness setup and a release build, run the opt-in suite with
 `python3 tools/harness/chaos.py`. It runs the quorum partition and heal, coordinator kill,
 paused battlegroup host, gateway checkpoint retry, departure retry, lease lapse arrival, worker
-rejoin, stall release, gateway return, loot award crash and migration stall cases against isolated fixtures.
+rejoin, stall release, gateway return, C'Thun recovery, loot award crash, migration stall, standby
+login and standby bundle cases against isolated fixtures.
 Use `--repeat 3` to check repeatability. Each case prints the harness directory containing
 its process logs and uses fresh login and character schemas.
 
@@ -356,6 +357,16 @@ must get a transfer abort and stay on its worker, with no link timeout and no le
 row is free, the same teleport moves the player, and it plays on there.
 
 Both set `innodb_lock_wait_timeout` to one second for their run, as `departure_retry.py` does.
+Run `python3 tools/harness/standby_login.py` in single-standby mode (a coordinator, its standby, two
+workers): while an account plays on one worker, the coordinator is killed and the account logs in on the
+other at once. Watching both workers' logs every 50 ms, the case fails if the second login enters the
+world before the first has left it; the standby must evict the first, and the second must play.
+
+Run `python3 tools/harness/standby_bundle.py` in single-standby mode with a gateway: a gateway player
+plays on a worker, the proxy holds that worker's frames to the coordinator for two seconds, the worker is
+stopped cleanly (it drains), and the coordinator is killed as soon as the worker has sent its releases.
+Sent again to the standby, every released world region must reach its next owner with its objects
+("arrived with N objects"), and the player plays on.
 
 Run `python3 tools/harness/battleground_recovery.py --cross-realm --map arathi` to kill the
 active match worker and check the same match's objectives, scoreboard and PvP on its standby.

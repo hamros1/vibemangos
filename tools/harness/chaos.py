@@ -16,6 +16,8 @@ import migration_stall
 import quorum
 import quorum_partition
 import stall_release
+import standby_bundle
+import standby_login
 import worker_rejoin
 
 
@@ -33,6 +35,8 @@ CASES = (
     ("cthun-stomach-recovery", cthun_recovery.stomach),
     ("loot-award-crash", loot_award_crash.main),
     ("migration-stall", migration_stall.run),
+    ("standby-login", standby_login.run),
+    ("standby-bundle", standby_bundle.run),
 )
 
 
