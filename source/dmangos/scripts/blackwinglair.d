@@ -98,6 +98,7 @@ enum BwlSignal : uint
     vaelTrigger = 102,  /// the area trigger to the copy
     nefariusLine = 103, /// Vaelastrasz to his Nefarius: say line `value`
     saveNefarian = 104, /// Nefarian's flight or combat changed
+    saveVael = 105,     /// Vaelastrasz's scene or speech moved to its next step
 }
 
 /// A random length between `low` and `high` milliseconds.
@@ -128,6 +129,7 @@ struct BlackwingLair
     ushort eggsBroken;
 
     @transient EntityRef razorgore, vaelastrasz, nefarius, troops;
+    @transient EntityRef vaelCorruptor;
     @transient EntityRef[6] doors; /// enter, exit, Nefarian, Chromaggus' exit, Vaelastrasz', Lashlayer's
     @transient EntityRef[8] generators;
     @transient ubyte generatorCount;
@@ -136,7 +138,7 @@ struct BlackwingLair
     @transient ubyte dragonspawn, blackwingDefenders;
     @transient EntityRef[] drakonidsSeen;
     @transient EntityRef[] eggsToGo;
-    @transient bool recoveringRazorgore, resetOldEggPhase, recoveringNefarian;
+    @transient bool recoveringRazorgore, resetOldEggPhase, recoveringNefarian, recoveringVael;
 
     enum Step : ubyte { defense, nefarian, eggsGone }
     Schedule!Step steps;
@@ -149,6 +151,19 @@ struct BlackwingLair
     void on(ref InstanceContext copy, const ref Restored e)
     {
         restoreNefarian(copy);
+        const vael = encounters[BwlEncounter.vaelastrasz];
+        if (vael == EncounterState.special || vael == EncounterState.inProgress)
+        {
+            if (copy.entryKilled(npcVaelastrasz))
+                set(copy, BwlEncounter.vaelastrasz, EncounterState.done);
+            else if (copy.hasSavedCreature(npcVaelastrasz))
+            {
+                recoveringVael = vael == EncounterState.inProgress;
+                copy.waitForPlayer();
+            }
+            else if (vael == EncounterState.special)
+                set(copy, BwlEncounter.vaelastrasz, EncounterState.notStarted); // older saves lacked the scene
+        }
         const state = encounters[BwlEncounter.razorgore];
         if (state == EncounterState.special && copy.entryKilled(npcRazorgore))
         {
@@ -175,6 +190,12 @@ struct BlackwingLair
 
     void on(ref InstanceContext copy, const ref PlayerEntered e)
     {
+        if (recoveringVael)
+        {
+            recoveringVael = false;
+            if (vaelastrasz && !copy.alive(copy.victimOf(vaelastrasz)))
+                copy.attack(vaelastrasz, e.player);
+        }
         if (recoveringNefarian)
         {
             recoveringNefarian = false;
@@ -281,8 +302,9 @@ struct BlackwingLair
         final switch (i)
         {
         case 0: // the main gate: shut while any encounter before Nefarian is under way
-            foreach (e; encounters[0 .. BwlEncounter.nefarian])
-                if (e == EncounterState.inProgress || e == EncounterState.special)
+            foreach (encounter, e; encounters[0 .. BwlEncounter.nefarian])
+                if (e == EncounterState.inProgress
+                    || (e == EncounterState.special && encounter != BwlEncounter.vaelastrasz))
                     return false;
             return true;
         case 1:
@@ -341,6 +363,8 @@ struct BlackwingLair
                 if (nefarianDragon || encounters[BwlEncounter.nefarian] == EncounterState.done)
                     copy.despawn(nefarius);
             }
+            else if (encounters[BwlEncounter.vaelastrasz] == EncounterState.special)
+                vaelCorruptor = e.creature;
             break;
         case npcNefariansTroops:
             troops = e.creature;
@@ -541,7 +565,14 @@ struct BlackwingLair
             {
                 encounters[BwlEncounter.vaelastrasz] = EncounterState.special;
                 copy.signal(vaelastrasz, BwlSignal.vaelIntro);
+                checkpointVael(copy);
             }
+            return;
+        }
+        if (e.id == BwlSignal.saveVael)
+        {
+            if (e.from == vaelastrasz && encounters[BwlEncounter.vaelastrasz] == EncounterState.special)
+                checkpointVael(copy);
             return;
         }
         if (e.id == BwlSignal.saveNefarian)
@@ -602,11 +633,27 @@ struct BlackwingLair
                 nefarianDragon = EntityRef.init;
             copy.checkpoint();
             break;
-        case BwlEncounter.vaelastrasz, BwlEncounter.lashlayer, BwlEncounter.firemaw, BwlEncounter.ebonroc,
+        case BwlEncounter.vaelastrasz:
+            checkpointVael(copy);
+            break;
+        case BwlEncounter.lashlayer, BwlEncounter.firemaw, BwlEncounter.ebonroc,
                 BwlEncounter.flamegor, BwlEncounter.chromaggus:
             break;
         }
         updateDoors(copy);
+    }
+
+    private void checkpointVael(ref InstanceContext copy)
+    {
+        const state = encounters[BwlEncounter.vaelastrasz];
+        if ((state == EncounterState.special || state == EncounterState.inProgress) && vaelastrasz)
+        {
+            copy.checkpointCreature(vaelastrasz);
+            if (state == EncounterState.special && vaelCorruptor)
+                copy.checkpointCreature(vaelCorruptor);
+        }
+        else
+            copy.checkpoint();
     }
 
     /// Nefarius' stage cleared after a wipe: his drakonids and spawners gone.
@@ -932,12 +979,12 @@ struct Vaelastrasz
             me.standState(StandState.stand);
             speechNum = 0;
             steps.after(Step.speech, 10.seconds);
+            me.signalDungeon(BwlSignal.saveVael);
         }
     }
 
     void on(ref CreatureContext me, const ref EnteredCombat e)
     {
-        me.signalDungeon(BwlEncounter.vaelastrasz, EncounterState.inProgress);
         me.castSelf(essenceOfTheRed);
         steps.after(Step.adrenalineTank, 45.seconds);
         steps.after(Step.adrenaline, 15.seconds);
@@ -945,6 +992,7 @@ struct Vaelastrasz
         steps.after(Step.nova, 5.seconds);
         steps.after(Step.cleave, 8.seconds);
         steps.after(Step.tailSweep, 20.seconds);
+        me.signalDungeon(BwlEncounter.vaelastrasz, EncounterState.inProgress);
     }
 
     void on(ref CreatureContext me, const ref Damaged e)
@@ -988,6 +1036,7 @@ struct Vaelastrasz
                     me.attack(nearest);
             }
             ++speechNum;
+            me.signalDungeon(BwlSignal.saveVael);
             break;
         case Step.adrenalineTank:
             steps.after(step, me.castSpell(burningAdrenalineTank) == ActionResult.ok ? 45.seconds : retry);
@@ -1018,7 +1067,8 @@ struct Vaelastrasz
         switch (introPhase)
         {
         case 0:
-            nefarius = me.summon(npcVictorNefarius, nefariusAtThrone, 25_000);
+            // His departure uses the same saved clock as the scene.
+            nefarius = me.summon(npcVictorNefarius, nefariusAtThrone);
             next = 1000;
             break;
         case 1:
@@ -1039,6 +1089,10 @@ struct Vaelastrasz
                 me.castAs(nefarius, redLightning, me.self);
             me.npcFlags(npcFlagGossip | npcFlagQuestGiver);
             me.removeAura(me.self, nefariusCorruption);
+            next = 8000;
+            break;
+        case 4:
+            dismissCorruptor(me);
             break;
         default:
             break;
@@ -1046,11 +1100,13 @@ struct Vaelastrasz
         ++introPhase;
         if (next)
             steps.after(Step.intro, next.msecs);
+        me.signalDungeon(BwlSignal.saveVael);
     }
 
     void on(ref CreatureContext me, const ref Reset e)
     {
         steps.clear();
+        dismissCorruptor(me);
         lowYelled = false;
         me.setHealthPercent(30);
         me.signalDungeon(BwlEncounter.vaelastrasz, EncounterState.failed);
@@ -1059,7 +1115,15 @@ struct Vaelastrasz
     void on(ref CreatureContext me, const ref Died e)
     {
         steps.clear();
+        dismissCorruptor(me);
         me.signalDungeon(BwlEncounter.vaelastrasz, EncounterState.done);
+    }
+
+    private void dismissCorruptor(ref CreatureContext me)
+    {
+        if (nefarius)
+            me.despawn(nefarius);
+        nefarius = EntityRef.init;
     }
 }
 

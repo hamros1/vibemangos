@@ -529,6 +529,8 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   Nefarian's raid keeps its drakonid kill count, surviving drakonids and the original tunnel
   spawners. The tunnels continue their waves. After the 42nd kill, the saved transition timer
   brings in one dragon, whose approach and ground fight both resume after a crash.
+  Vaelastrasz resumes the corruption scene with the same summoned Nefarius and continues his
+  speech from its saved step. His active fight and the open exit after his death also recover.
 * **GM commands.** `.instance info`, `.instance shutdown` and `.instance reset` of a copy another node
   hosts go to that node and its answer comes back; `.instance resetall` goes to every node.
 

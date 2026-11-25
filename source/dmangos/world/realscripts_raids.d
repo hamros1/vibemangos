@@ -774,24 +774,42 @@ unittest
     s.run(1.seconds);
     auto vael = s.the(vaelEntry);
     assert(s.healthOf(vael) <= 31, format!"Vaelastrasz at %s%%, not 30%%"(s.healthOf(vael)));
+    const dragon = vael.guid;
     s.enterTrigger(3626);
-    s.run(20.seconds);
+    assert(s.runUntil(() => s.said(-1_469_006), 6.seconds) && s.cast_(23642), s.seen());
+    const corruptor = s.the(nefarius).guid;
+    s.forget();
+    s.w.now += 30.seconds; // the outage outlasts the old summon timer
+    s.restartAfterCrash();
+    vael = s.the(vaelEntry);
     assert(s.ask(1) == 4, format!"the trigger did not begin his scene (%s)"(s.ask(1)));
-    assert(s.find(nefarius) !is null || s.all(nefarius, true).length, "no Nefarius at the throne");
-    assert(s.said(-1_469_006) && s.said(-1_469_032), "Nefarius' lines\n" ~ s.seen());
-    assert(s.cast_(23642) && s.cast_(19484), "no corruption or Red Lightning\n" ~ s.seen());
+    assert(vael.guid == dragon && s.the(nefarius).guid == corruptor, "the original scene actors returned");
+    assert(s.runUntil(() => s.said(-1_469_032) && s.cast_(19484), 20.seconds), "the scene did not resume\n" ~ s.seen());
+    assert(!s.said(-1_469_006), "the first line did not repeat");
     s.stayWith = vael;
     s.moveHeroes(vael.position);
     s.run(400.msecs);
     s.gossip(vael, [0, 0]);
     s.run(1.seconds);
     assert(s.said(-1_469_026), "Vaelastrasz does not answer\n" ~ s.seen());
+    s.forget();
+    s.restartAfterCrash();
+    vael = s.the(vaelEntry);
+    assert(vael.guid == dragon && !vael.ai.inCombat && s.ask(1) == 4);
     assert(s.runUntil(() => vael.ai.inCombat, 40.seconds), "Vaelastrasz does not turn on them\n" ~ s.seen());
     assert(s.said(-1_469_027) && s.said(-1_469_028), "his speech\n" ~ s.seen());
+    assert(!s.said(-1_469_026), "the first speech line did not repeat");
     assert(s.ask(1) == 1, "his encounter not in progress");
     s.run(1.seconds);
     assert(s.castBy(vaelEntry, 23513), "no Essence of the Red as he turns\n" ~ s.seen());
+    s.hurtTo(vael, 24);
+    s.run(3.seconds);
+    const health = s.healthOf(vael);
     s.forget();
+    s.restartAfterCrash();
+    vael = s.the(vaelEntry);
+    assert(vael.guid == dragon && vael.ai.inCombat && s.healthOf(vael) == health);
+    s.stayWith = vael;
     s.run(46.seconds);
     foreach (spell; [23462, 19983, 23461, 23620, 15847, 18173])
         assert(s.castBy(vaelEntry, spell), format!"Vaelastrasz: %s not cast\n%s"(spell, s.seen()));
@@ -801,6 +819,8 @@ unittest
     s.kill(vael);
     s.run(2.seconds);
     assert(s.ask(1) == 3 && s.doorOpen(179364), "his encounter not done, or his door shut");
+    s.restartAfterCrash();
+    assert(s.ask(1) == 3 && s.doorOpen(179364) && s.find(vaelEntry) is null);
 }
 
 /**
