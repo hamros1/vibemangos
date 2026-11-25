@@ -13,7 +13,7 @@ import core.time : MonoTime, msecs, seconds;
 import std.algorithm.searching : canFind;
 
 import dmangos.auth.accounts : AccountLevel;
-import dmangos.bytes : ByteReader, ByteWriter;
+import dmangos.bytes : ByteReader, ByteWriter, floatBits;
 import dmangos.world.creature : Creature, CreatureSpawn;
 import dmangos.world.gameobject : GameObject, GameObjectSpawn, GameObjectTemplate;
 import dmangos.world.grid : cellKeyAt;
@@ -823,7 +823,7 @@ unittest
     const float thirtyYards = 30;
     uint[spellRangeFormat.length] spellRange;
     spellRange[0] = 1;
-    spellRange[2] = *cast(const uint*) &thirtyYards;
+    spellRange[2] = floatBits(thirtyYards);
     foreach (node; [source, destination])
     {
         node.data.spells.spells[channelled] = channel;

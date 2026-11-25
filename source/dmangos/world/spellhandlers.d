@@ -4934,7 +4934,7 @@ unittest
 {
     import core.time : MonoTime;
     import std.algorithm.searching : count;
-    import dmangos.bytes : ByteWriter;
+    import dmangos.bytes : ByteWriter, floatBits;
     import dmangos.cluster.protocol : AreaDamage;
     import dmangos.dbc : buildDbc;
     import dmangos.world.auras : makeAura;
@@ -4973,7 +4973,7 @@ unittest
         const float radius = 20;
         uint[spellRadiusFormat.length] radiusRow;
         radiusRow[0] = 1;
-        radiusRow[1] = *cast(const uint*) &radius;
+        radiusRow[1] = floatBits(radius);
         node.client.spellRadii = typeof(node.client.spellRadii).parse(buildDbc(spellRadiusFormat, [radiusRow[]]),
             "SpellRadius.dbc");
         auto attack = testSpell(blast, SpellEffect.schoolDamage, ImplicitTarget.casterSource, 30);
@@ -5099,7 +5099,7 @@ unittest
 {
     import core.time : MonoTime, msecs;
     import std.algorithm.searching : count;
-    import dmangos.bytes : ByteReader, ByteWriter;
+    import dmangos.bytes : ByteReader, ByteWriter, floatBits;
     import dmangos.cluster.protocol : AreaDamage, decode, FrameHeader, MessageType, putMessage, takeFrame;
     import dmangos.dbc : buildDbc;
     import dmangos.world.auras : makeAura;
@@ -5153,7 +5153,7 @@ unittest
             uint[spellRangeFormat.length] rangeRow;
             rangeRow[0] = 1;
             const float range = 30;
-            rangeRow[2] = *cast(const uint*) &range;
+            rangeRow[2] = floatBits(range);
             node.client.spellRanges = typeof(node.client.spellRanges).parse(buildDbc(spellRangeFormat, [rangeRow[]]),
                 "SpellRange.dbc");
             auto attack = testSpell(chain, SpellEffect.schoolDamage, ImplicitTarget.enemy, 100, 1);
@@ -5294,7 +5294,7 @@ unittest
 {
     import core.time : MonoTime, msecs;
     import std.algorithm.searching : count;
-    import dmangos.bytes : ByteReader, ByteWriter;
+    import dmangos.bytes : ByteReader, ByteWriter, floatBits;
     import dmangos.cluster.protocol : decode, FrameHeader, MessageType, PartyHeal, putMessage, takeFrame;
     import dmangos.dbc : buildDbc;
     import dmangos.world.auras : makeAura;
@@ -5346,7 +5346,7 @@ unittest
             uint[spellRangeFormat.length] rangeRow;
             rangeRow[0] = 1;
             const float range = 40;
-            rangeRow[2] = *cast(const uint*) &range;
+            rangeRow[2] = floatBits(range);
             node.client.spellRanges = typeof(node.client.spellRanges).parse(buildDbc(spellRangeFormat, [rangeRow[]]),
                 "SpellRange.dbc");
             auto heal = testSpell(chain, SpellEffect.heal, ImplicitTarget.unitFriendChainHeal, 80, 1);
@@ -5477,7 +5477,7 @@ unittest
 {
     import core.time : MonoTime, msecs;
     import std.format : format;
-    import dmangos.bytes : ByteWriter;
+    import dmangos.bytes : ByteWriter, floatBits;
     import dmangos.cluster.protocol : AreaDamage, KillShare, PartyHeal;
     import dmangos.dbc : buildDbc;
     import dmangos.world.aurahandlers : ProcFlag;
@@ -5519,7 +5519,7 @@ unittest
         uint[spellRadiusFormat.length] radiusRow;
         radiusRow[0] = 1;
         const float radius = 20;
-        radiusRow[1] = *cast(const uint*) &radius;
+        radiusRow[1] = floatBits(radius);
         node.client.spellRadii = typeof(node.client.spellRadii).parse(buildDbc(spellRadiusFormat, [radiusRow[]]),
             "SpellRadius.dbc");
         auto heal = testSpell(prayer, SpellEffect.heal, ImplicitTarget.partyInRange, 60, 1);
@@ -5674,7 +5674,7 @@ unittest
 {
     import core.time : MonoTime;
     import std.algorithm.searching : count;
-    import dmangos.bytes : ByteReader, ByteWriter;
+    import dmangos.bytes : ByteReader, ByteWriter, floatBits;
     import dmangos.cluster.protocol : PartyHeal;
     import dmangos.dbc : buildDbc;
     import dmangos.world.auras : makeAura;
@@ -5710,7 +5710,7 @@ unittest
     origin.clock = owner.clock = () => now;
     enum uint heal = 55005, healerAura = 55006, reduced = 55007, cost = 12;
     const float area = 20;
-    const areaBits = *cast(const uint*) &area;
+    const areaBits = floatBits(area);
     foreach (node; [origin, owner])
     {
         uint[spellRadiusFormat.length] radiusRow;

@@ -893,7 +893,7 @@ unittest
     import dmangos.cluster.protocol : AreaDamage, CreatureSwing, decode;
     import dmangos.dbc : buildDbc;
     import dmangos.serialization : serialize;
-    import dmangos.bytes : ByteReader, ByteWriter;
+    import dmangos.bytes : ByteReader, ByteWriter, floatBits;
     import dmangos.world.aurahandlers : ProcFlag;
     import dmangos.world.auras : AuraType, makeAura;
     import dmangos.world.classspells : SpellFamily;
@@ -1000,7 +1000,7 @@ unittest
     uint[spellRangeFormat.length] meleeRange;
     meleeRange[0] = 1;
     const float fiveYards = 5;
-    meleeRange[2] = *cast(const uint*) &fiveYards;
+    meleeRange[2] = floatBits(fiveYards);
     foreach (node; [source, owner])
     {
         node.client.spellRanges = typeof(node.client.spellRanges).parse(buildDbc(spellRangeFormat, [meleeRange[]]),
@@ -1199,7 +1199,7 @@ unittest
     const float rangeMax = 20;
     uint[spellRangeFormat.length] rangeRow;
     rangeRow[0] = 1;
-    rangeRow[2] = *cast(const uint*) &rangeMax;
+    rangeRow[2] = floatBits(rangeMax);
     foreach (node; [source, owner])
     {
         node.client.spellCastTimes = typeof(node.client.spellCastTimes).parse(buildDbc(spellCastTimesFormat,
@@ -1282,7 +1282,7 @@ unittest
     {
         const float tenYards = 10;
         node.client.spellRadii = typeof(node.client.spellRadii).parse(buildDbc(spellRadiusFormat,
-            [[1u, *cast(const uint*) &tenYards, 0u, 0u]]), "SpellRadius.dbc");
+            [[1u, floatBits(tenYards), 0u, 0u]]), "SpellRadius.dbc");
         auto cone = testSpell(breath, SpellEffect.schoolDamage, ImplicitTarget.enemiesInCone, 6, 1);
         cone.casting.school = 1;
         cone.casting.radiusIndex[0] = 1;
