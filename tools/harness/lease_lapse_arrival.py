@@ -137,7 +137,10 @@ def exercise(fixture, proxy, loop, world_ports, auth_port):
     gateway_offset = len(output[GATEWAY])
     worker_offset = len(output[worker])
     arrived = fixture.directory / "arrived"
-    player = client("player", f"login:{NAME}", f"waitfile:{arrived}", "say:after the lapse", "logout")
+    # Spoken at once: held (at the gateway during the hand-off, then on the worker during the lapse) and answered
+    # once the worker holds its lease again.
+    player = client("player", f"login:{NAME}", "say:during the lapse", f"waitfile:{arrived}", "say:after the lapse",
+                    "logout")
     move = f"'{NAME}' moves to node {worker}"
     wait_for("the gateway to hand the player to the lapsed worker",
              lambda: move in logs()[GATEWAY][gateway_offset:], 20)
@@ -158,6 +161,7 @@ def exercise(fixture, proxy, loop, world_ports, auth_port):
     arrived.touch()
     if player.wait(timeout=30):
         raise RuntimeError(fixture.log("player")[-2500:])
+    assert "heard: 'during the lapse'" in fixture.log("player"), "what the client said during the lapse was lost"
     assert "heard: 'after the lapse'" in fixture.log("player"), "the client did not play on the worker"
     assert elections(logs()) == {(term, leader)}, "the coordinator or term changed"
     dropped = network(proxy.dropped_frames((leader, worker))) + network(proxy.dropped_frames((worker, leader)))

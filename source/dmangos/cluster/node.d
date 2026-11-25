@@ -1176,7 +1176,8 @@ final class ClusterNode : LinkOwner
     private void holdPlayer(Link link, ulong term, const(ubyte)[] payload)
     {
         const kind = decode!PlayerMessage(payload).kind;
-        const packet = kind == PlayerMessageKind.toHome || kind == PlayerMessageKind.toOwner;
+        const packet = kind == PlayerMessageKind.toHome || kind == PlayerMessageKind.toOwner
+            || kind == PlayerMessageKind.gatewayReturn;
         if (!heldPlayers.hold(link.peer.nodeId, link.peer.incarnation, term, payload, packet))
             warning!"cluster: node %s dropped a player packet from node %s while its lease had lapsed"(id,
                 link.peer.nodeId);

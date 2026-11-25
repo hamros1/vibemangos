@@ -316,14 +316,15 @@ without firewall changes or elevated privileges.
 Run `python3 tools/harness/departure_retry.py` to hold a gateway player's character row in a
 second MariaDB session while the client disconnects. The worker's save keeps timing out, so it
 must keep the departure until the row is free, then report it once, after the save; the same
-account then logs in and plays. The cluster runs with the default failure timeout and lease: the
+account then logs in and speaks at once, while the gateway hands it to the worker, and must be
+answered. The cluster runs with the default failure timeout and lease: the
 stalled database must cost the worker neither a link nor its lease. It sets the server's
 `innodb_lock_wait_timeout` to one second for its run and restores it afterwards.
 
 Run `python3 tools/harness/lease_lapse_arrival.py` to drop the worker lease frames between the
 coordinator and one worker at the proxy, so only that worker's lease lapses, in the same term and
-with every link up. A gateway client handed to it meanwhile must be held there, then arrive and
-play once the lease frames flow again.
+with every link up. A gateway client handed to it meanwhile, which speaks at once, must be held
+there, then arrive, be answered and play once the lease frames flow again.
 
 Run `python3 tools/harness/worker_rejoin.py` to stop (`SIGSTOP`) the worker simulating a gateway
 player until the coordinator drops it and the gateway restores the player elsewhere. Resumed, the

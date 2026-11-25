@@ -84,15 +84,14 @@ def exercise(fixture):
     assert tail.count(reported) == 1, "the departure was reported more than once"
     assert money() == GOLD, "the save made at the departure was lost"
 
-    # The gateway drops a client's packets while it hands the player to a worker: speak once it arrived.
-    arrived = fixture.directory / "arrived"
-    again = client("again", 0, f"login:{names[0]}", wait(arrived), "say:after the departure", "logout")
+    # Spoken right after login, while the gateway hands the player to the worker: it holds the packet, then
+    # sends it on after the arrival.
+    again = client("again", 0, f"login:{names[0]}", "say:right after login", "logout")
     wait_for("the account to enter the world again on a worker", lambda: sum(
         fixture.log(tag).count(arrival) for tag in ("node1", "node2", "node3")) == 2, 30)
-    arrived.touch()
     if again.wait(timeout=30):
         raise RuntimeError(fixture.log("again")[-2500:])
-    assert "heard: 'after the departure'" in fixture.log("again"), "the account could not play again"
+    assert "heard: 'right after login'" in fixture.log("again"), "the account could not play again"
     assert all(process.poll() is None for process in nodes.values()), "a node exited"
     assert not any("closed: heartbeats stopped" in fixture.log(tag) for tag in ("node1", "node2", "node3", "node4")), \
         "a link timed out while the database stalled"

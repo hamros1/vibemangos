@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 121; // a fenced-out process is refused as retired and may join again anew
+enum ushort protocolVersion = 122; // a client packet that reached a gateway player's old owner goes back to the gateway
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -704,6 +704,7 @@ enum PlayerMessageKind : ubyte
     gatewayMove = 7, /// the old owner saved and stopped; the gateway is to route the state to `opcode`
     gatewayArrival = 8, /// a migration forwarded by the gateway after the coordinator recorded the route
     gatewayRecover = 9, /// resume the saved character after the coordinator fenced the old owner
+    gatewayReturn = 10, /// to the gateway: a client packet that reached the old owner after the player left it
 }
 
 /// See `PlayerMessageKind`. Players are known by their account: one session per account in the cluster.
@@ -1390,7 +1391,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 121, recordedFingerprint = 0xc89a1c838aa163c0UL;
+private enum recordedVersion = 122, recordedFingerprint = 0x6f35af1b65c07021UL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

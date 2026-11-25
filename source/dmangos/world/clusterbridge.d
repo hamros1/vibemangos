@@ -891,6 +891,8 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
             {
                 node.sendTo(session.home, PlayerMessage(PlayerMessageKind.gatewayMove, account, target,
                     cast(ubyte[]) state));
+                // The client's packets the gateway relays before it hears go back to it, to follow the player.
+                returnToGateway[account] = MovedOnGateway(session.gatewayHome, MonoTime.currTime);
                 return;
             }
         node.sendTo(target, PlayerMessage(PlayerMessageKind.migrate, account, 0, cast(ubyte[]) state));
@@ -913,6 +915,28 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         MonoTime at;
     }
     private MovedOn[uint] movedOn;
+
+    /// The gateway of a player simulated here until moments ago, which routes it to its next owner.
+    private static struct MovedOnGateway
+    {
+        SimulationOwner gateway;
+        MonoTime at;
+    }
+    private MovedOnGateway[uint] returnToGateway;
+
+    /// The gateway a packet for a player that left here for another worker goes back to; none if long ago.
+    private SimulationOwner returnsTo(uint account)
+    {
+        import core.time : seconds;
+
+        if (auto m = account in returnToGateway)
+        {
+            if (MonoTime.currTime - m.at < 5.seconds)
+                return m.gateway;
+            returnToGateway.remove(account);
+        }
+        return SimulationOwner.init;
+    }
 
     /// The node a player simulated here until moments ago moved on to; 0 if none (or long ago).
     private ushort movedOnTo(uint account)
@@ -1024,6 +1048,13 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
             }
             else if (const next = movedOnTo(account))
                 toOwner(next, account, opcode, data); // sent before its home heard it moved on
+            else if (linkedOwner(peer, true).node && returnsTo(account) == linkedOwner(peer, true))
+                // Sent before the gateway heard the player moved on: back to it, to follow the player in order.
+                node.sendTo(peer, PlayerMessage(PlayerMessageKind.gatewayReturn, account, opcode, cast(ubyte[]) data));
+            return;
+        case PlayerMessageKind.gatewayReturn:
+            if (auto route = gatewayRoutes.get(account, null))
+                route.client.packetReturned(cast(Opcode) opcode, data);
             return;
         case PlayerMessageKind.toHome:
             if (auto route = gatewayRoutes.get(account, null))

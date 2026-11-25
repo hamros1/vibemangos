@@ -132,6 +132,7 @@ package mixin template GatewaySessions()
         else
         {
             kind = PlayerMessageKind.gatewayRecover;
+            route.client.dropHeldPackets("its character is restored from its last checkpoint");
             const auth = route.client.account;
             payload.put(cast(uint) auth.username.length);
             payload.putBytes(cast(const(ubyte)[]) auth.username);
@@ -269,6 +270,7 @@ package mixin template GatewaySessions()
         if (auto route = gatewayRoutes.get(account, null))
         {
             gatewayRoutes.remove(account);
+            route.client.dropHeldPackets("its character left the world");
             route.client.gatewayPaused = false;
             route.client.ownerLeft(toCharacterScreen);
         }

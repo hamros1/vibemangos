@@ -872,7 +872,17 @@ A node must never write over a character that has since played elsewhere.
 The gateway routes a saved handoff only after the coordinator records the new simulation owner's
 node and incarnation under that login. It holds later gameplay packets during the handoff. A
 gateway-to-owner outage leaves the recorded owner active while that worker still reaches the
-coordinator. The ordered relay retains outgoing packets for the gateway's same incarnation.
+coordinator.
+
+What the client sends while its route changes (a handoff, or an outage of the gateway's link to the
+owner) is held at the gateway in order, then sent to the owner after the arrival, on the same link:
+chat, commands, casts and moves alike. A movement heartbeat right after another replaces it, since it
+only says where the client is; starts, stops, jumps and landings are kept in turn. The owner checks the
+moves as it would have live, from the position it loaded, so a client that went further than its speed
+allows meanwhile is put back. A packet the gateway relayed to the old owner just before the move, which
+reached it after the player left, goes back to the gateway and is sent ahead of those held since. Past
+1024 packets or 256 KiB the client is disconnected; when the character leaves or is restored from its
+checkpoint instead, what was held is dropped and logged. The ordered relay retains outgoing packets for the gateway's same incarnation.
 
 If the coordinator loses the owner, it waits for the old write lease and margin before approving
 a replacement. The former incarnation cannot reconnect to renew its lease. The surviving worker

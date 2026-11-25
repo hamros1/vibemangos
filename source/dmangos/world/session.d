@@ -92,7 +92,10 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
     package ushort ownerNode;              // home: the node simulating this session's player; 0: here
     package ushort homeNode;               // owner: the node holding this session's client; 0: here
     package bool releaseWhenBack;          // home: the client left while elsewhere; release once the owner saved
-    package bool gatewayPaused;            // home: keep the socket alive while its owner is unreachable
+    private bool gatewayPaused_;           // home: keep the socket alive while its owner is unreachable
+    private HeldPacket[] heldPackets;      // home: what the client sent meanwhile, in order (`holdPacket`)
+    private size_t heldBytes, returnedPackets;
+    private MonoTime heldSince;
     package SimulationOwner gatewayHome;   // owner: the gateway's incarnation
     package uint gatewayCharacter;         // owner: the simulated character, including while loading
     package ulong gatewayToken;            // owner: the coordinator's route for this simulation
@@ -103,6 +106,127 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
 
     /// The character in the world (docs/DESIGN.md, step 3); null at the character screen.
     package Character playing;
+
+    /// A client packet held at the gateway while its player's route changes.
+    private static struct HeldPacket
+    {
+        Opcode opcode;
+        immutable(ubyte)[] body_;
+    }
+
+    /// The most packets, and bytes, held for one client during a hand-off; beyond them it is disconnected.
+    enum size_t maxHeldPackets = 1024, maxHeldBytes = 256 * 1024;
+
+    /**
+     * Home (a gateway): while true the player's route is changing (a hand-off to another worker, or its owner out
+     * of reach). What the client sends meanwhile is held (`holdPacket`), and goes on to the owner, in order, once
+     * the route is ready again.
+     */
+    package @property bool gatewayPaused() const
+    {
+        return gatewayPaused_;
+    }
+
+    /// ditto
+    package @property void gatewayPaused(bool paused)
+    {
+        const resumed = gatewayPaused_ && !paused;
+        gatewayPaused_ = paused;
+        if (resumed)
+            releaseHeldPackets();
+    }
+
+    /**
+     * Holds a client packet sent while the route changes, for the next owner. Everything is kept, in order:
+     * chat, commands, casts, and moves, whose starts, stops, jumps and landings the owner must see in turn (a
+     * landing deals the fall's damage). Only a heartbeat right after another replaces it: it says no more than
+     * where the client is now. The owner checks the moves as it would have live: the arrival resets its movement
+     * check at the saved position, and a client that went further than its speed allows meanwhile is put back,
+     * whether its moves come one by one or at once. A client that sends more than the bound is disconnected:
+     * dropping some of its packets would play the rest out of order.
+     */
+    private void holdPacket(Opcode opcode, const(ubyte)[] body_)
+    {
+        if (opcode == Opcode.MSG_MOVE_HEARTBEAT && heldPackets.length > returnedPackets
+            && heldPackets[$ - 1].opcode == Opcode.MSG_MOVE_HEARTBEAT)
+        {
+            heldBytes = heldBytes - heldPackets[$ - 1].body_.length + body_.length;
+            heldPackets[$ - 1].body_ = body_.idup;
+            return;
+        }
+        if (heldPackets.length >= maxHeldPackets || heldBytes + body_.length > maxHeldBytes)
+        {
+            warning!"%s: '%s' sent over %s packets (%s bytes) while its character changed servers; disconnecting"(
+                remoteAddress, account.username, heldPackets.length, heldBytes);
+            heldPackets = null;
+            heldBytes = returnedPackets = 0;
+            kick("too many packets during a hand-off");
+            return;
+        }
+        if (!heldPackets.length)
+            heldSince = MonoTime.currTime;
+        heldPackets ~= HeldPacket(opcode, body_.idup);
+        heldBytes += body_.length;
+    }
+
+    /**
+     * Home: a packet relayed to the old owner before the route changed that reached it after the player had left
+     * it: it came back. It goes before those held since, after those that came back before it.
+     */
+    package void packetReturned(Opcode opcode, const(ubyte)[] body_)
+    {
+        import std.array : insertInPlace;
+
+        if (!gatewayPaused_ || state_ != WorldState.elsewhere)
+        {
+            if (state_ == WorldState.elsewhere)
+                context.relayToOwner(ownerNode, account.id, cast(ushort) opcode, body_); // late, but not lost
+            return;
+        }
+        if (!heldPackets.length)
+            heldSince = MonoTime.currTime;
+        heldPackets.insertInPlace(returnedPackets++, HeldPacket(opcode, body_.idup));
+        heldBytes += body_.length;
+    }
+
+    /// Home: the route is ready again; what the client sent meanwhile goes on to the owner, in order.
+    private void releaseHeldPackets()
+    {
+        if (!heldPackets.length)
+            return;
+        auto held = heldPackets;
+        const waited = (MonoTime.currTime - heldSince).total!"msecs";
+        heldPackets = null;
+        heldBytes = returnedPackets = 0;
+        enum released = "%s: %s packet(s) '%s' sent during its hand-off go on after %s ms";
+        if (waited >= 500)
+            info!released(remoteAddress, held.length, account.username, waited);
+        else
+            trace!released(remoteAddress, held.length, account.username, waited);
+        foreach (i, packet; held)
+        {
+            if (gatewayPaused_ || wantsClose)
+            {
+                if (gatewayPaused_)
+                    foreach (rest; held[i .. $])
+                        holdPacket(rest.opcode, rest.body_);
+                return;
+            }
+            auto reader = ByteReader(packet.body_);
+            handle(packet.opcode, reader);
+        }
+    }
+
+    /// Home: the route did not go on as it was (the character left, or is restored from its checkpoint).
+    package void dropHeldPackets(string why)
+    {
+        if (!heldPackets.length)
+            return;
+        info!"%s: %s packet(s) '%s' sent during its hand-off dropped: %s"(remoteAddress, heldPackets.length,
+            account.username, why);
+        heldPackets = null;
+        heldBytes = returnedPackets = 0;
+    }
 
     private bool admitted;                 // the account is this session's (see `Kickable.admit`)
     private bool characterListWaiting;     // list only after an earlier session has saved and released the account
@@ -578,6 +702,8 @@ package:
                     finishGatewayRecovery();
                 else if (opcode == Opcode.CMSG_PING)
                     dispatchPacket(opcode, WorldState.characterScreen, reader);
+                else if (gatewayPaused_ && state_ == WorldState.elsewhere)
+                    holdPacket(opcode, reader.readBytes(reader.remaining));
                 return;
             }
             result = dispatchPacket(opcode, state_, reader);
@@ -985,6 +1111,7 @@ unittest
 unittest
 {
     import core.time : seconds;
+    import std.algorithm.searching : countUntil;
     import dmangos.world.context : PlayerRelay;
     import dmangos.world.player : CharacterData;
     import dmangos.world.objects : HighGuid, makeGuid;
@@ -1061,7 +1188,19 @@ unittest
     const name = deserialize!ServerNameQueryResponse(nameReader);
     assert(name.guid == c.guid && name.name == c.name && name.race == c.race && name.gender == c.gender
         && name.classId == c.classId);
+
+    // What the client sends while the route changes is held, and reaches the owner in order once it is ready.
+    client.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_SAY, "said during the hand-off"));
+    client.write(Opcode.CMSG_STANDSTATECHANGE, ClientStandStateChange(1));
+    assert(client.read().length == 0 && client.session.heldPackets.length == 2, "held at the gateway");
     client.session.gatewayPaused = false;
+    auto released = client.read();
+    const said = released.countUntil!(p => p.opcode == Opcode.SMSG_MESSAGECHAT);
+    const sat = released.countUntil!(p => p.opcode == Opcode.SMSG_STANDSTATE_UPDATE);
+    assert(said >= 0 && sat > said, "the owner answers both, in the order they were sent");
+    assert(client.session.heldPackets.length == 0);
+    client.write(Opcode.CMSG_STANDSTATECHANGE, ClientStandStateChange(0));
+    client.read();
 
     // The client sits down: node 2 handles it, and the answer comes back to the client, encrypted for it.
     client.write(Opcode.CMSG_STANDSTATECHANGE, ClientStandStateChange(1));
@@ -1078,6 +1217,40 @@ unittest
     client.read();
     assert(pipe.log == ["migrate", "left", "done"]);
     assert(client.session.state == WorldState.characterScreen && client.session.owner == 0);
+}
+
+/// A gateway holds a client's packets during a hand-off: heartbeats coalesce, returned packets go first, the bound kicks.
+unittest
+{
+    import dmangos.world.testclient;
+
+    auto client = TestClient(new WorldSession(newContext(newDatabase()), "127.0.0.1"), testKey);
+    authenticate(client);
+    auto session = client.session;
+    session.state_ = WorldState.elsewhere;
+    session.gatewayPaused = true;
+    session.holdPacket(Opcode.MSG_MOVE_START_FORWARD, [1]);
+    session.holdPacket(Opcode.MSG_MOVE_HEARTBEAT, [2]);
+    session.holdPacket(Opcode.MSG_MOVE_HEARTBEAT, [3]);
+    session.holdPacket(Opcode.MSG_MOVE_HEARTBEAT, [4]);
+    session.holdPacket(Opcode.CMSG_MESSAGECHAT, [5]);
+    session.holdPacket(Opcode.MSG_MOVE_STOP, [6]);
+    assert(session.heldPackets.length == 4 && session.heldPackets[1].body_ == [4],
+        "a heartbeat right after another replaces it; starts, stops and chat stay, in order");
+    session.packetReturned(Opcode.CMSG_MESSAGECHAT, [7]);
+    session.packetReturned(Opcode.CMSG_MESSAGECHAT, [8]);
+    assert(session.heldPackets[0].body_ == [7] && session.heldPackets[1].body_ == [8]
+        && session.heldPackets[2].body_ == [1], "those that came back from the old owner go first, in order");
+    session.holdPacket(Opcode.MSG_MOVE_HEARTBEAT, [9]);
+    assert(session.heldPackets.length == 7, "after a stop, a heartbeat is kept");
+    session.dropHeldPackets("a test");
+    assert(session.heldPackets.length == 0 && session.heldBytes == 0 && session.returnedPackets == 0);
+
+    foreach (i; 0 .. WorldSession.maxHeldPackets)
+        session.holdPacket(Opcode.CMSG_MESSAGECHAT, [1]);
+    assert(!session.wantsClose);
+    session.holdPacket(Opcode.CMSG_MESSAGECHAT, [1]);
+    assert(session.wantsClose && session.heldPackets.length == 0, "beyond the bound the client is disconnected");
 }
 
 /**
