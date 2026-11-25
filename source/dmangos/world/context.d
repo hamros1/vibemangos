@@ -6053,8 +6053,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.updatefields : UNIT_FIELD_HEALTH, UNIT_FIELD_MAXHEALTH;
 
         if (creature.spawn.guid >= temporaryCounterStart || creature.summon.type != TempSpawnType.none
-            || creature.ai is null || !creature.alive || !ownsQuestActor(creature))
-            return;
+            || creature.ai is null || !creature.alive || !ownsQuestActor(creature) || controlledByPlayer(creature))
+            return; // (held by a player: as `checkpointDungeonFight`)
         const saved = creature.guid in outdoorQuestActors;
         if (saved !is null && saved.player)
             return; // the active escort or follower also owns this creature's checkpoint
@@ -6063,6 +6063,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return discardQuestActor(creature);
         if (saved is null || saved.savedAt + 2 <= unixTime)
             checkpointOutdoorCreature(creature);
+    }
+
+    /// Whether a player charms or possesses `creature` (Mind Control, the Orb of Domination's Razorgore).
+    private static bool controlledByPlayer(const Creature creature)
+    {
+        import dmangos.world.updatefields : UNIT_FIELD_CHARMEDBY;
+
+        return creature.petOwner || creature.meleeController || creature.values.get!UNIT_FIELD_CHARMEDBY != 0;
     }
 
     private static bool hasOutdoorFactionChange(const Creature creature)
@@ -6096,6 +6104,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         const spawn = creature.spawn.guid, instance = where.instanceId;
         if (!ownsDungeonFights(where) || spawn >= temporaryCounterStart || creature.summon.type != TempSpawnType.none
             || creature.ai is null || !creature.alive)
+            return;
+        // Held by a player (charmed, possessed): its state now is the player's faction, flags and charm aura, which a
+        // restore would bring back with no one holding it. Its last snapshot from before stays.
+        if (controlledByPlayer(creature))
             return;
         const current = dungeonFights.get(instance, null);
         const tracked = spawn in current;

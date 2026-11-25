@@ -725,9 +725,7 @@ unittest
         grethok = 12557, razorgoreEntry = 12435, egg = 177807, legionnaire = 12416, mage = 12420, dragonspawn = 12422,
         gateIn = 176964, gateOut = 176965,
     }
-    // Not yet as a cluster member: there the player loses the orb's possession of Razorgore while its aura stays on
-    // him (to be fixed; then `cluster: true` here).
-    auto s = new Scene(469, Position(-7612, -1024, 413), [classWarrior, classMage, classPriest]);
+    auto s = new Scene(469, Position(-7612, -1024, 413), [classWarrior, classMage, classPriest], cluster: true);
     s.run(1.seconds);
     auto razorgore = s.the(razorgoreEntry);
     assert(s.doorOpen(gateIn) && !s.doorOpen(gateOut), "the gates before the fight");
