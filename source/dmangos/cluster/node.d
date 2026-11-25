@@ -296,6 +296,9 @@ final class ClusterNode : LinkOwner
         IdCounters ids;                    // coordinator
         MonoTime idGrantsFrom;             // coordinator: members' reports come in first
         MonoTime sessionGrantsFrom;        // promoted standby: new logins wait for the old leases (`promote`)
+        ubyte[][uint] handOverAfterWait;   // coordinator: bundles of regions released with no next owner (`handOver`)
+        /// Releases sent with their bundles, kept until the coordinator has taken them (`updateOwnership`).
+        ReleaseSent[uint] releasesSent;
         SessionChange[] newClaimsWaiting;  // ... these
         IdRequest[][ushort] idRequests;    // coordinator: waiting for `idGrantsFrom`, by member
         IdPool pool_;                      // members
@@ -1908,6 +1911,12 @@ private:
         directory.lost(link.peer.nodeId, lastHeard + config.leaseMs.msecs + leaseMargin, link.peer.incarnation);
     }
 
+    static struct ReleaseSent
+    {
+        ulong epoch;
+        immutable(ubyte)[] objects;
+    }
+
     struct SessionChange
     {
         uint account;
@@ -1979,6 +1988,13 @@ private:
         if (objects.length == 0)
             return;
         const target = authority.grantedAfter(region);
+        if (!target)
+        {
+            // Released with no next owner yet (one the authority has not chosen, or may not grant to yet:
+            // `RegionAuthority.released`): what it had is kept for whoever is granted the region next.
+            handOverAfterWait[region] = objects.dup;
+            return;
+        }
         if (target == id)
             arriving[region] = objects.dup;
         else if (target)
@@ -2051,6 +2067,19 @@ private:
         {
             act(directory.tick(now));
             authority.tick();
+            foreach (region; handOverAfterWait.keys) // released with no next owner: on to the one it has now
+            {
+                import std.algorithm.searching : canFind;
+
+                if (!authority.regions.canFind!(r => r.id == region))
+                    handOverAfterWait.remove(region); // merged into another since: its state went cold with it
+                else if (authority.grantedAfter(region))
+                {
+                    const bundle = handOverAfterWait[region];
+                    handOverAfterWait.remove(region);
+                    handOver(region, bundle);
+                }
+            }
             if (authority.takeChanged())
             {
                 const table = RegionTable(viewCoordinator, authority.version_, authority.regions.dup);
@@ -2102,16 +2131,34 @@ private:
             if (onOwnership !is null)
                 onOwnership(gained, lost, arrived, leaving);
         }
+        // A release goes to a coordinator that may die before taking it, and the one after asks again: what went
+        // with it is kept until a table shows the region no longer waiting on this node at that epoch.
+        foreach (region; releasesSent.keys)
+        {
+            const sent = releasesSent[region];
+            bool waiting;
+            foreach (ref r; regions_.latestTable)
+                waiting |= r.id == region && r.owner == id && r.state == RegionState.revoking && r.epoch == sent.epoch;
+            if (!waiting)
+                releasesSent.remove(region);
+        }
         foreach (ref r; releases)
         {
             auto objects = leaving.get(r.id, null);
+            if (objects is null)
+                if (const sent = r.id in releasesSent)
+                    if (sent.epoch == r.epoch)
+                        objects = cast(ubyte[]) sent.objects;
             if (isCoordinator)
             {
                 if (authority.released(id, r.id, r.epoch))
                     handOver(r.id, objects);
             }
             else if (auto link = coordinatorId in links)
+            {
                 link.send(RegionReleased(r.id, r.epoch, objects));
+                releasesSent[r.id] = ReleaseSent(r.epoch, objects.idup);
+            }
             else
                 continue; // sent once the coordinator is back
             leaving.remove(r.id);
@@ -3715,5 +3762,66 @@ unittest
         if (linked)
             assert(playing.events.length >= 3 && playing.events[0 .. 3] == ["grant 7/100", "grant 7/100", "evict 7/100"],
                 "claimed again at once, then evicted by the new login");
+    }
+}
+
+/**
+ * A region released with its objects to a coordinator that dies before taking the release: the standby that takes
+ * over asks again, and the release sent again still carries the objects, which reach the region's next owner once
+ * the standby grants anything (one lease after it took over), not before.
+ */
+unittest
+{
+    import dmangos.world.grid : cellKey;
+
+    CellCosts costs;
+    foreach (x; -40 .. 40)
+        costs[0][cellKey(x, x % 7)] = 10;
+    auto regions = partition([0u], costs, 8);
+    ulong[uint] cost;
+    foreach (r; regions)
+        cost[r.id] = costOf(costs, r.map, r.rect);
+
+    auto cluster = new TestCluster;
+    auto coordinator = cluster.add(1, 9000, 1, CoordinatorSetup(regions.dup, cost.dup, new TestCounters));
+    // Its own incarnation: a table from it replaces the old coordinator's (`RegionView.take`).
+    auto standby = cluster.add(2, 9001, 2, CoordinatorSetup(regions.dup, cost.dup, new TestCounters), true);
+    auto leaving = cluster.add(3, 9002), staying = cluster.add(4, 9003);
+    const(ubyte)[][uint][ushort] received;
+    void handsOver(ClusterNode node) // its own frame: each callback keeps its own node
+    {
+        node.onOwnership = (const(Region)[] gained, const(Region)[] lost, const(ubyte)[][uint] arriving,
+            ref ubyte[][uint] bundles) {
+            foreach (ref r; lost)
+                if (r.next)
+                    bundles[r.id] = [cast(ubyte) r.id, cast(ubyte) node.id];
+            foreach (id, objects; arriving)
+                received[node.id][id] = objects;
+        };
+    }
+    foreach (node; [coordinator, standby, leaving, staying])
+        handsOver(node);
+    cluster.run(8000, coordinator, standby, leaving, staying);
+    const had = leaving.regions.ownedRegions.dup;
+    assert(had.length);
+
+    // Node 3 drains: the coordinator revokes its regions, and the table reaches everyone, the standby too.
+    coordinator.authority.drain(leaving.id);
+    cluster.run(50, coordinator);
+    // The coordinator stops hearing anything: node 3's releases, with their objects, are lost; then it dies.
+    cluster.isolated[coordinator] = true;
+    cluster.run(200, leaving, standby, staying);
+    assert(leaving.regions.ownedRegions.length == 0, "released");
+    cluster.isolated.remove(coordinator);
+    cluster.kill(coordinator);
+    cluster.run(10_000, standby, leaving, staying);
+    assert(standby.isCoordinator);
+    foreach (ref r; had)
+    {
+        const owner = standby.regions.ownerAt(r.map, cellKey(r.rect.x0, r.rect.y0));
+        // The standby never heard of the drain: a region can come back to node 3 itself, with its own objects.
+        assert(owner && owner != coordinator.id, "granted again");
+        const bundle = received.get(owner, null).get(r.id, null);
+        assert(bundle == [cast(ubyte) r.id, cast(ubyte) leaving.id], "its objects came with the release sent again");
     }
 }

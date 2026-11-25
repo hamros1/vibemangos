@@ -49,6 +49,7 @@ final class RegionAuthority
         ushort[uint] movingTo;         // region id -> its next owner, while it is being revoked
         MonoTime[uint] heldUntil;      // region id -> when its lost owner's lease has surely run out
         MonoTime grantsFrom;
+        ushort[uint] grantAfterWait;   // region id -> its next owner, released before `grantsFrom` (`released`)
         Duration lease;
         MonoTime delegate() clock;
         bool changed_ = true;
@@ -453,10 +454,15 @@ final class RegionAuthority
                     if (home || target == 0)
                         target = home ? home : node;
                 }
-                if (target && target in members && target !in stalled)
+                if (target && target in members && target !in stalled && clock() >= grantsFrom)
                     grant(r, target);
                 else
                 {
+                    // Before `grantsFrom` (a standby that took over) the old coordinator may have granted the
+                    // region elsewhere already, in a table this one never saw: it goes to `target` once that
+                    // grant has surely lapsed (`tick`).
+                    if (target && clock() < grantsFrom)
+                        grantAfterWait[r.id] = target;
                     r.state = RegionState.unowned;
                     r.owner = 0;
                     r.next = 0;
@@ -482,6 +488,14 @@ final class RegionAuthority
         const now = clock();
         if (now < grantsFrom)
             return;
+        foreach (id, target; grantAfterWait)
+            foreach (ref r; regions_)
+                if (r.id == id && r.state == RegionState.unowned)
+                {
+                    if (target in members && target !in stalled && target !in draining)
+                        grant(r, target); // otherwise dealt out below, or once held no longer
+                }
+        grantAfterWait = null;
         uint[] expired;
         foreach (id, until; heldUntil)
             if (now >= until)
@@ -1445,4 +1459,26 @@ unittest
     assert(coordinator.released(1, region.id, region.epoch));
     coordinator.tick();
     assert(coordinator.regions[0].owner == 2 && coordinator.regions[0].state == RegionState.granted);
+}
+
+// A standby that took over grants nothing for a lease, a region released to it meanwhile included: the old
+// coordinator may have granted that region elsewhere in a table the standby never saw. It goes to the next owner
+// the table named once that lease is over.
+unittest
+{
+    import core.time : seconds;
+
+    auto now = MonoTime.currTime;
+    Region moving = Region(1, 0, CellRect(0, 0, 10, 10), 3, 5, RegionState.revoking, 4);
+    const kept = Region(2, 0, CellRect(10, 0, 20, 10), 4, 6, RegionState.granted);
+    auto authority = RegionAuthority.adopt([moving, kept], 9, [1: 100UL, 2: 100UL], 2, [2, 3, 4], 0, now,
+        5.seconds, () => now);
+    now += 1.seconds;
+    assert(authority.released(3, 1, 5));
+    assert(authority.grantedAfter(1) == 0, "not granted while the old coordinator's grants may hold");
+    authority.tick();
+    assert(authority.grantedAfter(1) == 0);
+    now += 5.seconds;
+    authority.tick();
+    assert(authority.grantedAfter(1) == 4, "to the next owner the table named, after the lease");
 }
