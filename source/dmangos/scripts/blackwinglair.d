@@ -645,7 +645,10 @@ struct BlackwingLair
         }
         if (e.id == BwlSignal.vaelTrigger)
         {
-            if (encounters[BwlEncounter.vaelastrasz] == EncounterState.notStarted && vaelastrasz)
+            // After a wipe the scene plays again: Vaelastrasz, back from his spawn (a crash, the copy reloaded), lies
+            // at 30% with no one to speak to until Nefarius has corrupted him.
+            const vael = encounters[BwlEncounter.vaelastrasz];
+            if ((vael == EncounterState.notStarted || vael == EncounterState.failed) && vaelastrasz)
             {
                 encounters[BwlEncounter.vaelastrasz] = EncounterState.special;
                 copy.signal(vaelastrasz, BwlSignal.vaelIntro);
@@ -2068,4 +2071,37 @@ unittest
     runtime.raise(h, c, CreatureLoaded(bwlCreature(npcVictorNefarius, 4)));
     runtime.raise(h, c, Signal(EntityRef.init, BwlEncounter.nefarian, EncounterState.inProgress));
     assert(lair.summoned[1].entry == 14312);
+}
+
+/// Vaelastrasz after a wipe and a crash: back from his spawn, he waits for the scene again, and players coming near
+/// start it.
+unittest
+{
+    import dmangos.bytes : ByteReader, ByteWriter;
+
+    alias self = dmangos.scripts.blackwinglair;
+    auto runtime = ScriptRuntime.of!self();
+    auto lair = new FakeLair;
+    auto c = InstanceContext(lair);
+    auto h = runtime.create(ScriptKind.instance, "instance_blackwing_lair");
+    const vael = bwlCreature(npcVaelastrasz, 5);
+    runtime.raise(h, c, CreatureLoaded(vael));
+    runtime.raise(h, c, Signal(EntityRef.init, BwlSignal.vaelTrigger));
+    runtime.raise(h, c, Signal(vael, BwlEncounter.vaelastrasz, EncounterState.inProgress));
+    runtime.raise(h, c, Signal(vael, BwlEncounter.vaelastrasz, EncounterState.failed)); // the wipe
+    ByteWriter saved;
+    runtime.save(h, saved);
+
+    auto after = new FakeLair;
+    auto d = InstanceContext(after);
+    auto g = runtime.create(ScriptKind.instance, "instance_blackwing_lair");
+    auto r = ByteReader(saved.data);
+    assert(runtime.load(g, r));
+    runtime.raise(g, d, Restored());
+    runtime.raise(g, d, CreatureLoaded(vael));
+    runtime.raise(g, d, Signal(EntityRef.init, BwlSignal.vaelTrigger));
+    bool introduced;
+    foreach (sent; after.signals)
+        introduced |= sent.from == vael && sent.id == BwlSignal.vaelIntro;
+    assert(introduced, "players coming near start his scene again");
 }
