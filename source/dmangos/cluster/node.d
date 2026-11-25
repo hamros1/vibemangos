@@ -35,6 +35,93 @@ import dmangos.net.server : NetSession;
 /// Opens a connection for `session` to `host:port`; a failure ends in `session.disconnected`.
 alias Dialer = void delegate(string host, ushort port, NetSession session);
 
+/**
+ * Player messages a quorum node received while its lease had lapsed, kept for when it holds again in the
+ * same term. Their sequences are consumed, so the sender never resends them, and a gateway takes a sent
+ * arrival or recovery as delivered. Relayed client packets are bounded; route changes are always kept.
+ */
+private struct HeldPlayerMessages
+{
+    enum maxPackets = 4096;
+
+    private static struct Held
+    {
+        ushort peer;
+        ulong incarnation, term;
+        immutable(ubyte)[] payload;
+        bool packet;
+    }
+
+    private Held[] held;
+    private size_t packets;
+
+    @property size_t length() const { return held.length; }
+
+    /// Keeps a message of `peer`'s process `incarnation`; false if it is a packet beyond the bound.
+    bool hold(ushort peer, ulong incarnation, ulong term, const(ubyte)[] payload, bool packet)
+    {
+        if (packet && packets >= maxPackets)
+            return false;
+        held ~= Held(peer, incarnation, term, payload.idup, packet);
+        if (packet)
+            ++packets;
+        return true;
+    }
+
+    /**
+     * Delivers, in order, those from `term` whose sender is linked now as the same process. Those of
+     * another term or process are dropped; those of a sender not linked now wait for its link.
+     */
+    void release(ulong term, scope ulong delegate(ushort) linkedIncarnation,
+        scope void delegate(ushort, const(ubyte)[]) deliver)
+    {
+        auto pending = held;
+        held = null;
+        packets = 0;
+        foreach (h; pending)
+        {
+            if (h.term != term)
+                continue;
+            const current = linkedIncarnation(h.peer);
+            if (!current)
+                hold(h.peer, h.incarnation, h.term, h.payload, h.packet);
+            else if (current == h.incarnation)
+                deliver(h.peer, h.payload);
+        }
+    }
+
+    void clear()
+    {
+        held = null;
+        packets = 0;
+    }
+}
+
+unittest
+{
+    HeldPlayerMessages messages;
+    ulong[ushort] linked = [2: 7];
+    ubyte[][] delivered;
+    ulong incarnation(ushort peer) { return linked.get(peer, 0); }
+    void deliver(ushort, const(ubyte)[] payload) { delivered ~= payload.dup; }
+
+    assert(messages.hold(2, 7, 1, [1], false) && messages.hold(3, 4, 1, [2], false));
+    assert(messages.hold(2, 6, 1, [3], false) && messages.hold(2, 7, 0, [4], false));
+    assert(messages.hold(2, 7, 1, [5], true));
+    messages.release(1, &incarnation, &deliver);
+    assert(delivered == [[1], [5]], "the same process's messages of the term, in order");
+    assert(messages.length == 1, "an unlinked sender's message waits for its link");
+    linked[3] = 4;
+    messages.release(1, &incarnation, &deliver);
+    assert(delivered == [[1], [5], [2]] && messages.length == 0);
+
+    foreach (i; 0 .. HeldPlayerMessages.maxPackets)
+        assert(messages.hold(2, 7, 1, [6], true));
+    assert(!messages.hold(2, 7, 1, [6], true) && messages.hold(2, 7, 1, [7], false), "packets are bounded");
+    messages.clear();
+    assert(messages.length == 0);
+}
+
 /// What the coordinator starts with: the world divided into regions, and the id counters it hands out from.
 struct CoordinatorSetup
 {
@@ -159,6 +246,7 @@ final class ClusterNode : LinkOwner
         bool fenced_;
         QuorumElection election;
         ulong quorumId, electedTerm;
+        HeldPlayerMessages heldPlayers;    // received while the lease had lapsed
         SimulationOwner termLeader;
         MonoTime nextWorkerLease;
         ulong appliedOwnership;
@@ -580,6 +668,8 @@ final class ClusterNode : LinkOwner
         if (quorumId)
             tickQuorum(now);
         updateOwnership(now);
+        if (heldPlayers.length && regions_.leaseHolds(now))
+            releaseHeldPlayers();
         if (fenced_)
             return;
         if (!quorumId && config.standby && !isCoordinator && lostCoordinator && coordinatorId == 0
@@ -882,6 +972,7 @@ final class ClusterNode : LinkOwner
         arriving = null;
         leaving = null;
         electedTerm = term;
+        heldPlayers.clear();
         termLeader = leader;
         nextWorkerLease = MonoTime.init;
         appliedOwnership = 0;
@@ -959,6 +1050,31 @@ final class ClusterNode : LinkOwner
         publish();
     }
 
+    private void holdPlayer(Link link, ulong term, const(ubyte)[] payload)
+    {
+        const kind = decode!PlayerMessage(payload).kind;
+        const packet = kind == PlayerMessageKind.toHome || kind == PlayerMessageKind.toOwner;
+        if (!heldPlayers.hold(link.peer.nodeId, link.peer.incarnation, term, payload, packet))
+            warning!"cluster: node %s dropped a player packet from node %s while its lease had lapsed"(id,
+                link.peer.nodeId);
+    }
+
+    private void releaseHeldPlayers()
+    {
+        if (!heldPlayers.length)
+            return;
+        heldPlayers.release(electedTerm, (ushort peer) {
+            if (auto link = peer in links)
+                return (*link).peer.incarnation;
+            return 0UL;
+        }, (ushort peer, const(ubyte)[] payload) {
+            if (players is null)
+                return;
+            const m = decode!PlayerMessage(payload);
+            players.player(peer, m.kind, m.account, m.opcode, m.data);
+        });
+    }
+
     void received(Link link, MessageType type, ulong term, const(ubyte)[] payload)
     {
         const peer = link.peer.nodeId;
@@ -972,8 +1088,12 @@ final class ClusterNode : LinkOwner
                 return followQuorumLeader(link, term, decode!Takeover(payload));
             if (!term || term != electedTerm)
                 return;
-            if (type == MessageType.player && !regions_.leaseHolds(clock()))
-                return;
+            if (type == MessageType.player)
+            {
+                if (!regions_.leaseHolds(clock()))
+                    return holdPlayer(link, term, payload);
+                releaseHeldPlayers(); // the sender's earlier messages first
+            }
         }
         else if (term)
             return;
