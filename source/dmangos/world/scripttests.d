@@ -73,9 +73,14 @@ unittest
     assert(smite.values.getByte!UNIT_FIELD_BYTES_1(0) == 0, "up again");
     assert(smite.values.get!UNIT_VIRTUAL_ITEM_SLOT_DISPLAY(0) == axe && smite.values.get!UNIT_VIRTUAL_ITEM_SLOT_DISPLAY(1) == axe);
 
-    // He moves to another node: made anew from his spawn there, his state (phase two) read into it.
+    // He moves to another node: made anew from his spawn there, his state (phase two) read into it. What a script
+    // holds him to (rooted for the fight, kept from dying) goes along.
+    smite.ai.scriptImmobilized(true, true);
+    smite.ai.scriptDeathPrevention(true);
     ByteWriter w;
     smite.saveState(w, 0);
+    smite.ai.scriptImmobilized(false, false);
+    smite.ai.scriptDeathPrevention(false);
     auto elsewhere = newCreationContext(db);
     elsewhere.data.creatureTemplates[mrSmite] = smiteTemplate;
     elsewhere.data.creatureScriptNames[mrSmite] = "boss_mr_smite";
@@ -83,6 +88,9 @@ unittest
     auto moved = elsewhere.makeCreature(&spawn);
     auto r = ByteReader(w.data);
     moved.loadState(r, 0);
+    assert(moved.scriptRooted && moved.ai.deathPrevention, "still held in place and kept from dying");
+    moved.ai.scriptImmobilized(false, false);
+    moved.ai.scriptDeathPrevention(false);
     auto there = elsewhere.map(mapEasternKingdoms);
     there.addObject(moved);
     // Past one third there: his last change, the hammer (from phase two, so not the axes again).

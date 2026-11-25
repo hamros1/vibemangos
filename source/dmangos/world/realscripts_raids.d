@@ -1652,6 +1652,7 @@ unittest
     boss = s.the(npcGothik);
     assert(s.instance == instance && boss.guid == bossGuid && boss.ai.inCombat);
     assert(boss.values.get!UNIT_FIELD_FLAGS & UnitFlags.uninteractible);
+    assert(boss.scriptRooted, "his script still holds him on the balcony");
     assert(s.ask(NaxxEncounter.gothik) == EncounterState.inProgress && !s.doorOpen(goGothikCombatGate));
     assert(!s.doorOpen(entryGate) && !s.doorOpen(exitGate));
     assert(s.map.creatureAt(killed) is null);

@@ -30,8 +30,17 @@ mixin template CreatureScripting()
         noMelee = 4,
         forceMelee = 8,
         reactionOverride = 16,
+        held = 128, /// a second byte follows: `HeldFlags`
     }
     private enum uint reactionShift = 5, reactionMask = 3;
+
+    /// What its script holds it to (`scriptImmobilized`, `scriptDeathPrevention`), in the byte after the flags.
+    private enum HeldFlags : ubyte
+    {
+        rooted = 1,
+        rootedForFight = 2,
+        deathPrevention = 4,
+    }
 
     /// Its script: `name` of `runtime` (no script if none serves it).
     void setBehaviour(ScriptRuntime runtime, string name)
@@ -88,7 +97,19 @@ mixin template CreatureScripting()
             if (react != defaultReaction)
                 flags |= cast(ubyte)(BehaviourFlags.reactionOverride | (cast(uint) react << reactionShift));
         }
+        // Older checkpoints have no second byte (the flags' top bit clear): nothing held.
+        ubyte held;
+        if (me.scriptRooted)
+            held |= HeldFlags.rooted;
+        if (rootedForFight)
+            held |= HeldFlags.rootedForFight;
+        if (deathPrevention)
+            held |= HeldFlags.deathPrevention;
+        if (held)
+            flags |= BehaviourFlags.held;
         w.put(flags);
+        if (held)
+            w.put(held);
         w.put(cast(uint) state.length);
         w.putBytes(state.data);
     }
@@ -106,6 +127,13 @@ mixin template CreatureScripting()
             const savedReaction = (flags >> reactionShift) & reactionMask;
             if (savedReaction <= typeof(react).max)
                 react = cast(typeof(react)) savedReaction;
+        }
+        if (flags & BehaviourFlags.held)
+        {
+            const held = r.read!ubyte;
+            me.scriptRooted = (held & HeldFlags.rooted) != 0;
+            rootedForFight = (held & HeldFlags.rootedForFight) != 0;
+            deathPrevention = (held & HeldFlags.deathPrevention) != 0;
         }
         auto state = ByteReader(r.readBytes(r.read!uint));
         if (scripts_ !is null && state.remaining && !scripts_.load(behaviour, state))
