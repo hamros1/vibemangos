@@ -1085,6 +1085,20 @@ cool-down); the players whose clients it holds stay and are logged out, saved, w
 when it owns nothing and has no visitors, or after 20 seconds whatever is left. The coordinator does
 not drain.
 
+A draining member sends `Drain` again to every coordinator it links to afterwards: the standby that
+takes over, or the same coordinator after it dropped the member and admitted it again. Either would
+otherwise not know of the drain, and could grant regions back to a member that is shutting down
+(the standby adopts the table with the member's regions revoking, but not the drain itself).
+
+If the coordinator dies during the drain, the member follows the standby like any member, and its
+lease holds through the takeover. Its releases are sent again to the standby. Players it simulates
+for a gateway wait on the member until the standby grants their ground to another member, which it
+does only after its first lease. The players then move on, saved
+(`tools/harness/standby_bundle.py`). If no coordinator renews the member's lease in time (no
+standby, or one that does not take over within the lease), the lease lapses during the drain. This
+loss is inherent. After the lapse every write is fenced, since the players' next owner may already be
+loading them. The gateways restore them from their last checkpoint, at most 15 seconds old.
+
 ## The realm list
 
 Only the coordinator speaks for the realm: it marks the realm online, updates its population and

@@ -6,7 +6,9 @@ objects. The proxy holds node 3's frames to the coordinator for two seconds; nod
 (SIGTERM: it drains, releasing every region with its objects), and the coordinator is killed as soon as
 node 3 has sent its releases, which die with it in the proxy. The standby takes over and asks for the releases
 again: each must come with its objects, and reach the region's next owner as a handover ("arrived with N
-objects"), not load cold. The player plays on.
+objects"), not load cold. Node 3 keeps its lease through the takeover, and tells the standby it is draining, so
+no region comes back to it: the player moves on, saved, to the node granted its ground, rather than being
+restored from its last checkpoint. The player plays on.
 """
 
 import asyncio
@@ -115,20 +117,23 @@ def exercise(fixture, proxy, loop, world_ports, auth_port, releases):
         return True
 
     wait_for(f"regions {sorted(regions)} to reach their next owner with their objects", handed_over, 40)
-    # Node 3 went with the coordinator's lease, unsaved: the standby restores the player from its checkpoint, and
-    # the gateway drops what the client sent meanwhile (docs/CLUSTER.md, "Gateway recovery"). It speaks once back.
-    back = (f"'{NAME}' arrived from another node", f"entered the world as '{NAME}'")
-    wait_for("the player back in the world on the standby",
-             lambda: any(line in cluster.log(STANDBY, alive)[offsets[STANDBY]:] for line in back), 40)
+    # Node 3 keeps its lease through the takeover and, draining, hands the player on, saved, once the standby has
+    # granted its ground (after its first lease); it speaks once there. Restored from its checkpoint instead, it
+    # would have lost what it did since, and the gateway what the client sent meanwhile.
+    moved = f"'{NAME}' arrived from another node"
+    wait_for("the player handed on to the standby", lambda: moved in cluster.log(STANDBY, alive)[offsets[STANDBY]:], 40)
+    assert f"'{NAME}' NOT saved" not in cluster.log(WORKER)[offsets[WORKER]:], "node 3 lost its lease with the player"
+    assert f"'{NAME}' restored for its gateway" not in cluster.log(STANDBY, alive)[offsets[STANDBY]:], \
+        "the player was restored from its checkpoint, not handed on"
     held.touch()
     if player.wait(timeout=40):
         raise RuntimeError(fixture.log(label)[-2500:])
     assert "heard: 'after the takeover'" in fixture.log(label), "the player could not play on"
-    recovered = fixture.log(label)[client_offset:].split("[new world]", 1)[1]
-    assert NPC.findall(recovered).count(npc) == 1, f"expected NPC {npc} exactly once after recovery"
+    shown = NPC.findall(fixture.log(label)[client_offset:]).count(npc)
+    assert shown <= 1, f"NPC {npc} shown {shown} times after the drain began"
     objects = sum(counts.values())
     print(f"PASS: node 3's releases of regions {sorted(regions)} died with the coordinator; sent again to the "
-          f"standby byte-for-byte, they restored {objects} objects and NPC {npc[1]} appeared once", flush=True)
+          f"standby byte-for-byte, they restored {objects} objects, and the player moved on saved", flush=True)
 
 
 def run(fixture):

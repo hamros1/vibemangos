@@ -259,6 +259,7 @@ final class ClusterNode : LinkOwner
         Hello own;
         ulong incarnation_;
         bool retired;                      // a coordinator refused this incarnation as fenced out: start anew
+        bool draining;                     // shutting down cleanly: every coordinator it follows is told (`drain`)
 
         // The view: authoritative on the coordinator, the latest received on members.
         ulong viewCoordinator;  // the coordinator incarnation the view comes from
@@ -418,6 +419,7 @@ final class ClusterNode : LinkOwner
      */
     bool drain()
     {
+        draining = true; // a coordinator it follows later (the standby that takes over) is told too
         return sendToCoordinator(Drain(incarnation));
     }
 
@@ -1064,6 +1066,10 @@ final class ClusterNode : LinkOwner
             link.send(release);
         claimsWaiting = null;
         releasesWaiting = null;
+        // A new coordinator, or this one since it dropped this node, did not hear of the drain (or lost it): it
+        // would grant this node regions again while it shuts down.
+        if (draining)
+            link.send(Drain(incarnation));
         if (sessions !is null)
             sessions.claimAll(); // a new coordinator knows nothing of them
         link.send(IdReport(pool_.highest(IdKind.character), pool_.highest(IdKind.item),
@@ -3880,7 +3886,8 @@ unittest
 /**
  * A region released with its objects to a coordinator that dies before taking the release: the standby that takes
  * over asks again, and the release sent again still carries the objects, which reach the region's next owner once
- * the standby grants anything (one lease after it took over), not before.
+ * the standby grants anything (one lease after it took over), not before. The releasing node is draining, and tells
+ * the standby so as it follows it: nothing is granted back to it.
  */
 unittest
 {
@@ -3918,8 +3925,9 @@ unittest
     assert(had.length);
 
     // Node 3 drains: the coordinator revokes its regions, and the table reaches everyone, the standby too.
-    coordinator.authority.drain(leaving.id);
-    cluster.run(50, coordinator);
+    assert(leaving.drain());
+    cluster.run(100, coordinator);
+    assert(coordinator.authority.isDraining(leaving.id));
     // The coordinator stops hearing anything: node 3's releases, with their objects, are lost; then it dies.
     cluster.isolated[coordinator] = true;
     cluster.run(200, leaving, standby, staying);
@@ -3928,11 +3936,14 @@ unittest
     cluster.kill(coordinator);
     cluster.run(10_000, standby, leaving, staying);
     assert(standby.isCoordinator);
+    // The drain went to the old coordinator only: node 3 tells the standby again as it follows it, and is granted
+    // nothing while it shuts down.
+    assert(standby.authority.isDraining(leaving.id), "the standby knows node 3 is draining");
+    assert(leaving.regions.ownedRegions.length == 0 && leaving.ownsNothing, "nothing came back to node 3");
     foreach (ref r; had)
     {
         const owner = standby.regions.ownerAt(r.map, cellKey(r.rect.x0, r.rect.y0));
-        // The standby never heard of the drain: a region can come back to node 3 itself, with its own objects.
-        assert(owner && owner != coordinator.id, "granted again");
+        assert(owner && owner != coordinator.id && owner != leaving.id, "granted again, elsewhere");
         const bundle = received.get(owner, null).get(r.id, null);
         assert(bundle == [cast(ubyte) r.id, cast(ubyte) leaving.id], "its objects came with the release sent again");
     }

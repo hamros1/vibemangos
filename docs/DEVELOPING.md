@@ -383,8 +383,9 @@ Run `python3 tools/harness/standby_bundle.py` in single-standby mode with a gate
 plays on a worker, the proxy holds that worker's frames to the coordinator for two seconds, the worker is
 stopped cleanly (it drains), and the coordinator is killed as soon as the worker has sent its releases.
 The test compares the original and resent bundles byte for byte and checks that each region
-arrives once with its original object count. On the original connection, the player must see
-the same living NPC's GUID exactly once after recovery and receive a chat reply.
+arrives once with its original object count. The worker must keep its lease through the takeover, and
+the standby must grant it nothing: the player moves on to the standby, saved, not restored from its checkpoint. On the
+original connection it must not see the same living NPC's GUID twice, and must receive a chat reply.
 
 Run `python3 tools/harness/battleground_recovery.py --cross-realm --map arathi` to kill the
 active match worker and check the same match's objectives, scoreboard and PvP on its standby.
