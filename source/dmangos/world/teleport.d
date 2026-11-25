@@ -158,10 +158,13 @@ private:
             action.teleportTo = destination;
             action.teleportInstance = toInstance;
             action.requiresLiveBattleground = requiresLiveBattleground;
+            enum ubyte transferAbortNotFound = 0x02;
             if (context.askDungeonEntry is null)
             {
-                migrateTo(host, action);
-                return true;
+                if (migrateTo(host, action))
+                    return true;
+                deliver(Opcode.SMSG_TRANSFER_ABORTED, [transferAbortNotFound]); // the database holds the move up
+                return false;
             }
             // The host decides (a lockout, a full copy): asked first, the player only moves to go in.
             if (dungeonEntryAsked != MonoTime.init && context.clock() - dungeonEntryAsked < 5.seconds)
@@ -178,7 +181,8 @@ private:
                         return deliver(Opcode.SMSG_TRANSFER_ABORTED, [abort]);
                     info!"%s: '%s' goes into map %s, which node %s hosts: moving there"(remoteAddress,
                         player.data.name, mapId, host);
-                    migrateTo(host, action);
+                    if (!migrateTo(host, action))
+                        deliver(Opcode.SMSG_TRANSFER_ABORTED, [transferAbortNotFound]);
                 });
             return true;
         }
@@ -210,8 +214,11 @@ private:
                 action.teleportInstance = toInstance;
                 info!"%s: '%s' goes to map %s, where node %s simulates: moving there"(remoteAddress, player.data.name,
                     mapId, owner);
-                migrateTo(owner, action);
-                return true;
+                if (migrateTo(owner, action))
+                    return true;
+                enum ubyte transferAbortNotFound = 0x02;
+                deliver(Opcode.SMSG_TRANSFER_ABORTED, [transferAbortNotFound]); // the database holds the move up
+                return false;
             }
         }
 

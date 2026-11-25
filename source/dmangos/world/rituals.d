@@ -97,6 +97,7 @@ mixin template RitualSummoning()
 
     private PartySummon summonPoint; // a summons waiting for the player's answer
     private ulong latestSummon;
+    private ulong consumedSummon; // the offer this session took in the database, whose move did not go through
     private enum ubyte summonOfferVersion = 1;
 
     package void writeSummonOffer(ref ByteWriter writer)
@@ -465,11 +466,16 @@ mixin template RitualSummoning()
         const point = summonPoint;
         if (summoner != point.summoner || point.summoner == 0 || point.expires <= context.unixTime)
             return;
-        if (connection.gatewayHome.node)
+        // A database that is slow or away would stop a move to another node after the offer is spent: the offer
+        // stays, shown again, and is taken once the writes go through.
+        if (!context.settleWrites())
+            return showPartySummon(point);
+        if (connection.gatewayHome.node && consumedSummon != point.sequence)
             try
             {
                 if (!context.database.consumePartySummonOffer(player.data.guid, point.sequence))
                     return;
+                consumedSummon = point.sequence;
             }
             catch (DatabaseException error)
             {
@@ -484,8 +490,9 @@ mixin template RitualSummoning()
             player.values.set!UNIT_FIELD_MOUNTDISPLAYID(0u);
             player.values.set!UNIT_FIELD_FLAGS(player.values.get!UNIT_FIELD_FLAGS & ~UnitFlags.taxiFlight);
         }
-        teleportTo(point.map, Position(point.x, point.y, point.z, player.position.orientation),
-            null, point.instance);
+        if (!teleportTo(point.map, Position(point.x, point.y, point.z, player.position.orientation),
+            null, point.instance) && player !is null && !context.settleWrites())
+            showPartySummon(point); // the move to another node waits on the database: the offer is accepted again
     }
 
     /**

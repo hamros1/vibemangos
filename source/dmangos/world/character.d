@@ -1753,3 +1753,37 @@ unittest
     const rejection = bodyOf(client.read(), Opcode.SMSG_MESSAGECHAT);
     assert(canFind(rejection, cast(const(ubyte)[]) "serverside flood protection"));
 }
+
+/// A database that does not take the writes stops a move to another node before it does anything: nothing is saved,
+/// ended or dismissed, and the player stays, simulated here, until the writes go through.
+unittest
+{
+    import dmangos.world.testclient : TestPlayerRelay, loggedIn, newCreationContext, newDatabase;
+    import dmangos.world.writebehind : WriteBehind, Writer;
+
+    auto db = newDatabase();
+    auto first = newCreationContext(db), second = newCreationContext(db);
+    auto relay = new TestPlayerRelay(first, second);
+    auto client = loggedIn(first, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    auto writer = new Writer(db, null, false); // not started: what is queued waits, as for a database away
+    scope (exit)
+        writer.stop();
+    writer.stalledWaitMs = 0;
+    first.writer = writer;
+    first.database = new WriteBehind(db, writer, null);
+    first.database.setMuteTime(1, 5); // one write waiting
+    const queued = writer.statistics.waiting;
+    auto staying = client.session.inWorld;
+
+    assert(!staying.migrateTo(second.nodeId), "the writes do not settle: the move does not go on");
+    assert(relay.remote is null && client.session.inWorld is staying && staying.player !is null);
+    assert(writer.statistics.waiting == queued, "nothing of the move was done: not even its saves were queued");
+
+    writer.start();
+    writer.stalledWaitMs = 1_000;
+    foreach (_; 0 .. 200)
+        if (writer.statistics.waiting)
+            imported!"core.thread".Thread.sleep(imported!"core.time".msecs(10));
+    assert(staying.migrateTo(second.nodeId), "the database is back: the move goes on");
+    assert(relay.remote !is null && client.session.inWorld is null);
+}

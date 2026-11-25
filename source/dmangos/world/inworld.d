@@ -294,21 +294,28 @@ private:
             return false;
         info!"%s: '%s' acts at %s, which node %s simulates: moving there"(remoteAddress, player.data.name,
             target & 0xFFFF_FFFF, owner);
-        migrateTo(owner, action);
-        return true;
+        return migrateTo(owner, action);
     }
 
     /**
      * Moves this player's simulation to node `target`: saved here, then loaded there with what its
      * client already has, so the client sees nothing of it. The client stays connected to its home,
      * whose id the state ends with (0: this node, when the player leaves home).
+     *
+     * False if the player stays: this node may not write, the gateway is out of reach, or the database does not
+     * take the writes the move needs (`WorldContext.settleWrites`). The writes queued before are settled first, so
+     * a database that is slow or away stops the move before it ends a duel, a trade, a channel or a charm, or
+     * dismisses the pet: those happen only once the move can go on (a stall in the instants between them and the
+     * move's own writes still leaves the player here without them).
      */
-    package void migrateTo(ushort target, ArrivalAction action = ArrivalAction.init)
+    package bool migrateTo(ushort target, ArrivalAction action = ArrivalAction.init)
     {
         if (!context.canWrite())
-            return;
+            return false;
         if (connection.gatewayHome.node && (context.gatewayReachable is null || !context.gatewayReachable(homeNode)))
-            return;
+            return false;
+        if (!context.settleWrites())
+            return false;
         duelComplete(DuelEnd.fled); // a forced move (such as draining) ends it for both players
         cancelTrade(true);
         const petControl = preparePetHandoff(action.teleportMap == uint.max);
@@ -321,7 +328,7 @@ private:
         savePlayerDetails();
         checkpointSummons();
         if (!context.settleWrites())
-            return; // the new owner must load the completed writes before processing packets
+            return false; // the new owner must load the completed writes before processing packets
 
         if (petControl.guid)
             detachPossessedPetForHandoff();
@@ -432,6 +439,7 @@ private:
             state_ = WorldState.closed;
             connection.playing = null;
         }
+        return true;
     }
 
     /// The account a `migrateTo` state is for, to make the session on the node it arrives at.
@@ -758,7 +766,8 @@ private:
             worldPvpCheck(); // the towers' capture bar, the zones' buffs, the Silithyst (`dmangos.world.worldpvp`)
             updateRemoteLootOffers();
             if (const target = migrationTarget())
-                return migrateTo(target); // the player is simulated there from now on
+                if (migrateTo(target))
+                    return; // the player is simulated there from now on; otherwise the next check tries again
         }
 
         // A save starts the interval again: no catching up after a stall.
