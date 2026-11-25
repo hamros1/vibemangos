@@ -1803,6 +1803,61 @@ unittest
 }
 
 /**
+ * Blackrock Depths' Relic Vault and Grim Guzzler on a cluster worker: Watcher Doomgrip and Hurley Blackbreath's party
+ * are summons, kept by the copy's checkpoint, so a crash while they live brings the same ones back, and the vault
+ * still opens when its last guard falls.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.script.api : EntityRef;
+    import dmangos.scripts.blackrockdepths : BlackrockDepths, Fight, secretDoor, watcherDoomgrip, hurleyBlackbreath,
+        blackbreathCrony;
+
+    auto d = Dungeon.enter(230, 60, cluster: true);
+    const vault = BlackrockDepths.vaultPlace;
+    d.goTo(Position(vault.x + 5, vault.y, vault.z));
+    d.run(1.seconds);
+    foreach (_; 0 .. 12)
+        d.w.context.signalDungeon(d.instanceId, EntityRef.init, BlackrockDepths.Signals.cofferOpened, 0);
+    d.run(1.seconds);
+    assert(d.saved!BlackrockDepths.vault == Fight.inProgress && d.summoned(watcherDoomgrip) == 1, d.story);
+    const watcher = d.find(watcherDoomgrip).guid;
+    EntityRef[] constructs;
+    foreach (guard; d.saved!BlackrockDepths.vaultGuards)
+        if (guard.guid != watcher)
+            constructs ~= guard;
+    foreach (guard; constructs)
+        if (auto c = d.map.creatureAt(guard.guid))
+            d.kill(c);
+    d.run(2.seconds);
+    assert(d.saved!BlackrockDepths.vaultGuards.alive == 1, "only the watcher stands");
+
+    foreach (_; 0 .. 3)
+        d.w.context.signalDungeon(d.instanceId, EntityRef.init, BlackrockDepths.Signals.kegBroken, 0);
+    d.run(1.seconds);
+    assert(d.summoned(hurleyBlackbreath) == 1 && d.all(blackbreathCrony).length == 3, d.story);
+    const hurley = d.find(hurleyBlackbreath).guid;
+
+    d.restartAfterCrash();
+    assert(d.all(watcherDoomgrip).length == 1 && d.find(watcherDoomgrip).guid == watcher,
+        "the same watcher guards the vault");
+    assert(d.all(hurleyBlackbreath).length == 1 && d.find(hurleyBlackbreath).guid == hurley,
+        "the same Hurley is back for his lockout");
+    assert(d.all(blackbreathCrony).length == 3, "with his three cronies");
+    assert(d.saved!BlackrockDepths.vault == Fight.inProgress);
+    d.kill(d.find(watcherDoomgrip));
+    d.run(1.seconds);
+    assert(d.saved!BlackrockDepths.vault == Fight.done && Dungeon.isOpen(d.objectOf(secretDoor)),
+        "the last guard's death opens the vault\n" ~ d.story);
+    d.kill(d.find(hurleyBlackbreath));
+    d.run(1.seconds);
+    d.restartAfterCrash();
+    assert(d.all(hurleyBlackbreath).length == 0, "a defeated Hurley stays gone");
+}
+
+/**
  * Blackrock Depths: a boss's death can reach the database before the save that settles his encounter. Magmus dead
  * with the Iron Hall's fight still under way in the copy's state: his throne room opens all the same.
  */

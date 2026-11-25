@@ -249,13 +249,17 @@ struct BlackrockDepths
         {
             EntityRef[] lost;
             foreach (guard; vaultGuards)
-                if (brd.killed(guard))
-                    lost ~= guard;
+                if (brd.killed(guard) || (guard.entry == watcherDoomgrip && !brd.hasSavedCreature(guard)))
+                    lost ~= guard; // dead, or a watcher an older save did not keep
             foreach (guard; lost)
                 vaultGuards.died(guard);
             if (vaultGuards.allDead)
                 vault = Fight.done;
+            else if (brd.hasSavedCreature(watcherDoomgrip))
+                brd.waitForPlayer();
         }
+        if (hurleyCalled && (brd.hasSavedCreature(hurleyBlackbreath) || brd.hasSavedCreature(blackbreathCrony)))
+            brd.waitForPlayer();
         if (tomb == Fight.inProgress)
         {
             tombRecovering = true;
@@ -492,10 +496,13 @@ struct BlackrockDepths
             brd.checkpoint();
         }
         vaultGuards.died(e.creature);
-        cronies.died(e.creature);
+        if (cronies.died(e.creature))
+            brd.releaseCheckpointActor(e.creature);
         switch (entry)
         {
         case watcherDoomgrip, warbringerConstruct:
+            if (entry == watcherDoomgrip)
+                brd.releaseCheckpointActor(e.creature);
             if (vault == Fight.inProgress && vaultGuards.allDead)
             {
                 vault = Fight.done;
@@ -504,6 +511,9 @@ struct BlackrockDepths
                 if (safe)
                     brd.objectFlags(safe, 0, ObjectFlag.noInteract);
             }
+            break;
+        case hurleyBlackbreath:
+            brd.releaseCheckpointActor(e.creature);
             break;
         case haterel, angerrel, vilerel, gloomrel, seethrel, doperel:
             if (tomb == Fight.inProgress)
@@ -788,7 +798,11 @@ struct BlackrockDepths
                     brd.attack(construct, target);
             }
         if (const watcher = brd.summon(watcherDoomgrip, vaultPlace, 0, brd.anyPlayer()))
+        {
             vaultGuards.add(watcher);
+            brd.checkpointCreature(watcher);
+        }
+        brd.checkpoint();
     }
 
     private void openBarDoor(ref InstanceContext brd)
@@ -811,7 +825,8 @@ struct BlackrockDepths
     private void callHurley(ref InstanceContext brd)
     {
         hurleyCalled = true;
-        brd.summon(hurleyBlackbreath, hurleyPlace);
+        if (const hurley = brd.summon(hurleyBlackbreath, hurleyPlace))
+            brd.checkpointCreature(hurley);
         foreach (i; 0 .. 3)
         {
             Location at = hurleyPlace;
@@ -821,8 +836,10 @@ struct BlackrockDepths
             {
                 cronies.add(crony);
                 brd.unitFlags(crony, UnitFlag.immuneToPlayer | UnitFlag.immuneToNpc);
+                brd.checkpointCreature(crony);
             }
         }
+        brd.checkpoint();
     }
 
     private void toggleRunes(ref InstanceContext brd, bool lit)
