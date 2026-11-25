@@ -44,7 +44,7 @@ describes how players use the systems available today.
 ### Known gaps in what exists
 
 * **Instances.** Crash recovery for an active multi-stage encounter depends on what its script
-  checkpoints. Razorgore, Onyxia, Uldaman and Sunken Temple have active encounter recovery tests.
+  checkpoints. Razorgore, Nefarian, Onyxia, Uldaman and Sunken Temple have active encounter recovery tests.
   See [dungeon failover](CLUSTER.md#dungeons-and-battlegrounds) for the current coverage.
 * **GM commands.** The [command reference](COMMANDS.md#not-yet-implemented) lists the remaining
   ArcEmu commands, including waypoint editing, arena administration and the flight cheat.

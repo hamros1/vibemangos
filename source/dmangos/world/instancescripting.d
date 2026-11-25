@@ -214,14 +214,15 @@ final class InstanceScript : InstanceHost
         pendingSummons = null;
         size_t index;
         EntityRef[] missing;
-        EntityRef[] restored;
+        struct RestoredActor { EntityRef entity; bool summoned; }
+        RestoredActor[] restored;
         map.migrateIn(encodeBundle(null, pending), (const ref Migrant migrant) {
             const guid = durableSummons[index++];
             auto object = restoreSummon(migrant);
             if (object is null && guid.isCreature)
                 missing ~= guid;
             else if (object !is null)
-                restored ~= guid;
+                restored ~= RestoredActor(guid, migrant.kind == MigrantKind.summonedCreature);
             return object;
         });
         if (pendingScriptRuns.length && restoreScriptRuns !is null)
@@ -229,11 +230,11 @@ final class InstanceScript : InstanceHost
             restoreScriptRuns(pendingScriptRuns);
             pendingScriptRuns = null;
         }
-        foreach (entity; restored)
-            if (entity.isCreature)
-                raise(CreatureLoaded(entity));
+        foreach (actor; restored)
+            if (actor.entity.isCreature)
+                raise(CreatureLoaded(actor.entity, actor.summoned));
             else
-                raise(ObjectLoaded(entity));
+                raise(ObjectLoaded(actor.entity));
         foreach (creature; missing)
             raise(CreatureEvaded(creature));
     }

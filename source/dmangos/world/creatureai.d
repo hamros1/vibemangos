@@ -341,10 +341,15 @@ final class CreatureAI : Scripted, CreatureHost, ScourgeCampHost
     ///
     this(Creature me)
     {
-        enum uint noAggroOnSight = 0x02; // CREATURE_EXTRA_FLAG_NO_AGGRO_ON_SIGHT
         this.me = me;
-        react = (me.template_.extraFlags & noAggroOnSight) ? ReactState.defensive : ReactState.aggressive;
+        react = defaultReaction;
         meleeEnabled = !(me.template_.staticFlags1 & staticFlagNoMeleeFlee); // `CreatureAI::CreatureAI`
+    }
+
+    private ReactState defaultReaction() const
+    {
+        enum uint noAggroOnSight = 0x02; // CREATURE_EXTRA_FLAG_NO_AGGRO_ON_SIGHT
+        return (me.template_.extraFlags & noAggroOnSight) ? ReactState.defensive : ReactState.aggressive;
     }
 
     /// Whether it is in combat.

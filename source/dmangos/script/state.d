@@ -10,7 +10,7 @@
  */
 module dmangos.script.state;
 
-import std.traits : hasUDA, isArray, isSomeString, isStaticArray;
+import std.traits : getUDAs, hasUDA, isArray, isSomeString, isStaticArray;
 
 import dmangos.bytes : ByteReader, ByteWriter, isWireScalar;
 
@@ -19,6 +19,12 @@ enum transient;
 
 /// Saved state added at the end of an existing script layout; older records use its default.
 enum appended;
+
+/// A later append to a layout that has already used `@appended` (version 1).
+struct AppendedSince
+{
+    uint version_;
+}
 
 /// The fingerprint of `S`'s saved layout.
 enum ulong layoutFingerprint(S) = fnv1a(layoutOf!S);
@@ -36,12 +42,15 @@ bool loadScript(S)(ref S state, ref ByteReader r)
     try
     {
         const stored = r.read!ulong;
-        const older = !compatibleLayout(stored, layoutFingerprint!S);
-        enum prior = fnv1a(layoutOf!(S, true));
-        if (older && !compatibleLayout(stored, prior))
+        uint through = uint.max;
+        if (!compatibleLayout(stored, layoutFingerprint!S))
+            static foreach (version_; 0 .. appendedVersion!S)
+                if (compatibleLayout(stored, fnv1a(layoutOf!(S, version_))))
+                    through = version_;
+        if (through == uint.max && !compatibleLayout(stored, layoutFingerprint!S))
             return false;
         S read;
-        readValue(r, read, older);
+        readValue(r, read, through);
         state = read;
         return true;
     }
@@ -50,6 +59,23 @@ bool loadScript(S)(ref S state, ref ByteReader r)
 }
 
 private:
+
+template fieldVersion(alias field)
+{
+    static if (hasUDA!(field, AppendedSince))
+        enum uint fieldVersion = getUDAs!(field, AppendedSince)[0].version_;
+    else
+        enum uint fieldVersion = hasUDA!(field, appended) ? 1 : 0;
+}
+
+uint appendedVersion(S)()
+{
+    uint highest = 1; // version 0 also covers older layouts with nested appended fields
+    static foreach (i, field; S.tupleof)
+        if (fieldVersion!(S.tupleof[i]) > highest)
+            highest = fieldVersion!(S.tupleof[i]);
+    return highest;
+}
 
 bool compatibleLayout(ulong stored, ulong current)
 {
@@ -88,14 +114,14 @@ ulong legacyDungeonLayout(ulong current) pure nothrow @nogc @safe
     }
 }
 
-string layoutOf(T, bool omitAppended = false)()
+string layoutOf(T, uint through = uint.max)()
 {
     static if (is(T == struct))
     {
         string s = T.stringof ~ "{";
         static foreach (i, field; T.tupleof)
-            static if (!hasUDA!(T.tupleof[i], transient) && !(omitAppended && hasUDA!(T.tupleof[i], appended)))
-                s ~= __traits(identifier, T.tupleof[i]) ~ ":" ~ layoutOf!(typeof(field), omitAppended) ~ ";";
+            static if (!hasUDA!(T.tupleof[i], transient) && fieldVersion!(T.tupleof[i]) <= through)
+                s ~= __traits(identifier, T.tupleof[i]) ~ ":" ~ layoutOf!(typeof(field), through) ~ ";";
         return s ~ "}";
     }
     else static if (is(T E == enum))
@@ -108,9 +134,9 @@ string layoutOf(T, bool omitAppended = false)()
         return s ~ ")";
     }
     else static if (isStaticArray!T)
-        return layoutOf!(typeof(T.init[0]), omitAppended) ~ "[" ~ T.length.stringof ~ "]";
+        return layoutOf!(typeof(T.init[0]), through) ~ "[" ~ T.length.stringof ~ "]";
     else static if (isArray!T)
-        return layoutOf!(typeof(T.init[0]), omitAppended) ~ "[]";
+        return layoutOf!(typeof(T.init[0]), through) ~ "[]";
     else
         return T.stringof;
 }
@@ -159,7 +185,7 @@ void writeValue(T)(ref ByteWriter w, const ref T value)
             ~ " (hold guids as EntityRef; mark caches @transient)");
 }
 
-void readValue(T)(ref ByteReader r, ref T value, bool omitAppended = false)
+void readValue(T)(ref ByteReader r, ref T value, uint through = uint.max)
 {
     static if (is(T E == enum))
         value = cast(T) r.read!E;
@@ -169,20 +195,13 @@ void readValue(T)(ref ByteReader r, ref T value, bool omitAppended = false)
     {
         static foreach (i, field; T.tupleof)
             static if (!hasUDA!(T.tupleof[i], transient))
-            {
-                static if (hasUDA!(T.tupleof[i], appended))
-                {
-                    if (!omitAppended)
-                        readValue(r, value.tupleof[i]);
-                }
-                else
-                    readValue(r, value.tupleof[i], omitAppended);
-            }
+                if (fieldVersion!(T.tupleof[i]) <= through)
+                    readValue(r, value.tupleof[i], through);
     }
     else static if (isStaticArray!T)
     {
         foreach (ref element; value)
-            readValue(r, element, omitAppended);
+            readValue(r, element, through);
     }
     else static if (isSomeString!T)
         value = cast(T) r.readString(r.read!uint);
@@ -190,7 +209,7 @@ void readValue(T)(ref ByteReader r, ref T value, bool omitAppended = false)
     {
         value.length = r.read!uint;
         foreach (ref element; value)
-            readValue(r, element, omitAppended);
+            readValue(r, element, through);
     }
 }
 
@@ -200,21 +219,30 @@ unittest
     {
         uint cleared;
         @appended uint phase = 2;
+        @AppendedSince(2) uint wave = 1;
     }
 
     ByteWriter old;
-    old.put(fnv1a(layoutOf!(Encounter, true)));
+    old.put(fnv1a(layoutOf!(Encounter, 0)));
     old.put(19u);
     auto reader = ByteReader(old.data);
     Encounter state;
-    assert(loadScript(state, reader) && state.cleared == 19 && state.phase == 2);
+    assert(loadScript(state, reader) && state.cleared == 19 && state.phase == 2 && state.wave == 1);
+
+    ByteWriter previous;
+    previous.put(fnv1a(layoutOf!(Encounter, 1)));
+    previous.put(20u);
+    previous.put(3u);
+    reader = ByteReader(previous.data);
+    assert(loadScript(state, reader) && state.cleared == 20 && state.phase == 3 && state.wave == 1);
 
     state.phase = 3;
+    state.wave = 4;
     ByteWriter current;
     saveScript(state, current);
     reader = ByteReader(current.data);
     Encounter restored;
-    assert(loadScript(restored, reader) && restored.cleared == 19 && restored.phase == 3);
+    assert(loadScript(restored, reader) && restored.cleared == 20 && restored.phase == 3 && restored.wave == 4);
 }
 
 unittest

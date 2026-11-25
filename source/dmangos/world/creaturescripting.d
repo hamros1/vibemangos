@@ -29,7 +29,9 @@ mixin template CreatureScripting()
         noChase = 2,
         noMelee = 4,
         forceMelee = 8,
+        reactionOverride = 16,
     }
+    private enum uint reactionShift = 5, reactionMask = 3;
 
     /// Its script: `name` of `runtime` (no script if none serves it).
     void setBehaviour(ScriptRuntime runtime, string name)
@@ -83,6 +85,8 @@ mixin template CreatureScripting()
             const defaultMelee = !(me.template_.staticFlags1 & staticFlagNoMeleeFlee);
             if (meleeEnabled != defaultMelee)
                 flags |= meleeEnabled ? BehaviourFlags.forceMelee : BehaviourFlags.noMelee;
+            if (react != defaultReaction)
+                flags |= cast(ubyte)(BehaviourFlags.reactionOverride | (cast(uint) react << reactionShift));
         }
         w.put(flags);
         w.put(cast(uint) state.length);
@@ -97,6 +101,12 @@ mixin template CreatureScripting()
         combatMovement_ = !(flags & BehaviourFlags.noChase);
         if (flags & (BehaviourFlags.noMelee | BehaviourFlags.forceMelee))
             meleeEnabled = (flags & BehaviourFlags.forceMelee) != 0;
+        if (flags & BehaviourFlags.reactionOverride)
+        {
+            const savedReaction = (flags >> reactionShift) & reactionMask;
+            if (savedReaction <= typeof(react).max)
+                react = cast(typeof(react)) savedReaction;
+        }
         auto state = ByteReader(r.readBytes(r.read!uint));
         if (scripts_ !is null && state.remaining && !scripts_.load(behaviour, state))
         {

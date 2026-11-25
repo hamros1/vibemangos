@@ -14,7 +14,7 @@ module dmangos.scripts.blackwinglair;
 import core.time : Duration;
 
 import dmangos.script;
-import dmangos.script.state : appended;
+import dmangos.script.state : appended, AppendedSince;
 
 /// Where `who` is, as `ctx` sees it (`Location.init` if it is not here).
 private Location where(C)(ref C ctx, EntityRef who)
@@ -97,6 +97,7 @@ enum BwlSignal : uint
     vaelIntro = 101,    /// the copy to Vaelastrasz: players came near
     vaelTrigger = 102,  /// the area trigger to the copy
     nefariusLine = 103, /// Vaelastrasz to his Nefarius: say line `value`
+    saveNefarian = 104, /// Nefarian's flight or combat changed
 }
 
 /// A random length between `low` and `high` milliseconds.
@@ -133,19 +134,21 @@ struct BlackwingLair
     @transient EntityRef[] loadedEggs;
     @transient EntityRef[64] defenders;
     @transient ubyte dragonspawn, blackwingDefenders;
-    @transient EntityRef[2] tunnelSpawners;
-    @transient EntityRef[48] drakonidsSeen;
-    @transient ubyte drakonidsSlain;
+    @transient EntityRef[] drakonidsSeen;
     @transient EntityRef[] eggsToGo;
-    @transient bool recoveringRazorgore, resetOldEggPhase;
+    @transient bool recoveringRazorgore, resetOldEggPhase, recoveringNefarian;
 
     enum Step : ubyte { defense, nefarian, eggsGone }
     Schedule!Step steps;
     @appended EntityRef[] brokenEggs;
     @appended ushort eggTotal;
+    @AppendedSince(2) EntityRef[2] tunnelSpawners;
+    @AppendedSince(2) EntityRef nefarianDragon;
+    @AppendedSince(2) ubyte drakonidsSlain;
 
     void on(ref InstanceContext copy, const ref Restored e)
     {
+        restoreNefarian(copy);
         const state = encounters[BwlEncounter.razorgore];
         if (state == EncounterState.special && copy.entryKilled(npcRazorgore))
         {
@@ -172,6 +175,18 @@ struct BlackwingLair
 
     void on(ref InstanceContext copy, const ref PlayerEntered e)
     {
+        if (recoveringNefarian)
+        {
+            recoveringNefarian = false;
+            if (encounters[BwlEncounter.nefarian] == EncounterState.inProgress)
+            {
+                if (nefarius && !copy.alive(copy.victimOf(nefarius)))
+                    copy.attack(nefarius, e.player);
+                foreach (drakonid; drakonidsSeen)
+                    if (!copy.alive(copy.victimOf(drakonid)))
+                        copy.attack(drakonid, e.player);
+            }
+        }
         if (resetOldEggPhase)
         {
             resetOldEggPhase = false;
@@ -192,6 +207,28 @@ struct BlackwingLair
             }
         if (eggsBroken && eggsBroken == eggTotal)
             steps.after(Step.eggsGone, 0.msecs);
+    }
+
+    private void restoreNefarian(ref InstanceContext copy)
+    {
+        const state = encounters[BwlEncounter.nefarian];
+        if (state != EncounterState.inProgress && state != EncounterState.special)
+            return;
+        const hasWave = tunnelSpawners[0] && tunnelSpawners[1]
+            && copy.hasSavedCreature(tunnelSpawners[0]) && copy.hasSavedCreature(tunnelSpawners[1]);
+        const hasDragon = nefarianDragon && copy.hasSavedCreature(nefarianDragon);
+        if (state == EncounterState.inProgress ? hasWave : hasDragon || steps.pending(Step.nefarian))
+        {
+            recoveringNefarian = true;
+            copy.waitForPlayer();
+        }
+        else
+        {
+            // Older active saves omitted the actors needed to resume this stage.
+            encounters[BwlEncounter.nefarian] = EncounterState.failed;
+            cleanupNefarian(copy);
+            copy.checkpoint();
+        }
     }
 
     void on(ref InstanceContext copy, const ref EventHappened e)
@@ -285,6 +322,8 @@ struct BlackwingLair
 
     void on(ref InstanceContext copy, const ref CreatureLoaded e)
     {
+        import std.algorithm.searching : canFind;
+
         draw(copy);
         switch (e.creature.entry)
         {
@@ -295,8 +334,13 @@ struct BlackwingLair
             vaelastrasz = e.creature;
             break;
         case npcVictorNefarius:
-            if (!nefarius)
+            // Vaelastrasz's intro can load a second copy of Victor Nefarius.
+            if (!e.summoned)
+            {
                 nefarius = e.creature;
+                if (nefarianDragon || encounters[BwlEncounter.nefarian] == EncounterState.done)
+                    copy.despawn(nefarius);
+            }
             break;
         case npcNefariansTroops:
             troops = e.creature;
@@ -312,9 +356,15 @@ struct BlackwingLair
                 copy.despawn(e.creature);
             break;
         default:
-            foreach (entry; drakonids)
-                if (e.creature.entry == entry)
-                    remember(drakonidsSeen[], e.creature);
+            const state = encounters[BwlEncounter.nefarian];
+            if (state == EncounterState.special && spawners[].canFind(e.creature.entry))
+                copy.despawn(e.creature);
+            if ((state == EncounterState.inProgress || state == EncounterState.special)
+                && drakonids[].canFind(e.creature.entry) && !drakonidsSeen.canFind(e.creature))
+            {
+                drakonidsSeen ~= e.creature;
+                copy.checkpointCreature(e.creature);
+            }
             break;
         }
     }
@@ -433,6 +483,8 @@ struct BlackwingLair
 
     void on(ref InstanceContext copy, const ref CreatureDied e)
     {
+        import std.algorithm.searching : countUntil;
+
         switch (e.creature.entry)
         {
         case npcRazorgore:
@@ -460,9 +512,11 @@ struct BlackwingLair
                 }
             break;
         default:
-            foreach (entry; drakonids)
-                if (e.creature.entry == entry && ++drakonidsSlain >= drakonidsToSlay
-                        && encounters[BwlEncounter.nefarian] == EncounterState.inProgress)
+            const index = drakonidsSeen.countUntil(e.creature);
+            if (index >= 0)
+            {
+                drakonidsSeen = drakonidsSeen[0 .. index] ~ drakonidsSeen[index + 1 .. $];
+                if (encounters[BwlEncounter.nefarian] == EncounterState.inProgress && ++drakonidsSlain == drakonidsToSlay)
                 {
                     set(copy, BwlEncounter.nefarian, EncounterState.special);
                     foreach (ref s; tunnelSpawners)
@@ -473,6 +527,8 @@ struct BlackwingLair
                         }
                     steps.after(Step.nefarian, 5.seconds);
                 }
+                copy.checkpoint();
+            }
             break;
         }
     }
@@ -488,8 +544,16 @@ struct BlackwingLair
             }
             return;
         }
+        if (e.id == BwlSignal.saveNefarian)
+        {
+            if (e.from == nefarianDragon && encounters[BwlEncounter.nefarian] == EncounterState.special)
+                copy.checkpointCreature(nefarianDragon);
+            return;
+        }
         if (e.id > BwlEncounter.max)
             return;
+        if (e.id == BwlEncounter.nefarian && e.value == EncounterState.inProgress && e.from.entry == npcVictorNefarius)
+            nefarius = e.from;
         set(copy, cast(BwlEncounter) e.id, cast(EncounterState) e.value);
     }
 
@@ -527,9 +591,16 @@ struct BlackwingLair
                 drakonidsSlain = 0;
                 tunnelSpawners[0] = copy.summon(leftTunnel, nefarianLocs[0], 3600 * 1000);
                 tunnelSpawners[1] = copy.summon(rightTunnel, nefarianLocs[1], 3600 * 1000);
+                copy.checkpointCreature(nefarius);
+                foreach (spawner; tunnelSpawners)
+                    if (spawner)
+                        copy.checkpointCreature(spawner);
             }
             if (state == EncounterState.failed)
                 cleanupNefarian(copy);
+            if (state == EncounterState.done)
+                nefarianDragon = EntityRef.init;
+            copy.checkpoint();
             break;
         case BwlEncounter.vaelastrasz, BwlEncounter.lashlayer, BwlEncounter.firemaw, BwlEncounter.ebonroc,
                 BwlEncounter.flamegor, BwlEncounter.chromaggus:
@@ -548,14 +619,12 @@ struct BlackwingLair
                 copy.despawn(s);
                 s = EntityRef.init;
             }
-        foreach (ref d; drakonidsSeen)
-            if (d)
-            {
-                if (copy.alive(d))
-                    copy.despawn(d);
-                d = EntityRef.init;
-            }
+        foreach (d; drakonidsSeen)
+            if (copy.alive(d))
+                copy.despawn(d);
+        drakonidsSeen = null;
         drakonidsSlain = 0;
+        nefarianDragon = EntityRef.init;
     }
 
     void on(ref InstanceContext copy, Step step)
@@ -569,14 +638,20 @@ struct BlackwingLair
             break;
         case Step.nefarian:
             // Nefarian comes; Nefarius blinks away.
-            const nefarian = copy.summon(npcNefarian, nefarianLocs[2], 0);
+            nefarianDragon = copy.summon(npcNefarian, nefarianLocs[2], 0);
+            if (!nefarianDragon)
+            {
+                steps.after(Step.nefarian, retry);
+                copy.checkpoint();
+                break;
+            }
             if (nefarius && copy.alive(nefarius))
             {
                 copy.castSpell(nefarius, 22_681, nefarius); // Shadowblink
                 copy.despawn(nefarius, 2500);
             }
-            if (nefarian)
-                copy.log("Nefarian comes");
+            copy.checkpointCreature(nefarianDragon);
+            copy.log("Nefarian comes");
             break;
         case Step.eggsGone:
             foreach (g; eggsToGo)
@@ -1322,13 +1397,13 @@ struct VictorNefarius
 
     void on(ref CreatureContext me, const ref EnteredCombat e)
     {
-        me.signalDungeon(BwlEncounter.nefarian, EncounterState.inProgress);
         steps.after(Step.bolt, 3.seconds);
         steps.after(Step.fear, 8.seconds);
         steps.after(Step.volley, 13.seconds);
         steps.after(Step.silence, 23.seconds);
         steps.after(Step.command, 30.seconds);
         steps.after(Step.blink, 40.seconds);
+        me.signalDungeon(BwlEncounter.nefarian, EncounterState.inProgress);
     }
 
     void on(ref CreatureContext me, Step step)
@@ -1450,6 +1525,7 @@ struct Nefarian
         me.combatMovement(false);
         me.flying(true);
         me.moveTo(landing[1], 1, true);
+        me.signalDungeon(BwlSignal.saveNefarian);
     }
 
     void on(ref CreatureContext me, const ref MovementDone e)
@@ -1459,12 +1535,15 @@ struct Nefarian
         if (e.point == 1)
             me.say(sayAggro);
         if (e.point + 1 < landing.length)
-            return me.moveTo(landing[e.point + 1], e.point + 1, true);
-        // Down.
-        landed = true;
-        me.emote(293); // EMOTE_ONESHOT_LAND
-        me.flying(false);
-        steps.after(Step.attackStart, 4.seconds);
+            me.moveTo(landing[e.point + 1], e.point + 1, true);
+        else
+        {
+            landed = true;
+            me.emote(293); // EMOTE_ONESHOT_LAND
+            me.flying(false);
+            steps.after(Step.attackStart, 4.seconds);
+        }
+        me.signalDungeon(BwlSignal.saveNefarian);
     }
 
     void on(ref CreatureContext me, const ref KilledUnit e)
@@ -1509,6 +1588,7 @@ struct Nefarian
             steps.after(Step.cleave, 7.seconds);
             steps.after(Step.tailLash, 10.seconds);
             steps.after(Step.classCall, 35.seconds);
+            me.signalDungeon(BwlSignal.saveNefarian);
             break;
         case Step.shadowFlame:
             steps.after(step, me.castSelf(shadowFlame) == ActionResult.ok ? 12.seconds : retry);
@@ -1671,7 +1751,11 @@ unittest
     const before = lair.summoned.length;
     assert(before == 6, "the two tunnels' spawners");
     foreach (i; 0 .. 42)
-        runtime.raise(h, c, CreatureDied(bwlCreature(14261, 100 + i), EntityRef(7)));
+    {
+        const drakonid = bwlCreature(14261, 100 + i);
+        runtime.raise(h, c, CreatureLoaded(drakonid, true));
+        runtime.raise(h, c, CreatureDied(drakonid, EntityRef(7)));
+    }
     runtime.tick(h, c, 5000);
     assert(lair.summoned[$ - 1].entry == npcNefarian);
 }

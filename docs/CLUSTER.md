@@ -526,6 +526,9 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   In Blackwing Lair, Razorgore's destroyed eggs stay gone and surviving defenders return with
   their saved health and wave timer. A player uses the orb again to resume control during the
   egg phase. The freed dragon's fight and the open exit after his death also survive a crash.
+  Nefarian's raid keeps its drakonid kill count, surviving drakonids and the original tunnel
+  spawners. The tunnels continue their waves. After the 42nd kill, the saved transition timer
+  brings in one dragon, whose approach and ground fight both resume after a crash.
 * **GM commands.** `.instance info`, `.instance shutdown` and `.instance reset` of a copy another node
   hosts go to that node and its answer comes back; `.instance resetall` goes to every node.
 

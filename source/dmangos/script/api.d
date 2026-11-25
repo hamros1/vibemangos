@@ -1147,6 +1147,7 @@ struct GameObjectContext
 struct CreatureLoaded
 {
     EntityRef creature;
+    bool summoned;
 }
 
 /// A game object of the copy came into the world.

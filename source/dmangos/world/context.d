@@ -8153,7 +8153,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             {
                 import dmangos.script.api : CreatureLoaded, EntityRef;
 
-                script.raise(CreatureLoaded(EntityRef(creature.guid)));
+                script.raise(CreatureLoaded(EntityRef(creature.guid), true));
             }
     }
 

@@ -816,6 +816,7 @@ unittest
         return;
     enum uint nefariusEntry = 10162, nefarianEntry = 11583;
     static immutable uint[6] drakonids = [14261, 14262, 14263, 14264, 14265, 14302];
+    static immutable uint[5] spawners = [14307, 14309, 14310, 14311, 14312];
     auto s = new Scene(469, Position(-7585, -1262, 481.6f), [classWarrior, classMage]);
     s.run(1.seconds);
     auto nefarius = s.the(nefariusEntry);
@@ -827,44 +828,68 @@ unittest
     s.run(41.seconds);
     foreach (spell; [22677, 22678, 22665, 22666, 22667, 22664])
         assert(s.castBy(nefariusEntry, spell), format!"Nefarius: %s not cast\n%s"(spell, s.seen()));
-    // The tunnels' spawners: each one's Spawn Drakonid (22659, the tick of its Drakonid Spawner) calls a drakonid of
-    // its colour. (The tick itself is not cast: a creature's periodic trigger auras do nothing yet, see the report;
-    // the spawners' EventAI sends a chromatic one a minute. So the test casts the tick, and summons the rest.)
+    // The two tunnel auras have already had time to produce their coloured waves.
+    ulong[] liveDrakonids()
     {
-        import dmangos.world.eventai : castTriggered;
-
-        static immutable uint[2][5] colours = [[14307, 14265], [14309, 14264], [14310, 14262], [14311, 14263],
-            [14312, 14261]];
-        foreach (c; colours)
-        {
-            auto spawner = s.find(c[0]);
-            if (spawner is null)
-                continue;
-            const before = s.all(c[1]).length;
-            assert(spawner.ai.scriptCast(22659, spawner.guid, castTriggered), "Spawn Drakonid not cast");
-            s.run(400.msecs);
-            assert(s.all(c[1]).length == before + 1, format!"spawner %s called no drakonid %s"(c[0], c[1]));
-        }
+        ulong[] ids;
+        foreach (entry; drakonids[0 .. 5])
+            foreach (drakonid; s.all(entry))
+                ids ~= drakonid.guid;
+        return ids;
     }
+    assert(liveDrakonids().length >= 2, "the tunnel auras produce coloured drakonids");
     // Forty-two drakonids slain (those the tunnels send, and as many more as they would have).
     s.stayWith = null;
     s.forget();
-    size_t slain;
-    const enough = s.runUntil(() {
-        foreach (entry; drakonids)
-            foreach (d; s.all(entry))
-            {
-                s.kill(d);
-                ++slain;
-            }
-        if (s.ask(7) == 1)
-            s.summon(drakonids[slain % 5], Position(-7599.32f, -1191.72f, 475.545f));
-        return s.ask(7) == 4;
-    }, 120.seconds, 1.seconds);
-    assert(enough, format!"%s drakonids slain, no Nefarian"(slain));
-    assert(slain >= 42, format!"Nefarian comes after %s drakonids"(slain));
+    ulong[] portals;
+    foreach (entry; spawners)
+        foreach (portal; s.all(entry))
+            portals ~= portal.guid;
+    assert(portals.length == 2);
+    const hostGuid = nefarius.guid;
+    const pen = Position(-7599.32f, -1191.72f, 475.545f);
+    auto wound = s.summon(drakonids[0], pen);
+    s.hurtTo(wound, 63);
+    const wounded = wound.guid, woundedHealth = s.healthOf(wound);
+    void killDrakonid(size_t i)
+    {
+        s.kill(s.summon(drakonids[i % drakonids.length], pen));
+        s.run(200.msecs);
+    }
+    foreach (i; 0 .. 12)
+        killDrakonid(i);
+    s.restartAfterCrash();
+    assert(s.ask(7) == 1 && s.the(nefariusEntry).guid == hostGuid);
+    foreach (guid; portals)
+        assert(s.map.creatureAt(guid) !is null, "the same tunnel spawner resumed");
+    assert(s.map.creatureAt(wounded) !is null && s.healthOf(s.map.creatureAt(wounded)) == woundedHealth);
+    const resumedWave = liveDrakonids();
+    assert(s.runUntil(() {
+        foreach (guid; liveDrakonids())
+            if (!resumedWave.canFind(guid))
+                return true;
+        return false;
+    }, 6.seconds), "the restored tunnel auras produce another wave");
+    foreach (i; 12 .. 41)
+        killDrakonid(i);
+    assert(s.ask(7) == 1, "41 kills cannot start the transition");
+    killDrakonid(41);
+    assert(s.ask(7) == 4 && s.find(nefarianEntry) is null, "kill 42 starts the transition timer");
+    s.restartAfterCrash();
+    s.run(1.seconds);
+    assert(s.ask(7) == 4 && s.find(nefarianEntry) is null, "the transition still has time remaining");
+    foreach (guid; portals)
+        assert(s.map.creatureAt(guid) is null, "the closed tunnel did not restart");
     assert(s.runUntil(() => s.find(nefarianEntry) !is null, 10.seconds), "no Nefarian");
     auto nefarian = s.the(nefarianEntry);
+    s.run(1.seconds);
+    const dragon = nefarian.guid;
+    assert(nefarian.flyingMovement && !nefarian.ai.inCombat);
+    s.restartAfterCrash();
+    nefarian = s.the(nefarianEntry);
+    assert(s.all(nefarianEntry).length == 1 && nefarian.guid == dragon, "the original dragon resumed his approach");
+    assert(nefarian.flyingMovement && !nefarian.ai.inCombat);
+    assert(s.find(nefariusEntry) is null, "the human form stayed gone");
     assert(s.runUntil(() => nefarian.ai.inCombat, 60.seconds), "Nefarian does not land to fight\n" ~ s.seen());
     // (His first line, -1469007, he yells where he appears: 330 yards from the hall, beyond a yell's 300.)
     assert(s.said(-1_469_009), "his line as he comes\n" ~ s.seen());
@@ -874,6 +899,17 @@ unittest
         assert(s.castBy(nefarianEntry, spell), format!"Nefarian: %s not cast\n%s"(spell, s.seen()));
     assert((s.castBy(nefarianEntry, 23397) && s.said(-1_469_014)) || (s.castBy(nefarianEntry, 23410)
         && s.said(-1_469_013)), "no class call\n" ~ s.seen());
+    s.pressing = false; // let the checkpoint catch up with the wound without adding further damage
+    s.hurtTo(nefarian, 62);
+    s.run(3.seconds);
+    const health = s.healthOf(nefarian);
+    s.restartAfterCrash();
+    nefarian = s.the(nefarianEntry);
+    assert(nefarian.guid == dragon && nefarian.ai.inCombat && !nefarian.flyingMovement,
+        "the original dragon is still fighting on the ground");
+    assert(s.healthOf(nefarian) == health,
+        format!"the wounded dragon recovered with %s%% health instead of %s%%"(s.healthOf(nefarian), health));
+    s.stayWith = nefarian;
     s.hurtTo(nefarian, 19);
     s.run(5.seconds);
     assert(s.castBy(nefarianEntry, 23362) && s.said(-1_469_010), format!"the bones do not rise (%s%%)\n%s"(s.healthOf(nefarian), s.seen()));
@@ -883,6 +919,8 @@ unittest
     s.kill(nefarian);
     s.run(2.seconds);
     assert(s.said(-1_469_012) && s.ask(7) == 3, "his death");
+    s.restartAfterCrash();
+    assert(s.ask(7) == 3 && s.find(nefarianEntry) is null && s.find(nefariusEntry) is null);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
