@@ -2987,7 +2987,11 @@ private:
         const now = context.clock();
         int paid; // the power it cost: most of it back for each target it missed (`DISCOUNT_POWER_ON_MISS`)
         bool cooldownStarted;
-        if (!c.triggered)
+        // An object-only spell whose placement is saved first (`commitWildObjectCast`) pays once it is saved: a
+        // failed save leaves its cooldown, power, reagents and item untouched.
+        const wildObjectOnly = spell.effect[0] == SpellEffect.summonObjectWild && spell.effect[1] == SpellEffect.none
+            && spell.effect[2] == SpellEffect.none && spell.casting.speed <= 0;
+        void payForCast()
         {
             // The cooldowns start: the item's, else the spell's; one that starts on an event (Presence of Mind,
             // Nature's Swiftness: `SPELL_ATTR_COOLDOWN_ON_EVENT`) when its aura ends (`cooldownEvent`), the spell
@@ -3026,6 +3030,8 @@ private:
                 takeCastItem(c.castItemEntry, c.castItemGuid); // its charges, and the item if used up
             flushInventory();
         }
+        if (!c.triggered && !wildObjectOnly)
+            payForCast();
 
         // The targets of each effect, and whether each hostile one is hit.
         TargetResult[] results;
@@ -3244,16 +3250,7 @@ private:
             takeAmmo(spell);
             flushInventory();
         }
-        enum uint notAnAction = 0x10000000; // SPELL_ATTR_EX2_NOT_AN_ACTION
-        if (!c.triggered)
-        {
-            if (!(spell.attributesEx2 & notAnAction))
-                interruptAurasOnCast(AuraInterrupt.actionLate, spell); // what a cast ends as it completes
-            if (cooldownStarted)
-                checkpointCooldowns();
-        }
-        if (spell.effect[0] == SpellEffect.summonObjectWild && spell.effect[1] == SpellEffect.none
-            && spell.effect[2] == SpellEffect.none && spell.casting.speed <= 0)
+        if (wildObjectOnly)
         {
             import dmangos.world.caster : Caster;
             import dmangos.world.spellsummons : OutdoorObjectCast, commitWildObjectCast;
@@ -3278,6 +3275,16 @@ private:
                     return SpellCastResult.error;
                 }
             }
+            if (!c.triggered)
+                payForCast();
+        }
+        enum uint notAnAction = 0x10000000; // SPELL_ATTR_EX2_NOT_AN_ACTION
+        if (!c.triggered)
+        {
+            if (!(spell.attributesEx2 & notAnAction))
+                interruptAurasOnCast(AuraInterrupt.actionLate, spell); // what a cast ends as it completes
+            if (cooldownStarted)
+                checkpointCooldowns();
         }
         if (!c.triggered)
             deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, SpellCastResult.ok));
@@ -7919,4 +7926,53 @@ unittest
     keeper.loseAura(keeper.auras.find(1098), map);
     assert(session.charmed is null && keeper.petOwner == 0 && keeper.petData is null, "its own again");
     assert(keeper.values.get!UNIT_FIELD_FACTIONTEMPLATE == ownFaction);
+}
+
+// An object-only spell whose saved placement fails costs nothing: no cooldown, no mana.
+unittest
+{
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.clientdata : spellDurationFormat;
+    import dmangos.world.defines : Power;
+    import dmangos.world.fencing : FencedDatabase;
+    import dmangos.world.gameobject : GameObjectTemplate, GameObjectType;
+    import dmangos.world.movement : Position;
+    import dmangos.world.playercreate : NewSpell;
+    import dmangos.world.spellcast : SpellCastResult, SpellTargets, TargetFlags;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db, (ref WorldConfig c) { c.cluster.nodeId = 1; });
+    context.ownsCell = (uint, ulong) => true;
+    context.client.spellDurations = typeof(context.client.spellDurations).parse(buildDbc(spellDurationFormat,
+        [[1u, 60_000, 0, 60_000]]), "SpellDuration.dbc");
+    enum uint blanket = 91_505, picnic = 91_506;
+    GameObjectTemplate rug = {entry: blanket, type: GameObjectType.generic, displayId: 1, name: "Picnic Blanket"};
+    context.data.gameObjectTemplates[blanket] = rug;
+    auto spell = testSpell(picnic, SpellEffect.summonObjectWild, ImplicitTarget.caster, 1);
+    spell.miscValue[0] = blanket;
+    spell.casting.durationIndex = 1;
+    spell.casting.powerType = Power.mana;
+    spell.casting.manaCost = 10;
+    spell.recoveryTime = 60_000;
+    context.data.spells.spells[picnic] = spell;
+    auto client = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f),
+        characterLevel: 20, setup: (ref c) {
+            c.classId = classMage;
+            c.power[Power.mana] = 80;
+            c.spells = [NewSpell(picnic, true)];
+        });
+    auto me = client.session.inWorld;
+    bool leased;
+    context.database = new FencedDatabase(db, () => leased);
+    const mana = me.player.values.get!UNIT_FIELD_POWER1(Power.mana);
+    assert(me.castSpell(context.data.spells.spell(picnic), SpellTargets(TargetFlags.self, 0), false, 0)
+        == SpellCastResult.error, "the placement could not be saved");
+    assert(me.player.values.get!UNIT_FIELD_POWER1(Power.mana) == mana, "its mana kept");
+    leased = true;
+    assert(me.castSpell(context.data.spells.spell(picnic), SpellTargets(TargetFlags.self, 0), false, 0)
+        == SpellCastResult.ok, "and no cooldown started");
+    assert(me.player.values.get!UNIT_FIELD_POWER1(Power.mana) == mana - 10, "paid once saved");
 }
