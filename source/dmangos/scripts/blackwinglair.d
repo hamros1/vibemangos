@@ -282,6 +282,18 @@ struct BlackwingLair
             steps.after(Step.eggsGone, 0.msecs);
     }
 
+    /**
+     * A creature gave up its fight, or the encounter's checkpoint could not bring it back: without Nefarian, or a
+     * tunnel's spawner, his encounter cannot go on, and its doors would stay shut on the raid.
+     */
+    void on(ref InstanceContext copy, const ref CreatureEvaded e)
+    {
+        const state = encounters[BwlEncounter.nefarian];
+        if ((state == EncounterState.inProgress || state == EncounterState.special) && e.creature
+            && (e.creature == nefarianDragon || e.creature == tunnelSpawners[0] || e.creature == tunnelSpawners[1]))
+            set(copy, BwlEncounter.nefarian, EncounterState.failed);
+    }
+
     private void restoreNefarian(ref InstanceContext copy)
     {
         const state = encounters[BwlEncounter.nefarian];
@@ -2022,6 +2034,13 @@ unittest
     }
     runtime.tick(h, c, 5000);
     assert(lair.summoned[$ - 1].entry == npcNefarian);
+
+    // Nefarian lost (his checkpoint could not bring him back): the encounter fails and its door opens.
+    const nefarianDoor = bwlObject(goDoorNefarian, 6);
+    runtime.raise(h, c, ObjectLoaded(nefarianDoor));
+    assert(!lair.opened[nefarianDoor.guid]);
+    runtime.raise(h, c, CreatureEvaded(lair.summoned[$ - 1]));
+    assert(lair.opened[nefarianDoor.guid], "the way out opens");
 }
 
 version (unittest)

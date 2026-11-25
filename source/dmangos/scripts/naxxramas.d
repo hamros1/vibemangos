@@ -440,6 +440,13 @@ struct Naxxramas
         updateDoors(copy);
     }
 
+    /// Gothik gave up his fight, or his checkpoint could not bring him back: his gates must not stay shut on the raid.
+    void on(ref InstanceContext copy, const ref CreatureEvaded e)
+    {
+        if (e.creature.entry == npcGothik && gothikActive)
+            setGothik(copy, EncounterState.failed);
+    }
+
     private void setGothik(ref InstanceContext copy, EncounterState state)
     {
         if (encounters[NaxxEncounter.gothik] == EncounterState.done)
@@ -3042,4 +3049,22 @@ unittest
     runtime.raise(m, manCtx, Signal(host.hostSelf(), NaxxSignal.webWrapPull, 9));
     runtime.tick(m, manCtx, 5000);
     assert(man.casts.canFind(Maexxna.webWrapStun) && man.summoned.length == 1 && man.signals[$ - 1].value == 9);
+}
+
+/// Gothik lost to his fight (he gave it up, or his checkpoint could not bring him back): the gates open again.
+unittest
+{
+    alias self = dmangos.scripts.naxxramas;
+    auto runtime = ScriptRuntime.of!self();
+    auto host = new FakeNecropolis;
+    auto copy = InstanceContext(host);
+    auto h = runtime.create(ScriptKind.instance, "instance_naxxramas");
+    const entryGate = naxxObject(181_124);
+    const gothik = EntityRef(0xF130_0000_0000_0003UL | (ulong(npcGothik) << 24));
+    runtime.raise(h, copy, ObjectLoaded(entryGate));
+    runtime.raise(h, copy, CreatureLoaded(gothik));
+    runtime.raise(h, copy, Signal(gothik, NaxxEncounter.gothik, EncounterState.inProgress));
+    assert(!host.opened[entryGate.guid], "shut while he fights");
+    runtime.raise(h, copy, CreatureEvaded(gothik));
+    assert(host.opened[entryGate.guid], "open once he is gone from the fight");
 }
