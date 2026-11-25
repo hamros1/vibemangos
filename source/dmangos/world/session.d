@@ -801,10 +801,12 @@ package:
 
     void disconnect()
     {
-        if (state_ == WorldState.elsewhere && context.config.cluster.gateway)
+        // Played on another node (behind a gateway or not): the owner saves it and takes it out of the world, and
+        // the account is released when it says so (`ownerLeft`), as when the client goes (`disconnected`).
+        if (state_ == WorldState.elsewhere)
         {
+            releaseWhenBack = true; // before the relay: an owner in the same process answers at once
             context.relayDisconnect(ownerNode, account.id);
-            releaseWhenBack = true;
         }
         if (playing !is null)
             playing.leave("disconnected", false);
@@ -1159,6 +1161,35 @@ unittest
     assert(released == [c.account]);
 }
 
+/// A session evicted while its player is simulated on another node (no gateway): the owner saves the player and
+/// takes it out of the world, and only then is the account released, never while the character is still in play.
+unittest
+{
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.testclient : TestPlayerRelay, loggedIn, newCreationContext;
+
+    auto db = newDatabase();
+    auto home = newCreationContext(db), owner = newCreationContext(db);
+    assert(!home.config.cluster.gateway);
+    auto relay = new TestPlayerRelay(home, owner);
+    uint[] released;
+    bool ownerHadIt;
+    home.releaseSession = (uint account, ulong) {
+        ownerHadIt = owner.onlinePlayer(makeGuid(HighGuid.player, 7)) !is null;
+        released ~= account;
+    };
+    auto client = loggedIn(home, db, 7, "Wanderer", Position(-8949.95f, -132.49f, 83.53f));
+    const account = client.session.account.id;
+    assert(client.session.inWorld.migrateTo(owner.nodeId));
+    assert(client.session.state == WorldState.elsewhere && owner.onlinePlayer(makeGuid(HighGuid.player, 7)) !is null);
+
+    home.sessionEvicted(account, home.sessionSerial(client.session));
+    assert(client.session.wantsClose);
+    client.session.disconnected();
+    assert(owner.onlinePlayer(makeGuid(HighGuid.player, 7)) is null, "the kicked player left the world on its owner");
+    assert(released == [account] && !ownerHadIt, "the account is released once the owner saved the player, not before");
+}
+
 /// A player simulated on another node: handed over, relayed both ways, and back to the character screen.
 unittest
 {
@@ -1319,7 +1350,6 @@ unittest
     assert(session.returnsOverdue(session.context.clock() + WorldSession.returnsWait) == 5);
     session.returnsCame(5);
     assert(!session.gatewayPaused && relay.sent == [19, 20, 21], "then sent on, those that came back first");
-    session.context.playerRelay = null;
     session.gatewayPaused = true;
 
     foreach (i; 0 .. WorldSession.maxHeldPackets)
