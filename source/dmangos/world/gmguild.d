@@ -24,7 +24,7 @@ private:
         if (context.guilds.named(name) !is null)
         {
             redSystemMessage(format!"Guild name %s is already taken."(name));
-            return false;
+            return true;
         }
         const guild = target.ownGuild();
         greenSystemMessage(format!"Changed guild name of %s to %s. This will take effect next restart."(guild.name,

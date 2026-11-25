@@ -1650,6 +1650,12 @@ unittest
     assert(g !is null && g.leader == 7);
     gm.say(".guild create Kirin Tor");
     assert(systemMessages(gm.read()).canFind!(m => m.canFind("is already in a guild.")));
+    gm.say(".guild rename Kirin Tor");
+    {
+        const told = systemMessages(gm.read());
+        assert(told[$ - 1] == ChatColor.softRed ~ "Guild name Kirin Tor is already taken.|r"
+            && !told.canFind!(m => m.canFind(".guild rename")), "a taken name gets its own message, not the usage too");
+    }
     gm.say(".guild members");
     const members = systemMessages(gm.read());
     assert(members.canFind(ChatColor.green ~ "Now showing guild members for Kirin Tor|r"));
