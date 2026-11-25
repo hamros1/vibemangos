@@ -11,6 +11,7 @@
 module dmangos.scripts.sunkentemple;
 
 import dmangos.script;
+import dmangos.script.state : appended;
 
 /// Creatures and objects of the temple.
 enum : uint
@@ -81,8 +82,8 @@ struct SunkenTemple
     /// players to kill it before the ritual fails.
     enum Step : ubyte { wave, suppressor, suppression }
     Schedule!(Step, 4) steps;
-    bool statuesCheckpointed;
-    ubyte extinguishedFlames;
+    @appended bool statuesCheckpointed;
+    @appended ubyte extinguishedFlames;
 
     /// What the Shade of Hakkar's EventAI tells the temple when a suppressor's Suppression hits it
     /// (`creature_ai_scripts` 844004: CMaNGOS's `SetData(TYPE_AVATAR, SPECIAL)`).

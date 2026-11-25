@@ -319,3 +319,35 @@ unittest
     reader = ByteReader(legacy.data);
     assert(loadScript(dungeon, reader));
 }
+
+unittest
+{
+    // Sunken Temple's crash-recovery fields were appended: saves from before them (and the enum-blind
+    // saves of 219ecf7 that key off that older layout) still load, with those fields at their defaults.
+    import dmangos.scripts.sunkentemple : SunkenTemple;
+
+    static assert(fnv1a(layoutOf!(SunkenTemple, 0)) == 0x16663c1a96892d9bUL);
+
+    SunkenTemple temple;
+    temple.statuesDone = 3;
+    temple.statuesCheckpointed = true;
+    temple.extinguishedFlames = 5;
+    ByteWriter current;
+    saveScript(temple, current);
+    const body = current.data[ulong.sizeof .. $ - bool.sizeof - ubyte.sizeof];
+
+    foreach (const stored; [0x16663c1a96892d9bUL, 0xd55de4fa96ca9c08UL])
+    {
+        ByteWriter old;
+        old.put(stored);
+        old.putBytes(body);
+        auto reader = ByteReader(old.data);
+        SunkenTemple restored;
+        assert(loadScript(restored, reader));
+        assert(restored.statuesDone == 3 && !restored.statuesCheckpointed && restored.extinguishedFlames == 0);
+    }
+
+    auto reader = ByteReader(current.data);
+    SunkenTemple restored;
+    assert(loadScript(restored, reader) && restored.statuesCheckpointed && restored.extinguishedFlames == 5);
+}
