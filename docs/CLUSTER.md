@@ -518,6 +518,9 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   In Uldaman, a replacement resumes the Stone Keepers from the last saved keeper and wake timer.
   The next keeper waits for a player to return, and defeated keepers stay dead.
   Archaedas resumes his awakening or fight with the awake statues.
+  In Sunken Temple, the statue puzzle keeps its lit statues and Atal'alarion resumes as the same
+  creature. The Avatar of Hakkar ritual keeps its extinguished flames, closed doors, surviving
+  summons and pending waves. Defeating the Avatar keeps the doors open after a crash.
 * **GM commands.** `.instance info`, `.instance shutdown` and `.instance reset` of a copy another node
   hosts go to that node and its answer comes back; `.instance resetall` goes to every node.
 

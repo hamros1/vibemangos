@@ -1104,12 +1104,15 @@ unittest
     assert(d.loadedObject(idol) !is null, "the idol");
 }
 
-/// The statues half done when the server restarts: their order starts again from the first (their lights went).
+/// The partially solved statue puzzle and the summoned Atal'alarion survive a worker crash.
 unittest
 {
+    import dmangos.scripts.sunkentemple : Fight, SunkenTemple;
+    import dmangos.world.updatefields : UNIT_FIELD_HEALTH;
+
     if (!haveRealData())
         return;
-    enum uint atalarion = 8580;
+    enum uint atalarion = 8580, light = 148883;
     static immutable uint[6] statues = [148830, 148831, 148832, 148833, 148834, 148835];
     auto d = Dungeon.enter(109, 50);
     foreach (statue; statues[0 .. 3])
@@ -1117,19 +1120,30 @@ unittest
         d.use(d.objectOf(statue));
         d.run(2.seconds);
     }
-    d.restart();
+    const lit = d.loadedObject(light).guid;
+    d.restartAfterCrash();
+    assert(d.saved!SunkenTemple.statuesDone == 3);
+    assert(d.map.findObject(lit) !is null, "previously lit statues stay lit");
+    d.use(d.objectOf(statues[0]));
+    d.run(2.seconds);
+    assert(d.saved!SunkenTemple.statuesDone == 3, "a previously solved statue cannot advance the puzzle");
     foreach (statue; statues[3 .. $])
     {
         d.use(d.objectOf(statue));
         d.run(2.seconds);
     }
-    assert(d.summoned(atalarion) == 0, "the last three alone do not call him after the restart\n" ~ d.story);
-    foreach (statue; statues)
-    {
-        d.use(d.objectOf(statue));
-        d.run(2.seconds);
-    }
-    assert(d.summoned(atalarion) == 1, "Atal'alarion after the restart\n" ~ d.story);
+    assert(d.summoned(atalarion) == 1, "the last correct statue summons Atal'alarion\n" ~ d.story);
+    auto guardian = d.find(atalarion);
+    const guid = guardian.guid;
+    d.hit(guardian, guardian.values.get!UNIT_FIELD_HEALTH / 3);
+    const health = guardian.values.get!UNIT_FIELD_HEALTH;
+    d.run(3.seconds);
+    d.restartAfterCrash();
+    auto resumed = d.all(atalarion);
+    assert(resumed.length == 1 && resumed[0].guid == guid && resumed[0].values.get!UNIT_FIELD_HEALTH == health);
+    d.kill(resumed[0]);
+    d.restartAfterCrash();
+    assert(d.saved!SunkenTemple.atalarionFight == Fight.done && !d.all(atalarion).length);
 }
 
 /**
@@ -1138,8 +1152,7 @@ unittest
  * doused with the Hakkari Blood (10460) brings a line (-1109006 ..) and, some seconds later, a Nightmare Suppressor
  * (8497) through a door, who walks its path to the Shade and casts Suppression (12623) on it: left alive twenty
  * seconds, the ritual fails (-1109015, the Shade gone, the doors open). Begun again, with each suppressor killed in
- * time, the fourth flame brings the Avatar (8443); dead, the doors open. A restart in the middle of the ritual ends it,
- * and the egg begins it again.
+ * time, the fourth flame brings the Avatar (8443); dead, the doors open.
  */
 unittest
 {
@@ -1195,26 +1208,65 @@ unittest
     assert(Dungeon.isOpen(d.objectOf(door1)), "his death opens the doors");
 }
 
-/// The Avatar's ritual cut by a restart: the egg begins it again.
+/// The worker can crash during a ritual or its resulting fight without replaying a flame, wave or boss spawn.
 unittest
 {
+    import dmangos.scripts.sunkentemple : Fight, SunkenTemple;
+    import dmangos.script.api : ObjectFlag;
+    import dmangos.world.updatefields : GAMEOBJECT_FLAGS, UNIT_FIELD_HEALTH;
+
     if (!haveRealData())
         return;
-    enum uint shade = 8440;
+    enum uint shade = 8440, avatar = 8443, suppressor = 8497, hakkariBlood = 10460, door = 149432;
+    static immutable uint[4] flames = [148418, 148419, 148420, 148421];
     auto d = Dungeon.enter(109, 55);
+    d.give(hakkariBlood, 10);
     d.goTo(Position(-466.8673f, 262.31204f, -90.7441f));
     d.event(8502);
     d.run(5.seconds);
     assert(d.summoned(shade) == 1);
-    d.killSummons([8437u, 8438]); // nothing fights (what would give up its fight as the party leaves)
+    const shadeGuid = d.find(shade).guid;
+    d.use(d.objectOf(flames[0]));
     d.run(1.seconds);
-    d.restart();
+    const dead = d.all(8437)[0].guid;
+    d.kill(d.map.creatureAt(dead));
+    const remaining = d.saved!SunkenTemple.steps.remaining(SunkenTemple.Step.suppressor);
+    d.restartAfterCrash();
     d.forget();
-    d.run(10.seconds);
-    assert(d.summoned(8437) == 0, "no waves after the restart\n" ~ d.story);
-    d.event(8502);
-    d.run(5.seconds);
-    assert(d.summoned(shade) == 1, "the Shade comes again\n" ~ d.story);
+    const resumed = d.saved!SunkenTemple;
+    const delay = resumed.steps.remaining(SunkenTemple.Step.suppressor);
+    assert(resumed.flamesOut == 1 && delay > 0 && remaining - delay >= 0 && remaining - delay <= 750);
+    assert(d.all(shade).length == 1 && d.find(shade).guid == shadeGuid);
+    assert(d.map.creatureAt(dead) is null && d.all(8437).length > 0, "only surviving minions resume");
+    assert(!Dungeon.isOpen(d.objectOf(door))
+        && (d.objectOf(flames[0]).values.get!GAMEOBJECT_FLAGS & ObjectFlag.noInteract));
+    bool suppressed()
+    {
+        d.killSummons([8437u, 8438]);
+        return d.find(suppressor) !is null && d.find(suppressor).alive;
+    }
+    assert(d.runUntil(&suppressed, (delay + 1000).msecs), "the saved suppressor timer resumes");
+    d.killSummons([suppressor]);
+    // Use the three remaining flames before their suppressor timers elapse.
+    foreach (flame; flames[1 .. $])
+    {
+        d.use(d.objectOf(flame));
+        d.run(1.seconds);
+    }
+    auto boss = d.find(avatar);
+    assert(boss !is null && d.all(shade).length == 0);
+    const avatarGuid = boss.guid;
+    d.hit(boss, boss.values.get!UNIT_FIELD_HEALTH / 3);
+    const health = boss.values.get!UNIT_FIELD_HEALTH;
+    d.run(3.seconds);
+    d.restartAfterCrash();
+    assert(d.all(avatar).length == 1 && d.find(avatar).guid == avatarGuid);
+    assert(d.find(avatar).values.get!UNIT_FIELD_HEALTH == health);
+    assert(!Dungeon.isOpen(d.objectOf(door)));
+    d.kill(d.find(avatar));
+    d.restartAfterCrash();
+    assert(d.saved!SunkenTemple.avatar == Fight.done && !d.all(avatar).length);
+    assert(Dungeon.isOpen(d.objectOf(door)), "the door stays open after the Avatar's death");
 }
 
 /**

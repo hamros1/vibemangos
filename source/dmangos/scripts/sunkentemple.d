@@ -81,29 +81,36 @@ struct SunkenTemple
     /// players to kill it before the ritual fails.
     enum Step : ubyte { wave, suppressor, suppression }
     Schedule!(Step, 4) steps;
+    bool statuesCheckpointed;
+    ubyte extinguishedFlames;
 
     /// What the Shade of Hakkar's EventAI tells the temple when a suppressor's Suppression hits it
     /// (`creature_ai_scripts` 844004: CMaNGOS's `SetData(TYPE_AVATAR, SPECIAL)`).
     enum uint typeAvatar = 4, avatarSpecial = 4;
     enum uint suppression = 12623;
 
-    /**
-     * A restart: what was under way is not (ScriptDev's `Load` keeps only what is done). The statues' order
-     * starts again if Atal'alarion is not dead, the Avatar's ritual may be begun anew, and Malfurion called
-     * again (he was a summon).
-     */
     void on(ref InstanceContext st, const ref Restored e)
     {
-        if (atalarionFight != Fight.done)
+        if (atalarionFight == Fight.inProgress && st.hasSavedCreature(atalarion))
+            st.waitForPlayer();
+        else if (atalarionFight != Fight.done && (!statuesCheckpointed || atalarionFight == Fight.inProgress))
         {
             atalarionFight = Fight.notStarted;
             statuesDone = 0;
         }
-        if (avatar != Fight.done)
-            avatar = Fight.notStarted;
-        flamesOut = 0;
-        shade = EntityRef.init;
-        steps.clear();
+        if (avatar == Fight.inProgress
+            && ((shade && st.hasSavedCreature(shade)) || st.hasSavedCreature(avatarOfHakkar)))
+            st.waitForPlayer();
+        else
+        {
+            if (avatar == Fight.inProgress)
+                avatar = Fight.notStarted; // old saves lost the active ritual actors
+            flamesOut = extinguishedFlames = 0;
+            shade = EntityRef.init;
+            steps.clear();
+            if (statuesDone && statuesCheckpointed)
+                st.waitForPlayer(); // restore the lights after the player loads the temple
+        }
         malfurionCalled = false;
     }
 
@@ -117,11 +124,28 @@ struct SunkenTemple
                 st.door(e.object, true);
         }
         else if (entry == hakkarDoor1 || entry == hakkarDoor2)
+        {
             doors[entry - hakkarDoor1] = e.object;
+            if (avatar != Fight.notStarted)
+                st.door(e.object, avatar != Fight.inProgress);
+        }
         else if (entry >= eternalFlame1 && entry < eternalFlame1 + 4)
+        {
             flames[entry - eternalFlame1] = e.object;
+            if (avatar == Fight.inProgress && !(extinguishedFlames & (1 << (entry - eternalFlame1))))
+                st.objectFlags(e.object, 0, ObjectFlag.noInteract);
+            else if (avatar != Fight.notStarted)
+                st.objectFlags(e.object, ObjectFlag.noInteract);
+        }
         else if (entry == evilCircle)
+        {
             circles.add(e.object);
+            if (avatar == Fight.inProgress)
+                st.checkpointObject(e.object);
+        }
+        else if (entry == atalaiLight || entry == atalaiLightBig || entry == idolOfHakkar)
+            if (statuesCheckpointed)
+                st.checkpointObject(e.object);
     }
 
     void on(ref InstanceContext st, const ref CreatureLoaded e)
@@ -155,16 +179,19 @@ struct SunkenTemple
                 if (atalarionFight != Fight.notStarted || i != statuesDone)
                     return; // the wrong statue: nothing (its trap is the database's)
                 ++statuesDone;
+                statuesCheckpointed = true;
                 Location at;
                 if (e.target && st.locationOf(e.target, at))
                     st.spawnObjects(atalaiLight, 1800, at, 8);
                 if (statuesDone == statueEvents.length)
                 {
                     atalarionFight = Fight.inProgress;
-                    st.summon(atalarion, atalarionPlace);
+                    if (const guardian = st.summon(atalarion, atalarionPlace))
+                        st.checkpointCreature(guardian);
                     st.spawnObjects(idolOfHakkar, 1800);
                     st.spawnObjects(atalaiLightBig, 1800);
                 }
+                st.checkpoint();
                 return;
             }
         if (e.event == avatarEvent)
@@ -182,6 +209,7 @@ struct SunkenTemple
         {
         case atalarion:
             atalarionFight = Fight.done;
+            st.checkpoint();
             break;
         case jammalan:
             jammalanDead = true;
@@ -192,9 +220,15 @@ struct SunkenTemple
             avatar = Fight.done;
             steps.clear();
             openDoors(st, true);
+            st.checkpoint();
             break;
-        case suppressor:
-            canBloodkeeper = true;
+        case bloodkeeper, hakkariMinion, suppressor:
+            if (avatar == Fight.inProgress)
+            {
+                if (e.creature.entry == suppressor)
+                    canBloodkeeper = true;
+                st.checkpoint();
+            }
             break;
         case zolo, gasher, loro, hukku, zullor, mijan:
             if (protectors.died(e.creature) && protectors.allDead && !barrierDown)
@@ -237,12 +271,21 @@ struct SunkenTemple
             // A suppressor reached the Shade: twenty seconds to kill it, or the ritual fails. (Its spell hit is
             // told before its aura is on the Shade: the aura is looked for when the time is up.)
             if (avatar == Fight.inProgress && shade && !steps.pending(Step.suppression))
+            {
                 steps.after(Step.suppression, 20.seconds);
+                st.checkpoint();
+            }
         }
         else if (e.id == Signals.flameOut && avatar == Fight.inProgress)
         {
-            if (e.from)
-                st.objectFlags(e.from, ObjectFlag.noInteract);
+            const entry = e.from.entry;
+            if (entry < eternalFlame1 || entry >= eternalFlame1 + 4)
+                return;
+            const bit = cast(ubyte)(1 << (entry - eternalFlame1));
+            if (extinguishedFlames & bit)
+                return;
+            extinguishedFlames |= bit;
+            st.objectFlags(e.from, ObjectFlag.noInteract);
             ++flamesOut;
             if (shade)
                 st.say(shade, sayBrazier1 - (flamesOut - 1));
@@ -258,11 +301,15 @@ struct SunkenTemple
                     st.despawn(shade);
                 }
                 if (const him = st.summon(avatarOfHakkar, at))
+                {
+                    st.checkpointCreature(him);
                     st.say(him, sayAvatarSpawn);
+                }
                 shade = EntityRef.init;
             }
             else
                 steps.after(Step.suppressor, (15_000 + st.random(30_000)).msecs);
+            st.checkpoint();
         }
         else if (e.id == Signals.callMalfurion && !malfurionCalled)
         {
@@ -314,23 +361,28 @@ struct SunkenTemple
                 // Suppression on the Shade (`dbscripts_on_creature_movement` 849701).
                 st.say(who, saySuppressor1 - cast(int) st.random(4));
                 st.walkPath(who, door);
+                st.checkpointCreature(who);
             }
             break;
         }
+        st.checkpoint();
     }
 
     private void startAvatar(ref InstanceContext st)
     {
         avatar = Fight.inProgress;
-        flamesOut = 0;
+        flamesOut = extinguishedFlames = 0;
         firstWave = true;
         foreach (flame; flames)
             if (flame)
                 st.objectFlags(flame, 0, ObjectFlag.noInteract);
         st.spawnObjects(evilCircle, 30 * 60);
         shade = st.summon(shadeOfHakkar, shadePlace);
+        if (shade)
+            st.checkpointCreature(shade);
         openDoors(st, false);
         steps.after(Step.wave, 3.seconds);
+        st.checkpoint();
     }
 
     private void failAvatar(ref InstanceContext st)
@@ -343,11 +395,12 @@ struct SunkenTemple
             st.despawn(shade);
             shade = EntityRef.init;
         }
-        flamesOut = 0;
+        flamesOut = extinguishedFlames = 0;
         foreach (flame; flames)
             if (flame)
                 st.objectFlags(flame, ObjectFlag.noInteract);
         openDoors(st, true);
+        st.checkpoint();
     }
 
     private void openDoors(ref InstanceContext st, bool open)
@@ -370,7 +423,8 @@ struct SunkenTemple
     {
         Location at;
         if (circle && st.locationOf(circle, at))
-            st.summon(entry, at);
+            if (const who = st.summon(entry, at))
+                st.checkpointCreature(who);
     }
 }
 

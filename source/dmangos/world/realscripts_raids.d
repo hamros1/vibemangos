@@ -522,7 +522,13 @@ unittest
         // Overpower, Intimidating Shout, Whirlwind, Charge, Threatening Gaze and his line at the gazed); Ohgan
         // slain, he rages (23537, the emote).
         Boss("Mandokir", 309, 11382, 5, [chainedSpirit, ohgan], [
-            Stage(0, 46, [16856, 24407, 19134, 13736, 24408, 24314], [-1_309_018], [[chainedSpirit, 19], [ohgan, 1]]),
+            Stage(0, 46, [16856, 24407, 19134, 24408, 24314], [-1_309_018], [[chainedSpirit, 19], [ohgan, 1]]),
+            Stage(0, 25, [13736], null, null, null, (Scene s, Creature boss) {
+                // After testing the ranged charge, keep the target in melee for Whirlwind.
+                s.stayWithin = 2;
+                foreach (i; 0 .. s.heroes.length)
+                    s.moveHero(i, boss.position);
+            }),
             Stage(0, 3, [23537], [-1_309_024], null, null, killOne(ohgan))], -1_309_015, 0, 2, Position.init,
             [classWarrior, classMage], null, 10, false, null, Position(-12190, -1948, 130.3f), (Scene s) {
                 // He comes down from his perch when the copy says (its keepers slain), and fights all there.

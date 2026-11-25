@@ -44,7 +44,8 @@ describes how players use the systems available today.
 ### Known gaps in what exists
 
 * **Instances.** Crash recovery for an active multi-stage encounter depends on what its script
-  checkpoints. Uldaman now resumes the Stone Keepers' sequence and Archaedas's fight. See
+  checkpoints. Uldaman resumes the Stone Keepers and Archaedas. Sunken Temple resumes the statue
+  puzzle and the Avatar of Hakkar ritual. See
   [dungeon failover](CLUSTER.md#dungeons-and-battlegrounds) for the current encounter coverage.
 * **GM commands.** The [command reference](COMMANDS.md#not-yet-implemented) lists the remaining
   ArcEmu commands, including waypoint editing, arena administration and the flight cheat.

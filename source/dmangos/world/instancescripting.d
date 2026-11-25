@@ -302,7 +302,9 @@ final class InstanceScript : InstanceHost
      */
     bool raise(E)(const E event)
     {
-        if (!runtime.handles!E(handle))
+        const handled = runtime.handles!E(handle);
+        // A returning player also restores saved actors for scripts without a PlayerEntered handler.
+        if (!handled && !(is(E == PlayerEntered) && summonsPending))
             return false;
         if (raising)
         {
@@ -310,7 +312,11 @@ final class InstanceScript : InstanceHost
             return false;
         }
         static if (is(E == PlayerEntered))
+        {
             restorePendingSummons();
+            if (!handled)
+                return false;
+        }
         raising = true;
         bool checkpoint;
         const consumed = dispatch(event, checkpoint);
