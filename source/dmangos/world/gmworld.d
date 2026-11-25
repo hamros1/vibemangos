@@ -784,11 +784,11 @@ private:
     {
         auto target = castTarget();
         if (target is null)
-            return false;
+            return true;
         uint id;
         const spell = spellNamed(args, id);
         if (spell is null)
-            return false;
+            return id != 0; // no number at all: the usage too
         blueSystemMessage(format!"Casting spell %d on target."(id));
         castSpell(spell, SpellTargets(TargetFlags.unit, guidOf(target)), false, 0);
         logCast("casted spell", id, target, target is this);
@@ -803,11 +803,11 @@ private:
 
         auto target = castTarget();
         if (target is null)
-            return false;
+            return true;
         uint id;
         const spell = spellNamed(args, id);
         if (spell is null)
-            return false;
+            return id != 0; // no number at all: the usage too
         blueSystemMessage(format!"Casting spell %d on target."(id));
         const guid = guidOf(target);
         const targets = SpellTargets(TargetFlags.unit, guid);
@@ -823,11 +823,11 @@ private:
     {
         auto target = castTarget();
         if (target is null)
-            return false;
+            return true;
         uint id;
         const spell = spellNamed(args, id);
         if (spell is null)
-            return false;
+            return id != 0; // no number at all: the usage too
         blueSystemMessage(format!"Target is casting spell %d on himself."(id));
         if (auto character = cast(Character) target)
             character.castSpell(spell, SpellTargets(TargetFlags.unit, character.player.guid), false, 0);
@@ -1045,6 +1045,12 @@ unittest
     context.update(now);
     auto again = cast(Creature) map.findObject(keeper.guid);
     assert(again !is null && again.alive, "back");
+    // Valid input that cannot be carried out gets its own message, not the usage too.
+    gm.say(".npc respawn");
+    assert(systemMessages(gm.read())
+        == [ChatColor.softRed ~ "You must select a creature's corpse with a valid CreatureSpawn point.|r"]);
+    gm.say(".debug castspell 999999");
+    assert(systemMessages(gm.read()) == [ChatColor.softRed ~ "Invalid spell id!|r"]);
 
     // A player, by selection and by name; and back to life by name.
     gm.write(Opcode.CMSG_SET_SELECTION, ClientGuid(victim.guid));

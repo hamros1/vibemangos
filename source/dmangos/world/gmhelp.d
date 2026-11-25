@@ -85,7 +85,7 @@ private:
         if (info is null)
         {
             redSystemMessage("Internal error: Could not find create info.");
-            return false;
+            return true;
         }
         greenSystemMessage(format!"Sending %s to the %s starting area."(target.player.data.name, race));
         target.commandTeleport(info.map, Position(info.x, info.y, info.z, 0));

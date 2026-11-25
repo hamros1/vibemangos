@@ -837,7 +837,7 @@ private:
         if (skill == 0)
         {
             redSystemMessage("Unknown skill ID.");
-            return false;
+            return true;
         }
         blueSystemMessage(format!"Modifying skill line %d. Advancing %d times."(skill, times));
         gmLog(format!"increased weapon skill (%u) of %s by %u"(skill, target.player.data.name, times));
@@ -979,7 +979,7 @@ private:
         if (corpse is null || corpse.alive || corpse.spawn.guid == 0)
         {
             redSystemMessage("You must select a creature's corpse with a valid CreatureSpawn point.");
-            return false;
+            return true;
         }
         const line = format!"Respawning a Creature: `%s` with entry: %u on map: %u sqlid: %u"(corpse.template_.name,
             corpse.spawn.entry, map.id, corpse.spawn.guid);

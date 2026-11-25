@@ -331,8 +331,8 @@ private:
 
     /**
      * `.quest addstart` .. `.quest delfinish`: the selected quest giver's quests, in memory and in
-     * `creature_questrelation` / `creature_involvedrelation`. False (the help is shown too) for a wrong target or
-     * quest.
+     * `creature_questrelation` / `creature_involvedrelation`. False after its message for a wrong target or quest,
+     * or a quest to remove that the creature does not have.
      */
     bool questRelationCommand(uint questId, bool start, bool add)
     {
@@ -381,7 +381,7 @@ private:
         if (!known)
         {
             redSystemMessage("Quest was NOT found for the specified NPC.");
-            return !start; // `.quest delstart` shows its help too
+            return false;
         }
         *list = (*list).remove((*list).countUntil(questId));
         context.database.deleteQuestRelation(start, entry, questId);
@@ -392,13 +392,13 @@ private:
     }
 
     /// `.quest addstart`, `.quest addfinish`, `.quest delstart` and `.quest delfinish`.
-    bool handleQuestAddStartCommand(uint questId) { return questRelationCommand(questId, true, true); }
+    bool handleQuestAddStartCommand(uint questId) { questRelationCommand(questId, true, true); return true; }
     /// ditto
-    bool handleQuestAddFinishCommand(uint questId) { return questRelationCommand(questId, false, true); }
+    bool handleQuestAddFinishCommand(uint questId) { questRelationCommand(questId, false, true); return true; }
     /// ditto
-    bool handleQuestDelStartCommand(uint questId) { return questRelationCommand(questId, true, false); }
+    bool handleQuestDelStartCommand(uint questId) { questRelationCommand(questId, true, false); return true; }
     /// ditto
-    bool handleQuestDelFinishCommand(uint questId) { return questRelationCommand(questId, false, false); }
+    bool handleQuestDelFinishCommand(uint questId) { questRelationCommand(questId, false, false); return true; }
 
     /// `.quest addboth`: the quest given and taken back by the selected creature.
     bool handleQuestAddBothCommand(uint questId)
@@ -614,8 +614,8 @@ unittest
         assert(gone.count!(m => m.canFind("Removed quest from NPC.")) == 2);
         assert(!context.data.quests.creatureStarts[creatureTrainer].canFind(9600) && db.questRelationRows.length == 0);
         gm.say(".quest delstart 9600");
-        assert(systemMessages(gm.read())[0]
-            == colored(ChatColor.softRed, "Quest was NOT found for the specified NPC."));
+        assert(systemMessages(gm.read()) == [colored(ChatColor.softRed, "Quest was NOT found for the specified NPC.")],
+            "its own message, not the usage too");
         context.data.quests.creatureStarts[creatureTrainer] ~= 9600;
         gm.write(Opcode.CMSG_SET_SELECTION, ClientGuid(anduin.session.character.guid));
     }
