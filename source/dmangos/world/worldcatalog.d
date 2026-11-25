@@ -64,7 +64,8 @@ struct WorldCatalogJournal
     }
 
     /// The original world tables use MyISAM. Workers keep watching an edit that was interrupted
-    /// between changing its world row and recording completion.
+    /// between changing its world row and recording completion. An update that fails is complete
+    /// too: workers reload once for whatever it changed, then stop watching.
     void change(WorldCatalogKey key, scope void delegate() update = null)
     {
         prepare();
@@ -72,12 +73,27 @@ struct WorldCatalogJournal
         world.execute!("INSERT INTO dmangos_world_catalog (catalog, entry, revision, pending) VALUES (?, ?, 1, ?) "
             ~ "ON DUPLICATE KEY UPDATE revision = revision + 1, pending = pending + VALUES(pending)")(
                 ubyte(key.catalog), key.entry, pending);
-        if (update !is null)
-        {
+        if (update is null)
+            return;
+        try
             update();
-            world.execute!("UPDATE dmangos_world_catalog SET revision = revision + 1, pending = pending - 1 "
-                ~ "WHERE catalog = ? AND entry = ? AND pending > 0")(ubyte(key.catalog), key.entry);
+        catch (Exception failure)
+        {
+            // Best effort: when the world database itself is gone, the edit stays pending as after a crash.
+            try
+                complete(key);
+            catch (Exception)
+            {
+            }
+            throw failure;
         }
+        complete(key);
+    }
+
+    private void complete(WorldCatalogKey key)
+    {
+        world.execute!("UPDATE dmangos_world_catalog SET revision = revision + 1, pending = pending - 1 "
+            ~ "WHERE catalog = ? AND entry = ? AND pending > 0")(ubyte(key.catalog), key.entry);
     }
 }
 
