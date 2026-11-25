@@ -11,6 +11,8 @@ import departure_retry
 import gateway_checkpoint_retry
 import gateway_return
 import lease_lapse_arrival
+import loot_award_crash
+import migration_stall
 import quorum
 import quorum_partition
 import stall_release
@@ -29,6 +31,8 @@ CASES = (
     ("gateway-return", gateway_return.run),
     ("cthun-transition-recovery", cthun_recovery.transition),
     ("cthun-stomach-recovery", cthun_recovery.stomach),
+    ("loot-award-crash", loot_award_crash.main),
+    ("migration-stall", migration_stall.run),
 )
 
 

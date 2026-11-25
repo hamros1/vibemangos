@@ -302,7 +302,7 @@ merge and a player handoff. Set `EXPECT_BALANCING=1` to check these events in a 
 After harness setup and a release build, run the opt-in suite with
 `python3 tools/harness/chaos.py`. It runs the quorum partition and heal, coordinator kill,
 paused battlegroup host, gateway checkpoint retry, departure retry, lease lapse arrival, worker
-rejoin, stall release and gateway return cases against isolated fixtures.
+rejoin, stall release, gateway return, loot award crash and migration stall cases against isolated fixtures.
 Use `--repeat 3` to check repeatability. Each case prints the harness directory containing
 its process logs and uses fresh login and character schemas.
 
@@ -344,6 +344,18 @@ client says a numbered line every 50 ms and ports to ground of its map another w
 the proxy delays the gateway's frames to its first worker by 600 ms. The lines that reach that worker
 after the player left must come back to the gateway (both log it) and, with the rest, be answered
 once each, in the order said.
+
+Run `python3 tools/harness/loot_award_crash.py` to kill (`SIGKILL`) a party member's worker after
+it claims a remote loot award, while a second MariaDB session locks the member's inventory so the
+item's write waits. The award must stay claimed, not stored. The gateway restores the member on
+another worker, and the award sent again must store exactly one copy of the prize.
+
+Run `python3 tools/harness/migration_stall.py` to teleport a gateway player to the other continent,
+simulated by another worker, while a second MariaDB session holds the character's row. The client
+must get a transfer abort and stay on its worker, with no link timeout and no lease lapse. Once the
+row is free, the same teleport moves the player, and it plays on there.
+
+Both set `innodb_lock_wait_timeout` to one second for their run, as `departure_retry.py` does.
 
 Run `python3 tools/harness/battleground_recovery.py --cross-realm --map arathi` to kill the
 active match worker and check the same match's objectives, scoreboard and PvP on its standby.
