@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Kill the coordinator while an account plays on one worker and logs in on another: never in the world twice.
 
-Single-standby mode. The account's character plays on worker node 3, its client connected there. The
-coordinator is killed, and at once the same account logs in on node 4. The standby takes over knowing no
-session; node 3 claims its session again as already granted, node 4's login is a new one and waits one lease.
-The new login evicts node 3's session, which saves and leaves, and only then enters the world on node 4.
-The harness watches both logs every 50 ms and fails if node 4 lets the character in while it is still in the
-world on node 3.
+Single-standby mode. The account's character plays from worker node 3, its client connected there (simulated
+there, or on node 4 if node 4 owns its ground). The coordinator is killed, and at once the same account logs in
+on node 4. The standby takes over knowing no session; node 3 claims its session again as already granted, node
+4's login is a new one and waits one lease. The new login evicts node 3's session, whose character is saved and
+leaves the world where it is simulated, and only then enters the world on node 4. The harness watches the logs
+every 50 ms and fails if node 4 lets the character in while it is still in the world.
 """
 
 import asyncio
@@ -27,7 +27,7 @@ def exercise(fixture, proxy, world_ports, auth_port):
                              account="STANDBYLOGIN", password="TESTSTANDBYLOGIN")
     cluster.create(NAME, WORKER)
     entered = f"entered the world as '{NAME}'"
-    left = f"'{NAME}' saved at"
+    left = f"left the world (disconnected); '{NAME}' saved at"  # the evicted session's, not the new one's logout
     alive = (STANDBY, WORKER, FOURTH)
 
     held = fixture.directory / "held"
@@ -42,14 +42,19 @@ def exercise(fixture, proxy, world_ports, auth_port):
     deadline = time.monotonic() + 60
     while entered_at is None and time.monotonic() < deadline:
         now = time.monotonic()
-        if left_at is None and left in cluster.log(WORKER, alive)[offsets[WORKER]:]:
+        # Saved and gone where it was simulated: node 3, or node 4 for node 3's client.
+        if left_at is None and any(left in cluster.log(node, alive)[offsets[node]:] for node in (WORKER, FOURTH)):
             left_at = now
         if entered in cluster.log(FOURTH, alive)[offsets[FOURTH]:]:
             entered_at = now
-            assert left_at is not None, "node 4 let the character in while it was still in the world on node 3"
+            assert left_at is not None, "node 4 let the character in while it was still in the world"
         time.sleep(0.05)
     if entered_at is None:
         raise RuntimeError("the second login never entered the world:\n" + fixture.log("second")[-2500:])
+    # Within one poll both can show; where both are node 4's, its log orders them.
+    fourth = cluster.log(FOURTH)[offsets[FOURTH]:]
+    assert left not in fourth or fourth.index(left) < fourth.index(entered), \
+        "node 4 let the character in before its first session had left the world there"
     held.touch()
     if second.wait(timeout=40):
         raise RuntimeError(fixture.log("second")[-2500:])

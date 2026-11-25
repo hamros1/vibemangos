@@ -177,8 +177,12 @@ assert ops[0x1EE][0] == 0x0C
 
 
 def enum():
+    # A cluster node sends the list once the coordinator grants the account, which can take a while (a standby
+    # that just took over holds new logins for one lease): DMANGOS_TEST_ENUM_SECONDS waits longer than the default.
     wsend(0x037, b"")
+    timeout = w.gettimeout(); w.settimeout(max(timeout, float(os.environ.get("DMANGOS_TEST_ENUM_SECONDS", "5"))))
     op, p = wrecv(); assert op == 0x03B
+    w.settimeout(timeout)
     chars, pos = {}, 1
     for _ in range(p[0]):
         guid = struct.unpack_from("<Q", p, pos)[0]; pos += 8

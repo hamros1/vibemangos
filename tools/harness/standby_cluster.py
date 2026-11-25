@@ -63,7 +63,8 @@ class StandbyCluster:
         return matches[-1][2] if matches else ""
 
     def client(self, label, node, *actions):
-        env = dict(os.environ, WORLD=f"127.0.0.1:{self.world_ports[node]}", DMANGOS_TEST_WAITFILE_SECONDS="90")
+        env = dict(os.environ, WORLD=f"127.0.0.1:{self.world_ports[node]}", DMANGOS_TEST_WAITFILE_SECONDS="90",
+                   DMANGOS_TEST_ENUM_SECONDS="20")  # a login just after the takeover waits one lease
         env.pop("REALM", None)
         return self.fixture.start(label, [sys.executable, "-u", REPO / "tools/testclient.py", str(self.auth_port),
                                           self.account, self.password, *actions], env=env)
