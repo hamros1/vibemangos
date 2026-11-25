@@ -8,7 +8,7 @@ module dmangos.world.clusterbridge;
 import dmangos.cluster.protocol : AreaDamage, CreatureSwing, GameObjectSpell, GroupLootRoll, LootCoinShare, PartyHeal, PeriodicResult,
     GroupCatalog, PartyAreaAura, PartyQuest, PartySummon, QuestLootCheck, ScriptCreatureStep, ScriptGameObject, TotemWeaponEnchant;
 
-import core.time : Duration, MonoTime, msecs;
+import core.time : Duration, MonoTime, msecs, seconds;
 
 import dmangos.cluster.node : ClusterNode, PlayerHandler, ReplicationHandler;
 import dmangos.cluster.protocol : DeliverTo, InRange, InterestUpdate, PlayerMessage, PlayerMessageKind, Presence,
@@ -40,11 +40,16 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
     private struct PendingStock
     {
         ushort owner;
-        MonoTime expires; // a stock read can time out without returning reserved items
+        MonoTime expires;
         void delegate(bool, uint) then;
+        uint map;
+        ulong creature;
+        uint item, maxCount, wanted; // a purchase's reservation: what a late reply's stock gives back
     }
 
     private PendingStock[uint] stockWaiting;
+    /// Purchases that timed out: a reply that comes after all gives its reserved stock back.
+    private PendingStock[uint] stockAbandoned;
 
     /// A gateway's player who left here before its last saves were known written, so not yet reported.
     private struct Departure
@@ -84,18 +89,29 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         gatewayTick(now);
         retryDepartures();
         releaseHeldArrivals();
-        if (stockWaiting.length)
+        if (stockWaiting.length || stockAbandoned.length)
         {
             uint[] expired;
             foreach (request, ref pending; stockWaiting)
-                if (pending.expires != MonoTime.init && now >= pending.expires)
+                if (now >= pending.expires)
                     expired ~= request;
             foreach (request; expired)
             {
-                const callback = stockWaiting[request].then;
+                auto pending = stockWaiting[request];
                 stockWaiting.remove(request);
-                callback(false, 0);
+                if (pending.wanted)
+                {
+                    pending.expires = now + 60.seconds; // long past any reply the owner still sends
+                    stockAbandoned[request] = pending;
+                }
+                pending.then(false, 0);
             }
+            expired = null;
+            foreach (request, ref pending; stockAbandoned)
+                if (now >= pending.expires)
+                    expired ~= request;
+            foreach (request; expired)
+                stockAbandoned.remove(request);
         }
         if (now >= nextPresence)
         {
@@ -274,6 +290,20 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         context.presenceLost(peer);
         foreach (map; context.allMaps)
             map.peerGone(peer);
+        // Stock asked of it: no answer comes (what it reserved went with it).
+        uint[] unanswered;
+        foreach (request, ref pending; stockWaiting)
+            if (pending.owner == peer)
+                unanswered ~= request;
+        foreach (request; unanswered)
+        {
+            auto callback = stockWaiting[request].then;
+            stockWaiting.remove(request);
+            callback(false, 0);
+        }
+        foreach (request; stockAbandoned.keys)
+            if (stockAbandoned[request].owner == peer)
+                stockAbandoned.remove(request);
         // Players it held the clients of: they leave the world here, saved (it cannot say they did).
         WorldSession[] orphans;
         foreach (account, session; remote)
@@ -334,8 +364,10 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         const request = nextStockRequest++;
         if (!node.sendTo(owner, StockRequest(request, map, creature, item, maxCount, incrTime, buyCount, wanted)))
             return then(false, 0);
-        const expiry = wanted ? MonoTime.init : context.clock() + context.config.cluster.failureTimeoutMs.msecs;
-        stockWaiting[request] = PendingStock(owner, expiry, then);
+        // A purchase times out too: the buyer is answered, and a reservation the reply makes after that is given
+        // back (`stockReply`), not kept from everyone until the vendor restocks.
+        const expiry = context.clock() + context.config.cluster.failureTimeoutMs.msecs;
+        stockWaiting[request] = PendingStock(owner, expiry, then, map, creature, item, maxCount, wanted);
     }
 
     /// For the context: gives reserved stock back.
@@ -367,11 +399,21 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
     void stockReply(ushort peer, const ref StockReply m)
     {
         if (auto pending = m.request in stockWaiting)
+        {
             if (pending.owner == peer)
             {
                 auto callback = pending.then;
                 stockWaiting.remove(m.request);
                 callback(m.reserved, m.left);
+            }
+        }
+        else if (auto late = m.request in stockAbandoned)
+            if (late.owner == peer)
+            {
+                // The buyer was told it failed: what the owner reserved for it goes back on sale.
+                if (m.reserved)
+                    releaseStock(peer, late.map, late.creature, late.item, late.maxCount, late.wanted);
+                stockAbandoned.remove(m.request);
             }
     }
 
