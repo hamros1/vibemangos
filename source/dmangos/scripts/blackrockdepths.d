@@ -318,6 +318,10 @@ struct BlackrockDepths
         {
         case magmus: magmusRef = e.creature; break;
         case emperor: emperorRef = e.creature; break;
+        case princess:
+            if (brd.entryKilled(emperor))
+                brd.signal(e.creature, Moira.Signals.emperorDead);
+            break;
         case plugger: pluggerRef = e.creature; break;
         case phalanx: phalanxRef = e.creature; break;
         case loregrain: loregrainRef = e.creature; break;

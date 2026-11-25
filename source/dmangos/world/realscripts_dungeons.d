@@ -1859,13 +1859,15 @@ unittest
 
 /**
  * Blackrock Depths: a boss's death can reach the database before the save that settles his encounter. Magmus dead
- * with the Iron Hall's fight still under way in the copy's state: his throne room opens all the same.
+ * with the Iron Hall's fight still under way in the copy's state: his throne room opens all the same. Moira, out of
+ * the fight and so with no snapshot of her own, comes back from a crash after the Emperor's death no longer hostile.
  */
 unittest
 {
     if (!haveRealData())
         return;
-    import dmangos.scripts.blackrockdepths : BlackrockDepths, Fight, magmus, throneRoom;
+    import dmangos.scripts.blackrockdepths : BlackrockDepths, EmperorThaurissan, Fight, emperor, magmus, princess,
+        throneRoom;
 
     auto d = Dungeon.enter(230, 60, cluster: true);
     auto boss = d.spawned(magmus, 0, 15);
@@ -1880,6 +1882,16 @@ unittest
     d.restartAfterCrash();
     assert(d.saved!BlackrockDepths.ironHall == Fight.done && Dungeon.isOpen(d.objectOf(throneRoom)),
         "the throne room opens for the dead Magmus");
+
+    auto him = d.spawned(emperor, 0, 15);
+    auto her = d.spawned(princess, 0, 30);
+    d.kill(him);
+    d.run(1.seconds);
+    assert(her.values.get!UNIT_FIELD_FACTIONTEMPLATE == EmperorThaurissan.factionNeutral, "widowed");
+    d.restartAfterCrash();
+    her = d.spawned(princess, 0, 30);
+    assert(her.values.get!UNIT_FIELD_FACTIONTEMPLATE == EmperorThaurissan.factionNeutral,
+        "still no foe of the party after a crash");
 }
 
 // ---------------------------------------------------------------------------------------------------------------
