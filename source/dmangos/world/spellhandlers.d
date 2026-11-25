@@ -2264,6 +2264,8 @@ private:
                 const next = aura.periodTimer[i] - elapsed;
                 aura.periodTimer[i] = next > 0 ? next : period - (-next % period);
             }
+        // The checkpointed slot may hold another aura's icon by now: the aura takes a free one as it is applied.
+        aura.slot = imported!"dmangos.world.auras".noSlot;
         channelSpell = aura.spell;
         channelTarget = target;
         channelTimer = remaining;
