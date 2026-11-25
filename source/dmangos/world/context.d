@@ -2498,7 +2498,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             }
             break;
         case AuraType.periodicManaLeech:
-            if (spell.miscValue[i] >= 0 && spell.miscValue[i] <= Power.happiness)
+            // Like the life drain above: only a caster still on the drained target's map takes the power.
+            auto drainedFrom = existingMap(message.map, message.instance);
+            if (drainedFrom !is null && drainedFrom is source.currentMap
+                && spell.miscValue[i] >= 0 && spell.miscValue[i] <= Power.happiness)
             {
                 const power = cast(Power) spell.miscValue[i];
                 if (caster.fields.get!UNIT_FIELD_MAXPOWER1(power))
