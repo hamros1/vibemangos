@@ -2164,6 +2164,34 @@ unittest
 }
 
 /**
+ * Dire Maul North on a cluster worker: Cho'Rush, hurt, comes back from his fight's snapshot after a crash, and the
+ * copy's script knows him again, so the King's death still makes him friendly.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint king = 11501, chorush = 14324, factionFriendly = 35;
+    auto d = Dungeon.enter(429, 60, cluster: true);
+    auto observer = d.spawned(chorush, 0, 25);
+    const guid = observer.guid;
+    d.pull(observer);
+    d.hurtTo(observer, 70);
+    d.run(3.seconds); // the fight's snapshot is written every two seconds
+    const health = observer.values.get!UNIT_FIELD_HEALTH;
+    d.restartAfterCrash();
+    auto back = d.find(chorush);
+    assert(back !is null && back.guid == guid, "the same Cho'Rush comes back from his fight");
+    assert(back.values.get!UNIT_FIELD_HEALTH < back.values.get!UNIT_FIELD_MAXHEALTH
+        && back.values.get!UNIT_FIELD_HEALTH >= health, "hurt as he was");
+    d.kill(d.spawned(king, 0, 25));
+    d.run(1.seconds);
+    back = d.find(chorush);
+    assert(back !is null && back.values.get!UNIT_FIELD_FACTIONTEMPLATE == factionFriendly,
+        "the King's death makes the restored Cho'Rush friendly\n" ~ d.story);
+}
+
+/**
  * Dire Maul North: Mizzle arrives even if Cho'Rush is dead. The coronation enables the tribute
  * dialogue, and the chest gives only the loot tiers unlocked by survivors.
  */

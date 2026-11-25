@@ -6148,6 +6148,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return;
         }
         pendingDungeonFights.remove(instance);
+        ulong[] restored;
         foreach (ref saved; records)
         {
             const spawn = creatureSpawnOf(saved.spawn);
@@ -6187,11 +6188,21 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                         return null;
                     waitForCombatPlayer(creature);
                     dungeonFights[instance][saved.spawn] = ActiveDungeonFight(guid, unixTime);
+                    restored ~= guid;
                     return cast(MapObject) creature;
                 });
             catch (Exception error)
                 warning!"instance %s: could not restore creature %s: %s"(instance, saved.spawn, error.msg);
         }
+        // Its cell skips a creature already back (`spawnCellIn`): the script learns it here, or it would hold no
+        // reference to a boss that came back from his fight.
+        if (auto script = instanceScripts.get(instance, null))
+            foreach (guid; restored)
+            {
+                import dmangos.script.api : CreatureLoaded, EntityRef;
+
+                script.raise(CreatureLoaded(EntityRef(guid)));
+            }
     }
 
     private void updateDungeonFights()

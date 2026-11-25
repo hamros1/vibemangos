@@ -72,6 +72,9 @@ final class Dungeon
     Cast[] casts;
     Summon[] summons;
     bool keepAlive = true; /// the party takes no damage (`.cheat god`), its health and mana topped up each step
+    /// The worlds run as cluster members (`clusterMode`): native fights and encounter checkpoints are saved as a
+    /// worker's are, and come back from them after `restartAfterCrash`.
+    bool cluster;
     uint level;
     ubyte classId;
     imported!"core.time".MonoTime started; /// when the test began (for the trace)
@@ -91,10 +94,12 @@ final class Dungeon
      * entrance (`areatrigger_teleport`) or `at`.
      */
     static Dungeon enter(uint mapId, uint level, ubyte classId = 1, size_t players = 1,
-        Position at = Position.init, uint seed = 20_261_120)
+        Position at = Position.init, uint seed = 20_261_120, bool cluster = false)
     {
         auto d = new Dungeon;
         d.w = RealWorld.make(seed);
+        if (cluster)
+            d.clusterMode();
         d.mapId = mapId;
         d.level = level;
         d.started = d.w.now;
@@ -717,6 +722,13 @@ final class Dungeon
         reconnect(false);
     }
 
+    /// The world, and the ones after it, run as cluster members (`cluster`).
+    void clusterMode()
+    {
+        cluster = true;
+        w.context.config.cluster.nodeId = 1;
+    }
+
     /// Discards the old world without letting its sockets log out or its timers run.
     void restartAfterCrash()
     {
@@ -741,6 +753,8 @@ final class Dungeon
             where ~= player(i).position;
         WorldConfig config;
         config.logoutDelay = 0;
+        if (cluster)
+            config.cluster.nodeId = 1;
         auto old = w.context;
         if (handoff)
         {
