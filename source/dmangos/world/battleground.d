@@ -321,6 +321,11 @@ final class Battleground
             MonoTime readyAt;
         }
         PowerUp[ulong] powerUps; // standalone placement GUID or pool ID in the high half
+        /// Each member's level when it last came in: its final reward when it is not online to ask.
+        ubyte[ulong] memberLevels;
+        /// Members offline only because the copy's worker crashed (not by their own logout): the match
+        /// goes on without them, and their final rewards are still kept for them until they return or go.
+        bool[ulong] offlineByCrash;
     }
 
     package void transferState(ref imported!"dmangos.world.battlegroundstate".BattlegroundState state,
@@ -368,19 +373,26 @@ final class Battleground
         return true;
     }
 
-    /// An optional tail keeps pre-pause match records readable.
+    /// Optional tails keep older match records readable: the pause, then the members' levels and who
+    /// is offline because of a crash.
     package void transferPause(ref imported!"dmangos.world.battlegroundstate".BattlegroundState state)
     {
         if (state.writer !is null || !state.reader.empty)
             state.transfer(pausedAt);
+        if (state.writer !is null || !state.reader.empty)
+            state.transfer(memberLevels, offlineByCrash);
     }
 
     package void recoveredAfterCrash()
     {
         const now = context.clock();
-        foreach (ref member; members)
+        foreach (guid, ref member; members)
             if (member.offlineSince == MonoTime.init)
+            {
                 member.offlineSince = now; // keep the place and any carried objective while the gateway reconnects
+                offlineByCrash[guid] = true;
+            }
+        checkpointDirty = true;
         if (crossRealm)
         {
             // The combined host's unsaved team raids are rebuilt as their members return.
@@ -441,6 +453,8 @@ final class Battleground
         checkpointDirty = true;
         const guid = player.guid;
         const identity = NameInfo(player.data.name, player.data.race, player.data.gender, player.data.classId);
+        memberLevels[guid] = cast(ubyte) player.data.level;
+        offlineByCrash.remove(guid);
         if (auto known = guid in members)
         {
             known.offlineSince = MonoTime.init;
@@ -493,6 +507,8 @@ final class Battleground
             }
         }
         members.remove(guid);
+        memberLevels.remove(guid);
+        offlineByCrash.remove(guid);
         {
             import std.algorithm.mutation : remove;
             import std.algorithm.searching : countUntil;
@@ -514,6 +530,7 @@ final class Battleground
         {
             checkpointDirty = true;
             m.offlineSince = context.clock();
+            offlineByCrash.remove(guid);
             if (status == BattlegroundStatus.inProgress)
                 rules.playerLeaving(this, guid);
         }
@@ -687,15 +704,17 @@ final class Battleground
         uint level;
         const day = honorDay(honorToday());
         foreach (guid, ref member; members)
-            if (member.offlineSince == MonoTime.init)
-                if (auto who = memberSession(guid))
-                {
-                    level = who.character.data.level;
-                    const won = teamWins(member.team, winner);
-                    finalPlayers[guid] = FinalPlayer(score: PvpStatsPlayer.init,
-                        reward: BattlegroundReward(context.config.realmId, instance, cast(uint) guid,
-                            markSpells[type][won ? 0 : 1], 0, day));
-                }
+        {
+            // Those offline only because of a crash fought until it: their rows are paid when they return.
+            const present = member.offlineSince == MonoTime.init && memberSession(guid) !is null;
+            if (!present && guid !in offlineByCrash)
+                continue;
+            level = rewardLevel(guid);
+            const won = teamWins(member.team, winner);
+            finalPlayers[guid] = FinalPlayer(score: PvpStatsPlayer.init,
+                reward: BattlegroundReward(context.config.realmId, instance, cast(uint) guid,
+                    markSpells[type][won ? 0 : 1], 0, day));
+        }
         collectingFinalRewards = true;
         scope (exit) collectingFinalRewards = false;
         if (finalObjectiveReward !is null)
@@ -710,6 +729,23 @@ final class Battleground
         if (const t = template_)
             finalBracket = cast(ubyte)((t.minLevel + 10 * (level ? bracketOf(*t, level) : 0)) / 10);
         finalPublicationPending = true;
+    }
+
+    /// A member's level for its rewards: online, its own; else as it came in; else (a record from before
+    /// levels were kept) another member's, as one copy's players share a bracket.
+    private uint rewardLevel(ulong guid)
+    {
+        if (auto who = memberSession(guid))
+            return who.character.data.level;
+        if (const level = guid in memberLevels)
+            return *level;
+        foreach (_, level; memberLevels)
+            return level;
+        foreach (other, ref m; members)
+            if (auto who = memberSession(other))
+                return who.character.data.level;
+        const t = template_;
+        return t is null ? 0 : t.minLevel;
     }
 
     private bool publishFinalResult()
@@ -872,21 +908,27 @@ final class Battleground
         if (t is null)
             return;
         foreach (guid, ref m; members)
-            if (m.team == team && m.offlineSince == MonoTime.init)
+        {
+            if (m.team != team)
+                continue;
+            if (collectingFinalRewards)
+            {
+                // Every finishing player, those offline because of a crash too, into its durable reward.
+                if (auto finished = guid in finalPlayers)
+                {
+                    const honor = bonusHonor(units, *t, rewardLevel(guid));
+                    finished.reward.honor += honor;
+                    m.bonusHonor += honor;
+                }
+            }
+            else if (m.offlineSince == MonoTime.init)
                 if (auto c = cast(Character) memberSession(guid))
                 {
                     const honor = bonusHonor(units, *t, c.player.data.level);
-                    if (collectingFinalRewards)
-                    {
-                        if (auto finished = guid in finalPlayers)
-                        {
-                            finished.reward.honor += honor;
-                            m.bonusHonor += honor;
-                        }
-                    }
-                    else if (c.battlegroundBonusHonor(honor))
+                    if (c.battlegroundBonusHonor(honor))
                         m.bonusHonor += honor;
                 }
+        }
     }
 
     /// Reputation: `amount` with `faction` to everyone of `team` here.
@@ -895,16 +937,18 @@ final class Battleground
         import dmangos.world.character : Character;
 
         foreach (guid, ref m; members)
-            if (m.team == team && m.offlineSince == MonoTime.init)
+        {
+            if (m.team != team)
+                continue;
+            if (collectingFinalRewards)
             {
-                if (collectingFinalRewards)
-                {
-                    if (auto finished = guid in finalPlayers)
-                        finished.reward.reputation ~= imported!"dmangos.world.database".BattlegroundReputation(faction, amount);
-                }
-                else if (auto c = cast(Character) memberSession(guid))
-                    c.battlegroundReputation(faction, amount);
+                if (auto finished = guid in finalPlayers)
+                    finished.reward.reputation ~= imported!"dmangos.world.database".BattlegroundReputation(faction, amount);
             }
+            else if (m.offlineSince == MonoTime.init)
+                if (auto c = cast(Character) memberSession(guid))
+                    c.battlegroundReputation(faction, amount);
+        }
     }
 
     /// Casts `spell` on everyone of `team` here (a quest's credit).
@@ -3403,4 +3447,34 @@ unittest
     varian.session.inWorld.payBattlegroundReward(reward);
     assert(!db.pendingBattlegroundRewards().length, "paid, not pending again every second");
     assert(db.loadHonor(7).points.length == 1, "the honor is not withheld");
+}
+
+/// A match recovered after a crash that ends before its players reconnect still keeps their final rewards.
+unittest
+{
+    import dmangos.world.movement : Position;
+    import dmangos.world.testclient;
+    import dmangos.world.warsong : winKills;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    auto varian = loggedIn(context, db, 7, "Varian", Position(-8949.95f, -132.49f, 83.53f), characterLevel: 25);
+    varian.read();
+    auto copy = enterWarsong(context, [&varian], [7], [0]);
+    copy.start();
+    assert(copy.memberLevels.get(7, 0) == 25);
+
+    auto successor = newCreationContext(db);
+    successor.clock = () => now;
+    successor.battlegroundMapEpoch = (uint) => 1UL;
+    successor.restoreBattleground(copy.mapId, copy.instance, context.snapshotBattleground(copy));
+    auto restored = successor.battlegrounds.find(copy.instance);
+    assert(restored.members[7].offlineSince != MonoTime.init && 7 in restored.offlineByCrash);
+    restored.end(winnerAlliance);
+    const rewards = db.pendingBattlegroundRewards();
+    assert(rewards.length == 1 && rewards[0].player == 7, "the crash-offline winner keeps its reward");
+    assert(rewards[0].markSpell == markSpells[BattlegroundType.warsongGulch][0]);
+    assert(rewards[0].honor == bonusHonor(winKills, *restored.template_, 25), "by its own bracket");
 }
