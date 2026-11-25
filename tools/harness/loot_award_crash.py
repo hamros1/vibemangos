@@ -26,7 +26,7 @@ from quorum import ELECTION
 
 VOTERS = ("node1", "node2", "node3")
 OWNS = re.compile(r"this node owns \[([^\]]*)\]")
-REGION = re.compile(r"(\d+) \(map (\d+), cells x (-?\d+)\.\.(-?\d+), y (-?\d+)\.\.(-?\d+)\)")
+GEOMETRY = re.compile(r"region (\d+): map (\d+), cells x (-?\d+)\.\.(-?\d+), y (-?\d+)\.\.(-?\d+)")
 CLAIMED = 255  # lootAwardClaimed (source/dmangos/world/database.d)
 HUBS = {0: (-8949.95, -132.49), 1: (-618.0, -4252.0)}
 
@@ -54,12 +54,19 @@ def hold_inventory(fixture, characters, guid):
 
 
 def layout(fixture):
-    """Each worker's regions, {tag: {region: (map, (x0, x1), (y0, y1))}}, from its latest ownership line."""
+    """Each worker's regions, {tag: {region: (map, (x0, x1), (y0, y1))}}: the regions from its latest ownership
+    line (which lists only their numbers once a node owns more than eight), their shapes from the division
+    every node logs as it starts."""
+    shapes = {}
+    for tag in VOTERS:
+        for region, map_id, x0, x1, y0, y1 in GEOMETRY.findall(fixture.log(tag)):
+            shapes[int(region)] = (int(map_id), (int(x0), int(x1)), (int(y0), int(y1)))
     owned = {}
     for tag in VOTERS:
         lines = OWNS.findall(fixture.log(tag))
-        owned[tag] = {int(region): (int(map_id), (int(x0), int(x1)), (int(y0), int(y1)))
-                      for region, map_id, x0, x1, y0, y1 in REGION.findall(lines[-1])} if lines else {}
+        ids = {int(region) for region in re.findall(r"^\s*(\d+)", lines[-1], re.M)} if lines else set()
+        ids |= {int(region) for region in re.findall(r"(?:^|, )(\d+)", lines[-1])} if lines else set()
+        owned[tag] = {region: shapes[region] for region in ids if region in shapes}
     return owned
 
 

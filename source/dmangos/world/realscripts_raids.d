@@ -844,8 +844,9 @@ unittest
     s.restartAfterCrash();
     razorgore = s.the(razorgoreEntry);
     assert(s.ask(0) == 4 && s.objects(egg).length == 0 && razorgore.guid == freeGuid);
-    // The fight goes on meanwhile: his last save, at most two seconds old, came after the raid hurt him.
-    assert(s.healthOf(razorgore) >= freeHealth && s.healthOf(razorgore) <= hurtHealth && razorgore.ai.inCombat,
+    // The fight goes on meanwhile: his last save, at most two seconds old, came after the raid hurt him. The
+    // raid, back, may already have struck him again by now: a swing or two, not his health before the hurt.
+    assert(s.healthOf(razorgore) >= freeHealth - 1 && s.healthOf(razorgore) <= hurtHealth && razorgore.ai.inCombat,
         format!"the freed dragon resumes the same fight: health %s, between %s and %s, in combat %s"(
             s.healthOf(razorgore), freeHealth, hurtHealth, razorgore.ai.inCombat));
     s.kill(razorgore);
