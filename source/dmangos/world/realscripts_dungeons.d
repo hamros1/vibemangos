@@ -190,6 +190,24 @@ unittest
     assert(Dungeon.isOpen(d.objectOf(factoryDoor)), "open after a restart");
 }
 
+/// The Deadmines after a clean handoff: the copy's script, made afresh on the next node, still holds its doors, so
+/// Rhahk'Zor's death there opens the Factory Door.
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint rhahkZor = 644, factoryDoor = 13965;
+    auto d = Dungeon.enter(36, 20);
+    assert(!Dungeon.isOpen(d.objectOf(factoryDoor)), "closed while he lives");
+    d.handoff();
+    auto boss = d.spawned(rhahkZor);
+    d.pull(boss);
+    d.run(2.seconds);
+    d.kill(boss);
+    d.run(1.seconds);
+    assert(Dungeon.isOpen(d.objectOf(factoryDoor)), "his death on the next node opens it");
+}
+
 /**
  * Mr. Smite (646), as ScriptDev2's sniffed script has him: Nimble Reflexes (6433) on him; below two thirds of his health
  * Smite Stomp (6432) and "You land lubbers are tougher..." (-1036002), the reflexes gone, a run to his chest (144111),

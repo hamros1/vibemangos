@@ -5108,6 +5108,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 if (copy.mapId == mapId && !ids.canFind(copy.instance))
                     ids ~= copy.instance; // its first player may still be acknowledging the world port
         w.put(cast(uint) ids.length);
+        // Each script's state goes first, with its encounter's creatures still here to capture (a save held back
+        // by its two-second pace would otherwise be lost): the next host makes the script from `instance.data`.
+        foreach (id; ids)
+            if (auto script = instanceScripts.get(id, null))
+                script.saveNow();
+        settleWrites();
         foreach (id; ids)
         {
             auto m = instanceMaps.get(id, null);
@@ -5242,6 +5248,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         }
         const before = m.objectCount - m.replicaCount;
         auto copy = battlegroundOfMap(mapId) ? battlegrounds.find(id) : null;
+        ArrivedObject[] arrived;
         m.migrateIn(bundle, (const ref Migrant migrant) {
             auto object = restoreWorldMigrant(migrant, m);
             if (auto creature = cast(Creature) object)
@@ -5253,6 +5260,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     return null;
                 go.instanceId = id;
             }
+            if (object !is null)
+                arrived ~= ArrivedObject(object.guid, migrant.kind);
             return object;
         });
         if (ownsDungeonFights(m))
@@ -5260,7 +5269,52 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         const restored = m.objectCount - m.replicaCount - before;
         if (copy !is null)
             copy.reconcilePowerUps(m);
+        copyObjectsArrived(id, arrived);
         return restored;
+    }
+
+    private static struct ArrivedObject
+    {
+        ulong guid;
+        MigrantKind kind;
+    }
+
+    /**
+     * A copy's objects came in from another node: its script, made afresh from `instance.data`, learns them as it
+     * would from their cells loading (`CreatureLoaded`, `ObjectLoaded`), so the doors and bosses it holds by
+     * reference answer again. A summon is told only if the encounter keeps it in its checkpoint, as when it comes
+     * back from one (`InstanceScript.restorePendingSummons`).
+     */
+    private void copyObjectsArrived(uint id, const(ArrivedObject)[] arrived)
+    {
+        import dmangos.script.api : CreatureLoaded, EntityRef, ObjectLoaded;
+
+        auto script = instanceScripts.get(id, null);
+        if (script is null)
+            return;
+        foreach (object; arrived)
+        {
+            const entity = EntityRef(object.guid);
+            final switch (object.kind)
+            {
+            case MigrantKind.creature:
+                script.raise(CreatureLoaded(entity));
+                break;
+            case MigrantKind.gameObject:
+                script.raise(ObjectLoaded(entity));
+                break;
+            case MigrantKind.summonedCreature:
+                if (script.keepsCheckpoint(entity))
+                    script.raise(CreatureLoaded(entity, true));
+                break;
+            case MigrantKind.summonedGameObject:
+                if (script.keepsCheckpoint(entity))
+                    script.raise(ObjectLoaded(entity));
+                break;
+            case MigrantKind.none, MigrantKind.creatureRespawn, MigrantKind.gameObjectRespawn, MigrantKind.scriptRun:
+                break;
+            }
+        }
     }
 
     /// An instance gone from this node's memory only (another node hosts it).
@@ -5513,7 +5567,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             {
                 // A raid copy outlives its emptiness until its reset (only its map goes); a dungeon's resets.
                 if (state.resetAt && time < state.resetAt)
-                    dropInstanceMap(id);
+                    dropInstanceMap(id, true);
                 else
                     gone ~= id;
             }
@@ -5580,9 +5634,15 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     binds.remove(mapId);
     }
 
-    /// A copy's map goes from memory (unloaded, reset, shut down, another node's now): its scripts too.
-    private void dropInstanceMap(uint id)
+    /**
+     * A copy's map goes from memory (unloaded, reset, shut down, another node's now): its scripts too. `keep`: the
+     * copy goes on (unloaded or shut down, its objects still here), so its script saves its state first.
+     */
+    private void dropInstanceMap(uint id, bool keep = false)
     {
+        if (keep)
+            if (auto script = instanceScripts.get(id, null))
+                script.saveNow();
         dungeonFights.remove(id);
         pendingDungeonFights.remove(id);
         if (auto m = instanceMaps.get(id, null))
@@ -5728,7 +5788,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         auto m = instanceMaps.get(id, null);
         if (m is null)
             return false;
-        dropInstanceMap(id);
+        dropInstanceMap(id, true);
         return true;
     }
 

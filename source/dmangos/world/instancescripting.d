@@ -478,6 +478,16 @@ final class InstanceScript : InstanceHost
             respawnKilled(map, entry);
     }
 
+    /**
+     * Writes its state now, whatever the pace of its saves: the copy is about to leave this node or memory. Its
+     * encounter's creatures must still be on the map (they are captured with it).
+     */
+    void saveNow()
+    {
+        if (!world && !raising)
+            save(true);
+    }
+
     /// The copy goes from this node: the script's state goes from memory (it is saved).
     void release()
     {
