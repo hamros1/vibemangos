@@ -1060,6 +1060,11 @@ abstract class WriteBehindBase : WorldDatabase
         return reader.loadCreaturePoolStates(realm);
     }
 
+    override imported!"dmangos.cluster.protocol".ScriptQuestCredit[] pendingScriptQuestCredits(uint realm)
+    {
+        return reader.pendingScriptQuestCredits(realm);
+    }
+
     override uint[] pendingLootCoinPlayers()
     {
         return reader.pendingLootCoinPlayers();

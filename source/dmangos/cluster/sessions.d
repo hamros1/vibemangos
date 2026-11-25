@@ -194,9 +194,10 @@ final class SessionDirectory
         if (request.kind == SessionRouteKind.recover)
         {
             const oldTerm = request.account in endedRouteTerms;
-            if ((!oldTerm && request.previous == request.next) || request.previous.node == home.node)
+            const stopped = request.account in stoppedSimulations;
+            if ((!stopped && !oldTerm && request.previous == request.next) || request.previous.node == home.node)
                 return Result.denied;
-            if (!oldTerm && !retired(request.previous))
+            if (!stopped && !oldTerm && !retired(request.previous))
             {
                 const until = request.previous in lostOwners;
                 if (until is null || now < *until)
@@ -356,4 +357,23 @@ unittest
     assert(directory.tick(now + 16.seconds).length == 0, "an older route cannot release the recovered simulation");
     directory.stopped(7, 70, 2, replacement);
     assert(directory.tick(now + 16.seconds) == [SessionAction(SessionAction.Kind.grant, 7, competing)]);
+}
+
+/// A worker can lose its lease while the gateway keeps the socket. Once that exact simulation
+/// reports it stopped, the gateway can restore the checkpoint even on the same worker.
+unittest
+{
+    auto directory = new SessionDirectory;
+    auto home = SessionRef(4, 1, 10);
+    auto owner = SimulationOwner(3, 20);
+    directory.claim(8, home);
+    auto move = SessionRoute(kind: SessionRouteKind.move, account: 8, character: 7, serial: 1,
+        token: 5, previous: home.process, next: owner);
+    assert(directory.route(home, move, MonoTime.currTime) == SessionRouteResult.granted);
+    auto recover = SessionRoute(kind: SessionRouteKind.recover, account: 8, character: 7, serial: 1,
+        token: 6, previous: owner, next: owner);
+    directory.stopped(8, 7, 4, owner);
+    assert(directory.route(home, recover, MonoTime.currTime) == SessionRouteResult.denied);
+    directory.stopped(8, 7, 5, owner);
+    assert(directory.route(home, recover, MonoTime.currTime) == SessionRouteResult.granted);
 }

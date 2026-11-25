@@ -1591,10 +1591,10 @@ unittest
         override bool advanceOutdoorScript(uint realm, ushort origin, ulong sequence, uint cursor, bool finished,
             const(OutdoorQuestUpdate)[] updates, const(QuestActorCheckpoint)[] summons,
             const(OutdoorScriptCheckpoint)[] relays, const(OutdoorSummonRequest)[] forwards,
-            const(OutdoorWorldState)[] worldStates)
+            const(OutdoorWorldState)[] worldStates, const(imported!"dmangos.cluster.protocol".ScriptQuestCredit)[] credits)
         {
             const advanced = inner.advanceOutdoorScript(realm, origin, sequence, cursor, finished, updates, summons,
-                relays, forwards, worldStates);
+                relays, forwards, worldStates, credits);
             claims += advanced;
             if (loseNext && updates.length)
             {

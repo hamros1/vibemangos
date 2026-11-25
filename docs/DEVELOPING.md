@@ -324,8 +324,9 @@ stalled database must cost the worker neither a link nor its lease. It sets the 
 
 Run `python3 tools/harness/lease_lapse_arrival.py` to drop the worker lease frames between the
 coordinator and one worker at the proxy, so only that worker's lease lapses, in the same term and
-with every link up. A gateway client handed to it meanwhile, which speaks at once, must be held
-there, then arrive, be answered and play once the lease frames flow again.
+with every link up. A gateway client sends chat during the handoff and receives its reply when
+the lease returns. The test then lets the lease lapse again while that player is active. The same
+worker must restore the character and answer chat on the original client connection.
 
 Run `python3 tools/harness/worker_rejoin.py` to stop (`SIGSTOP`) the worker simulating a gateway
 player until the coordinator drops it and the gateway restores the player elsewhere. Resumed, the
@@ -365,8 +366,9 @@ world before the first has left it; the standby must evict the first, and the se
 Run `python3 tools/harness/standby_bundle.py` in single-standby mode with a gateway: a gateway player
 plays on a worker, the proxy holds that worker's frames to the coordinator for two seconds, the worker is
 stopped cleanly (it drains), and the coordinator is killed as soon as the worker has sent its releases.
-Sent again to the standby, every released world region must reach its next owner with its objects
-("arrived with N objects"), and the player plays on.
+The test compares the original and resent bundles byte for byte and checks that each region
+arrives once with its original object count. On the original connection, the player must see
+the same living NPC's GUID exactly once after recovery and receive a chat reply.
 
 Run `python3 tools/harness/battleground_recovery.py --cross-realm --map arathi` to kill the
 active match worker and check the same match's objectives, scoreboard and PvP on its standby.

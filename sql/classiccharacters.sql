@@ -788,6 +788,18 @@ CREATE TABLE IF NOT EXISTS `dmangos_quest_actor` (
   `state` mediumtext CHARACTER SET ascii NOT NULL,
   PRIMARY KEY (`realm`, `actor`)
 ) ENGINE=InnoDB;
+CREATE TABLE IF NOT EXISTS dmangos_script_credit (
+    realm INT UNSIGNED NOT NULL, origin SMALLINT UNSIGNED NOT NULL, sequence BIGINT UNSIGNED NOT NULL,
+    player INT UNSIGNED NOT NULL, kind TINYINT UNSIGNED NOT NULL, quest INT UNSIGNED NOT NULL,
+    rewarder BIGINT UNSIGNED NOT NULL, applied BOOLEAN NOT NULL DEFAULT FALSE,
+    PRIMARY KEY (realm, origin, sequence), KEY pending (realm, applied, sequence), KEY (player)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS dmangos_gameplay_sequence (
+    realm INT UNSIGNED NOT NULL, node SMALLINT UNSIGNED NOT NULL, reserved BIGINT UNSIGNED NOT NULL,
+    PRIMARY KEY (realm, node)
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS `dmangos_outdoor_script` (
   `realm` int unsigned NOT NULL,
   `origin` smallint unsigned NOT NULL,

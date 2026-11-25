@@ -418,7 +418,7 @@ struct TempleOfAhnQiraj
         {
             // Back in the stomach: C'Thun's acid finds them again (or, risen no more, he puts them out).
             Location at;
-            if (copy.locationOf(e.player, at) && at.z < Cthun.stomachTop)
+            if (copy.locationOf(e.player, at) && Cthun.insideStomach(at))
                 copy.signal(cthun, Aq40Signal.stomachPlayer, cast(int) e.player.guid);
         }
     }
@@ -2044,8 +2044,11 @@ struct Cthun
     static immutable Location[2] fleshPlaces = [
         Location(-8571.472f, 1990.2048f, -98.777855f, 1.0123f), Location(-8525.083f, 1994.7125f, -98.255325f, 2.5831f),
     ];
-    /// Below this height a player is in the stomach.
-    enum float stomachTop = 0;
+    /// The lower chamber around the swallow point, Flesh Tentacles and exit platform.
+    static bool insideStomach(P)(P at)
+    {
+        return at.z < 0 && (at.x - stomach.x) ^^ 2 + (at.y - stomach.y) ^^ 2 < 100 ^^ 2;
+    }
 
     enum Step : ubyte { emerge, giantClaw, giantEye, eyeTentacles, mouth, swallow, acid, weakenedEnd }
     Schedule!Step steps;
@@ -2174,7 +2177,7 @@ struct Cthun
                     who = EntityRef.init;
                     changed = true;
                 }
-                else if (at.z > stomachTop)
+                else if (!insideStomach(at))
                 {
                     me.removeAura(who, digestiveAcid);
                     who = EntityRef.init;
@@ -2318,7 +2321,7 @@ struct GiantClawTentacle
     {
         foreach (attempt; 0 .. 4)
             if (const prey = me.selectTarget(Pick.random, PickFilter.player))
-                if (where(me, prey).z > Cthun.stomachTop)
+                if (where(me, prey).z > 0)
                     return prey;
         return EntityRef.init;
     }
@@ -2620,7 +2623,7 @@ unittest
         float z = -97;
         override EntityRef hostSelectTarget(Pick, uint, uint) { return EntityRef(7); }
         override ActionResult hostTeleportPlayer(EntityRef who, Location) { teleported ~= who; return ActionResult.ok; }
-        override bool hostLocationOf(EntityRef, out Location at) { at = Location(0, 0, z); return true; }
+        override bool hostLocationOf(EntityRef, out Location at) { at = Location(Cthun.stomach.x, Cthun.stomach.y, z); return true; }
         override ActionResult hostRemoveAura(EntityRef who, uint) { unaura ~= who; return ActionResult.ok; }
     }
 
@@ -2666,7 +2669,7 @@ unittest
         size_t fleshAlive;
         override EntityRef hostSelectTarget(Pick, uint, uint) { return EntityRef(7); }
         override ActionResult hostTeleportPlayer(EntityRef who, Location) { teleported ~= who; return ActionResult.ok; }
-        override bool hostLocationOf(EntityRef, out Location at) { at = Location(0, 0, -97); return here; }
+        override bool hostLocationOf(EntityRef, out Location at) { at = Cthun.stomach; return here; }
         override size_t hostCreaturesNearby(uint e, float, EntityRef[] into)
         {
             if (e != npcFleshTentacle)
@@ -2744,11 +2747,11 @@ unittest
         uint[] killed, respawned;
         Signal[] signals;
         EntityRef[] despawned;
-        float z = 100;
+        Location position;
         override bool hostEntryKilled(uint entry) { return killed.canFind(entry); }
         override void hostRespawnKilled(uint entry) { respawned ~= entry; }
         override bool hostAlive(EntityRef) { return true; }
-        override bool hostLocationOf(EntityRef, out Location at) { at = Location(0, 0, z); return true; }
+        override bool hostLocationOf(EntityRef, out Location at) { at = position; return true; }
         override ActionResult hostSignal(EntityRef to, uint id, int value)
         {
             signals ~= Signal(to, id, value);
@@ -2779,7 +2782,7 @@ unittest
     // A worker's crash, C'Thun and one tentacle in the checkpoint: the fight resumes as a player comes back.
     auto copy2 = new FakeTemple;
     copy2.killed = [npcEyeOfCthun];
-    copy2.z = -97;
+    copy2.position = Cthun.stomach;
     auto c2 = InstanceContext(copy2);
     auto h2 = runtime.create(ScriptKind.instance, "instance_temple_of_ahnqiraj");
     auto reader = ByteReader(saved.data);
@@ -2792,6 +2795,9 @@ unittest
     runtime.raise(h2, c2, PlayerEntered(EntityRef(7)));
     assert(copy2.signals.canFind(Signal(cthun, Aq40Signal.resumeCthun, 0)));
     assert(copy2.signals.canFind(Signal(cthun, Aq40Signal.stomachPlayer, 7)), "back in the stomach: told to C'Thun");
+    copy2.position = Location(-9024, 1176, -104); // Twin Emperors
+    runtime.raise(h2, c2, PlayerEntered(EntityRef(8)));
+    assert(!copy2.signals.canFind(Signal(cthun, Aq40Signal.stomachPlayer, 8)));
     assert(!copy2.respawned.length && !copy2.despawned.length);
     runtime.raise(h2, c2, Signal(cthun, Aq40Encounter.cthun, EncounterState.failed));
     assert(copy2.despawned == [flesh], "the wipe takes the restored tentacle, not the one lost with the worker");
@@ -2854,7 +2860,7 @@ unittest
         {
             return pick == Pick.random ? EntityRef(7) : EntityRef.init; // nobody in its reach
         }
-        override bool hostLocationOf(EntityRef, out Location at) { at = Location(0, 0, z); return true; }
+        override bool hostLocationOf(EntityRef, out Location at) { at = Location(Cthun.stomach.x, Cthun.stomach.y, z); return true; }
         override void hostTeleport(Location at) { went ~= at; }
     }
 

@@ -10,8 +10,9 @@ class ClusterProxy:
     ADDRESS = "127.0.0.2"
     DESTINATION = "127.0.0.1"
 
-    def __init__(self, ports):
+    def __init__(self, ports, observe=None):
         self.ports = ports
+        self.observe = observe
         self.blocked = set()
         self.dropping = {}
         self.dropped = {}
@@ -135,6 +136,8 @@ class ClusterProxy:
                 header = await reader.readexactly(16)
                 length, kind = struct.unpack_from("<IH", header)
                 payload = await reader.readexactly(length)
+                if self.observe is not None:
+                    self.observe(direction, kind, payload)
                 if kind in self.dropping.get(direction, ()):
                     self.dropped[direction] = self.dropped.get(direction, 0) + 1
                     continue

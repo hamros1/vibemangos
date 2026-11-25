@@ -534,22 +534,27 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private MonoTime nextBattlegroundRewardPoll;
     private bool[uint] retryLootCoinRedemption;
 
-    /// This process's incarnation in the cluster (docs/CLUSTER.md), which seeds `nextGameplaySequence`; 0 outside one.
+    /// The cluster incarnation supplies a floor compatible with numbers issued before range reservations.
     ulong incarnation;
+    private ulong gameplayReservedUntil;
+    private enum uint gameplayBlockSize = 1 << 20;
 
-    /**
-     * The next number of this node's gameplay messages. A peer drops a message at or below the highest number it
-     * has applied from this node, and keeps that mark for good: a new start must count from above where the last
-     * one stopped. The wall clock cannot promise that (it may have stepped back since); the incarnation, recorded
-     * beside the write log, rises with every start whatever the clock does, and leaves 2^20 numbers for each of
-     * the milliseconds between two starts (2^20 at least, for a start just after one the clock stepped back).
-     */
     ulong nextGameplaySequence()
     {
         import std.datetime.systime : Clock;
+        import dmangos.mysql : DatabaseException;
 
-        if (!gameplaySequence)
-            gameplaySequence = incarnation ? incarnation << 20 : cast(ulong) Clock.currStdTime;
+        if (incarnation && (!gameplayReservedUntil || gameplaySequence == gameplayReservedUntil))
+        {
+            const first = database.reserveGameplaySequences(config.realmId, config.cluster.nodeId,
+                incarnation << 20, gameplayBlockSize);
+            if (!first)
+                throw new DatabaseException("could not reserve gameplay sequence numbers");
+            gameplaySequence = first - 1;
+            gameplayReservedUntil = gameplaySequence + gameplayBlockSize;
+        }
+        else if (!incarnation && !gameplaySequence)
+            gameplaySequence = cast(ulong) Clock.currStdTime;
         return ++gameplaySequence;
     }
 
@@ -2597,33 +2602,64 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// A database script's quest credit for a player another node simulates (`ScriptQuestCredit`).
     void delegate(ushort node, const ref imported!"dmangos.cluster.protocol".ScriptQuestCredit credit)
         scriptQuestCreditElsewhere;
-    private ulong[ushort] scriptCreditsSeen; // origin -> the highest sequence applied from it
+    private MonoTime nextScriptCreditPoll;
 
-    /// Another node's database script credits a player here: once, or on to where the player went.
+    /// The message speeds up delivery. The realm's character database keeps the credit until its owner applies it.
     package void scriptQuestCreditArrived(const ref imported!"dmangos.cluster.protocol".ScriptQuestCredit credit)
     {
-        import dmangos.cluster.protocol : ScriptQuestCredit;
-        import dmangos.world.dbscripts : ScriptQuestEffect;
-
-        if (credit.sequence <= scriptCreditsSeen.get(credit.origin, 0))
-            return;
         auto player = onlinePlayer(credit.player);
-        if (player is null || player.character is null)
-        {
-            if (!credit.forwarded && scriptQuestCreditElsewhere !is null)
-                if (const hint = recentHandoff(credit.player))
-                {
-                    auto onward = cast(ScriptQuestCredit) credit;
-                    onward.forwarded = true;
-                    scriptQuestCreditElsewhere(hint.node, onward);
-                }
+        if (player is null || player.player is null || player.transferring || !canWrite())
             return;
+        applyScriptCredit(player, credit);
+    }
+
+    private void pollScriptCredits(MonoTime now)
+    {
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
+
+        if (!online.length || now < nextScriptCreditPoll || !canWrite())
+            return;
+        nextScriptCreditPoll = now + 1.seconds;
+        try
+        {
+            foreach (ref credit; database.pendingScriptQuestCredits(config.realmId))
+                scriptQuestCreditArrived(credit);
         }
-        scriptCreditsSeen[credit.origin] = credit.sequence;
+        catch (DatabaseException error)
+            warning!"could not deliver a script quest credit: %s"(error.msg);
+    }
+
+    private void applyScriptCredit(Character player, const ref imported!"dmangos.cluster.protocol".ScriptQuestCredit credit)
+    {
+        import dmangos.cluster.protocol : ScriptQuestCredit;
+        import dmangos.mysql : DatabaseException;
+        import dmangos.world.dbscripts : ScriptQuestEffect;
+        import dmangos.world.quests : QuestStatus;
+
+        if (player.savedUnread)
+            return;
         alias Kind = ScriptQuestEffect.Kind;
         const kind = credit.kind == ScriptQuestCredit.Kind.explored ? Kind.explored
             : credit.kind == ScriptQuestCredit.Kind.failed ? Kind.failed : Kind.kill;
-        ScriptQuestEffect(player, kind, credit.quest, credit.rewarder).apply();
+        auto effect = ScriptQuestEffect(player, kind, credit.quest, credit.rewarder);
+        QuestStatus[uint] proposed;
+        effect.apply(&proposed);
+        player.saveQuests();
+        if (!settleWrites())
+            return;
+        try
+        {
+            if (!database.consumeScriptQuestCredit(config.realmId, credit, proposed.values))
+                return;
+        }
+        catch (DatabaseException error)
+        {
+            // A lost reply may hide a successful payment. Re-read the durable quest log on login.
+            player.connection.kick("lost the connection while saving quest credit");
+            throw error;
+        }
+        effect.apply();
         player.flushPlayerChanges();
     }
 
@@ -10986,6 +11022,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         checkHonorWeek(now);
         services.tick(elapsed);
         pollLootCoinCredits(now);
+        pollScriptCredits(now);
         releaseSettledSessions();
         pollBattlegroundRewards(now);
         worldPvp.tick(elapsed);
@@ -12912,8 +12949,9 @@ unittest
     assert(sent.length == 2 && to == [2, 2] && sent[0].player == player && sent[1].player == player);
     assert(sent[0].kind == ScriptQuestCredit.Kind.kill && sent[0].quest == credited);
     assert(sent[1].kind == ScriptQuestCredit.Kind.explored && sent[1].quest == area);
-    foreach (ref credit; sent)
-        elsewhere.scriptQuestCreditArrived(credit);
+    // The direct notification overtakes the older one after a handoff.
+    elsewhere.scriptQuestCreditArrived(sent[1]);
+    elsewhere.scriptQuestCreditArrived(sent[0]);
     const me = anduin.session.character;
     assert(me.questStatus[questId].mobCount[0] == 1, "the kill, credited where the player plays");
     assert(me.questStatus[area].status == QuestState.complete, "and the explored area");
@@ -12921,6 +12959,23 @@ unittest
     // Sent again (a resend after a reconnect), the kill is not counted twice.
     elsewhere.scriptQuestCreditArrived(sent[0]);
     assert(me.questStatus[questId].mobCount[0] == 1 && me.questStatus[questId].status != QuestState.complete);
+
+    // A delayed step is checkpointed outdoors. Lose the sender's notification after its final cursor commits.
+    enum delayed = relay + 2;
+    scripted.data.dbScripts.add(DbScriptType.relay, DbScriptStep(delayed, 1000, 0, ScriptCommand.killCredit, credited));
+    assert(scripted.startScript(DbScriptType.relay, delayed, map, keeper.guid, player));
+    scripted.updateScripts(0);
+    assert(db.loadOutdoorScripts(scripted.config.realmId).length == 1);
+    scripted.updateScripts(1000);
+    assert(!db.loadOutdoorScripts(scripted.config.realmId).length);
+    const pending = db.pendingScriptQuestCredits(scripted.config.realmId);
+    assert(pending.length == 1 && sent.length == 3 && sent[2] == pending[0]);
+    elsewhere.scriptQuestCreditElsewhere = scripted.scriptQuestCreditElsewhere;
+    elsewhere.pollScriptCredits(MonoTime.currTime);
+    assert(me.questStatus[questId].mobCount[0] == 2 && me.questStatus[questId].status == QuestState.complete);
+    assert(db.questRows[7][questId].mobCount[0] == 2 && !db.pendingScriptQuestCredits(scripted.config.realmId).length);
+    elsewhere.scriptQuestCreditArrived(sent[2]);
+    assert(!db.consumeScriptQuestCredit(scripted.config.realmId, sent[2], null));
 }
 
 // A node's gameplay messages are numbered from its incarnation, not the wall clock: a start after the clock stepped
@@ -12931,9 +12986,10 @@ unittest
 
     auto db = newDatabase();
     auto before = newCreationContext(db, (ref config) { config.cluster.nodeId = 3; });
+    before.nextGameplaySequence(); // a value issued before joining the cluster
     before.incarnation = 1_795_631_257_169;
     ulong last;
-    foreach (_; 0 .. 100_000)
+    foreach (_; 0 .. 1_100_000)
         last = before.nextGameplaySequence();
     auto after = newCreationContext(db, (ref config) { config.cluster.nodeId = 3; });
     after.incarnation = before.incarnation + 1;

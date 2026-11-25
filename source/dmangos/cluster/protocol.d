@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 127; // a database script's quest credit reaches its player on another node
+enum ushort protocolVersion = 128; // quest-credit notifications name credits held in the realm character database
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -124,7 +124,6 @@ struct ScriptQuestCredit
     ulong rewarder;  /// kill: the creature that gave it
     ushort origin;
     ulong sequence;
-    bool forwarded;  /// the player's old node passed it on to its new owner
 }
 
 /// A single remote target's current state for Mind Vision's normal cast checks.
@@ -730,6 +729,7 @@ enum PlayerMessageKind : ubyte
     gatewayReturn = 10, /// to the gateway: a client packet that reached the old owner after the player left it
     gatewayFlush = 11, /// to the old owner: the gateway relays it nothing more for the player; it answers gatewayFlushed
     gatewayFlushed = 12, /// to the gateway: the old owner has sent back every client packet it had for the player
+    gatewayStopped = 13, /// the owner lost its lease and discarded this gateway simulation (data: route token)
 }
 
 /// See `PlayerMessageKind`. Players are known by their account: one session per account in the cluster.
@@ -1416,7 +1416,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 127, recordedFingerprint = 0x1a28a203a9cc4dc5UL;
+private enum recordedVersion = 128, recordedFingerprint = 0x2092e74d343f5c6dUL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

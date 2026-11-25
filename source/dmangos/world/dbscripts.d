@@ -418,6 +418,7 @@ package struct OutdoorOpenableState
 
 package struct OutdoorScriptStep
 {
+    imported!"dmangos.cluster.protocol".ScriptQuestCredit[] credits;
     private QuestStatus[uint][Character] rows;
     ScriptQuestEffect[] effects;
     ScriptCreatureSpawn[] summons;
@@ -733,7 +734,7 @@ mixin template DbScriptRunner()
                     cast(uint) run.next, finished, planned is null ? null : planned.updates(),
                     planned is null ? null : planned.actorCheckpoints(),
                     planned is null ? null : planned.relayCheckpoints, planned is null ? null : planned.forwards,
-                    planned is null ? null : planned.worldStates))
+                    planned is null ? null : planned.worldStates, planned is null ? null : planned.credits))
             {
                 run.waitingForSummons = planned !is null && planned.forwards.length != 0;
                 return true;
@@ -1814,16 +1815,20 @@ mixin template DbScriptRunner()
     {
         if (scriptQuestCreditElsewhere is null)
             return;
-        const route = remoteKillRecipient(player, map);
-        if (!route.node || route.node == config.cluster.nodeId)
-            return;
         const credit = ScriptQuestCredit(player, kind, id, rewarder, config.cluster.nodeId, nextGameplaySequence());
-        const node = route.node;
-        auto send = () { scriptQuestCreditElsewhere(node, credit); };
         if (planned !is null)
-            planned.afterCommit ~= send;
+            planned.credits ~= credit;
+        else if (!database.enqueueScriptQuestCredit(config.realmId, credit))
+            return;
+        // The owner's poll also finds the row if the player moves or either worker loses its link.
+        const node = remoteKillRecipient(player, map).node;
+        if (!node || node == config.cluster.nodeId)
+            return;
+        auto notifyOwner = () { scriptQuestCreditElsewhere(node, credit); };
+        if (planned !is null)
+            planned.afterCommit ~= notifyOwner;
         else
-            send();
+            notifyOwner();
     }
 
     /**

@@ -5,6 +5,7 @@ The loopback proxy drops the worker lease requests and replies between the coord
 worker, so that worker's lease lapses while every link, the coordinator's majority and the term
 stay as they were. A gateway client logs in at a position the worker owns: its arrival reaches the
 worker during the lapse and must be held, then delivered once the lease replies flow again.
+A second lapse fences the active simulation. The same client must resume on the same worker.
 """
 
 import asyncio
@@ -127,7 +128,8 @@ def exercise(fixture, proxy, loop, world_ports, auth_port):
     print(f"node {leader} coordinates term {term}; node {worker} simulates {place}", flush=True)
 
     offsets = {node: len(log) for node, log in logs().items()}
-    network(proxy.drop({(leader, worker): {WORKER_LEASE}, (worker, leader): {WORKER_LEASE}}))
+    blocked = {(leader, worker): {WORKER_LEASE}, (worker, leader): {WORKER_LEASE}}
+    network(proxy.drop(blocked))
     wait_for(f"node {worker}'s lease to lapse", lambda: lease(logs()[worker][offsets[worker]:]) == "LAPSED", 15)
     output = logs()
     assert elections(output) == {(term, leader)}, "the coordinator or term changed"
@@ -158,6 +160,17 @@ def exercise(fixture, proxy, loop, world_ports, auth_port):
     tail = logs()[worker][worker_offset:]
     assert tail.index(f"'{NAME}' arrived from another node") < released.search(tail).start(), \
         "the player arrived without the held messages"
+    wait_for("the client's first chat reply", lambda: "heard: 'during the lapse'" in fixture.log("player"), 15)
+    worker_offset = len(logs()[worker])
+    client_offset = len(fixture.log("player"))
+    network(proxy.drop(blocked))
+    wait_for("the worker to stop the active simulation",
+             lambda: f"'{NAME}' NOT saved" in logs()[worker][worker_offset:], 15)
+    network(proxy.drop({}))
+    wait_for("the original client to receive the recovery worldport",
+             lambda: "[new world]" in fixture.log("player")[client_offset:], 30)
+    wait_for("the same worker to restore the character",
+             lambda: f"entered the world as '{NAME}'" in logs()[worker][worker_offset:], 20)
     arrived.touch()
     if player.wait(timeout=30):
         raise RuntimeError(fixture.log("player")[-2500:])
@@ -165,8 +178,8 @@ def exercise(fixture, proxy, loop, world_ports, auth_port):
     assert "heard: 'after the lapse'" in fixture.log("player"), "the client did not play on the worker"
     assert elections(logs()) == {(term, leader)}, "the coordinator or term changed"
     dropped = network(proxy.dropped_frames((leader, worker))) + network(proxy.dropped_frames((worker, leader)))
-    print(f"PASS: node {worker} held the arrival through its lease lapse ({dropped} lease frames dropped) "
-          f"and the client played on it in the same term {term}", flush=True)
+    print(f"PASS: node {worker} held the arrival through its first lease lapse and restored the same client "
+          f"after its second lapse in term {term} ({dropped} lease frames dropped)", flush=True)
 
 
 def run(fixture):

@@ -60,6 +60,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         uint account;
         bool toCharacterScreen;
         ulong term;
+        bool fenced;
     }
 
     private Departure[uint] departures; // by account
@@ -236,7 +237,10 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
             if (session.gatewayHome.node)
                 expired ~= session;
         foreach (session; expired)
+        {
+            session.gatewayFenced = true;
             session.clientGone();
+        }
     }
 
     // Replicator: this node's objects, to the nodes that want them.
@@ -1096,7 +1100,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
                 // The coordinator and gateway may only hear once the saves are written: the next owner
                 // loads them. Until then (a database stall, a lapsed lease) the departure waits for the tick.
                 const departure = Departure(session.gatewayHome, session.gatewayCharacter, session.gatewayToken,
-                    account, toCharacterScreen, node.messageTerm());
+                    account, toCharacterScreen, node.messageTerm(), session.gatewayFenced);
                 if (!context.canWrite() || !context.settleWrites() || !reportDeparture(departure))
                 {
                     departures[account] = departure;
@@ -1112,8 +1116,12 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
     {
         if (!node.simulationStopped(departure.account, departure.character, departure.token))
             return false;
-        const message = PlayerMessage(PlayerMessageKind.left, departure.account, departure.toCharacterScreen ? 1 : 0,
-            null);
+        import dmangos.bytes : ByteWriter;
+
+        ByteWriter body;
+        body.put(departure.token);
+        const message = PlayerMessage(departure.fenced ? PlayerMessageKind.gatewayStopped : PlayerMessageKind.left,
+            departure.account, departure.toCharacterScreen ? 1 : 0, body.data.dup);
         node.sendToGateway(departure.gateway, message);
         return true;
     }
@@ -1221,13 +1229,27 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
                 session.fromOwner(opcode, data);
             }
             return;
+        case PlayerMessageKind.gatewayStopped:
         case PlayerMessageKind.left:
             if (auto route = gatewayRoutes.get(account, null))
             {
-                if (route.owner == linkedOwner(peer, true) && !route.pending.token)
+                import dmangos.bytes : ByteReader;
+
+                auto bytes = ByteReader(data);
+                if (route.owner != linkedOwner(peer, true) || bytes.remaining != ulong.sizeof
+                        || bytes.read!ulong != route.ownerToken)
+                    return;
+                if (kind == PlayerMessageKind.gatewayStopped && !route.closing)
+                {
+                    route.ownerStopped = true;
+                    route.client.gatewayPaused = true;
+                }
+                else if (!route.pending.token)
                     finishGatewayRoute(account, opcode == 1);
                 return;
             }
+            if (kind == PlayerMessageKind.gatewayStopped)
+                return;
             if (auto session = cast(WorldSession) context.sessionOf(account))
                 if (session.state == WorldState.elsewhere || session.owner == peer)
                     session.ownerLeft(opcode == 1);

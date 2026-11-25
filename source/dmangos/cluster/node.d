@@ -424,7 +424,14 @@ final class ClusterNode : LinkOwner
     /// Whether this node owns no region any more (a drain is over).
     @property bool ownsNothing()
     {
-        return regions_.ownedRegions.length == 0;
+        // A revoked region leaves the simulation before its writes settle. Wait for the
+        // coordinator's table to acknowledge the release, including after a takeover.
+        if (regions_.ownedRegions.length || releasesSent.length)
+            return false;
+        foreach (ref r; regions_.latestTable)
+            if (r.owner == id && r.state == RegionState.revoking)
+                return false;
+        return true;
     }
 
     /// Sends a message to the coordinator; false if this node is it, or not linked to it.
@@ -1961,7 +1968,13 @@ private:
         else if (!change.release && !change.held && clock() < sessionGrantsFrom)
             newClaimsWaiting ~= change; // `promote`: the sessions already in play are claimed again first
         else if (change.release)
+        {
+            import std.algorithm.mutation : remove;
+
+            newClaimsWaiting = newClaimsWaiting.remove!(claim =>
+                claim.account == change.account && claim.session == change.session);
             act(directory.released(change.account, change.session));
+        }
         else if (simulationOwner(change.session.node) == change.session.process)
             act(directory.claim(change.account, change.session));
     }
@@ -3788,10 +3801,16 @@ unittest
             cluster.cut(player, standby);
         cluster.kill(coordinator);
         newLogin.claim(7, 200);
-        bool secondGrantSeen;
+        bool abandoned, secondGrantSeen;
         foreach (_; 0 .. 200) // 10 seconds: past the old coordinator's lease and the standby's wait
         {
             cluster.run(50, standby, player, other);
+            if (linked && standby.isCoordinator && !abandoned && cluster.now < standby.sessionGrantsFrom)
+            {
+                abandoned = true;
+                other.claimSession(8, 300);
+                other.releaseSession(8, 300);
+            }
             const live = playing.events[$ - 1] == "grant 7/100" && player.regions.leaseHolds(cluster.now);
             if (newLogin.events.length && newLogin.events[$ - 1] == "grant 7/200")
             {
@@ -3807,8 +3826,14 @@ unittest
         assert(standby.isCoordinator);
         assert(secondGrantSeen, "the new login plays in the end");
         if (linked)
+        {
+            assert(abandoned);
+            other.claimSession(8, 301);
+            cluster.run(200, standby, player, other);
+            assert(newLogin.events == ["grant 7/200", "grant 8/301"]);
             assert(playing.events.length >= 3 && playing.events[0 .. 3] == ["grant 7/100", "grant 7/100", "evict 7/100"],
                 "claimed again at once, then evicted by the new login");
+        }
     }
 }
 
@@ -3955,7 +3980,7 @@ unittest
     size_t waiting;
     foreach (ref r; coordinator.regions.latestTable)
         waiting += r.state == RegionState.revoking && r.owner == b.id;
-    assert(waiting == had, "but releases none until its writes are in");
+    assert(waiting == had && !b.ownsNothing, "shutdown waits for every release");
     written = 19; // all but the last write before the release
     cluster.run(500, coordinator, b);
     waiting = 0;
@@ -3966,4 +3991,5 @@ unittest
     cluster.run(500, coordinator, b);
     foreach (ref r; coordinator.regions.latestTable)
         assert(r.owner != b.id, "released once they are");
+    assert(b.ownsNothing);
 }

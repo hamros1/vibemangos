@@ -150,6 +150,9 @@ no lock of its own.
     logged. A receiver that sees a sequence number skip logs it and counts it as a gap.
   * **Features' own resends** (session claims, service calls, script signals, takeovers) remain, and
     receivers deduplicate them.
+* Gameplay messages such as heals and script effects draw numbers from blocks of 1,048,576.
+  Each worker reserves its block in the realm character database before using it. After a restart it
+  starts above the last reservation, even if its clock moved backward.
 * **Heartbeats** go out on every link each `heartbeat_ms`. They carry no sequence number and are never
   resent. Each one:
   * measures the round trip;
@@ -212,7 +215,8 @@ The unit of ownership is the map **cell** (66.67 yards, `grid.d`), which maps al
   only then does the coordinator grant it to the next owner. A release of another epoch is ignored.
   The release waits, without stopping the owner's loop, until the writes it queued before it are in
   the database (`ClusterNode.writtenThrough`): the next owner reads from there what was saved of the
-  region, and must not read it older than the last owner wrote it.
+  region, and must not read it older than the last owner wrote it. During a clean shutdown the worker
+  waits for the coordinator to acknowledge its releases, up to the existing 20-second drain timeout.
 * **Epochs** increase with every grant and are built as (coordinator incarnation << 20) + count, so a
   restarted or new coordinator's grants are newer than anything its predecessor gave.
 * **Leases.** A node may act on its regions only until `lease_ms` after the last of its own heartbeats
@@ -676,6 +680,9 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
   hands off. Creature ticks keep the caster's threat and tap, and a lethal tick settles loot on
   the creature's node. Solo kill and quest credit, or honor for a PvP kill, go to the node
   simulating the caster. Group rewards still use their existing proximity checks.
+  For a database script, the outdoor step and its remote quest credit commit together. Workers check
+  `dmangos_script_credit` for pending credits belonging to their online players. Each quest update and
+  its receipt commit together, so late or repeated notifications are safe across a handoff.
   Health and mana drains send the amount actually drained to the caster's current node.
   For a targeted channel, the caster stays on its node and the target's node verifies the
   active channel before each tick. Cancellation and pushback update the remote aura.
@@ -937,7 +944,9 @@ wait for the database), and the cluster limits what is lost:
 The gateway routes a saved handoff only after the coordinator records the new simulation owner's
 node and incarnation under that login. It holds later gameplay packets during the handoff. A
 gateway-to-owner outage leaves the recorded owner active while that worker still reaches the
-coordinator.
+coordinator. If the worker loses its lease and discards the simulation, it reports the stopped route
+to the coordinator and gateway. The gateway keeps the client socket and requests the saved character
+again. The route token prevents a delayed departure from closing a replacement simulation.
 
 What the client sends while its route changes (a handoff, or an outage of the gateway's link to the
 owner) is held at the gateway in order, then sent to the owner after the arrival, on the same link:
@@ -1037,7 +1046,7 @@ coordinator's start-up partition and costs too and, like every member, holds the
   or ids, and before granting a new login: until every lease the old coordinator gave has run out, a
   member may still be playing an account it was granted and not yet have claimed it again (it may not
   even reach the standby). A session claimed again as already granted (`SessionClaim.held`) is taken
-  at once, so that a new login of its account evicts it rather than joining it in the world. A
+  at once. Closing a waiting login cancels its claim. A
   region released to the standby in that lease goes to the next owner its table named once the lease
   is over, and a member keeps what it sent with a release until a table shows the release taken: a
   release lost with the old coordinator is sent again with its objects, not empty.

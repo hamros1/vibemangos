@@ -10,9 +10,12 @@ objects"), not load cold. The player plays on.
 """
 
 import asyncio
+from collections import Counter
+import hashlib
 import os
 import re
 import signal
+import struct
 import time
 
 from cluster_fixture import available_ports, run_test, wait_for
@@ -23,7 +26,10 @@ from standby_cluster import COORDINATOR, FOURTH, NODES, STANDBY, TAKEOVER, WORKE
 
 NAME = "Bundlewalker"
 LOST = re.compile(r"cluster: regions gained \[[^\]]*\], lost \[([^\]]+)\]")
-LEAVES = re.compile(r"migration: region (\d+) leaves for node \d+ with \d+ objects")
+LEAVES = re.compile(r"migration: region (\d+) leaves for node \d+ with (\d+) objects")
+ARRIVES = re.compile(r"migration: region (\d+) arrived with (\d+) objects")
+NPC = re.compile(r"\[creature\] (\d+) guid (\d+): level \d+, health [1-9]\d*, .*?npc flags [1-9]")
+REGION_RELEASED = 6  # MessageType.regionReleased
 
 
 def region_ids(listed):
@@ -33,7 +39,7 @@ def region_ids(listed):
     return {int(m) for m in re.findall(r"\d+", listed)}
 
 
-def exercise(fixture, proxy, loop, world_ports, auth_port):
+def exercise(fixture, proxy, loop, world_ports, auth_port, releases):
     def network(operation):
         return asyncio.run_coroutine_threadsafe(operation, loop).result(timeout=5)
 
@@ -63,15 +69,36 @@ def exercise(fixture, proxy, loop, world_ports, auth_port):
         raise RuntimeError("node 3 simulates none of the places tried")
     label = f"player{attempt}"
 
+    npc = wait_for("a living NPC in sight", lambda: NPC.search(fixture.log(label)), 10).groups()
+    client_offset = len(fixture.log(label))
     offsets = {node: len(cluster.log(node)) for node in NODES}
-    network(proxy.delay({(WORKER, COORDINATOR): 2.0}))  # under the failure timeout: the link stays up
+
+    async def hold_releases():
+        for parts in releases.values():
+            parts.clear()
+        await proxy.delay({(WORKER, COORDINATOR): 2.0})
+
+    network(hold_releases())
     os.kill(cluster.processes[WORKER].pid, signal.SIGTERM)
     released = wait_for("node 3 to release its regions",
                         lambda: LOST.search(cluster.log(WORKER)[offsets[WORKER]:]), 15)
-    os.kill(cluster.processes[COORDINATOR].pid, signal.SIGKILL)  # the releases are still in the proxy
+
+    async def bundles(target):
+        return dict(releases[target])
+
+    lost = region_ids(released.group(1))
+
+    def sent_all():
+        parts = network(bundles(COORDINATOR))
+        return parts if lost <= parts.keys() else None
+
+    offered = wait_for("the outgoing region bundles in the proxy", sent_all, 5)
+    os.kill(cluster.processes[COORDINATOR].pid, signal.SIGKILL)
     # The world regions among them (services and dungeon maps go their own way): each left with its objects.
-    regions = {int(m) for m in LEAVES.findall(cluster.log(WORKER)[offsets[WORKER]:])}
-    assert regions and regions <= region_ids(released.group(1)), released.group(0)
+    counts = {int(region): int(count) for region, count in LEAVES.findall(cluster.log(WORKER)[offsets[WORKER]:])}
+    assert sum(counts.values()) > 0, "the departing regions held no objects"
+    regions = set(counts)
+    assert regions <= lost, released.group(0)
     network(proxy.delay({}))
 
     alive = (STANDBY, FOURTH)
@@ -79,7 +106,13 @@ def exercise(fixture, proxy, loop, world_ports, auth_port):
 
     def handed_over():
         log = cluster.log(STANDBY, alive)[offsets[STANDBY]:]
-        return all(re.search(rf"migration: region {region} arrived with \d+ objects", log) for region in regions)
+        arrivals = [(int(region), int(count)) for region, count in ARRIVES.findall(log) if int(region) in regions]
+        if {region for region, _ in arrivals} != regions:
+            return False
+        assert Counter(arrivals) == Counter(counts.items()), (arrivals, counts)
+        resent = network(bundles(STANDBY))
+        assert all(resent.get(region) == offered[region] for region in regions), "a resent bundle changed"
+        return True
 
     wait_for(f"regions {sorted(regions)} to reach their next owner with their objects", handed_over, 40)
     # Node 3 went with the coordinator's lease, unsaved: the standby restores the player from its checkpoint, and
@@ -91,11 +124,11 @@ def exercise(fixture, proxy, loop, world_ports, auth_port):
     if player.wait(timeout=40):
         raise RuntimeError(fixture.log(label)[-2500:])
     assert "heard: 'after the takeover'" in fixture.log(label), "the player could not play on"
-    log = cluster.log(STANDBY)[offsets[STANDBY]:]
-    objects = sum(int(re.search(rf"migration: region {region} arrived with (\d+) objects", log).group(1))
-                  for region in regions)
+    recovered = fixture.log(label)[client_offset:].split("[new world]", 1)[1]
+    assert NPC.findall(recovered).count(npc) == 1, f"expected NPC {npc} exactly once after recovery"
+    objects = sum(counts.values())
     print(f"PASS: node 3's releases of regions {sorted(regions)} died with the coordinator; sent again to the "
-          f"standby, they brought {objects} objects to their next owner, and the player played on", flush=True)
+          f"standby byte-for-byte, they restored {objects} objects and NPC {npc[1]} appeared once", flush=True)
 
 
 def run(fixture):
@@ -103,8 +136,16 @@ def run(fixture):
         ports = available_ports(2 * len(NODES) + 1)
         peer_ports = dict(zip(NODES, ports))
         world_ports = dict(zip(NODES, ports[len(NODES):]))
-        async with ClusterProxy(peer_ports) as proxy:
-            await asyncio.to_thread(exercise, fixture, proxy, asyncio.get_running_loop(), world_ports, ports[-1])
+        releases = {COORDINATOR: {}, STANDBY: {}}
+
+        def observe(direction, kind, payload):
+            source, target = direction
+            if source == WORKER and target in releases and kind == REGION_RELEASED:
+                region, = struct.unpack_from("<I", payload)
+                releases[target][region] = hashlib.sha256(payload).digest()
+
+        async with ClusterProxy(peer_ports, observe) as proxy:
+            await asyncio.to_thread(exercise, fixture, proxy, asyncio.get_running_loop(), world_ports, ports[-1], releases)
 
     asyncio.run(with_proxy())
 

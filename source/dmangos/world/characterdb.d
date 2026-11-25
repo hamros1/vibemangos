@@ -6,6 +6,7 @@
  */
 module dmangos.world.characterdb;
 
+import dmangos.cluster.protocol : ScriptQuestCredit;
 import dmangos.world.honorweek : HonorWeekEntry;
 import dmangos.cluster.services : ServiceKind;
 import std.algorithm.comparison : max;
@@ -1427,6 +1428,16 @@ final class CharacterStatements
 
     void prepareOutdoorScripts()
     {
+        characters.execute!"CREATE TABLE IF NOT EXISTS dmangos_script_credit (
+            realm INT UNSIGNED NOT NULL, origin SMALLINT UNSIGNED NOT NULL, sequence BIGINT UNSIGNED NOT NULL,
+            player INT UNSIGNED NOT NULL, kind TINYINT UNSIGNED NOT NULL, quest INT UNSIGNED NOT NULL,
+            rewarder BIGINT UNSIGNED NOT NULL, applied BOOLEAN NOT NULL DEFAULT FALSE,
+            PRIMARY KEY (realm, origin, sequence), KEY pending (realm, applied, sequence), KEY (player)
+        ) ENGINE=InnoDB"();
+        characters.execute!"CREATE TABLE IF NOT EXISTS dmangos_gameplay_sequence (
+            realm INT UNSIGNED NOT NULL, node SMALLINT UNSIGNED NOT NULL, reserved BIGINT UNSIGNED NOT NULL,
+            PRIMARY KEY (realm, node)
+        ) ENGINE=InnoDB"();
         characters.execute!("CREATE TABLE IF NOT EXISTS dmangos_outdoor_script ("
             ~ "realm INT UNSIGNED NOT NULL, origin SMALLINT UNSIGNED NOT NULL, sequence BIGINT UNSIGNED NOT NULL, "
             ~ "map INT UNSIGNED NOT NULL, home BIGINT UNSIGNED NOT NULL, `cursor` INT UNSIGNED NOT NULL, "
@@ -1472,6 +1483,50 @@ final class CharacterStatements
             return characters.execute!("DELETE FROM dmangos_outdoor_script" ~ key)(realm, origin, sequence, cursor) == 1;
         return characters.execute!("UPDATE dmangos_outdoor_script SET `cursor` = `cursor` + 1" ~ key)(
             realm, origin, sequence, cursor) == 1;
+    }
+
+    void enqueueScriptQuestCredit(uint realm, const ref ScriptQuestCredit credit)
+    {
+        characters.execute!"INSERT INTO dmangos_script_credit (realm, origin, sequence, player, kind, quest, rewarder)
+            VALUES (?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE realm = realm"
+            (realm, credit.origin, credit.sequence, cast(uint) credit.player, cast(ubyte) credit.kind, credit.quest, credit.rewarder);
+    }
+
+    ScriptQuestCredit[] pendingScriptQuestCredits(uint realm)
+    {
+        ScriptQuestCredit[] pending;
+        foreach (row; characters.query!"SELECT player, kind, quest, rewarder, origin, sequence FROM dmangos_script_credit
+                WHERE realm = ? AND applied = FALSE ORDER BY sequence, origin"(realm))
+            pending ~= ScriptQuestCredit(row.get!uint(0), cast(ScriptQuestCredit.Kind) row.get!ubyte(1),
+                row.get!uint(2), row.get!ulong(3), row.get!ushort(4), row.get!ulong(5));
+        return pending;
+    }
+
+    bool consumeScriptQuestCredit(uint realm, const ref ScriptQuestCredit credit, const(QuestStatus)[] quests)
+    {
+        bool applied;
+        characters.transaction({
+            if (!characters.execute!"UPDATE dmangos_script_credit SET applied = TRUE WHERE realm = ?
+                    AND origin = ? AND sequence = ? AND player = ? AND kind = ? AND quest = ?
+                    AND rewarder = ? AND applied = FALSE"(realm, credit.origin, credit.sequence, credit.player,
+                        cast(ubyte) credit.kind, credit.quest, credit.rewarder))
+                return;
+            saveQuestStatus(cast(uint) credit.player, quests);
+            applied = true; // preserved if a lost COMMIT reply forces the transaction to run again
+        });
+        return applied;
+    }
+
+    ulong reserveGameplaySequences(uint realm, ushort node, ulong floor, uint count)
+    {
+        ulong last;
+        characters.transaction({
+            characters.execute!"INSERT INTO dmangos_gameplay_sequence (realm, node, reserved) VALUES (?, ?, ?)
+                ON DUPLICATE KEY UPDATE reserved = GREATEST(reserved, ?) + ?"(realm, node, floor + count, floor, count);
+            last = characters.query!"SELECT reserved FROM dmangos_gameplay_sequence WHERE realm = ? AND node = ?"
+                (realm, node)[0].get!ulong(0);
+        });
+        return last - count + 1;
     }
 
     OutdoorWorldState[] loadOutdoorWorldStates(uint realm)
@@ -2593,6 +2648,7 @@ final class CharacterStatements
             .map!(row => row.get!uint(0)).array;
 
         characters.transaction({
+            characters.execute!"DELETE FROM dmangos_script_credit WHERE player = ?"(guid);
             characters.execute!"DELETE FROM dmangos_loot_coin WHERE player = ?"(guid);
             characters.execute!"DELETE FROM dmangos_loot_award WHERE player = ?"(guid);
             // An unpaid battleground reward goes with its character: a new one given the same guid gets none of it.

@@ -21,7 +21,7 @@ package mixin template GatewaySessions()
         SessionRoute pending;
         const(ubyte)[] state;
         MonoTime sendAt;
-        bool granted, closing, disconnectSent;
+        bool granted, closing, disconnectSent, ownerStopped;
     }
 
     private GatewayRoute[uint] gatewayRoutes;
@@ -92,6 +92,7 @@ package mixin template GatewaySessions()
             return;
         if (result.result == SessionRouteResult.granted)
         {
+            route.ownerStopped = false;
             route.owner = result.next;
             route.ownerToken = result.token;
             route.ownerTerm = node.messageTerm();
@@ -107,7 +108,7 @@ package mixin template GatewaySessions()
             finishGatewayRoute(result.account, false);
         }
         else if (result.kind == SessionRouteKind.recover
-            && route.ownerTerm == node.messageTerm() && node.simulationOwner(route.owner.node) == route.owner)
+            && !route.ownerStopped && route.ownerTerm == node.messageTerm() && node.simulationOwner(route.owner.node) == route.owner)
         {
             // The coordinator still recognizes the former process. Let it resume on the same route.
             route.pending = SessionRoute.init;
@@ -199,6 +200,7 @@ package mixin template GatewaySessions()
         foreach (account, route; gatewayRoutes)
         {
             const recoveringTerm = route.ownerToken && route.ownerTerm != term;
+            const recover = recoveringTerm || route.ownerStopped;
             if (recoveringTerm && route.requestedTerm != term)
             {
                 route.requestedTerm = term;
@@ -220,7 +222,7 @@ package mixin template GatewaySessions()
             }
             if (!route.pending.token)
             {
-                if (!recoveringTerm && node.simulationOwner(route.owner.node) == route.owner)
+                if (!recover && node.simulationOwner(route.owner.node) == route.owner)
                 {
                     if (route.coordinator != coordinator)
                     {
@@ -241,7 +243,7 @@ package mixin template GatewaySessions()
                 if (now < route.sendAt)
                     continue;
                 const destination = checkpointOwner(route, account);
-                if (!destination.node || (!recoveringTerm && destination == route.owner))
+                if (!destination.node || (!recover && destination == route.owner))
                 {
                     route.sendAt = now + 1.seconds;
                     continue;
@@ -254,7 +256,7 @@ package mixin template GatewaySessions()
             if (!route.pending.next.node)
             {
                 const destination = checkpointOwner(route, account);
-                if (!destination.node || (!recoveringTerm && destination == route.owner))
+                if (!destination.node || (!recover && destination == route.owner))
                     continue;
                 route.pending.token = context.nextGameplaySequence();
                 route.pending.next = destination;

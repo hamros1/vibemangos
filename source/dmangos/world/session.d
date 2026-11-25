@@ -100,6 +100,7 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
     private MonoTime heldSince;
     package SimulationOwner gatewayHome;   // owner: the gateway's incarnation
     package uint gatewayCharacter;         // owner: the simulated character, including while loading
+    package bool gatewayFenced;            // owner: its lease ended while the gateway still has the client
     package ulong gatewayToken;            // owner: the coordinator's route for this simulation
     private CharacterData recovery;        // owner: durable state while recovering, until the client loads the map
     private GatewayRecoveryCheckpoints recoveryCheckpoints;

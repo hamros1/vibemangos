@@ -1479,7 +1479,7 @@ unittest
     size_t swallowed = size_t.max;
     assert(s.runUntil(() {
         foreach (k; 0 .. s.heroes.length)
-            if (s.hero(k).position.z < Cthun.stomachTop)
+            if (Cthun.insideStomach(s.hero(k).position))
                 swallowed = k;
         return swallowed != size_t.max;
     }, 20.seconds), "nobody swallowed\n" ~ s.seen());
@@ -1491,7 +1491,7 @@ unittest
     s.forget();
     s.restartAfterCrash();
     cthun = s.the(npcCthun);
-    assert(s.hero(swallowed).position.z < Cthun.stomachTop, "the swallowed player not back in the stomach");
+    assert(Cthun.insideStomach(s.hero(swallowed).position), "the swallowed player not back in the stomach");
     assert(cthun.guid == cthunGuid && cthun.values.get!UNIT_FIELD_HEALTH == cthunHealth && s.all(npcCthun).length == 1);
     assert(s.all(npcFleshTentacle).length == 1 && s.all(npcFleshTentacle)[0].guid == survivor,
         format!"%s Flesh Tentacles after the crash"(s.all(npcFleshTentacle).length));

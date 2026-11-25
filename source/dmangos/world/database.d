@@ -7,6 +7,7 @@
  */
 module dmangos.world.database;
 
+import dmangos.cluster.protocol : ScriptQuestCredit;
 import dmangos.world.honorweek : HonorWeekEntry;
 import dmangos.cluster.services : ServiceKind;
 import std.typecons : Nullable, nullable;
@@ -946,7 +947,12 @@ interface WorldDatabase
     @DatabaseWrite bool advanceOutdoorScript(uint realm, ushort origin, ulong sequence, uint cursor, bool finished,
         const(OutdoorQuestUpdate)[] updates = null, const(QuestActorCheckpoint)[] summons = null,
         const(OutdoorScriptCheckpoint)[] relays = null, const(OutdoorSummonRequest)[] forwards = null,
-        const(OutdoorWorldState)[] worldStates = null);
+        const(OutdoorWorldState)[] worldStates = null, const(ScriptQuestCredit)[] credits = null);
+    @DatabaseWrite bool enqueueScriptQuestCredit(uint realm, const ref ScriptQuestCredit credit);
+    @DatabaseRead ScriptQuestCredit[] pendingScriptQuestCredits(uint realm);
+    @DatabaseWrite bool consumeScriptQuestCredit(uint realm, const ref ScriptQuestCredit credit, const(QuestStatus)[] quests);
+    /// Reserve a disjoint range above both the previous reservation and the supplied floor.
+    @DatabaseWrite ulong reserveGameplaySequences(uint realm, ushort node, ulong floor, uint count);
     @DatabaseRead OutdoorWorldState[] loadOutdoorWorldStates(uint realm);
     @DatabaseWrite void saveOutdoorWorldState(uint realm, const ref OutdoorWorldState state);
     @DatabaseRead OutdoorSummonRequest[] loadOutdoorSummons(uint realm);
@@ -1540,7 +1546,7 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     bool advanceOutdoorScript(uint realm, ushort origin, ulong sequence, uint cursor, bool finished,
         const(OutdoorQuestUpdate)[] updates = null, const(QuestActorCheckpoint)[] summons = null,
         const(OutdoorScriptCheckpoint)[] relays = null, const(OutdoorSummonRequest)[] forwards = null,
-        const(OutdoorWorldState)[] worldStates = null)
+        const(OutdoorWorldState)[] worldStates = null, const(ScriptQuestCredit)[] credits = null)
     {
         // Always in a transaction, even alone: a lost reply to a bare claim would be retried on a new
         // connection, match no row (the first attempt moved the cursor) and read as claimed elsewhere.
@@ -1559,6 +1565,8 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
                 statements.insertOutdoorSummon(realm, request);
             foreach (ref state; worldStates)
                 statements.saveOutdoorWorldState(realm, state);
+            foreach (ref credit; credits)
+                statements.enqueueScriptQuestCredit(realm, credit);
             // Retain this on a retry if COMMIT succeeded but its response was lost.
             advanced = true;
         });
@@ -1570,6 +1578,24 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
         foreach (ref relay; relays)
             if (!statements.beginOutdoorScript(realm, relay))
                 throw new imported!"dmangos.mysql".DatabaseException("summon relay checkpoint already exists");
+    }
+
+    bool enqueueScriptQuestCredit(uint realm, const ref ScriptQuestCredit credit)
+    {
+        statements.enqueueScriptQuestCredit(realm, credit);
+        return true;
+    }
+
+    ScriptQuestCredit[] pendingScriptQuestCredits(uint realm) { return statements.pendingScriptQuestCredits(realm); }
+
+    bool consumeScriptQuestCredit(uint realm, const ref ScriptQuestCredit credit, const(QuestStatus)[] quests)
+    {
+        return statements.consumeScriptQuestCredit(realm, credit, quests);
+    }
+
+    ulong reserveGameplaySequences(uint realm, ushort node, ulong floor, uint count)
+    {
+        return statements.reserveGameplaySequences(realm, node, floor, count);
     }
 
     OutdoorWorldState[] loadOutdoorWorldStates(uint realm) { return statements.loadOutdoorWorldStates(realm); }
@@ -3603,7 +3629,7 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
     bool advanceOutdoorScript(uint realm, ushort origin, ulong sequence, uint cursor, bool finished,
         const(OutdoorQuestUpdate)[] updates = null, const(QuestActorCheckpoint)[] summons = null,
         const(OutdoorScriptCheckpoint)[] relays = null, const(OutdoorSummonRequest)[] forwards = null,
-        const(OutdoorWorldState)[] worldStates = null)
+        const(OutdoorWorldState)[] worldStates = null, const(ScriptQuestCredit)[] credits = null)
     {
         auto scripts = origin in outdoorScripts.get(realm, null);
         if (scripts is null)
@@ -3626,7 +3652,55 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
             outdoorSummons[realm] ~= request;
         foreach (ref state; worldStates)
             saveOutdoorWorldState(realm, state);
+        foreach (ref credit; credits)
+            enqueueScriptQuestCredit(realm, credit);
         return true;
+    }
+
+    private struct StoredScriptCredit
+    {
+        ScriptQuestCredit credit;
+        bool applied;
+    }
+    private StoredScriptCredit[ulong[3]] scriptCredits;
+
+    bool enqueueScriptQuestCredit(uint realm, const ref ScriptQuestCredit credit)
+    {
+        const ulong[3] key = [realm, credit.origin, credit.sequence];
+        scriptCredits.require(key, StoredScriptCredit(credit));
+        return true;
+    }
+
+    ScriptQuestCredit[] pendingScriptQuestCredits(uint realm)
+    {
+        import std.algorithm.sorting : sort;
+        ScriptQuestCredit[] pending;
+        foreach (key, ref row; scriptCredits)
+            if (key[0] == realm && !row.applied)
+                pending ~= row.credit;
+        pending.sort!((a,b) => a.sequence < b.sequence);
+        return pending;
+    }
+
+    bool consumeScriptQuestCredit(uint realm, const ref ScriptQuestCredit credit, const(QuestStatus)[] quests)
+    {
+        const ulong[3] key = [realm, credit.origin, credit.sequence];
+        auto row = key in scriptCredits;
+        if (row is null || row.applied || row.credit.player != credit.player || row.credit.kind != credit.kind
+                || row.credit.quest != credit.quest || row.credit.rewarder != credit.rewarder)
+            return false;
+        saveQuestStatus(cast(uint) credit.player, quests);
+        row.applied = true;
+        return true;
+    }
+
+    private ulong[ushort][uint] gameplayReserved;
+    ulong reserveGameplaySequences(uint realm, ushort node, ulong floor, uint count)
+    {
+        import std.algorithm.comparison : max;
+        auto first = max(gameplayReserved.get(realm, null).get(node, 0), floor) + 1;
+        gameplayReserved[realm][node] = first + count - 1;
+        return first;
     }
 
     private OutdoorWorldState[ulong][uint] outdoorWorldStates;
@@ -4196,6 +4270,9 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
 
         if (options.method != 1) // as the database does: an unpaid battleground reward goes with its character
         {
+            foreach (key; scriptCredits.keys)
+                if (scriptCredits[key].credit.player == guid)
+                    scriptCredits.remove(key);
             foreach (key; battlegroundRewards.keys)
                 if (key[2] == guid)
                     battlegroundRewards.remove(key);
