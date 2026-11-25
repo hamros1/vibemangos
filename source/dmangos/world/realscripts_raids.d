@@ -670,7 +670,7 @@ unittest
     s.run(400.msecs);
     assert(s.map.findObject(eggs[0].guid) is eggs[0], "a player cannot break an egg by clicking it");
     size_t controller;
-    foreach (e; eggs)
+    foreach (eggIndex, e; eggs)
     {
         for (size_t attempt; s.map.findObject(e.guid) !is null && attempt < 3; ++attempt)
         {
@@ -703,6 +703,32 @@ unittest
         assert(s.map.findObject(e.guid) is null,
             format!"Destroy Egg failed at %s, dragon %s, spell result %s, controller %s, remaining %s of %s; %s"(
                 e.position, razorgore.position, razorgore.ai.castRefusal, controller, s.objects(egg).length, eggCount, s.seen()));
+        if (eggIndex == 4)
+        {
+            import dmangos.world.updatefields : UNIT_FIELD_HEALTH;
+
+            auto defenders = s.all(legionnaire) ~ s.all(mage) ~ s.all(dragonspawn);
+            assert(defenders.length >= 2 && s.heroes[controller].session.inWorld.charmed is razorgore);
+            const defeated = defenders[0].guid, wounded = defenders[1].guid, bossGuid = razorgore.guid;
+            s.hurtTo(defenders[1], 65);
+            const health = defenders[1].values.get!UNIT_FIELD_HEALTH;
+            s.kill(defenders[0]); // the death commits the wave, including the other defender's wound
+            s.run(200.msecs);
+            s.restartAfterCrash();
+            assert(s.ask(0) == 1 && !s.doorOpen(gateIn) && !s.doorOpen(gateOut));
+            assert(s.objects(egg).length == eggCount - eggIndex - 1);
+            foreach (broken; eggs[0 .. eggIndex + 1])
+                assert(s.map.findObject(broken.guid) is null, "the destroyed egg stayed gone");
+            razorgore = s.the(razorgoreEntry);
+            assert(razorgore.guid == bossGuid && razorgore.petOwner == 0, "a new controller must use the orb");
+            auto surviving = s.map.creatureAt(wounded);
+            assert(surviving !is null, format!"defender %s missing after recovery"(wounded));
+            assert(surviving.values.get!UNIT_FIELD_HEALTH == health,
+                format!"defender %s recovered with %s health instead of %s"(wounded,
+                    surviving.values.get!UNIT_FIELD_HEALTH, health));
+            auto fallen = s.map.creatureAt(defeated);
+            assert(fallen is null || !fallen.alive, "the defeated defender stays dead");
+        }
     }
     assert(s.ask(0) == 4, format!"the eggs broken, but the room is %s (%s eggs left of %s)"(s.ask(0), s.objects(egg).length, eggCount));
     assert(s.said(-1_469_035) && s.said(-1_469_033), "no emotes as the orb goes dark\n" ~ s.seen());
@@ -716,10 +742,20 @@ unittest
     s.run(31.seconds);
     foreach (spell; [19632, 23023, 22425, 24375])
         assert(s.castBy(razorgoreEntry, spell), format!"Razorgore: %s not cast\n%s"(spell, s.seen()));
+    const freeGuid = razorgore.guid;
+    s.hurtTo(razorgore, 66);
+    s.run(3.seconds);
+    const freeHealth = s.healthOf(razorgore);
+    s.restartAfterCrash();
+    razorgore = s.the(razorgoreEntry);
+    assert(s.ask(0) == 4 && s.objects(egg).length == 0 && razorgore.guid == freeGuid);
+    assert(s.healthOf(razorgore) == freeHealth && razorgore.ai.inCombat, "the freed dragon resumes the same fight");
     s.kill(razorgore);
     s.run(2.seconds);
     assert(!razorgore.alive && s.ask(0) == 3, "Razorgore's encounter not done");
     assert(s.doorOpen(gateOut) && s.doorOpen(gateIn), "the way on not open");
+    s.restartAfterCrash();
+    assert(s.ask(0) == 3 && s.doorOpen(gateOut) && !s.all(razorgoreEntry).length);
 }
 
 /**

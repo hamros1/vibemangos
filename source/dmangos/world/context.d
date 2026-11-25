@@ -5398,6 +5398,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     spawned ~= go;
         if (script !is null)
         {
+            import std.algorithm.searching : canFind;
             import dmangos.script.api : CreatureLoaded, EntityRef, ObjectLoaded;
 
             script.loading = spawned;
@@ -5406,6 +5407,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     script.raise(CreatureLoaded(EntityRef(object.guid)));
                 else
                     script.raise(ObjectLoaded(EntityRef(object.guid)));
+            if (script.loading.length != spawned.length)
+                foreach (object; spawned)
+                    if (auto go = cast(GameObject) object)
+                        if (!script.loading.canFind(object))
+                            scripts.destroy(go.behaviour);
+            spawned = script.loading;
             script.loading = null;
         }
         return spawned;

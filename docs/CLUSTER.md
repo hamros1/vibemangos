@@ -523,6 +523,9 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   summons and pending waves. Defeating the Avatar keeps the doors open after a crash.
   Onyxia keeps her health, flight phase, surviving whelps and the remaining time to the next wave.
   The recovered fight can proceed through landing and her final ground phase.
+  In Blackwing Lair, Razorgore's destroyed eggs stay gone and surviving defenders return with
+  their saved health and wave timer. A player uses the orb again to resume control during the
+  egg phase. The freed dragon's fight and the open exit after his death also survive a crash.
 * **GM commands.** `.instance info`, `.instance shutdown` and `.instance reset` of a copy another node
   hosts go to that node and its answer comes back; `.instance resetall` goes to every node.
 

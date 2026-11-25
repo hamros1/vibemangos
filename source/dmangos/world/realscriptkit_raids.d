@@ -111,6 +111,28 @@ final class Scene
         return w.context.map(mapId, instance);
     }
 
+    /// Drop the worker and its sessions, then rejoin the same copy using its saved records.
+    void restartAfterCrash()
+    {
+        import dmangos.world.context : WorldContext;
+
+        auto old = w.context;
+        w.context = new WorldContext(old.config, w.db, old.data, old.client);
+        stayWith = null;
+        foreach (ref session; heroes)
+        {
+            auto previous = session.session.inWorld.player;
+            const ref data = previous.data;
+            session = w.character(data.guid, data.name, data.classId, data.level, [], data.race);
+            auto next = session.session.inWorld;
+            assert(next.teleportTo(mapId, previous.position, null, instance, true));
+            session.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
+            assert(next.instanceId == instance, "back in the same raid copy");
+        }
+        map.random.seed(seed);
+        run(500.msecs);
+    }
+
     Player hero(size_t k = 0)
     {
         return heroes[k].session.inWorld.player;

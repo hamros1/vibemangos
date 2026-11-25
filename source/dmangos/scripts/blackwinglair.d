@@ -14,6 +14,7 @@ module dmangos.scripts.blackwinglair;
 import core.time : Duration;
 
 import dmangos.script;
+import dmangos.script.state : appended;
 
 /// Where `who` is, as `ctx` sees it (`Location.init` if it is not here).
 private Location where(C)(ref C ctx, EntityRef who)
@@ -129,16 +130,69 @@ struct BlackwingLair
     @transient EntityRef[6] doors; /// enter, exit, Nefarian, Chromaggus' exit, Vaelastrasz', Lashlayer's
     @transient EntityRef[8] generators;
     @transient ubyte generatorCount;
-    @transient ushort eggs;
+    @transient EntityRef[] loadedEggs;
     @transient EntityRef[64] defenders;
     @transient ubyte dragonspawn, blackwingDefenders;
     @transient EntityRef[2] tunnelSpawners;
     @transient EntityRef[48] drakonidsSeen;
     @transient ubyte drakonidsSlain;
     @transient EntityRef[] eggsToGo;
+    @transient bool recoveringRazorgore, resetOldEggPhase;
 
     enum Step : ubyte { defense, nefarian, eggsGone }
     Schedule!Step steps;
+    @appended EntityRef[] brokenEggs;
+    @appended ushort eggTotal;
+
+    void on(ref InstanceContext copy, const ref Restored e)
+    {
+        const state = encounters[BwlEncounter.razorgore];
+        if (state == EncounterState.special && copy.entryKilled(npcRazorgore))
+        {
+            set(copy, BwlEncounter.razorgore, EncounterState.done);
+            return;
+        }
+        if (state == EncounterState.inProgress && (eggsBroken != brokenEggs.length || (eggsBroken && !eggTotal)))
+        {
+            // Older saves kept a count but could not identify the eggs that count referred to.
+            encounters[BwlEncounter.razorgore] = EncounterState.failed;
+            steps.cancel(Step.defense);
+            steps.cancel(Step.eggsGone);
+            eggsBroken = 0;
+            brokenEggs = null;
+            resetOldEggPhase = true;
+            copy.waitForPlayer();
+        }
+        else if (state == EncounterState.inProgress || (state == EncounterState.special && copy.hasSavedCreature(npcRazorgore)))
+        {
+            recoveringRazorgore = true;
+            copy.waitForPlayer();
+        }
+    }
+
+    void on(ref InstanceContext copy, const ref PlayerEntered e)
+    {
+        if (resetOldEggPhase)
+        {
+            resetOldEggPhase = false;
+            copy.respawnKilled(npcGrethok);
+            copy.checkpoint();
+        }
+        if (!recoveringRazorgore)
+            return;
+        recoveringRazorgore = false;
+        if (encounters[BwlEncounter.razorgore] == EncounterState.special)
+            return; // the boss's native combat state resumes when the raid returns
+        foreach (defender; defenders)
+            if (defender)
+            {
+                const target = copy.victimOf(defender);
+                if (!copy.alive(target) || target == razorgore)
+                    copy.attack(defender, e.player);
+            }
+        if (eggsBroken && eggsBroken == eggTotal)
+            steps.after(Step.eggsGone, 0.msecs);
+    }
 
     void on(ref InstanceContext copy, const ref EventHappened e)
     {
@@ -170,17 +224,18 @@ struct BlackwingLair
         goDoorChromaggusExit, goDoorVaelastrasz, goDoorLashlayer];
 
     /// `who` among `those` (once), if there is room.
-    private static void remember(EntityRef[] those, EntityRef who)
+    private static bool remember(EntityRef[] those, EntityRef who)
     {
         foreach (ref t; those)
             if (t == who)
-                return;
+                return false;
         foreach (ref t; those)
             if (!t)
             {
                 t = who;
-                return;
+                return true;
             }
+        return false;
     }
 
     /// Whether door `i` stands open now.
@@ -247,12 +302,14 @@ struct BlackwingLair
             troops = e.creature;
             break;
         case npcMonsterGenerator:
-            if (generatorCount < generators.length)
-                generators[generatorCount++] = e.creature;
+            if (remember(generators[], e.creature))
+                ++generatorCount;
             break;
         case npcLegionnaire, npcMage, npcDragonspawn:
             if (encounters[BwlEncounter.razorgore] == EncounterState.inProgress)
-                remember(defenders[], e.creature);
+                registerDefender(e.creature);
+            else if (recoveringRazorgore && encounters[BwlEncounter.razorgore] == EncounterState.special)
+                copy.despawn(e.creature);
             break;
         default:
             foreach (entry; drakonids)
@@ -260,6 +317,16 @@ struct BlackwingLair
                     remember(drakonidsSeen[], e.creature);
             break;
         }
+    }
+
+    private void registerDefender(EntityRef defender)
+    {
+        if (!remember(defenders[], defender))
+            return;
+        if (defender.entry == npcDragonspawn)
+            ++dragonspawn;
+        else
+            ++blackwingDefenders;
     }
 
     void on(ref InstanceContext copy, const ref ObjectLoaded e)
@@ -272,7 +339,17 @@ struct BlackwingLair
                 copy.door(e.object, doorOpen(i));
             }
         if (e.object.entry == goBlackDragonEgg)
-            ++eggs;
+        {
+            import std.algorithm.comparison : max;
+            import std.algorithm.searching : canFind;
+
+            if (!loadedEggs.canFind(e.object))
+                loadedEggs ~= e.object;
+            eggTotal = max(eggTotal, cast(ushort) loadedEggs.length);
+            const state = encounters[BwlEncounter.razorgore];
+            if (state == EncounterState.special || state == EncounterState.done || brokenEggs.canFind(e.object))
+                copy.despawnObject(e.object);
+        }
     }
 
     void on(ref InstanceContext copy, const ref Asked e)
@@ -288,12 +365,16 @@ struct BlackwingLair
     void on(ref InstanceContext copy, const ref CreatureEngaged e)
     {
         // Grethok the Controller attacked: Razorgore's room wakes.
-        if (e.creature.entry == npcGrethok && encounters[BwlEncounter.razorgore] != EncounterState.done
-                && encounters[BwlEncounter.razorgore] != EncounterState.special)
+        const state = encounters[BwlEncounter.razorgore];
+        if (e.creature.entry == npcGrethok && (state == EncounterState.notStarted || state == EncounterState.failed))
         {
             set(copy, BwlEncounter.razorgore, EncounterState.inProgress);
+            copy.spawnObjects(goBlackDragonEgg, 0);
             steps.after(Step.defense, 40.seconds);
+            copy.checkpointCreature(e.creature);
         }
+        else if (e.creature.entry == npcRazorgore && state == EncounterState.special)
+            copy.checkpointCreature(e.creature);
     }
 
     void on(ref InstanceContext copy, const ref ObjectUsedHere e)
@@ -313,13 +394,15 @@ struct BlackwingLair
             }
             return;
         }
-        if (e.object.entry != goBlackDragonEgg || !razorgore || e.player != razorgore || eggsToGo.canFind(e.object))
+        if (e.object.entry != goBlackDragonEgg || !razorgore || e.player != razorgore || brokenEggs.canFind(e.object))
             return;
+        brokenEggs ~= e.object;
         ++eggsBroken;
         if (razorgore && copy.random(2))
             copy.say(razorgore, sayEggsBroken1 - copy.random(3));
         eggsToGo ~= e.object;
         steps.after(Step.eggsGone, 0.msecs); // once the use is over
+        copy.checkpoint();
     }
 
     /// The last egg broken: the orb goes dark, the defenders flee, and Razorgore fights.
@@ -344,6 +427,8 @@ struct BlackwingLair
                 d = EntityRef.init;
             }
         dragonspawn = blackwingDefenders = 0;
+        if (razorgore)
+            copy.checkpointCreature(razorgore);
     }
 
     void on(ref InstanceContext copy, const ref CreatureDied e)
@@ -352,15 +437,27 @@ struct BlackwingLair
         {
         case npcRazorgore:
             if (encounters[BwlEncounter.razorgore] == EncounterState.special)
+            {
                 set(copy, BwlEncounter.razorgore, EncounterState.done);
+                copy.checkpoint();
+            }
             break;
-        case npcLegionnaire, npcMage:
-            if (blackwingDefenders)
-                --blackwingDefenders;
+        case npcGrethok:
+            if (encounters[BwlEncounter.razorgore] == EncounterState.inProgress)
+                copy.checkpoint();
             break;
-        case npcDragonspawn:
-            if (dragonspawn)
-                --dragonspawn;
+        case npcLegionnaire, npcMage, npcDragonspawn:
+            foreach (ref defender; defenders)
+                if (defender == e.creature)
+                {
+                    defender = EntityRef.init;
+                    if (e.creature.entry == npcDragonspawn)
+                        --dragonspawn;
+                    else
+                        --blackwingDefenders;
+                    copy.checkpoint();
+                    break;
+                }
             break;
         default:
             foreach (entry; drakonids)
@@ -407,6 +504,9 @@ struct BlackwingLair
             if (state == EncounterState.failed)
             {
                 steps.cancel(Step.defense);
+                steps.cancel(Step.eggsGone);
+                eggsToGo = brokenEggs = null;
+                eggsBroken = 0;
                 foreach (ref d; defenders)
                     if (d)
                     {
@@ -414,8 +514,11 @@ struct BlackwingLair
                         d = EntityRef.init;
                     }
                 dragonspawn = blackwingDefenders = 0;
+                copy.spawnObjects(goBlackDragonEgg, 0);
+                copy.respawnKilled(npcGrethok);
                 if (razorgore)
                     copy.say(razorgore, sayRazorgoreDeath);
+                copy.checkpoint();
             }
             break;
         case BwlEncounter.nefarian:
@@ -462,6 +565,7 @@ struct BlackwingLair
         case Step.defense:
             defend(copy);
             steps.after(Step.defense, 15.seconds);
+            copy.checkpoint();
             break;
         case Step.nefarian:
             // Nefarian comes; Nefarius blinks away.
@@ -478,7 +582,7 @@ struct BlackwingLair
             foreach (g; eggsToGo)
                 copy.despawnObject(g);
             eggsToGo = null;
-            if (eggsBroken >= eggs && eggs && encounters[BwlEncounter.razorgore] == EncounterState.inProgress)
+            if (eggsBroken >= eggTotal && eggTotal && encounters[BwlEncounter.razorgore] == EncounterState.inProgress)
                 allEggsBroken(copy);
             break;
         }
@@ -512,11 +616,8 @@ struct BlackwingLair
             const made = copy.summon(entry, where(copy, generator), 0);
             if (!made)
                 continue;
-            remember(defenders[], made);
-            if (entry == npcDragonspawn)
-                ++dragonspawn;
-            else
-                ++blackwingDefenders;
+            registerDefender(made);
+            copy.checkpointCreature(made);
             copy.zoneCombat(made);
         }
     }
