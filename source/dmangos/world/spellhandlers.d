@@ -3936,16 +3936,34 @@ private:
             categoryReadyAt[category] = now + categoryRecovery.msecs;
         cooldownCategory[spell.id] = category && categoryRecovery > 0 ? category : 0;
         cooldownItem[spell.id] = itemEntry;
+        longestStarted = max(recovery, category ? categoryRecovery : 0);
         return true;
     }
 
+    /// The longest cooldown, in milliseconds, the last `startCooldown` started.
+    private int longestStarted;
+
+    /// A cooldown at least this long is saved as it starts, for every player (`checkpointCooldowns`).
+    enum int savedCooldownMs = 60_000;
+
+    /**
+     * Saves the cooldowns now. A gateway's player's are saved at every change, and settled: its worker can be lost
+     * while the client stays. Any other player's are saved when a long cooldown starts (a transmute's day, a
+     * hearthstone's hour), queued right after what the cast wrote (its reagents, its item): a crash before the next
+     * periodic save does not hand the cooldown back while what it made stays.
+     */
     private void checkpointCooldowns()
     {
-        if (connection.gatewayHome.node && context.canWrite())
+        if (!context.canWrite())
+            return;
+        if (connection.gatewayHome.node)
         {
             saveCooldowns();
             context.settleWrites();
         }
+        else if (longestStarted >= savedCooldownMs)
+            saveCooldowns();
+        longestStarted = 0;
     }
 
     // -----------------------------------------------------------------------
@@ -7976,4 +7994,35 @@ unittest
     assert(me.castSpell(context.data.spells.spell(picnic), SpellTargets(TargetFlags.self, 0), false, 0)
         == SpellCastResult.ok, "and no cooldown started");
     assert(me.player.values.get!UNIT_FIELD_POWER1(Power.mana) == mana - 10, "paid once saved");
+}
+
+// A long cooldown is saved as it starts for a player connected straight to its worker too: a crash before the
+// periodic save does not give back a transmute's day while its bar stays. A short one waits for that save.
+unittest
+{
+    import dmangos.world.movement : Position;
+    import dmangos.world.spells : SpellEffect, SpellInfo;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    enum uint transmute = 91_507, quick = 91_508;
+    auto day = testSpell(transmute, SpellEffect.dummy, ImplicitTarget.caster, 1);
+    day.recoveryTime = 86_400_000;
+    context.data.spells.spells[transmute] = day;
+    auto brief = testSpell(quick, SpellEffect.dummy, ImplicitTarget.caster, 1);
+    brief.recoveryTime = 6_000;
+    context.data.spells.spells[quick] = brief;
+    auto client = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
+    auto me = client.session.inWorld;
+    assert(!me.connection.gatewayHome.node, "connected straight to this worker");
+
+    me.startCooldown(context.data.spells.spell(quick));
+    assert(!db.loadCooldowns(7).length, "a short cooldown waits for the periodic save");
+    me.startCooldown(context.data.spells.spell(transmute));
+    const saved = db.loadCooldowns(7);
+    assert(saved.length == 2, "the long one is saved at once, with what else runs");
+    foreach (row; saved)
+        assert(row.spell == transmute || row.spell == quick);
 }
