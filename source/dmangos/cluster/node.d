@@ -303,7 +303,7 @@ final class ClusterNode : LinkOwner
         IdRequest[][ushort] idRequests;    // coordinator: waiting for `idGrantsFrom`, by member
         IdPool pool_;                      // members
         SessionDirectory directory;        // coordinator
-        ubyte[][uint] arriving;            // region id -> its objects' state, from its last owner
+        Arrival[uint] arriving;            // region id -> its objects' state, from its last owner
         ubyte[][uint] leaving;             // region id -> its objects' state, for its next owner
         SessionClaim[] claimsWaiting;      // members: sent once the coordinator is linked
         SessionReleased[] releasesWaiting; // ditto
@@ -1300,6 +1300,8 @@ final class ClusterNode : LinkOwner
         heldPlayers.clear();
         claimsWaiting = null;
         releasesWaiting = null;
+        arriving = null; // handed over to the old incarnation's grants, which the new one never holds
+        releasesSent = null;
         coordinatorId = 0;
         viewVersion = 0;
         viewCoordinator = 0;
@@ -1780,7 +1782,7 @@ final class ClusterNode : LinkOwner
                 return pool_.granted(grant.kind, grant.first, grant.count);
             case MessageType.regionHandover:
                 const handover = decode!RegionHandover(payload);
-                arriving[handover.region] = handover.objects.dup;
+                arriving[handover.region] = Arrival(handover.epoch, handover.objects.dup);
                 return;
             default:
                 return;
@@ -1911,6 +1913,13 @@ private:
         directory.lost(link.peer.nodeId, lastHeard + config.leaseMs.msecs + leaseMargin, link.peer.incarnation);
     }
 
+    /// A region's objects handed over for the grant at `epoch` (`RegionHandover`).
+    static struct Arrival
+    {
+        ulong epoch;
+        ubyte[] objects;
+    }
+
     static struct ReleaseSent
     {
         ulong epoch;
@@ -1995,10 +2004,11 @@ private:
             handOverAfterWait[region] = objects.dup;
             return;
         }
+        const epoch = authority.grantedEpoch(region);
         if (target == id)
-            arriving[region] = objects.dup;
+            arriving[region] = Arrival(epoch, objects.dup);
         else if (target)
-            sendTo(target, RegionHandover(region, cast(ubyte[]) objects));
+            sendTo(target, RegionHandover(region, epoch, cast(ubyte[]) objects));
     }
 
     /// The directory's decisions, to the sessions they are about: this node's directly, others' by message.
@@ -2123,9 +2133,16 @@ private:
                 regionIds(regions_.ownedRegions));
             const(ubyte)[][uint] arrived;
             foreach (ref r; gained)
-                if (auto objects = r.id in arriving)
+                if (auto came = r.id in arriving)
                 {
-                    arrived[r.id] = *objects;
+                    // Objects handed over for an earlier grant of the region (one not gained then, the lease
+                    // having lapsed, and granted to another node since) are older than what that node made of
+                    // it: they would bring back creatures killed and loot taken since. Its state comes cold.
+                    if (came.epoch == r.epoch)
+                        arrived[r.id] = came.objects;
+                    else
+                        warning!"cluster: region %s's objects were handed over for its grant %s, not this one (%s): it loads afresh"(
+                            r.id, came.epoch, r.epoch);
                     arriving.remove(r.id);
                 }
             if (onOwnership !is null)
@@ -3824,4 +3841,55 @@ unittest
         const bundle = received.get(owner, null).get(r.id, null);
         assert(bundle == [cast(ubyte) r.id, cast(ubyte) leaving.id], "its objects came with the release sent again");
     }
+}
+
+// Objects handed over for one grant of a region do not come with a later grant of it: a node that holds a stale
+// handover (its lease did not hold when the region came, and the region went elsewhere since) loads the region
+// afresh when it is granted the region again, instead of reviving what was killed and looted under the other owner.
+unittest
+{
+    import dmangos.world.grid : cellKey;
+
+    CellCosts costs;
+    foreach (x; -40 .. 40)
+        costs[0][cellKey(x, x % 7)] = 10;
+    auto regions = partition([0u], costs, 8);
+    ulong[uint] cost;
+    foreach (r; regions)
+        cost[r.id] = costOf(costs, r.map, r.rect);
+    auto cluster = new TestCluster;
+    auto coordinator = cluster.add(1, 9000, 1, CoordinatorSetup(regions.dup, cost.dup, new TestCounters));
+    auto b = cluster.add(2, 9001);
+    const(ubyte)[][uint] received;
+    b.onOwnership = (const(Region)[] gained, const(Region)[] lost, const(ubyte)[][uint] arriving,
+        ref ubyte[][uint]) {
+        foreach (id, objects; arriving)
+            received[id] = objects;
+    };
+    cluster.run(500, coordinator, b);
+    // Before anything is granted, b is handed objects for grants of every region that it will never hold.
+    foreach (ref r; regions)
+        coordinator.sendTo(b.id, RegionHandover(r.id, 1, [cast(ubyte) r.id, 99]));
+    cluster.run(6000, coordinator, b);
+    assert(b.regions.ownedRegions.length, "granted some regions");
+    assert(received.length == 0, "none of the stale objects came with them");
+    assert(b.arriving.length == 8 - b.regions.ownedRegions.length);
+
+    // Objects for the grant itself still come.
+    auto c = cluster.add(3, 9002);
+    const(ubyte)[][uint] cReceived;
+    c.onOwnership = (const(Region)[] gained, const(Region)[] lost, const(ubyte)[][uint] arriving,
+        ref ubyte[][uint]) {
+        foreach (id, objects; arriving)
+            cReceived[id] = objects;
+    };
+    b.onOwnership = (const(Region)[] gained, const(Region)[] lost, const(ubyte)[][uint] arriving,
+        ref ubyte[][uint] leaving) {
+        foreach (ref r; lost)
+            if (r.next)
+                leaving[r.id] = [cast(ubyte) r.id, cast(ubyte) 2];
+    };
+    coordinator.onOwnership = b.onOwnership;
+    cluster.run(2000, coordinator, b, c);
+    assert(c.regions.ownedRegions.length && cReceived.length == c.regions.ownedRegions.length);
 }

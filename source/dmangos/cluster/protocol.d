@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 125; // a session claimed again after a takeover says that it was granted before
+enum ushort protocolVersion = 126; // a region's handed-over objects name the grant they are for
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -547,6 +547,7 @@ struct RegionHandover
     enum type = MessageType.regionHandover;
 
     uint region;
+    ulong epoch; /// the grant the objects are for: a later grant of the region takes none of them
     @LengthPrefix!uint ubyte[] objects;
 }
 
@@ -1395,7 +1396,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 125, recordedFingerprint = 0x3f321a171a94d820UL;
+private enum recordedVersion = 126, recordedFingerprint = 0x0f543e09c072ba55UL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

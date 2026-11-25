@@ -482,6 +482,15 @@ final class RegionAuthority
         return 0;
     }
 
+    /// The epoch of the grant `grantedAfter` names; 0 if the region is not granted.
+    ulong grantedEpoch(uint region)
+    {
+        foreach (ref r; regions_)
+            if (r.id == region && r.state == RegionState.granted)
+                return r.epoch;
+        return 0;
+    }
+
     /// Hands out regions that are free (and no longer held for a lost owner).
     void tick()
     {
