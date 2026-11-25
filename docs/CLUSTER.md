@@ -412,8 +412,11 @@ step incomplete.
 Finite wild objects of the generic and spell-focus types use the same durable queue from placement.
 An immediate object-only player spell saves the request before reporting a successful cast.
 The objects keep their GUIDs, state, and original expiry during recovery. Timed outdoor summons and saved
-quest objects keep their grid loaded through idle cleanup until they leave the map. The worker retries
-pending region recovery if its first database read fails.
+quest objects keep their grid loaded through idle cleanup until they leave the map. If a gained region's
+quest actors, outdoor corpses, opened chests or respawn timers cannot be read, its cells stay unloaded
+and the worker reads them again every second; the cells load once every read has succeeded. Loading
+them first would spawn afresh what the database still holds: an opened chest with new loot, a dead
+creature alive, or an escort's NPC without its escort.
 
 On a clean dungeon handoff, queued database scripts resume at their next step with the elapsed
 time intact. The receiving node waits briefly for players who were participating when the copy

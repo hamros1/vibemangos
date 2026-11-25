@@ -4485,7 +4485,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         bool delegate(ulong) owns;
         if (ownsCell !is null)
-            owns = (ulong cell) => ownsCell(id, cell);
+            owns = (ulong cell) => ownsCell(id, cell) && !recoveryHolds(id, cell);
+        else if (config.cluster.enabled)
+            owns = (ulong cell) => !recoveryHolds(id, cell);
         MapObject[] delegate(uint, ulong) spawner = &spawnCell;
         if (instance)
             spawner = (uint m, ulong cell) => spawnCellIn(m, instance, cell);
@@ -5872,6 +5874,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         // Load additions before restoring live bundles or loading newly owned cells.
         discoverSavedSpawns(gained);
         forgetQuestActors(lost);
+        foreach (ref r; lost)
+            pendingRegionRecovery.remove(r.id);
 
         // Retire a returned creature before handing over any newly revoked physical home region.
         foreach (ref r; lost)
@@ -5936,7 +5940,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     leaving[r.id] = cast(ubyte[]) encodeBundle(null, timers);
             }
         const editedSpawns = refreshSavedGameObjectPlacements(gained, arriving);
-        refreshRegionRespawns(gained, arriving);
+        bool recoveryRead = refreshRegionRespawns(gained, arriving);
         // Every arrival first: a map that looks around for gained cells would otherwise spawn afresh what is
         // still on its way in another region's bundle.
         foreach (ref r; gained)
@@ -5970,8 +5974,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         foreach (ref r; gained)
             if (r.creature.spawn)
                 creatureLoanGained(r, arriving.get(r.id, null));
-        refreshOutdoorCorpses(gained, lost);
-        refreshOutdoorChests(gained, lost);
+        recoveryRead &= refreshOutdoorCorpses(gained, lost);
+        recoveryRead &= refreshOutdoorChests(gained, lost);
+        if (!recoveryRead)
+            holdRegionRecovery(gained, arriving);
         queueQuestActorRecovery(gained, arriving);
         restoreOutdoorScripts(gained);
         bool[uint] looked;
@@ -6005,6 +6011,80 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
     private QuestActorRegionGrant[uint] pendingQuestActorRegions;
     private long retryQuestActorRecoveryAt;
+
+    /// A gained region whose corpses, chests or respawn timers could not be read yet (`retryRegionRecovery`).
+    private struct RegionRecovery
+    {
+        Region region;
+        bool clean; // its bundle arrived: only the database's corpses and chests are still to read
+    }
+    private RegionRecovery[uint] pendingRegionRecovery;
+    private long retryRegionRecoveryAt;
+
+    /**
+     * Whether a gained cell waits for its region's recovery reads before it loads. Loaded first, the cell would
+     * spawn afresh what the database still holds: an opened chest with new loot, a dead creature alive, an
+     * escort's NPC without its escort (which the quest-actor recovery would then take for the escort's own).
+     */
+    private bool recoveryHolds(uint map, ulong cell) const
+    {
+        foreach (const ref pending; pendingRegionRecovery)
+            if (pending.region.map == map && pending.region.rect.containsKey(cell))
+                return true;
+        foreach (const ref grant; pendingQuestActorRegions)
+            if (!grant.clean && grant.region.map == map && grant.region.rect.containsKey(cell))
+                return true;
+        return false;
+    }
+
+    private void holdRegionRecovery(const(Region)[] gained, const(ubyte)[][uint] arriving)
+    {
+        import dmangos.log : warning;
+
+        foreach (ref region; gained)
+            if (physicalWorldRegion(region))
+                pendingRegionRecovery[region.id] = RegionRecovery(region, arriving.get(region.id, null).length != 0);
+        retryRegionRecoveryAt = unixTime + 1;
+        warning!"migration: %s gained region(s) wait to load until their corpses, chests and respawn timers are read"(
+            pendingRegionRecovery.length);
+    }
+
+    /// Reads again what a gained region's recovery could not (`holdRegionRecovery`), then loads its cells.
+    private void retryRegionRecovery()
+    {
+        import dmangos.log : info;
+
+        if (!pendingRegionRecovery.length || unixTime < retryRegionRecoveryAt)
+            return;
+        Region[] all, cold;
+        foreach (ref pending; pendingRegionRecovery)
+        {
+            all ~= pending.region;
+            if (!pending.clean)
+                cold ~= pending.region;
+        }
+        if (!syncColdRespawns(cold) || !refreshOutdoorCorpses(all, null) || !refreshOutdoorChests(all, null))
+        {
+            retryRegionRecoveryAt = unixTime + 1;
+            return;
+        }
+        pendingRegionRecovery = null;
+        info!"migration: %s gained region(s) read their corpses, chests and respawn timers and load now"(all.length);
+        loadHeldCells(all);
+    }
+
+    /// Loads, near players and peers, the cells of `regions` that waited for their recovery.
+    private void loadHeldCells(const(Region)[] regions)
+    {
+        bool[uint] looked;
+        foreach (ref r; regions)
+            if (r.map !in looked) // cells another recovery still holds stay as they are (`recoveryHolds`)
+            {
+                looked[r.map] = true;
+                if (auto m = r.map in maps)
+                    m.ownershipGained();
+            }
+    }
 
     private bool ownsQuestActor(const Creature creature)
     {
@@ -6459,7 +6539,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         refreshQuestActors();
     }
 
-    private void refreshQuestActors()
+    private void refreshQuestActors(bool retry = false)
     {
         import dmangos.log : warning;
         import dmangos.mysql : DatabaseException;
@@ -6479,6 +6559,15 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         }
         const grants = pendingQuestActorRegions.values;
         pendingQuestActorRegions = null;
+        scope (exit)
+            if (retry)
+            {
+                Region[] done;
+                foreach (ref grant; grants)
+                    if (grant.region.id !in pendingQuestActorRegions)
+                        done ~= grant.region;
+                loadHeldCells(done);
+            }
         foreach (actor; actors)
         {
             if (!grants.any!(grant => questActorRegion(grant.region, actor.map, actor.home)))
@@ -6622,14 +6711,15 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return false;
     }
 
-    private void refreshOutdoorCorpses(const(Region)[] gained, const(Region)[] lost)
+    /// False if the corpses could not be read (`holdRegionRecovery`).
+    private bool refreshOutdoorCorpses(const(Region)[] gained, const(Region)[] lost)
     {
         import dmangos.log : warning;
         import dmangos.mysql : DatabaseException;
         import std.algorithm.searching : any;
 
         if (!config.cluster.enabled)
-            return;
+            return true;
         foreach (guid; outdoorCorpses.keys)
         {
             const spawn = outdoorCorpseSpawn(outdoorCorpses[guid]);
@@ -6637,14 +6727,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 outdoorCorpses.remove(guid);
         }
         if (!gained.any!(r => physicalWorldRegion(r)))
-            return;
+            return true;
         InstanceCorpseRecord[] records;
         try
             records = database.loadOutdoorCorpses();
         catch (DatabaseException error)
         {
             warning!"migration: could not refresh outdoor corpses: %s"(error.msg);
-            return;
+            return false;
         }
         foreach (corpse; records)
         {
@@ -6665,6 +6755,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             catch (Exception error)
                 warning!"migration: could not read outdoor corpse %s: %s"(corpse.spawn, error.msg);
         }
+        return true;
     }
 
     private CreatureSpawn outdoorCorpseSpawn(const ref InstanceCorpseRecord corpse)
@@ -6703,20 +6794,21 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return Migrant(kind, corpse.spawn, cellKeyAt(spawn.x, spawn.y), fromHex(corpse.state));
     }
 
-    private void refreshOutdoorChests(const(Region)[] gained, const(Region)[] lost)
+    /// False if the opened chests could not be read (`holdRegionRecovery`).
+    private bool refreshOutdoorChests(const(Region)[] gained, const(Region)[] lost)
     {
         import dmangos.log : warning;
         import dmangos.mysql : DatabaseException;
         import std.algorithm.searching : any;
 
         if (!config.cluster.enabled)
-            return;
+            return true;
         foreach (guid; outdoorChests.keys)
             if (const index = guid in gameObjectSpawnIndex)
                 if (outdoorRegionCovers(&data.gameObjectSpawns[*index], lost))
                     outdoorChests.remove(guid);
         if (!gained.any!(r => physicalWorldRegion(r)))
-            return;
+            return true;
         try
         {
             foreach (chest; database.loadOutdoorChests())
@@ -6725,7 +6817,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                         outdoorChests[chest.spawn] = chest;
         }
         catch (DatabaseException error)
+        {
             warning!"migration: could not refresh outdoor chests: %s"(error.msg);
+            return false;
+        }
+        return true;
     }
 
     private void releaseRegionCharms(const ref Region region)
@@ -6841,14 +6937,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return timers;
     }
 
-    /// A clean handoff supplies its timers in the bundle. A crash only leaves the database rows.
-    private void refreshRegionRespawns(const(Region)[] gained, const(ubyte)[][uint] arriving)
+    /**
+     * A clean handoff supplies its timers in the bundle. A crash only leaves the database rows. False if they
+     * could not be read (`holdRegionRecovery`).
+     */
+    private bool refreshRegionRespawns(const(Region)[] gained, const(ubyte)[][uint] arriving)
     {
-        import dmangos.log : warning;
-        import dmangos.mysql : DatabaseException;
-
         if (!gained.length)
-            return;
+            return true;
         creaturePools.refresh();
         gameObjectPools.refresh();
         const(Region)[] cold;
@@ -6861,8 +6957,17 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             else
                 cold ~= region;
         }
+        return syncColdRespawns(cold);
+    }
+
+    /// The respawn timers of regions gained without a bundle, from the database. False if they could not be read.
+    private bool syncColdRespawns(const(Region)[] cold)
+    {
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
+
         if (!cold.length)
-            return;
+            return true;
         indexSpawns();
         void sync(Spawn)(ref long[uint] cached, const(long[uint]) saved, const(Spawn)[] spawns,
             const(size_t[uint]) index)
@@ -6897,7 +7002,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         catch (DatabaseException error)
         {
             warning!"migration: could not refresh respawn timers: %s"(error.msg);
+            return false;
         }
+        return true;
     }
 
     private MapObject restoreRegionMigrant(const ref Migrant migrant, Map destination, const ref Region region)
@@ -10763,7 +10870,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         if (instances.length)
             unloadEmptyInstances(now);
-        refreshQuestActors();
+        refreshQuestActors(true);
+        retryRegionRecovery();
         if (config.cluster.enabled && !config.cluster.gateway && now >= nextOutdoorWorldStatePoll)
         {
             nextOutdoorWorldStatePoll = now + 1.seconds;
@@ -12398,6 +12506,97 @@ unittest
     restarted.respawnDue(clock);
     const next = db.loadGameObjectPoolStates(realm)[pool];
     assert(next.revision == 3 && next.placements.length == 2 && next.placements[0].spawn != next.placements[1].spawn);
+}
+
+// A takeover that cannot read the opened chests yet keeps the chest's cell unloaded, and loads it once they are
+// read: the chest comes back opened with what was left in it, not unopened with new loot.
+unittest
+{
+    import dmangos.cluster.regions : CellRect;
+    import dmangos.mysql : DatabaseException;
+    import dmangos.world.database : WorldDatabase;
+    import dmangos.world.gameobject : GameObjectTemplate;
+    import dmangos.world.grid : cellCoordinate;
+    import dmangos.world.testclient;
+    import std.typecons : AutoImplement;
+
+    static abstract class ChestsAway : WorldDatabase
+    {
+        WorldDatabase inner;
+        int failures;
+
+        this(WorldDatabase inner) { this.inner = inner; }
+
+        override InstanceChestRecord[] loadOutdoorChests()
+        {
+            if (failures > 0)
+            {
+                --failures;
+                throw new DatabaseException("the characters database is away");
+            }
+            return inner.loadOutdoorChests();
+        }
+    }
+    enum string forward(C, alias method) = "return inner." ~ __traits(identifier, method) ~ "(args);";
+    alias Failing = AutoImplement!(ChestsAway, forward);
+
+    enum uint entry = 8011;
+    auto db = newDatabase();
+    auto clock = MonoTime.currTime;
+    const spawn = GameObjectSpawn(95, entry, 0, -8930, -120, 83.53, respawnSeconds: 30);
+
+    WorldContext worker(ushort id, WorldDatabase database)
+    {
+        auto client = testClientData();
+        auto data = testWorldData(client);
+        GameObjectTemplate chest = {entry: entry, type: GameObjectType.chest};
+        chest.data[3] = 1;
+        data.gameObjectTemplates[entry] = chest;
+        data.gameObjectCells[0][cellKeyAt(spawn.x, spawn.y)] ~= data.gameObjectSpawns.length;
+        data.gameObjectSpawns ~= spawn;
+        WorldConfig config;
+        config.realmId = 9;
+        config.cluster.nodeId = id;
+        auto node = new WorldContext(config, database, data, client);
+        node.startUnixTime = 2_000_000_000L;
+        node.startClock = clock;
+        node.clock = () => clock;
+        return node;
+    }
+    const guid = makeGuid(HighGuid.gameObject, spawn.entry, spawn.guid);
+    const home = cellKeyAt(spawn.x, spawn.y);
+
+    auto original = worker(1, db);
+    original.map(0).loadCell(home);
+    auto opened = original.map(0).gameObjectAt(guid);
+    opened.loot = new Loot(opened.guid, null);
+    opened.loot.gold = 25;
+    opened.loot.owners[7] = true;
+    opened.lootState = GoLootState.activated;
+    opened.despawnTimer = 300_000;
+    original.saveOpenedChest(original.map(0), opened);
+    assert(db.loadOutdoorChests().length == 1);
+
+    auto away = new Failing(db);
+    away.failures = 2;
+    auto replacement = worker(3, away);
+    const x = cellCoordinate(spawn.x), y = cellCoordinate(spawn.y);
+    ubyte[][uint] unused;
+    replacement.regionsChanged([Region(1, 0, CellRect(x, y, x + 1, y + 1), 3, 1, RegionState.granted)],
+        null, null, unused);
+    replacement.map(0).loadCell(home);
+    assert(replacement.map(0).gameObjectAt(guid) is null, "the cell waits for the opened chests");
+    replacement.retryRegionRecovery(); // too soon: no read
+    assert(away.failures == 1);
+    clock += 1.seconds;
+    replacement.retryRegionRecovery(); // read, and fails again
+    assert(replacement.map(0).gameObjectAt(guid) is null);
+    clock += 1.seconds;
+    replacement.retryRegionRecovery();
+    replacement.map(0).loadCell(home);
+    auto resumed = replacement.map(0).gameObjectAt(guid);
+    assert(resumed !is null && resumed.loot !is null && resumed.loot.gold == 25 && resumed.loot.owners[7],
+        "the chest comes back opened, with what was left in it");
 }
 
 // A lost node supplies no bundle, but its durable additions still belong to the next owner.
