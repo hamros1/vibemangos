@@ -60,6 +60,13 @@ struct ClusterConfig
     @JsonName("balance_interval_seconds") uint balanceIntervalSeconds = 30;
     @JsonName("balance_min_load_us") uint balanceMinLoadUs = 20_000; /// ditto: 2% of one core
     @JsonName("region_cooldown_seconds") uint regionCooldownSeconds = 120; /// ditto
+    /**
+     * How long a worker's database may take none of its writes before the worker gives up its lease, so that
+     * its regions and players go to other workers, which load them as last saved (docs/CLUSTER.md, "A worker
+     * whose database stalls"). The coordinator decides, and only while another worker's database takes its
+     * writes: when every one stalls, nobody gives up. 0: never.
+     */
+    @JsonName("database_stall_release_seconds") uint databaseStallReleaseSeconds = 120;
 
     /**
      * Phase 7: this member is the standby coordinator. It keeps what a coordinator needs, and takes

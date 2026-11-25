@@ -252,6 +252,12 @@ private:
             loginWaiting = true;
             return;
         }
+        if (context.databaseStalled)
+        {
+            warning!"%s: account %s's login refused: this server's database takes none of its writes"(remoteAddress,
+                account.id);
+            return send(ServerCharacterLoginFailed(CharacterLoginFailure.CHAR_LOGIN_FAILED));
+        }
         const guid = lowGuid(request.guid);
         auto loaded = context.database.loadCharacter(guid);
         if (loaded.isNull || loaded.get.account != account.id)

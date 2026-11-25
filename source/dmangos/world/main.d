@@ -8,6 +8,7 @@
 module dmangos.world.main;
 
 import core.time : Duration, minutes, MonoTime, msecs, seconds;
+import std.algorithm.comparison : min;
 import std.conv : to;
 import std.getopt : defaultGetoptPrinter, getopt, GetOptException, GetoptResult;
 import std.stdio : stderr;
@@ -237,7 +238,12 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
     const uint writeStream = config.realmId << 16 | (config.cluster.enabled ? config.cluster.nodeId : 0);
     if (config.writeLog.length)
         replayLog(config.writeLog, writerDatabase, writeStream);
-    auto writer = new Writer(writerDatabase, config.writeLog, true, writeStream);
+    auto writer = new Writer(writerDatabase, config.writeLog, false, writeStream);
+    // A cluster node's writer probes an idle database, so that the coordinator learns whose database takes no
+    // writes while it has nothing to write too (docs/CLUSTER.md, "A worker whose database stalls").
+    if (config.cluster.enabled)
+        writer.probeAfterMs = 500;
+    writer.start();
     scope (exit)
     {
         writer.stop(); // what the last sessions saved is written before the connections close
@@ -291,6 +297,7 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
     TcpServer server;
     ClusterBridge bridge;
     bool leaseHeld;
+    Duration silentWhileLeased; // how long the database had taken none of the writes at the last tick the lease held
     MonoTime clusterClock()
     {
         return realmClusterClock(config.cluster.quorum);
@@ -303,6 +310,12 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
     void loseWorldLease()
     {
         writer.leaseLapsed(writer.now);
+        // The writer may have dropped the held writes as the lease ran out, before this tick: the silence is the
+        // one seen while the lease held.
+        const silent = silentWhileLeased > writer.databaseSilentFor ? silentWhileLeased : writer.databaseSilentFor;
+        if (silent >= ClusterNode.databaseStalledAfter)
+            error!"cluster: this node's lease lapsed while its database had taken none of its writes for %s s: its queued writes are dropped, and its players are loaded elsewhere as last saved (what they did since is rolled back)"(
+                silent.total!"seconds");
         if (config.cluster.quorum && config.cluster.gateway)
             warning!"cluster: the gateway's lease lapsed: holding client connections for the next coordinator"();
         else
@@ -324,8 +337,11 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
         const incarnation = ClusterNode.newIncarnation(config.writeLog.length ? config.writeLog ~ ".incarnation" : null);
         cluster = new ClusterNode(config.cluster, incarnation, &clusterClock,
             (host, port, session) => server.connect(host, port, session, linkIdle),
-            () => LoadReport(cast(uint) tickAverageUs, cast(uint) context.sessionCount, cast(uint) context.objectCount),
+            () => LoadReport(cast(uint) tickAverageUs, cast(uint) context.sessionCount, cast(uint) context.objectCount,
+                cast(uint) min(writer.databaseSilentFor.total!"msecs", uint.max)),
             setup, config.realmId);
+        // While its database takes none of its writes, the node refuses logins and holds arrivals.
+        context.writesStalled = () => writer.databaseSilentFor >= ClusterNode.databaseStalledAfter;
         if (config.battlegroupStandbyNode)
         {
             import dmangos.cluster.services : ServiceKind;
@@ -505,6 +521,7 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
         };
         cluster.onTermChanged = () {
             bridge.fenceGatewaySimulations();
+            bridge.forgetHeldArrivals();
             if (leaseHeld)
                 loseWorldLease();
         };
@@ -518,6 +535,7 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
             writer.leaseLapsed(writer.now);
             bridge.fenceGatewaySimulations();
             bridge.forgetDepartures();
+            bridge.forgetHeldArrivals();
         };
         info!"cluster: node %s, incarnation %s, %s; clients at %s"(cluster.id, cluster.incarnation,
             cluster.isCoordinator ? "coordinator" : "member of " ~ config.cluster.coordinator,
@@ -560,7 +578,10 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
                 if (leaseHeld && !holds)
                     loseWorldLease();
                 else if (holds)
+                {
                     writer.renewLease(behind.writableUntil()); // a write waiting for the database stays writable
+                    silentWhileLeased = writer.databaseSilentFor;
+                }
                 leaseHeld = holds;
             }
             const took = MonoTime.currTime - now;

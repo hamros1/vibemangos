@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 122; // a client packet that reached a gateway player's old owner goes back to the gateway
+enum ushort protocolVersion = 123; // heartbeats say how long the sender's database has taken none of its writes
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -498,6 +498,7 @@ struct Heartbeat
     uint tickAverageUs;    /// the sender's mean tick over its last measurement interval
     uint players;          /// players in the world on the sender
     uint objects;          /// creatures and game objects on the sender
+    uint databaseStalledMs; /// how long the sender's database has taken none of its writes; 0: it takes them
     ulong received;        /// the highest sequence number the sender has received from the peer (all below too)
 }
 
@@ -1210,7 +1211,7 @@ unittest
     assert(takeFrame(input, header, payload) && header.type == MessageType.hello && header.sequence == 0);
     assert(decode!Hello(payload) == hello);
     assert(takeFrame(input, header, payload) && header.type == MessageType.heartbeat && header.sequence == 7);
-    assert(decode!Heartbeat(payload) == Heartbeat(100, 50, 3, 400, 2, 900) && payload.length == 40);
+    assert(decode!Heartbeat(payload) == Heartbeat(100, 50, 3, 400, 2, 900) && payload.length == 44);
     assert(input.length == 0 && !takeFrame(input, header, payload));
 
     const view = View(9, 3, [ViewMember(1, 5, "a:1", true), ViewMember(2, 6, "b:2", false)]);
@@ -1391,7 +1392,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 122, recordedFingerprint = 0x6f35af1b65c07021UL;
+private enum recordedVersion = 123, recordedFingerprint = 0x4ee52d9a363bb41eUL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

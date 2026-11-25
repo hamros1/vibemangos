@@ -29,6 +29,11 @@
  * cluster's heartbeats and lease, stops for that long at most once per stall. A write the
  * database refuses outright is kept in a file beside the log (`failedPath`) and the writer goes on.
  *
+ * In a cluster the writer also writes nothing now and then (`Writer.probeAfterMs`): a transaction that only
+ * records its number in the ledger, so that how long the database has taken none of this node's writes
+ * (`Writer.databaseSilentFor`) is known while the game has nothing to write too. The coordinator compares it
+ * across the nodes (docs/CLUSTER.md, "A worker whose database stalls").
+ *
  * Each queued write carries the time until which this node may write (its cluster lease, docs/CLUSTER.md);
  * the writer drops a write it reaches after that, and so does the replay. A standalone server
  * writes always. That time is on the writer's clock (`bootClock`): monotonic, so a step of the wall clock
@@ -44,7 +49,7 @@ import core.atomic : atomicLoad, atomicStore;
 import core.sync.condition : Condition;
 import core.sync.mutex : Mutex;
 import core.thread : Thread;
-import core.time : MonoTime;
+import core.time : Duration, MonoTime;
 import std.meta : AliasSeq, staticMap;
 import std.traits : FunctionAttribute, functionAttributes, hasUDA, isArray, isDynamicArray, isFloatingPoint,
     isIntegral, isSomeChar, isStaticArray, OriginalType, Parameters, ParameterStorageClass,
@@ -196,8 +201,12 @@ shared static this()
         }
     static foreach (fun; AliasSeq!(LegacyAuraWrites.saveAuras, LegacyAuraWrites.savePetAuras))
         table[signature!fun] = Method(__traits(identifier, fun), &replayLegacyAuras!fun);
+    table[probeSignature] = Method("probe", (WorldDatabase, const(ubyte)[]) {});
     bySignature = cast(immutable) table;
 }
+
+/// The signature of the writer's probe, which writes nothing (only its number, in the ledger: `Writer.probeAfterMs`).
+private enum ulong probeSignature = 0x70726f6265; // "probe"
 
 /// The key of a `@Replaces` write: its first argument, or that argument's `guid`.
 private ulong replaceKey(T)(const ref T first)
@@ -362,6 +371,13 @@ final class Writer
     long stalledWaitMs = 300;
     /// How long one `settle` waits at most for a writer that is slow but still finishing writes.
     long slowWaitMs = 1_000;
+    /**
+     * After this long with nothing written, the writer writes nothing (a probe: a transaction recording only its
+     * number in the ledger, under no lease, logged nowhere), so that `databaseSilentFor` tells whether the
+     * database takes writes while the game has none for it. 0: no probes (a standalone server). Set before
+     * `start`.
+     */
+    long probeAfterMs;
 
     private
     {
@@ -376,6 +392,8 @@ final class Writer
         bool stopping;
         WriterStats stats;
         MonoTime progressAt;   // when the writer last took a batch or finished a write
+        MonoTime databaseAt;   // when the database last finished a write, or the idle writer began on one
+        bool probing;          // a probe is being written (not waited for by `settle`)
         bool gaveUp;           // a `settle` gave up: the next ones do not wait until the queue empties
         // Set by the game loop, read by the writer's thread; both on `clock`.
         shared long leaseUntil; // the newest `writableUntil` given or renewed: the lease has held until at least then
@@ -464,7 +482,11 @@ final class Writer
         }
         write.seq = ++lastSeq;
         if (queue.length == 0 && inFlight == 0)
+        {
             progressAt = MonoTime.currTime; // an idle writer starts on it now
+            if (!probing)
+                databaseAt = progressAt;
+        }
         queue ~= write;
         ++stats.queued;
         work.notify();
@@ -521,6 +543,21 @@ final class Writer
         atomicStore(lapsedAt, at);
     }
 
+    /**
+     * How long the database has finished none of the writes the writer has had for it, its probes included
+     * (counted from when the idle writer began on them); zero while the writer has nothing to write. A write
+     * dropped for the lease does not count: the database had no part in it.
+     */
+    Duration databaseSilentFor()
+    {
+        lock.lock_nothrow();
+        scope (exit)
+            lock.unlock_nothrow();
+        if (queue.length == 0 && inFlight == 0 && !probing)
+            return Duration.zero;
+        return MonoTime.currTime - databaseAt;
+    }
+
     /// Whether nothing waits to be written.
     @property bool settled()
     {
@@ -574,22 +611,44 @@ private:
         for (;;)
         {
             Write[] batch;
+            bool probe;
             {
                 lock.lock_nothrow();
                 scope (exit)
                     lock.unlock_nothrow();
                 while (queue.length == 0 && !stopping)
-                    work.wait();
-                if (queue.length == 0)
-                    return;
-                batch = queue;
-                queue = null;
-                latest = null;
-                inFlight = batch.length;
-                progressAt = MonoTime.currTime;
-                room.notifyAll();
+                {
+                    const quiet = MonoTime.currTime - databaseAt;
+                    if (!probeAfterMs)
+                        work.wait();
+                    else if (quiet < probeAfterMs.msecs)
+                        work.wait(probeAfterMs.msecs - quiet);
+                    else
+                    {
+                        probe = true;
+                        break;
+                    }
+                }
+                if (probe)
+                {
+                    // Under no lease: it writes nothing but this stream's own row of the ledger.
+                    batch = [Write(probeSignature, 0, null, false, ++lastSeq)];
+                    probing = true;
+                    databaseAt = MonoTime.currTime;
+                }
+                else
+                {
+                    if (queue.length == 0)
+                        return;
+                    batch = queue;
+                    queue = null;
+                    latest = null;
+                    inFlight = batch.length;
+                    progressAt = MonoTime.currTime;
+                    room.notifyAll();
+                }
             }
-            if (logPath.length)
+            if (logPath.length && !probe)
                 appendToLog(logPath, batch);
             bool abandoned;
             foreach (ref w; batch)
@@ -616,14 +675,19 @@ private:
                     }
                     if (outcome == Outcome.written)
                     {
-                        count((ref s) { ++s.written; s.stalled = false; progressAt = MonoTime.currTime; });
+                        count((ref s) {
+                            if (!probe)
+                                ++s.written;
+                            s.stalled = false;
+                            progressAt = databaseAt = MonoTime.currTime;
+                        });
                         if (attempt > 1)
                             info!"the database is back: writing again"();
                         break;
                     }
                     if (outcome == Outcome.failed)
                     {
-                        count((ref s) { ++s.failed; progressAt = MonoTime.currTime; });
+                        count((ref s) { ++s.failed; progressAt = databaseAt = MonoTime.currTime; });
                         keepFailed(w);
                         break;
                     }
@@ -663,17 +727,23 @@ private:
                 if (logPath.length)
                     appendToLog(logPath, queue); // queued meanwhile: after the batch, in order
                 inFlight = 0;
+                probing = false;
                 queue = null;
                 gaveUp = false;
                 finished.notifyAll();
                 return;
             }
-            if (logPath.length)
+            if (logPath.length && !probe)
                 emptyLog(logPath);
             {
                 lock.lock_nothrow();
                 scope (exit)
                     lock.unlock_nothrow();
+                if (probe)
+                {
+                    probing = false;
+                    continue;
+                }
                 inFlight = 0;
                 progressAt = MonoTime.currTime;
                 if (queue.length == 0)
@@ -1446,6 +1516,39 @@ unittest
     db.setMuteTime(id, 91);
     writer.settle();
     assert(inner.findAccount("PLAYER").get.muteTime == 91 && writer.statistics.refused == 1);
+}
+
+// A writer with nothing to write probes the database now and then, so that one that takes no writes is seen while
+// the game writes nothing. The silence counts from when the held probe began, and ends once a probe goes through;
+// `settle` does not wait for probes, and they are not counted as writes. Without probes an idle writer reports none.
+unittest
+{
+    import core.thread : Thread;
+    import core.time : msecs;
+
+    auto inner = newDatabase();
+    auto flaky = new Flaky(inner);
+    auto idle = new Writer(flaky, null);
+    scope (exit)
+        idle.stop();
+    auto writer = new Writer(flaky, null, false);
+    scope (exit)
+        writer.stop();
+    writer.probeAfterMs = 50;
+    writer.start();
+    Thread.sleep(300.msecs);
+    assert(inner.appliedUpTo(0) >= 2, "each probe records its number");
+    assert(writer.databaseSilentFor < 100.msecs && writer.statistics.written == 0);
+    assert(idle.databaseSilentFor == Duration.zero && idle.statistics.written == 0);
+
+    atomicStore(flaky.commitHoldMs, 600); // the database holds every transaction now
+    Thread.sleep(350.msecs);
+    assert(writer.databaseSilentFor >= 200.msecs, "a held probe: the database takes no writes");
+    assert(writer.settle(), "settle does not wait for a probe");
+    assert(idle.databaseSilentFor == Duration.zero, "without probes, nothing to write is no silence");
+    atomicStore(flaky.commitHoldMs, 0);
+    Thread.sleep(700.msecs);
+    assert(writer.databaseSilentFor < 100.msecs, "a probe went through");
 }
 
 // A write held in its transaction (by a lock, say) while the lease lapses is rolled back at its commit. Checked

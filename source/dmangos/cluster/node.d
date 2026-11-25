@@ -224,6 +224,14 @@ final class ClusterNode : LinkOwner
     /// How long the standby waits, with no link to the coordinator, before taking over.
     enum Duration standbyGrace = 500.msecs;
 
+    /**
+     * How long a node's database may take none of its writes (`LoadReport.databaseStalledMs`) before the node
+     * counts as stalled: the coordinator grants it no region and sends it no new client, and its world refuses
+     * logins and holds arrivals until the database takes its writes again. Well above the writer's probes of an
+     * idle database (`Writer.probeAfterMs`), so a node with nothing to write is not taken for a stalled one.
+     */
+    enum Duration databaseStalledAfter = 2.seconds;
+
     immutable ushort id;
 
     /// This process's incarnation: larger for every start, and for every new start within it (`reincarnate`).
@@ -294,6 +302,11 @@ final class ClusterNode : LinkOwner
         ubyte[][uint] leaving;             // region id -> its objects' state, for its next owner
         SessionClaim[] claimsWaiting;      // members: sent once the coordinator is linked
         SessionReleased[] releasesWaiting; // ditto
+        bool[ushort] stalledNodes;         // coordinator: nodes whose database takes none of their writes
+        MonoTime[ushort] writingSince;     // coordinator: nodes whose database takes their writes, since when
+        bool everyStallLogged;             // coordinator: a stall past the limit was let be, as every node stalls
+        bool ownStallLogged;               // coordinator: its own database stalled past the limit
+        MonoTime nextStallJudgement;       // coordinator: once a heartbeat, as the reports come
     }
 
     /// Where session decisions go.
@@ -508,15 +521,19 @@ final class ClusterNode : LinkOwner
         bool anyGateway = config.gateway;
         foreach (link; links)
             anyGateway = anyGateway || link.peer.gateway;
+        // Nor to a node whose database takes none of its writes: it refuses logins (`databaseStalledAfter`).
+        const stalledMs = databaseStalledAfter.total!"msecs";
         string best;
         uint fewest = uint.max;
-        if (!anyGateway || config.gateway)
+        const own = load is null ? LoadReport.init : load();
+        if ((!anyGateway || config.gateway) && own.databaseStalledMs < stalledMs)
         {
             best = config.clientAddress;
-            fewest = load is null ? 0 : load().players;
+            fewest = own.players;
         }
         foreach (link; links)
-            if (link.peer.clientAddress.length && (!anyGateway || link.peer.gateway) && link.peerLoad.players < fewest)
+            if (link.peer.clientAddress.length && (!anyGateway || link.peer.gateway) && link.peerLoad.players < fewest
+                && link.peerLoad.databaseStalledMs < stalledMs)
             {
                 fewest = link.peerLoad.players;
                 best = link.peer.clientAddress;
@@ -738,6 +755,17 @@ final class ClusterNode : LinkOwner
             link.tick(now, report);
         if (quorumId)
             tickQuorum(now);
+        if (isCoordinator && now >= nextStallJudgement)
+        {
+            nextStallJudgement = now + config.heartbeatMs.msecs;
+            judgeDatabaseStalls(now, report);
+        }
+        else if (!isCoordinator && (stalledNodes.length || writingSince.length))
+        {
+            // Not seen meanwhile: a coordinator again later, it judges from what it hears from then on.
+            stalledNodes = null;
+            writingSince = null;
+        }
         updateOwnership(now);
         if (heldPlayers.length && regions_.leaseHolds(now))
             releaseHeldPlayers();
@@ -766,6 +794,101 @@ final class ClusterNode : LinkOwner
                 splitAddress(dial.address, host, port);
                 dialer(host, port, dial.pending);
             }
+    }
+
+    /**
+     * The coordinator: whose database takes none of their writes, as each simulating node says in its heartbeats
+     * (and this node in `own`). Those are granted no region and sent no new client (`RegionAuthority.databaseStalled`,
+     * `leastBusyClientAddress`); nor is a member whose heartbeats have not come yet.
+     *
+     * A member stalled for longer than `database_stall_release_seconds` is fenced out (`fenceOutStalled`), but
+     * only while another simulating node's database has taken its writes all along, for at least as long: that
+     * is how the stall is known to be the member's own (its connection, a lock held on its rows), so that its
+     * players can play on elsewhere. When every node's database stalls, the database itself is away: moving the
+     * players would gain nothing, and nobody is fenced out; nor just after such an outage, when the first node
+     * to write again sees the others' stalls before they have had time to retry. A node whose heartbeats have not
+     * come yet counts for neither side, and a member that owns no region has nothing to give up (one fenced out
+     * and joined again while its database still stalls). The coordinator does not fence itself out: its own
+     * stall is logged.
+     */
+    private void judgeDatabaseStalls(MonoTime now, const LoadReport own)
+    {
+        import std.algorithm.searching : canFind;
+        import std.algorithm.sorting : sort;
+
+        Duration[ushort] stalls;
+        stalls[id] = own.databaseStalledMs.msecs;
+        foreach (peer, link; links)
+            if (!link.peer.gateway && !link.wantsClose && link.heardLoad && find(peer) !is null)
+                stalls[peer] = link.peerLoad.databaseStalledMs.msecs;
+        ushort[] stalled, writing;
+        foreach (node, stall; stalls)
+            if (stall >= databaseStalledAfter)
+                stalled ~= node;
+            else
+                writing ~= node;
+        stalled.sort();
+        writing.sort();
+        foreach (node; stalled)
+            if (node !in stalledNodes)
+                warning!"cluster: node %s's database has taken none of its writes for %s s: it is granted no region and sent no new client while it stalls"(
+                    node, stalls[node].total!"seconds");
+        foreach (node, _; stalledNodes)
+            if (!stalled.canFind(node))
+                info!"cluster: node %s's database takes its writes again, or the node has left"(node);
+        stalledNodes = null;
+        foreach (node; stalled)
+            stalledNodes[node] = true;
+        foreach (node, stall; stalls)
+            authority.databaseStalled(node, stall >= databaseStalledAfter);
+        MonoTime[ushort] since;
+        foreach (node; writing)
+            since[node] = writingSince.get(node, now);
+        writingSince = since;
+
+        if (!config.databaseStallReleaseSeconds)
+            return;
+        const limit = config.databaseStallReleaseSeconds.seconds;
+        ushort[] steady; // writing for at least the limit: they wrote all through the stalls judged now
+        foreach (node; writing)
+            if (now - writingSince[node] >= limit)
+                steady ~= node;
+        bool kept, ownPast;
+        foreach (node; stalled)
+            if (stalls[node] > limit)
+            {
+                if (node == id)
+                    ownPast = true;
+                else if (steady.length && authority.owns(node))
+                    fenceOutStalled(node, stalls[node], steady);
+                else
+                    kept = true;
+            }
+        if (kept && !everyStallLogged)
+            warning!"cluster: node(s) %s stalled past database_stall_release_seconds (%s s), but no node's database has taken its writes all that time: the database itself is away, so no node gives up its players"(
+                stalled, config.databaseStallReleaseSeconds);
+        everyStallLogged = kept;
+        if (ownPast && !ownStallLogged)
+            error!"cluster: this node's own database (the coordinator's) has taken none of its writes for over database_stall_release_seconds (%s s): a coordinator does not fence itself out"(
+                config.databaseStallReleaseSeconds);
+        ownStallLogged = ownPast;
+    }
+
+    /**
+     * The coordinator fences out member `node`, whose database has taken none of its writes for `stall` while
+     * those of `writing` take theirs. It is dropped as a lost member is (`closed`): its link closes, so its lease
+     * is renewed no more, and its incarnation is refused from then on (`SessionDirectory.fenceOut`), so it never
+     * holds a lease again. Its regions and accounts are held until its lease and the margin have run out, then go
+     * to the others, which load its players as last saved; the member's queued writes are dropped by its own
+     * fence (docs/CLUSTER.md, "Fenced writes"). It joins again as a new incarnation (`reincarnate`).
+     */
+    private void fenceOutStalled(ushort node, Duration stall, const(ushort)[] writing)
+    {
+        auto link = links[node];
+        error!"cluster: node %s's database has taken none of its writes for %s s (over database_stall_release_seconds, %s s) while node(s) %s write theirs: node %s (incarnation %s) is fenced out. Once its lease has run out, its regions and players go to other nodes, which load the players as last saved: what they did on node %s since is rolled back"(
+            node, stall.total!"seconds", config.databaseStallReleaseSeconds, writing, node, link.peer.incarnation, node);
+        directory.fenceOut(SimulationOwner(node, link.peer.incarnation));
+        link.close("its database stalled past database_stall_release_seconds: fenced out");
     }
 
     /// One line per link: who, its round trip and duplicates, for the log.
@@ -898,7 +1021,10 @@ final class ClusterNode : LinkOwner
             }
             link.send(RegionTable(viewCoordinator, authority.version_, authority.regions.dup));
             if (!link.peer.gateway) // a gateway simulates nothing: no regions, no services
+            {
+                authority.databaseStalled(peer, true); // not known to take its writes until its heartbeats say
                 authority.joined(peer);
+            }
         }
     }
 
@@ -2847,6 +2973,91 @@ unittest
     assert(worlds[coordinator.id].onlinePlayer(guid) is restored && client.session is originalSocket);
 }
 
+// A worker whose database takes none of its writes holds a gateway player's arrival, and what its client says after
+// it, until the database takes writes again; then the player arrives and is answered, in order.
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import dmangos.world.clusterbridge : ClusterBridge;
+    import dmangos.world.config : WorldConfig;
+    import dmangos.world.fencing : FencedDatabase;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.session : WorldState;
+    import dmangos.world.testclient;
+
+    enum uint guid = 7;
+    auto cluster = new TestCluster;
+    auto coordinator = cluster.add(1, 9000, 1, CoordinatorSetup([
+        Region(1, 0, CellRect(-256, -256, 0, 256), 3, 10, RegionState.granted),
+        Region(2, 0, CellRect(0, -256, 256, 256), 1, 11, RegionState.granted)],
+        [1u: 10UL, 2u: 10UL], new TestCounters));
+    auto gateway = cluster.add(2, 9001, 1, CoordinatorSetup.init, false, true);
+    auto owner = cluster.add(3, 9002);
+    auto db = newDatabase();
+    WorldContext[ushort] worlds;
+    ClusterBridge[ushort] bridges;
+    void connect(ClusterNode bound, bool isGateway)
+    {
+        auto world = newCreationContext(db, (ref WorldConfig settings) { settings.cluster.gateway = isGateway; });
+        world.clock = () => cluster.now;
+        world.nodeId = bound.id;
+        world.ownsCell = (uint map, ulong cell) => bound.regions.ownsCell(map, cell);
+        world.database = new FencedDatabase(db, () => bound.regions.leaseHolds(cluster.now));
+        bound.onOwnership = &world.regionsChanged;
+        auto bridge = new ClusterBridge(bound, world, 5000);
+        bound.sessions = world;
+        bound.players = bridge;
+        bound.replication = bridge;
+        world.replicator = bridge;
+        world.playerRelay = bridge;
+        world.releaseSession = &bound.releaseSession;
+        worlds[bound.id] = world;
+        bridges[bound.id] = bridge;
+    }
+    connect(coordinator, false);
+    connect(gateway, true);
+    connect(owner, false);
+    void ticks(int ms)
+    {
+        foreach (_; 0 .. ms / 50)
+        {
+            cluster.run(50, coordinator, gateway, owner);
+            foreach (n; [coordinator, gateway, owner])
+            {
+                worlds[n.id].update(cluster.now);
+                bridges[n.id].tick();
+            }
+            cluster.pump();
+        }
+    }
+
+    ticks(8000);
+    bool stalled = true;
+    worlds[owner.id].writesStalled = () => stalled;
+    const at = Position(-8949.95f, -132.49f, 83.53f, 1.97f);
+    assert(gateway.regions.ownerAt(0, cellKeyAt(at.x, at.y)) == owner.id);
+    auto client = loggedIn(worlds[gateway.id], db, guid, "Anduin", at);
+    gateway.claimSession(db.loadable[guid].account, 1);
+    ticks(150);
+    worlds[gateway.id].regionOwnerAround = (uint map, Position p, float radius) =>
+        radius == 0 ? gateway.regions.ownerAt(map, cellKeyAt(p.x, p.y)) : ushort.init;
+    client.session.update(1100.msecs);
+    ticks(300);
+    assert(client.session.state == WorldState.elsewhere && client.session.owner == owner.id, "handed to the worker");
+    assert(worlds[owner.id].onlinePlayer(guid) is null, "the stalled worker holds the arrival");
+    client.read();
+    client.say("said while the database stalled");
+    ticks(300);
+    assert(!opcodesOf(client.read()).canFind(Opcode.SMSG_MESSAGECHAT), "held with the arrival");
+
+    stalled = false;
+    ticks(300);
+    assert(worlds[owner.id].onlinePlayer(guid) !is null, "the database takes writes again: the player arrives");
+    assert(opcodesOf(client.read()).canFind(Opcode.SMSG_MESSAGECHAT), "and what it said is answered");
+}
+
 // The old coordinator remains connected to a worker, but loses permission to renew either lease.
 version (linux) unittest
 {
@@ -3316,4 +3527,74 @@ unittest
     older.retired = true;
     older.tick();
     assert(older.fenced && older.incarnation == 10 && !fencedOut, "a newer start exists: stay fenced");
+}
+
+// A member whose database stalls gets no new region and no new client. Past database_stall_release_seconds, while
+// another node's database takes its writes, the coordinator fences it out: its regions go to the others once its
+// lease has run out, and it joins again as a new incarnation, granted nothing while it still stalls. When every
+// node's database stalls, nobody is fenced out.
+unittest
+{
+    import dmangos.world.grid : cellKey;
+
+    auto cluster = new TestCluster;
+    void releaseAfter(ref ClusterConfig settings)
+    {
+        settings.databaseStallReleaseSeconds = 3;
+    }
+
+    auto coordinator = cluster.add(1, 9000, 1, CoordinatorSetup([
+        Region(1, 0, CellRect(-256, -256, 0, 256), 2, 10, RegionState.granted),
+        Region(2, 0, CellRect(0, -256, 256, 256), 3, 11, RegionState.granted)],
+        [1u: 10UL, 2u: 10UL], new TestCounters), false, false, 9000, &releaseAfter);
+    auto stalling = cluster.add(2, 9001, 1, CoordinatorSetup.init, false, false, 9000, &releaseAfter);
+    auto other = cluster.add(3, 9002, 1, CoordinatorSetup.init, false, false, 9000, &releaseAfter);
+    uint[ushort] stalledMs; // what each node's heartbeats say of its database
+    void reports(ClusterNode node)
+    {
+        node.load = () => LoadReport(0, node.id == other.id ? 5 : 1, 0, stalledMs.get(node.id, 0));
+    }
+    foreach (node; [coordinator, stalling, other])
+        reports(node);
+    bool fencedOut;
+    stalling.onFencedOut = () { fencedOut = true; };
+    ClusterNode[] all = [coordinator, stalling, other];
+    cluster.run(8000, all);
+    assert(ids(coordinator) == [1, 2, 3] && stalling.regions.ownedRegions.length == 1);
+    assert(coordinator.leastBusyClientAddress() == "127.0.0.1:8001");
+
+    // Stalled, but not for long: it keeps what it has and gets no new client.
+    stalledMs[stalling.id] = 2500;
+    cluster.run(1000, all);
+    assert(stalling.id in coordinator.stalledNodes && coordinator.leastBusyClientAddress() != "127.0.0.1:8002");
+    assert(ids(coordinator) == [1, 2, 3] && stalling.regions.ownedRegions.length == 1);
+
+    // Every database stalls past the limit: the database itself is away, and nobody gives up.
+    stalledMs = [ushort(1): 5000, ushort(2): 5000, ushort(3): 5000];
+    cluster.run(1000, all);
+    assert(ids(coordinator) == [1, 2, 3] && stalling.regions.ownedRegions.length == 1 && coordinator.everyStallLogged);
+
+    // The others write again. Just after the outage nobody gives up: the member may not have retried yet.
+    const before = SimulationOwner(stalling.id, stalling.incarnation);
+    stalledMs = [ushort(2): 5000];
+    cluster.run(2000, all);
+    assert(ids(coordinator) == [1, 2, 3] && stalling.regions.ownedRegions.length == 1);
+    // Once they have written for as long as the limit, the stall is the member's own, and it is fenced out.
+    cluster.run(1200, all);
+    assert(ids(coordinator) == [1, 3] && !coordinator.directory.mayAdmit(before));
+    assert(stalling.regions.ownedRegions.length == 1 && !fencedOut, "it simulates until its own lease runs out");
+    cluster.run(6000, all);
+    assert(coordinator.regions.ownerAt(0, cellKey(-10, 0)) != stalling.id, "its region went to another node");
+    assert(fencedOut && stalling.incarnation > before.incarnation && !stalling.fenced, "it started again");
+    assert(ids(coordinator) == [1, 2, 3] && coordinator.simulationOwner(stalling.id).incarnation == stalling.incarnation);
+
+    // Joined again while it still stalls: it is granted nothing, and not fenced out again for owning nothing.
+    cluster.run(4000, all);
+    assert(ids(coordinator) == [1, 2, 3] && stalling.regions.ownedRegions.length == 0);
+    assert(coordinator.simulationOwner(stalling.id).incarnation == stalling.incarnation);
+
+    // Its database takes its writes again: it takes part in the balancing again.
+    stalledMs = null;
+    cluster.run(1000, all);
+    assert(coordinator.stalledNodes.length == 0 && stalling.id in coordinator.authority.memberLoads());
 }

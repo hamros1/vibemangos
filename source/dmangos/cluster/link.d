@@ -153,6 +153,8 @@ struct LoadReport
     uint tickAverageUs;
     uint players;
     uint objects;
+    /// How long the node's database has taken none of its writes (`Writer.databaseSilentFor`); 0: it takes them.
+    uint databaseStalledMs;
 }
 
 /// What a link needs from the node it belongs to.
@@ -209,6 +211,7 @@ final class Link : NetSession, BulkInput
         bool resyncing;          // reopened: new messages wait for the peer's first acknowledgement
         MonoTime confirmedAt_;   // the latest heartbeat of ours the peer echoed, on our clock
         LoadReport peerLoad_;    // what the peer's last heartbeat said of its load
+        bool heardLoad_;         // a heartbeat has come: `peerLoad_` is the peer's
         ulong peerSentAt;        // the last heartbeat's `sentAt`, to echo
         MonoTime peerSentSeenAt; // when it arrived
         Duration roundTrip_ = Duration.max;
@@ -282,6 +285,12 @@ final class Link : NetSession, BulkInput
     @property LoadReport peerLoad() const pure nothrow @nogc @safe
     {
         return peerLoad_;
+    }
+
+    /// Whether a heartbeat has come on this link, so that `peerLoad` is what the peer said.
+    @property bool heardLoad() const pure nothrow @nogc @safe
+    {
+        return heardLoad_;
     }
 
     /// When the last message arrived.
@@ -408,7 +417,7 @@ private:
     {
         const held = peerSentAt ? (now - peerSentSeenAt).total!"usecs" : 0;
         write(Heartbeat(micros(now), peerSentAt, cast(uint) held, load.tickAverageUs, load.players, load.objects,
-            sequences.lastReceived), 0);
+            load.databaseStalledMs, sequences.lastReceived), 0);
     }
 
     /// The peer's acknowledgement: what it has is let go; reopened, the rest goes out again first.
@@ -498,7 +507,8 @@ private:
             const now = clock();
             peerSentAt = beat.sentAt;
             peerSentSeenAt = now;
-            peerLoad_ = LoadReport(beat.tickAverageUs, beat.players, beat.objects);
+            peerLoad_ = LoadReport(beat.tickAverageUs, beat.players, beat.objects, beat.databaseStalledMs);
+            heardLoad_ = true;
             if (beat.echo)
             {
                 const sent = MonoTime.init + usecs(cast(long) beat.echo);

@@ -11,6 +11,7 @@ import gateway_checkpoint_retry
 import lease_lapse_arrival
 import quorum
 import quorum_partition
+import stall_release
 import worker_rejoin
 
 
@@ -22,6 +23,7 @@ CASES = (
     ("departure-retry", departure_retry.run),
     ("lease-lapse-arrival", lease_lapse_arrival.run),
     ("worker-rejoin", worker_rejoin.run),
+    ("stall-release", stall_release.run),
 )
 
 

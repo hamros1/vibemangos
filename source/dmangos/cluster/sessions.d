@@ -57,6 +57,7 @@ final class SessionDirectory
         bool[uint] endedRouteTerms;
         MonoTime[SimulationOwner] lostOwners;
         ulong[ushort] retiredOwners;  // these processes may no longer renew a lease
+        bool[SimulationOwner] fencedOut; // dropped while still linked (its database stalled): never admitted again
     }
 
     /// `session` asks for `account`.
@@ -125,10 +126,20 @@ final class SessionDirectory
         return owner.incarnation && owner.incarnation <= retiredOwners.get(owner.node, 0);
     }
 
+    /**
+     * The coordinator drops `owner` while it is still linked (its database took none of its writes for too
+     * long): it may never come back as that process, so its lease is never renewed. What it held is released as
+     * for any lost node (`lost`), once its lease and the margin have run out.
+     */
+    void fenceOut(SimulationOwner owner)
+    {
+        fencedOut[owner] = true;
+    }
+
     /// A coordinator-link failure revokes a live gateway simulation's old process.
     bool mayAdmit(SimulationOwner owner) const
     {
-        if (retired(owner))
+        if (retired(owner) || owner in fencedOut)
             return false;
         if (owner in lostOwners)
             foreach (account, route; routes)
@@ -159,7 +170,7 @@ final class SessionDirectory
         const holder = request.account in holders;
         if (holder is null || *holder != home || !request.character || !request.token || !request.next.node
             || !request.next.incarnation || request.next.node == home.node || retired(request.next)
-            || request.kind == SessionRouteKind.stopped)
+            || request.next in fencedOut || request.kind == SessionRouteKind.stopped)
             return Result.denied;
         if (auto current = request.account in routes)
         {
@@ -329,6 +340,15 @@ unittest
     assert(directory.route(gateway, recovery, now + 11.seconds, false) == SessionRouteResult.granted,
         "a lost acknowledgement can be repeated after the destination goes away");
     assert(directory.retired(old) && !directory.retired(SimulationOwner(old.node, old.incarnation + 1)));
+
+    // A process fenced out while still linked is never admitted again, nor routed to; its accounts wait for its
+    // lease as a lost one's do, and a route away from it is granted only then.
+    const stalled = SimulationOwner(3, 300);
+    directory.fenceOut(stalled);
+    assert(!directory.mayAdmit(stalled) && directory.mayAdmit(SimulationOwner(3, 301)));
+    const toStalled = SessionRoute(kind: SessionRouteKind.move, account: 7, character: 70, serial: 10, token: 3,
+        previous: replacement, next: stalled);
+    assert(directory.route(gateway, toStalled, now + 12.seconds) == SessionRouteResult.denied);
 
     directory.lost(gateway.node, now + 15.seconds, 50);
     assert(directory.claim(7, competing).length == 0 && directory.tick(now + 16.seconds).length == 0);

@@ -448,6 +448,8 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
         const checkpoints = recoveryCheckpoints;
         recovery = CharacterData.init;
         recoveryCheckpoints = GatewayRecoveryCheckpoints.init;
+        info!"%s: '%s' restored for its gateway from its last saved state (map %s at %.1f %.1f)"(remoteAddress,
+            saved.name, saved.map, saved.position.x, saved.position.y);
         auto entering = new Character(this, context);
         entering.enterWorldAtLogin(saved, &checkpoints);
     }
@@ -947,6 +949,11 @@ unittest
     const refused = client.read();
     assert(refused[0].opcode == Opcode.SMSG_CHARACTER_LOGIN_FAILED);
     assert(refused[0].body_ == [ubyte(CharacterLoginFailure.CHAR_LOGIN_NO_CHARACTER)]);
+    // A cluster node whose database takes none of its writes lets no one into the world.
+    context.writesStalled = () => true;
+    client.write(Opcode.CMSG_PLAYER_LOGIN, ClientPlayerLogin(1));
+    assert(client.read()[0].body_ == [ubyte(CharacterLoginFailure.CHAR_LOGIN_FAILED)]);
+    context.writesStalled = null;
 
     // Opcodes without a handler, or not handled on the character screen, are ignored once authenticated.
     client.write(Opcode.CMSG_NAME_QUERY, [1, 0, 0, 0, 0, 0, 0, 0]);

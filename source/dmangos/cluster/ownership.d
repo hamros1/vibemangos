@@ -44,6 +44,8 @@ final class RegionAuthority
         ulong tableVersion = 1;
         bool[ushort] members;          // live members, the coordinator included
         bool[ushort] draining;         // members shutting down: their regions go, none come
+        bool[ushort] stalled;          // members whose database takes none of their writes (or not known yet)
+        bool[ushort] joinWaiting;      // members that joined while in `stalled`: dealt to once they write
         ushort[uint] movingTo;         // region id -> its next owner, while it is being revoked
         MonoTime[uint] heldUntil;      // region id -> when its lost owner's lease has surely run out
         MonoTime grantsFrom;
@@ -222,12 +224,17 @@ final class RegionAuthority
             }
     }
 
-    /// A member joined: once grants are allowed, regions move to it so that the load evens out.
+    /**
+     * A member joined: once grants are allowed, regions move to it so that the load evens out. One whose
+     * database is not known to take its writes (`databaseStalled`) is dealt to once it does.
+     */
     void joined(ushort node)
     {
         members[node] = true;
         draining.remove(node);
-        if (clock() >= grantsFrom)
+        if (node in stalled)
+            joinWaiting[node] = true;
+        else if (clock() >= grantsFrom)
             balance();
     }
 
@@ -239,6 +246,8 @@ final class RegionAuthority
     {
         members.remove(node);
         draining.remove(node);
+        stalled.remove(node);
+        joinWaiting.remove(node);
         foreach (ref r; regions_)
         {
             if (r.owner == node && r.state != RegionState.unowned)
@@ -314,6 +323,34 @@ final class RegionAuthority
     bool isDraining(ushort node) const
     {
         return (node in draining) !is null;
+    }
+
+    /// Whether `node` owns a region, granted or on its way to another node.
+    bool owns(ushort node) const
+    {
+        foreach (ref r; regions_)
+            if (r.owner == node && r.state != RegionState.unowned)
+                return true;
+        return false;
+    }
+
+    /**
+     * Whether member `node`'s database takes none of its writes now (`ClusterNode.databaseStalledAfter`), or is
+     * not known to take them yet (a member just linked). Until it takes them, such a member is granted no region
+     * and none of its regions moves for the load: a region moves with its players, saved first, and the member
+     * cannot save them. A region already on its way to it goes elsewhere at its release. A member that joined
+     * meanwhile is dealt regions once its database takes its writes, as at any join; one that only stalled for a
+     * while gets regions again from the balancing.
+     */
+    void databaseStalled(ushort node, bool isStalled)
+    {
+        if (isStalled)
+        {
+            stalled[node] = true;
+            return;
+        }
+        if (stalled.remove(node) && joinWaiting.remove(node) && node in members && clock() >= grantsFrom)
+            balance();
     }
 
     private ushort creatureHome(const ref Region loan) const
@@ -416,7 +453,7 @@ final class RegionAuthority
                     if (home || target == 0)
                         target = home ? home : node;
                 }
-                if (target && target in members)
+                if (target && target in members && target !in stalled)
                     grant(r, target);
                 else
                 {
@@ -469,7 +506,8 @@ final class RegionAuthority
             if (!r.creature.spawn)
                 if (const node = r.map in pinnedMaps)
                 {
-                    if (r.state == RegionState.unowned && r.id !in held && *node in members && *node !in draining)
+                    if (r.state == RegionState.unowned && r.id !in held && *node in members && *node !in draining
+                        && *node !in stalled)
                         grant(r, *node);
                     held[r.id] = true;
                 }
@@ -656,7 +694,7 @@ private:
 
         ushort[] list;
         foreach (node, _; members)
-            if (node !in draining)
+            if (node !in draining && node !in stalled)
                 list ~= node;
         list.sort();
         return list;

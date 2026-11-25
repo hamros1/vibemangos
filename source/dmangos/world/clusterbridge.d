@@ -83,6 +83,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         const now = context.clock();
         gatewayTick(now);
         retryDepartures();
+        releaseHeldArrivals();
         if (stockWaiting.length)
         {
             uint[] expired;
@@ -128,6 +129,85 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         if (departures.length)
             info!"cluster: %s held departure(s) of the fenced-out incarnation dropped"(departures.length);
         departures = null;
+    }
+
+    /// A player message held with an arrival while this node's database stalls (`holdArrival`).
+    private static struct HeldArrival
+    {
+        ushort peer;
+        ulong incarnation; // the sender's: a message from an earlier start of it is not delivered
+        PlayerMessageKind kind;
+        ushort opcode;
+        immutable(ubyte)[] data;
+    }
+
+    private HeldArrival[][uint] heldArrivals; // by account, in order
+    private size_t heldArrivalPackets;
+
+    /// The most client packets held with arrivals; beyond them they are dropped (and the drop logged).
+    enum maxHeldArrivalPackets = 4096;
+
+    /**
+     * While this node's database takes none of its writes (`WorldContext.databaseStalled`), a player arriving
+     * here (from another node, or handed here by a gateway) waits: loading it would read past this node's own
+     * unwritten saves, and its own saves could not be written. Whatever comes for its account after the arrival
+     * waits with it, in order, and all goes on once the database takes writes again. If this node is fenced out
+     * meanwhile (`forgetHeldArrivals`), the arrival is dropped and the player is restored elsewhere, as with
+     * every player it simulated. True if the message was held.
+     */
+    private bool holdArrival(ushort peer, PlayerMessageKind kind, uint account, ushort opcode, const(ubyte)[] data)
+    {
+        auto held = account in heldArrivals;
+        if (held is null)
+        {
+            const arrival = kind == PlayerMessageKind.migrate || kind == PlayerMessageKind.gatewayArrival
+                || kind == PlayerMessageKind.gatewayRecover;
+            if (!arrival || !context.databaseStalled)
+                return false;
+            info!"cluster: account %s's arrival from node %s waits: this node's database takes none of its writes"(
+                account, peer);
+            heldArrivals[account] = null;
+            held = account in heldArrivals;
+        }
+        const packet = kind == PlayerMessageKind.toOwner;
+        if (packet && heldArrivalPackets >= maxHeldArrivalPackets)
+        {
+            if (heldArrivalPackets++ == maxHeldArrivalPackets)
+                warning!"cluster: over %s client packets wait with arrivals: those that follow are dropped"(
+                    maxHeldArrivalPackets);
+            return true;
+        }
+        if (packet)
+            ++heldArrivalPackets;
+        *held ~= HeldArrival(peer, linkedOwner(peer, true).incarnation, kind, opcode, data.idup);
+        return true;
+    }
+
+    /// The database takes writes again: the arrivals held, and what followed them, go on in order.
+    private void releaseHeldArrivals()
+    {
+        if (!heldArrivals.length || context.databaseStalled)
+            return;
+        auto held = heldArrivals;
+        heldArrivals = null;
+        heldArrivalPackets = 0;
+        foreach (account, messages; held)
+        {
+            info!"cluster: account %s's arrival goes on: this node's database takes its writes again"(account);
+            foreach (m; messages)
+                if (linkedOwner(m.peer, true).incarnation == m.incarnation)
+                    player(m.peer, m.kind, account, m.opcode, m.data);
+        }
+    }
+
+    /// The arrivals held of a fenced-out incarnation, or of an ended term: their players are restored elsewhere.
+    void forgetHeldArrivals()
+    {
+        if (heldArrivals.length)
+            info!"cluster: %s arrival(s) held while the database stalled dropped: their players are restored elsewhere"(
+                heldArrivals.length);
+        heldArrivals = null;
+        heldArrivalPackets = 0;
     }
 
     /// Run before processing world ticks so an expired worker cannot keep a gateway's simulation alive.
@@ -1016,6 +1096,8 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
 
     void player(ushort peer, PlayerMessageKind kind, uint account, ushort opcode, const(ubyte)[] data)
     {
+        if (holdArrival(peer, kind, account, opcode, data))
+            return;
         final switch (kind)
         {
         case PlayerMessageKind.migrate:

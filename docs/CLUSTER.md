@@ -81,6 +81,7 @@ The `cluster` object of `worldserver.json` (`cluster/config.d`):
 | `balance_interval_seconds` | How often the coordinator looks at the load | `30` |
 | `balance_min_load_us` | How busy (µs of loop time per second) the busiest node must be before anything moves | `20000` |
 | `region_cooldown_seconds` | How long a region that moved or was split stays put | `120` |
+| `database_stall_release_seconds` | How long a worker's database may take none of its writes, while the other workers' take theirs, before the coordinator fences the worker out ([below](#a-worker-whose-database-stalls)); 0 never | `120` |
 | `standby` | This member is the standby coordinator | `false` |
 | `gateway` | This member is a gateway | `false` |
 | `voters` | The fixed list of voting nodes for quorum mode, identical on every node | empty |
@@ -99,7 +100,8 @@ otherwise.
   replaces its earlier incarnation, which is fenced out, and a stale process that comes back later is
   refused (`staleIncarnation`).
 * **Starting again.** A process the coordinator itself fenced out (it was lost while it simulated a
-  gateway's player, so its lease must never be renewed) is refused as `retiredIncarnation`; whichever
+  gateway's player, or [its database stalled](#a-worker-whose-database-stalls), so its lease must never
+  be renewed) is refused as `retiredIncarnation`; whichever
   side dialed, the refused side is told why. No newer start of that node exists, so once its own lease
   has lapsed (its sessions ended, its regions given up, its queued writes dropped) it takes a new
   incarnation, recorded like a restart's, closes its links and joins again as a restarted node would.
@@ -846,6 +848,7 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
 | **The coordinator, with a standby** | The standby takes over (below). |
 | **The link to the coordinator** | A member keeps simulating until its lease lapses. Then it ends every session, writes nothing more (its saves are dropped and logged as not saved), and gives up its regions. When it reaches a coordinator again it re-claims its sessions, reports its ids, and is granted regions again. If the coordinator fenced its process out meanwhile, it joins as a new incarnation instead. |
 | **A restarted process** | It joins with a new incarnation, which fences out the old one; queued writes from before its lease lapsed are dropped on replay. |
+| **A worker's own database** | While it takes none of the worker's writes, the worker refuses logins and arrivals and gets no new region. Past `database_stall_release_seconds`, if other workers' databases take their writes, the coordinator fences it out, and its players are restored elsewhere as last saved ([below](#a-worker-whose-database-stalls)). |
 
 ### Fenced writes
 
@@ -871,6 +874,43 @@ A node must never write over a character that has since played elsewhere.
   While the database stalls, that wait does not stop the game loop: the release, a gateway player's
   departure and the move wait for the writes instead, and the node keeps its heartbeats and its lease
   meanwhile. Its queued writes stay fenced by that lease: they are written only while it holds.
+
+### A worker whose database stalls
+
+A worker whose database takes none of its writes (its connection to it is broken, or a lock on its rows
+holds its saves) cannot hand its players over: the next node loads them from the database, so a move
+waits until their saves are written. It keeps its links and its lease meanwhile (the game loop does not
+wait for the database), and the cluster limits what is lost:
+
+* **Reported.** Every heartbeat says how long the sender's database has taken none of its writes
+  (`Writer.databaseSilentFor`): counted from when the writer began on what it waits to write, and zero
+  when it has nothing to write. A cluster node's writer also writes nothing every half second it has
+  nothing else to write (a transaction recording only its number in `dmangos_write_applied`), so a
+  database that takes no writes is seen while the game writes nothing too.
+* **Stalled.** After two seconds without a write taken (`ClusterNode.databaseStalledAfter`) a node is
+  stalled. It refuses logins (the client is told the login failed), and holds arrivals: a player moving
+  to it, or handed to it by a gateway, waits there with what its client sends after, until the database
+  takes writes again. The coordinator grants it no region, moves none of its regions for the load (they
+  move with their players), and sends it no new client. A member that joins is dealt regions once its
+  heartbeats say its database takes its writes.
+* **Giving up.** The coordinator judges, since it hears every node. A member stalled for longer than
+  `database_stall_release_seconds` is fenced out, but only while another simulating node's database has
+  taken its writes all that time (for at least that long). The stall is then the member's own, and its
+  players can play on elsewhere. When every node stalls, the database itself is away: moving the players
+  would gain nothing, so nobody gives up, nor just after such an outage, before the others have had time
+  to write again. A member that owns no region has nothing to give up. The coordinator does not fence
+  itself out; its own stall past the limit is logged.
+* **Fenced out.** The coordinator closes the member's link and refuses that incarnation from then on, as
+  for a member lost while it simulated a gateway's player. Its lease is renewed no more and lapses: its
+  sessions end, its arrivals held are dropped, and its queued writes are not written. Once the lease and
+  the margin have passed, its regions go to the other members and gateways restore its players there from
+  their last saved state; a client connected to the member itself logs in again. What the players did
+  since their last save is rolled back, and both the coordinator and the member log it as such. The member
+  then joins as a new incarnation (above) and gets regions only as any member does.
+* **No late writes.** Every write the member queued carries the lease it was made under, and is checked
+  before it is begun and again in its transaction just before its commit ([Fenced
+  writes](#fenced-writes)): from the lapse on nothing of it is committed, while the next owner loads the
+  players only after the lease and the margin.
 
 ### Gateway recovery
 

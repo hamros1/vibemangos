@@ -77,6 +77,7 @@ Redirected logs are plain text. Set `NO_COLOR=1` to disable colors in a terminal
 | `disabled_transports` | ships and zeppelins (`transports.entry`) that do not sail, e.g. one a client cannot show | `[]` |
 | `packet_log` | a directory where every packet sent to each client is written (time, opcode, body in hex), for finding what a client cannot take; empty for none | `""` |
 | `cluster` | this node's place in the [cluster](CLUSTER.md#configuration) | example config starts node 1; omitted means standalone |
+| `cluster.database_stall_release_seconds` | how long a worker's database may take none of its writes, while other workers' databases take theirs, before the coordinator fences the worker out and its players are loaded on other workers as last saved ([details](CLUSTER.md#a-worker-whose-database-stalls)); 0 never | `120` |
 | `logout_delay`, `player_save_interval` | seconds a logout takes (GMs and resting players: none); seconds between saves of each character | `20`, `900` |
 | `allow_player_commands`, `gm_command_log` | allows players to use public commands, and configures the log file for audited staff actions | `false`, none |
 | `gamemaster_list_only_active_gms`, `gamemaster_hide_permissions` | `.gm list` shows players only GMs with the tag on; it hides staff role names from players | `false`, `false` |

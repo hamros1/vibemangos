@@ -10913,6 +10913,19 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 return session.kick("logged in on another node of the realm");
     }
 
+    /**
+     * A cluster node: whether its database has taken none of its writes for a while
+     * (`ClusterNode.databaseStalledAfter`). It refuses logins and holds arrivals meanwhile: what it loaded could
+     * miss its own unwritten saves, and what it saved of the player could not be written. Null: never.
+     */
+    bool delegate() writesStalled;
+
+    /// ditto
+    bool databaseStalled()
+    {
+        return writesStalled !is null && writesStalled();
+    }
+
     /// Whether this server may write to the databases (false on a cluster node whose lease lapsed).
     bool canWrite()
     {
