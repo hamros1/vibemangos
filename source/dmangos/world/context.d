@@ -2594,6 +2594,39 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return null;
     }
 
+    /// A database script's quest credit for a player another node simulates (`ScriptQuestCredit`).
+    void delegate(ushort node, const ref imported!"dmangos.cluster.protocol".ScriptQuestCredit credit)
+        scriptQuestCreditElsewhere;
+    private ulong[ushort] scriptCreditsSeen; // origin -> the highest sequence applied from it
+
+    /// Another node's database script credits a player here: once, or on to where the player went.
+    package void scriptQuestCreditArrived(const ref imported!"dmangos.cluster.protocol".ScriptQuestCredit credit)
+    {
+        import dmangos.cluster.protocol : ScriptQuestCredit;
+        import dmangos.world.dbscripts : ScriptQuestEffect;
+
+        if (credit.sequence <= scriptCreditsSeen.get(credit.origin, 0))
+            return;
+        auto player = onlinePlayer(credit.player);
+        if (player is null || player.character is null)
+        {
+            if (!credit.forwarded && scriptQuestCreditElsewhere !is null)
+                if (const hint = recentHandoff(credit.player))
+                {
+                    auto onward = cast(ScriptQuestCredit) credit;
+                    onward.forwarded = true;
+                    scriptQuestCreditElsewhere(hint.node, onward);
+                }
+            return;
+        }
+        scriptCreditsSeen[credit.origin] = credit.sequence;
+        alias Kind = ScriptQuestEffect.Kind;
+        const kind = credit.kind == ScriptQuestCredit.Kind.explored ? Kind.explored
+            : credit.kind == ScriptQuestCredit.Kind.failed ? Kind.failed : Kind.kill;
+        ScriptQuestEffect(player, kind, credit.quest, credit.rewarder).apply();
+        player.flushPlayerChanges();
+    }
+
     package void killShareArrived(const ref KillShare share)
     {
         import dmangos.world.honor : HonorVictim;
@@ -12831,35 +12864,41 @@ unittest
     assert(corpse.loot !is null && corpse.loot.gold == 25 && 7 in corpse.loot.owners, "with its loot");
 }
 
-// A database script's kill credit for a player another worker simulates (the player's region and the script's went
-// to two different survivors) reaches the player there as a shared kill.
+// A database script's quest credit for a player another worker simulates (the player's region and the script's went
+// to two different survivors) reaches the player there, once: a kill credit, and an explored area.
 unittest
 {
-    import dmangos.cluster.protocol : KillShare;
+    import dmangos.cluster.protocol : ScriptQuestCredit;
     import dmangos.world.dbscripts : DbScriptStep, DbScriptType, ScriptCommand;
     import dmangos.world.quests : Quest, QuestState;
     import dmangos.world.testclient;
     import dmangos.world.testdata;
 
-    enum uint relay = 530, questId = 9420, credited = 12346;
+    enum uint relay = 530, explore = 531, questId = 9420, area = 9421, credited = 12346;
     auto db = newDatabase();
     auto scripted = newCreationContext(db, (ref config) { config.cluster.nodeId = 1; });
     auto elsewhere = newCreationContext(db, (ref config) { config.cluster.nodeId = 2; });
     Quest q = {id: questId, method: 2, maxLevel: 60, title: "Greet", specialFlags: 0x20};
     q.reqCreatureOrGoId[0] = credited;
-    q.reqCreatureOrGoCount[0] = 1;
+    q.reqCreatureOrGoCount[0] = 2;
+    Quest witness = {id: area, method: 2, maxLevel: 60, title: "Witness", specialFlags: 0x02};
     foreach (node; [scripted, elsewhere])
+    {
         node.data.quests.quests[questId] = q;
+        node.data.quests.quests[area] = witness;
+    }
     scripted.data.dbScripts.add(DbScriptType.relay, DbScriptStep(relay, 0, 0, ScriptCommand.killCredit, credited));
+    scripted.data.dbScripts.add(DbScriptType.relay, DbScriptStep(explore, 0, 0, ScriptCommand.questExplored, area));
     auto anduin = loggedIn(elsewhere, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
     anduin.session.inWorld.addQuest(elsewhere.data.quests.quests[questId]);
+    anduin.session.inWorld.addQuest(elsewhere.data.quests.quests[area]);
     const player = anduin.session.character.guid;
 
-    KillShare[] sent;
+    ScriptQuestCredit[] sent;
     ushort[] to;
-    scripted.killShareElsewhere = (ushort node, const ref KillShare share) {
+    scripted.scriptQuestCreditElsewhere = (ushort node, const ref ScriptQuestCredit credit) {
         to ~= node;
-        sent ~= share;
+        sent ~= credit;
     };
     scripted.lastHeard[player] = WorldContext.Heard(2, MonoTime.currTime, 10); // presence: the player is on node 2
     auto map = scripted.map(0);
@@ -12868,10 +12907,20 @@ unittest
     auto keeper = cast(Creature) map.findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
     assert(keeper !is null);
     assert(scripted.startScript(DbScriptType.relay, relay, map, keeper.guid, player));
+    assert(scripted.startScript(DbScriptType.relay, explore, map, keeper.guid, player));
     scripted.updateScripts(0);
-    assert(sent.length == 1 && to == [2] && sent[0].target == player && sent[0].entry == credited);
-    elsewhere.killShareArrived(sent[0]);
-    assert(anduin.session.character.questStatus[questId].status == QuestState.complete, "credited where it plays");
+    assert(sent.length == 2 && to == [2, 2] && sent[0].player == player && sent[1].player == player);
+    assert(sent[0].kind == ScriptQuestCredit.Kind.kill && sent[0].quest == credited);
+    assert(sent[1].kind == ScriptQuestCredit.Kind.explored && sent[1].quest == area);
+    foreach (ref credit; sent)
+        elsewhere.scriptQuestCreditArrived(credit);
+    const me = anduin.session.character;
+    assert(me.questStatus[questId].mobCount[0] == 1, "the kill, credited where the player plays");
+    assert(me.questStatus[area].status == QuestState.complete, "and the explored area");
+
+    // Sent again (a resend after a reconnect), the kill is not counted twice.
+    elsewhere.scriptQuestCreditArrived(sent[0]);
+    assert(me.questStatus[questId].mobCount[0] == 1 && me.questStatus[questId].status != QuestState.complete);
 }
 
 // A node's gameplay messages are numbered from its incarnation, not the wall clock: a start after the clock stepped

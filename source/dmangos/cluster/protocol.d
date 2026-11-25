@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 126; // a region's handed-over objects name the grant they are for
+enum ushort protocolVersion = 127; // a database script's quest credit reaches its player on another node
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -105,6 +105,26 @@ enum MessageType : ushort
     totemWeaponEnchant = 66,
     mindVisionTarget = 67,
     groupCatalog = 68,
+    scriptQuestCredit = 69,
+}
+
+/**
+ * A database script's quest credit (an explored area or event, a failure, a kill) for a player another node
+ * simulates: after a crash the player's region and the script's can be on two different nodes. `origin` and
+ * `sequence` make it apply once.
+ */
+struct ScriptQuestCredit
+{
+    enum type = MessageType.scriptQuestCredit;
+    enum Kind : ubyte { explored, failed, kill }
+
+    ulong player;
+    Kind kind;
+    uint quest;      /// the quest (explored, failed) or the credited entry (kill)
+    ulong rewarder;  /// kill: the creature that gave it
+    ushort origin;
+    ulong sequence;
+    bool forwarded;  /// the player's old node passed it on to its new owner
 }
 
 /// A single remote target's current state for Mind Vision's normal cast checks.
@@ -1396,7 +1416,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 126, recordedFingerprint = 0x0f543e09c072ba55UL;
+private enum recordedVersion = 127, recordedFingerprint = 0x1a28a203a9cc4dc5UL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

@@ -6,7 +6,7 @@
 module dmangos.world.clusterbridge;
 
 import dmangos.cluster.protocol : AreaDamage, CreatureSwing, GameObjectSpell, GroupLootRoll, LootCoinShare, PartyHeal, PeriodicResult,
-    GroupCatalog, PartyAreaAura, PartyQuest, PartySummon, QuestLootCheck, ScriptCreatureStep, ScriptGameObject, TotemWeaponEnchant;
+    GroupCatalog, PartyAreaAura, PartyQuest, PartySummon, QuestLootCheck, ScriptCreatureStep, ScriptGameObject, ScriptQuestCredit, TotemWeaponEnchant;
 
 import core.time : Duration, MonoTime, msecs, seconds;
 
@@ -536,6 +536,18 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
     void killShare(ushort peer, const ref KillShare m)
     {
         context.killShareArrived(m);
+    }
+
+    /// For the context: a database script's quest credit, for the node that simulates its player.
+    void sendScriptQuestCredit(ushort target, const ref ScriptQuestCredit credit)
+    {
+        node.sendTo(target, credit);
+    }
+
+    /// Another node's database script credits a player here.
+    void scriptQuestCredit(ushort peer, const ref ScriptQuestCredit m)
+    {
+        context.scriptQuestCreditArrived(m);
     }
 
     bool sendGroupLootRoll(ushort peer, const ref GroupLootRoll message)

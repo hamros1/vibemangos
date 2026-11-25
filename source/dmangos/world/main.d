@@ -389,6 +389,7 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
         context.toEveryoneElsewhere = &bridge.toEveryoneElsewhere;
         context.gmRemote = &bridge.sendGmRemote;
         context.killShareElsewhere = &bridge.sendKillShare;
+        context.scriptQuestCreditElsewhere = &bridge.sendScriptQuestCredit;
         context.sendRemoteGroupLoot = &bridge.sendGroupLootRoll;
         context.canSendLootCoins = &bridge.canSendLootCoins;
         context.sendRemoteLootCoins = &bridge.sendLootCoinShare;

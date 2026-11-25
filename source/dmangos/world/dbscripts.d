@@ -467,7 +467,7 @@ package struct OutdoorScriptStep
  */
 mixin template DbScriptRunner()
 {
-    import dmangos.cluster.protocol : ScriptCreatureStep, ScriptGameObject;
+    import dmangos.cluster.protocol : ScriptCreatureStep, ScriptGameObject, ScriptQuestCredit;
     import dmangos.world.spellids;
     import std.random : uniform;
     import dmangos.log : trace;
@@ -1782,38 +1782,48 @@ mixin template DbScriptRunner()
         return null;
     }
 
-    /**
-     * A kill-credit step whose player another worker simulates: after a crash the player's region and the
-     * script's can go to two different survivors, so the script runs on, its player elsewhere. The credit
-     * goes to that worker as a shared kill, after the step's claim when it has one.
-     */
     private ulong[] stepObjects; // the guids the running step began with (`runScriptStep`)
 
-    private void creditRemoteScriptPlayer(Map map, uint entry, Creature rewarder, OutdoorScriptStep* planned)
+    /**
+     * The player a step began with that this node does not simulate (its guid 0 if none), and where its copy
+     * here is, if one is (`mirror`). After a crash the player's region and the script's can go to two different
+     * survivors: the script runs on here, its player there.
+     */
+    private ScriptThing remoteScriptPlayer(ScriptThing source, ScriptThing target)
     {
-        import dmangos.cluster.protocol : KillShare;
         import dmangos.world.objects : highGuidOf, HighGuid;
-        import dmangos.world.updatefields : UNIT_FIELD_LEVEL;
 
-        if (killShareElsewhere is null)
-            return;
         foreach (guid; stepObjects)
         {
             if (!guid || highGuidOf(guid) != HighGuid.player || onlinePlayer(guid) !is null)
                 continue;
-            const route = remoteKillRecipient(guid, map);
-            if (!route.node || route.node == config.cluster.nodeId)
-                continue;
-            const share = KillShare(target: guid, victim: rewarder !is null ? rewarder.guid : 0, entry: entry,
-                level: rewarder !is null ? rewarder.values.get!UNIT_FIELD_LEVEL : 0);
-            const node = route.node;
-            auto send = () { killShareElsewhere(node, share); };
-            if (planned !is null)
-                planned.afterCommit ~= send;
-            else
-                send();
-            return;
+            foreach (o; [target, source])
+                if (o.guid == guid && o.mirror !is null)
+                    return o;
+            return ScriptThing(guid);
         }
+        return ScriptThing.init;
+    }
+
+    /**
+     * A quest-credit step whose player another node simulates: the credit goes to that node
+     * (`ScriptQuestCredit`), after the step's claim when it has one.
+     */
+    private void creditRemoteScriptPlayer(Map map, ulong player, ScriptQuestCredit.Kind kind, uint id,
+        ulong rewarder, OutdoorScriptStep* planned)
+    {
+        if (scriptQuestCreditElsewhere is null)
+            return;
+        const route = remoteKillRecipient(player, map);
+        if (!route.node || route.node == config.cluster.nodeId)
+            return;
+        const credit = ScriptQuestCredit(player, kind, id, rewarder, config.cluster.nodeId, nextGameplaySequence());
+        const node = route.node;
+        auto send = () { scriptQuestCreditElsewhere(node, credit); };
+        if (planned !is null)
+            planned.afterCommit ~= send;
+        else
+            send();
     }
 
     /**
@@ -2340,11 +2350,22 @@ mixin template DbScriptRunner()
         }
         case ScriptCommand.questExplored:
         {
-            if (player is null)
-                break;
             const place = source.creatureOrGo ? source : (target.creatureOrGo ? target : ScriptThing.init);
             if (step.datalong2 && !place.exists)
                 break;
+            if (player is null)
+            {
+                // Another node may simulate the player: from its copy here, the distance can be checked.
+                const elsewhere = remoteScriptPlayer(source, target);
+                if (!elsewhere.guid || (step.datalong2 && elsewhere.mirror is null))
+                    break;
+                bool far = place.creature !is null && !place.creature.alive;
+                if (!far && step.datalong2)
+                    far = distanceSq(place.position, elsewhere.position) > float(step.datalong2) ^^ 2;
+                creditRemoteScriptPlayer(map, elsewhere.guid,
+                    far ? ScriptQuestCredit.Kind.failed : ScriptQuestCredit.Kind.explored, step.datalong, 0, planned);
+                break;
+            }
             bool fail = place.creature !is null && !place.creature.alive;
             if (!fail && step.datalong2)
                 fail = distanceSq(place.position, player.character.position) > float(step.datalong2) ^^ 2;
@@ -2364,7 +2385,10 @@ mixin template DbScriptRunner()
                 break;
             if (player is null)
             {
-                creditRemoteScriptPlayer(map, entry, rewarder, planned);
+                const elsewhere = remoteScriptPlayer(source, target);
+                if (elsewhere.guid)
+                    creditRemoteScriptPlayer(map, elsewhere.guid, ScriptQuestCredit.Kind.kill, entry,
+                        rewarder !is null ? rewarder.guid : 0, planned);
                 break;
             }
             auto effect = ScriptQuestEffect(player, ScriptQuestEffect.Kind.kill, entry, rewarder !is null ? rewarder.guid : 0);

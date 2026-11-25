@@ -162,6 +162,7 @@ interface ReplicationHandler
     void toEveryone(ushort peer, const ref ToEveryone message);
     void gmRemote(ushort peer, const ref GmRemote message);
     void killShare(ushort peer, const ref KillShare message);
+    void scriptQuestCredit(ushort peer, const ref ScriptQuestCredit message);
     void groupLootRoll(ushort peer, const ref GroupLootRoll message);
     void lootCoinShare(ushort peer, const ref LootCoinShare message);
     void partyQuest(ushort peer, const ref PartyQuest message);
@@ -1464,6 +1465,15 @@ final class ClusterNode : LinkOwner
             {
                 const m = decode!ScriptSignal(payload);
                 replication.scriptSignal(peer, m);
+            }
+            return;
+        }
+        if (type == MessageType.scriptQuestCredit)
+        {
+            if (replication !is null)
+            {
+                const m = decode!ScriptQuestCredit(payload);
+                replication.scriptQuestCredit(peer, m);
             }
             return;
         }
