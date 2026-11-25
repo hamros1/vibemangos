@@ -9,6 +9,7 @@ mixin template DebugCommands()
     import std.format : format;
     import std.math : cos, sin, sqrt;
     import std.uni : sicmp;
+    import dmangos.bytes : ByteWriter;
     import dmangos.world.commands;
     import dmangos.world.creature : Creature;
     import dmangos.world.movement : Position;
@@ -59,14 +60,56 @@ private:
                 unit.creature = cast(Creature) map.findObject(guid);
         }
         if (!unit.found)
-            systemMessage("Select a player or creature first.");
+            redSystemMessage("Select a player or creature first.");
         return unit;
+    }
+
+    /// Where the selected player or object stands, oneself without a selection; false after
+    /// "Select a player or creature first." if the selection is not on the map.
+    bool selectedPosition(out Position at)
+    {
+        const guid = player.values.get!UNIT_FIELD_TARGET;
+        at = player.position;
+        if (guid == 0)
+            return true;
+        if (auto other = map.find(guid))
+            at = other.character.position;
+        else if (auto object = map.findObject(guid))
+            at = object.position;
+        else
+        {
+            redSystemMessage("Select a player or creature first.");
+            return false;
+        }
+        return true;
+    }
+
+    /// The map's collision data; null after "Collision is not enabled." without vmaps.
+    auto vmapTerrain()
+    {
+        auto terrain = map.collision;
+        if (terrain is null || !terrain.hasVmaps)
+        {
+            redSystemMessage("Collision is not enabled.");
+            return null;
+        }
+        return terrain;
+    }
+
+    /// The battleground the player is in; null after "Join a battleground first.".
+    auto joinedBattleground()
+    {
+        auto copy = currentBattleground();
+        if (copy is null)
+            redSystemMessage("Join a battleground first.");
+        return copy;
     }
 
     // -----------------------------------------------------------------------
     // .debug
     // -----------------------------------------------------------------------
 
+    /// `.debug aimove`: the selected creature walks to a point on this map.
     bool handleAiMoveCommand(float x, float y, float z)
     {
         if (!context.client.isValidMapCoord(map.id, x, y, z))
@@ -76,34 +119,37 @@ private:
         return true;
     }
 
+    /// `.debug moveinfo`: the selected creature's spawn, movement generator, position and combat state.
     bool handleMoveInfoCommand()
     {
-        if (auto creature = selectedCreature(true))
-        {
-            const at = creature.position;
-            systemMessage(format!"Spawn %s, movement %s, position %.3f %.3f %.3f, orientation %.3f, combat %s."
-                (creature.spawn.guid, creature.generator.type, at.x, at.y, at.z, at.orientation, creature.ai.inCombat));
-        }
+        auto creature = selectedCreature(true);
+        if (creature is null)
+            return true;
+        const at = creature.position;
+        systemMessage(format!"Spawn %s, movement %s, position %.3f %.3f %.3f, orientation %.3f, combat %s."
+            (creature.spawn.guid, creature.generator.type, at.x, at.y, at.z, at.orientation, creature.ai.inCombat));
         return true;
     }
 
+    /// `.debug gettptime`: how far the ship the player is aboard is into its circuit.
     bool handleGetTransporterTimeCommand()
     {
         import dmangos.world.objects : HighGuid, counterOf, highGuidOf;
 
         const guid = player.movement.transportGuid;
         if (highGuidOf(guid) == HighGuid.moTransport)
-            foreach (ref ship; context.data.ships)
+            foreach (const ref ship; context.data.ships)
                 if (ship.entry == counterOf(guid) && ship.period)
                 {
                     systemMessage(format!"%s is %s ms into its %s ms circuit."
                         (ship.name, context.transportNow() % ship.period, ship.period));
                     return true;
                 }
-        systemMessage("Board a scheduled ship or zeppelin first.");
+        redSystemMessage("Board a scheduled ship or zeppelin first.");
         return true;
     }
 
+    /// `.debug position`: the map, copy, coordinates and facing.
     bool handleDebugDumpCoordsCommand()
     {
         const at = player.position;
@@ -112,27 +158,30 @@ private:
         return true;
     }
 
+    /// `.debug fade`: the player's threat on the selected creature lowered by a percentage.
     bool handleFadeCommand(uint percent)
     {
         return percent <= 100 && handleThreatModCommand(-cast(int) percent);
     }
 
+    /// `.debug threatMod`: the player's threat on the selected creature changed by a signed percentage.
     bool handleThreatModCommand(int percent)
     {
         if (percent < -100 || percent > 100)
             return false;
-        if (auto creature = selectedCreature(true))
-        {
-            const before = creature.ai.threatOf(player.guid);
-            creature.ai.modifyThreatPercent(player.guid, percent);
-            const after = creature.ai.threatOf(player.guid);
-            systemMessage(format!"Your threat on %s was %.2f and is now %.2f."
-                (creature.template_.name, before, after));
-            gmLog(format!"adjusted own threat on spawn %s by %s percent"(creature.spawn.guid, percent));
-        }
+        auto creature = selectedCreature(true);
+        if (creature is null)
+            return true;
+        const before = creature.ai.threatOf(player.guid);
+        creature.ai.modifyThreatPercent(player.guid, percent);
+        const after = creature.ai.threatOf(player.guid);
+        greenSystemMessage(format!"Your threat on %s was %.2f and is now %.2f."
+            (creature.template_.name, before, after));
+        gmLog(format!"adjusted own threat on spawn %s by %s percent"(creature.spawn.guid, percent));
         return true;
     }
 
+    /// `.debug calcThreat`: the threat a spell's damage gives with the player's modifiers.
     bool handleCalcThreatCommand(uint damage, uint spellId)
     {
         import dmangos.world.spellmods : SpellModOp;
@@ -147,56 +196,46 @@ private:
         return true;
     }
 
+    /// `.debug threatList`: the selected creature's threat entries for units on the map.
     bool handleThreatListCommand()
     {
         const guid = player.values.get!UNIT_FIELD_TARGET;
         auto target = cast(Creature) map.findObject(guid);
         if (target is null || target.ai is null)
         {
-            systemMessage("Select a creature first.");
+            redSystemMessage("Select a creature first.");
             return true;
         }
         string text = format!"threatlist of creature: %s %s\n"(guid & 0xFFFF_FFFF, guid >> 32);
         foreach (who, amount; target.ai.threatList)
-            if (amount && (map.find(who) !is null))
+            if (amount && map.find(who) !is null)
                 text ~= format!"guid: %s | threat: %s| threat after mod: %s\n"(who, amount, amount);
         sendMultilineMessage(text);
         return true;
     }
 
+    /// `.debug aggro`: the selected creature's aggro range against the player.
     bool handleAggroRangeCommand()
     {
-
         const guid = player.values.get!UNIT_FIELD_TARGET;
         auto creature = guid ? cast(Creature) map.findObject(guid) : null;
         if (creature is null || creature.ai is null)
         {
-            systemMessage("Select a player or creature first.");
+            redSystemMessage("Select a player or creature first.");
             return true;
         }
         systemMessage(format!"Aggrorange is: %s"(creature.ai.aggroRangeFor(unit)));
         return true;
     }
 
+    /// `.debug infront`: 1 if the selection is within the half circle the player faces, else 0.
     bool handleDebugInFrontCommand()
     {
         import std.math : atan2, PI;
 
-        const guid = player.values.get!UNIT_FIELD_TARGET;
-        Position at = player.position;
-        if (guid)
-        {
-            if (auto o = map.findObject(guid))
-                at = o.position;
-            else if (auto who = map.find(guid))
-                at = who.character.position;
-            else
-            {
-                systemMessage("Select a player or creature first.");
-                return true;
-            }
-        }
-        // In front: within the half circle it faces.
+        Position at;
+        if (!selectedPosition(at))
+            return true;
         const me = player.position;
         double angle = atan2(at.y - me.y, at.x - me.x);
         angle = angle >= 0 ? angle : 2 * PI + angle;
@@ -205,11 +244,11 @@ private:
             angle -= 2 * PI;
         while (angle < -PI)
             angle += 2 * PI;
-        const left = -PI / 2, right = PI / 2;
-        systemMessage(format!"%d"(angle >= left && angle <= right ? 1 : 0));
+        systemMessage(format!"%d"(angle >= -PI / 2 && angle <= PI / 2 ? 1 : 0));
         return true;
     }
 
+    /// `.debug los`: line of sight to the selection, from the ground, 2 and 5 yards up.
     bool handleCollisionTestLineOfSightCommand()
     {
         const guid = player.values.get!UNIT_FIELD_TARGET;
@@ -220,30 +259,25 @@ private:
             at = who.character.position;
         else
         {
-            systemMessage("Invalid target.");
+            redSystemMessage("Invalid target.");
             return true;
         }
         const me = player.position;
-        string los(float dz)
+        string sight(float dz)
         {
             return map.lineOfSightBetween(Position(me.x, me.y, me.z + dz), Position(at.x, at.y, at.z + dz))
                 ? "in LOS" : "not in LOS";
         }
-        systemMessage(format!"Result was: %s %s %s."(los(0), los(2), los(5)));
+        systemMessage(format!"Result was: %s %s %s."(sight(0), sight(2), sight(5)));
         return true;
     }
 
+    /// `.debug showreact`: an `SMSG_AI_REACTION` for the selected creature.
     bool handleShowReactionCommand(uint reaction)
     {
-        import dmangos.bytes : ByteWriter;
-        import dmangos.world.opcodes : Opcode;
-
-        auto creature = selectedCreature(false);
+        auto creature = selectedCreature(true);
         if (creature is null)
-        {
-            systemMessage("Select a creature first.");
             return true;
-        }
         ByteWriter w;
         w.put(creature.guid);
         w.put(reaction);
@@ -256,9 +290,6 @@ private:
     bool handleSendItemPushResultCommand(uint itemId, uint count = 0, uint type = 0, uint unk1 = 0, uint unk2 = 0,
         uint unk3 = 0, uint unk4 = 0)
     {
-        import dmangos.bytes : ByteWriter;
-        import dmangos.world.opcodes : Opcode;
-
         if (itemId == 0)
             return false;
         ByteWriter w;
@@ -279,54 +310,45 @@ private:
     /// `.debug face`: the creature's facing, in degrees, changed here only (the clients are not told).
     bool handleFaceCommand(uint degrees = 0)
     {
-        auto creature = selectedCreature(false);
-        if (creature is null)
-        {
-            systemMessage("Select a creature first.");
-            return true;
-        }
-        creature.movement.position.orientation = degrees / (360 / 6.28f);
+        if (auto creature = selectedCreature(true))
+            creature.movement.position.orientation = degrees / (360 / 6.28f);
         return true;
     }
 
+    /// `.debug testindoor`: whether the player stands indoors, by the vmaps.
     bool handleCollisionTestIndoorCommand()
     {
-        auto terrain = map.collision;
-        if (terrain is null || !terrain.hasVmaps)
-        {
-            systemMessage("Collision is not enabled.");
+        auto terrain = vmapTerrain();
+        if (terrain is null)
             return true;
-        }
         const at = player.position;
         const indoors = !terrain.isOutdoors(at.x, at.y, at.z + 2.0f);
         systemMessage(format!"Result was: %s."(indoors ? "indoors" : "outside"));
         return true;
     }
 
+    /// `.debug getheight`: the vmap heights above and at the player, the land's, and whether 5 yards ahead
+    /// is blocked.
     bool handleCollisionGetHeightCommand()
     {
-        import std.math : cos, sin;
-
-        auto terrain = map.collision;
-        if (terrain is null || !terrain.hasVmaps)
-        {
-            systemMessage("Collision is not enabled.");
+        auto terrain = vmapTerrain();
+        if (terrain is null)
             return true;
-        }
         enum float radius = 5.0f;
         const at = player.position;
-        const z = terrain.vmapHeight(at.x, at.y, at.z + 2.0f);
-        const z2 = terrain.vmapHeight(at.x, at.y, at.z + 5.0f);
-        const z3 = terrain.vmapHeight(at.x, at.y, at.z);
-        const z4 = terrain.height(at.x, at.y);
+        const from2 = terrain.vmapHeight(at.x, at.y, at.z + 2.0f);
+        const from5 = terrain.vmapHeight(at.x, at.y, at.z + 5.0f);
+        const fromFeet = terrain.vmapHeight(at.x, at.y, at.z);
+        const land = terrain.height(at.x, at.y);
         // Whether something stands in the way 5 yards ahead (1.5 yards short of the point).
-        const fp = !terrain.isInLineOfSight(at.x, at.y, at.z, at.x + radius * cos(at.orientation),
+        const blocked = !terrain.isInLineOfSight(at.x, at.y, at.z, at.x + radius * cos(at.orientation),
             at.y + radius * sin(at.orientation), at.z);
-        systemMessage(format!"Results were: %f(offset2.0f) | %f(offset5.0f) | %f(org) | landheight:%f | target radius5 FP:%d"(
-            z, z2, z3, z4, fp ? 1 : 0));
+        systemMessage(format!("Results were: %f(offset2.0f) | %f(offset5.0f) | %f(org) | landheight:%f"
+            ~ " | target radius5 FP:%d")(from2, from5, fromFeet, land, blocked ? 1 : 0));
         return true;
     }
 
+    /// `.debug getpos`: a spell's icon; nothing for an unknown spell.
     bool handleGetPosCommand(uint id)
     {
         if (const spell = context.data.spells.spell(id))
@@ -334,41 +356,32 @@ private:
         return true;
     }
 
+    /// `.debug distance`: the distance to the selection.
     bool handleDistanceCommand()
     {
-        const guid = player.values.get!UNIT_FIELD_TARGET;
-        Position at = player.position;
-        if (guid != 0)
-        {
-            if (auto other = map.find(guid))
-                at = other.character.position;
-            else if (auto object = map.findObject(guid))
-                at = object.position;
-            else
-            {
-                systemMessage("Select a player or creature first.");
-                return true;
-            }
-        }
+        Position at;
+        if (!selectedPosition(at))
+            return true;
         const me = player.position;
         systemMessage(format!"Distance is: %g"(sqrt((at.x - me.x) ^^ 2 + (at.y - me.y) ^^ 2 + (at.z - me.z) ^^ 2)));
         return true;
     }
 
+    /// `.debug setbytes`: an update field of the selected unit set byte by byte.
     bool handleSetBytesCommand(uint index, ubyte b0, ubyte b1, ubyte b2, ubyte b3)
     {
         auto unit = selectedUnit();
         if (!unit.found)
             return true;
-        const ubyte[4] b = [b0, b1, b2, b3];
         if (index >= unit.values.length)
             return false; // past the object's fields: refused, not written
-        unit.values.setSlot(index, b[0] | b[1] << 8 | b[2] << 16 | uint(b[3]) << 24);
+        unit.values.setSlot(index, b0 | b1 << 8 | b2 << 16 | uint(b3) << 24);
         unit.flush(this);
-        systemMessage(format!"Set Field %s bytes to %s %s %s %s"(index, b[0], b[1], b[2], b[3]));
+        greenSystemMessage(format!"Set Field %s bytes to %s %s %s %s"(index, b0, b1, b2, b3));
         return true;
     }
 
+    /// `.debug getbytes`: an update field of the selected unit, byte by byte.
     bool handleGetBytesCommand(uint slot)
     {
         auto unit = selectedUnit();
@@ -376,57 +389,62 @@ private:
             return true;
         if (slot >= unit.values.length)
             return false;
-        const v = unit.values[slot];
-        systemMessage(format!"bytes for Field %s are %s %s %s %s"(slot, v & 0xFF, v >> 8 & 0xFF, v >> 16 & 0xFF,
-            v >> 24));
+        const value = unit.values[slot];
+        systemMessage(format!"bytes for Field %s are %s %s %s %s"(slot, value & 0xFF, value >> 8 & 0xFF,
+            value >> 16 & 0xFF, value >> 24));
         return true;
     }
 
     /// The four movement tests: an order to the selected player, then "... Test Ran.".
     bool movementTest(Opcode opcode)(string what, bool failWithoutSelection)
     {
-        auto chr = selectedCharacter(true);
-        if (chr is null)
+        auto target = selectedCharacter(true);
+        if (target is null)
         {
-            systemMessage("No character selected.");
+            redSystemMessage("No character selected.");
             return !failWithoutSelection;
         }
-        chr.sendMovementOrder!opcode();
-        systemMessage(what ~ " Test Ran.");
+        target.sendMovementOrder!opcode();
+        greenSystemMessage(what ~ " Test Ran.");
         return true;
     }
 
+    /// `.debug unroot`.
     bool handleDebugUnrootCommand()
     {
         return movementTest!(Opcode.SMSG_FORCE_MOVE_UNROOT)("UnRoot", true);
     }
 
+    /// `.debug root`.
     bool handleDebugRootCommand()
     {
         return movementTest!(Opcode.SMSG_FORCE_MOVE_ROOT)("Root", false);
     }
 
+    /// `.debug landwalk`.
     bool handleDebugLandWalkCommand()
     {
         return movementTest!(Opcode.SMSG_MOVE_LAND_WALK)("Land Walk", true);
     }
 
+    /// `.debug waterwalk`.
     bool handleDebugWaterWalkCommand()
     {
         return movementTest!(Opcode.SMSG_MOVE_WATER_WALK)("Water Walk", true);
     }
 
-    bool handleKnockBackCommand(float f = 5)
+    /// `.debug knockback`: the player knocked back the way it faces (5 by default, or for 0).
+    bool handleKnockBackCommand(float speed = 5)
     {
-        if (f == 0)
-            f = 5;
-        const o = player.position.orientation;
+        const strength = speed == 0 ? 5 : speed;
+        const facing = player.position.orientation;
         // The packet: cos, sin, the speed, and two thirds of it upwards.
-        send(ServerKnockBack(player.guid, moveOrderCounter++, cos(o), sin(o), f, f * 0.66f));
+        send(ServerKnockBack(player.guid, moveOrderCounter++, cos(facing), sin(facing), strength, strength * 0.66f));
         resetMovementCheck();
         return true;
     }
 
+    /// `.debug setbit`: one bit of an update field of the selected unit flipped.
     bool handleModifyBitCommand(ushort field, uint bit)
     {
         auto unit = selectedUnit();
@@ -434,17 +452,19 @@ private:
             return true;
         if (field < 1 || field >= PLAYER_END || field >= unit.values.length || bit < 1 || bit > 32)
         {
-            systemMessage("Incorrect values.");
+            redSystemMessage("Incorrect values.");
             return true;
         }
         const mask = 1u << (bit - 1);
         const value = unit.values[field];
         unit.values.setSlot(field, value ^ mask);
         unit.flush(this);
-        systemMessage(format(value & mask ? "Removed bit %d in field %d." : "Set bit %d in field %d.", bit, field));
+        greenSystemMessage(value & mask ? format!"Removed bit %d in field %d."(bit, field)
+            : format!"Set bit %d in field %d."(bit, field));
         return true;
     }
 
+    /// `.debug setvalue`: an update field of the selected unit set.
     bool handleModifyValueCommand(ushort field, uint value)
     {
         auto unit = selectedUnit();
@@ -452,16 +472,17 @@ private:
             return true;
         if (field < 1 || field >= PLAYER_END || field >= unit.values.length)
         {
-            systemMessage("Choose a valid update field.");
+            redSystemMessage("Choose a valid update field.");
             return true;
         }
         const oldValue = unit.values[field];
         unit.values.setSlot(field, value);
         unit.flush(this);
-        systemMessage(format!"Set Field %d from %d to %d."(field, oldValue, value));
+        greenSystemMessage(format!"Set Field %d from %d to %d."(field, oldValue, value));
         return true;
     }
 
+    /// `.debug getUint32Value`: an update field of the selected player or creature (not oneself by default).
     bool handleGetUint32ValueCommand(uint index)
     {
         const guid = player.values.get!UNIT_FIELD_TARGET;
@@ -504,29 +525,27 @@ private:
         return sicmp(a, b) == 0;
     }
 
+    /// `.recall list`: the locations' names, five to a line.
     bool handleRecallListCommand()
     {
-        auto places = recallLocations();
+        const places = recallLocations();
         if (places.length == 0)
             return false;
         string text = colored(ChatColor.green, "Recall locations") ~ ":\n\n";
-        uint count;
-        foreach (ref place; places)
+        foreach (i, const ref place; places)
         {
             text ~= colored(ChatColor.sky, place.name) ~ ", ";
-            if (++count == 5)
-            {
+            if (i % 5 == 4)
                 text ~= "\n";
-                count = 0;
-            }
         }
         sendMultilineMessage(text);
         return true;
     }
 
+    /// `.recall go`: to the first location (in name order) whose name starts with the one given.
     bool handleRecallGoCommand(Rest name)
     {
-        foreach (ref place; recallLocations())
+        foreach (const ref place; recallLocations())
             if (sameStart(name, place.name, name.length))
             {
                 commandTeleport(place.map, Position(place.x, place.y, place.z, 0));
@@ -535,6 +554,7 @@ private:
         return false;
     }
 
+    /// `.recall add`: the player's position saved under a name.
     bool handleRecallAddCommand(Rest name)
     {
         if (context.data.teleports.canFind!(place => name.startsWith(place.name)))
@@ -542,21 +562,22 @@ private:
             redSystemMessage("Name in use, please use another name for your location.");
             return true;
         }
-        const p = player.position;
-        const place = GameTele(p.x, p.y, p.z, 0, player.data.map, name);
+        const at = player.position;
+        const place = GameTele(at.x, at.y, at.z, 0, player.data.map, name);
         context.database.addTeleport(place);
         context.data.teleports ~= place;
-        greenSystemMessage(format!"Added location to DB with MapID: %d, X: %f, Y: %f, Z: %f"(player.data.map, p.x, p.y,
-            p.z));
+        greenSystemMessage(format!"Added location to DB with MapID: %d, X: %f, Y: %f, Z: %f"(player.data.map, at.x,
+            at.y, at.z));
         gmLog(format!"used recall add, added \"%s\" location to database."(name));
         return true;
     }
 
+    /// `.recall delete`: the first location whose whole name begins the name given.
     bool handleRecallDelCommand(Rest name)
     {
         import std.algorithm.mutation : remove;
 
-        foreach (ref place; recallLocations())
+        foreach (const ref place; recallLocations())
             if (sameStart(name, place.name, place.name.length))
             {
                 const placeName = place.name;
@@ -570,20 +591,21 @@ private:
         return false;
     }
 
+    /// `.recall portplayer`: an online player sent to a location.
     bool handleRecallPortPlayerCommand(string name, string location)
     {
         auto found = context.onlinePlayer(name);
         if (found is null)
             return false;
-        auto plr = sessionOf(found);
+        auto target = sessionOf(found);
         // A location matches when its name starts with the name given (in any case): the name's
         // length counts, not the whole command line's, which would match only names that long.
-        foreach (ref place; recallLocations())
+        foreach (const ref place; recallLocations())
             if (sameStart(location, place.name, location.length))
             {
-                gmLog(format!"ported %s to %s ( map: %u, x: %f, y: %f, z: %f )"(plr.player.data.name, place.name,
+                gmLog(format!"ported %s to %s ( map: %u, x: %f, y: %f, z: %f )"(target.player.data.name, place.name,
                     place.map, place.x, place.y, place.z));
-                plr.commandTeleport(place.map, Position(place.x, place.y, place.z, 0));
+                target.commandTeleport(place.map, Position(place.x, place.y, place.z, 0));
                 return true;
             }
         return false;
@@ -600,63 +622,56 @@ private:
 
         systemMessage("Starting queued battlegrounds.");
         context.services.call!(BattlegroundQueueHost.forceStart)(BattlegroundInstance(0));
-        systemMessage("...done");
+        greenSystemMessage("...done");
         return true;
     }
 
     /// The player leaves their own slot in the current battleground.
     bool handleBattlegroundExitCommand()
     {
-        auto copy = currentBattleground();
-        if (copy is null)
-        {
-            systemMessage("Join a battleground first.");
-            return true;
-        }
-        leaveBattleground(true);
+        if (joinedBattleground() !is null)
+            leaveBattleground(true);
         return true;
     }
 
+    /// `.bg pause`: the current match paused or resumed (toggled without an argument).
     bool handlePauseBGCommand(Nullable!OnOff state)
     {
-        auto copy = currentBattleground();
+        auto copy = joinedBattleground();
         if (copy is null)
-        {
-            redSystemMessage("Join a battleground first.");
             return true;
-        }
         const pause = state.isNull ? !copy.paused : state.get == OnOff.on;
         if (!copy.setPaused(pause))
-            redSystemMessage("Only an active match or its countdown can be paused.");
-        else
         {
-            context.battlegrounds.flushCheckpoints();
-            gmLog(format!"set battleground %s paused=%s"(copy.instance, pause));
-            greenSystemMessage(pause ? "Battleground paused." : "Battleground resumed.");
+            redSystemMessage("Only an active match or its countdown can be paused.");
+            return true;
         }
+        context.battlegrounds.flushCheckpoints();
+        gmLog(format!"set battleground %s paused=%s"(copy.instance, pause));
+        greenSystemMessage(pause ? "Battleground paused." : "Battleground resumed.");
         return true;
     }
 
+    /// `.bg start`: the current battleground started now.
     bool handleStartBGCommand()
     {
-        if (auto copy = currentBattleground())
+        if (auto copy = joinedBattleground())
             copy.start();
-        else
-            systemMessage("Join a battleground first.");
         return true;
     }
 
+    /// `.bg status`: the current match's type, copy and status.
     bool handleBattlegroundInfoCommand()
     {
         import std.conv : to;
 
-        if (auto copy = currentBattleground())
-            systemMessage(format!"%s · Copy %s · %s"(copy.type, copy.instance, copy.paused ? "Paused" : copy.status.to!string));
-        else
-            systemMessage("Join a battleground first.");
+        if (auto copy = joinedBattleground())
+            systemMessage(format!"%s · Copy %s · %s"(copy.type, copy.instance,
+                copy.paused ? "Paused" : copy.status.to!string));
         return true;
     }
 
+    /// `.bg battleground`: the current match, and where to find the other commands.
     bool handleBattlegroundCommand()
     {
         handleBattlegroundInfoCommand();
@@ -664,6 +679,7 @@ private:
         return true;
     }
 
+    /// `.bg queue`: the battlegroup's queued players and matches, as the queue host counts them.
     bool handleGetBattlegroundQueueCommand()
     {
         import dmangos.world.bgqueue : BattlegroundPlayer, BattlegroundQueueHost, BattlegroundQueueStats;
@@ -677,13 +693,13 @@ private:
         return true;
     }
 
+    /// `.bg setbfstatus start`: as `.bg start`.
     bool handleSetBattlefieldStatusCommand(string action)
     {
-        if (action != "start")
-            return false;
-        return handleStartBGCommand();
+        return action == "start" && handleStartBGCommand();
     }
 
+    /// `.bg score`: a team's score in Warsong Gulch or Arathi Basin, short of a win.
     bool handleSetBGScoreCommand(string teamName, uint score)
     {
         import dmangos.world.arathi : resourceStates, maxResources;
@@ -695,36 +711,38 @@ private:
         const team = teamName == "alliance" ? 0 : 1;
         auto copy = currentBattleground();
         if (copy is null || copy.status != BattlegroundStatus.inProgress)
-            systemMessage("Join a match in progress first.");
-        else if (copy.type == BattlegroundType.warsongGulch && score < maxCaptures)
+        {
+            redSystemMessage("Join a match in progress first.");
+            return true;
+        }
+        if (copy.type == BattlegroundType.warsongGulch && score < maxCaptures)
             copy.setWorldState(captureStates[team], score);
         else if (copy.type == BattlegroundType.arathiBasin && score < maxResources)
             copy.setWorldState(resourceStates[team], score);
         else
-            systemMessage("Set a below-win score in Warsong Gulch or Arathi Basin.");
+            redSystemMessage("Set a below-win score in Warsong Gulch or Arathi Basin.");
         return true;
     }
 
+    /// `.bg worldstate`: a world state of the current battleground set.
     bool handleSetWorldStateCommand(uint id, uint value)
     {
-        if (auto copy = currentBattleground())
+        if (auto copy = joinedBattleground())
             copy.setWorldState(id, value);
-        else
-            systemMessage("Join a battleground first.");
         return true;
     }
 
+    /// `.bg setworldstates`: as `.bg worldstate`.
     bool handleSetWorldStatesCommand(uint id, uint value)
     {
         return handleSetWorldStateCommand(id, value);
     }
 
+    /// `.bg sound`: a sound played to the current battleground.
     bool handlePlaySoundCommand(uint sound)
     {
-        if (auto copy = currentBattleground())
+        if (auto copy = joinedBattleground())
             copy.playSound(sound);
-        else
-            systemMessage("Join a battleground first.");
         return true;
     }
 }
@@ -736,6 +754,7 @@ unittest
     import std.math : abs;
     import std.algorithm.searching : canFind, startsWith;
     import dmangos.auth.accounts : AccountLevel;
+    import dmangos.world.chatstyle : ChatColor;
     import dmangos.world.creature : Creature;
     import dmangos.world.movement : Position;
     import dmangos.world.objects : HighGuid, makeGuid;
@@ -750,7 +769,7 @@ unittest
     gm.read();
     auto keeper = cast(Creature) context.map(0).findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
     gm.say(".debug threatList");
-    assert(systemMessages(gm.read()) == ["Select a creature first."]);
+    assert(systemMessages(gm.read()) == [ChatColor.softRed ~ "Select a creature first.|r"]);
     gm.write(Opcode.CMSG_SET_SELECTION, ClientGuid(keeper.guid));
     gm.say(".debug threatList");
     assert(systemMessages(gm.read())[0].startsWith("threatlist of creature: "));
@@ -762,9 +781,9 @@ unittest
     gm.say(".debug testlos");
     assert(systemMessages(gm.read()) == ["Result was: in LOS in LOS in LOS."], "no terrain in the test: all in sight");
     gm.say(".debug testindoor");
-    assert(systemMessages(gm.read()) == ["Collision is not enabled."]);
+    assert(systemMessages(gm.read()) == [ChatColor.softRed ~ "Collision is not enabled.|r"]);
     gm.say(".debug getheight");
-    assert(systemMessages(gm.read()) == ["Collision is not enabled."]);
+    assert(systemMessages(gm.read()) == [ChatColor.softRed ~ "Collision is not enabled.|r"]);
     gm.say(".debug showreact 2");
     {
         const sent = gm.read();

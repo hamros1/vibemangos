@@ -1,27 +1,29 @@
 /// World editing and live game administration.
 module dmangos.world.gmworld;
 
-import dmangos.world.spellids;
-
 /// See the module documentation.
 mixin template WorldAdminCommands()
 {
-    import dmangos.world.spellids;
     import core.time : MonoTime;
     import std.format : format;
-    import dmangos.world.commands;
-    import dmangos.world.inventory : ItemState;
-    import dmangos.world.opcodes;
-    import dmangos.world.queries : chatMessage, monsterChatMessage;
-    import dmangos.world.updatefields;
+    import std.math : sqrt;
+    import dmangos.world.commands : ChatColor, colored, Rest;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.gmadmin : msecsSince, numberAtStart;
     import dmangos.world.gmtargets : GmRemoteOp;
+    import dmangos.world.inventory : ItemState;
+    import dmangos.world.opcodes : ChatType, Language, Opcode;
     import dmangos.world.player : DeathState;
+    import dmangos.world.queries : chatMessage, monsterChatMessage;
+    import dmangos.world.spellcast : SpellTargets, TargetFlags;
     import dmangos.world.spells : SpellInfo;
+    import dmangos.world.updatefields;
 
     package bool invincible; // `.invincible`: creatures do not attack it
 
 private:
 
+    /// `.server saveall`: every player saved, on every node, and the world told how long it took.
     bool handleSaveAllCommand()
     {
         const started = MonoTime.currTime;
@@ -34,181 +36,169 @@ private:
         // Every other node of a cluster saves its own (counted by presence).
         if (gmEverywhere(GmRemoteOp.saveAll))
             count += cast(uint) context.remotePlayers.length;
-        const message = format!"Saved all %d online players in %d msec."(count,
-            (MonoTime.currTime - started).total!"msecs");
+        const message = format!"Saved all %d online players in %d msec."(count, msecsSince(started));
         sendWorldText(message);
         sendWorldWideScreenText(message);
         gmLog("saved all players");
         return true;
     }
 
-    /// The game object selected, if it is still on the map.
-    GameObject selectedGameObject()
+    /// The game object selected, if it is still on the map; null (after a message if `showError`) if not.
+    GameObject selectedGameObject(bool showError)
     {
-        return selectedGo ? cast(GameObject) map.findObject(selectedGo) : null;
+        auto go = selectedGo ? cast(GameObject) map.findObject(selectedGo) : null;
+        if (go is null && showError)
+            redSystemMessage("Select a game object first.");
+        return go;
+    }
+
+    /// How far a game object is from the player, in yards.
+    float distanceToObject(GameObject go)
+    {
+        const at = go.position, here = player.position;
+        return sqrt((at.x - here.x) ^^ 2 + (at.y - here.y) ^^ 2 + (at.z - here.z) ^^ 2);
+    }
+
+    /// The selected creature, or null after "No selection." or "Select a creature first.".
+    Creature selectionAsCreature()
+    {
+        const guid = player.values.get!UNIT_FIELD_TARGET;
+        if (guid == 0)
+        {
+            redSystemMessage("No selection.");
+            return null;
+        }
+        auto creature = cast(Creature) map.findObject(guid);
+        if (creature is null)
+            redSystemMessage("Select a creature first.");
+        return creature;
     }
 
     /// `.npc vendoradditem <item> <amount> [extended cost]`: a ware for the selected vendor.
     bool handleItemCommand(uint item, int amount = -1, uint costId = 0)
     {
-        import dmangos.world.creature : Creature;
         import dmangos.world.npcdata : VendorItem;
-        import dmangos.world.updatefields : UNIT_FIELD_TARGET;
 
-        const guid = player.values.get!UNIT_FIELD_TARGET;
-        if (guid == 0)
-        {
-            systemMessage("No selection.");
-            return true;
-        }
-        auto creature = cast(Creature) map.findObject(guid);
+        auto creature = selectionAsCreature();
         if (creature is null)
-        {
-            systemMessage("Select a creature first.");
             return true;
-        }
         if (amount == -1)
         {
-            systemMessage("You need to specify an amount.");
+            redSystemMessage("You need to specify an amount.");
             return true;
         }
         if (costId > 0) // 1.12 has no ItemExtendedCost.dbc
         {
-            systemMessage("You've entered invalid extended cost id.");
+            redSystemMessage("You've entered invalid extended cost id.");
             return true;
         }
         const entry = creature.spawn.entry;
-        string text;
         if (const proto = item in context.data.items)
         {
             // The vendor sells the item by its own `BuyCount`; the amount is not kept.
-            auto list = &context.data.npcs.vendors.require(entry, null);
-            const slot = cast(uint) list.length;
-            *list ~= VendorItem(item, 0, 0, slot, 0);
+            auto wares = &context.data.npcs.vendors.require(entry, null);
+            const slot = cast(uint) wares.length;
+            *wares ~= VendorItem(item, 0, 0, slot, 0);
             context.database.insertVendorItem(entry, item);
-            text = format!"Item '%s' '%s' Added to list"(item, proto.details.name);
+            greenSystemMessage(format!"Item '%s' '%s' Added to list"(item, proto.details.name));
         }
         else
-            text = format!"Item '%s' Not Found in Database."(item);
+            redSystemMessage(format!"Item '%s' Not Found in Database."(item));
         gmLog(format!"added item %u to vendor %u"(item, entry));
-        systemMessage(text);
         return true;
     }
 
-    /// `.npc vendorremoveitem <item>`.
+    /// `.npc vendorremoveitem <item>`: a ware taken off the selected vendor.
     bool handleItemRemoveCommand(uint item)
     {
         import std.algorithm.mutation : remove;
         import std.algorithm.searching : countUntil;
-        import dmangos.world.creature : Creature;
-        import dmangos.world.updatefields : UNIT_FIELD_TARGET;
 
-        const guid = player.values.get!UNIT_FIELD_TARGET;
-        if (guid == 0)
-        {
-            systemMessage("No selection.");
-            return true;
-        }
-        auto creature = cast(Creature) map.findObject(guid);
+        auto creature = selectionAsCreature();
         if (creature is null)
+            return true;
+        const entry = creature.spawn.entry;
+        auto wares = entry in context.data.npcs.vendors;
+        const index = wares is null ? -1 : (*wares).countUntil!(ware => ware.item == item);
+        if (index < 0)
         {
-            systemMessage("Select a creature first.");
+            redSystemMessage(format!"Item '%s' Not Found in List."(item));
             return true;
         }
-        const entry = creature.spawn.entry;
-        auto list = entry in context.data.npcs.vendors;
-        const at = list is null ? -1 : (*list).countUntil!(v => v.item == item);
-        string text;
-        if (at >= 0)
-        {
-            *list = (*list).remove(at);
-            context.database.deleteVendorItem(entry, item);
-            if (const proto = item in context.data.items)
-                text = format!"Item '%s' '%s' Deleted from list"(item, proto.details.name);
-            else
-                text = format!"Item '%s' Deleted from list"(item);
-            gmLog(format!"removed item %u from vendor %u"(item, entry));
-        }
+        *wares = (*wares).remove(index);
+        context.database.deleteVendorItem(entry, item);
+        if (const proto = item in context.data.items)
+            greenSystemMessage(format!"Item '%s' '%s' Deleted from list"(item, proto.details.name));
         else
-            text = format!"Item '%s' Not Found in List."(item);
-        systemMessage(text);
+            greenSystemMessage(format!"Item '%s' Deleted from list"(item));
+        gmLog(format!"removed item %u from vendor %u"(item, entry));
         return true;
     }
 
     /// `.npc select`: the creature nearest on the ground among those in sight becomes the selection.
     bool handleNpcSelectCommand()
     {
-        import dmangos.world.creature : Creature;
-        import dmangos.world.updatefields : UNIT_FIELD_TARGET;
-
-        const me = player.position;
-        Creature un;
-        float dist = 999999.0f;
-        foreach (o; map.objectsNear(me, context.config.visibilityDistance))
-            if (auto c = cast(Creature) o)
-                if (map.seesObject(player.guid, c.guid))
-                {
-                    const p = c.position;
-                    const dist2 = (p.x - me.x) ^^ 2 + (p.y - me.y) ^^ 2;
-                    if (dist2 < dist)
-                    {
-                        un = c;
-                        dist = dist2;
-                    }
-                }
-        if (un is null)
+        const here = player.position;
+        Creature nearest;
+        float nearestSquared = 999_999.0f;
+        foreach (object; map.objectsNear(here, context.config.visibilityDistance))
         {
-            systemMessage("No inrange creatures found.");
+            auto creature = cast(Creature) object;
+            if (creature is null || !map.seesObject(player.guid, creature.guid))
+                continue;
+            const at = creature.position;
+            const squared = (at.x - here.x) ^^ 2 + (at.y - here.y) ^^ 2;
+            if (squared < nearestSquared)
+            {
+                nearest = creature;
+                nearestSquared = squared;
+            }
+        }
+        if (nearest is null)
+        {
+            redSystemMessage("No inrange creatures found.");
             return true;
         }
-        player.values.set!UNIT_FIELD_TARGET(un.guid);
+        player.values.set!UNIT_FIELD_TARGET(nearest.guid);
         flushPlayerChanges();
-        systemMessage(format!"Set selection to %s (%s)"(un.guid, un.template_ is null ? "Unknown" : un.template_.name));
+        greenSystemMessage(format!"Set selection to %s (%s)"(nearest.guid,
+            nearest.template_ is null ? "Unknown" : nearest.template_.name));
         return true;
     }
 
-    bool handleGameObjectSelectCommand(string arg = null)
+    /// `.gobject select [1]`: the nearest game object in sight selected, or with 1 the one after the selection.
+    bool handleGameObjectSelectCommand(string mode = null)
     {
-        import std.math : sqrt;
+        import std.algorithm.searching : countUntil;
 
-        const me = player.position;
-        float distanceTo(GameObject go)
-        {
-            const p = go.position;
-            return sqrt((p.x - me.x) ^^ 2 + (p.y - me.y) ^^ 2 + (p.z - me.z) ^^ 2);
-        }
-
-        GameObject[] seen; // the objects this player sees
-        foreach (o; map.objectsNear(me, context.config.visibilityDistance))
-            if (auto go = cast(GameObject) o)
+        GameObject[] seen;
+        foreach (object; map.objectsNear(player.position, context.config.visibilityDistance))
+            if (auto go = cast(GameObject) object)
                 if (map.seesObject(player.guid, go.guid))
                     seen ~= go;
         GameObject chosen;
-        if (arg.length && arg[0] == '1')
+        if (mode.length && mode[0] == '1' && seen.length)
         {
             // The one after the selected (or the first): `.gobject select 1` steps through them.
-            auto current = selectedGameObject();
-            bool next = current is null;
-            foreach (go; seen ~ seen)
-            {
-                if (next)
-                {
-                    chosen = go;
-                    break;
-                }
-                if (go is current)
-                    next = true;
-            }
+            auto current = selectedGameObject(false);
+            const index = seen.countUntil!(go => go is current);
+            if (current is null)
+                chosen = seen[0];
+            else if (index >= 0)
+                chosen = seen[(index + 1) % seen.length];
         }
         if (chosen is null)
         {
             float closest = 9999.0f;
             foreach (go; seen)
-                if (distanceTo(go) < closest)
+            {
+                const distance = distanceToObject(go);
+                if (distance < closest)
                 {
-                    closest = distanceTo(go);
+                    closest = distance;
                     chosen = go;
                 }
+            }
         }
         if (chosen is null)
         {
@@ -216,139 +206,137 @@ private:
             return true;
         }
         selectedGo = chosen.guid;
-        greenSystemMessage(format!"Selected GameObject [ %s ] which is %.3f meters away from you."(chosen.template_.name,
-            distanceTo(chosen)));
+        greenSystemMessage(format!"Selected GameObject [ %s ] which is %.3f meters away from you."(
+            chosen.template_.name, distanceToObject(chosen)));
         return true;
     }
 
+    /// `.addtrainerspell <teaching spell> [copper] [level]`: a lesson for the selected trainer, saved.
     bool handleAddTrainerSpellCommand(uint spell, uint cost = 0, ubyte requiredLevel = 0)
     {
+        import std.algorithm.searching : canFind;
         import dmangos.mysql : DatabaseException;
         import dmangos.world.npchandlers : NpcFlag;
         import dmangos.world.npcdata : trainerLesson;
-        import std.algorithm.searching : canFind;
 
         auto creature = selectedCreature(true);
         if (creature is null)
             return true;
         if (!(creature.values.get!UNIT_NPC_FLAGS & NpcFlag.trainer))
         {
-            systemMessage("Select a trainer first.");
+            redSystemMessage("Select a trainer first.");
             return true;
         }
         const lesson = trainerLesson(context.data.spells, spell, cost, requiredLevel);
         if (!lesson.learnedSpell)
         {
-            systemMessage("Use the ID of a supported trainer spell that teaches a lesson.");
+            redSystemMessage("Use the ID of a supported trainer spell that teaches a lesson.");
             return true;
         }
         const entry = creature.template_.entry;
         if (trainerSpells(creature).canFind!(existing => existing.learnedSpell == lesson.learnedSpell))
         {
-            systemMessage("The trainer already offers that lesson.");
+            redSystemMessage("The trainer already offers that lesson.");
             return true;
         }
         try
         {
             if (!context.canWrite() || !context.database.insertTrainerLesson(entry, spell, cost, requiredLevel))
             {
-                systemMessage("The lesson could not be added. It may already be saved.");
+                redSystemMessage("The lesson could not be added. It may already be saved.");
                 return true;
             }
             context.data.npcs.trainers[entry] ~= lesson;
-            gmLog(format!"added trainer spell %s at entry %s, cost %s, required level %s"
-                (spell, entry, cost, requiredLevel));
-            systemMessage(format!"Trainer %s will teach %s. Other workers will load the lesson on their next catalog refresh."
-                (entry, lesson.learnedSpell));
+            gmLog(format!"added trainer spell %s at entry %s, cost %s, required level %s"(spell, entry, cost,
+                requiredLevel));
+            greenSystemMessage(format!("Trainer %s will teach %s. Other workers will load the lesson on their next "
+                ~ "catalog refresh.")(entry, lesson.learnedSpell));
         }
         catch (DatabaseException)
-            systemMessage("The world database could not save the lesson.");
+            redSystemMessage("The world database could not save the lesson.");
         return true;
     }
 
+    /// `.npc listAgent`: the selected creature's script, spell list and EventAI events.
     bool handleListAiAgentCommand()
     {
         auto creature = selectedCreature(true);
         if (creature is null)
             return true;
-        const entry = creature.template_.entry, spawn = creature.spawn.guid, list = creature.template_.spellList;
+        const entry = creature.template_.entry, spawn = creature.spawn.guid;
+        const spellList = creature.template_.spellList;
         const scriptName = context.data.creatureScriptNames.get(entry, "");
         const events = context.data.eventAi.byCreature.get(entry, null);
         const spawnEvents = context.data.eventAi.bySpawn.get(spawn, null);
-        systemMessage(format!"Creature %s, spawn %s, script %s, spell list %s, EventAI events %s by entry and %s by spawn."
-            (entry, spawn, scriptName.length ? scriptName : "none", list, events.length, spawnEvents.length));
-        foreach (ref spell; context.data.creatureSpellLists.get(list, null))
-            systemMessage(format!"Spell %s, target %s, availability %s%%, repeat %s–%s ms."
-                (spell.spell, spell.targetId, spell.availability, spell.repeatMin, spell.repeatMax));
+        systemMessage(format!("Creature %s, spawn %s, script %s, spell list %s, EventAI events %s by entry and %s "
+            ~ "by spawn.")(entry, spawn, scriptName.length ? scriptName : "none", spellList, events.length,
+            spawnEvents.length));
+        foreach (ref spell; context.data.creatureSpellLists.get(spellList, null))
+            systemMessage(format!"Spell %s, target %s, availability %s%%, repeat %s–%s ms."(spell.spell,
+                spell.targetId, spell.availability, spell.repeatMin, spell.repeatMax));
         return true;
     }
 
+    /// `.gobject export`: the selected game object's spawn, as its row would hold it.
     bool handleGameObjectExportCommand()
     {
-        if (auto go = selectedGameObject())
-        {
-            const at = go.position;
-            systemMessage(format!"Game object %s, spawn %s, map %s, position %.6f %.6f %.6f %.6f."
-                (go.spawn.entry, go.spawn.guid, map.id, at.x, at.y, at.z, at.orientation));
-            systemMessage(format!"Rotation %.6f %.6f %.6f %.6f, respawn %s seconds."
-                (go.spawn.rotation[0], go.spawn.rotation[1], go.spawn.rotation[2], go.spawn.rotation[3], go.spawn.respawnSeconds));
-        }
-        else
-            systemMessage("Select a game object first.");
+        auto go = selectedGameObject(true);
+        if (go is null)
+            return true;
+        const at = go.position;
+        const rotation = go.spawn.rotation;
+        systemMessage(format!"Game object %s, spawn %s, map %s, position %.6f %.6f %.6f %.6f."(go.spawn.entry,
+            go.spawn.guid, map.id, at.x, at.y, at.z, at.orientation));
+        systemMessage(format!"Rotation %.6f %.6f %.6f %.6f, respawn %s seconds."(rotation[0], rotation[1],
+            rotation[2], rotation[3], go.spawn.respawnSeconds));
         return true;
     }
 
+    /// `.gobject info`: the selected game object's fields and distance.
     bool handleGameObjectInfoCommand()
     {
-        import std.math : sqrt;
         import dmangos.world.gameobject : GameObjectType;
 
-        auto go = selectedGameObject();
+        auto go = selectedGameObject(true);
         if (go is null)
-        {
-            redSystemMessage("Select a game object first.");
             return true;
-        }
-        const v = &go.values;
+        const values = &go.values;
         colorSystemMessage(ChatColor.silver, go.template_.name);
         void field(T)(string label, T value)
         {
             systemMessage(colored(ChatColor.green, label) ~ "  " ~ colored(ChatColor.sky, format!"%s"(value)));
         }
         field("Entry", go.spawn.entry);
-        field("Model", v.get!GAMEOBJECT_DISPLAYID);
-        field("State", v.get!GAMEOBJECT_STATE);
-        field("Flags", v.get!GAMEOBJECT_FLAGS);
-        field("Dynamic flags", v.get!GAMEOBJECT_DYN_FLAGS);
-        field("Faction", v.get!GAMEOBJECT_FACTION);
-        field("Type", cast(GameObjectType) v.get!GAMEOBJECT_TYPE_ID);
-        const p = go.position, me = player.position;
-        field("Distance", format!"%.2f"(sqrt((p.x - me.x) ^^ 2 + (p.y - me.y) ^^ 2 + (p.z - me.z) ^^ 2)));
-        field("Scale", v.get!OBJECT_FIELD_SCALE_X);
-        field("Rotation", format!"%.3f, %.3f, %.3f, %.3f"(v.get!GAMEOBJECT_ROTATION(0), v.get!GAMEOBJECT_ROTATION(1),
-            v.get!GAMEOBJECT_ROTATION(2), v.get!GAMEOBJECT_ROTATION(3)));
+        field("Model", values.get!GAMEOBJECT_DISPLAYID);
+        field("State", values.get!GAMEOBJECT_STATE);
+        field("Flags", values.get!GAMEOBJECT_FLAGS);
+        field("Dynamic flags", values.get!GAMEOBJECT_DYN_FLAGS);
+        field("Faction", values.get!GAMEOBJECT_FACTION);
+        field("Type", cast(GameObjectType) values.get!GAMEOBJECT_TYPE_ID);
+        field("Distance", format!"%.2f"(distanceToObject(go)));
+        field("Scale", values.get!OBJECT_FIELD_SCALE_X);
+        field("Rotation", format!"%.3f, %.3f, %.3f, %.3f"(values.get!GAMEOBJECT_ROTATION(0),
+            values.get!GAMEOBJECT_ROTATION(1), values.get!GAMEOBJECT_ROTATION(2), values.get!GAMEOBJECT_ROTATION(3)));
         return true;
     }
 
+    /// `.gobject activate`: the selected game object opened, or closed if it is open.
     bool handleGameObjectActivateCommand()
     {
-        auto go = selectedGameObject();
+        auto go = selectedGameObject(true);
         if (go is null)
-        {
-            redSystemMessage("Select a game object first.");
             return true;
-        }
-        auto v = &go.values;
-        if (v.get!GAMEOBJECT_STATE == 1)
+        auto values = &go.values;
+        if (values.get!GAMEOBJECT_STATE == 1)
         {
-            v.set!GAMEOBJECT_STATE(0u);
-            v.set!GAMEOBJECT_FLAGS(v.get!GAMEOBJECT_FLAGS - 1);
+            values.set!GAMEOBJECT_STATE(0u);
+            values.set!GAMEOBJECT_FLAGS(values.get!GAMEOBJECT_FLAGS - 1);
             blueSystemMessage("Gameobject closed.");
         }
         else
         {
-            v.set!GAMEOBJECT_STATE(1u);
-            v.set!GAMEOBJECT_FLAGS(v.get!GAMEOBJECT_FLAGS + 1);
+            values.set!GAMEOBJECT_STATE(1u);
+            values.set!GAMEOBJECT_FLAGS(values.get!GAMEOBJECT_FLAGS + 1);
             blueSystemMessage("Gameobject opened.");
         }
         map.flushGameObject(go);
@@ -356,62 +344,53 @@ private:
         return true;
     }
 
+    /// `.npc delete`: the selected creature's spawn deleted, from the world and the database.
     bool handleDeleteCommand()
     {
-        const guid = player.values.get!UNIT_FIELD_TARGET;
-        if (guid == 0)
-        {
-            systemMessage("No selection.");
+        auto creature = selectionAsCreature();
+        if (creature is null)
             return true;
-        }
-        auto unit = cast(Creature) map.findObject(guid);
-        if (unit is null)
-        {
-            systemMessage("Select a creature first.");
-            return true;
-        }
-        const at = unit.position;
-        if (!context.deleteCreatureSpawn(map, unit))
+        const at = creature.position;
+        if (!context.deleteCreatureSpawn(map, creature))
         {
             redSystemMessage("Could not delete the creature.");
             return true;
         }
-        gmLog(format!"used npc delete, sqlid %u, creature %s, pos %f %f %f"(unit.spawn.guid, unit.template_.name, at.x, at.y,
-            at.z));
-        blueSystemMessage(format!"Deleted creature ID %u"(unit.spawn.guid));
+        gmLog(format!"used npc delete, sqlid %u, creature %s, pos %f %f %f"(creature.spawn.guid,
+            creature.template_.name, at.x, at.y, at.z));
+        blueSystemMessage(format!"Deleted creature ID %u"(creature.spawn.guid));
         return true;
     }
 
-    bool handleGameObjectSpawnCommand(uint entryId = 0, int save = 0)
+    /// `.gobject spawn <entry> [save]`: a game object at the GM's position, saved if `save` is positive.
+    bool handleGameObjectSpawnCommand(uint entry = 0, int save = 0)
     {
-        if (entryId == 0)
+        if (entry == 0)
             return false;
-        if (entryId !in context.data.gameObjectTemplates)
+        if (entry !in context.data.gameObjectTemplates)
         {
-            systemMessage(format!"GameObject Info '%s' Not Found"(entryId));
+            redSystemMessage(format!"GameObject Info '%s' Not Found"(entry));
             return true;
         }
         const at = player.position;
-        auto go = context.spawnGameObjectAt(map, entryId, at, save > 0);
+        auto go = context.spawnGameObjectAt(map, entry, at, save > 0);
         if (go is null)
         {
             redSystemMessage("Could not spawn the game object.");
             return true;
         }
-        systemMessage(format!"Spawning GameObject By Entry '%s'"(entryId));
-        gmLog(format!"spawned gameobject %s, entry %u at %u %f %f %f%s"(go.template_.name, entryId, player.data.map, at.x,
-            at.y, at.z, save > 0 ? ", saved in DB" : ""));
+        greenSystemMessage(format!"Spawning GameObject By Entry '%s'"(entry));
+        gmLog(format!"spawned gameobject %s, entry %u at %u %f %f %f%s"(go.template_.name, entry, player.data.map,
+            at.x, at.y, at.z, save > 0 ? ", saved in DB" : ""));
         return true;
     }
 
+    /// `.gobject delete`: the selected game object's spawn deleted.
     bool handleGameObjectDeleteCommand()
     {
-        auto go = selectedGameObject();
+        auto go = selectedGameObject(true);
         if (go is null)
-        {
-            redSystemMessage("Select a game object first.");
             return true;
-        }
         if (!context.deleteGameObjectSpawn(map, go))
         {
             redSystemMessage("Could not delete the game object.");
@@ -422,14 +401,12 @@ private:
         return true;
     }
 
+    /// `.gobject enable`: the selected game object's dynamic flag toggled.
     bool handleGameObjectEnableCommand()
     {
-        auto go = selectedGameObject();
+        auto go = selectedGameObject(true);
         if (go is null)
-        {
-            redSystemMessage("Select a game object first.");
             return true;
-        }
         if (go.values.get!GAMEOBJECT_DYN_FLAGS == 1)
         {
             go.values.set!GAMEOBJECT_DYN_FLAGS(0u);
@@ -445,14 +422,12 @@ private:
         return true;
     }
 
+    /// `.gobject scale [scale]`: the selected game object's size (1 by default), not saved.
     bool handleGameObjectScaleCommand(float scale = 0)
     {
-        auto go = selectedGameObject();
+        auto go = selectedGameObject(true);
         if (go is null)
-        {
-            redSystemMessage("Select a game object first.");
             return true;
-        }
         if (!scale)
             scale = 1;
         go.values.set!OBJECT_FIELD_SCALE_X(scale);
@@ -464,9 +439,10 @@ private:
         return true;
     }
 
+    /// `.gobject animprogress <progress>`.
     bool handleGameObjectAnimProgressCommand(uint progress = 0)
     {
-        auto go = selectedGameObject();
+        auto go = selectedGameObject(false);
         if (go is null)
             return false;
         go.values.set!GAMEOBJECT_ANIMPROGRESS(progress);
@@ -475,16 +451,14 @@ private:
         return true;
     }
 
+    /// `.gobject move`: the selected game object's spawn moved to the GM's position.
     bool handleGameObjectMoveCommand()
     {
         import dmangos.world.gameobject : GameObjectSpawn;
 
-        auto go = selectedGameObject();
+        auto go = selectedGameObject(true);
         if (go is null)
-        {
-            redSystemMessage("Select a game object first.");
             return true;
-        }
         GameObjectSpawn changed = go.spawn;
         const at = player.position;
         changed.x = at.x;
@@ -498,33 +472,32 @@ private:
         return true;
     }
 
+    /// `.gobject rotate <x|y|o> [degrees]`: the selected game object turned about an axis, or to the GM's facing.
     bool handleGameObjectRotateCommand(string axis = null, float degrees = 0)
     {
+        import std.ascii : toLower;
         import std.math : cos, sin, PI;
         import dmangos.world.gameobject : GameObjectSpawn;
 
         if (axis.length == 0)
             return false;
-        auto go = selectedGameObject();
+        auto go = selectedGameObject(true);
         if (go is null)
-        {
-            redSystemMessage("Select a game object first.");
             return true;
-        }
-        const rad = degrees * (cast(float) PI / 180.0f);
+        const radians = degrees * (cast(float) PI / 180.0f);
         GameObjectSpawn changed = go.spawn;
-        switch (axis[0] | 0x20) // tolower
+        switch (axis[0].toLower)
         {
         case 'x':
-            changed.rotation[0] += rad;
+            changed.rotation[0] += radians;
             break;
         case 'y':
-            changed.rotation[1] += rad;
+            changed.rotation[1] += radians;
             break;
         case 'o':
-            const o = player.position.orientation;
-            changed.rotation[2] = sin(o / 2);
-            changed.rotation[3] = cos(o / 2);
+            const facing = player.position.orientation;
+            changed.rotation[2] = sin(facing / 2);
+            changed.rotation[3] = cos(facing / 2);
             break;
         default:
             redSystemMessage("Choose an axis: x, y, or o.");
@@ -537,6 +510,7 @@ private:
         return true;
     }
 
+    /// `.npc come`: the selected creature walks to the GM.
     bool handleNpcComeCommand()
     {
         auto creature = selectedCreature(true);
@@ -547,6 +521,7 @@ private:
         return true;
     }
 
+    /// `.npc possess`: the GM controls the selected creature, as the client controls a charmed one.
     bool handleNpcPossessCommand()
     {
         auto creature = selectedCreature(true);
@@ -562,18 +537,19 @@ private:
         return true;
     }
 
+    /// `.npc unpossess`: the possessed creature let go.
     bool handleNpcUnPossessCommand()
     {
         releaseCharmForHandoff();
         return true;
     }
 
+    /// `.npc return`: the selected creature's fight forgotten, or a walk back to its spawn point.
     bool handleNpcReturnCommand()
     {
         auto creature = selectedCreature(false);
         if (creature is null)
             return true;
-        // Its fight forgotten, back to its spawn point.
         if (creature.ai !is null && creature.ai.inCombat)
         {
             creature.ai.bind(map);
@@ -581,8 +557,8 @@ private:
         }
         else
         {
-            const s = creature.spawn;
-            npcWalkTo(creature, Position(s.x, s.y, s.z, s.orientation));
+            const spawn = creature.spawn;
+            npcWalkTo(creature, Position(spawn.x, spawn.y, spawn.z, spawn.orientation));
         }
         gmLog(format!"returned NPC %s, sqlid %u"(creature.template_.name, creature.spawn.guid));
         return true;
@@ -603,54 +579,58 @@ private:
         map.wake(creature.guid);
     }
 
+    /// `.character resetreputation`: every standing of the selected player back to its start.
     bool handleResetReputationCommand()
     {
-        auto plr = selectedCharacter(false);
-        if (plr is null)
+        auto target = selectedCharacter(false);
+        if (target is null)
         {
-            systemMessage("Select a player or yourself first.");
+            redSystemMessage("Select a player or yourself first.");
             return true;
         }
-        if (plr.player.reputation !is null) // every standing back to its start
+        if (target.player.reputation !is null)
         {
-            plr.player.reputation.initialize();
-            plr.saveReputation();
+            target.player.reputation.initialize();
+            target.saveReputation();
         }
-        systemMessage("Done. Relog for changes to take effect.");
-        gmLog(format!"used reset reputation for %s"(plr.player.data.name));
+        greenSystemMessage("Done. Relog for changes to take effect.");
+        gmLog(format!"used reset reputation for %s"(target.player.data.name));
         return true;
     }
 
+    /// `.character repairitems`: the selected player's items back to full durability.
     bool handleRepairItemsCommand()
     {
-        auto plr = selectedCharacter(false);
-        if (plr is null)
+        auto target = selectedCharacter(false);
+        if (target is null)
             return false;
-        foreach (item; plr.player.inventory.all()) // back to full durability
+        foreach (item; target.player.inventory.all())
         {
             if (item.durability == item.maxDurability)
                 continue;
             if (item.durability == 0 && item.isEquipped)
-                plr.player.inventory.equipmentChanged = true; // a broken worn item gives its stats again
+                target.player.inventory.equipmentChanged = true; // a broken worn item gives its stats again
             item.values.set!ITEM_FIELD_DURABILITY(item.maxDurability);
-            plr.player.inventory.setState(item, ItemState.changed);
+            target.player.inventory.setState(item, ItemState.changed);
         }
-        plr.flushInventory();
-        systemMessage("Items Repaired");
+        target.flushInventory();
+        greenSystemMessage("Items Repaired");
         return true;
     }
 
+    /// `.demorph`: the selected player (or the GM) back to its own model.
     bool handleDeMorphCommand()
     {
         auto target = selectedCharacter(true);
         if (target is null)
             target = this;
-        auto values = &target.player.values; // back to its own model
+        auto values = &target.player.values;
         values.set!UNIT_FIELD_DISPLAYID(values.get!UNIT_FIELD_NATIVEDISPLAYID);
         target.flushPlayerChanges();
         return true;
     }
 
+    /// `.mount <model>`: the selected player or creature mounted on a model.
     bool handleMountCommand(uint modelId = 0)
     {
         if (modelId == 0)
@@ -658,22 +638,22 @@ private:
             redSystemMessage("No model specified");
             return true;
         }
-        auto plr = selectedCharacter(false);
-        auto creature = plr is null ? selectedCreature(false) : null;
-        if (plr is null && creature is null)
+        auto target = selectedCharacter(false);
+        auto creature = target is null ? selectedCreature(false) : null;
+        if (target is null && creature is null)
         {
             redSystemMessage("No target found.");
             return true;
         }
-        auto values = plr !is null ? &plr.player.values : &creature.values;
+        auto values = target !is null ? &target.player.values : &creature.values;
         if (values.get!UNIT_FIELD_MOUNTDISPLAYID != 0)
         {
             redSystemMessage("Target is already mounted.");
             return true;
         }
         values.set!UNIT_FIELD_MOUNTDISPLAYID(modelId);
-        if (plr !is null)
-            plr.flushPlayerChanges();
+        if (target !is null)
+            target.flushPlayerChanges();
         else
             map.flushObjectChanges(creature);
         blueSystemMessage(format!"Now mounted with model %d."(modelId));
@@ -685,124 +665,141 @@ private:
     // Killing, reviving and casting
     // -----------------------------------------------------------------------
 
+    /// `.kill`: the selected player killed outright, or the selected creature by Death Touch.
     bool handleKillCommand()
     {
-        import dmangos.world.creature : Creature;
-        import dmangos.world.spellcast : SpellTargets, TargetFlags;
-
+        enum uint deathTouch = 5;
         const guid = player.values.get!UNIT_FIELD_TARGET;
-        auto plr = cast(Character) map.find(guid);
-        auto creature = plr is null ? cast(Creature) map.findObject(guid) : null;
-        if (plr is null && creature is null)
+        if (auto target = cast(Character) map.find(guid))
+        {
+            gmLog("used kill command on PLAYER " ~ target.player.data.name);
+            // Killed outright, not by damage: god mode does not stop it.
+            target.killedByGm(player.data.name);
+            return true;
+        }
+        auto creature = cast(Creature) map.findObject(guid);
+        if (creature is null)
         {
             redSystemMessage("Select a unit first.");
             return true;
         }
-        if (plr !is null)
-        {
-            gmLog("used kill command on PLAYER " ~ plr.player.data.name);
-            // Killed outright, not by damage: god mode does not stop it.
-            plr.killedByGm(player.data.name);
-            return true;
-        }
         gmLog(format!"used kill command on CREATURE %u [%s], sqlid %u%s"(creature.spawn.entry, creature.template_.name,
             creature.spawn.guid, context.groups.of(player.guid) !is null ? ", in group" : ""));
-        // Cast insta-kill (Death Touch).
-        const deathTouch = context.data.spells.spell(5);
-        if (deathTouch is null)
+        const spell = context.data.spells.spell(deathTouch);
+        if (spell is null)
             return false;
-        castSpell(deathTouch, SpellTargets(TargetFlags.unit, creature.guid), true, 0);
+        castSpell(spell, SpellTargets(TargetFlags.unit, creature.guid), true, 0);
         return true;
     }
 
-    bool handleKillByPlrCommand(Rest args = Rest.init)
+    /// `.killplr <name>`: the named player killed, on any node.
+    bool handleKillByPlrCommand(Rest name = Rest.init)
     {
-        auto found = context.onlinePlayer(args);
+        auto found = context.onlinePlayer(name);
         if (found is null)
         {
-            if (const remote = context.remotePlayer(args))
-                if (gmElsewhere(args, GmRemoteOp.kill, args))
+            if (const remote = context.remotePlayer(name))
+                if (gmElsewhere(name, GmRemoteOp.kill, name))
                 {
                     gmLog(format!"remote killed %s (Name: %s)"(remote.entry.guid, remote.entry.name));
                     return true;
                 }
-            redSystemMessage(format!"Player %s is not online or does not exist."(args));
+            redSystemMessage(format!"Player %s is not online or does not exist."(name));
             return true;
         }
-        auto plr = sessionOf(found);
-        const wasAlive = plr.player.deathState == DeathState.alive;
-        plr.killedByName(gmSink, player.data.name, args);
+        auto target = sessionOf(found);
+        const wasAlive = target.player.deathState == DeathState.alive;
+        target.killedByName(gmSink, player.data.name, name);
         if (wasAlive)
-            gmLog(format!"remote killed %s (Name: %s)"(plr.player.guid, plr.player.data.name));
+            gmLog(format!"remote killed %s (Name: %s)"(target.player.guid, target.player.data.name));
         return true;
     }
 
-    bool handleReviveByNameCommand(Rest args = Rest.init)
+    /// `.reviveplr <name>`: the named player alive again, on any node.
+    bool handleReviveByNameCommand(Rest name = Rest.init)
     {
-        auto found = context.onlinePlayer(args);
+        auto found = context.onlinePlayer(name);
         if (found is null)
         {
-            if (context.remotePlayer(args) !is null && gmElsewhere(args, GmRemoteOp.revive, args))
+            if (context.remotePlayer(name) !is null && gmElsewhere(name, GmRemoteOp.revive, name))
             {
-                gmLog("revived player " ~ args);
+                gmLog("revived player " ~ name);
                 return true;
             }
-            redSystemMessage(format!"Could not find player %s."(args));
+            redSystemMessage(format!"Could not find player %s."(name));
             return true;
         }
-        auto plr = sessionOf(found);
-        const wasDead = plr.player.deathState != DeathState.alive;
-        plr.revivedByName(gmSink, args);
+        auto target = sessionOf(found);
+        const wasDead = target.player.deathState != DeathState.alive;
+        target.revivedByName(gmSink, name);
         if (wasDead)
-            gmLog("revived player " ~ args);
+            gmLog("revived player " ~ name);
         return true;
     }
 
-    /// `selectedCharacter(false)`, else `selectedCreature(false)`: the cast commands' target, or null after the message.
+    /// The cast commands' target: the selected player, else the selected creature; null after a message.
     Object castTarget()
     {
-        if (auto plr = selectedCharacter(false))
-            return plr;
+        if (auto character = selectedCharacter(false))
+            return character;
         if (auto creature = selectedCreature(false))
             return creature;
         redSystemMessage("Must select a char or creature.");
         return null;
     }
 
-    /// `atol`: the number its text starts with (0 if none), and its spell; null after "Invalid spell id!".
-    const(SpellInfo)* spellNamed(string args, out uint id)
+    /// The spell whose id `text` starts with (`numberAtStart`), and the id; null after "Invalid spell id!".
+    const(SpellInfo)* spellNamed(string text, out uint id)
     {
-        import std.ascii : isDigit;
-        import std.conv : to;
-
-        size_t n;
-        while (n < args.length && n < 9 && args[n].isDigit)
-            ++n;
-        id = n ? args[0 .. n].to!uint : 0;
+        id = numberAtStart(text);
         const spell = context.data.spells.spell(id);
         if (spell is null)
             redSystemMessage("Invalid spell id!");
         return spell;
     }
 
-    /// The GM log line for a cast command at `target`.
-    void logCast(string what, uint spellId, Object target, bool self)
+    /// The guid of a cast command's target.
+    ulong guidOf(Object target)
     {
-        import dmangos.world.creature : Creature;
+        if (auto character = cast(Character) target)
+            return character.player.guid;
+        return (cast(Creature) target).guid;
+    }
 
-        if (auto plr = cast(Character) target)
+    /// The GM log line for a cast command at `target` (none for the GM's own casts at itself).
+    void logCast(string action, uint spellId, Object target, bool self)
+    {
+        if (auto character = cast(Character) target)
         {
             if (!self)
-                gmLog(format!"%s %d on PLAYER %s"(what, spellId, plr.player.data.name));
+                gmLog(format!"%s %d on PLAYER %s"(action, spellId, character.player.data.name));
         }
         else if (auto creature = cast(Creature) target)
-            gmLog(format!"%s %d on CREATURE %u [%s], sqlid %u"(what, spellId, creature.spawn.entry,
+            gmLog(format!"%s %d on CREATURE %u [%s], sqlid %u"(action, spellId, creature.spawn.entry,
                 creature.template_.name, creature.spawn.guid));
     }
 
+    /// `.debug castspell <spell>`: the GM casts a spell at the selected player or creature.
     bool handleCastSpellCommand(Rest args = Rest.init)
     {
-        import dmangos.world.spellcast : SpellTargets, TargetFlags;
+        auto target = castTarget();
+        if (target is null)
+            return false;
+        uint id;
+        const spell = spellNamed(args, id);
+        if (spell is null)
+            return false;
+        blueSystemMessage(format!"Casting spell %d on target."(id));
+        castSpell(spell, SpellTargets(TargetFlags.unit, guidOf(target)), false, 0);
+        logCast("casted spell", id, target, target is this);
+        return true;
+    }
+
+    /// `.debug castspellne <spell>`: the look of a cast and nothing else, for this GM only (in the 1.12 client's
+    /// layout).
+    bool handleCastSpellPreviewCommand(Rest args = Rest.init)
+    {
+        import dmangos.world.spellcast : spellGoPacket, spellStartPacket, SpellMissInfo, TargetResult;
 
         auto target = castTarget();
         if (target is null)
@@ -813,38 +810,17 @@ private:
             return false;
         blueSystemMessage(format!"Casting spell %d on target."(id));
         const guid = guidOf(target);
-        castSpell(spell, SpellTargets(TargetFlags.unit, guid), false, 0);
-        logCast("casted spell", id, target, target is this);
-        return true;
-    }
-
-    bool handleCastSpellPreviewCommand(Rest args = Rest.init)
-    {
-        auto target = castTarget();
-        if (target is null)
-            return false;
-        uint id;
-        const spell = spellNamed(args, id);
-        if (spell is null)
-            return false;
-        blueSystemMessage(format!"Casting spell %d on target."(id));
-        // The look of a cast and nothing else, for this GM only (in the 1.12 client's layout).
-        import dmangos.world.spellcast : spellGoPacket, spellStartPacket, SpellMissInfo, SpellTargets, TargetFlags,
-            TargetResult;
-
-        const targets = SpellTargets(TargetFlags.unit, guidOf(target));
+        const targets = SpellTargets(TargetFlags.unit, guid);
         deliver(Opcode.SMSG_SPELL_START, spellStartPacket(player.guid, id, 0, targets));
-        deliver(Opcode.SMSG_SPELL_GO, spellGoPacket(player.guid, id, [TargetResult(guidOf(target), SpellMissInfo.none)],
+        deliver(Opcode.SMSG_SPELL_GO, spellGoPacket(player.guid, id, [TargetResult(guid, SpellMissInfo.none)],
             targets));
         logCast("casted spell", id, target, target is this);
         return true;
     }
 
+    /// `.debug castself <spell>`: the selected player or creature casts a spell at itself.
     bool handleCastSelfCommand(Rest args = Rest.init)
     {
-        import dmangos.world.creature : Creature;
-        import dmangos.world.spellcast : SpellTargets, TargetFlags;
-
         auto target = castTarget();
         if (target is null)
             return false;
@@ -853,45 +829,33 @@ private:
         if (spell is null)
             return false;
         blueSystemMessage(format!"Target is casting spell %d on himself."(id));
-        if (auto plr = cast(Character) target)
-            plr.castSpell(spell, SpellTargets(TargetFlags.unit, plr.player.guid), false, 0);
+        if (auto character = cast(Character) target)
+            character.castSpell(spell, SpellTargets(TargetFlags.unit, character.player.guid), false, 0);
         else if (auto creature = cast(Creature) target)
             creature.ai.castFromCommand(spell, map);
         logCast("used castself with spell", id, target, target is this);
         return true;
     }
 
-    /// The guid of a cast command's target.
-    ulong guidOf(Object target)
-    {
-        import dmangos.world.creature : Creature;
-
-        if (auto plr = cast(Character) target)
-            return plr.player.guid;
-        return (cast(Creature) target).guid;
-    }
-
     /**
-     * `.invisible`: invisible and invincible, or neither again (ArcEmu's `m_isGmInvisible`, `m_invisible`,
-     * `bInvincible`): only game masters with their tag on and the player's group see it, creatures leave it
-     * alone, its friends are told it went offline.
+     * `.invisible`: invisible and invincible, or neither again: only game masters with their tag on and the
+     * player's group see it, creatures leave it alone, its friends are told it went offline.
      */
     bool handleInvisibleCommand()
     {
-        string message = "Invisibility and Invincibility are now ";
         const on = !player.gmInvisible;
         player.gmInvisible = on;
         invincible = on;
         announceToFriends(!on);
-        message ~= on ? " ON." : " OFF."; // ArcEmu's `"%s ON."` after the space already there
-        message ~= " You may have to leave and re-enter this zone for changes to take effect.";
         map.refreshVisibility(this);
-        greenSystemMessage(message);
+        // Two spaces before ON or OFF, as players have always seen it.
+        greenSystemMessage(format!("Invisibility and Invincibility are now  %s. You may have to leave and re-enter "
+            ~ "this zone for changes to take effect.")(on ? "ON" : "OFF"));
         return true;
     }
 
     /// `.guild create <name>`: a guild of the selected player, who leads it alone.
-    bool createGuildCommand(Rest name = Rest.init)
+    bool handleGuildCreateCommand(Rest name = Rest.init)
     {
         import std.ascii : isAlpha;
 
@@ -907,13 +871,13 @@ private:
         }
         if (name.length > 75)
         {
-            systemMessage(format!"The name was too long by %ui"(name.length - 75)); // ArcEmu's format, its "i" too
+            redSystemMessage(format!"The name is %s characters too long."(name.length - 75));
             return true;
         }
         foreach (c; name)
             if (!isAlpha(c) && c != ' ')
             {
-                systemMessage("Error, name can only contain chars A-Z and a-z.");
+                redSystemMessage("Error, name can only contain chars A-Z and a-z.");
                 return true;
             }
         if (context.guilds.named(name) !is null)
@@ -927,43 +891,38 @@ private:
         return true;
     }
 
+    /// `.invincible`: creatures leave the selected player (or the GM) alone, or no longer.
     bool handleInvincibleCommand()
     {
-        auto chr = selectedCharacter(true);
-        string message;
-        if (chr !is null)
+        auto target = selectedCharacter(true);
+        if (target is null)
         {
-            chr.invincible = !chr.invincible;
-            message = "Invincibility is now " ~ (chr.invincible
-                ? "ON. You may have to leave and re-enter this zone for changes to take effect."
-                : "OFF. Exit and re-enter this zone for this change to take effect.");
+            redSystemMessage("Select a player or yourself first.");
+            return true;
         }
-        else
-            message = "Select a player or yourself first.";
-        if (chr !is null && chr !is this)
-            gmLog("toggled invincibility on " ~ chr.player.data.name);
-        systemMessage(message.length > 99 ? message[0 .. 99] : message); // at most 99 bytes
+        target.invincible = !target.invincible;
+        if (target !is this)
+            gmLog("toggled invincibility on " ~ target.player.data.name);
+        greenSystemMessage("Invincibility is now " ~ (target.invincible
+            ? "ON. You may have to leave and re-enter this zone for changes to take effect."
+            : "OFF. Exit and re-enter this zone for this change to take effect."));
         return true;
     }
 
+    /// `.npc flags <flags>`: the selected creature's NPC flags until it respawns (the template is not changed).
     bool handleNpcFlagCommand(uint flags)
     {
-        const guid = player.values.get!UNIT_FIELD_TARGET;
-        if (guid == 0)
+        if (player.values.get!UNIT_FIELD_TARGET == 0)
         {
-            systemMessage("No selection.");
+            redSystemMessage("No selection.");
             return true;
         }
-        auto creature = selectedCreature(false);
+        auto creature = selectedCreature(true);
         if (creature is null)
-        {
-            systemMessage("Select a creature first.");
             return true;
-        }
         creature.values.set!UNIT_NPC_FLAGS(flags);
         map.flushObjectChanges(creature);
-        // Not saved: npc flags are kept in creature_template, which stays as it is.
-        systemMessage("Value saved, you may need to rejoin or clean your client cache.");
+        greenSystemMessage("Value saved, you may need to rejoin or clean your client cache.");
         gmLog(format!"changed npc flags of creature %u [%s] to %u"(creature.template_.entry, creature.template_.name,
             flags));
         return true;
@@ -980,27 +939,30 @@ private:
                 monsterChatMessage(type, creature.guid, creature.template_.name, text));
             return true;
         }
-        if (auto plr = selectedCharacter(false))
+        if (auto speaker = selectedCharacter(false))
         {
-            const body_ = chatMessage(yell ? ChatType.CHAT_MSG_YELL : ChatType.CHAT_MSG_SAY, Language.LANG_UNIVERSAL,
-                plr.player.guid, text);
-            plr.map.sendToWatchers(plr, Opcode.SMSG_MESSAGECHAT, body_, true);
+            const message = chatMessage(yell ? ChatType.CHAT_MSG_YELL : ChatType.CHAT_MSG_SAY,
+                Language.LANG_UNIVERSAL, speaker.player.guid, text);
+            speaker.map.sendToWatchers(speaker, Opcode.SMSG_MESSAGECHAT, message, true);
             return true;
         }
         redSystemMessage("Please select a creature or player before using this command.");
         return true;
     }
 
+    /// `.npc say <text>`.
     bool handleMonsterSayCommand(Rest text = Rest.init)
     {
         return monsterChat(text, false);
     }
 
+    /// `.npc yell <text>`.
     bool handleMonsterYellCommand(Rest text = Rest.init)
     {
         return monsterChat(text, true);
     }
 }
+
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -1024,6 +986,7 @@ unittest
     import dmangos.world.packets : ClientGuid;
     import dmangos.world.player : DeathState, Player;
     import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.spellids : DamageClass;
     import dmangos.world.testclient;
     import dmangos.world.testdata;
     import dmangos.world.updatefields;
@@ -1058,16 +1021,16 @@ unittest
     // `.npc vendoradditem` and `.npc vendorremoveitem` on the innkeeper.
     gm.write(Opcode.CMSG_SET_SELECTION, ClientGuid(keeper.guid));
     gm.say(format!".npc vendoradditem %s"(itemShirt));
-    assert(systemMessages(gm.read()) == ["You need to specify an amount."]);
+    assert(systemMessages(gm.read()) == [ChatColor.softRed ~ "You need to specify an amount.|r"]);
     gm.say(format!".npc vendoradditem %s 1 5"(itemShirt));
-    assert(systemMessages(gm.read()) == ["You've entered invalid extended cost id."]);
+    assert(systemMessages(gm.read()) == [ChatColor.softRed ~ "You've entered invalid extended cost id.|r"]);
     gm.say(format!".npc vendoradditem %s 1"(itemShirt));
     assert(systemMessages(gm.read()).length == 1 && db.vendorRows.canFind([creatureInnkeeper, itemShirt]));
     assert(context.data.npcs.vendors[creatureInnkeeper].canFind!(v => v.item == itemShirt));
     gm.say(format!".npc vendorremoveitem %s"(itemShirt));
     assert(systemMessages(gm.read())[0].canFind("Deleted from list") && !db.vendorRows.canFind([creatureInnkeeper, itemShirt]));
     gm.say(format!".npc vendorremoveitem %s"(itemShirt));
-    assert(systemMessages(gm.read()) == [format!"Item '%s' Not Found in List."(itemShirt)]);
+    assert(systemMessages(gm.read()) == [ChatColor.softRed ~ format!"Item '%s' Not Found in List.|r"(itemShirt)]);
 
     // A creature: Death Touch.
     gm.write(Opcode.CMSG_SET_SELECTION, ClientGuid(keeper.guid));
@@ -1227,7 +1190,7 @@ unittest
     GameObjectTemplate chair = {entry: 9010, type: GameObjectType.chair, displayId: 1, name: "Chair"};
     context.data.gameObjectTemplates[9010] = chair;
     gm.say(".gobject spawn 9010 1");
-    assert(systemMessages(gm.read()) == ["Spawning GameObject By Entry '9010'"]);
+    assert(systemMessages(gm.read()) == [ChatColor.green ~ "Spawning GameObject By Entry '9010'|r"]);
     assert(db.gameObjectSpawnRows.length == 1);
     gm.say(".gobject select");
     assert(systemMessages(gm.read())[0].canFind("[ Chair ]"));

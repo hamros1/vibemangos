@@ -4,7 +4,7 @@ module dmangos.world.gmaccess;
 public import dmangos.auth.staffroles : GmAccess;
 import dmangos.world.database : WorldDatabase;
 
-/// A policy read failure denies staff access.
+/// The account's staff access; none if the database cannot be read.
 GmAccess readGmAccess(WorldDatabase database, uint accountId)
 {
     import dmangos.log : warning;
@@ -19,13 +19,16 @@ GmAccess readGmAccess(WorldDatabase database, uint accountId)
     }
 }
 
+/// `.access`: one's own roles and capabilities, and roles granted to and revoked from accounts.
 mixin template AccessCommands()
 {
     import std.algorithm.searching : canFind;
     import std.array : join;
     import std.format : format;
+    import dmangos.mysql : DatabaseException;
 
 private:
+    /// `.access status`: this player's roles and capabilities.
     bool handleGmAccessInfoCommand()
     {
         greenSystemMessage("Staff access");
@@ -40,37 +43,41 @@ private:
         return true;
     }
 
+    /// `.access grant <account> <role>`.
     bool handleGmAccessGrantCommand(string username, string role)
     {
         return changeGmRole(username, role, true);
     }
 
+    /// `.access revoke <account> <role>`.
     bool handleGmAccessRevokeCommand(string username, string role)
     {
         return changeGmRole(username, role, false);
     }
 
-    private bool changeGmRole(string username, string role, bool grant)
+    /// Grants (or revokes) `role` for the account `username` in the login database.
+    bool changeGmRole(string username, string role, bool grant)
     {
-        import dmangos.mysql : DatabaseException;
-
         try
         {
             const target = context.database.findAccount(username);
             if (target.isNull)
-                redSystemMessage(format!"Account %s was not found."(username));
-            else if (!context.canWrite() || !context.database.changeGmRole(target.get.id, role, grant))
-                redSystemMessage(format!"Could not %s %s for %s."(grant ? "grant" : "revoke", role, target.get.username));
-            else
             {
-                gmLog(format!"role %s %s for %s"(role, grant ? "granted" : "revoked", target.get.username));
-                greenSystemMessage(format!"Role %s %s for %s."(role, grant ? "granted" : "revoked", target.get.username));
+                redSystemMessage(format!"Account %s was not found."(username));
+                return true;
             }
+            const name = target.get.username;
+            if (!context.canWrite() || !context.database.changeGmRole(target.get.id, role, grant))
+            {
+                redSystemMessage(format!"Could not %s %s for %s."(grant ? "grant" : "revoke", role, name));
+                return true;
+            }
+            const done = grant ? "granted" : "revoked";
+            gmLog(format!"role %s %s for %s"(role, done, name));
+            greenSystemMessage(format!"Role %s %s for %s."(role, done, name));
         }
         catch (DatabaseException)
-        {
             redSystemMessage("The login database could not update the role.");
-        }
         return true;
     }
 }

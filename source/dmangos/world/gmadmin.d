@@ -1,54 +1,87 @@
 /// Account administration, server operations, and shared character management.
 module dmangos.world.gmadmin;
 
+import core.time : MonoTime;
+
+/// The number `text` starts with, read as `atoi` reads it (at most nine digits); 0 if none.
+package uint numberAtStart(const(char)[] text) pure nothrow @nogc @safe
+{
+    import std.ascii : isDigit;
+
+    uint number;
+    foreach (c; text[0 .. text.length < 9 ? text.length : 9])
+    {
+        if (!c.isDigit)
+            break;
+        number = number * 10 + (c - '0');
+    }
+    return number;
+}
+
+///
+unittest
+{
+    assert(numberAtStart("95900 rest") == 95_900 && numberAtStart("x1") == 0 && numberAtStart("") == 0);
+    assert(numberAtStart("1234567890") == 123_456_789);
+}
+
+/// The milliseconds since `started`, for the commands that say how long they took.
+package long msecsSince(MonoTime started)
+{
+    return (MonoTime.currTime - started).total!"msecs";
+}
+
 /// See the module documentation.
 mixin template AdminCommands()
 {
     import core.time : MonoTime, seconds;
-    import dmangos.world.database : TicketRecord;
     import std.algorithm.comparison : clamp, min;
     import std.algorithm.searching : canFind, endsWith, findSplitBefore;
     import std.algorithm.sorting : sort;
-    import std.conv : ConvException, to;
     import std.format : format;
-    import std.string : indexOf;
+    import std.string : capitalize, indexOf;
     import std.uni : sicmp, toLower;
     import dmangos.auth.accounts : AccountLevel;
-    import dmangos.log;
-    import dmangos.world.commands;
+    import dmangos.log : error, info, warning;
+    import dmangos.script.api : EntityRef;
+    import dmangos.world.commands : ChatColor, colored, dateTimeString, durationString,
+        ctimeString, parseDuration, isIPv4Address, Nullable, Rest, secondsPerDay, secondsPerHour, secondsPerMinute;
     import dmangos.world.context : ShutdownTimer;
     import dmangos.world.database : LookupResult, LookupTable;
-    import dmangos.world.defines : exploredZonesSize, PlayerClass;
-    import dmangos.world.gmadmin;
+    import dmangos.world.gmadmin : msecsSince, numberAtStart;
     import dmangos.world.gmtargets : GmRemoteOp;
     import dmangos.world.map : packetBody;
     import dmangos.world.movement : Position;
-    import dmangos.world.player : DeathState;
     import dmangos.world.names : normalizedName;
-    import dmangos.world.opcodes;
-    import dmangos.world.packets;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.packets : ServerPlaySound, ServerSummonRequest;
+    import dmangos.world.player : DeathState;
+    import dmangos.world.playercreate : NewCharacter;
     import dmangos.world.spells : SpellEffect;
     import dmangos.world.updatefields;
 
 private:
+    /// `.pet addspell <spell>`: the selected player's pet learns a spell.
     bool handleAddPetSpellCommand(uint spell)
     {
         return petSpellCommand(spell, true);
     }
 
+    /// `.pet removespell <spell>`: the selected player's pet forgets a spell.
     bool handleRemovePetSpellCommand(uint spell)
     {
         return petSpellCommand(spell, false);
     }
 
-    private bool petSpellCommand(uint spell, bool teach)
+    /// The selected player's pet learns (`teach`) or forgets a spell.
+    bool petSpellCommand(uint spell, bool teach)
     {
-        auto plr = selectedCharacter(false);
-        if (plr is null)
+        auto target = selectedCharacter(false);
+        if (target is null)
             return false;
-        if (plr.ownPet is null)
+        if (target.ownPet is null)
         {
-            redSystemMessage(format!"%s has no pet."(plr.player.data.name));
+            redSystemMessage(format!"%s has no pet."(target.player.data.name));
             return true;
         }
         if (context.data.spells.spell(spell) is null)
@@ -56,73 +89,79 @@ private:
             redSystemMessage(format!"Unknown spell ID %s."(spell));
             return true;
         }
-        plr.petLearnsSpell(spell, teach);
-        greenSystemMessage(format!"%s's pet %s spell %s."(plr.player.data.name, teach ? "learned" : "forgot", spell));
+        target.petLearnsSpell(spell, teach);
+        greenSystemMessage(format!"%s's pet %s spell %s."(target.player.data.name, teach ? "learned" : "forgot",
+            spell));
         return true;
     }
 
     /// `.pet renamepet <name>`: the player's own pet is renamed.
-    bool handleRenamePetCommand(Rest args = Rest.init)
+    bool handleRenamePetCommand(Rest name = Rest.init)
     {
         if (ownPet is null)
         {
             redSystemMessage("You have no pet.");
             return true;
         }
-        if (args.length < 1)
+        if (name.length < 1)
         {
             redSystemMessage("You must specify a name.");
             return true;
         }
-        greenSystemMessage(format!"Renamed your pet to %s."(args.text));
-        renamePetTo(args.text);
+        greenSystemMessage(format!"Renamed your pet to %s."(name.text));
+        renamePetTo(name.text);
         return true;
     }
 
+    /// `.modify level <level>`: the selected player's level.
     bool handleModifyLevelCommand(uint level = 0)
     {
-        auto plr = selectedCharacter(true);
-        if (plr is null)
+        auto target = selectedCharacter(true);
+        if (target is null)
             return true;
         if (level == 0 || level > context.config.maxPlayerLevel)
         {
             redSystemMessage("Enter a level within the server’s level range.");
             return true;
         }
-        blueSystemMessage(format!"Setting the level of %s to %u."(plr.player.data.name, level));
-        plr.greenSystemMessage(format!"%s set your level to %u."(player.data.name, level));
-        gmLog(format!"used modify level on %s, level %u"(plr.player.data.name, level));
-        plr.applyLevel(level);
+        blueSystemMessage(format!"Setting the level of %s to %u."(target.player.data.name, level));
+        target.greenSystemMessage(format!"%s set your level to %u."(player.data.name, level));
+        gmLog(format!"used modify level on %s, level %u"(target.player.data.name, level));
+        target.applyLevel(level);
         return true;
     }
 
+    /// `.modify gender [0|1]`: the selected player's gender, and its model with it; toggled if none is given.
     bool handleGenderChangeCommand(Nullable!int requested)
     {
         auto found = context.onlinePlayer(player.values.get!UNIT_FIELD_TARGET);
         if (found is null)
         {
-            systemMessage("Select a player first.");
+            redSystemMessage("Select a player first.");
             return true;
         }
         auto target = sessionOf(found);
-        auto p = target.player;
-        const displayId = p.values.get!UNIT_FIELD_NATIVEDISPLAYID;
-        const uint gender = requested.isNull ? p.data.gender == 1 ? 0 : 1 : clamp(requested.get, 0, 1);
-        p.data.gender = cast(ubyte) gender;
-        p.values.setByte!UNIT_FIELD_BYTES_0(2, cast(ubyte) gender);
-        p.values.setHalf!PLAYER_BYTES_3(0, cast(ushort) gender);
+        auto character = target.player;
+        const displayId = character.values.get!UNIT_FIELD_NATIVEDISPLAYID;
+        const uint gender = requested.isNull ? (character.data.gender == 1 ? 0 : 1) : clamp(requested.get, 0, 1);
+        character.data.gender = cast(ubyte) gender;
+        character.values.setByte!UNIT_FIELD_BYTES_0(2, cast(ubyte) gender);
+        character.values.setHalf!PLAYER_BYTES_3(0, cast(ushort) gender);
         // A race's female model id follows its male one.
         const display = gender == 0 ? displayId - 1 : displayId + 1;
-        p.values.set!UNIT_FIELD_DISPLAYID(display);
-        p.values.set!UNIT_FIELD_NATIVEDISPLAYID(display);
+        character.values.set!UNIT_FIELD_DISPLAYID(display);
+        character.values.set!UNIT_FIELD_NATIVEDISPLAYID(display);
         target.flushPlayerChanges();
-        systemMessage(format!"Set %s's gender to %s(%u)."(p.data.name, gender ? "Female" : "Male", gender));
+        greenSystemMessage(format!"Set %s's gender to %s(%u)."(character.data.name, gender ? "Female" : "Male",
+            gender));
         return true;
     }
 
+    /// `.scourge [status|start|stop]`: the Scourge Invasion's state, or it started or stopped.
     bool handleScourgeCommand(string action = "status")
     {
         import dmangos.world.scourge : InvasionHost, InvasionControl;
+
         switch (action)
         {
         case "status":
@@ -132,129 +171,130 @@ private:
         case "start", "stop":
             context.services.call!(InvasionHost.control)(InvasionControl(action == "start"));
             return true;
-        default: return false;
+        default:
+            return false;
         }
     }
 
+    /// `.worldport <map> <x> <y> <z>`: a teleport to coordinates inside the map grid.
     bool handleWorldPortCommand(uint mapId, float x, float y, float z)
     {
-        enum float maxCoord = 17_066.666f; // _maxX, _maxY; _minX, _minY are their negatives
-        if (x >= maxCoord || x <= -maxCoord || y <= -maxCoord || y >= maxCoord)
+        import std.math : fabs;
+
+        enum float gridEdge = 17_066.666f;
+        if (fabs(x) >= gridEdge || fabs(y) >= gridEdge)
             return false;
         commandTeleport(mapId, Position(x, y, z, 0));
         return true;
     }
 
+    /// `.levelup [levels]`: the selected player (or the GM) up some levels, at most to the server's cap.
     bool handleLevelUpCommand(int levels = 1)
     {
         if (levels <= 0)
             return false;
-        auto plr = selectedCharacter(true);
-        if (plr is null)
-            plr = this;
-        gmLog(format!"used level up command on %s, with %u levels"(plr.player.data.name, levels));
-        levels += plr.player.data.level;
-        if (levels > context.config.maxPlayerLevel)
-            levels = context.config.maxPlayerLevel;
-        plr.applyLevel(levels);
-        plr.systemMessage(format!"You have been leveled up to Level %d"(levels));
+        auto target = selectedCharacter(true);
+        if (target is null)
+            target = this;
+        gmLog(format!"used level up command on %s, with %u levels"(target.player.data.name, levels));
+        const level = min(levels + target.player.data.level, context.config.maxPlayerLevel);
+        target.applyLevel(level);
+        target.greenSystemMessage(format!"You have been leveled up to Level %d"(level));
         return true;
     }
 
-    /// "[d days, h hours, m minutes, s seconds]", as `HandlePlayerInfo` writes played time.
+    /// A played time as "[d days, h hours, m minutes, s seconds]".
     static string playedText(uint seconds)
     {
-        return format!"[%d days, %d hours, %d minutes, %d seconds]"(seconds / TIME_DAY, seconds / TIME_HOUR % 24,
-            seconds / TIME_MINUTE % 60, seconds % 60);
+        return format!"[%d days, %d hours, %d minutes, %d seconds]"(seconds / secondsPerDay, seconds / secondsPerHour % 24,
+            seconds / secondsPerMinute % 60, seconds % 60);
     }
 
+    /// `.playerinfo [name]`: what is known of the named player (on any node), or of the selected one.
     bool handlePlayerInfoCommand(Rest name = Rest.init)
     {
-        Character plr;
-        if (name.length >= 2) // char name can be 2 letters
+        if (name.length < 2) // a name has two letters at least
         {
-            auto found = context.onlinePlayer(name);
-            if (found is null)
-            {
-                if (!gmElsewhere(name, GmRemoteOp.playerInfo))
-                    redSystemMessage(format!"Unable to locate player %s."(name));
-                return true;
-            }
-            plr = sessionOf(found);
-        }
-        else
-            plr = selectedCharacter(true);
-        if (plr is null)
+            if (auto target = selectedCharacter(true))
+                target.describeTo(gmSink);
             return true;
-        plr.describeTo(gmSink);
+        }
+        auto found = context.onlinePlayer(name);
+        if (found !is null)
+            sessionOf(found).describeTo(gmSink);
+        else if (!gmElsewhere(name, GmRemoteOp.playerInfo))
+            redSystemMessage(format!"Unable to locate player %s."(name));
         return true;
     }
 
+    /// `.revive`: the selected player alive, with full health, mana and energy, and unrooted.
     bool handleReviveCommand()
     {
-        auto plr = selectedCharacter(true);
-        if (plr is null)
+        auto target = selectedCharacter(true);
+        if (target is null)
             return true;
-        plr.sendMovementOrder!(Opcode.SMSG_FORCE_MOVE_UNROOT)();
-        // Resurrected: alive, its corpse gone to bones.
-        if (plr.player.deathState != DeathState.alive)
+        target.sendMovementOrder!(Opcode.SMSG_FORCE_MOVE_UNROOT)();
+        if (target.player.deathState != DeathState.alive)
         {
-            plr.bringBack(1);
-            plr.spawnCorpseBones();
+            target.bringBack(1);
+            target.spawnCorpseBones();
         }
-        auto values = &plr.player.values;
+        auto values = &target.player.values;
         values.set!UNIT_FIELD_HEALTH(values.get!UNIT_FIELD_MAXHEALTH);
         values.set!UNIT_FIELD_POWER1(values.get!UNIT_FIELD_MAXPOWER1);
         values.set!UNIT_FIELD_POWER4(values.get!UNIT_FIELD_MAXPOWER4);
-        plr.flushPlayerChanges();
-        if (plr !is this)
-            gmLog("revived player " ~ plr.player.data.name);
+        target.flushPlayerChanges();
+        if (target !is this)
+            gmLog("revived player " ~ target.player.data.name);
         return true;
     }
 
     /// The selected player, on this map, or null after "Invalid target.".
     Character selectedPlayerUnit()
     {
-        auto plr = cast(Character) map.find(player.values.get!UNIT_FIELD_TARGET);
-        if (plr is null)
+        auto target = cast(Character) map.find(player.values.get!UNIT_FIELD_TARGET);
+        if (target is null)
             redSystemMessage("Invalid target.");
-        return plr;
+        return target;
     }
 
+    /// `.paralyze`: the selected player rooted.
     bool handleParalyzeCommand()
     {
-        auto plr = selectedPlayerUnit();
-        if (plr is null)
-            return true;
-        blueSystemMessage("Rooting target.");
-        plr.blueSystemMessage(format!"You have been rooted by %s."(player.data.name));
-        gmLog("rooted player " ~ plr.player.data.name);
-        plr.sendMovementOrder!(Opcode.SMSG_FORCE_MOVE_ROOT)();
-        return true;
+        return rootSelectedPlayer(true);
     }
 
+    /// `.unparalyze`: the selected player free to move again.
     bool handleUnParalyzeCommand()
     {
-        auto plr = selectedPlayerUnit();
-        if (plr is null)
+        return rootSelectedPlayer(false);
+    }
+
+    /// The selected player rooted (`root`) or unrooted, and told by whom.
+    bool rootSelectedPlayer(bool root)
+    {
+        auto target = selectedPlayerUnit();
+        if (target is null)
             return true;
-        blueSystemMessage("Unrooting target.");
-        plr.blueSystemMessage(format!"You have been unrooted by %s."(player.data.name));
-        gmLog("unrooted player " ~ plr.player.data.name);
-        plr.sendMovementOrder!(Opcode.SMSG_FORCE_MOVE_UNROOT)();
+        const done = root ? "rooted" : "unrooted";
+        blueSystemMessage(root ? "Rooting target." : "Unrooting target.");
+        target.blueSystemMessage(format!"You have been %s by %s."(done, player.data.name));
+        gmLog(format!"%s player %s"(done, target.player.data.name));
+        if (root)
+            target.sendMovementOrder!(Opcode.SMSG_FORCE_MOVE_ROOT)();
+        else
+            target.sendMovementOrder!(Opcode.SMSG_FORCE_MOVE_UNROOT)();
         return true;
     }
 
     // -----------------------------------------------------------------------
-    // Accounts (sLogonCommHandler.Account_*)
+    // Accounts
     // -----------------------------------------------------------------------
 
-    /// The connection of the account named `name` (in the world or at the
-    /// character screen), in any case, or null.
+    /// The connection of the account named `name` (in the world or at the character screen), in any case, or
+    /// null.
     WorldSession connectionOfAccountName(string name)
     {
-        import dmangos.world.session : WorldSession;
-
         const found = context.accounts.findAccount(name);
         return found.isNull ? null : cast(WorldSession) context.sessionOfAccount(found.get.id);
     }
@@ -266,19 +306,20 @@ private:
         return connection is null ? null : connection.inWorld;
     }
 
+    /// `.account mute <account> <duration>`: the account cannot speak until then.
     bool handleAccountMuteCommand(string name, string duration)
     {
-        const period = getTimePeriodFromString(duration);
+        const period = parseDuration(duration);
         if (period <= 0)
             return false;
         const until = context.unixTime + period;
         const found = context.accounts.findAccount(name);
         if (!found.isNull)
             context.database.setMuteTime(found.get.id, until);
-        const text = convertTimeStampToDataTime(until);
+        const text = dateTimeString(until);
         greenSystemMessage(format!"Account '%s' has been muted until %s. The change will be effective immediately."(
             name, text));
-        gmLog(format!"mutex account %s until %s"(name, text));
+        gmLog(format!"muted account %s until %s"(name, text));
         if (auto session = sessionOfAccountName(name))
         {
             session.account.muteTime = until;
@@ -288,6 +329,7 @@ private:
         return true;
     }
 
+    /// `.account unmute <account>`.
     bool handleAccountUnmuteCommand(string name)
     {
         const found = context.accounts.findAccount(name);
@@ -307,10 +349,9 @@ private:
     // Disconnecting
     // -----------------------------------------------------------------------
 
-    /// The message sent for each session a disconnect command closes, then the close.
-    void disconnect(imported!"dmangos.world.session".WorldSession connection)
+    /// Closes a session (an account at its character screen too), saying whose.
+    void disconnect(WorldSession connection)
     {
-        // "Disconnecting user with ...": an account at its character screen too.
         const name = connection.character is null ? "noplayer" : connection.character.data.name;
         gmSink.system(format!"Disconnecting user with account `%s` IP `%s` Player `%s`."(connection.account.username,
             connection.address, name));
@@ -322,10 +363,10 @@ private:
     {
         auto sessions = context.sessionsFrom(ip);
         foreach (session; sessions)
-            if (auto connection = cast(imported!"dmangos.world.session".WorldSession) session)
+            if (auto connection = cast(WorldSession) session)
                 disconnect(connection);
         if (sessions.length == 0)
-            systemMessage(format!"There is nobody online with ip [%s]"(ip));
+            redSystemMessage(format!"There is nobody online with ip [%s]"(ip));
     }
 
     /// Disconnects the session of the account named `account`.
@@ -334,9 +375,10 @@ private:
         if (auto connection = connectionOfAccountName(account))
             disconnect(connection);
         else
-            systemMessage(format!"There is nobody online with account [%s]"(account));
+            redSystemMessage(format!"There is nobody online with account [%s]"(account));
     }
 
+    /// `.kick byplayer <name>`: the named player's session closed, on any node.
     bool handleKillByPlayerCommand(Rest name = Rest.init)
     {
         if (name.length < 2)
@@ -344,18 +386,15 @@ private:
             redSystemMessage("A player's name is required.");
             return true;
         }
-        // Disconnects the player's session. "There is no body online" is said only when nobody was found.
         if (auto found = context.onlinePlayer(name))
             disconnect(sessionOf(found).connection);
-        else if (gmElsewhere(name, GmRemoteOp.disconnect))
-        {
-        }
-        else
-            systemMessage(format!"There is no body online with the name [%s]"(name));
+        else if (!gmElsewhere(name, GmRemoteOp.disconnect))
+            redSystemMessage(format!"There is nobody online with the name [%s]"(name));
         gmLog("disconnected player " ~ name);
         return true;
     }
 
+    /// `.kick byaccount <account>`: the account's session closed.
     bool handleKillBySessionCommand(Rest account = Rest.init)
     {
         if (account.length < 2)
@@ -368,6 +407,7 @@ private:
         return true;
     }
 
+    /// `.kick byip <address>`: every session from the address closed.
     bool handleKillByIpCommand(Rest ip = Rest.init)
     {
         if (ip.length < 2)
@@ -384,9 +424,19 @@ private:
     // Bans
     // -----------------------------------------------------------------------
 
+    /// `ip` with its CIDR prefix length: "/32" (the one address) when it has none, which the GM is told.
+    string withPrefixLength(string ip)
+    {
+        if (ip.canFind('/'))
+            return ip;
+        systemMessage("Lack of CIDR address assumes a 32bit match (if you don't understand, don't worry, it worked)");
+        return ip ~ "/32";
+    }
+
+    /// `.ban ip <address[/bits]> <duration> [reason]`: the address banned, and its sessions closed.
     bool handleIpBanCommand(string ip, string duration, Rest reason = Rest.init)
     {
-        const period = getTimePeriodFromString(duration);
+        const period = parseDuration(duration);
         if (period < 1)
             return false;
         if (!isIPv4Address(ip.findSplitBefore("/")[0]))
@@ -394,74 +444,68 @@ private:
             redSystemMessage(format!"Invalid IPv4 address [%s]"(ip));
             return true;
         }
-        const expireTime = context.unixTime + period;
-        if (!ip.canFind('/'))
-        {
-            redSystemMessage("Lack of CIDR address assumes a 32bit match (if you don't understand, dont worry, it "
-                ~ "worked)");
-            ip ~= "/32";
-        }
-        systemMessage(format!"Adding [%s] to IP ban table, expires %s.Reason is :%s"(ip, ctimeString(expireTime),
-            reason));
-        const address = ip[0 .. ip.indexOf('/')];
-        context.accounts.banIp(ip.endsWith("/32") ? address : ip, period, player.data.name, reason);
+        const expires = ctimeString(context.unixTime + period);
+        const range = withPrefixLength(ip);
+        greenSystemMessage(format!"Adding [%s] to IP ban table, expires %s.Reason is :%s"(range, expires, reason));
+        const address = range[0 .. range.indexOf('/')];
+        context.accounts.banIp(range.endsWith("/32") ? address : range, period, player.data.name, reason);
         disconnectUsersWithIP(address);
-        gmLog(format!"banned ip address %s, expires %s"(ip, ctimeString(expireTime)));
+        gmLog(format!"banned ip address %s, expires %s"(range, expires));
         return true;
     }
 
+    /// `.ban character <name> <duration> <reason>`: the character's account banned, announced to the world.
     bool handleBanCharacterCommand(string name, string duration, Rest reason)
     {
-        const banTime = getTimePeriodFromString(duration);
-        if (banTime < 1)
+        const period = parseDuration(duration);
+        if (period < 1)
             return false;
 
         auto online = context.onlinePlayer(name);
         const elsewhere = online is null ? context.remotePlayer(name) : null;
         uint accountId;
-        if (elsewhere !is null)
+        if (online !is null)
+        {
+            accountId = sessionOf(online).account.id;
+            systemMessage(format!"Banning player '%s' ingame for '%s'."(name, reason));
+        }
+        else if (elsewhere !is null)
         {
             accountId = elsewhere.entry.account;
             systemMessage(format!"Banning player '%s' ingame for '%s'."(name, reason));
         }
-        else if (online is null)
+        else
         {
             const owner = context.database.characterOwner(context.database.characterGuid(normalizedName(name)));
             if (owner.isNull)
             {
-                systemMessage("Player not found.");
+                redSystemMessage("Player not found.");
                 return true;
             }
             accountId = owner.get.account;
             systemMessage(format!"Banning player '%s' in database for '%s'."(name, reason));
-        }
-        else
-        {
-            accountId = sessionOf(online).account.id;
-            systemMessage(format!"Banning player '%s' ingame for '%s'."(name, reason));
         }
         if (!outranksAccount(accountId))
         {
             redSystemMessage(format!"You cannot ban %s, as they are a staff member of your rank or higher."(name));
             return true;
         }
-        // Bans apply to accounts: the character's account is banned.
-        context.accounts.banAccount(accountId, banTime, player.data.name, reason);
-        systemMessage(format!"This ban is due to expire %s%s."("on ",
-            convertTimeStampToDataTime(context.unixTime + banTime)));
+        context.accounts.banAccount(accountId, period, player.data.name, reason);
+        systemMessage(format!"This ban is due to expire on %s."(dateTimeString(context.unixTime + period)));
         if (online !is null)
             sessionOf(online).bannedBy(gmSink, player.data.name);
         else if (elsewhere !is null)
             gmElsewhere(name, GmRemoteOp.banKick);
-        gmLog(format!"banned %s, reason %s, for %s"(name, reason, convertTimeStampToString(banTime)));
-        const message = format!"GM: %s has been banned by %s for %s. Reason: %s"(name,
-            player.data.name, convertTimeStampToString(banTime), reason);
-        sendWorldText(colored(ChatColor.red, message.length > 187 ? message[0 .. 187] : message));
+        const length = durationString(period);
+        gmLog(format!"banned %s, reason %s, for %s"(name, reason, length));
+        const message = format!"GM: %s has been banned by %s for %s. Reason: %s"(name, player.data.name, length,
+            reason);
+        sendWorldText(colored(ChatColor.red, message[0 .. min($, 187)]));
         return true;
     }
 
     /// Whether this GM may ban `accountId`: its staff rank is below theirs. A failed policy read never is.
-    private bool outranksAccount(uint accountId)
+    bool outranksAccount(uint accountId)
     {
         import dmangos.mysql : DatabaseException;
 
@@ -471,9 +515,10 @@ private:
             return false;
     }
 
+    /// `.ban account <account> <duration> [reason]`: banned (for ever with a zero duration), and disconnected.
     bool handleAccountBannedCommand(string name, string duration, Rest reason = Rest.init)
     {
-        const period = getTimePeriodFromString(duration);
+        const period = parseDuration(duration);
         if (period < 0)
             return false;
         const found = context.accounts.findAccount(name);
@@ -483,29 +528,26 @@ private:
             return true;
         }
         if (!found.isNull)
-            context.accounts.banAccount(found.get.id, period, player.data.name, reason); // 0: for ever
-        const until = period ? convertTimeStampToDataTime(context.unixTime + period) : "";
+            context.accounts.banAccount(found.get.id, period, player.data.name, reason);
+        const until = period ? dateTimeString(context.unixTime + period) : "";
         greenSystemMessage(format!("Account '%s' has been banned %s%s for reason : %s. The change will be effective "
             ~ "immediately.")(name, period ? "until " : "forever", until, reason));
         disconnectUsersWithAccount(name);
-        gmLog(format!"banned account %s until %s"(name, period ? until : "permanant"));
+        gmLog(format!"banned account %s %s"(name, period ? "until " ~ until : "permanently"));
         return true;
     }
 
+    /// `.unban ip <address[/bits]>`.
     bool handleIpUnbanCommand(string ip)
     {
-        if (!ip.canFind('/'))
-        {
-            redSystemMessage("Lack of CIDR address assumes a 32bit match (if you don't understand, dont worry, it "
-                ~ "worked)");
-            ip ~= "/32";
-        }
-        systemMessage(format!"Deleting [%s] from ip ban table if it exists"(ip));
-        context.accounts.unbanIp(ip.endsWith("/32") ? ip[0 .. $ - 3] : ip);
-        gmLog("unbanned ip address " ~ ip);
+        const range = withPrefixLength(ip);
+        greenSystemMessage(format!"Deleting [%s] from ip ban table if it exists"(range));
+        context.accounts.unbanIp(range.endsWith("/32") ? range[0 .. $ - 3] : range);
+        gmLog("unbanned ip address " ~ range);
         return true;
     }
 
+    /// `.unban character <name>`: the character's account unbanned.
     bool handleUnBanCharacterCommand(string name)
     {
         if (auto online = context.onlinePlayer(name))
@@ -513,15 +555,16 @@ private:
         else if (const remote = context.remotePlayer(name))
             greenSystemMessage(format!"Unbanned player %s ingame."(remote.entry.name));
         else
-            greenSystemMessage(format!"Player %s not found ingame."(name));
+            systemMessage(format!"Player %s not found ingame."(name));
         const owner = context.database.characterOwner(context.database.characterGuid(normalizedName(name)));
         if (!owner.isNull)
             context.accounts.unbanAccount(owner.get.account, player.data.name);
-        systemMessage(format!"Unbanned character %s in database."(name));
+        greenSystemMessage(format!"Unbanned character %s in database."(name));
         gmLog("unbanned " ~ name);
         return true;
     }
 
+    /// `.unban account <account>`.
     bool handleAccountUnbanCommand(string name)
     {
         const found = context.accounts.findAccount(name);
@@ -536,6 +579,7 @@ private:
     // The server
     // -----------------------------------------------------------------------
 
+    /// `.server setmotd <message>`: the message of the day.
     bool handleSetMotdCommand(Rest motd = Rest.init)
     {
         if (motd.length < 2)
@@ -549,6 +593,7 @@ private:
         return true;
     }
 
+    /// `.server rehash`: the configuration file read again.
     bool handleRehashCommand()
     {
         import dmangos.world.config : loadWorldConfig;
@@ -556,20 +601,20 @@ private:
         const message = format!"%s is rehashing config file."(player.data.name);
         sendWorldWideScreenText(message);
         sendWorldText(message);
-        if (context.configPath.length)
+        if (context.configPath.length == 0)
+            return true;
+        try
         {
-            try
-            {
-                // Settings read when the server starts (databases, port, ...) keep their values until a restart.
-                context.config = loadWorldConfig(context.configPath);
-                info!"configuration %s read again"(context.configPath);
-            }
-            catch (Exception e)
-                error!"cannot read the configuration again: %s"(e.msg);
+            // Settings read when the server starts (databases, port, ...) keep their values until a restart.
+            context.config = loadWorldConfig(context.configPath);
+            info!"configuration %s read again"(context.configPath);
         }
+        catch (Exception e)
+            error!"cannot read the configuration again: %s"(e.msg);
         return true;
     }
 
+    /// `.server reloadtable <table>`: a table this server keeps in memory read again (the teleports).
     bool handleDbReloadCommand(string table)
     {
         import dmangos.world.worldcatalog : WorldCatalog, WorldCatalogKey;
@@ -580,55 +625,50 @@ private:
         const started = MonoTime.currTime;
         sendWorldText(colored(ChatColor.softRed,
             format!"%s started reloading table %s. The server may lag briefly."(player.data.name, table)));
-        bool reloaded;
-        // The tables this server keeps in memory and can read again.
-        if (sicmp(table, "areatrigger_teleport") == 0 || sicmp(table, "game_tele") == 0)
+        const reloaded = sicmp(table, "areatrigger_teleport") == 0 || sicmp(table, "game_tele") == 0;
+        if (reloaded)
         {
             context.data.setTeleports(context.database.loadAreaTriggerTeleports(), context.database.loadTeleports(),
                 context.client);
             if (context.config.cluster.nodeId)
-            {
-                const key = WorldCatalogKey(WorldCatalog.teleports, 0);
-                context.database.markWorldCatalogReload(key);
-            }
-            reloaded = true;
+                context.database.markWorldCatalogReload(WorldCatalogKey(WorldCatalog.teleports, 0));
+            sendWorldText(colored(ChatColor.sky, format!"Database reload completed in %u ms."(msecsSince(started))));
         }
-        if (!reloaded)
-            sendWorldText(colored(ChatColor.softRed, "Database reload failed."));
         else
-            sendWorldText(colored(ChatColor.sky, format!"Database reload completed in %u ms."(
-                (MonoTime.currTime - started).total!"msecs")));
+            sendWorldText(colored(ChatColor.softRed, "Database reload failed."));
         gmLog("reloaded table " ~ table);
         return true;
     }
 
-    /// Starts a shutdown or restart `delay` seconds away; the world update announces it as it counts down.
+    /// Announces a shutdown or restart `delay` seconds away and starts it; the world update counts it down.
     void startShutdown(uint delay, bool restart)
     {
+        const what = restart ? "restart" : "shutdown";
+        sendWorldText(colored(ChatColor.sky, format!"%s scheduled a server %s in %u seconds."(player.data.name, what,
+            delay)));
+        gmLog(format!"initiated server %s timer %u sec"(what, delay));
         ShutdownTimer timer;
         timer.at = context.clock() + delay.seconds;
         timer.restart = restart;
         context.shutdown = timer;
-        warning!"'%s' ordered a %s in %s seconds"(player.data.name, restart ? "restart" : "shutdown", delay);
+        warning!"'%s' ordered a %s in %s seconds"(player.data.name, what, delay);
     }
 
+    /// `.server shutdown [seconds]`: by default in the 5 seconds its help promises.
     bool handleShutdownCommand(uint delay = 5)
     {
-        // A bare `.server shutdown` waits the 5 seconds its help promises.
-        sendWorldText(colored(ChatColor.sky, format!"%s scheduled a server shutdown in %u seconds."(player.data.name, delay)));
-        gmLog(format!"initiated server shutdown timer %u sec"(delay));
         startShutdown(delay, false);
         return true;
     }
 
+    /// `.server restart [seconds]`.
     bool handleShutdownRestartCommand(uint delay = 5)
     {
-        sendWorldText(colored(ChatColor.sky, format!"%s scheduled a server restart in %u seconds."(player.data.name, delay)));
-        gmLog(format!"initiated server restart timer %u sec"(delay));
         startShutdown(delay, true);
         return true;
     }
 
+    /// `.server cancelshutdown`: the shutdown or restart under way called off.
     bool handleCancelShutdownCommand()
     {
         if (context.shutdown.isNull)
@@ -651,9 +691,9 @@ private:
         MonoTime expires;
     }
 
-    SummonOffer summonOffer;
-    bool hasSummonOffer;
+    Nullable!SummonOffer summonOffer;
 
+    /// `.admin masssummon`: every player, on every node, offered a summon to the GM.
     bool handleMassSummonCommand()
     {
         uint count;
@@ -672,21 +712,23 @@ private:
     /// Offers the player a summon; it has two minutes to accept.
     void summonRequest(ulong summoner, uint zone, uint mapId, Position at)
     {
-        summonOffer = SummonOffer(mapId, at, context.clock() + 120.seconds);
-        hasSummonOffer = true;
-        send(ServerSummonRequest(summoner, zone, 120_000));
+        enum offerSeconds = 120;
+        summonOffer = SummonOffer(mapId, at, context.clock() + offerSeconds.seconds);
+        send(ServerSummonRequest(summoner, zone, offerSeconds * 1000));
     }
 
     /// The player answered a summon offer (`CMSG_SUMMON_RESPONSE`, `dmangos.world.rituals`): whether it was this one.
     bool acceptGmSummonOffer()
     {
-        if (!hasSummonOffer || context.clock() > summonOffer.expires)
+        if (summonOffer.isNull || context.clock() > summonOffer.get.expires)
             return false;
-        hasSummonOffer = false;
-        commandTeleport(summonOffer.map, summonOffer.position);
+        const offer = summonOffer.get;
+        summonOffer.nullify();
+        commandTeleport(offer.map, offer.position);
         return true;
     }
 
+    /// `.admin playall <sound>`: a sound played for every player here.
     bool handleGlobalPlaySoundCommand(uint sound)
     {
         if (sound == 0)
@@ -701,98 +743,94 @@ private:
     // Cheats
     // -----------------------------------------------------------------------
 
+    /// `.clearcooldowns`: the cooldowns of the selected player's (or the GM's) class spells cleared.
     bool handleClearCooldownsCommand()
     {
         const guid = cast(uint) player.values.get!UNIT_FIELD_TARGET;
-        auto plr = selectedCharacter(true);
-        if (plr is null)
+        auto target = selectedCharacter(true);
+        if (target is null)
         {
-            plr = this;
+            target = this;
             systemMessage("Targeting yourself.");
         }
-        if (plr !is this)
-            gmLog("Cleared all cooldowns for player " ~ plr.player.data.name);
-        // The class's three skill lines (the skill lines of its talent trees), and its name.
-        static immutable uint[3][12] lines = [[0, 0, 0], [26, 256, 257], [594, 267, 184], [50, 51, 163],
+        if (target !is this)
+            gmLog("Cleared all cooldowns for player " ~ target.player.data.name);
+        // Each class's three skill lines (those of its talent trees), and its name.
+        static immutable uint[3][12] treeLines = [[0, 0, 0], [26, 256, 257], [594, 267, 184], [50, 51, 163],
             [253, 38, 39], [56, 78, 613], [0, 0, 0], [373, 374, 375], [6, 8, 237], [355, 354, 593], [0, 0, 0],
             [573, 574, 134]];
-        static immutable string[12] names = ["", "Warrior", "Paladin", "Hunter", "Rogue", "Priest", "", "Shaman",
-            "Mage", "Warlock", "", "Druid"];
-        const classId = plr.player.data.classId;
-        if (classId >= names.length || names[classId].length == 0)
+        static immutable string[12] classNames = ["", "Warrior", "Paladin", "Hunter", "Rogue", "Priest", "",
+            "Shaman", "Mage", "Warlock", "", "Druid"];
+        const classId = target.player.data.classId;
+        if (classId >= classNames.length || classNames[classId].length == 0)
             return true;
-        foreach (line; lines[classId])
-            plr.clearCooldownsOnLine(line, guid);
-        blueSystemMessage(format!"Cleared all %s cooldowns."(names[classId]));
+        foreach (line; treeLines[classId])
+            target.clearCooldownsOnLine(line, guid);
+        blueSystemMessage(format!"Cleared all %s cooldowns."(classNames[classId]));
         return true;
     }
 
+    /// `.removeauras`: every aura but the passive ones taken off the selected player.
     bool handleRemoveAurasCommand()
     {
-        auto plr = selectedCharacter(true);
-        if (plr is null)
+        auto target = selectedCharacter(true);
+        if (target is null)
             return false;
         blueSystemMessage("Removing all auras...");
-        // The removable slots: every aura but the passive ones.
-        foreach (aura; plr.player.auras.list.dup)
+        foreach (aura; target.player.auras.list.dup)
             if (!aura.passive)
-                plr.removeAura(aura);
-        if (plr !is this)
-            gmLog(format!"Removed all of %s's auras."(plr.player.data.name));
+                target.removeAura(aura);
+        if (target !is this)
+            gmLog(format!"Removed all of %s's auras."(target.player.data.name));
         return true;
     }
 
+    /// `.character resettalents`.
     bool handleResetTalentsCommand()
     {
-        auto plr = selectedCharacter(true);
-        if (plr is null)
+        auto target = selectedCharacter(true);
+        if (target is null)
             return true;
-        plr.resetTalents();
-        systemMessage(format!"Reset talents of %s."(plr.player.data.name));
-        plr.blueSystemMessage(format!"%s reset all your talents."(player.data.name));
-        gmLog("reset talents of " ~ plr.player.data.name);
+        target.resetTalents();
+        greenSystemMessage(format!"Reset talents of %s."(target.player.data.name));
+        target.blueSystemMessage(format!"%s reset all your talents."(player.data.name));
+        gmLog("reset talents of " ~ target.player.data.name);
         return true;
     }
 
+    /// `.admin dispelall [1]`: every player here loses its negative auras, and its positive ones too with a number
+    /// other than 0.
     bool handleDispelAllCommand(Rest args = Rest.init)
     {
-        import std.ascii : isDigit;
-
-        // `atoi`: any number but 0 also takes the positive auras.
-        size_t n;
-        while (n < args.length && n < 9 && args[n].isDigit)
-            ++n;
-        const pos = n ? args[0 .. n].to!uint : 0;
-        gmLog(format!"used dispelall command, pos %u"(pos));
+        const positive = numberAtStart(args);
+        gmLog(format!"used dispelall command, pos %u"(positive));
         // The players of this node (those on another node of a cluster keep theirs).
         foreach (other; context.onlinePlayers)
-            sessionOf(other).dispelAll(pos != 0);
+            sessionOf(other).dispelAll(positive != 0);
         gmLog("used mass dispel");
         blueSystemMessage("Dispel action done.");
         return true;
     }
 
-    import dmangos.world.playercreate : NewCharacter;
-
-    bool handleIncreaseWeaponSkillCommand(uint cnt = 1)
+    /// `.character increaseweaponskill [times]`: the skill of the weapon in hand (unarmed with none) advanced.
+    bool handleIncreaseWeaponSkillCommand(uint times = 1)
     {
-        import std.algorithm.comparison : min;
         import dmangos.world.defines : equipmentSlotMainhand, equipmentSlotRanged;
 
-        auto pr = selectedCharacter(true);
-        if (pr is null)
-            pr = this;
-        auto it = pr.player.inventory.equipped(equipmentSlotMainhand);
-        if (it is null)
-            it = pr.player.inventory.equipped(equipmentSlotRanged);
+        auto target = selectedCharacter(true);
+        if (target is null)
+            target = this;
+        auto weapon = target.player.inventory.equipped(equipmentSlotMainhand);
+        if (weapon is null)
+            weapon = target.player.inventory.equipped(equipmentSlotRanged);
         uint skill;
-        if (it !is null && it.proto !is null)
+        if (weapon !is null && weapon.proto !is null)
         {
             // Weapon subclasses to skill lines, oddities included (exotic ones count as staves).
             static immutable uint[21] bySubClass = [44, 172, 45, 46, 54, 160, 229, 43, 55, 136, 136, 0, 473, 0, 0,
                 173, 176, 227, 226, 228, 356];
-            if (it.proto.subClass < bySubClass.length)
-                skill = bySubClass[it.proto.subClass];
+            if (weapon.proto.subClass < bySubClass.length)
+                skill = bySubClass[weapon.proto.subClass];
         }
         else
             skill = 162; // unarmed
@@ -801,230 +839,211 @@ private:
             redSystemMessage("Unknown skill ID.");
             return false;
         }
-        blueSystemMessage(format!"Modifying skill line %d. Advancing %d times."(skill, cnt));
-        gmLog(format!"increased weapon skill (%u) of %s by %u"(skill, pr.player.data.name, cnt));
-        const now = pr.player.skillValue(skill);
-        if (now[1] == 0)
+        blueSystemMessage(format!"Modifying skill line %d. Advancing %d times."(skill, times));
+        gmLog(format!"increased weapon skill (%u) of %s by %u"(skill, target.player.data.name, times));
+        const current = target.player.skillValue(skill);
+        if (current[1] == 0)
         {
             systemMessage("The player does not know this skill. Adding it now.");
-            pr.applySkill(skill, 1, 300);
+            target.applySkill(skill, 1, 300);
         }
-        else // `_AdvanceSkillLine`: up to the maximum
-            pr.applySkill(skill, cast(ushort) min(now[0] + cnt, now[1]), now[1]);
+        else // up to the maximum
+            target.applySkill(skill, cast(ushort) min(current[0] + times, current[1]), current[1]);
         return true;
     }
 
-    /// What a new character of `plr`'s race, class and gender starts with, as character creation gives it.
-    package static bool startingAbilities(typeof(this) plr, out NewCharacter fresh)
+    /// What a new character of `character`'s race, class and gender starts with, as character creation gives it.
+    package static bool startingAbilities(typeof(this) character, out NewCharacter fresh)
     {
-        import dmangos.auth.accounts : AccountLevel;
         import dmangos.world.playercreate : CharacterBuilder, CreateRequest;
 
-        auto builder = new CharacterBuilder(plr.context.data, plr.context.client, plr.context.creationSettings,
-            () => 0u);
-        CreateRequest request = {name: plr.player.data.name, race: plr.player.data.race,
-            classId: plr.player.data.classId, gender: plr.player.data.gender};
+        auto builder = new CharacterBuilder(character.context.data, character.context.client,
+            character.context.creationSettings, () => 0u);
+        const data = &character.player.data;
+        CreateRequest request = {name: data.name, race: data.race, classId: data.classId, gender: data.gender};
         return builder.create(0, 0, AccountLevel.player, request, true, fresh);
     }
 
+    /// `.character resetspells`: the selected player back to the spells a new character of its race and class has.
     bool handleResetSpellsCommand()
     {
-        import std.algorithm.searching : canFind;
-
-        auto plr = selectedCharacter(true);
-        if (plr is null)
+        auto target = selectedCharacter(true);
+        if (target is null)
             return true;
-        // Back to the spells a new character of its race and class has.
         NewCharacter fresh;
-        if (startingAbilities(plr, fresh))
+        if (startingAbilities(target, fresh))
         {
-            foreach (spell; plr.player.spells.dup)
-                if (!fresh.spells.canFind!(s => s.spell == spell))
-                    plr.unlearn(spell);
-            foreach (s; fresh.spells)
-                if (s.active && !s.disabled)
-                    plr.learn(s.spell);
+            foreach (spell; target.player.spells.dup)
+                if (!fresh.spells.canFind!(known => known.spell == spell))
+                    target.unlearn(spell);
+            foreach (known; fresh.spells)
+                if (known.active && !known.disabled)
+                    target.learn(known.spell);
         }
-        systemMessage(format!"Reset spells of %s to level 1."(plr.player.data.name));
-        plr.blueSystemMessage(format!"%s reset all your spells to starting values."(player.data.name));
-        gmLog(format!"reset spells of %s"(plr.player.data.name));
+        greenSystemMessage(format!"Reset spells of %s to level 1."(target.player.data.name));
+        target.blueSystemMessage(format!"%s reset all your spells to starting values."(player.data.name));
+        gmLog(format!"reset spells of %s"(target.player.data.name));
         return true;
     }
 
+    /// `.character resetskills`: the selected player back to a new character's skills, with its level's caps.
     bool handleResetSkillsCommand()
     {
-        import std.algorithm.searching : canFind;
-
-        auto plr = selectedCharacter(true);
-        if (plr is null)
+        auto target = selectedCharacter(true);
+        if (target is null)
             return true;
         NewCharacter fresh;
-        if (!startingAbilities(plr, fresh))
+        if (!startingAbilities(target, fresh))
             return true;
-        // `_RemoveAllSkills`, then the create info's skills and the languages, the level's caps.
-        foreach (skill; plr.player.skillList())
-            if (!fresh.skills.canFind!(s => s.skill == skill[0]))
-                plr.applySkill(skill[0], 0, 0);
-        foreach (s; fresh.skills)
-            plr.applySkill(s.skill, cast(ushort) s.value, cast(ushort) s.max);
-        plr.player.updateSkillsForLevel(context.client);
-        foreach (skill; plr.player.skillList())
-            plr.applySkill(skill[0], cast(ushort) skill[1], cast(ushort) skill[2]); // saved with the new caps
+        foreach (skill; target.player.skillList())
+            if (!fresh.skills.canFind!(known => known.skill == skill[0]))
+                target.applySkill(skill[0], 0, 0);
+        foreach (known; fresh.skills)
+            target.applySkill(known.skill, cast(ushort) known.value, cast(ushort) known.max);
+        target.player.updateSkillsForLevel(context.client);
+        foreach (skill; target.player.skillList())
+            target.applySkill(skill[0], cast(ushort) skill[1], cast(ushort) skill[2]); // saved with the new caps
         blueSystemMessage("Reset skills to default.");
-        gmLog(format!"reset skills of %s to default"(plr.player.data.name));
+        gmLog(format!"reset skills of %s to default"(target.player.data.name));
         return true;
     }
 
     /// `.fixscale <scale>`: the selected creature's size, and its template's, kept.
-    bool handleFixScaleCommand(float sc = 0)
+    bool handleFixScaleCommand(float scale = 0)
     {
-        import dmangos.world.updatefields : OBJECT_FIELD_SCALE_X;
-
         auto creature = selectedCreature(true);
         if (creature is null)
             return true;
-        if (sc < 0.1f)
+        if (scale < 0.1f)
             return false;
-        creature.values.set!OBJECT_FIELD_SCALE_X(sc);
+        creature.values.set!OBJECT_FIELD_SCALE_X(scale);
         map.flushObjectChanges(creature);
         const entry = creature.spawn.entry;
-        if (auto t = context.data.creatureTemplates.edit(entry))
-            t.scale = sc;
-        context.database.updateCreatureScale(entry, sc);
+        if (auto edited = context.data.creatureTemplates.edit(entry))
+            edited.scale = scale;
+        context.database.updateCreatureScale(entry, scale);
         return true;
     }
 
-    bool handleRemoveRessurectionSickessAuraCommand()
+    /// `.removesickness`: resurrection sickness taken off the selected player.
+    bool handleRemoveResurrectionSicknessAuraCommand()
     {
         enum uint resurrectionSickness = 15007;
-        auto plr = selectedCharacter(true);
-        if (plr is null)
+        auto target = selectedCharacter(true);
+        if (target is null)
             return false;
         blueSystemMessage("Removed resurrection sickness.");
-        if (auto aura = plr.player.auras.find(resurrectionSickness))
-            plr.removeAura(aura);
-        if (plr !is this)
-            gmLog(format!"Removed resurrection sickness from %s"(plr.player.data.name));
+        if (auto aura = target.player.auras.find(resurrectionSickness))
+            target.removeAura(aura);
+        if (target !is this)
+            gmLog(format!"Removed resurrection sickness from %s"(target.player.data.name));
         return true;
     }
 
+    /// `.admin castall <spell>`: every player here casts the spell on itself, triggered (not one that teaches).
     bool handleCastAllCommand(Rest args = Rest.init)
     {
-        import std.ascii : isDigit;
-
         if (args.length < 2)
         {
             redSystemMessage("No spellid specified.");
             return true;
         }
-        // `atol`
-        size_t n;
-        while (n < args.length && n < 9 && args[n].isDigit)
-            ++n;
-        const spellId = n ? args[0 .. n].to!uint : 0;
+        const spellId = numberAtStart(args);
         const spell = context.data.spells.spell(spellId);
         if (spell is null)
         {
             redSystemMessage("Invalid spell specified.");
             return true;
         }
-        enum uint learnSpell = 36; // SPELL_EFFECT_LEARN_SPELL: not on everybody
-        foreach (i; 0 .. 3)
-            if (spell.effect[i] == learnSpell)
-            {
-                gmLog(format!"used wrong / learnall castall command, spellid %u"(spellId));
-                redSystemMessage("Learn spell specified.");
-                return true;
-            }
+        if (spell.hasEffect(SpellEffect.learnSpell))
+        {
+            gmLog(format!"used wrong / learnall castall command, spellid %u"(spellId));
+            redSystemMessage("Learn spell specified.");
+            return true;
+        }
         gmLog(format!"used castall command, spellid %u"(spellId));
-        // The players of this node in the world, each casting it on itself, triggered.
         foreach (other; context.onlinePlayers)
         {
-            auto who = sessionOf(other);
-            if (who.player !is null && !who.transferring)
-                who.castTriggeredAt(spellId, who.player.guid);
+            auto target = sessionOf(other);
+            if (target.player !is null && !target.transferring)
+                target.castTriggeredAt(spellId, target.player.guid);
         }
         blueSystemMessage(format!"Casted spell %u on all players!"(spellId));
         return true;
     }
 
+    /// `.npc respawn`: the selected corpse gone now, the creature back a second later.
     bool handleCreatureRespawnCommand()
     {
         auto corpse = selectedCreature(false);
-        if (corpse !is null && !corpse.alive && corpse.spawn.guid != 0)
+        if (corpse is null || corpse.alive || corpse.spawn.guid == 0)
         {
-            const line = format!"Respawning a Creature: `%s` with entry: %u on map: %u sqlid: %u"(corpse.template_.name,
-                corpse.spawn.entry, map.id, corpse.spawn.guid);
-            blueSystemMessage(line);
-            gmLog("Respawned" ~ line[10 .. $]);
-            // The corpse goes now, the creature comes back a second later.
-            context.respawnSoon(corpse, map);
-            return true;
+            redSystemMessage("You must select a creature's corpse with a valid CreatureSpawn point.");
+            return false;
         }
-        redSystemMessage("You must select a creature's corpse with a valid CreatureSpawn point.");
-        return false;
+        const line = format!"Respawning a Creature: `%s` with entry: %u on map: %u sqlid: %u"(corpse.template_.name,
+            corpse.spawn.entry, map.id, corpse.spawn.guid);
+        blueSystemMessage(line);
+        gmLog("Respawned" ~ line["Respawning".length .. $]);
+        context.respawnSoon(corpse, map);
+        return true;
     }
 
     // -----------------------------------------------------------------------
     // Whispers to a GM with the tag on
     // -----------------------------------------------------------------------
 
+    /// `.gm whisperblock`: the GM tag without the <GM> flag; players' whispers get the automatic reply.
     bool handleWhisperBlockCommand()
     {
-        // The GM tag without the <GM> flag: players' whispers get the automatic reply.
         if (player.gmTagOn)
             return false;
         player.gmTagOn = true;
         return true;
     }
 
+    /// The guid and name of the player named `name`, on this node or another; false after "Player not found.".
+    bool findPlayerAnywhere(string name, out ulong guid, out string found)
+    {
+        if (auto online = context.onlinePlayer(name))
+        {
+            guid = online.character.guid;
+            found = online.character.data.name;
+            return true;
+        }
+        if (const remote = context.remotePlayer(name))
+        {
+            guid = remote.entry.guid;
+            found = remote.entry.name;
+            return true;
+        }
+        redSystemMessage("Player not found.");
+        return false;
+    }
+
+    /// `.gm allowwhispers <name>`: the player may whisper the GM while its tag is on.
     bool handleAllowWhispersCommand(Rest name)
     {
         if (name.length < 2)
             return false;
         ulong guid;
         string found;
-        if (auto plr = context.onlinePlayer(name))
-        {
-            guid = plr.character.guid;
-            found = plr.character.data.name;
-        }
-        else if (const remote = context.remotePlayer(name)) // another node's player
-        {
-            guid = remote.entry.guid;
-            found = remote.entry.name;
-        }
-        else
-        {
-            redSystemMessage("Player not found.");
+        if (!findPlayerAnywhere(name, guid, found))
             return true;
-        }
         gmTargets[guid] = true;
         blueSystemMessage(format!"Now accepting whispers from %s."(found));
         return true;
     }
 
+    /// `.gm blockwhispers <name>`: the player's whispers blocked again.
     bool handleBlockWhispersCommand(Rest name)
     {
         if (name.length < 2)
             return false;
         ulong guid;
         string found;
-        if (auto plr = context.onlinePlayer(name))
-        {
-            guid = plr.character.guid;
-            found = plr.character.data.name;
-        }
-        else if (const remote = context.remotePlayer(name)) // another node's player
-        {
-            guid = remote.entry.guid;
-            found = remote.entry.name;
-        }
-        else
-        {
-            redSystemMessage("Player not found.");
+        if (!findPlayerAnywhere(name, guid, found))
             return true;
-        }
         gmTargets.remove(guid);
         blueSystemMessage(format!"Now blocking whispers from %s."(found));
         return true;
@@ -1034,30 +1053,32 @@ private:
     // The character group
     // -----------------------------------------------------------------------
 
+    /// `.character removeitem <item> [count]`: copies of an item taken from the selected player.
     bool handleRemoveItemCommand(uint itemId, int count = 1)
     {
         if (count == 0)
             return false;
-        const ocount = count;
-        auto plr = selectedCharacter(true);
-        if (plr is null)
+        auto target = selectedCharacter(true);
+        if (target is null)
             return true;
         if (count > 0)
-            plr.takeItem(itemId, count);
-        if (const item = itemId in context.data.items)
+            target.takeItem(itemId, count);
+        const item = itemId in context.data.items;
+        if (item is null)
         {
-            gmLog(format!"used remove item %s (id: %u) count %u from %s"(item.details.name, itemId, ocount,
-                plr.player.data.name));
-            blueSystemMessage(format!"Removing %u copies of item %s (id: %u) from %s's inventory."(ocount,
-                itemLink(itemId), itemId, plr.player.data.name));
-            plr.blueSystemMessage(format!"%s removed %u copies of item %s from your inventory."(player.data.name,
-                ocount, itemLink(itemId)));
-        }
-        else
             redSystemMessage(format!"Cannot remove non valid item id: %u ."(itemId));
+            return true;
+        }
+        gmLog(format!"used remove item %s (id: %u) count %u from %s"(item.details.name, itemId, count,
+            target.player.data.name));
+        blueSystemMessage(format!"Removing %u copies of item %s (id: %u) from %s's inventory."(count, itemLink(itemId),
+            itemId, target.player.data.name));
+        target.blueSystemMessage(format!"%s removed %u copies of item %s from your inventory."(player.data.name,
+            count, itemLink(itemId)));
         return true;
     }
 
+    /// `.character additemset <set>`: every item of an item set given to the selected player.
     bool handleAddItemSetCommand(uint setId = 0)
     {
         if (setId == 0)
@@ -1065,8 +1086,8 @@ private:
             redSystemMessage("You must specify a setid.");
             return true;
         }
-        auto chr = selectedCharacter(true);
-        if (chr is null)
+        auto target = selectedCharacter(true);
+        if (target is null)
         {
             redSystemMessage("Unable to select character.");
             return true;
@@ -1083,18 +1104,18 @@ private:
         entries.sort();
         blueSystemMessage(format!"Searching item set %u..."(setId));
         const started = MonoTime.currTime;
-        gmLog(format!"used add item set command, set %u, target %s"(setId, chr.player.data.name));
+        gmLog(format!"used add item set command, set %u, target %s"(setId, target.player.data.name));
         foreach (entry; entries)
-            if (chr.giveItem(entry, 1) == 0)
+            if (target.giveItem(entry, 1) == 0)
             {
                 sendNotification("No free slots left!");
                 return true;
             }
-        greenSystemMessage(format!"Added set to inventory complete. Time: %u ms"((MonoTime.currTime - started)
-            .total!"msecs"));
+        greenSystemMessage(format!"Added set to inventory complete. Time: %u ms"(msecsSince(started)));
         return true;
     }
 
+    /// `.character advanceallskills <amount>`: each of the selected player's skills up, to at most its maximum.
     bool handleAdvanceAllSkillsCommand(uint amount = 0)
     {
         if (amount == 0)
@@ -1102,43 +1123,44 @@ private:
             redSystemMessage("An amount to increment is required.");
             return true;
         }
-        auto plr = selectedCharacter(true);
-        if (plr is null)
+        auto target = selectedCharacter(true);
+        if (target is null)
             return true;
-        foreach (skill; plr.player.skillList) // `_AdvanceAllSkills`: each up to its maximum
-            plr.applySkill(skill[0], cast(ushort) min(skill[1] + amount, skill[2]), cast(ushort) skill[2]);
-        plr.greenSystemMessage(format!"Advanced all your skill lines by %u points."(amount));
-        gmLog(format!"advanced all skills by %u on %s"(amount, plr.player.data.name));
+        foreach (skill; target.player.skillList)
+            target.applySkill(skill[0], cast(ushort) min(skill[1] + amount, skill[2]), cast(ushort) skill[2]);
+        target.greenSystemMessage(format!"Advanced all your skill lines by %u points."(amount));
+        gmLog(format!"advanced all skills by %u on %s"(amount, target.player.data.name));
         return true;
     }
 
+    /// `.character showitems`: the selected player's items, each as a link with its count.
     bool handleShowItemsCommand()
     {
-        auto plr = selectedCharacter(true);
-        if (plr is null)
+        auto target = selectedCharacter(true);
+        if (target is null)
             return true;
-        foreach (item; plr.player.inventory.all()) // each item as a link, with its count
+        foreach (item; target.player.inventory.all())
             systemMessage(format!"Item %u %s Count %u Slot %u ContainerSlots %u"(item.entry, itemLink(item.entry),
-                cast(ubyte) plr.player.inventory.count(item.entry), item.slot, item.proto.containerSlots));
-        gmLog(format!"used show items command on %s,"(plr.player.data.name));
+                cast(ubyte) target.player.inventory.count(item.entry), item.slot, item.proto.containerSlots));
+        gmLog(format!"used show items command on %s,"(target.player.data.name));
         return true;
     }
 
+    /// `.character showskills`: the selected player's skills with their values.
     bool handleShowSkillsCommand()
     {
-        auto plr = selectedCharacter(true);
-        if (plr is null)
+        auto target = selectedCharacter(true);
+        if (target is null)
             return true;
-        foreach (skill; plr.player.skillList)
+        foreach (skill; target.player.skillList)
             systemMessage(format!"Skill %u %s %u/%u"(skill[0], skillName(skill[0]), skill[1], skill[2]));
-        gmLog(format!"used show skills command on %s,"(plr.player.data.name));
+        gmLog(format!"used show skills command on %s,"(target.player.data.name));
         return true;
     }
 
     /// `.npc npcfollow`: the selected creature follows this player.
     bool handleNpcFollowCommand()
     {
-        import dmangos.script.api : EntityRef;
         import std.math : PI;
 
         auto creature = selectedCreature(true);
@@ -1152,8 +1174,6 @@ private:
     /// `.npc nullfollow`: the selected creature follows nobody; it moves as before.
     bool handleNullFollowCommand()
     {
-        import dmangos.script.api : EntityRef;
-
         auto creature = selectedCreature(true);
         if (creature is null)
             return true;
@@ -1163,13 +1183,14 @@ private:
     }
 
     /**
-     * `.character forcerename <name>`: the character must take a new name at its next login (CMaNGOS's `at_login`
-     * rename flag, ArcEmu's `forced_rename_pending`); its old name is reserved (in memory: the world database
-     * keeps `reserved_name`, which the server does not write).
+     * `.character forcerename <name>`: the character must take a new name at its next login (the `at_login`
+     * rename flag); its old name is reserved (in memory: the world database keeps `reserved_name`, which the
+     * server does not write).
      */
     bool handleForceRenameCommand(string name)
     {
         import dmangos.world.characters : AtLoginFlags;
+        import dmangos.world.worlddata : toLowerName;
 
         if (name.length > 100)
             return false;
@@ -1183,51 +1204,50 @@ private:
         const realName = online !is null ? online.character.data.name : normalizedName(name);
         if (online !is null)
         {
-            auto other = sessionOf(online);
-            other.player.data.atLogin |= AtLoginFlags.rename;
-            other.savePlayer();
-            other.blueSystemMessage(format!"%s forced your character to be renamed next logon."(player.data.name));
+            auto target = sessionOf(online);
+            target.player.data.atLogin |= AtLoginFlags.rename;
+            target.savePlayer();
+            target.blueSystemMessage(format!"%s forced your character to be renamed next logon."(player.data.name));
         }
         else
             context.database.addAtLoginFlags(guid, AtLoginFlags.rename);
-        import dmangos.world.worlddata : toLowerName;
-
         context.data.reservedNames[toLowerName(realName)] = true;
         greenSystemMessage(format!"Forcing %s to rename his character next logon."(name));
-        gmLog(format!"forced %s to rename his charater (%u)"(realName, guid));
+        gmLog(format!"forced %s to rename their character (%u)"(realName, guid));
         return true;
     }
 
-    bool handleRenameCommand(string name1, string name2)
+    /// `.character rename <name> <new name>`: the character renamed now, wherever it is.
+    bool handleRenameCommand(string oldName, string wanted)
     {
         import dmangos.world.names : checkPlayerName, CharNameResult;
 
         const config = context.config;
-        if (checkPlayerName(name2, config.minPlayerName, config.strictPlayerNames, config.realmZone)
+        if (checkPlayerName(wanted, config.minPlayerName, config.strictPlayerNames, config.realmZone)
             != CharNameResult.CHAR_NAME_SUCCESS)
         {
             redSystemMessage("Enter a valid character name.");
             return true;
         }
-        const guid = context.database.characterGuid(normalizedName(name1));
+        const guid = context.database.characterGuid(normalizedName(oldName));
         if (guid == 0)
         {
             redSystemMessage("Player not found with this name.");
             return true;
         }
-        const newName = normalizedName(name2);
+        const newName = normalizedName(wanted);
         if (context.database.nameTaken(newName))
         {
             redSystemMessage("Player found with this name in use already.");
             return true;
         }
         context.database.renameCharacter(guid, newName);
-        if (auto online = context.onlinePlayer(name1))
+        if (auto online = context.onlinePlayer(oldName))
             sessionOf(online).renamedBy(gmSink, player.data.name, newName);
         else
-            gmElsewhere(name1, GmRemoteOp.rename, newName);
-        greenSystemMessage(format!"Changed name of '%s' to '%s'."(name1, name2));
-        gmLog(format!"renamed character %s (GUID: %u) to %s"(name1, guid, name2));
+            gmElsewhere(oldName, GmRemoteOp.rename, newName);
+        greenSystemMessage(format!"Changed name of '%s' to '%s'."(oldName, wanted));
+        gmLog(format!"renamed character %s (GUID: %u) to %s"(oldName, guid, wanted));
         return true;
     }
 
@@ -1241,33 +1261,35 @@ private:
         const offset = fullName.toLower.indexOf(search);
         string name = colored(ChatColor.white, fullName);
         if (offset >= 0 && offset + search.length <= fullName.length)
-            name = colored(ChatColor.white, fullName[0 .. offset])
-                ~ colored(ChatColor.softRed, fullName[offset .. offset + search.length])
-                ~ colored(ChatColor.white, fullName[offset + search.length .. $]);
+        {
+            const end = offset + search.length;
+            name = colored(ChatColor.white, fullName[0 .. offset]) ~ colored(ChatColor.softRed, fullName[offset .. end])
+                ~ colored(ChatColor.white, fullName[end .. $]);
+        }
         systemMessage(format!"%s %u: %s"(prefix, id, name));
     }
 
-    /// The lookups that need four letters, and stop at 25 results.
+    /// The lookups that need four letters, and stop at 25 results: started and completed in blue or green.
     bool lookupNamed(string search, string kind, bool blue, LookupResult[] delegate(string) find)
     {
-        const x = search.toLower;
-        if (x.length < 4)
+        const text = search.toLower;
+        if (text.length < 4)
         {
             redSystemMessage("Enter at least four characters to search.");
             return true;
         }
-        void say(string text)
+        void say(string message)
         {
             if (blue)
-                blueSystemMessage(text);
+                blueSystemMessage(message);
             else
-                greenSystemMessage(text);
+                greenSystemMessage(message);
         }
 
-        say(format!"Starting search of %s `%s`..."(kind, x));
+        say(format!"Starting search of %s `%s`..."(kind, text));
         const started = MonoTime.currTime;
         uint count;
-        foreach (row; find(x))
+        foreach (row; find(text))
         {
             if (kind == "item")
             {
@@ -1275,136 +1297,130 @@ private:
                 systemMessage(format!"Item %u %s ContainerSlots %u"(row.id, itemLink(row.id), item.containerSlots));
             }
             else
-                sendHighlightedName(kind == "creature" ? "Creature" : kind == "spell" ? "Spell" : "Skill", row.name, x,
-                    row.id);
+                sendHighlightedName(kind.capitalize, row.name, text, row.id);
             if (++count == 25)
             {
                 redSystemMessage("More than 25 results returned. aborting.");
                 break;
             }
         }
-        say(format!"Search completed in %u ms."((MonoTime.currTime - started).total!"msecs"));
+        say(format!"Search completed in %u ms."(msecsSince(started)));
         return true;
     }
 
+    /// `.npc spawn <entry>`: a creature spawned at the GM's position, and saved.
     bool handleCreatureSpawnCommand(uint entry = 0)
     {
         if (entry == 0)
             return false;
-        const t = entry in context.data.creatureTemplates;
-        if (t is null)
+        const creatureTemplate = entry in context.data.creatureTemplates;
+        if (creatureTemplate is null)
         {
             redSystemMessage("Invalid entry id.");
             return true;
         }
         const at = player.position;
-        auto creature = context.spawnCreatureAt(map, entry, at);
-        if (creature is null)
+        if (context.spawnCreatureAt(map, entry, at) is null)
         {
             redSystemMessage("Could not spawn the creature.");
             return true;
         }
-        blueSystemMessage(format!"Spawned a creature `%s` with entry %u at %f %f %f on map %u"(t.name, entry, at.x, at.y,
-            at.z, player.data.map));
-        gmLog(format!"spawned a %s at %u %f %f %f"(t.name, player.data.map, at.x, at.y, at.z));
+        blueSystemMessage(format!"Spawned a creature `%s` with entry %u at %f %f %f on map %u"(creatureTemplate.name,
+            entry, at.x, at.y, at.z, player.data.map));
+        gmLog(format!"spawned a %s at %u %f %f %f"(creatureTemplate.name, player.data.map, at.x, at.y, at.z));
         return true;
     }
 
+    /// `.character getstanding <faction>`: the selected player's base and current standing with a faction.
     bool handleGetStandingCommand(uint faction = 0)
     {
-        auto plr = selectedCharacter(true);
-        if (plr is null)
+        auto target = selectedCharacter(true);
+        if (target is null)
             return true;
-        const entry = context.client.factions.lookup(faction);
-        const rep = plr.player.reputation;
-        const standing = rep is null ? 0 : rep.standingWith(faction);
-        const base = rep is null || entry is null ? 0 : rep.baseOf(entry);
+        const factionEntry = context.client.factions.lookup(faction);
+        const reputation = target.player.reputation;
+        const standing = reputation is null ? 0 : reputation.standingWith(faction);
+        const base = reputation is null || factionEntry is null ? 0 : reputation.baseOf(factionEntry);
         greenSystemMessage(format!"Reputation for faction %u:"(faction));
         systemMessage(format!"Base Standing: %d"(base));
         blueSystemMessage(format!"Standing: %d"(standing));
         return true;
     }
 
+    /// `.character setstanding <faction> <standing>`: to that value, its neighbouring factions untouched.
     bool handleSetStandingCommand(uint faction, int standing)
     {
-        auto plr = selectedCharacter(true);
-        if (plr is null)
+        auto target = selectedCharacter(true);
+        if (target is null)
             return true;
-        blueSystemMessage(format!"Setting standing of %u to %d on %s."(faction, standing, plr.player.data.name));
-        if (plr.player.reputation !is null) // to that value, its neighbouring factions untouched
-            plr.modifyReputation(faction, standing - plr.player.reputation.standingWith(faction), true);
-        plr.flushPlayerChanges();
-        plr.greenSystemMessage(format!"%s set your standing of faction %u to %d."(player.data.name, faction, standing));
-        gmLog(format!"set standing of faction %u to %u for %s"(faction, standing, plr.player.data.name));
+        blueSystemMessage(format!"Setting standing of %u to %d on %s."(faction, standing, target.player.data.name));
+        if (target.player.reputation !is null)
+            target.modifyReputation(faction, standing - target.player.reputation.standingWith(faction), true);
+        target.flushPlayerChanges();
+        target.greenSystemMessage(format!"%s set your standing of faction %u to %d."(player.data.name, faction,
+            standing));
+        gmLog(format!"set standing of faction %u to %u for %s"(faction, standing, target.player.data.name));
         return true;
     }
 
+    /// `.lookup faction <text>`.
     bool handleLookupFactionCommand(Rest search)
     {
-        const x = search.text.toLower;
-        if (x.length < 4)
-        {
-            redSystemMessage("Enter at least four characters to search.");
-            return true;
-        }
-        greenSystemMessage(format!"Starting search of faction `%s`..."(x));
-        const started = MonoTime.currTime;
-        uint count;
-        foreach (id; 0 .. context.client.factions.idLimit)
-            if (const f = context.client.factions.lookup(id))
-                if (f.name[0].toLower.canFind(x))
-                {
-                    sendHighlightedName("Faction", f.name[0], x, f.id);
-                    if (++count == 25)
-                    {
-                        redSystemMessage("More than 25 results returned. aborting.");
-                        break;
-                    }
-                }
-        greenSystemMessage(format!"Search completed in %u ms."((MonoTime.currTime - started).total!"msecs"));
-        return true;
+        return lookupNamed(search, "faction", false, (text) {
+            LookupResult[] found;
+            foreach (id; 0 .. context.client.factions.idLimit)
+                if (const faction = context.client.factions.lookup(id))
+                    if (faction.name[0].toLower.canFind(text))
+                        found ~= LookupResult(faction.id, faction.name[0]);
+            return found;
+        });
     }
 
+    /// `.lookup item <text>`.
     bool handleLookupItemCommand(Rest search)
     {
-        return lookupNamed(search, "item", true, (x) {
+        return lookupNamed(search, "item", true, (text) {
             LookupResult[] found;
             foreach (entry, ref item; context.data.items)
-                if (item.details.name.toLower.canFind(x))
+                if (item.details.name.toLower.canFind(text))
                     found ~= LookupResult(entry, item.details.name);
             found.sort!((a, b) => a.id < b.id);
             return found;
         });
     }
 
+    /// `.lookup creature <text>`.
     bool handleLookupCreatureCommand(Rest search)
     {
-        return lookupNamed(search, "creature", false, x => context.database.lookup(LookupTable.creature, x, 25));
+        return lookupNamed(search, "creature", false, text => context.database.lookup(LookupTable.creature, text, 25));
     }
 
+    /// `.lookup spell <text>`.
     bool handleLookupSpellCommand(Rest search)
     {
-        return lookupNamed(search, "spell", false, x => context.database.lookup(LookupTable.spell, x, 25));
+        return lookupNamed(search, "spell", false, text => context.database.lookup(LookupTable.spell, text, 25));
     }
 
+    /// `.lookup skill <text>`.
     bool handleLookupSkillCommand(Rest search)
     {
-        return lookupNamed(search, "skill", false, (x) {
+        return lookupNamed(search, "skill", false, (text) {
             LookupResult[] found;
             foreach (ref skill; context.client.skillLines.rows)
-                if (skill.name[0].toLower.canFind(x))
+                if (skill.name[0].toLower.canFind(text))
                     found ~= LookupResult(skill.id, skill.name[0]);
             return found;
         });
     }
 
+    /// `.lookup object <text>`: the game objects whose name matches, at most 50.
     bool handleLookupObjectCommand(Rest search)
     {
-        const x = search.toLower;
-        greenSystemMessage(format!"Starting search of object `%s`..."(x));
+        const text = search.toLower;
+        greenSystemMessage(format!"Starting search of object `%s`..."(text));
         const started = MonoTime.currTime;
         uint count;
-        foreach (row; context.database.lookup(LookupTable.gameObject, x, 50))
+        foreach (row; context.database.lookup(LookupTable.gameObject, text, 50))
         {
             systemMessage(colored(ChatColor.gold, format!"Object %u"(row.id)) ~ " · " ~ row.name);
             if (++count >= 50)
@@ -1415,23 +1431,23 @@ private:
         }
         if (count == 0)
             blueSystemMessage("No matches found.");
-        blueSystemMessage(format!"Search completed in %u ms."((MonoTime.currTime - started).total!"msecs"));
+        blueSystemMessage(format!"Search completed in %u ms."(msecsSince(started)));
         return true;
     }
 
-    /// `.lookup quest`: the quests whose name matches the search text, at most 25.
+    /// `.lookup quest <text>`: the quests whose name matches, at most 25.
     bool handleQuestLookupCommand(Rest search)
     {
-        const x = search.toLower;
-        if (x.length < 4)
+        const text = search.toLower;
+        if (text.length < 4)
         {
             redSystemMessage("Enter at least four characters to search.");
             return true;
         }
-        blueSystemMessage(format!"Starting search of quests `%s`..."(x));
+        blueSystemMessage(format!"Starting search of quests `%s`..."(text));
         const started = MonoTime.currTime;
         uint count;
-        foreach (row; context.database.lookup(LookupTable.quest, x, 25))
+        foreach (row; context.database.lookup(LookupTable.quest, text, 25))
         {
             blueSystemMessage(format!"%u · %s"(row.id, row.name));
             if (++count == 25)
@@ -1442,7 +1458,7 @@ private:
         }
         if (count == 0)
             blueSystemMessage("No matches found.");
-        blueSystemMessage(format!"Search completed in %u ms."((MonoTime.currTime - started).total!"msecs"));
+        blueSystemMessage(format!"Search completed in %u ms."(msecsSince(started)));
         return true;
     }
 
@@ -1450,29 +1466,32 @@ private:
     // Creatures
     // -----------------------------------------------------------------------
 
+    /// `.npc info`: the selected creature's fields.
     bool handleNpcInfoCommand()
     {
         import dmangos.world.objects : counterOf;
 
-        auto crt = selectedCreature(true);
-        if (crt is null)
+        auto creature = selectedCreature(true);
+        if (creature is null)
             return false;
-        auto v = &crt.values;
-        blueSystemMessage("Showing creature info for " ~ crt.template_.name);
-        systemMessage(format!"GUID: %d"(cast(uint) crt.guid));
-        systemMessage(format!"Faction: %d"(v.get!UNIT_FIELD_FACTIONTEMPLATE));
-        systemMessage(format!"NPCFlags: %d"(v.get!UNIT_NPC_FLAGS));
-        systemMessage(format!"DisplayID: %d"(v.get!UNIT_FIELD_DISPLAYID));
-        systemMessage(format!"Health (cur/max): %d/%d"(v.get!UNIT_FIELD_HEALTH, v.get!UNIT_FIELD_MAXHEALTH));
-        systemMessage(format!"Mana (cur/max): %d/%d"(v.get!UNIT_FIELD_POWER1, v.get!UNIT_FIELD_MAXPOWER1));
+        const values = &creature.values;
+        blueSystemMessage("Showing creature info for " ~ creature.template_.name);
+        systemMessage(format!"GUID: %d"(cast(uint) creature.guid));
+        systemMessage(format!"Faction: %d"(values.get!UNIT_FIELD_FACTIONTEMPLATE));
+        systemMessage(format!"NPCFlags: %d"(values.get!UNIT_NPC_FLAGS));
+        systemMessage(format!"DisplayID: %d"(values.get!UNIT_FIELD_DISPLAYID));
+        systemMessage(format!"Health (cur/max): %d/%d"(values.get!UNIT_FIELD_HEALTH, values.get!UNIT_FIELD_MAXHEALTH));
+        systemMessage(format!"Mana (cur/max): %d/%d"(values.get!UNIT_FIELD_POWER1, values.get!UNIT_FIELD_MAXPOWER1));
         systemMessage("Armor/Holy/Fire/Nature/Frost/Shadow/Arcane");
-        systemMessage(format!"%d/%d/%d/%d/%d/%d/%d"(v.get!UNIT_FIELD_RESISTANCES(0), v.get!UNIT_FIELD_RESISTANCES(1),
-            v.get!UNIT_FIELD_RESISTANCES(2), v.get!UNIT_FIELD_RESISTANCES(3), v.get!UNIT_FIELD_RESISTANCES(4),
-            v.get!UNIT_FIELD_RESISTANCES(5), v.get!UNIT_FIELD_RESISTANCES(6)));
-        systemMessage(format!"Damage (min/max): %f/%f"(v.get!UNIT_FIELD_MINDAMAGE, v.get!UNIT_FIELD_MAXDAMAGE));
-        colorSystemMessage(ChatColor.red, format!"Entry ID: %d"(v.get!OBJECT_FIELD_ENTRY));
-        colorSystemMessage(ChatColor.red, format!"SQL Entry ID: %d"(counterOf(crt.guid)));
-        const bytes = v.get!UNIT_FIELD_BYTES_0;
+        systemMessage(format!"%d/%d/%d/%d/%d/%d/%d"(values.get!UNIT_FIELD_RESISTANCES(0),
+            values.get!UNIT_FIELD_RESISTANCES(1), values.get!UNIT_FIELD_RESISTANCES(2),
+            values.get!UNIT_FIELD_RESISTANCES(3), values.get!UNIT_FIELD_RESISTANCES(4),
+            values.get!UNIT_FIELD_RESISTANCES(5), values.get!UNIT_FIELD_RESISTANCES(6)));
+        systemMessage(format!"Damage (min/max): %f/%f"(values.get!UNIT_FIELD_MINDAMAGE,
+            values.get!UNIT_FIELD_MAXDAMAGE));
+        colorSystemMessage(ChatColor.red, format!"Entry ID: %d"(values.get!OBJECT_FIELD_ENTRY));
+        colorSystemMessage(ChatColor.red, format!"SQL Entry ID: %d"(counterOf(creature.guid)));
+        const bytes = values.get!UNIT_FIELD_BYTES_0;
         systemMessage(format!"UNIT_FIELD_BYTES_0 are %s %s %s %s"(bytes & 0xFF, bytes >> 8 & 0xFF, bytes >> 16 & 0xFF,
             bytes >> 24));
         return true;
@@ -1515,7 +1534,7 @@ unittest
     assert(systemMessages(gm.read()) == [ChatColor.green ~ "Reputation for faction 72:|r", "Base Standing: 0",
         ChatColor.sky ~ "Standing: 1000|r"]);
     gm.say(".character resetreputation");
-    assert(systemMessages(gm.read()) == ["Done. Relog for changes to take effect."]);
+    assert(systemMessages(gm.read()) == [ChatColor.green ~ "Done. Relog for changes to take effect.|r"]);
     assert(me.reputation.standingWith(72) == 0);
 }
 
@@ -1576,7 +1595,7 @@ unittest
         anduin.read();
         assert(victim.knowsSpell(blessing) && victim.skillValue(164)[1] == 75);
         gm.say(".character resetspells");
-        assert(systemMessages(gm.read()) == ["Reset spells of Anduin to level 1."]);
+        assert(systemMessages(gm.read()) == [ChatColor.green ~ "Reset spells of Anduin to level 1.|r"]);
         assert(systemMessages(anduin.read()).canFind(ChatColor.sky ~ "Varian reset all your spells to starting values.|r"));
         assert(!victim.knowsSpell(blessing));
         {

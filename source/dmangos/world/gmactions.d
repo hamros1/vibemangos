@@ -11,7 +11,6 @@ module dmangos.world.gmactions;
 mixin template GmActions()
 {
     import dmangos.bytes : ByteWriter;
-    import dmangos.log;
     import dmangos.world.group : GroupUpdate;
     import dmangos.world.map : packetBody;
     import dmangos.world.movement : MovementInfo, MoveType;
@@ -47,10 +46,10 @@ private:
     void levelRewardLetter(uint level)
     {
         const raceMask = 1u << (player.data.race - 1);
-        foreach (ref m; context.data.levelRewardMails.get(level, null))
-            if ((m.raceMask & raceMask) && context.client.mailTemplates.lookup(m.mailTemplate) !is null)
+        foreach (const ref reward; context.data.levelRewardMails.get(level, null))
+            if ((reward.raceMask & raceMask) && context.client.mailTemplates.lookup(reward.mailTemplate) !is null)
             {
-                context.templateLetter(m.mailTemplate, m.sender, player.data.guid);
+                context.templateLetter(reward.mailTemplate, reward.sender, player.data.guid);
                 break; // one letter a level (`GetMailLevelReward`)
             }
     }
@@ -201,7 +200,7 @@ private:
     }
 
     /// A system message to staff announcement recipients.
-    void sendGMWorldText(string text)
+    void sendGmWorldText(string text)
     {
         context.toEveryone(Opcode.SMSG_MESSAGECHAT, chatMessage(ChatType.CHAT_MSG_SYSTEM, Language.LANG_UNIVERSAL, 0,
             text), true);

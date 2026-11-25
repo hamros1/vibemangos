@@ -7,9 +7,7 @@ module dmangos.world.commands;
 public import std.typecons : Nullable; // handler parameters may be `Nullable`
 
 import dmangos.world.commandtable;
-import dmangos.world.updatefields;
 
-import dmangos.world.chatstyle : systemChatText;
 public import dmangos.world.chatstyle : ChatColor, colored;
 
 /// Whether `typed` is the start of `name`, in any case.
@@ -46,21 +44,25 @@ package string[] commandMethods(immutable(ChatCommand)[] table) pure @safe
     return methods;
 }
 
+/// The permission path of the row `name` under `parent`.
 package string childPath(string parent, string name) pure @safe
 {
     return parent.length ? parent ~ " " ~ name : name;
 }
 
+/// Whether `word` is `name`, in any case.
 package bool exactWord(string name, string word) pure nothrow @safe @nogc
 {
     return name.length == word.length && hasStringAbbr(name, word);
 }
 
+/// Whether `word` is the row's name or its preferred spelling.
 package bool named(ref const ChatCommand row, string word) pure nothrow @safe @nogc
 {
     return exactWord(row.name, word) || exactWord(row.alternate, word);
 }
 
+/// The row of `rows` named `word`, or (with `abbreviations`) the first it abbreviates; null if none.
 private const(ChatCommand)* catalogWord(immutable(ChatCommand)[] rows, string word, bool abbreviations) pure @safe
 {
     if (!word.length)
@@ -194,11 +196,11 @@ unittest
 /// Lengths of time in seconds, as commands count them: a month is 30 days, a year 12 months.
 enum : uint
 {
-    TIME_MINUTE = 60,
-    TIME_HOUR = TIME_MINUTE * 60,
-    TIME_DAY = TIME_HOUR * 24,
-    TIME_MONTH = TIME_DAY * 30,
-    TIME_YEAR = TIME_MONTH * 12,
+    secondsPerMinute = 60,
+    secondsPerHour = secondsPerMinute * 60,
+    secondsPerDay = secondsPerHour * 24,
+    secondsPerMonth = secondsPerDay * 30,
+    secondsPerYear = secondsPerMonth * 12,
 }
 
 /**
@@ -206,7 +208,7 @@ enum : uint
  * or `h`, added up, in seconds. Reading stops at anything that is not a digit, and a number
  * without a letter is ignored, so "perm" is 0. -1 for an unknown letter.
  */
-int getTimePeriodFromString(const(char)[] text) pure nothrow @safe @nogc
+int parseDuration(const(char)[] text) pure nothrow @safe @nogc
 {
     import std.ascii : isDigit, toLower;
 
@@ -222,10 +224,10 @@ int getTimePeriodFromString(const(char)[] text) pure nothrow @safe @nogc
         uint multiplier;
         switch (toLower(text[i]))
         {
-        case 'y': multiplier = TIME_YEAR; break;
-        case 'm': multiplier = TIME_MONTH; break;
-        case 'd': multiplier = TIME_DAY; break;
-        case 'h': multiplier = TIME_HOUR; break;
+        case 'y': multiplier = secondsPerYear; break;
+        case 'm': multiplier = secondsPerMonth; break;
+        case 'd': multiplier = secondsPerDay; break;
+        case 'h': multiplier = secondsPerHour; break;
         default: return -1;
         }
         ++i;
@@ -235,34 +237,34 @@ int getTimePeriodFromString(const(char)[] text) pure nothrow @safe @nogc
 }
 
 /// A number of seconds in words: "1 days, 2 hours, " and so on.
-string convertTimeStampToString(uint timestamp) pure @safe
+string durationString(uint timestamp) pure @safe
 {
-    import std.conv : to;
+    import std.format : format;
 
     const seconds = timestamp % 60;
-    const mins = timestamp / TIME_MINUTE % 60;
-    const hours = timestamp / TIME_HOUR % 24;
-    const days = timestamp / TIME_DAY % 30;
-    const months = timestamp / TIME_MONTH % 12;
-    const years = timestamp / TIME_YEAR;
+    const minutes = timestamp / secondsPerMinute % 60;
+    const hours = timestamp / secondsPerHour % 24;
+    const days = timestamp / secondsPerDay % 30;
+    const months = timestamp / secondsPerMonth % 12;
+    const years = timestamp / secondsPerYear;
     string result;
     if (years)
-        result ~= years.to!string ~ " years, ";
+        result ~= format!"%s years, "(years);
     if (months)
-        result ~= months.to!string ~ " months, ";
+        result ~= format!"%s months, "(months);
     if (days)
-        result ~= days.to!string ~ " days, ";
+        result ~= format!"%s days, "(days);
     if (hours)
-        result ~= hours.to!string ~ " hours, ";
-    if (mins)
-        result ~= mins.to!string ~ " minutes, ";
+        result ~= format!"%s hours, "(hours);
+    if (minutes)
+        result ~= format!"%s minutes, "(minutes);
     if (seconds)
-        result ~= seconds.to!string ~ " seconds";
+        result ~= format!"%s seconds"(seconds);
     return result;
 }
 
 /// A Unix time as a date: "Monday, 05 January 2026, 09:04:01", in local time.
-string convertTimeStampToDataTime(long timestamp) @safe
+string dateTimeString(long timestamp) @safe
 {
     import std.datetime.systime : SysTime;
     import std.format : format;
@@ -270,9 +272,9 @@ string convertTimeStampToDataTime(long timestamp) @safe
     static immutable string[7] days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
     static immutable string[12] months = ["January", "February", "March", "April", "May", "June", "July", "August",
         "September", "October", "November", "December"];
-    const t = SysTime.fromUnixTime(timestamp);
-    return format!"%s, %02d %s %d, %02d:%02d:%02d"(days[t.dayOfWeek], t.day, months[t.month - 1], t.year, t.hour,
-        t.minute, t.second);
+    const time = SysTime.fromUnixTime(timestamp);
+    return format!"%s, %02d %s %d, %02d:%02d:%02d"(days[time.dayOfWeek], time.day, months[time.month - 1], time.year,
+        time.hour, time.minute, time.second);
 }
 
 /// C's `ctime`: "Wed Jun 30 21:49:08 1993\n", in local time, as the IP ban message prints it.
@@ -284,45 +286,49 @@ string ctimeString(long timestamp) @safe
     static immutable string[7] days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     static immutable string[12] months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov",
         "Dec"];
-    const t = SysTime.fromUnixTime(timestamp);
-    return format!"%s %s %2d %02d:%02d:%02d %d\n"(days[t.dayOfWeek], months[t.month - 1], t.day, t.hour, t.minute,
-        t.second, t.year);
+    const time = SysTime.fromUnixTime(timestamp);
+    return format!"%s %s %2d %02d:%02d:%02d %d\n"(days[time.dayOfWeek], months[time.month - 1], time.day, time.hour,
+        time.minute, time.second, time.year);
 }
 
 unittest
 {
-    assert(getTimePeriodFromString("1d2h") == 93_600 && getTimePeriodFromString("perm") == 0);
-    assert(getTimePeriodFromString("5") == 0 && getTimePeriodFromString("3x") == -1);
-    assert(getTimePeriodFromString("1m") == 2_592_000);
-    assert(convertTimeStampToString(93_605) == "1 days, 2 hours, 5 seconds");
-    assert(convertTimeStampToString(TIME_YEAR + TIME_MONTH + 61) == "1 years, 1 months, 1 minutes, 1 seconds");
+    assert(parseDuration("1d2h") == 93_600 && parseDuration("perm") == 0);
+    assert(parseDuration("5") == 0 && parseDuration("3x") == -1);
+    assert(parseDuration("1m") == 2_592_000);
+    assert(durationString(93_605) == "1 days, 2 hours, 5 seconds");
+    assert(durationString(secondsPerYear + secondsPerMonth + 61) == "1 years, 1 months, 1 minutes, 1 seconds");
 }
 
-/// See the module documentation.
+/// Commands typed in chat: matched against the catalog, checked against the player's access, run; and the
+/// system messages, selections and `.modify` field rows the handlers share.
 mixin template ChatCommands()
 {
     import std.format : format;
-    import dmangos.log;
+    import dmangos.log : trace;
+    import dmangos.world.chatstyle : systemChatText;
     import dmangos.world.commands;
-    import dmangos.world.commandtable;
+    import dmangos.world.commandtable : ChatCommand, commandTable;
     import dmangos.world.creature : Creature;
     import dmangos.world.objects : HighGuid, highGuidOf;
-    import dmangos.world.opcodes;
-    import dmangos.world.packets;
+    import dmangos.world.opcodes : ChatType, Language;
+    import dmangos.world.packets : ServerMessageChat;
     import dmangos.world.queries : chatMessage;
-    import dmangos.world.updatefields;
+    import dmangos.world.updatefields : UNIT_END, UNIT_FIELD_MINDAMAGE, UNIT_FIELD_STAT1, UNIT_FIELD_TARGET;
 
 private:
-    private enum methods = commandMethods(commandTable);
+    enum methods = commandMethods(commandTable);
 
-    private struct CommandMatch
+    /// A catalog row the typed words named, with its permission path and its preferred spelling.
+    struct CommandMatch
     {
         const(ChatCommand)* row;
         string path;
         string label;
     }
 
-    private bool canRunCommand(ref const ChatCommand row, string path) const
+    /// Whether this player may run `row` (at `path`): a group if any of its actions.
+    bool canRunCommand(ref const ChatCommand row, string path) const
     {
         import std.uni : toLower;
 
@@ -342,7 +348,8 @@ private:
             || (permission.delegable && gmAccess.allows("command." ~ toLower(path)));
     }
 
-    private const(ChatCommand)* matchCommand(immutable(ChatCommand)[] table, string parent, string word,
+    /// The row of `table` named `word` (or abbreviated by it) that this player may run; null if none.
+    const(ChatCommand)* matchCommand(immutable(ChatCommand)[] table, string parent, string word,
         bool abbreviations) const
     {
         const(ChatCommand)* prefix;
@@ -357,13 +364,14 @@ private:
         return prefix;
     }
 
-    private CommandMatch readCommand(ref string text, bool abbreviations = true) const
+    /// The command the words of `text` name, which then holds the arguments; no row if none.
+    CommandMatch readCommand(ref string text, bool abbreviations = true) const
     {
         CommandMatch match;
         immutable(ChatCommand)[] table = commandTable;
         while (const word = nextWord(text))
         {
-            auto row = matchCommand(table, match.path, word, abbreviations);
+            const row = matchCommand(table, match.path, word, abbreviations);
             if (row is null)
                 return CommandMatch.init;
             match = CommandMatch(row, childPath(match.path, row.name), childPath(match.label, row.label));
@@ -402,15 +410,17 @@ private:
         return true;
     }
 
-    private const(ChatCommand)* actionFor(ref const ChatCommand row) const
+    /// The action a row runs: its own, or a shortcut's target.
+    const(ChatCommand)* actionFor(ref const ChatCommand row) const
     {
         return row.target.length ? declaredCommand(row.target) : &row;
     }
 
-    private bool runCommand(ref const ChatCommand row, string args)
+    /// Runs the action `row` with `args`; false if they do not fit it.
+    bool runCommand(ref const ChatCommand row, string args)
     {
         if (row.field >= 0)
-            return row.decimal ? cmdSetField!float(row, args) : cmdSetField!uint(row, args);
+            return row.decimal ? setFieldCommand!float(row, args) : setFieldCommand!uint(row, args);
         switch (row.handler)
         {
             static foreach (method; methods)
@@ -423,17 +433,20 @@ private:
         }
     }
 
-    private void unknownCommand()
+    /// The answer to a command that does not exist or this player may not use.
+    void unknownCommand()
     {
         redSystemMessage("Command unavailable. Try .commands.");
     }
 
-    private string commandUsage(string label, ref const ChatCommand row) const
+    /// `.label` and the row's arguments.
+    string commandUsage(string label, ref const ChatCommand row) const
     {
         return "." ~ label ~ (row.arguments.length ? " " ~ row.arguments : "");
     }
 
-    private void showCommandHelp(const ref CommandMatch match)
+    /// The matched action's usage and description, or why it is unavailable.
+    void showCommandHelp(const ref CommandMatch match)
     {
         const row = actionFor(*match.row);
         blueSystemMessage(commandUsage(match.label, *row));
@@ -443,10 +456,13 @@ private:
             systemMessage(row.description);
     }
 
-    private void showCommandList(CommandMatch match, string filter = null)
+    /// The actions of the matched group (or the top-level commands, those starting with `filter`) this player
+    /// may use.
+    void showCommandList(CommandMatch match, string filter = null)
     {
         import std.algorithm.sorting : sort;
         import std.array : join;
+        import std.range : chunks;
 
         const rows = match.row is null ? commandTable : match.row.children;
         string[] lines;
@@ -478,12 +494,13 @@ private:
         else
         {
             greenSystemMessage("Commands  ·  .help <command> for syntax");
-            for (size_t i; i < lines.length; i += 5)
-                systemMessage(lines[i .. (i + 5 < lines.length ? i + 5 : lines.length)].join("  "));
+            foreach (chunk; lines.chunks(5))
+                systemMessage(chunk.join("  "));
         }
     }
 
-    private bool rowsHaveActions(immutable(ChatCommand)[] rows, string parent) const
+    /// Whether any of `rows` (under `parent`) is an action this player may use.
+    bool rowsHaveActions(immutable(ChatCommand)[] rows, string parent) const
     {
         foreach (ref row; rows)
             if (!actionFor(row).unavailableReason.length && canRunCommand(row, childPath(parent, row.name)))
@@ -598,7 +615,8 @@ private:
     // Selections
     // -----------------------------------------------------------------------
 
-    /// The selected player on this map, oneself if nothing is selected.
+    /// The selected player on this map, oneself if nothing is selected; null (with an error message if
+    /// `showError`) if the selection is not a player here.
     Character selectedCharacter(bool showError)
     {
         const guid = player.values.get!UNIT_FIELD_TARGET;
@@ -630,32 +648,32 @@ private:
     // .modify's field rows
     // -----------------------------------------------------------------------
 
-    /// Sets a typed update field. Resource maxima default to the requested value.
-    bool cmdSetField(T)(ref const ChatCommand row, string args)
+    /// A `.modify` field row: the selected player's (or creature's) field set, and its maximum, which defaults to
+    /// the value.
+    bool setFieldCommand(T)(ref const ChatCommand row, string args)
     {
         import std.conv : ConvException, to;
         import std.math : isFinite;
 
         const hasMax = row.maximum >= 0;
-        const value = nextWord(args);
+        const valueWord = nextWord(args);
         const maximumArg = hasMax ? nextWord(args) : null;
-        if (value is null || (row.field == UNIT_FIELD_MINDAMAGE && maximumArg is null) || trimSpaces(args).length)
+        if (valueWord is null || (row.field == UNIT_FIELD_MINDAMAGE && maximumArg is null) || trimSpaces(args).length)
             return false;
-        const maximum = !hasMax ? "0" : maximumArg.length ? maximumArg : value;
-        T av, mv;
+        const maximumWord = !hasMax ? "0" : maximumArg.length ? maximumArg : valueWord;
+        T value, maximum;
         try
         {
-            av = value.to!T;
-            mv = maximum.to!T;
+            value = valueWord.to!T;
+            maximum = maximumWord.to!T;
         }
         catch (ConvException)
             return false;
-        // Integer and float values are checked a little differently.
         static if (is(T == float))
-            const invalidValue = !av.isFinite || !mv.isFinite || av <= 0;
+            const invalidValue = !value.isFinite || !maximum.isFinite || value <= 0;
         else
-            const invalidValue = av == 0 && mv > 0;
-        if (invalidValue || hasMax && (mv < av || mv <= 0))
+            const invalidValue = value == 0 && maximum > 0;
+        if (invalidValue || hasMax && (maximum < value || maximum <= 0))
         {
             redSystemMessage("Enter a valid value. A maximum must be positive and at least as large as the value.");
             return true;
@@ -663,7 +681,7 @@ private:
 
         enum valueFormat = is(T == float) ? "%.1f" : "%d";
         enum logFormat = is(T == float) ? "%f" : "%s";
-        const shown = hasMax ? format!(valueFormat ~ "/" ~ valueFormat)(av, mv) : format!valueFormat(av);
+        const shown = hasMax ? format!(valueFormat ~ "/" ~ valueFormat)(value, maximum) : format!valueFormat(value);
         static uint raw(T number)
         {
             import dmangos.bytes : floatBits;
@@ -678,31 +696,31 @@ private:
         const maxSlot = hasMax ? cast(size_t) row.maximum : 0;
         const fieldName = row.label;
         static if (is(T == uint))
-            const stored = slot == UNIT_FIELD_STAT1 ? av / 2 : av; // the agility row stores half the value
+            const stored = slot == UNIT_FIELD_STAT1 ? value / 2 : value; // the agility row stores half the value
         else
-            const stored = av;
-        if (auto plr = selectedCharacter(false))
+            const stored = value;
+        if (auto target = selectedCharacter(false))
         {
-            const name = plr.player.data.name;
-            gmLog(format!("used modify field value: %s, " ~ logFormat ~ " on %s")(fieldName, av, name));
-            blueSystemMessage(format!"You set the %s of %s to %s."(fieldName, name, shown));
-            plr.greenSystemMessage(format!"%s set your %s to %s."(player.data.name, fieldName, shown));
-            plr.player.values.setSlot(slot, raw(stored));
+            const name = target.player.data.name;
+            gmLog(format!("used modify field value: %s, " ~ logFormat ~ " on %s")(fieldName, value, name));
+            greenSystemMessage(format!"You set the %s of %s to %s."(fieldName, name, shown));
+            target.greenSystemMessage(format!"%s set your %s to %s."(player.data.name, fieldName, shown));
+            target.player.values.setSlot(slot, raw(stored));
             if (hasMax)
-                plr.player.values.setSlot(maxSlot, raw(mv));
-            plr.flushPlayerChanges();
+                target.player.values.setSlot(maxSlot, raw(maximum));
+            target.flushPlayerChanges();
         }
-        else if (auto cr = selectedCreature(false))
+        else if (auto creature = selectedCreature(false))
         {
             if (!(slot < UNIT_END && maxSlot < UNIT_END))
                 return false;
-            const name = cr.template_.name;
-            blueSystemMessage(format!"Setting %s of %s to %s."(fieldName, name, shown));
-            gmLog(format!("used modify field value: [creature]%s, " ~ logFormat ~ " on %s")(fieldName, av, name));
-            cr.values.setSlot(slot, raw(stored));
+            const name = creature.template_.name;
+            greenSystemMessage(format!"Setting %s of %s to %s."(fieldName, name, shown));
+            gmLog(format!("used modify field value: [creature]%s, " ~ logFormat ~ " on %s")(fieldName, value, name));
+            creature.values.setSlot(slot, raw(stored));
             if (hasMax)
-                cr.values.setSlot(maxSlot, raw(mv));
-            map.flushObjectChanges(cr);
+                creature.values.setSlot(maxSlot, raw(maximum));
+            map.flushObjectChanges(creature);
         }
         else
             redSystemMessage("Select a player or creature first.");
@@ -722,6 +740,7 @@ version (unittest)
     import dmangos.world.opcodes;
     import dmangos.world.player : PlayerFlags;
     import dmangos.world.testclient;
+    import dmangos.world.updatefields;
 }
 
 /// Who may use commands, how words are matched, and what a refusal or a sub-table looks like.
@@ -821,10 +840,12 @@ unittest
     gm.read();
 
     gm.say(".learn 99999999");
-    assert(systemMessages(gm.read()) == [ChatColor.green ~ "Targeting yourself.|r", "Unknown spell ID 99999999."]);
+    assert(systemMessages(gm.read()) == [ChatColor.green ~ "Targeting yourself.|r",
+        ChatColor.softRed ~ "Unknown spell ID 99999999.|r"]);
     assert(!gm.session.inWorld.isStaff && gm.session.inWorld.security == AccountLevel.player);
     gm.say(".character learn 99999999");
-    assert(systemMessages(gm.read()) == [ChatColor.green ~ "Targeting yourself.|r", "Unknown spell ID 99999999."]);
+    assert(systemMessages(gm.read()) == [ChatColor.green ~ "Targeting yourself.|r",
+        ChatColor.softRed ~ "Unknown spell ID 99999999.|r"]);
     gm.say(".travel coords 0 0 0 0");
     assert(systemMessages(gm.read()) == [ChatColor.softRed ~ "Command unavailable. Try .commands.|r"]);
     gm.say(".access grant JAINA administrator");
@@ -894,7 +915,7 @@ unittest
     gm.say(".modify hp 400 500");
     const me = gm.session.character;
     assert(me.values[UNIT_FIELD_HEALTH] == 400 && me.values[UNIT_FIELD_MAXHEALTH] == 500);
-    assert(systemMessages(gm.read()) == [ChatColor.sky ~ "You set the hp of Anduin to 400/500.|r",
+    assert(systemMessages(gm.read()) == [ChatColor.green ~ "You set the hp of Anduin to 400/500.|r",
         ChatColor.green ~ "Anduin set your hp to 400/500.|r"]);
     gm.say(".modify hp 600 500");
     assert(systemMessages(gm.read())[0].canFind("Enter a valid value"));
@@ -955,7 +976,8 @@ unittest
     gm.say(".character additem 117");
     assert(gm.session.character.inventory.count(itemJerky) == 1);
     gm.say(".character additem 117 x");
-    assert(systemMessages(gm.read())[$ - 1] == "Give items to the selected player." && gm.session.character.inventory.count(itemJerky) == 1);
+    assert(systemMessages(gm.read())[$ - 1] == "Give items to the selected player.");
+    assert(gm.session.character.inventory.count(itemJerky) == 1);
 
     // `Rest` takes the rest of the line; a missing `Rest` with a default takes the default.
     gm.say(".kickplayer jaina was rude to the guards");
@@ -968,7 +990,8 @@ unittest
 
     // `OnOff` reads "on" and "off" only; an optional `Nullable!OnOff` toggles when it is missing.
     gm.say(".cheat explore maybe");
-    assert(systemMessages(gm.read()) == [ChatColor.sky ~ ".cheat explore <on|off>|r", "Reveal or clear map exploration."]);
+    assert(systemMessages(gm.read()) == [ChatColor.sky ~ ".cheat explore <on|off>|r",
+        "Reveal or clear map exploration."]);
     enum activated = ChatColor.sky ~ "Skip area requirements: on for Anduin.|r";
     enum deactivated = ChatColor.sky ~ "Skip area requirements: off for Anduin.|r";
     gm.say(".cheat triggerpass");
@@ -992,13 +1015,13 @@ unittest
     gm.say(".pet addspell 133");
     assert(systemMessages(gm.read()) == [ChatColor.softRed ~ "Jaina has no pet.|r"]);
     gm.say(".pet createpet 299");
-    assert(systemMessages(gm.read()).canFind(colored(ChatColor.softRed, "Choose a tameable creature entry and a living hunter with no callable pet.")));
+    assert(systemMessages(gm.read()).canFind(colored(ChatColor.softRed,
+        "Choose a tameable creature entry and a living hunter with no callable pet.")));
 }
 
 /// GM tickets: a player asks for help; the GM channel's `.gmTicket` commands list and remove tickets, as ArcEmu's.
 unittest
 {
-    import std.algorithm.searching : canFind;
     import dmangos.bytes : ByteWriter;
 
     auto db = newDatabase();
@@ -1036,10 +1059,8 @@ unittest
     auto listed = gm.read();
     bool says(const(ServerPacketRead)[] packets, string text)
     {
-        foreach (p; packets)
-            if (p.opcode == Opcode.SMSG_MESSAGECHAT && p.body_.canFind(cast(const(ubyte)[]) text))
-                return true;
-        return false;
+        return packets.canFind!(p => p.opcode == Opcode.SMSG_MESSAGECHAT
+            && p.body_.canFind(cast(const(ubyte)[]) text));
     }
     assert(says(listed, "GmTicket:2") && says(listed, "GmTicket:3:1:1:1::Anduin:"), "the list");
     gm.say(".gmTicket get 1");

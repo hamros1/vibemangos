@@ -4,20 +4,25 @@
  * `.quest finisher`, `.quest spawn` and `.quest reward`. Quest givers are read from
  * `creature_questrelation`, finishers from `creature_involvedrelation`, the game object ones
  * likewise, and spawns from `creature`.
- * Mixed into `dmangos.world.session.Character`.
+ * Mixed into `dmangos.world.character.Character`.
  */
 module dmangos.world.gmquest;
 
 /// See the module documentation.
 mixin template QuestCommands()
 {
+    import std.algorithm.searching : canFind;
     import std.format : format;
     import dmangos.world.commands;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.npchandlers : NpcFlag;
     import dmangos.world.opcodes : Opcode;
     import dmangos.world.quests : Quest, QuestState, maxQuestLogSize, questXp;
+    import dmangos.world.updatefields : PLAYER_QUEST_LOG_1_1, UNIT_FIELD_TARGET, UNIT_NPC_FLAGS;
 
 private:
 
+    /// `.quest load`: the quest catalog read again from the world database.
     bool handleQuestLoadCommand()
     {
         import dmangos.mysql : DatabaseException;
@@ -26,187 +31,175 @@ private:
         {
             auto catalog = context.canWrite() ? context.database.reloadQuestCatalog() : null;
             if (catalog is null)
-                systemMessage("The quest catalog could not be reloaded.");
-            else
             {
-                context.data.quests = catalog;
-                gmLog(format!"reloaded %s quest definitions"(catalog.quests.length));
-                systemMessage(format!"Reloaded %s quests. Other workers will refresh automatically."(catalog.quests.length));
+                redSystemMessage("The quest catalog could not be reloaded.");
+                return true;
             }
+            context.data.quests = catalog;
+            gmLog(format!"reloaded %s quest definitions"(catalog.quests.length));
+            greenSystemMessage(format!"Reloaded %s quests. Other workers will refresh automatically."
+                (catalog.quests.length));
         }
         catch (DatabaseException)
-            systemMessage("The world database could not reload the quest catalog.");
+            redSystemMessage("The world database could not reload the quest catalog.");
         return true;
     }
 
     /// The selected player, else the GM itself ("Targeting yourself.").
     auto questTarget()
     {
-        auto plr = selectedCharacter(true);
-        if (plr is null)
+        auto target = selectedCharacter(true);
+        if (target is null)
         {
-            plr = this;
+            target = this;
             systemMessage("Targeting yourself.");
         }
-        return plr;
+        return target;
     }
 
-    /// Whether `plr` has finished (been rewarded for) the quest `id`.
-    static bool finished(typeof(this) plr, uint id)
+    /// The quest `questId`; null after "Quest ... was not found.".
+    const(Quest)* knownQuest(uint questId)
     {
-        const q = id in plr.player.questStatus;
-        return q !is null && q.rewarded;
+        const quest = context.data.quests.quest(questId);
+        if (quest is null)
+            redSystemMessage(format!"Quest %s was not found."(questId));
+        return quest;
     }
 
-    /// Whether the quest `id` is in `plr`'s log.
-    static bool onQuest(typeof(this) plr, uint id)
+    /// Whether `character` has finished (been rewarded for) the quest `id`.
+    static bool finished(typeof(this) character, uint id)
     {
-        return plr.questSlot(id) < maxQuestLogSize;
+        const status = id in character.player.questStatus;
+        return status !is null && status.rewarded;
     }
 
+    /// Whether the quest `id` is in `character`'s log.
+    static bool onQuest(typeof(this) character, uint id)
+    {
+        return character.questSlot(id) < maxQuestLogSize;
+    }
+
+    /// The lowest entry of `relations` that has the quest; 0 if none.
+    static uint lowestEntryWith(const uint[][uint] relations, uint questId)
+    {
+        uint lowest;
+        foreach (entry, quests; relations)
+            if (quests.canFind(questId) && (!lowest || entry < lowest))
+                lowest = entry;
+        return lowest;
+    }
+
+    /// `.quest status`: whether the target has finished the quest, is on it, or neither.
     bool handleQuestStatusCommand(uint questId = 0)
     {
         if (questId == 0)
             return false;
-        auto plr = questTarget();
-        string feedback;
-        if (context.data.quests.quest(questId) !is null)
-        {
-            if (finished(plr, questId))
-                feedback = "Player has already completed that quest.";
-            else if (onQuest(plr, questId))
-                feedback = "Player is currently on that quest.";
-            else
-                feedback = "Player has not finished that quest.";
-        }
+        auto target = questTarget();
+        if (knownQuest(questId) is null)
+            return true;
+        if (finished(target, questId))
+            systemMessage("Player has already completed that quest.");
+        else if (onQuest(target, questId))
+            systemMessage("Player is currently on that quest.");
         else
-            feedback = format!"Quest %s was not found."(questId);
-        greenSystemMessage(feedback);
+            systemMessage("Player has not finished that quest.");
         return true;
     }
 
+    /// `.quest start`: the quest put in the target's log, with its source item.
     bool handleQuestStartCommand(uint questId = 0)
     {
         if (questId == 0)
             return false;
-        auto plr = questTarget();
-        string feedback;
-        const quest = context.data.quests.quest(questId);
-        if (quest !is null)
+        auto target = questTarget();
+        const quest = knownQuest(questId);
+        if (quest is null)
+            return true;
+        if (finished(target, questId))
+            redSystemMessage("Player has already completed that quest.");
+        else if (onQuest(target, questId))
+            redSystemMessage("Player is currently on that quest.");
+        else if (target.questSlot(0) >= maxQuestLogSize)
         {
-            if (finished(plr, questId))
-                feedback = "Player has already completed that quest.";
-            else if (onQuest(plr, questId))
-                feedback = "Player is currently on that quest.";
-            else if (plr.questSlot(0) >= maxQuestLogSize)
-            {
-                plr.deliver(Opcode.SMSG_QUESTLOG_FULL, null);
-                feedback = "Player's quest log is full.";
-            }
-            else
-            {
-                gmLog(format!"started quest %u [%s] for player %s"(quest.id, quest.title, plr.player.data.name));
-                plr.addQuest(*quest); // its source item with it
-                plr.flushInventory(true);
-                plr.flushPlayerChanges();
-                feedback = "Quest has been added to the player's quest log.";
-            }
+            target.deliver(Opcode.SMSG_QUESTLOG_FULL, null);
+            redSystemMessage("Player's quest log is full.");
         }
         else
-            feedback = format!"Quest %s was not found."(questId);
-        greenSystemMessage(feedback);
+        {
+            gmLog(format!"started quest %u [%s] for player %s"(quest.id, quest.title, target.player.data.name));
+            target.addQuest(*quest); // its source item with it
+            target.flushInventory(true);
+            target.flushPlayerChanges();
+            greenSystemMessage("Quest has been added to the player's quest log.");
+        }
         return true;
     }
 
+    /// `.quest complete`: the quest finished and rewarded for the target; one in the log also gives its
+    /// experience, and its giver's reputation if one stands on the map.
     bool handleQuestFinishCommand(uint questId = 0)
     {
-        import dmangos.world.creature : Creature;
-
         if (questId == 0)
             return false;
-        auto plr = questTarget();
-        string feedback;
-        const quest = context.data.quests.quest(questId);
+        auto target = questTarget();
+        const quest = knownQuest(questId);
         if (quest is null)
+            return true;
+        if (finished(target, questId))
         {
-            feedback = format!"Quest %s was not found."(questId);
-            greenSystemMessage(feedback);
+            redSystemMessage("Player has already completed that quest.");
             return true;
         }
-        if (finished(plr, questId))
-        {
-            greenSystemMessage("Player has already completed that quest.");
-            return true;
-        }
-        if (onQuest(plr, questId))
+        string feedback = "The quest has now been completed for that player.";
+        if (onQuest(target, questId))
         {
             // The quest's giver: a creature (else a game object) that starts it, and one of its entry on the map.
-            uint giverId;
-            foreach (entry, list; context.data.quests.creatureStarts)
-                foreach (q; list)
-                    if (q == questId && !giverId)
-                        giverId = entry;
+            uint giverId = lowestEntryWith(context.data.quests.creatureStarts, questId);
             if (!giverId)
-                foreach (entry, list; context.data.quests.gameObjectStarts)
-                    foreach (q; list)
-                        if (q == questId && !giverId)
-                            giverId = entry;
+                giverId = lowestEntryWith(context.data.quests.gameObjectStarts, questId);
             if (giverId == 0)
-                systemMessage("Unable to find quest giver creature or object.");
-            else
+                redSystemMessage("Unable to find quest giver creature or object.");
+            else if (target.map.creaturesNear(target.player.position, 100_000)
+                .canFind!(creature => creature.template_.entry == giverId))
             {
-                bool found;
-                foreach (c; plr.map.creaturesNear(plr.player.position, 100_000))
-                    if (c.template_.entry == giverId)
-                        found = true;
-                if (found)
-                {
-                    greenSystemMessage("Found a quest_giver creature.");
-                    plr.rewardQuestReputation(*quest);
-                }
-                else
-                    redSystemMessage("Unable to find quest_giver object.");
+                greenSystemMessage("Found a quest_giver creature.");
+                target.rewardQuestReputation(*quest);
             }
-            plr.gmFinishQuest(*quest);
+            else
+                redSystemMessage("Unable to find quest_giver object.");
+            target.gmFinishQuest(*quest);
             feedback = "Player was on that quest, but has now completed it.";
         }
-        else
-            feedback = "The quest has now been completed for that player.";
-        gmLog(format!"completed quest %u [%s] for player %s"(questId, quest.title, plr.player.data.name));
-        plr.markQuestFinished(questId);
+        gmLog(format!"completed quest %u [%s] for player %s"(questId, quest.title, target.player.data.name));
+        target.markQuestFinished(questId);
         greenSystemMessage(feedback);
         return true;
     }
 
+    /// `.quest remove`: the quest taken out of the target's log.
     bool handleQuestRemoveCommand(uint questId = 0)
     {
         if (questId == 0)
             return false;
-        auto plr = questTarget();
+        auto target = questTarget();
         const quest = context.data.quests.quest(questId);
-        string feedback;
-        if (quest !is null)
+        if (quest is null)
         {
-            // The quest is taken out of the player's log.
-            if (plr.player.questStatus.length)
-            {
-                if (finished(plr, questId))
-                    feedback = "Player has already completed that quest.";
-                else if (onQuest(plr, questId))
-                {
-                    plr.gmDropQuest(*quest);
-                    feedback = "Quest removed from the player’s log.";
-                }
-                else
-                    feedback = "No quest log entry found for that player.";
-            }
-            else
-                feedback = "Player has no quests to remove.";
-            gmLog(format!"removed quest %u [%s] from player %s%%"(quest.id, quest.title, plr.player.data.name));
+            redSystemMessage("That quest could not be found.");
+            return true;
+        }
+        if (target.player.questStatus.length == 0)
+            redSystemMessage("Player has no quests to remove.");
+        else if (finished(target, questId))
+            redSystemMessage("Player has already completed that quest.");
+        else if (onQuest(target, questId))
+        {
+            target.gmDropQuest(*quest);
+            greenSystemMessage("Quest removed from the player’s log.");
         }
         else
-            feedback = "That quest could not be found.";
-        greenSystemMessage(feedback);
+            redSystemMessage("No quest log entry found for that player.");
+        gmLog(format!"removed quest %u [%s] from player %s%%"(quest.id, quest.title, target.player.data.name));
         return true;
     }
 
@@ -214,60 +207,33 @@ private:
     void questRelation(uint questId, bool starts)
     {
         const word = starts ? "starter" : "finisher";
-        const Word = starts ? "Starter" : "Finisher";
-        uint creatureId, objectId;
-        foreach (entry, list; starts ? context.data.quests.creatureStarts : context.data.quests.creatureEnds)
-            foreach (q; list)
-                if (q == questId && (!creatureId || entry < creatureId))
-                    creatureId = entry;
-        foreach (entry, list; starts ? context.data.quests.gameObjectStarts : context.data.quests.gameObjectEnds)
-            foreach (q; list)
-                if (q == questId && (!objectId || entry < objectId))
-                    objectId = entry;
-
-        if (creatureId)
-        {
-            if (const t = creatureId in context.data.creatureTemplates)
-            {
-                string spawn = "N/A";
-                foreach (ref s; context.data.creatureSpawns)
-                    if (s.entry == creatureId)
-                    {
-                        spawn = format!"%s"(s.guid);
-                        break;
-                    }
-                blueSystemMessage(format!"Quest %s found: creature id, spawnid, name"(
-                    starts ? "Starter" : Word));
-                blueSystemMessage(format!"%s, %s, %s"(creatureId, spawn, t.name));
-            }
-            else
-                blueSystemMessage(format!"No creature quest %s info found."(word));
-        }
-        else
-            blueSystemMessage(format!"No creature quest %ss found."(word));
-
-        if (objectId)
-        {
-            if (const t = objectId in context.data.gameObjectTemplates)
-            {
-                string spawn = "N/A";
-                foreach (ref s; context.data.gameObjectSpawns)
-                    if (s.entry == objectId)
-                    {
-                        spawn = format!"%s"(s.guid);
-                        break;
-                    }
-                blueSystemMessage(format!"Quest %s found: object id, spawnid, name"(
-                    starts ? "starter" : Word));
-                blueSystemMessage(format!"%s, %s, %s"(objectId, spawn, t.name));
-            }
-            else
-                blueSystemMessage(format!"No object quest %s info found."(word));
-        }
-        else
-            blueSystemMessage(format!"No object quest %ss found."(word));
+        const title = starts ? "Starter" : "Finisher";
+        const quests = &context.data.quests;
+        const creatureId = lowestEntryWith(starts ? quests.creatureStarts : quests.creatureEnds, questId);
+        const objectId = lowestEntryWith(starts ? quests.gameObjectStarts : quests.gameObjectEnds, questId);
+        showQuestRelation("creature", title, word, creatureId, creatureId in context.data.creatureTemplates,
+            context.data.creatureSpawns);
+        showQuestRelation("object", starts ? "starter" : title, word, objectId,
+            objectId in context.data.gameObjectTemplates, context.data.gameObjectSpawns);
     }
 
+    /// `questRelation`'s lines for one kind of giver: its entry, first spawn and name, or that there is none.
+    void showQuestRelation(Template, Spawns)(string kind, string title, string word, uint entry, Template found,
+        Spawns spawns)
+    {
+        import std.algorithm.searching : find;
+
+        if (!entry)
+            return blueSystemMessage(format!"No %s quest %ss found."(kind, word));
+        if (found is null)
+            return blueSystemMessage(format!"No %s quest %s info found."(kind, word));
+        const spawned = spawns.find!(spawn => spawn.entry == entry);
+        const spawn = spawned.length ? format!"%s"(spawned[0].guid) : "N/A";
+        blueSystemMessage(format!"Quest %s found: %s id, spawnid, name"(title, kind));
+        blueSystemMessage(format!"%s, %s, %s"(entry, spawn, found.name));
+    }
+
+    /// `.quest item`: the items the quest asks for, up to 25.
     bool handleQuestItemCommand(uint questId)
     {
         // A quest's items are in its own row (`reqItemId`, `reqItemCount`).
@@ -283,8 +249,7 @@ private:
                 const proto = item in context.data.items;
                 blueSystemMessage(format!"%s: %s -> %s"(item, quest.reqItemCount[i],
                     proto is null ? "" : proto.details.name));
-                ++count;
-                if (count == 25)
+                if (++count == 25)
                 {
                     redSystemMessage("Showing the first 25 matches.");
                     break;
@@ -295,31 +260,29 @@ private:
         return true;
     }
 
+    /// `.quest list`: the quests a creature entry gives (the selected quest giver's without one), or those
+    /// in the target's log, up to 25.
     bool handleQuestListCommand(uint questGiver = 0)
     {
-        import dmangos.world.creature : Creature;
-        import dmangos.world.updatefields : PLAYER_QUEST_LOG_1_1, UNIT_FIELD_TARGET, UNIT_NPC_FLAGS;
-
-        enum uint npcFlagQuestGiver = 0x02;
         if (questGiver == 0)
         {
             const guid = player.values.get!UNIT_FIELD_TARGET;
             if (guid == 0)
             {
-                systemMessage("You must target an npc or specify an id.");
+                redSystemMessage("You must target an npc or specify an id.");
                 return true;
             }
-            if (auto unit = cast(Creature) map.findObject(guid))
+            if (auto creature = cast(Creature) map.findObject(guid))
             {
-                if (!(unit.values.get!UNIT_NPC_FLAGS & npcFlagQuestGiver))
+                if (!(creature.values.get!UNIT_NPC_FLAGS & NpcFlag.questGiver))
                 {
-                    systemMessage("Unit is not a valid quest giver.");
+                    redSystemMessage("Unit is not a valid quest giver.");
                     return true;
                 }
-                const entry = unit.spawn.entry;
+                const entry = creature.spawn.entry;
                 if (entry !in context.data.quests.creatureStarts && entry !in context.data.quests.creatureEnds)
                 {
-                    systemMessage("NPC does not have any quests.");
+                    redSystemMessage("NPC does not have any quests.");
                     return true;
                 }
                 questGiver = entry;
@@ -343,9 +306,9 @@ private:
 
         if (questGiver == 0)
         {
-            auto plr = questTarget();
+            auto target = questTarget();
             foreach (slot; 0 .. maxQuestLogSize)
-                if (const id = plr.player.values[PLAYER_QUEST_LOG_1_1 + 3 * slot])
+                if (const id = target.player.values[PLAYER_QUEST_LOG_1_1 + 3 * slot])
                     if (!line(id))
                         break;
         }
@@ -367,36 +330,35 @@ private:
     }
 
     /**
-     * `.quest addstart` .. `.quest delfinish`: the selected quest giver's quests, in memory
-     * and in `creature_questrelation` / `creature_involvedrelation`. False (the help is shown too) for a wrong target or quest.
+     * `.quest addstart` .. `.quest delfinish`: the selected quest giver's quests, in memory and in
+     * `creature_questrelation` / `creature_involvedrelation`. False (the help is shown too) for a wrong target or
+     * quest.
      */
     bool questRelationCommand(uint questId, bool start, bool add)
     {
         import std.algorithm.mutation : remove;
-        import std.algorithm.searching : canFind, countUntil;
-        import dmangos.world.creature : Creature;
-        import dmangos.world.updatefields : UNIT_FIELD_TARGET, UNIT_NPC_FLAGS;
+        import std.algorithm.searching : countUntil;
 
-        enum uint npcFlagQuestGiver = 0x02;
         const guid = player.values.get!UNIT_FIELD_TARGET;
-        auto unit = guid ? cast(Creature) map.findObject(guid) : null;
-        if (unit is null)
+        auto creature = guid ? cast(Creature) map.findObject(guid) : null;
+        if (creature is null)
         {
-            systemMessage("You must target an npc.");
+            redSystemMessage("You must target an npc.");
             return false;
         }
-        if (!(unit.values.get!UNIT_NPC_FLAGS & npcFlagQuestGiver))
+        if (!(creature.values.get!UNIT_NPC_FLAGS & NpcFlag.questGiver))
         {
-            systemMessage("Unit is not a valid quest giver.");
+            redSystemMessage("Unit is not a valid quest giver.");
             return false;
         }
         const quest = context.data.quests.quest(questId);
         if (quest is null)
         {
-            systemMessage(add ? "Invalid quest selected, unable to add quest to the specified NPC." : "Invalid Quest selected.");
+            redSystemMessage(add ? "Invalid quest selected, unable to add quest to the specified NPC."
+                : "Invalid Quest selected.");
             return false;
         }
-        const entry = unit.spawn.entry;
+        const entry = creature.spawn.entry;
         auto relations = start ? &context.data.quests.creatureStarts : &context.data.quests.creatureEnds;
         auto list = &(*relations).require(entry, null);
         const known = (*list).canFind(questId);
@@ -404,7 +366,7 @@ private:
         if (add)
         {
             if (known)
-                systemMessage("Quest was already found for the specified NPC.");
+                redSystemMessage("Quest was already found for the specified NPC.");
             else
             {
                 *list ~= questId;
@@ -412,26 +374,33 @@ private:
             }
             systemMessage(colored(ChatColor.green, format!"Added quest %s to NPC. "(which))
                 ~ colored(ChatColor.sky, quest.title));
-            gmLog(format!"added %s of quest %u [%s] to NPC %u [%s]"(which, quest.id, quest.title, entry, unit.template_.name));
+            gmLog(format!"added %s of quest %u [%s] to NPC %u [%s]"(which, quest.id, quest.title, entry,
+                creature.template_.name));
             return true;
         }
         if (!known)
         {
-            systemMessage("Quest was NOT found for the specified NPC.");
+            redSystemMessage("Quest was NOT found for the specified NPC.");
             return !start; // `.quest delstart` shows its help too
         }
         *list = (*list).remove((*list).countUntil(questId));
         context.database.deleteQuestRelation(start, entry, questId);
         systemMessage(colored(ChatColor.green, "Removed quest from NPC. ") ~ colored(ChatColor.sky, quest.title));
-        gmLog(format!"deleted %s of quest %u [%s] to NPC %u [%s]"(which, quest.id, quest.title, entry, unit.template_.name));
+        gmLog(format!"deleted %s of quest %u [%s] to NPC %u [%s]"(which, quest.id, quest.title, entry,
+            creature.template_.name));
         return true;
     }
 
+    /// `.quest addstart`, `.quest addfinish`, `.quest delstart` and `.quest delfinish`.
     bool handleQuestAddStartCommand(uint questId) { return questRelationCommand(questId, true, true); }
+    /// ditto
     bool handleQuestAddFinishCommand(uint questId) { return questRelationCommand(questId, false, true); }
+    /// ditto
     bool handleQuestDelStartCommand(uint questId) { return questRelationCommand(questId, true, false); }
+    /// ditto
     bool handleQuestDelFinishCommand(uint questId) { return questRelationCommand(questId, false, false); }
 
+    /// `.quest addboth`: the quest given and taken back by the selected creature.
     bool handleQuestAddBothCommand(uint questId)
     {
         if (questRelationCommand(questId, true, true))
@@ -439,6 +408,7 @@ private:
         return true;
     }
 
+    /// `.quest delboth`: the quest neither given nor taken back by the selected creature.
     bool handleQuestDelBothCommand(uint questId)
     {
         if (questRelationCommand(questId, true, false))
@@ -446,6 +416,7 @@ private:
         return true;
     }
 
+    /// `.quest giver`.
     bool handleQuestGiverCommand(uint questId = 0)
     {
         if (questId == 0)
@@ -454,6 +425,7 @@ private:
         return true;
     }
 
+    /// `.quest finisher`.
     bool handleQuestFinisherCommand(uint questId = 0)
     {
         if (questId == 0)
@@ -462,50 +434,45 @@ private:
         return true;
     }
 
+    /// `.quest spawn`: to the first spawn of the quest's lowest-entry starter creature.
     bool handleQuestSpawnCommand(uint questId = 0)
     {
         import dmangos.world.movement : Position;
 
         if (questId == 0)
             return false;
-        uint starterId;
-        foreach (entry, list; context.data.quests.creatureStarts)
-            foreach (q; list)
-                if (q == questId && (!starterId || entry < starterId))
-                    starterId = entry;
+        const starterId = lowestEntryWith(context.data.quests.creatureStarts, questId);
         if (!starterId)
         {
             blueSystemMessage("No quest starters found.");
             return true;
         }
-        const t = starterId in context.data.creatureTemplates;
-        if (t is null)
+        const starter = starterId in context.data.creatureTemplates;
+        if (starter is null)
         {
             blueSystemMessage("No quest starter info found.");
             return true;
         }
-        foreach (ref s; context.data.creatureSpawns)
-            if (s.entry == starterId)
+        foreach (const ref spawn; context.data.creatureSpawns)
+            if (spawn.entry == starterId)
             {
                 blueSystemMessage("Porting to Quest Starter/Giver: id, name");
-                blueSystemMessage(format!"%s, %s"(starterId, t.name));
-                commandTeleport(s.map, Position(s.x, s.y, s.z, 0));
+                blueSystemMessage(format!"%s, %s"(starterId, starter.name));
+                commandTeleport(spawn.map, Position(spawn.x, spawn.y, spawn.z, 0));
                 return true;
             }
         blueSystemMessage("No spawn location for quest starter was found.");
         return true;
     }
 
+    /// `.quest reward`: the quest's item rewards and choices, as links.
     bool handleQuestRewardCommand(uint questId = 0)
     {
         if (questId == 0)
             return false;
-        const quest = context.data.quests.quest(questId);
+        const quest = knownQuest(questId);
         if (quest is null)
-        {
-            redSystemMessage(format!"Quest %s was not found."(questId));
             return true;
-        }
         uint count;
         void showRewards(string label, scope const(uint)[] items, scope const(uint)[] quantities)
         {
@@ -549,10 +516,10 @@ package:
     /// The quest `id` marked complete and rewarded, and saved.
     void markQuestFinished(uint id)
     {
-        auto q = &statusOf(id);
-        q.status = QuestState.complete;
-        q.rewarded = true;
-        q.changed = true;
+        auto progress = &statusOf(id);
+        progress.status = QuestState.complete;
+        progress.rewarded = true;
+        progress.changed = true;
         saveQuests();
     }
 
@@ -564,9 +531,9 @@ package:
             setQuestSlot(slot, 0);
         if (quest.srcItemId)
             player.inventory.destroyCount(quest.srcItemId, quest.srcItemCount ? quest.srcItemCount : 1);
-        auto q = &statusOf(quest.id);
-        q.status = QuestState.none;
-        q.changed = true;
+        auto progress = &statusOf(quest.id);
+        progress.status = QuestState.none;
+        progress.changed = true;
         saveQuests();
         flushInventory(true);
         flushPlayerChanges();
@@ -610,12 +577,12 @@ unittest
     const me = cast(Player) anduin.session.character;
 
     gm.say(".quest status 9600");
-    assert(systemMessages(gm.read()) == [colored(ChatColor.green, "Player has not finished that quest.")], "one status message");
+    assert(systemMessages(gm.read()) == ["Player has not finished that quest."], "one status message");
     gm.say(".quest start 9600");
     assert(systemMessages(gm.read()) == [colored(ChatColor.green, "Quest has been added to the player's quest log.")]);
     assert(me.values[PLAYER_QUEST_LOG_1_1] == 9600);
     gm.say(".quest status 9600");
-    assert(systemMessages(gm.read()) == [colored(ChatColor.green, "Player is currently on that quest.")]);
+    assert(systemMessages(gm.read()) == ["Player is currently on that quest."]);
 
     gm.say(".quest list");
     assert(systemMessages(gm.read()).canFind(colored(ChatColor.sky, "9600: Orders")), "the selected player's log");
@@ -635,16 +602,20 @@ unittest
         trainer.values.set!UNIT_NPC_FLAGS(trainer.values.get!UNIT_NPC_FLAGS | 0x02);
         gm.write(Opcode.CMSG_SET_SELECTION, ClientGuid(trainer.guid));
         gm.say(".quest addfinish 9600");
-        assert(systemMessages(gm.read()).canFind(colored(ChatColor.green, "Added quest finisher to NPC. ") ~ colored(ChatColor.sky, "Orders")));
-        assert(context.data.quests.creatureEnds[creatureTrainer].canFind(9600) && db.questRelationRows == [[0u, creatureTrainer, 9600]]);
+        assert(systemMessages(gm.read()).canFind(colored(ChatColor.green, "Added quest finisher to NPC. ")
+            ~ colored(ChatColor.sky, "Orders")));
+        assert(context.data.quests.creatureEnds[creatureTrainer].canFind(9600)
+            && db.questRelationRows == [[0u, creatureTrainer, 9600]]);
         gm.say(".quest addstart 9600");
-        assert(systemMessages(gm.read()).canFind("Quest was already found for the specified NPC."));
+        assert(systemMessages(gm.read())
+            .canFind(colored(ChatColor.softRed, "Quest was already found for the specified NPC.")));
         gm.say(".quest delboth 9600");
         const gone = systemMessages(gm.read());
         assert(gone.count!(m => m.canFind("Removed quest from NPC.")) == 2);
         assert(!context.data.quests.creatureStarts[creatureTrainer].canFind(9600) && db.questRelationRows.length == 0);
         gm.say(".quest delstart 9600");
-        assert(systemMessages(gm.read())[0] == "Quest was NOT found for the specified NPC.");
+        assert(systemMessages(gm.read())[0]
+            == colored(ChatColor.softRed, "Quest was NOT found for the specified NPC."));
         context.data.quests.creatureStarts[creatureTrainer] ~= 9600;
         gm.write(Opcode.CMSG_SET_SELECTION, ClientGuid(anduin.session.character.guid));
     }
@@ -656,7 +627,8 @@ unittest
 
     gm.say(".quest giver 9600");
     const giver = systemMessages(gm.read());
-    assert(giver.canFind!(m => m.canFind("Llane Beshere")) && giver.canFind(colored(ChatColor.sky, "No object quest starters found.")));
+    assert(giver.canFind!(m => m.canFind("Llane Beshere"))
+        && giver.canFind(colored(ChatColor.sky, "No object quest starters found.")));
     context.data.quests.quests[9600].rewChoiceItemId[0] = itemJerky;
     context.data.quests.quests[9600].rewChoiceItemCount[0] = 1;
     gm.say(".quest reward 9600");
@@ -668,7 +640,8 @@ unittest
     assert(done.canFind(colored(ChatColor.green, "Player was on that quest, but has now completed it.")));
     assert(me.questStatus[9600].rewarded && me.values[PLAYER_QUEST_LOG_1_1] == 0);
     gm.say(".quest remove 9600");
-    assert(systemMessages(gm.read())[0].canFind(colored(ChatColor.green, "Player has already completed that quest.")), "one message");
+    assert(systemMessages(gm.read())[0].canFind(colored(ChatColor.softRed, "Player has already completed that quest.")),
+        "one message");
     gm.say(".quest status 9601");
-    assert(systemMessages(gm.read()) == [colored(ChatColor.green, "Quest 9601 was not found.")]);
+    assert(systemMessages(gm.read()) == [colored(ChatColor.softRed, "Quest 9601 was not found.")]);
 }

@@ -1,50 +1,67 @@
 /// Player support tickets.
 module dmangos.world.gmticket;
 
+/// See the module documentation.
 mixin template TicketCommands()
 {
+    import std.array : split;
     import std.format : format;
-    import std.conv : to, ConvException;
+    import dmangos.bytes : ByteWriter;
     import dmangos.world.commands;
     import dmangos.world.database : TicketRecord;
     import dmangos.world.opcodes : Opcode;
-    import dmangos.world.packets;
-    import dmangos.world.queries : chatMessage;
 
 private:
     /// Reads the numeric ticket prefix used by the legacy GM client.
-    private static long leadingNumber(string text)
+    static long leadingNumber(string text)
     {
         import std.ascii : isDigit;
 
-        size_t n;
-        while (n < text.length && (text[n] == ' ' || text[n] == '\t'))
-            ++n;
+        size_t i;
+        while (i < text.length && (text[i] == ' ' || text[i] == '\t'))
+            ++i;
         bool negative;
-        if (n < text.length && (text[n] == '-' || text[n] == '+'))
-            negative = text[n++] == '-';
+        if (i < text.length && (text[i] == '-' || text[i] == '+'))
+            negative = text[i++] == '-';
         long value;
-        while (n < text.length && text[n].isDigit && value < uint.max)
-            value = value * 10 + (text[n++] - '0');
+        while (i < text.length && text[i].isDigit && value < uint.max)
+            value = value * 10 + (text[i++] - '0');
         return negative ? -value : value;
     }
 
     /// The ticket `id` (closed ones too); false if none.
-    private bool ticketById(uint id, out TicketRecord ticket)
+    bool ticketById(uint id, out TicketRecord ticket)
     {
-        foreach (t; context.database.tickets(true))
-            if (t.id == id)
+        foreach (record; context.database.tickets(true))
+            if (record.id == id)
             {
-                ticket = t;
+                ticket = record;
                 return true;
             }
         return false;
     }
 
-    /// The online session of the ticket's author; null if offline.
-    private typeof(this) ticketAuthor(const ref TicketRecord t)
+    /// Whether the command named a ticket; false after "You must specify a ticket id.".
+    bool ticketIdGiven(uint id)
     {
-        return context.onlinePlayer(cast(ulong) t.player);
+        if (!id)
+            redSystemMessage("You must specify a ticket id.");
+        return id != 0;
+    }
+
+    /// The ticket `id`, if open (or closed too, with `closedToo`); false after the channel's "Ticket not found.".
+    bool findTicket(uint id, out TicketRecord ticket, bool closedToo = false)
+    {
+        if (ticketById(id, ticket) && (closedToo || !ticket.closed))
+            return true;
+        ticketChannelSay("GmTicket:0:Ticket not found.", false);
+        return false;
+    }
+
+    /// The online session of the ticket's author; null if offline.
+    typeof(this) ticketAuthor(const ref TicketRecord ticket)
+    {
+        return context.onlinePlayer(cast(ulong) ticket.player);
     }
 
     /// `.gmTicket list`: every open ticket, a line each, to this GM.
@@ -53,24 +70,25 @@ private:
         if (context.config.gmClientChannel.length == 0)
             return false;
         ticketChannelSay("GmTicket:2", false);
-        foreach (t; context.database.tickets(false))
+        foreach (const ref ticket; context.database.tickets(false))
         {
-            auto plr = ticketAuthor(t);
+            auto author = ticketAuthor(ticket);
             string assigned;
-            if (const gm = t.id in context.ticketAssignedTo)
+            if (const assignee = ticket.id in context.ticketAssignedTo)
             {
-                if (auto aplr = context.onlinePlayer(*gm))
-                    assigned = aplr.player.data.name;
+                if (auto online = context.onlinePlayer(*assignee))
+                    assigned = online.player.data.name;
                 else
                 {
-                    const info = context.database.nameInfo(cast(uint) *gm);
+                    const info = context.database.nameInfo(cast(uint) *assignee);
                     if (!info.isNull)
                         assigned = info.get.name;
                 }
             }
-            ticketChannelSay(format!"GmTicket:3:%s:%s:%s:%s:%s:%s"(t.id, plr is null ? t.level : plr.player.data.level,
-                plr is null ? 0 : 1, assigned, plr is null ? t.name : plr.player.data.name,
-                context.ticketComments.get(t.id, "")), false);
+            ticketChannelSay(format!"GmTicket:3:%s:%s:%s:%s:%s:%s"(ticket.id,
+                author is null ? ticket.level : author.player.data.level, author is null ? 0 : 1, assigned,
+                author is null ? ticket.name : author.player.data.name, context.ticketComments.get(ticket.id, "")),
+                false);
         }
         return true;
     }
@@ -78,29 +96,21 @@ private:
     /// `.gmTicket get <id>`: the ticket's words, a line each, to this GM.
     bool handleGmTicketGetByIdCommand(Rest args = Rest.init)
     {
-        import std.string : split;
-
         const id = cast(uint) leadingNumber(args);
-        if (!id)
-        {
-            redSystemMessage("You must specify a ticket id.");
+        if (!ticketIdGiven(id))
             return true;
-        }
         if (context.config.gmClientChannel.length == 0)
             return false;
-        TicketRecord t;
-        if (!ticketById(id, t) || t.closed)
-        {
-            ticketChannelSay("GmTicket:0:Ticket not found.", false);
+        TicketRecord ticket;
+        if (!findTicket(id, ticket))
             return true;
-        }
         // A line for each piece between line ends, empty ones too; none for what follows the last line end if empty.
-        const lines = t.text.split('\n');
-        foreach (k, line; lines)
+        const lines = ticket.text.split('\n');
+        foreach (i, line; lines)
         {
-            if (k + 1 == lines.length && line.length == 0)
+            if (i + 1 == lines.length && line.length == 0)
                 break;
-            ticketChannelSay(format!"GmTicket:%s:%s:%s"(k == 0 ? 4 : 5, t.id, line), false);
+            ticketChannelSay(format!"GmTicket:%s:%s:%s"(i == 0 ? 4 : 5, ticket.id, line), false);
         }
         return true;
     }
@@ -109,30 +119,24 @@ private:
     bool handleGmTicketRemoveByIdCommand(Rest args = Rest.init)
     {
         const id = cast(uint) leadingNumber(args);
-        if (!id)
-        {
-            redSystemMessage("You must specify a ticket id.");
+        if (!ticketIdGiven(id))
             return true;
-        }
         if (context.config.gmClientChannel.length == 0)
             return false;
-        TicketRecord t;
-        if (!ticketById(id, t) || t.closed)
-        {
-            ticketChannelSay("GmTicket:0:Ticket not found.", false);
+        TicketRecord ticket;
+        if (!findTicket(id, ticket))
             return true;
-        }
-        const assigned = context.ticketAssignedTo.get(t.id, 0);
+        const assigned = context.ticketAssignedTo.get(ticket.id, 0);
         if (assigned != 0 && assigned != player.guid && !allowsStaff("staff.admin"))
         {
             ticketChannelSay("GmTicket:0:Ticket is assigned to another GM.", false);
             return true;
         }
-        auto plr = ticketAuthor(t);
-        ticketChannelSay(format!"GmTicket:6:%s"(t.id), true);
-        context.database.closeTicket(t.id);
-        if (plr !is null)
-            plr.ticketRemoved();
+        auto author = ticketAuthor(ticket);
+        ticketChannelSay(format!"GmTicket:6:%s"(ticket.id), true);
+        context.database.closeTicket(ticket.id);
+        if (author !is null)
+            author.ticketRemoved();
         return true;
     }
 
@@ -147,56 +151,48 @@ private:
     /// `.gmTicket assign <id> [name]`: the ticket to a GM online (this one by default).
     bool handleGmTicketAssignToCommand(Rest args = Rest.init)
     {
-        import std.array : split;
-
         const words = args.text.split;
         if (words.length < 1)
             return false;
         const id = cast(uint) leadingNumber(words[0]);
-        if (!id)
-        {
-            redSystemMessage("You must specify a ticket id.");
+        if (!ticketIdGiven(id))
             return true;
-        }
         if (context.config.gmClientChannel.length == 0)
             return false;
-        TicketRecord t;
-        if (!ticketById(id, t) || t.closed)
-        {
-            ticketChannelSay("GmTicket:0:Ticket not found.", false);
+        TicketRecord ticket;
+        if (!findTicket(id, ticket))
             return true;
-        }
-        typeof(this) plr = words.length == 1 ? this : context.onlinePlayer(words[1]);
-        if (plr is null)
+        typeof(this) assignee = words.length == 1 ? this : context.onlinePlayer(words[1]);
+        if (assignee is null)
         {
             ticketChannelSay("GmTicket:0:Player not found.", false);
             return true;
         }
-        if (plr.player is null)
+        if (assignee.player is null)
         {
             ticketChannelSay("GmTicket:0:Player isn't online.", false);
             return true;
         }
-        if (!plr.isStaff)
+        if (!assignee.isStaff)
         {
             ticketChannelSay("GmTicket:0:Player is not a GM.", false);
             return true;
         }
-        const assigned = context.ticketAssignedTo.get(t.id, 0);
-        if (assigned == plr.player.guid)
+        const assigned = context.ticketAssignedTo.get(ticket.id, 0);
+        if (assigned == assignee.player.guid)
         {
             ticketChannelSay("GmTicket:0:Ticket already assigned to this GM.", false);
             return true;
         }
         if (assigned != 0 && assigned != player.guid)
-            if (auto aplr = context.onlinePlayer(assigned))
-                if (aplr.player !is null && !allowsStaff("staff.admin"))
+            if (auto holder = context.onlinePlayer(assigned))
+                if (holder.player !is null && !allowsStaff("staff.admin"))
                 {
                     ticketChannelSay("GmTicket:0:Ticket already assigned to another GM.", false);
                     return true;
                 }
-        context.ticketAssignedTo[t.id] = plr.player.guid;
-        ticketChannelSay(format!"GmTicket:8:%s:%s"(t.id, plr.player.data.name), true);
+        context.ticketAssignedTo[ticket.id] = assignee.player.guid;
+        ticketChannelSay(format!"GmTicket:8:%s:%s"(ticket.id, assignee.player.data.name), true);
         return true;
     }
 
@@ -204,33 +200,28 @@ private:
     bool handleGmTicketReleaseCommand(Rest args = Rest.init)
     {
         const id = cast(uint) leadingNumber(args);
-        if (!id)
-        {
-            redSystemMessage("You must specify a ticket id.");
+        if (!ticketIdGiven(id))
             return true;
-        }
         if (context.config.gmClientChannel.length == 0)
             return false;
-        TicketRecord t;
-        if (!ticketById(id, t) || t.closed)
-        {
-            ticketChannelSay("GmTicket:0:Ticket not found.", false);
+        TicketRecord ticket;
+        if (!findTicket(id, ticket))
             return true;
-        }
-        const assigned = context.ticketAssignedTo.get(t.id, 0);
+        const assigned = context.ticketAssignedTo.get(ticket.id, 0);
         if (assigned == 0)
         {
             ticketChannelSay("GmTicket:0:Ticket not assigned to a GM.", false);
             return true;
         }
-        auto plr = context.onlinePlayer(assigned);
-        if (!allowsStaff("staff.admin") && plr !is null && plr.player !is null && plr.allowsStaff("staff.admin"))
+        auto holder = context.onlinePlayer(assigned);
+        if (!allowsStaff("staff.admin") && holder !is null && holder.player !is null
+            && holder.allowsStaff("staff.admin"))
         {
             ticketChannelSay("GmTicket:0:You can not release tickets from admins.", false);
             return true;
         }
-        context.ticketAssignedTo.remove(t.id);
-        ticketChannelSay(format!"GmTicket:9:%s"(t.id), true);
+        context.ticketAssignedTo.remove(ticket.id);
+        ticketChannelSay(format!"GmTicket:9:%s"(ticket.id), true);
         return true;
     }
 
@@ -242,27 +233,21 @@ private:
         const space = args.text.indexOf(' ');
         const comment = space < 0 ? "" : args.text[space + 1 .. $];
         const id = cast(uint) leadingNumber(space < 0 ? args.text : args.text[0 .. space]);
-        if (!id)
-        {
-            redSystemMessage("You must specify a ticket id.");
+        if (!ticketIdGiven(id))
             return true;
-        }
         if (context.config.gmClientChannel.length == 0)
             return false;
-        TicketRecord t;
-        if (!ticketById(id, t) || t.closed)
-        {
-            ticketChannelSay("GmTicket:0:Ticket not found.", false);
+        TicketRecord ticket;
+        if (!findTicket(id, ticket))
             return true;
-        }
-        const assigned = context.ticketAssignedTo.get(t.id, 0);
+        const assigned = context.ticketAssignedTo.get(ticket.id, 0);
         if (assigned != 0 && assigned != player.guid && !allowsStaff("staff.admin"))
         {
             ticketChannelSay("GmTicket:0:Ticket is assigned to another GM.", false);
             return true;
         }
-        context.ticketComments[t.id] = comment;
-        ticketChannelSay(format!"GmTicket:10:%s:%s:%s"(t.id, player.data.name, comment), true);
+        context.ticketComments[ticket.id] = comment;
+        ticketChannelSay(format!"GmTicket:10:%s:%s:%s"(ticket.id, player.data.name, comment), true);
         return true;
     }
 
@@ -270,31 +255,25 @@ private:
     bool handleGmTicketDeletePermanentCommand(Rest args = Rest.init)
     {
         const id = cast(uint) leadingNumber(args);
-        if (!id)
-        {
-            redSystemMessage("You must specify a ticket id.");
+        if (!ticketIdGiven(id))
             return true;
-        }
         if (context.config.gmClientChannel.length == 0)
             return false;
-        TicketRecord t;
-        if (!ticketById(id, t))
-        {
-            ticketChannelSay("GmTicket:0:Ticket not found.", false);
+        TicketRecord ticket;
+        if (!findTicket(id, ticket, true))
             return true;
-        }
-        typeof(this) plr;
-        if (!t.closed)
+        typeof(this) author;
+        if (!ticket.closed)
         {
-            plr = ticketAuthor(t);
-            ticketChannelSay(format!"GmTicket:6:%s"(t.id), true);
-            context.database.closeTicket(t.id);
+            author = ticketAuthor(ticket);
+            ticketChannelSay(format!"GmTicket:6:%s"(ticket.id), true);
+            context.database.closeTicket(ticket.id);
         }
-        context.database.deleteTicket(t.id);
-        context.ticketAssignedTo.remove(t.id);
-        context.ticketComments.remove(t.id);
-        if (plr !is null)
-            plr.ticketRemoved();
+        context.database.deleteTicket(ticket.id);
+        context.ticketAssignedTo.remove(ticket.id);
+        context.ticketComments.remove(ticket.id);
+        if (author !is null)
+            author.ticketRemoved();
         return true;
     }
 
@@ -305,5 +284,4 @@ private:
         greenSystemMessage(context.gmTicketsOn ? "TicketSystem enabled." : "TicketSystem disabled.");
         return true;
     }
-
 }

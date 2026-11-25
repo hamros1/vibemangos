@@ -3,53 +3,61 @@ module dmangos.world.commandtable;
 
 import dmangos.world.updatefields;
 
+/// Who may run an action.
 struct CommandPermission
 {
-    string capability;
-    string alsoRequires;
-    bool delegable = true;
+    string capability;      /// the capability that allows it; empty: everyone
+    string alsoRequires;    /// a capability needed as well
+    bool delegable = true;  /// whether a role may grant the action alone, by its path ("command.gm on")
 }
 
+/// Allowed by `capability`, or by a grant of the action's path.
 private CommandPermission permit(string capability) pure @safe
 {
     return CommandPermission(capability);
 }
 
+/// Granting and revoking roles: `roles.manage` and `staff.admin`, never granted by path.
 private enum roleAdministration = CommandPermission("roles.manage", "staff.admin", false);
 
+/// A row of the catalog: an action, a group of rows, a shortcut to another row, or a `.modify` field.
 struct ChatCommand
 {
-    string name;
-    string alternate;
+    string name;                       /// the original name, which permission paths use
+    string alternate;                  /// the preferred spelling, if not `name`
     CommandPermission permission;
-    string handler;
-    string arguments;
+    string handler;                    /// the `handle...Command` method the action calls
+    string arguments;                  /// its syntax, as `.help` shows it
     string description;
-    immutable(ChatCommand)[] children;
-    string target;
-    string unavailableReason;
-    int field = -1;
-    int maximum = -1;
-    bool decimal;
+    immutable(ChatCommand)[] children; /// a group's rows
+    string target;                     /// a shortcut's row, by its permission path
+    string unavailableReason;          /// why the action does not exist in this client
+    int field = -1;                    /// the update field a `.modify` row sets; -1 if none
+    int maximum = -1;                  /// the field of its maximum; -1 if none
+    bool decimal;                      /// whether the field is a float
 
+    /// The spelling shown: the preferred one.
     string label() const pure @safe
     {
         return alternate.length ? alternate : name;
     }
 }
 
+/// An action calling `handler`.
 private ChatCommand action(string name, CommandPermission permission, string handler,
     string arguments, string description, string alternate = null) pure @safe
 {
     return ChatCommand(name, alternate, permission, handler, arguments, description);
 }
 
+/// A group of rows.
 private ChatCommand section(string name, immutable(ChatCommand)[] children,
     string alternate = null) pure @safe
 {
     return ChatCommand(name, alternate, CommandPermission.init, null, null, null, children);
 }
 
+/// A row that runs the action at the path `target`.
 private ChatCommand shortcut(string name, string target) pure @safe
 {
     ChatCommand row;
@@ -58,6 +66,7 @@ private ChatCommand shortcut(string name, string target) pure @safe
     return row;
 }
 
+/// An action this client has no system for, which says so.
 private ChatCommand unavailable(string name, CommandPermission permission, string reason) pure @safe
 {
     ChatCommand row = action(name, permission, null, null, null);
@@ -65,6 +74,7 @@ private ChatCommand unavailable(string name, CommandPermission permission, strin
     return row;
 }
 
+/// A `.modify` row setting `field`, and the field `maximum` (its maximum) if one is given.
 private ChatCommand stat(string name, int field, string description, int maximum = -1,
     bool decimal = false, string alternate = null) pure @safe
 {
@@ -174,7 +184,7 @@ immutable ChatCommand[] waypointCommandTable = [
     action("addfly", permit("world.waypoints"), "handleWaypointAddFlyCommand", "[wait-ms]", "Add an airborne point for a creature that can fly.", "add-air"),
 ];
 
-immutable ChatCommand[] gMTicketCommandTable = [
+immutable ChatCommand[] gmTicketCommandTable = [
     action("list", permit("support.tickets"), "handleGmTicketListCommand", "[all]", "List open player tickets."),
     action("get", permit("support.tickets"), "handleGmTicketGetByIdCommand", "<id>", "Read a ticket by ID.", "show"),
     action("remove", permit("support.tickets"), "handleGmTicketRemoveByIdCommand", "<id>", "Close a ticket.", "close"),
@@ -186,7 +196,7 @@ immutable ChatCommand[] gMTicketCommandTable = [
 ];
 
 immutable ChatCommand[] guildCommandTable = [
-    action("create", permit("guild.manage"), "createGuildCommand", "<name>", "Create a guild for the selected player."),
+    action("create", permit("guild.manage"), "handleGuildCreateCommand", "<name>", "Create a guild for the selected player."),
     action("rename", permit("guild.manage"), "handleRenameGuildCommand", "<name>", "Rename the selected player's guild."),
     action("members", permit("guild.manage"), "handleGuildMembersCommand", "", "List members and ranks in the selected player's guild."),
     action("removeplayer", permit("guild.manage"), "handleGuildRemovePlayerCommand", "", "Remove the selected player from their guild."),
@@ -222,7 +232,7 @@ immutable ChatCommand[] battlegroundCommandTable = [
     action("forcestart", permit("staff.admin"), "handleInitializeAllQueuedBattlegroundsCommand", "", "Start all queued battlegrounds."),
 ];
 
-immutable ChatCommand[] nPCCommandTable = [
+immutable ChatCommand[] npcCommandTable = [
     action("vendoradditem", permit("world.creatures"), "handleItemCommand", "<item-id> [quantity] [extended-cost-id]", "Add an item to the selected vendor.", "sell"),
     action("vendorremoveitem", permit("world.creatures"), "handleItemRemoveCommand", "<item-id>", "Remove an item from the selected vendor.", "unsell"),
     action("flags", permit("world.creatures"), "handleNpcFlagCommand", "<flags>", "Set the selected NPC's flags."),
@@ -425,6 +435,7 @@ immutable ChatCommand[] accessCommandTable = [
     action("revoke", roleAdministration, "handleGmAccessRevokeCommand", "<account> <role>", "Remove a role from an account."),
 ];
 
+/// The whole catalog, the top-level rows.
 immutable ChatCommand[] commandTable = [
     action("commands", permit(""), "handleCommandsCommand", "[command or prefix]", "Find commands you can use."),
     action("help", permit(""), "handleHelpCommand", "[command]", "Show syntax and details for a command."),
@@ -451,10 +462,10 @@ immutable ChatCommand[] commandTable = [
     section("waypoint", waypointCommandTable, "wp"),
     section("debug", debugCommandTable),
     section("gm", gmCommandTable),
-    section("gmTicket", gMTicketCommandTable, "ticket"),
+    section("gmTicket", gmTicketCommandTable, "ticket"),
     section("gobject", gameObjectCommandTable, "object"),
     section("battleground", battlegroundCommandTable, "bg"),
-    section("npc", nPCCommandTable),
+    section("npc", npcCommandTable),
     section("cheat", cheatCommandTable),
     section("account", accountCommandTable),
     section("honor", honorCommandTable),
@@ -480,7 +491,7 @@ immutable ChatCommand[] commandTable = [
     action("gotrig", permit("world.teleport"), "handleTriggerCommand", "<trigger-id> [instance-id]", "Teleport to an area trigger."),
     action("modperiod", permit("world.objects"), "handleTransportPeriodCommand", "<period-ms>", "Save the current ship or zeppelin’s circuit time.", "transport-period"),
     action("logcomment", permit("support.lookup"), "handleGmLogCommentCommand", "<comment>", "Write a note to the GM log."),
-    action("removesickness", permit("character.modify"), "handleRemoveRessurectionSickessAuraCommand", "", "Remove resurrection sickness."),
+    action("removesickness", permit("character.modify"), "handleRemoveResurrectionSicknessAuraCommand", "", "Remove resurrection sickness."),
     action("fixscale", permit("character.modify"), "handleFixScaleCommand", "[scale]", "Set the selected unit's scale."),
     action("addtrainerspell", permit("world.trainers"), "handleAddTrainerSpellCommand", "<teaching-spell-id> [copper] [level]", "Add a lesson to the selected trainer."),
     section("travel", travelCommandTable, "go"),

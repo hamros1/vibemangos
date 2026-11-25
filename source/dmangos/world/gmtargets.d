@@ -10,7 +10,6 @@ public import dmangos.cluster.protocol : GmRemoteOp; // a cluster message's fiel
 
 import dmangos.world.chatstyle : ChatColor, colored, systemChatText;
 
-
 /// Whether `op` is about a dungeon copy (or a player's), done on the node hosting it.
 bool aboutInstances(GmRemoteOp op) pure nothrow @nogc @safe
 {
@@ -28,29 +27,34 @@ struct GmSink
 {
     void delegate(string text) send;
 
+    /// A plain system message.
     void system(string text)
     {
         send(systemChatText(text));
     }
 
+    /// A system message in `color`.
     void colored(ChatColor color, string text)
     {
         send(systemChatText(text, color));
     }
 
-    void red(string text) { colored(ChatColor.softRed, text); }
-    void green(string text) { colored(ChatColor.green, text); }
-    void blue(string text) { colored(ChatColor.sky, text); }
+    void red(string text) { colored(ChatColor.softRed, text); }   /// An error or refusal.
+    void green(string text) { colored(ChatColor.green, text); }   /// A change made.
+    void blue(string text) { colored(ChatColor.sky, text); }      /// A notice.
 }
 
 /// See the module documentation.
 mixin template GmTargets()
 {
+    import std.conv : ConvException, to;
     import std.format : format;
     import dmangos.cluster.protocol : GmRemote;
-    import dmangos.world.chatstyle : ChatColor, colored, systemChatText;
+    import dmangos.world.chatstyle : ChatColor, colored;
     import dmangos.world.gmtargets : GmRemoteOp, GmSink;
     import dmangos.world.movement : Position;
+    import dmangos.world.player : DeathState;
+    import dmangos.world.updatefields : UNIT_FIELD_HEALTH, UNIT_FIELD_MAXHEALTH;
 
     /// This GM's messages, for the target-side methods when the target is here.
     package GmSink gmSink()
@@ -58,10 +62,26 @@ mixin template GmTargets()
         return GmSink(&systemMessage);
     }
 
-    /**
-     * Sends `op` to the node simulating `name`, if another node does; false if none.
-     * `map` and `at` are the GM's map and position, for a summons.
-     */
+    /// `op` from this GM, with its map and position (for a summons), for another node.
+    private GmRemote gmOrder(GmRemoteOp op, string text)
+    {
+        GmRemote order;
+        order.op = op;
+        order.gm = player.guid;
+        order.gmName = player.data.name;
+        order.gmCanKickGms = allowsStaff("staff.admin");
+        order.map = player.data.map;
+        order.instance = instanceId_;
+        const at = player.position;
+        order.x = at.x;
+        order.y = at.y;
+        order.z = at.z;
+        order.orientation = at.orientation;
+        order.text = text;
+        return order;
+    }
+
+    /// Sends `op` to the node simulating `name`, if another node does; false if none.
     package bool gmElsewhere(string name, GmRemoteOp op, string text = null)
     {
         if (context.gmRemote is null)
@@ -69,78 +89,63 @@ mixin template GmTargets()
         const remote = context.remotePlayer(name);
         if (remote is null)
             return false;
-        GmRemote m;
-        m.op = op;
-        m.gm = player.guid;
-        m.gmName = player.data.name;
-        m.gmCanKickGms = allowsStaff("staff.admin");
-        m.target = remote.entry.guid;
-        m.map = player.data.map;
-        m.instance = instanceId_;
-        const at = player.position;
-        m.x = at.x;
-        m.y = at.y;
-        m.z = at.z;
-        m.orientation = at.orientation;
-        m.text = text;
-        context.gmRemote(remote.node, m);
+        auto order = gmOrder(op, text);
+        order.target = remote.entry.guid;
+        context.gmRemote(remote.node, order);
         return true;
     }
 
     /// A GM's command from another node for this player: done here, the GM told through `gm`; `reply`
     /// sends a command back to the GM's node (`appearAt`).
-    package void gmTargeted(const ref GmRemote m, GmSink gm, void delegate(GmRemote) reply)
+    package void gmTargeted(const ref GmRemote order, GmSink gm, void delegate(GmRemote) reply)
     {
-        final switch (m.op) // the deserializer refused any other value
+        const at = Position(order.x, order.y, order.z, order.orientation);
+        final switch (order.op) // the deserializer refused any other value
         {
         case GmRemoteOp.kick:
-            return kickedBy(gm, m.gmName, m.gmCanKickGms, m.text);
+            return kickedBy(gm, order.gmName, order.gmCanKickGms, order.text);
         case GmRemoteOp.summon:
-            return summonedBy(gm, m.gmName, m.map, Position(m.x, m.y, m.z, m.orientation), m.instance);
+            return summonedBy(gm, order.gmName, order.map, at, order.instance);
         case GmRemoteOp.appear:
-            return appearedToBy(gm, m.gmName, (uint map, Position at, uint instance) {
+            return appearedToBy(gm, order.gmName, (uint map, Position there, uint instance) {
                 GmRemote back;
                 back.instance = instance;
                 back.op = GmRemoteOp.appearAt;
-                back.gm = m.gm;
-                back.target = m.gm;
+                back.gm = order.gm;
+                back.target = order.gm;
                 back.map = map;
-                back.x = at.x;
-                back.y = at.y;
-                back.z = at.z;
-                back.orientation = at.orientation;
+                back.x = there.x;
+                back.y = there.y;
+                back.z = there.z;
+                back.orientation = there.orientation;
                 reply(back);
             });
         case GmRemoteOp.appearAt:
-            commandTeleport(m.map, Position(m.x, m.y, m.z, m.orientation), m.instance);
+            commandTeleport(order.map, at, order.instance);
             return;
         case GmRemoteOp.disconnect:
-            return disconnectedBy(gm, m.gmName);
+            return disconnectedBy(gm, order.gmName);
         case GmRemoteOp.banKick:
-            return bannedBy(gm, m.gmName);
+            return bannedBy(gm, order.gmName);
         case GmRemoteOp.rename:
-            return renamedBy(gm, m.gmName, m.text);
+            return renamedBy(gm, order.gmName, order.text);
         case GmRemoteOp.playerInfo:
             return describeTo(gm);
         case GmRemoteOp.kill:
-            return killedByName(gm, m.gmName, m.text);
+            return killedByName(gm, order.gmName, order.text);
         case GmRemoteOp.revive:
-            return revivedByName(gm, m.text);
+            return revivedByName(gm, order.text);
         case GmRemoteOp.saveAll:
             return savePlayer();
         case GmRemoteOp.instanceInfo, GmRemoteOp.instanceShutdown, GmRemoteOp.instanceReset,
             GmRemoteOp.instanceResetAll:
             return; // the node's, not a player's (`ClusterBridge.gmRemote`)
         case GmRemoteOp.massSummon:
-        {
-            import std.conv : to, ConvException;
-
             uint zone;
             try
-                zone = m.text.to!uint;
+                zone = order.text.to!uint;
             catch (ConvException) {}
-            return summonRequest(m.gm, zone, m.map, Position(m.x, m.y, m.z, m.orientation));
-        }
+            return summonRequest(order.gm, zone, order.map, at);
         }
     }
 
@@ -149,31 +154,16 @@ mixin template GmTargets()
     {
         if (context.gmRemote is null)
             return 0;
-        GmRemote m;
-        m.op = op;
-        m.gm = player.guid;
-        m.gmName = player.data.name;
-        m.gmCanKickGms = allowsStaff("staff.admin");
-        m.map = player.data.map;
-        m.instance = instanceId_;
-        const at = player.position;
-        m.x = at.x;
-        m.y = at.y;
-        m.z = at.z;
-        m.orientation = at.orientation;
-        m.text = text;
+        const order = gmOrder(op, text);
         const nodes = context.otherNodes();
         foreach (node; nodes)
-            context.gmRemote(node, m);
+            context.gmRemote(node, order);
         return nodes.length;
     }
 
     /// `.kill`'s part on a player: health 0, and it dies; it is told who did it.
     package void killedByGm(string gmName)
     {
-        import dmangos.world.player : DeathState;
-        import dmangos.world.updatefields : UNIT_FIELD_HEALTH;
-
         if (player.deathState != DeathState.alive)
             return;
         player.values.set!UNIT_FIELD_HEALTH(0u);
@@ -181,36 +171,29 @@ mixin template GmTargets()
         blueSystemMessage(format!"%s killed you with a GM command."(gmName));
     }
 
-    /// `.killplr`'s part on the player (`args`: its name as the GM typed it).
-    package void killedByName(GmSink gm, string gmName, string args)
+    /// `.killplr`'s part on the player (`name`: its name as the GM typed it).
+    package void killedByName(GmSink gm, string gmName, string name)
     {
-        import dmangos.world.player : DeathState;
-        import dmangos.world.updatefields : UNIT_FIELD_HEALTH;
-
         if (player.deathState != DeathState.alive)
-            return gm.red(format!"Player %s is already dead."(args));
+            return gm.red(format!"Player %s is already dead."(name));
         player.values.set!UNIT_FIELD_HEALTH(0u);
         playerDied(false);
         blueSystemMessage(format!"You were killed by %s with a GM command."(gmName));
-        gm.green(format!"Killed player %s."(args));
+        gm.green(format!"Killed player %s."(name));
     }
 
-    /// `.reviveplr`'s part on the player: `remoteRevive` (alive with full health, its corpse gone).
-    package void revivedByName(GmSink gm, string args)
+    /// `.reviveplr`'s part on the player (`name`: its name as the GM typed it): `remoteRevive`.
+    package void revivedByName(GmSink gm, string name)
     {
-        import dmangos.world.player : DeathState;
-
         if (player.deathState == DeathState.alive)
-            return gm.green(format!"Player %s is not dead."(args));
+            return gm.green(format!"Player %s is not dead."(name));
         remoteRevive();
-        gm.green(format!"Revived player %s."(args));
+        gm.green(format!"Revived player %s."(name));
     }
 
     /// Resurrected, unrooted, with full health; its corpse turns to bones.
     package void remoteRevive()
     {
-        import dmangos.world.updatefields : UNIT_FIELD_HEALTH, UNIT_FIELD_MAXHEALTH;
-
         bringBack(1);
         spawnCorpseBones();
         player.values.set!UNIT_FIELD_HEALTH(player.values.get!UNIT_FIELD_MAXHEALTH);
@@ -220,11 +203,11 @@ mixin template GmTargets()
     /// `.kick`'s part on the player: administrators may only be kicked by other administrators.
     package void kickedBy(GmSink gm, string gmName, bool gmCanKickGms, string reason)
     {
-        const chrName = player.data.name;
-        gm.blue(format!"Attempting to kick %s from the server for \"%s\"."(chrName, reason));
+        const name = player.data.name;
+        gm.blue(format!"Attempting to kick %s from the server for \"%s\"."(name, reason));
         if (!gmCanKickGms && allowsStaff("staff.admin"))
-            return gm.red(format!"You cannot kick %s, as they are a higher level gm than you."(chrName));
-        const message = format!"GM: %s was kicked from the server by %s. Reason: %s"(chrName, gmName, reason);
+            return gm.red(format!"You cannot kick %s, as they are a higher level gm than you."(name));
+        const message = format!"GM: %s was kicked from the server by %s. Reason: %s"(name, gmName, reason);
         sendWorldText(colored(ChatColor.red, message.length > 187 ? message[0 .. 187] : message));
         systemMessage(format!"You are being kicked from the server by %s. Reason: %s"(gmName, reason));
         kick(format!"kicked by %s: %s"(gmName, reason));
@@ -283,17 +266,18 @@ mixin template GmTargets()
             "Shaman", "Mage", "Warlock", "None", "Druid"];
         static immutable string[12] races = ["None", "Human", "Orc", "Dwarf", "Night Elf", "Undead", "Tauren", "Gnome",
             "Troll", "None", "Blood Elf", "Draenei"];
-        const p = player;
-        const progress = p.progress(secondsInWorld());
-        const female = p.data.gender != 0;
-        gm.green(format!"%s is a %s %s %s"(p.data.name, female ? "Female" : "Male",
-            races[p.data.race < races.length ? p.data.race : 0],
-            classes[p.data.classId < classes.length ? p.data.classId : 0]));
-        gm.blue(format!"%s has played %s at this level"(female ? "She" : "He", playedText(progress.levelTime)));
+        const data = player.data;
+        const progress = player.progress(secondsInWorld());
+        const female = data.gender != 0;
+        const pronoun = female ? "She" : "He";
+        gm.green(format!"%s is a %s %s %s"(data.name, female ? "Female" : "Male",
+            races[data.race < races.length ? data.race : 0],
+            classes[data.classId < classes.length ? data.classId : 0]));
+        gm.blue(format!"%s has played %s at this level"(pronoun, playedText(progress.levelTime)));
         gm.blue(format!"and %s overall"(playedText(progress.totalTime)));
-        gm.blue(format!"%s is connecting from account '%s'[%u] with permissions '%s'"(female ? "She" : "He",
-            account.username, account.id, staffRoles));
-        gm.blue(format!"%s uses %s (build %u)"(female ? "She" : "He", "WoW", build));
+        gm.blue(format!"%s is connecting from account '%s'[%u] with permissions '%s'"(pronoun, account.username,
+            account.id, staffRoles));
+        gm.blue(format!"%s uses %s (build %u)"(pronoun, "WoW", build));
         gm.blue(format!"%s IP is '%s', and has a latency of %ums"(female ? "Her" : "His", address, latencyMs));
     }
 }

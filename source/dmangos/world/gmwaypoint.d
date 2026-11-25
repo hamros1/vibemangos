@@ -1,43 +1,55 @@
 /// Draft and save a native spawn's waypoint route.
 module dmangos.world.gmwaypoint;
 
+/// See the module documentation.
 mixin template WaypointCommands()
 {
     import std.algorithm.searching : countUntil;
     import std.algorithm.sorting : sort;
     import std.format : format;
+    import dmangos.mysql : DatabaseException;
     import dmangos.world.commands : ChatColor, colored;
     import dmangos.world.creature : Creature, TempSpawnType;
-    import dmangos.mysql : DatabaseException;
     import dmangos.world.motion : MotionType, WaypointGait, WaypointNode;
     import dmangos.world.objects : temporaryCounterStart;
 
 private:
     enum uint maxWaypointPoint = 0xFF_FFFF;
-    uint waypointSpawn;
-    MotionType waypointMode;
-    WaypointNode[] waypointDraft;
+    uint waypointSpawn;           // the spawn the draft is for; 0: none
+    MotionType waypointMode;      // looped or linear
+    WaypointNode[] waypointDraft; // its points, in order
 
-    private Creature waypointTarget()
+    /// The selected creature if it is a saved spawn, its route loaded as the draft when it is a new one; null
+    /// after a message otherwise.
+    Creature waypointTarget()
     {
         auto creature = selectedCreature(true);
         if (creature is null)
             return null;
-        if (!creature.spawn.guid || creature.spawn.guid >= temporaryCounterStart || creature.summon.type != TempSpawnType.none)
+        const guid = creature.spawn.guid;
+        if (!guid || guid >= temporaryCounterStart || creature.summon.type != TempSpawnType.none)
         {
-            systemMessage("Select a saved creature spawn.");
+            redSystemMessage("Select a saved creature spawn.");
             return null;
         }
-        if (waypointSpawn != creature.spawn.guid)
+        if (waypointSpawn != guid)
         {
-            waypointSpawn = creature.spawn.guid;
+            waypointSpawn = guid;
             waypointDraft = context.data.waypoints.defaultPath(creature.spawn.entry, waypointSpawn).dup;
-            waypointMode = creature.spawn.movementType == MotionType.linearWaypoint ? MotionType.linearWaypoint : MotionType.waypoint;
+            waypointMode = creature.spawn.movementType == MotionType.linearWaypoint
+                ? MotionType.linearWaypoint : MotionType.waypoint;
         }
         return creature;
     }
 
-    private void showWaypoint(const ref WaypointNode node)
+    /// Where the point numbered `point` is in the draft; -1 if it is not.
+    ptrdiff_t draftIndex(uint point)
+    {
+        return waypointDraft.countUntil!(node => node.point == point);
+    }
+
+    /// One line for a point: its place, wait, and what it does.
+    void showWaypoint(const ref WaypointNode node)
     {
         string details;
         if (node.gait != WaypointGait.default_)
@@ -52,16 +64,18 @@ private:
             (colored(ChatColor.sky, format!"Point %s"(node.point)), node.x, node.y, node.z, node.delay, details));
     }
 
+    /// `.wp list`: the selected spawn's draft.
     bool handleWaypointShowCommand()
     {
         if (!waypointTarget())
             return true;
         greenSystemMessage(format!"Route draft  ·  Spawn %s  ·  %s points"(waypointSpawn, waypointDraft.length));
-        foreach (ref node; waypointDraft)
+        foreach (const ref node; waypointDraft)
             showWaypoint(node);
         return true;
     }
 
+    /// `.wp discard`: the draft dropped unsaved.
     bool handleWaypointHideCommand()
     {
         waypointSpawn = 0;
@@ -70,22 +84,23 @@ private:
         return true;
     }
 
+    /// `.wp script`: a movement script run at a point (0 clears it).
     bool handleWaypointScriptCommand(uint point, uint script)
     {
         import dmangos.world.dbscripts : DbScriptType;
 
         if (script && !context.data.dbScripts.steps(DbScriptType.creatureMovement, script).length)
             return false;
-        if (waypointTarget())
-        {
-            const index = waypointDraft.countUntil!(p => p.point == point);
-            if (index < 0)
-                return false;
-            waypointDraft[index].scriptId = script;
-        }
+        if (!waypointTarget())
+            return true;
+        const index = draftIndex(point);
+        if (index < 0)
+            return false;
+        waypointDraft[index].scriptId = script;
         return true;
     }
 
+    /// `.wp generate`: the navigation mesh's path from the draft's last point (or the spawn) to the GM, added.
     bool handleGenerateWaypointsCommand()
     {
         import dmangos.vmap.math : Vector3;
@@ -102,7 +117,7 @@ private:
         if (route.length < 2 || route.length - 1 > maxWaypointPoint - start
             || (route[$ - 1].x - at.x) ^^ 2 + (route[$ - 1].y - at.y) ^^ 2 + (route[$ - 1].z - at.z) ^^ 2 > 4)
         {
-            systemMessage("No complete navigation path reaches your position.");
+            redSystemMessage("No complete navigation path reaches your position.");
             return true;
         }
         foreach (node; route[1 .. $])
@@ -110,39 +125,42 @@ private:
                 return false;
         foreach (i, node; route[1 .. $])
             waypointDraft ~= WaypointNode(start + cast(uint) i + 1, node.x, node.y, node.z);
-        systemMessage(format!"Added %s navigation points to the draft."(route.length - 1));
+        greenSystemMessage(format!"Added %s navigation points to the draft."(route.length - 1));
         return true;
     }
 
+    /// `.wp info`: one point of the draft.
     bool handleWaypointInfoCommand(uint point)
     {
-        if (waypointTarget())
-        {
-            const index = waypointDraft.countUntil!(p => p.point == point);
-            if (index >= 0)
-                showWaypoint(waypointDraft[index]);
-            else
-                systemMessage("That point is not in the draft.");
-        }
+        if (!waypointTarget())
+            return true;
+        const index = draftIndex(point);
+        if (index < 0)
+            redSystemMessage("That point is not in the draft.");
+        else
+            showWaypoint(waypointDraft[index]);
         return true;
     }
 
+    /// `.wp add`: the GM's position added as the draft's next point.
     bool handleWaypointAddCommand(uint waitMs = 0)
     {
         return addDraftPoint(waitMs, WaypointGait.default_);
     }
 
+    /// `.wp add-air`: as `.wp add`, flown to, for a creature that can fly.
     bool handleWaypointAddFlyCommand(uint waitMs = 0)
     {
         return addDraftPoint(waitMs, WaypointGait.fly);
     }
 
-    private bool addDraftPoint(uint waitMs, WaypointGait gait)
+    /// The GM's position added as the draft's next point, reached with `gait`.
+    bool addDraftPoint(uint waitMs, WaypointGait gait)
     {
-        auto spawn = waypointTarget();
-        if (spawn is null)
+        auto creature = waypointTarget();
+        if (creature is null)
             return true;
-        if (gait == WaypointGait.fly && !(spawn.template_.inhabitType & 4))
+        if (gait == WaypointGait.fly && !(creature.template_.inhabitType & 4))
         {
             redSystemMessage("Select a creature whose template allows flight.");
             return true;
@@ -157,17 +175,21 @@ private:
         return true;
     }
 
-    private WaypointNode* draftPoint(uint id)
+    /// The draft's point numbered `point`; null after a message if there is none.
+    WaypointNode* draftPoint(uint point)
     {
         if (waypointTarget() is null)
             return null;
-        foreach (ref point; waypointDraft)
-            if (point.point == id)
-                return &point;
-        redSystemMessage("This point is not in the draft.");
-        return null;
+        const index = draftIndex(point);
+        if (index < 0)
+        {
+            redSystemMessage("This point is not in the draft.");
+            return null;
+        }
+        return &waypointDraft[index];
     }
 
+    /// `.wp gait`: how the creature moves to a point.
     bool handleWaypointGaitCommand(uint point, string mode)
     {
         WaypointGait gait;
@@ -186,6 +208,7 @@ private:
         return true;
     }
 
+    /// `.wp emote`: an emote played at a point (0 clears it).
     bool handleWaypointEmoteCommand(uint point, uint emote)
     {
         if (emote && context.client.emotes.lookup(emote) is null)
@@ -201,6 +224,7 @@ private:
         return true;
     }
 
+    /// `.wp model`: a model the creature takes at a point (0 clears it).
     bool handleWaypointModelCommand(uint point, uint display)
     {
         if (display && context.client.creatureDisplays.lookup(display) is null)
@@ -216,64 +240,63 @@ private:
         return true;
     }
 
+    /// `.wp delete`: a point taken out of the draft.
     bool handleWaypointDeleteCommand(uint point)
     {
         import std.algorithm.mutation : remove;
 
-        if (waypointTarget())
-        {
-            const index = waypointDraft.countUntil!(p => p.point == point);
-            if (index >= 0)
-                waypointDraft = waypointDraft.remove(index);
-            else
-                systemMessage("That point is not in the draft.");
-        }
+        if (!waypointTarget())
+            return true;
+        const index = draftIndex(point);
+        if (index < 0)
+            redSystemMessage("That point is not in the draft.");
+        else
+            waypointDraft = waypointDraft.remove(index);
         return true;
     }
 
+    /// `.wp move`: a point moved to the GM's position and facing.
     bool handleWaypointMoveHereCommand(uint point)
     {
-        if (waypointTarget())
-        {
-            const index = waypointDraft.countUntil!(p => p.point == point);
-            if (index < 0)
-                return false;
-            const at = player.position;
-            if (!context.client.isValidMapCoord(map.id, at.x, at.y, at.z))
-                return false;
-            waypointDraft[index].x = at.x;
-            waypointDraft[index].y = at.y;
-            waypointDraft[index].z = at.z;
-            waypointDraft[index].orientation = at.orientation;
-        }
+        if (!waypointTarget())
+            return true;
+        const index = draftIndex(point);
+        const at = player.position;
+        if (index < 0 || !context.client.isValidMapCoord(map.id, at.x, at.y, at.z))
+            return false;
+        waypointDraft[index].x = at.x;
+        waypointDraft[index].y = at.y;
+        waypointDraft[index].z = at.z;
+        waypointDraft[index].orientation = at.orientation;
         return true;
     }
 
+    /// `.wp wait`: how long the creature waits at a point.
     bool handleWaypointWaitCommand(uint point, uint waitMs)
     {
-        if (waypointTarget())
-        {
-            const index = waypointDraft.countUntil!(p => p.point == point);
-            if (index < 0)
-                return false;
-            waypointDraft[index].delay = waitMs;
-        }
+        if (!waypointTarget())
+            return true;
+        const index = draftIndex(point);
+        if (index < 0)
+            return false;
+        waypointDraft[index].delay = waitMs;
         return true;
     }
 
+    /// `.wp renumber`: a point given a free number, the draft kept in order.
     bool handleWaypointChangeNoCommand(uint point, uint replacement)
     {
-        if (waypointTarget())
-        {
-            const index = waypointDraft.countUntil!(p => p.point == point);
-            if (index < 0 || !replacement || replacement > maxWaypointPoint || waypointDraft.countUntil!(p => p.point == replacement) >= 0)
-                return false;
-            waypointDraft[index].point = replacement;
-            waypointDraft.sort!((a, b) => a.point < b.point);
-        }
+        if (!waypointTarget())
+            return true;
+        const index = draftIndex(point);
+        if (index < 0 || !replacement || replacement > maxWaypointPoint || draftIndex(replacement) >= 0)
+            return false;
+        waypointDraft[index].point = replacement;
+        waypointDraft.sort!((a, b) => a.point < b.point);
         return true;
     }
 
+    /// `.wp mode`: the route looped or run in a line.
     bool handleWaypointMoveTypeCommand(string mode)
     {
         if (mode != "loop" && mode != "linear")
@@ -283,16 +306,18 @@ private:
         return true;
     }
 
+    /// `.wp clear`: every point taken out of the draft.
     bool handleDeleteWaypointsCommand()
     {
-        if (waypointTarget())
-        {
-            waypointDraft = null;
-            systemMessage("Draft cleared. Use .wp save to apply.");
-        }
+        if (!waypointTarget())
+            return true;
+        waypointDraft = null;
+        greenSystemMessage("Draft cleared. Use .wp save to apply.");
         return true;
     }
 
+    /// `.wp save`: the draft saved as the spawn's route (an empty one leaves it idle), for the workers to load
+    /// on restart.
     bool handleSaveWaypointsCommand()
     {
         if (!waypointTarget())
@@ -302,16 +327,15 @@ private:
             const mode = waypointDraft.length ? waypointMode : MotionType.idle;
             if (!context.canWrite() || !context.database.saveSpawnWaypoints(waypointSpawn, mode, waypointDraft))
             {
-                systemMessage("The draft could not be saved. Check that the spawn exists and the world waypoint migration is installed.");
+                redSystemMessage("The draft could not be saved. Check that the spawn exists and the world waypoint "
+                    ~ "migration is installed.");
                 return true;
             }
             gmLog(format!"saved %s waypoint(s) for spawn %s"(waypointDraft.length, waypointSpawn));
             greenSystemMessage("Route saved. World workers load it on restart.");
         }
         catch (DatabaseException)
-        {
-            systemMessage("The world database could not save the waypoint draft.");
-        }
+            redSystemMessage("The world database could not save the waypoint draft.");
         return true;
     }
 }

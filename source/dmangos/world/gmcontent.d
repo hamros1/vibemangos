@@ -1,6 +1,7 @@
 /// Staff tools for creature content and transport schedules.
 module dmangos.world.gmcontent;
 
+/// See the module documentation.
 mixin template ContentCommands()
 {
     import std.format : format;
@@ -12,12 +13,13 @@ mixin template ContentCommands()
     import dmangos.world.worlddata : SpellListEntry;
 
 private:
-    uint formationLeader;
-    ulong testingCreature;
-    SpellListEntry[] testSpells;
-    size_t nextTestSpell;
+    uint formationLeader;         // the spawn `.npc formation-add` links followers to
+    ulong testingCreature;        // the creature under `.debug ai-test`
+    SpellListEntry[] testSpells;  // its combat spells
+    size_t nextTestSpell;         // the next of them to try
 
-    private Creature selectedSavedSpawn()
+    /// The selected creature if it is a saved spawn; null after a message otherwise.
+    Creature selectedSavedSpawn()
     {
         auto creature = selectedCreature(true);
         if (creature !is null && (!creature.spawnId || creature.spawnId >= temporaryCounterStart
@@ -29,6 +31,7 @@ private:
         return creature;
     }
 
+    /// `.npc link-info`: the selected spawn's formation, leader and followers.
     bool handleNpcLinkInfoCommand()
     {
         auto creature = selectedSavedSpawn();
@@ -53,6 +56,7 @@ private:
         return true;
     }
 
+    /// `.npc link`: the selected spawn linked to a leader spawn (0 clears the link).
     bool handleNpcSpawnLinkCommand(uint leader, uint flags = LinkFlag.aggroOnAggro)
     {
         import std.traits : EnumMembers;
@@ -69,17 +73,19 @@ private:
         return follower is null || saveNpcLink(follower, CreatureLink(leader, 0, leader ? flags : 0));
     }
 
+    /// `.npc formation-leader`: the selected spawn chosen as the leader for `.npc formation-add`.
     bool handleFormationLeaderCommand()
     {
-        if (auto leader = selectedSavedSpawn())
-        {
-            formationLeader = leader.spawnId;
-            greenSystemMessage(format!"Leader set to spawn %s. Select a follower and use .npc formation-add."
-                (formationLeader));
-        }
+        auto leader = selectedSavedSpawn();
+        if (leader is null)
+            return true;
+        formationLeader = leader.spawnId;
+        greenSystemMessage(format!"Leader set to spawn %s. Select a follower and use .npc formation-add."
+            (formationLeader));
         return true;
     }
 
+    /// `.npc formation-add`: the selected spawn follows the chosen leader at a distance and angle.
     bool handleFormationAddCommand(float distance = 3, float degrees = 180)
     {
         if (!distance.isFinite || distance < 0 || !degrees.isFinite)
@@ -94,27 +100,32 @@ private:
             true, distance, cast(float)(degrees % 360 * PI / 180)));
     }
 
+    /// `.npc formation-remove`: the selected spawn's link cleared.
     bool handleFormationClearCommand()
     {
         auto follower = selectedSavedSpawn();
         return follower is null || saveNpcLink(follower, CreatureLink.init);
     }
 
-    private bool saveNpcLink(Creature follower, CreatureLink link)
+    /// The follower's link saved to the world database, for the workers to load on restart.
+    bool saveNpcLink(Creature follower, CreatureLink link)
     {
         if (follower.spawnId in context.data.formationSlots)
         {
-            redSystemMessage("This spawn belongs to a Classic-DB formation. Edit its spawn group in the world database.");
+            redSystemMessage(
+                "This spawn belongs to a Classic-DB formation. Edit its spawn group in the world database.");
             return true;
         }
         try
         {
             if (!context.canWrite() || !context.database.saveGmSpawnLink(follower.spawnId, link))
             {
-                redSystemMessage("The link could not be saved. Use different saved spawns on the same map and avoid loops.");
+                redSystemMessage(
+                    "The link could not be saved. Use different saved spawns on the same map and avoid loops.");
                 return true;
             }
-            gmLog(format!"set leader %s and link flags %#x for spawn %s"(link.masterGuid, link.flags, follower.spawnId));
+            gmLog(format!"set leader %s and link flags %#x for spawn %s"(link.masterGuid, link.flags,
+                follower.spawnId));
             greenSystemMessage(link.masterGuid ? "Spawn link saved. World workers load it on restart."
                 : "Spawn link cleared. World workers apply the change on restart.");
         }
@@ -123,6 +134,7 @@ private:
         return true;
     }
 
+    /// `.npc ai-spell`: a spell added to the shared combat spell list of the selected creature's template.
     bool handleNpcAddAgentCommand(uint spell, string target, uint repeatMs)
     {
         const targetId = target == "self" ? 2 : target == "victim" ? 1 : 0;
@@ -150,13 +162,15 @@ private:
                 return true;
             }
             gmLog(format!"added spell %s to creature spell list %s"(spell, list));
-            greenSystemMessage(format!"Spell %s added to shared list %s. World workers load it on restart."(spell, list));
+            greenSystemMessage(format!"Spell %s added to shared list %s. World workers load it on restart."
+                (spell, list));
         }
         catch (DatabaseException)
             redSystemMessage("The world database could not edit the spell list.");
         return true;
     }
 
+    /// `.debug ai-test`: a test of the selected creature's combat spells, one at a time.
     bool handleAiTestBeginCommand()
     {
         testingCreature = 0;
@@ -178,6 +192,7 @@ private:
         return true;
     }
 
+    /// `.debug ai-next`: the creature casts the next test spell, by its own targeting rule.
     bool handleAiTestNextCommand()
     {
         auto creature = cast(Creature) map.findObject(testingCreature);
@@ -198,6 +213,7 @@ private:
         return true;
     }
 
+    /// `.debug ai-skip`: the next test spell passed over.
     bool handleAiTestSkipCommand()
     {
         if (nextTestSpell < testSpells.length)
@@ -206,54 +222,60 @@ private:
         return true;
     }
 
-    private void showAiTestStep()
+    /// The spell the test tries next, or that none remain.
+    void showAiTestStep()
     {
         if (nextTestSpell < testSpells.length)
-            blueSystemMessage(format!"Next: spell %s. Use .debug ai-next or .debug ai-skip."(testSpells[nextTestSpell].spell));
+            blueSystemMessage(format!"Next: spell %s. Use .debug ai-next or .debug ai-skip."
+                (testSpells[nextTestSpell].spell));
         else
             systemMessage("No test spells remain.");
     }
 
+    /// `.pet create`: a persistent pet of a creature entry for the selected hunter.
     bool handleCreatePetCommand(uint entry)
     {
         auto target = selectedCharacter(true);
         if (target is null)
             return true;
         if (!target.createStaffPet(entry))
-            redSystemMessage("Choose a tameable creature entry and a living hunter with no callable pet.");
-        else
         {
-            gmLog(format!"created hunter pet %s for %s"(entry, target.player.data.name));
-            greenSystemMessage(format!"Pet %s created for %s."(entry, target.player.data.name));
+            redSystemMessage("Choose a tameable creature entry and a living hunter with no callable pet.");
+            return true;
         }
+        gmLog(format!"created hunter pet %s for %s"(entry, target.player.data.name));
+        greenSystemMessage(format!"Pet %s created for %s."(entry, target.player.data.name));
         return true;
     }
 
+    /// `.pet helper`: a temporary guardian that follows the GM.
     bool handleSummonHelperCommand(uint entry, uint seconds = 60)
     {
         if (entry !in context.data.creatureTemplates || !summonStaffHelper(entry, seconds))
-            redSystemMessage("Use a valid creature entry and a positive duration in seconds while alive.");
-        else
         {
-            gmLog(format!"summoned helper %s for %s seconds"(entry, seconds));
-            greenSystemMessage(format!"Helper %s summoned for %s seconds."(entry, seconds));
+            redSystemMessage("Use a valid creature entry and a positive duration in seconds while alive.");
+            return true;
         }
+        gmLog(format!"summoned helper %s for %s seconds"(entry, seconds));
+        greenSystemMessage(format!"Helper %s summoned for %s seconds."(entry, seconds));
         return true;
     }
 
+    /// `.admin audit-names`: offline characters whose names the rules refuse, listed (the first ten) or marked
+    /// for rename at their next login.
     bool handleAuditNamesCommand(string action = "preview")
     {
         import dmangos.world.names : checkPlayerName, CharNameResult;
 
         if (action != "preview" && action != "apply")
             return false;
-        const cfg = context.config;
+        const config = context.config;
         uint candidates, marked;
         try
         {
             foreach (const ref record; context.database.gmNamesToReview())
             {
-                if (checkPlayerName(record.name, cfg.minPlayerName, cfg.strictPlayerNames, cfg.realmZone)
+                if (checkPlayerName(record.name, config.minPlayerName, config.strictPlayerNames, config.realmZone)
                     == CharNameResult.CHAR_NAME_SUCCESS)
                     continue;
                 ++candidates;
@@ -269,52 +291,42 @@ private:
                 greenSystemMessage(format!"Marked %s of %s invalid offline names for rename."(marked, candidates));
             }
             else
-            {
-                greenSystemMessage(format!"%s invalid offline names. Use .admin audit-names apply to mark them."
+                systemMessage(format!"%s invalid offline names. Use .admin audit-names apply to mark them."
                     (candidates));
-            }
         }
         catch (DatabaseException)
             redSystemMessage(format!"Name review stopped after marking %s characters."(marked));
         return true;
     }
 
+    /// `.debug database`: a saved creature or game object spawn's placement, read from the world database.
     bool handleDatabaseCheckCommand(string kind, uint id)
     {
+        if (kind != "npc" && kind != "object")
+            return false;
         try
         {
             if (kind == "npc")
-            {
-                const record = context.database.savedCreatureSpawn(id);
-                if (record.isNull)
-                    redSystemMessage("No saved creature has that spawn ID.");
-                else
-                {
-                    const spawn = record.get;
-                    blueSystemMessage(format!"Spawn %s · Creature %s · Map %s · %.3f, %.3f, %.3f"
-                        (id, spawn.entry, spawn.map, spawn.x, spawn.y, spawn.z));
-                }
-            }
-            else if (kind == "object")
-            {
-                const record = context.database.savedGameObjectSpawn(id);
-                if (record.isNull)
-                    redSystemMessage("No saved game object has that spawn ID.");
-                else
-                {
-                    const spawn = record.get;
-                    blueSystemMessage(format!"Spawn %s · Object %s · Map %s · %.3f, %.3f, %.3f"
-                        (id, spawn.entry, spawn.map, spawn.x, spawn.y, spawn.z));
-                }
-            }
+                showSavedSpawn(context.database.savedCreatureSpawn(id), id, "creature", "Creature");
             else
-                return false;
+                showSavedSpawn(context.database.savedGameObjectSpawn(id), id, "game object", "Object");
         }
         catch (DatabaseException)
             redSystemMessage("The world database could not read the placement.");
         return true;
     }
 
+    /// `.debug database`'s line for one saved spawn, or that there is none.
+    void showSavedSpawn(Record)(const Record record, uint id, string kind, string label)
+    {
+        if (record.isNull)
+            return redSystemMessage(format!"No saved %s has that spawn ID."(kind));
+        const spawn = record.get;
+        blueSystemMessage(format!"Spawn %s · %s %s · Map %s · %.3f, %.3f, %.3f"
+            (id, label, spawn.entry, spawn.map, spawn.x, spawn.y, spawn.z));
+    }
+
+    /// `.debug packet notification`: a test notification to the GM's own client.
     bool handlePacketCheckCommand(string kind)
     {
         import dmangos.world.packets : ServerNotification;
@@ -325,16 +337,18 @@ private:
         return true;
     }
 
+    /// `.transport-period`: the circuit time of the ship aboard saved, for the workers to load on restart.
     bool handleTransportPeriodCommand(uint milliseconds)
     {
         const guid = player.movement.transportGuid;
         if (highGuidOf(guid) == HighGuid.moTransport)
-            foreach (ref ship; context.data.ships)
+            foreach (const ref ship; context.data.ships)
                 if (ship.entry == counterOf(guid))
                 {
                     if (!milliseconds || milliseconds < ship.minimumPeriod)
                     {
-                        redSystemMessage(format!"%s needs a circuit of at least %s ms."(ship.name, ship.minimumPeriod));
+                        redSystemMessage(format!"%s needs a circuit of at least %s ms."
+                            (ship.name, ship.minimumPeriod));
                         return true;
                     }
                     try

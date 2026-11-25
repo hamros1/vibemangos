@@ -1,21 +1,20 @@
 /// Staff presence, announcements, and player support tools.
 module dmangos.world.gmstaff;
 
-import dmangos.world.commands;
-
 /// See the module documentation.
 mixin template StaffCommands()
 {
-    import std.algorithm.comparison : min;
+    import std.algorithm.comparison : max, min;
+    import std.algorithm.searching : canFind;
     import std.format : format;
     import std.math : floor;
-    import dmangos.world.commands;
-    import dmangos.world.gmtargets : GmRemoteOp;
-    import dmangos.world.names : normalizedName;
     import dmangos.world.chatstyle : announcementTint, itemChatLink, playerChatLink;
+    import dmangos.world.commands : ChatColor, colored, Rest;
+    import dmangos.world.gmtargets : GmRemoteOp;
     import dmangos.world.movement : Position;
+    import dmangos.world.names : normalizedName;
     import dmangos.world.player : PlayerFlags;
-    import dmangos.world.updatefields;
+    import dmangos.world.updatefields : PLAYER_FIELD_COINAGE, UNIT_FIELD_TARGET, UNIT_NPC_EMOTESTATE;
 
 private:
     /// A chat link to an item, in 1.12's link format.
@@ -25,7 +24,8 @@ private:
         return item is null ? format!"Item %s"(entry) : itemChatLink(entry, item.details.name, item.details.quality);
     }
 
-    private string announcement(string message, bool onScreen)
+    /// `message` as the configured announcement: tag, staff badge and author, in their colours.
+    string announcement(string message, bool onScreen)
     {
         const config = context.config;
         string text = colored(announcementTint(config.announceTagColor), "[" ~ config.announceTag ~ "]");
@@ -44,13 +44,12 @@ private:
         return text ~ ": " ~ colored(announcementTint(config.announceMessageColor), message);
     }
 
+    /// `.announce <message>`: a chat announcement to the realm.
     bool handleAnnounceCommand(Rest message = Rest.init)
     {
-        import std.algorithm.searching : canFind;
-
         if (message.length < 4 || message.canFind('%'))
         {
-            systemMessage("Announcements require at least four characters and cannot contain a percent sign.");
+            redSystemMessage("Announcements require at least four characters and cannot contain a percent sign.");
             return true;
         }
         sendWorldText(announcement(message, false));
@@ -58,14 +57,16 @@ private:
         return true;
     }
 
+    /// `.gmannounce <message>`: a message to the staff online.
     bool handleGmAnnounceCommand(Rest message)
     {
-        sendGMWorldText(colored(ChatColor.red, "[Team]") ~ " " ~ colored(ChatColor.green, playerChatLink(player.data.name))
-            ~ ": " ~ colored(ChatColor.yellow, message));
+        const author = colored(ChatColor.green, playerChatLink(player.data.name));
+        sendGmWorldText(colored(ChatColor.red, "[Team]") ~ " " ~ author ~ ": " ~ colored(ChatColor.yellow, message));
         gmLog(format!"announced to staff [%s]"(message));
         return true;
     }
 
+    /// `.wannounce <message>`: an on-screen announcement to the realm.
     bool handleScreenAnnounceCommand(Rest message)
     {
         sendWorldWideScreenText(announcement(message, true));
@@ -73,17 +74,20 @@ private:
         return true;
     }
 
+    /// `.gm on`.
     bool handleGmOnCommand()
     {
         return setGmMode(true);
     }
 
+    /// `.gm off`.
     bool handleGmOffCommand()
     {
         return setGmMode(false);
     }
 
-    private bool setGmMode(bool enabled)
+    /// The GM tag and flag on or off, and the player shown or hidden accordingly.
+    bool setGmMode(bool enabled)
     {
         if (player.gmTagOn == enabled && player.hasFlag(PlayerFlags.gm) == enabled)
         {
@@ -98,11 +102,13 @@ private:
         return true;
     }
 
+    /// `.gps`: the position of the selected player or creature, or one's own.
     bool handleGpsCommand()
     {
         const guid = player.values.get!UNIT_FIELD_TARGET;
+        const mapId = player.data.map;
         Position at = player.position;
-        uint mapId = player.data.map, zone = player.data.zone;
+        uint zone = player.data.zone;
         if (guid != 0)
         {
             if (auto other = map.find(guid))
@@ -114,7 +120,7 @@ private:
                 at = object.position; // creatures have no area without map data: the GM's zone, close by
             else
             {
-                systemMessage("Select a player or creature first.");
+                redSystemMessage("Select a player or creature first.");
                 return true;
             }
         }
@@ -123,81 +129,82 @@ private:
         return true;
     }
 
-    bool handleKickCommand(string name, Rest kickReason = Rest("No reason"))
+    /// `.kickplayer <name> [reason]`: the player disconnected, here or on its node.
+    bool handleKickCommand(string name, Rest reason = Rest("No reason"))
     {
-        auto found = context.onlinePlayer(name);
-        if (found is null)
+        if (auto found = context.onlinePlayer(name))
         {
-            if (const remote = context.remotePlayer(name))
-                if (gmElsewhere(name, GmRemoteOp.kick, kickReason))
-                {
-                    gmLog(format!"Kicked player %s from the server for %s"(remote.entry.name, kickReason));
-                    return true;
-                }
-            redSystemMessage("Player is not online at the moment.");
+            auto target = sessionOf(found);
+            gmLog(format!"Kicked player %s from the server for %s"(target.player.data.name, reason));
+            target.kickedBy(gmSink, player.data.name, allowsStaff("staff.admin"), reason);
             return true;
         }
-        auto chr = sessionOf(found);
-        gmLog(format!"Kicked player %s from the server for %s"(chr.player.data.name, kickReason));
-        chr.kickedBy(gmSink, player.data.name, allowsStaff("staff.admin"), kickReason);
+        const remote = context.remotePlayer(name);
+        if (remote !is null && gmElsewhere(name, GmRemoteOp.kick, reason))
+            gmLog(format!"Kicked player %s from the server for %s"(remote.entry.name, reason));
+        else
+            redSystemMessage("Player is not online at the moment.");
         return true;
     }
 
+    /// `.character additem <item> [count] [random-property]`: items given to the selected player (or oneself).
     bool handleAddInvItemCommand(uint itemId, uint count = 1, int randomProperty = 0)
     {
-        auto chr = selectedCharacter(false);
-        if (chr is null)
-            chr = this;
+        auto target = selectedCharacter(false);
+        if (target is null)
+            target = this;
         const item = itemId in context.data.items;
         if (item is null)
         {
             redSystemMessage(format!"Item %d is not a valid item!"(itemId));
             return true;
         }
-        gmLog(format!"used add item command, item id %u [%s] to %s"(itemId, item.details.name, chr.player.data.name));
+        gmLog(format!"used add item command, item id %u [%s] to %s"(itemId, item.details.name,
+            target.player.data.name));
         // Gives `count`, in as many stacks as it takes, not one stack capped at the item's maximum.
-        if (chr.giveItem(itemId, count == 0 ? 1 : count) == 0)
+        if (target.giveItem(itemId, count == 0 ? 1 : count) == 0)
         {
             sendNotification("No free slots were found in your inventory!");
             return true;
         }
-        systemMessage(format!"Adding item %s (id: %d) to %s's inventory."(itemLink(itemId), itemId,
-            chr.player.data.name));
-        chr.systemMessage(format!"%s added item %s to your inventory."(player.data.name, itemLink(itemId)));
+        greenSystemMessage(format!"Adding item %s (id: %d) to %s's inventory."(itemLink(itemId), itemId,
+            target.player.data.name));
+        target.systemMessage(format!"%s added item %s to your inventory."(player.data.name, itemLink(itemId)));
         return true;
     }
 
+    /// `.summon <name>`: the player brought here, from this node or another; offline, moved in the database.
     bool handleSummonCommand(Rest name)
     {
-        const p = player.position;
-        gmLog(format!"summoned %s on map %u, %f %f %f"(name, player.data.map, p.x, p.y, p.z));
+        const at = player.position;
+        gmLog(format!"summoned %s on map %u, %f %f %f"(name, player.data.map, at.x, at.y, at.z));
         if (auto found = context.onlinePlayer(name))
-            sessionOf(found).summonedBy(gmSink, player.data.name, player.data.map, p, instanceId_);
-        else if (gmElsewhere(name, GmRemoteOp.summon))
         {
+            sessionOf(found).summonedBy(gmSink, player.data.name, player.data.map, at, instanceId_);
+            return true;
         }
-        else
+        if (gmElsewhere(name, GmRemoteOp.summon))
+            return true;
+        const guid = context.database.characterGuid(normalizedName(name));
+        if (guid == 0)
         {
-            const guid = context.database.characterGuid(normalizedName(name));
-            if (guid == 0)
-                systemMessage(format!"Player (%s) does not exist."(name));
-            else
-            {
-                context.database.moveOfflineCharacter(guid, player.data.map, p.x, p.y, p.z, player.data.zone);
-                const info = context.database.nameInfo(guid);
-                systemMessage(format!"(Offline) %s has been summoned."(info.isNull ? name : info.get.name));
-            }
+            redSystemMessage(format!"Player (%s) does not exist."(name));
+            return true;
         }
+        context.database.moveOfflineCharacter(guid, player.data.map, at.x, at.y, at.z, player.data.zone);
+        const info = context.database.nameInfo(guid);
+        greenSystemMessage(format!"(Offline) %s has been summoned."(info.isNull ? name : info.get.name));
         return true;
     }
 
+    /// `.appear <name>`: the GM teleported to the player, on this node or another.
     bool handleAppearCommand(Rest name)
     {
         auto found = context.onlinePlayer(name);
         if (found is null)
         {
             if (!gmElsewhere(name, GmRemoteOp.appear))
-                systemMessage(format!"Player (%s) does not exist or is not logged in."(name));
+                redSystemMessage(format!"Player (%s) does not exist or is not logged in."(name));
             return true;
         }
         sessionOf(found).appearedToBy(gmSink, player.data.name,
@@ -205,6 +212,7 @@ private:
         return true;
     }
 
+    /// `.modify speed <speed>`: the selected player's movement speed.
     bool handleModifySpeedCommand(float speed)
     {
         if (speed > 255 || speed < 1)
@@ -212,46 +220,47 @@ private:
             redSystemMessage("Incorrect value. Range is 1..255");
             return true;
         }
-        auto chr = selectedCharacter(true);
-        if (chr is null)
+        auto target = selectedCharacter(true);
+        if (target is null)
             return true;
-        if (chr !is this)
-            gmLog(format!"modified speed of %s to %2.2f."(chr.player.data.name, speed));
-        blueSystemMessage(format!"You set the speed of %s to %2.2f."(chr.player.data.name, speed));
-        chr.systemMessage(format!"%s set your speed to %2.2f."(player.data.name, speed));
-        chr.applySpeed(speed);
+        if (target !is this)
+            gmLog(format!"modified speed of %s to %2.2f."(target.player.data.name, speed));
+        greenSystemMessage(format!"You set the speed of %s to %2.2f."(target.player.data.name, speed));
+        target.systemMessage(format!"%s set your speed to %2.2f."(player.data.name, speed));
+        target.applySpeed(speed);
         return true;
     }
 
-    bool handleLearnSkillCommand(uint skill, uint min_, uint max_ = 1)
+    /// `.character learnskill <skill> <value> [max]`: a skill line taught to the selected player; its cap at
+    /// least its value.
+    bool handleLearnSkillCommand(uint skill, uint value, uint maximum = 1)
     {
         blueSystemMessage(format!"Adding skill line %d"(skill));
-        auto plr = selectedCharacter(true);
-        if (plr is null)
+        auto target = selectedCharacter(true);
+        if (target is null)
             return false;
-        gmLog(format!"used add skill of %u %u %u on %s"(skill, min_, max_, plr.player.data.name));
-        // `_AddSkillLine`: a maximum below the value is raised to it.
-        if (max_ < min_)
-            max_ = min_;
-        plr.applySkill(skill, cast(ushort) min(min_, ushort.max), cast(ushort) min(max_, ushort.max));
+        gmLog(format!"used add skill of %u %u %u on %s"(skill, value, maximum, target.player.data.name));
+        const cap = max(maximum, value);
+        target.applySkill(skill, cast(ushort) min(value, ushort.max), cast(ushort) min(cap, ushort.max));
         return true;
     }
 
-    bool handleModifySkillCommand(uint skill, uint cnt = 1)
+    /// `.character advanceskill <skill> [points]`: a skill raised up to its cap; an unknown one learned.
+    bool handleModifySkillCommand(uint skill, uint points = 1)
     {
-        blueSystemMessage(format!"Modifying skill line %d. Advancing %d times."(skill, cnt));
-        auto plr = selectedCharacter(true);
-        if (plr is null)
-            plr = this;
-        gmLog(format!"used modify skill of %u %u on %s"(skill, cnt, plr.player.data.name));
-        const now = plr.player.skillValue(skill);
-        if (now[1] == 0)
+        blueSystemMessage(format!"Modifying skill line %d. Advancing %d times."(skill, points));
+        auto target = selectedCharacter(true);
+        if (target is null)
+            target = this;
+        gmLog(format!"used modify skill of %u %u on %s"(skill, points, target.player.data.name));
+        const current = target.player.skillValue(skill);
+        if (current[1] == 0)
         {
             systemMessage("The player does not know this skill. Adding it now.");
-            plr.applySkill(skill, 1, 300);
+            target.applySkill(skill, 1, 300);
         }
-        else // `_AdvanceSkillLine`: up to the maximum
-            plr.applySkill(skill, cast(ushort) min(now[0] + cnt, now[1]), now[1]);
+        else
+            target.applySkill(skill, cast(ushort) min(current[0] + points, current[1]), current[1]);
         return true;
     }
 
@@ -262,87 +271,90 @@ private:
         return line is null ? null : line.name[0];
     }
 
+    /// `.character getskillinfo`: the selected player's skills with their values and caps.
     bool handleGetSkillsInfoCommand()
     {
-        auto plr = selectedCharacter(true);
-        if (plr is null)
+        auto target = selectedCharacter(true);
+        if (target is null)
             return false;
-        blueSystemMessage(format!"Player: %s has skills"(plr.player.data.name));
-        foreach (skill; plr.player.skillList)
+        blueSystemMessage(format!"Player: %s has skills"(target.player.data.name));
+        foreach (skill; target.player.skillList)
         {
             const name = skillName(skill[0]);
             if (name is null)
-            {
                 redSystemMessage(format!"Invalid skill: %u"(skill[0]));
-                continue;
-            }
-            blueSystemMessage(format!"  %s: Value: %u, MaxValue: %u. (+ %d bonus)"(name, skill[1], skill[2], 0));
+            else
+                blueSystemMessage(format!"  %s: Value: %u, MaxValue: %u. (+ %d bonus)"(name, skill[1], skill[2], 0));
         }
         return true;
     }
 
+    /// `.character removeskill <skill>`: a skill line the selected player has, removed.
     bool handleRemoveSkillCommand(uint skill)
     {
         blueSystemMessage(format!"Removing skill line %d"(skill));
-        auto plr = selectedCharacter(true);
-        if (plr !is null && plr.player.skillValue(skill)[1] != 0)
+        auto target = selectedCharacter(true);
+        if (target is null || target.player.skillValue(skill)[1] == 0)
         {
-            plr.applySkill(skill, 0, 0);
-            gmLog(format!"used remove skill of %u on %s"(skill, plr.player.data.name));
-            plr.systemMessage(format!"%s removed skill line %d from you. "(player.data.name, skill));
+            redSystemMessage(format!"Player doesn't have skill line %d"(skill));
+            return true;
         }
-        else
-            blueSystemMessage(format!"Player doesn't have skill line %d"(skill));
+        target.applySkill(skill, 0, 0);
+        gmLog(format!"used remove skill of %u on %s"(skill, target.player.data.name));
+        target.systemMessage(format!"%s removed skill line %d from you. "(player.data.name, skill));
         return true;
     }
 
+    /// `.npc emote [emote]`: the selected creature's emote state.
     bool handleEmoteCommand(uint emote = 0)
     {
-        auto target = selectedCreature(true);
-        if (target is null)
+        auto creature = selectedCreature(true);
+        if (creature is null)
             return false;
-        target.values.set!UNIT_NPC_EMOTESTATE(emote);
-        map.flushObjectChanges(target);
+        creature.values.set!UNIT_NPC_EMOTESTATE(emote);
+        map.flushObjectChanges(creature);
         return true;
     }
 
+    /// `.modify gold <copper>`: money added to or taken from the selected player, down to none.
     bool handleModifyGoldCommand(int total)
     {
-        auto chr = selectedCharacter(true);
-        if (chr is null)
+        auto target = selectedCharacter(true);
+        if (target is null)
             return true;
         const magnitude = total < 0 ? -long(total) : long(total);
         const gold = cast(uint) floor(magnitude / 10_000.0f);
         const silver = cast(uint) floor(magnitude / 100.0f) % 100;
         const copper = cast(uint)(magnitude % 100);
-        gmLog(format!"used modify gold on %s, gold: %d"(chr.player.data.name, total));
-        long newGold = long(chr.player.values.get!PLAYER_FIELD_COINAGE) + total;
-        const name = chr.player.data.name;
+        const name = target.player.data.name;
+        gmLog(format!"used modify gold on %s, gold: %d"(name, total));
+        long newGold = long(target.player.values.get!PLAYER_FIELD_COINAGE) + total;
         if (newGold < 0)
         {
-            blueSystemMessage(format!"Taking all gold from %s's backpack..."(name));
-            chr.greenSystemMessage(format!"%s took the all gold from your backpack."(player.data.name));
+            greenSystemMessage(format!"Taking all gold from %s's backpack..."(name));
+            target.greenSystemMessage(format!"%s took the all gold from your backpack."(player.data.name));
             newGold = 0;
         }
         else if (total >= 0)
         {
-            blueSystemMessage(format!"Adding %u gold, %u silver, %u copper to %s's backpack..."(gold, silver, copper,
-                name));
-            chr.greenSystemMessage(format!"%s added %u gold, %u silver, %u copper to your backpack."(player.data.name,
-                gold, silver, copper));
+            greenSystemMessage(format!"Adding %u gold, %u silver, %u copper to %s's backpack..."(gold, silver,
+                copper, name));
+            target.greenSystemMessage(format!"%s added %u gold, %u silver, %u copper to your backpack."(
+                player.data.name, gold, silver, copper));
         }
         else
         {
-            blueSystemMessage(format!"Taking %u gold, %u silver, %u copper from %s's backpack..."(gold, silver, copper,
-                name));
-            chr.greenSystemMessage(format!"%s took %u gold, %u silver, %u copper from your backpack."(player.data.name,
-                gold, silver, copper));
+            greenSystemMessage(format!"Taking %u gold, %u silver, %u copper from %s's backpack..."(gold, silver,
+                copper, name));
+            target.greenSystemMessage(format!"%s took %u gold, %u silver, %u copper from your backpack."(
+                player.data.name, gold, silver, copper));
         }
-        chr.player.values.set!PLAYER_FIELD_COINAGE(cast(uint) min(newGold, uint.max));
-        chr.flushPlayerChanges();
+        target.player.values.set!PLAYER_FIELD_COINAGE(cast(uint) min(newGold, uint.max));
+        target.flushPlayerChanges();
         return true;
     }
 
+    /// `.gotrig <trigger> [instance]`: the GM teleported to an area trigger (the instance is not used).
     bool handleTriggerCommand(uint triggerId, int instanceId = 0)
     {
         const entry = triggerId == 0 ? null : context.client.areaTriggers.lookup(triggerId);
@@ -352,30 +364,31 @@ private:
             return true;
         }
         commandTeleport(entry.mapId, Position(entry.x, entry.y, entry.z, 0));
-        blueSystemMessage(format!"Teleported to trigger %u on [%u][%.2f][%.2f][%.2f]"(entry.id, entry.mapId, entry.x,
-            entry.y, entry.z));
+        greenSystemMessage(format!"Teleported to trigger %u on [%u][%.2f][%.2f][%.2f]"(entry.id, entry.mapId,
+            entry.x, entry.y, entry.z));
         return true;
     }
 
+    /// `.character unlearn <spell>`: a spell the selected player knows, removed.
     bool handleUnlearnCommand(uint spellId = 0)
     {
-        auto plr = selectedCharacter(true);
-        if (plr is null)
+        auto target = selectedCharacter(true);
+        if (target is null)
             return true;
         if (spellId == 0)
         {
             redSystemMessage("You must specify a spell id.");
             return true;
         }
-        gmLog(format!"removed spell %u from %s"(spellId, plr.player.data.name));
-        if (plr.player.knowsSpell(spellId))
+        gmLog(format!"removed spell %u from %s"(spellId, target.player.data.name));
+        if (!target.player.knowsSpell(spellId))
         {
-            plr.greenSystemMessage(format!"Removed spell %u."(spellId));
-            greenSystemMessage(format!"Removed spell %u from %s."(spellId, plr.player.data.name));
-            plr.unlearn(spellId);
-        }
-        else
             redSystemMessage(format!"The player does not know spell %u."(spellId));
+            return true;
+        }
+        target.greenSystemMessage(format!"Removed spell %u."(spellId));
+        greenSystemMessage(format!"Removed spell %u from %s."(spellId, target.player.data.name));
+        target.unlearn(spellId);
         return true;
     }
 }
