@@ -2439,6 +2439,7 @@ unittest
             replacement.clock = () => now;
             replacement.sendRemoteLootCoins = (ushort, const ref LootCoinShare) => false;
             jaina = loggedIn(replacement, db, 8, "Jaina", Position(-8945, -132, 83.5f));
+            assert(jaina.session.character.money == otherBefore + Copper(5), "the share is paid on entering the world");
             jaina.read();
             now += 1.seconds;
             replacement.update(now);
@@ -2457,7 +2458,9 @@ unittest
                     ++notifications;
                     assert(ByteReader(packet.body_).read!uint == 5);
                 }
-            assert(notifications == 1, "a replay neither credits coins nor repeats the notification");
+            // A share paid on entering the world was announced with the login packets.
+            assert(notifications == (delivery == Delivery.refused ? 0 : 1),
+                "a replay neither credits coins nor repeats the notification");
             memberNode.lootCoinShareArrived(1, paid);
             assert(jaina.session.character.money == otherBefore + Copper(5));
         }
@@ -2485,6 +2488,20 @@ unittest
     assert(!db.pendingLootCoinPlayers().length);
     context.redeemLootCoinShare(7);
     assert(purse.money == Copper(605) && db.moneySaves[7][0] == 605, "a credit is paid once");
+}
+
+// A group coin credit left for a character who was offline is paid when it enters the world.
+unittest
+{
+    import dmangos.world.database : LootCoinCredit;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    assert(context.sendRemoteLootCoins is null, "a node that does not poll for credits");
+    db.saveLootCoinSplit(1, 77, [LootCoinCredit(7, 5)]);
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
+    assert(anduin.session.character.money == Copper(5) && db.moneySaves[7][0] == 5);
+    assert(!db.pendingLootCoinPlayers().length);
 }
 
 // Two corpses made on different nodes share the coordinator's rotation.

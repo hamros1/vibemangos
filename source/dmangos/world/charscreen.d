@@ -379,6 +379,9 @@ mixin template CharacterLogin()
         battlegroundOnLogin();
         if (player is null)
             return;
+        // Group coins credited while the character was offline: nothing else pays them on a node that does
+        // not poll for credits.
+        context.redeemLootCoinShare(guid);
         if (recovered && !transferring)
             refreshBattlegroundQueue();
         // Another node's ground (a dungeon it hosts, say): there at once, not after the first look.
