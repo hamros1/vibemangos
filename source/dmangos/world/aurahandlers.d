@@ -930,8 +930,9 @@ private:
     private static bool recoverableEncounterAura(uint spell)
     {
         import dmangos.scripts.blackwinglair : isBlackwingRecoveryAura;
+        import dmangos.scripts.naxxramas : isNaxxramasRecoveryAura;
 
-        return isBlackwingRecoveryAura(spell);
+        return isBlackwingRecoveryAura(spell) || isNaxxramasRecoveryAura(spell);
     }
 
     private void checkpointEncounterAura(const Aura aura)
@@ -940,7 +941,7 @@ private:
             checkpointSummons(true);
     }
 
-    private const(ubyte)[] encounterAuraRecoveryState()
+    package const(ubyte)[] encounterAuraRecoveryState()
     {
         ByteWriter state;
         foreach (aura; player.auras.list)
@@ -957,7 +958,7 @@ private:
         return state.data;
     }
 
-    private void restoreEncounterAuraRecovery(ref ByteReader state)
+    package void restoreEncounterAuraRecovery(ref ByteReader state)
     {
         import std.algorithm.comparison : max;
 
@@ -968,16 +969,21 @@ private:
         scope (exit) loadingSavedAuras = false;
         while (!state.empty)
         {
+            import dmangos.scripts.naxxramas : isSapphironFreeze;
+
             auto aura = Aura.loadState(state, (uint id) => context.data.spells.spell(id));
-            if (aura.spell is null || !recoverableEncounterAura(aura.spell.id)
-                || (aura.duration >= 0 && aura.duration <= elapsed))
+            if (aura.spell is null || !recoverableEncounterAura(aura.spell.id))
+                continue;
+            // Sapphiron's freeze waits with his air phase, which a crash pauses: it keeps the time it had.
+            const lost = isSapphironFreeze(aura.spell.id) ? 0 : elapsed;
+            if (aura.duration >= 0 && aura.duration <= lost)
                 continue;
             if (aura.duration > 0)
-                aura.duration -= elapsed;
+                aura.duration -= lost;
             foreach (i, period; aura.period)
                 if (period > 0)
                 {
-                    const due = aura.periodTimer[i] - elapsed;
+                    const due = aura.periodTimer[i] - lost;
                     aura.periodTimer[i] = due > 0 ? due : period - (-due % period);
                 }
             aura.slot = noSlot;
@@ -1728,4 +1734,55 @@ unittest
     auto me = client.session.inWorld;
     assert(me.player.auras.find(evocation) is null, "no channel, no channel aura");
     assert(me.player.auras.find(blessing) !is null);
+}
+
+/**
+ * Sapphiron's freeze comes back from a gateway player's checkpoint with the time it had, however long the crash's
+ * outage: his air phase does not count it either, and his breath must find the frozen still frozen. Life Drain loses
+ * the outage, as Chromaggus's afflictions do.
+ */
+unittest
+{
+    import core.time : MonoTime, seconds;
+    import dmangos.bytes : ByteReader;
+    import dmangos.cluster.protocol : SimulationOwner;
+    import dmangos.scripts.naxxramas : Sapphiron;
+    import dmangos.world.auras : makeAura;
+    import dmangos.world.movement : Position;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.spellids : AuraType, SpellEffect;
+    import dmangos.world.testclient;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    foreach (spell; [Sapphiron.icebolt, Sapphiron.iceboltImmunity, Sapphiron.lifeDrain])
+    {
+        context.data.spells.spells[spell] = testSpell(spell, SpellEffect.applyAura, 6, 0);
+        context.data.spells.spells.edit(spell).casting.applyAuraName[0] = spell == Sapphiron.icebolt
+            ? AuraType.modStun : spell == Sapphiron.lifeDrain ? AuraType.periodicLeech : AuraType.schoolImmunity;
+    }
+    auto client = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    auto session = client.session.inWorld;
+    client.session.gatewayHome = SimulationOwner(4, 1);
+    const sapphiron = 0xF130_0000_0000_0100UL | (ulong(15_989) << 24);
+    session.addAura(makeAura(context.data.spells.spell(Sapphiron.icebolt), sapphiron, 63, 25_000, false, [0, 0, 0]));
+    session.addAura(makeAura(context.data.spells.spell(Sapphiron.iceboltImmunity), 7, 60, 27_000, true, [127, 0, 0]));
+    session.addAura(makeAura(context.data.spells.spell(Sapphiron.lifeDrain), sapphiron, 63, 12_000, false, [100, 0, 0]));
+    assert(db.loadPlayerSummons(7).length, "the freeze was not checkpointed as it came");
+    const saved = session.encounterAuraRecoveryState();
+    foreach (spell; [Sapphiron.icebolt, Sapphiron.iceboltImmunity, Sapphiron.lifeDrain])
+        session.removeAura(session.player.auras.find(spell));
+
+    // The worker is lost; the player comes back thirty seconds on (longer than any of the three lasts).
+    now += 30.seconds;
+    auto state = ByteReader(saved);
+    session.restoreEncounterAuraRecovery(state);
+    auto freeze = session.player.auras.find(Sapphiron.icebolt), immunity = session.player.auras.find(
+        Sapphiron.iceboltImmunity);
+    assert(freeze !is null && freeze.duration == 25_000 && freeze.caster == sapphiron,
+        "the frozen player came back thawed: the outage counted against the freeze");
+    assert(immunity !is null && immunity.duration == 27_000, "the frozen player lost the immunity");
+    assert(session.player.auras.find(Sapphiron.lifeDrain) is null, "Life Drain outlasted its time");
 }

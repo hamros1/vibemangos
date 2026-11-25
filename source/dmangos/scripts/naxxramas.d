@@ -2484,6 +2484,24 @@ struct Sapphiron
 }
 
 /**
+ * The auras of Sapphiron's fight a gateway player's checkpoint keeps (`Character.encounterAuraRecoveryState`): his
+ * Icebolt's freeze, the immunity that goes with it, and Life Drain.
+ */
+bool isNaxxramasRecoveryAura(uint spell) pure nothrow @nogc @safe
+{
+    return isSapphironFreeze(spell) || spell == Sapphiron.lifeDrain;
+}
+
+/**
+ * Sapphiron's freeze (Icebolt's stun, and its immunity): it lasts until he lands, and a crash's outage, which his
+ * timers do not count, does not count against it either. Restored, it keeps the time it had when last saved.
+ */
+bool isSapphironFreeze(uint spell) pure nothrow @nogc @safe
+{
+    return spell == Sapphiron.icebolt || spell == Sapphiron.iceboltImmunity;
+}
+
+/**
  * Kel'Thuzad: summons the dead from his alcoves for five minutes while he channels; then fights with
  * Frostbolt, Frost Bolt Nova, Mana Detonation, Shadow Fissure and Frost Blast; below 40% the Lich King
  * sends him Guardians of Icecrown. His Chains turn raiders against their allies, and he breaks
