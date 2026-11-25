@@ -1910,7 +1910,6 @@ unittest
     import std.algorithm.searching : canFind;
     import dmangos.dbc : buildDbc;
     import dmangos.world.clientdata : factionTemplateFormat;
-    import dmangos.world.creature : CreatureTemplate;
     import dmangos.world.movement : Position;
     import dmangos.world.objects : HighGuid, makeGuid;
     import dmangos.world.packets : ClientGuid;
@@ -1980,7 +1979,7 @@ unittest
         [[humans, 1, 0, players | 2, 2, monsters, 0, 0, 0, 0, 0, 0, 0, 0], [14u, 14, 0, monsters, 0, players, 0, 0, 0,
         0, 0, 0, 0, 0]]), "FactionTemplate.dbc");
     keeper.factionTemplate = context.client.factionTemplates.lookup(14);
-    (cast(CreatureTemplate*) keeper.template_).detection = 20;
+    context.data.creatureTemplates.edit(creatureInnkeeper).detection = 20;
     jaina.write(Opcode.MSG_MOVE_HEARTBEAT, moveTo(Position(-8949.5f, -132, 83.53f, 1.97f)));
     assert(keeper.ai.inCombat && keeper.ai.currentVictim == jaina.session.character.guid, "attacked on sight");
 }
@@ -1991,7 +1990,6 @@ unittest
     import core.time : MonoTime, msecs;
     import dmangos.dbc : buildDbc;
     import dmangos.world.clientdata : factionTemplateFormat;
-    import dmangos.world.creature : CreatureTemplate;
     import dmangos.world.movement : Position;
     import dmangos.world.objects : HighGuid, makeGuid;
     import dmangos.world.packets : ClientGuid;
@@ -2021,7 +2019,7 @@ unittest
         c.values.set!UNIT_FIELD_MAXHEALTH(500u);
         c.values.set!UNIT_FIELD_HEALTH(500u);
     }
-    (cast(CreatureTemplate*) trainer.template_).detection = 0;
+    context.data.creatureTemplates.edit(creatureTrainer).detection = 0;
     trainer.movement.position = Position(-8951, -127, 83.5f, 0);
 
     void tick(int ms)
