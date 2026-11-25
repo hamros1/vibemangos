@@ -850,6 +850,9 @@ A node must never write over a character that has since played elsewhere.
   time until which the node's lease held when it was made. The writer drops a write it reaches after
   that time, and so does the replay of the write-ahead log at start-up. A node restarted after its
   lease lapsed therefore never writes over the regions' new owner.
+* That time is on the host's boot clock (`CLOCK_BOOTTIME`), never the wall clock, so stepping the wall
+  clock back (NTP, an operator) cannot let a fenced node's queued writes through. The log records
+  which boot wrote each entry; after the machine restarts, entries made under a lease are dropped.
 * Before an account is released to the coordinator and before a player moves to another node, the node
   waits until everything queued has been written: the next node loads the character from the database.
 

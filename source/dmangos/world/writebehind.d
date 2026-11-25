@@ -28,7 +28,9 @@
  *
  * Each queued write carries the time until which this node may write (its cluster lease, docs/CLUSTER.md);
  * the writer drops a write it reaches after that, and so does the replay. A standalone server
- * writes always.
+ * writes always. That time is on the writer's clock (`bootClock`): monotonic, so a step of the wall clock
+ * (NTP, an operator) can neither stretch the lease nor let a fenced node's queued writes through, and the
+ * same for every process of one boot of the machine, so the replay after a restart reads it too.
  *
  * Everything is generated from the interface (`std.typecons.AutoImplement`, as in `fencing.d`), so a
  * method added there is queued or waited for without anyone remembering to.
@@ -39,7 +41,6 @@ import core.atomic : atomicLoad, atomicStore;
 import core.sync.condition : Condition;
 import core.sync.mutex : Mutex;
 import core.thread : Thread;
-import std.datetime.systime : Clock;
 import std.meta : AliasSeq, staticMap;
 import std.traits : FunctionAttribute, functionAttributes, hasUDA, isArray, isDynamicArray, isFloatingPoint,
     isIntegral, isSomeChar, isStaticArray, OriginalType, Parameters, ParameterStorageClass,
@@ -207,11 +208,50 @@ private ulong replaceKey(T)(const ref T first)
 // The queue and its writer
 // ---------------------------------------------------------------------------------------------------
 
+/**
+ * The writer's clock, in hnsecs: the time since the machine booted, suspend included (Linux
+ * `CLOCK_BOOTTIME`; elsewhere `MonoTime`). Unlike the wall clock it is never stepped, and every process of
+ * one boot reads the same, so a deadline logged by one start is still a deadline for the next (`bootKey`).
+ */
+long bootClock() nothrow @nogc @safe
+{
+    import core.time : ClockType, MonoTimeImpl;
+
+    version (linux)
+        alias Boot = MonoTimeImpl!(ClockType.bootTime);
+    else
+        alias Boot = MonoTimeImpl!(ClockType.normal);
+    return (Boot.currTime - Boot.init).total!"hnsecs";
+}
+
+/// Which boot of the machine this is (a hash of Linux's `boot_id`); 0: not known. Set once at start-up.
+__gshared ulong bootKey;
+
+shared static this()
+{
+    import std.file : readText;
+    import std.string : strip;
+
+    try
+    {
+        const id = readText("/proc/sys/kernel/random/boot_id").strip;
+        ulong hash = 0xcbf29ce484222325;
+        foreach (c; id)
+        {
+            hash ^= c;
+            hash *= 0x100000001b3;
+        }
+        bootKey = id.length ? hash | 1 : 0;
+    }
+    catch (Exception)
+        bootKey = 0; // unknown: a deadline logged before a restart is taken to have passed
+}
+
 /// One queued write.
 struct Write
 {
     ulong signature;          /// which method (`signature`)
-    long writableUntil;       /// in hnsecs since 1 AD (`Clock.currStdTime`): not written after; 0: always
+    long writableUntil;       /// on the writer's clock (`bootClock`, hnsecs): not written after; 0: always
     immutable(ubyte)[] args;  /// the arguments, as `encode` wrote them
     bool replaced;            /// a later write made it pointless
     ulong seq;                /// its number in this writer's stream (from 1; 0: not numbered)
@@ -304,8 +344,10 @@ final class Writer
         size_t inFlight;       // taken, being written
         bool stopping;
         WriterStats stats;
+        // Set by the game loop, read by the writer's thread; both on `clock`.
         shared long leaseUntil; // the newest `writableUntil` given or renewed: the lease has held until at least then
         shared long lapsedAt;   // when the lease last lapsed: a write made before is never written
+        long delegate() clock;  // `bootClock`, unless a test fakes it; set before the thread starts, then only read
         WorldDatabase db;
         WriteLedger ledger;    // where written writes are recorded; null: not recorded
         uint stream;
@@ -320,10 +362,13 @@ final class Writer
      *
      * If `db` is a `WriteLedger` whose table can be used, each write is numbered in `stream` and recorded
      * there as it is written, so that writing the log again after a crash skips what the database has.
+     *
+     * `clock` is the writer's clock (`now`), which the lease's times are on; null: `bootClock`.
      */
-    this(WorldDatabase db, string logPath, bool started = true, uint stream = 0)
+    this(WorldDatabase db, string logPath, bool started = true, uint stream = 0, long delegate() clock = null)
     {
         this.db = db;
+        this.clock = clock !is null ? clock : () => bootClock();
         this.logPath = logPath;
         this.stream = stream;
         lock = new Mutex;
@@ -417,8 +462,14 @@ final class Writer
         return stats.failed == failedBefore;
     }
 
+    /// The writer's clock (`bootClock`, hnsecs), which `Write.writableUntil`, `renewLease` and `leaseLapsed` are on.
+    @property long now()
+    {
+        return clock();
+    }
+
     /**
-     * The lease holds until `until` (`Clock.currStdTime`), as the cluster renewed it: a write waiting for the
+     * The lease holds until `until` (on `now`), as the cluster renewed it: a write waiting for the
      * database may be written until then, though no newer write said so.
      */
     void renewLease(long until)
@@ -427,7 +478,7 @@ final class Writer
             atomicStore(leaseUntil, until);
     }
 
-    /// The lease lapsed at `at`: no write made before it is written, even once the lease holds again.
+    /// The lease lapsed at `at` (on `now`): no write made before it is written, even once the lease holds again.
     void leaseLapsed(long at)
     {
         atomicStore(lapsedAt, at);
@@ -509,7 +560,7 @@ private:
                     continue;
                 for (uint attempt = 1;; ++attempt)
                 {
-                    if (w.writableUntil && (Clock.currStdTime >= atomicLoad(leaseUntil)
+                    if (w.writableUntil && (clock() >= atomicLoad(leaseUntil)
                             || w.writableUntil <= atomicLoad(lapsedAt)))
                     {
                         count((ref s) { ++s.refused; });
@@ -631,14 +682,16 @@ string nameOf(ulong signature)
 // The log
 // ---------------------------------------------------------------------------------------------------
 
-private enum ubyte[8] logMagic = ['d', 'm', 'w', 'a', 'l', '0', '0', '2'];
+private enum ubyte[8] logMagic = ['d', 'm', 'w', 'a', 'l', '0', '0', '3'];
+private enum ubyte[8] logMagicWallClock = ['d', 'm', 'w', 'a', 'l', '0', '0', '2']; // deadlines on the wall clock
 private enum ubyte[8] logMagicUnnumbered = ['d', 'm', 'w', 'a', 'l', '0', '0', '1']; // before writes were numbered
 
 /*
  * The log: `logMagic`, then each write as its length (uint), the CRC-32 of the rest (uint), its
- * signature (ulong), its `writableUntil` (long), its number (ulong) and its arguments. A write cut short,
- * or whose CRC is wrong (the end of a write the system did not finish), ends the log. A log of the
- * earlier format (`logMagicUnnumbered`) has no numbers.
+ * signature (ulong), its `writableUntil` (long, on `bootClock`), its number (ulong), the boot it was
+ * logged in (`bootKey`, ulong) and its arguments. A write cut short, or whose CRC is wrong (the end of a
+ * write the system did not finish), ends the log. The earlier formats have no boot, their `writableUntil`
+ * being on the wall clock (`logMagicWallClock`), and the earliest no numbers either (`logMagicUnnumbered`).
  */
 private void appendToLog(string path, const(Write)[] batch)
 {
@@ -655,6 +708,7 @@ private void appendToLog(string path, const(Write)[] batch)
         encode(body_, w.signature);
         encode(body_, w.writableUntil);
         encode(body_, w.seq);
+        encode(body_, bootKey);
         body_ ~= w.args;
         const uint length = cast(uint) body_.length;
         const crc = crc32Of(body_);
@@ -687,9 +741,14 @@ private void emptyLog(string path)
         error!"cannot empty the log of queued writes %s: %s"(path, e.msg);
 }
 
-/// The writes in the log at `path`, up to the first that is incomplete.
+/**
+ * The writes in the log at `path`, up to the first that is incomplete, their `writableUntil` on this boot's
+ * `bootClock`: one logged in another boot (or one not known) has passed it, as no lease outlives a restart of
+ * the machine. A log of the wall-clock format, from before an upgrade, is read against the wall clock.
+ */
 Write[] readLog(string path)
 {
+    import std.datetime.systime : Clock;
     import std.digest.crc : crc32Of;
     import std.file : exists, read;
 
@@ -698,17 +757,20 @@ Write[] readLog(string path)
     const(ubyte)[] bytes = cast(const(ubyte)[]) read(path);
     if (bytes.length < logMagic.length)
         return null;
-    const numbered = bytes[0 .. logMagic.length] == logMagic[];
-    if (!numbered && bytes[0 .. logMagic.length] != logMagicUnnumbered[])
+    const magic = bytes[0 .. logMagic.length];
+    const booted = magic == logMagic[];
+    const numbered = booted || magic == logMagicWallClock[];
+    if (!numbered && magic != logMagicUnnumbered[])
         return null;
     bytes = bytes[logMagic.length .. $];
+    const bootNow = bootClock();
     Write[] writes;
     while (bytes.length >= 8)
     {
         uint length, check;
         decode(bytes, length);
         decode(bytes, check);
-        if (length < (numbered ? 24 : 16) || length > bytes.length)
+        if (length < (booted ? 32 : numbered ? 24 : 16) || length > bytes.length)
             break;
         const body_ = bytes[0 .. length];
         const crc = crc32Of(body_);
@@ -721,6 +783,18 @@ Write[] readLog(string path)
         decode(rest, w.writableUntil);
         if (numbered)
             decode(rest, w.seq);
+        if (booted)
+        {
+            ulong boot;
+            decode(rest, boot);
+            if (w.writableUntil && w.writableUntil != long.max && (boot == 0 || boot != bootKey))
+                w.writableUntil = 1; // another boot's: passed
+        }
+        else if (w.writableUntil && w.writableUntil != long.max)
+        {
+            const left = w.writableUntil - Clock.currStdTime;
+            w.writableUntil = left > 0 ? bootNow + left : 1;
+        }
         w.args = rest.idup;
         writes ~= w;
     }
@@ -758,7 +832,7 @@ size_t replayLog(string path, WorldDatabase db, uint stream = 0, long patienceMs
                 warning!"cannot read dmangos_write_applied (%s): the log is written again whole"(e.msg);
                 ledger = null;
             }
-        const now = Clock.currStdTime;
+        const now = bootClock();
         const since = MonoTime.currTime;
         foreach (ref w; writes)
         {
@@ -811,12 +885,12 @@ abstract class WriteBehindBase : WorldDatabase
 {
     protected WorldDatabase reader;
     protected Writer writer;
-    /// Until when this node may write (`Clock.currStdTime`), asked at each write; null: always.
+    /// Until when this node may write (on the writer's clock, `Writer.now`), asked at each write; null: always.
     long delegate() writableUntil;
 
     /**
      * Reads (and the writes that cannot be queued) go to `reader`, in the game loop; queued writes go to
-     * `writer`. `writableUntil` says until when this node may write (`Clock.currStdTime`); null: always.
+     * `writer`. `writableUntil` says until when this node may write (on `Writer.now`); null: always.
      */
     this(WorldDatabase reader, Writer writer, long delegate() writableUntil = null)
     {
@@ -850,7 +924,7 @@ abstract class WriteBehindBase : WorldDatabase
 
     protected bool leaseStillHolds()
     {
-        return writableUntil is null || Clock.currStdTime < writableUntil();
+        return writableUntil is null || writer.now < writableUntil();
     }
 
     protected void enqueue(alias fun, Args...)(auto ref Args args)
@@ -945,7 +1019,7 @@ unittest
     auto writer = new Writer(inner, null);
     scope (exit)
         writer.stop();
-    long until = Clock.currStdTime - 1; // already lapsed
+    long until = bootClock() - 1; // already lapsed
     WorldDatabase db = new WriteBehind(inner, writer, () => until);
     const id = db.findAccount("PLAYER").get.id;
     db.setMuteTime(id, 42);
@@ -986,7 +1060,7 @@ unittest
     long until = 0;
     encode(args, until);
     auto w = Write(signature!(WorldDatabase.setMuteTime), 0, cast(immutable) args);
-    auto expired = Write(signature!(WorldDatabase.setMuteTime), Clock.currStdTime - 1, cast(immutable) args);
+    auto expired = Write(signature!(WorldDatabase.setMuteTime), bootClock() - 1, cast(immutable) args);
     appendToLog(path, [w, expired]);
     ubyte[] wrong;
     encode(wrong, id);
@@ -1192,7 +1266,7 @@ unittest
     scope (exit)
         writer.stop();
     writer.stalledWaitMs = 100;
-    long until = Clock.currStdTime + 5_000_000; // the lease, as the write is made: half a second more
+    long until = bootClock() + 5_000_000; // the lease, as the write is made: half a second more
     auto db = new WriteBehind(inner, writer, () => until);
     const id = inner.findAccount("PLAYER").get.id;
     db.setMuteTime(id, 80);
@@ -1201,7 +1275,7 @@ unittest
     assert(writer.statistics.stalled);
     foreach (i; 0 .. 40) // the cluster renews the lease meanwhile
     {
-        writer.renewLease(Clock.currStdTime + 5_000_000);
+        writer.renewLease(bootClock() + 5_000_000);
         if (inner.findAccount("PLAYER").get.muteTime == 80)
             break;
         Thread.sleep(100.msecs);
@@ -1212,8 +1286,8 @@ unittest
     // A write made before the lease lapsed is never written, even when the lease holds again.
     atomicStore(flaky.failures, 1);
     db.setMuteTime(id, 81);
-    writer.leaseLapsed(Clock.currStdTime + 10_000_000);
-    writer.renewLease(Clock.currStdTime + 50_000_000);
+    writer.leaseLapsed(bootClock() + 10_000_000);
+    writer.renewLease(bootClock() + 50_000_000);
     foreach (i; 0 .. 20)
     {
         if (writer.settled)
@@ -1221,4 +1295,66 @@ unittest
         Thread.sleep(50.msecs);
     }
     assert(inner.findAccount("PLAYER").get.muteTime == 80 && writer.statistics.refused == 1);
+}
+
+// The fence is on the writer's monotonic clock, not the wall clock: a lease that ran out there has run out
+// whatever the wall clock reads (NTP stepped it back, say), and the writes queued under it are dropped.
+unittest
+{
+    import core.atomic : atomicOp;
+
+    auto inner = newDatabase();
+    // Far beyond the wall clock's hnsecs: read against the wall clock, every deadline here is still ahead.
+    shared long fake = long.max / 2;
+    auto writer = new Writer(inner, null, false, 0, () => atomicLoad(fake)); // queues until started
+    scope (exit)
+        writer.stop();
+    long until = atomicLoad(fake) + 5_000_000; // the lease, as the write is made: half a second more
+    auto db = new WriteBehind(inner, writer, () => until);
+    const id = inner.findAccount("PLAYER").get.id;
+    db.setMuteTime(id, 90);
+    atomicOp!"+="(fake, 5_000_000); // the lease runs out before the writer reaches the write
+    writer.start();
+    writer.settle();
+    assert(inner.findAccount("PLAYER").get.muteTime != 90, "a write reached after the lease ran out is dropped");
+    assert(writer.statistics.refused == 1);
+
+    // Renewed on the same clock, the lease lets writes through again.
+    until = writer.now + 5_000_000;
+    writer.renewLease(until);
+    db.setMuteTime(id, 91);
+    writer.settle();
+    assert(inner.findAccount("PLAYER").get.muteTime == 91 && writer.statistics.refused == 1);
+}
+
+// The log's deadlines are on the boot clock: a restart in the same boot keeps the lease's time left; a log
+// from another boot of the machine (whose clock started again) has passed every deadline but "always".
+unittest
+{
+    import std.file : exists, remove;
+
+    const path = tempLog("boot");
+    scope (exit)
+        if (exists(path))
+            remove(path);
+    auto inner = newDatabase();
+    const id = inner.findAccount("PLAYER").get.id;
+    Write muteFor(long minutes, long until)
+    {
+        ubyte[] args;
+        encode(args, id);
+        encode(args, minutes);
+        return Write(signature!(WorldDatabase.setMuteTime), until, cast(immutable) args);
+    }
+
+    appendToLog(path, [muteFor(1, 0), muteFor(2, bootClock() + 600_000_000)]); // a minute of lease left
+    assert(replayLog(path, inner) == 2 && inner.findAccount("PLAYER").get.muteTime == 2, "the same boot: written");
+
+    appendToLog(path, [muteFor(3, 0), muteFor(4, bootClock() + 600_000_000)]);
+    const thisBoot = bootKey;
+    bootKey = thisBoot ^ 2; // read as after the machine restarted
+    scope (exit)
+        bootKey = thisBoot;
+    assert(replayLog(path, inner) == 1 && inner.findAccount("PLAYER").get.muteTime == 3,
+        "another boot: the leased write is dropped");
 }

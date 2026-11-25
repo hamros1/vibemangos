@@ -302,7 +302,7 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
         BattlegroupHostLease.ensureTable(login);
     void loseWorldLease()
     {
-        writer.leaseLapsed(imported!"std.datetime.systime".Clock.currStdTime);
+        writer.leaseLapsed(writer.now);
         if (config.cluster.quorum && config.cluster.gateway)
             warning!"cluster: the gateway's lease lapsed: holding client connections for the next coordinator"();
         else
@@ -446,9 +446,10 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
             context.worldPvp.ask(); // the same for world PvP
         }
         // And a queued write is dropped if the writer reaches it after the lease lapsed (step 6).
+        // The writer's clock is monotonic like the cluster's, so a step of the wall clock moves neither end.
+        // Outside quorum mode the cluster's stops while the host is suspended and the writer's (`bootClock`)
+        // does not: the fence then ends sooner, never later.
         behind.writableUntil = () {
-            import std.datetime.systime : Clock;
-
             import std.algorithm.comparison : min;
 
             const at = clusterClock();
@@ -457,7 +458,7 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
                 ends = sharedLease.holds() ? min(ends, sharedLease.validUntil) : at;
             if (ends == MonoTime.max)
                 return long.max;
-            return Clock.currStdTime + (ends > at ? (ends - at).total!"hnsecs" : -1);
+            return writer.now + (ends > at ? (ends - at).total!"hnsecs" : -1);
         };
         // One login per account across the cluster, and members' ids from the coordinator's blocks.
         cluster.sessions = context;
@@ -646,7 +647,7 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
         sharedLease.tick();
         if (!sharedLease.fenced)
             return true;
-        writer.leaseLapsed(imported!"std.datetime.systime".Clock.currStdTime);
+        writer.leaseLapsed(writer.now);
         warning!"battlegroup %s: shared lease lost, stopping both host and queue simulation"(config.battlegroup);
         return false;
     }
