@@ -220,6 +220,7 @@ final class TestCreature : CreatureHost
 final class TestInstance : InstanceHost
 {
     bool hostEntryKilled(uint) { return false; }
+    bool hostKilled(EntityRef creature) { return (creature.guid in dead) !is null; }
     void hostStartDatabaseEvent(uint event, EntityRef, EntityRef) { did ~= format("event %s", event); }
     void hostRespawnKilled(uint) {}
     mixin Recording;

@@ -241,6 +241,21 @@ struct BlackrockDepths
 
     void on(ref InstanceContext brd, const ref Restored e)
     {
+        // A boss's death reaches the database as it happens, the state it settles with the next save: a crash
+        // between the two leaves him dead and his doors shut.
+        if (ironHall != Fight.done && brd.entryKilled(magmus))
+            ironHall = Fight.done;
+        if (vault == Fight.inProgress)
+        {
+            EntityRef[] lost;
+            foreach (guard; vaultGuards)
+                if (brd.killed(guard))
+                    lost ~= guard;
+            foreach (guard; lost)
+                vaultGuards.died(guard);
+            if (vaultGuards.allDead)
+                vault = Fight.done;
+        }
         if (tomb == Fight.inProgress)
         {
             tombRecovering = true;

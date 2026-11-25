@@ -1802,6 +1802,31 @@ unittest
     assert(durableAwards() == awarded, "the claim could not pay twice");
 }
 
+/**
+ * Blackrock Depths: a boss's death can reach the database before the save that settles his encounter. Magmus dead
+ * with the Iron Hall's fight still under way in the copy's state: his throne room opens all the same.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.scripts.blackrockdepths : BlackrockDepths, Fight, magmus, throneRoom;
+
+    auto d = Dungeon.enter(230, 60, cluster: true);
+    auto boss = d.spawned(magmus, 0, 15);
+    d.pull(boss);
+    d.run(1.seconds);
+    assert(d.saved!BlackrockDepths.ironHall == Fight.inProgress);
+    const during = d.data;
+    d.kill(boss);
+    d.run(1.seconds);
+    assert(Dungeon.isOpen(d.objectOf(throneRoom)));
+    d.w.db.saveInstanceData(d.instanceId, during); // the crash came between his death and the save after it
+    d.restartAfterCrash();
+    assert(d.saved!BlackrockDepths.ironHall == Fight.done && Dungeon.isOpen(d.objectOf(throneRoom)),
+        "the throne room opens for the dead Magmus");
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Blackrock Spire (229)
 // ---------------------------------------------------------------------------------------------------------------

@@ -4636,6 +4636,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                             created, source.guid, target.guid);
                     };
                     script.entryKilled = &entryKilledInInstance;
+                    script.spawnKilled = (uint copy, ulong guid) => deadInInstance(copy, cast(uint)(guid & 0xFF_FFFF));
                     script.respawnKilled = &respawnKilledInCopy;
                     script.signalObject = &gameObjectSignalled;
                     script.respawnObjectOf = &respawnObjectOfEntry;

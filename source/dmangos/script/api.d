@@ -1254,6 +1254,7 @@ interface InstanceHost
     ActionResult hostWalkPath(EntityRef creature, uint pathId);
     bool hostHasAura(EntityRef creature, uint spell);
     bool hostEntryKilled(uint entry);
+    bool hostKilled(EntityRef creature);
     void hostStartDatabaseEvent(uint event, EntityRef source, EntityRef target);
     void hostRespawnKilled(uint entry);
 }
@@ -1528,6 +1529,12 @@ struct InstanceContext
 
     /// Whether a permanent spawn of this entry died in this copy.
     bool entryKilled(uint entry) { return host.hostEntryKilled(entry); }
+
+    /**
+     * Whether this permanent spawn of the copy (not a summon) died in it. Its death can reach the database before the
+     * checkpoint that counts it: `Restored` checks what the script remembers as alive against it.
+     */
+    bool killed(EntityRef creature) { return host.hostKilled(creature); }
 
     /// Restores this entry's killed spawns in the current copy.
     void respawnKilled(uint entry) { host.hostRespawnKilled(entry); }

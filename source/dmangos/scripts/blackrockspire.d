@@ -226,6 +226,20 @@ struct BlackrockSpire
 
     void on(ref InstanceContext brs, const ref Restored e)
     {
+        // A defender's death reaches the database as it happens, the rooms' state with the next save.
+        if (rooms == Fight.inProgress)
+        {
+            foreach (ref room; roomMobs)
+            {
+                EntityRef[] dead;
+                foreach (who; room)
+                    if (brs.killed(who))
+                        dead ~= who;
+                foreach (who; dead)
+                    room.died(who);
+            }
+            settleRooms(brs);
+        }
         if (emberseerFight == Fight.inProgress)
         {
             if (brs.entryKilled(emberseer))
@@ -418,6 +432,29 @@ struct BlackrockSpire
         }
     }
 
+    /// The rooms whose defenders are all dead have their runes go out; all seven out, the way to Emberseer opens.
+    private void settleRooms(ref InstanceContext brs)
+    {
+        bool allDone = true;
+        foreach (i, ref room; roomMobs)
+        {
+            if (!roomDone[i] && (room.allDead || room.empty))
+            {
+                roomDone[i] = true;
+                if (runes[i])
+                    brs.door(runes[i], false); // the rune goes out
+            }
+            allDone &= roomDone[i];
+        }
+        if (allDone && rooms != Fight.done)
+        {
+            rooms = Fight.done;
+            brs.log("the seven runes are out: the way to Emberseer opens");
+            if (emberseerInDoor)
+                brs.door(emberseerInDoor, true);
+        }
+    }
+
     void on(ref InstanceContext brs, const ref CreatureDied e)
     {
         incarcerators.died(e.creature);
@@ -426,25 +463,9 @@ struct BlackrockSpire
         case blackhandSummoner, blackhandVeteran:
             if (rooms != Fight.inProgress)
                 break;
-            bool allDone = true;
-            foreach (i, ref room; roomMobs)
-            {
+            foreach (ref room; roomMobs)
                 room.died(e.creature);
-                if (!roomDone[i] && (room.allDead || room.empty))
-                {
-                    roomDone[i] = true;
-                    if (runes[i])
-                        brs.door(runes[i], false); // the rune goes out
-                }
-                allDone &= roomDone[i];
-            }
-            if (allDone)
-            {
-                rooms = Fight.done;
-                brs.log("the seven runes are out: the way to Emberseer opens");
-                if (emberseerInDoor)
-                    brs.door(emberseerInDoor, true);
-            }
+            settleRooms(brs);
             break;
         case incarcerator:
             if (emberseerFight == Fight.inProgress)
@@ -1092,4 +1113,34 @@ unittest
     brs.raise(CreatureDied(creatureRef(gyth, 1000 + brs.host.spawned)));
     brs.run(500);
     assert(brs.host.done("say 10162 -1229018") && brs.state!BlackrockSpire.stadium == Fight.done);
+}
+
+// A crash between a rune room defender's death and the save after it: the copy comes back with the room's last
+// defender dead among its spawns but alive in its state, and the rune goes out all the same.
+unittest
+{
+    import dmangos.bytes : ByteReader, ByteWriter;
+    import dmangos.scripts.testing;
+
+    alias self = dmangos.scripts.blackrockspire;
+    auto brs = runInstance!self("instance_blackrock_spire");
+    brs.raise(ObjectLoaded(objectRef(emberseerIn)));
+    brs.raise(ObjectLoaded(objectRef(roomRunes[0])));
+    brs.raise(CreatureLoaded(creatureRef(blackhandSummoner, 1)));
+    brs.raise(CreatureLoaded(creatureRef(blackhandVeteran, 2)));
+    brs.raise(Signal(playerRef, BlackrockSpire.Signals.enterUpper, 1));
+    brs.raise(CreatureDied(creatureRef(blackhandSummoner, 1)));
+    ByteWriter saved;
+    brs.runtime.save(brs.handle, saved); // the last save the copy wrote
+    brs.host.dead[creatureRef(blackhandVeteran, 2).guid] = true; // its death, recorded as it happened
+
+    auto after = runInstance!self("instance_blackrock_spire");
+    after.host.dead = brs.host.dead;
+    auto r = ByteReader(saved.data);
+    assert(after.runtime.load(after.handle, r));
+    after.raise(Restored());
+    after.raise(ObjectLoaded(objectRef(roomRunes[0])));
+    after.raise(ObjectLoaded(objectRef(emberseerIn)));
+    assert(after.state!BlackrockSpire.rooms == Fight.done && after.host.done("door 175244 open"),
+        "the dead defender counts: the way to Emberseer opens");
 }

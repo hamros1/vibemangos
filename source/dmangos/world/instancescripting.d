@@ -74,6 +74,7 @@ final class InstanceScript : InstanceHost
 
     /// Whether an entry is in this copy's persisted creature deaths.
     bool delegate(uint instance, uint entry) entryKilled;
+    bool delegate(uint instance, ulong guid) spawnKilled;
     void delegate(Map map, uint entry) respawnKilled;
 
     // Raid scripts:
@@ -485,6 +486,11 @@ final class InstanceScript : InstanceHost
     bool hostEntryKilled(uint entry)
     {
         return entryKilled !is null && entryKilled(id, entry);
+    }
+
+    bool hostKilled(EntityRef creature)
+    {
+        return spawnKilled !is null && creature.isCreature && spawnKilled(id, creature.guid);
     }
 
     void hostStartDatabaseEvent(uint event, EntityRef source, EntityRef target)
