@@ -48,6 +48,14 @@ describes how players use the systems available today.
   Ebonroc, Flamegor, Chromaggus, and Nefarian.
   The Suppression Room keeps disarmed device timers and Lashlayer's room-wide shutdown.
   Naxxramas has Gothik recovery tests for both the wave phase and the ground fight.
+  It also has Sapphiron recovery tests for the birth window, the ground phase, the air phase
+  with a player frozen before Frost Breath, the breath begun, a wipe followed by a crash, and
+  his death. The [crash points](CLUSTER.md#sapphirons-crash-points) list what the clients saw.
+  Open: his Summon Blizzard does nothing yet. Neither `spell_sapphiron_blizzard` nor the
+  Blizzard creature (16474) is ported, so no blizzard needs recovering. A frozen player on a
+  regular home logs in again with the auras of the last character save. A frozen gateway
+  player who returns after he has landed, or to a fight that a restore failed, stays frozen
+  until the aura ends.
   The Temple of Ahn'Qiraj has C'Thun recovery tests for the Eye's phase, the crash between the
   Eye's death and C'Thun's rise, a player in his stomach, and a wipe in his phase.
   See [dungeon failover](CLUSTER.md#dungeons-and-battlegrounds) for coverage across instances.

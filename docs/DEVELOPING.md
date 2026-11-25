@@ -318,8 +318,8 @@ merge and a player handoff. Set `EXPECT_BALANCING=1` to check these events in a 
 After harness setup and a release build, run the opt-in suite with
 `python3 tools/harness/chaos.py`. It runs the quorum partition and heal, coordinator kill,
 paused battlegroup host, gateway checkpoint retry, departure retry, lease lapse arrival, worker
-rejoin, stall release, gateway return, C'Thun recovery, loot award crash, migration stall, standby
-login and standby bundle cases against isolated fixtures.
+rejoin, stall release, gateway return, C'Thun recovery, Sapphiron recovery, loot award crash,
+migration stall, standby login and standby bundle cases against isolated fixtures.
 Use `--repeat 3` to check repeatability. Each case prints the harness directory containing
 its process logs and uses fresh login and character schemas.
 
@@ -362,6 +362,14 @@ client says a numbered line every 50 ms and ports to ground of its map another w
 the proxy delays the gateway's frames to its first worker by 600 ms. The lines that reach that worker
 after the player left must come back to the gateway (both log it) and, with the rest, be answered
 once each, in the order said.
+
+Run `python3 tools/harness/sapphiron_recovery.py --phase air` (or `ground`, or `birth`) to kill the
+Naxxramas worker during Sapphiron's fight. Three scripted raid members on a gateway spring his
+birth. The test then checks that their original sockets come back to the same copy with one
+Sapphiron and his saved phase and timers. The air phase also checks the same ice block, a member
+still frozen, and a single breath that spares the member behind the block. The test's
+`waitactions:` steps send members where the frozen member's block gives cover.
+[Sapphiron's crash points](CLUSTER.md#sapphirons-crash-points) has the details.
 
 Run `python3 tools/harness/loot_award_crash.py` to kill (`SIGKILL`) a party member's worker after
 it claims a remote loot award, while a second MariaDB session locks the member's inventory so the

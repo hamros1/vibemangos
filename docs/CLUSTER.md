@@ -566,6 +566,18 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   The first players back resume the saved timers. On the floor he keeps his health, side and
   remaining teleports. The central gate stays in its saved state and opens after four side changes
   or when he reaches 30% health. His death opens the exit for the rest of the lockout.
+  Sapphiron, a summon, is kept in the checkpoint while his fight is under way, with the ice
+  blocks of his air phase. He saves himself after each step of his timers, so a crash resumes
+  him from the last step. A crash in the 22 seconds between his birth and his coming brings him
+  once, on the birth's timer. A crash in the ground phase brings back the same Sapphiron with his
+  health and Frost Aura, and he rises on his first timer. A crash after his Icebolt froze a
+  player and before Frost Breath brings back the same Sapphiron in the air, the same ice block
+  and the player still frozen. His breath begins on its saved timer and lands once: it strikes
+  players in the open and passes over those behind a block. A crash with the breath begun
+  resumes its cast. The blocks stand until he lands. A wipe, or a crash after one, leaves one
+  Sapphiron at home for the next pull. His death opens the waterfall to Kel'Thuzad for the rest
+  of the lockout. A gateway player's freeze (Icebolt and its immunity) keeps the time it had
+  when saved, since his timers do not count the outage. Life Drain keeps its original deadline.
   In the Temple of Ahn'Qiraj, C'Thun's fight keeps the Eye of C'Thun, C'Thun and every living
   tentacle with their health, auras and timers. A crash in the Eye's phase resumes its beams and
   tentacle waves on their saved timers. A crash in the five seconds between the Eye's death and
@@ -1421,6 +1433,24 @@ the original invitation deadline.
 
 Run `python3 tools/harness/queue_failover.py` to check queue host loss with an open invitation, and
 `python3 tools/harness/queue_failover.py --active-match` to check map host loss during Warsong Gulch.
+
+### Sapphiron's crash points
+
+`tools/harness/sapphiron_recovery.py` sends three scripted raid members on a gateway into the
+Frostwyrm Lair, where they spring his birth. It kills the worker that hosts Naxxramas with
+`SIGKILL`, just after an encounter checkpoint, at these points:
+
+| `--phase` | Crash point | What the original clients saw after recovery |
+|---|---|---|
+| `birth` | About 6 s after the birth, before Sapphiron comes | All three sockets back in the same copy. He came once, about 16 s later, as the birth's 22 s timer had left |
+| `ground` | About 15 s into the fight, after Life Drain and a blizzard, with him at 80% health | The same Sapphiron (same GUID) at the saved health, within 1%, with Frost Aura. He rose 46 s after the pull, counted without the outage, breathed once and landed |
+| `ground`, second crash | After his death, on the worker that took over | Sapphiron dead and the waterfall to Kel'Thuzad open. The first worker is restarted beforehand so that the voters keep a majority |
+| `air` | After his first Icebolt froze one member and before Frost Breath began. The other two stood within 10 yards of the frozen member, so no other was frozen; one then moved behind the ice block and one into the open | The same Sapphiron in the air and the same single ice block GUID. The frozen member still had Icebolt and its immunity. The breath began 12 s after recovery, as the saved timer left, and landed once. It struck the member in the open for about 80,000 to 110,000 and did not hit the member behind the block. He landed and the block melted |
+
+The real-data tests in `source/dmangos/world/realscripts_raids.d` cover the same crash points in
+cluster mode. They add a crash with the breath begun, where the cast resumes and lands once, and a
+wipe in the air phase followed by a crash, after which one Sapphiron waits at home and can be
+fought again.
 
 The cluster code is tested in memory: links wired back to back and a fake clock, with whole clusters
 of world contexts (joining, views, heartbeats, timeouts, restarts and fencing; handovers with no cell
