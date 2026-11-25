@@ -1,4 +1,4 @@
-"""A loopback TCP relay that can partition fixture-owned cluster links."""
+"""A loopback TCP relay that can partition fixture-owned cluster links or drop kinds of frames on them."""
 
 import asyncio
 import struct
@@ -13,6 +13,8 @@ class ClusterProxy:
     def __init__(self, ports):
         self.ports = ports
         self.blocked = set()
+        self.dropping = {}
+        self.dropped = {}
         self.links = {}
         self.tasks = set()
         self.listeners = []
@@ -55,6 +57,13 @@ class ClusterProxy:
                 if peer is not None:
                     peer.transport.abort()
 
+    async def drop(self, kinds):
+        """Discard frames of the given message kinds, by (source, target) direction, until called again."""
+        self.dropping = {direction: frozenset(types) for direction, types in kinds.items()}
+
+    async def dropped_frames(self, direction):
+        return self.dropped.get(direction, 0)
+
     async def live_links(self):
         return {link for writer, (link, peer) in self.links.items()
                 if peer is not None and not writer.is_closing() and not peer.is_closing()}
@@ -85,8 +94,8 @@ class ClusterProxy:
                 return
             self.links[writer] = (link, peer)
             peer.write(header + hello)
-            pumps = [asyncio.create_task(self.copy(reader, peer)),
-                     asyncio.create_task(self.copy(peer_reader, writer))]
+            pumps = [asyncio.create_task(self.copy(reader, peer, (source, target))),
+                     asyncio.create_task(self.copy(peer_reader, writer, (target, source)))]
             await asyncio.wait(pumps, return_when=asyncio.FIRST_COMPLETED)
         except (OSError, EOFError, asyncio.TimeoutError):
             # Startup and deliberate cuts can close either side of a link.
@@ -100,8 +109,15 @@ class ClusterProxy:
                 pump.cancel()
             await asyncio.gather(*pumps, return_exceptions=True)
 
-    @staticmethod
-    async def copy(reader, writer):
-        while data := await reader.read(65536):
-            writer.write(data)
+    async def copy(self, reader, writer, direction):
+        # Whole frames, so that a dropped one leaves the stream intact. Only unsequenced
+        # messages (heartbeats, quorum votes and leases) can be dropped without a resend or a gap.
+        while True:
+            header = await reader.readexactly(16)
+            length, kind = struct.unpack_from("<IH", header)
+            payload = await reader.readexactly(length)
+            if kind in self.dropping.get(direction, ()):
+                self.dropped[direction] = self.dropped.get(direction, 0) + 1
+                continue
+            writer.write(header + payload)
             await writer.drain()

@@ -1109,6 +1109,11 @@ final class ClusterNode : LinkOwner
     {
         if (!heldPlayers.length)
             return;
+        const before = heldPlayers.length;
+        scope (exit)
+            if (heldPlayers.length < before)
+                info!"cluster: node %s released %s player message(s) held while its lease had lapsed"(id,
+                    before - heldPlayers.length);
         heldPlayers.release(electedTerm, (ushort peer) {
             if (auto link = peer in links)
                 return (*link).peer.incarnation;

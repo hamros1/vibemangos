@@ -931,7 +931,10 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
                 const departure = Departure(session.gatewayHome, session.gatewayCharacter, session.gatewayToken,
                     account, toCharacterScreen, node.messageTerm());
                 if (!context.canWrite() || !context.settleWrites() || !reportDeparture(departure))
+                {
                     departures[account] = departure;
+                    info!"cluster: account %s left before its saves were written; its departure waits for them"(account);
+                }
                 return;
             }
         node.sendTo(home, message);
@@ -961,8 +964,13 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         const settled = context.canWrite() && (context.writer is null || context.writer.settled);
         uint[] done;
         foreach (account, ref departure; departures)
-            if (departure.term != term || (settled && reportDeparture(departure)))
+            if (departure.term != term)
                 done ~= account;
+            else if (settled && reportDeparture(departure))
+            {
+                info!"cluster: account %s's departure reported now that its saves are written"(account);
+                done ~= account;
+            }
         foreach (account; done)
             departures.remove(account);
     }

@@ -23,7 +23,7 @@ BEASTS = {8925: 4, 8926: 2, 8927: 5, 8928: 3, 8933: 3, 8932: 7}
 CHAMPIONS = set(range(9027, 9033))
 
 
-def start_cluster(fixture, new_party, *, world=None, leader_appearance=(1, 1), extra_member=False):
+def start_cluster(fixture, new_party, *, world=None, leader_appearance=(1, 1), extra_member=False, cluster=None):
     login = fixture.fresh_schema("login", "classicrealmd.sql")
     characters = fixture.fresh_schema("chars", "classiccharacters.sql")
     ports = available_ports(9)
@@ -90,7 +90,7 @@ def start_cluster(fixture, new_party, *, world=None, leader_appearance=(1, 1), e
         tag = f"node{node}"
         config = dict(base, port=ports[node-1], write_log=f"{tag}.writes")
         config["cluster"] = dict(name="dungeon-recovery", node_id=node, listen_address="127.0.0.1",
-                                 listen_port=ports[node+3], voters=roster, gateway=node == 4)
+                                 listen_port=ports[node+3], voters=roster, gateway=node == 4, **(cluster or {}))
         if node != 4:
             config["cluster"]["vote_file"] = f"{tag}.vote"
         nodes[tag] = fixture.start_world(tag, config)

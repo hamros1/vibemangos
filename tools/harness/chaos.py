@@ -6,7 +6,9 @@ import time
 
 import battlegroup_failover
 from cluster_fixture import run_test
+import departure_retry
 import gateway_checkpoint_retry
+import lease_lapse_arrival
 import quorum
 import quorum_partition
 
@@ -16,6 +18,8 @@ CASES = (
     ("quorum", quorum.run),
     ("battlegroup-failover", battlegroup_failover.run),
     ("gateway-checkpoint-retry", gateway_checkpoint_retry.run),
+    ("departure-retry", departure_retry.run),
+    ("lease-lapse-arrival", lease_lapse_arrival.run),
 )
 
 

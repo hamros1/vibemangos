@@ -301,7 +301,8 @@ merge and a player handoff. Set `EXPECT_BALANCING=1` to check these events in a 
 
 After harness setup and a release build, run the opt-in suite with
 `python3 tools/harness/chaos.py`. It runs the quorum partition and heal, coordinator kill,
-paused battlegroup host, and gateway checkpoint retry cases against isolated fixtures.
+paused battlegroup host, gateway checkpoint retry, departure retry and lease lapse arrival cases
+against isolated fixtures.
 Use `--repeat 3` to check repeatability. Each case prints the harness directory containing
 its process logs and uses fresh login and character schemas.
 
@@ -311,6 +312,17 @@ and the nonvoting gateway stay connected. The case checks that minority regions 
 the majority after release, the original gateway client recovers from its durable checkpoint,
 and the old owners rejoin without overwriting the replacement's progress. The proxy runs
 without firewall changes or elevated privileges.
+
+Run `python3 tools/harness/departure_retry.py` to hold a gateway player's character row in a
+second MariaDB session while the client disconnects. The worker's save keeps timing out, so it
+must keep the departure until the row is free, then report it once, after the save; the same
+account then logs in and plays. It sets the server's `innodb_lock_wait_timeout` to one second for
+its run and restores it afterwards.
+
+Run `python3 tools/harness/lease_lapse_arrival.py` to drop the worker lease frames between the
+coordinator and one worker at the proxy, so only that worker's lease lapses, in the same term and
+with every link up. A gateway client handed to it meanwhile must be held there, then arrive and
+play once the lease frames flow again.
 
 Run `python3 tools/harness/battleground_recovery.py --cross-realm --map arathi` to kill the
 active match worker and check the same match's objectives, scoreboard and PvP on its standby.
