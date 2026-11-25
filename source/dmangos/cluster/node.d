@@ -379,11 +379,15 @@ final class ClusterNode : LinkOwner
             }
     }
 
-    void simulationStopped(uint account, uint character, ulong token)
+    /// Tells the coordinator a gateway's simulation here stopped, its writes settled; false if it cannot hear now.
+    bool simulationStopped(uint account, uint character, ulong token)
     {
         if (isCoordinator)
-            return directory.stopped(account, character, token, simulationOwner(id));
-        sendToCoordinator(SessionRoute(kind: SessionRouteKind.stopped, account: account, character: character,
+        {
+            directory.stopped(account, character, token, simulationOwner(id));
+            return true;
+        }
+        return sendToCoordinator(SessionRoute(kind: SessionRouteKind.stopped, account: account, character: character,
             token: token));
     }
 

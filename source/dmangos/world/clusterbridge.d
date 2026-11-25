@@ -12,7 +12,7 @@ import core.time : Duration, MonoTime, msecs;
 
 import dmangos.cluster.node : ClusterNode, PlayerHandler, ReplicationHandler;
 import dmangos.cluster.protocol : DeliverTo, InRange, InterestUpdate, PlayerMessage, PlayerMessageKind, Presence,
-    PresenceEntry, ChannelCommand, GmRemote, KillShare, ScriptSignal, DungeonEntryRequest, DungeonEntryReply, FriendStatusChange, GuildBroadcast, GuildInvitation, GuildReload, MessageType, GroupCommand, RegionLoad, ToEveryone, GroupState, MemberStatsRequest, ReplicaCreate, ReplicaMove, ReplicaRemove, ReplicaValues, StockRelease, StockReply, StockRequest,
+    PresenceEntry, SimulationOwner, ChannelCommand, GmRemote, KillShare, ScriptSignal, DungeonEntryRequest, DungeonEntryReply, FriendStatusChange, GuildBroadcast, GuildInvitation, GuildReload, MessageType, GroupCommand, RegionLoad, ToEveryone, GroupState, MemberStatsRequest, ReplicaCreate, ReplicaMove, ReplicaRemove, ReplicaValues, StockRelease, StockReply, StockRequest,
     WhisperMessage;
 import dmangos.world.creature : Creature;
 import dmangos.world.group : Group, Groups;
@@ -45,6 +45,19 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
     }
 
     private PendingStock[uint] stockWaiting;
+
+    /// A gateway's player who left here before its last saves were known written, so not yet reported.
+    private struct Departure
+    {
+        SimulationOwner gateway;
+        uint character;
+        ulong token;
+        uint account;
+        bool toCharacterScreen;
+        ulong term;
+    }
+
+    private Departure[uint] departures; // by account
     private uint nextStockRequest = 1;
     private MonoTime nextPresence;
 
@@ -69,6 +82,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
     {
         const now = context.clock();
         gatewayTick(now);
+        retryDepartures();
         if (stockWaiting.length)
         {
             uint[] expired;
@@ -912,12 +926,45 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         if (auto session = remote.get(account, null))
             if (session.gatewayHome.node)
             {
-                if (!context.canWrite() || !context.settleWrites())
-                    return;
-                node.simulationStopped(account, session.gatewayCharacter, session.gatewayToken);
-                return node.sendToGateway(session.gatewayHome, message);
+                // The coordinator and gateway may only hear once the saves are written: the next owner
+                // loads them. Until then (a database stall, a lapsed lease) the departure waits for the tick.
+                const departure = Departure(session.gatewayHome, session.gatewayCharacter, session.gatewayToken,
+                    account, toCharacterScreen, node.messageTerm());
+                if (!context.canWrite() || !context.settleWrites() || !reportDeparture(departure))
+                    departures[account] = departure;
+                return;
             }
         node.sendTo(home, message);
+    }
+
+    /// Reports a gateway player's stopped simulation to the coordinator, then the gateway; false if it cannot yet.
+    private bool reportDeparture(const ref Departure departure)
+    {
+        if (!node.simulationStopped(departure.account, departure.character, departure.token))
+            return false;
+        const message = PlayerMessage(PlayerMessageKind.left, departure.account, departure.toCharacterScreen ? 1 : 0,
+            null);
+        node.sendToGateway(departure.gateway, message);
+        return true;
+    }
+
+    /**
+     * Reports the departures `left` could not, once nothing written for them waits or could still be written.
+     * A new term ends them instead: the worker's previous simulation is fenced, and the gateway
+     * recovers its routes from the checkpoints.
+     */
+    private void retryDepartures()
+    {
+        if (!departures.length)
+            return;
+        const term = node.messageTerm();
+        const settled = context.canWrite() && (context.writer is null || context.writer.settled);
+        uint[] done;
+        foreach (account, ref departure; departures)
+            if (departure.term != term || (settled && reportDeparture(departure)))
+                done ~= account;
+        foreach (account; done)
+            departures.remove(account);
     }
 
     void remoteDone(uint account)
@@ -1026,6 +1073,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         const token = r.read!ulong;
         if (!token)
             return;
+        departures.remove(account); // the gateway routed the account anew: it no longer waits for that one
         WorldSession session;
         if (kind == PlayerMessageKind.gatewayArrival)
         {
