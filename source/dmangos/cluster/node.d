@@ -10,6 +10,9 @@
  * restarted node (a higher incarnation) replaces the old one, whose link is closed; a hello from a
  * lower incarnation is refused as stale, and a node refused as stale by its coordinator stops
  * dialing and reports itself `fenced`: it gets no more lease confirmations, so its regions lapse.
+ * A process the coordinator has fenced out itself (it was lost while it simulated a gateway's player,
+ * `SessionDirectory.mayAdmit`) is refused as retired; no newer start of it exists, so once its own
+ * lease has lapsed it starts again as a new incarnation (`reincarnate`) and joins like a restarted node.
  *
  * Regions (`dmangos.cluster.ownership`): the coordinator holds the `RegionAuthority` and
  * publishes its table whenever it changes; every node keeps a `RegionView`, renews its lease from the
@@ -222,7 +225,21 @@ final class ClusterNode : LinkOwner
     enum Duration standbyGrace = 500.msecs;
 
     immutable ushort id;
-    immutable ulong incarnation;
+
+    /// This process's incarnation: larger for every start, and for every new start within it (`reincarnate`).
+    @property ulong incarnation() const pure nothrow @nogc @safe
+    {
+        return incarnation_;
+    }
+
+    /// Where a new incarnation is recorded (`newIncarnation`); none: not recorded.
+    string incarnationRecord;
+
+    /**
+     * The coordinator fenced this process out and its lease has lapsed: the world server ends what this
+     * incarnation simulated and queued, before the node starts again as a new one (`reincarnate`).
+     */
+    void delegate() onFencedOut;
 
     private
     {
@@ -231,6 +248,8 @@ final class ClusterNode : LinkOwner
         Dialer dialer;
         LoadReport delegate() load;
         Hello own;
+        ulong incarnation_;
+        bool retired;                      // a coordinator refused this incarnation as fenced out: start anew
 
         // The view: authoritative on the coordinator, the latest received on members.
         ulong viewCoordinator;  // the coordinator incarnation the view comes from
@@ -530,7 +549,7 @@ final class ClusterNode : LinkOwner
     {
         this.config = config;
         this.id = config.nodeId;
-        this.incarnation = incarnation;
+        this.incarnation_ = incarnation;
         this.clock = clock;
         this.dialer = dialer;
         this.load = load;
@@ -602,26 +621,32 @@ final class ClusterNode : LinkOwner
     static ulong newIncarnation(string path = null)
     {
         import std.algorithm.comparison : max;
-        import std.conv : to;
         import std.datetime.systime : Clock, SysTime;
-        import std.file : exists, readText;
-        import std.string : strip;
 
         const wall = cast(ulong)(Clock.currTime - SysTime.fromUnixTime(0)).total!"msecs";
         if (!path.length)
             return wall;
-        ulong last;
-        try
-            if (exists(path))
-                last = readText(path).strip.to!ulong;
-        catch (Exception e)
-            warning!"cluster: cannot read the last incarnation in %s: %s"(path, e.msg);
-        const next = max(wall, last + 1);
+        const next = max(wall, recordedIncarnation(path) + 1);
         try
             saveIncarnation(path, next);
         catch (Exception e)
             warning!"cluster: cannot record this incarnation in %s: %s"(path, e.msg);
         return next;
+    }
+
+    /// The last incarnation recorded at `path`; 0 if none (or unreadable, which is logged).
+    static ulong recordedIncarnation(string path)
+    {
+        import std.conv : to;
+        import std.file : exists, readText;
+        import std.string : strip;
+
+        try
+            if (exists(path))
+                return readText(path).strip.to!ulong;
+        catch (Exception e)
+            warning!"cluster: cannot read the last incarnation in %s: %s"(path, e.msg);
+        return 0;
     }
 
     // Replaced whole and synced, so that a crash leaves the old record or the new one.
@@ -718,6 +743,8 @@ final class ClusterNode : LinkOwner
             releaseHeldPlayers();
         if (fenced_)
             return;
+        if (retired && !isCoordinator && !config.gateway && !regions_.leaseHolds(now))
+            reincarnate(now);
         if (!quorumId && config.standby && !isCoordinator && lostCoordinator && coordinatorId == 0
             && now - lostCoordinatorAt >= standbyGrace)
             promote(now);
@@ -788,7 +815,7 @@ final class ClusterNode : LinkOwner
                 if (hello.incarnation < *known)
                     return RejectReason.staleIncarnation;
             if (!directory.mayAdmit(SimulationOwner(hello.nodeId, hello.incarnation)))
-                return RejectReason.staleIncarnation;
+                return RejectReason.retiredIncarnation;
         }
         else if (quorumId && (voter !is null || election !is null))
         {
@@ -878,6 +905,7 @@ final class ClusterNode : LinkOwner
     /// A member has a coordinator (anew, or the standby that took over): it learns what this node holds.
     private void coordinatorLinked(Link link)
     {
+        retired = false; // admitted: this incarnation is not fenced out
         foreach (claim; claimsWaiting)
             link.send(claim);
         foreach (release; releasesWaiting)
@@ -1094,6 +1122,55 @@ final class ClusterNode : LinkOwner
         foreach (peer, _; takeoverPending)
             sendTo(peer, Takeover(incarnation));
         publish();
+    }
+
+    /**
+     * The coordinator fenced this process out (`retired`) and its lease has lapsed, so nothing it
+     * simulated or queued under that lease can still be written (docs/CLUSTER.md, "Fenced writes"). It
+     * becomes a new incarnation, as a restart would: every link closes, the numbering with every peer starts
+     * afresh, and it joins the coordinator again, which grants it regions like any new member. The old
+     * incarnation stays fenced: the coordinator never renews it, and peers take the new one's hello as a
+     * restart.
+     */
+    private void reincarnate(MonoTime now)
+    {
+        import std.algorithm.comparison : max;
+
+        const previous = incarnation_;
+        if (incarnationRecord.length && recordedIncarnation(incarnationRecord) > previous)
+        {
+            // A newer start of this node recorded its incarnation: that process is the node now.
+            fenced_ = true;
+            error!"cluster: a newer start of node %s exists (recorded in %s): this process stays fenced"(id,
+                incarnationRecord);
+            return;
+        }
+        if (onFencedOut !is null)
+            onFencedOut();
+        incarnation_ = max(previous + 1, newIncarnation(incarnationRecord));
+        own.incarnation = incarnation_;
+        retired = false;
+        warning!"cluster: node %s starts again as incarnation %s (was %s)"(id, incarnation_, previous);
+        foreach (link; links)
+            link.close("this node starts again as a new incarnation");
+        foreach (link; handshaking)
+            link.close("this node starts again as a new incarnation");
+        sequences = null;
+        heldPlayers.clear();
+        claimsWaiting = null;
+        releasesWaiting = null;
+        coordinatorId = 0;
+        viewVersion = 0;
+        viewCoordinator = 0;
+        members = null;
+        foreach (ref dial; dials)
+        {
+            dial.pending = null;
+            dial.due = now;
+            dial.backoff = firstBackoff;
+        }
+        if (election !is null)
+            election.rebind(SimulationOwner(id, incarnation_));
     }
 
     private void holdPlayer(Link link, ulong term, const(ubyte)[] payload)
@@ -1618,6 +1695,12 @@ final class ClusterNode : LinkOwner
         if (at >= 0)
             handshaking = handshaking.remove(at);
         const now = clock();
+        if (link.closeReason == "refused: retiredIncarnation" && !retired)
+        {
+            retired = true;
+            warning!"cluster: the coordinator fenced this process (node %s, incarnation %s) out: it starts again as a new one once its lease has lapsed"(
+                id, incarnation_);
+        }
         foreach (key, ref dial; dials)
             if (dial.pending is link)
             {
@@ -2749,9 +2832,18 @@ unittest
     assert(restored !is null && restored.character.position == checkpoint);
     assert(!opcodesOf(client.read()).canFind(Opcode.SMSG_LOGIN_VERIFY_WORLD));
 
+    // The old process wakes up: its incarnation is refused, and with its lease long lapsed it joins as a new one.
+    const oldProcess = SimulationOwner(owner.id, owner.incarnation);
     auto stale = cluster.add(owner.id, 9002, owner.incarnation);
+    bool reincarnated;
+    stale.onFencedOut = () { reincarnated = true; };
     cluster.run(1000, coordinator, gateway, stale);
-    assert(stale.fenced && coordinator.simulationOwner(stale.id).node == 0, "the old process cannot renew its lease");
+    assert(reincarnated && !stale.fenced && stale.incarnation > oldProcess.incarnation);
+    assert(!coordinator.directory.mayAdmit(oldProcess), "the old process cannot renew its lease");
+    assert(coordinator.simulationOwner(stale.id) == SimulationOwner(stale.id, stale.incarnation),
+        "only the new start is a member");
+    assert(gateway.linkTo(stale.id) is null || gateway.linkTo(stale.id).peer.incarnation == stale.incarnation);
+    assert(worlds[coordinator.id].onlinePlayer(guid) is restored && client.session is originalSocket);
 }
 
 // The old coordinator remains connected to a worker, but loses permission to renew either lease.
@@ -3028,7 +3120,10 @@ unittest
 
         auto stale = cluster.add(worker.id, 9002, worker.incarnation, CoordinatorSetup.init, false, false, 9001);
         cluster.run(1000, standby, gateway, stale);
-        assert(stale.fenced && standby.simulationOwner(worker.id).node == 0);
+        assert(!standby.directory.mayAdmit(SimulationOwner(worker.id, worker.incarnation)));
+        assert(stale.incarnation > worker.incarnation
+            && standby.simulationOwner(worker.id) == SimulationOwner(worker.id, stale.incarnation),
+            "the fenced-out process joins only as a new start");
         assert(worlds[standby.id].onlinePlayer(guid) is restored && !socket.wantsClose);
     }
 }
@@ -3201,4 +3296,23 @@ unittest
     assert(ClusterNode.newIncarnation(path) == ahead + 2);
     write(path, "garbage");
     assert(ClusterNode.newIncarnation(path) >= first, "an unreadable record falls back on the clock");
+
+    // A process the coordinator fenced out starts again as a new incarnation, recorded, unless a newer start of
+    // the node recorded its own meanwhile: that one is the node now.
+    auto cluster = new TestCluster;
+    auto node = cluster.add(2, 9001, 10);
+    node.incarnationRecord = path;
+    write(path, "10\n");
+    bool fencedOut;
+    node.onFencedOut = () { fencedOut = true; };
+    node.retired = true;
+    node.tick();
+    assert(fencedOut && node.incarnation > 10 && readText(path).strip.to!ulong == node.incarnation && !node.fenced);
+    auto older = cluster.add(2, 9001, 10);
+    older.incarnationRecord = path;
+    fencedOut = false;
+    older.onFencedOut = () { fencedOut = true; };
+    older.retired = true;
+    older.tick();
+    assert(older.fenced && older.incarnation == 10 && !fencedOut, "a newer start exists: stay fenced");
 }

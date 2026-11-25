@@ -444,6 +444,12 @@ private:
 
         if (header.sequence == 0)
         {
+            if (header.type == MessageType.reject) // the dialing side refused this side's hello
+            {
+                import std.conv : to;
+
+                return close("refused: " ~ decode!Reject(payload).reason.to!string);
+            }
             if (header.type == MessageType.heartbeat)
                 return heartbeatReceived(decode!Heartbeat(payload));
             if (header.type == MessageType.quorumVote || header.type == MessageType.quorumWorkerLease)
@@ -546,8 +552,7 @@ private:
     {
         import std.conv : to;
 
-        if (!dialed_)
-            write(Reject(reason), 0);
+        write(Reject(reason), 0); // a dialed peer has already taken the link as open: it learns why it closes
         close("refused " ~ address ~ ": " ~ reason.to!string);
     }
 
@@ -566,9 +571,10 @@ unittest
     {
         PeerSequences sequences;
         ulong[] got; // the `sequence` field of each ServiceCall received
+        RejectReason refusal;
 
         this() { sequences = new PeerSequences; }
-        RejectReason admit(Link, const ref Hello, out PeerSequences s) { s = sequences; return RejectReason.none; }
+        RejectReason admit(Link, const ref Hello, out PeerSequences s) { s = sequences; return refusal; }
         void opened(Link) {}
         ulong messageTerm() { return 0; }
 
@@ -611,6 +617,14 @@ unittest
     exchange(foreign[0], foreign[1]);
     assert(foreign[0].wantsClose && foreign[1].wantsClose);
     assert(foreign[1].closeReason == "refused: wrongRealm", "equal cluster names do not join separate realms");
+
+    // The dialing side refuses the hello: the side it dialed, already open, learns why the link closes.
+    b.refusal = RejectReason.retiredIncarnation;
+    auto refused = connect();
+    exchange(refused[0], refused[1]);
+    assert(refused[0].wantsClose && refused[1].wantsClose);
+    assert(refused[0].closeReason == "refused: retiredIncarnation" && refused[1].closeReason == "refused a:1: retiredIncarnation");
+    b.refusal = RejectReason.none;
 
     struct OlderHello
     {

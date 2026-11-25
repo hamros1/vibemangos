@@ -508,6 +508,17 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
             if (leaseHeld)
                 loseWorldLease();
         };
+        // Fenced out by the coordinator, the node starts again as a new incarnation: what the old one simulated
+        // or queued under its lease is over first (its writes are dropped), as after a restart.
+        cluster.incarnationRecord = config.writeLog.length ? config.writeLog ~ ".incarnation" : null;
+        cluster.onFencedOut = () {
+            if (leaseHeld)
+                loseWorldLease();
+            leaseHeld = false;
+            writer.leaseLapsed(writer.now);
+            bridge.fenceGatewaySimulations();
+            bridge.forgetDepartures();
+        };
         info!"cluster: node %s, incarnation %s, %s; clients at %s"(cluster.id, cluster.incarnation,
             cluster.isCoordinator ? "coordinator" : "member of " ~ config.cluster.coordinator,
             config.cluster.clientAddress);

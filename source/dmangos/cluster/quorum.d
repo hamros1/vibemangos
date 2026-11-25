@@ -49,6 +49,16 @@ final class QuorumElection
         nextCampaign = promiseUntil + delay;
     }
 
+    /// This voter's process started again as `self` (`ClusterNode.reincarnate`); its promises to others stand.
+    void rebind(SimulationOwner self)
+    {
+        this.self = self;
+        campaign = 0;
+        elected = false;
+        wonRound = false;
+        votes = null;
+    }
+
     ulong term(MonoTime now) const
     {
         return !failed && elected && vote.term == campaign && now < deadline ? campaign : 0;

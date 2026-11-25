@@ -122,6 +122,14 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         }
     }
 
+    /// The departures of a fenced-out incarnation: the coordinator ended its simulations; gateways recover them.
+    void forgetDepartures()
+    {
+        if (departures.length)
+            info!"cluster: %s held departure(s) of the fenced-out incarnation dropped"(departures.length);
+        departures = null;
+    }
+
     /// Run before processing world ticks so an expired worker cannot keep a gateway's simulation alive.
     void fenceGatewaySimulations()
     {

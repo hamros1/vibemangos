@@ -301,8 +301,8 @@ merge and a player handoff. Set `EXPECT_BALANCING=1` to check these events in a 
 
 After harness setup and a release build, run the opt-in suite with
 `python3 tools/harness/chaos.py`. It runs the quorum partition and heal, coordinator kill,
-paused battlegroup host, gateway checkpoint retry, departure retry and lease lapse arrival cases
-against isolated fixtures.
+paused battlegroup host, gateway checkpoint retry, departure retry, lease lapse arrival and worker
+rejoin cases against isolated fixtures.
 Use `--repeat 3` to check repeatability. Each case prints the harness directory containing
 its process logs and uses fresh login and character schemas.
 
@@ -324,6 +324,11 @@ Run `python3 tools/harness/lease_lapse_arrival.py` to drop the worker lease fram
 coordinator and one worker at the proxy, so only that worker's lease lapses, in the same term and
 with every link up. A gateway client handed to it meanwhile must be held there, then arrive and
 play once the lease frames flow again.
+
+Run `python3 tools/harness/worker_rejoin.py` to stop (`SIGSTOP`) the worker simulating a gateway
+player until the coordinator drops it and the gateway restores the player elsewhere. Resumed, the
+old process must be refused, wait for its own lease to lapse, and join again as a new incarnation
+while the player plays on.
 
 Run `python3 tools/harness/battleground_recovery.py --cross-realm --map arathi` to kill the
 active match worker and check the same match's objectives, scoreboard and PvP on its standby.

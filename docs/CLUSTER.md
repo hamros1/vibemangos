@@ -98,6 +98,12 @@ otherwise.
   admits a node id only with an incarnation at least as high as the one it knows: a restarted node
   replaces its earlier incarnation, which is fenced out, and a stale process that comes back later is
   refused (`staleIncarnation`).
+* **Starting again.** A process the coordinator itself fenced out (it was lost while it simulated a
+  gateway's player, so its lease must never be renewed) is refused as `retiredIncarnation`; whichever
+  side dialed, the refused side is told why. No newer start of that node exists, so once its own lease
+  has lapsed (its sessions ended, its regions given up, its queued writes dropped) it takes a new
+  incarnation, recorded like a restart's, closes its links and joins again as a restarted node would.
+  The old incarnation stays refused.
 * **The handshake.** The dialing side sends `Hello` (protocol version, cluster name, node id,
   incarnation, its cluster and client addresses, whether it is a gateway); the other side checks it
   and answers with its own or with a `Reject` giving the reason: another cluster, another protocol
@@ -838,7 +844,7 @@ supplies what the who list, friend lists, group lists and GM commands show of ot
 | **A gateway's direct link to an owner** | The gateway pauses client gameplay and answers pings. The owner keeps the character and buffers packets while both nodes remain in the coordinator's view. |
 | **A player's home** | The owner logs the player out, saved. For a gateway, the coordinator waits for the simulation to stop or be fenced before it grants the account again. |
 | **The coordinator, with a standby** | The standby takes over (below). |
-| **The link to the coordinator** | A member keeps simulating until its lease lapses. Then it ends every session, writes nothing more (its saves are dropped and logged as not saved), and gives up its regions. When it reaches a coordinator again it re-claims its sessions, reports its ids, and is granted regions again. |
+| **The link to the coordinator** | A member keeps simulating until its lease lapses. Then it ends every session, writes nothing more (its saves are dropped and logged as not saved), and gives up its regions. When it reaches a coordinator again it re-claims its sessions, reports its ids, and is granted regions again. If the coordinator fenced its process out meanwhile, it joins as a new incarnation instead. |
 | **A restarted process** | It joins with a new incarnation, which fences out the old one; queued writes from before its lease lapsed are dropped on replay. |
 
 ### Fenced writes

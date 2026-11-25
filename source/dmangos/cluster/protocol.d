@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 120; // staff roles and named announcement audiences
+enum ushort protocolVersion = 121; // a fenced-out process is refused as retired and may join again anew
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -447,6 +447,7 @@ enum RejectReason : ubyte
     unexpectedNode = 5,   /// not the node that was dialed
     notInView = 6,        /// a member the coordinator has not admitted
     wrongRealm = 7,       /// a different realm on the login server
+    retiredIncarnation = 8, /// a process the coordinator fenced out of its lease: it may join again as a new one
 }
 
 /// A frame's header.
@@ -1389,7 +1390,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 120, recordedFingerprint = 0x89c647e7ef3bc42fUL;
+private enum recordedVersion = 121, recordedFingerprint = 0xc89a1c838aa163c0UL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "
