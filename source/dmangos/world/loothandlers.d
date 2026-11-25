@@ -53,6 +53,22 @@ package void bindLootDelivery(WorldContext context, Map map, Loot loot, bool rol
                 return LootAwardResult.init;
             }
         };
+        loot.expireRemoteAward = (const ref LootAwardKey key) {
+            import dmangos.world.inventory : InventoryResult;
+
+            try
+            {
+                context.database.saveLootAward(key, InventoryResult.itemNotFound, context.unixTime, 0, 0, null);
+                if (!context.settleWrites())
+                    return LootAwardResult.init;
+                return context.database.loadLootAward(key);
+            }
+            catch (DatabaseException error)
+            {
+                warning!"group loot award %s could not be expired yet: %s"(key.token, error.msg);
+                return LootAwardResult.init;
+            }
+        };
         loot.remoteMemberNode = (ulong guid) {
             if (auto player = cast(Replica) map.findObject(guid))
                 if (player.fields.type == TypeId.player && player.owner != context.nodeId)
@@ -1930,6 +1946,84 @@ unittest
         assert(saved.get(7, 0) == ((scenario == Scenario.personal || scenario == Scenario.sharedAlreadyTaken) ? 1 : 0));
         assert(saved.get(8, 0) == expectedRemote);
     }
+}
+
+// A remote master award nobody answers is refused under its token after a while: the slot can be assigned
+// again, and the original award arriving late stores nothing.
+unittest
+{
+    import dmangos.cluster.protocol : GroupLootRoll;
+    import dmangos.world.characterdb : GroupRecord, GroupMemberRecord;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.group : LootMethod;
+    import dmangos.world.loot : LootSlotType, lootAwardKey, remoteAwardSeconds;
+    import dmangos.world.replication : encodePlayerState;
+
+    auto db = newDatabase();
+    GroupRecord party;
+    party.id = 1;
+    party.leader = party.looter = 7;
+    party.leaderName = "Anduin";
+    party.lootMethod = LootMethod.masterLoot;
+    party.lootThreshold = 2;
+    party.members = [GroupMemberRecord(7, "Anduin"), GroupMemberRecord(8, "Jaina")];
+    db.groups[party.id] = party;
+    auto corpseNode = newCreationContext(db), otherNode = newCreationContext(db);
+    corpseNode.nodeId = 1;
+    otherNode.nodeId = 2;
+    otherNode.ownsCell = (uint, ulong) => false;
+    auto now = MonoTime.currTime;
+    corpseNode.clock = otherNode.clock = () => now;
+    auto anduin = loggedIn(corpseNode, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
+    const nearCorpse = Position(-8945, -132, 83.5f);
+    auto jaina = loggedIn(otherNode, db, 8, "Jaina", nearCorpse);
+    corpseNode.map(0).replicaCreated(2, cellKeyAt(nearCorpse.x, nearCorpse.y), 8,
+        encodePlayerState(jaina.session.character, 0));
+
+    GroupLootRoll[] awards, results;
+    corpseNode.sendRemoteGroupLoot = (ushort node, const ref GroupLootRoll message) {
+        awards ~= message;
+        return true;
+    };
+    otherNode.sendRemoteGroupLoot = (ushort node, const ref GroupLootRoll message) {
+        results ~= message;
+        return true;
+    };
+    corpseNode.data.items.edit(itemJerky).details.quality = 2;
+    auto victim = lootableInnkeeper(corpseNode);
+    killIt(anduin, victim, now);
+    auto loot = victim.loot;
+    auto item = loot.itemInSlot(0);
+    anduin.write(Opcode.CMSG_LOOT, ClientGuid(victim.guid));
+    anduin.read();
+    const assignment = ClientLootMasterGive(victim.guid, 0, 8);
+    anduin.write(Opcode.CMSG_LOOT_MASTER_GIVE, assignment);
+    assert(awards.length == 1 && item.remoteAward == awards[0].roll);
+
+    loot.update(); // the award is resent, and its deadline starts
+    assert(awards.length == 2 && item.remoteAward && item.blocked);
+    now += (remoteAwardSeconds - 1).seconds;
+    loot.update();
+    assert(item.remoteAward, "still waiting before the deadline");
+    now += 2.seconds;
+    loot.update();
+    assert(!item.remoteAward && !item.blocked && item.slotTypeFor(7, loot) == LootSlotType.master,
+        "an unanswered award unlocks the slot for the master");
+    const expiredKey = lootAwardKey(awards[0]);
+    const expired = db.loadLootAward(expiredKey);
+    assert(expired.recorded && expired.error);
+
+    otherNode.groupLootRollArrived(1, awards[0]);
+    assert(!results.length && !jaina.session.character.inventory.count(itemJerky),
+        "the expired award stores nothing when it arrives late");
+
+    const sent = awards.length;
+    anduin.write(Opcode.CMSG_LOOT_MASTER_GIVE, assignment);
+    assert(awards.length == sent + 1 && awards[$ - 1].roll != awards[0].roll);
+    otherNode.groupLootRollArrived(1, awards[$ - 1]);
+    assert(results.length == 1 && results[0].stored);
+    corpseNode.groupLootRollArrived(2, results[0]);
+    assert(jaina.session.character.inventory.count(itemJerky) == 1 && item.allowed.length == 0);
 }
 
 // The master sees the remote recipient and can assign a shared slot exactly once.

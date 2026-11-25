@@ -252,6 +252,12 @@ enum RollVote : ubyte
 /// A group roll's time: a minute to choose.
 enum lootRollSeconds = 60;
 
+/**
+ * How long an award sent to another node may go unanswered. Then the loot's node records a refusal under the
+ * award's token, unless the recipient recorded its own result first, and the item is unlocked.
+ */
+enum remoteAwardSeconds = 60;
+
 /// The most items one loot holds.
 enum maxLootItems = 16;
 
@@ -314,6 +320,8 @@ final class LootItem
     alias fields this;
 
     bool[ulong] allowed;      /// who may still take it
+    private ulong awaitedAward;    // the `remoteAward` that `awardDeadline` is for (not handed off: restarts)
+    private long awardDeadline;
 
     /// How `player` sees this item in the loot window, by the loot method: may take, may only view, or not at all.
     LootSlotType slotTypeFor(ulong player, const Loot loot) const
@@ -432,6 +440,8 @@ final class Loot
     bool delegate(ushort, const ref GroupLootRoll) sendRemoteRoll;
     ushort delegate(ulong) remoteMemberNode; /// current simulation of an initially eligible remote member
     LootAwardResult delegate(const ref LootAwardKey) loadRemoteAward;
+    /// Records a refusal under the award's token unless a result is there already, then reads the result.
+    LootAwardResult delegate(const ref LootAwardKey) expireRemoteAward;
     ushort localAwardNode;
     private long checkAwardsAt;
     private long nextRecoveredOffer;
@@ -1219,7 +1229,16 @@ final class Loot
                 : GroupLootRoll.Action.award, rollMap, target, recipient, item.remoteAward, item.slot,
                 item.itemId, item.count, item.randomPropertyId, item.condition);
             const key = lootAwardKey(message);
-            const outcome = loadRemoteAward(key);
+            if (item.awaitedAward != item.remoteAward)
+            {
+                item.awaitedAward = item.remoteAward;
+                item.awardDeadline = now + remoteAwardSeconds;
+            }
+            auto outcome = loadRemoteAward(key);
+            // No answer (the recipient logged out, or left the map): the token's row decides once and for all,
+            // so a copy of the award that arrives late finds it and stores nothing.
+            if (!outcome.recorded && now >= item.awardDeadline && expireRemoteAward !is null)
+                outcome = expireRemoteAward(key);
             if (outcome.recorded)
             {
                 message.action = GroupLootRoll.Action.result;
