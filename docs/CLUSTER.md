@@ -1031,7 +1031,10 @@ coordinator's start-up partition and costs too and, like every member, holds the
   transfers already on their way to them. Regions of missing members are held through their lease,
   then reassigned and spawned afresh. New epochs start above every epoch in the table. View and
   table versions continue from the old ones. The standby waits one lease before granting new regions
-  or ids.
+  or ids, and before granting a new login: until every lease the old coordinator gave has run out, a
+  member may still be playing an account it was granted and not yet have claimed it again (it may not
+  even reach the standby). A session claimed again as already granted (`SessionClaim.held`) is taken
+  at once, so that a new login of its account evicts it rather than joining it in the world.
 * **Members follow** (`Takeover`, sent again each second until accepted). A member takes the standby
   as its coordinator once it has lost the old one itself; while its own link to the old one is alive,
   it waits. The standby's heartbeat echoes on the link they already have renew the member's lease at

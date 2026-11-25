@@ -295,6 +295,8 @@ final class ClusterNode : LinkOwner
         RegionView regions_;
         IdCounters ids;                    // coordinator
         MonoTime idGrantsFrom;             // coordinator: members' reports come in first
+        MonoTime sessionGrantsFrom;        // promoted standby: new logins wait for the old leases (`promote`)
+        SessionChange[] newClaimsWaiting;  // ... these
         IdRequest[][ushort] idRequests;    // coordinator: waiting for `idGrantsFrom`, by member
         IdPool pool_;                      // members
         SessionDirectory directory;        // coordinator
@@ -440,15 +442,18 @@ final class ClusterNode : LinkOwner
             link.send(message);
     }
 
-    /// This node accepted session `serial` for `account`: the coordinator decides whether it may play.
-    void claimSession(uint account, ulong serial)
+    /**
+     * This node accepted session `serial` for `account`: the coordinator decides whether it may play. `held`: an
+     * earlier coordinator granted it, and it is claimed again for a new one.
+     */
+    void claimSession(uint account, ulong serial, bool held = false)
     {
         if (isCoordinator)
-            return applySessionChange(SessionChange(account, SessionRef(id, serial, incarnation)));
+            return applySessionChange(SessionChange(account, SessionRef(id, serial, incarnation), held: held));
         if (auto link = coordinatorId in links)
-            link.send(SessionClaim(account, serial));
+            link.send(SessionClaim(account, serial, held));
         else
-            claimsWaiting ~= SessionClaim(account, serial);
+            claimsWaiting ~= SessionClaim(account, serial, held);
     }
 
     /// Session `serial` of `account` ended, its character saved.
@@ -1237,6 +1242,13 @@ final class ClusterNode : LinkOwner
         directory = new SessionDirectory;
         ids = standbySetup.ids;
         idGrantsFrom = now + lease + leaseMargin;
+        // A standby knows no session of the old coordinator's. Until every lease that coordinator gave has run out,
+        // a member could still be playing an account it was granted, and has not claimed it again yet (it may not
+        // even be linked here): a new login of the account elsewhere waits until then, while the sessions claimed
+        // again (`SessionClaim.held`) are taken at once, so that a new login evicts them rather than joins them.
+        // Under a quorum the term begins only once the old leases have run out, so nothing waits.
+        if (!quorumId)
+            sessionGrantsFrom = idGrantsFrom;
         if (onPromoted !is null)
             onPromoted();
         if (ids !is null && pool_ !is null)
@@ -1901,12 +1913,15 @@ private:
         uint account;
         SessionRef session;
         bool release;
+        bool held; // granted by an earlier coordinator (`SessionClaim.held`)
     }
 
     void applySessionChange(SessionChange change)
     {
         if (takeoverGateways.length)
             deferredSessionChanges ~= change;
+        else if (!change.release && !change.held && clock() < sessionGrantsFrom)
+            newClaimsWaiting ~= change; // `promote`: the sessions already in play are claimed again first
         else if (change.release)
             act(directory.released(change.account, change.session));
         else if (simulationOwner(change.session.node) == change.session.process)
@@ -1931,7 +1946,8 @@ private:
             if (type == MessageType.sessionClaim)
             {
                 const m = decode!SessionClaim(payload);
-                applySessionChange(SessionChange(m.account, SessionRef(peer, m.serial, link.peer.incarnation)));
+                applySessionChange(SessionChange(m.account, SessionRef(peer, m.serial, link.peer.incarnation),
+                    held: m.held));
             }
             else if (type == MessageType.sessionReleased)
             {
@@ -2044,6 +2060,13 @@ private:
             }
             if (quorumId)
                 regions_.grantUntil(election.validUntil(now));
+            if (newClaimsWaiting.length && now >= sessionGrantsFrom)
+            {
+                auto waiting = newClaimsWaiting;
+                newClaimsWaiting = null;
+                foreach (change; waiting)
+                    applySessionChange(change);
+            }
             if (now >= idGrantsFrom && ids !is null)
             {
                 foreach (peer, requests; idRequests)
@@ -3597,4 +3620,100 @@ unittest
     stalledMs = null;
     cluster.run(1000, all);
     assert(coordinator.stalledNodes.length == 0 && stalling.id in coordinator.authority.memberLoads());
+}
+
+/**
+ * A standby that takes over knows none of the old coordinator's sessions. A login of an account that a member
+ * still plays under the old coordinator's lease is not granted elsewhere until that lease has surely run out; a
+ * session claimed again as already granted (`SessionClaim.held`) is taken at once, so a new login evicts it, and
+ * plays only once it released. The account is never in the world on two nodes.
+ */
+unittest
+{
+    import dmangos.world.grid : cellKey;
+
+    static final class Reclaiming : SessionHandler
+    {
+        ClusterNode node;
+        string[] events;
+        bool[uint] granted; // account -> serial granted (one session per account here)
+        ulong[uint] serials;
+
+        void sessionGranted(uint account, ulong serial)
+        {
+            import std.format : format;
+
+            events ~= format!"grant %s/%s"(account, serial);
+            granted[account] = true;
+        }
+        void sessionEvicted(uint account, ulong serial)
+        {
+            import std.format : format;
+
+            events ~= format!"evict %s/%s"(account, serial);
+        }
+        void claimAll()
+        {
+            foreach (account, serial; serials)
+                node.claimSession(account, serial, (account in granted) !is null);
+        }
+        void claim(uint account, ulong serial)
+        {
+            serials[account] = serial;
+            node.claimSession(account, serial);
+        }
+    }
+
+    CellCosts costs;
+    foreach (x; -40 .. 40)
+        costs[0][cellKey(x, x % 7)] = 10;
+    auto regions = partition([0u], costs, 8);
+    ulong[uint] cost;
+    foreach (r; regions)
+        cost[r.id] = costOf(costs, r.map, r.rect);
+
+    foreach (linked; [false, true])
+    {
+        auto cluster = new TestCluster;
+        auto coordinator = cluster.add(1, 9000, 1, CoordinatorSetup(regions.dup, cost.dup, new TestCounters));
+        auto standby = cluster.add(2, 9001, 1, CoordinatorSetup(regions.dup, cost.dup, new TestCounters), true);
+        auto player = cluster.add(3, 9002), other = cluster.add(4, 9003);
+        auto playing = new Reclaiming, newLogin = new Reclaiming;
+        playing.node = player;
+        newLogin.node = other;
+        player.sessions = playing;
+        other.sessions = newLogin;
+        cluster.run(8000, coordinator, standby, player, other);
+        playing.claim(7, 100);
+        cluster.run(100, coordinator, standby, player, other);
+        assert(playing.events == ["grant 7/100"]);
+
+        // The coordinator dies. Unlinked from the standby, the player's node goes on under its old lease (and
+        // claims nothing); linked, it claims its session again. Meanwhile the account logs in on the other node.
+        if (!linked)
+            cluster.cut(player, standby);
+        cluster.kill(coordinator);
+        newLogin.claim(7, 200);
+        bool secondGrantSeen;
+        foreach (_; 0 .. 200) // 10 seconds: past the old coordinator's lease and the standby's wait
+        {
+            cluster.run(50, standby, player, other);
+            const live = playing.events[$ - 1] == "grant 7/100" && player.regions.leaseHolds(cluster.now);
+            if (newLogin.events.length && newLogin.events[$ - 1] == "grant 7/200")
+            {
+                secondGrantSeen = true;
+                assert(!live, "the account is never in the world on two nodes");
+            }
+            if (linked && playing.events[$ - 1] == "evict 7/100" && 7 in playing.serials)
+            {
+                playing.serials.remove(7); // its character saved, the evicted session ends
+                player.releaseSession(7, 100);
+            }
+        }
+        assert(standby.isCoordinator);
+        assert(secondGrantSeen, "the new login plays in the end");
+        if (linked)
+            assert(playing.events.length >= 3 && playing.events[0 .. 3] == ["grant 7/100", "grant 7/100", "evict 7/100"],
+                "claimed again at once, then evicted by the new login");
+    }
 }

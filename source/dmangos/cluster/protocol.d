@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 124; // a gateway waits for a player's old owner to send back what reached it late
+enum ushort protocolVersion = 125; // a session claimed again after a takeover says that it was granted before
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -641,6 +641,7 @@ struct SessionClaim
 
     uint account;
     ulong serial;  /// the node's number for the session
+    bool held;     /// an earlier coordinator granted it: claimed again for a new one (`ClusterNode.promote`)
 }
 
 /// The session may enter the world: no other session has the account.
@@ -1394,7 +1395,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 124, recordedFingerprint = 0xa8f48eb39382042cUL;
+private enum recordedVersion = 125, recordedFingerprint = 0x3f321a171a94d820UL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

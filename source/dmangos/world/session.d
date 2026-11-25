@@ -1126,7 +1126,7 @@ unittest
     auto context = newContext(db);
     uint[] claimed, released;
     ulong lastSerial;
-    context.claimSession = (uint account, ulong serial) { claimed ~= account; lastSerial = serial; };
+    context.claimSession = (uint account, ulong serial, bool) { claimed ~= account; lastSerial = serial; };
     context.releaseSession = (uint account, ulong serial) { released ~= account; };
 
     auto client = TestClient(new WorldSession(context, "127.0.0.1"), testKey);

@@ -444,7 +444,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
      * In a cluster, where sessions are claimed when they start and released when they end (their
      * characters saved), so that an account plays on one node at a time; null standalone.
      */
-    void delegate(uint account, ulong serial) claimSession, releaseSession;
+    /// `held`: claimed again for a new coordinator after an earlier one granted it (`SessionClaim.held`).
+    void delegate(uint account, ulong serial, bool held) claimSession;
+    void delegate(uint account, ulong serial) releaseSession;
 
     /// In a cluster, this node's id, and the node that owns a map's ground around a point:
     /// a player simulated here moves to the owner of where it stands. Null when standalone.
@@ -11101,7 +11103,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (claimSession is null)
             session.admit();
         else
-            claimSession(accountId, serial);
+            claimSession(accountId, serial, false);
     }
 
     /**
@@ -11128,6 +11130,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 else
                     releaseSession(accountId, *serial);
             }
+            grantedSerials.remove(*serial);
             serials.remove(session);
         }
     }
@@ -11183,8 +11186,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         if (auto session = account in sessions)
             if (serials.get(*session, 0) == serial)
+            {
+                grantedSerials[serial] = true;
                 session.admit();
+            }
     }
+
+    private bool[ulong] grantedSerials; // the sessions a coordinator let into the world
 
     /// See `SessionHandler.sessionEvicted`.
     void sessionEvicted(uint account, ulong serial)
@@ -11270,7 +11278,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return;
         foreach (account, session; sessions)
             if (auto serial = session in serials)
-                claimSession(account, *serial);
+                claimSession(account, *serial, (*serial in grantedSerials) !is null);
     }
 
     private CreaturePools creaturePools;

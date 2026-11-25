@@ -481,7 +481,7 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
         };
         // One login per account across the cluster, and members' ids from the coordinator's blocks.
         cluster.sessions = context;
-        context.claimSession = (uint account, ulong serial) => cluster.claimSession(account, serial);
+        context.claimSession = (uint account, ulong serial, bool held) => cluster.claimSession(account, serial, held);
         context.releaseSession = (uint account, ulong serial) => cluster.releaseSession(account, serial);
         if (!cluster.isCoordinator)
         {
