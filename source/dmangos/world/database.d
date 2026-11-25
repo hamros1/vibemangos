@@ -777,6 +777,10 @@ interface WorldDatabase
     @Replaces void savePlayerSummons(uint player, string state);
     /// Update position and active effects atomically when they describe the same transition.
     void savePlayerRecovery(const ref CharacterProgress progress, string state);
+    /// `dmangos_gm_session`: a gateway login's GM toggles, for its recovery after a crash (hex; empty: none).
+    @DatabaseRead string loadGmSession(uint player);
+    /// ditto; empty deletes the row
+    @Replaces void saveGmSession(uint player, string state);
     @DatabaseRead PartySummonCheckpoint loadPartySummonOffer(uint player);
     @DatabaseWrite bool publishPartySummonOffer(uint player, ulong sequence, string state);
     @DatabaseWrite bool consumePartySummonOffer(uint player, ulong sequence);
@@ -1299,6 +1303,7 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
         statements.prepareDungeonFights();
         statements.prepareOutdoorScripts();
         statements.preparePlayerSummons();
+        statements.prepareGmSessions();
         statements.preparePartySummonOffers();
         statements.prepareLootAwards();
         characterDb.execute!("CREATE TABLE IF NOT EXISTS `dmangos_write_applied` ("
@@ -1428,6 +1433,8 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
             statements.savePlayerSummons(progress.guid, state);
         });
     }
+    string loadGmSession(uint player) { return statements.loadGmSession(player); }
+    void saveGmSession(uint player, string state) { statements.saveGmSession(player, state); }
     PartySummonCheckpoint loadPartySummonOffer(uint player) { return statements.loadPartySummonOffer(player); }
     bool publishPartySummonOffer(uint player, ulong sequence, string state)
     {
@@ -3590,6 +3597,17 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
     void deletePartySummonOffer(uint player) { partySummonOffers.remove(player); }
 
     string loadPlayerSummons(uint player) { return playerSummons.get(player, null); }
+
+    string[uint] gmSessions; /// `dmangos_gm_session`
+    string loadGmSession(uint player) { return gmSessions.get(player, null); }
+
+    void saveGmSession(uint player, string state)
+    {
+        if (state.length)
+            gmSessions[player] = state;
+        else
+            gmSessions.remove(player);
+    }
 
     void savePlayerSummons(uint player, string state)
     {

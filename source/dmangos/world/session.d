@@ -77,6 +77,7 @@ package struct GatewayRecoveryCheckpoints
 {
     string ongoingEffects;
     PartySummonCheckpoint summonOffer;
+    string gmSession; /// `dmangos_gm_session`: the login's GM toggles (`Character.restoreGmSession`)
 }
 
 /// See the module documentation.
@@ -443,7 +444,8 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
                 return false;
             const ongoing = context.database.loadPlayerSummons(gatewayCharacter);
             const offer = context.database.loadPartySummonOffer(gatewayCharacter);
-            recoveryCheckpoints = GatewayRecoveryCheckpoints(ongoing, offer);
+            const gm = context.database.loadGmSession(gatewayCharacter);
+            recoveryCheckpoints = GatewayRecoveryCheckpoints(ongoing, offer, gm);
             recovery = loaded.get;
         }
         catch (DatabaseException error)
@@ -1790,4 +1792,65 @@ unittest
     auto there = mesh.remotes[2][c.account];
     there.update(50.msecs);
     assert(owned.ai.inCombat && owned.ai.currentVictim == 7, "noticed, and attacked, there");
+}
+
+/// A gateway's GM restored from its checkpoint after its worker crashed keeps its GM toggles, as far as its staff
+/// role allows them then: a checkpoint read back never grants what the account may not have.
+unittest
+{
+    import core.time : msecs;
+    import dmangos.auth.accounts : AccountLevel;
+    import dmangos.cluster.protocol : SimulationOwner;
+    import dmangos.world.context : PlayerRelay;
+    import dmangos.world.player : PlayerFlags;
+
+    static final class Gateway : PlayerRelay // node 4, the gateway: what the worker sends it goes nowhere
+    {
+        void toHome(ushort, uint, ushort, const(ubyte)[]) {}
+        void toOwner(ushort, uint, ushort, const(ubyte)[]) {}
+        void disconnect(ushort, uint) {}
+        void migrate(ushort, uint, const(ubyte)[]) {}
+        void left(ushort, uint, bool) {}
+        void moved(ushort, uint, ushort) {}
+        void remoteDone(uint) {}
+    }
+
+    auto db = newDatabase();
+    auto crashed = newCreationContext(db);
+    auto client = loggedIn(crashed, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.gameMaster);
+    client.session.gatewayHome = SimulationOwner(4, 1);
+    foreach (command; [".cheat god on", ".cheat triggerpass on", ".gm on", ".invisible"])
+        client.say(command);
+    auto gm = client.session.inWorld;
+    gm.gmTargets[8] = true; // `.gm allowwhispers Jaina`
+    assert(gm.godModeCheat && gm.triggerpassCheat && gm.player.gmTagOn && gm.player.gmInvisible && gm.invincible);
+    client.session.update(50.msecs);
+    assert(db.loadGmSession(7).length, "the toggles are checkpointed as they are set");
+
+    // The worker dies with it (nothing more is written); another restores the login from the checkpoint.
+    Character restore()
+    {
+        auto replacement = newCreationContext(db);
+        replacement.playerRelay = new Gateway;
+        replacement.ownsCell = (uint, ulong) => true;
+        auto session = new WorldSession(replacement, db.accounts["ANDUIN"], 4);
+        session.gatewayHome = SimulationOwner(4, 1);
+        assert(session.beginGatewayRecovery(7, 5875));
+        session.finishGatewayRecovery();
+        assert(session.inWorld !is null);
+        return session.inWorld;
+    }
+
+    auto back = restore();
+    assert(back.godModeCheat && back.triggerpassCheat && !back.powerCheat, "the cheats it had, and no others");
+    assert(back.player.gmTagOn && back.player.hasFlag(PlayerFlags.gm), "GM mode");
+    assert(back.player.gmInvisible && back.invincible, "invisible");
+    assert(8 in back.gmTargets);
+
+    // Its staff role is taken away before it is restored again: nothing comes back.
+    db.gmAccessRows.remove(client.session.account.id);
+    auto demoted = restore();
+    assert(!demoted.godModeCheat && !demoted.triggerpassCheat && !demoted.invincible, "no cheat it may not have");
+    assert(!demoted.player.gmTagOn && !demoted.player.hasFlag(PlayerFlags.gm) && !demoted.player.gmInvisible);
+    assert(demoted.gmTargets.length == 0);
 }

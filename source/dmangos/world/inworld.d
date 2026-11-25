@@ -112,7 +112,10 @@ private:
         if (saveProgressOnLeave)
             context.database.saveProgress(progress);
         if (connection.gatewayHome.node)
+        {
             context.database.deletePartySummonOffer(player.data.guid);
+            context.database.saveGmSession(player.data.guid, null);
+        }
         context.database.setOnline(player.data.guid, account.id, false, context.config.realmId);
         if (!saveProgressOnLeave)
             warning!"%s: '%s' left the world (%s); progress remains at the last durable save"(
@@ -648,15 +651,7 @@ private:
         state.put(pendingZone);
         state.put(floodLines);
         state.put(floodTime);
-        state.put(triggerpassCheat);
-        state.put(cooldownCheat);
-        state.put(castTimeCheat);
-        state.put(godModeCheat);
-        state.put(powerCheat);
-        state.put(invincible);
-        state.put(cast(uint) gmTargets.length);
-        foreach (guid; gmTargets.byKey)
-            state.put(guid);
+        writeGmSession(state);
     }
 
     private void readSessionHandoff(ref ByteReader state)
@@ -678,18 +673,161 @@ private:
         pendingZone = state.read!uint;
         floodLines = state.read!uint;
         floodTime = state.read!long;
-        triggerpassCheat = state.read!bool;
-        cooldownCheat = state.read!bool;
-        castTimeCheat = state.read!bool;
-        godModeCheat = state.read!bool;
-        powerCheat = state.read!bool;
-        invincible = state.read!bool;
+        readGmSession(state, false); // as they were there, for this session
+        // The old node wrote the gateway's checkpoint of them before the move; with none to keep, nothing is there.
+        gmSessionKnown = gmToggles() == 0 && gmTargets.length == 0;
+        gmSessionWritten = null;
+        gmTogglesWritten = 0;
+    }
+
+    // -----------------------------------------------------------------------
+    // GM session toggles: carried by a clean handoff, and checkpointed for a gateway's login (docs/CLUSTER.md)
+    // -----------------------------------------------------------------------
+
+    /// The toggles, a bit each (`gmToggles`), and what the account's staff role must allow to have each restored.
+    private static immutable string[9] gmToggleCapabilities = [
+        "testing.cheats", // `.cheat triggerpass`
+        "testing.cheats", // `.cheat cooldown`
+        "testing.cheats", // `.cheat casttime`
+        "testing.cheats", // `.cheat god`
+        "testing.cheats", // `.cheat power`
+        "staff.presence", // `.invincible` (and `.invisible`'s invincibility)
+        "staff.tag",      // the GM tag: `.gm on`, `.gm whisperblock`
+        "staff.tag",      // the <GM> flag shown with it: `.gm on`
+        "staff.presence", // `.invisible`
+    ];
+    private enum ubyte gmSessionVersion = 1;
+    private string gmSessionWritten;  // a gateway's login: its `dmangos_gm_session` row, as this node last wrote it
+    private ushort gmTogglesWritten;  // ditto, the toggles in it
+    private bool gmSessionKnown;      // whether the row is known to be that (not yet after a login)
+
+    /// This session's GM toggles, a bit each, in `gmToggleCapabilities`' order.
+    private ushort gmToggles() const
+    {
+        ushort bits;
+        void flag(uint bit, bool on)
+        {
+            if (on)
+                bits |= 1 << bit;
+        }
+
+        flag(0, triggerpassCheat);
+        flag(1, cooldownCheat);
+        flag(2, castTimeCheat);
+        flag(3, godModeCheat);
+        flag(4, powerCheat);
+        flag(5, invincible);
+        flag(6, player.gmTagOn);
+        flag(7, player.hasFlag(PlayerFlags.gm));
+        flag(8, player.gmInvisible);
+        return bits;
+    }
+
+    private void writeGmSession(ref ByteWriter state) const
+    {
+        state.put(gmToggles());
+        state.put(cast(uint) gmTargets.length);
+        foreach (guid; gmTargets.byKey)
+            state.put(guid);
+    }
+
+    /**
+     * The toggles `writeGmSession` wrote. `allowedOnly`, only those the account's staff role allows now, and
+     * `.gm allowwhispers`' players only with `staff.support`: a checkpoint read back never grants a cheat.
+     */
+    private void readGmSession(ref ByteReader state, bool allowedOnly)
+    {
+        import dmangos.bytes : PacketException;
+
+        const bits = state.read!ushort;
+        if (bits >> gmToggleCapabilities.length)
+            throw new PacketException("unknown GM session toggle");
+        bool on(uint bit)
+        {
+            return (bits & (1 << bit)) && (!allowedOnly || allowsStaff(gmToggleCapabilities[bit]));
+        }
+
+        triggerpassCheat = on(0);
+        cooldownCheat = on(1);
+        castTimeCheat = on(2);
+        godModeCheat = on(3);
+        powerCheat = on(4);
+        invincible = on(5);
+        player.gmTagOn = on(6);
+        player.setFlag(PlayerFlags.gm, on(7));
+        player.gmInvisible = on(8);
         const allowed = state.read!uint;
         if (allowed > state.remaining / ulong.sizeof)
-            throw new PacketException("invalid GM whisper list in handoff");
+            throw new PacketException("invalid GM whisper list");
         gmTargets = null;
         foreach (_; 0 .. allowed)
-            gmTargets[state.read!ulong] = true;
+        {
+            const guid = state.read!ulong;
+            if (!allowedOnly || allowsStaff("staff.support"))
+                gmTargets[guid] = true;
+        }
+    }
+
+    /**
+     * A gateway's login: its GM toggles, written as they change (checked each tick, the whisper list at each save),
+     * so that the login restored from its checkpoint after a crash keeps them (`restoreGmSession`). `full` compares
+     * the whole state, not only the toggles.
+     */
+    package void checkpointGmSession(bool full)
+    {
+        import dmangos.world.instancescripting : toHex;
+
+        const home = connection.gatewayHome;
+        if (!home.node || player is null)
+            return;
+        const toggles = gmToggles();
+        if (gmSessionKnown && !full && toggles == gmTogglesWritten)
+            return;
+        string state;
+        if (toggles || gmTargets.length)
+        {
+            ByteWriter checkpoint;
+            checkpoint.put(gmSessionVersion);
+            checkpoint.put(home.node);
+            checkpoint.put(home.incarnation);
+            writeGmSession(checkpoint);
+            state = toHex(checkpoint.data);
+        }
+        if (gmSessionKnown && state == gmSessionWritten)
+        {
+            gmTogglesWritten = toggles;
+            return;
+        }
+        if (!context.canWrite())
+            return;
+        context.database.saveGmSession(player.data.guid, state);
+        gmSessionWritten = state;
+        gmTogglesWritten = toggles;
+        gmSessionKnown = true;
+    }
+
+    /**
+     * Entering the world: a gateway's login restored after a crash gets the GM toggles its checkpoint holds, as far
+     * as the account's staff role allows them now. Before the player is shown: the GM flag and `.invisible` are part
+     * of what others see. Any other login starts without, and the first tick writes that.
+     */
+    package void restoreGmSession(scope const(imported!"dmangos.world.session".GatewayRecoveryCheckpoints)* checkpoints)
+    {
+        import dmangos.world.instancescripting : fromHex;
+
+        gmSessionKnown = false;
+        if (checkpoints is null || !checkpoints.gmSession.length)
+            return;
+        try
+        {
+            auto state = ByteReader(fromHex(checkpoints.gmSession));
+            const home = connection.gatewayHome;
+            if (state.read!ubyte == gmSessionVersion && state.read!ushort == home.node
+                && state.read!ulong == home.incarnation)
+                readGmSession(state, true);
+        }
+        catch (Exception error)
+            warning!"%s: could not restore the GM toggles of '%s': %s"(remoteAddress, player.data.name, error.msg);
     }
 
     /**
@@ -756,6 +894,7 @@ private:
         }
         if (player is null)
             return;
+        checkpointGmSession(false); // a toggle just set (by the GM or on the GM) is in the gateway's checkpoint
         updateElevatorPassenger();
         if (player is null)
             return;

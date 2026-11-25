@@ -347,7 +347,8 @@ The character's saved auras, cooldowns, quests and reputation move with it. A cl
 carries its movement, corpse and death state, pending projectile impacts, what its client knows,
 active pet, dungeon copy and client connection details. Regeneration, rest, zone checks and chat
 flood protection keep their progress. Temporary GM commands and allowed whisper senders stay in
-effect for the same session. Ordinary balancing waits for a taxi flight to land. A forced clean
+effect for the same session: the `.cheat` toggles, `.invincible`, `.invisible`, and the GM tag of
+`.gm on` and `.gm whisperblock`. Ordinary balancing waits for a taxi flight to land. A forced clean
 handoff can resume the flight from its current route and position.
 
 ### Leaving the game
@@ -980,6 +981,13 @@ with their remaining time. The party can finish it and receive the original targ
 Active environmental timers resume on the same connection. Time spent waiting for recovery counts
 toward the original timer. Damage pulses due during the outage are skipped.
 A player reloaded in the middle of a fall keeps the original fall height for landing damage.
+A gateway login's GM toggles are written to `dmangos_gm_session` as they change. These are the
+toggles a clean handoff carries, and the `.gm allowwhispers` players, which are written at each save.
+The replacement restores them before the player is shown. It restores only what the account's staff
+role allows at that time: `testing.cheats` for the cheats, `staff.presence` for invincibility and
+invisibility, `staff.tag` for the GM tag, and `staff.support` for the whisper list. A cheat a GM
+turned on for another player's character stays through a clean handoff but not through a crash.
+There is no flight toggle: `.cheat fly` is unavailable in this client.
 
 If the worker and coordinator both fail, a gateway linked to the standby reports its last
 acknowledged simulation owner when it accepts the takeover. The standby restores the original

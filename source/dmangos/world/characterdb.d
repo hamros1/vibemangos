@@ -1612,6 +1612,27 @@ final class CharacterStatements
             characters.execute!"DELETE FROM dmangos_player_summons WHERE player = ?"(player);
     }
 
+    void prepareGmSessions()
+    {
+        characters.execute!("CREATE TABLE IF NOT EXISTS dmangos_gm_session ("
+            ~ "player INT UNSIGNED NOT NULL PRIMARY KEY, state TEXT CHARACTER SET ascii NOT NULL) ENGINE=InnoDB")();
+    }
+
+    string loadGmSession(uint player)
+    {
+        const rows = characters.query!"SELECT state FROM dmangos_gm_session WHERE player = ?"(player);
+        return rows.length ? rows[0].get!string(0) : null;
+    }
+
+    void saveGmSession(uint player, string state)
+    {
+        if (state.length)
+            characters.execute!("INSERT INTO dmangos_gm_session (player, state) VALUES (?, ?) "
+                ~ "ON DUPLICATE KEY UPDATE state = VALUES(state)")(player, state);
+        else
+            characters.execute!"DELETE FROM dmangos_gm_session WHERE player = ?"(player);
+    }
+
     void preparePartySummonOffers()
     {
         characters.execute!("CREATE TABLE IF NOT EXISTS dmangos_party_summon_offer ("
@@ -2644,6 +2665,7 @@ final class CharacterStatements
         prepareLootCoins();
         prepareLootAwards();
         prepareBattlegroundRewards();
+        prepareGmSessions();
         const pets = characters.query!"SELECT id FROM character_pet WHERE owner = ?"(guid)
             .map!(row => row.get!uint(0)).array;
 
@@ -2656,6 +2678,7 @@ final class CharacterStatements
             characters.execute!"DELETE FROM dmangos_bg_event_reward WHERE player = ?"(guid);
             savePlayerSummons(guid, null);
             deletePartySummonOffer(guid);
+            saveGmSession(guid, null);
             foreach (pet; pets)
             {
                 characters.execute!"DELETE FROM character_pet WHERE id = ?"(pet);

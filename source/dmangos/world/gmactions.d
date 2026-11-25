@@ -183,6 +183,7 @@ private:
     /// The separate player records needed for a periodic save or a handoff.
     private void savePlayerDetails()
     {
+        checkpointGmSession(true);
         if (savedUnread)
             return; // what is in memory lacks records it could not read: the saved ones stay (`readSaved`)
         saveAuras();

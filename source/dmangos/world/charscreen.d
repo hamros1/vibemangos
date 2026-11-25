@@ -342,6 +342,7 @@ mixin template CharacterLogin()
         const guid = character.guid;
         refreshGmAccess();
         player = makePlayer(character, !recovered);
+        restoreGmSession(checkpoints); // before the player is shown: the GM flag and `.invisible` are seen
         readSaved(() => loadCooldowns()); // before the spellbook is sent: it shows them
         readSaved(() => loadTalentReset());
         readSaved(() => loadSocial());
@@ -381,7 +382,8 @@ mixin template CharacterLogin()
             character.position.z);
         if (savedUnread)
             return leaveIfUnread(); // back to the character screen, its records as saved
-        announceToFriends(true);
+        if (!player.gmInvisible) // restored `.invisible`: its friends keep seeing it offline
+            announceToFriends(true);
         guildLogin();
         // An interrupted battleground can send the character straight to another node.
         battlegroundOnLogin();

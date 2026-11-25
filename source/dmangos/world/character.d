@@ -1709,7 +1709,7 @@ unittest
     import core.time : msecs;
     import std.algorithm.searching : canFind;
     import dmangos.world.config : WorldConfig;
-    import dmangos.world.player : RestType;
+    import dmangos.world.player : PlayerFlags, RestType;
     import dmangos.world.testclient : TestPlayerRelay, bodyOf, loggedIn, newCreationContext, newDatabase, say;
 
     void floodProtection(ref WorldConfig config)
@@ -1738,6 +1738,9 @@ unittest
     previous.triggerpassCheat = true;
     previous.godModeCheat = true;
     previous.gmTargets[8] = true;
+    previous.player.gmTagOn = true; // `.gm on`, `.invisible`
+    previous.player.setFlag(PlayerFlags.gm, true);
+    previous.player.gmInvisible = true;
 
     previous.migrateTo(second.nodeId);
     assert(relay.remote !is null && client.session.inWorld is null);
@@ -1746,6 +1749,7 @@ unittest
     assert(current.player.restType == RestType.city && current.player.restCountedAt == countedAt);
     assert(current.zoneTimer.elapsed == 400.msecs && current.zoneUpdatePending && current.pendingZone == 1519);
     assert(current.triggerpassCheat && current.godModeCheat && !current.powerCheat && 8 in current.gmTargets);
+    assert(current.player.gmTagOn && current.player.hasFlag(PlayerFlags.gm) && current.player.gmInvisible);
     assert(current.floodLines == 2 && current.floodTime == floodUntil);
 
     client.read();
