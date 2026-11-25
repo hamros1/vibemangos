@@ -1940,12 +1940,21 @@ mixin template CreatureCasting()
         world_.flushCreature(who);
     }
 
-    /// ditto
+    /// ditto. Let swing again in a fight, it swings at its victim at once (CMaNGOS's `SetMeleeEnabled`): attacking the
+    /// victim it already has would not start it again.
     void scriptMelee(bool on)
     {
+        import dmangos.world.combat : attackStart;
+        import dmangos.world.opcodes : Opcode;
+
         meleeEnabled = on;
         if (!on)
             meleeStop(world_);
+        else if (inCombat_ && victim && !meleeAttacking && world_ !is null)
+        {
+            meleeAttacking = true;
+            world_.sendToObservers(me.guid, Opcode.SMSG_ATTACKSTART, attackStart(me.guid, victim));
+        }
     }
 
     /// ditto

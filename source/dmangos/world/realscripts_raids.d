@@ -1906,8 +1906,8 @@ unittest
 
 /**
  * Sapphiron: the Frostwyrm Lair's way open (the copy's "special"), he comes 22 s later and fights all there:
- * Frost Aura, Cleave, Tail Sweep, Life Drain, his blizzard; at 46 s he takes to the air (Icebolt) and lands. His
- * The air phase ends in Frost Breath and the ice blocks melt.
+ * Frost Aura, Cleave, Tail Sweep, Life Drain, his blizzard; at 46 s he takes to the air (Icebolt) and lands. The
+ * air phase ends in Frost Breath and the ice blocks melt; landed, he fights in melee again (Cleave).
  */
 unittest
 {
@@ -1932,6 +1932,8 @@ unittest
     s.run(16.seconds);
     assert(s.castBy(sapphironEntry, 28524), "no damaging Frost Breath");
     assert(!s.objects(181247).length, "block remained after landing");
+    s.forget();
+    assert(s.runUntil(() => s.castBy(sapphironEntry, 19_983), 12.seconds), "no Cleave after he landed\n" ~ s.seen());
     s.kill(sap);
     s.run(2.seconds);
     assert(s.ask(13) == 3, "his encounter not done");
