@@ -48,6 +48,8 @@ describes how players use the systems available today.
   Ebonroc, Flamegor, Chromaggus, and Nefarian.
   The Suppression Room keeps disarmed device timers and Lashlayer's room-wide shutdown.
   Naxxramas has Gothik recovery tests for both the wave phase and the ground fight.
+  The Temple of Ahn'Qiraj has C'Thun recovery tests for the Eye's phase, the crash between the
+  Eye's death and C'Thun's rise, a player in his stomach, and a wipe in his phase.
   See [dungeon failover](CLUSTER.md#dungeons-and-battlegrounds) for coverage across instances.
 * **GM commands.** The [command reference](COMMANDS.md#edit-a-route-or-trainer) documents native
   waypoint and trainer editing, NPC formations, battleground pause and quest catalog reload.

@@ -555,6 +555,13 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   The first players back resume the saved timers. On the floor he keeps his health, side and
   remaining teleports. The central gate stays in its saved state and opens after four side changes
   or when he reaches 30% health. His death opens the exit for the rest of the lockout.
+  In the Temple of Ahn'Qiraj, C'Thun's fight keeps the Eye of C'Thun, C'Thun and every living
+  tentacle with their health, auras and timers. A crash in the Eye's phase resumes its beams and
+  tentacle waves on their saved timers. A crash in the five seconds between the Eye's death and
+  C'Thun's rise still lets him rise, once, and his two Flesh Tentacles grow once. A player
+  swallowed before a crash comes back in the stomach, where the acid finds them again. A Flesh
+  Tentacle slain before the crash stays slain, so the other one's death weakens him. A wipe in his
+  phase, or a crash after it, brings the Eye back for the next pull. His death stays recorded.
 * **GM commands.** `.instance info`, `.instance shutdown` and `.instance reset` of a copy another node
   hosts go to that node and its answer comes back; `.instance resetall` goes to every node.
 
@@ -1157,6 +1164,8 @@ python3 tools/harness/outdoor_corpse_recovery.py
 python3 tools/harness/outdoor_chest_recovery.py
 python3 tools/harness/outdoor_chest_recovery.py --pooled
 python3 tools/harness/dreadsteed_recovery.py
+python3 tools/harness/cthun_recovery.py --phase transition
+python3 tools/harness/cthun_recovery.py --phase stomach
 python3 tools/harness/escort_recovery.py
 python3 tools/harness/outdoor_script_recovery.py
 python3 tools/harness/outdoor_script_recovery.py --clean
@@ -1222,6 +1231,17 @@ reopen the original chest. MariaDB must record both original drops once and the 
 The pooled version also checks that the respawn is recorded for the original selected placement.
 The Dreadsteed check kills the worker just after calling the Keeper and J'eevee. Both existing
 clients see the same actors finish placing the ritual supplies and spawn the first wave once.
+The C'Thun checks run a two-player raid group in Ahn'Qiraj. `--phase transition` kills the
+worker after the Eye of C'Thun dies and before C'Thun rises, once the checkpoint of his rise is
+written. Both existing clients reload the same raid copy and see the same C'Thun rise once and
+cast a Mouth Tentacle. Neither client sees the Eye or an Eye-phase tentacle again.
+`--phase stomach` keeps the second player outside the temple, so only the leader can be
+swallowed. The worker is killed after the leader is swallowed and has slain one of the two Flesh
+Tentacles. MariaDB holds the leader's position in the stomach. The leader's existing socket
+reloads in the stomach, the Digestive Acid ticks again, and only the surviving Flesh Tentacle is
+there. Its death weakens C'Thun, who keeps his health. The leader climbs out, the saved position
+follows, and the second player enters the same raid copy. In both checks MariaDB has one copy of
+the map and no separate fight rows for the Eye or C'Thun. Both are also in `tools/harness/chaos.py`.
 The escort check kills the Defias Traitor's worker after the quest starts. The original client
 reloads the same actor, sees the route finish, and keeps the completed quest in MariaDB.
 The outdoor script check kills the worker after the first quest script step. The original client
