@@ -999,6 +999,8 @@ private:
                 continue;
             if (recovered && row.caster == player.guid && recoverableChannelAura(*spell))
                 continue; // the gateway's channel checkpoint supplies its current timing
+            if (ownChannelGone(*spell, row))
+                continue; // the channel it belonged to ended with the session it ran in
             if (recovered && recoverableEncounterAura(row.spell))
                 continue; // the gateway checkpoint also records dispels since the last periodic save
             auto aura = makeAura(spell, row.caster, player.data.level, row.maxDuration,
@@ -1029,6 +1031,25 @@ private:
             if (row.caster == player.guid && (spell.attributes & cooldownOnEvent))
                 holdForCooldownEvent(spell);
         }
+    }
+
+    /**
+     * A saved aura of the player's own channel (Evocation, Tranquility) whose channel is not running here: saved as
+     * the player left, crashed or moved, it would come back on its own, ticking while the player moves and casts.
+     * A channel carried here (a clean handoff) keeps its aura; a channel's ground effect comes back detached, as its
+     * own handling below does.
+     */
+    private bool ownChannelGone(const ref SpellInfo spell, const ref imported!"dmangos.world.database".AuraRecord row)
+    {
+        enum uint channeled = 0x04, selfChanneled = 0x40;
+        if (row.caster != player.guid || !(spell.attributesEx & (channeled | selfChanneled)))
+            return false;
+        if (channelSpell !is null && channelSpell.id == spell.id)
+            return false;
+        foreach (i, effect; spell.effect)
+            if (effect == SpellEffect.persistentAreaAura && (row.effectMask & (1 << i)))
+                return false;
+        return true;
     }
 
     /// A positive aura the player clicks off.
@@ -1671,4 +1692,40 @@ unittest
     assert(keeper.auras.find(roots) !is null);
     keeper.updateAuras(context.map(0), 1500);
     assert(keeper.auras.find(roots) is null, "broken at the heartbeat");
+}
+
+// A saved aura of the player's own channel comes back only with its channel: after a crash and a fresh login the
+// channel is gone, and so is its aura. Its other auras come back.
+unittest
+{
+    import dmangos.world.database : AuraRecord;
+    import dmangos.world.movement : Position;
+    import dmangos.world.spells : SpellEffect, SpellInfo;
+    import dmangos.world.testclient;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    enum uint evocation = 91_511, blessing = 91_512;
+    SpellInfo channel;
+    channel.id = evocation;
+    channel.attributesEx = 0x04; // channeled
+    channel.effect[0] = SpellEffect.applyAura;
+    context.data.spells.spells[evocation] = channel;
+    SpellInfo buff;
+    buff.id = blessing;
+    buff.effect[0] = SpellEffect.applyAura;
+    context.data.spells.spells[blessing] = buff;
+    enum ulong anduin = 7;
+    AuraRecord channelled, kept;
+    channelled.caster = kept.caster = anduin;
+    channelled.spell = evocation;
+    kept.spell = blessing;
+    channelled.maxDuration = channelled.remaining = 8_000;
+    kept.maxDuration = kept.remaining = 60_000;
+    channelled.effectMask = kept.effectMask = 1;
+    db.auraRows[7] = [channelled, kept];
+    auto client = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
+    auto me = client.session.inWorld;
+    assert(me.player.auras.find(evocation) is null, "no channel, no channel aura");
+    assert(me.player.auras.find(blessing) !is null);
 }
