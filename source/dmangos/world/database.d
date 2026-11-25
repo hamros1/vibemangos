@@ -930,6 +930,8 @@ interface WorldDatabase
     /// When recording a native creature's death, commit its respawn deadline with the corpse.
     void saveInstanceCorpse(const InstanceCorpseRecord corpse, long respawnAt);
     void deleteInstanceCorpse(uint instance, uint spawn);
+    /// Deletes the outdoor corpses that expired before `before` (Unix time): nothing restores them any more.
+    void purgeExpiredOutdoorCorpses(long before);
     @DatabaseRead InstanceCorpseRecord[] loadOutdoorCorpses();
     @DatabaseRead PickpocketRecord loadPickpocket(uint instance, uint spawn);
     void savePickpocket(const PickpocketRecord pocket);
@@ -1520,6 +1522,7 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
             statements.saveInstanceCorpse(corpse);
     }
     void deleteInstanceCorpse(uint instance, uint spawn) { statements.deleteInstanceCorpse(instance, spawn); }
+    void purgeExpiredOutdoorCorpses(long before) { statements.purgeExpiredOutdoorCorpses(before); }
     InstanceCorpseRecord[] loadOutdoorCorpses() { return statements.loadOutdoorCorpses(); }
     PickpocketRecord loadPickpocket(uint instance, uint spawn) { return statements.loadPickpocket(instance, spawn); }
     void savePickpocket(const PickpocketRecord pocket) { statements.savePickpocket(pocket); }
@@ -3513,6 +3516,13 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
         import std.algorithm.mutation : remove;
 
         instanceRows.corpses = instanceRows.corpses.remove!(r => r.instance == instance && r.spawn == spawn);
+    }
+
+    void purgeExpiredOutdoorCorpses(long before)
+    {
+        import std.algorithm.mutation : remove;
+
+        instanceRows.corpses = instanceRows.corpses.remove!(r => !r.instance && r.expiresAt < before);
     }
 
     InstanceCorpseRecord[] loadOutdoorCorpses()

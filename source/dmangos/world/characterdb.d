@@ -1327,6 +1327,12 @@ final class CharacterStatements
         characters.execute!"DELETE FROM dmangos_instance_corpse WHERE instance = ? AND spawn = ?"(instance, spawn);
     }
 
+    void purgeExpiredOutdoorCorpses(long before)
+    {
+        prepareInstanceCorpses();
+        characters.execute!"DELETE FROM dmangos_instance_corpse WHERE instance = 0 AND expires_at < ?"(before);
+    }
+
     void preparePickpockets()
     {
         characters.execute!("CREATE TABLE IF NOT EXISTS dmangos_pickpocket ("

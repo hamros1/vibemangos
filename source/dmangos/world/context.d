@@ -10900,12 +10900,34 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     private MonoTime lastConditionalSpawnCheck;
 
+    private long nextOutdoorCorpsePurge;
+
+    /**
+     * Once an hour, the outdoor corpses that expired over an hour ago go from the database. A native spawn's row
+     * is replaced at its next death, but a scripted summon's counter is never used again, and the row of one whose
+     * corpse expired while no worker held it (a takeover, or a restore that failed) would otherwise stay for good.
+     */
+    private void purgeExpiredOutdoorCorpses()
+    {
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
+
+        if (!config.cluster.enabled || config.cluster.gateway || unixTime < nextOutdoorCorpsePurge || !canWrite())
+            return;
+        nextOutdoorCorpsePurge = unixTime + 3600;
+        try
+            database.purgeExpiredOutdoorCorpses(unixTime - 3600);
+        catch (DatabaseException error)
+            warning!"outdoor corpses: could not delete the expired ones: %s"(error.msg);
+    }
+
     private void worldPhase(MonoTime now, Duration elapsed)
     {
         if (instances.length)
             unloadEmptyInstances(now);
         refreshQuestActors(true);
         retryRegionRecovery();
+        purgeExpiredOutdoorCorpses();
         if (config.cluster.enabled && !config.cluster.gateway && now >= nextOutdoorWorldStatePoll)
         {
             nextOutdoorWorldStatePoll = now + 1.seconds;
@@ -12936,4 +12958,27 @@ unittest
     clock += 1.seconds;
     node.respawnDue(clock);
     assert(map.gameObjectAt(guid) !is null, "back, by the selection read again");
+}
+
+// An outdoor summon's corpse row that expired with no worker to release it goes from the database within the hour.
+unittest
+{
+    import dmangos.world.testclient : newCreationContext, newDatabase;
+
+    auto db = newDatabase();
+    auto clock = MonoTime.currTime;
+    auto node = newCreationContext(db, (ref config) { config.cluster.nodeId = 1; });
+    node.clock = () => clock;
+    const now = node.unixTime;
+    db.saveInstanceCorpse(InstanceCorpseRecord(0, temporaryCounterStart + 5, now - 7200, ""), 0);
+    db.saveInstanceCorpse(InstanceCorpseRecord(0, temporaryCounterStart + 6, now + 60, ""), 0);
+    node.purgeExpiredOutdoorCorpses();
+    const kept = db.loadOutdoorCorpses();
+    assert(kept.length == 1 && kept[0].spawn == temporaryCounterStart + 6, "only the expired one goes");
+    db.saveInstanceCorpse(InstanceCorpseRecord(0, temporaryCounterStart + 7, now - 7200, ""), 0);
+    node.purgeExpiredOutdoorCorpses();
+    assert(db.loadOutdoorCorpses().length == 2, "once an hour");
+    clock += 3601.seconds;
+    node.purgeExpiredOutdoorCorpses();
+    assert(db.loadOutdoorCorpses().length == 1);
 }
