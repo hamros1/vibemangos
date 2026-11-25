@@ -279,9 +279,16 @@ struct Naxxramas
             steps.after(Step.sapphiron, 0.msecs);
     }
 
+    /// A restore during Stalagg and Feugen's fight keeps their swap going: adds restored still fighting
+    /// never enter combat again to restart it. Until a swap finds them fighting, a fresh pull restarts it.
+    @transient bool tankSwapRestored;
+
     void on(ref InstanceContext copy, const ref Restored e)
     {
         steps.cancel(Step.tankSwap);
+        tankSwapRestored = encounters[NaxxEncounter.thaddius] == EncounterState.inProgress;
+        if (tankSwapRestored)
+            steps.every(Step.tankSwap, 21.seconds);
     }
 
     /// The question whether the way to Sapphiron is open (every quarter ended).
@@ -331,9 +338,17 @@ struct Naxxramas
         if (which == NaxxEncounter.thaddius)
         {
             if (state != EncounterState.inProgress)
+            {
                 steps.cancel(Step.tankSwap);
-            else if ((e.from.entry == npcFeugen || e.from.entry == npcStalagg) && !steps.pending(Step.tankSwap))
+                tankSwapRestored = false;
+            }
+            else if ((e.from.entry == npcFeugen || e.from.entry == npcStalagg)
+                && (tankSwapRestored || !steps.pending(Step.tankSwap)))
+            {
+                // A pull after a restore found the adds idle: time the swap from this pull.
+                tankSwapRestored = false;
                 steps.every(Step.tankSwap, 21.seconds);
+            }
         }
         if ((which == NaxxEncounter.thaddius || which == NaxxEncounter.fourHorsemen) && encounters[which] == state)
             return;
@@ -437,6 +452,7 @@ struct Naxxramas
         if (!stalaggTank.isPlayer || !feugenTank.isPlayer || stalaggTank == feugenTank
             || !copy.alive(stalaggTank) || !copy.alive(feugenTank))
             return;
+        tankSwapRestored = false; // the restored timer met the fight still on
 
         enum uint pull = 28_337, stalaggMarker = 28_338, feugenMarker = 28_339;
         copy.castSpell(stalagg, stalaggMarker);
@@ -2632,10 +2648,29 @@ unittest
     assert(host.castSpells.length == 8, "a new pull starts a fresh timer");
     runtime.raise(h, copy, Restored());
     runtime.tick(h, copy, 21_000);
-    assert(host.castSpells.length == 8, "a cold restore discards an in-progress swap timer");
+    assert(host.castSpells.length == 12, "adds restored still fighting keep swapping tanks");
     runtime.raise(h, copy, Signal(stalagg, NaxxEncounter.thaddius, EncounterState.inProgress));
+    runtime.tick(h, copy, 20_999);
+    assert(host.castSpells.length == 12, "a signal during a running swap keeps its timing");
+    runtime.tick(h, copy, 1);
+    assert(host.castSpells.length == 16);
+
+    // Restored with the adds idle (they came back fresh): the swap waits for the new pull's timing.
+    host.victims[stalagg.guid] = host.victims[feugen.guid] = EntityRef.init;
+    runtime.raise(h, copy, Restored());
+    runtime.tick(h, copy, 15_000);
+    host.victims[stalagg.guid] = EntityRef(7);
+    host.victims[feugen.guid] = EntityRef(8);
+    runtime.raise(h, copy, Signal(stalagg, NaxxEncounter.thaddius, EncounterState.inProgress));
+    runtime.tick(h, copy, 20_999);
+    assert(host.castSpells.length == 16, "a fresh pull after restoring restarts the swap timer");
+    runtime.tick(h, copy, 1);
+    assert(host.castSpells.length == 20, "a fresh pull can start after restoring");
+
+    runtime.raise(h, copy, Signal(feugen, NaxxEncounter.thaddius, EncounterState.failed));
+    runtime.raise(h, copy, Restored());
     runtime.tick(h, copy, 21_000);
-    assert(host.castSpells.length == 12, "a fresh pull can start after restoring");
+    assert(host.castSpells.length == 20, "a restore after a wipe arms no swap");
 }
 
 /// Naxxramas' copy: Anub'Rekhan's door shuts while he fights and his gate opens when he dies; the
