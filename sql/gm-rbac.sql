@@ -52,6 +52,7 @@ INSERT IGNORE INTO dmangos_gm_role_permission VALUES
     ('game-master', 'character.mount'),
     ('game-master', 'debug.use'),
     ('game-master', 'guild.manage'),
+    ('game-master', 'server.manage'),
     ('game-master', 'server.save'),
     ('game-master', 'staff.announce'),
     ('game-master', 'staff.access'),

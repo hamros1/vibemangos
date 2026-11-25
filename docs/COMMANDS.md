@@ -32,7 +32,8 @@ mariadb -u root -p classicrealmd < sql/gm-role-upgrade.sql
 The upgrade preserves existing role assignments and migrates old staff accounts to the
 corresponding built-in role. Reapplying it respects accounts whose roles were revoked.
 Recreate any customized permissions as named grants. The servers read staff access from the
-role tables.
+role tables. Reapply `sql/gm-rbac.sql` after each update: it grants the built-in roles new
+capabilities, such as `server.manage`, and removes retired ones.
 
 Run `./bin/authserver account grant <login> administrator` to give your first administrator
 access. In game, use `.access grant <login> <role>`. Roles apply to the account across all
@@ -133,7 +134,7 @@ Generated from the command tables by `python3 tools/commands_doc.py`.
 | `.appear <name>` | Teleport to a player. | `world.teleport` |
 | `.ban account <account> <duration> [reason]` | Ban an account. | `account.moderate` |
 | `.ban character <character> <duration> <reason>` | Ban a character's account. | `account.moderate` |
-| `.ban ip <ip-address> <duration> [reason]` | Ban an IP address. | `character.modify` |
+| `.ban ip <ip-address> <duration> [reason]` | Ban an IP address. | `account.moderate` |
 | `.bg battleground` (also `.battleground battleground`) | Show the current match and available tools. | `battleground.manage` |
 | `.bg forcestart` (also `.battleground forcestart`) | Start all queued battlegrounds. | `staff.admin` |
 | `.bg leave` (also `.battleground leave`) | Leave the current battleground. | `battleground.manage` |
@@ -339,7 +340,7 @@ Generated from the command tables by `python3 tools/commands_doc.py`.
 | `.paralyze` | Root the selected player. | `staff.discipline` |
 | `.pet create <creature-entry>` (also `.pet createpet`) | Create a persistent pet for the selected hunter. | `character.modify` |
 | `.pet forget <spell-id>` (also `.pet removespell`) | Remove a spell from the selected player's pet. | `character.modify` |
-| `.pet helper <creature-entry> [seconds]` (also `.pet spawnbot`) | Summon a temporary guardian that follows you. | `account.moderate` |
+| `.pet helper <creature-entry> [seconds]` (also `.pet spawnbot`) | Summon a temporary guardian that follows you. | `world.creatures` |
 | `.pet rename <name>` (also `.pet renamepet`) | Rename your pet. | `character.modify` |
 | `.pet teach <spell-id>` (also `.pet addspell`) | Teach a spell to the selected player's pet. | `character.modify` |
 | `.playerinfo [name]` | Inspect a character and their account. | `character.modify` |
@@ -372,10 +373,10 @@ Generated from the command tables by `python3 tools/commands_doc.py`.
 | `.reviveplr <character>` | Resurrect a player by name. | `character.combat` |
 | `.scourge [status\|start\|stop]` | Check or control the Scourge Invasion. | `staff.admin` |
 | `.server cancel` (also `.server cancelshutdown`) | Cancel a scheduled shutdown or restart. | `staff.admin` |
-| `.server motd [message]` (also `.server setmotd`) | Set the message of the day. | `character.modify` |
+| `.server motd [message]` (also `.server setmotd`) | Set the message of the day. | `server.manage` |
 | `.server network` (also `.server netstatus`) | Show connection counts. | `public` |
 | `.server reload-config` (also `.server rehash`) | Reload server configuration. | `staff.admin` |
-| `.server reload-data <table>` (also `.server reloadtable`) | Reload supported world data. | `character.modify` |
+| `.server reload-data <table>` (also `.server reloadtable`) | Reload supported world data. | `server.manage` |
 | `.server restart [seconds]` | Schedule a server restart in seconds. | `staff.admin` |
 | `.server save` | Save the selected player. | `server.save` |
 | `.server save-all` (also `.server saveall`) | Save online characters. | `server.save` |
@@ -391,10 +392,10 @@ Generated from the command tables by `python3 tools/commands_doc.py`.
 | `.ticket release <id>` (also `.gmTicket release`) | Clear a ticket's assignment. | `support.tickets` |
 | `.ticket show <id>` (also `.gmTicket get`) | Read a ticket by ID. | `support.tickets` |
 | `.ticket toggle` (also `.gmTicket toggle`) | Enable or disable player tickets. | `staff.admin` |
-| `.transport-period <period-ms>` (also `.modperiod`) | Save the current ship or zeppelin’s circuit time. | `character.modify` |
+| `.transport-period <period-ms>` (also `.modperiod`) | Save the current ship or zeppelin’s circuit time. | `world.objects` |
 | `.unban account <account>` | Remove a ban from an account. | `staff.admin` |
 | `.unban character <character>` | Remove a ban from a character's account. | `staff.admin` |
-| `.unban ip <ip-address>` | Remove a ban from an IP address. | `character.modify` |
+| `.unban ip <ip-address>` | Remove a ban from an IP address. | `account.moderate` |
 | `.unparalyze` | Release the selected player's root. | `staff.discipline` |
 | `.wannounce <message>` | Send a realm-wide on-screen announcement. | `staff.announce` |
 | `.where` (also `.gps`) | Show your position or the selected unit’s position. | `public` |

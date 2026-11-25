@@ -282,7 +282,7 @@ immutable ChatCommand[] petCommandTable = [
     action("renamepet", permit("character.modify"), "handleRenamePetCommand", "<name>", "Rename your pet.", "rename"),
     action("addspell", permit("character.modify"), "handleAddPetSpellCommand", "<spell-id>", "Teach a spell to the selected player's pet.", "teach"),
     action("removespell", permit("character.modify"), "handleRemovePetSpellCommand", "<spell-id>", "Remove a spell from the selected player's pet.", "forget"),
-    action("spawnbot", permit("account.moderate"), "handleSummonHelperCommand", "<creature-entry> [seconds]", "Summon a temporary guardian that follows you.", "helper"),
+    action("spawnbot", permit("world.creatures"), "handleSummonHelperCommand", "<creature-entry> [seconds]", "Summon a temporary guardian that follows you.", "helper"),
 ];
 
 immutable ChatCommand[] recallCommandTable = [
@@ -315,9 +315,9 @@ immutable ChatCommand[] questCommandTable = [
 ];
 
 immutable ChatCommand[] serverCommandTable = [
-    action("setmotd", permit("character.modify"), "handleSetMotdCommand", "[message]", "Set the message of the day.", "motd"),
+    action("setmotd", permit("server.manage"), "handleSetMotdCommand", "[message]", "Set the message of the day.", "motd"),
     action("rehash", permit("staff.admin"), "handleRehashCommand", "", "Reload server configuration.", "reload-config"),
-    action("reloadtable", permit("character.modify"), "handleDBReloadCommand", "<table>", "Reload supported world data.", "reload-data"),
+    action("reloadtable", permit("server.manage"), "handleDBReloadCommand", "<table>", "Reload supported world data.", "reload-data"),
     action("shutdown", permit("staff.admin"), "handleShutdownCommand", "[seconds]", "Schedule a server shutdown in seconds."),
     action("restart", permit("staff.admin"), "handleShutdownRestartCommand", "[seconds]", "Schedule a server restart in seconds."),
     action("cancelshutdown", permit("staff.admin"), "handleCancelShutdownCommand", "", "Cancel a scheduled shutdown or restart.", "cancel"),
@@ -388,13 +388,13 @@ immutable ChatCommand[] kickCommandTable = [
 ];
 
 immutable ChatCommand[] banCommandTable = [
-    action("ip", permit("character.modify"), "handleIPBanCommand", "<ip-address> <duration> [reason]", "Ban an IP address."),
+    action("ip", permit("account.moderate"), "handleIPBanCommand", "<ip-address> <duration> [reason]", "Ban an IP address."),
     action("character", permit("account.moderate"), "handleBanCharacterCommand", "<character> <duration> <reason>", "Ban a character's account."),
     action("account", permit("account.moderate"), "handleAccountBannedCommand", "<account> <duration> [reason]", "Ban an account."),
 ];
 
 immutable ChatCommand[] unbanCommandTable = [
-    action("ip", permit("character.modify"), "handleIPUnBanCommand", "<ip-address>", "Remove a ban from an IP address."),
+    action("ip", permit("account.moderate"), "handleIPUnBanCommand", "<ip-address>", "Remove a ban from an IP address."),
     action("character", permit("staff.admin"), "handleUnBanCharacterCommand", "<character>", "Remove a ban from a character's account."),
     action("account", permit("staff.admin"), "handleAccountUnbanCommand", "<account>", "Remove a ban from an account."),
 ];
@@ -478,7 +478,7 @@ immutable ChatCommand[] commandTable = [
     action("paralyze", permit("staff.discipline"), "handleParalyzeCommand", "", "Root the selected player."),
     action("unparalyze", permit("staff.discipline"), "handleUnParalyzeCommand", "", "Release the selected player's root."),
     action("gotrig", permit("world.teleport"), "handleTriggerCommand", "<trigger-id> [instance-id]", "Teleport to an area trigger."),
-    action("modperiod", permit("character.modify"), "handleTransportPeriodCommand", "<period-ms>", "Save the current ship or zeppelin’s circuit time.", "transport-period"),
+    action("modperiod", permit("world.objects"), "handleTransportPeriodCommand", "<period-ms>", "Save the current ship or zeppelin’s circuit time.", "transport-period"),
     action("logcomment", permit("support.lookup"), "handleGmLogCommentCommand", "<comment>", "Write a note to the GM log."),
     action("removesickness", permit("character.modify"), "handleRemoveRessurectionSickessAuraCommand", "", "Remove resurrection sickness."),
     action("fixscale", permit("character.modify"), "handleFixScaleCommand", "[scale]", "Set the selected unit's scale."),

@@ -90,7 +90,7 @@ string[] defaultRoleGrants(string role)
             "support.lookup", "support.tickets", "world.teleport", "character.mount"];
     case "game-master":
         return ["account.moderate", "battleground.manage", "character.combat", "character.learn", "character.modify",
-            "character.mount", "debug.use", "guild.manage", "server.save", "staff.announce",
+            "character.mount", "debug.use", "guild.manage", "server.manage", "server.save", "staff.announce",
             "staff.access", "staff.discipline", "staff.disconnect", "staff.game_master", "staff.presence",
             "staff.support", "staff.tag", "support.lookup", "support.tickets", "testing.cheats",
             "world.creatures", "world.objects", "world.quests", "world.teleport",

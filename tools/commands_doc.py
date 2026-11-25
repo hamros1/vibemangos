@@ -115,7 +115,8 @@ mariadb -u root -p classicrealmd < sql/gm-role-upgrade.sql
 The upgrade preserves existing role assignments and migrates old staff accounts to the
 corresponding built-in role. Reapplying it respects accounts whose roles were revoked.
 Recreate any customized permissions as named grants. The servers read staff access from the
-role tables.
+role tables. Reapply `sql/gm-rbac.sql` after each update: it grants the built-in roles new
+capabilities, such as `server.manage`, and removes retired ones.
 
 Run `./bin/authserver account grant <login> administrator` to give your first administrator
 access. In game, use `.access grant <login> <role>`. Roles apply to the account across all
