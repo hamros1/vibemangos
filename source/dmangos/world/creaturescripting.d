@@ -1330,12 +1330,19 @@ mixin template CreatureScripting()
 
     void hostFlying(bool on)
     {
+        import dmangos.world.motion : fallToGround;
+
+        const wasFlying = me.flyingMovement;
         enum uint levitating = 0x0000_0400; // MOVEFLAG_LEVITATING
         me.scriptFlying = on;
         if (on)
             me.movement.flags |= levitating;
         else
+        {
             me.movement.flags &= ~levitating;
+            if (wasFlying && world_ !is null)
+                fallToGround(me, world_);
+        }
     }
 
     void hostDisplay(uint model)

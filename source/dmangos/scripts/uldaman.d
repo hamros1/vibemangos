@@ -47,19 +47,65 @@ struct Uldaman
     Pack!64 dwarves;              /// custodians and hallshapers
     Pack!8 guardians, warders;
     @transient EntityRef upper, lower, vault, archaedasRef;
+    @transient bool keepersRecovering, archaedasRecovering;
 
     enum Step : ubyte { wakeKeeper }
     Schedule!Step steps;
 
-    /// A restart: the keepers woken stand in stone again (their altar may be used anew), Archaedas sleeps.
     void on(ref InstanceContext ulda, const ref Restored e)
     {
         if (keepers == Fight.inProgress)
-            keepers = Fight.notStarted;
-        keeperWoken[] = false;
-        steps.clear();
+        {
+            bool captured = steps.pending(Step.wakeKeeper);
+            foreach (who; keeperPack)
+                captured |= ulda.hasSavedCreature(who);
+            if (captured)
+            {
+                keepersRecovering = true;
+                ulda.waitForPlayer();
+            }
+            else
+                keepers = Fight.notStarted; // legacy saves omitted the awake creature
+        }
         if (archaedasFight == Fight.inProgress || archaedasFight == Fight.waking)
-            archaedasFight = Fight.notStarted;
+        {
+            archaedasRecovering = ulda.hasSavedCreature(archaedas);
+            if (archaedasRecovering)
+                ulda.waitForPlayer();
+            else
+                archaedasFight = Fight.notStarted;
+        }
+    }
+
+    void on(ref InstanceContext ulda, const ref PlayerEntered e)
+    {
+        if (archaedasRecovering)
+        {
+            archaedasRecovering = false;
+            if (!ulda.alive(starter))
+                starter = e.player;
+            if (archaedasFight == Fight.inProgress && archaedasRef && !ulda.alive(ulda.victimOf(archaedasRef)))
+                ulda.attack(archaedasRef, starter);
+        }
+        if (!keepersRecovering)
+            return;
+        keepersRecovering = false;
+        if (!ulda.alive(starter))
+            starter = e.player;
+        bool waking;
+        foreach (who; keeperPack)
+        {
+            const index = keeperPack.indexOf(who);
+            if (!keeperWoken[index])
+                continue;
+            if (!ulda.alive(who))
+                continue;
+            waking = true;
+            if (!ulda.alive(ulda.victimOf(who)))
+                ulda.attack(who, starter);
+        }
+        if (!waking && !steps.pending(Step.wakeKeeper))
+            steps.after(Step.wakeKeeper, 5.seconds);
     }
 
     void on(ref InstanceContext ulda, const ref ObjectLoaded e)
@@ -107,6 +153,7 @@ struct Uldaman
             starter = e.source;
             keepers = Fight.inProgress;
             steps.after(Step.wakeKeeper, 5.seconds);
+            ulda.checkpoint();
         }
         else if (e.event == archaedasAltar
             && (archaedasFight == Fight.notStarted || archaedasFight == Fight.failed) && archaedasRef)
@@ -114,6 +161,7 @@ struct Uldaman
             starter = e.source;
             archaedasFight = Fight.waking;
             ulda.signal(archaedasRef, Archaedas.Signals.wake);
+            ulda.checkpointCreature(archaedasRef);
         }
     }
 
@@ -135,6 +183,7 @@ struct Uldaman
                 keeperWoken[index] = true;
                 ulda.removeAura(keeper, stoned);
                 ulda.attack(keeper, starter);
+                ulda.checkpointCreature(keeper);
                 return;
             }
         }
@@ -157,6 +206,7 @@ struct Uldaman
             }
             else
                 steps.after(Step.wakeKeeper, 5.seconds);
+            ulda.checkpoint();
         }
         else if (e.creature.entry == archaedas)
         {
@@ -164,6 +214,7 @@ struct Uldaman
             if (vault)
                 ulda.door(vault, true);
             ulda.spawnObjects(ancientTreasure, 3600);
+            ulda.checkpoint();
         }
     }
 
@@ -183,6 +234,7 @@ struct Uldaman
         foreach (keeper; keeperPack)
             if (ulda.alive(keeper) && !ulda.hasAura(keeper, stoned))
                 ulda.castSpell(keeper, stoned);
+        ulda.checkpoint();
     }
 
     void on(ref InstanceContext ulda, const ref Signal e)
@@ -191,6 +243,8 @@ struct Uldaman
         {
         case Signals.engaged:
             archaedasFight = Fight.inProgress;
+            if (archaedasRef)
+                ulda.checkpointCreature(archaedasRef);
             break;
         case Signals.evaded:
             if (archaedasFight != Fight.done)
@@ -236,6 +290,7 @@ struct Uldaman
         ulda.removeAura(who, stoned);
         const target = archaedasRef ? ulda.victimOf(archaedasRef) : EntityRef.init;
         ulda.attack(who, target ? target : starter);
+        ulda.checkpointCreature(who);
     }
 }
 
@@ -273,9 +328,9 @@ struct Archaedas
 
     void on(ref CreatureContext me, const ref EnteredCombat e)
     {
-        me.signalDungeon(Uldaman.Signals.engaged);
         steps.after(Step.tremor, (7000 + me.random(7000)).msecs);
         steps.after(Step.dwarf, 10.seconds);
+        me.signalDungeon(Uldaman.Signals.engaged);
     }
 
     void on(ref CreatureContext me, const ref Damaged e)

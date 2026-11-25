@@ -43,17 +43,16 @@ describes how players use the systems available today.
 
 ### Known gaps in what exists
 
-* **World conditions:** ClassicDB's realm-script, world-state comparison and kill-credited encounter
-  conditions can gate scripts and spawns. Timed world-state variables written by database scripts are
-  currently local to the map on the worker running the script. They still need synchronization and
-  recovery across outdoor workers. The separate binary `WorldStateExpression` format is pending.
-* **Creature movement:** air-capable creatures use flying splines on type 3 paths. Water-only
-  creatures on the same path type continue swimming. Hover, water walking and slow fall auras send
-  the flags and spline packets to clients. Server-side surface routing for water walking and
-  falling physics for creatures still need coverage.
-* **Instances:** crash recovery depends on the encounter script. See
-  [dungeon failover](CLUSTER.md#dungeons-and-battlegrounds) for which encounters resume in progress.
-* **GM commands:** commands tied to missing systems are listed in [Commands](COMMANDS.md).
+* **Instances.** Crash recovery for an active multi-stage encounter depends on what its script
+  checkpoints. Uldaman now resumes the Stone Keepers' sequence and Archaedas's fight. See
+  [dungeon failover](CLUSTER.md#dungeons-and-battlegrounds) for the current encounter coverage.
+* **GM commands.** The [command reference](COMMANDS.md#not-yet-implemented) lists the remaining
+  ArcEmu commands, including waypoint editing, arena administration and the flight cheat.
+
+Outdoor database scripts share world-state variables by realm and map. Delayed steps commit
+their variable changes with the script cursor, and ClassicDB's binary expressions can gate spawn
+groups and creature casts. Server-driven creatures can follow checked water-surface routes
+and use gravity and Slow Fall on descent.
 
 Offline group leaders are replaced after `offline_group_leader_delay` seconds (300 by default,
 0 disables it). Mixed-faction group members see one another as friendly when enabled. Channels

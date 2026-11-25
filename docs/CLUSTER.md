@@ -515,6 +515,9 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   In Dire Maul North, Mizzle resumes his walk or remains available for the tribute at the throne.
   The Dreadsteed ritual in Dire Maul West resumes with its actors, supplies, wave timers and
   pending database steps. The final summons continue from the saved step.
+  In Uldaman, a replacement resumes the Stone Keepers from the last saved keeper and wake timer.
+  The next keeper waits for a player to return, and defeated keepers stay dead.
+  Archaedas resumes his awakening or fight with the awake statues.
 * **GM commands.** `.instance info`, `.instance shutdown` and `.instance reset` of a copy another node
   hosts go to that node and its answer comes back; `.instance resetall` goes to every node.
 
@@ -548,6 +551,13 @@ in the world on two nodes, and none is loaded before its last session's save has
 Character creation and deletion wait for the grant too. Claims made while the coordinator is
 unreachable are sent when it is back, and a node claims all its sessions again whenever it links to a
 coordinator. A lost node's accounts are freed when its lease has run out.
+
+### Outdoor script world state
+
+Workers read the realm's map-scoped script variables from the character database once per second.
+A delayed script commits a variable update and its next step in the same transaction. A replacement
+can resume the script while workers that own affected spawn cells continue to evaluate the last
+committed value.
 
 ### Presence
 
@@ -1054,6 +1064,8 @@ python3 tools/harness/outdoor_script_recovery.py --after-summon
 python3 tools/harness/outdoor_script_recovery.py --after-summon --clean
 python3 tools/harness/outdoor_script_recovery.py --retry-actor-db
 python3 tools/harness/outdoor_script_recovery.py --dead-actor
+python3 tools/harness/outdoor_world_state_recovery.py during
+python3 tools/harness/outdoor_world_state_recovery.py after
 python3 tools/harness/outdoor_object_recovery.py
 python3 tools/harness/player_summon_recovery.py
 python3 tools/harness/player_summon_recovery.py --scenario guardian

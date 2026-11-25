@@ -538,7 +538,7 @@ private:
         return true;
     }
 
-    /// Closes the battleground the player is in.
+    /// The player leaves their own slot in the current battleground.
     bool handleBattlegroundExitCommand()
     {
         auto copy = currentBattleground();
@@ -547,18 +547,48 @@ private:
             systemMessage("You're not in a battleground!");
             return true;
         }
-        copy.close();
+        leaveBattleground(true);
+        return true;
+    }
+
+    bool handleStartBGCommand()
+    {
+        if (auto copy = currentBattleground())
+            copy.start();
+        else
+            systemMessage("You're not in a battleground!");
+        return true;
+    }
+
+    bool handleBGInfoCommnad()
+    {
+        if (auto copy = currentBattleground())
+            systemMessage(format!"%s, copy %s, %s."(copy.type, copy.instance, copy.status));
+        else
+            systemMessage("You're not in a battleground!");
         return true;
     }
 
     bool handleSetWorldStateCommand(uint id, uint value)
     {
-        return true; // meant for the player's battleground, if any; nothing is set
+        if (auto copy = currentBattleground())
+            copy.setWorldState(id, value);
+        else
+            systemMessage("You're not in a battleground!");
+        return true;
     }
 
-    bool handlePlaySoundCommand()
+    bool handleSetWorldStatesCommand(uint id, uint value)
     {
-        systemMessage("You're not in a battleground!");
+        return handleSetWorldStateCommand(id, value);
+    }
+
+    bool handlePlaySoundCommand(uint sound)
+    {
+        if (auto copy = currentBattleground())
+            copy.playSound(sound);
+        else
+            systemMessage("You're not in a battleground!");
         return true;
     }
 }

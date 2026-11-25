@@ -81,12 +81,10 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 * `.character forcerename` sets CMaNGOS's `at_login` rename flag (ArcEmu's `forced_rename_pending`); the
   old name is reserved until the server restarts (ArcEmu's `banned_names` row; CMaNGOS keeps
   `reserved_name` in the world database, which the server does not write).
-* `.invisible`: in a cluster, players of other nodes still see an invisible game master (their replica
-  of it carries no invisibility yet).
 * Arguments are read strictly: a number written wrong ("12abc", "abc") or a missing argument shows
   the command's help, where ArcEmu's C parsing read "12abc" as 12 and "abc" as 0 and went on.
 
-## Working (237)
+## Working (244)
 
 | Command | Letter | Help |
 |---|---|---|
@@ -104,6 +102,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.mount` | `m` | Mounts into modelid x. |
 | `.dismount` | `h` | Dismounts. |
 | `.gps` | `0` | Shows Position |
+| `.scourge` | `z` | .scourge start\|stop\|status |
 | `.worldport` | `v` |  |
 | `.start` | `m` | Teleport's you to a starting location |
 | `.invincible` | `j` | .invincible - Toggles INVINCIBILITY (mobs won't attack you) |
@@ -194,7 +193,10 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.gobject animprogress` | `o` | Sets anim progress |
 | `.gobject move` | `g` | Moves gameobject to player xyz |
 | `.gobject rotate` | `g` | <Axis> <Value> - Rotates the object. <Axis> x,y, Default o. |
+| `.battleground startbg` | `e` | Starts current battleground match. |
+| `.battleground bginfo` | `e` | Displays information about current battleground. |
 | `.battleground setworldstate` | `e` | <var> <val> - Var can be in hex. WS Value. |
+| `.battleground setworldstates` | `e` | <var> <val> - Var can be in hex. WS Value. |
 | `.battleground playsound` | `e` | <val>. Val can be in hex. |
 | `.battleground leave` | `e` | Leaves the current battleground. |
 | `.battleground forcestart` | `z` | Forces initialitation of all battlegrounds with active queue. |
@@ -210,6 +212,8 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.npc return` | `n` | .npc return - Returns ncp to spawnpoint. |
 | `.npc spawn` | `n` | .npc spawn - Spawns npc of entry <id> |
 | `.npc respawn` | `n` | .respawn - Respawns a dead npc from it's corpse. |
+| `.npc possess` | `n` | .npc possess - Possess an npc (mind control) |
+| `.npc unpossess` | `n` | .npc unpossess - Unposses any currently possessed npc. |
 | `.npc select` | `n` | .npc select - selects npc closest |
 | `.npc npcfollow` | `m` | Sets npc to follow you |
 | `.npc nullfollow` | `m` | Sets npc to not follow anything |
@@ -255,6 +259,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.recall add` | `q` | Add recall location |
 | `.recall del` | `q` | Remove a recall location |
 | `.recall portplayer` | `m` | recall ports player |
+| `.guild create` | `m` | Creates a guild. |
 | `.guild rename` | `m` | Renames a guild. |
 | `.guild members` | `m` | Lists guildmembers and their ranks. |
 | `.guild removeplayer` | `m` | Removes a player from a guild. |
@@ -328,10 +333,10 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.removesickness` | `m` | Removes ressurrection sickness from the target |
 | `.fixscale` | `m` |  |
 
-## Not yet implemented (58)
+## Not yet implemented
 
-These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: what they work on is not
-done yet (among them AI agents and waypoint editing, possession, arenas, GM invisibility, flying).
+The following 52 ArcEmu commands cover features such as waypoint editing and arena administration.
+They return "Not yet implemented."
 
 | Command | Letter | Help |
 |---|---|---|
@@ -365,18 +370,13 @@ done yet (among them AI agents and waypoint editing, possession, arenas, GM invi
 | `.debug setallratings` | `d` | Sets rating values to incremental numbers based on their index. |
 | `.gobject export` | `o` | Exports the current GO selected |
 | `.battleground setbgscore` | `e` | <Teamid> <Score> - Sets battleground score. 2 Arguments. |
-| `.battleground startbg` | `e` | Starts current battleground match. |
 | `.battleground pausebg` | `e` | Pauses current battleground match. |
-| `.battleground bginfo` | `e` | Displays information about current battleground. |
 | `.battleground battleground` | `e` | Shows BG Menu |
-| `.battleground setworldstates` | `e` | <var> <val> - Var can be in hex. WS Value. |
 | `.battleground setbfstatus` | `e` | .setbfstatus - NYI. |
 | `.battleground getqueue` | `z` | Gets common battleground queue information. |
 | `.npc addAgent` | `n` | .npc addAgent <agent> <procEvent> <procChance> <procCount> <spellId> <spellType> <spelltargetType> <spellCooldown> <floatMisc1> <Misc2> |
 | `.npc listAgent` | `n` | .npc listAgent |
 | `.npc spawnlink` | `n` | .spawnlink sqlentry |
-| `.npc possess` | `n` | .npc possess - Possess an npc (mind control) |
-| `.npc unpossess` | `n` | .npc unpossess - Unposses any currently possessed npc. |
 | `.npc formationlink1` | `m` | Sets formation master. |
 | `.npc formationlink2` | `m` | Sets formation slave with distance and angle |
 | `.npc formationclear` | `m` | Removes formation from creature |
@@ -385,7 +385,6 @@ done yet (among them AI agents and waypoint editing, possession, arenas, GM invi
 | `.cheat stack` | `m` | Enables aura stacking cheat. |
 | `.quest load` | `2` | Loads quests from database |
 | `.pet spawnbot` | `a` | .pet spawnbot <type> - spawn a helper bot for your aid |
-| `.guild create` | `m` | Creates a guild. |
 | `.character settitle` | `m` | Adds title to a player |
 | `.admin renameallinvalidchars` | `z` | Renames all invalid character names |
 | `.arena createteam` | `e` | Creates arena team |

@@ -2305,6 +2305,58 @@ final class Map : CombatWorld, GameObjectWorld
         return null;
     }
 
+    float waterSurface(Vector3 at)
+    {
+        import dmangos.mapfile : mapLiquidTypeOcean, mapLiquidTypeWater;
+
+        LiquidData liquid;
+        if (terrain is null || terrain.liquidStatus(at.x, at.y, at.z,
+                mapLiquidTypeWater | mapLiquidTypeOcean, liquid) == LiquidStatus.noWater)
+            return invalidHeightValue;
+        return liquid.level;
+    }
+
+    bool pathOnWater(Vector3 from, Vector3 to, out Vector3[] route)
+    {
+        import std.algorithm.comparison : max;
+        import std.math : abs, ceil, isFinite, sqrt;
+
+        enum float maxDistance = 200, clearance = 0.15f;
+        const dx = to.x - from.x, dy = to.y - from.y;
+        const distance = sqrt(dx * dx + dy * dy);
+        if (terrain is null || !distance.isFinite || distance > maxDistance)
+            return false;
+        const steps = max(1u, cast(uint) ceil(distance / 2));
+        const originalSurface = waterSurface(from);
+        if (originalSurface > from.z + 1)
+            return false; // still submerged
+        bool onWater = originalSurface > invalidHeightValue;
+        auto last = from;
+        Vector3[] points = [last];
+        foreach (step; 1 .. steps + 1)
+        {
+            const fraction = float(step) / steps;
+            auto p = Vector3(from.x + dx * fraction, from.y + dy * fraction, last.z);
+            const ground = groundHeight(p.x, p.y, last.z + 2, false);
+            const surface = waterSurface(p);
+            const wet = surface > invalidHeightValue && surface >= ground;
+            onWater |= wet;
+            p.z = wet ? surface : ground;
+            if (p.z <= invalidHeightValue || abs(p.z - last.z) > 3
+                || !lineOfSightBetween(Position(last.x, last.y, last.z + clearance), Position(p.x, p.y, p.z + clearance)))
+                return onWater || waterSurface(to) > invalidHeightValue;
+            // Keep the sampled profile without sending every sample on a flat surface.
+            if (p.z != last.z && points[$ - 1] != last)
+                points ~= last;
+            if (p.z != last.z || step == steps)
+                points ~= p;
+            last = p;
+        }
+        if (onWater)
+            route = points;
+        return onWater;
+    }
+
     /// See `MotionWorld.waterOrGroundLevel`.
     float waterOrGroundLevel(float x, float y, float z, float groundZ, float minWaterDeep)
     {

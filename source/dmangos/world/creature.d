@@ -26,10 +26,10 @@ import dmangos.world.clientdata : ClientData;
 import dmangos.world.map : Idler, Moving, PerViewer;
 import dmangos.world.replication : Replica, Replicable;
 import dmangos.vmap.math : Vector3;
-import dmangos.world.motion : followSpline, IdleMovement, MotionWorld, MovementGenerator, readMovement, saveMovement, WaypointStore;
+import dmangos.world.motion : fallToGround, followSpline, IdleMovement, MotionWorld, MovementGenerator, readMovement, saveMovement, WaypointStore;
 import dmangos.world.movement : baseMoveSpeed, MovementFlags, MovementInfo, MoveType, Position;
 import dmangos.bytes : ByteReader, ByteWriter;
-import dmangos.world.spline : MoveSpline;
+import dmangos.world.spline : MoveSpline, SplineFlags;
 import dmangos.world.spells : SpellInfo;
 import dmangos.world.objects;
 import dmangos.world.updatefields;
@@ -754,6 +754,11 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         return canSwim && !(template_.inhabitType & inhabitLandOrAir) && !flyingMovement;
     }
 
+    package @property bool surfaceWalking() const
+    {
+        return !waterOnly && movement.has(MovementFlags.waterWalking) && !movement.has(MovementFlags.swimming);
+    }
+
     /// Change the movement mode and its public flag together.
     package bool setSwimming(bool swimming)
     {
@@ -808,7 +813,9 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         if (point == lastSwimProbe)
             return;
         lastSwimProbe = point;
-        if (setSwimming(world.swimmableAt(point, collisionHeight)))
+        const surface = movement.has(MovementFlags.waterWalking) ? world.waterSurface(point) : -200_000;
+        const onSurface = surface > -200_000 && at.z >= surface - 0.15f;
+        if (setSwimming(!onSurface && world.swimmableAt(point, collisionHeight)))
             world.flushCreature(this);
     }
 
@@ -883,6 +890,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             MovementAura(AuraType.hover, MovementFlags.hover,
                 Opcode.SMSG_SPLINE_MOVE_SET_HOVER, Opcode.SMSG_SPLINE_MOVE_UNSET_HOVER),
         ];
+        uint changedModes;
         foreach (mode; modes)
         {
             const enabled = auras.has(mode.aura);
@@ -892,10 +900,28 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
                 movement.flags |= mode.flag;
             else
                 movement.flags &= ~mode.flag;
+            changedModes |= mode.flag;
             ByteWriter packet;
             packet.putPackedGuid(guid);
             world.sendToObservers(guid, enabled ? mode.enable : mode.disable, packet.data);
         }
+        const falling = !spline.finalized && (spline.flags & SplineFlags.falling);
+        if (changedModes & MovementFlags.waterWalking)
+        {
+            lastSwimProbe = Vector3(float.nan, float.nan, float.nan);
+            if (!falling && !flyingMovement)
+            {
+                const at = spline.finalized ? position : spline.position;
+                if (world.waterSurface(Vector3(at.x, at.y, at.z)) > -200_000)
+                    stopMoving(this, world);
+            }
+            refreshSwimming(world);
+        }
+        if (falling && movement.has(MovementFlags.hover))
+            stopMoving(this, world);
+        else if ((changedModes & ~movement.flags & (MovementFlags.hover | MovementFlags.waterWalking))
+            || (falling && (changedModes & MovementFlags.safeFall)))
+            fallToGround(this, world, falling);
         const held = immobilized;
         const stunned = auras.has(AuraType.modStun);
         const flags = values.get!UNIT_FIELD_FLAGS;
@@ -932,7 +958,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         if (held == auraHeld)
             return;
         auraHeld = held;
-        if (held)
+        if (held && !(spline.flags & SplineFlags.falling))
             stopMoving(this, world);
         ByteWriter w;
         w.putPackedGuid(guid);
@@ -1415,7 +1441,9 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             return;
         enum uint crowdControlFlags = UnitFlags.stunned | UnitFlags.fleeing | UnitFlags.confused | UnitFlags.silenced
             | UnitFlags.pacified | UnitFlags.disarmed;
-        if (auras.list.length || auraHeld || auraSpeedFactor != 1 || (values.get!UNIT_FIELD_FLAGS & crowdControlFlags))
+        enum movementAuraFlags = MovementFlags.waterWalking | MovementFlags.safeFall | MovementFlags.hover;
+        if (auras.list.length || auraHeld || auraSpeedFactor != 1 || (movement.flags & movementAuraFlags)
+            || (values.get!UNIT_FIELD_FLAGS & crowdControlFlags))
             refreshAuraMovement(world);
         if (petData !is null && petData.statsShownAt != auras.changes) // a pet's stats are made of its auras too
         {
@@ -1424,6 +1452,13 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             showPetStats(this);
             if (auto combat = cast(CombatWorld) world)
                 combat.flushCreature(this);
+        }
+        if (!spline.finalized && (spline.flags & SplineFlags.falling))
+        {
+            followSpline(this, diff);
+            if (spline.finalized)
+                refreshSwimming(world);
+            return;
         }
         if (ai !is null)
             if (auto combat = cast(CombatWorld) world)

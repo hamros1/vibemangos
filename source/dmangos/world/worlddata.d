@@ -19,6 +19,7 @@ import dmangos.world.clientdata : ClientData, maskOf, maxSkillStep, playableClas
 import dmangos.world.eventai : EventAiData;
 import dmangos.world.pet : PetData;
 import dmangos.world.dbscripts : DbScriptData;
+import dmangos.world.worldstateexpression : WorldStateExpressions;
 import dmangos.world.reputation : Spillover;
 import dmangos.world.creature : CreatureAddon, CreatureClassStats, CreatureSpawn, CreatureTemplate, classStatsKey,
     creatureTemplateQuery;
@@ -394,6 +395,7 @@ struct SpellListEntry
     uint availability;   /// percent chance it is used at all in a fight
     uint probability;    /// its weight among those ready (0: cast whenever ready, first)
     uint initialMin, initialMax, repeatMin, repeatMax;
+    uint worldStateExpression;
 }
 
 /// A `page_text` row: a page's text, and the page after it (0: the last).
@@ -490,7 +492,8 @@ final class WorldData
         size_t[] creatures, objects;
     }
     ConditionalSpawns[uint] conditionalSpawns;
-    uint[uint][2] spawnConditions;
+    SpawnGroupCondition[uint][2] spawnConditions;
+    WorldStateExpressions worldStateExpressions;
     uint[] annoraScorpidSpawns;
     uint[uint][uint] encounterCreatureById, encounterCreatureByWorldState;
 
@@ -703,10 +706,21 @@ final class WorldData
         data.loadSpawns(world, client, spawnSeed);
         data.loadQuestSpawnPhases(world);
         data.loadTransports(world, client); // after the game object templates
+        uint[uint] combatExpressions;
+        import dmangos.mysql : DatabaseException;
+        try
+            foreach (row; world.query!"SELECT Id, WorldStateExpressionID FROM combat_condition WHERE WorldStateExpressionID > 0"())
+                combatExpressions[row.get!uint(0)] = row.get!uint(1);
+        catch (DatabaseException e)
+        {
+            if (e.code != 1146)
+                throw e;
+        }
         foreach (row; world.query!("SELECT Id, SpellId, Flags, TargetId, Availability, Probability, InitialMin, "
-            ~ "InitialMax, RepeatMin, RepeatMax FROM creature_spell_list ORDER BY Id, Position")())
+            ~ "InitialMax, RepeatMin, RepeatMax, CombatCondition FROM creature_spell_list ORDER BY Id, Position")())
             data.creatureSpellLists[row.get!uint(0)] ~= SpellListEntry(row.get!uint(1), row.get!uint(2), row.get!int(3),
-                row.get!uint(4), row.get!uint(5), row.get!uint(6), row.get!uint(7), row.get!uint(8), row.get!uint(9));
+                row.get!uint(4), row.get!uint(5), row.get!uint(6), row.get!uint(7), row.get!uint(8), row.get!uint(9),
+                combatExpressions.get(cast(uint) row.get!int(10), 0));
         foreach (row; world.query!"SELECT entry, spell1, spell2, spell3, spell4 FROM creature_template_spells WHERE setId = 0"())
         {
             uint[4] spells;
@@ -987,7 +1001,7 @@ final class WorldData
         // Spawn groups select at most MaxCount placements. Map-local conditions gate the selection in play.
         auto groups = new SpawnGroups;
         foreach (row; world.query!"SELECT Id, Type, MaxCount, WorldState, WorldStateExpression FROM spawn_group"())
-            groups.add(row.get!uint(0), row.get!uint(1), row.get!int(2), row.get!int(4) != 0, row.get!uint(3));
+            groups.add(row.get!uint(0), row.get!uint(1), row.get!int(2), row.get!uint(4), row.get!uint(3));
         foreach (row; world.query!"SELECT Id, Guid FROM spawn_group_spawn"())
         {
             const group = row.get!uint(0), guid = row.get!uint(1);
@@ -999,6 +1013,7 @@ final class WorldData
             groups.addEntry(row.get!uint(0), row.get!uint(1), row.get!uint(2), row.get!uint(3), row.get!uint(4));
         groups.choose(rng);
         loadEncounterConditions(world);
+        loadWorldStateExpressions(world);
 
         // Spawns without an entry take one of `creature_spawn_entry`'s, or their group's.
         uint[][uint] spawnEntries;
@@ -1077,6 +1092,20 @@ final class WorldData
         info!"loaded %s creature and %s game object templates; %s creatures and %s game objects spawn (%s skipped)"(
             creatureTemplates.length, gameObjectTemplates.length, creatureSpawns.length, gameObjectSpawns.length,
             skipped);
+    }
+
+    private void loadWorldStateExpressions(MySqlConnection world)
+    {
+        import dmangos.mysql : DatabaseException;
+
+        try
+            foreach (row; world.query!"SELECT Id, Expression FROM worldstate_expression"())
+                worldStateExpressions.add(row.get!uint(0), row.get!string(1));
+        catch (DatabaseException e)
+        {
+            if (e.code != 1146)
+                throw e;
+        }
     }
 
     /// Kill-credited encounters use each copy's persisted creature deaths.
@@ -1821,6 +1850,12 @@ unittest
     assert(pools.reroll(PoolMember.Kind.creature, 99, rng) == 0, "not in a pool");
 }
 
+struct SpawnGroupCondition
+{
+    uint condition, expression;
+    bool opCast(T : bool)() const { return condition || expression; }
+}
+
 /**
  * Spawn groups (`spawn_group`, `spawn_group_spawn`, `spawn_group_entry`): selected placements,
  * their conditions and entries for placements without their own.
@@ -1831,8 +1866,7 @@ final class SpawnGroups
     {
         uint type;          // 0 creatures, 1 game objects
         int maxCount;       // 0: every member
-        bool hasExpression; // binary WorldStateExpression, a separate format
-        uint condition;     // WorldState is a condition entry, not a state variable ID
+        SpawnGroupCondition gate; // WorldState is a condition entry, not a state variable ID
         uint[] guids;
         uint[] entries;
         uint[] chances;
@@ -1846,9 +1880,9 @@ final class SpawnGroups
     private bool[uint][2] active;      // type -> spawn guids that are up
 
     ///
-    void add(uint id, uint type, int maxCount, bool hasExpression, uint condition = 0)
+    void add(uint id, uint type, int maxCount, uint expression = 0, uint condition = 0)
     {
-        groups[id] = Group(type, maxCount, hasExpression, condition);
+        groups[id] = Group(type, maxCount, SpawnGroupCondition(condition, expression));
     }
 
     ///
@@ -1881,11 +1915,11 @@ final class SpawnGroups
 
         foreach (id, ref group; groups)
         {
-            if (group.hasExpression || group.type >= 2)
+            if (group.type >= 2)
                 continue;
             auto members = group.guids.dup;
             // Each worker selects the same placements for a gate that can open in several regions.
-            if (group.condition)
+            if (group.gate)
             {
                 import std.algorithm.sorting : sort;
                 members.sort();
@@ -1909,11 +1943,11 @@ final class SpawnGroups
     }
 
     /// The condition that selected placement checks when its map is loaded.
-    uint condition(uint type, uint guid) const
+    SpawnGroupCondition condition(uint type, uint guid) const
     {
         if (const id = guid in groupOf[type])
-            return groups[*id].condition;
-        return 0;
+            return groups[*id].gate;
+        return SpawnGroupCondition.init;
     }
 
     /**
@@ -2019,9 +2053,9 @@ final class SpawnGroups
 unittest
 {
     auto groups = new SpawnGroups;
-    groups.add(1, 0, 1, false);
-    groups.add(2, 0, 0, true);
-    groups.add(3, 1, 0, false, 100);
+    groups.add(1, 0, 1);
+    groups.add(2, 0, 0, 200);
+    groups.add(3, 1, 0, 0, 100);
     groups.addSpawn(3, 27);
     foreach (guid; [5u, 6, 7])
         groups.addSpawn(1, guid);
@@ -2031,14 +2065,15 @@ unittest
     auto rng = Random(3);
     groups.choose(rng);
     assert(groups.spawns(0, 5) + groups.spawns(0, 6) + groups.spawns(0, 7) == 1, "MaxCount 1");
-    assert(!groups.spawns(0, 9) && groups.spawns(0, 42) && groups.spawns(1, 5));
-    assert(groups.spawns(1, 27) && groups.condition(1, 27) == 100);
+    assert(groups.spawns(0, 9) && groups.condition(0, 9).expression == 200);
+    assert(groups.spawns(0, 42) && groups.spawns(1, 5));
+    assert(groups.spawns(1, 27) && groups.condition(1, 27).condition == 100);
     const entry = groups.entryFor(5, rng);
 
     // `MinCount` and `MaxCount`: one Lady Anacondra and three Druids of the Fang among four spots.
     {
         auto fang = new SpawnGroups;
-        fang.add(4300001, 0, 0, false);
+        fang.add(4300001, 0, 0);
         foreach (guid; [1u, 2, 3, 4])
             fang.addSpawn(4300001, guid);
         fang.addEntry(4300001, 3671, 0, 1, 1);

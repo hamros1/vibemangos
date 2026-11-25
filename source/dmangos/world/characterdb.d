@@ -24,7 +24,7 @@ import dmangos.world.database : AuraRecord, TicketRecord, BattlegroundData, PvpS
     PetitionRecord, SocialRow, CorpseRecord, InstanceBindRecord, InstanceRecord, InstanceRecords,
     InstanceRespawnRecord, MailRecord, ServiceCheckpoint, GroupLootRotation, LootCoinCredit, LootCoinRedemption,
     LootAwardKey, LootAwardResult, BattlegroundCheckpoint, BattlegroundReward, BattlegroundPayment,
-    OutdoorSummonKind, OutdoorSummonRequest, QuestActorCheckpoint;
+    OutdoorSummonKind, OutdoorSummonRequest, OutdoorWorldState, QuestActorCheckpoint;
 import dmangos.world.reputation : ReputationRecord;
 import dmangos.world.auctionhouse : AuctionRecord;
 import dmangos.world.quests : QuestState, QuestStatus;
@@ -1425,6 +1425,9 @@ final class CharacterStatements
             ~ "realm INT UNSIGNED NOT NULL, origin SMALLINT UNSIGNED NOT NULL, sequence BIGINT UNSIGNED NOT NULL, "
             ~ "map INT UNSIGNED NOT NULL, home BIGINT UNSIGNED NOT NULL, `cursor` INT UNSIGNED NOT NULL, "
             ~ "state TEXT CHARACTER SET ascii NOT NULL, PRIMARY KEY (realm, origin, sequence)) ENGINE=InnoDB")();
+        characters.execute!("CREATE TABLE IF NOT EXISTS dmangos_outdoor_world_state ("
+            ~ "realm INT UNSIGNED NOT NULL, map INT UNSIGNED NOT NULL, id INT UNSIGNED NOT NULL, "
+            ~ "value INT NOT NULL, PRIMARY KEY (realm, map, id)) ENGINE=InnoDB")();
         characters.execute!("CREATE TABLE IF NOT EXISTS dmangos_outdoor_summon ("
             ~ "realm INT UNSIGNED NOT NULL, origin SMALLINT UNSIGNED NOT NULL, sequence BIGINT UNSIGNED NOT NULL, "
             ~ "`cursor` INT UNSIGNED NOT NULL, ordinal INT UNSIGNED NOT NULL, map INT UNSIGNED NOT NULL, "
@@ -1463,6 +1466,20 @@ final class CharacterStatements
             return characters.execute!("DELETE FROM dmangos_outdoor_script" ~ key)(realm, origin, sequence, cursor) == 1;
         return characters.execute!("UPDATE dmangos_outdoor_script SET `cursor` = `cursor` + 1" ~ key)(
             realm, origin, sequence, cursor) == 1;
+    }
+
+    OutdoorWorldState[] loadOutdoorWorldStates(uint realm)
+    {
+        OutdoorWorldState[] states;
+        foreach (row; characters.query!"SELECT map, id, value FROM dmangos_outdoor_world_state WHERE realm = ?"(realm))
+            states ~= OutdoorWorldState(row.get!uint(0), row.get!uint(1), row.get!int(2));
+        return states;
+    }
+
+    void saveOutdoorWorldState(uint realm, const ref OutdoorWorldState state)
+    {
+        characters.execute!("INSERT INTO dmangos_outdoor_world_state (realm, map, id, value) VALUES (?, ?, ?, ?) "
+            ~ "ON DUPLICATE KEY UPDATE value = VALUES(value)")(realm, state.map, state.id, state.value);
     }
 
     void insertOutdoorSummon(uint realm, const ref OutdoorSummonRequest request)

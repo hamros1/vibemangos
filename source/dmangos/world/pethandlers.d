@@ -1044,6 +1044,7 @@ mixin template PetHandlers()
     private Creature charmed_;         // the creature charmed, null if none
     private uint charmedFaction;       // its own faction, back when the charm ends
     private uint charmedFlags;         // its own unit flags, ditto
+    private ReactState charmedReaction;
     private uint charmSpell;           // the charm's spell
     private bool possessing;           // the player moves and sees as it (Mind Control, Eyes of the Beast)
 
@@ -1068,18 +1069,19 @@ mixin template PetHandlers()
         const ownPet = creature is pet_; // Eyes of the Beast: one's own pet, possessed
         if (pet_ !is null && !ownPet)
             unsummonPet(PetSlot.current); // set aside, as CMaNGOS's `UnsummonPetTemporaryIfAny`
-        charmSpell = spell.id;
+        charmSpell = spell is null ? 0 : spell.id; // GM possession creates no spell aura
         possessing = possess;
         if (!ownPet)
         {
             charmedFaction = creature.values.get!UNIT_FIELD_FACTIONTEMPLATE;
             charmedFlags = creature.values.get!UNIT_FIELD_FLAGS;
+            charmedReaction = creature.ai.react;
             creature.ai.dropThreat(map);
             creature.ai.petStopAttack(map);
             auto state = new PetState;
             state.type = PetType.guardian; // never saved: `writePet` keeps no charm
             state.owner = player.guid;
-            state.createdBySpell = spell.id;
+            state.createdBySpell = charmSpell;
             state.name = creature.template_.name;
             state.bar = ActionBar.initial();
             // The possession bar and AI rotation can contain different spells (notably in raids).
@@ -1138,9 +1140,12 @@ mixin template PetHandlers()
             creature.values.set!UNIT_FIELD_FACTIONTEMPLATE(charmedFaction);
             creature.factionTemplate = context.client.factionTemplates.lookup(charmedFaction);
             creature.values.set!UNIT_FIELD_FLAGS(charmedFlags & ~UnitFlags.playerControlled);
+            if (creature.ai !is null)
+                creature.ai.react = charmedReaction;
             pet_ = null;
             deliver(Opcode.SMSG_PET_SPELLS, noPetSpellsPacket());
-            if (creature.alive && creature.ai !is null && canAttack(creature.ai.relatingOf(), relatingNow(), context.client))
+            if (charmSpell && creature.alive && creature.ai !is null
+                && canAttack(creature.ai.relatingOf(), relatingNow(), context.client))
                 creature.ai.attackedBy(unit, map); // it remembers who held it
         }
         map.flushObjectChanges(creature);

@@ -376,6 +376,13 @@ struct OutdoorScriptCheckpoint
     bool waitingForSummons;
 }
 
+/// A database-script variable shared by the workers of an outdoor map in one realm.
+struct OutdoorWorldState
+{
+    uint map, id;
+    int value;
+}
+
 enum OutdoorSummonKind : ubyte { creature, gameObject, openable, scriptedObject, scriptedDespawn, relay, staticDespawn }
 
 /// A durable summon routed by destination cell, with a receipt after the actor commits.
@@ -881,7 +888,10 @@ interface WorldDatabase
     @DatabaseWrite bool beginOutdoorScript(uint realm, const ref OutdoorScriptCheckpoint script);
     @DatabaseWrite bool advanceOutdoorScript(uint realm, ushort origin, ulong sequence, uint cursor, bool finished,
         const(OutdoorQuestUpdate)[] updates = null, const(QuestActorCheckpoint)[] summons = null,
-        const(OutdoorScriptCheckpoint)[] relays = null, const(OutdoorSummonRequest)[] forwards = null);
+        const(OutdoorScriptCheckpoint)[] relays = null, const(OutdoorSummonRequest)[] forwards = null,
+        const(OutdoorWorldState)[] worldStates = null);
+    @DatabaseRead OutdoorWorldState[] loadOutdoorWorldStates(uint realm);
+    @DatabaseWrite void saveOutdoorWorldState(uint realm, const ref OutdoorWorldState state);
     @DatabaseRead OutdoorSummonRequest[] loadOutdoorSummons(uint realm);
     @DatabaseWrite bool enqueueOutdoorSummon(uint realm, const ref OutdoorSummonRequest request);
     @DatabaseRead bool outdoorSummonsPending(uint realm, ushort origin, ulong sequence);
@@ -1430,9 +1440,10 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     }
     bool advanceOutdoorScript(uint realm, ushort origin, ulong sequence, uint cursor, bool finished,
         const(OutdoorQuestUpdate)[] updates = null, const(QuestActorCheckpoint)[] summons = null,
-        const(OutdoorScriptCheckpoint)[] relays = null, const(OutdoorSummonRequest)[] forwards = null)
+        const(OutdoorScriptCheckpoint)[] relays = null, const(OutdoorSummonRequest)[] forwards = null,
+        const(OutdoorWorldState)[] worldStates = null)
     {
-        if (!updates.length && !summons.length && !relays.length && !forwards.length)
+        if (!updates.length && !summons.length && !relays.length && !forwards.length && !worldStates.length)
             return statements.advanceOutdoorScript(realm, origin, sequence, cursor, finished);
         bool advanced;
         characterDb.transaction({
@@ -1445,6 +1456,8 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
             saveSummonRelays(realm, relays);
             foreach (ref request; forwards)
                 statements.insertOutdoorSummon(realm, request);
+            foreach (ref state; worldStates)
+                statements.saveOutdoorWorldState(realm, state);
             // Retain this on a retry if COMMIT succeeded but its response was lost.
             advanced = true;
         });
@@ -1456,6 +1469,12 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
         foreach (ref relay; relays)
             if (!statements.beginOutdoorScript(realm, relay))
                 throw new imported!"dmangos.mysql".DatabaseException("summon relay checkpoint already exists");
+    }
+
+    OutdoorWorldState[] loadOutdoorWorldStates(uint realm) { return statements.loadOutdoorWorldStates(realm); }
+    void saveOutdoorWorldState(uint realm, const ref OutdoorWorldState state)
+    {
+        statements.saveOutdoorWorldState(realm, state);
     }
 
     OutdoorSummonRequest[] loadOutdoorSummons(uint realm) { return statements.loadOutdoorSummons(realm); }
@@ -3213,7 +3232,8 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
 
     bool advanceOutdoorScript(uint realm, ushort origin, ulong sequence, uint cursor, bool finished,
         const(OutdoorQuestUpdate)[] updates = null, const(QuestActorCheckpoint)[] summons = null,
-        const(OutdoorScriptCheckpoint)[] relays = null, const(OutdoorSummonRequest)[] forwards = null)
+        const(OutdoorScriptCheckpoint)[] relays = null, const(OutdoorSummonRequest)[] forwards = null,
+        const(OutdoorWorldState)[] worldStates = null)
     {
         auto scripts = origin in outdoorScripts.get(realm, null);
         if (scripts is null)
@@ -3234,7 +3254,21 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
             beginOutdoorScript(realm, relay);
         foreach (ref request; forwards)
             outdoorSummons[realm] ~= request;
+        foreach (ref state; worldStates)
+            saveOutdoorWorldState(realm, state);
         return true;
+    }
+
+    private OutdoorWorldState[ulong][uint] outdoorWorldStates;
+
+    OutdoorWorldState[] loadOutdoorWorldStates(uint realm)
+    {
+        return outdoorWorldStates.get(realm, null).values;
+    }
+
+    void saveOutdoorWorldState(uint realm, const ref OutdoorWorldState state)
+    {
+        outdoorWorldStates[realm][(ulong(state.map) << 32) | state.id] = state;
     }
 
     private OutdoorSummonRequest[][uint] outdoorSummons;

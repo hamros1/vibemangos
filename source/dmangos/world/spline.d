@@ -12,7 +12,7 @@ import std.math : atan2, PI;
 
 import dmangos.bytes : ByteReader, ByteWriter;
 import dmangos.vmap.math : Vector3;
-import dmangos.world.movement : Position;
+import dmangos.world.movement : jumpGravity, Position;
 
 /// The spline flags of `SMSG_MONSTER_MOVE`.
 enum SplineFlags : uint
@@ -68,6 +68,13 @@ struct MoveSpline
         points = path.dup ~ path[$ - 1];
         lengths = new int[path.length];
 
+        if (flags & SplineFlags.falling)
+        {
+            foreach (i; 1 .. path.length)
+                lengths[i] = 1 + cast(int)(fallSeconds(path[0].z - path[i].z, velocity) * 1000);
+            return;
+        }
+
         // The time of each point, from 1 ms on, truncated as it adds up.
         const velocityInv = 1000.0f / velocity;
         int time = 1;
@@ -78,6 +85,30 @@ struct MoveSpline
         }
         if (duration < 1) // all the points in one place
             lengths[last] = 1;
+    }
+
+    private static float fallSeconds(float distance, float terminalSpeed)
+        pure nothrow @nogc @safe
+    {
+        import std.math : sqrt;
+
+        const accelerationTime = terminalSpeed / jumpGravity;
+        const accelerationDistance = terminalSpeed * accelerationTime / 2;
+        if (distance <= 0)
+            return 0;
+        return distance <= accelerationDistance ? sqrt(2 * distance / jumpGravity)
+            : accelerationTime + (distance - accelerationDistance) / terminalSpeed;
+    }
+
+    private float fallZ() const pure nothrow @nogc @safe
+    {
+        import std.algorithm.comparison : min, max;
+
+        const seconds = timePassed_ / 1000.0f;
+        const accelerationTime = min(velocity_ / jumpGravity, seconds);
+        const distance = jumpGravity * accelerationTime * accelerationTime / 2
+            + velocity_ * (seconds - accelerationTime);
+        return max(finalDestination.z, points[0].z - distance);
     }
 
     /// A stop: no path, done at once.
@@ -183,7 +214,9 @@ struct MoveSpline
         const segmentTime = lengths[pointIndex + 1] - lengths[pointIndex];
         const u = segmentTime > 0 ? (timePassed_ - lengths[pointIndex]) / float(segmentTime) : 1.0f;
         const a = points[pointIndex], b = points[pointIndex + 1];
-        const p = a + (b - a) * u;
+        auto p = a + (b - a) * u;
+        if (flags_ & SplineFlags.falling)
+            p.z = finalized ? finalDestination.z : fallZ();
         float orientation;
         if (finalized && (flags_ & SplineFlags.finalAngle))
             orientation = facingAngle_;

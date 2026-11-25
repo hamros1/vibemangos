@@ -850,15 +850,15 @@ unittest
 }
 
 /**
- * Uldaman restarted in the middle of its events: the Stone Keepers' waking stops (those left stand in stone, nobody
- * wakes them), and the altar used again does it all; Archaedas, woken, sleeps again after the restart and his altar
- * wakes him anew.
+ * Uldaman resumes the Stone Keepers' sequence from a save and opens the doors once.
+ * Archaedas then resumes his active fight at the saved health on a replacement world.
  */
 unittest
 {
     if (!haveRealData())
         return;
     import dmangos.script.api : EntityRef, EventHappened;
+    import dmangos.world.updatefields : UNIT_FIELD_HEALTH;
 
     enum uint keeper = 4857, stoned = 10255, upper = 124367, archaedas = 2748;
     auto d = Dungeon.enter(70, 45);
@@ -882,33 +882,30 @@ unittest
     d.run(2.seconds);
     d.restart();
     d.spawned(keeper, 0, 20);
-    d.run(15.seconds);
-    assert(awake() is null, "nobody wakes them after the restart");
-    altar(2228);
-    assert(d.all(keeper).canFind!(k => k.guid == first.guid), "restarting the event revives the missing keeper");
+    assert(d.runUntil(() => awake() !is null, 15.seconds), "the next keeper wakes without using the altar again");
+    assert(!d.all(keeper).canFind!(k => k.guid == first.guid && k.alive), "the first keeper stays dead");
     bool open()
     {
         if (auto k = awake())
             d.kill(k);
         return Dungeon.isOpen(d.objectOf(upper));
     }
-    assert(d.runUntil(&open, 200.seconds), "the event done again after the restart\n" ~ d.story);
+    assert(d.runUntil(&open, 200.seconds), "the surviving sequence finishes after the restart\n" ~ d.story);
 
     auto boss = d.spawned(archaedas, 0, 25);
     altar(2268);
     d.goTo(Position(boss.position.x + 5, boss.position.y, boss.position.z));
     d.run(8.seconds);
     assert(boss.ai.inCombat, "Archaedas fights");
-    d.goTo(Position(boss.position.x + 150, boss.position.y, boss.position.z));
-    d.restart();
+    const original = boss.guid, health = boss.values.get!UNIT_FIELD_HEALTH - 300;
+    boss.values.set!UNIT_FIELD_HEALTH(health);
+    d.run(3.seconds);
+    d.restartAfterCrash();
     d.forget();
     boss = d.spawned(archaedas, 0, 25);
     d.run(2.seconds);
-    assert(!boss.ai.inCombat && !d.heard(-1070001), "asleep after the restart");
-    altar(2268);
-    d.goTo(Position(boss.position.x + 5, boss.position.y, boss.position.z));
-    d.run(8.seconds);
-    assert(d.heard(-1070005) && boss.ai.inCombat, "his altar wakes him again\n" ~ d.story);
+    assert(boss.guid == original && boss.values.get!UNIT_FIELD_HEALTH == health);
+    assert(boss.ai.inCombat && !d.heard(-1070005), "Archaedas resumes without another awakening\n" ~ d.story);
 }
 
 // ---------------------------------------------------------------------------------------------------------------

@@ -1166,6 +1166,11 @@ unittest
         "a blocked swim stops rather than walking straight");
 
     const surface = point(20, 20, 60);
+    Vector3[] walk;
+    assert(map.pathOnWater(surface, point(21, 21, 54), walk) && walk.length == 2);
+    assert(walk[0] == surface && walk[$ - 1] == point(21, 21, 60), "a water walker stays above the seabed");
+    assert(!map.pathOnWater(from, point(21, 21, 60), walk), "a submerged creature cannot start on the surface");
+    assert(map.pathOnWater(surface, across, walk) && walk.length == 0, "a dry hole blocks the surface route");
     Vector3 approach;
     assert(map.swimmingTarget(surface, 2, approach) && isClose(approach.z, 59.9f, 0, 0.01));
     assert(!map.swimmingTarget(point(20, 20, 65), 2, approach), "an airborne target is beyond swim reach");

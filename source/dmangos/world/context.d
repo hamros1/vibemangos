@@ -86,7 +86,7 @@ import dmangos.world.character : Character;
 import dmangos.world.player : Player;
 import dmangos.world.playercreate : CreationSettings;
 import dmangos.world.spellids : ImplicitTarget, SpellEffect;
-import dmangos.world.worlddata : EventCreature, EventMail, PoolMember, Ship, SpellListEntry, WorldData;
+import dmangos.world.worlddata : EventCreature, EventMail, PoolMember, Ship, SpawnGroupCondition, SpellListEntry, WorldData;
 
 /// How a player simulated on another node than its client's talks to the other node.
 interface PlayerRelay
@@ -3034,6 +3034,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         reportScripts();
         signalSequence = ulong(startUnixTime) << 20; // above what an earlier run of this node sent
         loadInstances();
+        if (config.cluster.enabled && !config.cluster.gateway)
+            readOutdoorWorldStates();
         loadCommandOverrides();
         // The cluster services this node can run (docs/SERVICES.md); standalone it runs them all at once.
         import dmangos.world.groupservice : LootTurnHost;
@@ -3888,10 +3890,24 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return data.npcs.conditions.satisfied(id, subject, client);
     }
 
+    private int[uint][uint] outdoorWorldStates;
+    private MonoTime nextOutdoorWorldStatePoll;
+
+    private void readOutdoorWorldStates()
+    {
+        int[uint][uint] current;
+        foreach (ref state; database.loadOutdoorWorldStates(config.realmId))
+            current[state.map][state.id] = state.value;
+        outdoorWorldStates = current;
+    }
+
     package int conditionMapWorldState(Map where, uint id)
     {
         if (auto value = id in where.scriptedWorldStates)
             return *value;
+        if (!where.instanceId)
+            if (const value = id in outdoorWorldStates.get(where.id, null))
+                return *value;
         if (auto copy = battlegrounds.find(where.instanceId))
             if (copy.mapId == where.id)
                 return cast(int) copy.worldStates.get(id, 0);
@@ -3911,6 +3927,18 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     return entryKilledInInstance(where.instanceId, *boss);
         }
         return conditionRealmState(id);
+    }
+
+    bool worldStateExpressionMet(CombatWorld world, uint expression)
+    {
+        auto where = cast(Map) world;
+        if (where is null)
+            return false;
+        const now = unixTime;
+        // Map-wide random expressions give the same result to every worker evaluating the same second.
+        const seed = cast(uint) now ^ (where.id * 31) ^ where.instanceId ^ (expression * 16777619u);
+        return data.worldStateExpressions.matches(expression, id => conditionMapWorldState(where, id),
+            &gameEvents.holidayActive, now, seed);
     }
 
     package bool conditionEncounterCompleted(Map where, uint id)
@@ -5252,8 +5280,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     private bool groupSpawnAllowed(Map where, uint type, uint guid)
     {
-        if (const condition = guid in data.spawnConditions[type])
-            return where !is null && mapConditionMet(where, *condition);
+        if (const gate = guid in data.spawnConditions[type])
+            return where !is null && mapConditionMet(where, gate.condition)
+                && (!gate.expression || worldStateExpressionMet(where, gate.expression));
         return true;
     }
 
@@ -5303,9 +5332,21 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     if (present !is null)
                         where.removeObject(guid);
                 }
-                else if (present is null && !instance)
-                    if (auto object = spawnWorldGameObject(spawn))
+                else if (present is null)
+                {
+                    if (!instance)
+                    {
+                        if (auto object = spawnWorldGameObject(spawn))
+                            where.addObject(object);
+                        continue;
+                    }
+                    if (auto object = spawnGameObjectInCopy(where.id, instance, spawn))
+                    {
                         where.addObject(object);
+                        if (auto script = instanceScripts.get(instance, null))
+                            script.raise(imported!"dmangos.script.api".ObjectLoaded(EntityRef(object.guid)));
+                    }
+                }
             }
         }
         foreach (where; maps)
@@ -5353,32 +5394,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             }
         if (auto cells = mapId in data.gameObjectCells)
             foreach (index; (*cells).get(cell, null))
-            {
-                const spawn = &data.gameObjectSpawns[index];
-                if (script !is null && script.restoringEntity(EntityRef(makeGuid(HighGuid.gameObject, spawn.entry, spawn.guid))))
-                    continue;
-                const reward = state is null ? null : spawn.guid in state.chests;
-                if ((spawn.respawnSeconds < 0 && reward is null) || (state !is null && spawn.guid in state.usedUp)
-                    || !gameObjectInEvents(spawn.guid) || !groupSpawnAllowed(existingMap(mapId, instance), 1, spawn.guid))
-                    continue;
-                const available = copy !is null && spawn.battlegroundPowerUp ? copy.powerUpAvailable(spawn.guid)
-                    : upInPool(PoolMember.Kind.gameObject, spawn.guid);
-                if (!available)
-                    continue;
-                const event = spawn.guid in data.gameObjectBattleEvents;
-                if (copy !is null && !copy.spawnAllowed(event))
-                    continue;
-                auto go = makeGameObject(*spawn);
-                go.instanceId = instance;
-                if (reward !is null && !restoreReward(go, *reward))
-                {
-                    scripts.destroy(go.behaviour);
-                    continue;
-                }
-                if (copy !is null && event !is null && (*event)[0] == 254 && copy.doorsOpen)
-                    go.setDoorOpen(true); // a door loading after the start is open
-                spawned ~= go;
-            }
+                if (auto go = spawnGameObjectInCopy(mapId, instance, data.gameObjectSpawns[index]))
+                    spawned ~= go;
         if (script !is null)
         {
             import dmangos.script.api : CreatureLoaded, EntityRef, ObjectLoaded;
@@ -5392,6 +5409,34 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             script.loading = null;
         }
         return spawned;
+    }
+
+    private GameObject spawnGameObjectInCopy(uint mapId, uint instance, const ref GameObjectSpawn spawn)
+    {
+        if (auto script = instanceScripts.get(instance, null))
+            if (script.restoringEntity(EntityRef(makeGuid(HighGuid.gameObject, spawn.entry, spawn.guid))))
+                return null;
+        const state = instance in instances;
+        const reward = state is null ? null : spawn.guid in state.chests;
+        if ((spawn.respawnSeconds < 0 && reward is null) || (state !is null && spawn.guid in state.usedUp)
+            || !gameObjectInEvents(spawn.guid) || !groupSpawnAllowed(existingMap(mapId, instance), 1, spawn.guid))
+            return null;
+        auto copy = battlegroundOfMap(mapId) ? battlegrounds.find(instance) : null;
+        const available = copy !is null && spawn.battlegroundPowerUp ? copy.powerUpAvailable(spawn.guid)
+            : upInPool(PoolMember.Kind.gameObject, spawn.guid);
+        const event = spawn.guid in data.gameObjectBattleEvents;
+        if (!available || (copy !is null && !copy.spawnAllowed(event)))
+            return null;
+        auto go = makeGameObject(spawn);
+        go.instanceId = instance;
+        if (reward !is null && !restoreReward(go, *reward))
+        {
+            scripts.destroy(go.behaviour);
+            return null;
+        }
+        if (copy !is null && event !is null && (*event)[0] == 254 && copy.doorsOpen)
+            go.setDoorOpen(true);
+        return go;
     }
 
     /// After `Instance.UnloadDelay` empty, an instance's map is unloaded, and its binds go with it.
@@ -10552,6 +10597,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (instances.length)
             unloadEmptyInstances(now);
         refreshQuestActors();
+        if (config.cluster.enabled && !config.cluster.gateway && now >= nextOutdoorWorldStatePoll)
+        {
+            nextOutdoorWorldStatePoll = now + 1.seconds;
+            try
+                readOutdoorWorldStates();
+            catch (imported!"dmangos.mysql".DatabaseException error)
+                imported!"dmangos.log".warning!"outdoor world states: could not refresh persisted values: %s"(error.msg);
+        }
         updateScripts(cast(uint) elapsed.total!"msecs");
         updateOutdoorScriptActors();
         updateDungeonFights();
@@ -10852,7 +10905,7 @@ unittest
     enum uint condition = 88, flag = 99;
     context.data.npcs.conditions = new Conditions([Condition(condition, ConditionType.worldState, flag, 1, 1)]);
     context.data.conditionalSpawns[spawn.map] = WorldData.ConditionalSpawns([0], null);
-    context.data.spawnConditions[0][spawn.guid] = condition;
+    context.data.spawnConditions[0][spawn.guid] = SpawnGroupCondition(condition);
     auto where = context.map(spawn.map);
     where.loadCell(home);
     assert(where.creatureAt(guid) is null);

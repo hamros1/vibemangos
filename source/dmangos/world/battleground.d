@@ -3221,6 +3221,27 @@ unittest
     assert(closestGraveyard(context.data, context.client, mapWarsongGulch, near, teamAlliance, 3277, 0, closed).id == 771);
 }
 
+/// The GM can inspect and start a live match and send a world-state update to its clients.
+unittest
+{
+    import dmangos.auth.accounts : AccountLevel;
+    import dmangos.world.testclient;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto gm = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.gameMaster);
+    gm.read();
+    auto copy = enterWarsong(context, [&gm], [7], [0]);
+    gm.say(".battleground bginfo");
+    assert(gm.read().length);
+    gm.say(".battleground startbg");
+    assert(copy.status == BattlegroundStatus.inProgress);
+    gm.say(".battleground setworldstates 9999 42");
+    assert(copy.worldStates[9999] == 42 && gm.read().opcodesOf.canFind(Opcode.SMSG_UPDATE_WORLD_STATE));
+    gm.say(".battleground playsound 3439");
+    assert(gm.read().opcodesOf.canFind(Opcode.SMSG_PLAY_SOUND));
+}
+
 /// A group queues as one: every member gets the slot; one already queued keeps the group out.
 unittest
 {

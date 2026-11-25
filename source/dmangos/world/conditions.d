@@ -96,6 +96,21 @@ struct ConditionSubject
     bool delegate(uint id) completedEncounter;
 }
 
+/// Signed comparison shared by condition rows and binary world-state expressions.
+package bool compareConditionOperands(uint op, int lhs, int rhs)
+{
+    switch (op)
+    {
+    case 1: return lhs == rhs;
+    case 2: return lhs != rhs;
+    case 3: return lhs < rhs;
+    case 4: return lhs <= rhs;
+    case 5: return lhs > rhs;
+    case 6: return lhs >= rhs;
+    default: return false;
+    }
+}
+
 /// See the module documentation.
 final class Conditions
 {
@@ -288,16 +303,7 @@ private:
             if (subject.worldState is null)
                 return false;
             const value = subject.worldState(c.value1), operand = cast(int) c.value3;
-            switch (c.value2)
-            {
-            case 1: return value == operand;
-            case 2: return value != operand;
-            case 3: return value < operand;
-            case 4: return value <= operand;
-            case 5: return value > operand;
-            case 6: return value >= operand;
-            default: return false;
-            }
+            return compareConditionOperands(c.value2, value, operand);
         }
         case lastWaypoint:
             if (c.value2 == 0)

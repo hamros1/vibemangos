@@ -83,6 +83,8 @@ interface CreatureLore
     /// Spell list `id`'s spells (`creature_spell_list`); empty if none.
     const(SpellListEntry)[] spellList(uint id);
 
+    bool worldStateExpressionMet(CombatWorld world, uint expression);
+
     /// `creature` becomes a creature of `entry` (`Creature.changeEntry`); false if there is no such entry.
     bool changeEntry(Creature creature, uint entry);
 
@@ -1487,10 +1489,16 @@ private:
         foreach (ref t; spellListTimers)
             if (t != int.max)
                 t -= diff;
+        bool ready(size_t i, const ref SpellListEntry e)
+        {
+            return spellListTimers[i] <= 0
+                && (!e.worldStateExpression || lore.worldStateExpressionMet(world, e.worldStateExpression));
+        }
+
         size_t pick = size_t.max;
         uint total;
         foreach (i, ref e; list)
-            if (spellListTimers[i] <= 0)
+            if (ready(i, e))
             {
                 if (e.probability == 0)
                 {
@@ -1503,7 +1511,7 @@ private:
         {
             uint roll = uniform(0, total, world.random);
             foreach (i, ref e; list)
-                if (spellListTimers[i] <= 0 && e.probability)
+                if (e.probability && ready(i, e))
                 {
                     if (roll < e.probability)
                     {

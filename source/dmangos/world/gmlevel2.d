@@ -482,6 +482,27 @@ private:
         return true;
     }
 
+    bool handleNpcPossessCommand()
+    {
+        auto creature = getSelectedCreature(true);
+        if (creature is null)
+            return true;
+        if (!player.alive || !creature.alive || creature.ai is null || (creature.petOwner && creature !is ownPet)
+            || creature.values.get!UNIT_FIELD_CHARMEDBY)
+        {
+            redSystemMessage("This creature cannot be possessed.");
+            return true;
+        }
+        takeCharm(creature, null, true);
+        return true;
+    }
+
+    bool handleNpcUnPossessCommand()
+    {
+        releaseCharmForHandoff();
+        return true;
+    }
+
     bool handleNpcReturnCommand()
     {
         auto creature = getSelectedCreature(false);
@@ -1203,4 +1224,36 @@ version (unittest) private ulong makeGuidFor(uint entry, uint spawn)
     import dmangos.world.objects : HighGuid, makeGuid;
 
     return makeGuid(HighGuid.unit, entry, spawn);
+}
+
+/// GM possession uses normal client control and releases the native creature without a spell aura.
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import dmangos.auth.accounts : AccountLevel;
+    import dmangos.world.creatureai : ReactState;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.packets : ClientGuid;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata : creatureInnkeeper, innkeeperSpawn;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto gm = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.gameMaster);
+    auto session = gm.session.inWorld;
+    const guid = makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn);
+    auto npc = context.map(0).creatureAt(guid);
+    const faction = npc.values.get!UNIT_FIELD_FACTIONTEMPLATE;
+    npc.ai.react = ReactState.passive;
+    gm.write(Opcode.CMSG_SET_SELECTION, ClientGuid(guid));
+    gm.say(".npc possess");
+    assert(session.activeMover == guid && npc.values.get!UNIT_FIELD_CHARMEDBY == session.player.guid);
+    assert(gm.read().opcodesOf.canFind(Opcode.SMSG_CLIENT_CONTROL_UPDATE));
+    gm.say(".npc unpossess");
+    assert(session.activeMover == 0 && npc.values.get!UNIT_FIELD_CHARMEDBY == 0);
+    assert(npc.values.get!UNIT_FIELD_FACTIONTEMPLATE == faction && !npc.ai.inCombat);
+    assert(npc.ai.react == ReactState.passive);
 }

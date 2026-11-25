@@ -150,6 +150,12 @@ interface MotionWorld
     /// How high a swimmer may be above `groundZ`.
     float waterOrGroundLevel(float x, float y, float z, float groundZ, float minWaterDeep);
 
+    /// Surface level at a point inside the water column, or invalidHeightValue.
+    float waterSurface(Vector3 at);
+
+    /// A checked route over water and the nearby shore. True with an empty route means blocked.
+    bool pathOnWater(Vector3 from, Vector3 to, out Vector3[] route);
+
     /// Sends a packet to the players whose clients have the object `guid`.
     void sendToObservers(ulong guid, Opcode opcode, const(ubyte)[] body_);
 
@@ -945,7 +951,7 @@ package Vector3 followDestination(const Creature creature, MotionWorld world, Po
 {
     const destination = Vector3(x, y, leader.z);
     Vector3 submerged;
-    underwater = creature.canSwim && !creature.flyingMovement && (
+    underwater = creature.canSwim && !creature.flyingMovement && !creature.surfaceWalking && (
         world.swimmingTarget(destination, creature.collisionHeight, submerged)
         || world.swimmingTarget(Vector3(leader.x, leader.y, leader.z), creature.collisionHeight, submerged));
     return underwater ? submerged : destination;
@@ -955,7 +961,7 @@ package Vector3 followDestination(const Creature creature, MotionWorld world, Po
 package Vector3 habitatDestination(const Creature creature, MotionWorld world, Vector3 point, out bool underwater)
 {
     Vector3 submerged;
-    underwater = creature.canSwim && !creature.flyingMovement
+    underwater = creature.canSwim && !creature.flyingMovement && !creature.surfaceWalking
         && world.swimmingTarget(point, creature.collisionHeight, submerged);
     return underwater ? submerged : point;
 }
@@ -964,7 +970,7 @@ package Vector3 habitatDestination(const Creature creature, MotionWorld world, V
 package void launchFollowPath(Creature creature, MotionWorld world, Vector3 destination, bool underwater,
     bool walk, float facing)
 {
-    if (!underwater)
+    if (!underwater && !creature.surfaceWalking)
     {
         const ground = world.groundHeight(destination.x, destination.y, destination.z + 2, false);
         if (ground > -100_000)
@@ -1030,8 +1036,30 @@ private int launchPath(Creature creature, MotionWorld world, Vector3[] points, b
     bool generatePath, float speed, out bool continues)
 in (points.length > 1)
 {
+    if (!creature.spline.finalized && (creature.spline.flags & SplineFlags.falling))
+        return 0;
     const at = creature.spline.finalized ? creature.position : creature.spline.position;
     points[0] = Vector3(at.x, at.y, at.z);
+    if (creature.surfaceWalking && !creature.flyingMovement && !creature.ridingPlatform)
+    {
+        Vector3[] surface = [points[0]];
+        bool usedWater;
+        foreach (point; points[1 .. $])
+        {
+            Vector3[] leg;
+            if (world.pathOnWater(surface[$ - 1], point, leg))
+            {
+                if (leg.length < 2)
+                    return 0;
+                usedWater = true;
+                surface ~= leg[1 .. $];
+            }
+            else
+                surface ~= point;
+        }
+        if (usedWater)
+            return launchSpline(creature, world, surface, walk, false, facing, speed);
+    }
     bool swimming;
     const riding = creature.ridingPlatform && !creature.flyingMovement;
     const groundSpeed = isNaN(speed) ? creature.speeds[walk ? MoveType.walk : MoveType.run] : speed;
@@ -1118,6 +1146,36 @@ private int launchSpline(Creature creature, MotionWorld world, const(Vector3)[] 
     return creature.spline.duration;
 }
 
+/// Start gravity from the creature's current position. Supported and swimming units stay put.
+package bool fallToGround(Creature creature, MotionWorld world, bool replaceFall = false)
+{
+    import dmangos.world.terrain : invalidHeightValue;
+
+    if (!creature.alive || creature.flyingMovement || creature.ridingPlatform
+        || creature.movement.has(MovementFlags.hover) || creature.movement.has(MovementFlags.swimming))
+        return false;
+    if (!replaceFall && !creature.spline.finalized && (creature.spline.flags & SplineFlags.falling))
+        return true;
+    const at = creature.spline.finalized ? creature.position : creature.spline.position;
+    const start = Vector3(at.x, at.y, at.z);
+    auto floor = world.groundHeight(at.x, at.y, at.z, true);
+    const surface = world.waterSurface(start);
+    if (surface > floor && (creature.canSwim || creature.surfaceWalking))
+        floor = surface;
+    if (floor <= invalidHeightValue || at.z - floor < 0.2f)
+        return false;
+    enum float terminalSpeed = 60.148003f, slowTerminalSpeed = 7.0f;
+    const speed = creature.movement.has(MovementFlags.safeFall) ? slowTerminalSpeed : terminalSpeed;
+    creature.movement.position = at;
+    creature.movement.flags &= ~MovementFlags.forward;
+    creature.movement.flags |= MovementFlags.splineEnabled;
+    creature.spline = MoveSpline([start, Vector3(at.x, at.y, floor)], SplineFlags.falling | SplineFlags.finalAngle,
+        speed, nextSplineId(), at.orientation);
+    creature.positionTimer = 0;
+    world.sendToObservers(creature.guid, Opcode.SMSG_MONSTER_MOVE, monsterMove(creature.guid, creature.spline));
+    return true;
+}
+
 /// Stands where it is, and tells the clients.
 void stopMoving(Creature creature, MotionWorld world)
 {
@@ -1192,7 +1250,10 @@ void allowedPositionZ(const Creature creature, MotionWorld world, ref Vector3 p)
     const canSwim = (inhabit & inhabitWater) != 0;
     const ground = world.groundHeight(p.x, p.y, p.z, canSwim);
     const top = canSwim ? world.waterOrGroundLevel(p.x, p.y, p.z, ground, creature.collisionHeight) : ground;
-    if (top > invalidHeight)
+    const surface = creature.surfaceWalking ? world.waterSurface(p) : invalidHeight;
+    if (surface > ground)
+        p.z = surface;
+    else if (top > invalidHeight)
     {
         if (p.z > top)
             p.z = top;
@@ -1215,6 +1276,16 @@ version (unittest)
 
         float groundHeight(float, float, float, bool) { return ground; }
         float waterOrGroundLevel(float, float, float, float groundZ, float) { return groundZ; }
+        float surface = -200_000;
+        float waterSurface(Vector3) { return surface; }
+        bool pathOnWater(Vector3 from, Vector3 to, out Vector3[] route)
+        {
+            if (surface <= -200_000)
+                return false;
+            to.z = surface;
+            route = [from, to];
+            return true;
+        }
         void sendToObservers(ulong, Opcode opcode, const(ubyte)[] body_) { sent ~= opcode; bodies ~= body_; }
         void flushCreature(Creature creature) {}
         ref Random random() { return rng; }
@@ -1503,6 +1574,53 @@ unittest
     assert(bird.spline.flags & SplineFlags.flying);
     launch(shark, world, [Vector3.init, Vector3(60, 50, 20)], true);
     assert(!(shark.spline.flags & SplineFlags.flying));
+}
+
+/// An active Water Walking aura routes at the surface, then a non-swimmer falls to the floor when it expires.
+unittest
+{
+    import dmangos.world.auras : AuraType, makeAura;
+    import dmangos.world.spells : SpellInfo;
+
+    auto world = new TestWorld;
+    world.surface = 10;
+    world.ground = 0;
+    auto creature = testCreature(CreatureSpawn(1, 100, 0, 50, 50, 10, 0));
+    static SpellInfo walk;
+    walk.id = 4;
+    walk.effect[0] = SpellEffect.applyAura;
+    walk.casting.applyAuraName[0] = AuraType.waterWalk;
+    bool isNew;
+    auto aura = creature.auras.apply(makeAura(&walk, 1, 1, -1, true, [0, 0, 0]), creature.values, isNew);
+    creature.tick(world, 1);
+    assert(launch(creature, world, [Vector3.init, Vector3(55, 50, 0)], true, float.nan, true) > 0);
+    assert(creature.spline.finalDestination == Vector3(55, 50, 10));
+    creature.tick(world, 5000);
+    creature.auras.remove(aura, creature.values);
+    creature.tick(world, 500);
+    assert(creature.spline.flags & SplineFlags.falling);
+    assert(creature.position.z > 7 && creature.position.z < 8);
+    creature.tick(world, 3000);
+    assert(creature.spline.finalized && creature.position.z == 0);
+}
+
+/// Falling is accelerated, capped by Slow Fall, and reconstructs at the same point on another worker.
+unittest
+{
+    const points = [Vector3(7, 8, 80), Vector3(7, 8, 10)];
+    auto normal = MoveSpline(points, SplineFlags.falling, 60.148003f, 1);
+    auto slow = MoveSpline(points, SplineFlags.falling, 7, 2);
+    normal.update(2000);
+    slow.update(2000);
+    assert(slow.duration > normal.duration);
+    assert(near(normal.position.z, 41.4178f) && slow.position.z > 66);
+    ByteWriter packet;
+    slow.writeExact(packet);
+    auto reader = ByteReader(packet.data);
+    auto moved = MoveSpline.readExact(reader);
+    assert(moved.position == slow.position && moved.duration == slow.duration);
+    moved.update(20_000);
+    assert(moved.finalized && moved.position.z == 10);
 }
 
 /// Server-driven aura modes are included in movement creates and sent as packed-GUID spline orders.

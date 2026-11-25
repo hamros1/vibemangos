@@ -531,18 +531,28 @@ unittest
                 assert(s.runUntil(() => him.ai.inCombat, 60.seconds), "Mandokir does not come down to fight");
                 return him;
             }),
-        // Hakkar: a stack of Hakkar's Power for each priest alive (all five here); his line; list 1483401 (Cause
-        // Insanity, Will of Hakkar, Corrupted Blood, Blood Siphon at 90 s). His aspects' combat conditions
-        // (1005 .. 1009) are reputation and quest conditions in this world database: not asked for.
+        // Hakkar gets a stack of Power and the matching Aspect from each living priest.
+        // His spell list also includes Cause Insanity, Will of Hakkar, Corrupted Blood and Blood Siphon.
         Boss("Hakkar", 309, 14834, -1, [], [
             Stage(0, 2, null, null, null, null, (Scene s, Creature boss) {
                 const aura = boss.auras.find(hakkarsPower);
                 assert(aura !is null && aura.stacks == 5, format!"Hakkar's Power: %s stacks, not 5"(
                     aura is null ? 0 : aura.stacks));
             }),
-            Stage(0, 90, [24327, 24178, 24328, 24324]),
-            // a priest slain (Jeklik's death told to the copy): a stack fewer
-            Stage(0, 1, null, null, null, null, (Scene s, Creature boss) { s.signalCopy(0, 3); }),
+            Stage(0, 90, [24327, 24178, 24328, 24324, 24687]),
+            Stage(0, 1, null, null, null, null, (Scene s, Creature boss) {
+                import dmangos.world.grid : cellKeyAt;
+
+                // Jeklik's native death both weakens Hakkar and closes her Aspect's expression gate.
+                foreach (ref spawn; s.w.context.data.creatureSpawns)
+                    if (spawn.map == 309 && spawn.entry == 14517)
+                    {
+                        s.map.loadCell(cellKeyAt(spawn.x, spawn.y));
+                        break;
+                    }
+                s.kill(s.the(14517));
+                assert(!s.w.context.worldStateExpressionMet(s.map, 2984));
+            }),
             Stage(0, 1, null, null, null, null, (Scene s, Creature boss) {
                 const aura = boss.auras.find(hakkarsPower);
                 assert(aura !is null && aura.stacks == 4, format!"Hakkar's Power: %s stacks, a priest slain"(
@@ -1244,8 +1254,9 @@ unittest
         Boss("Patchwerk", 533, 16_028, 9, [], [Stage(0, 5, [28_308]), Stage(4, 2, [28_131])]),
         Boss("Grobbulus", 533, 15_931, 10, [], [Stage(0, 32, [28_169, 28_157], null,
             [[falloutSlime, 1], [grobbulusCloud, 1]])]),
-        Boss("Gluth", 533, 15_932, 11, [], [Stage(0, 22, [25_646, 28_371, 29_685], null, [[zombieChow, 1]]),
-            Stage(0, 85, [28_374])]),
+        // Check the first spawn before the later Devour ticks may eat it and the following waves.
+        Boss("Gluth", 533, 15_932, 11, [], [Stage(0, 6, null, null, [[zombieChow, 1]]),
+            Stage(0, 16, [25_646, 28_371, 29_685]), Stage(0, 85, [28_374])]),
     ];
     foreach (b; bosses)
     {

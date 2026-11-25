@@ -28,7 +28,8 @@ import dmangos.world.spellids;
 import dmangos.mysql : MySqlConnection;
 import dmangos.world.character : Character;
 import dmangos.world.creature : Creature;
-import dmangos.world.database : OutdoorQuestUpdate, OutdoorScriptCheckpoint, OutdoorSummonRequest, QuestActorCheckpoint;
+import dmangos.world.database : OutdoorQuestUpdate, OutdoorScriptCheckpoint, OutdoorSummonRequest, OutdoorWorldState,
+    QuestActorCheckpoint;
 import dmangos.world.grid : noCell;
 import dmangos.world.movement : Position;
 import dmangos.world.quests : QuestStatus;
@@ -420,6 +421,7 @@ package struct OutdoorScriptStep
     ScriptRun[] relays;
     OutdoorScriptCheckpoint[] relayCheckpoints;
     OutdoorSummonRequest[] forwards;
+    OutdoorWorldState[] worldStates;
     ulong parentHome;
     void delegate()[] afterCommit;
 
@@ -469,7 +471,7 @@ mixin template DbScriptRunner()
     import dmangos.world.dbscripts : OutdoorObjectPayload, OutdoorOpenableAction, OutdoorOpenableState, OutdoorScriptedObject,
         OutdoorScriptStep, ScriptCreatureSpawn, ScriptQuestEffect, ScriptSummonPayload;
     import dmangos.world.creature : Creature;
-    import dmangos.world.database : OutdoorScriptCheckpoint, OutdoorSummonKind, OutdoorSummonRequest, QuestActorCheckpoint;
+    import dmangos.world.database : OutdoorScriptCheckpoint, OutdoorSummonKind, OutdoorSummonRequest, OutdoorWorldState, QuestActorCheckpoint;
     import dmangos.world.gameobject : GameObject;
     import dmangos.world.grid : noCell;
     import dmangos.world.map : Map;
@@ -701,7 +703,8 @@ mixin template DbScriptRunner()
             if (database.advanceOutdoorScript(config.realmId, run.outdoorOrigin, run.outdoorSequence,
                     cast(uint) run.next, finished, planned is null ? null : planned.updates(),
                     planned is null ? null : planned.actorCheckpoints(),
-                    planned is null ? null : planned.relayCheckpoints, planned is null ? null : planned.forwards))
+                    planned is null ? null : planned.relayCheckpoints, planned is null ? null : planned.forwards,
+                    planned is null ? null : planned.worldStates))
             {
                 run.waitingForSummons = planned !is null && planned.forwards.length != 0;
                 return true;
@@ -958,7 +961,7 @@ mixin template DbScriptRunner()
                     const stagesEffects = step.command.among(ScriptCommand.questExplored, ScriptCommand.killCredit,
                         ScriptCommand.tempSpawnCreature, ScriptCommand.openDoor, ScriptCommand.closeDoor,
                         ScriptCommand.respawnGameObject, ScriptCommand.despawnGameObject, ScriptCommand.startRelayScript,
-                        ScriptCommand.setFaction);
+                        ScriptCommand.setFaction, ScriptCommand.setWorldState);
                     OutdoorScriptStep planned;
                     scope (exit) planned.discardUnpublishedSummons();
                     if (!claimOutdoorStep(run, map, *step, stops || run.next + 1 == run.steps.length,
@@ -1376,6 +1379,8 @@ mixin template DbScriptRunner()
 
     private void publishOutdoorStep(Map map, ref OutdoorScriptStep planned)
     {
+        foreach (ref state; planned.worldStates)
+            outdoorWorldStates[state.map][state.id] = state.value;
         foreach (ref effect; planned.effects)
             effect.apply();
         foreach (ref effect; planned.summons)
@@ -2491,9 +2496,21 @@ mixin template DbScriptRunner()
             break;
         }
         case ScriptCommand.setWorldState:
-            if (step.dataint[0] > 0)
-                map.scriptedWorldStates[cast(uint) step.dataint[0]] = step.dataint[1];
+        {
+            if (step.dataint[0] <= 0)
+                break;
+            const state = OutdoorWorldState(map.id, cast(uint) step.dataint[0], step.dataint[1]);
+            if (planned !is null)
+                planned.worldStates ~= state;
+            else if (map.instanceId || !config.cluster.enabled)
+                map.scriptedWorldStates[state.id] = state.value;
+            else if (canWrite())
+            {
+                database.saveOutdoorWorldState(config.realmId, state);
+                outdoorWorldStates[map.id][state.id] = state.value;
+            }
             break;
+        }
         case ScriptCommand.startRelayScript:
         {
             ulong remoteHome = noCell;
