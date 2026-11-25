@@ -7857,8 +7857,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         else if (r.creature.returning && ownsCell(spawn.map, cellKey(r.rect.x0, r.rect.y0))
             && map_.creatureAt(guid) is null)
         {
-            // A crashed borrower left no state. Re-read saved deaths before rebuilding its spawn.
-            if (!state.length)
+            // The borrower sent nothing back: it crashed (no state at all), or it lost the creature without a clean
+            // release when its lease lapsed or the term changed (a deadline at most). Its death, and the corpse
+            // with its loot, are in the database: re-read them before rebuilding the spawn.
+            if (!until)
             {
                 if (creaturePools.manages(spawn.guid))
                 {
@@ -7871,9 +7873,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     if (saved)
                         respawnAt[spawn.guid] = saved;
                 }
-                if (hasOutdoorRespawn(spawn.guid) && restoreLoanCorpse(map_, *spawn))
-                    return;
             }
+            if (hasOutdoorRespawn(spawn.guid) && restoreLoanCorpse(map_, *spawn))
+                return;
             if (!awaitingRespawn(spawn.guid) && creatureInEvents(spawn.guid)
                 && groupSpawnAllowed(map_, 0, spawn.guid) && upInPool(PoolMember.Kind.creature, spawn.guid))
                 if (auto creature = makeCreature(spawn))
@@ -12682,4 +12684,87 @@ unittest
     context.update(now);
     auto back = cast(Creature) m.findObject(addGuid);
     assert(back !is null && back.alive && !context.deadInInstance(m.instanceId, 90080), "the add came back");
+}
+
+// A helper that died on the node that borrowed it keeps its corpse and loot when that node loses the loan without a
+// clean release (its lease lapsed, or the quorum's term changed) and gives it back with nothing in hand: the
+// helper's home reads the death back from the database instead of losing the corpse.
+unittest
+{
+    import dmangos.cluster.regions : CellRect, CreatureLease, Region, RegionState, creatureLeaseMap;
+    import dmangos.world.grid : cellCoordinate;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields : UNIT_FIELD_HEALTH;
+
+    auto db = newDatabase();
+    auto clock = MonoTime.currTime;
+    Region lease;
+    WorldContext node(ushort id)
+    {
+        auto n = newCreationContext(db, (ref config) { config.cluster.nodeId = id; });
+        n.clock = () => clock;
+        n.creatureLease = (uint spawn) => spawn == lease.creature.spawn ? lease : Region.init;
+        n.sendCreatureLoan = (CreatureLoan) {};
+        return n;
+    }
+    auto home = node(1), borrower = node(2);
+    borrower.startClock = home.startClock;
+    borrower.startUnixTime = home.startUnixTime;
+    const spawn = home.loanSpawn(innkeeperSpawn, 0);
+    assert(spawn !is null);
+    const guid = makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn);
+    const homeCell = cellKeyAt(spawn.x, spawn.y);
+    home.ownsCell = (uint mapId, ulong cell) => !mapId && cell == homeCell;
+    borrower.ownsCell = (uint, ulong) => false;
+    home.map(0).loadCell(homeCell);
+    assert(home.map(0).creatureAt(guid) !is null);
+
+    const x = cellCoordinate(spawn.x), y = cellCoordinate(spawn.y);
+    const loan = Region(50, creatureLeaseMap, CellRect(x, y, x + 1, y + 1), 2, 1, RegionState.granted, 0,
+        CreatureLease(innkeeperSpawn, 0));
+    Region lending = loan;
+    lending.owner = 1;
+    lending.state = RegionState.revoking;
+    lending.next = 2;
+    lease = lending;
+    const lent = home.releaseCreatureLoan(lending);
+    assert(lent.length, "lent alive");
+    lease = loan;
+    ubyte[][uint] leaving;
+    borrower.regionsChanged([loan], null, [loan.id: lent], leaving);
+    auto there = borrower.map(0);
+    auto helper = there.creatureAt(guid);
+    assert(helper !is null && helper.alive);
+
+    helper.values.set!UNIT_FIELD_HEALTH(0u);
+    helper.die(there, borrower.unixTime);
+    helper.loot = new Loot(helper.guid, null);
+    helper.loot.gold = 25;
+    helper.loot.owners[7] = true;
+    helper.corpseTimer = 60_000; // the test innkeeper's spawn has no respawn time to keep a corpse for
+    helper.respawnAt = borrower.unixTime + 300;
+    borrower.saveNewCorpse(helper);
+    assert(db.loadOutdoorCorpses().length == 1);
+
+    // The borrower's lease lapses and comes back (or the term changes): it loses the loan, then holds it again.
+    borrower.regionsChanged(null, [loan], null, leaving);
+    assert(there.creatureAt(guid) is null);
+    borrower.regionsChanged([loan], null, null, leaving);
+
+    // The coordinator sends the helper home; the borrower has nothing to send with it.
+    Region returning = loan;
+    returning.creature.returning = true;
+    returning.state = RegionState.revoking;
+    returning.next = 1;
+    lease = returning;
+    const back = borrower.releaseCreatureLoan(returning);
+    returning.owner = 1;
+    returning.state = RegionState.granted;
+    returning.next = 0;
+    lease = returning;
+    home.regionsChanged([returning], null, [returning.id: back], leaving);
+    auto corpse = home.map(0).creatureAt(guid);
+    assert(corpse !is null && !corpse.alive, "dead at home, not risen");
+    assert(corpse.loot !is null && corpse.loot.gold == 25 && 7 in corpse.loot.owners, "with its loot");
 }
