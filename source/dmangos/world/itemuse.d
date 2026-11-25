@@ -220,6 +220,10 @@ mixin template ItemUseHandlers()
         auto items = player.inventory.justEquipped;
         player.inventory.justEquipped = null;
         const now = context.clock();
+        bool started;
+        scope (exit)
+            if (started)
+                checkpointCooldowns(); // a gateway's player keeps it through a worker crash, as a cast's
         foreach (item; items)
         {
             if (item.proto is null || (item.proto.flags & noEquipCooldown) || !item.isEquipped)
@@ -243,6 +247,7 @@ mixin template ItemUseHandlers()
                         categoryReadyAt[spell.category] = now + (cast(long) categoryMs).msecs;
                     cooldownCategory[spell.id] = categoryMs ? spell.category : 0;
                     cooldownItem[spell.id] = 0;
+                    started = true;
                 }
                 ByteWriter w;
                 w.put(item.fullGuid);
@@ -362,4 +367,36 @@ mixin template ItemUseHandlers()
         if (timedItems.length)
             flushInventory();
     }
+}
+
+// Equipping an item starts its use spell's 30 s cooldown; a gateway's player keeps it through a worker crash, saved
+// as it starts, as a cast's cooldown is.
+unittest
+{
+    import dmangos.cluster.protocol : SimulationOwner;
+    import dmangos.world.defines : equipmentSlotMainhand, inventorySlotBag0;
+    import dmangos.world.movement : Position;
+    import dmangos.world.spells : SpellInfo;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata : itemSword;
+    import dmangos.world.inventory : itemPos;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    enum uint trinket = 91_510;
+    SpellInfo use;
+    use.id = trinket;
+    context.data.spells.spells[trinket] = use;
+    context.data.items.edit(itemSword).details.spells[0].id = trinket;
+    auto client = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
+    auto me = client.session.inWorld;
+    client.session.gatewayHome = SimulationOwner(3, 1);
+    auto sword = me.player.inventory[cast(ubyte) inventorySlotBag0, cast(ubyte) equipmentSlotMainhand];
+    if (sword is null)
+        sword = me.player.inventory.equipNew(itemPos(cast(ubyte) inventorySlotBag0, cast(ubyte) equipmentSlotMainhand), itemSword);
+    assert(sword !is null && sword.isEquipped);
+    me.player.inventory.justEquipped = [sword];
+    me.applyEquipCooldowns();
+    const saved = db.loadCooldowns(7);
+    assert(saved.length == 1 && saved[0].spell == trinket, "the equip cooldown is saved as it starts");
 }

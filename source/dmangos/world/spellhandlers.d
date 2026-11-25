@@ -3952,7 +3952,7 @@ private:
      * hearthstone's hour), queued right after what the cast wrote (its reagents, its item): a crash before the next
      * periodic save does not hand the cooldown back while what it made stays.
      */
-    private void checkpointCooldowns()
+    package void checkpointCooldowns()
     {
         if (!context.canWrite() || savedUnread)
             return;
