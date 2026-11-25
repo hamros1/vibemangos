@@ -2452,11 +2452,13 @@ mixin template BattlegroundHandlers()
         ItemPosCount[] destinations;
         Item[] stacks;
         uint carried;
-        if (reward.markSpell)
+        // A mark that can never be made (its spell or item missing from the data) must not hold back the
+        // honor and reputation of the same entitlement, nor keep it pending to be retried every second.
+        bool markPrepared()
         {
             const spell = context.data.spells.spell(reward.markSpell);
             if (spell is null)
-                return;
+                return false;
             uint entry, count;
             foreach (i, effect; spell.effect)
                 if (effect == SpellEffect.createItem)
@@ -2466,13 +2468,13 @@ mixin template BattlegroundHandlers()
                     break;
                 }
             if (!entry || entry !in context.data.items)
-                return;
+                return false;
             inventory.canStoreNew(nullBag, nullSlot, destinations, entry, count);
             foreach (destination; destinations)
             {
                 auto item = inventory.create(entry, destination.count);
                 if (item is null)
-                    return;
+                    return false;
                 stacks ~= item;
                 auto existing = inventory[destination.pos];
                 auto row = existing is null ? item.record : existing.record;
@@ -2492,9 +2494,10 @@ mixin template BattlegroundHandlers()
             }
             if (carried < count)
             {
+                // Bags full: the rest comes by mail.
                 auto item = inventory.create(entry, count - carried);
                 if (item is null || item.count != count - carried)
-                    return;
+                    return false;
                 item.bind();
                 payment.mailedItem = item.record;
                 auto mail = &payment.mail;
@@ -2508,6 +2511,20 @@ mixin template BattlegroundHandlers()
                 mail.deliverTime = context.unixTime;
                 mail.expireTime = mail.deliverTime + 30 * 24 * 60 * 60;
             }
+            return true;
+        }
+        if (reward.markSpell && !markPrepared())
+        {
+            import dmangos.log : warning;
+
+            warning!"battleground reward of match %s for player %s: mark spell %s cannot make an item; paying the rest"(
+                reward.match, reward.player, reward.markSpell);
+            destinations = null;
+            stacks = null;
+            carried = 0;
+            payment.inventory = null;
+            payment.mail = MailRecord.init;
+            payment.mailedItem = typeof(payment.mailedItem).init;
         }
 
         Reputation draft;
@@ -3369,4 +3386,21 @@ unittest
 
     varian.session.inWorld.leaveBattleground(false);
     assert(context.groups.of(9) is null, "out of the raid as he leaves");
+}
+
+/// A mark the data cannot make still pays the entitlement's honor and ends its retries.
+unittest
+{
+    import dmangos.world.movement : Position;
+    import dmangos.world.testclient;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto varian = loggedIn(context, db, 7, "Varian", Position(-8949.95f, -132.49f, 83.53f));
+    varian.read();
+    const reward = BattlegroundReward(context.config.realmId, 1, 7, 999_999, 24, 1);
+    db.publishBattlegroundResult(reward.realm, reward.match, PvpStatsBattleground.init, null, [reward], false);
+    varian.session.inWorld.payBattlegroundReward(reward);
+    assert(!db.pendingBattlegroundRewards().length, "paid, not pending again every second");
+    assert(db.loadHonor(7).points.length == 1, "the honor is not withheld");
 }
