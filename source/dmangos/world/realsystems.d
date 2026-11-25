@@ -15,11 +15,19 @@ private string[] scoreColumns(uint map)
 {
     import std.array : split;
     import std.file : read;
+    import std.bitmanip : littleEndianToNative;
     import std.process : environment;
-    import std.string : fromStringz;
+    import std.string : indexOf;
 
     const bytes = cast(const(ubyte)[]) read(environment["DMANGOS_REAL_DATA"].split("|")[0] ~ "/dbc/WorldStateUI.dbc");
-    uint at(size_t offset) { return *cast(const uint*) &bytes[offset]; }
+    uint at(size_t offset) { return littleEndianToNative!uint(bytes[offset .. offset + 4][0 .. 4]); }
+    string text(size_t offset)
+    {
+        const tail = cast(const(char)[]) bytes[offset .. $];
+        const end = tail.indexOf('\0');
+        assert(end >= 0, "a string runs past the end of WorldStateUI.dbc");
+        return tail[0 .. end].idup;
+    }
     const rows = at(4), fields = at(8), size = at(12);
     const strings = 20 + rows * size;
     string[] names;
@@ -27,7 +35,7 @@ private string[] scoreColumns(uint map)
     {
         const row = 20 + i * size;
         if (at(row + 4) == map && at(row + 24 * 4) == 2)
-            names ~= fromStringz(cast(const(char)*) &bytes[strings + at(row + 4 * 4)]).idup;
+            names ~= text(strings + at(row + 4 * 4));
     }
     assert(fields == 39);
     return names;
