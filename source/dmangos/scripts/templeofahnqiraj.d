@@ -2298,9 +2298,9 @@ struct GiantClawTentacle
                 me.castSpell(me.random(2) ? hamstring : thrash);
                 steps.after(step, 5.seconds);
             }
-            else if (const prey = me.selectTarget(Pick.random, PickFilter.player))
+            else if (const prey = inTheRoom(me))
             {
-                // Under someone else.
+                // Under someone else (in the room: it cannot follow anyone into C'Thun's stomach).
                 me.teleport(where(me, prey));
                 me.resetThreat();
                 me.attack(prey);
@@ -2311,6 +2311,16 @@ struct GiantClawTentacle
                 steps.after(step, 1.seconds);
             break;
         }
+    }
+
+    /// A random player it could come up under: one not in C'Thun's stomach (nothing, if none is in the room).
+    private static EntityRef inTheRoom(ref CreatureContext me)
+    {
+        foreach (attempt; 0 .. 4)
+            if (const prey = me.selectTarget(Pick.random, PickFilter.player))
+                if (where(me, prey).z > Cthun.stomachTop)
+                    return prey;
+        return EntityRef.init;
     }
 }
 
@@ -2831,4 +2841,33 @@ unittest
     auto asked = InstanceContext(copy4);
     runtime.raise(h4, asked, Asked(EntityRef.init, Aq40Encounter.cthun));
     assert(asked.answerGiven == EncounterState.done && !copy4.respawned.length && !copy4.signals.length);
+}
+
+/// A Giant Claw Tentacle with nobody in reach comes up under someone in the room, never in C'Thun's stomach.
+unittest
+{
+    static class FakeClaw : FakeQiraji
+    {
+        float z = -97;
+        Location[] went;
+        override EntityRef hostSelectTarget(Pick pick, uint, uint)
+        {
+            return pick == Pick.random ? EntityRef(7) : EntityRef.init; // nobody in its reach
+        }
+        override bool hostLocationOf(EntityRef, out Location at) { at = Location(0, 0, z); return true; }
+        override void hostTeleport(Location at) { went ~= at; }
+    }
+
+    alias self = dmangos.scripts.templeofahnqiraj;
+    auto runtime = ScriptRuntime.of!self();
+    auto host = new FakeClaw;
+    host.entry = npcGiantClawTentacle;
+    auto me = CreatureContext(host);
+    auto h = runtime.create(ScriptKind.creature, "mob_giant_claw_tentacle");
+    runtime.raise(h, me, Spawned());
+    runtime.tick(h, me, 5000);
+    assert(!host.went.length, "it followed a swallowed player into the stomach");
+    host.z = 100;
+    runtime.tick(h, me, 1000);
+    assert(host.went.length == 1 && host.went[0].z == 100);
 }
