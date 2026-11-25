@@ -1210,6 +1210,7 @@ interface InstanceHost
     uint hostPlayerCount();
     void hostLog(string text);
     // Dungeon scripts:
+    void hostSignalObjects(uint entry, uint id, int value);
     EntityRef hostSummon(uint entry, Location at, uint despawnMs, EntityRef attack);
     ActionResult hostSay(EntityRef speaker, int textEntry, EntityRef target);
     ActionResult hostCast(EntityRef caster, uint spell, EntityRef target, bool triggered);
@@ -1258,7 +1259,7 @@ struct InstanceContext
 {
     private InstanceHost host;
     private bool checkpoint_, waitForPlayer_;
-    private EntityRef[] summons_;
+    private EntityRef[] summons_, releasedObjects_;
     private const(EntityRef)[] savedSummons_;
 
     @disable this(this);
@@ -1279,6 +1280,9 @@ struct InstanceContext
 
     /// A `Signal` for a creature's (or game object's) script in the copy.
     ActionResult signal(EntityRef to, uint id, int value = 0) { return host.hostSignal(to, id, value); }
+
+    /// A `Signal` for every loaded game object of `entry` in the copy.
+    void signalObjects(uint entry, uint id, int value = 0) { host.hostSignalObjects(entry, id, value); }
 
     /// The players in the copy.
     @property uint playerCount() { return host.hostPlayerCount(); }
@@ -1305,6 +1309,13 @@ struct InstanceContext
     void checkpointObject(EntityRef object)
     {
         summons_ ~= object;
+        checkpoint();
+    }
+
+    /// Stop saving an encounter object after its temporary state ends.
+    void releaseCheckpointObject(EntityRef object)
+    {
+        releasedObjects_ ~= object;
         checkpoint();
     }
 
@@ -1348,7 +1359,17 @@ struct InstanceContext
         return false;
     }
 
+    /// Finds a checkpointed game object type before the copy has loaded its spawns.
+    bool hasSavedGameObject(uint entry) const
+    {
+        foreach (saved; savedSummons_)
+            if (saved.isGameObject && saved.entry == entry)
+                return true;
+        return false;
+    }
+
     package(dmangos) @property EntityRef[] checkpointSummons() { return summons_; }
+    package(dmangos) @property EntityRef[] releasedCheckpointObjects() { return releasedObjects_; }
     package(dmangos) @property void savedSummons(const(EntityRef)[] creatures) { savedSummons_ = creatures; }
 
     // Raid scripts:

@@ -74,26 +74,36 @@ unittest
     assert(ragefire.cast_(11970, 11520) && ragefire.cast_(18072, 11520), ragefire.story);
 }
 
-/// A rogue's Disarm Trap stops suppression temporarily and killing Broodlord stops it for the lockout.
+/// A disarmed device resumes its timer after a crash. Lashlayer shuts down the whole room for the lockout.
 unittest
 {
     if (!haveRealData())
         return;
-    import dmangos.bytes : ByteWriter;
-    import dmangos.script.api : ObjectFlag;
+    import dmangos.bytes : ByteReader, ByteWriter;
+    import dmangos.script.api : EncounterState, ObjectFlag;
+    import dmangos.script.state : loadScript;
+    import dmangos.scripts.blackwinglair : BlackwingLair, BwlEncounter, SuppressionDevice;
+    import dmangos.world.objects : HighGuid, makeGuid;
     import dmangos.world.opcodes : Opcode;
     import dmangos.world.spellcast : SpellCastResult, TargetFlags;
     import dmangos.world.testclient : bodyOf;
 
     enum uint device = 179784, suppression = 22247, disarm = 1842, broodlord = 12017;
+    enum chosen = makeGuid(HighGuid.gameObject, device, 4690072);
+    enum neighbor = makeGuid(HighGuid.gameObject, device, 4690098);
     auto d = Dungeon.enter(469, 60, 4, 2, Position(-7572.59f, -1062.57f, 449.164f));
-    GameObject trap;
-    d.map.forEachObject((object) {
-        if (auto go = cast(GameObject) object)
-            if (go.spawn.guid == 4690072)
-                trap = go;
-    });
-    assert(trap !is null);
+    auto trap() { return d.map.gameObjectAt(chosen); }
+    bool disabled(GameObject go) { return go !is null && (go.values.get!GAMEOBJECT_FLAGS & ObjectFlag.noInteract) != 0; }
+    int remaining()
+    {
+        ByteWriter writer;
+        d.w.context.scripts.save(trap.behaviour, writer);
+        auto reader = ByteReader(writer.data);
+        SuppressionDevice script;
+        assert(loadScript(script, reader));
+        return script.steps.remaining(SuppressionDevice.Step.rearm);
+    }
+
     const spot = Position(-7572.3f, -1062.57f, 449.164f);
     d.goTo(spot);
     d.goTo(spot, 1);
@@ -106,25 +116,54 @@ unittest
     d.port(d.party[1], 469, spot, d.instanceId);
     assert(d.party[1].session.inWorld.instanceId == d.instanceId);
 
+    void disarmDevice()
+    {
+        if (!d.player.knowsSpell(disarm))
+            d.player.spells ~= disarm;
+        ByteWriter request;
+        request.put(disarm);
+        request.put(cast(ushort) TargetFlags.locked);
+        request.putPackedGuid(chosen);
+        d.party[0].write(Opcode.CMSG_CAST_SPELL, request.data);
+        const result = bodyOf(d.party[0].read(), Opcode.SMSG_CAST_RESULT);
+        assert(d.runUntil(() => disabled(trap), 12.seconds),
+            format!"Disarm Trap disables the device (cast result %s)"(result.length >= 6 ? cast(SpellCastResult) result[5] : SpellCastResult.ok));
+    }
     assert(d.give(5060) == 1); // Thieves' Tools
-    if (!d.player.knowsSpell(disarm))
-        d.player.spells ~= disarm;
-    ByteWriter request;
-    request.put(disarm);
-    request.put(cast(ushort) TargetFlags.locked);
-    request.putPackedGuid(trap.guid);
-    d.party[0].write(Opcode.CMSG_CAST_SPELL, request.data);
-    const result = bodyOf(d.party[0].read(), Opcode.SMSG_CAST_RESULT);
-    assert(d.runUntil(() => (trap.values.get!GAMEOBJECT_FLAGS & ObjectFlag.noInteract) != 0, 12.seconds),
-        format!"Disarm Trap disables the device (cast result %s)"(result.length >= 6 ? cast(SpellCastResult) result[5] : SpellCastResult.ok));
+    disarmDevice();
     d.run(20.seconds);
     assert(!suppressed(0) && !suppressed(1), "no pulses while disarmed");
-    assert(d.runUntil(() => suppressed(0) && suppressed(1), 110.seconds), "a rearmed device resumes its pulses");
+    const before = remaining();
+    assert(before >= 9_000 && before <= 100_000 && d.data.canFind(":summons1:"));
+    d.w.now += 3.minutes; // the outage outlasts the original disarm
+    d.restartAfterCrash();
+    assert(disabled(trap) && Dungeon.isOpen(trap), "the original device still shows as disarmed");
+    assert(d.map.gameObjectAt(neighbor) !is null && !disabled(d.map.gameObjectAt(neighbor)), "nearby devices stay armed");
+    const after = remaining();
+    assert(after >= before - 1_000 && after <= before + 2_000,
+        format!"remaining disarm timer before the crash %s, after %s"(before, after));
+    d.run((after - 500).msecs);
+    assert(disabled(trap) && !suppressed(0) && !suppressed(1), "no early rearm or pulses");
+    assert(d.runUntil(() => !disabled(trap), 1.seconds), "the saved disarm timer expires");
+    assert(!d.data.canFind(":summons1:"), "rearming removed the temporary checkpoint");
+    assert(d.runUntil(() => suppressed(0) && suppressed(1), 6.seconds), "a rearmed device resumes its pulses");
+
+    d.restartAfterCrash();
+    assert(trap !is null && !disabled(trap), "the rearmed device does not recover a stale disarm");
+    assert(d.give(5060) == 1);
+    disarmDevice();
+    d.handoff();
+    assert(disabled(trap) && remaining() > 0, "a clean handoff also retains the pending rearm");
 
     d.kill(d.spawned(broodlord, 0, 15));
+    assert(disabled(trap) && disabled(d.map.gameObjectAt(neighbor)), "both armed and disarmed devices shut down at once");
+    assert(!d.data.canFind(":summons1:"), "shutdown discards the pending rearm");
     d.goTo(spot);
-    d.run(20.seconds);
-    assert(d.loadedObject(device) !is null && !suppressed(0) && !suppressed(1), "Lashlayer's death stops the pulses");
+    d.restartAfterCrash();
+    assert(d.saved!BlackwingLair.encounters[BwlEncounter.lashlayer] == EncounterState.done && !d.all(broodlord).length);
+    d.run(3.minutes);
+    assert(disabled(trap) && disabled(d.map.gameObjectAt(neighbor)) && !suppressed(0) && !suppressed(1),
+        "Lashlayer's death stops the pulses for this lockout");
 }
 
 // ---------------------------------------------------------------------------------------------------------------

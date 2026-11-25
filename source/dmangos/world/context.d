@@ -4508,6 +4508,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 if (go.behaviour && scripts.handles!(imported!"dmangos.script.api".Spawned)(go.behaviour))
                     objectArrivals ~= GameObjectArrival(go, created);
         };
+        created.onGameObjectMigrated = (GameObject go) => noteTickingObject(go, created);
         created.onCreatureDeath = (Creature c) {
             linkedDeath(created, c); // its pack's part first, while it is still known
             c.die(created, unixTime);
@@ -4620,6 +4621,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     script.signalObject = &gameObjectSignalled;
                     script.respawnObjectOf = &respawnObjectOfEntry;
                     script.summonObjectAt = &summonGameObjectAt;
+                    created.keepIdleObjectLoaded = (MapObject object) => cast(GameObject) object !is null
+                        && script.keepsCheckpoint(EntityRef(object.guid));
                     instanceScripts[instance] = script;
                     if (!copyArriving) // a copy from another node brings its creatures: their fights go on
                         script.restored();

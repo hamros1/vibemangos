@@ -531,6 +531,9 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   brings in one dragon, whose approach and ground fight both resume after a crash.
   Vaelastrasz resumes the corruption scene with the same summoned Nefarius and continues his
   speech from its saved step. His active fight and the open exit after his death also recover.
+  Disarmed devices in the Suppression Room remain disarmed until their saved rearm timers expire.
+  The timers resume when a player returns. Lashlayer's death cancels them and keeps the room
+  shut down for the rest of the lockout.
 * **GM commands.** `.instance info`, `.instance shutdown` and `.instance reset` of a copy another node
   hosts go to that node and its answer comes back; `.instance resetall` goes to every node.
 

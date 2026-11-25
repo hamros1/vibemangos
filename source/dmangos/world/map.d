@@ -1697,6 +1697,9 @@ final class Map : CombatWorld, GameObjectWorld
                     trackCreatureCombat(creature, true);
                 creature.ai.resumeSpellHandoff(this);
             }
+        if (auto go = cast(GameObject) object)
+            if (onGameObjectMigrated !is null)
+                onGameObjectMigrated(go);
         replicate(slot, at_);
         updateObjectVisibility(object);
     }
@@ -2597,8 +2600,11 @@ final class Map : CombatWorld, GameObjectWorld
     /// Objects with a durable lifetime keep their cell loaded until they expire or leave the map.
     bool delegate(MapObject object) keepIdleObjectLoaded;
 
-    /// Open-world round 2: an object became this map's own (spawned with its cell, put here, or handed over).
+    /// A freshly spawned object became this map's own (loaded with its cell or put here by a script).
     void delegate(MapObject object) onObjectArrived;
+
+    /// A game object has been installed from a migration or checkpoint; its script can resume ticking.
+    void delegate(GameObject object) onGameObjectMigrated;
 
     /// Every object here, replicas included.
     void forEachObject(scope void delegate(MapObject object) each)

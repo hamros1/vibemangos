@@ -67,6 +67,7 @@ enum : uint
     goDoorVaelastrasz = 179364,
     goDoorLashlayer = 179365,
     goBlackDragonEgg = 177807, goOrbOfDomination = 177808,
+    goSuppressionDevice = 179784,
     npcOrbTrigger = 14449,
 }
 
@@ -99,6 +100,9 @@ enum BwlSignal : uint
     nefariusLine = 103, /// Vaelastrasz to his Nefarius: say line `value`
     saveNefarian = 104, /// Nefarian's flight or combat changed
     saveVael = 105,     /// Vaelastrasz's scene or speech moved to its next step
+    suppressionDisarmed = 106, /// save the device until it rearms
+    suppressionFinished = 107, /// the device rearmed or shut down
+    suppressionShutdown = 108, /// Lashlayer died
 }
 
 /// A random length between `low` and `high` milliseconds.
@@ -150,6 +154,10 @@ struct BlackwingLair
 
     void on(ref InstanceContext copy, const ref Restored e)
     {
+        if (copy.hasSavedGameObject(goSuppressionDevice))
+            copy.waitForPlayer();
+        if (copy.entryKilled(npcLashlayer))
+            set(copy, BwlEncounter.lashlayer, EncounterState.done);
         restoreNefarian(copy);
         const vael = encounters[BwlEncounter.vaelastrasz];
         if (vael == EncounterState.special || vael == EncounterState.inProgress)
@@ -424,6 +432,8 @@ struct BlackwingLair
             if (state == EncounterState.special || state == EncounterState.done || brokenEggs.canFind(e.object))
                 copy.despawnObject(e.object);
         }
+        if (e.object.entry == goSuppressionDevice && encounters[BwlEncounter.lashlayer] == EncounterState.done)
+            copy.signal(e.object, BwlSignal.suppressionShutdown);
     }
 
     void on(ref InstanceContext copy, const ref Asked e)
@@ -522,6 +532,11 @@ struct BlackwingLair
             if (encounters[BwlEncounter.razorgore] == EncounterState.inProgress)
                 copy.checkpoint();
             break;
+        case npcLashlayer:
+            // The native spawn's death is recorded before this event.
+            if (!e.summoned)
+                set(copy, BwlEncounter.lashlayer, EncounterState.done);
+            break;
         case npcLegionnaire, npcMage, npcDragonspawn:
             foreach (ref defender; defenders)
                 if (defender == e.creature)
@@ -559,6 +574,17 @@ struct BlackwingLair
 
     void on(ref InstanceContext copy, const ref Signal e)
     {
+        if (e.id == BwlSignal.suppressionDisarmed || e.id == BwlSignal.suppressionFinished)
+        {
+            if (e.from.isGameObject && e.from.entry == goSuppressionDevice)
+            {
+                if (e.id == BwlSignal.suppressionDisarmed)
+                    copy.checkpointObject(e.from);
+                else
+                    copy.releaseCheckpointObject(e.from);
+            }
+            return;
+        }
         if (e.id == BwlSignal.vaelTrigger)
         {
             if (encounters[BwlEncounter.vaelastrasz] == EncounterState.notStarted && vaelastrasz)
@@ -592,6 +618,8 @@ struct BlackwingLair
     private void set(ref InstanceContext copy, BwlEncounter which, EncounterState state)
     {
         const was = encounters[which];
+        if (which == BwlEncounter.lashlayer && was == EncounterState.done)
+            return;
         encounters[which] = state;
         final switch (which)
         {
@@ -636,7 +664,14 @@ struct BlackwingLair
         case BwlEncounter.vaelastrasz:
             checkpointVael(copy);
             break;
-        case BwlEncounter.lashlayer, BwlEncounter.firemaw, BwlEncounter.ebonroc,
+        case BwlEncounter.lashlayer:
+            if (state == EncounterState.done)
+            {
+                copy.signalObjects(goSuppressionDevice, BwlSignal.suppressionShutdown);
+                copy.checkpoint();
+            }
+            break;
+        case BwlEncounter.firemaw, BwlEncounter.ebonroc,
                 BwlEncounter.flamegor, BwlEncounter.chromaggus:
             break;
         }
@@ -1137,9 +1172,15 @@ struct SuppressionDevice
     void on(ref GameObjectContext device, const ref Spawned e)
     {
         if (device.askDungeon(BwlEncounter.lashlayer) == EncounterState.done)
-            disable(device);
-        else if (!steps.busy)
+            return shutdown(device);
+        if (!steps.busy)
             steps.every(Step.pulse, (1 + device.random(5_000)).msecs, 5.seconds);
+    }
+
+    void on(ref GameObjectContext device, const ref Signal e)
+    {
+        if (e.id == BwlSignal.suppressionShutdown)
+            shutdown(device);
     }
 
     void on(ref GameObjectContext device, const ref TrapSprung e)
@@ -1152,13 +1193,16 @@ struct SuppressionDevice
         device.consume();
         disable(device);
         if (device.askDungeon(BwlEncounter.lashlayer) != EncounterState.done)
+        {
             steps.after(Step.rearm, (30_000 + device.random(90_001)).msecs);
+            device.signalDungeon(BwlSignal.suppressionDisarmed);
+        }
     }
 
     void on(ref GameObjectContext device, Step step)
     {
         if (device.askDungeon(BwlEncounter.lashlayer) == EncounterState.done)
-            return disable(device);
+            return shutdown(device, step == Step.rearm);
         final switch (step)
         {
         case Step.pulse:
@@ -1169,8 +1213,17 @@ struct SuppressionDevice
             device.open(false);
             device.objectFlags(device.self, ObjectFlag.noInteract, false);
             steps.every(Step.pulse, 5.seconds);
+            device.signalDungeon(BwlSignal.suppressionFinished);
             break;
         }
+    }
+
+    private void shutdown(ref GameObjectContext device, bool rearming = false)
+    {
+        const disarmed = rearming || steps.pending(Step.rearm);
+        disable(device);
+        if (disarmed)
+            device.signalDungeon(BwlSignal.suppressionFinished);
     }
 
     private void disable(ref GameObjectContext device)
@@ -1190,7 +1243,13 @@ struct Broodlord
     enum Step : ubyte { cleave, knockAway, blastWave, mortalStrike }
     Schedule!Step steps;
 
-    mixin(encounterOf!"BwlEncounter.lashlayer");
+    void on(ref CreatureContext me, const ref Died e) { steps.clear(); }
+
+    void on(ref CreatureContext me, const ref Reset e)
+    {
+        steps.clear();
+        me.signalDungeon(BwlEncounter.lashlayer, EncounterState.failed);
+    }
 
     void on(ref CreatureContext me, const ref EnteredCombat e)
     {

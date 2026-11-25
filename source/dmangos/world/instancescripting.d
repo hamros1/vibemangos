@@ -239,14 +239,18 @@ final class InstanceScript : InstanceHost
             raise(CreatureEvaded(creature));
     }
 
-    /// The checkpoint supplies this creature when the first player enters the copy.
+    /// The checkpoint supplies this creature or object when the first player enters the copy.
     bool restoringEntity(EntityRef entity) const
     {
-        if (summonsPending)
-            foreach (saved; durableSummons)
-                if (saved == entity)
-                    return true;
-        return false;
+        return summonsPending && keepsCheckpoint(entity);
+    }
+
+    /// Whether this object still has active encounter state to save.
+    bool keepsCheckpoint(EntityRef entity) const
+    {
+        import std.algorithm.searching : canFind;
+
+        return durableSummons.canFind(entity);
     }
 
     /// Open-world round 2: the script `name` (`world_template.ScriptName`) of continent `mapId`; null if none serves it.
@@ -279,7 +283,7 @@ final class InstanceScript : InstanceHost
             context.savedSummons = durableSummons;
         runtime.raise(handle, context, event);
         checkpoint = context.checkpointRequested;
-        rememberCheckpointCreatures(context.checkpointSummons);
+        updateCheckpointActors(context);
         if (context.changedDatabaseScripts)
             durableScripts = context.databaseScripts;
         static if (is(E == Restored))
@@ -351,7 +355,7 @@ final class InstanceScript : InstanceHost
             auto context = InstanceContext(this);
             runtime.tick(handle, context, ms);
             checkpoint = context.checkpointRequested;
-            rememberCheckpointCreatures(context.checkpointSummons);
+            updateCheckpointActors(context);
             if (context.changedDatabaseScripts)
                 durableScripts = context.databaseScripts;
         }
@@ -377,13 +381,20 @@ final class InstanceScript : InstanceHost
         save(durable);
     }
 
-    private void rememberCheckpointCreatures(EntityRef[] creatures)
+    private void updateCheckpointActors(ref InstanceContext context)
     {
-        import std.algorithm.searching : canFind;
+        import std.algorithm.mutation : remove;
+        import std.algorithm.searching : countUntil;
 
-        foreach (creature; creatures)
-            if (!durableSummons.canFind(creature))
-                durableSummons ~= creature;
+        foreach (actor; context.checkpointSummons)
+            if (!keepsCheckpoint(actor))
+                durableSummons ~= actor;
+        foreach (object; context.releasedCheckpointObjects)
+        {
+            const index = durableSummons.countUntil(object);
+            if (index >= 0)
+                durableSummons = durableSummons.remove(index);
+        }
     }
 
     private void save(bool checkpoint)
@@ -539,6 +550,17 @@ final class InstanceScript : InstanceHost
     uint hostPlayerCount()
     {
         return map is null ? 0 : cast(uint) map.population;
+    }
+
+    void hostSignalObjects(uint entry, uint id, int value)
+    {
+        if (map is null || signalObject is null)
+            return;
+        map.forEachObject((MapObject object) {
+            if (auto go = cast(GameObject) object)
+                if (go.spawn.entry == entry)
+                    signalObject(go, map, EntityRef.init, id, value);
+        });
     }
 
     void hostLog(string text)

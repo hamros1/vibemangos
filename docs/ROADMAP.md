@@ -45,6 +45,7 @@ describes how players use the systems available today.
 
 * **Instances.** Crash recovery for an active multi-stage encounter depends on what its script
   checkpoints. Blackwing Lair has active recovery tests for Razorgore, Vaelastrasz and Nefarian.
+  The Suppression Room keeps disarmed device timers and Lashlayer's room-wide shutdown.
   See [dungeon failover](CLUSTER.md#dungeons-and-battlegrounds) for coverage across instances.
 * **GM commands.** The [command reference](COMMANDS.md#not-yet-implemented) lists the remaining
   ArcEmu commands, including waypoint editing, arena administration and the flight cheat.

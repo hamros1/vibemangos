@@ -241,6 +241,7 @@ final class TestInstance : InstanceHost
     }
     uint hostPlayerCount() { return players; }
     void hostLog(string) {}
+    void hostSignalObjects(uint, uint, int) {}
     EntityRef hostSummon(uint entry, Location, uint, EntityRef)
     {
         did ~= format("summon %s", entry);
