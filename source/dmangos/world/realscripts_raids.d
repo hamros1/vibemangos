@@ -838,12 +838,16 @@ unittest
         assert(s.castBy(razorgoreEntry, spell), format!"Razorgore: %s not cast\n%s"(spell, s.seen()));
     const freeGuid = razorgore.guid;
     s.hurtTo(razorgore, 66);
+    const hurtHealth = s.healthOf(razorgore);
     s.run(3.seconds);
     const freeHealth = s.healthOf(razorgore);
     s.restartAfterCrash();
     razorgore = s.the(razorgoreEntry);
     assert(s.ask(0) == 4 && s.objects(egg).length == 0 && razorgore.guid == freeGuid);
-    assert(s.healthOf(razorgore) == freeHealth && razorgore.ai.inCombat, "the freed dragon resumes the same fight");
+    // The fight goes on meanwhile: his last save, at most two seconds old, came after the raid hurt him.
+    assert(s.healthOf(razorgore) >= freeHealth && s.healthOf(razorgore) <= hurtHealth && razorgore.ai.inCombat,
+        format!"the freed dragon resumes the same fight: health %s, between %s and %s, in combat %s"(
+            s.healthOf(razorgore), freeHealth, hurtHealth, razorgore.ai.inCombat));
     s.kill(razorgore);
     s.run(2.seconds);
     assert(!razorgore.alive && s.ask(0) == 3, "Razorgore's encounter not done");
@@ -1698,6 +1702,37 @@ unittest
     s.restartAfterCrash();
     assert(s.ask(NaxxEncounter.gothik) == EncounterState.done && s.doorOpen(exitGate));
     assert(s.find(npcGothik) is null && !s.all(npcSpectralTrainee).length && !s.all(npcUnrelentingTrainee).length);
+}
+
+/// Gothik: a spectral trainee killed just before a crash, sooner than the encounter's next timed save, stays dead.
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.scripts.naxxramas;
+
+    const encounter = Boss("Gothik the Harvester", 533, npcGothik, NaxxEncounter.gothik, [npcSubBossTrigger]);
+    Scene s;
+    auto boss = setUp(encounter, s);
+    s.pressing = false;
+    s.stayWith = null;
+    s.engage(boss);
+    s.moveHero(0, Position(2692, -3410, 268));
+    s.moveHero(1, Position(2692, -3322, 268));
+    assert(s.runUntil(() => s.all(npcUnrelentingTrainee).length == 2, 26.seconds), "the first living wave");
+    auto living = s.all(npcUnrelentingTrainee);
+    const survivor = living[1].guid;
+    s.kill(living[0]);
+    s.run(2100.msecs); // the spectral trainee its death sent is in a timed save
+    auto spectral = s.the(npcSpectralTrainee);
+    const killed = spectral.guid;
+    s.kill(spectral);
+    s.run(200.msecs);
+    s.restartAfterCrash();
+    assert(s.map.creatureAt(killed) is null && !s.all(npcSpectralTrainee).length,
+        "the spectral trainee killed before the crash stays dead");
+    auto still = s.all(npcUnrelentingTrainee);
+    assert(still.length == 1 && still[0].guid == survivor);
 }
 
 /**

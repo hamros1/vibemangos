@@ -7929,8 +7929,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     }
                     discardDungeonFight(creature.instanceId, guid);
                 }
+            // What the script makes of the death is a checkpoint: the death is queued already, and a crash between
+            // the two writes would leave the creature dead but its encounter waiting on it (a door shut for good).
             if (auto script = creature.instanceId in instanceScripts)
-                script.raise(CreatureDied(EntityRef(creature.guid), EntityRef(creature.lootRecipient), summoned));
+                script.raiseCheckpointed(CreatureDied(EntityRef(creature.guid), EntityRef(creature.lootRecipient),
+                    summoned));
             return;
         }
         if (auto script = creature.spawn.map in worldScripts) // open-world round 2

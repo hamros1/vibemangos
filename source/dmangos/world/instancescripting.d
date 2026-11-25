@@ -330,6 +330,26 @@ final class InstanceScript : InstanceHost
         return consumed;
     }
 
+    /**
+     * As `raise`, but what the event changes is written as a checkpoint (`persist`'s `checkpoint`), however recent the
+     * last save: a death, already queued for the database, must not land without what the script made of it.
+     */
+    bool raiseCheckpointed(E)(const E event)
+    {
+        if (raising)
+        {
+            pending ~= () { raiseCheckpointed(event); };
+            return false;
+        }
+        const outer = checkpointChanges;
+        checkpointChanges = true;
+        needsCheckpoint |= drainingEvents; // its save comes once the events before it are done
+        scope (exit)
+            checkpointChanges = outer;
+        return raise(event);
+    }
+
+    private bool checkpointChanges;    // `raiseCheckpointed`: the next save is a checkpoint
     private bool raising;              // a handler runs
     private void delegate()[] pending; // events its actions caused, for after it
     private bool waitForPlayer;
@@ -401,6 +421,7 @@ final class InstanceScript : InstanceHost
     {
         if (persist is null || summonsPending) // wait for the saved actors before writing another checkpoint
             return;
+        checkpoint |= checkpointChanges;
         string summons;
         if ((durableSummons.length || durableScripts.length) && !checkpoint && sinceSummonSave < 2_000)
             return;
@@ -903,4 +924,25 @@ unittest
 {
     assert(fromHex(toHex([0, 1, 0xAB, 0xFF])) == [0, 1, 0xAB, 0xFF]);
     assert(fromHex("zz") is null);
+}
+
+// What a script makes of a death is written as a checkpoint (the death itself is already queued), and only what
+// changed is written.
+unittest
+{
+    static import dmangos.scripts.deadmines;
+    import dmangos.scripts.deadmines : rhahkZor;
+    import dmangos.world.objects : HighGuid, makeGuid;
+
+    bool[] checkpoints;
+    auto script = InstanceScript.make(ScriptRuntime.of!(dmangos.scripts.deadmines)(), "instance_deadmines", 1, 36,
+        null, (string, bool checkpoint) { checkpoints ~= checkpoint; }, (MigrantKind, uint) => EntityRef.init,
+        (uint) => false);
+    const guard = EntityRef(makeGuid(HighGuid.unit, rhahkZor, 90002));
+    script.raiseCheckpointed(CreatureDied(guard, EntityRef.init, false));
+    assert(checkpoints == [true], "Rhahk'Zor's death settled with its door");
+    script.raiseCheckpointed(CreatureDied(guard, EntityRef.init, false));
+    assert(checkpoints == [true], "nothing changed: nothing written");
+    script.raise(CreatureDied(EntityRef(makeGuid(HighGuid.unit, 4417, 90003)), EntityRef.init, false));
+    assert(checkpoints == [true]);
 }
