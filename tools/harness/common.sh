@@ -17,15 +17,24 @@ db_info() { echo ".;$SOCK;mangos;harness;$1"; }
 db_running() { [ -f "$H/run/mariadb.pid" ] && kill -0 "$(cat "$H/run/mariadb.pid")" 2>/dev/null; }
 
 db_start() {
-    db_running && return 0
+    db_running && { db_migrate; return; }
     mkdir -p "$H/run" "$H/logs"
     LD_LIBRARY_PATH="$(dirname "$MYSQL_LIB")" setsid "$MARIADB_ROOT/usr/sbin/mariadbd" --no-defaults \
         --basedir="$MARIADB_ROOT/usr" --datadir="$H/mariadb-data" --socket="$SOCK" \
         --pid-file="$H/run/mariadb.pid" --skip-networking --skip-grant-tables \
         --lc-messages-dir="$MARIADB_ROOT/usr/share/mysql" >> "$H/logs/mariadb.log" 2>&1 < /dev/null &
-    for i in $(seq 120); do [ -S "$SOCK" ] && db_running && return 0; sleep 0.25; done
+    for i in $(seq 120); do [ -S "$SOCK" ] && db_running && { db_migrate; return; }; sleep 0.25; done
     echo "the harness's MariaDB did not start; see $H/logs/mariadb.log" >&2
     return 1
+}
+
+# Brings the copied login database up to the schema the servers refuse to start without. Each script is
+# safe to apply again, so this runs at every start.
+db_migrate() {
+    for script in gm-rbac.sql gm-role-upgrade.sql; do
+        LD_LIBRARY_PATH="$(dirname "$MYSQL_LIB")" "$MARIADB_ROOT/usr/bin/mariadb" -S "$SOCK" -u root classicrealmd \
+            < "$REPO/sql/$script" || { echo "the harness could not apply sql/$script" >&2; return 1; }
+    done
 }
 
 db_stop() {
