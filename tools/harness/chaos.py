@@ -29,6 +29,7 @@ import loot_award_crash
 import migration_stall
 import quorum
 import quorum_partition
+import sapphiron_recovery
 import stall_release
 import standby_bundle
 import standby_login
@@ -47,6 +48,9 @@ CASES = (
     ("gateway-return", gateway_return.run),
     ("cthun-transition-recovery", cthun_recovery.transition),
     ("cthun-stomach-recovery", cthun_recovery.stomach),
+    ("sapphiron-air-recovery", sapphiron_recovery.air),
+    ("sapphiron-ground-recovery", sapphiron_recovery.ground),
+    ("sapphiron-birth-recovery", sapphiron_recovery.birth),
     ("loot-award-crash", loot_award_crash.main),
     ("migration-stall", migration_stall.run),
     ("standby-login", standby_login.run),

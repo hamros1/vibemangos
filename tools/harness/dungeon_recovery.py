@@ -101,43 +101,44 @@ def start_cluster(fixture, new_party, *, world=None, leader_appearance=(1, 1), e
 
 
 def open_party(fixture, characters, names, leader, client, nodes, new_party, actions, *, map_id=MAP, entrance=None):
+    """Logs a client in for each of `actions` (the party's members, in order) and brings them into one dungeon copy."""
     invite, accept, enter, inside = (fixture.directory / name for name in ("invite", "accept", "enter", "inside"))
     assemble_leader = (wait(invite), f"invite:{names[1]}") if new_party else ()
     assemble_member = (wait(accept), "accept") if new_party else ()
     portal = (wait(enter), "cmd:.cheat god", entrance or f"trigger:{ENTRANCE}", wait(inside))
-    clients = [
-        client("party0", 0, f"login:{names[0]}", *assemble_leader, *portal, *actions[0]),
-        client("party1", 1, f"login:{names[1]}", *assemble_member, *portal, *actions[1]),
-    ]
+    clients = [client(f"party{i}", i, f"login:{names[i]}", *(assemble_leader if i == 0 else assemble_member),
+                      *portal, *member_actions) for i, member_actions in enumerate(actions)]
+    members = names[:len(clients)]
 
     def logs():
-        output = [fixture.log(f"party{i}") for i in range(2)]
+        output = [fixture.log(f"party{i}") for i in range(len(clients))]
         for i, process in enumerate(clients):
             if process.poll():
                 raise RuntimeError(f"party client {i} failed:\n{output[i][-2000:]}")
         return output
 
-    wait_for("both party members logged in", lambda: all("[appears] player" in log for log in logs()), 30)
-    wait_for("both players routed from the gateway to workers",
+    wait_for("the party members logged in", lambda: all("[appears] player" in log for log in logs()), 30)
+    wait_for("the players routed from the gateway to workers",
              lambda: all(any(f"'{name}' arrived from another node" in fixture.log(tag)
-                             for tag in nodes if tag != "node4") for name in names), 15)
+                             for tag in nodes if tag != "node4") for name in members), 15)
     if new_party:
         invite.touch()
         wait_for("the coordinator to deliver the invite", lambda: "[invited by]" in logs()[1], 12)
         accept.touch()
         wait_for("both clients to see the new party", lambda: all("[group list] party" in log for log in logs()), 12)
     enter.touch()
-    wait_for("both players entered the dungeon",
+    wait_for("the players entered the dungeon",
              lambda: all(f"[new world] map {map_id} " in log for log in logs()), 20)
-    binds = wait_for("both character binds written",
+    binds = wait_for("the character binds written",
                      lambda: fixture.query("SELECT instance FROM character_instance ORDER BY guid", characters)
-                     if fixture.query("SELECT COUNT(*) FROM character_instance", characters) == "2" else "", 12)
+                     if fixture.query("SELECT COUNT(*) FROM character_instance", characters) == str(len(clients))
+                     else "", 12)
     copies = set(map(int, binds.split()))
     assert len(copies) == 1, f"party split between dungeon copies {sorted(copies)}"
     copy, = copies
     assert fixture.query(f"SELECT instance FROM group_instance WHERE leaderGuid={leader}", characters) == str(copy)
-    wait_for("both clients to see the same party", lambda: all(re.search(r"\[group list\] (?:party|raid)", log)
-                                                                for log in logs()), 12)
+    wait_for("the clients to see the same party", lambda: all(re.search(r"\[group list\] (?:party|raid)", log)
+                                                               for log in logs()), 12)
     inside.touch()
     return copy, logs, clients
 

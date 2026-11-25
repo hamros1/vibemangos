@@ -36,6 +36,7 @@ in order:
     rolloffer  rollvote:N     keep the next group loot prompt, then pass (0), need (1) or greed (2)
     rollcast:N                vote on the last group loot prompt without waiting for the result
     waitfile:PATH             keep receiving packets until another test process creates this file
+    waitactions:PATH          the same, then run the actions the file lists (one a line) before the rest
     release  corpse  tocorpse  reclaim  spirithealer
                               dead: release the spirit, ask where the corpse is, go there, take it
                               back; or ask the spirit healer picked with npc:ENTRY
@@ -332,6 +333,21 @@ def describe_creature_auras(guid, fields):
             elif field in auras:
                 print(f"  [creature aura] {guid:#018x} ended {auras.pop(field)}")
 
+player_auras = {}
+
+def describe_player_auras(guid, fields, created=False):
+    """Prints the auras a player (this one or another) gained or lost, from its aura fields."""
+    if created:
+        player_auras.pop(guid, None)
+    auras = player_auras.setdefault(guid, {})
+    for field, spell in fields.items():
+        if 0x2F <= field < 0x5F:
+            if spell and auras.get(field) != spell:
+                auras[field] = spell
+                print(f"  [player aura] {guid} received {spell}")
+            elif not spell and field in auras:
+                print(f"  [player aura] {guid} ended {auras.pop(field)}")
+
 def describe(op, p):
     """Prints a packet that another player caused."""
     global last_roll_offer
@@ -350,7 +366,9 @@ def describe(op, p):
         for kind, g, t, v, move in objs:
             if kind in (2, 3) and t in (1, 2): print(f"  [item created] {g & 0xFFFFFFFF}: entry {v[3]} count {v.get(OBJECT_END + 8)}")
             elif kind == 0 and g in item_objects: print(f"  [item changed] {g & 0xFFFFFFFF}: fields {sorted(v)}")
-            elif kind == 0 and g == player_guid: print(f"  [player changed] {len(v)} fields")
+            elif kind == 0 and g == player_guid:
+                print(f"  [player changed] {len(v)} fields")
+                describe_player_auras(g, v)
             elif kind == 0 and seen_objects.get(g, (0, 0))[0] == 5 and 0xE in v:
                 print(f"  [game object state] {g:#018x} state {v[0xE]}")
             elif kind == 4:
@@ -364,6 +382,7 @@ def describe(op, p):
                 print(f"  [appears] player {g}: race {b0 & 0xFF} class {(b0 >> 8) & 0xFF} level {v[OBJECT_END + 0x1C]}, "
                       f"health {v.get(OBJECT_END + 0x10)}/{v.get(OBJECT_END + 0x16)} (percent), {len(v)} fields, "
                       f"at {move[0]:.1f} {move[1]:.1f} {move[2]:.1f}")
+                describe_player_auras(g, v, created=True)
             elif kind in (2, 3) and t == 7:
                 print(f"  [corpse appears] {g & 0xFFFFFF} at {move[0]:.1f} {move[1]:.1f} {move[2]:.1f}" if move else
                       f"  [corpse appears] {g & 0xFFFFFF}")
@@ -392,6 +411,8 @@ def describe(op, p):
             elif kind == 0:
                 health = f", health {v[OBJECT_END + 0x10]}/{v.get(OBJECT_END + 0x16, '?')}" if OBJECT_END + 0x10 in v else ""
                 print(f"  [changes] {g}: fields {sorted(v)}{health}")
+                if seen_objects.get(g, (0, 0))[0] == 4:
+                    describe_player_auras(g, v)
                 if seen_objects.get(g, (0, 0))[0] == 3:
                     if OBJECT_END + 0x1D in v:
                         print(f"  [creature faction] {g:#018x} faction {v[OBJECT_END + 0x1D]}")
@@ -763,7 +784,9 @@ def movement(op, x, y, z, o=0.0, flags=0, fall_time=0):
 
 npc = None  # the creature the NPC actions talk to (`npc:ENTRY`)
 pending_roll = None
-for action in actions:
+step = 0
+while step < len(actions):
+    action = actions[step]; step += 1
     kind, *args = action.split(":")
     if kind == "login":
         guid = enum()[args[0]][0]
@@ -1016,7 +1039,7 @@ for action in actions:
         loot, slot, _ = last_roll_offer
         wsend(0x2A0, struct.pack("<QIB", loot, slot, int(args[0])))
         listen_for(0.5)
-    elif kind == "waitfile":
+    elif kind in ("waitfile", "waitactions"):
         from pathlib import Path
         path = Path(":".join(args))
         deadline = time.monotonic() + float(os.environ.get("DMANGOS_TEST_WAITFILE_SECONDS", "15"))
@@ -1024,6 +1047,10 @@ for action in actions:
             if time.monotonic() >= deadline:
                 raise RuntimeError(f"{path.name} did not appear")
             listen_for(0.2)
+        if kind == "waitactions":
+            listed = [line.strip() for line in path.read_text().splitlines() if line.strip()]
+            print(f"waitactions: {' '.join(listed)}")
+            actions[step:step] = listed
     elif kind in ("castgo", "castopen", "usego"):
         # Walk next to the nearest game object of ENTRY to cast at it or use it. castgo also takes its loot.
         import math
