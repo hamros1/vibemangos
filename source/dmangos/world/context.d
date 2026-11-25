@@ -724,14 +724,18 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         }
         try
         {
-            const paid = database.redeemLootCoins(guid, unixTime);
+            // The database adds the credits to the live purse, not to its own older copy of the money, and nothing
+            // runs between reading the purse and setting it to that sum: unsaved spending is not refunded, and the
+            // session and the database hold the same money afterwards.
+            const paid = database.redeemLootCoins(guid, player.player.money.amount, unixTime);
             if (!paid.valid)
                 return;
             retryLootCoinRedemption.remove(guid);
+            if (!paid.copper)
+                return;
             player.player.values.set!PLAYER_FIELD_COINAGE(paid.wallet);
             player.flushPlayerChanges();
-            if (paid.copper)
-                tellLootCoinShare(player, paid.copper);
+            tellLootCoinShare(player, paid.copper);
         }
         catch (DatabaseException error)
         {

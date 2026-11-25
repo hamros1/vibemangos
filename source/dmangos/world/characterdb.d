@@ -2298,21 +2298,21 @@ final class CharacterStatements
             .map!(row => row.get!uint(0)).array;
     }
 
-    LootCoinRedemption redeemLootCoins(uint player, long now)
+    LootCoinRedemption redeemLootCoins(uint player, uint wallet, long now)
     {
         import dmangos.world.money : Copper;
 
         prepareLootCoins();
         LootCoinRedemption result;
         characters.transaction({
-            const wallet = characters.query!"SELECT money FROM characters WHERE guid = ? AND account <> 0 FOR UPDATE"(player);
-            if (!wallet.length)
+            // The live wallet, not `characters.money`: spending the session has not saved yet stays spent.
+            if (!characters.query!"SELECT guid FROM characters WHERE guid = ? AND account <> 0 FOR UPDATE"(player).length)
                 return;
             Copper coins;
             foreach (row; characters.query!("SELECT copper FROM dmangos_loot_coin WHERE player = ? "
                 ~ "AND paid_at = 0 FOR UPDATE")(player))
                 coins = coins + Copper(row.get!uint(0));
-            const money = (Copper(wallet[0].get!uint(0)) + coins).amount;
+            const money = (Copper(wallet) + coins).amount;
             if (coins)
             {
                 characters.execute!"UPDATE characters SET money = ? WHERE guid = ?"(money, player);

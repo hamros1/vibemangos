@@ -1014,8 +1014,12 @@ interface WorldDatabase
     /// Deposits every group share together, identified by the original drop's immutable payout token.
     @DatabaseWrite bool saveLootCoinSplit(ushort issuer, ulong token, const(LootCoinCredit)[] shares);
     @DatabaseRead uint[] pendingLootCoinPlayers();
-    /// Updates the wallet and marks the player's credits paid in the same transaction.
-    @DatabaseWrite LootCoinRedemption redeemLootCoins(uint player, long now);
+    /**
+     * Adds the player's unpaid credits to `wallet`, the online session's live purse, saves the sum as the
+     * character's money and marks the credits paid in the same transaction. The saved money is never the
+     * older `characters.money`, which may not yet hold what the session spent.
+     */
+    @DatabaseWrite LootCoinRedemption redeemLootCoins(uint player, uint wallet, long now);
 
     /// The `groups` row of a new group.
     void createGroup(const ref GroupRecord group);
@@ -1900,7 +1904,10 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
         return statements.saveLootCoinSplit(issuer, token, shares);
     }
     uint[] pendingLootCoinPlayers() { return statements.pendingLootCoinPlayers(); }
-    LootCoinRedemption redeemLootCoins(uint player, long now) { return statements.redeemLootCoins(player, now); }
+    LootCoinRedemption redeemLootCoins(uint player, uint wallet, long now)
+    {
+        return statements.redeemLootCoins(player, wallet, now);
+    }
     void createGroup(const ref GroupRecord group) { statements.createGroup(group); }
     void updateGroup(const ref GroupRecord group) { statements.updateGroup(group); }
     void deleteGroup(uint groupId) { statements.deleteGroup(groupId); }
@@ -2723,7 +2730,7 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
         return players.keys;
     }
 
-    LootCoinRedemption redeemLootCoins(uint player, long now)
+    LootCoinRedemption redeemLootCoins(uint player, uint wallet, long now)
     {
         import dmangos.world.money : Copper;
 
@@ -2738,7 +2745,7 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
                 credit.paidAt = now;
             }
         const saved = moneySaves.get(player, [character.money, character.playerBytes2]);
-        const money = (Copper(saved[0]) + credited).amount;
+        const money = (Copper(wallet) + credited).amount;
         if (credited)
             saveInventory(player, money, saved[1], null);
         return LootCoinRedemption(true, money, credited.amount);

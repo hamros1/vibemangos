@@ -2361,6 +2361,29 @@ unittest
     }
 }
 
+// A group coin credit is added to the live purse: money the session spent but has not saved stays spent.
+unittest
+{
+    import dmangos.world.database : LootCoinCredit;
+    import dmangos.world.updatefields : PLAYER_FIELD_COINAGE;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
+    anduin.read();
+    auto purse = context.onlinePlayer(anduin.session.character.guid).player;
+    purse.values.set!PLAYER_FIELD_COINAGE(1000);
+    db.saveInventory(7, 1000, purse.values[PLAYER_BYTES_2], null);
+    purse.pay(Copper(400)); // a taxi fare, say: only the field changes until the next save
+    db.saveLootCoinSplit(1, 77, [LootCoinCredit(7, 5)]);
+    context.redeemLootCoinShare(7);
+    assert(purse.money == Copper(605), "the stale saved purse would have refunded the fare");
+    assert(db.moneySaves[7][0] == 605);
+    assert(!db.pendingLootCoinPlayers().length);
+    context.redeemLootCoinShare(7);
+    assert(purse.money == Copper(605) && db.moneySaves[7][0] == 605, "a credit is paid once");
+}
+
 // Two corpses made on different nodes share the coordinator's rotation.
 unittest
 {
