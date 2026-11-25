@@ -162,7 +162,7 @@ template KindInfo(ScriptKind kind)
             SummonedDied, SummonedArrived, UnitInSight, EmoteReceived,
             // Instance round 2:
             AuraRemoved,
-            StealthAlert);
+            StealthAlert, CreatureCastFinished);
         alias Attribute = .creature;
     }
     else static if (kind == ScriptKind.gameObject)

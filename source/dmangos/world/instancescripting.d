@@ -389,9 +389,9 @@ final class InstanceScript : InstanceHost
         foreach (actor; context.checkpointSummons)
             if (!keepsCheckpoint(actor))
                 durableSummons ~= actor;
-        foreach (object; context.releasedCheckpointObjects)
+        foreach (actor; context.releasedCheckpointActors)
         {
-            const index = durableSummons.countUntil(object);
+            const index = durableSummons.countUntil(actor);
             if (index >= 0)
                 durableSummons = durableSummons.remove(index);
         }

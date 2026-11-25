@@ -5999,6 +5999,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return;
         const current = dungeonFights.get(instance, null);
         const tracked = spawn in current;
+        if (auto script = instanceScripts.get(instance, null))
+            if (script.keepsCheckpoint(EntityRef(creature.guid)))
+            {
+                if (tracked !is null)
+                    discardDungeonFight(instance, spawn);
+                return; // the encounter supplies the creature and its phase together
+            }
         if (!creature.ai.inCombat && creature.values.get!UNIT_FIELD_HEALTH >= creature.values.get!UNIT_FIELD_MAXHEALTH)
         {
             if (tracked !is null)

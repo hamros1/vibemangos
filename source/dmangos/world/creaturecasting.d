@@ -1013,6 +1013,7 @@ mixin template CreatureCasting()
     private void go(const(SpellInfo)* spell, ulong target, bool takeMana, bool auraAbsent = false,
         ulong[] selectedWeaponTargets = null, CustomValues custom = CustomValues.init, bool selectedChannelTarget = false)
     {
+        import dmangos.script.api : CreatureCastFinished;
         import dmangos.world.context : WorldContext;
         import dmangos.world.map : Map;
         import dmangos.world.spellcast : spellFailurePacket, SpellCastResult;
@@ -1329,6 +1330,8 @@ mixin template CreatureCasting()
             else
                 finishCreatureChannel(true);
         }
+        if (me.alive && behaviour && scripts_.handles!CreatureCastFinished(behaviour))
+            raiseScript(CreatureCastFinished(spell.id));
         world_.flushCreature(me);
     }
 

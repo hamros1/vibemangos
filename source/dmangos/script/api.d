@@ -201,6 +201,12 @@ struct SpellHit
     uint schoolMask; /// Raid scripts: the schools it struck with (`SpellSchoolMask`: 1 physical, 4 fire, 8 nature, 16 frost, ...)
 }
 
+/// This creature finished a cast and resolved its spell effects.
+struct CreatureCastFinished
+{
+    uint spell;
+}
+
 // Instance round 2:
 
 /// Its aura of `spell`, from `caster`, went: it ran out, was dispelled or cancelled, or a script took it away
@@ -1259,7 +1265,7 @@ struct InstanceContext
 {
     private InstanceHost host;
     private bool checkpoint_, waitForPlayer_;
-    private EntityRef[] summons_, releasedObjects_;
+    private EntityRef[] summons_, releasedActors_;
     private const(EntityRef)[] savedSummons_;
 
     @disable this(this);
@@ -1312,10 +1318,10 @@ struct InstanceContext
         checkpoint();
     }
 
-    /// Stop saving an encounter object after its temporary state ends.
-    void releaseCheckpointObject(EntityRef object)
+    /// Stop saving an encounter creature or object after its temporary state ends.
+    void releaseCheckpointActor(EntityRef actor)
     {
-        releasedObjects_ ~= object;
+        releasedActors_ ~= actor;
         checkpoint();
     }
 
@@ -1369,7 +1375,7 @@ struct InstanceContext
     }
 
     package(dmangos) @property EntityRef[] checkpointSummons() { return summons_; }
-    package(dmangos) @property EntityRef[] releasedCheckpointObjects() { return releasedObjects_; }
+    package(dmangos) @property EntityRef[] releasedCheckpointActors() { return releasedActors_; }
     package(dmangos) @property void savedSummons(const(EntityRef)[] creatures) { savedSummons_ = creatures; }
 
     // Raid scripts:

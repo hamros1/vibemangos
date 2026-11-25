@@ -588,12 +588,17 @@ unittest
     if (!haveRealData())
         return;
     auto breaths = (Scene s, Creature boss) {
+        import dmangos.scripts.blackwinglair : Chromaggus;
+
         foreach (side; [9, 10])
         {
             const breath = cast(uint) s.ask(side);
             assert(breath, format!"the copy drew no breath for side %s"(side));
             assert(s.castBy(14020, breath), format!"Chromaggus: breath %s not breathed\n%s"(breath, s.seen()));
         }
+        assert(Chromaggus.afflictions[].canFind!(spell => s.hero.auras.find(spell, boss.guid) !is null)
+            || s.hero.auras.find(Chromaggus.mutation, boss.guid) !is null,
+            "Brood Affliction applies a real debuff to a player fighting Chromaggus");
     };
     const Boss[] bosses = [
         // Broodlord: his line; Cleave (8 s), Knock Away (12 s), Blast Wave (20 s), Mortal Strike (30 s).
@@ -613,6 +618,38 @@ unittest
         fight(b);
         wipe(b);
     }
+}
+
+/// The first breath has already gone off when the worker dies, before the next automatic checkpoint.
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.scripts.blackwinglair : BwlEncounter, BwlQuestion, npcChromaggus, goDoorChromaggusExit;
+
+    Scene s;
+    const encounter = Boss("Chromaggus", 469, npcChromaggus, BwlEncounter.chromaggus);
+    auto boss = setUp(encounter, s);
+    s.pressing = false;
+    const guid = boss.guid;
+    const left = cast(uint) s.ask(BwlQuestion.chromaLeftBreath), right = cast(uint) s.ask(BwlQuestion.chromaRightBreath);
+    s.engage(boss);
+    s.hurtTo(boss, 65);
+    assert(s.runUntil(() => s.castCount(left, guid) == 1, 36.seconds), s.seen());
+    const health = boss.values.get!UNIT_FIELD_HEALTH;
+    s.forget();
+    s.restartAfterCrash();
+    boss = s.the(npcChromaggus);
+    assert(boss.guid == guid && boss.ai.inCombat && boss.values.get!UNIT_FIELD_HEALTH == health);
+    assert(s.ask(BwlEncounter.chromaggus) == 1 && !s.doorOpen(goDoorChromaggusExit));
+    assert(s.ask(BwlQuestion.chromaLeftBreath) == left && s.ask(BwlQuestion.chromaRightBreath) == right);
+    s.stayWith = boss;
+    assert(s.runUntil(() => s.castCount(right, guid) == 1, 33.seconds), s.seen());
+    assert(!s.castCount(left, guid), "the completed first breath did not replay");
+    s.kill(boss);
+    s.run(500.msecs);
+    s.restartAfterCrash();
+    assert(s.ask(BwlEncounter.chromaggus) == 3 && s.doorOpen(goDoorChromaggusExit) && !s.all(npcChromaggus).length);
 }
 
 /**

@@ -1530,7 +1530,7 @@ mixin template PetHandlers()
     }
 
     private enum ubyte loneTotemSlot = 4, guardianSlot = 5;
-    private enum ubyte summonCheckpointVersion = 6;
+    private enum ubyte summonCheckpointVersion = 7;
     private bool summonCheckpointExists, detachingSummons;
 
     private const(ubyte)[] playerSummonState(bool departing, ulong removed = 0)
@@ -1618,10 +1618,12 @@ mixin template PetHandlers()
         const fishing = player.alive && bobber && bobber != removed ? fishingRecoveryState() : null;
         const ground = player.alive && persistentAreas.length ? groundRecoveryState() : null;
         const environmentState = player.alive ? environmentRecoveryState() : null;
+        const encounterAuras = player.alive ? encounterAuraRecoveryState() : null;
         const casting = player.alive && (generic.active || pendingHits.length || context.replicaImpactCount(player.guid)
             || activeRecoveryChannelAura() !is null || ritualChannelOwner || cameraChannel())
             ? castRecoveryState() : null;
-        const active = summons.length || fishing.length || ground.length || casting.length || environmentState.length;
+        const active = summons.length || fishing.length || ground.length || casting.length || environmentState.length
+            || encounterAuras.length;
         if (!active && !summonCheckpointExists)
             return true;
         ByteWriter checkpoint;
@@ -1638,6 +1640,8 @@ mixin template PetHandlers()
             checkpoint.putBytes(ground);
             checkpoint.put(cast(uint) environmentState.length);
             checkpoint.putBytes(environmentState);
+            checkpoint.put(cast(uint) encounterAuras.length);
+            checkpoint.putBytes(encounterAuras);
             checkpoint.putBytes(casting);
         }
         const state = active ? toHex(checkpoint.data) : null;
@@ -1667,6 +1671,8 @@ mixin template PetHandlers()
         if (checkpoints is null)
         {
             context.database.savePlayerSummons(player.data.guid, null);
+            if (connection.gatewayHome.node && player.alive && encounterAuraRecoveryState().length)
+                checkpointSummons();
             context.settleWrites();
             return;
         }
@@ -1703,6 +1709,11 @@ mixin template PetHandlers()
                             {
                                 auto environmentState = ByteReader(state.readBytes(state.read!uint));
                                 restoreEnvironmentRecovery(environmentState);
+                            }
+                            if (version_ >= 7)
+                            {
+                                auto encounterAuras = ByteReader(state.readBytes(state.read!uint));
+                                restoreEncounterAuraRecovery(encounterAuras);
                             }
                             restoreCastRecovery(state, version_ >= 6);
                         }

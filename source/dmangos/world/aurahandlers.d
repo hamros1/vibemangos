@@ -426,6 +426,7 @@ private:
             auraEffects(applied, true);
         else // one more stack (Blessing of the Claw's health): the stats of its amounts again
             player.refreshEquipmentStats(context.data);
+        checkpointEncounterAura(applied);
         sendAuraDuration(applied);
         flushPlayerChanges();
         if (isNew) // its spell's script hears of each of its effects (whoever cast it)
@@ -501,6 +502,7 @@ private:
         auraEffects(aura, false);
         if (aura.caster == player.guid)
             cooldownEvent(aura.spell); // Presence of Mind's cooldown starts now
+        checkpointEncounterAura(aura);
         flushPlayerChanges();
         {
             import dmangos.script.api : AuraEnded, EntityRef;
@@ -923,11 +925,73 @@ private:
         context.database.saveAuras(player.data.guid, rows);
     }
 
+    private bool loadingSavedAuras;
+
+    private static bool recoverableEncounterAura(uint spell)
+    {
+        import dmangos.scripts.blackwinglair : Chromaggus;
+
+        return Chromaggus.isRecoveryAura(spell);
+    }
+
+    private void checkpointEncounterAura(const Aura aura)
+    {
+        if (!loadingSavedAuras && connection.gatewayHome.node && recoverableEncounterAura(aura.spell.id))
+            checkpointSummons(true);
+    }
+
+    private const(ubyte)[] encounterAuraRecoveryState()
+    {
+        ByteWriter state;
+        foreach (aura; player.auras.list)
+            if (recoverableEncounterAura(aura.spell.id))
+            {
+                if (!state.length)
+                {
+                    state.put(map.id);
+                    state.put(map.instanceId);
+                    state.put(context.transportNow());
+                }
+                aura.saveState(state);
+            }
+        return state.data;
+    }
+
+    private void restoreEncounterAuraRecovery(ref ByteReader state)
+    {
+        import std.algorithm.comparison : max;
+
+        if (state.empty || state.read!uint != map.id || state.read!uint != map.instanceId)
+            return;
+        const elapsed = max(0, cast(int)(context.transportNow() - state.read!uint));
+        loadingSavedAuras = true;
+        scope (exit) loadingSavedAuras = false;
+        while (!state.empty)
+        {
+            auto aura = Aura.loadState(state, (uint id) => context.data.spells.spell(id));
+            if (aura.spell is null || !recoverableEncounterAura(aura.spell.id)
+                || (aura.duration >= 0 && aura.duration <= elapsed))
+                continue;
+            if (aura.duration > 0)
+                aura.duration -= elapsed;
+            foreach (i, period; aura.period)
+                if (period > 0)
+                {
+                    const due = aura.periodTimer[i] - elapsed;
+                    aura.periodTimer[i] = due > 0 ? due : period - (-due % period);
+                }
+            aura.slot = noSlot;
+            addAura(aura);
+        }
+    }
+
     /// Loads the auras saved at the last logout, with the time they had left.
     package void loadAuras(bool recovered = false)
     {
         import dmangos.world.auras : enableAuraEffect;
 
+        loadingSavedAuras = true;
+        scope (exit) loadingSavedAuras = false;
         foreach (ref row; context.database.loadAuras(player.data.guid))
         {
             const spell = context.data.spells.spell(row.spell);
@@ -935,6 +999,8 @@ private:
                 continue;
             if (recovered && row.caster == player.guid && recoverableChannelAura(*spell))
                 continue; // the gateway's channel checkpoint supplies its current timing
+            if (recovered && recoverableEncounterAura(row.spell))
+                continue; // the gateway checkpoint also records dispels since the last periodic save
             auto aura = makeAura(spell, row.caster, player.data.level, row.maxDuration,
                 Aura.savedPositive(*spell, row.effectMask), row.amount);
             ubyte groundEffects;
@@ -1538,6 +1604,34 @@ unittest
     session.removeAura(him.auras.find(devotion));
     session.updateAreaAuras(1000.msecs);
     assert(her.auras.find(devotion) is null, "gone with the paladin's");
+}
+
+/// A dispel updates the gateway checkpoint even when the ordinary character save still has the debuff.
+unittest
+{
+    import dmangos.cluster.protocol : SimulationOwner;
+    import dmangos.world.auras : makeAura;
+    import dmangos.world.movement : Position;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.spellids : AuraType, SpellEffect;
+    import dmangos.world.testclient;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    enum uint blue = 23153;
+    context.data.spells.spells[blue] = testSpell(blue, SpellEffect.applyAura, 6, 0);
+    context.data.spells.spells.edit(blue).casting.applyAuraName[0] = AuraType.modDecreaseSpeed;
+    auto client = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    auto session = client.session.inWorld;
+    client.session.gatewayHome = SimulationOwner(4, 1);
+    auto aura = makeAura(context.data.spells.spell(blue), 123, 60, 600_000, false, [10, 0, 0]);
+    assert(session.addAura(aura) && db.loadPlayerSummons(7).length, "the newly applied debuff was checkpointed");
+    session.saveAuras();
+    assert(db.loadAuras(7).length == 1);
+    session.removeAura(aura);
+    assert(!db.loadPlayerSummons(7).length, "the last encounter aura was removed from the checkpoint");
+    session.loadAuras(true);
+    assert(session.player.auras.find(blue) is null, "the old periodic save did not resurrect the dispelled aura");
 }
 
 /// A root with `SPELL_ATTR_HEARTBEAT_RESIST` on a creature keeps its chance to break, and breaks at a heartbeat.

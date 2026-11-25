@@ -103,6 +103,7 @@ enum BwlSignal : uint
     suppressionDisarmed = 106, /// save the device until it rearms
     suppressionFinished = 107, /// the device rearmed or shut down
     suppressionShutdown = 108, /// Lashlayer died
+    saveChromaggus = 109, /// a combat step advanced
 }
 
 /// A random length between `low` and `high` milliseconds.
@@ -132,7 +133,7 @@ struct BlackwingLair
     uint leftBreath, rightBreath, leftTunnel, rightTunnel;
     ushort eggsBroken;
 
-    @transient EntityRef razorgore, vaelastrasz, nefarius, troops;
+    @transient EntityRef razorgore, vaelastrasz, nefarius, troops, chromaggus;
     @transient EntityRef vaelCorruptor;
     @transient EntityRef[6] doors; /// enter, exit, Nefarian, Chromaggus' exit, Vaelastrasz', Lashlayer's
     @transient EntityRef[8] generators;
@@ -142,7 +143,7 @@ struct BlackwingLair
     @transient ubyte dragonspawn, blackwingDefenders;
     @transient EntityRef[] drakonidsSeen;
     @transient EntityRef[] eggsToGo;
-    @transient bool recoveringRazorgore, resetOldEggPhase, recoveringNefarian, recoveringVael;
+    @transient bool recoveringRazorgore, resetOldEggPhase, recoveringNefarian, recoveringVael, recoveringChromaggus;
 
     enum Step : ubyte { defense, nefarian, eggsGone }
     Schedule!Step steps;
@@ -158,6 +159,16 @@ struct BlackwingLair
             copy.waitForPlayer();
         if (copy.entryKilled(npcLashlayer))
             set(copy, BwlEncounter.lashlayer, EncounterState.done);
+        if (encounters[BwlEncounter.chromaggus] == EncounterState.inProgress)
+        {
+            if (copy.entryKilled(npcChromaggus))
+                set(copy, BwlEncounter.chromaggus, EncounterState.done);
+            else if (copy.hasSavedCreature(npcChromaggus))
+            {
+                recoveringChromaggus = true;
+                copy.waitForPlayer();
+            }
+        }
         restoreNefarian(copy);
         const vael = encounters[BwlEncounter.vaelastrasz];
         if (vael == EncounterState.special || vael == EncounterState.inProgress)
@@ -198,6 +209,12 @@ struct BlackwingLair
 
     void on(ref InstanceContext copy, const ref PlayerEntered e)
     {
+        if (recoveringChromaggus)
+        {
+            recoveringChromaggus = false;
+            if (chromaggus && !copy.alive(copy.victimOf(chromaggus)))
+                copy.attack(chromaggus, e.player);
+        }
         if (recoveringVael)
         {
             recoveringVael = false;
@@ -362,6 +379,10 @@ struct BlackwingLair
             break;
         case npcVaelastrasz:
             vaelastrasz = e.creature;
+            break;
+        case npcChromaggus:
+            if (!e.summoned)
+                chromaggus = e.creature;
             break;
         case npcVictorNefarius:
             // Vaelastrasz's intro can load a second copy of Victor Nefarius.
@@ -537,6 +558,13 @@ struct BlackwingLair
             if (!e.summoned)
                 set(copy, BwlEncounter.lashlayer, EncounterState.done);
             break;
+        case npcChromaggus:
+            if (!e.summoned)
+            {
+                chromaggus = e.creature;
+                set(copy, BwlEncounter.chromaggus, EncounterState.done);
+            }
+            break;
         case npcLegionnaire, npcMage, npcDragonspawn:
             foreach (ref defender; defenders)
                 if (defender == e.creature)
@@ -581,7 +609,7 @@ struct BlackwingLair
                 if (e.id == BwlSignal.suppressionDisarmed)
                     copy.checkpointObject(e.from);
                 else
-                    copy.releaseCheckpointObject(e.from);
+                    copy.releaseCheckpointActor(e.from);
             }
             return;
         }
@@ -607,10 +635,22 @@ struct BlackwingLair
                 copy.checkpointCreature(nefarianDragon);
             return;
         }
+        if (e.id == BwlSignal.saveChromaggus)
+        {
+            if (e.from.isCreature && e.from.entry == npcChromaggus && (!chromaggus || e.from == chromaggus)
+                && encounters[BwlEncounter.chromaggus] == EncounterState.inProgress)
+            {
+                chromaggus = e.from; // a clean handoff can bring him in without CreatureLoaded
+                copy.checkpointCreature(chromaggus);
+            }
+            return;
+        }
         if (e.id > BwlEncounter.max)
             return;
         if (e.id == BwlEncounter.nefarian && e.value == EncounterState.inProgress && e.from.entry == npcVictorNefarius)
             nefarius = e.from;
+        if (e.id == BwlEncounter.chromaggus && e.from.isCreature && e.from.entry == npcChromaggus)
+            chromaggus = e.from;
         set(copy, cast(BwlEncounter) e.id, cast(EncounterState) e.value);
     }
 
@@ -618,7 +658,7 @@ struct BlackwingLair
     private void set(ref InstanceContext copy, BwlEncounter which, EncounterState state)
     {
         const was = encounters[which];
-        if (which == BwlEncounter.lashlayer && was == EncounterState.done)
+        if ((which == BwlEncounter.lashlayer || which == BwlEncounter.chromaggus) && was == EncounterState.done)
             return;
         encounters[which] = state;
         final switch (which)
@@ -671,8 +711,13 @@ struct BlackwingLair
                 copy.checkpoint();
             }
             break;
-        case BwlEncounter.firemaw, BwlEncounter.ebonroc,
-                BwlEncounter.flamegor, BwlEncounter.chromaggus:
+        case BwlEncounter.chromaggus:
+            if (state == EncounterState.inProgress && chromaggus)
+                copy.checkpointCreature(chromaggus);
+            else if (was == EncounterState.inProgress || state == EncounterState.done)
+                copy.releaseCheckpointActor(chromaggus);
+            break;
+        case BwlEncounter.firemaw, BwlEncounter.ebonroc, BwlEncounter.flamegor:
             break;
         }
         updateDoors(copy);
@@ -1375,25 +1420,29 @@ struct Chromaggus
 {
     enum : int { emoteFrenzyKill = -1_000_001, emoteFrenzy = -1_000_002, emoteShimmer = -1_469_003 }
     enum : uint { broodAffliction = 23173, elementalShield = 22276, frenzy = 23128, enrage = 23537 }
+    enum : uint { bronze = 23170, timeStop = 23171, mutation = 23174, mutationStats = 23175, mutationSpeed = 23177 }
+    static immutable uint[5] afflictions = [23153, 23154, 23155, 23169, bronze];
     enum Step : ubyte { shield, breathLeft, breathRight, affliction, frenzy }
     Schedule!Step steps;
     bool enraged;
 
-    mixin(encounterOf!"BwlEncounter.chromaggus");
+    void on(ref CreatureContext me, const ref Died e) { steps.clear(); }
 
-    void reset(ref CreatureContext me)
+    void on(ref CreatureContext me, const ref Reset e)
     {
+        steps.clear();
         enraged = false;
+        me.signalDungeon(BwlEncounter.chromaggus, EncounterState.failed);
     }
 
     void on(ref CreatureContext me, const ref EnteredCombat e)
     {
-        me.signalDungeon(BwlEncounter.chromaggus, EncounterState.inProgress);
         steps.after(Step.shield, 0.msecs);
         steps.after(Step.breathLeft, 30.seconds);
         steps.after(Step.breathRight, 60.seconds);
         steps.after(Step.affliction, 7.seconds);
         steps.after(Step.frenzy, 15.seconds);
+        me.signalDungeon(BwlEncounter.chromaggus, EncounterState.inProgress);
     }
 
     void on(ref CreatureContext me, const ref Damaged e)
@@ -1403,7 +1452,55 @@ struct Chromaggus
             enraged = true;
             me.castSelf(enrage);
             me.say(emoteFrenzy);
+            me.signalDungeon(BwlSignal.saveChromaggus);
         }
+    }
+
+    static bool isRecoveryAura(uint spell)
+    {
+        import std.algorithm.searching : canFind;
+
+        return afflictions[].canFind(spell) || spell == timeStop || spell == mutation
+            || spell == mutationStats || spell == mutationSpeed;
+    }
+
+    private void afflict(ref CreatureContext me)
+    {
+        import std.algorithm.searching : all;
+
+        const color = afflictions[me.random(afflictions.length)];
+        EntityRef[120] targets; // a full raid and its pets and guardians
+        const count = me.threatList(targets[]);
+        size_t affected;
+        foreach (target; targets[0 .. count])
+        {
+            if (!target.isPlayer || !me.alive(target) || me.hasAura(target, mutation))
+                continue;
+            me.castSpell(color, target, true);
+            if (afflictions[].all!(spell => me.hasAura(target, spell)))
+                if (me.castSpell(mutation, target, true) == ActionResult.ok && me.hasAura(target, mutation))
+                {
+                    foreach (spell; afflictions)
+                        me.removeAura(target, spell);
+                    me.castAs(target, mutationStats, target, true);
+                    me.castAs(target, mutationSpeed, target, true);
+                }
+            if (++affected == 15)
+                break;
+        }
+    }
+
+    private void nextStep(ref CreatureContext me, Step step, bool casted, Duration interval)
+    {
+        steps.after(step, casted ? interval : retry);
+        if (casted)
+            me.signalDungeon(BwlSignal.saveChromaggus);
+    }
+
+    void on(ref CreatureContext me, const ref CreatureCastFinished e)
+    {
+        if (e.spell == me.askDungeon(BwlQuestion.chromaLeftBreath) || e.spell == me.askDungeon(BwlQuestion.chromaRightBreath))
+            me.signalDungeon(BwlSignal.saveChromaggus);
     }
 
     void on(ref CreatureContext me, Step step)
@@ -1411,32 +1508,40 @@ struct Chromaggus
         final switch (step)
         {
         case Step.shield:
-            if (me.castSelf(elementalShield) == ActionResult.ok)
-            {
+            const shielded = me.castSelf(elementalShield) == ActionResult.ok;
+            if (shielded)
                 me.say(emoteShimmer);
-                steps.after(step, 45.seconds);
-            }
-            else
-                steps.after(step, retry);
+            nextStep(me, step, shielded, 45.seconds);
             break;
         case Step.breathLeft, Step.breathRight:
             const breath = cast(uint) me.askDungeon(step == Step.breathLeft ? BwlQuestion.chromaLeftBreath
                 : BwlQuestion.chromaRightBreath);
-            steps.after(step, breath && me.castSelf(breath) == ActionResult.ok ? 60.seconds : retry);
+            nextStep(me, step, breath && me.castSelf(breath) == ActionResult.ok, 60.seconds);
             break;
         case Step.affliction:
-            steps.after(step, me.castSelf(broodAffliction) == ActionResult.ok ? 7.seconds : retry);
+            const afflicted = me.castSelf(broodAffliction) == ActionResult.ok;
+            if (afflicted)
+                afflict(me);
+            nextStep(me, step, afflicted, 7.seconds);
             break;
         case Step.frenzy:
-            if (me.castSelf(frenzy) == ActionResult.ok)
-            {
+            const frenzied = me.castSelf(frenzy) == ActionResult.ok;
+            if (frenzied)
                 me.say(emoteFrenzyKill);
-                steps.after(step, 15.seconds);
-            }
-            else
-                steps.after(step, retry);
+            nextStep(me, step, frenzied, 15.seconds);
             break;
         }
+    }
+}
+
+/// Bronze Affliction periodically stuns the afflicted player.
+@spell("spell_brood_affliction_bronze") @spellIds(Chromaggus.bronze)
+struct BroodAfflictionBronze
+{
+    void on(ref SpellContext spell, const ref AuraTickEnded e)
+    {
+        if (e.effect == 0 && e.target.isPlayer && spell.random(10) == 0)
+            spell.castSpell(e.target, Chromaggus.timeStop, e.target);
     }
 }
 

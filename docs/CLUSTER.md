@@ -534,6 +534,9 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   Disarmed devices in the Suppression Room remain disarmed until their saved rearm timers expire.
   The timers resume when a player returns. Lashlayer's death cancels them and keeps the room
   shut down for the rest of the lockout.
+  Chromaggus keeps his saved health and breath schedule. Gateway players recover their Brood
+  Afflictions and Chromatic Mutation in the same copy. Auras expire on their original deadlines,
+  periodic ticks due during the outage are skipped, and removed afflictions stay gone.
 * **GM commands.** `.instance info`, `.instance shutdown` and `.instance reset` of a copy another node
   hosts go to that node and its answer comes back; `.instance resetall` goes to every node.
 
