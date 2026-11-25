@@ -521,6 +521,8 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   In Sunken Temple, the statue puzzle keeps its lit statues and Atal'alarion resumes as the same
   creature. The Avatar of Hakkar ritual keeps its extinguished flames, closed doors, surviving
   summons and pending waves. Defeating the Avatar keeps the doors open after a crash.
+  Onyxia keeps her health, flight phase, surviving whelps and the remaining time to the next wave.
+  The recovered fight can proceed through landing and her final ground phase.
 * **GM commands.** `.instance info`, `.instance shutdown` and `.instance reset` of a copy another node
   hosts go to that node and its answer comes back; `.instance resetall` goes to every node.
 

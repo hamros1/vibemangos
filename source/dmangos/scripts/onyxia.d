@@ -30,6 +30,7 @@ enum OnyxiaData : uint
 {
     onyxia = 0,
     liftoff = 4, /// a value of `onyxia`: she is in the air
+    saveFight = 100,
 }
 
 /// What the copy remembers of Onyxia's fight.
@@ -38,20 +39,83 @@ struct OnyxiasLair
 {
     EncounterState onyxia;
     bool inAir; /// her phase in the air began
+    @transient EntityRef dragon;
+    @transient EntityRef[] pendingWhelps;
+    @transient bool recovering;
+
+    void on(ref InstanceContext copy, const ref Restored e)
+    {
+        if (onyxia != EncounterState.inProgress)
+            return;
+        if (copy.entryKilled(npcOnyxia))
+        {
+            onyxia = EncounterState.done;
+            inAir = false;
+        }
+        else if (copy.hasSavedCreature(npcOnyxia))
+        {
+            recovering = true;
+            copy.waitForPlayer();
+        }
+    }
+
+    void on(ref InstanceContext copy, const ref CreatureLoaded e)
+    {
+        if (e.creature.entry == npcOnyxia)
+            dragon = e.creature;
+        else if (e.creature.entry == npcOnyxiaWhelp && onyxia == EncounterState.inProgress)
+            pendingWhelps ~= e.creature;
+    }
+
+    void on(ref InstanceContext copy, const ref PlayerEntered e)
+    {
+        if (!recovering)
+            return;
+        recovering = false;
+        if (dragon && !copy.alive(copy.victimOf(dragon)))
+            copy.attack(dragon, e.player);
+        foreach (whelp; pendingWhelps)
+            if (copy.alive(whelp) && !copy.alive(copy.victimOf(whelp)))
+                copy.attack(whelp, e.player);
+        pendingWhelps = null;
+    }
 
     void on(ref InstanceContext copy, const ref Signal e)
     {
+        if (e.id == OnyxiaData.saveFight)
+        {
+            if (onyxia == EncounterState.inProgress)
+                checkpointFight(copy, e.from);
+            return;
+        }
         if (e.id != OnyxiaData.onyxia)
             return;
         if (e.value == OnyxiaData.liftoff)
         {
             inAir = true;
+            checkpointFight(copy, e.from);
             return;
         }
         onyxia = cast(EncounterState) e.value;
         inAir = false;
+        if (onyxia == EncounterState.inProgress)
+            checkpointFight(copy, e.from);
+        else
+        {
+            pendingWhelps = null;
+            copy.checkpoint();
+        }
         if (onyxia == EncounterState.done)
             copy.log("Onyxia is slain");
+    }
+
+    private void checkpointFight(ref InstanceContext copy, EntityRef boss)
+    {
+        if (boss)
+            copy.checkpointCreature(boss);
+        foreach (whelp; pendingWhelps)
+            copy.checkpointCreature(whelp);
+        pendingWhelps = null;
     }
 
     void on(ref InstanceContext copy, const ref Asked e)
@@ -142,7 +206,7 @@ struct Onyxia
     enum Step : ubyte
     {
         checkInLair, bellowingRoar, flameBreath, cleave, tailSweep, wingBuffet, knockAway, fireball,
-        movement, summonWhelps, transition, breathMove,
+        movement, summonWhelps, transition, breathMove, saveFight,
     }
 
     Schedule!(Step, 16) steps;
@@ -189,7 +253,6 @@ struct Onyxia
     void on(ref CreatureContext me, const ref EnteredCombat e)
     {
         me.say(sayAggro);
-        me.signalDungeon(OnyxiaData.onyxia, EncounterState.inProgress);
         me.standState(StandState.stand);
         steps.after(Step.checkInLair, 3.seconds);
         steps.after(Step.flameBreath, between(me, 10_000, 20_000));
@@ -197,6 +260,7 @@ struct Onyxia
         steps.after(Step.tailSweep, between(me, 15_000, 20_000));
         steps.after(Step.wingBuffet, between(me, 10_000, 20_000));
         steps.after(Step.knockAway, between(me, 20_000, 30_000));
+        me.signalDungeon(OnyxiaData.onyxia, EncounterState.inProgress);
     }
 
     void on(ref CreatureContext me, const ref KilledUnit e)
@@ -224,6 +288,7 @@ struct Onyxia
             me.combatMovement(false);
             me.melee(false);
             me.moveNow(liftoffAt, pointLiftoff);
+            steps.after(Step.saveFight, 0.msecs);
         }
         else if (phase == Phase.breath && e.after <= 40)
         {
@@ -236,6 +301,7 @@ struct Onyxia
             steps.cancel(Step.breathMove);
             me.removeAura(me.self, dragonHover);
             me.moveNow(landAt, pointLand);
+            steps.after(Step.saveFight, 0.msecs);
         }
     }
 
@@ -250,6 +316,7 @@ struct Onyxia
             me.flying(false);
             me.removeAura(me.self, pacifySelf);
             steps.after(Step.transition, 2.seconds);
+            me.signalDungeon(OnyxiaData.saveFight);
             return;
         case pointLiftoff:
             steps.after(Step.transition, 3500.msecs);
@@ -269,6 +336,7 @@ struct Onyxia
         }
         if (const middle = me.creatureNearby(npcOnyxiaTrigger, 200))
             me.face(middle);
+        me.signalDungeon(OnyxiaData.saveFight);
     }
 
     void on(ref CreatureContext me, Step step)
@@ -280,8 +348,8 @@ struct Onyxia
             {
                 phase = Phase.breathPre;
                 steps.after(Step.summonWhelps, 3.seconds);
-                me.signalDungeon(OnyxiaData.onyxia, OnyxiaData.liftoff);
                 me.moveNow(spots[north].at, pointInitNorth);
+                me.signalDungeon(OnyxiaData.onyxia, OnyxiaData.liftoff);
             }
             else if (phase == Phase.breathPost)
             {
@@ -296,6 +364,7 @@ struct Onyxia
                 steps.after(Step.tailSweep, between(me, 15_000, 20_000));
                 steps.after(Step.knockAway, between(me, 10_000, 20_000));
                 steps.after(Step.checkInLair, 3.seconds);
+                me.signalDungeon(OnyxiaData.onyxia, EncounterState.inProgress);
             }
             break;
         case Step.checkInLair:
@@ -383,8 +452,19 @@ struct Onyxia
             break;
         case Step.summonWhelps:
             summonWhelps(me);
+            me.signalDungeon(OnyxiaData.saveFight);
+            break;
+        case Step.saveFight:
+            // Damaged is raised before health changes. Save the new phase after the hit is applied.
+            me.signalDungeon(OnyxiaData.saveFight);
             break;
         }
+    }
+
+    void on(ref CreatureContext me, const ref SummonedDied e)
+    {
+        if (e.summoned.entry == npcOnyxiaWhelp)
+            me.signalDungeon(OnyxiaData.saveFight);
     }
 
     /// A pair of whelps from the nests; after a wave, a pause until the next.

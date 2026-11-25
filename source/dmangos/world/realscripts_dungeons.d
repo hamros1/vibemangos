@@ -19,6 +19,45 @@ import dmangos.world.movement : Position;
 import dmangos.world.realscriptkit;
 import dmangos.world.updatefields;
 
+/// Onyxia's saved airborne fight keeps the boss and surviving whelps in the original copy.
+unittest
+{
+    import dmangos.script.api : EncounterState;
+    import dmangos.scripts.onyxia : Onyxia, OnyxiasLair, npcOnyxia, npcOnyxiaWhelp;
+
+    if (!haveRealData())
+        return;
+    auto d = Dungeon.enter(249, 60);
+    auto boss = d.spawned(npcOnyxia, 0, 12);
+    d.pull(boss);
+    d.hurtTo(boss, 64);
+    assert(d.runUntil(() => d.cast_(Onyxia.fireball, npcOnyxia) && d.all(npcOnyxiaWhelp).length >= 2,
+        45.seconds), d.story);
+    const guid = boss.guid, health = boss.values.get!UNIT_FIELD_HEALTH;
+    auto whelps = d.all(npcOnyxiaWhelp);
+    const dead = whelps[0].guid, wounded = whelps[1].guid;
+    d.hit(whelps[1], whelps[1].values.get!UNIT_FIELD_HEALTH / 3);
+    const whelpHealth = whelps[1].values.get!UNIT_FIELD_HEALTH;
+    d.kill(whelps[0]);
+    d.restartAfterCrash();
+    d.forget();
+    boss = d.map.creatureAt(guid);
+    assert(boss !is null && d.all(npcOnyxia).length == 1, "restore one copy of the original boss");
+    assert(boss.ai.inCombat && boss.flyingMovement, "the restored boss is still fighting in the air");
+    assert(d.saved!OnyxiasLair.inAir && boss.values.get!UNIT_FIELD_HEALTH == health);
+    auto survivor = d.map.creatureAt(wounded);
+    assert(survivor !is null && survivor.values.get!UNIT_FIELD_HEALTH == whelpHealth);
+    assert(d.map.creatureAt(dead) is null && !d.heard(Onyxia.sayPhase2), "the defeated whelp and takeoff stay past");
+    assert(d.runUntil(() => d.cast_(Onyxia.fireball, npcOnyxia), 8.seconds), "fireballs resume in the air");
+
+    d.hurtTo(boss, 39);
+    assert(d.runUntil(() => d.cast_(Onyxia.bellowingRoar, npcOnyxia), 25.seconds), d.story);
+    assert(!d.saved!OnyxiasLair.inAir);
+    d.kill(boss);
+    d.restartAfterCrash();
+    assert(!d.all(npcOnyxia).length && d.saved!OnyxiasLair.onyxia == EncounterState.done);
+}
+
 /// Stockade and Ragefire Chasm use the world database's combat AI without instance-wide events.
 unittest
 {

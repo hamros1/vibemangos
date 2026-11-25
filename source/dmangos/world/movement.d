@@ -24,6 +24,7 @@ enum MovementFlags : uint
     turnLeft = 0x00000010,
     turnRight = 0x00000020,
     walkMode = 0x00000100,
+    levitating = 0x00000400,
     root = 0x00001000,
     jumping = 0x00002000,     /// adds the jump fields
     fallingFar = 0x00004000,

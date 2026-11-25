@@ -1594,6 +1594,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         }
         values.clearChanges();
         movement = MovementInfo.read(r);
+        scriptFlying = movement.has(MovementFlags.levitating);
         foreach (ref speed; speeds)
             speed = r.read!float;
         spline = MoveSpline.readExact(r);

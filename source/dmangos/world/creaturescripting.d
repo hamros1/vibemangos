@@ -23,6 +23,14 @@ mixin template CreatureScripting()
         bool spawnRaised;         // `Spawned` was raised
     }
 
+    private enum BehaviourFlags : ubyte
+    {
+        spawned = 1,
+        noChase = 2,
+        noMelee = 4,
+        forceMelee = 8,
+    }
+
     /// Its script: `name` of `runtime` (no script if none serves it).
     void setBehaviour(ScriptRuntime runtime, string name)
     {
@@ -66,7 +74,17 @@ mixin template CreatureScripting()
         ByteWriter state;
         if (scripts_ !is null)
             scripts_.save(behaviour, state);
-        w.put(spawnRaised);
+        // The existing spawn byte was 0 or 1 on older checkpoints.
+        ubyte flags = spawnRaised ? BehaviourFlags.spawned : 0;
+        if (spawnRaised || !behaviour)
+        {
+            if (!combatMovement_)
+                flags |= BehaviourFlags.noChase;
+            const defaultMelee = !(me.template_.staticFlags1 & staticFlagNoMeleeFlee);
+            if (meleeEnabled != defaultMelee)
+                flags |= meleeEnabled ? BehaviourFlags.forceMelee : BehaviourFlags.noMelee;
+        }
+        w.put(flags);
         w.put(cast(uint) state.length);
         w.putBytes(state.data);
     }
@@ -74,7 +92,11 @@ mixin template CreatureScripting()
     /// Reads what `saveBehaviour` wrote; a state of another layout leaves the script fresh.
     void loadBehaviour(ref ByteReader r)
     {
-        spawnRaised = r.read!bool;
+        const flags = r.read!ubyte;
+        spawnRaised = (flags & BehaviourFlags.spawned) != 0;
+        combatMovement_ = !(flags & BehaviourFlags.noChase);
+        if (flags & (BehaviourFlags.noMelee | BehaviourFlags.forceMelee))
+            meleeEnabled = (flags & BehaviourFlags.forceMelee) != 0;
         auto state = ByteReader(r.readBytes(r.read!uint));
         if (scripts_ !is null && state.remaining && !scripts_.load(behaviour, state))
         {
@@ -1331,15 +1353,15 @@ mixin template CreatureScripting()
     void hostFlying(bool on)
     {
         import dmangos.world.motion : fallToGround;
+        import dmangos.world.movement : MovementFlags;
 
         const wasFlying = me.flyingMovement;
-        enum uint levitating = 0x0000_0400; // MOVEFLAG_LEVITATING
         me.scriptFlying = on;
         if (on)
-            me.movement.flags |= levitating;
+            me.movement.flags |= MovementFlags.levitating;
         else
         {
-            me.movement.flags &= ~levitating;
+            me.movement.flags &= ~MovementFlags.levitating;
             if (wasFlying && world_ !is null)
                 fallToGround(me, world_);
         }
