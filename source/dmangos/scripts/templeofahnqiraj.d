@@ -152,7 +152,7 @@ struct TempleOfAhnQiraj
 
     // Appended to keep earlier lockout saves readable.
     @appended EntityRef[] cthunAdds; /// the tentacles living in C'Thun's fight under way (saved with it)
-    @transient bool recoveringCthun;
+    @transient bool recoveringCthun, respawnEye;
 
     private static immutable uint[3] doorEntries = [goSkeramGate, goTwinsEnterDoor, goTwinsExitDoor];
 
@@ -324,7 +324,8 @@ struct TempleOfAhnQiraj
 
     /**
      * C'Thun's encounter in `state`. While it is under way the Eye, C'Thun and their living tentacles are saved
-     * with the copy (a worker's crash resumes the fight, `Restored`); otherwise they are not, and the tentacles go.
+     * with the copy (a worker's crash resumes the fight, `Restored`); otherwise they are not, the tentacles go, and
+     * a wipe after the Eye died brings the Eye back for the next pull.
      */
     private void setCthun(ref InstanceContext copy, EncounterState state)
     {
@@ -350,12 +351,14 @@ struct TempleOfAhnQiraj
                     copy.despawn(add);
             }
             cthunAdds = null;
+            if (state == EncounterState.failed && copy.entryKilled(npcEyeOfCthun) && !copy.entryKilled(npcCthun))
+                copy.respawnKilled(npcEyeOfCthun); // the next pull starts with the Eye
         }
         copy.checkpoint();
     }
 
     /// The copy came back from its save: C'Thun's fight under way resumes from its checkpoint when a player comes
-    /// back; a fight saved without it fails.
+    /// back; a fight saved without it fails, and an Eye slain in a fight that is over comes back.
     void on(ref InstanceContext copy, const ref Restored e)
     {
         import std.algorithm.mutation : remove;
@@ -379,10 +382,25 @@ struct TempleOfAhnQiraj
             cthunAdds = null;
             copy.checkpoint();
         }
+        if (copy.entryKilled(npcEyeOfCthun))
+        {
+            respawnEye = true; // once the copy is loaded
+            copy.waitForPlayer();
+        }
     }
 
     void on(ref InstanceContext copy, const ref PlayerEntered e)
     {
+        if (respawnEye)
+        {
+            respawnEye = false;
+            if (!cthunActive && encounters[Aq40Encounter.cthun] != EncounterState.done
+                    && copy.entryKilled(npcEyeOfCthun))
+            {
+                copy.respawnKilled(npcEyeOfCthun);
+                copy.checkpoint();
+            }
+        }
         if (!cthunActive)
             return;
         if (recoveringCthun)
@@ -2704,7 +2722,8 @@ unittest
 }
 
 /// The copy's side of C'Thun's recovery: a fight saved with him resumes when a player is back (who, in the stomach,
-/// is handed to him); a fight saved without him fails.
+/// is handed to him); a fight saved without him fails; an Eye slain in a fight that is over comes back, whether the
+/// wipe was seen or a worker's crash came between.
 unittest
 {
     import std.algorithm.searching : canFind;
@@ -2766,8 +2785,9 @@ unittest
     assert(!copy2.respawned.length && !copy2.despawned.length);
     runtime.raise(h2, c2, Signal(cthun, Aq40Encounter.cthun, EncounterState.failed));
     assert(copy2.despawned == [flesh], "the wipe takes the restored tentacle, not the one lost with the worker");
+    assert(copy2.respawned == [npcEyeOfCthun], "the wipe brings the Eye back");
 
-    // A save without the fight's creatures (older, or lost): the fight failed.
+    // A save without the fight's creatures (older, or lost): the fight failed; the slain Eye comes back.
     auto copy3 = new FakeTemple;
     copy3.killed = [npcEyeOfCthun];
     auto c3 = InstanceContext(copy3);
@@ -2775,10 +2795,28 @@ unittest
     reader = ByteReader(saved.data);
     assert(runtime.load(h3, reader));
     runtime.raise(h3, c3, Restored());
+    assert(c3.waitingForPlayer && !copy3.respawned.length, "the Eye waits for the copy to be loaded");
     runtime.raise(h3, c3, PlayerEntered(EntityRef(7)));
+    assert(copy3.respawned == [npcEyeOfCthun] && !copy3.signals.length);
+    runtime.raise(h3, c3, PlayerEntered(EntityRef(8)));
+    assert(copy3.respawned == [npcEyeOfCthun], "once");
     auto asked3 = InstanceContext(copy3);
     runtime.raise(h3, asked3, Asked(EntityRef.init, Aq40Encounter.cthun));
-    assert(asked3.answerGiven == EncounterState.failed && !copy3.signals.length);
+    assert(asked3.answerGiven == EncounterState.failed);
+
+    // A crash after the wipe was saved but before the Eye was back.
+    runtime.raise(h2, c2, Signal(cthun, Aq40Encounter.cthun, EncounterState.failed));
+    ByteWriter wiped;
+    runtime.save(h2, wiped);
+    auto copy5 = new FakeTemple;
+    copy5.killed = [npcEyeOfCthun];
+    auto c5 = InstanceContext(copy5);
+    auto h5 = runtime.create(ScriptKind.instance, "instance_temple_of_ahnqiraj");
+    reader = ByteReader(wiped.data);
+    assert(runtime.load(h5, reader));
+    runtime.raise(h5, c5, Restored());
+    runtime.raise(h5, c5, PlayerEntered(EntityRef(7)));
+    assert(copy5.respawned == [npcEyeOfCthun], "the Eye back after a crash between the wipe and its return");
 
     // C'Thun slain before the crash: the encounter is done, nothing comes back.
     auto copy4 = new FakeTemple;

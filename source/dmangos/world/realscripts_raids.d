@@ -1512,6 +1512,54 @@ unittest
         assert(!s.all(entry).length, format!"a tentacle %s left after his death"(entry));
 }
 
+/// A wipe in C'Thun's second phase brings the Eye back for the next pull, C'Thun dormant again and no tentacle left;
+/// so it stays after a worker's crash.
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.script.api : EncounterState;
+    import dmangos.scripts.templeofahnqiraj;
+    import dmangos.world.defines : UnitFlags;
+
+    const b = Boss("Eye of C'Thun", 531, npcEyeOfCthun, Aq40Encounter.cthun, [npcCthun], null);
+    Scene s;
+    auto eye = setUp(b, s);
+    const eyeGuid = eye.guid;
+    s.stayWithin = 40;
+    s.pressing = false;
+    s.engage(eye);
+    s.run(3.seconds);
+    s.kill(eye);
+    auto cthun = s.the(npcCthun);
+    assert(s.runUntil(() => cthun.auras.find(Cthun.carapace) !is null, 6.seconds), "C'Thun did not rise");
+    s.run(2.seconds);
+    s.wipe(cthun);
+    void assertReady(string when)
+    {
+        bool tentacles()
+        {
+            foreach (entry; [npcClawTentacle, npcEyeTentacle, npcGiantClawTentacle, npcGiantEyeTentacle,
+                    npcFleshTentacle])
+                if (s.all(entry).length)
+                    return true;
+            return false;
+        }
+        assert(s.runUntil(() => s.all(npcEyeOfCthun).length == 1 && !s.the(npcCthun).ai.inCombat
+            && !s.the(npcCthun).ai.evading && !tentacles(), 30.seconds),
+            format!"%s: %s Eyes, C'Thun in combat %s, tentacles left %s"(when, s.all(npcEyeOfCthun).length,
+            s.the(npcCthun).ai.inCombat, tentacles()));
+        assert(s.the(npcEyeOfCthun).guid == eyeGuid && s.all(npcCthun).length == 1);
+        cthun = s.the(npcCthun);
+        assert((cthun.values.get!UNIT_FIELD_FLAGS & UnitFlags.uninteractible) && !cthun.auras.find(Cthun.carapace),
+            when ~ ": C'Thun not dormant");
+        assert(s.ask(Aq40Encounter.cthun) == EncounterState.failed, when ~ ": the encounter not failed");
+    }
+    assertReady("after the wipe");
+    s.restartAfterCrash();
+    assertReady("after the crash");
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Naxxramas (533)
 // ---------------------------------------------------------------------------------------------------------------
