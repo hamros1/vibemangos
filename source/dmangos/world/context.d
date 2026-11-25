@@ -2477,9 +2477,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         switch (spell.casting.applyAuraName[i])
         {
         case AuraType.periodicLeech:
-            const factor = spell.casting.multipleValue[i] > 0 ? spell.casting.multipleValue[i] : 1.0f;
-            spellHeal(caster, spell, caster.unit, cast(int)(message.drained
-                * caster.spellMod(SpellModOp.multipleValue, spell, factor)), SpellHeal(true));
+            // Only a caster still on the drained target's map takes the life (as a local drain's does).
+            if (auto drainedOn = existingMap(message.map, message.instance))
+                if (drainedOn is source.currentMap)
+                {
+                    const factor = spell.casting.multipleValue[i] > 0 ? spell.casting.multipleValue[i] : 1.0f;
+                    spellHeal(caster, spell, caster.unit, cast(int)(message.drained
+                        * caster.spellMod(SpellModOp.multipleValue, spell, factor)), SpellHeal(true));
+                }
             goto case AuraType.periodicDamage;
         case AuraType.periodicDamage:
             auto map_ = existingMap(message.map, message.instance);

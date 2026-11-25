@@ -867,6 +867,18 @@ unittest
     map.replicaCreated(2, casterCell, guid, encodePlayerState(moved.player, 0));
     drained.updateAuras(map, period);
     assert(ticks.length == 3 && drained.values.get!UNIT_FIELD_HEALTH == 20 && victimProc.charges == 1);
+
+    // A drain reported from a map the caster is no longer on (both hosted here) gives it no life.
+    auto elsewhere = ticks[0];
+    elsewhere.sequence = ticks[2].sequence + 1;
+    elsewhere.map = mapKalimdor;
+    destination.map(mapKalimdor);
+    destination.periodicResultArrived(1, elsewhere);
+    assert(moved.player.values.get!UNIT_FIELD_HEALTH == 70, "the caster left the drained target's map");
+    elsewhere.sequence++;
+    elsewhere.map = map.id;
+    destination.periodicResultArrived(1, elsewhere);
+    assert(moved.player.values.get!UNIT_FIELD_HEALTH == 80, "but takes it on the same map");
 }
 
 /// Hate to Zero (`spell_hate_to_zero`), a creature's spell: its target's threat on it is gone.
