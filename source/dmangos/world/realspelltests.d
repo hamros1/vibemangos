@@ -1905,6 +1905,47 @@ unittest
     }
 }
 
+/// A move to another node whose own saves do not settle leaves the hunter where it was, its pet out again.
+unittest
+{
+    import dmangos.world.database : PetRecord;
+    import dmangos.world.pet : PetType;
+    import dmangos.world.testclient : TestPlayerRelay;
+    import dmangos.world.testdata : classHunter;
+    import dmangos.world.writebehind : WriteBehind, Writer;
+
+    if (!haveRealData())
+        return;
+
+    auto source = RealWorld.make(), destination = RealWorld.make();
+    destination.context.database = source.db;
+    auto relay = new TestPlayerRelay(source.context, destination.context);
+    PetRecord saved;
+    saved.id = 12;
+    saved.entry = 3099; // a boar
+    saved.owner = 7;
+    saved.type = PetType.hunter;
+    saved.name = "Bristle";
+    saved.level = 60;
+    saved.health = 150;
+    source.db.savePet(saved);
+    auto client = source.character(7, "Tracker", classHunter, 60, null, raceOrc);
+    auto hunter = client.session.inWorld;
+    assert(hunter.ownPet !is null);
+
+    // Nothing waits before the move, so it begins; the saves it queues are not written (the writer is not
+    // started), so it does not go on.
+    auto writer = new Writer(source.db, null, false);
+    scope (exit)
+        writer.stop();
+    writer.stalledWaitMs = 0;
+    source.context.writer = writer;
+    source.context.database = new WriteBehind(source.db, writer, null);
+    assert(!hunter.migrateTo(destination.context.nodeId), "its saves do not settle: the move does not go on");
+    assert(relay.remote is null && client.session.inWorld is hunter);
+    assert(hunter.ownPet !is null && hunter.ownPet.spawn.entry == 3099, "the pet set aside for the move is back");
+}
+
 /// Eyes of the Beast keeps the hunter's pet and its original mover through a clean handoff.
 unittest
 {

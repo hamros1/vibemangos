@@ -332,7 +332,21 @@ private:
         savePlayerDetails();
         checkpointSummons();
         if (!context.settleWrites())
-            return false; // the new owner must load the completed writes before processing packets
+        {
+            // The new owner must load the completed writes before processing packets: the player stays here,
+            // and the pet set aside for the move comes back, as after a teleport.
+            if (!petControl.guid)
+            {
+                import dmangos.mysql : DatabaseException;
+
+                try
+                    petsOnArrival();
+                catch (DatabaseException error)
+                    imported!"dmangos.log".warning!"%s: the pet set aside for a move that did not happen did not come back: %s"(
+                        player.data.name, error.msg);
+            }
+            return false;
+        }
 
         if (petControl.guid)
             detachPossessedPetForHandoff();
