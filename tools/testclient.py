@@ -734,6 +734,13 @@ def expect(*wanted):
         if op in wanted: return op, p
         describe(op, p)
 
+def expect_spoken():
+    """Read until a player's chat line, describing anything else (system messages too) on the way."""
+    while True:
+        op, p = expect(0x096)
+        if p[0] != 0x0A: return op, p  # CHAT_MSG_SYSTEM: the server's own, such as the population on entering
+        describe(op, p)
+
 def until(last):
     got = []
     while True:
@@ -1155,7 +1162,7 @@ for action in actions:
     elif kind == "gchat":
         wsend(0x095, struct.pack("<II", 3, 7) + args[0].encode() + b"\0"); print(f"guild chat '{args[0]}'"); listen_for(1)
     elif kind == "say":
-        wsend(0x095, struct.pack("<II", 0, 7) + args[0].encode() + b"\0"); op, p = expect(0x096)
+        wsend(0x095, struct.pack("<II", 0, 7) + args[0].encode() + b"\0"); op, p = expect_spoken()
         n = struct.unpack_from("<I", p, 21)[0]; print(f"heard: '{p[25:25 + n - 1].decode()}'")
     elif kind == "chatter":
         count, interval = int(args[0]), float(args[1]) / 1000
@@ -1186,7 +1193,7 @@ for action in actions:
             raise RuntimeError(f"chatter: answered {answered}, not 1 to {count} in order")
         print(f"chatter: all {count} answered, in order")
     elif kind == "yell":
-        wsend(0x095, struct.pack("<II", 5, 7) + args[0].encode() + b"\0"); op, p = expect(0x096)
+        wsend(0x095, struct.pack("<II", 5, 7) + args[0].encode() + b"\0"); op, p = expect_spoken()
         n = struct.unpack_from("<I", p, 21)[0]; print(f"heard: '{p[25:25 + n - 1].decode()}'")
     elif kind == "emote":
         wsend(0x095, struct.pack("<II", 8, 0) + ":".join(args).encode() + b"\0")
