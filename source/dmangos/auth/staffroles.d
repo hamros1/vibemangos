@@ -87,13 +87,13 @@ string[] defaultRoleGrants(string role)
         return ["*"];
     case "support":
         return ["staff.discipline", "staff.access", "staff.support", "staff.tag", "staff.announce",
-            "support.lookup", "support.tickets", "world.teleport", "world.objects.move", "character.mount"];
+            "support.lookup", "support.tickets", "world.teleport", "character.mount"];
     case "game-master":
         return ["account.moderate", "battleground.manage", "character.combat", "character.learn", "character.modify",
             "character.mount", "debug.use", "guild.manage", "server.save", "staff.announce",
             "staff.access", "staff.discipline", "staff.disconnect", "staff.game_master", "staff.presence",
             "staff.support", "staff.tag", "support.lookup", "support.tickets", "testing.cheats",
-            "world.creatures", "world.objects", "world.objects.move", "world.quests", "world.teleport",
+            "world.creatures", "world.objects", "world.quests", "world.teleport",
             "world.trainers", "world.waypoints"];
     default:
         return null;

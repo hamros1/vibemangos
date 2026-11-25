@@ -225,7 +225,7 @@ Generated from the command tables by `python3 tools/commands_doc.py`.
 | `.gm list` | List online staff. | `public` |
 | `.gm off` | Turn off the GM tag and whisper blocking. | `staff.tag` |
 | `.gm on` | Turn on the GM tag and whisper blocking. | `staff.tag` |
-| `.gm quiet` (also `.gm whisperblock`) | Block whispers while keeping the visible GM tag off. | `world.objects.move` |
+| `.gm quiet` (also `.gm whisperblock`) | Block whispers while keeping the visible GM tag off. | `staff.tag` |
 | `.gmannounce <message>` | Send a message to online staff. | `staff.announce` |
 | `.go coords <map> <x> <y> <z>` (also `.travel coords`) | Teleport to map coordinates. | `world.teleport` |
 | `.go player <name>` (also `.travel player`) | Teleport to a player. | `world.teleport` |
@@ -331,8 +331,8 @@ Generated from the command tables by `python3 tools/commands_doc.py`.
 | `.object enable` (also `.gobject enable`) | Toggle whether the selected game object is usable. | `world.objects` |
 | `.object export` (also `.gobject export`) | Show the selected game object's placement and rotation. | `world.objects` |
 | `.object info` (also `.gobject info`) | Inspect the selected game object. | `world.objects` |
-| `.object move` (also `.gobject move`) | Move the selected game object to your position. | `world.objects.move` |
-| `.object rotate <x\|y\|o> <degrees>` (also `.gobject rotate`) | Set rotation around an axis in degrees. | `world.objects.move` |
+| `.object move` (also `.gobject move`) | Move the selected game object to your position. | `world.objects` |
+| `.object rotate <x\|y\|o> <degrees>` (also `.gobject rotate`) | Set rotation around an axis in degrees. | `world.objects` |
 | `.object scale <scale>` (also `.gobject scale`) | Set the selected game object's scale. | `world.objects` |
 | `.object select [name]` (also `.gobject select`) | Select the nearest game object. | `world.objects` |
 | `.object spawn <entry-id> [save: 0\|1]` (also `.gobject spawn`) | Spawn a game object by entry ID. | `world.objects` |

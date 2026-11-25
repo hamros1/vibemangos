@@ -203,8 +203,8 @@ immutable ChatCommand[] gameObjectCommandTable = [
     action("scale", permit("world.objects"), "handleGOScale", "<scale>", "Set the selected game object's scale."),
     action("animprogress", permit("world.objects"), "handleGOAnimProgress", "[progress]", "Set the selected game object's animation progress.", "animation"),
     action("export", permit("world.objects"), "handleGOExport", "", "Show the selected game object's placement and rotation."),
-    action("move", permit("world.objects.move"), "handleGOMove", "", "Move the selected game object to your position."),
-    action("rotate", permit("world.objects.move"), "handleGORotate", "<x|y|o> <degrees>", "Set rotation around an axis in degrees."),
+    action("move", permit("world.objects"), "handleGOMove", "", "Move the selected game object to your position."),
+    action("rotate", permit("world.objects"), "handleGORotate", "<x|y|o> <degrees>", "Set rotation around an axis in degrees."),
 ];
 
 immutable ChatCommand[] battlegroundCommandTable = [
@@ -331,7 +331,7 @@ immutable ChatCommand[] gmCommandTable = [
     action("list", permit(""), "handleGMListCommand", "", "List online staff."),
     action("off", permit("staff.tag"), "handleGMOffCommand", "", "Turn off the GM tag and whisper blocking."),
     action("on", permit("staff.tag"), "handleGMOnCommand", "", "Turn on the GM tag and whisper blocking."),
-    action("whisperblock", permit("world.objects.move"), "handleWhisperBlockCommand", "", "Block whispers while keeping the visible GM tag off.", "quiet"),
+    action("whisperblock", permit("staff.tag"), "handleWhisperBlockCommand", "", "Block whispers while keeping the visible GM tag off.", "quiet"),
     action("allowwhispers", permit("staff.support"), "handleAllowWhispersCommand", "<name>", "Allow whispers from a player while in GM mode.", "allow"),
     action("blockwhispers", permit("staff.support"), "handleBlockWhispersCommand", "<name>", "Remove a player's whisper exception.", "block"),
 ];

@@ -752,6 +752,16 @@ unittest
     assert(menu[1] == ChatColor.sky ~ ".gm allow <name>|r  Allow whispers from a player while in GM mode.");
     assert(menu.canFind(ChatColor.sky ~ ".gm off|r  Turn off the GM tag and whisper blocking."));
 
+    // Support keeps `.gm quiet` but cannot save game object placements to the world database.
+    foreach (edit; [".gobject move", ".gobject rotate x 90"])
+    {
+        mod.say(edit);
+        assert(systemMessages(mod.read()) == [ChatColor.softRed ~ "Command unavailable. Try .commands.|r"]);
+    }
+    mod.say(".gm quiet");
+    mod.read();
+    assert(mod.session.character.gmTagOn);
+
     // The first row in table order wins: `.k` is `.kill`, which needs a selection.
     gm.say(".k");
     assert(systemMessages(gm.read()) == [ChatColor.softRed ~ "Select a unit first.|r"]);

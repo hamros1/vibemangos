@@ -236,7 +236,6 @@ INSERT IGNORE INTO dmangos_gm_role_permission VALUES
     ('support', 'support.lookup'),
     ('support', 'support.tickets'),
     ('support', 'world.teleport'),
-    ('support', 'world.objects.move'),
     ('support', 'character.mount');
 
 INSERT IGNORE INTO dmangos_gm_role_permission VALUES
@@ -262,7 +261,6 @@ INSERT IGNORE INTO dmangos_gm_role_permission VALUES
     ('game-master', 'testing.cheats'),
     ('game-master', 'world.creatures'),
     ('game-master', 'world.objects'),
-    ('game-master', 'world.objects.move'),
     ('game-master', 'world.quests'),
     ('game-master', 'world.teleport'),
     ('game-master', 'world.trainers'),
