@@ -1132,6 +1132,16 @@ private:
         return storeLootItem(entry, count, randomPropertyId, sendError);
     }
 
+    /// Whether `storeLootItem` finds room for the item, without storing it.
+    package uint lootItemFits(uint entry, uint count, bool sendError)
+    {
+        ItemPosCount[] dest;
+        const result = player.inventory.canStoreNew(nullBag, nullSlot, dest, entry, count);
+        if (result != InventoryResult.ok && sendError)
+            sendEquipError(EquipError(result, null, null, 0, entry));
+        return result;
+    }
+
     package uint storeLootItem(uint entry, uint count, int randomPropertyId, bool sendError,
         scope imported!"dmangos.world.database".InstanceChestRecord delegate() checkpoint = null,
         const LootAwardKey award = LootAwardKey.init,
@@ -2024,6 +2034,113 @@ unittest
     assert(results.length == 1 && results[0].stored);
     corpseNode.groupLootRollArrived(2, results[0]);
     assert(jaina.session.character.inventory.count(itemJerky) == 1 && item.allowed.length == 0);
+}
+
+// The award's expiry and its late delivery race: whichever records the token first decides. The expiry first, the
+// recipient's node stores nothing; the recipient's claim first, the expiry reads it stored and the item is theirs.
+unittest
+{
+    import dmangos.cluster.protocol : GroupLootRoll;
+    import dmangos.world.characterdb : GroupRecord, GroupMemberRecord;
+    import dmangos.world.database : LootAwardKey, WorldDatabase;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.group : LootMethod;
+    import dmangos.world.loot : LootSlotType, lootAwardKey, remoteAwardSeconds;
+    import dmangos.world.replication : encodePlayerState;
+    import std.typecons : AutoImplement;
+
+    // The loot's node runs while the recipient's node takes the token.
+    static abstract class ExpiresDuringClaim : WorldDatabase
+    {
+        WorldDatabase inner;
+        bool expiryFirst;
+        void delegate() expire;
+
+        this(WorldDatabase inner) { this.inner = inner; }
+
+        override bool claimLootAward(const ref LootAwardKey key, long now)
+        {
+            if (expiryFirst)
+                expire();
+            const claimed = inner.claimLootAward(key, now);
+            if (!expiryFirst)
+                expire();
+            return claimed;
+        }
+    }
+
+    enum string forward(C, alias method) = "return inner." ~ __traits(identifier, method) ~ "(args);";
+    alias Racing = AutoImplement!(ExpiresDuringClaim, forward);
+    foreach (expiryFirst; [true, false])
+    {
+        auto db = newDatabase();
+        GroupRecord party;
+        party.id = 1;
+        party.leader = party.looter = 7;
+        party.leaderName = "Anduin";
+        party.lootMethod = LootMethod.masterLoot;
+        party.lootThreshold = 2;
+        party.members = [GroupMemberRecord(7, "Anduin"), GroupMemberRecord(8, "Jaina")];
+        db.groups[party.id] = party;
+        auto corpseNode = newCreationContext(db), otherNode = newCreationContext(db);
+        corpseNode.nodeId = 1;
+        otherNode.nodeId = 2;
+        otherNode.ownsCell = (uint, ulong) => false;
+        auto now = MonoTime.currTime;
+        corpseNode.clock = otherNode.clock = () => now;
+        auto anduin = loggedIn(corpseNode, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
+        const nearCorpse = Position(-8945, -132, 83.5f);
+        auto jaina = loggedIn(otherNode, db, 8, "Jaina", nearCorpse);
+        corpseNode.map(0).replicaCreated(2, cellKeyAt(nearCorpse.x, nearCorpse.y), 8,
+            encodePlayerState(jaina.session.character, 0));
+
+        GroupLootRoll[] awards, results;
+        corpseNode.sendRemoteGroupLoot = (ushort node, const ref GroupLootRoll message) {
+            awards ~= message;
+            return true;
+        };
+        otherNode.sendRemoteGroupLoot = (ushort node, const ref GroupLootRoll message) {
+            results ~= message;
+            return true;
+        };
+        corpseNode.data.items.edit(itemJerky).details.quality = 2;
+        auto victim = lootableInnkeeper(corpseNode);
+        killIt(anduin, victim, now);
+        auto loot = victim.loot;
+        auto item = loot.itemInSlot(0);
+        anduin.write(Opcode.CMSG_LOOT, ClientGuid(victim.guid));
+        anduin.read();
+        anduin.write(Opcode.CMSG_LOOT_MASTER_GIVE, ClientLootMasterGive(victim.guid, 0, 8));
+        assert(awards.length == 1);
+        loot.update(); // the deadline starts
+        now += (remoteAwardSeconds + 1).seconds;
+
+        auto racing = new Racing(db);
+        racing.expiryFirst = expiryFirst;
+        racing.expire = () => loot.update();
+        otherNode.database = racing;
+        otherNode.groupLootRollArrived(1, awards[0]);
+
+        const key = lootAwardKey(awards[0]);
+        const recorded = db.loadLootAward(key);
+        size_t saved;
+        foreach (guid, ref row; db.itemRows)
+            if (row.entry == itemJerky && db.itemOwners[guid] == 8)
+                saved += row.count;
+        assert(!item.remoteAward && results.length == 1 && recorded.recorded);
+        if (expiryFirst)
+        {
+            assert(recorded.error && !results[0].stored, "the refusal is recorded first: nothing is stored");
+            assert(!jaina.session.character.inventory.count(itemJerky) && !saved);
+            assert(item.slotTypeFor(7, loot) == LootSlotType.master, "the master can assign the item again");
+        }
+        else
+        {
+            assert(!recorded.error && results[0].stored, "the claim is recorded first: the expiry reads it stored");
+            assert(jaina.session.character.inventory.count(itemJerky) == 1 && saved == 1);
+            assert(!item.allowed.length, "the item is delivered, not assignable again");
+        }
+    }
 }
 
 // The master sees the remote recipient and can assign a shared slot exactly once.

@@ -2346,15 +2346,28 @@ final class CharacterStatements
         return rows.length ? LootAwardResult(true, rows[0].get!ubyte(0)) : LootAwardResult.init;
     }
 
+    bool claimLootAward(const ref LootAwardKey key, long now)
+    {
+        prepareLootAwards();
+        return characters.execute!("INSERT IGNORE INTO dmangos_loot_award "
+            ~ "(token, loot, map_id, slot, player, result, recorded_at) VALUES (?, ?, ?, ?, ?, 0, ?)")(
+                key.token, key.loot, key.map, key.slot, key.player, now) != 0;
+    }
+
     void saveLootAward(const ref LootAwardKey key, ubyte result, long now, uint money, uint playerBytes2,
         const(ItemChange)[] changes)
     {
         prepareLootAwards();
         characters.transaction({
-            const inserted = characters.execute!("INSERT IGNORE INTO dmangos_loot_award "
+            characters.execute!("INSERT IGNORE INTO dmangos_loot_award "
                 ~ "(token, loot, map_id, slot, player, result, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?)")(
                     key.token, key.loot, key.map, key.slot, key.player, result, now);
-            if (inserted && !result)
+            if (result)
+                return;
+            const rows = characters.query!("SELECT result FROM dmangos_loot_award "
+                ~ "WHERE token = ? AND loot = ? AND map_id = ? AND slot = ? AND player = ? FOR UPDATE")(
+                    key.token, key.loot, key.map, key.slot, key.player);
+            if (rows.length && !rows[0].get!ubyte(0))
                 saveInventory(key.player, money, playerBytes2, changes);
         });
     }

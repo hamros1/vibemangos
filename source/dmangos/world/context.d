@@ -684,8 +684,22 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             // refuses a player who is in no group at all.
             if (!master || (groups.of(message.player) !is null
                 && (!message.condition || player.conditionMet(message.condition))))
-                result.inventoryError = cast(ubyte) player.storeLootItem(message.item, message.count,
-                    message.randomProperty, !master, award: key);
+                result.inventoryError = cast(ubyte) player.lootItemFits(message.item, message.count, !master);
+            // The token is claimed before the item exists: the loot's node may expire the award at any moment,
+            // and only one of the two can record it. Its refusal first: nothing is stored.
+            if (result.inventoryError == InventoryResult.ok)
+            {
+                if (database.claimLootAward(key, unixTime))
+                    result.inventoryError = cast(ubyte) player.storeLootItem(message.item, message.count,
+                        message.randomProperty, !master, award: key);
+                else
+                {
+                    const recorded = database.loadLootAward(key);
+                    if (!recorded.recorded)
+                        return; // the claim was not written (the lease lapsed): the loot's node asks again
+                    result.inventoryError = recorded.error;
+                }
+            }
             result.stored = result.inventoryError == InventoryResult.ok;
             if (!result.stored)
                 database.saveLootAward(key, result.inventoryError, unixTime, 0, 0, null);

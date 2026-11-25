@@ -1143,7 +1143,15 @@ interface WorldDatabase
         const PickpocketRecord pocket);
 
     @DatabaseRead LootAwardResult loadLootAward(const ref LootAwardKey key);
-    /// Records the result and any new inventory rows in the same transaction.
+    /**
+     * Takes the award's token for its recipient before the item is made: records it stored, unless a result
+     * (the loot's node expiring it) is already recorded. True when this call recorded it.
+     */
+    @DatabaseWrite bool claimLootAward(const ref LootAwardKey key, long now);
+    /**
+     * Records the result and any new inventory rows in the same transaction. The rows are saved only when the
+     * token's row says stored: this call's, or the recipient's claim.
+     */
     void saveLootAward(const ref LootAwardKey key, ubyte error, long now, uint money, uint playerBytes2,
         const(ItemChange)[] changes);
 
@@ -2036,6 +2044,11 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
         return statements.loadLootAward(key);
     }
 
+    bool claimLootAward(const ref LootAwardKey key, long now)
+    {
+        return statements.claimLootAward(key, now);
+    }
+
     void saveLootAward(const ref LootAwardKey key, ubyte error, long now, uint money, uint playerBytes2,
         const(ItemChange)[] changes)
     {
@@ -2594,14 +2607,20 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
         return lootAwards.get(key, LootAwardResult.init);
     }
 
+    bool claimLootAward(const ref LootAwardKey key, long now)
+    {
+        if (key in lootAwards)
+            return false;
+        lootAwards[key] = LootAwardResult(true, 0);
+        return true;
+    }
+
     void saveLootAward(const ref LootAwardKey key, ubyte error, long now, uint money, uint playerBytes2,
         const(ItemChange)[] changes)
     {
-        if (key in lootAwards)
-            return;
-        if (!error)
+        const recorded = lootAwards.require(key, LootAwardResult(true, error));
+        if (!error && !recorded.error)
             saveInventory(key.player, money, playerBytes2, changes);
-        lootAwards[key] = LootAwardResult(true, error);
     }
 
     LookupResult[] lookup(LookupTable table, string text, uint limit)
