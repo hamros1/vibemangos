@@ -532,12 +532,22 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private MonoTime nextBattlegroundRewardPoll;
     private bool[uint] retryLootCoinRedemption;
 
+    /// This process's incarnation in the cluster (docs/CLUSTER.md), which seeds `nextGameplaySequence`; 0 outside one.
+    ulong incarnation;
+
+    /**
+     * The next number of this node's gameplay messages. A peer drops a message at or below the highest number it
+     * has applied from this node, and keeps that mark for good: a new start must count from above where the last
+     * one stopped. The wall clock cannot promise that (it may have stepped back since); the incarnation, recorded
+     * beside the write log, rises with every start whatever the clock does, and leaves 2^20 numbers for each of
+     * the milliseconds between two starts (2^20 at least, for a start just after one the clock stepped back).
+     */
     ulong nextGameplaySequence()
     {
         import std.datetime.systime : Clock;
 
         if (!gameplaySequence)
-            gameplaySequence = cast(ulong) Clock.currStdTime;
+            gameplaySequence = incarnation ? incarnation << 20 : cast(ulong) Clock.currStdTime;
         return ++gameplaySequence;
     }
 
@@ -12810,4 +12820,22 @@ unittest
     assert(sent.length == 1 && to == [2] && sent[0].target == player && sent[0].entry == credited);
     elsewhere.killShareArrived(sent[0]);
     assert(anduin.session.character.questStatus[questId].status == QuestState.complete, "credited where it plays");
+}
+
+// A node's gameplay messages are numbered from its incarnation, not the wall clock: a start after the clock stepped
+// back (its recorded incarnation one above the last) still numbers above everything the last start sent.
+unittest
+{
+    import dmangos.world.testclient : newCreationContext, newDatabase;
+
+    auto db = newDatabase();
+    auto before = newCreationContext(db, (ref config) { config.cluster.nodeId = 3; });
+    before.incarnation = 1_795_631_257_169;
+    ulong last;
+    foreach (_; 0 .. 100_000)
+        last = before.nextGameplaySequence();
+    auto after = newCreationContext(db, (ref config) { config.cluster.nodeId = 3; });
+    after.incarnation = before.incarnation + 1;
+    assert(after.nextGameplaySequence() > last);
+    assert(newCreationContext(db).nextGameplaySequence() != 0, "outside a cluster, from the clock as before");
 }

@@ -342,6 +342,7 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
             setup, config.realmId);
         // While its database takes none of its writes, the node refuses logins and holds arrivals.
         context.writesStalled = () => writer.databaseSilentFor >= ClusterNode.databaseStalledAfter;
+        context.incarnation = incarnation;
         if (config.battlegroupStandbyNode)
         {
             import dmangos.cluster.services : ServiceKind;
