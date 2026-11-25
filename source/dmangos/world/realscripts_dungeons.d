@@ -27,7 +27,7 @@ unittest
 
     if (!haveRealData())
         return;
-    auto d = Dungeon.enter(249, 60);
+    auto d = Dungeon.enter(249, 60, cluster: true);
     auto boss = d.spawned(npcOnyxia, 0, 12);
     d.pull(boss);
     d.hurtTo(boss, 64);
@@ -91,7 +91,7 @@ unittest
     enum uint device = 179784, suppression = 22247, disarm = 1842, broodlord = 12017;
     enum chosen = makeGuid(HighGuid.gameObject, device, 4690072);
     enum neighbor = makeGuid(HighGuid.gameObject, device, 4690098);
-    auto d = Dungeon.enter(469, 60, 4, 2, Position(-7572.59f, -1062.57f, 449.164f));
+    auto d = Dungeon.enter(469, 60, 4, 2, Position(-7572.59f, -1062.57f, 449.164f), cluster: true);
     auto trap() { return d.map.gameObjectAt(chosen); }
     bool disabled(GameObject go) { return go !is null && (go.values.get!GAMEOBJECT_FLAGS & ObjectFlag.noInteract) != 0; }
     int remaining()

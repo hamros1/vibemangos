@@ -134,14 +134,14 @@ const(imported!"dmangos.world.worlddata".WorldData) realData()
 }
 
 /// The scene for `b`: the characters three yards from it, the trash round it cleared; the boss.
-Creature setUp(const ref Boss b, out Scene s)
+Creature setUp(const ref Boss b, out Scene s, bool cluster = false)
 {
     Position at = b.summonAt.x != 0 ? b.summonAt : b.heroAt.x != 0 ? b.heroAt : spawnOf(b.map, b.entry);
     assert(at.x != 0 || at.y != 0, format!"%s: no spawn of %s on map %s"(b.name, b.entry, b.map));
     Position heroAt = b.heroAt.x != 0 ? b.heroAt : at;
     if (b.heroAt.x == 0)
         heroAt.x += 3;
-    s = new Scene(b.map, heroAt, b.classes);
+    s = new Scene(b.map, heroAt, b.classes, cluster: cluster);
     s.run(400.msecs); // its cells loaded (a boss may see them come: what it does then is seen too)
     auto boss = b.arrive !is null ? b.arrive(s) : b.summonAt.x != 0 ? s.summon(b.entry, at) : s.find(b.entry);
     assert(boss !is null, format!"%s: not on the map"(b.name));
@@ -643,7 +643,7 @@ unittest
     {
         Scene s;
         const encounter = Boss(d.name, 469, d.entry, d.state);
-        auto boss = setUp(encounter, s);
+        auto boss = setUp(encounter, s, cluster: true);
         s.pressing = false;
         const guid = boss.guid;
         s.engage(boss);
@@ -686,7 +686,7 @@ unittest
 
     Scene s;
     const encounter = Boss("Chromaggus", 469, npcChromaggus, BwlEncounter.chromaggus);
-    auto boss = setUp(encounter, s);
+    auto boss = setUp(encounter, s, cluster: true);
     s.pressing = false;
     const guid = boss.guid;
     const left = cast(uint) s.ask(BwlQuestion.chromaLeftBreath), right = cast(uint) s.ask(BwlQuestion.chromaRightBreath);
@@ -725,6 +725,8 @@ unittest
         grethok = 12557, razorgoreEntry = 12435, egg = 177807, legionnaire = 12416, mage = 12420, dragonspawn = 12422,
         gateIn = 176964, gateOut = 176965,
     }
+    // Not yet as a cluster member: there the player loses the orb's possession of Razorgore while its aura stays on
+    // him (to be fixed; then `cluster: true` here).
     auto s = new Scene(469, Position(-7612, -1024, 413), [classWarrior, classMage, classPriest]);
     s.run(1.seconds);
     auto razorgore = s.the(razorgoreEntry);
@@ -868,7 +870,7 @@ unittest
     if (!haveRealData())
         return;
     enum uint vaelEntry = 13020, nefarius = 10162;
-    auto s = new Scene(469, Position(-7480, -1016, 408.6f), [classWarrior, classMage]);
+    auto s = new Scene(469, Position(-7480, -1016, 408.6f), [classWarrior, classMage], cluster: true);
     s.run(1.seconds);
     auto vael = s.the(vaelEntry);
     assert(s.healthOf(vael) <= 31, format!"Vaelastrasz at %s%%, not 30%%"(s.healthOf(vael)));
@@ -936,7 +938,7 @@ unittest
     enum uint nefariusEntry = 10162, nefarianEntry = 11583;
     static immutable uint[6] drakonids = [14261, 14262, 14263, 14264, 14265, 14302];
     static immutable uint[5] spawners = [14307, 14309, 14310, 14311, 14312];
-    auto s = new Scene(469, Position(-7585, -1262, 481.6f), [classWarrior, classMage]);
+    auto s = new Scene(469, Position(-7585, -1262, 481.6f), [classWarrior, classMage], cluster: true);
     s.run(1.seconds);
     auto nefarius = s.the(nefariusEntry);
     s.gossip(nefarius, [0, 0, 0]);
@@ -1630,7 +1632,7 @@ unittest
     enum uint entryGate = 181124, exitGate = 181125;
     const encounter = Boss("Gothik the Harvester", 533, npcGothik, NaxxEncounter.gothik, [npcSubBossTrigger]);
     Scene s;
-    auto boss = setUp(encounter, s);
+    auto boss = setUp(encounter, s, cluster: true);
     s.pressing = false;
     s.stayWith = null;
     s.engage(boss);
@@ -1713,7 +1715,7 @@ unittest
 
     const encounter = Boss("Gothik the Harvester", 533, npcGothik, NaxxEncounter.gothik, [npcSubBossTrigger]);
     Scene s;
-    auto boss = setUp(encounter, s);
+    auto boss = setUp(encounter, s, cluster: true);
     s.pressing = false;
     s.stayWith = null;
     s.engage(boss);

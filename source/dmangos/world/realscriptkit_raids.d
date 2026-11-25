@@ -7,6 +7,9 @@
  *
  * The characters may be made god-like (`godlike`): their health is filled at every tick, so a fight runs as long as
  * the test needs. Runs only with the real data (`DMANGOS_REAL_DATA`).
+ *
+ * A scene made with `cluster: true` runs its world as a cluster member: native fights and the encounters'
+ * checkpoints are written as on a worker, and `restartAfterCrash` brings the copy back from them.
  */
 module dmangos.world.realscriptkit_raids;
 
@@ -66,20 +69,24 @@ final class Scene
      * `count` characters of `classId` and `level` at `at` on `mapId`: in a new copy of it if it is a dungeon (all in
      * the same one), on the continent if not. Its creatures load as the characters' sight reaches them.
      */
-    this(uint mapId, Position at, size_t count = 1, ubyte classId = classWarrior, uint level = 60, uint seed = 20_261_120)
+    this(uint mapId, Position at, size_t count = 1, ubyte classId = classWarrior, uint level = 60, uint seed = 20_261_120,
+        bool cluster = false)
     {
         ubyte[] classes;
         foreach (k; 0 .. count)
             classes ~= classId;
-        this(mapId, at, classes, level, seed);
+        this(mapId, at, classes, level, seed, cluster: cluster);
     }
 
     /// ditto, a character of each of `classes` (the first a warrior, say, the second a mage: one with mana).
-    this(uint mapId, Position at, const(ubyte)[] classes, uint level = 60, uint seed = 20_261_120, bool withTerrain = false)
+    this(uint mapId, Position at, const(ubyte)[] classes, uint level = 60, uint seed = 20_261_120, bool withTerrain = false,
+        bool cluster = false)
     {
         import dmangos.world.packets : ClientTeleportAck;
 
         w = RealWorld.make(seed, withTerrain);
+        if (cluster)
+            w.context.config.cluster.nodeId = 1; // a cluster member (the next worlds keep its configuration)
         this.mapId = mapId;
         this.seed = seed;
         foreach (k, classId; classes)
