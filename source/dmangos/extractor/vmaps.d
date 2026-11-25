@@ -22,7 +22,7 @@ import std.algorithm.searching : canFind, endsWith;
 import std.algorithm.sorting : sort;
 import std.array : appender;
 import std.ascii : isAlpha, isDigit;
-import std.bitmanip : littleEndianToNative;
+import std.bitmanip : littleEndianToNative, nativeToLittleEndian;
 import std.exception : enforce;
 import std.file : exists, mkdirRecurse, rmdirRecurse;
 import std.format : format;
@@ -483,8 +483,8 @@ final class RawExtractor
                     found.references[reference] = true;
         }
         auto bytes = w.data.dup;
-        bytes[8 .. 12] = (cast(ubyte*)&triangles)[0 .. 4];
-        bytes[12 .. 16] = (cast(ubyte*)&groupsWritten)[0 .. 4];
+        bytes[8 .. 12] = nativeToLittleEndian(triangles);
+        bytes[12 .. 16] = nativeToLittleEndian(groupsWritten);
         std.file.write(outputPath(name), bytes);
         written[name] = triangles;
         doodads[name] = found;
