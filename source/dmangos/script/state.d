@@ -351,3 +351,38 @@ unittest
     SunkenTemple restored;
     assert(loadScript(restored, reader) && restored.statuesCheckpointed && restored.extinguishedFlames == 5);
 }
+
+unittest
+{
+    // The Temple of Ahn'Qiraj's C'Thun recovery list was appended: lockouts saved before it (and the enum-blind
+    // saves of 219ecf7 keyed off that older layout) still load, with no tentacles to restore.
+    import dmangos.script.api : EncounterState, EntityRef;
+    import dmangos.scripts.templeofahnqiraj : Aq40Encounter, TempleOfAhnQiraj;
+
+    static assert(fnv1a(layoutOf!(TempleOfAhnQiraj, 0)) == 0x2b625e18f5cc90f1UL);
+    static assert(legacyDungeonLayout(0x2b625e18f5cc90f1UL) == 0x1930997e372b81b0UL);
+
+    TempleOfAhnQiraj temple;
+    temple.encounters[Aq40Encounter.cthun] = EncounterState.inProgress;
+    ByteWriter current;
+    saveScript(temple, current);
+    const body = current.data[ulong.sizeof .. $ - uint.sizeof]; // without the empty list's length
+
+    foreach (const stored; [0x2b625e18f5cc90f1UL, 0x1930997e372b81b0UL])
+    {
+        ByteWriter old;
+        old.put(stored);
+        old.putBytes(body);
+        auto reader = ByteReader(old.data);
+        TempleOfAhnQiraj restored;
+        assert(loadScript(restored, reader));
+        assert(restored.encounters[Aq40Encounter.cthun] == EncounterState.inProgress && !restored.cthunAdds.length);
+    }
+
+    temple.cthunAdds = [EntityRef(0xF130_003D_8A00_0001UL)];
+    ByteWriter withAdds;
+    saveScript(temple, withAdds);
+    auto reader = ByteReader(withAdds.data);
+    TempleOfAhnQiraj restored;
+    assert(loadScript(restored, reader) && restored.cthunAdds == temple.cthunAdds);
+}

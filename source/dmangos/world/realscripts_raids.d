@@ -1406,6 +1406,112 @@ unittest
     assert(s.ask(8) == 3, "his encounter not done");
 }
 
+/**
+ * C'Thun's fight survives a worker's crash in the same raid copy: in the Eye's phase (its health, its tentacles and
+ * their timers), between the Eye's death and his rise (he rises once, his Flesh Tentacles grow once), with a player
+ * in his stomach (the acid finds them again, the slain Flesh Tentacle stays slain and the other one's death weakens
+ * him), and after his death (nothing comes back).
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import std.algorithm.iteration : map;
+    import std.algorithm.sorting : sort;
+    import std.array : array;
+    import dmangos.script.api : EncounterState;
+    import dmangos.scripts.templeofahnqiraj;
+    import dmangos.world.defines : UnitFlags;
+
+    const b = Boss("Eye of C'Thun", 531, npcEyeOfCthun, Aq40Encounter.cthun, [npcCthun], null);
+    Scene s;
+    auto eye = setUp(b, s);
+    const instance = s.instance, eyeGuid = eye.guid, cthunGuid = s.the(npcCthun).guid;
+    s.stayWithin = 40;
+    s.pressing = false;
+    s.engage(eye);
+    const engagedAt = s.elapsedMs;
+    ulong[] clawsOf() { return s.all(npcClawTentacle).map!(c => c.guid).array.sort.release; }
+
+    // (i) The Eye's phase: its health, its claw tentacles, the eye tentacles' timer.
+    assert(s.runUntil(() => s.all(npcClawTentacle).length >= 1, 9.seconds), "no Claw Tentacle at 8 s");
+    s.hurtTo(eye, 70);
+    s.run(2400.msecs); // a periodic save of the fight
+    const eyeHealth = eye.values.get!UNIT_FIELD_HEALTH;
+    const claws = clawsOf();
+    assert(!s.all(npcEyeTentacle).length);
+    s.restartAfterCrash();
+    eye = s.the(npcEyeOfCthun);
+    assert(s.instance == instance && eye.guid == eyeGuid && eye.values.get!UNIT_FIELD_HEALTH == eyeHealth,
+        format!"the Eye back at %s of %s health"(eye.values.get!UNIT_FIELD_HEALTH, eyeHealth));
+    assert(s.ask(Aq40Encounter.cthun) == EncounterState.inProgress && s.all(npcEyeOfCthun).length == 1);
+    assert(clawsOf() == claws, format!"claw tentacles %s, before the crash %s"(clawsOf(), claws));
+    assert(s.the(npcCthun).guid == cthunGuid && s.all(npcCthun).length == 1);
+    s.stayWith = eye;
+    assert(!s.runUntil(() => s.all(npcEyeTentacle).length > 0, (43_000 - (s.elapsedMs - engagedAt)).msecs),
+        "the eye tentacles ran ahead of their saved timer");
+    assert(s.runUntil(() => s.all(npcEyeTentacle).length > 0, 6.seconds), "no eye tentacles on the saved timer");
+    assert(s.all(npcEyeTentacle).length == 8, format!"%s eye tentacles"(s.all(npcEyeTentacle).length));
+
+    // (ii) The Eye slain, the worker lost before C'Thun rises: he rises once, under the same guid.
+    s.kill(eye);
+    s.run(2.seconds);
+    auto cthun = s.the(npcCthun);
+    assert(!cthun.auras.find(Cthun.carapace) && (cthun.values.get!UNIT_FIELD_FLAGS & UnitFlags.uninteractible));
+    s.forget();
+    s.restartAfterCrash();
+    cthun = s.the(npcCthun);
+    assert(cthun.guid == cthunGuid && s.find(npcEyeOfCthun) is null, "the Eye back, or another C'Thun");
+    assert(s.runUntil(() => cthun.auras.find(Cthun.carapace) !is null, 5.seconds), "C'Thun did not rise");
+    assert(!(cthun.values.get!UNIT_FIELD_FLAGS & UnitFlags.uninteractible) && s.all(npcCthun).length == 1);
+    assert(s.all(npcFleshTentacle).length == 2 && !s.all(npcClawTentacle).length && !s.all(npcEyeTentacle).length,
+        format!"%s Flesh Tentacles, %s claws, %s eye tentacles"(s.all(npcFleshTentacle).length,
+        s.all(npcClawTentacle).length, s.all(npcEyeTentacle).length));
+    s.run(2.seconds);
+    assert(s.castCount(Cthun.transform) <= 1 && s.all(npcFleshTentacle).length == 2, "he rose twice");
+
+    // (iii) A player swallowed, one Flesh Tentacle slain, the worker lost.
+    size_t swallowed = size_t.max;
+    assert(s.runUntil(() {
+        foreach (k; 0 .. s.heroes.length)
+            if (s.hero(k).position.z < Cthun.stomachTop)
+                swallowed = k;
+        return swallowed != size_t.max;
+    }, 20.seconds), "nobody swallowed\n" ~ s.seen());
+    auto flesh = s.all(npcFleshTentacle);
+    s.kill(flesh[0]);
+    const survivor = flesh[1].guid;
+    s.run(2400.msecs);
+    const cthunHealth = cthun.values.get!UNIT_FIELD_HEALTH;
+    s.forget();
+    s.restartAfterCrash();
+    cthun = s.the(npcCthun);
+    assert(s.hero(swallowed).position.z < Cthun.stomachTop, "the swallowed player not back in the stomach");
+    assert(cthun.guid == cthunGuid && cthun.values.get!UNIT_FIELD_HEALTH == cthunHealth && s.all(npcCthun).length == 1);
+    assert(s.all(npcFleshTentacle).length == 1 && s.all(npcFleshTentacle)[0].guid == survivor,
+        format!"%s Flesh Tentacles after the crash"(s.all(npcFleshTentacle).length));
+    assert(s.runUntil(() => s.castBy(npcCthun, Cthun.digestiveAcid), 5500.msecs), "the acid lost the swallowed");
+    s.kill(s.all(npcFleshTentacle)[0]);
+    assert(s.runUntil(() => cthun.auras.find(Cthun.vulnerable) !is null, 1.seconds),
+        "the second Flesh Tentacle's death did not weaken him: the first one's was lost");
+
+    // (iv) Out of the stomach before a crash: the acid no longer finds them; his death stays.
+    s.moveHero(swallowed, Position(Cthun.stomachExit.x, Cthun.stomachExit.y, Cthun.stomachExit.z));
+    s.run(5200.msecs);
+    s.restartAfterCrash();
+    s.forget();
+    s.run(6.seconds);
+    assert(!s.castBy(npcCthun, Cthun.digestiveAcid), "the acid still finds one out of the stomach");
+    cthun = s.the(npcCthun);
+    s.kill(cthun);
+    s.run(400.msecs);
+    s.restartAfterCrash();
+    assert(s.ask(Aq40Encounter.cthun) == EncounterState.done && s.find(npcCthun) is null
+        && s.find(npcEyeOfCthun) is null, "C'Thun or his Eye back after his death");
+    foreach (entry; [npcClawTentacle, npcEyeTentacle, npcGiantClawTentacle, npcGiantEyeTentacle, npcFleshTentacle])
+        assert(!s.all(entry).length, format!"a tentacle %s left after his death"(entry));
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Naxxramas (533)
 // ---------------------------------------------------------------------------------------------------------------

@@ -13,6 +13,7 @@ module dmangos.scripts.templeofahnqiraj;
 import core.time : Duration;
 
 import dmangos.script;
+import dmangos.script.state : appended;
 
 /// Where `who` is, as `ctx` sees it (`Location.init` if it is not here).
 private Location where(C)(ref C ctx, EntityRef who)
@@ -86,6 +87,10 @@ enum Aq40Signal : uint
     eyeDown = 107,       /// the Eye of C'Thun to C'Thun: the second phase
     ouroGone = 109,      /// Ouro to the spawner: wake again (the fight failed)
     cthunWhisper = 110,  /// the copy's tick: C'Thun whispers
+    saveCthun = 111,     /// the Eye or C'Thun to the copy: a phase, a timer or the stomach changed (checkpoint me)
+    resumeCthun = 112,   /// the copy to C'Thun: a player is back after a recovery
+    stomachPlayer = 113, /// the copy to C'Thun: a player came back in the stomach (`value`: their guid)
+    leftStomach = 114,   /// the stomach's way out to the copy: someone climbed out
 }
 
 private enum uint triggerTwinEmperors = 4047, triggerSartura = 4052;
@@ -145,6 +150,10 @@ struct TempleOfAhnQiraj
     enum Step : ubyte { intro, whisper }
     Schedule!Step steps;
 
+    // Appended to keep earlier lockout saves readable.
+    @appended EntityRef[] cthunAdds; /// the tentacles living in C'Thun's fight under way (saved with it)
+    @transient bool recoveringCthun;
+
     private static immutable uint[3] doorEntries = [goSkeramGate, goTwinsEnterDoor, goTwinsExitDoor];
 
     private bool doorOpen(size_t i) const
@@ -178,12 +187,29 @@ struct TempleOfAhnQiraj
             sartura = e.creature;
             break;
         case npcCthun:
+            if (e.summoned)
+                break;
             cthun = e.creature;
             if (!steps.pending(Step.whisper))
                 steps.after(Step.whisper, 90.seconds);
+            if (cthunActive) // a clean handoff brings him in without a signal: he stays in the checkpoint
+                copy.checkpointCreature(cthun);
             break;
         case npcEyeOfCthun:
+            if (e.summoned)
+                break;
             eye = e.creature;
+            if (cthunActive)
+                copy.checkpointCreature(eye);
+            break;
+        case npcClawTentacle, npcEyeTentacle, npcGiantClawTentacle, npcGiantEyeTentacle, npcFleshTentacle:
+            import std.algorithm.searching : canFind;
+
+            if (e.summoned && cthunActive && !cthunAdds.canFind(e.creature))
+            {
+                cthunAdds ~= e.creature;
+                copy.checkpointCreature(e.creature);
+            }
             break;
         case npcSkeram:
             if (!skeram)
@@ -225,8 +251,8 @@ struct TempleOfAhnQiraj
         if (e.event != cthunResetEvent)
             return;
         copy.consume();
-        if (encounters[Aq40Encounter.cthun] == EncounterState.inProgress)
-            encounters[Aq40Encounter.cthun] = EncounterState.failed;
+        if (cthunActive)
+            setCthun(copy, EncounterState.failed);
     }
 
     void on(ref InstanceContext copy, const ref Signal e)
@@ -247,6 +273,26 @@ struct TempleOfAhnQiraj
             if ((s == EncounterState.notStarted || s == EncounterState.failed) && sartura)
                 copy.zoneCombat(sartura);
             return;
+        }
+        if (e.id == Aq40Signal.saveCthun)
+        {
+            if (cthunActive && copy.alive(e.from))
+                copy.checkpointCreature(e.from);
+            return;
+        }
+        if (e.id == Aq40Signal.leftStomach)
+        {
+            if (cthunActive)
+                copy.checkpoint(); // where they came out, with the fight
+            return;
+        }
+        if (e.id == Aq40Encounter.cthun)
+        {
+            if (e.from.isCreature && e.from.entry == npcCthun)
+                cthun = e.from;
+            else if (e.from.isCreature && e.from.entry == npcEyeOfCthun)
+                eye = e.from;
+            return setCthun(copy, cast(EncounterState) e.value);
         }
         if (e.id > Aq40Encounter.max)
             return;
@@ -269,6 +315,113 @@ struct TempleOfAhnQiraj
         foreach (i, d; doors)
             if (d)
                 copy.door(d, doorOpen(i));
+    }
+
+    private bool cthunActive() const
+    {
+        return encounters[Aq40Encounter.cthun] == EncounterState.inProgress;
+    }
+
+    /**
+     * C'Thun's encounter in `state`. While it is under way the Eye, C'Thun and their living tentacles are saved
+     * with the copy (a worker's crash resumes the fight, `Restored`); otherwise they are not, and the tentacles go.
+     */
+    private void setCthun(ref InstanceContext copy, EncounterState state)
+    {
+        if (encounters[Aq40Encounter.cthun] == EncounterState.done)
+            return;
+        encounters[Aq40Encounter.cthun] = state;
+        if (cthunActive)
+        {
+            if (eye && copy.alive(eye))
+                copy.checkpointCreature(eye);
+            if (cthun && copy.alive(cthun))
+                copy.checkpointCreature(cthun);
+        }
+        else
+        {
+            foreach (actor; [eye, cthun])
+                if (actor)
+                    copy.releaseCheckpointActor(actor);
+            foreach (add; cthunAdds)
+            {
+                copy.releaseCheckpointActor(add);
+                if (copy.alive(add))
+                    copy.despawn(add);
+            }
+            cthunAdds = null;
+        }
+        copy.checkpoint();
+    }
+
+    /// The copy came back from its save: C'Thun's fight under way resumes from its checkpoint when a player comes
+    /// back; a fight saved without it fails.
+    void on(ref InstanceContext copy, const ref Restored e)
+    {
+        import std.algorithm.mutation : remove;
+
+        const state = encounters[Aq40Encounter.cthun];
+        if (state == EncounterState.done)
+            return;
+        if (copy.entryKilled(npcCthun))
+            return setCthun(copy, EncounterState.done);
+        if (state == EncounterState.inProgress
+                && (copy.hasSavedCreature(npcCthun) || copy.hasSavedCreature(npcEyeOfCthun)))
+        {
+            recoveringCthun = true;
+            cthunAdds = cthunAdds.remove!(add => !copy.hasSavedCreature(add));
+            copy.waitForPlayer();
+            return;
+        }
+        if (state == EncounterState.inProgress)
+        {
+            encounters[Aq40Encounter.cthun] = EncounterState.failed; // older saves kept no fight to resume
+            cthunAdds = null;
+            copy.checkpoint();
+        }
+    }
+
+    void on(ref InstanceContext copy, const ref PlayerEntered e)
+    {
+        if (!cthunActive)
+            return;
+        if (recoveringCthun)
+        {
+            recoveringCthun = false;
+            if (eye && copy.alive(eye) && !copy.alive(copy.victimOf(eye)))
+                copy.zoneCombat(eye);
+            foreach (add; cthunAdds)
+                if (add.entry != npcFleshTentacle && copy.alive(add) && !copy.alive(copy.victimOf(add)))
+                    copy.attack(add, e.player);
+            if (cthun && copy.alive(cthun))
+                copy.signal(cthun, Aq40Signal.resumeCthun);
+        }
+        if (cthun && copy.alive(cthun))
+        {
+            // Back in the stomach: C'Thun's acid finds them again (or, risen no more, he puts them out).
+            Location at;
+            if (copy.locationOf(e.player, at) && at.z < Cthun.stomachTop)
+                copy.signal(cthun, Aq40Signal.stomachPlayer, cast(int) e.player.guid);
+        }
+    }
+
+    void on(ref InstanceContext copy, const ref CreatureDied e)
+    {
+        import std.algorithm.mutation : remove;
+        import std.algorithm.searching : countUntil;
+
+        if (!e.summoned && e.creature.entry == npcCthun)
+            return setCthun(copy, EncounterState.done);
+        if (!e.summoned && e.creature.entry == npcEyeOfCthun)
+        {
+            copy.releaseCheckpointActor(e.creature);
+            return;
+        }
+        const index = cthunAdds.countUntil(e.creature);
+        if (index < 0)
+            return;
+        cthunAdds = cthunAdds.remove(index);
+        copy.releaseCheckpointActor(e.creature);
     }
 
     void on(ref InstanceContext copy, Step step)
@@ -357,10 +510,12 @@ struct AtStomachCthun
                 at.castSpell(trigger, exitStomach, trigger);
             // Up and out (where the throw would carry them through the ceiling).
             at.teleport(e.player, Cthun.stomachExit);
+            at.signalDungeon(Aq40Signal.leftStomach);
             break;
         case ceiling:
             at.consume();
             at.teleport(e.player, Cthun.stomachExit);
+            at.signalDungeon(Aq40Signal.leftStomach);
             break;
         case feet:
             if (!at.hasAura(e.player, Cthun.digestiveAcid))
@@ -1890,8 +2045,40 @@ struct Cthun
 
     void on(ref CreatureContext me, const ref Signal e)
     {
-        if (e.id == Aq40Signal.eyeDown && !risen)
+        switch (e.id)
+        {
+        case Aq40Signal.eyeDown:
+            if (risen || steps.pending(Step.emerge))
+                break;
             steps.after(Step.emerge, 5.seconds);
+            me.signalDungeon(Aq40Signal.saveCthun); // his rise is saved with the Eye's death
+            break;
+        case Aq40Signal.resumeCthun:
+            if (risen)
+                me.zoneCombat();
+            break;
+        case Aq40Signal.stomachPlayer:
+            const who = EntityRef(cast(uint) e.value);
+            if (!risen)
+            {
+                // No fight to be in his stomach for: out.
+                me.removeAura(who, digestiveAcid);
+                me.teleport(who, stomachExit);
+            }
+            else if (!swallowedAlready(who))
+            {
+                foreach (ref slot; inStomach)
+                    if (!slot)
+                    {
+                        slot = who;
+                        me.signalDungeon(Aq40Signal.saveCthun);
+                        break;
+                    }
+            }
+            break;
+        default:
+            break;
+        }
     }
 
     void on(ref CreatureContext me, const ref SummonedDied e)
@@ -1900,6 +2087,7 @@ struct Cthun
             return;
         if (++fleshSlain >= fleshPlaces.length)
             weaken(me);
+        me.signalDungeon(Aq40Signal.saveCthun);
     }
 
     void on(ref CreatureContext me, Step step)
@@ -1915,6 +2103,7 @@ struct Cthun
             me.zoneCombat();
             startTentacles(me);
             steps.every(Step.acid, 5.seconds);
+            me.signalDungeon(Aq40Signal.saveCthun);
             break;
         case Step.giantClaw, Step.giantEye:
             if (const target = me.selectTarget(Pick.random, PickFilter.player))
@@ -1949,30 +2138,42 @@ struct Cthun
                         break;
                     }
             seized = EntityRef.init;
+            me.signalDungeon(Aq40Signal.saveCthun); // the swallowed are saved in his stomach
             break;
         case Step.acid:
-            // The acid eats at the swallowed; those who climbed out are rid of it.
+            // The acid eats at the swallowed; those who climbed out are rid of it. One not back yet after a
+            // worker's crash keeps their place (the copy tells him where they come back, `stomachPlayer`).
+            bool changed;
             foreach (ref who; inStomach)
             {
                 if (!who)
                     continue;
                 Location at;
-                if (!me.alive(who) || !me.locationOf(who, at))
+                if (!me.locationOf(who, at))
+                    continue;
+                if (!me.alive(who))
+                {
                     who = EntityRef.init;
+                    changed = true;
+                }
                 else if (at.z > stomachTop)
                 {
                     me.removeAura(who, digestiveAcid);
                     who = EntityRef.init;
+                    changed = true;
                 }
                 else
                     me.castSpell(digestiveAcid, who, true);
             }
+            if (changed)
+                me.signalDungeon(Aq40Signal.saveCthun);
             break;
         case Step.weakenedEnd:
             weakened = false;
             me.removeAura(me.self, vulnerable);
             me.castSelf(carapace, true);
             startTentacles(me);
+            me.signalDungeon(Aq40Signal.saveCthun);
             break;
         }
     }
@@ -2017,6 +2218,9 @@ struct Cthun
         steps.after(Step.eyeTentacles, 35.seconds);
         steps.after(Step.mouth, 10.seconds);
         fleshSlain = 0;
+        EntityRef[fleshPlaces.length] growing;
+        if (me.creaturesNearby(npcFleshTentacle, 250, growing[])) // the stomach's tentacles grow once
+            return;
         foreach (place; fleshPlaces)
             me.summon(npcFleshTentacle, place);
     }
@@ -2418,4 +2622,175 @@ unittest
     assert(!host.casts.canFind(Cthun.vulnerable));
     runtime.raise(h, me, SummonedDied(flesh[1], EntityRef(7)));
     assert(host.casts.canFind(Cthun.vulnerable), "weakened");
+}
+
+/// C'Thun asks the copy to save him at each change a worker's crash must not lose (his rise, a swallow, a Flesh
+/// Tentacle slain); his saved state resumes the same fight: one rise, the same stomach, the same count of slain.
+unittest
+{
+    import std.algorithm.searching : canFind, count;
+    import dmangos.bytes : ByteReader, ByteWriter;
+
+    static class FakeCthun : FakeQiraji
+    {
+        EntityRef[] teleported;
+        bool here = true;
+        size_t fleshAlive;
+        override EntityRef hostSelectTarget(Pick, uint, uint) { return EntityRef(7); }
+        override ActionResult hostTeleportPlayer(EntityRef who, Location) { teleported ~= who; return ActionResult.ok; }
+        override bool hostLocationOf(EntityRef, out Location at) { at = Location(0, 0, -97); return here; }
+        override size_t hostCreaturesNearby(uint e, float, EntityRef[] into)
+        {
+            if (e != npcFleshTentacle)
+                return 0;
+            foreach (i; 0 .. fleshAlive)
+                into[i] = EntityRef(0xF130_0000_0000_0200UL | (ulong(e) << 24) | i);
+            return fleshAlive;
+        }
+    }
+
+    alias self = dmangos.scripts.templeofahnqiraj;
+    auto runtime = ScriptRuntime.of!self();
+    auto host = new FakeCthun;
+    host.entry = npcCthun;
+    auto me = CreatureContext(host);
+    auto h = runtime.create(ScriptKind.creature, "boss_cthun");
+    runtime.raise(h, me, Spawned());
+    runtime.raise(h, me, Signal(EntityRef.init, Aq40Signal.eyeDown));
+    assert(host.dungeon.canFind!(s => s.id == Aq40Signal.saveCthun), "the Eye's death saves his rise");
+    host.dungeon = null;
+    runtime.raise(h, me, Signal(EntityRef.init, Aq40Signal.eyeDown));
+    assert(!host.dungeon.length, "the Eye's death told again changes nothing");
+    runtime.tick(h, me, 5000);
+    assert(host.casts.count(Cthun.transform) == 1 && host.summoned.length == 2);
+    runtime.tick(h, me, 10_000);
+    runtime.tick(h, me, 4000);
+    assert(host.teleported == [EntityRef(7)] && host.dungeon[$ - 1].id == Aq40Signal.saveCthun, "a swallow is saved");
+    const flesh = host.summoned[0 .. 2].dup;
+    host.dungeon = null;
+    runtime.raise(h, me, SummonedDied(flesh[0], EntityRef(7)));
+    assert(host.dungeon.canFind!(s => s.id == Aq40Signal.saveCthun), "a Flesh Tentacle's death is saved");
+
+    // A worker's crash: his saved state on another node, the swallowed player not back yet.
+    ByteWriter saved;
+    runtime.save(h, saved);
+    auto host2 = new FakeCthun;
+    host2.entry = npcCthun;
+    host2.here = false;
+    host2.fleshAlive = 1;
+    auto me2 = CreatureContext(host2);
+    auto h2 = runtime.create(ScriptKind.creature, "boss_cthun");
+    auto reader = ByteReader(saved.data);
+    assert(runtime.load(h2, reader));
+    runtime.raise(h2, me2, Signal(EntityRef.init, Aq40Signal.eyeDown));
+    runtime.tick(h2, me2, 5000);
+    assert(!host2.casts.canFind(Cthun.transform) && !host2.summoned.canFind!(s => s.entry == npcFleshTentacle),
+        "no second rise and no new Flesh Tentacles");
+    assert(!host2.casts.canFind(Cthun.digestiveAcid), "the swallowed player is not back yet");
+    host2.here = true;
+    runtime.tick(h2, me2, 5000);
+    assert(host2.casts.canFind(Cthun.digestiveAcid), "back in his stomach, kept on his list: the acid again");
+    runtime.raise(h2, me2, SummonedDied(flesh[1], EntityRef(7)));
+    assert(host2.casts.canFind(Cthun.vulnerable), "the other tentacle's death weakens him: the first one's counted");
+
+    // One who comes back in his stomach while he has not risen is put out.
+    auto host3 = new FakeCthun;
+    host3.entry = npcCthun;
+    auto me3 = CreatureContext(host3);
+    auto h3 = runtime.create(ScriptKind.creature, "boss_cthun");
+    runtime.raise(h3, me3, Spawned());
+    runtime.raise(h3, me3, Signal(EntityRef.init, Aq40Signal.stomachPlayer, 9));
+    assert(host3.teleported == [EntityRef(9)]);
+}
+
+/// The copy's side of C'Thun's recovery: a fight saved with him resumes when a player is back (who, in the stomach,
+/// is handed to him); a fight saved without him fails.
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import dmangos.bytes : ByteReader, ByteWriter;
+
+    static class FakeTemple : BlackHole!InstanceHost
+    {
+        uint[] killed, respawned;
+        Signal[] signals;
+        EntityRef[] despawned;
+        float z = 100;
+        override bool hostEntryKilled(uint entry) { return killed.canFind(entry); }
+        override void hostRespawnKilled(uint entry) { respawned ~= entry; }
+        override bool hostAlive(EntityRef) { return true; }
+        override bool hostLocationOf(EntityRef, out Location at) { at = Location(0, 0, z); return true; }
+        override ActionResult hostSignal(EntityRef to, uint id, int value)
+        {
+            signals ~= Signal(to, id, value);
+            return ActionResult.ok;
+        }
+        override ActionResult hostDespawn(EntityRef c, uint) { despawned ~= c; return ActionResult.ok; }
+    }
+    EntityRef creature(uint entry, uint spawn) { return EntityRef(0xF130_0000_0000_0000UL | (ulong(entry) << 24) | spawn); }
+
+    alias self = dmangos.scripts.templeofahnqiraj;
+    auto runtime = ScriptRuntime.of!self();
+    const eye = creature(npcEyeOfCthun, 1), cthun = creature(npcCthun, 2);
+    const flesh = creature(npcFleshTentacle, 0x100), claw = creature(npcClawTentacle, 0x101);
+
+    // The fight under way, with two tentacles; the copy saved.
+    auto copy = new FakeTemple;
+    auto c = InstanceContext(copy);
+    auto h = runtime.create(ScriptKind.instance, "instance_temple_of_ahnqiraj");
+    runtime.raise(h, c, CreatureLoaded(eye));
+    runtime.raise(h, c, CreatureLoaded(cthun));
+    runtime.raise(h, c, Signal(eye, Aq40Encounter.cthun, EncounterState.inProgress));
+    runtime.raise(h, c, CreatureLoaded(flesh, true));
+    runtime.raise(h, c, CreatureLoaded(claw, true));
+    runtime.raise(h, c, CreatureLoaded(flesh, true));
+    ByteWriter saved;
+    runtime.save(h, saved);
+
+    // A worker's crash, C'Thun and one tentacle in the checkpoint: the fight resumes as a player comes back.
+    auto copy2 = new FakeTemple;
+    copy2.killed = [npcEyeOfCthun];
+    copy2.z = -97;
+    auto c2 = InstanceContext(copy2);
+    auto h2 = runtime.create(ScriptKind.instance, "instance_temple_of_ahnqiraj");
+    auto reader = ByteReader(saved.data);
+    assert(runtime.load(h2, reader));
+    c2.savedSummons = [cthun, flesh];
+    runtime.raise(h2, c2, Restored());
+    assert(c2.waitingForPlayer && !copy2.respawned.length);
+    runtime.raise(h2, c2, CreatureLoaded(cthun));
+    runtime.raise(h2, c2, CreatureLoaded(flesh, true));
+    runtime.raise(h2, c2, PlayerEntered(EntityRef(7)));
+    assert(copy2.signals.canFind(Signal(cthun, Aq40Signal.resumeCthun, 0)));
+    assert(copy2.signals.canFind(Signal(cthun, Aq40Signal.stomachPlayer, 7)), "back in the stomach: told to C'Thun");
+    assert(!copy2.respawned.length && !copy2.despawned.length);
+    runtime.raise(h2, c2, Signal(cthun, Aq40Encounter.cthun, EncounterState.failed));
+    assert(copy2.despawned == [flesh], "the wipe takes the restored tentacle, not the one lost with the worker");
+
+    // A save without the fight's creatures (older, or lost): the fight failed.
+    auto copy3 = new FakeTemple;
+    copy3.killed = [npcEyeOfCthun];
+    auto c3 = InstanceContext(copy3);
+    auto h3 = runtime.create(ScriptKind.instance, "instance_temple_of_ahnqiraj");
+    reader = ByteReader(saved.data);
+    assert(runtime.load(h3, reader));
+    runtime.raise(h3, c3, Restored());
+    runtime.raise(h3, c3, PlayerEntered(EntityRef(7)));
+    auto asked3 = InstanceContext(copy3);
+    runtime.raise(h3, asked3, Asked(EntityRef.init, Aq40Encounter.cthun));
+    assert(asked3.answerGiven == EncounterState.failed && !copy3.signals.length);
+
+    // C'Thun slain before the crash: the encounter is done, nothing comes back.
+    auto copy4 = new FakeTemple;
+    copy4.killed = [npcEyeOfCthun, npcCthun];
+    auto c4 = InstanceContext(copy4);
+    auto h4 = runtime.create(ScriptKind.instance, "instance_temple_of_ahnqiraj");
+    reader = ByteReader(saved.data);
+    assert(runtime.load(h4, reader));
+    c4.savedSummons = [cthun];
+    runtime.raise(h4, c4, Restored());
+    runtime.raise(h4, c4, PlayerEntered(EntityRef(7)));
+    auto asked = InstanceContext(copy4);
+    runtime.raise(h4, asked, Asked(EntityRef.init, Aq40Encounter.cthun));
+    assert(asked.answerGiven == EncounterState.done && !copy4.respawned.length && !copy4.signals.length);
 }
