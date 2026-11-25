@@ -137,10 +137,34 @@ struct LootAwardKey
     ubyte slot;
 }
 
+/**
+ * `dmangos_loot_award.result` while a recipient's claim waits for its item to be written: the token is the
+ * recipient's, but the award is not decided until the item's rows and the result commit together (`saveLootAward`).
+ */
+enum ubyte lootAwardClaimed = 0xff;
+
+/**
+ * How long a claim whose item was never written holds the award before the loot's node may record a refusal over
+ * it (`expireLootAward`): far beyond any write a worker can still make under its lease.
+ */
+enum long lootAwardClaimSeconds = 600;
+
 struct LootAwardResult
 {
     bool recorded;
     ubyte error;
+
+    /// The award is settled: stored, or refused. A recipient's claim alone is not.
+    bool decided() const
+    {
+        return recorded && error != lootAwardClaimed;
+    }
+
+    /// The recipient took the token, but its item is not written yet.
+    bool claimed() const
+    {
+        return recorded && error == lootAwardClaimed;
+    }
 }
 
 /// A `mail` row and its one item (`mail_items`; 1.12 sends at most one).
@@ -1148,13 +1172,19 @@ interface WorldDatabase
 
     @DatabaseRead LootAwardResult loadLootAward(const ref LootAwardKey key);
     /**
-     * Takes the award's token for its recipient before the item is made: records it stored, unless a result
-     * (the loot's node expiring it) is already recorded. True when this call recorded it.
+     * Takes the award's token for its recipient before the item is made: records it claimed (`lootAwardClaimed`),
+     * unless a result (the loot's node expiring it) is already recorded. True when this call recorded it.
      */
     @DatabaseWrite bool claimLootAward(const ref LootAwardKey key, long now);
     /**
-     * Records the result and any new inventory rows in the same transaction. The rows are saved only when the
-     * token's row says stored: this call's, or the recipient's claim.
+     * The loot's node gives up on an unanswered award: records it refused, unless a result is already recorded or
+     * the recipient's claim is younger than `lootAwardClaimSeconds` (its item may still be written).
+     */
+    @DatabaseWrite void expireLootAward(const ref LootAwardKey key, long now);
+    /**
+     * Records the result and any new inventory rows in the same transaction. Stored (`error` 0): only over the
+     * recipient's claim, and the rows are saved only when this call turned the claim into stored. Refused: over
+     * the claim, or where nothing is recorded.
      */
     void saveLootAward(const ref LootAwardKey key, ubyte error, long now, uint money, uint playerBytes2,
         const(ItemChange)[] changes);
@@ -2054,6 +2084,11 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
         return statements.claimLootAward(key, now);
     }
 
+    void expireLootAward(const ref LootAwardKey key, long now)
+    {
+        statements.expireLootAward(key, now);
+    }
+
     void saveLootAward(const ref LootAwardKey key, ubyte error, long now, uint money, uint playerBytes2,
         const(ItemChange)[] changes)
     {
@@ -2607,6 +2642,7 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
     }
 
     private LootAwardResult[LootAwardKey] lootAwards;
+    private long[LootAwardKey] lootAwardTimes;
 
     LootAwardResult loadLootAward(const ref LootAwardKey key)
     {
@@ -2617,16 +2653,40 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
     {
         if (key in lootAwards)
             return false;
-        lootAwards[key] = LootAwardResult(true, 0);
+        lootAwards[key] = LootAwardResult(true, lootAwardClaimed);
+        lootAwardTimes[key] = now;
         return true;
+    }
+
+    void expireLootAward(const ref LootAwardKey key, long now)
+    {
+        import dmangos.world.inventory : InventoryResult;
+
+        if (auto recorded = key in lootAwards)
+        {
+            if (recorded.claimed && lootAwardTimes.get(key, 0) <= now - lootAwardClaimSeconds)
+                *recorded = LootAwardResult(true, InventoryResult.itemNotFound);
+        }
+        else
+            lootAwards[key] = LootAwardResult(true, InventoryResult.itemNotFound);
     }
 
     void saveLootAward(const ref LootAwardKey key, ubyte error, long now, uint money, uint playerBytes2,
         const(ItemChange)[] changes)
     {
-        const recorded = lootAwards.require(key, LootAwardResult(true, error));
-        if (!error && !recorded.error)
+        auto recorded = key in lootAwards;
+        if (error)
+        {
+            if (recorded is null)
+                lootAwards[key] = LootAwardResult(true, error);
+            else if (recorded.claimed)
+                *recorded = LootAwardResult(true, error);
+        }
+        else if (recorded !is null && recorded.claimed)
+        {
+            *recorded = LootAwardResult(true, 0);
             saveInventory(key.player, money, playerBytes2, changes);
+        }
     }
 
     LookupResult[] lookup(LookupTable table, string text, uint limit)

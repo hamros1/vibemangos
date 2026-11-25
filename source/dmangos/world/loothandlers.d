@@ -58,9 +58,9 @@ package void bindLootDelivery(WorldContext context, Map map, Loot loot, bool rol
 
             try
             {
-                context.database.saveLootAward(key, InventoryResult.itemNotFound, context.unixTime, 0, 0, null);
-                if (!context.settleWrites())
-                    return LootAwardResult.init;
+                // A recipient's claim keeps the award while its item may still be written: the row stays claimed,
+                // and the award is sent again.
+                context.database.expireLootAward(key, context.unixTime);
                 return context.database.loadLootAward(key);
             }
             catch (DatabaseException error)
@@ -2120,6 +2120,8 @@ unittest
         racing.expire = () => loot.update();
         otherNode.database = racing;
         otherNode.groupLootRollArrived(1, awards[0]);
+        now += 3.seconds;
+        loot.update(); // a claim found by the expiry is no outcome: the loot's node reads the stored row now
 
         const key = lootAwardKey(awards[0]);
         const recorded = db.loadLootAward(key);
@@ -2127,7 +2129,7 @@ unittest
         foreach (guid, ref row; db.itemRows)
             if (row.entry == itemJerky && db.itemOwners[guid] == 8)
                 saved += row.count;
-        assert(!item.remoteAward && results.length == 1 && recorded.recorded);
+        assert(!item.remoteAward && results.length == 1 && recorded.decided);
         if (expiryFirst)
         {
             assert(recorded.error && !results[0].stored, "the refusal is recorded first: nothing is stored");
@@ -2141,6 +2143,119 @@ unittest
             assert(!item.allowed.length, "the item is delivered, not assignable again");
         }
     }
+}
+
+// The recipient's worker claims the award and dies before the item's write: the claim alone is no outcome. The
+// loot's node keeps the award and sends it again; the recipient, back from its last save, stores it under its own
+// claim, exactly once.
+unittest
+{
+    import dmangos.cluster.protocol : GroupLootRoll;
+    import dmangos.world.characterdb : GroupRecord, GroupMemberRecord;
+    import dmangos.world.database : LootAwardKey, WorldDatabase;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.group : LootMethod;
+    import dmangos.world.inventory : ItemChange;
+    import dmangos.world.loot : lootAwardKey, remoteAwardSeconds;
+    import dmangos.world.replication : encodePlayerState;
+    import std.typecons : AutoImplement;
+
+    // The worker dies with the item's write still queued: it never reaches the database.
+    static abstract class LosesTheStore : WorldDatabase
+    {
+        WorldDatabase inner;
+
+        this(WorldDatabase inner) { this.inner = inner; }
+
+        override void saveLootAward(const ref LootAwardKey key, ubyte error, long now, uint money, uint playerBytes2,
+            const(ItemChange)[] changes)
+        {
+            if (error)
+                inner.saveLootAward(key, error, now, money, playerBytes2, changes);
+        }
+    }
+
+    enum string forward(C, alias method) = "return inner." ~ __traits(identifier, method) ~ "(args);";
+    alias Crashing = AutoImplement!(LosesTheStore, forward);
+    auto db = newDatabase();
+    GroupRecord party;
+    party.id = 1;
+    party.leader = party.looter = 7;
+    party.leaderName = "Anduin";
+    party.lootMethod = LootMethod.masterLoot;
+    party.lootThreshold = 2;
+    party.members = [GroupMemberRecord(7, "Anduin"), GroupMemberRecord(8, "Jaina")];
+    db.groups[party.id] = party;
+    auto corpseNode = newCreationContext(db), otherNode = newCreationContext(db);
+    corpseNode.nodeId = 1;
+    otherNode.nodeId = 2;
+    otherNode.ownsCell = (uint, ulong) => false;
+    auto now = MonoTime.currTime;
+    corpseNode.clock = otherNode.clock = () => now;
+    auto anduin = loggedIn(corpseNode, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
+    const nearCorpse = Position(-8945, -132, 83.5f);
+    auto jaina = loggedIn(otherNode, db, 8, "Jaina", nearCorpse);
+    corpseNode.map(0).replicaCreated(2, cellKeyAt(nearCorpse.x, nearCorpse.y), 8,
+        encodePlayerState(jaina.session.character, 0));
+
+    GroupLootRoll[] awards;
+    corpseNode.sendRemoteGroupLoot = (ushort node, const ref GroupLootRoll message) {
+        awards ~= message;
+        return true;
+    };
+    otherNode.sendRemoteGroupLoot = (ushort node, const ref GroupLootRoll message) => true;
+    corpseNode.data.items.edit(itemJerky).details.quality = 2;
+    auto victim = lootableInnkeeper(corpseNode);
+    killIt(anduin, victim, now);
+    auto loot = victim.loot;
+    auto item = loot.itemInSlot(0);
+    anduin.write(Opcode.CMSG_LOOT, ClientGuid(victim.guid));
+    anduin.read();
+    anduin.write(Opcode.CMSG_LOOT_MASTER_GIVE, ClientLootMasterGive(victim.guid, 0, 8));
+    assert(awards.length == 1);
+
+    size_t saved()
+    {
+        size_t count;
+        foreach (guid, ref row; db.itemRows)
+            if (row.entry == itemJerky && db.itemOwners[guid] == 8)
+                count += row.count;
+        return count;
+    }
+
+    otherNode.database = new Crashing(db);
+    otherNode.groupLootRollArrived(1, awards[0]);
+    const key = lootAwardKey(awards[0]);
+    assert(db.loadLootAward(key).claimed && !saved(), "claimed, and the item's write is lost");
+
+    // The loot's node waits past its deadline: the claim is the recipient's, so the award is neither stored nor
+    // expired, and it is sent again.
+    loot.update();
+    now += (remoteAwardSeconds + 1).seconds;
+    loot.update();
+    assert(item.remoteAward && db.loadLootAward(key).claimed, "a claim alone does not take the item from the loot");
+    const resent = awards[$ - 1];
+
+    // The recipient is back from its last save on a new worker; the award stores the item there, under its claim.
+    auto recovered = newCreationContext(db);
+    recovered.nodeId = 2;
+    recovered.ownsCell = (uint, ulong) => false;
+    recovered.clock = () => now;
+    GroupLootRoll[] results;
+    recovered.sendRemoteGroupLoot = (ushort node, const ref GroupLootRoll message) {
+        results ~= message;
+        return true;
+    };
+    auto back = loggedIn(recovered, db, 8, "Jaina", nearCorpse);
+    assert(!back.session.character.inventory.count(itemJerky));
+    recovered.groupLootRollArrived(1, resent);
+    assert(results.length == 1 && results[0].stored && db.loadLootAward(key).decided && saved() == 1);
+    assert(back.session.character.inventory.count(itemJerky) == 1);
+    recovered.groupLootRollArrived(1, resent);
+    assert(results.length == 1 && saved() == 1, "a late copy of the award stores nothing more");
+    now += 3.seconds;
+    loot.update();
+    assert(!item.remoteAward && !item.allowed.length, "the loot's node reads the stored row: the item is delivered");
 }
 
 // The master sees the remote recipient and can assign a shared slot exactly once.

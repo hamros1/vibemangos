@@ -23,7 +23,7 @@ import dmangos.world.playercreate : NewCharacter, NewSkill, NewSpell, maxEnchant
 import dmangos.world.database : AuraRecord, TicketRecord, BattlegroundData, PvpStatsBattleground, PvpStatsPlayer, HonorColumns, HonorPointRecord, HonorRecord, CooldownRecord, PetRecord, PetSpellRecord, GuildEventRecord, GuildMemberRecord, GuildRankRecord, GuildRecord,
     PetitionRecord, SocialRow, CorpseRecord, InstanceBindRecord, InstanceRecord, InstanceRecords,
     InstanceRespawnRecord, MailRecord, ServiceCheckpoint, GroupLootRotation, LootCoinCredit, LootCoinRedemption,
-    LootAwardKey, LootAwardResult, BattlegroundCheckpoint, BattlegroundReward, BattlegroundPayment,
+    LootAwardKey, LootAwardResult, lootAwardClaimed, lootAwardClaimSeconds, BattlegroundCheckpoint, BattlegroundReward, BattlegroundPayment,
     OutdoorSummonKind, OutdoorSummonRequest, OutdoorWorldState, QuestActorCheckpoint;
 import dmangos.world.reputation : ReputationRecord;
 import dmangos.world.auctionhouse : AuctionRecord;
@@ -2350,8 +2350,24 @@ final class CharacterStatements
     {
         prepareLootAwards();
         return characters.execute!("INSERT IGNORE INTO dmangos_loot_award "
-            ~ "(token, loot, map_id, slot, player, result, recorded_at) VALUES (?, ?, ?, ?, ?, 0, ?)")(
-                key.token, key.loot, key.map, key.slot, key.player, now) != 0;
+            ~ "(token, loot, map_id, slot, player, result, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?)")(
+                key.token, key.loot, key.map, key.slot, key.player, lootAwardClaimed, now) != 0;
+    }
+
+    void expireLootAward(const ref LootAwardKey key, long now)
+    {
+        import dmangos.world.inventory : InventoryResult;
+
+        prepareLootAwards();
+        characters.transaction({
+            characters.execute!("INSERT IGNORE INTO dmangos_loot_award "
+                ~ "(token, loot, map_id, slot, player, result, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?)")(
+                    key.token, key.loot, key.map, key.slot, key.player, InventoryResult.itemNotFound, now);
+            characters.execute!("UPDATE dmangos_loot_award SET result = ?, recorded_at = ? "
+                ~ "WHERE token = ? AND loot = ? AND map_id = ? AND slot = ? AND player = ? AND result = ? "
+                ~ "AND recorded_at <= ?")(InventoryResult.itemNotFound, now, key.token, key.loot, key.map, key.slot,
+                    key.player, lootAwardClaimed, now - lootAwardClaimSeconds);
+        });
     }
 
     void saveLootAward(const ref LootAwardKey key, ubyte result, long now, uint money, uint playerBytes2,
@@ -2359,15 +2375,22 @@ final class CharacterStatements
     {
         prepareLootAwards();
         characters.transaction({
-            characters.execute!("INSERT IGNORE INTO dmangos_loot_award "
-                ~ "(token, loot, map_id, slot, player, result, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?)")(
-                    key.token, key.loot, key.map, key.slot, key.player, result, now);
             if (result)
+            {
+                // A refusal: where nothing is recorded, or over the recipient's own claim.
+                characters.execute!("INSERT IGNORE INTO dmangos_loot_award "
+                    ~ "(token, loot, map_id, slot, player, result, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?)")(
+                        key.token, key.loot, key.map, key.slot, key.player, result, now);
+                characters.execute!("UPDATE dmangos_loot_award SET result = ?, recorded_at = ? "
+                    ~ "WHERE token = ? AND loot = ? AND map_id = ? AND slot = ? AND player = ? AND result = ?")(
+                        result, now, key.token, key.loot, key.map, key.slot, key.player, lootAwardClaimed);
                 return;
-            const rows = characters.query!("SELECT result FROM dmangos_loot_award "
-                ~ "WHERE token = ? AND loot = ? AND map_id = ? AND slot = ? AND player = ? FOR UPDATE")(
-                    key.token, key.loot, key.map, key.slot, key.player);
-            if (rows.length && !rows[0].get!ubyte(0))
+            }
+            // Stored: the claim turns into stored together with the item's rows, or neither is written (the loot's
+            // node expired the claim meanwhile).
+            if (characters.execute!("UPDATE dmangos_loot_award SET result = 0, recorded_at = ? "
+                ~ "WHERE token = ? AND loot = ? AND map_id = ? AND slot = ? AND player = ? AND result = ?")(
+                    now, key.token, key.loot, key.map, key.slot, key.player, lootAwardClaimed) == 1)
                 saveInventory(key.player, money, playerBytes2, changes);
         });
     }

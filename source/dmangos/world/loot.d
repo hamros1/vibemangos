@@ -1237,9 +1237,11 @@ final class Loot
             auto outcome = loadRemoteAward(key);
             // No answer (the recipient logged out, or left the map): the token's row decides once and for all,
             // so a copy of the award that arrives late finds it and stores nothing.
-            if (!outcome.recorded && now >= item.awardDeadline && expireRemoteAward !is null)
+            // A claim is not an outcome: the recipient took the token, but its item may not be written (its worker
+            // crashed first). The award is sent again, and the recipient stores it under its own claim.
+            if (!outcome.decided && now >= item.awardDeadline && expireRemoteAward !is null)
                 outcome = expireRemoteAward(key);
-            if (outcome.recorded)
+            if (outcome.decided)
             {
                 message.action = GroupLootRoll.Action.result;
                 message.stored = !outcome.error;

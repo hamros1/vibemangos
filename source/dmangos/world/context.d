@@ -667,7 +667,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return;
         try
         {
-            if (database.loadLootAward(key).recorded)
+            const earlier = database.loadLootAward(key);
+            if (earlier.decided)
                 return; // the loot owner can read the original result even after both workers change
             const master = message.action == GroupLootRoll.Action.masterAward;
             auto localLoot = peer == nodeId ? lootOnMap(message.map, message.loot) : null;
@@ -686,16 +687,18 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 && (!message.condition || player.conditionMet(message.condition))))
                 result.inventoryError = cast(ubyte) player.lootItemFits(message.item, message.count, !master);
             // The token is claimed before the item exists: the loot's node may expire the award at any moment,
-            // and only one of the two can record it. Its refusal first: nothing is stored.
+            // and only one of the two can record it. Its refusal first: nothing is stored. The claim is not the
+            // result: the item's rows turn it into stored (`saveLootAward`), so a claim whose item was never written
+            // (this worker crashed, or its lease lapsed, before the write) is this recipient's to store again.
             if (result.inventoryError == InventoryResult.ok)
             {
-                if (database.claimLootAward(key, unixTime))
+                if (earlier.claimed || database.claimLootAward(key, unixTime))
                     result.inventoryError = cast(ubyte) player.storeLootItem(message.item, message.count,
                         message.randomProperty, !master, award: key);
                 else
                 {
                     const recorded = database.loadLootAward(key);
-                    if (!recorded.recorded)
+                    if (!recorded.decided)
                         return; // the claim was not written (the lease lapsed): the loot's node asks again
                     result.inventoryError = recorded.error;
                 }
@@ -704,7 +707,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if (!result.stored)
                 database.saveLootAward(key, result.inventoryError, unixTime, 0, 0, null);
             if (!settleWrites())
+                return; // the loot's node asks again; the token's row answers once the write is in
+            // The row, not this worker's view, is the outcome: the item's write is what turned the claim into stored.
+            const outcome = database.loadLootAward(key);
+            if (!outcome.decided)
                 return;
+            result.stored = !outcome.error;
+            result.inventoryError = outcome.error;
             if (localDrop)
                 localLoot.remoteAwardResult(peer, result);
             else
