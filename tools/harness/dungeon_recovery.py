@@ -23,7 +23,8 @@ BEASTS = {8925: 4, 8926: 2, 8927: 5, 8928: 3, 8933: 3, 8932: 7}
 CHAMPIONS = set(range(9027, 9033))
 
 
-def start_cluster(fixture, new_party, *, world=None, leader_appearance=(1, 1), extra_member=False, cluster=None):
+def start_cluster(fixture, new_party, *, world=None, leader_appearance=(1, 1), extra_member=False, cluster=None,
+                  raid=False):
     login = fixture.fresh_schema("login", "classicrealmd.sql")
     characters = fixture.fresh_schema("chars", "classiccharacters.sql")
     ports = available_ports(9)
@@ -80,7 +81,7 @@ def start_cluster(fixture, new_party, *, world=None, leader_appearance=(1, 1), e
                   characters)
     if not new_party:
         members = ",".join(f"(1,{guid},0,0)" for guid in guids)
-        fixture.query(f"INSERT INTO groups VALUES (1,{leader},0,0,3,{leader},2,0,0,0,0,0,0,0,0,0); "
+        fixture.query(f"INSERT INTO groups VALUES (1,{leader},0,0,3,{leader},2,0,0,0,0,0,0,0,0,{int(raid)}); "
                       f"INSERT INTO group_member VALUES {members}", characters)
     assert fixture.query("SELECT COUNT(*) FROM instance", characters) == "0"
 
@@ -135,7 +136,8 @@ def open_party(fixture, characters, names, leader, client, nodes, new_party, act
     assert len(copies) == 1, f"party split between dungeon copies {sorted(copies)}"
     copy, = copies
     assert fixture.query(f"SELECT instance FROM group_instance WHERE leaderGuid={leader}", characters) == str(copy)
-    wait_for("both clients to see the same party", lambda: all("[group list] party" in log for log in logs()), 12)
+    wait_for("both clients to see the same party", lambda: all(re.search(r"\[group list\] (?:party|raid)", log)
+                                                                for log in logs()), 12)
     inside.touch()
     return copy, logs, clients
 

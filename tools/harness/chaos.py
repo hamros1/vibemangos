@@ -6,6 +6,7 @@ import time
 
 import battlegroup_failover
 from cluster_fixture import run_test
+import cthun_recovery
 import departure_retry
 import gateway_checkpoint_retry
 import gateway_return
@@ -26,6 +27,8 @@ CASES = (
     ("worker-rejoin", worker_rejoin.run),
     ("stall-release", stall_release.run),
     ("gateway-return", gateway_return.run),
+    ("cthun-transition-recovery", cthun_recovery.transition),
+    ("cthun-stomach-recovery", cthun_recovery.stomach),
 )
 
 
