@@ -712,6 +712,7 @@ struct BlackrockSpire
                 brs.say(rendRef, sayRendAttack);
                 brs.moveTo(rendRef, rendLeaves, 0, true);
                 brs.despawn(rendRef, 5000);
+                brs.releaseCheckpointActor(rendRef); // gone for good: a crash before he leaves does not bring him back
             }
             if (nefariusRef)
                 brs.say(nefariusRef, sayNefWarchief);

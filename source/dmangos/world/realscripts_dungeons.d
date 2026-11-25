@@ -2146,6 +2146,10 @@ unittest
     }
     auto mount = d.find(gyth);
     assert(mount !is null && d.saved!BlackrockSpire.stadiumWave == 8, "the fight reaches Gyth");
+    d.restartAfterCrash(); // before Rend, riding off on Gyth, has left the balcony
+    assert(d.all(rend).length == 0, "Rend rode off on Gyth: none waits on the balcony");
+    mount = d.find(gyth);
+    assert(mount !is null, "Gyth comes back with the stadium");
     d.pull(mount);
     d.hurtTo(mount, 8);
     d.run(6.seconds);
