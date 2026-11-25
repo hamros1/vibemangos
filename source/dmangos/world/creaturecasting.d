@@ -216,6 +216,17 @@ mixin template CreatureCasting()
         script.spellHit(this, caster, spell, schoolMask);
     }
 
+    package void healedBy(uint spell, CombatWorld world)
+    {
+        import dmangos.script.api : CreatureHealed;
+
+        if (behaviour && scripts_.handles!CreatureHealed(behaviour))
+        {
+            world_ = world;
+            raiseScript(CreatureHealed(spell));
+        }
+    }
+
     /// Its aura of `spell` from `caster` went (`Creature.loseAura`): its script hears of it.
     void auraLost(ulong caster, uint spell, CombatWorld world)
     {

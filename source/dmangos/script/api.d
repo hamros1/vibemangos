@@ -207,6 +207,12 @@ struct CreatureCastFinished
     uint spell;
 }
 
+/// A spell landed and restored some of this creature's health.
+struct CreatureHealed
+{
+    uint spell;
+}
+
 // Instance round 2:
 
 /// Its aura of `spell`, from `caster`, went: it ran out, was dispelled or cancelled, or a script took it away

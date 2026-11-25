@@ -50,6 +50,9 @@ enum : uint
     npcRazorgore = 12435,
     npcVaelastrasz = 13020,
     npcLashlayer = 12017,
+    npcFiremaw = 11983,
+    npcEbonroc = 14601,
+    npcFlamegor = 11981,
     npcChromaggus = 14020,
     npcNefarian = 11583,
     npcVictorNefarius = 10162,
@@ -69,6 +72,18 @@ enum : uint
     goBlackDragonEgg = 177807, goOrbOfDomination = 177808,
     goSuppressionDevice = 179784,
     npcOrbTrigger = 14449,
+}
+
+/// Native fights that save each completed ability with the boss's combat state, indexed by encounter.
+private immutable uint[BwlEncounter.max + 1] checkpointedBossEntries = [
+    0, 0, 0, npcFiremaw, npcEbonroc, npcFlamegor, npcChromaggus, 0,
+];
+
+private enum uint shadowOfEbonroc = 23340, flameBuffet = 23341, flamegorFrenzy = 23342, ebonrocShadowHeal = 23394;
+
+bool isBlackwingRecoveryAura(uint spell)
+{
+    return spell == shadowOfEbonroc || spell == flameBuffet || Chromaggus.isRecoveryAura(spell);
 }
 
 /// The weekly selection's events (`event_weekly_chromatic_selection`): Chromaggus' left breath (five), his right
@@ -103,7 +118,7 @@ enum BwlSignal : uint
     suppressionDisarmed = 106, /// save the device until it rearms
     suppressionFinished = 107, /// the device rearmed or shut down
     suppressionShutdown = 108, /// Lashlayer died
-    saveChromaggus = 109, /// a combat step advanced
+    saveBossCombat = 109, /// a combat step advanced
 }
 
 /// A random length between `low` and `high` milliseconds.
@@ -114,6 +129,13 @@ private Duration between(ref CreatureContext me, uint low, uint high)
 
 /// A step whose cast failed is tried again this soon.
 private enum retry = 400.msecs;
+
+private void nextCombatStep(E)(ref CreatureContext me, ref Schedule!E steps, E step, bool casted, lazy Duration delay)
+{
+    steps.after(step, casted ? delay : retry);
+    if (casted)
+        me.signalDungeon(BwlSignal.saveBossCombat);
+}
 
 /// What the copy remembers: its encounters, and the breaths and drakonids it drew (saved in `instance.data`).
 @instance("instance_blackwing_lair")
@@ -133,7 +155,8 @@ struct BlackwingLair
     uint leftBreath, rightBreath, leftTunnel, rightTunnel;
     ushort eggsBroken;
 
-    @transient EntityRef razorgore, vaelastrasz, nefarius, troops, chromaggus;
+    @transient EntityRef razorgore, vaelastrasz, nefarius, troops;
+    @transient EntityRef[checkpointedBossEntries.length] checkpointedBosses;
     @transient EntityRef vaelCorruptor;
     @transient EntityRef[6] doors; /// enter, exit, Nefarian, Chromaggus' exit, Vaelastrasz', Lashlayer's
     @transient EntityRef[8] generators;
@@ -143,7 +166,8 @@ struct BlackwingLair
     @transient ubyte dragonspawn, blackwingDefenders;
     @transient EntityRef[] drakonidsSeen;
     @transient EntityRef[] eggsToGo;
-    @transient bool recoveringRazorgore, resetOldEggPhase, recoveringNefarian, recoveringVael, recoveringChromaggus;
+    @transient bool recoveringRazorgore, resetOldEggPhase, recoveringNefarian, recoveringVael;
+    @transient bool[checkpointedBossEntries.length] recoveringBosses;
 
     enum Step : ubyte { defense, nefarian, eggsGone }
     Schedule!Step steps;
@@ -159,16 +183,17 @@ struct BlackwingLair
             copy.waitForPlayer();
         if (copy.entryKilled(npcLashlayer))
             set(copy, BwlEncounter.lashlayer, EncounterState.done);
-        if (encounters[BwlEncounter.chromaggus] == EncounterState.inProgress)
-        {
-            if (copy.entryKilled(npcChromaggus))
-                set(copy, BwlEncounter.chromaggus, EncounterState.done);
-            else if (copy.hasSavedCreature(npcChromaggus))
+        foreach (i, entry; checkpointedBossEntries)
+            if (entry && encounters[i] == EncounterState.inProgress)
             {
-                recoveringChromaggus = true;
-                copy.waitForPlayer();
+                if (copy.entryKilled(entry))
+                    set(copy, cast(BwlEncounter) i, EncounterState.done);
+                else if (copy.hasSavedCreature(entry))
+                {
+                    recoveringBosses[i] = true;
+                    copy.waitForPlayer();
+                }
             }
-        }
         restoreNefarian(copy);
         const vael = encounters[BwlEncounter.vaelastrasz];
         if (vael == EncounterState.special || vael == EncounterState.inProgress)
@@ -209,12 +234,14 @@ struct BlackwingLair
 
     void on(ref InstanceContext copy, const ref PlayerEntered e)
     {
-        if (recoveringChromaggus)
-        {
-            recoveringChromaggus = false;
-            if (chromaggus && !copy.alive(copy.victimOf(chromaggus)))
-                copy.attack(chromaggus, e.player);
-        }
+        foreach (i, ref recovering; recoveringBosses)
+            if (recovering)
+            {
+                recovering = false;
+                const boss = checkpointedBosses[i];
+                if (boss && !copy.alive(copy.victimOf(boss)))
+                    copy.attack(boss, e.player);
+            }
         if (recoveringVael)
         {
             recoveringVael = false;
@@ -369,7 +396,7 @@ struct BlackwingLair
 
     void on(ref InstanceContext copy, const ref CreatureLoaded e)
     {
-        import std.algorithm.searching : canFind;
+        import std.algorithm.searching : canFind, countUntil;
 
         draw(copy);
         switch (e.creature.entry)
@@ -380,9 +407,9 @@ struct BlackwingLair
         case npcVaelastrasz:
             vaelastrasz = e.creature;
             break;
-        case npcChromaggus:
+        case npcFiremaw, npcEbonroc, npcFlamegor, npcChromaggus:
             if (!e.summoned)
-                chromaggus = e.creature;
+                checkpointedBosses[checkpointedBossEntries[].countUntil(e.creature.entry)] = e.creature;
             break;
         case npcVictorNefarius:
             // Vaelastrasz's intro can load a second copy of Victor Nefarius.
@@ -558,11 +585,12 @@ struct BlackwingLair
             if (!e.summoned)
                 set(copy, BwlEncounter.lashlayer, EncounterState.done);
             break;
-        case npcChromaggus:
+        case npcFiremaw, npcEbonroc, npcFlamegor, npcChromaggus:
             if (!e.summoned)
             {
-                chromaggus = e.creature;
-                set(copy, BwlEncounter.chromaggus, EncounterState.done);
+                const i = checkpointedBossEntries[].countUntil(e.creature.entry);
+                checkpointedBosses[i] = e.creature;
+                set(copy, cast(BwlEncounter) i, EncounterState.done);
             }
             break;
         case npcLegionnaire, npcMage, npcDragonspawn:
@@ -602,6 +630,8 @@ struct BlackwingLair
 
     void on(ref InstanceContext copy, const ref Signal e)
     {
+        import std.algorithm.searching : countUntil;
+
         if (e.id == BwlSignal.suppressionDisarmed || e.id == BwlSignal.suppressionFinished)
         {
             if (e.from.isGameObject && e.from.entry == goSuppressionDevice)
@@ -635,13 +665,14 @@ struct BlackwingLair
                 copy.checkpointCreature(nefarianDragon);
             return;
         }
-        if (e.id == BwlSignal.saveChromaggus)
+        if (e.id == BwlSignal.saveBossCombat)
         {
-            if (e.from.isCreature && e.from.entry == npcChromaggus && (!chromaggus || e.from == chromaggus)
-                && encounters[BwlEncounter.chromaggus] == EncounterState.inProgress)
+            const i = checkpointedBossEntries[].countUntil(e.from.entry);
+            if (e.from.isCreature && i >= 0 && (!checkpointedBosses[i] || e.from == checkpointedBosses[i])
+                && encounters[i] == EncounterState.inProgress)
             {
-                chromaggus = e.from; // a clean handoff can bring him in without CreatureLoaded
-                copy.checkpointCreature(chromaggus);
+                checkpointedBosses[i] = e.from; // a clean handoff can bring a boss in without CreatureLoaded
+                copy.checkpointCreature(e.from);
             }
             return;
         }
@@ -649,8 +680,8 @@ struct BlackwingLair
             return;
         if (e.id == BwlEncounter.nefarian && e.value == EncounterState.inProgress && e.from.entry == npcVictorNefarius)
             nefarius = e.from;
-        if (e.id == BwlEncounter.chromaggus && e.from.isCreature && e.from.entry == npcChromaggus)
-            chromaggus = e.from;
+        if (e.from.isCreature && e.from.entry == checkpointedBossEntries[e.id])
+            checkpointedBosses[e.id] = e.from;
         set(copy, cast(BwlEncounter) e.id, cast(EncounterState) e.value);
     }
 
@@ -658,7 +689,7 @@ struct BlackwingLair
     private void set(ref InstanceContext copy, BwlEncounter which, EncounterState state)
     {
         const was = encounters[which];
-        if ((which == BwlEncounter.lashlayer || which == BwlEncounter.chromaggus) && was == EncounterState.done)
+        if ((which == BwlEncounter.lashlayer || checkpointedBossEntries[which]) && was == EncounterState.done)
             return;
         encounters[which] = state;
         final switch (which)
@@ -711,13 +742,11 @@ struct BlackwingLair
                 copy.checkpoint();
             }
             break;
-        case BwlEncounter.chromaggus:
-            if (state == EncounterState.inProgress && chromaggus)
-                copy.checkpointCreature(chromaggus);
+        case BwlEncounter.firemaw, BwlEncounter.ebonroc, BwlEncounter.flamegor, BwlEncounter.chromaggus:
+            if (state == EncounterState.inProgress && checkpointedBosses[which])
+                copy.checkpointCreature(checkpointedBosses[which]);
             else if (was == EncounterState.inProgress || state == EncounterState.done)
-                copy.releaseCheckpointActor(chromaggus);
-            break;
-        case BwlEncounter.firemaw, BwlEncounter.ebonroc, BwlEncounter.flamegor:
+                copy.releaseCheckpointActor(checkpointedBosses[which]);
             break;
         }
         updateDoors(copy);
@@ -1336,39 +1365,51 @@ private mixin template Drake(BwlEncounter which, uint special, uint first, uint 
 
     void on(ref CreatureContext me, const ref EnteredCombat e)
     {
-        me.signalDungeon(which, EncounterState.inProgress);
         steps.after(Step.special, first.msecs);
         steps.after(Step.shadowFlame, 18.seconds);
         steps.after(Step.wingBuffet, 30.seconds);
         steps.after(Step.thrash, 6.seconds);
+        me.signalDungeon(which, EncounterState.inProgress);
     }
+
+    void on(ref CreatureContext me, const ref CreatureCastFinished e)
+    {
+        if (e.spell == shadowFlame || e.spell == wingBuffet)
+            me.signalDungeon(BwlSignal.saveBossCombat);
+    }
+
+    static if (which == BwlEncounter.ebonroc)
+        void on(ref CreatureContext me, const ref CreatureHealed e)
+        {
+            if (e.spell == ebonrocShadowHeal)
+                me.signalDungeon(BwlSignal.saveBossCombat);
+        }
 
     void on(ref CreatureContext me, Step step)
     {
         final switch (step)
         {
         case Step.special:
-            const ok = (special == 23340 ? me.castSpell(special) : me.castSelf(special)) == ActionResult.ok;
+            const ok = (special == shadowOfEbonroc ? me.castSpell(special) : me.castSelf(special)) == ActionResult.ok;
             if (ok && emote)
                 me.say(emote);
-            steps.after(step, ok ? between(me, low, high) : retry);
+            nextCombatStep(me, steps, step, ok, between(me, low, high));
             break;
         case Step.shadowFlame:
-            steps.after(step, me.castSelf(shadowFlame) == ActionResult.ok ? between(me, 15_000, 18_000) : retry);
+            nextCombatStep(me, steps, step, me.castSelf(shadowFlame) == ActionResult.ok, between(me, 15_000, 18_000));
             break;
         case Step.wingBuffet:
-            if (me.castSelf(wingBuffet) == ActionResult.ok)
+            const ok = me.castSelf(wingBuffet) == ActionResult.ok;
+            if (ok)
             {
                 EntityRef[40] near;
                 foreach (p; near[0 .. me.playersNear(20, near[])])
                     me.modifyThreat(p, -50);
-                steps.after(step, between(me, 30_000, 35_000));
             }
-            else
-                steps.after(step, retry);
+            nextCombatStep(me, steps, step, ok, between(me, 30_000, 35_000));
             break;
         case Step.thrash:
-            steps.after(step, me.castSelf(thrash) == ActionResult.ok ? between(me, 2000, 6000) : retry);
+            nextCombatStep(me, steps, step, me.castSelf(thrash) == ActionResult.ok, between(me, 2000, 6000));
             break;
         }
     }
@@ -1376,7 +1417,6 @@ private mixin template Drake(BwlEncounter which, uint special, uint first, uint 
     void on(ref CreatureContext me, const ref Died e)
     {
         steps.clear();
-        me.signalDungeon(which, EncounterState.done);
     }
 
     void on(ref CreatureContext me, const ref Reset e)
@@ -1390,7 +1430,7 @@ private mixin template Drake(BwlEncounter which, uint special, uint first, uint 
 @creature("boss_firemaw")
 struct Firemaw
 {
-    mixin Drake!(BwlEncounter.firemaw, 23341, 5000, 5000, 5000) drake;
+    mixin Drake!(BwlEncounter.firemaw, flameBuffet, 5000, 5000, 5000) drake;
     alias steps = drake.steps;
     alias on = drake.on;
 }
@@ -1399,7 +1439,7 @@ struct Firemaw
 @creature("boss_ebonroc")
 struct Ebonroc
 {
-    mixin Drake!(BwlEncounter.ebonroc, 23340, 45_000, 25_000, 35_000) drake;
+    mixin Drake!(BwlEncounter.ebonroc, shadowOfEbonroc, 45_000, 25_000, 35_000) drake;
     alias steps = drake.steps;
     alias on = drake.on;
 }
@@ -1408,7 +1448,7 @@ struct Ebonroc
 @creature("boss_flamegor")
 struct Flamegor
 {
-    mixin Drake!(BwlEncounter.flamegor, 23342, 10_000, 10_000, 15_000, -1_000_002) drake;
+    mixin Drake!(BwlEncounter.flamegor, flamegorFrenzy, 10_000, 10_000, 15_000, -1_000_002) drake;
     alias steps = drake.steps;
     alias on = drake.on;
 }
@@ -1452,7 +1492,7 @@ struct Chromaggus
             enraged = true;
             me.castSelf(enrage);
             me.say(emoteFrenzy);
-            me.signalDungeon(BwlSignal.saveChromaggus);
+            me.signalDungeon(BwlSignal.saveBossCombat);
         }
     }
 
@@ -1490,17 +1530,10 @@ struct Chromaggus
         }
     }
 
-    private void nextStep(ref CreatureContext me, Step step, bool casted, Duration interval)
-    {
-        steps.after(step, casted ? interval : retry);
-        if (casted)
-            me.signalDungeon(BwlSignal.saveChromaggus);
-    }
-
     void on(ref CreatureContext me, const ref CreatureCastFinished e)
     {
         if (e.spell == me.askDungeon(BwlQuestion.chromaLeftBreath) || e.spell == me.askDungeon(BwlQuestion.chromaRightBreath))
-            me.signalDungeon(BwlSignal.saveChromaggus);
+            me.signalDungeon(BwlSignal.saveBossCombat);
     }
 
     void on(ref CreatureContext me, Step step)
@@ -1511,24 +1544,24 @@ struct Chromaggus
             const shielded = me.castSelf(elementalShield) == ActionResult.ok;
             if (shielded)
                 me.say(emoteShimmer);
-            nextStep(me, step, shielded, 45.seconds);
+            nextCombatStep(me, steps, step, shielded, 45.seconds);
             break;
         case Step.breathLeft, Step.breathRight:
             const breath = cast(uint) me.askDungeon(step == Step.breathLeft ? BwlQuestion.chromaLeftBreath
                 : BwlQuestion.chromaRightBreath);
-            nextStep(me, step, breath && me.castSelf(breath) == ActionResult.ok, 60.seconds);
+            nextCombatStep(me, steps, step, breath && me.castSelf(breath) == ActionResult.ok, 60.seconds);
             break;
         case Step.affliction:
             const afflicted = me.castSelf(broodAffliction) == ActionResult.ok;
             if (afflicted)
                 afflict(me);
-            nextStep(me, step, afflicted, 7.seconds);
+            nextCombatStep(me, steps, step, afflicted, 7.seconds);
             break;
         case Step.frenzy:
             const frenzied = me.castSelf(frenzy) == ActionResult.ok;
             if (frenzied)
                 me.say(emoteFrenzyKill);
-            nextStep(me, step, frenzied, 15.seconds);
+            nextCombatStep(me, steps, step, frenzied, 15.seconds);
             break;
         }
     }
@@ -2014,8 +2047,10 @@ unittest
     foreach (_; 0 .. 460)
         runtime.tick(h, me, 100);
     assert(host.casts.canFind(23340) && host.casts.canFind(Ebonroc.drake.shadowFlame));
+    runtime.raise(h, me, CreatureCastFinished(Ebonroc.drake.shadowFlame));
+    assert(host.dungeon[$ - 1].id == BwlSignal.saveBossCombat);
     runtime.raise(h, me, Died(EntityRef(7)));
-    assert(host.dungeon[$ - 1] == Signal(EntityRef.init, BwlEncounter.ebonroc, EncounterState.done));
+    assert(!runtime.busy(h)); // the copy records defeat after the native spawn death is saved
 }
 
 /// The week's selection: a breath and a tunnel picked by its events, before the fights begin.

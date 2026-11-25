@@ -640,6 +640,8 @@ uint spellHeal(ref Caster caster, const(SpellInfo)* spell, UnitRef target, int v
     }
     uint healed;
     const amount = applyHealAmount(spell, target, rolled, healed);
+    if (healed && target.creature !is null && target.creature.ai !is null)
+        target.creature.ai.healedBy(spell.id, target.map);
     caster.sendAround(Opcode.SMSG_SPELLHEALLOG, healLog(target: target.combatGuid, caster: caster.guid, spell.id, amount,
         crit));
     flushUnit(caster, target);

@@ -620,6 +620,63 @@ unittest
     }
 }
 
+/// The drakes keep their combat state and continue past the special ability that just completed.
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.scripts.blackwinglair : BwlEncounter, npcEbonroc, npcFiremaw, npcFlamegor;
+    import std.algorithm.searching : find;
+
+    struct DrakeCase
+    {
+        string name;
+        uint entry;
+        BwlEncounter state;
+        uint special;
+        uint readyIn;
+        uint stacks;
+    }
+    foreach (d; [DrakeCase("Ebonroc", npcEbonroc, BwlEncounter.ebonroc, 23340, 53, 1),
+                 DrakeCase("Firemaw", npcFiremaw, BwlEncounter.firemaw, 23341, 18, 3),
+                 DrakeCase("Flamegor", npcFlamegor, BwlEncounter.flamegor, 23342, 15, 1)])
+    {
+        Scene s;
+        const encounter = Boss(d.name, 469, d.entry, d.state);
+        auto boss = setUp(encounter, s);
+        s.pressing = false;
+        const guid = boss.guid;
+        s.engage(boss);
+        s.hurtTo(boss, 68);
+        assert(s.runUntil(() {
+            auto aura = (d.entry == npcFlamegor ? boss.auras : s.hero.auras).find(d.special, guid);
+            return aura !is null && aura.stacks >= d.stacks;
+        }, d.readyIn.seconds), d.name ~ " did not reach its special\n" ~ s.seen());
+        if (d.entry == npcEbonroc)
+        {
+            const beforeHeal = boss.values.get!UNIT_FIELD_HEALTH;
+            assert(s.runUntil(() => boss.values.get!UNIT_FIELD_HEALTH > beforeHeal, 6.seconds),
+                "the mark did not heal Ebonroc on a melee hit\n" ~ s.seen());
+        }
+        const health = boss.values.get!UNIT_FIELD_HEALTH;
+        s.forget();
+        s.restartAfterCrash();
+        boss = s.the(d.entry);
+        assert(boss.guid == guid && boss.ai.inCombat && boss.values.get!UNIT_FIELD_HEALTH == health, d.name);
+        assert(s.ask(d.state) == 1 && !s.castCount(d.special, guid), d.name);
+        if (d.entry == npcFlamegor)
+            assert(boss.auras.find(d.special, guid) !is null, "Flamegor still has the original Frenzy");
+        s.stayWith = boss;
+        assert(s.runUntil(() => s.castCount(22539, guid) != 0, 14.seconds), d.name ~ " did not resume Shadow Flame\n" ~ s.seen());
+        const next = s.casts.find!(c => c.caster == guid && !c.started && (c.spell == d.special || c.spell == 22539));
+        assert(next[0].spell == 22539, d.name ~ " repeated its special before the next Shadow Flame");
+        s.kill(boss);
+        s.run(500.msecs);
+        s.restartAfterCrash();
+        assert(s.ask(d.state) == 3 && !s.all(d.entry).length, d.name ~ " stays defeated");
+    }
+}
+
 /// The first breath has already gone off when the worker dies, before the next automatic checkpoint.
 unittest
 {

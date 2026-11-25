@@ -929,9 +929,9 @@ private:
 
     private static bool recoverableEncounterAura(uint spell)
     {
-        import dmangos.scripts.blackwinglair : Chromaggus;
+        import dmangos.scripts.blackwinglair : isBlackwingRecoveryAura;
 
-        return Chromaggus.isRecoveryAura(spell);
+        return isBlackwingRecoveryAura(spell);
     }
 
     private void checkpointEncounterAura(const Aura aura)

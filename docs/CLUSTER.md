@@ -537,6 +537,10 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   Chromaggus keeps his saved health and breath schedule. Gateway players recover their Brood
   Afflictions and Chromatic Mutation in the same copy. Auras expire on their original deadlines,
   periodic ticks due during the outage are skipped, and removed afflictions stay gone.
+  Firemaw, Ebonroc, and Flamegor resume their active fights with their saved health, threat,
+  and ability timers. Firemaw's Flame Buffet stacks and Shadow of Ebonroc keep their original
+  expiration deadlines. Ebonroc keeps healing already received through his mark, and Flamegor
+  keeps the Frenzy already in progress.
 * **GM commands.** `.instance info`, `.instance shutdown` and `.instance reset` of a copy another node
   hosts go to that node and its answer comes back; `.instance resetall` goes to every node.
 
