@@ -302,7 +302,7 @@ merge and a player handoff. Set `EXPECT_BALANCING=1` to check these events in a 
 After harness setup and a release build, run the opt-in suite with
 `python3 tools/harness/chaos.py`. It runs the quorum partition and heal, coordinator kill,
 paused battlegroup host, gateway checkpoint retry, departure retry, lease lapse arrival, worker
-rejoin and stall release cases against isolated fixtures.
+rejoin, stall release and gateway return cases against isolated fixtures.
 Use `--repeat 3` to check repeatability. Each case prints the harness directory containing
 its process logs and uses fresh login and character schemas.
 
@@ -338,6 +338,12 @@ than that must release nothing, and neither must one of every node's database (e
 worker must be fenced out: the gateway restores its player on another worker as last saved (the change
 made during the stall rolled back), where it speaks and is answered, and the worker joins again as a new
 incarnation. It sets `innodb_lock_wait_timeout` to one second for its run and restores it afterwards.
+
+Run `python3 tools/harness/gateway_return.py` to chat through the gateway across a hand-off: the
+client says a numbered line every 50 ms and ports to ground of its map another worker simulates, while
+the proxy delays the gateway's frames to its first worker by 600 ms. The lines that reach that worker
+after the player left must come back to the gateway (both log it) and, with the rest, be answered
+once each, in the order said.
 
 Run `python3 tools/harness/battleground_recovery.py --cross-realm --map arathi` to kill the
 active match worker and check the same match's objectives, scoreboard and PvP on its standby.

@@ -1,4 +1,4 @@
-"""A loopback TCP relay that can partition fixture-owned cluster links or drop kinds of frames on them."""
+"""A loopback TCP relay that can partition fixture-owned cluster links, or drop or delay frames on them."""
 
 import asyncio
 import struct
@@ -15,6 +15,7 @@ class ClusterProxy:
         self.blocked = set()
         self.dropping = {}
         self.dropped = {}
+        self.delays = {}
         self.links = {}
         self.tasks = set()
         self.listeners = []
@@ -60,6 +61,10 @@ class ClusterProxy:
     async def drop(self, kinds):
         """Discard frames of the given message kinds, by (source, target) direction, until called again."""
         self.dropping = {direction: frozenset(types) for direction, types in kinds.items()}
+
+    async def delay(self, delays):
+        """Hold every frame of the given (source, target) directions for so many seconds, in order, until called again."""
+        self.delays = dict(delays)
 
     async def dropped_frames(self, direction):
         return self.dropped.get(direction, 0)
@@ -112,12 +117,30 @@ class ClusterProxy:
     async def copy(self, reader, writer, direction):
         # Whole frames, so that a dropped one leaves the stream intact. Only unsequenced
         # messages (heartbeats, quorum votes and leases) can be dropped without a resend or a gap.
-        while True:
-            header = await reader.readexactly(16)
-            length, kind = struct.unpack_from("<IH", header)
-            payload = await reader.readexactly(length)
-            if kind in self.dropping.get(direction, ()):
-                self.dropped[direction] = self.dropped.get(direction, 0) + 1
-                continue
-            writer.write(header + payload)
-            await writer.drain()
+        # A delayed frame goes on once its delay has passed since it came, after those that came before it.
+        loop = asyncio.get_running_loop()
+        waiting = asyncio.Queue()
+
+        async def deliver():
+            while True:
+                due, frame = await waiting.get()
+                if due > loop.time():
+                    await asyncio.sleep(due - loop.time())
+                writer.write(frame)
+                await writer.drain()
+
+        delivery = asyncio.create_task(deliver())
+        try:
+            while True:
+                header = await reader.readexactly(16)
+                length, kind = struct.unpack_from("<IH", header)
+                payload = await reader.readexactly(length)
+                if kind in self.dropping.get(direction, ()):
+                    self.dropped[direction] = self.dropped.get(direction, 0) + 1
+                    continue
+                if delivery.done():
+                    delivery.result()  # the peer's side failed: raises why
+                waiting.put_nowait((loop.time() + self.delays.get(direction, 0), header + payload))
+        finally:
+            delivery.cancel()
+            await asyncio.gather(delivery, return_exceptions=True)

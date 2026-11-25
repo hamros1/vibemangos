@@ -220,7 +220,11 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
         if (!gatewayPaused || state_ != WorldState.elsewhere)
         {
             if (state_ == WorldState.elsewhere)
+            {
+                warning!"%s: a packet '%s' sent to its old owner came back after the hand-off: sent on late, after newer ones"(
+                    remoteAddress, account.username);
                 context.relayToOwner(ownerNode, account.id, cast(ushort) opcode, body_); // late, but not lost
+            }
             return;
         }
         if (!heldPackets.length)
@@ -235,14 +239,14 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
         if (!heldPackets.length)
             return;
         auto held = heldPackets;
-        const waited = (MonoTime.currTime - heldSince).total!"msecs";
+        const waited = (MonoTime.currTime - heldSince).total!"msecs", returned = returnedPackets;
         heldPackets = null;
         heldBytes = returnedPackets = 0;
-        enum released = "%s: %s packet(s) '%s' sent during its hand-off go on after %s ms";
-        if (waited >= 500)
-            info!released(remoteAddress, held.length, account.username, waited);
+        enum released = "%s: %s packet(s) '%s' sent during its hand-off go on after %s ms, %s of them back from its old owner";
+        if (waited >= 500 || returned)
+            info!released(remoteAddress, held.length, account.username, waited, returned);
         else
-            trace!released(remoteAddress, held.length, account.username, waited);
+            trace!released(remoteAddress, held.length, account.username, waited, returned);
         foreach (i, packet; held)
         {
             if (gatewayPaused || wantsClose)

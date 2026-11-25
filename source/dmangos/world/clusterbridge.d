@@ -1001,6 +1001,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
     {
         SimulationOwner gateway;
         MonoTime at;
+        uint returned; // client packets sent back to it since
     }
     private MovedOnGateway[uint] returnToGateway;
 
@@ -1131,8 +1132,13 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
             else if (const next = movedOnTo(account))
                 toOwner(next, account, opcode, data); // sent before its home heard it moved on
             else if (linkedOwner(peer, true).node && returnsTo(account) == linkedOwner(peer, true))
+            {
                 // Sent before the gateway heard the player moved on: back to it, to follow the player in order.
                 node.sendTo(peer, PlayerMessage(PlayerMessageKind.gatewayReturn, account, opcode, cast(ubyte[]) data));
+                if (returnToGateway[account].returned++ == 0)
+                    info!"cluster: a packet of account %s's client came after its player left this node: back to its gateway"(
+                        account);
+            }
             return;
         case PlayerMessageKind.gatewayReturn:
             if (auto route = gatewayRoutes.get(account, null))

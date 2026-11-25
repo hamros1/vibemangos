@@ -15,6 +15,10 @@ in order:
     questlog[:ID]             the quest log as the client has it (from the player's fields); with ID, check it is there
     move:X:Y:Z                walk to a position (after login)
     say:TEXT                  say something and print what comes back
+    chatter:COUNT:MS[:AT:MAP:X:Y:Z]
+                              say 'chatter 1' to 'chatter COUNT', one every MS milliseconds, without
+                              waiting (after the AT-th, the worldport command to MAP X Y Z); then wait
+                              for every answer, and fail unless each came, in the order said
     yell:TEXT                 yell something (heard 300 yards around)
     sit                       sit down and print the changed fields
     whisper:NAME:TEXT         whisper to another player
@@ -1153,6 +1157,34 @@ for action in actions:
     elif kind == "say":
         wsend(0x095, struct.pack("<II", 0, 7) + args[0].encode() + b"\0"); op, p = expect(0x096)
         n = struct.unpack_from("<I", p, 21)[0]; print(f"heard: '{p[25:25 + n - 1].decode()}'")
+    elif kind == "chatter":
+        count, interval = int(args[0]), float(args[1]) / 1000
+        port_after = int(args[2]) if len(args) > 2 else 0
+        answered = []
+
+        def take(op, p):
+            if op == 0x096 and p[0] == 0:  # a say
+                n = struct.unpack_from("<I", p, 21)[0]; text = p[25:25 + n - 1].decode()
+                if text.startswith("chatter "):
+                    answered.append(int(text.split()[1])); print(f"heard: '{text}'")
+                    return
+            describe(op, p)
+
+        start = time.time()
+        for i in range(1, count + 1):
+            wsend(0x095, struct.pack("<II", 0, 7) + f"chatter {i}".encode() + b"\0")
+            if i == port_after:
+                m, x, y, z = int(args[3]), *map(float, args[4:7])
+                wsend(0x008, struct.pack("<II4f", 0, m, x, y, z, 0)); print(f"worldport {m} {x} {y} {z} after chatter {i}")
+            end = start + i * interval
+            while time.time() < end:
+                if select.select([w], [], [], max(0, end - time.time()))[0]: take(*wrecv())
+        deadline = time.time() + 60
+        while len(answered) < count and time.time() < deadline:
+            if select.select([w], [], [], max(0, deadline - time.time()))[0]: take(*wrecv())
+        if answered != list(range(1, count + 1)):
+            raise RuntimeError(f"chatter: answered {answered}, not 1 to {count} in order")
+        print(f"chatter: all {count} answered, in order")
     elif kind == "yell":
         wsend(0x095, struct.pack("<II", 5, 7) + args[0].encode() + b"\0"); op, p = expect(0x096)
         n = struct.unpack_from("<I", p, 21)[0]; print(f"heard: '{p[25:25 + n - 1].decode()}'")
