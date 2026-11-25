@@ -2363,6 +2363,32 @@ unittest
     assert(s.hero(1).values.get!UNIT_FIELD_HEALTH < 200_000, "exposed player took no damage from the primary breath");
 }
 
+/// Sapphiron's lair: where the characters stand, eleven yards from his birth (its trap springs as they are seen).
+private enum frostwyrmLair = Position(3521.48f, -5225.87f, 137.626f);
+
+/**
+ * Sapphiron's birth (181356, a trap with no spell of its own) springs as the raid comes into his lair, for its script
+ * alone: his encounter is born, and he comes once, 22 seconds later.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.script.api : EncounterState;
+    import dmangos.scripts.naxxramas : NaxxEncounter, npcSapphiron;
+
+    auto s = new Scene(533, frostwyrmLair, [classWarrior, classMage]);
+    s.run(400.msecs);
+    assert(s.ask(NaxxEncounter.sapphiron) == EncounterState.notStarted && s.objects(181_356).length);
+    s.moveHeroes(frostwyrmLair);
+    assert(s.runUntil(() => s.ask(NaxxEncounter.sapphiron) == EncounterState.special, 2.seconds),
+        "the birth did not spring as the raid came");
+    assert(!s.runUntil(() => s.find(npcSapphiron) !is null, 21.seconds) && s.runUntil(() => s.find(npcSapphiron)
+        !is null, 1600.msecs), "Sapphiron did not come 22 seconds after his birth");
+    s.run(30.seconds);
+    assert(s.all(npcSapphiron).length == 1, "the birth brought him twice");
+}
+
 /// The priest uses the same spellbook command as the possession bar in the client.
 private void orderControlled(Scene s, Creature controlled, uint spell, ulong target, size_t owner = 0)
 {

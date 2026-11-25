@@ -8863,7 +8863,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /**
      * A trap (`GAMEOBJECT_TYPE_TRAP`) a player stepped near: one not friendly
      * to the player casts its spell at the player, then waits its cooldown; one with charges is used
-     * up after them (and comes back with its spawn's respawn time).
+     * up after them (and comes back with its spawn's respawn time). A scripted trap with no spell of its
+     * own (Sapphiron's birth) is sprung for its script alone.
      */
     package void trapSprung(Map map, Inhabitant who, GameObject trap)
     {
@@ -8874,7 +8875,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (trap.owner)
             return; // a hunter's: its owner's spell, sprung on its owner's enemies (`Character.updateTraps`)
         const spell = cast(uint) trap.template_.data[3];
-        if (spell == 0)
+        if (spell == 0 && !trap.behaviour)
             return;
         if (trap.spawn.battlegroundPowerUp)
         {
@@ -8902,6 +8903,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (trap.behaviour && gameObjectUsed(trap, map, session.character.guid))
             return;
         trap.trapReadyAt = unixTime + (trap.template_.data[5] > 0 ? trap.template_.data[5] : 1);
+        if (spell == 0)
+            return;
         session.castTriggeredAt(spell, session.character.guid);
         const charges = trap.template_.data[4];
         if (charges > 0 && ++trap.trapUses >= charges)
