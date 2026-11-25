@@ -38,7 +38,7 @@ def exercise(fixture, proxy, loop, world_ports, auth_port):
         return asyncio.run_coroutine_threadsafe(operation, loop).result(timeout=5)
 
     cluster = StandbyCluster(fixture, proxy, world_ports, auth_port, "standby-bundle", gateway=True,
-                             account="STANDBYBUNDLE", password="TESTSTANDBYBUNDLE")
+                             account="STANDBYBUNDLE", password="TESTBUNDLE")
     cluster.create(NAME, FOURTH)
     alive = (COORDINATOR, STANDBY, WORKER, FOURTH)
 
@@ -82,6 +82,11 @@ def exercise(fixture, proxy, loop, world_ports, auth_port):
         return all(re.search(rf"migration: region {region} arrived with \d+ objects", log) for region in regions)
 
     wait_for(f"regions {sorted(regions)} to reach their next owner with their objects", handed_over, 40)
+    # Node 3 went with the coordinator's lease, unsaved: the standby restores the player from its checkpoint, and
+    # the gateway drops what the client sent meanwhile (docs/CLUSTER.md, "Gateway recovery"). It speaks once back.
+    back = (f"'{NAME}' arrived from another node", f"entered the world as '{NAME}'")
+    wait_for("the player back in the world on the standby",
+             lambda: any(line in cluster.log(STANDBY, alive)[offsets[STANDBY]:] for line in back), 40)
     held.touch()
     if player.wait(timeout=40):
         raise RuntimeError(fixture.log(label)[-2500:])
