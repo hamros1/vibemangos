@@ -921,6 +921,15 @@ final class Battleground
                     m.bonusHonor += honor;
                 }
             }
+            else if (auto event = eventRewardFor(guid, m))
+            {
+                const honor = bonusHonor(units, *t, rewardLevel(guid));
+                if (honor)
+                {
+                    event.reward.honor = honor;
+                    m.bonusHonor += honor;
+                }
+            }
             else if (m.offlineSince == MonoTime.init)
                 if (auto c = cast(Character) memberSession(guid))
                 {
@@ -935,6 +944,7 @@ final class Battleground
     void rewardReputationToTeam(uint faction, int amount, ubyte team)
     {
         import dmangos.world.character : Character;
+        import dmangos.world.database : BattlegroundReputation;
 
         foreach (guid, ref m; members)
         {
@@ -943,8 +953,10 @@ final class Battleground
             if (collectingFinalRewards)
             {
                 if (auto finished = guid in finalPlayers)
-                    finished.reward.reputation ~= imported!"dmangos.world.database".BattlegroundReputation(faction, amount);
+                    finished.reward.reputation ~= BattlegroundReputation(faction, amount);
             }
+            else if (auto event = eventRewardFor(guid, m))
+                event.reward.reputation ~= BattlegroundReputation(faction, amount);
             else if (m.offlineSince == MonoTime.init)
                 if (auto c = cast(Character) memberSession(guid))
                     c.battlegroundReputation(faction, amount);
@@ -957,9 +969,15 @@ final class Battleground
         import dmangos.world.character : Character;
 
         foreach (guid, ref m; members)
-            if (m.team == team && m.offlineSince == MonoTime.init)
+        {
+            if (m.team != team)
+                continue;
+            if (auto event = eventRewardFor(guid, m))
+                event.castSpell = spell;
+            else if (m.offlineSince == MonoTime.init)
                 if (auto c = cast(Character) memberSession(guid))
                     c.battlegroundCast(spell);
+        }
     }
 
     /// Kill credit `entry` to every member of `team` here (`KilledMonsterCredit` for each).
@@ -968,9 +986,46 @@ final class Battleground
         import dmangos.world.character : Character;
 
         foreach (guid, ref m; members)
-            if (m.team == team && m.offlineSince == MonoTime.init)
+        {
+            if (m.team != team)
+                continue;
+            if (auto event = eventRewardFor(guid, m))
+                event.killCredit = entry;
+            else if (m.offlineSince == MonoTime.init)
                 if (auto c = cast(Character) memberSession(guid))
                     c.battlegroundKillCredit(entry);
+        }
+    }
+
+    /**
+     * Objectives' rewards during the match, not yet in a checkpoint: each goes into the database with the checkpoint
+     * that records its objective (`Battlegrounds.saveCheckpoint`), both or neither, and is paid from there once
+     * (`Character.payBattlegroundEventReward`). A crash before the checkpoint loses the objective and its rewards
+     * together; one after keeps both.
+     */
+    package imported!"dmangos.world.database".BattlegroundEventReward[] eventRewards;
+
+    /**
+     * A new event reward for `guid` (an objective's honor, reputation or quest credit), or null where it is paid as
+     * before, in memory: outside a durable match, during the final rewards, to a player of another realm's database
+     * (a cross-realm match), or to one logged out other than by a crash. A crash-offline player's waits for its
+     * return.
+     */
+    private imported!"dmangos.world.database".BattlegroundEventReward* eventRewardFor(ulong guid, const ref Member m)
+    {
+        import dmangos.world.database : BattlegroundEventReward;
+        import dmangos.world.honor : honorDay, honorToday;
+
+        if (collectingFinalRewards || !context.battlegrounds.durable || checkpointRetired || endingPending)
+            return null;
+        if (context.battlegroup !is null && context.battlegroup.homeOf(guid) !is context)
+            return null;
+        if (m.offlineSince != MonoTime.init && guid !in offlineByCrash)
+            return null;
+        eventRewards ~= BattlegroundEventReward(BattlegroundReward(context.config.realmId, instance, cast(uint) guid,
+            0, 0, honorDay(honorToday())));
+        checkpointDirty = true;
+        return &eventRewards[$ - 1];
     }
 
     /// Kill credit `entry` to `guid` and the members of its group here (`RewardPlayerAndGroupAtEventCredit`).
@@ -2062,8 +2117,13 @@ final class Battlegrounds
             const format = copy.finalPublicationPending ? pendingResultFormat : checkpointFormat;
             const state = retire ? null : format ~ Base64.encode(context.snapshotBattleground(copy)).idup;
             const row = BattlegroundCheckpoint(copy.instance, copy.checkpointRevision, context.unixTime, state);
-            if (context.database.saveBattlegroundCheckpoint(context.config.realmId, copy.mapId, row))
+            // Its objectives' rewards with it, each named by this revision (which only one save can take) and its
+            // place: written again after a failed save, they are the same rows, and a superseded owner writes none.
+            foreach (i, ref reward; copy.eventRewards)
+                reward.event = (copy.checkpointRevision << 20) | i;
+            if (context.database.saveBattlegroundCheckpoint(context.config.realmId, copy.mapId, row, copy.eventRewards))
             {
+                copy.eventRewards = null;
                 ++copy.checkpointRevision;
                 copy.checkpointDirty = false;
                 copy.checkpointRetired = retire;
@@ -2478,6 +2538,48 @@ mixin template BattlegroundHandlers()
     /// Pays from a durable entitlement on the node that owns the character.
     package void payBattlegroundReward(const ref BattlegroundReward reward)
     {
+        payBattleground(reward, null, (ref const p) => context.database.payBattlegroundReward(reward, p));
+    }
+
+    /// The event rewards whose quest credit this session applied, their payment not yet written.
+    private bool[ulong[4]] creditedBattlegroundEvents;
+
+    /**
+     * Pays an objective's reward from its durable row (`Battleground.eventRewards`), once: its quest credit is applied
+     * here and the quest log's changed rows are written with the receipt, its honor and its reputation. A payment
+     * that does not commit is tried at the next poll; the credit is not applied twice meanwhile.
+     */
+    package void payBattlegroundEventReward(const ref imported!"dmangos.world.database".BattlegroundEventReward event)
+    {
+        import dmangos.world.quests : QuestStatus;
+
+        const ulong[4] key = [event.reward.realm, event.reward.match, event.event, event.reward.player];
+        if (key !in creditedBattlegroundEvents)
+        {
+            if (event.castSpell)
+                battlegroundCastHere(event.castSpell);
+            if (event.killCredit)
+                scriptKillCredit(event.killCredit, 0);
+            creditedBattlegroundEvents[key] = true;
+        }
+        QuestStatus[] quests;
+        foreach (ref q; player.questStatus)
+            if (q.changed)
+                quests ~= q;
+        if (!payBattleground(event.reward, quests,
+                (ref const p) => context.database.payBattlegroundEventReward(event, p)))
+            return;
+        creditedBattlegroundEvents.remove(key);
+        foreach (ref q; player.questStatus) // written with the receipt
+            foreach (ref saved; quests)
+                if (q.quest == saved.quest && q == saved)
+                    q.changed = false;
+    }
+
+    /// The payment of `reward`, with `quests` written alongside; `commit` writes it with its receipt. Whether it paid.
+    private bool payBattleground(const ref BattlegroundReward reward, imported!"dmangos.world.quests".QuestStatus[] quests,
+        scope bool delegate(ref const imported!"dmangos.world.database".BattlegroundPayment) commit)
+    {
         import std.algorithm.comparison : max;
         import dmangos.mysql : TransactionLost;
         import dmangos.world.database : BattlegroundPayment, MailRecord;
@@ -2487,6 +2589,7 @@ mixin template BattlegroundHandlers()
         import dmangos.world.spellids : SpellEffect;
 
         BattlegroundPayment payment;
+        payment.quests = quests;
         payment.money = player.money.amount;
         payment.playerBytes = player.values[PLAYER_BYTES_2];
         auto inventory = player.inventory;
@@ -2585,11 +2688,11 @@ mixin template BattlegroundHandlers()
         if (reward.honor)
             saveHonor();
         if (!context.settleWrites())
-            return;
+            return false;
         try
         {
-            if (!context.database.payBattlegroundReward(reward, payment))
-                return;
+            if (!commit(payment))
+                return false;
         }
         catch (TransactionLost error)
         {
@@ -2625,6 +2728,7 @@ mixin template BattlegroundHandlers()
             deliver(Opcode.SMSG_PVP_CREDIT, credit.data);
             flushPlayerChanges();
         }
+        return true;
     }
 
     /// Casts `spell` on the player itself, triggered, if the spell exists.
@@ -3519,4 +3623,61 @@ unittest
     assert(rewards.length == 1 && rewards[0].player == 7, "the crash-offline winner keeps its reward");
     assert(rewards[0].markSpell == markSpells[BattlegroundType.warsongGulch][0]);
     assert(rewards[0].honor == bonusHonor(winKills, *restored.template_, 25), "by its own bracket");
+}
+
+/// An objective's honor during a durable match is written with the checkpoint that records the objective and paid
+/// once from there: not before, not twice, and to a crash-offline player when it is back.
+unittest
+{
+    import core.time : seconds;
+    import dmangos.world.movement : Position;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata : mapWarsongGulch;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    context.battlegroundMapEpoch = (uint map) => map == mapWarsongGulch ? 1UL : 0UL;
+    auto varian = loggedIn(context, db, 7, "Varian", Position(-8949.95f, -132.49f, 83.53f), characterLevel: 25);
+    varian.read();
+    auto copy = enterWarsong(context, [&varian], [7], [0]);
+    copy.start();
+    context.battlegrounds.flushCheckpoints();
+    const before = db.loadHonor(7).points.length;
+
+    copy.rewardHonorToTeam(2, 0); // a flag captured
+    const scored = copy.members[7].bonusHonor;
+    assert(scored > 0, "on the scoreboard at once");
+    assert(!db.pendingBattlegroundEventRewards().length, "not in the database before its checkpoint");
+    context.battlegrounds.flushCheckpoints();
+    assert(db.pendingBattlegroundEventRewards().length == 1, "with the checkpoint that records the capture");
+    now += 2.seconds;
+    context.update(now);
+    assert(!db.pendingBattlegroundEventRewards().length && db.loadHonor(7).points.length == before + 1, "paid");
+    now += 2.seconds;
+    context.update(now);
+    assert(db.loadHonor(7).points.length == before + 1, "once");
+
+    // Another capture; the worker crashes before its checkpoint: the capture and its honor are lost together.
+    copy.rewardHonorToTeam(2, 0);
+    auto successor = newCreationContext(db);
+    successor.clock = () => now;
+    successor.battlegroundMapEpoch = (uint map) => map == mapWarsongGulch ? 2UL : 0UL;
+    successor.battlegrounds.recoverMap(mapWarsongGulch, false);
+    auto restored = successor.battlegrounds.find(copy.instance);
+    assert(restored !is null && restored.members[7].bonusHonor == scored, "the checkpoint's score");
+    assert(!db.pendingBattlegroundEventRewards().length, "and no honor for the capture it does not record");
+
+    // A capture on the successor while Varian is offline by the crash: his honor waits for his return.
+    assert(7 in restored.offlineByCrash);
+    restored.rewardHonorToTeam(2, 0);
+    successor.battlegrounds.flushCheckpoints();
+    assert(db.pendingBattlegroundEventRewards().length == 1);
+    auto back = loggedIn(successor, db, 7, "Varian", Position(-8949.95f, -132.49f, 83.53f), characterLevel: 25);
+    back.read();
+    now += 2.seconds;
+    successor.update(now);
+    assert(!db.pendingBattlegroundEventRewards().length && db.loadHonor(7).points.length == before + 2,
+        "paid on his return, once");
 }

@@ -582,6 +582,13 @@ Each home database commits the character's marks, honor, and reputation together
 The current character owner can deliver a pending reward after recovery or on a later login. Marks
 that exceed available bag space arrive by mail.
 
+Objective rewards during a match work the same way. A flag capture, a tower, a mine or a slain
+captain gives honor, reputation or quest credit. Each reward is written to `dmangos_bg_event_reward`
+in the same transaction as the match checkpoint that records the objective, keyed by the
+checkpoint's revision. The reward poll pays it once to an online player. A player offline because
+of the crash is paid on return. A crash before that checkpoint loses the objective and its rewards
+together. Players from another realm in a cross-realm match still receive these rewards in memory.
+
 ## State shared across nodes
 
 ### One login per account

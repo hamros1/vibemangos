@@ -514,6 +514,20 @@ struct BattlegroundReward
     BattlegroundReputation[] reputation;
 }
 
+/**
+ * A reward an objective gives during a match (a flag captured, a tower or a mine taken, a captain slain): written with
+ * the match checkpoint that records the objective (`WorldDatabase.saveBattlegroundCheckpoint`), and paid once
+ * (`payBattlegroundEventReward`), to a player online or, crash-offline, when it returns. `event` is unique within the
+ * match: the checkpoint's revision and the reward's place in it.
+ */
+struct BattlegroundEventReward
+{
+    BattlegroundReward reward; /// its honor and reputation (no mark)
+    ulong event;
+    uint castSpell;            /// a quest's credit cast on the player (`Battleground.castOnTeam`), or 0
+    uint killCredit;           /// a quest's kill credit (`Battleground.killCreditToTeam`), or 0
+}
+
 /// The prepared writes for one reward. These are applied together with its receipt.
 struct BattlegroundPayment
 {
@@ -522,6 +536,7 @@ struct BattlegroundPayment
     ItemRecord mailedItem;
     MailRecord mail;
     ReputationRecord[] reputation;
+    QuestStatus[] quests; /// the quest log's changed rows, with a quest credit the reward gave
 }
 
 /// What `loadHonor` gives.
@@ -1213,10 +1228,17 @@ interface WorldDatabase
     @DatabaseWrite bool saveServiceCheckpoint(ServiceKind kind, uint realm, const ref ServiceCheckpoint checkpoint);
     @DatabaseRead BattlegroundCheckpoint[] loadBattlegroundCheckpoints(uint realm, uint map, long since);
     @DatabaseWrite bool saveBattlegroundCheckpoint(uint realm, uint map, const ref BattlegroundCheckpoint checkpoint);
+    /// ditto, and the rewards its objectives gave since the last one, in the same transaction: both or neither.
+    @DatabaseWrite bool saveBattlegroundCheckpoint(uint realm, uint map, const ref BattlegroundCheckpoint checkpoint,
+        const(BattlegroundEventReward)[] rewards);
     @DatabaseWrite bool publishBattlegroundResult(uint realm, uint match, const PvpStatsBattleground result,
         const(PvpStatsPlayer)[] scores, const(BattlegroundReward)[] rewards, bool keepStatistics);
     @DatabaseRead BattlegroundReward[] pendingBattlegroundRewards();
     @DatabaseWrite bool payBattlegroundReward(const ref BattlegroundReward reward, const ref BattlegroundPayment payment);
+    @DatabaseRead BattlegroundEventReward[] pendingBattlegroundEventRewards();
+    /// Pays `reward` once: false if it was paid already (or is not there).
+    @DatabaseWrite bool payBattlegroundEventReward(const ref BattlegroundEventReward reward,
+        const ref BattlegroundPayment payment);
 }
 
 /// The world tables `.lookup` searches.
@@ -2024,6 +2046,22 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     {
         return statements.payBattlegroundReward(reward, payment);
     }
+
+    bool saveBattlegroundCheckpoint(uint realm, uint map, const ref BattlegroundCheckpoint checkpoint,
+        const(BattlegroundEventReward)[] rewards)
+    {
+        return statements.saveBattlegroundCheckpoint(realm, map, checkpoint, rewards);
+    }
+
+    BattlegroundEventReward[] pendingBattlegroundEventRewards()
+    {
+        return statements.pendingBattlegroundEventRewards();
+    }
+
+    bool payBattlegroundEventReward(const ref BattlegroundEventReward reward, const ref BattlegroundPayment payment)
+    {
+        return statements.payBattlegroundEventReward(reward, payment);
+    }
     void saveAccountData(bool perCharacter, uint owner, uint type, long time, const(ubyte)[] data)
     {
         statements.saveAccountData(perCharacter, owner, type, time, data);
@@ -2422,11 +2460,48 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
     }
     bool saveBattlegroundCheckpoint(uint realm, uint map, const ref BattlegroundCheckpoint checkpoint)
     {
+        return saveBattlegroundCheckpoint(realm, map, checkpoint, null);
+    }
+
+    bool saveBattlegroundCheckpoint(uint realm, uint map, const ref BattlegroundCheckpoint checkpoint,
+        const(BattlegroundEventReward)[] rewards)
+    {
         auto refRows = &battlegroundCheckpoints.require(realm, null).require(map, null);
         if (refRows.get(checkpoint.instance, BattlegroundCheckpoint.init).revision != checkpoint.revision)
             return false;
         (*refRows)[checkpoint.instance] = checkpoint;
         ++(*refRows)[checkpoint.instance].revision;
+        foreach (ref reward; rewards)
+            battlegroundEventRewards.require([reward.reward.realm, reward.reward.match, reward.event,
+                reward.reward.player], cast(BattlegroundEventReward) reward);
+        return true;
+    }
+
+    /// Event rewards not yet paid, by realm, match, event and player.
+    BattlegroundEventReward[ulong[4]] battlegroundEventRewards;
+    private bool[ulong[4]] paidBattlegroundEvents;
+
+    BattlegroundEventReward[] pendingBattlegroundEventRewards()
+    {
+        BattlegroundEventReward[] pending;
+        foreach (key, ref reward; battlegroundEventRewards)
+            if (key !in paidBattlegroundEvents)
+                pending ~= reward;
+        return pending;
+    }
+
+    bool payBattlegroundEventReward(const ref BattlegroundEventReward reward, const ref BattlegroundPayment payment)
+    {
+        const ulong[4] key = [reward.reward.realm, reward.reward.match, reward.event, reward.reward.player];
+        if (key !in battlegroundEventRewards || key in paidBattlegroundEvents)
+            return false;
+        paidBattlegroundEvents[key] = true;
+        if (payment.quests.length)
+            saveQuestStatus(reward.reward.player, payment.quests);
+        saveReputation(reward.reward.player, payment.reputation);
+        if (reward.reward.honor)
+            saveHonor(reward.reward.player, loadHonor(reward.reward.player).columns,
+                [HonorPointRecord(0, reward.reward.player, reward.reward.honor, reward.reward.honorDay, 1)]);
         return true;
     }
 
@@ -4110,9 +4185,14 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
         import std.array : array;
 
         if (options.method != 1) // as the database does: an unpaid battleground reward goes with its character
+        {
             foreach (key; battlegroundRewards.keys)
                 if (key[2] == guid)
                     battlegroundRewards.remove(key);
+            foreach (key; battlegroundEventRewards.keys)
+                if (key[3] == guid)
+                    battlegroundEventRewards.remove(key);
+        }
         auto list = accountId in characterLists;
         if (list is null)
             return;

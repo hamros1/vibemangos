@@ -792,6 +792,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 if (auto who = onlinePlayer(playerGuid(reward.player)))
                     if (who.player !is null && !who.transferring)
                         who.payBattlegroundReward(reward);
+            // Objectives' rewards during matches, to the players here: those online, and crash-offline ones back.
+            foreach (ref event; database.pendingBattlegroundEventRewards())
+                if (auto who = onlinePlayer(playerGuid(event.reward.player)))
+                    if (who.player !is null && !who.transferring)
+                        who.payBattlegroundEventReward(event);
         }
         catch (DatabaseException error)
             warning!"could not deliver battleground rewards: %s"(error.msg);

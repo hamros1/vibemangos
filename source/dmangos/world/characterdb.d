@@ -23,7 +23,7 @@ import dmangos.world.playercreate : NewCharacter, NewSkill, NewSpell, maxEnchant
 import dmangos.world.database : AuraRecord, TicketRecord, BattlegroundData, PvpStatsBattleground, PvpStatsPlayer, HonorColumns, HonorPointRecord, HonorRecord, CooldownRecord, PetRecord, PetSpellRecord, GuildEventRecord, GuildMemberRecord, GuildRankRecord, GuildRecord,
     PetitionRecord, SocialRow, CorpseRecord, InstanceBindRecord, InstanceRecord, InstanceRecords,
     InstanceRespawnRecord, MailRecord, ServiceCheckpoint, GroupLootRotation, LootCoinCredit, LootCoinRedemption,
-    LootAwardKey, LootAwardResult, lootAwardClaimed, lootAwardClaimSeconds, BattlegroundCheckpoint, BattlegroundReward, BattlegroundPayment,
+    LootAwardKey, LootAwardResult, lootAwardClaimed, lootAwardClaimSeconds, BattlegroundCheckpoint, BattlegroundReward, BattlegroundPayment, BattlegroundEventReward,
     OutdoorSummonKind, OutdoorSummonRequest, OutdoorWorldState, QuestActorCheckpoint;
 import dmangos.world.reputation : ReputationRecord;
 import dmangos.world.auctionhouse : AuctionRecord;
@@ -1873,6 +1873,27 @@ final class CharacterStatements
         return matches;
     }
 
+    bool saveBattlegroundCheckpoint(uint realm, uint map, const ref BattlegroundCheckpoint checkpoint,
+        const(BattlegroundEventReward)[] rewards)
+    {
+        if (!rewards.length)
+            return saveBattlegroundCheckpoint(realm, map, checkpoint);
+        prepareBattlegroundCheckpoints(); // before the transaction: a CREATE TABLE would commit it
+        prepareBattlegroundRewards();
+        bool saved;
+        characters.transaction({
+            // The rewards only with the checkpoint that records their objectives: a superseded owner writes neither.
+            saved = saveBattlegroundCheckpoint(realm, map, checkpoint);
+            if (!saved)
+                return;
+            foreach (ref reward; rewards)
+                characters.execute!"INSERT IGNORE INTO dmangos_bg_event_reward (realm, instance, event, player, reward)
+                    VALUES (?, ?, ?, ?, ?)"(reward.reward.realm, reward.reward.match, reward.event, reward.reward.player,
+                        encodeBattleResult(cast(BattlegroundEventReward) reward));
+        });
+        return saved;
+    }
+
     bool saveBattlegroundCheckpoint(uint realm, uint map, const ref BattlegroundCheckpoint checkpoint)
     {
         prepareBattlegroundCheckpoints();
@@ -1900,6 +1921,12 @@ final class CharacterStatements
             realm INT UNSIGNED NOT NULL, instance INT UNSIGNED NOT NULL, player INT UNSIGNED NOT NULL,
             reward TEXT NOT NULL, paid BOOLEAN NOT NULL DEFAULT FALSE,
             PRIMARY KEY (realm, instance, player), KEY pending (paid, player)) ENGINE=InnoDB"();
+        // An objective's rewards during the match: a table of their own, so the final rewards' rows (one per player
+        // and match) stay as they are.
+        characters.execute!"CREATE TABLE IF NOT EXISTS dmangos_bg_event_reward (
+            realm INT UNSIGNED NOT NULL, instance INT UNSIGNED NOT NULL, event BIGINT UNSIGNED NOT NULL,
+            player INT UNSIGNED NOT NULL, reward TEXT NOT NULL, paid BOOLEAN NOT NULL DEFAULT FALSE,
+            PRIMARY KEY (realm, instance, event, player), KEY pending (paid, player)) ENGINE=InnoDB"();
         battlegroundRewardsReady = true;
     }
 
@@ -1953,6 +1980,42 @@ final class CharacterStatements
         return pending;
     }
 
+    BattlegroundEventReward[] pendingBattlegroundEventRewards()
+    {
+        import dmangos.bytes : ByteReader;
+        import dmangos.world.battlegroundstate : BattlegroundState;
+        import std.base64 : Base64;
+
+        prepareBattlegroundRewards();
+        BattlegroundEventReward[] pending;
+        foreach (row; characters.query!"SELECT reward FROM dmangos_bg_event_reward WHERE paid = FALSE
+            ORDER BY realm, instance, event"())
+        {
+            auto bytes = ByteReader(Base64.decode(row.get!string(0)));
+            auto reader = BattlegroundState(reader: &bytes);
+            BattlegroundEventReward reward;
+            reader.transfer(reward);
+            pending ~= reward;
+        }
+        return pending;
+    }
+
+    bool payBattlegroundEventReward(const ref BattlegroundEventReward reward, const ref BattlegroundPayment payment)
+    {
+        prepareBattlegroundRewards();
+        bool applied;
+        characters.transaction({
+            applied = false;
+            if (!characters.execute!"UPDATE dmangos_bg_event_reward SET paid = TRUE
+                WHERE realm = ? AND instance = ? AND event = ? AND player = ? AND paid = FALSE"(
+                    reward.reward.realm, reward.reward.match, reward.event, reward.reward.player))
+                return;
+            applied = true;
+            writeBattlegroundPayment(reward.reward, payment);
+        });
+        return applied;
+    }
+
     bool payBattlegroundReward(const ref BattlegroundReward reward, const ref BattlegroundPayment payment)
     {
         prepareBattlegroundRewards();
@@ -1963,6 +2026,17 @@ final class CharacterStatements
                     reward.realm, reward.match, reward.player))
                 return;
             applied = true; // also true if a retry finds that the first COMMIT took effect
+            writeBattlegroundPayment(reward, payment);
+        });
+        return applied;
+    }
+
+    /// A reward's writes, in its receipt's transaction.
+    private void writeBattlegroundPayment(const ref BattlegroundReward reward, const ref BattlegroundPayment payment)
+    {
+        {
+            if (payment.quests.length)
+                saveQuestStatus(reward.player, payment.quests);
             if (payment.inventory.length)
                 saveInventory(reward.player, payment.money, payment.playerBytes, payment.inventory);
             if (payment.mail.id)
@@ -1974,8 +2048,7 @@ final class CharacterStatements
             if (reward.honor)
                 characters.execute!"INSERT INTO character_honor_cp (guid, victim_type, victim, honor, date, type)
                     VALUES (?, 0, ?, ?, ?, 1)"(reward.player, reward.player, float(reward.honor), reward.honorDay);
-        });
-        return applied;
+        }
     }
 
     /// See `WorldDatabase.charactersFor`.
@@ -2518,6 +2591,7 @@ final class CharacterStatements
             characters.execute!"DELETE FROM dmangos_loot_award WHERE player = ?"(guid);
             // An unpaid battleground reward goes with its character: a new one given the same guid gets none of it.
             characters.execute!"DELETE FROM dmangos_bg_reward WHERE player = ?"(guid);
+            characters.execute!"DELETE FROM dmangos_bg_event_reward WHERE player = ?"(guid);
             savePlayerSummons(guid, null);
             deletePartySummonOffer(guid);
             foreach (pet; pets)
