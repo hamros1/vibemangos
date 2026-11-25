@@ -31,7 +31,7 @@ ChannelCommand channelCommand(const OnlinePlayer who, ChannelOp op, string chann
     import dmangos.world.updatefields : PLAYER_BYTES_3;
 
     const p = who.character;
-    return ChannelCommand(p.guid, p.data.name, p.data.race, who.canUseCommand('c'), p.chatTag, op, channel, arg,
+    return ChannelCommand(p.guid, p.data.name, p.data.race, who.allowsStaff("staff.support"), p.chatTag, op, channel, arg,
         cast(uint) language, rankInfo(p.values.getByte!PLAYER_BYTES_3(3)).visualRank);
 }
 

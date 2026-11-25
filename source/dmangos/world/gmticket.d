@@ -123,7 +123,7 @@ private:
             return true;
         }
         const assigned = context.ticketAssignedTo.get(t.id, 0);
-        if (assigned != 0 && assigned != player.guid && !canUseCommand('z'))
+        if (assigned != 0 && assigned != player.guid && !allowsStaff("staff.admin"))
         {
             ticketChannelSay("GmTicket:0:Ticket is assigned to another GM.", false);
             return true;
@@ -177,7 +177,7 @@ private:
             ticketChannelSay("GmTicket:0:Player isn't online.", false);
             return true;
         }
-        if (!plr.hasPermissions)
+        if (!plr.isStaff)
         {
             ticketChannelSay("GmTicket:0:Player is not a GM.", false);
             return true;
@@ -190,7 +190,7 @@ private:
         }
         if (assigned != 0 && assigned != player.guid)
             if (auto aplr = context.onlinePlayer(assigned))
-                if (aplr.player !is null && !canUseCommand('z'))
+                if (aplr.player !is null && !allowsStaff("staff.admin"))
                 {
                     ticketChannelSay("GmTicket:0:Ticket already assigned to another GM.", false);
                     return true;
@@ -224,7 +224,7 @@ private:
             return true;
         }
         auto plr = context.onlinePlayer(assigned);
-        if (!canUseCommand('z') && plr !is null && plr.player !is null && plr.canUseCommand('z'))
+        if (!allowsStaff("staff.admin") && plr !is null && plr.player !is null && plr.allowsStaff("staff.admin"))
         {
             ticketChannelSay("GmTicket:0:You can not release tickets from admins.", false);
             return true;
@@ -256,7 +256,7 @@ private:
             return true;
         }
         const assigned = context.ticketAssignedTo.get(t.id, 0);
-        if (assigned != 0 && assigned != player.guid && !canUseCommand('z'))
+        if (assigned != 0 && assigned != player.guid && !allowsStaff("staff.admin"))
         {
             ticketChannelSay("GmTicket:0:Ticket is assigned to another GM.", false);
             return true;

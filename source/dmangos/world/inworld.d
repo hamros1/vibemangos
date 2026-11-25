@@ -337,7 +337,7 @@ private:
         w.put(account.id);
         w.put(cast(uint) account.username.length);
         w.putBytes(cast(const(ubyte)[]) account.username);
-        w.put(cast(ubyte) account.level);
+        w.put(ubyte(0)); // reserved field in the handoff envelope
         w.put(account.muteTime);
         w.put(player.data.guid);
         player.movement.write(w);
@@ -441,7 +441,7 @@ private:
         WorldAccount a;
         a.id = r.read!uint;
         a.username = r.readString(r.read!uint);
-        a.level = cast(AccountLevel) r.read!ubyte;
+        r.read!ubyte; // reserved
         a.muteTime = r.read!long;
         return a;
     }
@@ -631,7 +631,7 @@ private:
     void handleLogoutRequest()
     {
         const cantLogout = player.movement.has(MovementFlags.jumping) || player.movement.has(MovementFlags.fallingFar);
-        const instant = player.hasFlag(PlayerFlags.resting) || hasPermissions || context.config.logoutDelay == 0;
+        const instant = player.hasFlag(PlayerFlags.resting) || isStaff || context.config.logoutDelay == 0;
         send(ServerLogoutResponse(cantLogout ? 1 : 0, instant && !cantLogout ? 1 : 0));
         if (cantLogout)
             return;
@@ -996,7 +996,7 @@ private:
         import std.algorithm.comparison : max;
 
         // Accounts with permissions skip the speed check.
-        if (!context.config.movementSpeedCheck || hasPermissions)
+        if (!context.config.movementSpeedCheck || isStaff)
             return true;
         const now = context.clock();
         const elapsed = (now - checkpointTime).total!"msecs" / 1000.0;
@@ -1542,7 +1542,7 @@ private:
     /**
      * A chat message, by its type. The GM parts: flood protection for
      * players without permissions, the moderator's mute, commands in the chat types they are read
-     * from, everyone understanding the `c` permission, and the GM tag.
+     * from, everyone understanding staff with `staff.support`, and the GM tag.
      */
     @Handles(Opcode.CMSG_MESSAGECHAT, WorldState.inWorld)
     void handleMessageChat(const ClientChat chat)
@@ -1551,7 +1551,7 @@ private:
             return; // addon messages are ignored
         const config = context.config;
         const now = context.unixTime;
-        if (!hasPermissions && config.floodLines && config.floodSeconds)
+        if (!isStaff && config.floodLines && config.floodSeconds)
         {
             if (now >= floodTime)
             {
@@ -1579,7 +1579,7 @@ private:
 
         // The `c` permission, and with shared chat everyone, are understood by all.
         Language language = chat.language;
-        if (canUseCommand('c') || config.allowTwoSideInteractionChat)
+        if (allowsStaff("staff.support") || config.allowTwoSideInteractionChat)
             language = Language.LANG_UNIVERSAL;
         else if (config.allowTwoSideInteractionGroup && (chat.type == ChatType.CHAT_MSG_PARTY
             || chat.type == ChatType.CHAT_MSG_RAID || chat.type == ChatType.CHAT_MSG_RAID_LEADER
@@ -1655,7 +1655,7 @@ private:
             import dmangos.world.clientdata : Team;
             import dmangos.world.opcodes : languageSkills;
 
-            if (!canUseCommand('c') && !config.allowTwoSideInteractionChat)
+            if (!allowsStaff("staff.support") && !config.allowTwoSideInteractionChat)
             {
                 if (chat.language != Language.LANG_UNIVERSAL)
                 {
@@ -1746,7 +1746,7 @@ private:
     {
         import dmangos.world.whisper : deliverWhisper, WhisperFrom;
 
-        const from = WhisperFrom(player.guid, player.data.race, hasPermissions, player.chatTag);
+        const from = WhisperFrom(player.guid, player.data.race, isStaff, player.chatTag);
         import dmangos.world.online : OnlinePlayer;
         OnlinePlayer target = context.onlinePlayer(to);
         if (target is null)

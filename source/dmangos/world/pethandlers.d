@@ -915,6 +915,33 @@ mixin template PetHandlers()
             castSpell(spell, SpellTargets(TargetFlags.unit, target), true, 0);
     }
 
+    /// Creates a normal hunter pet from the template without consuming a world spawn.
+    package bool createStaffPet(uint entry)
+    {
+        if (player.data.classId != classHunter || !player.alive || pet_ !is null || !context.canWrite())
+            return false;
+        const template_ = entry in context.data.creatureTemplates;
+        if (template_ is null || !isTameable(*template_))
+            return false;
+        foreach (ref pet; savedPets())
+            if (pet.slot == PetSlot.current || pet.slot == PetSlot.notInSlot)
+                return false; // leave the existing hunter pet callable
+        uint number;
+        if (!context.takeId(IdKind.pet, number))
+            return false;
+        auto state = new PetState;
+        state.number = number;
+        state.type = PetType.hunter;
+        state.createdBySpell = spellTameBeastDone;
+        state.name = template_.name;
+        state.bar = ActionBar.initial();
+        state.happiness = tamedHappiness;
+        state.loyalty = 1;
+        state.loyaltyPoints = tamedLoyaltyPoints;
+        learnCreateSpells(state, entry);
+        return bringPet(state, entry, 0, player.data.level, 0, ReactState.defensive, 0, 0) !is null;
+    }
+
     /**
      * `SPELL_EFFECT_TAMECREATURE` (with its cast checks): a hunter with no pet makes a tameable beast
      * of no higher level its pet, at the beast's level and health; the beast itself goes.

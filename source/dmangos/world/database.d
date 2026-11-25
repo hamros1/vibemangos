@@ -14,7 +14,7 @@ import std.typecons : Nullable, nullable;
 import dmangos.crypto.srp6 : sessionKeyLength;
 import dmangos.mysql : DatabaseException, MySqlConnection;
 import dmangos.world.gmaccess : GmAccess;
-import dmangos.auth.accounts : AccountLevel, canonicalAccountName, decodeBigNumberHex, toAccountLevel;
+import dmangos.auth.accounts : canonicalAccountName, decodeBigNumberHex;
 import dmangos.world.characterdb : CharacterOwner, CharacterStatements, DeleteOptions, GuidCounters, NameInfo;
 public import dmangos.world.characterdb : GroupMemberRecord, GroupRecord;
 import dmangos.world.movement : Position;
@@ -32,12 +32,19 @@ import dmangos.world.worlddata : AreaTriggerTeleport, areaTriggerTeleportQuery, 
     gameObjectSpawnFromRow, gameObjectSpawnQuery, gameTeleQuery;
 import dmangos.world.playercreate : NewCharacter;
 
+import dmangos.auth.staffroles : staffAccess, changeStaffRole, defaultRoleGrants;
+
+struct GmNameReview
+{
+    uint guid;
+    string name;
+}
+
 /// The parts of an `account` row a world session needs.
 struct WorldAccount
 {
     uint id;
     string username;
-    AccountLevel level;
     ubyte[sessionKeyLength] sessionKey;
     bool hasSessionKey;  /// False unless `sessionkey` holds a full 80-digit key.
     bool locked;
@@ -930,6 +937,10 @@ interface WorldDatabase
 
     @DatabaseWrite bool saveSpawnWaypoints(uint spawn, MotionType mode, const(WaypointNode)[] nodes);
 
+    @DatabaseWrite bool saveGmSpawnLink(uint follower, const ref imported!"dmangos.world.creaturelinking".CreatureLink link);
+    @DatabaseWrite bool addGmNpcSpell(uint list, uint spell, int target, uint repeatMs);
+    @DatabaseWrite bool setGmTransportPeriod(uint entry, uint period);
+
     /// Direct creature spawn rows added above a node's initial world-data snapshot.
     @DatabaseRead CreatureSpawn[] savedCreatureSpawnsAfter(uint guid);
 
@@ -1031,6 +1042,9 @@ interface WorldDatabase
 
     /// The guid of the character called `name`, or 0.
     @DatabaseRead uint characterGuid(string name);
+
+    @DatabaseRead GmNameReview[] gmNamesToReview();
+    @DatabaseWrite bool gmMarkNameForChange(uint guid, string name);
 
     /// Gives an offline character a new name (`characters.name`).
     void renameCharacter(uint guid, string newName);
@@ -1617,19 +1631,98 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
         if (world.query!("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() "
             ~ "AND table_name IN ('creature', 'creature_movement') AND engine='InnoDB'")()[0].get!uint(0) != 2)
             return false;
+        import std.algorithm.searching : canFind;
+        const extended = world.query!("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() "
+            ~ "AND table_name='dmangos_gm_waypoint' AND engine='InnoDB'")()[0].get!uint(0) != 0;
+        if (!extended && nodes.canFind!(node => node.gait || node.emote || node.model))
+            return false;
         bool saved;
         world.transaction({
+            saved = false;
             if (!world.query!"SELECT guid FROM creature WHERE guid=? FOR UPDATE"(spawn).length)
                 return;
             world.execute!"DELETE FROM creature_movement WHERE Id=?"(spawn);
+            if (extended)
+                world.execute!"DELETE FROM dmangos_gm_waypoint WHERE spawn=?"(spawn);
             foreach (ref node; nodes)
+            {
                 world.execute!("INSERT INTO creature_movement (Id, Point, PositionX, PositionY, PositionZ, Orientation, WaitTime, ScriptId) "
                     ~ "VALUES (?, ?, ?, ?, ?, ?, ?, ?)")(spawn, node.point, node.x, node.y, node.z,
                     node.orientation.isFinite ? node.orientation : 100.0f, node.delay, node.scriptId);
+                if (node.gait || node.emote || node.model)
+                    world.execute!("INSERT INTO dmangos_gm_waypoint (spawn,point,gait,emote,model) "
+                        ~ "VALUES (?,?,?,?,?)")(spawn, node.point, cast(uint) node.gait, node.emote, node.model);
+            }
             world.execute!"UPDATE creature SET MovementType=? WHERE guid=?"(cast(uint) mode, spawn);
             saved = true;
         });
         return saved;
+    }
+
+    bool saveGmSpawnLink(uint follower, const ref imported!"dmangos.world.creaturelinking".CreatureLink link)
+    {
+        const leader = link.masterGuid;
+        if (!follower || leader == follower)
+            return false;
+        bool saved;
+        world.transaction({
+            saved = false;
+            if (!world.query!"SELECT leader FROM dmangos_gm_spawn_link WHERE follower=0 FOR UPDATE"().length)
+                return;
+            const found = world.query!("SELECT COUNT(*) FROM creature WHERE guid=? OR (guid=? "
+                ~ "AND map=(SELECT map FROM creature WHERE guid=?))")(follower, leader, follower);
+            if (found[0].get!uint(0) != (leader ? 2 : 1))
+                return;
+            // Merge authored and original links in one read after acquiring the edit lock.
+            uint[uint] masters;
+            foreach (row; world.query!("SELECT c.guid, COALESCE(g.leader,c.master_guid) FROM creature_linking c "
+                ~ "LEFT JOIN dmangos_gm_spawn_link g ON g.follower=c.guid UNION "
+                ~ "SELECT follower, leader FROM dmangos_gm_spawn_link WHERE follower<>0")())
+                masters[row.get!uint(0)] = row.get!uint(1);
+            bool[uint] visited;
+            for (uint next = leader; next; next = masters.get(next, 0))
+            {
+                if (next == follower || next in visited)
+                    return;
+                visited[next] = true;
+            }
+            world.execute!("INSERT INTO dmangos_gm_spawn_link (follower,leader,flags,has_offset,distance,angle) "
+                ~ "VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE leader=VALUES(leader),flags=VALUES(flags),"
+                ~ "has_offset=VALUES(has_offset),distance=VALUES(distance),angle=VALUES(angle)")(
+                    follower, leader, link.flags, cast(uint) link.hasOffset, link.distance, link.angle);
+            saved = true;
+        });
+        return saved;
+    }
+
+    bool addGmNpcSpell(uint list, uint spell, int target, uint repeatMs)
+    {
+        bool saved;
+        world.transaction({
+            saved = false;
+            auto rows = world.query!("SELECT Position, SpellId FROM creature_spell_list WHERE Id=? "
+                ~ "ORDER BY Position FOR UPDATE")(list);
+            if (!rows.length)
+                return; // do not create a list which has no template binding
+            foreach (row; rows)
+                if (row.get!uint(1) == spell)
+                    return;
+            const position = rows[$ - 1].get!int(0);
+            if (position == int.max)
+                return;
+            world.execute!("INSERT INTO creature_spell_list (Id,Position,SpellId,Flags,CombatCondition,TargetId,"
+                ~ "ScriptId,Availability,Probability,InitialMin,InitialMax,RepeatMin,RepeatMax,Comments) "
+                ~ "VALUES (?,?,?,0,-1,?,0,100,0,?,?,?,?, 'GM authored')")(
+                    list, position + 1, spell, target, repeatMs, repeatMs, repeatMs, repeatMs);
+            saved = true;
+        });
+        return saved;
+    }
+
+    bool setGmTransportPeriod(uint entry, uint period)
+    {
+        return world.execute!"UPDATE transports SET period=? WHERE entry=?"(period, entry) != 0
+            || world.query!"SELECT entry FROM transports WHERE entry=?"(entry).length != 0;
     }
 
     CreatureSpawn[] savedCreatureSpawnsAfter(uint guid)
@@ -1815,6 +1908,18 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     void updateGroupMember(const GroupMemberRecord member) { statements.updateGroupMember(member); }
     void removeGroupMember(uint guid) { statements.removeGroupMember(guid); }
     uint characterGuid(string name) { return statements.characterGuid(name); }
+    GmNameReview[] gmNamesToReview()
+    {
+        return characterDb.queryAs!(GmNameReview, "SELECT guid,name FROM characters "
+            ~ "WHERE account<>0 AND online=0 AND (at_login & 1)=0 ORDER BY guid")();
+    }
+
+    bool gmMarkNameForChange(uint guid, string name)
+    {
+        return characterDb.execute!("UPDATE characters SET at_login=at_login|1 "
+            ~ "WHERE guid=? AND BINARY name=? AND account<>0 AND online=0 AND (at_login&1)=0")(guid, name) != 0;
+    }
+
     void renameCharacter(uint guid, string newName) { statements.renameCharacter(guid, newName); }
     void addAtLoginFlags(uint guid, uint flags) { statements.addAtLoginFlags(guid, flags); }
     void renameGuild(uint guildId, string name) { statements.renameGuild(guildId, name); }
@@ -2036,7 +2141,6 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     {
         uint id;
         string username;
-        uint gmlevel;
         string sessionkey;
         string lockedIp;
         uint locked;
@@ -2047,7 +2151,7 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
 
     Nullable!WorldAccount findAccount(string username)
     {
-        const rows = login.queryAs!(AccountRow, "SELECT a.id, a.username, a.gmlevel, a.sessionkey, a.lockedIp, "
+        const rows = login.queryAs!(AccountRow, "SELECT a.id, a.username, a.sessionkey, a.lockedIp, "
             ~ "a.locked, a.os, a.platform, a.mutetime FROM account a WHERE username = ?")(username);
         if (rows.length == 0)
             return Nullable!WorldAccount.init;
@@ -2056,7 +2160,6 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
         WorldAccount account;
         account.id = row.id;
         account.username = row.username;
-        account.level = toAccountLevel(row.gmlevel);
         account.locked = row.locked == 1;
         account.lockedIp = row.lockedIp;
         account.os = row.os;
@@ -2076,57 +2179,8 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
         return nullable(account);
     }
 
-    GmAccess gmAccessFor(uint accountId)
-    {
-        GmAccess access;
-        try
-        {
-            foreach (row; login.query!("SELECT COALESCE(r.role_name, ''), COALESCE(p.capability, '') FROM dmangos_gm_enrollment e "
-                ~ "LEFT JOIN dmangos_gm_account_role ar ON ar.account_id=e.account_id "
-                ~ "LEFT JOIN dmangos_gm_role r ON r.role_name=ar.role_name "
-                ~ "LEFT JOIN dmangos_gm_role_permission p ON p.role_name=r.role_name "
-                ~ "WHERE e.account_id=? ORDER BY r.role_name, p.capability")(accountId))
-            {
-                import std.algorithm.searching : canFind;
-
-                access.managed = true;
-                const role = row.get!string(0), capability = row.get!string(1);
-                if (role.length && !access.roles.canFind(role))
-                    access.roles ~= role;
-                if (capability.length && !access.grants.canFind(capability))
-                    access.grants ~= capability;
-            }
-        }
-        catch (DatabaseException error)
-        {
-            if (error.code != 1146 || login.query!("SELECT COUNT(*) FROM information_schema.tables "
-                ~ "WHERE table_schema=DATABASE() AND table_name IN ('dmangos_gm_enrollment', '"
-                ~ "dmangos_gm_account_role', 'dmangos_gm_role', 'dmangos_gm_role_permission')")()[0].get!uint(0))
-                throw error;
-        }
-        return access;
-    }
-
-    bool changeGmRole(uint accountId, string role, bool grant)
-    {
-        bool changed;
-        login.transaction({
-            changed = false;
-            if (!login.query!("SELECT role_name FROM dmangos_gm_role WHERE role_name=? LOCK IN SHARE MODE")(role).length)
-                return;
-            if (grant)
-            {
-                login.execute!"INSERT IGNORE INTO dmangos_gm_enrollment (account_id) VALUES (?)"(accountId);
-                login.execute!("INSERT INTO dmangos_gm_account_role (account_id, role_name) VALUES (?, ?) "
-                    ~ "ON DUPLICATE KEY UPDATE role_name=VALUES(role_name)")(accountId, role);
-                changed = true;
-            }
-            else
-                changed = login.execute!"DELETE FROM dmangos_gm_account_role WHERE account_id=? AND role_name=?"
-                    (accountId, role) != 0;
-        });
-        return changed;
-    }
+    GmAccess gmAccessFor(uint accountId) { return staffAccess(login, accountId); }
+    bool changeGmRole(uint accountId, string role, bool grant) { return changeStaffRole(login, accountId, role, grant); }
 
     bool isBanned(uint accountId, string ip)
     {
@@ -2430,6 +2484,26 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
                     record.atLogin |= flags;
         if (auto c = guid in loadable)
             c.atLogin |= flags;
+    }
+
+    GmNameReview[] gmNamesToReview()
+    {
+        GmNameReview[] names;
+        foreach (guid, ref row; loadable)
+            if (row.account && !(row.atLogin & 1))
+                names ~= GmNameReview(guid, row.name);
+        return names;
+    }
+
+    bool gmMarkNameForChange(uint guid, string name)
+    {
+        if (auto row = guid in loadable)
+            if (row.name == name && !(row.atLogin & 1))
+            {
+                addAtLoginFlags(guid, 1);
+                return true;
+            }
+        return false;
     }
 
     void renameCharacter(uint guid, string newName)
@@ -3614,6 +3688,28 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
         return true;
     }
 
+    imported!"dmangos.world.creaturelinking".CreatureLink[uint] gmSpawnLinks;
+
+    bool saveGmSpawnLink(uint follower, const ref imported!"dmangos.world.creaturelinking".CreatureLink link)
+    {
+        if (!follower || follower == link.masterGuid || follower !in creatureSpawnRows
+            || (link.masterGuid && (link.masterGuid !in creatureSpawnRows
+                || creatureSpawnRows[link.masterGuid].map != creatureSpawnRows[follower].map)))
+            return false;
+        bool[uint] visited;
+        for (uint next = link.masterGuid; next; next = gmSpawnLinks.get(next, imported!"dmangos.world.creaturelinking".CreatureLink.init).masterGuid)
+        {
+            if (next == follower || next in visited)
+                return false;
+            visited[next] = true;
+        }
+        gmSpawnLinks[follower] = link;
+        return true;
+    }
+
+    bool addGmNpcSpell(uint list, uint spell, int target, uint repeatMs) { return false; }
+    bool setGmTransportPeriod(uint entry, uint period) { return false; }
+
     CreatureSpawn[] savedCreatureSpawnsAfter(uint guid)
     {
         CreatureSpawn[] spawns;
@@ -3936,7 +4032,30 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
     GmAccess[uint] gmAccessRows;
 
     GmAccess gmAccessFor(uint accountId) { return gmAccessRows.get(accountId, GmAccess.init); }
-    bool changeGmRole(uint accountId, string role, bool grant) { return false; }
+    bool changeGmRole(uint accountId, string role, bool grant)
+    {
+        import std.algorithm.mutation : remove;
+        import std.algorithm.searching : canFind;
+
+        if (!defaultRoleGrants(role).length)
+            return false;
+        auto access = gmAccessFor(accountId);
+        if (grant && !access.roles.canFind(role))
+            access.roles ~= role;
+        else if (!grant)
+        {
+            if (!access.roles.canFind(role))
+                return false;
+            access.roles = access.roles.dup.remove!(name => name == role);
+        }
+        access.grants = null;
+        foreach (name; access.roles)
+            foreach (capability; defaultRoleGrants(name))
+                if (!access.grants.canFind(capability))
+                    access.grants ~= capability;
+        gmAccessRows[accountId] = access;
+        return true;
+    }
 
     bool isBanned(uint accountId, string ip)
     {

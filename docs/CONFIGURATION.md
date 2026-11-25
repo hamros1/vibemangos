@@ -60,7 +60,7 @@ Redirected logs are plain text. Set `NO_COLOR=1` to disable colors in a terminal
 | `allow_two_side_interaction_guild` | guilds of both factions | `false` |
 | `chat_restricted_raid_warnings` | raid warnings only in raids | `false` |
 | `allow_two_side_who_list` | the other faction in /who | `false` |
-| `gm_level_in_who_list` | the highest account level players see in /who | `3` |
+| `gm_level_in_who_list` | the highest staff rank players see in /who | `3` |
 | `max_who_list_returns` | the most matches /who counts (it lists at most 49) | `49` |
 | `instance_ignore_level`, `instance_ignore_raid` | skip the level and raid-group checks of instance entrances | `false`, `false` |
 | `update_interval` | the world tick, in ms | `50` |
@@ -78,10 +78,8 @@ Redirected logs are plain text. Set `NO_COLOR=1` to disable colors in a terminal
 | `packet_log` | a directory where every packet sent to each client is written (time, opcode, body in hex), for finding what a client cannot take; empty for none | `""` |
 | `cluster` | this node's place in the [cluster](CLUSTER.md#configuration) | example config starts node 1; omitted means standalone |
 | `logout_delay`, `player_save_interval` | seconds a logout takes (GMs and resting players: none); seconds between saves of each character | `20`, `900` |
-| `gm_permissions` | legacy command permissions for unenrolled accounts at levels 1, 2 and 3 | `{"1": "bcghiltuv", "2": "a", "3": "az"}` |
-| `command_overrides` | other permission letters for commands: `[{"command": "gm on", "group": "m"}]` | none |
 | `allow_player_commands`, `gm_command_log` | allows players to use public commands, and configures the log file for audited staff actions | `false`, none |
-| `gamemaster_list_only_active_gms`, `gamemaster_hide_permissions` | `.gm list` shows players only GMs with the tag on; it hides GMs' permissions from players | `false`, `false` |
+| `gamemaster_list_only_active_gms`, `gamemaster_hide_permissions` | `.gm list` shows players only GMs with the tag on; it hides staff role names from players | `false`, `false` |
 | `send_stats_on_join`, `gm_client_channel` | everyone, not only GMs, is told the population on entering the world; a channel only accounts with permissions may join | `true`, none |
 | `flood_lines`, `flood_seconds`, `flood_message` | lines a player without permissions may say per period, and whether it is told (0 = off) | `0`, `0`, `false` |
 | `announce_tag`, `announce_gm_admin_tag`, `announce_name_in_announce`, `announce_name_in_wannounce` | how `.announce` and `.wannounce` look | `Staff`, `false`, `true`, `true` |
@@ -96,7 +94,7 @@ Redirected logs are plain text. Set `NO_COLOR=1` to disable colors in a terminal
 | `mirror_timer_fatigue_max`, `mirror_timer_breath_max`, `mirror_timer_environmental_max` | seconds in deep water, under water and in lava before they hurt | `60`, `60`, `1` |
 | `environmental_damage_min`, `environmental_damage_max` | lava's damage each time | `605`, `610` |
 | `start_player_level`, `start_gm_level`, `start_player_money` | new characters' level; their level on moderator accounts and up; their money in copper | `1`, `1`, `0` |
-| `max_primary_trade_skill`, `trade_skill_gm_ignore_max_primary` | primary professions a character may learn; the account level from which the limit is ignored | `2`, `4` |
+| `max_primary_trade_skill`, `trade_skill_gm_ignore_max_primary` | primary professions a character may learn; the staff rank from which the limit is ignored | `2`, `4` |
 | `strict_player_names`, `min_player_name` | the character name rules (0 any one script, bit 0 basic Latin, bit 1 the realm zone's script); the shortest name | `0`, `2` |
 | `char_delete_method`, `char_delete_min_level`, `mail_delivery_delay` | delete (0) or unlink (1) characters, from which level; seconds before mail with an attached item arrives on a different account | `0`, `0`, `3600` |
 | `allowed_builds`, `mysql_library`, `idle_timeout`, `max_connections`, `log_level` | client builds accepted; the client library file; idle seconds; connection cap (up to 60,000 on Linux, 1,000 elsewhere); logging | |
@@ -131,9 +129,10 @@ Run these commands from the installation directory or pass `--config FILE` befor
 or `ip`. The login server can be running while you make these changes.
 
 ```
-./bin/authserver account create NAME PASSWORD [player|moderator|gameMaster|administrator]
+./bin/authserver account create NAME PASSWORD [ROLE]
 ./bin/authserver account password NAME PASSWORD
-./bin/authserver account level NAME LEVEL
+./bin/authserver account grant NAME ROLE
+./bin/authserver account revoke NAME ROLE
 ./bin/authserver account ban NAME [DAYS] [REASON]   # no DAYS, or 0 = permanent
 ./bin/authserver account unban NAME
 ./bin/authserver account list

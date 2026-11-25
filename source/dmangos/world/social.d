@@ -150,7 +150,7 @@ mixin template SocialHandlers()
         import dmangos.world.character : Character;
 
         if (auto other = context.onlinePlayer(guid))
-            if (other.character !is null && (!other.character.gmTagOn || hasPermissions))
+            if (other.character !is null && (!other.character.gmTagOn || isStaff))
             {
                 const c = other.character;
                 const status = c.hasFlag(PlayerFlags.afk) ? FriendStatus.afk
@@ -162,7 +162,7 @@ mixin template SocialHandlers()
             import dmangos.world.context : PresenceFlags;
 
             const e = remote.entry;
-            if ((e.flags & PresenceFlags.gmTag) && !hasPermissions)
+            if ((e.flags & PresenceFlags.gmTag) && !isStaff)
                 return FriendInfo.init;
             const status = (e.flags & PresenceFlags.afk) ? FriendStatus.afk
                 : (e.flags & PresenceFlags.dnd) ? FriendStatus.dnd : FriendStatus.online;
@@ -194,7 +194,7 @@ mixin template SocialHandlers()
         if (befriends(guid))
             return deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.already, guid));
         const info = context.database.nameInfo(low);
-        if (!hasPermissions && !context.config.allowTwoSideAddFriend && !info.isNull
+        if (!isStaff && !context.config.allowTwoSideAddFriend && !info.isNull
             && context.client.teamForRace(info.get.race) != context.client.teamForRace(player.data.race))
             return deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.enemy, guid));
         if (countWith(SocialFlag.friend) >= friendLimit)

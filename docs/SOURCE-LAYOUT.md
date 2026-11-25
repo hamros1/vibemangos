@@ -61,8 +61,10 @@ source/dmangos/world/       the world server
   inventory.d                 items and bags, and the rules for storing, equipping, swapping, saving them
   conditions.d                the conditions table: requirements of menus, lessons and wares
   commandtable.d              command names, arguments, help and permission declarations
-  commands.d                  shared command lookup, argument parsing, dispatch and color formatting
-  gmaccess.d                  database-backed staff roles and legacy account fallback
+  commands.d                  shared command lookup, argument parsing and dispatch
+  chatstyle.d                 chat palettes and hyperlink formatting
+  gmaccess.d                  staff role inspection and administration
+  gmcontent.d                 saved creature links, AI tests and transport schedules
   gmactions.d                 shared actions for levels, speeds, items, skills and saving
   gmlearn.d, gmcheat.d, gmguild.d, gmwaypoint.d and other gm modules group handlers by task
   gminstance.d                GM commands: .instance

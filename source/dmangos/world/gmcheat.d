@@ -17,7 +17,8 @@ private:
         greenSystemMessage("Testing toggles  ·  " ~ plyr.player.data.name);
         void status(string name, bool on)
         {
-            systemMessage(format!"%s  %s%s|r"(name, on ? MSG_COLOR_GREEN : MSG_COLOR_GREY, on ? "On" : "Off"));
+            const state = on ? colored(ChatColor.green, "On") : colored(ChatColor.grey, "Off");
+            systemMessage(name ~ "  " ~ state);
         }
 
         status("No cooldowns", plyr.cooldownCheat);
@@ -93,6 +94,31 @@ private:
         if (target !is this)
             target.greenSystemMessage(format!"%s turned %s %s."(player.data.name, value, name));
         gmLog(format!"set %s %s for %s"(name, value, target.player.data.name));
+        return true;
+    }
+
+    bool handleAuraStackCommand(uint spell, uint stacks)
+    {
+        if (stacks < 1 || stacks > 255)
+            return false;
+        auto target = getSelectedChar(true);
+        if (target is null)
+            return true;
+        auto auras = &target.player.auras;
+        foreach (aura; auras.list)
+            if (aura.spell.id == spell && !aura.passive && !aura.channelToken)
+            {
+                aura.stacks = stacks;
+                ++auras.changes;
+                auras.writeSlot(aura, target.player.values);
+                target.player.refreshEquipmentStats(context.data);
+                target.refreshSpeeds();
+                target.flushPlayerChanges();
+                gmLog(format!"set spell %s stacks to %s on %s"(spell, stacks, target.player.data.name));
+                greenSystemMessage(format!"Spell %s · %s stacks on %s."(spell, stacks, target.player.data.name));
+                return true;
+            }
+        redSystemMessage("Apply that spell as an ordinary aura before changing its stack count.");
         return true;
     }
 

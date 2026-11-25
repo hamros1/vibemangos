@@ -30,7 +30,7 @@ private:
             return false;
         }
         // Chat links and colours ('|') are for game masters.
-        if (security == AccountLevel.player && channel.canFind('|'))
+        if (!isStaff && channel.canFind('|'))
         {
             deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.invalidName, channel));
             return false;
@@ -52,7 +52,7 @@ private:
             return;
         // The GM client channel (`gm_client_channel`): only accounts with permissions may join it.
         const gmChannel = context.config.gmClientChannel;
-        if (gmChannel.length && sicmp(gmChannel, name) == 0 && !hasPermissions)
+        if (gmChannel.length && sicmp(gmChannel, name) == 0 && !isStaff)
             return;
         channelCommand(ChannelOp.join, name, request.password);
     }

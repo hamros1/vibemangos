@@ -1,7 +1,6 @@
 /**
  * Dispatches in-game staff commands. The command table defines syntax and named capability
- * groups; enrolled accounts may also receive individual commands. Legacy accounts retain
- * their configured permission letters and abbreviated command names.
+ * groups, aliases and abbreviations. Roles can grant individual command paths.
  */
 module dmangos.world.commands;
 
@@ -10,22 +9,8 @@ public import std.typecons : Nullable; // handler parameters may be `Nullable`
 import dmangos.world.commandtable;
 import dmangos.world.updatefields;
 
-/// The colour codes of system messages.
-enum : string
-{
-    MSG_COLOR_LIGHTRED = "|cffff6060",
-    MSG_COLOR_LIGHTBLUE = "|cff00ccff",
-    MSG_COLOR_BLUE = "|cff0000ff",
-    MSG_COLOR_GREEN = "|cff00ff00",
-    MSG_COLOR_RED = "|cffff0000",
-    MSG_COLOR_GOLD = "|cffffcc00",
-    MSG_COLOR_GREY = "|cff888888",
-    MSG_COLOR_WHITE = "|cffffffff",
-    MSG_COLOR_SUBWHITE = "|cffbbbbbb",
-    MSG_COLOR_MAGENTA = "|cffff00ff",
-    MSG_COLOR_YELLOW = "|cffffff00",
-    MSG_COLOR_CYAN = "|cff00ffff",
-}
+import dmangos.world.chatstyle : systemChatText;
+public import dmangos.world.chatstyle : ChatColor, colored;
 
 /// Whether `typed` is the start of `name`, in any case.
 bool hasStringAbbr(const(char)[] name, const(char)[] typed) pure nothrow @safe @nogc
@@ -42,97 +27,6 @@ unittest
 {
     assert(hasStringAbbr("gmannounce", "gma") && hasStringAbbr("gm", "GM") && hasStringAbbr("gm", ""));
     assert(!hasStringAbbr("gm", "gmon"));
-}
-
-/**
- * The permission letters of a security string, in lower case;
- * `3` and `4` stand for `a`; after `a` only `z` is kept; a leading `0` means none.
- */
-string loadSecurity(string security) pure @safe
-{
-    import std.ascii : toLower;
-
-    string letters;
-    bool hasA;
-    foreach (i, raw; security)
-    {
-        char c = toLower(raw);
-        if (c == '4' || c == '3')
-            c = 'a';
-        if (c == 'a')
-        {
-            letters ~= 'a';
-            hasA = true;
-        }
-        else if (!hasA && c == '0' && i == 0)
-            break;
-        else if (!hasA || c == 'z')
-            letters ~= c;
-    }
-    return letters;
-}
-
-/// Whether `permissions` allow a command of the letter `group`: `a` allows all but `z`; group 0 needs any permission.
-bool canUseCommand(string permissions, char group) pure nothrow @safe @nogc
-{
-    if (permissions.length == 0)
-        return false;
-    if (group == 0)
-        return true;
-    if (permissions[0] == 'a' && group != 'z')
-        return true;
-    foreach (c; permissions)
-        if (c == group)
-            return true;
-    return false;
-}
-
-/// Whether the account is a game master: an `a` among the letters.
-bool hasGMPermissions(string permissions) pure nothrow @safe @nogc
-{
-    foreach (c; permissions)
-        if (c == 'a')
-            return true;
-    return false;
-}
-
-unittest
-{
-    assert(loadSecurity("AZ") == "az" && loadSecurity("3") == "a" && loadSecurity("abz") == "az");
-    assert(loadSecurity("0bc") == "" && loadSecurity("bc0") == "bc0");
-    assert(canUseCommand("az", 'z') && canUseCommand("a", 'm') && !canUseCommand("a", 'z'));
-    assert(canUseCommand("bc", 'b') && !canUseCommand("bc", 'm') && !canUseCommand("bc", '0'));
-    assert(!canUseCommand("", 'b') && hasGMPermissions("bca") && !hasGMPermissions("bc"));
-}
-
-/// Expands a legacy permission override, including a whole group via `group *`.
-string[] overrideTargets(string command) pure @safe
-{
-    auto root = catalogWord(commandTable, nextWord(command), true);
-    if (root is null)
-        return null;
-    const leaf = nextWord(command);
-    if (!leaf.length)
-        return [root.target.length ? root.target : root.name];
-    if (leaf == "*")
-    {
-        string[] paths;
-        foreach (ref row; root.children)
-            paths ~= row.target.length ? row.target : childPath(root.name, row.name);
-        return paths;
-    }
-    const child = catalogWord(root.children, leaf, true);
-    if (child is null)
-        return null;
-    return [child.target.length ? child.target : childPath(root.name, child.name)];
-}
-
-unittest
-{
-    assert(overrideTargets("gm on") == ["gm on"] && overrideTargets("modify h") == ["modify hp"]);
-    assert(overrideTargets("gm *").length == 6 && overrideTargets("nosuch").length == 0);
-    assert(overrideTargets("go coords") == ["worldport"] && overrideTargets("where") == ["gps"]);
-    assert(overrideTargets("wp wait") == ["waypoint waittime"]);
 }
 
 /// Distinct method names for the compile-time dispatch switch.
@@ -435,12 +329,6 @@ private:
         if (row.target.length)
             return canRunCommand(*declaredCommand(row.target), row.target);
         const permission = row.permission;
-        if (!gmAccess.managed)
-        {
-            const override_ = path in context.commandOverrides;
-            const group = override_ is null ? permission.legacy : *override_;
-            return group == '0' || canUseCommand(group);
-        }
         if (row.children.length)
         {
             foreach (ref child; row.children)
@@ -492,7 +380,7 @@ private:
         if (!text.length || (text[0] != '!' && text[0] != '.') || (text.length > 1 && text[1] == '.'))
             return false;
         refreshGmAccess();
-        const canOpen = gmAccess.managed ? gmAccess.grants.length != 0 : hasPermissions;
+        const canOpen = gmAccess.grants.length != 0;
         if (!canOpen && !context.config.allowPlayerCommands)
             return false;
         trace!"%s: '%s' (%s) typed %s"(remoteAddress, player.data.name, account.username, text);
@@ -548,7 +436,7 @@ private:
     private void showCommandHelp(const ref CommandMatch match)
     {
         const row = actionFor(*match.row);
-        systemMessage(MSG_COLOR_LIGHTBLUE ~ commandUsage(match.label, *row) ~ "|r");
+        blueSystemMessage(commandUsage(match.label, *row));
         if (row.unavailableReason.length)
             redSystemMessage(row.unavailableReason);
         else if (row.description.length)
@@ -570,10 +458,10 @@ private:
             if (action.unavailableReason.length || !canRunCommand(row, childPath(match.path, row.name)))
                 continue;
             if (match.row !is null)
-                lines ~= MSG_COLOR_LIGHTBLUE ~ commandUsage(childPath(match.label, row.label), *action) ~ "|r  "
+                lines ~= colored(ChatColor.sky, commandUsage(childPath(match.label, row.label), *action)) ~ "  "
                     ~ action.description;
             else if (!row.children.length || rowsHaveActions(row.children, row.name))
-                lines ~= MSG_COLOR_LIGHTBLUE ~ "." ~ row.label ~ "|r";
+                lines ~= colored(ChatColor.sky, "." ~ row.label);
         }
         if (!lines.length)
         {
@@ -660,32 +548,31 @@ private:
     void systemMessage(string text)
     {
         send(ServerMessageChat(chatMessage(ChatType.CHAT_MSG_SYSTEM, Language.LANG_UNIVERSAL, 0,
-            text.length > 1023 ? text[0 .. 1023] : text)));
+            systemChatText(text))));
     }
 
     /// A system message in the colour `color`.
-    void colorSystemMessage(string color, string text)
+    void colorSystemMessage(ChatColor color, string text)
     {
-        const limit = 1023 - color.length - "|r".length;
-        systemMessage(color ~ (text.length > limit ? text[0 .. limit] : text) ~ "|r");
+        systemMessage(systemChatText(text, color));
     }
 
     /// A system message in light red.
     void redSystemMessage(string text)
     {
-        colorSystemMessage(MSG_COLOR_LIGHTRED, text);
+        colorSystemMessage(ChatColor.softRed, text);
     }
 
     /// A system message in green.
     void greenSystemMessage(string text)
     {
-        colorSystemMessage(MSG_COLOR_GREEN, text);
+        colorSystemMessage(ChatColor.green, text);
     }
 
     /// A system message in light blue.
     void blueSystemMessage(string text)
     {
-        colorSystemMessage(MSG_COLOR_LIGHTBLUE, text);
+        colorSystemMessage(ChatColor.sky, text);
     }
 
     /// One system message per line of `text`.
@@ -856,26 +743,26 @@ unittest
 
     // The moderator's letters ("bcghiltuv") have no `m`: `.modify` is not there for it.
     mod.say(".modify hp 5");
-    assert(systemMessages(mod.read()) == [MSG_COLOR_LIGHTRED ~ "Command unavailable. Try .commands.|r"]);
+    assert(systemMessages(mod.read()) == [ChatColor.softRed ~ "Command unavailable. Try .commands.|r"]);
 
     // A group name lists the allowed actions with their preferred spelling and syntax.
     mod.say(".gm");
     const menu = systemMessages(mod.read());
-    assert(menu.length == 7 && menu[0] == MSG_COLOR_GREEN ~ ".gm commands|r");
-    assert(menu[1] == MSG_COLOR_LIGHTBLUE ~ ".gm allow <name>|r  Allow whispers from a player while in GM mode.");
-    assert(menu.canFind(MSG_COLOR_LIGHTBLUE ~ ".gm off|r  Turn off the GM tag and whisper blocking."));
+    assert(menu.length == 7 && menu[0] == ChatColor.green ~ ".gm commands|r");
+    assert(menu[1] == ChatColor.sky ~ ".gm allow <name>|r  Allow whispers from a player while in GM mode.");
+    assert(menu.canFind(ChatColor.sky ~ ".gm off|r  Turn off the GM tag and whisper blocking."));
 
     // The first row in table order wins: `.k` is `.kill`, which needs a selection.
     gm.say(".k");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Select a unit first.|r"]);
+    assert(systemMessages(gm.read()) == [ChatColor.softRed ~ "Select a unit first.|r"]);
 
     // A command whose system does not exist yet says so.
     gm.say(".cheat fly");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Player flight is unavailable in this client.|r"]);
+    assert(systemMessages(gm.read()) == [ChatColor.softRed ~ "Player flight is unavailable in this client.|r"]);
 
     // `.invisible`, both ways, in ArcEmu's words (its double space included).
     gm.say(".invisible");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_GREEN ~ "Invisibility and Invincibility are now  ON. You may have "
+    assert(systemMessages(gm.read()) == [ChatColor.green ~ "Invisibility and Invincibility are now  ON. You may have "
         ~ "to leave and re-enter this zone for changes to take effect.|r"]);
     assert(gm.session.character.gmInvisible && gm.session.inWorld.untouchable);
     gm.say(".invisible");
@@ -884,7 +771,7 @@ unittest
 
     // A handler refusing its arguments shows the row's help.
     gm.say(".levelup -2");
-    assert(systemMessages(gm.read())[0] == MSG_COLOR_LIGHTBLUE ~ ".levelup [levels]|r");
+    assert(systemMessages(gm.read())[0] == ChatColor.sky ~ ".levelup [levels]|r");
 
     // Levels raise the caps of the skills that go with the level, not their values.
     {
@@ -899,9 +786,9 @@ unittest
 
     // `.help`, with abbreviations.
     gm.say(".help gm of");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ ".gm off|r", "Turn off the GM tag and whisper blocking."]);
+    assert(systemMessages(gm.read()) == [ChatColor.sky ~ ".gm off|r", "Turn off the GM tag and whisper blocking."]);
     gm.say("!he nosuch");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED
+    assert(systemMessages(gm.read()) == [ChatColor.softRed
         ~ "Command unavailable. Try .commands.|r"]);
 
     // `..` is never a command.
@@ -909,7 +796,7 @@ unittest
     assert(opcodesOf(gm.read()) == [Opcode.SMSG_MESSAGECHAT] && systemMessages(gm.read()).length == 0);
 }
 
-/// A scoped role can use the canonical command and its alias. Removing it never restores the legacy admin level.
+/// A scoped role can use the canonical command and its alias. Removing it closes access on the next command.
 unittest
 {
     import dmangos.world.gmaccess : GmAccess;
@@ -918,23 +805,23 @@ unittest
     auto context = newCreationContext(db);
     auto gm = loggedIn(context, db, 7, "Jaina", Position(-8940, -132, 83.5f), AccountLevel.administrator);
     const id = db.accounts["JAINA"].id;
-    db.gmAccessRows[id] = GmAccess(true, ["spell-tester"], ["command.character learn", "command.account level"]);
+    db.gmAccessRows[id] = GmAccess(["spell-tester"], ["command.character learn", "command.access grant"]);
     gm.read();
 
     gm.say(".learn 99999999");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_GREEN ~ "Targeting yourself.|r", "Unknown spell ID 99999999."]);
-    assert(!gm.session.inWorld.hasPermissions && gm.session.inWorld.security == AccountLevel.player);
+    assert(systemMessages(gm.read()) == [ChatColor.green ~ "Targeting yourself.|r", "Unknown spell ID 99999999."]);
+    assert(!gm.session.inWorld.isStaff && gm.session.inWorld.security == AccountLevel.player);
     gm.say(".character learn 99999999");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_GREEN ~ "Targeting yourself.|r", "Unknown spell ID 99999999."]);
+    assert(systemMessages(gm.read()) == [ChatColor.green ~ "Targeting yourself.|r", "Unknown spell ID 99999999."]);
     gm.say(".travel coords 0 0 0 0");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Command unavailable. Try .commands.|r"]);
-    gm.say(".account level JAINA 3");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Command unavailable. Try .commands.|r"]);
+    assert(systemMessages(gm.read()) == [ChatColor.softRed ~ "Command unavailable. Try .commands.|r"]);
+    gm.say(".access grant JAINA administrator");
+    assert(systemMessages(gm.read()) == [ChatColor.softRed ~ "Command unavailable. Try .commands.|r"]);
 
-    db.gmAccessRows[id] = GmAccess(true);
+    db.gmAccessRows[id] = GmAccess.init;
     gm.say(".learn 99999999");
     assert(systemMessages(gm.read()).length == 0);
-    assert(!gm.session.inWorld.hasGMPermissions && !gm.session.inWorld.permissions.length);
+    assert(!gm.session.inWorld.allowsStaff("staff.game_master") && !gm.session.inWorld.staffRoles.length);
 }
 
 /// `.gm on` and `.gm off`, the GM tag in chat, and whispers to a GM with the tag on.
@@ -948,12 +835,12 @@ unittest
     gm.read();
 
     gm.say(".gm on");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_GREEN ~ "GM mode on. Your GM tag is visible.|r"]);
+    assert(systemMessages(gm.read()) == [ChatColor.green ~ "GM mode on. Your GM tag is visible.|r"]);
     const jaina = gm.session.character;
     assert(jaina.gmTagOn && jaina.hasFlag(PlayerFlags.gm));
     player.read();
     gm.say(".gm on");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "GM mode is already on.|r"]);
+    assert(systemMessages(gm.read()) == [ChatColor.sky ~ "GM mode is already on.|r"]);
 
     // Her words carry the GM tag.
     gm.say("hello");
@@ -966,7 +853,7 @@ unittest
     assert(reply.length == 1 && (cast(const(char)[]) reply[0].body_).canFind("does not currently have an open ticket"));
     assert(gm.read().length == 0);
     gm.say(".gm allowwhispers anduin");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "Now accepting whispers from Anduin.|r"]);
+    assert(systemMessages(gm.read()) == [ChatColor.sky ~ "Now accepting whispers from Anduin.|r"]);
     player.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_WHISPER, "help me", "Jaina"));
     assert(opcodesOf(gm.read()) == [Opcode.SMSG_MESSAGECHAT]);
     player.read();
@@ -974,22 +861,17 @@ unittest
     gm.say(".gm off");
     assert(!jaina.gmTagOn && !jaina.hasFlag(PlayerFlags.gm));
     gm.read();
-    // `.gm list`: names and permissions.
+    // `.gm list`: staff names and role names.
     player.read();
     gm.say(".gm list");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_GREEN ~ "There are following active GMs on this server:|r",
-        " - Jaina [a]"]);
+    assert(systemMessages(gm.read()) == [colored(ChatColor.green, "Active GMs"), " - Jaina [game-master]"]);
 }
 
 /// `.modify` field rows, overrides, the GM log, kicks and mutes.
 unittest
 {
     auto db = newDatabase();
-    auto context = newCreationContext(db, (ref c) {
-        import dmangos.world.config : CommandOverride;
-
-        c.commandOverrides = [CommandOverride("gps", "z")];
-    });
+    auto context = newCreationContext(db);
     auto gm = loggedIn(context, db, 7, "Anduin", Position(0, 0, 0), AccountLevel.gameMaster);
     auto admin = loggedIn(context, db, 8, "Varian", Position(5, 0, 0), AccountLevel.administrator);
     auto player = loggedIn(context, db, 9, "Jaina", Position(6, 0, 0));
@@ -1000,8 +882,8 @@ unittest
     gm.say(".modify hp 400 500");
     const me = gm.session.character;
     assert(me.values[UNIT_FIELD_HEALTH] == 400 && me.values[UNIT_FIELD_MAXHEALTH] == 500);
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "You set the hp of Anduin to 400/500.|r",
-        MSG_COLOR_GREEN ~ "Anduin set your hp to 400/500.|r"]);
+    assert(systemMessages(gm.read()) == [ChatColor.sky ~ "You set the hp of Anduin to 400/500.|r",
+        ChatColor.green ~ "Anduin set your hp to 400/500.|r"]);
     gm.say(".modify hp 600 500");
     assert(systemMessages(gm.read())[0].canFind("Enter a valid value"));
     gm.say(".modify scale 2.5");
@@ -1013,15 +895,12 @@ unittest
     assert(me.values[UNIT_FIELD_HEALTH] == 300 && me.values[UNIT_FIELD_MAXHEALTH] == 300);
     gm.read();
 
-    // A legacy override also governs the preferred alias.
     gm.say(".where");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Command unavailable. Try .commands.|r"]);
-    admin.say(".where");
-    assert(systemMessages(admin.read())[0].canFind("Position"));
+    assert(systemMessages(gm.read())[0].canFind("Position"));
 
-    // A `z` account cannot be kicked by an `a` one.
+    // Game masters cannot kick administrators.
     gm.say(".kickplayer varian spamming");
-    assert(systemMessages(gm.read())[$ - 1] == MSG_COLOR_LIGHTRED
+    assert(systemMessages(gm.read())[$ - 1] == ChatColor.softRed
         ~ "You cannot kick Varian, as they are a higher level gm than you.|r");
 
     // `.account mute`: the player is told, and cannot speak.
@@ -1031,7 +910,7 @@ unittest
     player.say("hi");
     assert(systemMessages(player.read()) == ["Your voice is currently muted by a moderator."]);
     gm.say(".account unmute JAINA");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_GREEN ~ "Account 'JAINA' has been unmuted.|r"]);
+    assert(systemMessages(gm.read()) == [ChatColor.green ~ "Account 'JAINA' has been unmuted.|r"]);
     assert(systemMessages(player.read()) == ["Your voice has restored. You may speak again."]);
     player.say("hi");
     assert(opcodesOf(player.read()) == [Opcode.SMSG_MESSAGECHAT]);
@@ -1053,9 +932,9 @@ unittest
 
     // A word that does not convert, or a missing one, shows the command's help.
     gm.say(".modify speed fast");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ ".modify speed <speed>|r", "Set movement speed."]);
+    assert(systemMessages(gm.read()) == [ChatColor.sky ~ ".modify speed <speed>|r", "Set movement speed."]);
     gm.say(".modify speed");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ ".modify speed <speed>|r", "Set movement speed."]);
+    assert(systemMessages(gm.read()) == [ChatColor.sky ~ ".modify speed <speed>|r", "Set movement speed."]);
     gm.say(".modify speed 14");
     assert(gm.session.character.speeds[MoveType.run] == 14);
     gm.read();
@@ -1068,7 +947,7 @@ unittest
 
     // `Rest` takes the rest of the line; a missing `Rest` with a default takes the default.
     gm.say(".kickplayer jaina was rude to the guards");
-    assert(systemMessages(gm.read())[0] == MSG_COLOR_LIGHTBLUE
+    assert(systemMessages(gm.read())[0] == ChatColor.sky
         ~ "Attempting to kick Jaina from the server for \"was rude to the guards\".|r");
     auto again = loggedIn(context, db, 9, "Varian", Position(5, 0, 0));
     gm.read();
@@ -1077,9 +956,9 @@ unittest
 
     // `OnOff` reads "on" and "off" only; an optional `Nullable!OnOff` toggles when it is missing.
     gm.say(".cheat explore maybe");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ ".cheat explore <on|off>|r", "Reveal or clear map exploration."]);
-    enum activated = MSG_COLOR_LIGHTBLUE ~ "Skip area requirements: on for Anduin.|r";
-    enum deactivated = MSG_COLOR_LIGHTBLUE ~ "Skip area requirements: off for Anduin.|r";
+    assert(systemMessages(gm.read()) == [ChatColor.sky ~ ".cheat explore <on|off>|r", "Reveal or clear map exploration."]);
+    enum activated = ChatColor.sky ~ "Skip area requirements: on for Anduin.|r";
+    enum deactivated = ChatColor.sky ~ "Skip area requirements: off for Anduin.|r";
     gm.say(".cheat triggerpass");
     assert(systemMessages(gm.read()).canFind(activated));
     gm.say(".cheat triggerpass");
@@ -1097,11 +976,11 @@ unittest
     auto gm = loggedIn(context, db, 9, "Jaina", Position(-8940, -132, 83.5f), AccountLevel.gameMaster);
     gm.read();
     gm.say(".pet renamepet Fluffy");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "You have no pet.|r"]);
+    assert(systemMessages(gm.read()) == [ChatColor.softRed ~ "You have no pet.|r"]);
     gm.say(".pet addspell 133");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Jaina has no pet.|r"]);
+    assert(systemMessages(gm.read()) == [ChatColor.softRed ~ "Jaina has no pet.|r"]);
     gm.say(".pet createpet 299");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Creating pets from chat is unavailable.|r"]);
+    assert(systemMessages(gm.read()).canFind(colored(ChatColor.softRed, "Choose a tameable creature entry and a living hunter with no callable pet.")));
 }
 
 /// GM tickets: a player asks for help; the GM channel's `.gmTicket` commands list and remove tickets, as ArcEmu's.
@@ -1120,7 +999,7 @@ unittest
     // Without a GM channel the commands show their help.
     gm.say(".gmTicket list");
     const help = systemMessages(gm.read());
-    assert(help.length && !help.canFind(MSG_COLOR_LIGHTRED ~ "Player flight is unavailable in this client.|r"));
+    assert(help.length && !help.canFind(ChatColor.softRed ~ "Player flight is unavailable in this client.|r"));
 
     // A ticket: made, then read back.
     ByteWriter w;
@@ -1162,7 +1041,7 @@ unittest
     auto admin = loggedIn(context, db, 10, "Varian", Position(-8940, -130, 83.5f), AccountLevel.administrator);
     admin.read();
     admin.say(".gmTicket toggle");
-    assert(systemMessages(admin.read()) == [MSG_COLOR_GREEN ~ "TicketSystem disabled.|r"]);
+    assert(systemMessages(admin.read()) == [ChatColor.green ~ "TicketSystem disabled.|r"]);
     anduin.read();
     anduin.write(Opcode.CMSG_GMTICKET_SYSTEMSTATUS, null);
     auto status = anduin.read();

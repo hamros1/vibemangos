@@ -116,7 +116,7 @@ GroupCommand groupCommand(const OnlinePlayer who, GroupOp op, ulong target = 0, 
     string text2 = null, uint number = 0, uint number2 = 0)
 {
     const p = who.character;
-    return GroupCommand(p.guid, p.data.name, p.data.race, who.hasPermissions, op, target, text, text2, number,
+    return GroupCommand(p.guid, p.data.name, p.data.race, who.isStaff, op, target, text, text2, number,
         number2);
 }
 
@@ -607,9 +607,9 @@ private:
             }
             if (recipient == 0 || recipient == c.guid)
                 return result(c, PARTY_OP_INVITE, name, ERR_BAD_PLAYER_NAME_S);
-            if (!c.permissions && context.database.isIgnoring(cast(uint) recipient, cast(uint) c.guid))
+            if (!c.staff && context.database.isIgnoring(cast(uint) recipient, cast(uint) c.guid))
                 return result(c, PARTY_OP_INVITE, name, ERR_IGNORING_YOU_S);
-            if (!c.permissions && !context.config.allowTwoSideInteractionGroup
+            if (!c.staff && !context.config.allowTwoSideInteractionGroup
                 && context.client.teamForRace(c.race) != context.client.teamForRace(recipientRace))
                 return result(c, PARTY_OP_INVITE, name, ERR_PLAYER_WRONG_FACTION);
 

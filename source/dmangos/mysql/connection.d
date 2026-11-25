@@ -4,7 +4,7 @@
  * The SQL text is a template argument, and `?` marks each parameter:
  *
  * ---
- * auto rows = db.query!"SELECT id, gmlevel FROM account WHERE username = ?"(name);
+ * auto rows = db.query!"SELECT id, username FROM account WHERE username = ?"(name);
  * db.execute!"UPDATE account SET failed_logins = failed_logins + 1 WHERE id = ?"(id);
  * ---
  *

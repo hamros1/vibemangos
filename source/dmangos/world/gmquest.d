@@ -69,19 +69,19 @@ private:
         if (questId == 0)
             return false;
         auto plr = questTarget();
-        string recout = "|cff00ff00";
+        string feedback;
         if (context.data.quests.quest(questId) !is null)
         {
             if (finished(plr, questId))
-                recout ~= "Player has already completed that quest.";
+                feedback = "Player has already completed that quest.";
             else if (onQuest(plr, questId))
-                recout ~= "Player is currently on that quest.";
+                feedback = "Player is currently on that quest.";
             else
-                recout ~= "Player has NOT finished that quest.";
+                feedback = "Player has not finished that quest.";
         }
         else
-            recout ~= format!"Quest Id [%s] was not found and unable to add it to the player's quest log."(questId);
-        sendMultilineMessage(recout ~ "\n\n");
+            feedback = format!"Quest %s was not found."(questId);
+        greenSystemMessage(feedback);
         return true;
     }
 
@@ -90,18 +90,18 @@ private:
         if (questId == 0)
             return false;
         auto plr = questTarget();
-        string recout = "|cff00ff00";
+        string feedback;
         const quest = context.data.quests.quest(questId);
         if (quest !is null)
         {
             if (finished(plr, questId))
-                recout ~= "Player has already completed that quest.";
+                feedback = "Player has already completed that quest.";
             else if (onQuest(plr, questId))
-                recout ~= "Player is currently on that quest.";
+                feedback = "Player is currently on that quest.";
             else if (plr.questSlot(0) >= maxQuestLogSize)
             {
                 plr.deliver(Opcode.SMSG_QUESTLOG_FULL, null);
-                recout ~= "Player's quest log is full.";
+                feedback = "Player's quest log is full.";
             }
             else
             {
@@ -109,12 +109,12 @@ private:
                 plr.addQuest(*quest); // its source item with it
                 plr.flushInventory(true);
                 plr.flushPlayerChanges();
-                recout ~= "Quest has been added to the player's quest log.";
+                feedback = "Quest has been added to the player's quest log.";
             }
         }
         else
-            recout ~= format!"Quest Id [%s] was not found and unable to add it to the player's quest log."(questId);
-        sendMultilineMessage(recout ~ "\n\n");
+            feedback = format!"Quest %s was not found."(questId);
+        greenSystemMessage(feedback);
         return true;
     }
 
@@ -125,17 +125,17 @@ private:
         if (questId == 0)
             return false;
         auto plr = questTarget();
-        string recout = "|cff00ff00";
+        string feedback;
         const quest = context.data.quests.quest(questId);
         if (quest is null)
         {
-            recout ~= format!"Quest Id [%s] was not found and unable to add it to the player's quest log."(questId);
-            sendMultilineMessage(recout ~ "\n\n");
+            feedback = format!"Quest %s was not found."(questId);
+            greenSystemMessage(feedback);
             return true;
         }
         if (finished(plr, questId))
         {
-            sendMultilineMessage(recout ~ "Player has already completed that quest.\n\n\n\n");
+            greenSystemMessage("Player has already completed that quest.");
             return true;
         }
         if (onQuest(plr, questId))
@@ -168,13 +168,13 @@ private:
                     redSystemMessage("Unable to find quest_giver object.");
             }
             plr.gmFinishQuest(*quest);
-            recout ~= "Player was on that quest, but has now completed it.";
+            feedback = "Player was on that quest, but has now completed it.";
         }
         else
-            recout ~= "The quest has now been completed for that player.";
+            feedback = "The quest has now been completed for that player.";
         gmLog(format!"completed quest %u [%s] for player %s"(questId, quest.title, plr.player.data.name));
         plr.markQuestFinished(questId);
-        sendMultilineMessage(recout ~ "\n\n");
+        greenSystemMessage(feedback);
         return true;
     }
 
@@ -184,28 +184,29 @@ private:
             return false;
         auto plr = questTarget();
         const quest = context.data.quests.quest(questId);
-        string recout;
+        string feedback;
         if (quest !is null)
         {
-            recout = "|cff00ff00";
             // The quest is taken out of the player's log.
             if (plr.player.questStatus.length)
             {
                 if (finished(plr, questId))
-                    recout ~= "Player has already completed that quest.\n\n";
+                    feedback = "Player has already completed that quest.";
                 else if (onQuest(plr, questId))
+                {
                     plr.gmDropQuest(*quest);
+                    feedback = "Quest removed from the player’s log.";
+                }
                 else
-                    recout ~= "No quest log entry found for that player.";
+                    feedback = "No quest log entry found for that player.";
             }
             else
-                recout ~= "Player has no quests to remove.";
-            recout ~= "\n\n";
+                feedback = "Player has no quests to remove.";
             gmLog(format!"removed quest %u [%s] from player %s%%"(quest.id, quest.title, plr.player.data.name));
         }
         else
-            recout = "Invalid quest selected, unable to remove.\n\n";
-        systemMessage(recout);
+            feedback = "That quest could not be found.";
+        greenSystemMessage(feedback);
         return true;
     }
 
@@ -235,15 +236,15 @@ private:
                         spawn = format!"%s"(s.guid);
                         break;
                     }
-                sendMultilineMessage(format!"|cff00ccffQuest %s found: creature id, spawnid, name\n\n"(
+                blueSystemMessage(format!"Quest %s found: creature id, spawnid, name"(
                     starts ? "Starter" : Word));
-                sendMultilineMessage(format!"|cff00ccff%s, %s, %s\n\n"(creatureId, spawn, t.name));
+                blueSystemMessage(format!"%s, %s, %s"(creatureId, spawn, t.name));
             }
             else
-                sendMultilineMessage(format!"|cff00ccffNo creature quest %s info found.\n\n"(word));
+                blueSystemMessage(format!"No creature quest %s info found."(word));
         }
         else
-            sendMultilineMessage(format!"|cff00ccffNo creature quest %ss found.\n\n"(word));
+            blueSystemMessage(format!"No creature quest %ss found."(word));
 
         if (objectId)
         {
@@ -256,15 +257,15 @@ private:
                         spawn = format!"%s"(s.guid);
                         break;
                     }
-                sendMultilineMessage(format!"|cff00ccffQuest %s found: object id, spawnid, name\n\n"(
+                blueSystemMessage(format!"Quest %s found: object id, spawnid, name"(
                     starts ? "starter" : Word));
-                sendMultilineMessage(format!"|cff00ccff%s, %s, %s\n\n"(objectId, spawn, t.name));
+                blueSystemMessage(format!"%s, %s, %s"(objectId, spawn, t.name));
             }
             else
-                sendMultilineMessage(format!"|cff00ccffNo object quest %s info found.\n\n"(word));
+                blueSystemMessage(format!"No object quest %s info found."(word));
         }
         else
-            sendMultilineMessage(format!"|cff00ccffNo object quest %ss found.\n\n"(word));
+            blueSystemMessage(format!"No object quest %ss found."(word));
     }
 
     bool handleQuestItemCommand(uint questId)
@@ -278,19 +279,19 @@ private:
                 if (item == 0)
                     continue;
                 if (count == 0)
-                    sendMultilineMessage("|cff00ff00Quest item matches: itemid: count -> Name\n\n");
+                    greenSystemMessage("Quest items · ID, count, name");
                 const proto = item in context.data.items;
-                sendMultilineMessage(format!"|cff00ccff%s: %s -> %s\n"(item, quest.reqItemCount[i],
+                blueSystemMessage(format!"%s: %s -> %s"(item, quest.reqItemCount[i],
                     proto is null ? "" : proto.details.name));
                 ++count;
                 if (count == 25)
                 {
-                    redSystemMessage("More than 25 results returned. aborting.");
+                    redSystemMessage("Showing the first 25 matches.");
                     break;
                 }
             }
         if (count == 0)
-            sendMultilineMessage("|cff00ccffNo matches found.\n\n");
+            blueSystemMessage("No matches found.");
         return true;
     }
 
@@ -324,17 +325,17 @@ private:
                 questGiver = entry;
             }
         }
-        sendMultilineMessage("|cff00ff00Quest matches: id: title\n\n");
+        greenSystemMessage("Quests · ID, title");
         uint count;
         bool line(uint id)
         {
             const quest = context.data.quests.quest(id);
             if (quest is null)
                 return true;
-            sendMultilineMessage(format!"|cff00ccff%s: %s\n"(id, quest.title));
+            blueSystemMessage(format!"%s: %s"(id, quest.title));
             if (++count == 25)
             {
-                redSystemMessage("More than 25 results returned. aborting.");
+                redSystemMessage("Showing the first 25 matches.");
                 return false;
             }
             return true;
@@ -353,7 +354,7 @@ private:
             const starts = questGiver in context.data.quests.creatureStarts;
             if (starts is null)
             {
-                sendMultilineMessage("|cff00ccffNo quests found for the specified NPC id.\n\n");
+                blueSystemMessage("No quests found for the specified NPC id.");
                 return true;
             }
             foreach (id; *starts)
@@ -361,7 +362,7 @@ private:
                     break;
         }
         if (count == 0)
-            sendMultilineMessage("|cff00ccffNo matches found.\n\n");
+            blueSystemMessage("No matches found.");
         return true;
     }
 
@@ -409,7 +410,8 @@ private:
                 *list ~= questId;
                 context.database.insertQuestRelation(start, entry, questId);
             }
-            sendMultilineMessage(format!"|cff00ff00Added Quest to NPC as %s: |cff00ccff%s\n\n"(which, quest.title));
+            systemMessage(colored(ChatColor.green, format!"Added quest %s to NPC. "(which))
+                ~ colored(ChatColor.sky, quest.title));
             gmLog(format!"added %s of quest %u [%s] to NPC %u [%s]"(which, quest.id, quest.title, entry, unit.template_.name));
             return true;
         }
@@ -420,7 +422,7 @@ private:
         }
         *list = (*list).remove((*list).countUntil(questId));
         context.database.deleteQuestRelation(start, entry, questId);
-        sendMultilineMessage(format!"|cff00ff00Deleted Quest from NPC: |cff00ccff%s\n\n"(quest.title));
+        systemMessage(colored(ChatColor.green, "Removed quest from NPC. ") ~ colored(ChatColor.sky, quest.title));
         gmLog(format!"deleted %s of quest %u [%s] to NPC %u [%s]"(which, quest.id, quest.title, entry, unit.template_.name));
         return true;
     }
@@ -473,24 +475,24 @@ private:
                     starterId = entry;
         if (!starterId)
         {
-            sendMultilineMessage("|cff00ccffNo quest starters found.\n\n");
+            blueSystemMessage("No quest starters found.");
             return true;
         }
         const t = starterId in context.data.creatureTemplates;
         if (t is null)
         {
-            sendMultilineMessage("|cff00ccffNo quest starter info found.\n\n");
+            blueSystemMessage("No quest starter info found.");
             return true;
         }
         foreach (ref s; context.data.creatureSpawns)
             if (s.entry == starterId)
             {
-                sendMultilineMessage("|cff00ccffPorting to Quest Starter/Giver: id, name\n\n");
-                sendMultilineMessage(format!"|cff00ccff%s, %s\n\n"(starterId, t.name));
+                blueSystemMessage("Porting to Quest Starter/Giver: id, name");
+                blueSystemMessage(format!"%s, %s"(starterId, t.name));
                 commandTeleport(s.map, Position(s.x, s.y, s.z, 0));
                 return true;
             }
-        sendMultilineMessage("|cff00ccffNo spawn location for quest starter was found.\n\n");
+        blueSystemMessage("No spawn location for quest starter was found.");
         return true;
     }
 
@@ -498,37 +500,27 @@ private:
     {
         if (questId == 0)
             return false;
-        string recout;
-        const q = context.data.quests.quest(questId);
-        if (q !is null)
+        const quest = context.data.quests.quest(questId);
+        if (quest is null)
         {
-            uint rewards, choices;
-            foreach (i, item; q.rewItemId)
-                if (item)
-                {
-                    ++rewards;
-                    if (item !in context.data.items)
-                        recout ~= format!"Unknown item id %%lu%s"(item);
-                    else
-                        recout ~= format!"Reward (%s): %s"(item, itemLink(item))
-                            ~ (q.rewItemCount[i] == 1 ? "\n" : format!"[x%s]\n"(q.rewItemCount[i]));
-                }
-            foreach (i, item; q.rewChoiceItemId)
-                if (item)
-                {
-                    ++choices;
-                    if (item !in context.data.items)
-                        recout ~= format!"Unknown item id %%lu%s"(item);
-                    else
-                        recout ~= format!"Reward choice (%s): %s"(item, itemLink(item))
-                            ~ (q.rewChoiceItemCount[i] == 1 ? "\n" : format!"[x%s]\n"(q.rewChoiceItemCount[i]));
-                }
-            if (rewards == 0 && choices == 0)
-                recout ~= format!"Quest %s has no item rewards."(questId);
+            redSystemMessage(format!"Quest %s was not found."(questId));
+            return true;
         }
-        else
-            recout ~= format!"Quest ID %s not found.\n"(questId);
-        sendMultilineMessage(recout);
+        uint count;
+        void showRewards(string label, scope const(uint)[] items, scope const(uint)[] quantities)
+        {
+            foreach (i, entry; items)
+                if (entry)
+                {
+                    ++count;
+                    const quantity = quantities[i] > 1 ? format!"[x%s]"(quantities[i]) : "";
+                    systemMessage(format!"%s (%s): %s%s"(label, entry, itemLink(entry), quantity));
+                }
+        }
+        showRewards("Reward", quest.rewItemId[], quest.rewItemCount[]);
+        showRewards("Reward choice", quest.rewChoiceItemId[], quest.rewChoiceItemCount[]);
+        if (!count)
+            systemMessage(format!"Quest %s has no item rewards."(questId));
         return true;
     }
 
@@ -590,6 +582,7 @@ unittest
     import std.algorithm.searching : canFind, count;
     import std.format : format;
     import dmangos.auth.accounts : AccountLevel;
+    import dmangos.world.chatstyle : ChatColor, colored;
     import dmangos.world.movement : Position;
     import dmangos.world.opcodes;
     import dmangos.world.packets : ClientGuid;
@@ -617,21 +610,21 @@ unittest
     const me = cast(Player) anduin.session.character;
 
     gm.say(".quest status 9600");
-    assert(systemMessages(gm.read()) == ["|cff00ff00Player has NOT finished that quest.", ""], "ArcEmu's empty line too");
+    assert(systemMessages(gm.read()) == [colored(ChatColor.green, "Player has not finished that quest.")], "one status message");
     gm.say(".quest start 9600");
-    assert(systemMessages(gm.read()) == ["|cff00ff00Quest has been added to the player's quest log.", ""]);
+    assert(systemMessages(gm.read()) == [colored(ChatColor.green, "Quest has been added to the player's quest log.")]);
     assert(me.values[PLAYER_QUEST_LOG_1_1] == 9600);
     gm.say(".quest status 9600");
-    assert(systemMessages(gm.read()) == ["|cff00ff00Player is currently on that quest.", ""]);
+    assert(systemMessages(gm.read()) == [colored(ChatColor.green, "Player is currently on that quest.")]);
 
     gm.say(".quest list");
-    assert(systemMessages(gm.read()).canFind("|cff00ccff9600: Orders"), "the selected player's log");
+    assert(systemMessages(gm.read()).canFind(colored(ChatColor.sky, "9600: Orders")), "the selected player's log");
     gm.say(format!".quest list %s"(creatureTrainer));
-    assert(systemMessages(gm.read()).canFind("|cff00ccff9600: Orders"), "the trainer's quests");
+    assert(systemMessages(gm.read()).canFind(colored(ChatColor.sky, "9600: Orders")), "the trainer's quests");
     gm.say(".quest list 1");
-    assert(systemMessages(gm.read()).canFind("|cff00ccffNo quests found for the specified NPC id."));
+    assert(systemMessages(gm.read()).canFind(colored(ChatColor.sky, "No quests found for the specified NPC id.")));
     gm.say(".quest item 9600");
-    assert(systemMessages(gm.read()).canFind("|cff00ccffNo matches found."));
+    assert(systemMessages(gm.read()).canFind(colored(ChatColor.sky, "No matches found.")));
 
     // The trainer (a quest giver) takes the quest back too, then gives it no more.
     {
@@ -642,13 +635,13 @@ unittest
         trainer.values.set!UNIT_NPC_FLAGS(trainer.values.get!UNIT_NPC_FLAGS | 0x02);
         gm.write(Opcode.CMSG_SET_SELECTION, ClientGuid(trainer.guid));
         gm.say(".quest addfinish 9600");
-        assert(systemMessages(gm.read()).canFind("|cff00ff00Added Quest to NPC as finisher: |cff00ccffOrders"));
+        assert(systemMessages(gm.read()).canFind(colored(ChatColor.green, "Added quest finisher to NPC. ") ~ colored(ChatColor.sky, "Orders")));
         assert(context.data.quests.creatureEnds[creatureTrainer].canFind(9600) && db.questRelationRows == [[0u, creatureTrainer, 9600]]);
         gm.say(".quest addstart 9600");
         assert(systemMessages(gm.read()).canFind("Quest was already found for the specified NPC."));
         gm.say(".quest delboth 9600");
         const gone = systemMessages(gm.read());
-        assert(gone.count!(m => m.canFind("Deleted Quest from NPC")) == 2);
+        assert(gone.count!(m => m.canFind("Removed quest from NPC.")) == 2);
         assert(!context.data.quests.creatureStarts[creatureTrainer].canFind(9600) && db.questRelationRows.length == 0);
         gm.say(".quest delstart 9600");
         assert(systemMessages(gm.read())[0] == "Quest was NOT found for the specified NPC.");
@@ -658,21 +651,24 @@ unittest
     context.data.quests.quests[9600].reqItemId[0] = itemJerky;
     context.data.quests.quests[9600].reqItemCount[0] = 2;
     gm.say(".quest item 9600");
-    assert(systemMessages(gm.read()).canFind("|cff00ccff117: 2 -> Tough Jerky"));
+    assert(systemMessages(gm.read()).canFind(colored(ChatColor.sky, "117: 2 -> Tough Jerky")));
     context.data.quests.quests[9600].reqItemId[0] = 0;
 
     gm.say(".quest giver 9600");
     const giver = systemMessages(gm.read());
-    assert(giver.canFind!(m => m.canFind("Llane Beshere")) && giver.canFind("|cff00ccffNo object quest starters found."));
+    assert(giver.canFind!(m => m.canFind("Llane Beshere")) && giver.canFind(colored(ChatColor.sky, "No object quest starters found.")));
+    context.data.quests.quests[9600].rewChoiceItemId[0] = itemJerky;
+    context.data.quests.quests[9600].rewChoiceItemCount[0] = 1;
     gm.say(".quest reward 9600");
-    assert(systemMessages(gm.read()) == ["Reward (117): |cff9d9d9d|Hitem:117:0:0:0|h[Tough Jerky]|h|r[x5]"]);
+    const jerky = "|cff9d9d9d|Hitem:117:0:0:0|h[Tough Jerky]|h|r";
+    assert(systemMessages(gm.read()) == ["Reward (117): " ~ jerky ~ "[x5]", "Reward choice (117): " ~ jerky]);
 
     gm.say(".quest complete 9600");
     const done = systemMessages(gm.read());
-    assert(done.canFind("|cff00ff00Player was on that quest, but has now completed it."));
+    assert(done.canFind(colored(ChatColor.green, "Player was on that quest, but has now completed it.")));
     assert(me.questStatus[9600].rewarded && me.values[PLAYER_QUEST_LOG_1_1] == 0);
     gm.say(".quest remove 9600");
-    assert(systemMessages(gm.read())[0].canFind("|cff00ff00Player has already completed that quest."), "one message");
+    assert(systemMessages(gm.read())[0].canFind(colored(ChatColor.green, "Player has already completed that quest.")), "one message");
     gm.say(".quest status 9601");
-    assert(systemMessages(gm.read()) == ["|cff00ff00Quest Id [9601] was not found and unable to add it to the player's quest log.", ""]);
+    assert(systemMessages(gm.read()) == [colored(ChatColor.green, "Quest 9601 was not found.")]);
 }

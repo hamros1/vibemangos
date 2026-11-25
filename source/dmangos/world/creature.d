@@ -735,9 +735,12 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     /// An air-capable creature following a database spline flies along its recorded coordinates.
     package @property bool flyingMovement() const
     {
-        import dmangos.world.motion : MotionType;
+        import dmangos.world.motion : MotionType, WaypointMovement;
 
-        return scriptFlying || (spawn.movementType == MotionType.path && (template_.inhabitType & 4));
+        if (scriptFlying || (spawn.movementType == MotionType.path && (template_.inhabitType & 4)))
+            return true;
+        const route = cast(const WaypointMovement) generator;
+        return route !is null && route.flightLeg;
     }
 
     /// Its habitat and template allow it to swim, with the walk-in-water exception for creatures such as crabs.

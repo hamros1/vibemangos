@@ -140,13 +140,13 @@ private int run(const Options o)
     {
         const name = format!"%s%s"(o.prefix, i);
         auto found = accounts.findAccount(name);
-        const id = found.isNull ? accounts.createAccount(name, "x" ~ uniform!uint(rng).to!string, AccountLevel.player).id
+        const id = found.isNull ? accounts.createAccount(name, "x" ~ uniform!uint(rng).to!string).id
             : found.get.id;
         ubyte[sessionKeyLength] key;
         foreach (ref b; key)
             b = uniform!ubyte(rng);
         if (o.commands.length)
-            accounts.setLevel(name, AccountLevel.administrator);
+            accounts.changeRole(name, "administrator", true);
         accounts.recordLogin(id, key, "127.0.0.1", ClientDetails("enUS", "Win", "x86"));
         accountIds ~= id;
         bots ~= new Bot(i - 1, name, characterName(o.prefix, i), key, BotPlan.init, uniform!uint(rng));

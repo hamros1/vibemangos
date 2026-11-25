@@ -187,7 +187,7 @@ private:
             systemMessage(format!"Unknown spell ID %u."(spell));
             return true;
         }
-        if (!plr.hasGMPermissions && info.effect[].canFind(SpellEffect.instantKill))
+        if (!plr.allowsStaff("staff.game_master") && info.effect[].canFind(SpellEffect.instantKill))
         {
             redSystemMessage("Only staff characters can learn instant-kill spells.");
             gmLog(format!"refused instant-kill spell %s for %s"(spell, plr.player.data.name));

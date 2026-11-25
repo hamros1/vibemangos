@@ -341,6 +341,40 @@ final class Battleground
         }
     }
 
+    private MonoTime pausedAt;
+
+    @property bool paused() const { return pausedAt != MonoTime.init; }
+
+    package bool setPaused(bool enable)
+    {
+        if ((status != BattlegroundStatus.waitJoin && status != BattlegroundStatus.inProgress) || endingPending)
+            return false;
+        if (enable == paused)
+            return true;
+
+        const now = context.clock();
+        if (enable)
+            pausedAt = now;
+        else
+        {
+            const elapsed = now - pausedAt;
+            made += elapsed;
+            foreach (ref powerUp; powerUps)
+                if (powerUp.readyAt != MonoTime.init)
+                    powerUp.readyAt += elapsed;
+            pausedAt = MonoTime.init;
+        }
+        checkpointDirty = true;
+        return true;
+    }
+
+    /// An optional tail keeps pre-pause match records readable.
+    package void transferPause(ref imported!"dmangos.world.battlegroundstate".BattlegroundState state)
+    {
+        if (state.writer !is null || !state.reader.empty)
+            state.transfer(pausedAt);
+    }
+
     package void recoveredAfterCrash()
     {
         const now = context.clock();
@@ -381,7 +415,7 @@ final class Battleground
     /// The time since it was made, as the status packet says it.
     @property uint sinceMs() const
     {
-        return cast(uint)(context.clock() - made).total!"msecs";
+        return cast(uint)((paused ? pausedAt : context.clock()) - made).total!"msecs";
     }
 
     /// The copy's map id.
@@ -494,7 +528,7 @@ final class Battleground
     /// The time to the spirit guides' next pulse (`SMSG_AREA_SPIRIT_HEALER_TIME`).
     @property Duration untilSpiritHeal() const
     {
-        const since = (context.clock() - made).total!"msecs" % spiritHealInterval.total!"msecs";
+        const since = sinceMs % spiritHealInterval.total!"msecs";
         return (spiritHealInterval.total!"msecs" - since).msecs;
     }
 
@@ -507,7 +541,8 @@ final class Battleground
             return;
         }
         const now = context.clock();
-        spiritHealPulse(elapsed);
+        if (!paused)
+            spiritHealPulse(elapsed);
         // Those offline too long go.
         ulong[] gone;
         foreach (guid, ref m; members)
@@ -515,6 +550,12 @@ final class Battleground
                 gone ~= guid;
         foreach (guid; gone)
             removed(guid);
+
+        if (paused)
+        {
+            closeIfEmpty(now);
+            return;
+        }
 
         final switch (status)
         {
@@ -555,7 +596,7 @@ final class Battleground
     {
         import dmangos.log : info;
 
-        if (status != BattlegroundStatus.waitJoin)
+        if (status != BattlegroundStatus.waitJoin || paused)
             return;
         said = 3;
         startLeft = Duration.zero;
@@ -1139,7 +1180,7 @@ final class Battleground
 
     package bool takePowerUp(Map map, GameObject pickup, ulong member)
     {
-        if (status != BattlegroundStatus.inProgress || !memberAlive(member) || !context.canWrite()
+        if (paused || status != BattlegroundStatus.inProgress || !memberAlive(member) || !context.canWrite()
             || !powerUpAvailable(pickup.spawn.guid) || map.gameObjectAt(pickup.guid) !is pickup)
             return false;
         const delay = pickup.spawn.respawnSeconds > 0 ? pickup.spawn.respawnSeconds : 180;
@@ -2144,7 +2185,6 @@ mixin template BattlegroundHandlers()
      */
     package void leaveBattleground(bool teleport)
     {
-        import dmangos.auth.accounts : AccountLevel;
         import dmangos.world.spellcast : SpellTargets, TargetFlags;
 
         if (battleground_.instance == 0)
@@ -2152,7 +2192,7 @@ mixin template BattlegroundHandlers()
         bool deserted;
         if (auto copy = context.battlegrounds.find(battleground_.instance))
         {
-            deserted = copy.deserting && security < AccountLevel.gameMaster && context.config.battlegroundCastDeserter;
+            deserted = copy.deserting && !allowsStaff("staff.game_master") && context.config.battlegroundCastDeserter;
             leaveTeamRaid(copy, battleground_.team);
             copy.removed(player.guid);
         }
@@ -3229,6 +3269,8 @@ unittest
 
     auto db = newDatabase();
     auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
     auto gm = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.gameMaster);
     gm.read();
     auto copy = enterWarsong(context, [&gm], [7], [0]);
@@ -3240,6 +3282,21 @@ unittest
     assert(copy.worldStates[9999] == 42 && gm.read().opcodesOf.canFind(Opcode.SMSG_UPDATE_WORLD_STATE));
     gm.say(".battleground playsound 3439");
     assert(gm.read().opcodesOf.canFind(Opcode.SMSG_PLAY_SOUND));
+
+    gm.say(".bg pause on");
+    assert(copy.paused);
+    const pausedAt = copy.sinceMs;
+    now += 10.seconds;
+    copy.tick(10.seconds);
+    assert(copy.sinceMs == pausedAt);
+    auto successor = newCreationContext(db);
+    successor.clock = () => now;
+    successor.restoreBattleground(copy.mapId, copy.instance, context.snapshotBattleground(copy));
+    auto restored = successor.battlegrounds.find(copy.instance);
+    assert(restored.paused && restored.sinceMs == pausedAt && restored.worldStates[9999] == 42);
+    assert(restored.setPaused(false));
+    now += 1.seconds;
+    assert(restored.sinceMs == pausedAt + 1000);
 }
 
 /// A group queues as one: every member gets the slot; one already queued keeps the group out.

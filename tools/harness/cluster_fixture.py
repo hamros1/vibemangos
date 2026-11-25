@@ -77,6 +77,10 @@ class ClusterFixture:
         return subprocess.run([*args, "-e", sql], env=self.mysql_env, check=True,
                               stdout=subprocess.PIPE, text=True).stdout.strip()
 
+    def grant_admins(self, login):
+        self.query("INSERT IGNORE INTO dmangos_gm_enrollment SELECT id FROM account; "
+                   "INSERT IGNORE INTO dmangos_gm_account_role SELECT id, 'administrator' FROM account", login)
+
     def fresh_schema(self, label, template):
         name = self.directory.name.replace("-", "_") + "_" + label
         self.query(f"CREATE DATABASE `{name}`")

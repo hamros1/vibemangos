@@ -358,14 +358,15 @@ TestClient loggedIn(WorldContext context, MemoryWorldDatabase db, uint guid, str
     void delegate(ref CharacterData) setup = null)
 {
     import std.uni : toUpper;
+    import dmangos.auth.staffroles : roleForRank;
 
     // The account is created in the login database too, so GM commands find it under the same id.
     WorldAccount account = db.accounts["PLAYER"];
     account.username = name.toUpper;
-    account.level = level;
     const existing = context.accounts.findAccount(account.username);
-    account.id = existing.isNull ? context.accounts.createAccount(account.username, "test", level).id : existing.get.id;
+    account.id = existing.isNull ? context.accounts.createAccount(account.username, "test", roleForRank(level)).id : existing.get.id;
     db.accounts[account.username] = account;
+    db.gmAccessRows[account.id] = context.accounts.staffAccessFor(account.id);
     CharacterData c;
     c.guid = guid;
     c.account = account.id;

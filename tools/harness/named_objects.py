@@ -109,7 +109,7 @@ def run(fixture, abrupt=False):
     password = "LOCALMORTARTEST"
     for account in ("MORTARCASTER", "MORTARSPAWN"):
         subprocess.run([*auth, "account", "create", account, password], cwd=fixture.directory, check=True, timeout=10)
-    fixture.query("UPDATE account SET gmlevel = 3", login)  # the fixture's two test accounts
+    fixture.grant_admins(login)  # the fixture's two test accounts
     fixture.start("auth", auth)
     wait_for("the login server", lambda: "listening on" in fixture.log("auth"), 10)
 

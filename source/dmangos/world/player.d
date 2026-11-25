@@ -1036,7 +1036,7 @@ final class Player : InventoryOwner
         }
     }
 
-    /// The c permission grants languages for this session without writing character_skills.
+    /// The staff.support capability grants languages for this session without writing character_skills.
     package void learnGmLanguages()
     {
         import dmangos.world.opcodes : languageSkills;

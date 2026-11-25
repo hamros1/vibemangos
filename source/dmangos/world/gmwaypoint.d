@@ -6,10 +6,10 @@ mixin template WaypointCommands()
     import std.algorithm.searching : countUntil;
     import std.algorithm.sorting : sort;
     import std.format : format;
-    import dmangos.world.commands : MSG_COLOR_LIGHTBLUE;
+    import dmangos.world.commands : ChatColor, colored;
     import dmangos.world.creature : Creature, TempSpawnType;
     import dmangos.mysql : DatabaseException;
-    import dmangos.world.motion : MotionType, WaypointNode;
+    import dmangos.world.motion : MotionType, WaypointGait, WaypointNode;
     import dmangos.world.objects : temporaryCounterStart;
 
 private:
@@ -39,9 +39,17 @@ private:
 
     private void showWaypoint(const ref WaypointNode node)
     {
-        systemMessage(format!"%sPoint %s|r  ·  %.3f, %.3f, %.3f  ·  Wait %s ms%s"
-            (MSG_COLOR_LIGHTBLUE, node.point, node.x, node.y, node.z, node.delay,
-                node.scriptId ? format!"  ·  Script %s"(node.scriptId) : ""));
+        string details;
+        if (node.gait != WaypointGait.default_)
+            details ~= format!"  ·  %s"(node.gait);
+        if (node.scriptId)
+            details ~= format!"  ·  Script %s"(node.scriptId);
+        if (node.emote)
+            details ~= format!"  ·  Emote %s"(node.emote);
+        if (node.model)
+            details ~= format!"  ·  Model %s"(node.model);
+        systemMessage(format!"%s  ·  %.3f, %.3f, %.3f  ·  Wait %s ms%s"
+            (colored(ChatColor.sky, format!"Point %s"(node.point)), node.x, node.y, node.z, node.delay, details));
     }
 
     bool handleWPShowCommand()
@@ -121,15 +129,89 @@ private:
 
     bool handleWPAddCommand(uint waitMs = 0)
     {
-        if (waypointTarget())
+        return addDraftPoint(waitMs, WaypointGait.default_);
+    }
+
+    bool handleWPAddFlyCommand(uint waitMs = 0)
+    {
+        return addDraftPoint(waitMs, WaypointGait.fly);
+    }
+
+    private bool addDraftPoint(uint waitMs, WaypointGait gait)
+    {
+        auto spawn = waypointTarget();
+        if (spawn is null)
+            return true;
+        if (gait == WaypointGait.fly && !(spawn.template_.inhabitType & 4))
         {
-            const at = player.position;
-            if (!context.client.isValidMapCoord(map.id, at.x, at.y, at.z)
-                || (waypointDraft.length && waypointDraft[$ - 1].point >= maxWaypointPoint))
-                return false;
-            const point = waypointDraft.length ? waypointDraft[$ - 1].point + 1 : 1;
-            waypointDraft ~= WaypointNode(point, at.x, at.y, at.z, at.orientation, waitMs);
-            showWaypoint(waypointDraft[$ - 1]);
+            redSystemMessage("Select a creature whose template allows flight.");
+            return true;
+        }
+        const at = player.position;
+        if (!context.client.isValidMapCoord(map.id, at.x, at.y, at.z)
+            || (waypointDraft.length && waypointDraft[$ - 1].point >= maxWaypointPoint))
+            return false;
+        const point = waypointDraft.length ? waypointDraft[$ - 1].point + 1 : 1;
+        waypointDraft ~= WaypointNode(point, at.x, at.y, at.z, at.orientation, waitMs, 0, gait);
+        showWaypoint(waypointDraft[$ - 1]);
+        return true;
+    }
+
+    private WaypointNode* draftPoint(uint id)
+    {
+        if (waypointTarget() is null)
+            return null;
+        foreach (ref point; waypointDraft)
+            if (point.point == id)
+                return &point;
+        redSystemMessage("This point is not in the draft.");
+        return null;
+    }
+
+    bool handleWPGaitCommand(uint point, string mode)
+    {
+        WaypointGait gait;
+        switch (mode)
+        {
+        case "default": gait = WaypointGait.default_; break;
+        case "walk": gait = WaypointGait.walk; break;
+        case "run": gait = WaypointGait.run; break;
+        default: return false;
+        }
+        if (auto node = draftPoint(point))
+        {
+            node.gait = gait;
+            showWaypoint(*node);
+        }
+        return true;
+    }
+
+    bool handleWPEmoteCommand(uint point, uint emote)
+    {
+        if (emote && context.client.emotes.lookup(emote) is null)
+        {
+            redSystemMessage("Unknown emote ID.");
+            return true;
+        }
+        if (auto node = draftPoint(point))
+        {
+            node.emote = emote;
+            showWaypoint(*node);
+        }
+        return true;
+    }
+
+    bool handleWPModelCommand(uint point, uint display)
+    {
+        if (display && context.client.creatureDisplays.lookup(display) is null)
+        {
+            redSystemMessage("Unknown display ID.");
+            return true;
+        }
+        if (auto node = draftPoint(point))
+        {
+            node.model = display;
+            showWaypoint(*node);
         }
         return true;
     }

@@ -49,8 +49,8 @@ describes how players use the systems available today.
   The Suppression Room keeps disarmed device timers and Lashlayer's room-wide shutdown.
   See [dungeon failover](CLUSTER.md#dungeons-and-battlegrounds) for coverage across instances.
 * **GM commands.** The [command reference](COMMANDS.md#edit-a-route-or-trainer) documents native
-  waypoint and trainer editing and quest catalog reload. Legacy entries still pending include
-  battleground pause, arena administration and player flight.
+  waypoint and trainer editing, NPC formations, battleground pause and quest catalog reload.
+  The remaining unavailable entries require client support for later game features.
 
 Outdoor database scripts share world-state variables by realm and map. Delayed steps commit
 their variable changes with the script cursor, and ClassicDB's binary expressions can gate spawn
@@ -59,7 +59,7 @@ and use gravity and Slow Fall on descent.
 
 Offline group leaders are replaced after `offline_group_leader_delay` seconds (300 by default,
 0 disables it). Mixed-faction group members see one another as friendly when enabled. Channels
-validate spoken languages, and the GM `c` permission grants the language skills for the session.
+validate spoken languages, and the `staff.support` capability grants the language skills for the session.
 Feign Death shows a timer and kills the hunter if an uninterrupted successful feign expires.
 
 ## Next milestones

@@ -40,7 +40,7 @@ import dmangos.world.gmcheat : CheatCommands;
 import dmangos.world.gmguild : GuildAdminCommands;
 import dmangos.world.gmticket : TicketCommands;
 import dmangos.world.gmwaypoint : WaypointCommands;
-import dmangos.world.gmaccess : AccessCommands, GmAccess, gmCapability, readGmAccess;
+import dmangos.world.gmaccess : AccessCommands, GmAccess, readGmAccess;
 import dmangos.world.gmtargets : GmTargets;
 import dmangos.world.combathandlers : CombatHandlers;
 import dmangos.world.death : DeathHandlers;
@@ -74,6 +74,7 @@ import dmangos.world.loot : Looter;
 import dmangos.world.combat : Fighter, MeleeDamage;
 import dmangos.world.relations : Relating;
 import dmangos.world.gmdebug : DebugCommands;
+import dmangos.world.gmcontent : ContentCommands;
 import dmangos.world.gmhelp : SupportCommands;
 import dmangos.world.gmstaff : StaffCommands;
 import dmangos.world.gmworld : WorldAdminCommands;
@@ -732,41 +733,26 @@ final class Character : OnlinePlayer, Looter
 
 
 
-    /// Rank used by staff presence and the who list.
+    /// Rank used only by the staff presence and who-list displays.
     @property AccountLevel security() const
     {
-        return gmAccess.rank(account.level);
+        return gmAccess.rank();
     }
 
-    /// Staff status displayed in player searches and carried on the existing cluster wire.
-    @property string permissions() const
+    @property string staffRoles() const
     {
-        if (!gmAccess.managed)
-            return context.config.gmPermissions.forLevel(account.level);
         import std.array : join;
-        return hasPermissions ? gmAccess.roles.join(", ") : null;
+        return gmAccess.roles.join(", ");
     }
 
-    /// Whether the account may use a command of the letter `group`.
-    bool canUseCommand(char group) const
+    bool allowsStaff(string capability) const
     {
-        import dmangos.world.commands : canUse = canUseCommand;
-
-        return gmAccess.managed ? gmAccess.allows(gmCapability(group)) : canUse(permissions, group);
+        return gmAccess.allows(capability);
     }
 
-    /// Whether the account has any command permission.
-    @property bool hasPermissions() const
+    @property bool isStaff() const
     {
-        return gmAccess.managed ? gmAccess.allows("staff.access") : permissions.length > 0;
-    }
-
-    /// Whether the account is a game master (has `a`).
-    @property bool hasGMPermissions() const
-    {
-        import dmangos.world.commands : hasGM = hasGMPermissions;
-
-        return gmAccess.managed ? gmAccess.allows("staff.game_master") : hasGM(permissions);
+        return allowsStaff("staff.access");
     }
 
     /// Between `SMSG_NEW_WORLD` and the client's `MSG_MOVE_WORLDPORT_ACK`.
@@ -976,6 +962,7 @@ private:
     mixin GuildAdminCommands;
     mixin TicketCommands;
     mixin DebugCommands;
+    mixin ContentCommands;
 }
 
 version (unittest)

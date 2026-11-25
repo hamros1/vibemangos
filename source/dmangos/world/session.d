@@ -746,6 +746,8 @@ package:
     @Handles(Opcode.CMSG_PING, WorldState.characterScreen, WorldState.inWorld)
     void handlePing(const ClientPing ping)
     {
+        import dmangos.world.gmaccess : readGmAccess;
+
         const now = context.clock();
         if (pinged)
         {
@@ -753,7 +755,8 @@ package:
             {
                 ++overspeedPings;
                 const limit = context.config.maxOverspeedPings;
-                if (limit && overspeedPings > limit && account.level == AccountLevel.player)
+                if (limit && overspeedPings > limit && !(playing is null
+                    ? readGmAccess(context.database, account.id).allows("staff.access") : playing.isStaff))
                 {
                     warning!"%s: '%s' kicked for over-speed pings"(remoteAddress, account.username);
                     return disconnect();

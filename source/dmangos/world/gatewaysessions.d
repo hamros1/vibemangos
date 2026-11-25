@@ -135,7 +135,6 @@ package mixin template GatewaySessions()
             const auth = route.client.account;
             payload.put(cast(uint) auth.username.length);
             payload.putBytes(cast(const(ubyte)[]) auth.username);
-            payload.put(cast(ubyte) auth.level);
             payload.put(auth.muteTime);
             payload.put(route.client.build);
             payload.put(route.character);

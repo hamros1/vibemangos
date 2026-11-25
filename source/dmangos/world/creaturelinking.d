@@ -52,6 +52,9 @@ struct CreatureLink
     uint masterEntry; /// a template link's master entry
     uint flags;
     uint range;       /// a template link's search range from the master's spawn point (0: any)
+    bool hasOffset;   /// a GM-authored formation supplies its own offset
+    float distance = 0;
+    float angle = 0;
 }
 
 /// The links, by slave and by master.
@@ -65,8 +68,28 @@ final class CreatureLinks
     /// Adds a `creature_linking` row.
     void addGuid(uint slave, uint master, uint flags)
     {
-        bySlaveGuid[slave] = CreatureLink(master, 0, flags, 0);
-        slavesOfGuid[master] ~= slave;
+        setGuid(slave, CreatureLink(master, 0, flags, 0));
+    }
+
+    void setGuid(uint slave, CreatureLink link)
+    {
+        import std.algorithm.mutation : remove;
+
+        if (const previous = slave in bySlaveGuid)
+        {
+            const leader = previous.masterGuid;
+            auto remaining = slavesOfGuid[leader].remove!(guid => guid == slave);
+            if (remaining.length)
+                slavesOfGuid[leader] = remaining;
+            else
+                slavesOfGuid.remove(leader);
+            bySlaveGuid.remove(slave);
+        }
+        if (link.masterGuid)
+        {
+            bySlaveGuid[slave] = link;
+            slavesOfGuid[link.masterGuid] ~= slave;
+        }
     }
 
     /// Adds a `creature_linking_template` row.

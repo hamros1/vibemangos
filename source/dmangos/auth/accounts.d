@@ -24,7 +24,7 @@ enum maxAccountNameLength = 16;
 /// Longest password, in characters.
 enum maxPasswordLength = 16;
 
-/// Security level, stored in `account.gmlevel`.
+/// Staff rank projected from role capabilities for visibility and character creation.
 enum AccountLevel : ubyte
 {
     player,        /// 0
@@ -33,10 +33,10 @@ enum AccountLevel : ubyte
     administrator, /// 3
 }
 
-/// Converts a stored `gmlevel`, capping it at administrator.
-AccountLevel toAccountLevel(uint gmlevel) pure nothrow @nogc @safe
+/// Decodes a realm’s configured staff rank threshold.
+AccountLevel toAccountLevel(uint rank) pure nothrow @nogc @safe
 {
-    return gmlevel >= AccountLevel.administrator ? AccountLevel.administrator : cast(AccountLevel) gmlevel;
+    return rank >= AccountLevel.administrator ? AccountLevel.administrator : cast(AccountLevel) rank;
 }
 
 /// Whether an account may log in, according to `account_banned`.
@@ -52,7 +52,6 @@ struct Account
 {
     uint id;
     string username;
-    AccountLevel level;
     ubyte[saltLength] salt;
     ubyte[keyLength] verifier;
     bool credentialsValid;  /// False if the stored `s`/`v` cannot be decoded.

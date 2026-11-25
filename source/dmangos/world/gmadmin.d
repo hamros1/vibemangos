@@ -266,39 +266,6 @@ private:
         return connection is null ? null : connection.inWorld;
     }
 
-    /// The `account.gmlevel` a GM permission string stands for: a level number as is, otherwise
-    /// the level whose `gm_permissions` string has the same letters. -1 if none has.
-    int levelForPermissions(string flags)
-    {
-        if (flags.length == 1 && flags[0] >= '0' && flags[0] <= '3')
-            return flags[0] - '0';
-        const letters = loadSecurity(flags);
-        foreach (level; 0 .. 4)
-            if (context.config.gmPermissions.forLevel(level) == letters)
-                return level;
-        return -1;
-    }
-
-    bool handleAccountLevelCommand(string account, string gmlevel)
-    {
-        const level = levelForPermissions(gmlevel);
-        if (level < 0)
-        {
-            redSystemMessage(format!"No account level has the permissions '%s' (see gm_permissions)."(gmlevel));
-            return true;
-        }
-        if (!context.accounts.findAccount(account).isNull)
-        {
-            context.accounts.setLevel(account, cast(AccountLevel) level);
-            if (auto session = sessionOfAccountName(account))
-                session.account.level = cast(AccountLevel) level;
-        }
-        greenSystemMessage(format!("Account '%s' level has been updated to '%s'. The change will be effective "
-            ~ "immediately.")(account, gmlevel));
-        gmLog(format!"set account %s flags to %s"(account, gmlevel));
-        return true;
-    }
-
     bool handleAccountMuteCommand(string name, string duration)
     {
         const period = getTimePeriodFromString(duration);
@@ -482,9 +449,9 @@ private:
         else if (elsewhere !is null)
             gmElsewhere(name, GmRemoteOp.banKick);
         gmLog(format!"banned %s, reason %s, for %s"(name, reason, convertTimeStampToString(banTime)));
-        const message = format!"%sGM: %s has been banned by %s for %s. Reason: %s"(MSG_COLOR_RED, name,
+        const message = format!"GM: %s has been banned by %s for %s. Reason: %s"(name,
             player.data.name, convertTimeStampToString(banTime), reason);
-        sendWorldText(message.length > 199 ? message[0 .. 199] : message);
+        sendWorldText(colored(ChatColor.red, message.length > 187 ? message[0 .. 187] : message));
         return true;
     }
 
@@ -574,7 +541,6 @@ private:
             {
                 // Settings read when the server starts (databases, port, ...) keep their values until a restart.
                 context.config = loadWorldConfig(context.configPath);
-                context.loadCommandOverrides();
                 info!"configuration %s read again"(context.configPath);
             }
             catch (Exception e)
@@ -591,8 +557,8 @@ private:
         if (table.length < 3)
             return false;
         const started = MonoTime.currTime;
-        sendWorldText(format!("%s%s initiated server-side reload of table `%s`. The server may experience some lag "
-            ~ "while this occurs.")(MSG_COLOR_LIGHTRED, player.data.name, table));
+        sendWorldText(colored(ChatColor.softRed,
+            format!"%s started reloading table %s. The server may lag briefly."(player.data.name, table)));
         bool reloaded;
         // The tables this server keeps in memory and can read again.
         if (sicmp(table, "areatrigger_teleport") == 0 || sicmp(table, "game_tele") == 0)
@@ -607,10 +573,10 @@ private:
             reloaded = true;
         }
         if (!reloaded)
-            sendWorldText(MSG_COLOR_LIGHTRED ~ "Database reload failed.");
+            sendWorldText(colored(ChatColor.softRed, "Database reload failed."));
         else
-            sendWorldText(format!"%sDatabase reload completed in %u ms."(MSG_COLOR_LIGHTBLUE,
-                (MonoTime.currTime - started).total!"msecs"));
+            sendWorldText(colored(ChatColor.sky, format!"Database reload completed in %u ms."(
+                (MonoTime.currTime - started).total!"msecs")));
         gmLog("reloaded table " ~ table);
         return true;
     }
@@ -628,8 +594,7 @@ private:
     bool handleShutdownCommand(uint delay = 5)
     {
         // A bare `.server shutdown` waits the 5 seconds its help promises.
-        sendWorldText(format!"%sServer shutdown initiated by %s, shutting down in %u seconds."(MSG_COLOR_LIGHTBLUE,
-            player.data.name, delay));
+        sendWorldText(colored(ChatColor.sky, format!"%s scheduled a server shutdown in %u seconds."(player.data.name, delay)));
         gmLog(format!"initiated server shutdown timer %u sec"(delay));
         startShutdown(delay, false);
         return true;
@@ -637,8 +602,7 @@ private:
 
     bool handleShutdownRestartCommand(uint delay = 5)
     {
-        sendWorldText(format!"%sServer restart initiated by %s, shutting down in %u seconds."(MSG_COLOR_LIGHTBLUE,
-            player.data.name, delay));
+        sendWorldText(colored(ChatColor.sky, format!"%s scheduled a server restart in %u seconds."(player.data.name, delay)));
         gmLog(format!"initiated server restart timer %u sec"(delay));
         startShutdown(delay, true);
         return true;
@@ -648,8 +612,8 @@ private:
     {
         if (context.shutdown.isNull)
             return false;
-        sendWorldText(format!"%sServer %s cancelled by %s."(MSG_COLOR_LIGHTBLUE,
-            context.shutdown.get.restart ? "Restart" : "Shutdown", player.data.name));
+        sendWorldText(colored(ChatColor.sky, format!"%s cancelled the server %s."(player.data.name,
+            context.shutdown.get.restart ? "restart" : "shutdown")));
         context.shutdown.nullify();
         return true;
     }
@@ -1254,13 +1218,12 @@ private:
     void sendHighlightedName(string prefix, string fullName, string search, uint id)
     {
         const offset = fullName.toLower.indexOf(search);
-        string text = format!"%s %u: %s"(prefix, id, MSG_COLOR_WHITE);
-        if (offset < 0)
-            text ~= fullName;
-        else
-            text ~= fullName[0 .. offset] ~ MSG_COLOR_LIGHTRED ~ fullName[offset .. offset + search.length]
-                ~ MSG_COLOR_WHITE ~ fullName[offset + search.length .. $];
-        systemMessage(text);
+        string name = colored(ChatColor.white, fullName);
+        if (offset >= 0 && offset + search.length <= fullName.length)
+            name = colored(ChatColor.white, fullName[0 .. offset])
+                ~ colored(ChatColor.softRed, fullName[offset .. offset + search.length])
+                ~ colored(ChatColor.white, fullName[offset + search.length .. $]);
+        systemMessage(format!"%s %u: %s"(prefix, id, name));
     }
 
     /// The lookups that need four letters, and stop at 25 results.
@@ -1269,7 +1232,7 @@ private:
         const x = search.toLower;
         if (x.length < 4)
         {
-            redSystemMessage("Your search string must be at least 5 characters long.");
+            redSystemMessage("Enter at least four characters to search.");
             return true;
         }
         void say(string text)
@@ -1360,7 +1323,7 @@ private:
         const x = search.text.toLower;
         if (x.length < 4)
         {
-            redSystemMessage("Your search string must be at least 5 characters long.");
+            redSystemMessage("Enter at least four characters to search.");
             return true;
         }
         greenSystemMessage(format!"Starting search of faction `%s`..."(x));
@@ -1422,15 +1385,15 @@ private:
         uint count;
         foreach (row; context.database.lookup(LookupTable.gameObject, x, 50))
         {
-            sendMultilineMessage(format!"|cfffff000Object %u|cffFFFFFF: %s"(row.id, row.name));
+            systemMessage(colored(ChatColor.gold, format!"Object %u"(row.id)) ~ " · " ~ row.name);
             if (++count >= 50)
             {
-                redSystemMessage("More than 50 results returned. aborting.");
+                redSystemMessage("Showing the first 50 matches.");
                 break;
             }
         }
         if (count == 0)
-            sendMultilineMessage("|cff00ccffNo matches found.");
+            blueSystemMessage("No matches found.");
         blueSystemMessage(format!"Search completed in %u ms."((MonoTime.currTime - started).total!"msecs"));
         return true;
     }
@@ -1441,7 +1404,7 @@ private:
         const x = search.toLower;
         if (x.length < 4)
         {
-            redSystemMessage("Your search string must be at least 5 characters long.");
+            redSystemMessage("Enter at least four characters to search.");
             return true;
         }
         blueSystemMessage(format!"Starting search of quests `%s`..."(x));
@@ -1449,7 +1412,7 @@ private:
         uint count;
         foreach (row; context.database.lookup(LookupTable.quest, x, 25))
         {
-            sendMultilineMessage(format!"|cff00ccff%u: %s\n"(row.id, row.name));
+            blueSystemMessage(format!"%u · %s"(row.id, row.name));
             if (++count == 25)
             {
                 redSystemMessage("More than 25 results returned. aborting.");
@@ -1457,7 +1420,7 @@ private:
             }
         }
         if (count == 0)
-            sendMultilineMessage("|cff00ccffNo matches found.\n\n");
+            blueSystemMessage("No matches found.");
         blueSystemMessage(format!"Search completed in %u ms."((MonoTime.currTime - started).total!"msecs"));
         return true;
     }
@@ -1486,8 +1449,8 @@ private:
             v.get!UNIT_FIELD_RESISTANCES(2), v.get!UNIT_FIELD_RESISTANCES(3), v.get!UNIT_FIELD_RESISTANCES(4),
             v.get!UNIT_FIELD_RESISTANCES(5), v.get!UNIT_FIELD_RESISTANCES(6)));
         systemMessage(format!"Damage (min/max): %f/%f"(v.get!UNIT_FIELD_MINDAMAGE, v.get!UNIT_FIELD_MAXDAMAGE));
-        colorSystemMessage(MSG_COLOR_RED, format!"Entry ID: %d"(v.get!OBJECT_FIELD_ENTRY));
-        colorSystemMessage(MSG_COLOR_RED, format!"SQL Entry ID: %d"(counterOf(crt.guid)));
+        colorSystemMessage(ChatColor.red, format!"Entry ID: %d"(v.get!OBJECT_FIELD_ENTRY));
+        colorSystemMessage(ChatColor.red, format!"SQL Entry ID: %d"(counterOf(crt.guid)));
         const bytes = v.get!UNIT_FIELD_BYTES_0;
         systemMessage(format!"UNIT_FIELD_BYTES_0 are %s %s %s %s"(bytes & 0xFF, bytes >> 8 & 0xFF, bytes >> 16 & 0xFF,
             bytes >> 24));
@@ -1502,7 +1465,7 @@ unittest
     import dmangos.auth.accounts : AccountLevel;
     import dmangos.dbc : buildDbc;
     import dmangos.world.clientdata : factionFormat;
-    import dmangos.world.commands : MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE;
+    import dmangos.world.commands : ChatColor;
     import dmangos.world.movement : Position;
     import dmangos.world.opcodes;
     import dmangos.world.packets : ClientGuid;
@@ -1524,12 +1487,12 @@ unittest
     const me = cast(Player) anduin.session.character;
 
     gm.say(".character setstanding 72 1000");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "Setting standing of 72 to 1000 on Anduin.|r"]);
+    assert(systemMessages(gm.read()) == [ChatColor.sky ~ "Setting standing of 72 to 1000 on Anduin.|r"]);
     assert(me.reputation.standingWith(72) == 1000);
-    assert(systemMessages(anduin.read()).canFind(MSG_COLOR_GREEN ~ "Varian set your standing of faction 72 to 1000.|r"));
+    assert(systemMessages(anduin.read()).canFind(ChatColor.green ~ "Varian set your standing of faction 72 to 1000.|r"));
     gm.say(".character getstanding 72");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_GREEN ~ "Reputation for faction 72:|r", "Base Standing: 0",
-        MSG_COLOR_LIGHTBLUE ~ "Standing: 1000|r"]);
+    assert(systemMessages(gm.read()) == [ChatColor.green ~ "Reputation for faction 72:|r", "Base Standing: 0",
+        ChatColor.sky ~ "Standing: 1000|r"]);
     gm.say(".character resetreputation");
     assert(systemMessages(gm.read()) == ["Done. Relog for changes to take effect."]);
     assert(me.reputation.standingWith(72) == 0);
@@ -1541,7 +1504,7 @@ unittest
     import std.algorithm.searching : canFind;
     import dmangos.auth.accounts : AccountLevel;
     import dmangos.world.auras : AuraType, makeAura;
-    import dmangos.world.commands : MSG_COLOR_LIGHTBLUE, MSG_COLOR_LIGHTRED;
+    import dmangos.world.commands : ChatColor;
     import dmangos.world.movement : Position;
     import dmangos.world.opcodes;
     import dmangos.world.packets : ClientGuid;
@@ -1566,20 +1529,20 @@ unittest
     auto victim = cast(Player) anduin.session.character;
 
     gm.say(".admin castall 7");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "No spellid specified.|r"], "one figure is too short");
+    assert(systemMessages(gm.read()) == [ChatColor.softRed ~ "No spellid specified.|r"], "one figure is too short");
     gm.say(".admin castall 95999");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Invalid spell specified.|r"]);
+    assert(systemMessages(gm.read()) == [ChatColor.softRed ~ "Invalid spell specified.|r"]);
     gm.say(".admin castall 95901");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Learn spell specified.|r"]);
+    assert(systemMessages(gm.read()) == [ChatColor.softRed ~ "Learn spell specified.|r"]);
     gm.say(".admin castall 95900");
-    assert(systemMessages(gm.read()).canFind(MSG_COLOR_LIGHTBLUE ~ "Casted spell 95900 on all players!|r"));
+    assert(systemMessages(gm.read()).canFind(ChatColor.sky ~ "Casted spell 95900 on all players!|r"));
     assert(victim.auras.find(blessing) !is null && (cast(Player) gm.session.character).auras.find(blessing) !is null);
 
     // No weapon: unarmed (162), from 1 a step.
     gm.write(Opcode.CMSG_SET_SELECTION, ClientGuid(victim.guid));
     const unarmed = victim.skillValue(162);
     gm.say(".character increaseweaponskill 2");
-    assert(systemMessages(gm.read())[0] == MSG_COLOR_LIGHTBLUE ~ "Modifying skill line 162. Advancing 2 times.|r");
+    assert(systemMessages(gm.read())[0] == ChatColor.sky ~ "Modifying skill line 162. Advancing 2 times.|r");
     assert(unarmed[1] == 0 ? victim.skillValue(162)[0] == 1
         : victim.skillValue(162)[0] == (unarmed[0] + 2 < unarmed[1] ? unarmed[0] + 2 : unarmed[1]));
 
@@ -1593,7 +1556,7 @@ unittest
         assert(victim.knowsSpell(blessing) && victim.skillValue(164)[1] == 75);
         gm.say(".character resetspells");
         assert(systemMessages(gm.read()) == ["Reset spells of Anduin to level 1."]);
-        assert(systemMessages(anduin.read()).canFind(MSG_COLOR_LIGHTBLUE ~ "Varian reset all your spells to starting values.|r"));
+        assert(systemMessages(anduin.read()).canFind(ChatColor.sky ~ "Varian reset all your spells to starting values.|r"));
         assert(!victim.knowsSpell(blessing));
         {
             NewCharacter fresh;
@@ -1603,7 +1566,7 @@ unittest
                     assert(victim.knowsSpell(s.spell), "a new character's spells");
         }
         gm.say(".character resetskills");
-        assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "Reset skills to default.|r"]);
+        assert(systemMessages(gm.read()) == [ChatColor.sky ~ "Reset skills to default.|r"]);
         assert(victim.skillValue(164)[1] == 0 && victim.skillList().length > 0);
     }
 
@@ -1627,14 +1590,14 @@ unittest
     assert(victim.auras.find(sickness) !is null);
     gm.write(Opcode.CMSG_SET_SELECTION, ClientGuid(victim.guid));
     gm.say(".removesickness");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "Removed resurrection sickness.|r"]);
+    assert(systemMessages(gm.read()) == [ChatColor.sky ~ "Removed resurrection sickness.|r"]);
     assert(victim.auras.find(sickness) is null);
 }
 
 // `.guild create`, `members` and `disband` on the GM itself (nothing selected), in ArcEmu's words.
 unittest
 {
-    import dmangos.world.commands : MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE;
+    import dmangos.world.commands : ChatColor;
     import dmangos.world.testclient;
 
     auto db = newDatabase();
@@ -1642,17 +1605,17 @@ unittest
     auto gm = loggedIn(context, db, 7, "Jaina", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.gameMaster);
     gm.read();
     gm.say(".guild create Kirin Tor");
-    assert(systemMessages(gm.read()).canFind(MSG_COLOR_GREEN ~ "Guild created|r"));
+    assert(systemMessages(gm.read()).canFind(ChatColor.green ~ "Guild created|r"));
     auto g = context.guilds.named("Kirin Tor");
     assert(g !is null && g.leader == 7);
     gm.say(".guild create Kirin Tor");
     assert(systemMessages(gm.read()).canFind!(m => m.canFind("is already in a guild.")));
     gm.say(".guild members");
     const members = systemMessages(gm.read());
-    assert(members.canFind(MSG_COLOR_GREEN ~ "Now showing guild members for Kirin Tor|r"));
+    assert(members.canFind(ChatColor.green ~ "Now showing guild members for Kirin Tor|r"));
     assert(members.canFind!(m => m.canFind("Jaina (Rank: ")));
     gm.say(".guild disband");
-    assert(systemMessages(gm.read()).canFind(MSG_COLOR_GREEN ~ "Disbanded Guild: Kirin Tor|r"));
+    assert(systemMessages(gm.read()).canFind(ChatColor.green ~ "Disbanded Guild: Kirin Tor|r"));
     assert(context.guilds.named("Kirin Tor") is null);
     gm.say(".guild create Dal4ran");
     assert(systemMessages(gm.read()).canFind!(m => m.canFind("Error, name can only contain chars A-Z and a-z.")));

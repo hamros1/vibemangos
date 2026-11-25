@@ -3,9 +3,10 @@
  *
  * ---
  * authserver [--config FILE]                                  run the server
- * authserver [--config FILE] account create NAME PASSWORD [LEVEL]
+ * authserver [--config FILE] account create NAME PASSWORD [ROLE]
  * authserver [--config FILE] account password NAME PASSWORD
- * authserver [--config FILE] account level NAME LEVEL
+ * authserver [--config FILE] account grant NAME ROLE
+ * authserver [--config FILE] account revoke NAME ROLE
  * authserver [--config FILE] account ban NAME [DAYS] [REASON]
  * authserver [--config FILE] account unban NAME
  * authserver [--config FILE] account list
@@ -36,9 +37,10 @@ private enum usage = "dmangos login server for 1.12.x clients, on a CMaNGOS real
 
 Usage:
   authserver [--config FILE]
-  authserver [--config FILE] account create NAME PASSWORD [player|moderator|gameMaster|administrator]
+  authserver [--config FILE] account create NAME PASSWORD [ROLE]
   authserver [--config FILE] account password NAME PASSWORD
-  authserver [--config FILE] account level NAME LEVEL
+  authserver [--config FILE] account grant NAME ROLE
+  authserver [--config FILE] account revoke NAME ROLE
   authserver [--config FILE] account ban NAME [DAYS] [REASON]     (no DAYS, or 0: permanent)
   authserver [--config FILE] account unban NAME
   authserver [--config FILE] account list
@@ -127,7 +129,8 @@ private int runCommand(LoginDatabase database, string[] args)
     Command[string] commands = [
         "account create": &createAccount,
         "account password": &changePassword,
-        "account level": &changeLevel,
+        "account grant": &changeRole!true,
+        "account revoke": &changeRole!false,
         "account ban": &banAccount,
         "account unban": &unbanAccount,
         "account list": &listAccounts,
@@ -143,10 +146,10 @@ private int runCommand(LoginDatabase database, string[] args)
 
 private int createAccount(LoginDatabase database, string[] args)
 {
-    enforce(args.length == 2 || args.length == 3, "usage: account create NAME PASSWORD [LEVEL]");
-    const level = args.length == 3 ? args[2].to!AccountLevel : AccountLevel.player;
-    const account = database.createAccount(args[0], args[1], level);
-    writefln("created account %s (id %s, level %s)", account.username, account.id, account.level);
+    enforce(args.length == 2 || args.length == 3, "usage: account create NAME PASSWORD [ROLE]");
+    const role = args.length == 3 ? args[2] : null;
+    const account = database.createAccount(args[0], args[1], role);
+    writefln("Created account %s (ID %s).", account.username, account.id);
     return 0;
 }
 
@@ -158,11 +161,12 @@ private int changePassword(LoginDatabase database, string[] args)
     return 0;
 }
 
-private int changeLevel(LoginDatabase database, string[] args)
+private int changeRole(bool grant)(LoginDatabase database, string[] args)
 {
-    enforce(args.length == 2, "usage: account level NAME LEVEL (player, moderator, gameMaster, administrator)");
-    database.setLevel(args[0], args[1].to!AccountLevel);
-    writefln("%s is now %s", canonicalAccountName(args[0]), args[1]);
+    enum action = grant ? "grant" : "revoke";
+    enforce(args.length == 2, "usage: account " ~ action ~ " NAME ROLE");
+    enforce(database.changeRole(args[0], args[1], grant), "The staff role could not be updated.");
+    writefln("Updated %s’s %s role.", canonicalAccountName(args[0]), args[1]);
     return 0;
 }
 
@@ -213,10 +217,12 @@ private int unbanAccount(LoginDatabase database, string[] args)
 private int listAccounts(LoginDatabase database, string[] args)
 {
     enforce(args.length == 0, "usage: account list");
-    writefln("%5s  %-16s  %-13s  %-9s  %-15s  %s", "id", "name", "level", "ban", "locked to", "failed logins");
+    import std.array : join;
+    writefln("%5s  %-16s  %-9s  %-15s  %s  %s", "id", "name", "ban", "locked to", "failed logins", "roles");
     foreach (account; database.listAccounts())
-        writefln("%5s  %-16s  %-13s  %-9s  %-15s  %s", account.id, account.username, account.level,
-            account.ban, account.locked ? account.lockedIp : "-", account.failedLogins);
+        writefln("%5s  %-16s  %-9s  %-15s  %s  %s", account.id, account.username,
+            account.ban, account.locked ? account.lockedIp : "-", account.failedLogins,
+            database.staffAccessFor(account.id).roles.join(", "));
     return 0;
 }
 

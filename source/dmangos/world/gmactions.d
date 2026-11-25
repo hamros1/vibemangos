@@ -200,11 +200,11 @@ private:
         toEveryone(Opcode.SMSG_MESSAGECHAT, chatMessage(ChatType.CHAT_MSG_SYSTEM, Language.LANG_UNIVERSAL, 0, text));
     }
 
-    /// A system message to everyone with the `u` permission.
+    /// A system message to staff announcement recipients.
     void sendGMWorldText(string text)
     {
         context.toEveryone(Opcode.SMSG_MESSAGECHAT, chatMessage(ChatType.CHAT_MSG_SYSTEM, Language.LANG_UNIVERSAL, 0,
-            text), 'u');
+            text), true);
     }
 
     /// `SMSG_AREA_TRIGGER_MESSAGE` to everyone, in the middle of the screen.

@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 119; // group baselines end with the active group IDs
+enum ushort protocolVersion = 120; // staff roles and named announcement audiences
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -737,9 +737,9 @@ struct PresenceEntry
     ubyte race, classId, level, gender;
     uint zone;
     uint flags;          /// `PresenceFlags`
-    ubyte security;      /// the account's level (the who list hides GMs from players above `gm_level_in_who_list`)
+    ubyte security;      /// staff rank for who-list visibility
     @LengthPrefix!ubyte string autoReply; /// while away or busy
-    @LengthPrefix!ubyte string permissions; /// the account's GM permission letters (`.gm list`)
+    @LengthPrefix!uint string staffRoles; /// role names shown by `.gm list`
 }
 
 /// The players the sender simulates that changed (`entries`) or left (`gone`).
@@ -770,7 +770,7 @@ struct WhisperMessage
     ulong to;
     ulong from;
     ubyte fromRace;
-    bool fromPermissions;
+    bool fromStaff;
     ubyte fromChatTag;
     @LengthPrefix!uint string text;
 }
@@ -883,7 +883,7 @@ struct ChannelCommand
     ulong guid;
     @LengthPrefix!uint string name;
     ubyte race;
-    bool moderateAll;      /// the `c` permission: moderates every channel
+    bool moderateAll;      /// permission to moderate user-created channels
     ubyte chatTag;
     ChannelOp op;
     @LengthPrefix!uint string channel;
@@ -900,7 +900,7 @@ struct GroupCommand
     ulong guid;
     @LengthPrefix!uint string name;
     ubyte race;
-    bool permissions;      /// any GM permission: invites across factions
+    bool staff;            /// staff access permits cross-faction invitations
     GroupOp op;
     ulong target;
     @LengthPrefix!uint string text;
@@ -954,14 +954,13 @@ struct MemberStatsRequest
     ulong member;
 }
 
-/// A packet for every player the receiver simulates (world texts); with `permission`, only for
-/// those who have that GM permission letter.
+/// A broadcast to players simulated by the receiving worker.
 struct ToEveryone
 {
     enum type = MessageType.toEveryone;
 
     ushort opcode;
-    ubyte permission;
+    bool staffOnly; /// Limit delivery to staff announcement recipients.
     @LengthPrefix!uint ubyte[] body_;
 }
 
@@ -974,7 +973,7 @@ struct GmRemote
     GmRemoteOp op;
     ulong gm;
     @LengthPrefix!uint string gmName;
-    bool gmCanKickGms;       /// the GM has the `z` permission
+    bool gmCanKickGms;       /// the issuer has staff.admin
     ulong target;
     uint map;
     float x, y, z, orientation;
@@ -1390,7 +1389,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 119, recordedFingerprint = 0x96adaa77ba5757b1UL;
+private enum recordedVersion = 120, recordedFingerprint = 0x89c647e7ef3bc42fUL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

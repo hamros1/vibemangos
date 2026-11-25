@@ -18,7 +18,7 @@ struct WhisperFrom
 {
     ulong guid;
     ubyte race;
-    bool permissions;   /// GM permissions: any faction, past a GM's tag
+    bool staff;   /// GM permissions: any faction, past a GM's tag
     ubyte chatTag;
 }
 
@@ -33,16 +33,16 @@ void deliverWhisper(OnlinePlayer target, const WhisperFrom from, string text, bo
 {
     const receiver = target.character;
     // Ignored: the sender hears that it is ignored, and the whisper goes nowhere.
-    if (!from.permissions && target.ignores(from.guid))
+    if (!from.staff && target.ignores(from.guid))
         return toSender(Opcode.SMSG_MESSAGECHAT, chatMessage(ChatType.CHAT_MSG_IGNORED, Language.LANG_UNIVERSAL,
             receiver.guid, ""));
-    if (!from.permissions && receiver.gmTagOn && !allowsWhispersFrom(from.guid))
+    if (!from.staff && receiver.gmTagOn && !allowsWhispersFrom(from.guid))
         return toSender(Opcode.SMSG_MESSAGECHAT, chatMessage(ChatType.CHAT_MSG_WHISPER, Language.LANG_UNIVERSAL,
             receiver.guid, "This Game Master does not currently have an open ticket from you and did not receive "
             ~ "your whisper. Please submit a new GM Ticket request if you need to speak to a GM. This is an "
             ~ "automatic message.", ChatTag.CHAT_TAG_GM));
     const sameTeam = teamOf(receiver.data.race) == teamOf(from.race);
-    if (!sameTeam && !twoSideChat && !from.permissions && !target.hasPermissions)
+    if (!sameTeam && !twoSideChat && !from.staff && !target.isStaff)
         return toSender(Opcode.SMSG_CHAT_WRONG_FACTION, packetBody(ServerChatWrongFaction()));
     target.deliver(Opcode.SMSG_MESSAGECHAT,
         chatMessage(ChatType.CHAT_MSG_WHISPER, Language.LANG_UNIVERSAL, from.guid, text, from.chatTag));

@@ -1239,8 +1239,8 @@ version (unittest)
             return 0;
         }
         @property AccountLevel security() const { return AccountLevel.player; }
-        bool canUseCommand(char) const { return false; }
-        @property bool hasPermissions() const { return false; }
+        bool allowsStaff(string) const { return false; }
+        @property bool isStaff() const { return false; }
         @property bool transferring() const { return false; }
         void groupChanged() { ++groupChanges; }
         void update(Duration) {}

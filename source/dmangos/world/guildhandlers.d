@@ -283,7 +283,7 @@ mixin template GuildHandlers()
     void handleGuildCreate(ref ByteReader reader)
     {
         const name = reader.readCString();
-        if (!hasPermissions || ownGuild() !is null || name.length == 0)
+        if (!isStaff || ownGuild() !is null || name.length == 0)
             return;
         if (foundGuild(name) is null)
             guildResult(GuildCommand.create, name, GuildError.nameExistsS);

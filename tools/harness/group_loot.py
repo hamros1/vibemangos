@@ -84,7 +84,7 @@ def run(fixture, migrate):
     for name in (owner, member):
         subprocess.run([*auth, "account", "create", name.upper(), password],
                         cwd=fixture.directory, check=True, timeout=10)
-    fixture.query("UPDATE account SET gmlevel = 3", login)
+    fixture.grant_admins(login)
     fixture.start("auth", auth)
     wait_for("the login server", lambda: "listening on" in fixture.log("auth"), 10)
 

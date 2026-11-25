@@ -424,6 +424,7 @@ struct Ship
     string name;
     uint period;
     KeyFrame[] frames;
+    uint minimumPeriod;
 }
 
 /// A row of `world_safe_locs`.
@@ -703,6 +704,7 @@ final class WorldData
         foreach (row; world.query!"SELECT entry, map, master_entry, flag, search_range FROM creature_linking_template"())
             data.creatureLinks.addTemplate(row.get!uint(0), row.get!uint(1), row.get!uint(2), row.get!uint(3),
                 row.get!uint(4));
+        data.loadGmSpawnLinks(world);
         data.loadSpawns(world, client, spawnSeed);
         data.loadQuestSpawnPhases(world);
         data.loadTransports(world, client); // after the game object templates
@@ -1148,11 +1150,31 @@ final class WorldData
         bool[uint] spawnGuids;
         foreach (row; world.query!"SELECT guid FROM creature"())
             spawnGuids[row.get!uint(0)] = true;
-        size_t skipped;
-        foreach (row; world.query!("SELECT Id, Point, PositionX, PositionY, PositionZ, Orientation, WaitTime, ScriptId "
-            ~ "FROM creature_movement")())
+        import dmangos.mysql : DatabaseException;
+        import dmangos.world.motion : WaypointGait;
+
+        enum columns = "SELECT m.Id, m.Point, m.PositionX, m.PositionY, m.PositionZ, m.Orientation, m.WaitTime, m.ScriptId";
+        auto rows = typeof(world.query!(columns ~ " FROM creature_movement m")()).init;
+        try
+            rows = world.query!(columns ~ ", COALESCE(g.gait,0), COALESCE(g.emote,0), COALESCE(g.model,0) "
+                ~ "FROM creature_movement m LEFT JOIN dmangos_gm_waypoint g ON g.spawn=m.Id AND g.point=m.Point")();
+        catch (DatabaseException error)
         {
-            const n = node(row, 1);
+            if (error.code != 1146)
+                throw error;
+            rows = world.query!(columns ~ " FROM creature_movement m")();
+        }
+        size_t skipped;
+        foreach (row; rows)
+        {
+            auto n = node(row, 1);
+            if (row.length > 8)
+            {
+                const gait = row.get!uint(8);
+                n.gait = gait <= WaypointGait.max ? cast(WaypointGait) gait : WaypointGait.default_;
+                n.emote = row.get!uint(9);
+                n.model = row.get!uint(10);
+            }
             if (row.get!uint(0) !in spawnGuids || !valid(n))
                 ++skipped;
             else
@@ -1244,11 +1266,29 @@ final class WorldData
                 warning!"transport %s (%s): taxi path %s gives no schedule"(entry, name, t.data[0]);
                 continue;
             }
+            const minimum = roundTime(generatePath(path, t.data[1], t.data[2]));
             info!"transport %s (%s): %s path nodes, %s key frames, round %s ms (the path alone: %s ms)"(entry, name,
-                path.length, frames.length, period, roundTime(generatePath(path, t.data[1], t.data[2])));
-            ships ~= Ship(entry, name, period, frames);
+                path.length, frames.length, period, minimum);
+            ships ~= Ship(entry, name, period, frames, minimum);
         }
         info!"loaded %s ships and zeppelins"(ships.length);
+    }
+
+    private void loadGmSpawnLinks(MySqlConnection world)
+    {
+        import dmangos.mysql : DatabaseException;
+        import dmangos.world.creaturelinking : CreatureLink;
+
+        try
+            foreach (row; world.query!("SELECT follower, leader, flags, has_offset, distance, angle "
+                ~ "FROM dmangos_gm_spawn_link WHERE follower <> 0")())
+                creatureLinks.setGuid(row.get!uint(0), CreatureLink(row.get!uint(1), 0, row.get!uint(2), 0,
+                    row.get!uint(3) != 0, row.get!float(4), row.get!float(5)));
+        catch (DatabaseException error)
+        {
+            if (error.code != 1146)
+                throw error;
+        }
     }
 
     /// Random properties (`item_enchantment_template`) and what properties and enchantments are (the DBCs).

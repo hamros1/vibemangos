@@ -22,6 +22,8 @@ import dmangos.crypto.srp6 : sessionKeyLength;
 import dmangos.auth.accounts;
 import dmangos.auth.realms : RealmRecord;
 
+import dmangos.auth.staffroles : GmAccess, defaultRoleGrants;
+
 /// Name recorded in `banned_by` for automatic bans.
 enum autoBanAuthor = "dmangos realmd";
 
@@ -59,13 +61,13 @@ interface LoginDatabase
     ubyte[uint] characterCounts(uint accountId);
 
     /// Creates an account. Throws if the name is invalid or taken.
-    Account createAccount(string username, string password, AccountLevel level = AccountLevel.player);
+    Account createAccount(string username, string password, string role = null);
 
     /// Replaces an account's salt and verifier.
     void setPassword(string username, string password);
 
-    /// Changes an account's security level.
-    void setLevel(string username, AccountLevel level);
+    GmAccess staffAccessFor(uint accountId);
+    bool changeRole(string username, string role, bool grant);
 
     /// Every account, by id.
     Account[] listAccounts();
@@ -214,7 +216,9 @@ class MemoryLoginDatabase : LoginDatabase
         byName(username).credentialsValid = false;
     }
 
-    Account createAccount(string username, string password, AccountLevel level = AccountLevel.player)
+    private GmAccess[uint] accessByAccount;
+
+    Account createAccount(string username, string password, string role = null)
     {
         validateNewCredentials(username, password);
         immutable name = canonicalAccountName(username);
@@ -224,11 +228,13 @@ class MemoryLoginDatabase : LoginDatabase
         Account account;
         account.id = nextId++;
         account.username = name;
-        account.level = level;
+        enforce(!role.length || defaultRoleGrants(role).length, "Unknown staff role.");
         account.salt = credentials.salt;
         account.verifier = credentials.verifier;
         account.credentialsValid = true;
         accounts[name] = account;
+        if (role.length)
+            changeRole(name, role, true);
         return account;
     }
 
@@ -242,9 +248,35 @@ class MemoryLoginDatabase : LoginDatabase
         account.credentialsValid = true;
     }
 
-    void setLevel(string username, AccountLevel level)
+    GmAccess staffAccessFor(uint accountId)
     {
-        byName(username).level = level;
+        return accessByAccount.get(accountId, GmAccess.init);
+    }
+
+    bool changeRole(string username, string role, bool grant)
+    {
+        import std.algorithm.mutation : remove;
+        import std.algorithm.searching : canFind;
+
+        if (!defaultRoleGrants(role).length)
+            return false;
+        const id = byName(username).id;
+        auto access = staffAccessFor(id);
+        if (grant && !access.roles.canFind(role))
+            access.roles ~= role;
+        else if (!grant)
+        {
+            if (!access.roles.canFind(role))
+                return false;
+            access.roles = access.roles.dup.remove!(name => name == role);
+        }
+        access.grants = null;
+        foreach (name; access.roles)
+            foreach (capability; defaultRoleGrants(name))
+                if (!access.grants.canFind(capability))
+                    access.grants ~= capability;
+        accessByAccount[id] = access;
+        return true;
     }
 
     Account[] listAccounts()
@@ -278,7 +310,7 @@ unittest
     auto db = new MemoryLoginDatabase;
     db.now = () @safe => clock;
 
-    const thrall = db.createAccount("Thrall", "Lok'tar", AccountLevel.gameMaster);
+    const thrall = db.createAccount("Thrall", "Lok'tar", "game-master");
     assert(thrall.username == "THRALL" && thrall.id == 1 && thrall.credentialsValid);
     assert(!db.findAccount("thrall").isNull);
     assert(db.findAccount("jaina").isNull);

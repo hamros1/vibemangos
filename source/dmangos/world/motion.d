@@ -47,6 +47,14 @@ enum MotionType : uint
     follow = 14,  /// after a linked leader (`dmangos.world.creaturelinking`)
 }
 
+enum WaypointGait : ubyte
+{
+    default_,
+    walk,
+    run,
+    fly,
+}
+
 /// A point of a path.
 struct WaypointNode
 {
@@ -57,6 +65,9 @@ struct WaypointNode
     float orientation = float.nan; /// where to face when waiting there; NaN: no facing (100 in the table)
     uint delay;         /// milliseconds to wait there
     uint scriptId;      /// `dbscripts_on_creature_movement`, run when it gets there
+    WaypointGait gait;
+    uint emote;
+    uint model;
 }
 
 /// The paths of `creature_movement` (by spawn) and `creature_movement_template`.
@@ -362,6 +373,8 @@ final class WaypointMovement : MovementGenerator
         bool continueToWaypoint; // an intermediate leg, or the spline could not start
     }
 
+    bool flightLeg; /// the current waypoint spline is airborne
+
     bool paused; /// paused by a script (`ScriptCommand.pauseWaypoints`): stands where it is until resumed
 
     @property uint lastWaypoint() const { return lastReached; }
@@ -418,6 +431,7 @@ final class WaypointMovement : MovementGenerator
         w.put(paused);
         w.put(pathId);
         w.put(fromTable);
+        w.put(flightLeg);
     }
 
     override void load(ref ByteReader r)
@@ -438,6 +452,8 @@ final class WaypointMovement : MovementGenerator
         {
             pathId = r.read!uint;
             fromTable = r.read!bool;
+            if (!r.empty)
+                flightLeg = r.read!bool;
         }
         if (path.length && current >= path.length) // the path changed under it: start it over
             current = 0;
@@ -509,9 +525,23 @@ private:
         if (lastReached == currentPoint)
             return;
         lastReached = path[current].point;
-        const wait = path[current].delay;
-        if (path[current].scriptId)
-            world.waypointScript(creature, path[current].scriptId);
+        const ref node = path[current];
+        const wait = node.delay;
+        if (node.model)
+        {
+            import dmangos.world.updatefields : UNIT_FIELD_DISPLAYID;
+            creature.values.set!UNIT_FIELD_DISPLAYID(node.model);
+            world.flushCreature(creature);
+        }
+        if (node.emote)
+        {
+            ByteWriter packet;
+            packet.put(node.emote);
+            packet.put(creature.guid);
+            world.sendToObservers(creature.guid, Opcode.SMSG_EMOTE, packet.data);
+        }
+        if (node.scriptId)
+            world.waypointScript(creature, node.scriptId);
         switchToNextNode();
         if (wait > 0)
             nextMoveTime = wait;
@@ -556,6 +586,9 @@ private:
     {
         nodeIndexes = null;
         const(WaypointNode)* next = &path[current];
+        const gait = next.gait;
+        flightLeg = gait == WaypointGait.fly && (creature.template_.inhabitType & 4) != 0;
+        const walk = gait == WaypointGait.default_ || gait == WaypointGait.walk;
         if (path.length == 1)
             lastReached = 0;
         creature.refreshSwimming(world);
@@ -567,7 +600,7 @@ private:
             if (underwater || creature.movement.has(MovementFlags.swimming) || creature.waterOnly)
             {
                 const facing = next.delay ? next.orientation : float.nan;
-                const leg = launchHabitatPath(creature, world, destination, underwater, true, facing);
+                const leg = launchHabitatPath(creature, world, destination, underwater, walk, facing);
                 continueToWaypoint = leg.continues || !leg.duration;
                 pathDuration = int.max; // the next leg must wait for the real endpoint
                 if (!leg.duration)
@@ -576,17 +609,19 @@ private:
             }
         }
 
-        const speed = creature.speeds[creature.movement.has(MovementFlags.walkMode) ? MoveType.walk : MoveType.run];
+        const timingWalk = gait == WaypointGait.default_ ? creature.movement.has(MovementFlags.walkMode) : walk;
+        const speed = creature.speeds[timingWalk ? MoveType.walk : MoveType.run];
+        const dockSpeed = creature.speeds[walk ? MoveType.walk : MoveType.run];
         const at = creature.spline.finalized ? creature.position : creature.spline.position;
         const from = Vector3(at.x, at.y, at.z);
         Vector3[] dock;
         const dockLeg = creature.flyingMovement ? DockRoute.unrelated
-            : world.pathAtDock(from, Vector3(next.x, next.y, next.z), creature.speeds[MoveType.walk], dock);
+            : world.pathAtDock(from, Vector3(next.x, next.y, next.z), dockSpeed, dock);
         if (dockLeg != DockRoute.unrelated || creature.ridingPlatform)
         {
             const facing = dockLeg == DockRoute.complete && next.delay ? next.orientation : float.nan;
             pathDuration = int.max;
-            if (dock.length && launchSpline(creature, world, dock, true, false, facing, float.nan))
+            if (dock.length && launchSpline(creature, world, dock, walk, false, facing, float.nan))
                 continueToWaypoint = dockLeg == DockRoute.approach;
             else
             {
@@ -625,8 +660,8 @@ private:
             const candidate = &path[after];
             const end = Vector3(candidate.x, candidate.y, candidate.z);
             Vector3 submerged;
-            if ((habitat && world.swimmingTarget(end, creature.collisionHeight, submerged))
-                || (!creature.flyingMovement && world.pathAtDock(points[$ - 1], end, creature.speeds[MoveType.walk], dock)
+            if (candidate.gait != gait || (habitat && world.swimmingTarget(end, creature.collisionHeight, submerged))
+                || (!creature.flyingMovement && world.pathAtDock(points[$ - 1], end, dockSpeed, dock)
                     != DockRoute.unrelated))
             {
                 mustFinish = true;
@@ -639,7 +674,7 @@ private:
         }
 
         const facing = !isNaN(next.orientation) && next.delay != 0 ? next.orientation : float.nan;
-        pathDuration = launch(creature, world, points, true, facing);
+        pathDuration = launch(creature, world, points, walk, facing);
         continueToWaypoint = !pathDuration;
         if (continueToWaypoint)
             nextMoveTime = 500;

@@ -15,35 +15,6 @@ import dmangos.cluster.config : ClusterConfig;
 import dmangos.json;
 import dmangos.log : LogLevel;
 
-/// The permission letters (`accounts.gm` strings) given to each `account.gmlevel`.
-struct GmPermissions
-{
-    @JsonName("1") string moderator = "bcghiltuv";  /// kick, tickets, GM tag, announcements, appear and summon
-    @JsonName("2") string gameMaster = "a";         /// every command but the `z` ones
-    @JsonName("3") string administrator = "az";     /// every command
-
-    /// The letters of a level, read by `loadSecurity` as a login reads them.
-    string forLevel(uint level) const pure @safe
-    {
-        import dmangos.world.commands : loadSecurity;
-
-        switch (level)
-        {
-        case 0: return null;
-        case 1: return loadSecurity(moderator);
-        case 2: return loadSecurity(gameMaster);
-        default: return loadSecurity(administrator);
-        }
-    }
-}
-
-/// A `command_overrides` row: "gm on" (or "gm *") gets the letter `group`.
-struct CommandOverride
-{
-    string command;
-    string group;
-}
-
 /// Settings for the world server.
 struct WorldConfig
 {
@@ -268,11 +239,7 @@ struct WorldConfig
     // The GM system's settings
     // -----------------------------------------------------------------------
 
-    /// The permission letters for each `account.gmlevel` (see `dmangos.world.commands`).
-    @JsonName("gm_permissions") GmPermissions gmPermissions;
-    /// `command_overrides`: give commands other permission letters.
-    @JsonName("command_overrides") CommandOverride[] commandOverrides;
-    /// `Server.AllowPlayerCommands`: accounts without permissions may use the `0` commands.
+    /// `Server.AllowPlayerCommands`: players may use public commands.
     @JsonName("allow_player_commands") bool allowPlayerCommands = false;
     /// `Log.GMCommands`: the file the GM command log is appended to; empty for none.
     @JsonName("gm_command_log") string gmCommandLog;
@@ -336,9 +303,6 @@ struct WorldConfig
         enforce(skipCinematics <= 2, "skip_cinematics must be 0, 1 or 2");
         enforce(startPlayerLevel >= 1 && startGmLevel >= startPlayerLevel, "start levels must be >= 1, GM >= player");
         enforce(charDeleteMethod <= 1, "char_delete_method must be 0 or 1");
-        foreach (row; commandOverrides)
-            enforce(row.command.length && row.group.length == 1,
-                format!"command_overrides: '%s' needs a command and a one-letter group"(row.command));
         foreach (color; [announceTagColor, announceGmTagColor, announceNameColor, announceMessageColor])
             enforce(color >= 1 && color <= 10, "announce colours must be between 1 and 10");
     }

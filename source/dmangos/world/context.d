@@ -156,7 +156,7 @@ enum PresenceFlags : uint
     gmTag = 1,
     afk = 2,
     dnd = 4,
-    permissions = 8,  /// it has GM permissions (understands every language, ignores factions)
+    staff = 8,        /// its account has staff access
 }
 
 /// Implemented by sessions so the context can kick a duplicate login.
@@ -386,8 +386,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// Sends a group command to the coordinator; null standalone and on the coordinator.
     void delegate(const ref GroupCommand command) forwardGroup;
 
-    /// Sends a packet to every other node's players (with `permission`, those who have it); null standalone.
-    void delegate(ushort opcode, char permission, const(ubyte)[] body_) toEveryoneElsewhere;
+    /// Sends a packet to every other node's players (with `staffOnly`, staff announcement recipients); null standalone.
+    void delegate(ushort opcode, bool staffOnly, const(ubyte)[] body_) toEveryoneElsewhere;
 
     /// Sends a GM command to the node simulating its target; null standalone.
     void delegate(ushort node, const ref GmRemote command) gmRemote;
@@ -2982,8 +2982,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// The configuration file, which `.server rehash` reads again; null when there is none (tests).
     string configPath;
 
-    /// `command_overrides`: permission letters by full command name ("gm on").
-    char[string] commandOverrides;
 
     /// Lines written to the GM command log (tests read them; the file gets them too).
     string[] gmLogLines;
@@ -3042,7 +3040,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         loadInstances();
         if (config.cluster.enabled && !config.cluster.gateway)
             readOutdoorWorldStates();
-        loadCommandOverrides();
         // The cluster services this node can run (docs/SERVICES.md); standalone it runs them all at once.
         import dmangos.world.groupservice : LootTurnHost;
 
@@ -3474,6 +3471,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (auto f = cast(FollowMovement) slave.generator)
             if (f.leader == master.guid)
                 return;
+        if (const link = slave.spawnId in data.creatureLinks.bySlaveGuid)
+            if (link.hasOffset && link.masterGuid == master.spawnId)
+            {
+                slave.generator = new FollowMovement(master.guid, link.distance, link.angle);
+                m.wake(slave.guid);
+                return;
+            }
         const s = slave.spawn, ms = master.spawn;
         const dx = s.x - ms.x, dy = s.y - ms.y;
         const distance = sqrt(dx * dx + dy * dy);
@@ -4103,26 +4107,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return null;
     }
 
-    /// Reads the `command_overrides` setting: GM commands given another permission letter.
-    void loadCommandOverrides()
-    {
-        import dmangos.log : info, warning;
-        import dmangos.world.commands : overrideTargets;
-
-        commandOverrides = null;
-        foreach (row; config.commandOverrides)
-        {
-            const paths = overrideTargets(row.command);
-            if (paths.length == 0)
-                warning!"command_overrides: no command '%s'"(row.command);
-            foreach (path; paths)
-            {
-                commandOverrides[path] = row.group[0];
-                info!"Changing command level of command `%s` to %s."(path, row.group[0]);
-            }
-        }
-    }
-
     /// A line in the GM command log (`gm_command_log`), with the time in front.
     void writeGmLog(string line)
     {
@@ -4691,6 +4675,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             auto group = groups.of(player);
             return group is null ? 0 : group.id;
         };
+        created.battlegroundPaused = () => battlegroundPaused(created);
         created.groupViewerFaction = &groupViewerFaction;
         return created;
     }
@@ -4707,12 +4692,20 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return viewer.values.get!UNIT_FIELD_FACTIONTEMPLATE;
     }
 
+    private bool battlegroundPaused(Map map)
+    {
+        if (map.instanceId)
+            if (auto copy = battlegrounds.find(map.instanceId))
+                return copy.mapId == map.id && copy.paused;
+        return false;
+    }
+
     /// Battleground objectives use the player credited with the killing blow, independently of the loot tap.
     package void battlegroundCreatureKilled(Map map, uint entry, ulong killer)
     {
         if (map.instanceId)
             if (auto copy = battlegrounds.find(map.instanceId))
-                if (copy.mapId == map.id)
+                if (copy.mapId == map.id && !copy.paused)
                     copy.rules.creatureKilled(copy, entry, killer);
     }
 
@@ -5103,6 +5096,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     copy.transferState(state);
                     auto stored = instances.get(id, InstanceState.init);
                     state.transfer(stored.dead, stored.usedUp);
+                    copy.transferPause(state);
                 }
                 w.put(cast(uint) match.data.length);
                 w.putBytes(match.data);
@@ -5134,6 +5128,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         ByteWriter w, match;
         auto state = BattlegroundState(clock(), writer: &match);
         copy.transferState(state, durableSnapshot: true);
+        copy.transferPause(state);
         w.put(cast(uint) match.length);
         w.putBytes(match.data);
         w.put(cast(uint) bundle.length);
@@ -5157,6 +5152,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         auto state = BattlegroundState(clock(), reader: &r);
         state.transfer(stored.dead, stored.usedUp);
         auto copy = battlegrounds.restore(id, battlegroundOfMap(mapId), match, formatVersion);
+        auto matchState = BattlegroundState(clock(), reader: &match);
+        copy.transferPause(matchState);
         instances[id] = stored;
         restoreDungeonCopy(mapId, id, bundle);
         restoreDungeonScriptRuns(mapId, r);
@@ -5185,10 +5182,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 if (!match.length)
                     continue;
                 auto reader = ByteReader(match);
-                battlegrounds.restore(id, bg, reader);
+                auto copy = battlegrounds.restore(id, bg, reader);
                 auto stored = InstanceState(mapId, 0, unixTime);
                 auto state = BattlegroundState(clock(), reader: &reader);
                 state.transfer(stored.dead, stored.usedUp);
+                copy.transferPause(state);
                 instances[id] = stored;
             }
             if (id !in instances)
@@ -7773,20 +7771,20 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     /**
      * A packet for every player in the world, on every node; with
-     * `permission`, only for those with that GM permission letter.
+     * `staffOnly`, only for staff announcement recipients.
      */
-    void toEveryone(Opcode opcode, const(ubyte)[] body_, char permission = 0)
+    void toEveryone(Opcode opcode, const(ubyte)[] body_, bool staffOnly = 0)
     {
-        deliverToOwn(opcode, body_, permission);
+        deliverToOwn(opcode, body_, staffOnly);
         if (toEveryoneElsewhere !is null)
-            toEveryoneElsewhere(cast(ushort) opcode, permission, body_);
+            toEveryoneElsewhere(cast(ushort) opcode, staffOnly, body_);
     }
 
     /// `toEveryone`, for this node's players only.
-    void deliverToOwn(Opcode opcode, const(ubyte)[] body_, char permission = 0)
+    void deliverToOwn(Opcode opcode, const(ubyte)[] body_, bool staffOnly = 0)
     {
         foreach (other; online)
-            if (permission == 0 || other.canUseCommand(permission))
+            if (!staffOnly || other.allowsStaff("staff.announce"))
                 other.deliver(opcode, body_);
     }
 

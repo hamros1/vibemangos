@@ -319,7 +319,7 @@ private:
     void handleRealmList(const ClientRealmList request) // read only to check its size
     {
         const realms = context.realms.current(MonoTime.currTime);
-        send(buildRealmList(realms, build, account.level, context.database.characterCounts(account.id)));
+        send(buildRealmList(realms, build, context.database.staffAccessFor(account.id).rank(), context.database.characterCounts(account.id)));
     }
 
     // -----------------------------------------------------------------------

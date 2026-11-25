@@ -98,13 +98,13 @@ private:
         {
             ++count;
             latency += sessionOf(other).latencyMs;
-            if (other.hasPermissions)
+            if (other.isStaff)
                 ++gm;
         }
         // In a cluster, the other nodes' players too.
         const elsewhere = context.remotePlayers;
         foreach (ref r; elsewhere)
-            if (r.entry.flags & PresenceFlags.permissions)
+            if (r.entry.flags & PresenceFlags.staff)
                 ++gm;
         const up = context.unixTime - context.startTime;
         greenSystemMessage("dmangos  ·  Server status");
@@ -166,30 +166,30 @@ private:
     bool handleGMListCommand()
     {
         bool first = true;
-        const isGM = hasPermissions;
+        const isGM = isStaff;
         const onlyActive = context.config.gamemasterListOnlyActiveGMs;
-        void list(string name, string permissions, bool tagOn)
+        void list(string name, string roles, bool tagOn)
         {
             if (!(isGM || !onlyActive || tagOn))
                 return;
             if (first)
-                greenSystemMessage("There are following active GMs on this server:");
+                greenSystemMessage("Active GMs");
             if (context.config.gamemasterHidePermissions && !isGM)
                 systemMessage(" - " ~ name);
             else if (onlyActive && !tagOn)
-                systemMessage(format!"|cff888888 - %s [%s]|r"(name, permissions));
+                colorSystemMessage(ChatColor.grey, format!" - %s [%s]"(name, roles));
             else
-                systemMessage(format!" - %s [%s]"(name, permissions));
+                systemMessage(format!" - %s [%s]"(name, roles));
             first = false;
         }
 
         foreach (other; context.onlinePlayers)
-            if (other.hasPermissions)
-                list(other.character.data.name, sessionOf(other).permissions, other.character.gmTagOn);
+            if (other.isStaff)
+                list(other.character.data.name, sessionOf(other).staffRoles, other.character.gmTagOn);
         // In a cluster, the other nodes' GMs too, as presence says.
         foreach (ref r; context.remotePlayers)
-            if (r.entry.flags & PresenceFlags.permissions)
-                list(r.entry.name, r.entry.permissions, (r.entry.flags & PresenceFlags.gmTag) != 0);
+            if (r.entry.flags & PresenceFlags.staff)
+                list(r.entry.name, r.entry.staffRoles, (r.entry.flags & PresenceFlags.gmTag) != 0);
         if (first)
             systemMessage("There are no GMs currently logged in on this server.");
         return true;

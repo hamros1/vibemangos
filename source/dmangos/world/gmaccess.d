@@ -1,34 +1,10 @@
-/// Named capabilities for staff accounts. Legacy levels apply only before enrollment.
+/// In-game role inspection and administration.
 module dmangos.world.gmaccess;
 
-import std.algorithm.searching : canFind;
-import dmangos.auth.accounts : AccountLevel;
+public import dmangos.auth.staffroles : GmAccess;
 import dmangos.world.database : WorldDatabase;
 
-struct GmAccess
-{
-    bool managed;
-    string[] roles;
-    string[] grants;
-
-    bool allows(string capability) const
-    {
-        return capability.length && (grants.canFind("*") || grants.canFind(capability));
-    }
-
-    AccountLevel rank(AccountLevel legacyLevel) const
-    {
-        if (!managed)
-            return legacyLevel;
-        if (allows("staff.admin"))
-            return AccountLevel.administrator;
-        if (allows("staff.game_master"))
-            return AccountLevel.gameMaster;
-        return allows("staff.access") ? AccountLevel.moderator : AccountLevel.player;
-    }
-}
-
-/// A policy read failure closes access. The implementation recognizes schemas predating RBAC.
+/// A policy read failure denies staff access.
 GmAccess readGmAccess(WorldDatabase database, uint accountId)
 {
     import dmangos.log : warning;
@@ -39,39 +15,7 @@ GmAccess readGmAccess(WorldDatabase database, uint accountId)
     catch (DatabaseException error)
     {
         warning!"Could not read GM access for account %s: %s"(accountId, error.msg);
-        return GmAccess(true);
-    }
-}
-
-/// Compatibility mapping for command rows and the existing staff feature checks.
-string gmCapability(char group) pure nothrow @safe @nogc
-{
-    switch (group)
-    {
-    case '0': return null;
-    case '1': return "support.lookup";
-    case '2', 'q': return "world.quests";
-    case 'a': return "account.moderate";
-    case 'b': return "staff.discipline";
-    case 'f': return "staff.disconnect";
-    case 'c': return "staff.support";
-    case 'd': return "debug.use";
-    case 'e': return "battleground.manage";
-    case 'g': return "world.objects.move";
-    case 'o': return "world.objects";
-    case 'h': return "character.mount";
-    case 'i', 'j': return "staff.presence";
-    case 'l': return "support.lookup";
-    case 'm': return "character.modify";
-    case 'n': return "world.creatures";
-    case 'r': return "character.combat";
-    case 's': return "server.save";
-    case 't': return "staff.tag";
-    case 'u': return "staff.announce";
-    case 'v': return "world.teleport";
-    case 'w': return "world.waypoints";
-    case 'z': return "staff.admin";
-    default: return null;
+        return GmAccess.init;
     }
 }
 
@@ -84,11 +28,6 @@ mixin template AccessCommands()
 private:
     bool handleGmAccessInfoCommand()
     {
-        if (!gmAccess.managed)
-        {
-            blueSystemMessage("Staff access comes from your legacy account level.");
-            return true;
-        }
         greenSystemMessage("Staff access");
         systemMessage("Roles: " ~ (gmAccess.roles.length ? gmAccess.roles.join(", ") : "None"));
         if (gmAccess.grants.canFind("*"))

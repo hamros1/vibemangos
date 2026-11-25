@@ -71,12 +71,6 @@
 	"char_delete_method": 0,
 	"char_delete_min_level": 0,
 	"mail_delivery_delay": 3600,
-	"gm_permissions": {
-		"1": "bcghiltuv",
-		"2": "a",
-		"3": "az"
-	},
-	"command_overrides": [],
 	"allow_player_commands": false,
 	"gm_command_log": "logs/gmcommand.log",
 	"gamemaster_list_only_active_gms": false,

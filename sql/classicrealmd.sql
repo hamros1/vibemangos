@@ -16,7 +16,6 @@
 CREATE TABLE `account` (
   `id` int(11) unsigned NOT NULL AUTO_INCREMENT COMMENT 'Identifier',
   `username` varchar(32) NOT NULL DEFAULT '',
-  `gmlevel` tinyint(3) unsigned NOT NULL DEFAULT 0,
   `sessionkey` longtext DEFAULT NULL,
   `v` longtext DEFAULT NULL,
   `s` longtext DEFAULT NULL,
@@ -36,8 +35,7 @@ CREATE TABLE `account` (
   `token` text DEFAULT NULL,
   `flags` int(10) unsigned NOT NULL DEFAULT 0,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `idx_username` (`username`),
-  KEY `idx_gmlevel` (`gmlevel`)
+  UNIQUE KEY `idx_username` (`username`)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_general_ci ROW_FORMAT=DYNAMIC COMMENT='Account System';
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;

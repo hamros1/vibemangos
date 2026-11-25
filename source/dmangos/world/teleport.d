@@ -115,7 +115,7 @@ private:
         if (mapEntry.isBattleground)
         {
             const mine = battleground_.instance && (toInstance == uint.max || toInstance == battleground_.instance);
-            if (!mine && !(toInstance != uint.max && security >= AccountLevel.gameMaster))
+            if (!mine && !(toInstance != uint.max && allowsStaff("staff.game_master")))
                 return false;
             if (toInstance == uint.max)
                 toInstance = battleground_.instance;
@@ -141,7 +141,7 @@ private:
         // Five new dungeon or raid copies an hour (`WorldContext.instanceLimitReached`), game masters aside.
         const entersCopy = context.instanceable(mapId) && !mapEntry.isBattleground
             && (player.data.map != mapId || (toInstance != uint.max && toInstance != instanceId_))
-            && security < AccountLevel.gameMaster;
+            && !allowsStaff("staff.game_master");
         if (context.instanceable(mapId) && !context.hostsDungeon(mapId))
         {
             import dmangos.world.inworld : ArrivalAction;
@@ -168,7 +168,7 @@ private:
                 return false; // one question at a time
             dungeonEntryAsked = context.clock();
             const asked = player.guid;
-            context.askDungeonEntry(host, player.guid, mapId, toInstance, security >= AccountLevel.gameMaster,
+            context.askDungeonEntry(host, player.guid, mapId, toInstance, allowsStaff("staff.game_master"),
                 (ubyte abort) {
                     dungeonEntryAsked = MonoTime.init;
                     if (player is null || player.guid != asked || state_ != WorldState.inWorld || transferring
@@ -231,7 +231,7 @@ private:
         uint known;
         if (context.instanceable(mapId))
             known = instance != uint.max ? instance : context.boundInstance(player.guid, mapId);
-        if (known && (player.data.map != mapId || known != instanceId_) && security < AccountLevel.gameMaster)
+        if (known && (player.data.map != mapId || known != instanceId_) && !allowsStaff("staff.game_master"))
             if (const most = mapId in context.data.instanceMaxPlayers)
                 if (auto there = context.existingMap(mapId, known))
                     if (there.population >= *most)
@@ -325,7 +325,7 @@ private:
 
                 context.battlegrounds.open(instance, battlegroundOfMap(mapId));
             }
-            if (toInstance != uint.max && security < AccountLevel.gameMaster)
+            if (toInstance != uint.max && !allowsStaff("staff.game_master"))
                 context.bindOnEntering(player.guid, mapId, instance);
             player.data.map = mapId;
             player.movement.position = destination;
@@ -534,7 +534,7 @@ private:
 
         // A battleground's own triggers (its flag rooms, exit portals) first.
         if (auto copy = currentBattleground())
-            if (copy.rules.areaTrigger(copy, player.guid, request.id))
+            if (copy.paused || copy.rules.areaTrigger(copy, player.guid, request.id))
                 return;
         // World PvP's (Silithus's camps, where Silithyst is turned in).
         if (worldPvpAreaTrigger(request.id))
@@ -579,7 +579,7 @@ private:
     @Handles(Opcode.CMSG_WORLD_TELEPORT, WorldState.inWorld)
     void handleWorldTeleport(const ClientWorldTeleport request)
     {
-        if (security < AccountLevel.administrator)
+        if (!allowsStaff("staff.admin"))
             return sendNotification("You do not have permission to use this command.");
         teleportTo(request.map, Position(request.x, request.y, request.z, request.orientation));
     }

@@ -132,7 +132,7 @@ private:
             return sendMailResult(0, MailAction.send, MailError.notEnoughMoney);
         const raceAccount = context.database.characterRaceAccount(receiver);
         if (context.client.teamForRace(cast(ubyte) raceAccount[0]) != context.client.teamForRace(player.data.race)
-            && !hasPermissions)
+            && !isStaff)
             return sendMailResult(0, MailAction.send, MailError.notYourTeam);
         if (context.database.loadMail(receiver).length > 100)
             return sendMailResult(0, MailAction.send, MailError.recipientCapReached);

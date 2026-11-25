@@ -105,7 +105,7 @@ def exercise(fixture, proxy, loop, world_ports, auth_port):
     account, password = "QUORUMPARTITION", "TESTQUORUM"
     subprocess.run([AUTH, "-c", auth, "account", "create", account, password], cwd=fixture.directory,
                    check=True, timeout=15, stdout=subprocess.DEVNULL)
-    fixture.query("UPDATE account SET gmlevel=3", login)
+    fixture.grant_admins(login)
     fixture.start("auth", [AUTH, "-c", auth])
     wait_for("the login server", lambda: "listening on" in fixture.log("auth"), 15)
 

@@ -1539,6 +1539,15 @@ private:
         spellListTimers[pick] = castSpell(spell, target, 0) ? span(e.repeatMin, e.repeatMax) : 500;
     }
 
+    package bool testCombatSpell(CombatWorld world, const ref SpellListEntry row)
+    {
+        if (lore is null || !me.alive)
+            return false;
+        world_ = world;
+        const target = spellListTarget(row.targetId, world);
+        return target != 0 && castSpell(lore.spellInfo(row.spell), target, 0);
+    }
+
     /// The target `creature_spell_targeting` row `id` names for it now; 0 if none.
     private ulong spellListTarget(int id, CombatWorld world)
     {

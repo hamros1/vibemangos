@@ -38,7 +38,7 @@ private:
         m.op = op;
         m.gm = player.guid;
         m.gmName = player.data.name;
-        m.gmCanKickGms = canUseCommand('z');
+        m.gmCanKickGms = allowsStaff("staff.admin");
         m.target = target;
         m.instance = id;
         context.gmRemote(host, m);
@@ -78,7 +78,7 @@ private:
         if (plr is null)
             return true;
         if (!instanceElsewhere(instanceId, GmRemoteOp.instanceReset, plr.player.guid))
-            resetInstanceHere(context, instanceId, plr.player.guid, plr.player.data.name, canUseCommand('z'), gmSink);
+            resetInstanceHere(context, instanceId, plr.player.guid, plr.player.data.name, allowsStaff("staff.admin"), gmSink);
         gmLog(format!"used reset instance command on %s, instance %u,"(plr.player.data.name, instanceId));
         return true;
     }
@@ -139,42 +139,33 @@ private:
         auto plr = getSelectedChar(true);
         if (plr is null)
             return true;
-        uint count;
-        string ss = "Show persistent instances of " ~ MSG_COLOR_CYAN ~ plr.player.data.name ~ "|r\n";
-        // The binds this node knows, and (in a cluster) those of dungeons other nodes host, as saved.
-        uint[uint] binds = cast(uint[uint]) context.bindsOf(plr.player.guid).dup;
+        systemMessage("Persistent instances for " ~ colored(ChatColor.cyan, plr.player.data.name));
+        auto binds = context.bindsOf(plr.player.guid).dup;
         if (context.gmRemote !is null)
             foreach (mapId, id; context.database.instanceBindsOf(cast(uint) plr.player.guid))
                 if (mapId !in binds)
                     binds[mapId] = id;
         foreach (mapId, id; binds)
         {
-            ++count;
-            ss ~= " - " ~ MSG_COLOR_CYAN ~ format!"%s"(id) ~ "|r";
-            ss ~= " (" ~ MSG_COLOR_CYAN ~ mapName(context, mapId) ~ "|r)";
             const host = context.dungeonHost(mapId);
+            auto m = context.instanceMap(id);
+            string status;
             if (context.gmRemote !is null && host != context.nodeId)
-                ss ~= " [" ~ mapTypeString(context, mapId) ~ "] - " ~ MSG_COLOR_CYAN ~ format!"node %s"(host) ~ "|r";
+                status = colored(ChatColor.cyan, format!"Node %s"(host));
             else if (context.instanceState(id) is null)
-                ss ~= " - " ~ MSG_COLOR_RED ~ "Expired!|r";
+                status = colored(ChatColor.red, "Expired");
+            else if (m is null || !m.population)
+                status = colored(ChatColor.softRed, m is null ? "Shut down" : "Idle");
             else
-            {
-                ss ~= " [" ~ mapTypeString(context, mapId) ~ "] - ";
-                auto m = context.instanceMap(id);
-                if (m is null)
-                    ss ~= MSG_COLOR_LIGHTRED ~ "Shut Down|r";
-                else if (m.population == 0)
-                    ss ~= MSG_COLOR_LIGHTRED ~ "Idle|r";
-                else
-                    ss ~= MSG_COLOR_GREEN ~ "In use|r";
-            }
-            ss ~= "\n";
+                status = colored(ChatColor.green, "In use");
+            systemMessage(format!"%s  ·  %s  ·  %s  ·  %s"(colored(ChatColor.cyan, format!"%s"(id)),
+                colored(ChatColor.cyan, mapName(context, mapId)), mapTypeString(context, mapId), status));
         }
-        if (count == 0)
-            ss ~= "Player is not assigned to any persistent instances.\n";
+        if (!binds.length)
+            systemMessage("This player has no persistent instance binds.");
         else
-            ss ~= "Player is assigned to " ~ MSG_COLOR_CYAN ~ format!"%s"(count) ~ "|r persistent instances.\n";
-        sendMultilineMessage(ss);
+            systemMessage(format!"Player is assigned to %s persistent instances."(
+                colored(ChatColor.cyan, format!"%s"(binds.length))));
         gmLog(format!"used show instances command on %s,"(plr.player.data.name));
         return true;
     }
@@ -230,7 +221,6 @@ string mapName(WorldContext context, uint mapId)
 /// `.instance info`'s lines about copy `id` (known here).
 void describeInstance(WorldContext context, uint id, GmSink sink)
 {
-    import std.array : split;
     import std.format : format;
     import core.time : seconds;
     import dmangos.world.commands;
@@ -238,32 +228,33 @@ void describeInstance(WorldContext context, uint id, GmSink sink)
     const state = context.instanceState(id);
     if (state is null)
         return sink.red(format!"Instance with id %u not found."(id));
-    string ss = "Instance ID: " ~ MSG_COLOR_CYAN ~ format!"%s"(id) ~ "|r (" ~ MSG_COLOR_CYAN
-        ~ mapName(context, state.mapId) ~ "|r)\n";
-    ss ~= "Persistent: " ~ MSG_COLOR_CYAN ~ (state.resetAt ? "Yes" : "No") ~ "|r\n";
-    ss ~= "Type: " ~ MSG_COLOR_CYAN ~ mapTypeString(context, state.mapId) ~ "|r\n";
-    ss ~= "Created: " ~ MSG_COLOR_CYAN ~ convertTimeStampToDataTime(state.createdAt) ~ "|r\n";
-    ss ~= "Expires: " ~ MSG_COLOR_CYAN ~ convertTimeStampToDataTime(state.resetAt) ~ "|r\n";
-    auto m = context.instanceMap(id);
-    if (m is null)
-        ss ~= "Status: " ~ MSG_COLOR_LIGHTRED ~ "Shut Down|r\n";
-    else if (m.population == 0)
+    void field(string label, string value, ChatColor color = ChatColor.cyan)
     {
-        ss ~= "Status: " ~ MSG_COLOR_LIGHTRED ~ "Idle|r";
+        sink.system(label ~ ": " ~ colored(color, value));
+    }
+    field("Instance ID", format!"%s (%s)"(id, mapName(context, state.mapId)));
+    field("Persistent", state.resetAt ? "Yes" : "No");
+    field("Type", mapTypeString(context, state.mapId));
+    field("Created", convertTimeStampToDataTime(state.createdAt));
+    field("Expires", convertTimeStampToDataTime(state.resetAt));
+
+    auto map = context.instanceMap(id);
+    if (map is null)
+        field("Status", "Shut down", ChatColor.softRed);
+    else if (map.population)
+    {
+        field("Status", "In use", ChatColor.green);
+        field("Players inside", format!"%s"(map.population));
+    }
+    else
+    {
+        field("Status", "Idle", ChatColor.softRed);
         if (state.emptySince != state.emptySince.init)
         {
             const left = state.emptySince + context.config.instanceUnloadDelay.seconds - context.clock();
-            ss ~= " (" ~ MSG_COLOR_CYAN ~ "Shutdown in " ~ MSG_COLOR_LIGHTRED ~ format!"%s"(left.total!"minutes")
-                ~ MSG_COLOR_CYAN ~ " minutes|r)";
+            field("Shutdown in", format!"%s minutes"(left.total!"minutes"));
         }
-        ss ~= "\n";
     }
-    else
-        ss ~= "Status: " ~ MSG_COLOR_GREEN ~ "In use|r (" ~ MSG_COLOR_GREEN ~ format!"%s"(m.population)
-            ~ MSG_COLOR_CYAN ~ " players inside|r)\n";
-    foreach (line; ss.split('\n'))
-        if (line.length)
-            sink.system(line);
 }
 
 /// `.instance shutdown`'s work on copy `id`: everyone inside goes back out, and the copy unloads.
@@ -286,7 +277,7 @@ void shutdownInstanceHere(WorldContext context, uint id, GmSink sink)
     sink.system("...done");
 }
 
-/// `.instance reset`'s work on copy `id` for player `who` (`canRevoke`: the GM has the `z` permission).
+/// `.instance reset`'s work on copy `id` for player `who` (`canRevoke`: the issuer has `staff.admin`).
 void resetInstanceHere(WorldContext context, uint id, ulong who, string name, bool canRevoke, GmSink sink)
 {
     import std.format : format;
@@ -342,7 +333,7 @@ unittest
     import std.algorithm.searching : canFind;
     import std.format : format;
     import dmangos.auth.accounts : AccountLevel;
-    import dmangos.world.commands : MSG_COLOR_LIGHTRED;
+    import dmangos.world.commands : ChatColor;
     import dmangos.world.movement : Position;
     import dmangos.world.opcodes;
     import dmangos.world.packets : ClientGuid;
@@ -380,11 +371,11 @@ unittest
     assert(gm.session.inWorld.instanceId == 0 && gm.session.character.data.map == 0 && gm.session.character.position == outside);
 
     gm.say(".instance shutdown 999");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "There's no instance with id 999.|r"]);
+    assert(systemMessages(gm.read()) == [ChatColor.softRed ~ "There's no instance with id 999.|r"]);
     gm.say(format!".instance shutdown %s"(id));
     assert(systemMessages(gm.read()) == ["Attempting to shutdown instance with id " ~ format!"%s"(id) ~ "...", "...done"]);
     assert(context.instanceMap(id) is null && context.instanceState(id) !is null, "unloaded, kept");
     gm.say(format!".instance shutdown %s"(id));
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Instance with id " ~ format!"%s"(id)
+    assert(systemMessages(gm.read()) == [ChatColor.softRed ~ "Instance with id " ~ format!"%s"(id)
         ~ " already shut down.|r"]);
 }

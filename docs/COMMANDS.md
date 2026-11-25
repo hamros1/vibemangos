@@ -20,15 +20,23 @@ Use `.modify hp 400` to set both health and maximum health to 400. Use
 
 ## Give someone staff access
 
-New installations include the role tables. Upgrade an existing login database from the repository
-directory, then run the new worldserver binaries on every worker.
+New installations include the role tables. For an existing cluster, stop the login server and
+all world processes, then run these migrations from the repository directory before starting
+the new binaries together. Substitute your login database name if it differs.
 
 ```sh
 mariadb -u root -p classicrealmd < sql/gm-rbac.sql
+mariadb -u root -p classicrealmd < sql/gm-role-upgrade.sql
 ```
 
-Sign in to a legacy administrator account and run `.access grant <login> <role>`. Use the account's
-login name. Roles are account-wide for all realms sharing this login database.
+The upgrade preserves existing role assignments and migrates old staff accounts to the
+corresponding built-in role. Reapplying it respects accounts whose roles were revoked.
+Recreate any customized permissions as named grants. The servers read staff access from the
+role tables.
+
+Run `./bin/authserver account grant <login> administrator` to give your first administrator
+access. In game, use `.access grant <login> <role>`. Roles apply to the account across all
+realms that share this login database.
 
 | Role | Access |
 |---|---|
@@ -36,12 +44,10 @@ login name. Roles are account-wide for all realms sharing this login database.
 | `game-master` | Support, gameplay testing, events and world editing |
 | `administrator` | Every capability, including role administration |
 
-Run `.access revoke <login> <role>` to remove a role. Multiple roles combine their grants. An
-enrolled account with zero roles has no staff access. Workers read current roles at login, on
-handoff and before executing chat commands. Other staff behavior uses the last loaded policy.
-Accounts that have never been enrolled still use `account.gmlevel`, `gm_permissions` and
-`command_overrides`. The legacy `.account level` command sets that fallback policy. Configure
-`gm_command_log` on every worker to record role changes and other audited staff actions.
+Run `.access revoke <login> <role>` to remove a role. Multiple roles combine their grants.
+An account with zero roles has no staff access. Workers refresh roles at login, on handoff
+and before executing chat commands. Configure `gm_command_log` on every worker to record
+role changes and audited staff actions.
 
 ## Create a narrow role
 
@@ -68,11 +74,13 @@ and for `.npc traineradd` use `command.addtrainerspell`.
 * Select a saved creature. Stand at each waypoint and use `.wp add [wait-ms]`. Use
   `.wp list` to review your draft and `.wp save` to commit the route. Use
   `.wp discard` to discard unsaved edits. Selecting a different spawn starts a new draft.
-  A saved empty route makes the spawn idle. Attach existing movement scripts with
-  `.wp script <point> <script-id>`.
+  A saved empty route makes the spawn idle. Use `.wp gait`, `.wp emote` or `.wp model` to
+  customize a point, or `.wp script <point> <script-id>` to attach an existing script.
+  Use `.wp add-air` for a creature whose template supports flight.
 * If you imported Classic-DB before this change, run
   `mariadb -u root -p classicmangos < sql/gm-waypoints.sql` against the world database.
-  It converts the spawn and route tables to InnoDB. Run this migration during maintenance,
+  Run `mariadb -u root -p classicmangos < sql/gm-content.sql` for NPC spawn links.
+  The waypoint migration converts the spawn and route tables to InnoDB. Run both during maintenance,
   then restart world workers after saving routes so they load the new paths.
 * Select a trainer and run `.npc traineradd <teaching-spell-id> [cost-in-copper] [required-level]`.
   Use the spell that teaches the lesson. The selected worker uses it immediately, and the other
@@ -80,6 +88,16 @@ and for `.npc traineradd` use `command.addtrainerspell`.
 
 Use `.quest reload` after updating quest definitions or giver relationships in the world database.
 Workers switch to the new catalog after it loads.
+
+## Test encounters and edit spawn links
+
+* Select a saved leader and use `.npc formation-leader`. Select a follower and use
+  `.npc formation-add [yards] [degrees]`. Use `.npc link-info` to inspect the saved link and
+  `.npc formation-remove` to clear it. Restart world workers to load saved changes.
+* Select an NPC with a spell list. Use `.debug ai-test` to inspect its spells and
+  `.debug ai-next` to cast the next spell on its normal targets.
+* Use `.bg pause on` in a battleground to pause the match clock, scoring and objectives.
+  Use `.bg pause off` to resume the same match.
 
 ## Design references
 
@@ -94,7 +112,7 @@ Workers switch to the new catalog after it loads.
   and chat-based staff feedback. [Aion command reference](https://power.ncsoft.jp/aion/powerWiki/操作方法およびコマンド)
   [WildStar Redmoon Rising patch notes](https://store.steampowered.com/news/posts/?appids=376570&enddate=1472591462)
 
-## Working commands (278)
+## Working commands (298)
 
 Generated from the command tables by `python3 tools/commands_doc.py`.
 
@@ -103,10 +121,10 @@ Generated from the command tables by `python3 tools/commands_doc.py`.
 | `.access grant <account> <role>` | Assign a role to an account. | `staff.admin + roles.manage` |
 | `.access revoke <account> <role>` | Remove a role from an account. | `staff.admin + roles.manage` |
 | `.access status` (also `.access whoami`) | Show your roles and capabilities. | `public` |
-| `.account level <account> <0\|1\|2\|3>` | Set an account's legacy staff level. | `staff.admin` |
 | `.account mute <account> <duration>` | Mute an account for a duration. | `account.moderate` |
 | `.account unmute <account>` | Remove an account mute. | `account.moderate` |
 | `.addtrainerspell <teaching-spell-id> [copper] [level]` | Add a lesson to the selected trainer. | `world.trainers` |
+| `.admin audit-names [preview\|apply]` (also `.admin renameallinvalidchars`) | Review invalid offline names and mark them for rename. | `staff.admin` |
 | `.admin castall <spell-id>` | Make online players on this worker cast a spell. | `staff.admin` |
 | `.admin dispelall [all: 0\|1]` | Remove harmful or helpful auras from players on this worker. | `staff.admin` |
 | `.admin masssummon` | Summon online players to your position. | `staff.admin` |
@@ -119,6 +137,7 @@ Generated from the command tables by `python3 tools/commands_doc.py`.
 | `.bg battleground` (also `.battleground battleground`) | Show the current match and available tools. | `battleground.manage` |
 | `.bg forcestart` (also `.battleground forcestart`) | Start all queued battlegrounds. | `staff.admin` |
 | `.bg leave` (also `.battleground leave`) | Leave the current battleground. | `battleground.manage` |
+| `.bg pause [on\|off]` (also `.battleground pausebg`) | Pause or resume the countdown, combat, and objectives. | `battleground.manage` |
 | `.bg queue` (also `.battleground getqueue`) | Show battlegroup queue and match counts. | `staff.admin` |
 | `.bg score <alliance\|horde> <score>` (also `.battleground setbgscore`) | Set a below-win score in Warsong Gulch or Arathi Basin. | `battleground.manage` |
 | `.bg setbfstatus start` (also `.battleground setbfstatus`) | Start the current battleground with the start action. | `battleground.manage` |
@@ -156,16 +175,21 @@ Generated from the command tables by `python3 tools/commands_doc.py`.
 | `.cheat god [on\|off]` | Toggle damage immunity. | `testing.cheats` |
 | `.cheat power [on\|off]` | Toggle free spell casts. | `testing.cheats` |
 | `.cheat skip-requirements [on\|off]` (also `.cheat triggerpass`) | Toggle bypass of area trigger requirements. | `testing.cheats` |
+| `.cheat stack <spell-id> <stacks>` | Set the stack count of an active aura on a player. | `testing.cheats` |
 | `.cheat status` | Show active testing toggles. | `testing.cheats` |
 | `.cheat taxi <on\|off>` | Toggle access to all flight paths. | `testing.cheats` |
 | `.clearcooldowns` | Clear the selected player's spell cooldowns. | `character.modify` |
 | `.commands [command or prefix]` | Find commands you can use. | `public` |
 | `.debug aggro` (also `.debug aggrorange`) | Show the selected creature's aggro range. | `debug.use` |
+| `.debug ai-next` (also `.debug aispelltestcontinue`) | Attempt the next test spell using the creature’s targeting rule. | `debug.use` |
+| `.debug ai-skip` (also `.debug aispelltestskip`) | Skip the current test spell. | `debug.use` |
+| `.debug ai-test` (also `.debug aispelltestbegin`) | Start a test of the selected creature’s combat spells. | `debug.use` |
 | `.debug aimove <x> <y> <z>` | Move the selected creature to coordinates on this map. | `debug.use` |
 | `.debug calcThreat <damage> <spell-id>` | Estimate spell threat from damage and your modifiers. | `debug.use` |
 | `.debug cast <spell-id>` (also `.debug castspell`) | Cast a spell on the selected unit. | `debug.use` |
 | `.debug castself <spell-id>` | Make the selected unit cast a spell on itself. | `debug.use` |
 | `.debug castspellne <spell-id>` | Preview a spell's animation. | `debug.use` |
+| `.debug database <npc\|object> <spawn-id>` (also `.debug sqlquery`) | Read a saved spawn’s placement from the world database. | `debug.use` |
 | `.debug distance` (also `.debug dist`) | Show the distance to the selected unit. | `debug.use` |
 | `.debug face <degrees>` | Turn the selected creature to an angle in degrees. | `debug.use` |
 | `.debug fade <percent>` | Reduce your threat by a percentage. | `debug.use` |
@@ -180,6 +204,7 @@ Generated from the command tables by `python3 tools/commands_doc.py`.
 | `.debug landwalk` | Send a land-walking movement order. | `debug.use` |
 | `.debug los` (also `.debug testlos`) | Check line of sight to the selected unit. | `debug.use` |
 | `.debug moveinfo` | Inspect the selected creature's movement. | `debug.use` |
+| `.debug packet notification` (also `.debug sendpacket`) | Send a test notification to your own client. | `debug.use` |
 | `.debug position` (also `.debug dumpcoords`) | Show map, instance, coordinates and facing. | `debug.use` |
 | `.debug rangecheck` | Show distance and combat reach against the selected unit. | `debug.use` |
 | `.debug root` | Send a root movement order. | `debug.use` |
@@ -276,12 +301,18 @@ Generated from the command tables by `python3 tools/commands_doc.py`.
 | `.modify talentpoints <value>` | Set unspent talent points. | `character.modify` |
 | `.mount <display-id>` | Mount the selected player with a display ID. | `character.modify` |
 | `.npc ai` (also `.npc listAgent`) | Show the selected creature's scripts and combat spells. | `world.creatures` |
+| `.npc ai-add <spell-id> <self\|victim> <repeat-ms>` (also `.npc addAgent`) | Add a spell to the selected NPC’s shared combat list. | `world.creatures` |
 | `.npc come` | Move the selected NPC to your position. | `world.creatures` |
 | `.npc delete` | Delete the selected creature and its saved spawn. | `world.creatures` |
 | `.npc emote [emote]` | Set the selected NPC's emote state. | `world.creatures` |
 | `.npc flags <flags>` | Set the selected NPC's flags. | `world.creatures` |
 | `.npc follow` (also `.npc npcfollow`) | Make the selected NPC follow you. | `character.modify` |
+| `.npc formation-add [yards] [degrees]` (also `.npc formationlink2`) | Save the selected creature as a follower of the chosen leader. | `world.creatures` |
+| `.npc formation-leader` (also `.npc formationlink1`) | Select the leader for a formation edit. | `world.creatures` |
+| `.npc formation-remove` (also `.npc formationclear`) | Clear the selected spawn’s saved formation link. | `world.creatures` |
 | `.npc info` | Inspect the selected NPC. | `world.creatures` |
+| `.npc link <leader-spawn\|0> [flags]` (also `.npc spawnlink`) | Save a link to a leader spawn, or clear it with 0. | `world.creatures` |
+| `.npc link-info` | Inspect the selected creature’s active spawn links. | `world.creatures` |
 | `.npc possess` | Take control of the selected NPC. | `world.creatures` |
 | `.npc respawn` | Respawn the selected creature. | `world.creatures` |
 | `.npc return` | Send the selected NPC back to its spawn point. | `world.creatures` |
@@ -306,7 +337,9 @@ Generated from the command tables by `python3 tools/commands_doc.py`.
 | `.object select [name]` (also `.gobject select`) | Select the nearest game object. | `world.objects` |
 | `.object spawn <entry-id> [save: 0\|1]` (also `.gobject spawn`) | Spawn a game object by entry ID. | `world.objects` |
 | `.paralyze` | Root the selected player. | `staff.discipline` |
+| `.pet create <creature-entry>` (also `.pet createpet`) | Create a persistent pet for the selected hunter. | `character.modify` |
 | `.pet forget <spell-id>` (also `.pet removespell`) | Remove a spell from the selected player's pet. | `character.modify` |
+| `.pet helper <creature-entry> [seconds]` (also `.pet spawnbot`) | Summon a temporary guardian that follows you. | `account.moderate` |
 | `.pet rename <name>` (also `.pet renamepet`) | Rename your pet. | `character.modify` |
 | `.pet teach <spell-id>` (also `.pet addspell`) | Teach a spell to the selected player's pet. | `character.modify` |
 | `.playerinfo [name]` | Inspect a character and their account. | `character.modify` |
@@ -358,6 +391,7 @@ Generated from the command tables by `python3 tools/commands_doc.py`.
 | `.ticket release <id>` (also `.gmTicket release`) | Clear a ticket's assignment. | `support.tickets` |
 | `.ticket show <id>` (also `.gmTicket get`) | Read a ticket by ID. | `support.tickets` |
 | `.ticket toggle` (also `.gmTicket toggle`) | Enable or disable player tickets. | `staff.admin` |
+| `.transport-period <period-ms>` (also `.modperiod`) | Save the current ship or zeppelin’s circuit time. | `character.modify` |
 | `.unban account <account>` | Remove a ban from an account. | `staff.admin` |
 | `.unban character <character>` | Remove a ban from a character's account. | `staff.discipline` |
 | `.unban ip <ip-address>` | Remove a ban from an IP address. | `character.modify` |
@@ -366,50 +400,34 @@ Generated from the command tables by `python3 tools/commands_doc.py`.
 | `.where` (also `.gps`) | Show your position or the selected unit’s position. | `public` |
 | `.worldport <map> <x> <y> <z>` | Teleport to map coordinates. | `world.teleport` |
 | `.wp add [wait-ms]` (also `.waypoint add`) | Add your position to the route draft. | `world.waypoints` |
+| `.wp add-air [wait-ms]` (also `.waypoint addfly`) | Add an airborne point for a creature that can fly. | `world.waypoints` |
 | `.wp clear` (also `.waypoint deleteall`) | Remove all points from the draft. | `world.waypoints` |
 | `.wp delete <point>` (also `.waypoint delete`) | Remove a point from the draft. | `world.waypoints` |
 | `.wp discard` (also `.waypoint hide`) | Discard unsaved route edits. | `world.waypoints` |
+| `.wp emote <point> <emote-id\|0>` (also `.waypoint emote`) | Set or clear an emote played at a draft point. | `world.waypoints` |
+| `.wp gait <point> <default\|walk\|run>` (also `.waypoint flags`) | Set the movement into a draft point. | `world.waypoints` |
 | `.wp generate` (also `.waypoint generate`) | Extend the draft to your position using the navigation mesh. | `world.waypoints` |
 | `.wp info <point>` (also `.waypoint info`) | Show one draft point. | `world.waypoints` |
 | `.wp list` (also `.waypoint show`) | List points in the route draft. | `world.waypoints` |
 | `.wp mode <loop\|linear>` (also `.waypoint movetype`) | Set the route to loop or run in a line. | `world.waypoints` |
+| `.wp model <point> <display-id\|0>` (also `.waypoint skin`) | Set or clear a model applied at a draft point. | `world.waypoints` |
 | `.wp move <point>` (also `.waypoint movehere`) | Move a draft point to your position. | `world.waypoints` |
 | `.wp renumber <point> <replacement>` (also `.waypoint change`) | Renumber a draft point. | `world.waypoints` |
 | `.wp save` (also `.waypoint save`) | Save the route for the selected spawn. | `world.waypoints` |
 | `.wp script <point> <script-id\|0>` (also `.waypoint script`) | Attach a movement script to a point or clear it with 0. | `world.waypoints` |
 | `.wp wait <point> <wait-ms>` (also `.waypoint waittime`) | Set a point's wait time in milliseconds. | `world.waypoints` |
 
-## Unavailable commands (27)
+## Unavailable commands (7)
 
-These entries remain callable by their existing names and explain what is unavailable.
-In-game command menus list working actions.
+These actions depend on features absent from the supported client. Calling one directly
+shows the client restriction. In-game command menus list working actions.
 
 | Command | Effect | Capability |
 |---|---|---|
-| `.admin renameallinvalidchars` | Use .character forcerename for individual characters. | `staff.admin` |
 | `.arena createteam` | Rated arena teams are unavailable in this client. | `battleground.manage` |
 | `.arena resetallratings` | Rated arena teams are unavailable in this client. | `staff.admin` |
 | `.arena setteamleader` | Rated arena teams are unavailable in this client. | `battleground.manage` |
-| `.bg pausebg` (also `.battleground pausebg`) | Battleground pause is unavailable. | `battleground.manage` |
 | `.character settitle` | Custom character titles are unavailable in this client. | `character.modify` |
 | `.cheat fly` | Player flight is unavailable in this client. | `testing.cheats` |
 | `.cheat flyspeed` | Player flight is unavailable in this client. | `testing.cheats` |
-| `.cheat stack` | The aura stacking override is unavailable. | `testing.cheats` |
-| `.debug aispelltestbegin` | The automated creature spell tester is unavailable. | `debug.use` |
-| `.debug aispelltestcontinue` | The automated creature spell tester is unavailable. | `debug.use` |
-| `.debug aispelltestskip` | The automated creature spell tester is unavailable. | `debug.use` |
-| `.debug sendpacket` | Sending raw packets from chat is disabled. | `debug.use` |
 | `.debug setallratings` | Combat ratings are unavailable in this client. | `debug.use` |
-| `.debug sqlquery` | Use the MariaDB client for SQL. | `debug.use` |
-| `.modperiod` | Changing a transport schedule in chat is unavailable. | `character.modify` |
-| `.npc addAgent` | Editing creature AI spells in chat is unavailable. | `world.creatures` |
-| `.npc formationclear` | Editing NPC formations in chat is unavailable. | `character.modify` |
-| `.npc formationlink1` | Editing NPC formations in chat is unavailable. | `character.modify` |
-| `.npc formationlink2` | Editing NPC formations in chat is unavailable. | `character.modify` |
-| `.npc spawnlink` | Editing spawn links in chat is unavailable. | `world.creatures` |
-| `.pet createpet` | Creating pets from chat is unavailable. | `character.modify` |
-| `.pet spawnbot` | Helper bots are unavailable. | `account.moderate` |
-| `.wp addfly` (also `.waypoint addfly`) | This route editor saves ground waypoints. | `world.waypoints` |
-| `.wp emote` (also `.waypoint emote`) | Use a movement script with .wp script to play an emote. | `world.waypoints` |
-| `.wp flags` (also `.waypoint flags`) | This route format has no per-point flags. | `world.waypoints` |
-| `.wp skin` (also `.waypoint skin`) | Use a movement script with .wp script to change the model. | `world.waypoints` |

@@ -22,13 +22,15 @@ import dmangos.auth.accounts;
 import dmangos.auth.database;
 import dmangos.auth.realms : RealmRecord;
 
+import dmangos.auth.staffroles : GmAccess, staffAccess, staffRoleExists, changeStaffRole;
+
 /// See the module documentation.
 final class MySqlLoginDatabase : LoginDatabase
 {
     private MySqlConnection db;
 
     /// Account columns plus the ban counts, as the logon challenge needs them.
-    private enum selectAccounts = "SELECT a.id, a.username, a.gmlevel, a.v, a.s, a.sessionkey, a.locked, "
+    private enum selectAccounts = "SELECT a.id, a.username, a.v, a.s, a.sessionkey, a.locked, "
         ~ "a.lockedIp, a.failed_logins, "
         ~ "(SELECT COUNT(*) FROM account_banned WHERE account_id = a.id AND active = 1 AND expires_at = banned_at), "
         ~ "(SELECT COUNT(*) FROM account_banned WHERE account_id = a.id AND active = 1 "
@@ -40,7 +42,6 @@ final class MySqlLoginDatabase : LoginDatabase
     {
         uint id;
         string username;
-        uint gmlevel;
         string v;
         string s;
         string sessionkey;
@@ -140,18 +141,19 @@ final class MySqlLoginDatabase : LoginDatabase
         return counts;
     }
 
-    Account createAccount(string username, string password, AccountLevel level = AccountLevel.player)
+    Account createAccount(string username, string password, string role = null)
     {
         validateNewCredentials(username, password);
         immutable name = canonicalAccountName(username);
         enforce(db.query!"SELECT 1 FROM account WHERE username = ?"(name).length == 0,
             "account '" ~ name ~ "' already exists");
 
+        enforce(!role.length || staffRoleExists(db, role), "Unknown staff role.");
         const credentials = makeCredentials(name, password);
         db.execute!"INSERT INTO account(username, v, s, joindate) VALUES (?, ?, ?, NOW())"(
             name, credentials.verifierHex, credentials.saltHex);
-        if (level != AccountLevel.player)
-            db.execute!"UPDATE account SET gmlevel = ? WHERE username = ?"(level, name);
+        if (role.length)
+            enforce(changeRole(name, role, true), "The staff role could not be assigned.");
         // The new account gets a zero character count on every realm.
         db.execute!("INSERT INTO realmcharacters (realmid, acctid, numchars) SELECT realmlist.id, account.id, 0 "
             ~ "FROM realmlist, account LEFT JOIN realmcharacters ON acctid = account.id WHERE acctid IS NULL")();
@@ -167,9 +169,11 @@ final class MySqlLoginDatabase : LoginDatabase
             account.id);
     }
 
-    void setLevel(string username, AccountLevel level)
+    GmAccess staffAccessFor(uint accountId) { return staffAccess(db, accountId); }
+
+    bool changeRole(string username, string role, bool grant)
     {
-        db.execute!"UPDATE account SET gmlevel = ? WHERE id = ?"(level, require(username).id);
+        return changeStaffRole(db, require(username).id, role, grant);
     }
 
     Account[] listAccounts()
@@ -192,11 +196,11 @@ private:
     void checkSchema()
     {
         static immutable tables = ["account", "account_banned", "account_logons", "ip_banned", "realmcharacters",
-            "realmlist"];
+            "realmlist", "dmangos_gm_role", "dmangos_gm_enrollment", "dmangos_gm_role_permission", "dmangos_gm_account_role"];
         foreach (table; tables)
             enforce!DatabaseException(db.query!("SELECT COUNT(*) FROM information_schema.tables "
                 ~ "WHERE table_schema = DATABASE() AND table_name = ?")(table)[0].get!uint(0) == 1,
-                "table '" ~ table ~ "' is missing; import CMaNGOS sql/base/realmd.sql into the database first");
+                "table '" ~ table ~ "' is missing; apply the login schema and staff role migration");
     }
 
     static Account toAccount(const AccountRow row)
@@ -204,7 +208,6 @@ private:
         Account account;
         account.id = row.id;
         account.username = row.username;
-        account.level = toAccountLevel(row.gmlevel);
         account.locked = row.locked == 1;
         account.lockedIp = row.lockedIp;
         account.failedLogins = row.failedLogins;

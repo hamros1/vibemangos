@@ -371,15 +371,15 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
     }
 
     /// For the context: a packet for every other node's players.
-    void toEveryoneElsewhere(ushort opcode, char permission, const(ubyte)[] body_)
+    void toEveryoneElsewhere(ushort opcode, bool staffOnly, const(ubyte)[] body_)
     {
-        node.broadcast(ToEveryone(opcode, cast(ubyte) permission, body_.dup));
+        node.broadcast(ToEveryone(opcode, staffOnly, body_.dup));
     }
 
     /// Another node's world text, for the players here.
     void toEveryone(ushort peer, const ref ToEveryone m)
     {
-        context.deliverToOwn(cast(Opcode) m.opcode, m.body_, cast(char) m.permission);
+        context.deliverToOwn(cast(Opcode) m.opcode, m.body_, m.staffOnly);
     }
 
     /// For the context: a group member's share of a kill here, for the node that simulates it.
@@ -752,7 +752,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
     /// For the context: a whisper for a player another node simulates.
     void whisperRemote(ushort target, ulong guid, WhisperFrom from, string text)
     {
-        node.sendTo(target, WhisperMessage(guid, from.guid, from.race, from.permissions, from.chatTag, text));
+        node.sendTo(target, WhisperMessage(guid, from.guid, from.race, from.staff, from.chatTag, text));
     }
 
     /// A whisper from another node for a player this one simulates: checked and delivered here, answered there.
@@ -762,7 +762,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         if (target is null)
             return; // it left meanwhile
         auto session = cast(Character) target;
-        deliverWhisper(target, WhisperFrom(m.from, m.fromRace, m.fromPermissions, m.fromChatTag), m.text,
+        deliverWhisper(target, WhisperFrom(m.from, m.fromRace, m.fromStaff, m.fromChatTag), m.text,
             context.config.allowTwoSideInteractionChat,
             (ulong sender) => session !is null && session.allowsWhispersFrom(sender),
             (ubyte race) => cast(uint) context.client.teamForRace(race),
@@ -782,11 +782,11 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
             flags |= PresenceFlags.afk;
         if (p.hasFlag(PlayerFlags.dnd))
             flags |= PresenceFlags.dnd;
-        if (who.hasPermissions)
-            flags |= PresenceFlags.permissions;
+        if (who.isStaff)
+            flags |= PresenceFlags.staff;
         return PresenceEntry(p.guid, p.data.name, p.data.account, p.data.race, p.data.classId,
             cast(ubyte) p.data.level, p.data.gender, p.data.zone, flags, cast(ubyte) who.security, p.autoReply,
-            who.hasPermissions ? who.permissions : null);
+            who.isStaff ? who.staffRoles : null);
     }
 
     /// Publish a player's arrival or departure before other actions can use their presence.
@@ -1015,7 +1015,6 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
 
     private void receiveGatewayPlayer(ushort peer, PlayerMessageKind kind, uint account, const(ubyte)[] data)
     {
-        import dmangos.auth.accounts : AccountLevel;
         import dmangos.bytes : ByteReader;
         import dmangos.world.database : WorldAccount;
 
@@ -1048,7 +1047,6 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
             WorldAccount auth;
             auth.id = account;
             auth.username = r.readString(r.read!uint).idup;
-            auth.level = cast(AccountLevel) r.read!ubyte;
             auth.muteTime = r.read!long;
             const clientBuild = r.read!uint, character = r.read!uint;
             if (!r.empty)

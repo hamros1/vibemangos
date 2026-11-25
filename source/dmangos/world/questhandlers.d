@@ -1075,6 +1075,9 @@ private:
 
     void rewardQuest(const ref Quest quest, uint reward)
     {
+        if (auto copy = currentBattleground())
+            if (copy.paused)
+                return systemMessage("This battleground is paused.");
         scope (success) // a battleground's turn-ins (Alterac Valley's armor scraps, its offerings)
             if (auto copy = currentBattleground())
             {

@@ -3,7 +3,7 @@
 
     python3 tools/commands_doc.py
 
-Reads the D command catalog and capability definitions.
+Reads the D command catalog.
 """
 import ast
 from pathlib import Path
@@ -13,28 +13,13 @@ ROOT = Path(__file__).resolve().parents[1]
 WORLD = ROOT / "source" / "dmangos" / "world"
 
 
-def capabilities():
-    text = (WORLD / "gmaccess.d").read_text()
-    return {
-        letter: capability
-        for group, capability in re.findall(r'case ([^:]+): return "([^"]+)";', text)
-        for letter in re.findall(r"'(.)'", group)
-    }
-
-
 def command_catalog():
     source = (WORLD / "commandtable.d").read_text()
     tables = {}
-    groups = capabilities()
-
     def capability(node):
         if isinstance(node, ast.Name):
-            return {
-                "roleAdministration": "staff.admin + roles.manage",
-                "legacyAdministration": "staff.admin",
-            }[node.id]
-        value = ast.literal_eval(node.args[0])
-        return groups.get(value, "public") if len(node.args) == 1 else value
+            return {"roleAdministration": "staff.admin + roles.manage"}[node.id]
+        return ast.literal_eval(node.args[0]) or "public"
 
     for name, content in re.findall(r"immutable ChatCommand\[\] (\w+) = \[(.*?)\n\];", source, re.S):
         rows = []
@@ -46,9 +31,9 @@ def command_catalog():
                        children=None, target=None, unavailable=False)
             match call.func.id:
                 case "section":
-                    row["children"] = args[2].id
-                    if len(args) > 3:
-                        row["label"] = ast.literal_eval(args[3])
+                    row["children"] = args[1].id
+                    if len(args) > 2:
+                        row["label"] = ast.literal_eval(args[2])
                 case "shortcut":
                     row["target"] = ast.literal_eval(args[1])
                 case "unavailable":
@@ -62,7 +47,7 @@ def command_catalog():
                 case "stat":
                     maximum = len(args) > 3 and not isinstance(args[3], ast.UnaryOp)
                     syntax = "<min> <max>" if word == "damage" else "<value> [max]" if maximum else "<value>"
-                    row.update(capability=groups["m"], args=syntax, description=ast.literal_eval(args[2]))
+                    row.update(capability="character.modify", args=syntax, description=ast.literal_eval(args[2]))
                     if len(args) > 5:
                         row["label"] = ast.literal_eval(args[5])
                 case _:
@@ -118,15 +103,23 @@ Use `.modify hp 400` to set both health and maximum health to 400. Use
 
 ## Give someone staff access
 
-New installations include the role tables. Upgrade an existing login database from the repository
-directory, then run the new worldserver binaries on every worker.
+New installations include the role tables. For an existing cluster, stop the login server and
+all world processes, then run these migrations from the repository directory before starting
+the new binaries together. Substitute your login database name if it differs.
 
 ```sh
 mariadb -u root -p classicrealmd < sql/gm-rbac.sql
+mariadb -u root -p classicrealmd < sql/gm-role-upgrade.sql
 ```
 
-Sign in to a legacy administrator account and run `.access grant <login> <role>`. Use the account's
-login name. Roles are account-wide for all realms sharing this login database.
+The upgrade preserves existing role assignments and migrates old staff accounts to the
+corresponding built-in role. Reapplying it respects accounts whose roles were revoked.
+Recreate any customized permissions as named grants. The servers read staff access from the
+role tables.
+
+Run `./bin/authserver account grant <login> administrator` to give your first administrator
+access. In game, use `.access grant <login> <role>`. Roles apply to the account across all
+realms that share this login database.
 
 | Role | Access |
 |---|---|
@@ -134,12 +127,10 @@ login name. Roles are account-wide for all realms sharing this login database.
 | `game-master` | Support, gameplay testing, events and world editing |
 | `administrator` | Every capability, including role administration |
 
-Run `.access revoke <login> <role>` to remove a role. Multiple roles combine their grants. An
-enrolled account with zero roles has no staff access. Workers read current roles at login, on
-handoff and before executing chat commands. Other staff behavior uses the last loaded policy.
-Accounts that have never been enrolled still use `account.gmlevel`, `gm_permissions` and
-`command_overrides`. The legacy `.account level` command sets that fallback policy. Configure
-`gm_command_log` on every worker to record role changes and other audited staff actions.
+Run `.access revoke <login> <role>` to remove a role. Multiple roles combine their grants.
+An account with zero roles has no staff access. Workers refresh roles at login, on handoff
+and before executing chat commands. Configure `gm_command_log` on every worker to record
+role changes and audited staff actions.
 
 ## Create a narrow role
 
@@ -166,11 +157,13 @@ and for `.npc traineradd` use `command.addtrainerspell`.
 * Select a saved creature. Stand at each waypoint and use `.wp add [wait-ms]`. Use
   `.wp list` to review your draft and `.wp save` to commit the route. Use
   `.wp discard` to discard unsaved edits. Selecting a different spawn starts a new draft.
-  A saved empty route makes the spawn idle. Attach existing movement scripts with
-  `.wp script <point> <script-id>`.
+  A saved empty route makes the spawn idle. Use `.wp gait`, `.wp emote` or `.wp model` to
+  customize a point, or `.wp script <point> <script-id>` to attach an existing script.
+  Use `.wp add-air` for a creature whose template supports flight.
 * If you imported Classic-DB before this change, run
   `mariadb -u root -p classicmangos < sql/gm-waypoints.sql` against the world database.
-  It converts the spawn and route tables to InnoDB. Run this migration during maintenance,
+  Run `mariadb -u root -p classicmangos < sql/gm-content.sql` for NPC spawn links.
+  The waypoint migration converts the spawn and route tables to InnoDB. Run both during maintenance,
   then restart world workers after saving routes so they load the new paths.
 * Select a trainer and run `.npc traineradd <teaching-spell-id> [cost-in-copper] [required-level]`.
   Use the spell that teaches the lesson. The selected worker uses it immediately, and the other
@@ -178,6 +171,16 @@ and for `.npc traineradd` use `command.addtrainerspell`.
 
 Use `.quest reload` after updating quest definitions or giver relationships in the world database.
 Workers switch to the new catalog after it loads.
+
+## Test encounters and edit spawn links
+
+* Select a saved leader and use `.npc formation-leader`. Select a follower and use
+  `.npc formation-add [yards] [degrees]`. Use `.npc link-info` to inspect the saved link and
+  `.npc formation-remove` to clear it. Restart world workers to load saved changes.
+* Select an NPC with a spell list. Use `.debug ai-test` to inspect its spells and
+  `.debug ai-next` to cast the next spell on its normal targets.
+* Use `.bg pause on` in a battleground to pause the match clock, scoring and objectives.
+  Use `.bg pause off` to resume the same match.
 
 ## Design references
 
@@ -202,8 +205,8 @@ Generated from the command tables by `python3 tools/commands_doc.py`.
 
 ## Unavailable commands (%d)
 
-These entries remain callable by their existing names and explain what is unavailable.
-In-game command menus list working actions.
+These actions depend on features absent from the supported client. Calling one directly
+shows the client restriction. In-game command menus list working actions.
 
 | Command | Effect | Capability |
 |---|---|---|

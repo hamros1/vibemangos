@@ -547,6 +547,8 @@ Character creditedPlayer(UnitRef unit)
  */
 void dealDamage(UnitRef attacker, UnitRef victim, uint damage, const Blow blow)
 {
+    if (victim.map !is null && victim.map.battlegroundPaused !is null && victim.map.battlegroundPaused())
+        return;
     // A player's worn items wear a little with the damage it deals and takes (`Unit::DealDamage`).
     if (damage)
     {

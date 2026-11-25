@@ -310,29 +310,23 @@ private:
             return true;
         }
         const v = &go.values;
-        systemMessage(format!"%s Informations:"(MSG_COLOR_SUBWHITE));
-        systemMessage(format!"%s Entry:%s%u"(MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, go.spawn.entry));
-        systemMessage(format!"%s Model:%s%u"(MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, v.get!GAMEOBJECT_DISPLAYID));
-        systemMessage(format!"%s State:%s%u"(MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, v.get!GAMEOBJECT_STATE));
-        systemMessage(format!"%s flags:%s%u"(MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, v.get!GAMEOBJECT_FLAGS));
-        systemMessage(format!"%s dynflags:%s%u"(MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, v.get!GAMEOBJECT_DYN_FLAGS));
-        systemMessage(format!"%s faction:%s%u"(MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, v.get!GAMEOBJECT_FACTION));
-        static immutable string[] typeNames = ["Door", "Button", "Quest Giver", "Chest", "Binder", "Generic", "Trap",
-            "Chair", "Spell Focus", "Text", "Goober", "Transport", "Area Damage", "Camera", "Map Object",
-            "Mo Transport", "Duel Arbiter", "Fishing Node", "Ritual", "Mailbox", "Auction House", "Guard Post",
-            "Spell Caster", "Meeting Stone", "Flag Stand", "Fishing Hole", "Flag Drop"];
-        const type = v.get!GAMEOBJECT_TYPE_ID;
-        systemMessage(format!"%s Type:%s%u -- %s"(MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, type,
-            type < typeNames.length ? typeNames[type] : "Unknown."));
+        colorSystemMessage(ChatColor.silver, go.template_.name);
+        void field(T)(string label, T value)
+        {
+            systemMessage(colored(ChatColor.green, label) ~ "  " ~ colored(ChatColor.sky, format!"%s"(value)));
+        }
+        field("Entry", go.spawn.entry);
+        field("Model", v.get!GAMEOBJECT_DISPLAYID);
+        field("State", v.get!GAMEOBJECT_STATE);
+        field("Flags", v.get!GAMEOBJECT_FLAGS);
+        field("Dynamic flags", v.get!GAMEOBJECT_DYN_FLAGS);
+        field("Faction", v.get!GAMEOBJECT_FACTION);
+        field("Type", cast(GameObjectType) v.get!GAMEOBJECT_TYPE_ID);
         const p = go.position, me = player.position;
-        systemMessage(format!"%s Distance:%s%f"(MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE,
-            sqrt((p.x - me.x) ^^ 2 + (p.y - me.y) ^^ 2 + (p.z - me.z) ^^ 2)));
-        systemMessage(format!"%s Name:%s%s"(MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, go.template_.name));
-        systemMessage(format!"%s Size:%s%s"(MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, v.get!OBJECT_FIELD_SCALE_X));
-        systemMessage(format!"%s Rotation X:%s%f"(MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, v.get!GAMEOBJECT_ROTATION(0)));
-        systemMessage(format!"%s Rotation Y:%s%f"(MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, v.get!GAMEOBJECT_ROTATION(1)));
-        systemMessage(format!"%s Rotation O1:%s%f"(MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, v.get!GAMEOBJECT_ROTATION(2)));
-        systemMessage(format!"%s Rotation O2:%s%f"(MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, v.get!GAMEOBJECT_ROTATION(3)));
+        field("Distance", format!"%.2f"(sqrt((p.x - me.x) ^^ 2 + (p.y - me.y) ^^ 2 + (p.z - me.z) ^^ 2)));
+        field("Scale", v.get!OBJECT_FIELD_SCALE_X);
+        field("Rotation", format!"%.3f, %.3f, %.3f, %.3f"(v.get!GAMEOBJECT_ROTATION(0), v.get!GAMEOBJECT_ROTATION(1),
+            v.get!GAMEOBJECT_ROTATION(2), v.get!GAMEOBJECT_ROTATION(3)));
         return true;
     }
 
@@ -1022,7 +1016,7 @@ unittest
     import std.algorithm.searching : canFind;
     import std.format : format;
     import dmangos.auth.accounts : AccountLevel;
-    import dmangos.world.commands : MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, MSG_COLOR_LIGHTRED, MSG_COLOR_GREY;
+    import dmangos.world.commands : ChatColor, colored;
     import dmangos.world.creature : Creature;
     import dmangos.world.movement : Position;
     import dmangos.world.objects : HighGuid, makeGuid;
@@ -1050,7 +1044,7 @@ unittest
 
     // Nothing selected.
     gm.say(".kill");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Select a unit first.|r"]);
+    assert(systemMessages(gm.read()) == [ChatColor.softRed ~ "Select a unit first.|r"]);
 
     // `.npc select`: the nearest creature.
     gm.say(".npc select");
@@ -1094,37 +1088,37 @@ unittest
     gm.say(".kill");
     gm.read();
     assert(victim.deathState == DeathState.corpse);
-    assert(systemMessages(anduin.read()) == [MSG_COLOR_LIGHTBLUE ~ "Varian killed you with a GM command.|r"]);
+    assert(systemMessages(anduin.read()) == [ChatColor.sky ~ "Varian killed you with a GM command.|r"]);
     gm.say(".killplr anduin");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Player anduin is already dead.|r"]);
+    assert(systemMessages(gm.read()) == [ChatColor.softRed ~ "Player anduin is already dead.|r"]);
     gm.say(".reviveplr anduin");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_GREEN ~ "Revived player anduin.|r"]);
+    assert(systemMessages(gm.read()) == [ChatColor.green ~ "Revived player anduin.|r"]);
     assert(victim.deathState == DeathState.alive
         && victim.values.get!UNIT_FIELD_HEALTH == victim.values.get!UNIT_FIELD_MAXHEALTH);
     gm.say(".reviveplr anduin");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_GREEN ~ "Player anduin is not dead.|r"]);
+    assert(systemMessages(gm.read()) == [ChatColor.green ~ "Player anduin is not dead.|r"]);
     gm.say(".killplr anduin");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_GREEN ~ "Killed player anduin.|r"]);
-    assert(systemMessages(anduin.read()) == [MSG_COLOR_LIGHTBLUE ~ "You were killed by Varian with a GM command.|r"]);
+    assert(systemMessages(gm.read()) == [ChatColor.green ~ "Killed player anduin.|r"]);
+    assert(systemMessages(anduin.read()) == [ChatColor.sky ~ "You were killed by Varian with a GM command.|r"]);
     gm.say(".killplr nobody");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Player nobody is not online or does not exist.|r"]);
+    assert(systemMessages(gm.read()) == [ChatColor.softRed ~ "Player nobody is not online or does not exist.|r"]);
     gm.say(".reviveplr anduin");
     gm.read();
 
     // God mode: no damage taken.
     gm.write(Opcode.CMSG_SET_SELECTION, ClientGuid(victim.guid));
     gm.say(".cheat god");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "Damage immunity: on for Anduin.|r"]);
-    assert(systemMessages(anduin.read()) == [MSG_COLOR_GREEN ~ "Varian turned on Damage immunity.|r"]);
+    assert(systemMessages(gm.read()) == [ChatColor.sky ~ "Damage immunity: on for Anduin.|r"]);
+    assert(systemMessages(anduin.read()) == [ChatColor.green ~ "Varian turned on Damage immunity.|r"]);
     const health = victim.values.get!UNIT_FIELD_HEALTH;
     anduin.session.inWorld.unit.spellHitBy(keeper.guid, 50);
     assert(victim.values.get!UNIT_FIELD_HEALTH == health);
     gm.say(".cheat casttime on");
     gm.say(".cheat status");
     const status = systemMessages(gm.read());
-    assert(status.canFind("Damage immunity  " ~ MSG_COLOR_GREEN ~ "On|r"));
-    assert(status.canFind("Instant casts  " ~ MSG_COLOR_GREEN ~ "On|r"));
-    assert(status.canFind("Skip area requirements  " ~ MSG_COLOR_GREY ~ "Off|r"));
+    assert(status.canFind("Damage immunity  " ~ ChatColor.green ~ "On|r"));
+    assert(status.canFind("Instant casts  " ~ ChatColor.green ~ "On|r"));
+    assert(status.canFind("Skip area requirements  " ~ ChatColor.grey ~ "Off|r"));
 }
 
 /// `.npc come` walks the selected creature to the GM; `.npc return` walks it back to its spawn point.
@@ -1158,7 +1152,7 @@ unittest
 {
     import std.algorithm.searching : canFind, startsWith;
     import dmangos.auth.accounts : AccountLevel;
-    import dmangos.world.commands : MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, MSG_COLOR_LIGHTRED;
+    import dmangos.world.commands : ChatColor, colored;
     import dmangos.world.gameobject : GameObject, GameObjectSpawn, GameObjectTemplate, GameObjectType;
     import dmangos.world.movement : Position;
     import dmangos.world.testclient;
@@ -1170,7 +1164,7 @@ unittest
     auto gm = loggedIn(context, db, 7, "Varian", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.administrator);
     gm.read();
     gm.say(".gobject info");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Select a game object first.|r"]);
+    assert(systemMessages(gm.read()) == [ChatColor.softRed ~ "Select a game object first.|r"]);
 
     GameObjectTemplate door = {entry: 9001, type: GameObjectType.door, displayId: 1, name: "Door"};
     context.data.gameObjectTemplates[9001] = door;
@@ -1180,15 +1174,15 @@ unittest
     gm.read();
 
     gm.say(".gobject select");
-    assert(systemMessages(gm.read())[0].startsWith(MSG_COLOR_GREEN ~ "Selected GameObject [ Door ] which is 1."));
+    assert(systemMessages(gm.read())[0].startsWith(ChatColor.green ~ "Selected GameObject [ Door ] which is 1."));
     gm.say(".gobject info");
     const info = systemMessages(gm.read());
-    assert(info.canFind(MSG_COLOR_GREEN ~ " Entry:" ~ MSG_COLOR_LIGHTBLUE ~ "9001"));
-    assert(info.canFind(MSG_COLOR_GREEN ~ " Type:" ~ MSG_COLOR_LIGHTBLUE ~ "0 -- Door"));
+    assert(info.canFind(colored(ChatColor.green, "Entry") ~ "  " ~ colored(ChatColor.sky, "9001")));
+    assert(info.canFind(colored(ChatColor.green, "Type") ~ "  " ~ colored(ChatColor.sky, "door")));
     gm.say(".gobject activate");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "Gameobject closed.|r"] && go.values.get!GAMEOBJECT_STATE == 0);
+    assert(systemMessages(gm.read()) == [ChatColor.sky ~ "Gameobject closed.|r"] && go.values.get!GAMEOBJECT_STATE == 0);
     gm.say(".gobject activate");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "Gameobject opened.|r"] && go.values.get!GAMEOBJECT_STATE == 1);
+    assert(systemMessages(gm.read()) == [ChatColor.sky ~ "Gameobject opened.|r"] && go.values.get!GAMEOBJECT_STATE == 1);
 }
 
 /// `.npc spawn` and `.npc delete`, `.gobject spawn` (saved) and `.gobject delete`: in the world and the database.
@@ -1197,7 +1191,7 @@ unittest
     import std.algorithm.searching : canFind, startsWith;
     import std.format : format;
     import dmangos.auth.accounts : AccountLevel;
-    import dmangos.world.commands : MSG_COLOR_LIGHTBLUE, MSG_COLOR_LIGHTRED;
+    import dmangos.world.commands : ChatColor, colored;
     import dmangos.world.creature : Creature;
     import dmangos.world.gameobject : GameObjectTemplate, GameObjectType;
     import dmangos.world.movement : Position;
@@ -1213,7 +1207,7 @@ unittest
     auto map = context.map(0);
 
     gm.say(".npc spawn 6774");
-    assert(systemMessages(gm.read())[0].startsWith(MSG_COLOR_LIGHTBLUE ~ "Spawned a creature `"));
+    assert(systemMessages(gm.read())[0].startsWith(ChatColor.sky ~ "Spawned a creature `"));
     assert(db.creatureSpawnRows.length == 1);
     const row = db.creatureSpawnRows.values[0];
     auto spawned = cast(Creature) map.findObject(makeGuidFor(row.entry, row.guid));
@@ -1223,11 +1217,11 @@ unittest
 
     context.database = new FencedDatabase(db, () => false);
     gm.say(".npc delete");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Could not delete the creature.|r"]);
+    assert(systemMessages(gm.read()) == [ChatColor.softRed ~ "Could not delete the creature.|r"]);
     assert(map.findObject(spawned.guid) is spawned && db.creatureSpawnRows.length == 1);
     context.database = db;
     gm.say(".npc delete");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "Deleted creature ID " ~ format!"%s"(row.guid) ~ "|r"]);
+    assert(systemMessages(gm.read()) == [ChatColor.sky ~ "Deleted creature ID " ~ format!"%s"(row.guid) ~ "|r"]);
     assert(map.findObject(spawned.guid) is null && db.creatureSpawnRows.length == 0);
 
     GameObjectTemplate chair = {entry: 9010, type: GameObjectType.chair, displayId: 1, name: "Chair"};
@@ -1238,36 +1232,36 @@ unittest
     gm.say(".gobject select");
     assert(systemMessages(gm.read())[0].canFind("[ Chair ]"));
     gm.say(".gobject scale 2");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "Set scale to 2.000|r"]);
+    assert(systemMessages(gm.read()) == [ChatColor.sky ~ "Set scale to 2.000|r"]);
     gm.say(".gobject enable");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "Gameobject activated.|r"]);
+    assert(systemMessages(gm.read()) == [ChatColor.sky ~ "Gameobject activated.|r"]);
     gm.say(".gobject animprogress 5");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "Set ANIMPROGRESS to 5|r"]);
+    assert(systemMessages(gm.read()) == [ChatColor.sky ~ "Set ANIMPROGRESS to 5|r"]);
     const chairRow = db.gameObjectSpawnRows.keys[0];
     db.gameObjectSpawnRows[chairRow].respawnSeconds = 100; // a column that a placement edit must leave intact
     gm.say(".gobject rotate x 90");
     assert(db.gameObjectSpawnRows.values[0].rotation[0] > 1.5f, "turned and saved");
     assert(db.gameObjectSpawnRows[chairRow].respawnSeconds == 100);
     gm.say(".gobject rotate q 90");
-    assert(systemMessages(gm.read()).canFind(MSG_COLOR_LIGHTRED ~ "Choose an axis: x, y, or o.|r"));
+    assert(systemMessages(gm.read()).canFind(ChatColor.softRed ~ "Choose an axis: x, y, or o.|r"));
     gm.say(".gobject move");
     assert(db.gameObjectSpawnRows.length == 1);
     gm.read();
     context.database = new FencedDatabase(db, () => false);
     gm.say(".gobject delete");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Could not delete the game object.|r"]);
+    assert(systemMessages(gm.read()) == [ChatColor.softRed ~ "Could not delete the game object.|r"]);
     assert(db.gameObjectSpawnRows.length == 1);
     context.database = db;
     db.deleteGameObjectSpawn(chairRow);
     gm.say(".gobject move");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Could not move the game object.|r"]);
+    assert(systemMessages(gm.read()) == [ChatColor.softRed ~ "Could not move the game object.|r"]);
     assert(db.gameObjectSpawnRows.length == 0, "a failed placement edit cannot recreate a deleted spawn");
     gm.say(".gobject delete");
     assert(db.gameObjectSpawnRows.length == 0);
 
     context.database = new FencedDatabase(db, () => false);
     gm.say(".gobject spawn 9010 1");
-    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Could not spawn the game object.|r"]);
+    assert(systemMessages(gm.read()) == [ChatColor.softRed ~ "Could not spawn the game object.|r"]);
     assert(db.gameObjectSpawnRows.length == 0);
     context.database = db;
 

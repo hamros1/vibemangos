@@ -3,28 +3,6 @@ module dmangos.world.gmstaff;
 
 import dmangos.world.commands;
 
-/// The colour of an `announce_*_color` number.
-string announceColor(uint number) pure nothrow @safe @nogc
-{
-    static immutable string[11] colors = ["", MSG_COLOR_LIGHTRED, MSG_COLOR_LIGHTBLUE, MSG_COLOR_BLUE, MSG_COLOR_GREEN,
-        MSG_COLOR_RED, MSG_COLOR_GOLD, MSG_COLOR_GREY, MSG_COLOR_WHITE, MSG_COLOR_MAGENTA, MSG_COLOR_YELLOW];
-    return number < colors.length ? colors[number] : "";
-}
-
-/// The client's colour for an item quality, as item links use it.
-string itemQualityColor(uint quality) pure nothrow @safe @nogc
-{
-    static immutable string[7] colors = ["|cff9d9d9d", "|cffffffff", "|cff1eff00", "|cff0070dd", "|cffa335ee",
-        "|cffff8000", "|cffe6cc80"];
-    return quality < colors.length ? colors[quality] : colors[1];
-}
-
-unittest
-{
-    assert(announceColor(1) == "|cffff6060" && announceColor(10) == "|cffffff00");
-    assert(announceColor(0) == "" && announceColor(11) == "");
-}
-
 /// See the module documentation.
 mixin template StaffCommands()
 {
@@ -34,7 +12,7 @@ mixin template StaffCommands()
     import dmangos.world.commands;
     import dmangos.world.gmtargets : GmRemoteOp;
     import dmangos.world.names : normalizedName;
-    import dmangos.world.gmstaff : announceColor, itemQualityColor;
+    import dmangos.world.chatstyle : announcementTint, itemChatLink, playerChatLink;
     import dmangos.world.movement : Position;
     import dmangos.world.player : PlayerFlags;
     import dmangos.world.updatefields;
@@ -44,23 +22,26 @@ private:
     string itemLink(uint entry)
     {
         const item = entry in context.data.items;
-        return format!"%s|Hitem:%u:0:0:0|h[%s]|h|r"(itemQualityColor(item.details.quality), entry, item.details.name);
+        return item is null ? format!"Item %s"(entry) : itemChatLink(entry, item.details.name, item.details.quality);
     }
 
-    /// The `[Staff]<GM>` start that `.announce` and `.wannounce` share.
-    string announceStart()
+    private string announcement(string message, bool onScreen)
     {
         const config = context.config;
-        string text = announceColor(config.announceTagColor) ~ "[" ~ config.announceTag ~ "]"
-            ~ announceColor(config.announceGmTagColor);
+        string text = colored(announcementTint(config.announceTagColor), "[" ~ config.announceTag ~ "]");
         if (config.announceGmAdminTag)
         {
-            if (canUseCommand('z'))
-                text ~= "<Admin>";
-            else if (hasPermissions)
-                text ~= "<GM>";
+            const badge = allowsStaff("staff.admin") ? "<Admin>" : allowsStaff("staff.access") ? "<GM>" : "";
+            if (badge.length)
+                text ~= colored(announcementTint(config.announceGmTagColor), badge);
         }
-        return text;
+        if (onScreen ? config.nameInWAnnounce : config.nameInAnnounce)
+        {
+            const name = player.data.name;
+            const author = onScreen ? "[" ~ name ~ "]" : playerChatLink(name);
+            text ~= colored(announcementTint(config.announceNameColor), author);
+        }
+        return text ~ ": " ~ colored(announcementTint(config.announceMessageColor), message);
     }
 
     bool handleAnnounceCommand(Rest message = Rest.init)
@@ -72,37 +53,23 @@ private:
             systemMessage("Announcements require at least four characters and cannot contain a percent sign.");
             return true;
         }
-        const config = context.config;
-        string text = announceStart();
-        if (config.nameInAnnounce)
-            text ~= "|r" ~ announceColor(config.announceNameColor) ~ "|Hplayer:" ~ player.data.name ~ "|h["
-                ~ player.data.name ~ "]|h:|r " ~ announceColor(config.announceMessageColor);
-        else
-            text ~= ": " ~ announceColor(config.announceMessageColor);
-        sendWorldText(text ~ message);
-        gmLog(format!"used announce command, [%s]"(message));
+        sendWorldText(announcement(message, false));
+        gmLog(format!"announced to the realm [%s]"(message));
         return true;
     }
 
     bool handleGMAnnounceCommand(Rest message)
     {
-        sendGMWorldText(format!(MSG_COLOR_RED ~ "[Team]" ~ MSG_COLOR_GREEN ~ " |Hplayer:%s|h[%s]|h:" ~ MSG_COLOR_YELLOW
-            ~ " %s")(player.data.name, player.data.name, message));
-        gmLog(format!"used team announce command, [%s]"(message));
+        sendGMWorldText(colored(ChatColor.red, "[Team]") ~ " " ~ colored(ChatColor.green, playerChatLink(player.data.name))
+            ~ ": " ~ colored(ChatColor.yellow, message));
+        gmLog(format!"announced to staff [%s]"(message));
         return true;
     }
 
     bool handleWAnnounceCommand(Rest message)
     {
-        const config = context.config;
-        string text = announceStart();
-        if (config.nameInWAnnounce)
-            text ~= "|r" ~ announceColor(config.announceNameColor) ~ "[" ~ player.data.name ~ "]:|r "
-                ~ announceColor(config.announceMessageColor);
-        else
-            text ~= ": " ~ announceColor(config.announceMessageColor);
-        sendWorldWideScreenText(text ~ message);
-        gmLog(format!"used wannounce command [%s]"(message));
+        sendWorldWideScreenText(announcement(message, true));
+        gmLog(format!"announced on screen [%s]"(message));
         return true;
     }
 
@@ -151,8 +118,8 @@ private:
                 return true;
             }
         }
-        systemMessage(format!"%sPosition|r  ·  Map %s  ·  Zone %s  ·  %.3f, %.3f, %.3f  ·  Facing %.3f"
-            (MSG_COLOR_GREEN, mapId, zone, at.x, at.y, at.z, at.orientation));
+        systemMessage(format!"%s  ·  Map %s  ·  Zone %s  ·  %.3f, %.3f, %.3f  ·  Facing %.3f"
+            (colored(ChatColor.green, "Position"), mapId, zone, at.x, at.y, at.z, at.orientation));
         return true;
     }
 
@@ -172,7 +139,7 @@ private:
         }
         auto chr = sessionOf(found);
         gmLog(format!"Kicked player %s from the server for %s"(chr.player.data.name, kickReason));
-        chr.kickedBy(gmSink, player.data.name, canUseCommand('z'), kickReason);
+        chr.kickedBy(gmSink, player.data.name, allowsStaff("staff.admin"), kickReason);
         return true;
     }
 

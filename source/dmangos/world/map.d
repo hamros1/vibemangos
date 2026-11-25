@@ -444,6 +444,8 @@ final class Map : CombatWorld, GameObjectWorld
     /// Sends replicas of this map's own objects to other nodes; null when standalone.
     Replicator replicator;
 
+    package bool delegate() battlegroundPaused;
+
     package ElevatorPath delegate(ulong guid, const ref UpdateValues fields) elevatorPath;
     package uint delegate() elevatorClock;
     package bool[ulong] elevatorHomes; // spawn cells of transports that can travel far from home

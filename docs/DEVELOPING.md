@@ -160,19 +160,21 @@ The catalog supplies the in-game usage, permission checks and generated referenc
 this is the action for `.wp move`.
 
 ```d
-action("movehere", permit('w'), "handleWPMoveHereCommand", "<point>",
+action("movehere", permit("world.waypoints"), "handleWPMoveHereCommand", "<point>",
     "Move a draft point to your position.", "move"),
 ```
 
 The last argument is the preferred spelling. The original name stays in existing permission
 paths, so `.wp move` uses `command.waypoint movehere`. Use `shortcut` to link to an action in
-another group. Use an explicit named capability when the legacy permission letter and the role
-capability cover different duties.
+another group. Use the narrowest named capability that covers the action.
 
 The dispatch code converts arguments to the handler’s parameter types. A default value makes an
 argument optional. An omitted `Nullable` argument is null. `Rest` takes the rest of the line and
 `OnOff` accepts `on` or `off`. Return false to show usage, or send a message and return true if
 the input is valid but the action cannot run.
+
+Use `greenSystemMessage`, `redSystemMessage` and `blueSystemMessage` for command feedback.
+`chatstyle.d` owns the color palette and item and player link formatting.
 
 Run `python3 tools/commands_doc.py` after editing the catalog.
 

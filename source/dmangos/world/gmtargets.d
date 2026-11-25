@@ -8,7 +8,7 @@ module dmangos.world.gmtargets;
 
 public import dmangos.cluster.protocol : GmRemoteOp; // a cluster message's field
 
-import dmangos.world.commands : MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, MSG_COLOR_LIGHTRED;
+import dmangos.world.chatstyle : ChatColor, colored, systemChatText;
 
 
 /// Whether `op` is about a dungeon copy (or a player's), done on the node hosting it.
@@ -30,17 +30,17 @@ struct GmSink
 
     void system(string text)
     {
-        send(text.length > 1023 ? text[0 .. 1023] : text);
+        send(systemChatText(text));
     }
 
-    void colored(string color, string text)
+    void colored(ChatColor color, string text)
     {
-        system(color ~ (text.length > 1023 ? text[0 .. 1023] : text) ~ "|r");
+        send(systemChatText(text, color));
     }
 
-    void red(string text) { colored(MSG_COLOR_LIGHTRED, text); }
-    void green(string text) { colored(MSG_COLOR_GREEN, text); }
-    void blue(string text) { colored(MSG_COLOR_LIGHTBLUE, text); }
+    void red(string text) { colored(ChatColor.softRed, text); }
+    void green(string text) { colored(ChatColor.green, text); }
+    void blue(string text) { colored(ChatColor.sky, text); }
 }
 
 /// See the module documentation.
@@ -48,7 +48,7 @@ mixin template GmTargets()
 {
     import std.format : format;
     import dmangos.cluster.protocol : GmRemote;
-    import dmangos.world.commands : MSG_COLOR_RED;
+    import dmangos.world.chatstyle : ChatColor, colored, systemChatText;
     import dmangos.world.gmtargets : GmRemoteOp, GmSink;
     import dmangos.world.movement : Position;
 
@@ -73,7 +73,7 @@ mixin template GmTargets()
         m.op = op;
         m.gm = player.guid;
         m.gmName = player.data.name;
-        m.gmCanKickGms = canUseCommand('z');
+        m.gmCanKickGms = allowsStaff("staff.admin");
         m.target = remote.entry.guid;
         m.map = player.data.map;
         m.instance = instanceId_;
@@ -153,7 +153,7 @@ mixin template GmTargets()
         m.op = op;
         m.gm = player.guid;
         m.gmName = player.data.name;
-        m.gmCanKickGms = canUseCommand('z');
+        m.gmCanKickGms = allowsStaff("staff.admin");
         m.map = player.data.map;
         m.instance = instanceId_;
         const at = player.position;
@@ -217,16 +217,15 @@ mixin template GmTargets()
         flushPlayerChanges();
     }
 
-    /// `.kick`'s part on the player: a GM without the `z` permission cannot kick one who has it.
+    /// `.kick`'s part on the player: administrators may only be kicked by other administrators.
     package void kickedBy(GmSink gm, string gmName, bool gmCanKickGms, string reason)
     {
         const chrName = player.data.name;
         gm.blue(format!"Attempting to kick %s from the server for \"%s\"."(chrName, reason));
-        if (!gmCanKickGms && canUseCommand('z'))
+        if (!gmCanKickGms && allowsStaff("staff.admin"))
             return gm.red(format!"You cannot kick %s, as they are a higher level gm than you."(chrName));
-        const message = format!"%sGM: %s was kicked from the server by %s. Reason: %s"(MSG_COLOR_RED, chrName,
-            gmName, reason);
-        sendWorldText(message.length > 199 ? message[0 .. 199] : message);
+        const message = format!"GM: %s was kicked from the server by %s. Reason: %s"(chrName, gmName, reason);
+        sendWorldText(colored(ChatColor.red, message.length > 187 ? message[0 .. 187] : message));
         systemMessage(format!"You are being kicked from the server by %s. Reason: %s"(gmName, reason));
         kick(format!"kicked by %s: %s"(gmName, reason));
     }
@@ -293,7 +292,7 @@ mixin template GmTargets()
         gm.blue(format!"%s has played %s at this level"(female ? "She" : "He", playedText(progress.levelTime)));
         gm.blue(format!"and %s overall"(playedText(progress.totalTime)));
         gm.blue(format!"%s is connecting from account '%s'[%u] with permissions '%s'"(female ? "She" : "He",
-            account.username, account.id, permissions));
+            account.username, account.id, staffRoles));
         gm.blue(format!"%s uses %s (build %u)"(female ? "She" : "He", "WoW", build));
         gm.blue(format!"%s IP is '%s', and has a latency of %ums"(female ? "Her" : "His", address, latencyMs));
     }
@@ -325,11 +324,11 @@ unittest
     ushort sentTo;
     context.gmRemote = (ushort node, const ref GmRemote m) { sentTo = node; sent ~= m; };
     ushort[] elsewhere;
-    context.toEveryoneElsewhere = (ushort opcode, char, const(ubyte)[]) { elsewhere ~= opcode; };
+    context.toEveryoneElsewhere = (ushort opcode, bool, const(ubyte)[]) { elsewhere ~= opcode; };
     auto gm = loggedIn(context, db, 9, "Jaina", Position(-8940, -132, 83.5f), AccountLevel.administrator);
     gm.read();
     context.presence(2, true, [PresenceEntry(0x55, "Faraway", 5, 1, 1, 10, 0, 12, 0, 0, ""),
-        PresenceEntry(0x56, "Keeper", 6, 1, 1, 60, 0, 12, PresenceFlags.permissions | PresenceFlags.gmTag, 3, "",
+        PresenceEntry(0x56, "Keeper", 6, 1, 1, 60, 0, 12, PresenceFlags.staff | PresenceFlags.gmTag, 3, "",
         "az")], null);
 
     // `.summon` and `.kickplayer` name a player of node 2: the command goes there, with the GM's place.

@@ -110,7 +110,7 @@ interface ChannelMember
     @property string name() const;
     @property ubyte race() const;
 
-    /// The `c` permission letter: it moderates every channel but the built-in ones.
+    /// Whether the player can moderate user-created channels.
     @property bool moderatesAll() const;
 
     /// The visual honor rank (-4 to 14): the defense channels need one to speak in.
@@ -403,7 +403,7 @@ final class Channel
     /// Turns moderation on or off.
     void toggleModeration(ChannelMember player)
     {
-        // Moderators, and anyone with the `c` permission.
+        // Channel moderators and staff with moderation access.
         if (!checkModerator(player, player.moderatesAll))
             return;
         moderation = !moderation;

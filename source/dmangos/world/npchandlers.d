@@ -878,7 +878,7 @@ private:
             send(ServerSetProficiency(2, player.proficiency[0])); // ITEM_CLASS_WEAPON
             send(ServerSetProficiency(4, player.proficiency[1])); // ITEM_CLASS_ARMOR
         }
-        if (canUseCommand('c'))
+        if (allowsStaff("staff.support"))
             player.learnGmLanguages();
         flushPlayerChanges();
     }

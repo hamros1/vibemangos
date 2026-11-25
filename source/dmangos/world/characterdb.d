@@ -383,7 +383,7 @@ final class CharacterStatements
         const now = Clock.currTime.toUnixTime;
         characters.execute!("UPDATE characters SET position_x = ?, position_y = ?, position_z = ?, orientation = ?, "
             ~ "map = ?, zone = ?, totaltime = ?, leveltime = ?, logout_time = ?, health = ?, power1 = ?, "
-            ~ "power2 = ?, power3 = ?, power4 = ?, power5 = ?, actionBars = ?, cinematic = ?, at_login = ?, "
+            ~ "power2 = ?, power3 = ?, power4 = ?, power5 = ?, actionBars = ?, cinematic = ?, at_login = (at_login & 1) | ?, "
             ~ "level = ?, xp = ?, money = ?, exploredZones = ?, equipmentCache = ?, ammoId = ?, rest_bonus = ?, "
             ~ "is_logout_resting = ?, playerFlags = ?, death_expire_time = ?, taximask = ?, taxi_path = ? WHERE guid = ?")(
             p.position.x, p.position.y, p.position.z, p.position.orientation, p.map, p.zone, p.totalTime, p.levelTime,

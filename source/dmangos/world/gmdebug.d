@@ -509,11 +509,11 @@ private:
         auto places = recallLocations();
         if (places.length == 0)
             return false;
-        string text = MSG_COLOR_GREEN ~ "Recall locations|r:\n\n";
+        string text = colored(ChatColor.green, "Recall locations") ~ ":\n\n";
         uint count;
         foreach (ref place; places)
         {
-            text ~= MSG_COLOR_LIGHTBLUE ~ place.name ~ "|r, ";
+            text ~= colored(ChatColor.sky, place.name) ~ ", ";
             if (++count == 5)
             {
                 text ~= "\n";
@@ -617,6 +617,26 @@ private:
         return true;
     }
 
+    bool handlePauseBGCommand(Nullable!OnOff state)
+    {
+        auto copy = currentBattleground();
+        if (copy is null)
+        {
+            redSystemMessage("Join a battleground first.");
+            return true;
+        }
+        const pause = state.isNull ? !copy.paused : state.get == OnOff.on;
+        if (!copy.setPaused(pause))
+            redSystemMessage("Only an active match or its countdown can be paused.");
+        else
+        {
+            context.battlegrounds.flushCheckpoints();
+            gmLog(format!"set battleground %s paused=%s"(copy.instance, pause));
+            greenSystemMessage(pause ? "Battleground paused." : "Battleground resumed.");
+        }
+        return true;
+    }
+
     bool handleStartBGCommand()
     {
         if (auto copy = currentBattleground())
@@ -628,8 +648,10 @@ private:
 
     bool handleBGInfoCommnad()
     {
+        import std.conv : to;
+
         if (auto copy = currentBattleground())
-            systemMessage(format!"%s, copy %s, %s."(copy.type, copy.instance, copy.status));
+            systemMessage(format!"%s · Copy %s · %s"(copy.type, copy.instance, copy.paused ? "Paused" : copy.status.to!string));
         else
             systemMessage("Join a battleground first.");
         return true;

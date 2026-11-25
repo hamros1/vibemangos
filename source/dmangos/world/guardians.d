@@ -162,13 +162,25 @@ mixin template GuardianSummons()
         return at;
     }
 
+    package bool summonStaffHelper(uint entry, uint seconds)
+    {
+        if (!player.alive || !seconds || seconds > int.max / 1000)
+            return false;
+        const targets = SpellTargets.init;
+        if (!makeGuardian(null, entry, guardianSpot(targets, 0, 0), player.data.level,
+            cast(int) seconds * 1000))
+            return false;
+        checkpointSummons(true);
+        return true;
+    }
+
     /// One guardian of `entry` at `at`, for `ms` (0: until it dies).
-    private void makeGuardian(const(SpellInfo)* spell, uint entry, Position at, uint level, int ms)
+    private bool makeGuardian(const(SpellInfo)* spell, uint entry, Position at, uint level, int ms)
     {
         auto g = context.summonCreature(map, entry, at, ms > 0 ? TempSpawnType.timedOrCorpse : TempSpawnType.corpse,
             ms > 0 ? ms : 0, player.guid);
         if (g is null)
-            return;
+            return false;
         if (level != g.values.get!UNIT_FIELD_LEVEL)
             context.setCreatureLevel(g, level);
         auto v = &g.values;
@@ -178,7 +190,7 @@ mixin template GuardianSummons()
         enum uint copied = UnitFlags.playerControlled | UnitFlags.pvp | UnitFlags.immuneToPlayer | UnitFlags.immuneToNpc;
         v.set!UNIT_FIELD_FLAGS(g.template_.unitFlags | (player.values.get!UNIT_FIELD_FLAGS & copied));
         v.set!UNIT_NPC_FLAGS(g.template_.npcFlags);
-        v.set!UNIT_CREATED_BY_SPELL(spell.id);
+        v.set!UNIT_CREATED_BY_SPELL(spell is null ? 0 : spell.id);
         v.set!UNIT_FIELD_SUMMONEDBY(player.guid);
         v.set!UNIT_FIELD_CREATEDBY(player.guid);
         v.setByte!UNIT_FIELD_BYTES_2(1, guardianMiscFlags);
@@ -187,6 +199,7 @@ mixin template GuardianSummons()
         g.generator = new FollowMovement(player.guid, guardianFollowDistance, guardianFollowAngle);
         map.flushObjectChanges(g);
         guardians_ ~= g.guid;
+        return true;
     }
 
     /// The guardian `guid` goes.

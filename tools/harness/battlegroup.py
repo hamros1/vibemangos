@@ -53,7 +53,7 @@ def run(fixture):
     for account in accounts:
         subprocess.run([AUTH, "-c", auth_path, "account", "create", account, password],
                        cwd=fixture.directory, check=True, timeout=15)
-    fixture.query("UPDATE account SET gmlevel=3", login)
+    fixture.grant_admins(login)
     fixture.start("auth", [AUTH, "-c", auth_path])
     wait_for("the login server", lambda: "listening on" in fixture.log("auth"), 10)
 

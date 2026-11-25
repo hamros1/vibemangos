@@ -19,11 +19,11 @@ interface OnlinePlayer : Inhabitant
     /// The account's security level.
     @property AccountLevel security() const;
 
-    /// Whether the account has the permission letter `group`.
-    bool canUseCommand(char group) const;
+    /// Whether the account's roles grant the named capability.
+    bool allowsStaff(string capability) const;
 
-    /// Whether the account has any GM permission at all.
-    @property bool hasPermissions() const;
+    /// Whether the account has staff access.
+    @property bool isStaff() const;
 
     /// Whether the player ignores `guid` (its ignore list).
     bool ignores(ulong guid) const;

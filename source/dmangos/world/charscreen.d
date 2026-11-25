@@ -84,7 +84,7 @@ private:
     {
         import dmangos.world.gmaccess : readGmAccess;
 
-        return readGmAccess(context.database, account.id).rank(account.level);
+        return readGmAccess(context.database, account.id).rank();
     }
 
     /// Creates a character as the client asked; returns the result code for `SMSG_CHAR_CREATE`.
@@ -408,7 +408,7 @@ mixin template CharacterLogin()
             character.spells, abilities);
         auto made = new Player(character, abilities, context.data, context.client, &context.nextItemGuid,
             context.playerGuid(character.guid));
-        if (canUseCommand('c'))
+        if (allowsStaff("staff.support"))
             made.learnGmLanguages();
         const offline = offlineRest && character.logoutTime > 0 ? context.unixTime - character.logoutTime : 0;
         const rate = character.logoutResting ? context.config.rateRestOfflineInTavernOrCity
@@ -435,13 +435,15 @@ mixin template CharacterLogin()
                 sendSystemMessage(line);
         }
         // GMs, and with `send_stats_on_join` everyone, are told the population (a GM system message).
-        if (context.config.sendStatsOnJoin || hasGMPermissions)
+        if (context.config.sendStatsOnJoin || allowsStaff("staff.game_master"))
         {
-            import dmangos.world.commands : MSG_COLOR_WHITE;
+            import dmangos.world.chatstyle : ChatColor, colored;
+            import std.conv : to;
 
-            systemMessage(format!"Online Players: %s%s |rPeak: %s%s|r Accepted Connections: %s%s"(MSG_COLOR_WHITE,
-                context.sessionCount, MSG_COLOR_WHITE, context.peakSessions, MSG_COLOR_WHITE,
-                context.acceptedSessions));
+            systemMessage(format!"Online Players: %s  ·  Peak: %s  ·  Accepted Connections: %s"(
+                colored(ChatColor.white, context.sessionCount.to!string),
+                colored(ChatColor.white, context.peakSessions.to!string),
+                colored(ChatColor.white, context.acceptedSessions.to!string)));
         }
 
         sendInitialPacketsBeforeAddToMap();
@@ -452,7 +454,7 @@ mixin template CharacterLogin()
         if (!recovered && c.cinematic == 0)
         {
             player.data.cinematic = 1;
-            if (!hasGMPermissions)
+            if (!allowsStaff("staff.game_master"))
                 if (const race = context.client.races.lookup(c.race))
                     if (race.cinematicSequence)
                         send(ServerTriggerCinematic(race.cinematicSequence));
