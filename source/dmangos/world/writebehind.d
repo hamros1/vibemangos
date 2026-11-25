@@ -403,6 +403,7 @@ final class Writer
         WriteLedger ledger;    // where written writes are recorded; null: not recorded
         uint stream;
         ulong lastSeq;         // the number given to the newest write
+        ulong inFlightFrom;    // the number of the first write being written (`writtenThrough`)
         string logPath;
         Thread thread;
     }
@@ -558,6 +559,26 @@ final class Writer
         return MonoTime.currTime - databaseAt;
     }
 
+    /// The number of the newest write queued so far: `writtenThrough` it, everything queued until now is written.
+    @property ulong mark()
+    {
+        lock.lock_nothrow();
+        scope (exit)
+            lock.unlock_nothrow();
+        return lastSeq;
+    }
+
+    /// Whether every write queued up to `mark` `upTo` is written (or dropped); later ones may still wait.
+    bool writtenThrough(ulong upTo)
+    {
+        lock.lock_nothrow();
+        scope (exit)
+            lock.unlock_nothrow();
+        if (inFlight && inFlightFrom <= upTo)
+            return false;
+        return queue.length == 0 || queue[0].seq > upTo;
+    }
+
     /// Whether nothing waits to be written.
     @property bool settled()
     {
@@ -644,6 +665,7 @@ private:
                     queue = null;
                     latest = null;
                     inFlight = batch.length;
+                    inFlightFrom = batch.length ? batch[0].seq : 0;
                     progressAt = MonoTime.currTime;
                     room.notifyAll();
                 }
@@ -1609,4 +1631,34 @@ unittest
         bootKey = thisBoot;
     assert(replayLog(path, inner) == 1 && inner.findAccount("PLAYER").get.muteTime == 3,
         "another boot: the leased write is dropped");
+}
+
+// `writtenThrough(mark)`: the writes queued up to a mark are in, whatever was queued after it.
+unittest
+{
+    import core.thread : Thread;
+    import core.time : msecs;
+
+    auto inner = newDatabase();
+    auto flaky = new Flaky(inner);
+    atomicStore(flaky.holdMs, 300);
+    auto writer = new Writer(flaky, null);
+    scope (exit)
+        writer.stop();
+    WorldDatabase db = new WriteBehind(inner, writer, null);
+    const id = inner.findAccount("PLAYER").get.id;
+    assert(writer.writtenThrough(writer.mark), "nothing queued: nothing to wait for");
+    db.setMuteTime(id, 50);
+    const mark = writer.mark;
+    assert(!writer.writtenThrough(mark), "held by the database");
+    foreach (_; 0 .. 100)
+    {
+        if (writer.writtenThrough(mark))
+            break;
+        Thread.sleep(20.msecs);
+    }
+    assert(writer.writtenThrough(mark) && inner.findAccount("PLAYER").get.muteTime == 50);
+    atomicStore(flaky.holdMs, 2_000);
+    db.setMuteTime(id, 51); // queued after the mark
+    assert(writer.writtenThrough(mark) && !writer.writtenThrough(writer.mark));
 }

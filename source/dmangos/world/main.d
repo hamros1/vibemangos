@@ -342,6 +342,9 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
             setup, config.realmId);
         // While its database takes none of its writes, the node refuses logins and holds arrivals.
         context.writesStalled = () => writer.databaseSilentFor >= ClusterNode.databaseStalledAfter;
+        // A region's release (with its objects) waits for what this node wrote of it: its next owner reads it.
+        cluster.writeMark = () => writer.mark;
+        cluster.writtenThrough = (ulong mark) => writer.writtenThrough(mark);
         context.incarnation = incarnation;
         if (config.battlegroupStandbyNode)
         {

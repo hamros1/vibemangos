@@ -210,6 +210,9 @@ The unit of ownership is the map **cell** (66.67 yards, `grid.d`), which maps al
 * **One owner at a time.** A region moves in two steps. The coordinator marks it `revoking`, naming
   its next owner; the owner stops simulating it and answers `RegionReleased` with the grant's epoch;
   only then does the coordinator grant it to the next owner. A release of another epoch is ignored.
+  The release waits, without stopping the owner's loop, until the writes it queued before it are in
+  the database (`ClusterNode.writtenThrough`): the next owner reads from there what was saved of the
+  region, and must not read it older than the last owner wrote it.
 * **Epochs** increase with every grant and are built as (coordinator incarnation << 20) + count, so a
   restarted or new coordinator's grants are newer than anything its predecessor gave.
 * **Leases.** A node may act on its regions only until `lease_ms` after the last of its own heartbeats

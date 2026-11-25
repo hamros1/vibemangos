@@ -297,6 +297,7 @@ final class ClusterNode : LinkOwner
         MonoTime idGrantsFrom;             // coordinator: members' reports come in first
         MonoTime sessionGrantsFrom;        // promoted standby: new logins wait for the old leases (`promote`)
         ubyte[][uint] handOverAfterWait;   // coordinator: bundles of regions released with no next owner (`handOver`)
+        ulong[uint] releaseMarks;          // region id -> the writes its release waits for (`writtenThrough`)
         /// Releases sent with their bundles, kept until the coordinator has taken them (`updateOwnership`).
         ReleaseSent[uint] releasesSent;
         SessionChange[] newClaimsWaiting;  // ... these
@@ -469,6 +470,15 @@ final class ClusterNode : LinkOwner
         else
             releasesWaiting ~= SessionReleased(account, serial);
     }
+
+    /**
+     * This node's write-behind queue (docs/DESIGN.md, step 6): the number of the newest write queued, and whether
+     * everything up to a number is written. A region's release waits for the writes queued before it. Null: no
+     * queue, nothing waits.
+     */
+    ulong delegate() writeMark;
+    /// ditto
+    bool delegate(ulong) writtenThrough;
 
     /// The incarnation in the coordinator's latest view, including this process.
     SimulationOwner simulationOwner(ushort node) const
@@ -2161,6 +2171,16 @@ private:
         }
         foreach (ref r; releases)
         {
+            // The next owner reads from the database what was saved of the region: not before this node's writes
+            // up to the release are in, or it could load state older than what this node wrote (a departure
+            // waits the same way). The loop goes on meanwhile.
+            if (writeMark !is null)
+            {
+                const mark = releaseMarks.require(r.id, writeMark());
+                if (!writtenThrough(mark))
+                    continue;
+                releaseMarks.remove(r.id);
+            }
             auto objects = leaving.get(r.id, null);
             if (objects is null)
                 if (const sent = r.id in releasesSent)
@@ -3892,4 +3912,48 @@ unittest
     coordinator.onOwnership = b.onOwnership;
     cluster.run(2000, coordinator, b, c);
     assert(c.regions.ownedRegions.length && cReceived.length == c.regions.ownedRegions.length);
+}
+
+// A region's release waits for the writes its node queued before it: until they are in, the region stays its own
+// (revoking), and its next owner, which reads what was saved of it, is not granted it. The node's loop goes on.
+unittest
+{
+    import dmangos.world.grid : cellKey;
+
+    CellCosts costs;
+    foreach (x; -40 .. 40)
+        costs[0][cellKey(x, x % 7)] = 10;
+    auto regions = partition([0u], costs, 8);
+    ulong[uint] cost;
+    foreach (r; regions)
+        cost[r.id] = costOf(costs, r.map, r.rect);
+    auto cluster = new TestCluster;
+    auto coordinator = cluster.add(1, 9000, 1, CoordinatorSetup(regions.dup, cost.dup, new TestCounters));
+    auto b = cluster.add(2, 9001);
+    ulong queued = 10, written = 10;
+    b.writeMark = () => queued;
+    b.writtenThrough = (ulong mark) => written >= mark;
+    cluster.run(6000, coordinator, b);
+    const had = b.regions.ownedRegions.length;
+    assert(had);
+
+    // b saves something of its regions as they go, and its database is slow to take it.
+    queued = 20;
+    coordinator.authority.drain(b.id);
+    cluster.run(2000, coordinator, b);
+    assert(b.regions.ownedRegions.length == 0, "it stops simulating them at once");
+    size_t waiting;
+    foreach (ref r; coordinator.regions.latestTable)
+        waiting += r.state == RegionState.revoking && r.owner == b.id;
+    assert(waiting == had, "but releases none until its writes are in");
+    written = 19; // all but the last write before the release
+    cluster.run(500, coordinator, b);
+    waiting = 0;
+    foreach (ref r; coordinator.regions.latestTable)
+        waiting += r.state == RegionState.revoking && r.owner == b.id;
+    assert(waiting == had);
+    written = 20;
+    cluster.run(500, coordinator, b);
+    foreach (ref r; coordinator.regions.latestTable)
+        assert(r.owner != b.id, "released once they are");
 }
