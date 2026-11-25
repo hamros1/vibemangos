@@ -409,7 +409,7 @@ final class BattlegroundQueue
         nodes[guid] = node;
         tickets.require(guid, (Ticket[queueSlots]).init);
         int slot = -1;
-        foreach (i, ref s; *(&tickets[guid]))
+        foreach (i, ref s; tickets[guid])
         {
             if (s.type == type)
                 return; // already queued
