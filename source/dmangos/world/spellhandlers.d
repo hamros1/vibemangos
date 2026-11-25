@@ -7781,6 +7781,7 @@ unittest
     import dmangos.world.spellmods : SpellModOp;
     import dmangos.world.testclient;
     import dmangos.world.testdata;
+    import std.bitmanip : littleEndianToNative;
 
     auto db = newDatabase();
     auto context = newCreationContext(db);
@@ -7800,7 +7801,7 @@ unittest
         if (p.opcode == Opcode.SMSG_SET_PCT_SPELL_MODIFIER)
             mods ~= p.body_.dup;
     assert(mods.length == 2, "one for each bit of its mask");
-    assert(mods[0][0] == 0 && mods[0][1] == SpellModOp.cost && *cast(int*) &mods[0][2] == -10);
+    assert(mods[0][0] == 0 && mods[0][1] == SpellModOp.cost && littleEndianToNative!int(mods[0][2 .. 6][0 .. 4]) == -10);
     assert(mods[1][0] == 2);
 }
 
