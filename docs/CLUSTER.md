@@ -92,7 +92,9 @@ otherwise.
 ## Nodes and membership
 
 * **Identity.** `node_id` is configured. Each start of the process gets an **incarnation**, the
-  milliseconds since the epoch at start, so a later start always has a higher one. The coordinator
+  milliseconds since the epoch at start, or one more than the last start's recorded in
+  `<write_log>.incarnation` if that is higher, so a later start has a higher one even after the wall
+  clock stepped back. The coordinator
   admits a node id only with an incarnation at least as high as the one it knows: a restarted node
   replaces its earlier incarnation, which is fenced out, and a stale process that comes back later is
   refused (`staleIncarnation`).

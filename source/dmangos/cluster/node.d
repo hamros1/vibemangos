@@ -594,12 +594,58 @@ final class ClusterNode : LinkOwner
         return pool_;
     }
 
-    /// An incarnation for a process starting now: milliseconds since the Unix epoch.
-    static ulong newIncarnation()
+    /**
+     * An incarnation for a process starting now: milliseconds since the Unix epoch, but above the last one
+     * recorded at `path` (none: not recorded), which it then records. Without the record, a start after the
+     * wall clock stepped back would be refused as an older one (`staleIncarnation`) and stay fenced.
+     */
+    static ulong newIncarnation(string path = null)
     {
+        import std.algorithm.comparison : max;
+        import std.conv : to;
         import std.datetime.systime : Clock, SysTime;
+        import std.file : exists, readText;
+        import std.string : strip;
 
-        return cast(ulong)(Clock.currTime - SysTime.fromUnixTime(0)).total!"msecs";
+        const wall = cast(ulong)(Clock.currTime - SysTime.fromUnixTime(0)).total!"msecs";
+        if (!path.length)
+            return wall;
+        ulong last;
+        try
+            if (exists(path))
+                last = readText(path).strip.to!ulong;
+        catch (Exception e)
+            warning!"cluster: cannot read the last incarnation in %s: %s"(path, e.msg);
+        const next = max(wall, last + 1);
+        try
+            saveIncarnation(path, next);
+        catch (Exception e)
+            warning!"cluster: cannot record this incarnation in %s: %s"(path, e.msg);
+        return next;
+    }
+
+    // Replaced whole and synced, so that a crash leaves the old record or the new one.
+    private static void saveIncarnation(string path, ulong incarnation)
+    {
+        import core.sys.posix.fcntl : open, O_RDONLY;
+        import core.sys.posix.unistd : close, fsync;
+        import std.file : rename;
+        import std.path : dirName;
+        import std.stdio : File;
+        import std.string : toStringz;
+
+        const temporary = path ~ ".tmp";
+        auto file = File(temporary, "w");
+        file.writeln(incarnation);
+        file.flush();
+        enforce(fsync(file.fileno) == 0, "could not sync " ~ temporary);
+        file.close();
+        rename(temporary, path);
+        const directory = open(dirName(path).toStringz, O_RDONLY);
+        enforce(directory >= 0, "could not open the directory of " ~ path);
+        scope (exit)
+            close(directory);
+        enforce(fsync(directory) == 0, "could not sync the directory of " ~ path);
     }
 
     /// Whether this node is the coordinator (the configured one, or the standby since it took over).
@@ -3127,4 +3173,27 @@ unittest
             assert(returned.alive);
         assert(!coordinator.regions.creatureRegion(trainerSpawn).creature.spawn, "the temporary lease was retired");
     }
+}
+
+// An incarnation stays above the last recorded one, even after the wall clock stepped back.
+unittest
+{
+    import std.conv : to;
+    import std.file : exists, readText, remove, tempDir, write;
+    import std.path : buildPath;
+    import std.process : thisProcessID;
+    import std.string : strip;
+
+    const path = buildPath(tempDir, "dmangos-incarnation-" ~ thisProcessID.to!string);
+    scope (exit)
+        if (exists(path))
+            remove(path);
+    const first = ClusterNode.newIncarnation(path);
+    assert(readText(path).strip.to!ulong == first, "recorded");
+    const ahead = first + 3_600_000; // the last start ran an hour ahead: the clock has been stepped back since
+    write(path, ahead.to!string ~ "\n");
+    assert(ClusterNode.newIncarnation(path) == ahead + 1, "newer than the last start, so not refused as stale");
+    assert(ClusterNode.newIncarnation(path) == ahead + 2);
+    write(path, "garbage");
+    assert(ClusterNode.newIncarnation(path) >= first, "an unreadable record falls back on the clock");
 }

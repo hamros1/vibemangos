@@ -320,7 +320,9 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
         CoordinatorSetup setup;
         if (config.cluster.isCoordinator || config.cluster.standby || config.cluster.voter(config.cluster.nodeId))
             setup = coordinatorSetup(config.cluster.regionCount, data, client, context);
-        cluster = new ClusterNode(config.cluster, ClusterNode.newIncarnation(), &clusterClock,
+        // Recorded beside the write log, so that a restart after the wall clock stepped back is not refused.
+        const incarnation = ClusterNode.newIncarnation(config.writeLog.length ? config.writeLog ~ ".incarnation" : null);
+        cluster = new ClusterNode(config.cluster, incarnation, &clusterClock,
             (host, port, session) => server.connect(host, port, session, linkIdle),
             () => LoadReport(cast(uint) tickAverageUs, cast(uint) context.sessionCount, cast(uint) context.objectCount),
             setup, config.realmId);
