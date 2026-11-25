@@ -342,16 +342,16 @@ mixin template CharacterLogin()
         const guid = character.guid;
         refreshGmAccess();
         player = makePlayer(character, !recovered);
-        loadCooldowns(); // before the spellbook is sent: it shows them
-        loadTalentReset();
-        loadSocial();
+        readSaved(() => loadCooldowns()); // before the spellbook is sent: it shows them
+        readSaved(() => loadTalentReset());
+        readSaved(() => loadSocial());
         saveTimer = IntervalTimer(sessionSaveInterval());
         regenTimer.reset();
         enteredWorld = context.clock();
         state_ = WorldState.inWorld;
         connection.playing = this; // in the world from here on
         instanceId_ = context.instanceFor(player.guid, player.data.map); // a dungeon: its group's copy, or its own
-        loadBattleground(); // the initial map packets need the copy's current world states
+        readSaved(() => loadBattleground()); // the initial map packets need the copy's current world states
         sendLoginPackets(recovered);
         context.enterWorld(this, true); // after the player's own create block: now others see it, and it sees them
         context.database.setOnline(guid, account.id, true, context.config.realmId);
@@ -366,11 +366,11 @@ mixin template CharacterLogin()
         }
         updateLeaderFlag(); // as saved, or not
         deathOnLogin();
-        loadAuras(recovered);
-        loadHonor();
-        loadEnchantmentTimers();
+        readSaved(() => loadAuras(recovered));
+        readSaved(() => loadHonor());
+        readSaved(() => loadEnchantmentTimers());
         // Timed items that run in real time lose the time logged out.
-        loadItemDurations(player.data.logoutTime > 0 ? context.unixTime - player.data.logoutTime : 0);
+        readSaved(() => loadItemDurations(player.data.logoutTime > 0 ? context.unixTime - player.data.logoutTime : 0));
         applyPassiveSpells();
         petsOnArrival(); // the saved current pet comes back
         resumeSavedFlight(); // logged out in flight: it flies on
@@ -379,6 +379,8 @@ mixin template CharacterLogin()
         info!"%s: '%s' entered the world as '%s' (guid %s, map %s at %.1f %.1f %.1f)"(remoteAddress,
             account.username, character.name, guid, character.map, character.position.x, character.position.y,
             character.position.z);
+        if (savedUnread)
+            return leaveIfUnread(); // back to the character screen, its records as saved
         announceToFriends(true);
         guildLogin();
         // An interrupted battleground can send the character straight to another node.

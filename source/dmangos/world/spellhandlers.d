@@ -3954,7 +3954,7 @@ private:
      */
     private void checkpointCooldowns()
     {
-        if (!context.canWrite())
+        if (!context.canWrite() || savedUnread)
             return;
         if (connection.gatewayHome.node)
         {

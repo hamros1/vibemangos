@@ -1787,3 +1787,85 @@ unittest
     assert(staying.migrateTo(second.nodeId), "the database is back: the move goes on");
     assert(relay.remote !is null && client.session.inWorld is null);
 }
+
+/// A database read that fails as a player arrives from another node lets the account go, not a half-made session
+/// holding it; one that fails once it is in the world sends it away without saving over the records it lacks.
+unittest
+{
+    import dmangos.mysql : DatabaseException;
+    import dmangos.world.context : PlayerRelay;
+    import dmangos.world.database : AuraRecord, WorldDatabase;
+    import dmangos.world.player : CharacterData;
+    import dmangos.world.session : WorldSession;
+    import dmangos.world.testclient : loggedIn, newCreationContext, newDatabase;
+    import std.typecons : AutoImplement, Nullable;
+
+    static final class Capturing : PlayerRelay
+    {
+        const(ubyte)[] state;
+        size_t lefts;
+        void toHome(ushort, uint, ushort, const(ubyte)[]) {}
+        void toOwner(ushort, uint, ushort, const(ubyte)[]) {}
+        void disconnect(ushort, uint) {}
+        void migrate(ushort, uint, const(ubyte)[] state) { this.state = state.idup; }
+        void left(ushort, uint, bool) { ++lefts; }
+        void moved(ushort, uint, ushort) {}
+        void remoteDone(uint) {}
+    }
+
+    static abstract class Failing : WorldDatabase
+    {
+        WorldDatabase inner;
+        bool character, auras;
+
+        this(WorldDatabase inner) { this.inner = inner; }
+
+        override Nullable!CharacterData loadCharacter(uint guid)
+        {
+            if (character)
+                throw new DatabaseException("Lost connection to server during query");
+            return inner.loadCharacter(guid);
+        }
+
+        override AuraRecord[] loadAuras(uint player)
+        {
+            if (auras)
+                throw new DatabaseException("Lost connection to server during query");
+            return inner.loadAuras(player);
+        }
+    }
+
+    enum string forward(C, alias method) = "return inner." ~ __traits(identifier, method) ~ "(args);";
+    alias Breaking = AutoImplement!(Failing, forward);
+    foreach (inWorld; [false, true])
+    {
+        auto db = newDatabase();
+        auto first = newCreationContext(db), second = newCreationContext(db);
+        first.nodeId = 1;
+        second.nodeId = 2;
+        auto relay = new Capturing;
+        first.playerRelay = second.playerRelay = relay;
+        auto client = loggedIn(first, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+        assert(client.session.inWorld.migrateTo(second.nodeId) && relay.state.length);
+        AuraRecord blessing;
+        blessing.spell = 1243; // Power Word: Fortitude, saved before the move
+        blessing.remaining = -1;
+        db.auraRows[7] = [blessing];
+
+        auto failing = new Breaking(db);
+        failing.character = !inWorld;
+        failing.auras = inWorld;
+        second.database = failing;
+        auto arriving = new WorldSession(second, Character.migrationAccount(relay.state), first.nodeId);
+        if (!inWorld)
+        {
+            assert(!arriving.arrive(relay.state), "the character could not be read: it does not arrive");
+            assert(arriving.inWorld is null);
+            continue;
+        }
+        const lefts = relay.lefts;
+        assert(arriving.arrive(relay.state));
+        assert(arriving.inWorld is null && relay.lefts == lefts + 1, "in without its auras: it leaves at once");
+        assert(db.auraRows[7] == [blessing], "and its saved auras stay as they were");
+    }
+}

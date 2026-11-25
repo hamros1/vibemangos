@@ -88,20 +88,24 @@ private:
         dismissCompanion();
         cancelTrade(false, TradeStatus.targetLogout);
         duelComplete(DuelEnd.fled);
-        if (player.deathState == DeathState.alive)
-            saveAuras();
-        saveCooldowns();
-        saveQuests();
-        saveReputation();
-        saveHonor();
-        saveEnchantmentTimes();
-        saveItemDurations();
+        if (!savedUnread) // the records it could not read stay as saved (`readSaved`)
+        {
+            if (player.deathState == DeathState.alive)
+                saveAuras();
+            saveCooldowns();
+            saveQuests();
+            saveReputation();
+            saveHonor();
+            saveEnchantmentTimes();
+            saveItemDurations();
+        }
         // A fenced simulation can be replaced behind a gateway. Its queue and channel state
         // still belong to the player, so only an authoritative session reports this logout.
         const authoritative = context.canWrite();
         if (authoritative)
             battlegroundLoggedOut();
-        saveBattleground();
+        if (!savedUnread)
+            saveBattleground();
         deathOnLogout();
         taxiOnLeave();
         const progress = player.progress(secondsInWorld());
@@ -517,7 +521,11 @@ private:
         foreach (ref speed; speeds)
             speed = r.read!float;
 
-        auto loaded = context.database.loadCharacter(guid);
+        import std.typecons : Nullable;
+
+        Nullable!CharacterData loaded;
+        if (!readSaved(() { loaded = context.database.loadCharacter(guid); }))
+            return false; // the database is away: the account is let go (`left`), not held by a half-made session
         if (loaded.isNull || loaded.get.account != account.id)
             return false;
         auto character = loaded.get;
@@ -550,14 +558,14 @@ private:
         restoreRitualHandoff(r);
         restoreSummonsOnHandoff(r);
         readCastHandoff(r);
-        loadAuras();
-        loadHonor();
-        loadBattleground();
-        loadEnchantmentTimers();
-        loadItemDurations(0);
-        loadCooldowns();
-        loadTalentReset();
-        loadSocial();
+        readSaved(() => loadAuras());
+        readSaved(() => loadHonor());
+        readSaved(() => loadBattleground());
+        readSaved(() => loadEnchantmentTimers());
+        readSaved(() => loadItemDurations(0));
+        readSaved(() => loadCooldowns());
+        readSaved(() => loadTalentReset());
+        readSaved(() => loadSocial());
         refreshGuildFields();
         applyPassiveSpells();
         readFlightHandoff(r);
@@ -572,7 +580,46 @@ private:
         battlegroundCheckDue = action.teleportMap == uint.max; // not on its way into a copy
         info!"%s: '%s' arrived from another node (map %s at %.1f %.1f)"(remoteAddress, character.name, character.map,
             character.position.x, character.position.y);
+        leaveIfUnread();
         return true;
+    }
+
+    /**
+     * Records of the character that could not be read (`readSaved`): it plays without them, so it must not save
+     * over them (`savePlayerDetails` leaves them alone), and it leaves (`leaveIfUnread`), to come back from them.
+     */
+    package bool savedUnread;
+
+    /**
+     * Runs a read of the character's saved records, again if the database fails it (a lost connection is made
+     * anew), up to three times. False, with `savedUnread`, if every attempt failed. A read fails before it applies
+     * anything (its rows come whole), so trying it again applies nothing twice.
+     */
+    package bool readSaved(scope void delegate() read)
+    {
+        import dmangos.mysql : DatabaseException;
+
+        foreach (attempt; 0 .. 3)
+            try
+            {
+                read();
+                return true;
+            }
+            catch (DatabaseException error)
+            {
+                if (attempt == 2)
+                    warning!"%s: '%s': could not read the character's saved records: %s"(remoteAddress,
+                        account.username, error.msg);
+            }
+        savedUnread = true;
+        return false;
+    }
+
+    /// The character entered the world without some of its saved records: it leaves, saving none of them.
+    package void leaveIfUnread()
+    {
+        if (savedUnread && player !is null)
+            leave("its saved records could not be read", false);
     }
 
     private void writeSessionHandoff(ref ByteWriter state)
