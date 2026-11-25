@@ -1,34 +1,7 @@
 /**
- * Chat commands: parsing a typed `.command`, checking the account's permission letters, finding
- * the command's row in `dmangos.world.commandtable` and running its handler. The commands, their
- * permission letters, the lookup and the replies match ArcEmu 2.4.3's exactly; that is a
- * requirement of the project.
- *
- * $(UL
- *   $(LI $(B Permissions.) Each account has a string of permission letters; a
- *        command's letter must be in it (`canUseCommand`), and `a` stands for
- *        every letter but `z`. The database's `account.gmlevel` is a number, so the
- *        `gm_permissions` setting gives each level its string; the default gives game masters
- *        (2) `a` and administrators (3) `az`. The string goes through
- *        `loadSecurity`, so "3" means `a` there too.)
- *   $(LI $(B Lookup.) A message starting with `.` or `!` is a command if the account has any
- *        permission (or `allow_player_commands` is set); otherwise it is said aloud. Each word
- *        is matched against `dmangos.world.commandtable`'s rows in order, and the first row the
- *        word abbreviates, and whose letter the account has, is taken
- *        (`executeCommandInTable`). A sub-table without a matching word lists its commands.
- *        A handler returning false shows the row's help, or "Incorrect syntax specified".)
- *   $(LI $(B Handlers.) Each row names its handler; the `Character` method of that name,
- *        with a lower-case first letter, runs it. Its parameters say what it takes: the command's
- *        words are converted to their types with `std.conv.to` (`invoke`); a `Rest` takes the rest
- *        of the line, `OnOff` reads "on" or "off", and a word that is missing or does not convert
- *        shows the command's help. The handlers are in `gmlevel0` .. `gmlevel3` and `gmdebug`, grouped
- *        by command level. Rows whose handler is not
- *        written yet (their systems do not exist yet) answer "Not yet implemented."
- *        (`handleNYICommand`). docs/COMMANDS.md lists both.)
- *   $(LI $(B GM log.) Commands that log what they do (`gmLog`) write to the file
- *        `gm_command_log` names, if any.)
- * )
- * The `command_overrides` table changes a command's letter.
+ * Dispatches in-game staff commands. The command table defines syntax and named capability
+ * groups; enrolled accounts may also receive individual commands. Legacy accounts retain
+ * their configured permission letters and abbreviated command names.
  */
 module dmangos.world.commands;
 
@@ -441,7 +414,7 @@ mixin template ChatCommands()
 
 private:
     /// Every handler the command tables name.
-    enum string[] arcHandlers = collectHandlers(commandTable);
+    enum string[] commandHandlers = collectHandlers(commandTable);
 
     /// `handle...Command` methods that no row names on purpose (the "Not yet implemented." answer itself).
     enum string[] unlistedHandlers = ["handleNYICommand"];
@@ -458,6 +431,33 @@ private:
         return row.group;
     }
 
+    private bool canRunCommand(string path, ref immutable ChatCommand row) const
+    {
+        import std.uni : toLower;
+
+        import dmangos.world.gmaccess : gmCanonicalCommand, gmCommandCapability;
+
+        const canonical = gmCanonicalCommand(path);
+        if (!gmAccess.managed)
+        {
+            const group = commandGroup(canonical, row);
+            return group == '0' || canUseCommand(group);
+        }
+        if (row.children.length)
+        {
+            foreach (ref child; row.children)
+                if (canRunCommand(path ~ " " ~ child.name, child))
+                    return true;
+            return false;
+        }
+        // Account delegation can only be granted by an administrator.
+        if (path == "access grant" || path == "access revoke")
+            return gmAccess.allows("staff.admin") && gmAccess.allows("roles.manage");
+        if (path == "account level")
+            return gmAccess.allows("staff.admin");
+        return row.group == '0' || gmAccess.allows(gmCommandCapability(canonical, row.group)) || gmAccess.allows("command." ~ toLower(canonical));
+    }
+
     // -----------------------------------------------------------------------
     // Parsing and running commands
     // -----------------------------------------------------------------------
@@ -467,11 +467,13 @@ private:
     {
         if (text.length == 0)
             return false;
-        if (!hasPermissions && !context.config.allowPlayerCommands)
-            return false;
         if (text[0] != '!' && text[0] != '.')
             return false;
         if (text.length > 1 && text[1] == '.') // skip '..'
+            return false;
+        refreshGmAccess();
+        const canOpen = gmAccess.managed ? gmAccess.grants.length != 0 : hasPermissions;
+        if (!canOpen && !context.config.allowPlayerCommands)
             return false;
         trace!"%s: '%s' (%s) typed %s"(remoteAddress, player.data.name, account.username, text);
         if (!executeCommandInTable(commandTable, null, text[1 .. $]))
@@ -493,13 +495,13 @@ private:
         if (cmd.length == 0)
             return false;
 
+        const exact = table.canFind!(row => row.name.length == cmd.length && hasStringAbbr(row.name, cmd));
         foreach (ref row; table)
         {
-            if (!hasStringAbbr(row.name, cmd))
+            if ((exact && row.name.length != cmd.length) || !hasStringAbbr(row.name, cmd))
                 continue;
             const rowPath = path.length ? path ~ " " ~ row.name : row.name;
-            const group = commandGroup(rowPath, row);
-            if (group != '0' && !canUseCommand(group))
+            if (!canRunCommand(rowPath, row))
                 continue;
 
             if (row.children.length)
@@ -513,8 +515,7 @@ private:
                         greenSystemMessage("Available Subcommands:");
                         foreach (ref child; row.children)
                         {
-                            const childGroup = commandGroup(rowPath ~ " " ~ child.name, child);
-                            if (childGroup == '0' || canUseCommand(childGroup))
+                            if (canRunCommand(rowPath ~ " " ~ child.name, child))
                                 blueSystemMessage(format!" %s - %s"(child.name,
                                     child.help.length ? child.help : "No Help Available"));
                         }
@@ -553,12 +554,12 @@ private:
         static foreach (member; __traits(allMembers, typeof(this)))
             static if (member.length > "handleCommand".length && member[0 .. 6] == "handle"
                 && member[$ - 7 .. $] == "Command" && !unlistedHandlers.canFind(member))
-                static assert(arcHandlers.canFind!((name, m) => handlerMethod(name) == m)(member),
+                static assert(commandHandlers.canFind!((name, m) => handlerMethod(name) == m)(member),
                     member ~ " is not named by any row of the command tables (dmangos.world.commandtable)");
 
         switch (handler)
         {
-            static foreach (name; arcHandlers)
+            static foreach (name; commandHandlers)
             {
                 static if (__traits(hasMember, typeof(this), handlerMethod(name)))
                 {
@@ -882,6 +883,34 @@ unittest
     // `..` is never a command.
     gm.say("..what");
     assert(opcodesOf(gm.read()) == [Opcode.SMSG_MESSAGECHAT] && systemMessages(gm.read()).length == 0);
+}
+
+/// A scoped role can use the canonical command and its alias. Removing it never restores the legacy admin level.
+unittest
+{
+    import dmangos.world.gmaccess : GmAccess;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto gm = loggedIn(context, db, 7, "Jaina", Position(-8940, -132, 83.5f), AccountLevel.administrator);
+    const id = db.accounts["JAINA"].id;
+    db.gmAccessRows[id] = GmAccess(true, ["spell-tester"], ["command.character learn", "command.account level"]);
+    gm.read();
+
+    gm.say(".learn 99999999");
+    assert(systemMessages(gm.read()) == [MSG_COLOR_GREEN ~ "Auto-targeting self.|r", "Invalid spell 99999999"]);
+    assert(!gm.session.inWorld.hasPermissions && gm.session.inWorld.security == AccountLevel.player);
+    gm.say(".character learn 99999999");
+    assert(systemMessages(gm.read()) == [MSG_COLOR_GREEN ~ "Auto-targeting self.|r", "Invalid spell 99999999"]);
+    gm.say(".travel coords 0 0 0 0");
+    assert(systemMessages(gm.read()) == ["There is no such command, or you do not have access to it."]);
+    gm.say(".account level JAINA 3");
+    assert(systemMessages(gm.read()) == ["There is no such command, or you do not have access to it."]);
+
+    db.gmAccessRows[id] = GmAccess(true);
+    gm.say(".learn 99999999");
+    assert(systemMessages(gm.read()).length == 0);
+    assert(!gm.session.inWorld.hasGMPermissions && !gm.session.inWorld.permissions.length);
 }
 
 /// `.gm on` and `.gm off`, the GM tag in chat, and whispers to a GM with the tag on.

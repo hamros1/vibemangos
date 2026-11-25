@@ -1,17 +1,12 @@
-/**
- * The level 0 command handlers: `.help`, `.commands`, `.start`, `.server info`,
- * `.server netstatus`, `.dismount`, `.server save`, `.gm list`,
- * `.debug rangecheck` and `.logcomment`. Mixed into
- * `dmangos.world.character.Character`; `dmangos.world.commands` calls them.
- */
-module dmangos.world.gmlevel0;
+/// Command discovery and player support information.
+module dmangos.world.gmhelp;
 
 /// See the module documentation.
-mixin template Level0Commands()
+mixin template SupportCommands()
 {
     import dmangos.world.context : PresenceFlags;
     import core.time : seconds;
-    import std.algorithm.searching : countUntil;
+    import std.algorithm.searching : canFind, countUntil;
     import std.format : format;
     import std.math : sqrt;
     import std.uni : toLower;
@@ -22,17 +17,18 @@ mixin template Level0Commands()
     import dmangos.world.updatefields;
 
 private:
-    /// The help of the command named by `cmd` and `words`. It skips the rows the player cannot use, as
-    /// `executeCommandInTable` does (ArcEmu skips those it *can* use, which makes `.help` find nothing).
+    /// Help uses the same exact-name priority and permissions as dispatch.
     bool showHelpForCommand(immutable(ChatCommand)[] table, string path, ref string words, string cmd)
     {
+        if (!cmd.length)
+            return false;
+        const exact = table.canFind!(row => row.name.length == cmd.length && hasStringAbbr(row.name, cmd));
         foreach (ref row; table)
         {
-            if (!hasStringAbbr(row.name, cmd))
+            if ((exact && row.name.length != cmd.length) || !hasStringAbbr(row.name, cmd))
                 continue;
             const rowPath = path.length ? path ~ " " ~ row.name : row.name;
-            const group = commandGroup(rowPath, row);
-            if (group != '0' && !canUseCommand(group))
+            if (!canRunCommand(rowPath, row))
                 continue;
             if (row.children.length)
             {
@@ -69,7 +65,7 @@ private:
             if (filter.length && !hasStringAbbr(row.name, filter))
                 continue;
             const group = commandGroup(row.name, row);
-            if (group != '0' && !canUseCommand(group))
+            if (!canRunCommand(row.name, row))
                 continue;
             switch (group)
             {

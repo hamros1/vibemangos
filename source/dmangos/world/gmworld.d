@@ -1,16 +1,10 @@
-/**
- * The level 2 GM commands this server's systems support (their permissions and messages match
- * ArcEmu 2.4.3's exactly): `.server saveall`, `.character repairitems`, `.demorph`, `.mount`,
- * `.invincible`, `.npc flags`, `.npc say` and `.npc yell`, `.kill`, `.killplr`, `.reviveplr`,
- * `.castspell`, `.castspellne` and `.castself`, and more. Mixed into
- * `dmangos.world.character.Character`.
- */
-module dmangos.world.gmlevel2;
+/// World editing and live game administration.
+module dmangos.world.gmworld;
 
 import dmangos.world.spellids;
 
 /// See the module documentation.
-mixin template Level2Commands()
+mixin template WorldAdminCommands()
 {
     import dmangos.world.spellids;
     import core.time : MonoTime;
@@ -224,6 +218,83 @@ private:
         selectedGo = chosen.guid;
         greenSystemMessage(format!"Selected GameObject [ %s ] which is %.3f meters away from you."(chosen.template_.name,
             distanceTo(chosen)));
+        return true;
+    }
+
+    bool handleAddTrainerSpellCommand(uint spell, uint cost = 0, ubyte requiredLevel = 0)
+    {
+        import dmangos.mysql : DatabaseException;
+        import dmangos.world.npchandlers : NpcFlag;
+        import dmangos.world.npcdata : trainerLesson;
+        import std.algorithm.searching : canFind;
+
+        auto creature = getSelectedCreature(true);
+        if (creature is null)
+            return true;
+        if (!(creature.values.get!UNIT_NPC_FLAGS & NpcFlag.trainer))
+        {
+            systemMessage("Select a trainer first.");
+            return true;
+        }
+        const lesson = trainerLesson(context.data.spells, spell, cost, requiredLevel);
+        if (!lesson.learnedSpell)
+        {
+            systemMessage("Use the ID of a supported trainer spell that teaches a lesson.");
+            return true;
+        }
+        const entry = creature.template_.entry;
+        if (trainerSpells(creature).canFind!(existing => existing.learnedSpell == lesson.learnedSpell))
+        {
+            systemMessage("The trainer already offers that lesson.");
+            return true;
+        }
+        try
+        {
+            if (!context.canWrite() || !context.database.insertTrainerLesson(entry, spell, cost, requiredLevel))
+            {
+                systemMessage("The lesson could not be added. It may already be saved.");
+                return true;
+            }
+            context.data.npcs.trainers[entry] ~= lesson;
+            gmLog(format!"added trainer spell %s at entry %s, cost %s, required level %s"
+                (spell, entry, cost, requiredLevel));
+            systemMessage(format!"Trainer %s will teach %s. Other workers will load the lesson on their next catalog refresh."
+                (entry, lesson.learnedSpell));
+        }
+        catch (DatabaseException)
+            systemMessage("The world database could not save the lesson.");
+        return true;
+    }
+
+    bool handleListAIAgentCommand()
+    {
+        auto creature = getSelectedCreature(true);
+        if (creature is null)
+            return true;
+        const entry = creature.template_.entry, spawn = creature.spawn.guid, list = creature.template_.spellList;
+        const scriptName = context.data.creatureScriptNames.get(entry, "");
+        const events = context.data.eventAi.byCreature.get(entry, null);
+        const spawnEvents = context.data.eventAi.bySpawn.get(spawn, null);
+        systemMessage(format!"Creature %s, spawn %s, script %s, spell list %s, EventAI events %s by entry and %s by spawn."
+            (entry, spawn, scriptName.length ? scriptName : "none", list, events.length, spawnEvents.length));
+        foreach (ref spell; context.data.creatureSpellLists.get(list, null))
+            systemMessage(format!"Spell %s, target %s, availability %s%%, repeat %s–%s ms."
+                (spell.spell, spell.targetId, spell.availability, spell.repeatMin, spell.repeatMax));
+        return true;
+    }
+
+    bool handleGOExport()
+    {
+        if (auto go = selectedGameObject())
+        {
+            const at = go.position;
+            systemMessage(format!"Game object %s, spawn %s, map %s, position %.6f %.6f %.6f %.6f."
+                (go.spawn.entry, go.spawn.guid, map.id, at.x, at.y, at.z, at.orientation));
+            systemMessage(format!"Rotation %.6f %.6f %.6f %.6f, respawn %s seconds."
+                (go.spawn.rotation[0], go.spawn.rotation[1], go.spawn.rotation[2], go.spawn.rotation[3], go.spawn.respawnSeconds));
+        }
+        else
+            systemMessage("Select a game object first.");
         return true;
     }
 

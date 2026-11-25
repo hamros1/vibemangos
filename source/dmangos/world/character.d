@@ -35,6 +35,12 @@ import dmangos.world.channelhandlers : ChannelHandlers;
 import dmangos.world.charscreen : CharacterLogin;
 import dmangos.world.commands : ChatCommands;
 import dmangos.world.gmactions : GmActions;
+import dmangos.world.gmlearn : LearningCommands;
+import dmangos.world.gmcheat : CheatCommands;
+import dmangos.world.gmguild : GuildAdminCommands;
+import dmangos.world.gmticket : TicketCommands;
+import dmangos.world.gmwaypoint : WaypointCommands;
+import dmangos.world.gmaccess : AccessCommands, GmAccess, gmCapability, readGmAccess;
 import dmangos.world.gmtargets : GmTargets;
 import dmangos.world.combathandlers : CombatHandlers;
 import dmangos.world.death : DeathHandlers;
@@ -68,9 +74,9 @@ import dmangos.world.loot : Looter;
 import dmangos.world.combat : Fighter, MeleeDamage;
 import dmangos.world.relations : Relating;
 import dmangos.world.gmdebug : DebugCommands;
-import dmangos.world.gmlevel0 : Level0Commands;
-import dmangos.world.gmlevel1 : Level1Commands;
-import dmangos.world.gmlevel2 : Level2Commands;
+import dmangos.world.gmhelp : SupportCommands;
+import dmangos.world.gmstaff : StaffCommands;
+import dmangos.world.gmworld : WorldAdminCommands;
 import dmangos.world.gminstance : InstanceCommands;
 import dmangos.world.sessionscripting : SessionScripting;
 import dmangos.world.social : FriendInfo, SocialHandlers;
@@ -79,7 +85,7 @@ import dmangos.world.pethandlers : PetHandlers;
 import dmangos.world.petauras : PetAuraRules;
 import dmangos.script.api : MenuOption, QuestProgress;
 import dmangos.world.gmquest : QuestCommands;
-import dmangos.world.gmlevel3 : Level3Commands;
+import dmangos.world.gmadmin : AdminCommands;
 import dmangos.world.grouphandlers : GroupHandlers;
 import dmangos.world.exploration : Exploration;
 import dmangos.world.environment : EnvironmentHandlers;
@@ -726,16 +732,19 @@ final class Character : OnlinePlayer, Looter
 
 
 
-    /// The account's level.
+    /// Rank used by staff presence and the who list.
     @property AccountLevel security() const
     {
-        return account.level;
+        return gmAccess.rank(account.level);
     }
 
-    /// The account's GM command permission letters, from its `gmlevel`.
+    /// Staff status displayed in player searches and carried on the existing cluster wire.
     @property string permissions() const
     {
-        return context.config.gmPermissions.forLevel(account.level);
+        if (!gmAccess.managed)
+            return context.config.gmPermissions.forLevel(account.level);
+        import std.array : join;
+        return hasPermissions ? gmAccess.roles.join(", ") : null;
     }
 
     /// Whether the account may use a command of the letter `group`.
@@ -743,13 +752,13 @@ final class Character : OnlinePlayer, Looter
     {
         import dmangos.world.commands : canUse = canUseCommand;
 
-        return canUse(permissions, group);
+        return gmAccess.managed ? gmAccess.allows(gmCapability(group)) : canUse(permissions, group);
     }
 
     /// Whether the account has any command permission.
     @property bool hasPermissions() const
     {
-        return permissions.length > 0;
+        return gmAccess.managed ? gmAccess.allows("staff.access") : permissions.length > 0;
     }
 
     /// Whether the account is a game master (has `a`).
@@ -757,7 +766,7 @@ final class Character : OnlinePlayer, Looter
     {
         import dmangos.world.commands : hasGM = hasGMPermissions;
 
-        return hasGM(permissions);
+        return gmAccess.managed ? gmAccess.allows("staff.game_master") : hasGM(permissions);
     }
 
     /// Between `SMSG_NEW_WORLD` and the client's `MSG_MOVE_WORLDPORT_ACK`.
@@ -908,6 +917,15 @@ private:
     mixin Exploration;
     mixin EnvironmentHandlers;
     mixin MovementOrders;
+    private GmAccess gmAccess;
+
+    private void refreshGmAccess()
+    {
+        gmAccess = readGmAccess(context.database, account.id);
+    }
+
+    mixin AccessCommands;
+    mixin WaypointCommands;
     mixin ChatCommands;
     mixin GmActions;
     mixin GmTargets;
@@ -946,13 +964,17 @@ private:
     mixin ItemUseHandlers;
     mixin ProfessionHandlers;
     mixin HonorHandlers;
-    mixin Level0Commands;
-    mixin Level1Commands;
-    mixin Level2Commands;
+    mixin SupportCommands;
+    mixin StaffCommands;
+    mixin WorldAdminCommands;
     mixin InstanceCommands;
     mixin SessionScripting;
     mixin QuestCommands;
-    mixin Level3Commands;
+    mixin AdminCommands;
+    mixin LearningCommands;
+    mixin CheatCommands;
+    mixin GuildAdminCommands;
+    mixin TicketCommands;
     mixin DebugCommands;
 }
 

@@ -10,6 +10,8 @@ enum WorldCatalog : ubyte
     questFinisher,
     creatureScale,
     teleports,
+    quests,
+    trainer,
 }
 
 struct WorldCatalogKey

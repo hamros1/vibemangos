@@ -1,6 +1,6 @@
 /**
  * What the GM command handlers do to players, shared by the handler groups
- * (`gmlevel0` .. `gmlevel3`, `gmdebug`, `gmrecall`): levels, speeds, spells,
+ * (`gmstaff`, `gmworld`, `gmadmin`, `gmdebug`): levels, speeds, spells,
  * skills, items, saving, teleports, and messages to everyone. Mixed into
  * `dmangos.world.character.Character`; a handler calls them on the session of
  * the player it acts on.
@@ -117,7 +117,7 @@ private:
         if (isPrimaryProfessionFirstRank(spell))
         {
             const settings = context.creationSettings;
-            const most = cast(uint) account.level < settings.gmIgnoreMaxPrimarySkills ? settings.maxPrimaryTradeSkill : 10;
+            const most = cast(uint) security < settings.gmIgnoreMaxPrimarySkills ? settings.maxPrimaryTradeSkill : 10;
             const free = player.values.get!PLAYER_CHARACTER_POINTS2 + 1;
             if (free <= most)
                 player.values.set!PLAYER_CHARACTER_POINTS2(free);

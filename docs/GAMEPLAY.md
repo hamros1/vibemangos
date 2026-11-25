@@ -152,19 +152,10 @@ See the [roadmap](ROADMAP.md) for open work, the [spell audit](SPELLS.md) for sp
   and custom ones with owners, moderators, passwords, muting, kicks, bans, invitations,
   announcements and moderation. One set per faction, unless
   `allow_two_side_interaction_channel` is on.
-* **The GM system:** GM commands behave exactly as ArcEmu 2.4.3's: the same command tables,
-  permission letters, lookup and replies, word for word. This is a compatibility contract. An
-  account's `gmlevel` is mapped to letters by `gm_permissions`. 229 of the 295
-  commands work: teleports and `game_tele` recall places, `.modify` (health, stats, speed, money,
-  level, looks, ...), `.levelup`, `.character learn`, skills, items, lookups, kicks, bans, mutes,
-  account levels, timed shutdowns and restarts, announcements, the GM tag and whisper blocking,
-  killing and reviving, casting, clearing cooldowns and auras, resetting talents, respawning, the
-  cheats (cooldown, cast time, god mode, power, explore, triggerpass), `.invincible`, instances,
-  quests (status, starting, completing, quest givers and their lists), reputation, spawning and
-  deleting creatures and game objects, vendors' wares, resetting spells and skills, and debugging.
-  GM tickets work too: a player's help request is a ticket (`gm_tickets`), and the `.gmTicket`
-  commands answer in the GM channel (`gm_client_channel`) as ArcEmu's do. The others (waypoint
-  editing, possession, arenas, ...) say "Not yet implemented." See [GM commands](COMMANDS.md).
+* **The GM system:** Staff roles can grant a whole domain or individual commands. Use `.commands`
+  or `.help` to discover available actions. Staff can manage player accounts and tickets, edit
+  waypoint routes, add trainer lessons, and inspect current or queued battlegrounds. Existing
+  installations can adopt roles using the instructions in the [GM command reference](COMMANDS.md).
 
 ## NPCs, items and the world
 

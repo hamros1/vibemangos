@@ -27,7 +27,7 @@ case "$operation" in
             printf '\nUSE classicmangos;\n'
             gzip -dc -- "$world"
             printf '\nUSE classicmangos;\n'
-            cat "$repo/sql/classic-world-fixes.sql"
+            cat "$repo/sql/classic-world-fixes.sql" "$repo/sql/gm-waypoints.sql"
         } | mariadb "$@" --batch --skip-force
         ;;
     apply-world-fixes)

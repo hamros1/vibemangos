@@ -40,7 +40,7 @@ The world server's modules, by layer:
 | Layer | Modules |
 |---|---|
 | Protocol | `opcodes` (values), `packets` (fixed layouts), `queries` (variable layouts), `crypt` (header cipher), `addons` |
-| Session | `session` (framing, handshake), `character` (the player in the world), the handler groups `charscreen`, `inworld`, `teleport`, `grouphandlers`, `channelhandlers`, `npchandlers`, `itemhandlers`, `combathandlers`, `exploration`, and the GM system `commands`, `commandtable`, `gmactions`, `gmlevel0` .. `gmlevel3`, `gminstance`, `gmquest`, `gmdebug`; `context` (shared state) |
+| Session | `session` (framing, handshake), `character` (the player in the world), the handler groups `charscreen`, `inworld`, `teleport`, `grouphandlers`, `channelhandlers`, `npchandlers`, `itemhandlers`, `combathandlers`, `exploration`, and the GM system `commands`, `commandtable`, `gmactions`, `gmaccess`, `gmhelp`, `gmstaff`, `gmworld`, `gmadmin`, `gminstance`, `gmquest`, `gmdebug`; `context` (shared state) |
 | Game objects | `player` (a character in the world), `objects` (update packets), `updatefields` (the field table), `movement`, `stats` |
 | World | `map` (players and objects on a map, visibility, broadcasting), `grid` (cells), `terrain` (ground, areas, liquids), `creature`, `gameobject`, `online` (what groups and channels see of players), `group` (parties and raids), `channel` (chat channels), `context` (maps, the players online, groups, channels) |
 | Game rules | `combat` (melee formulas: the attack table, damage, armor, reach), `relations` (who may attack whom), `inventory` (items and every rule for moving them), `playercreate` (new characters, and the spells relearned at login), `conditions`, `characters` (character list), `names`, `defines` |
@@ -150,7 +150,7 @@ final class Character : OnlinePlayer, Looter
     mixin AuraHandlers;             // aurahandlers.d: what each aura does, and its ticks
     ...                             // trade, duels, quests, talents, mail, auctions, taxis,
                                     // reputation, exploration, social, guilds, pets, scripts,
-                                    // and the GM commands (commands.d, gmlevel*.d, gmdebug.d)
+                                    // and the GM commands (commands.d, gm*.d, gmdebug.d)
 }
 ```
 
@@ -954,39 +954,20 @@ is an `SMSG_CHANNEL_NOTIFY`, built by `notice(type, channel, extra...)`. `Channe
 
 ## Chat commands
 
-GM commands behave exactly as ArcEmu 2.4.3's: the same commands, permission letters, checks and
-messages, word for word. That is a compatibility contract; the implementation is this server's own:
+The [GM command reference](COMMANDS.md) covers setup, roles and command syntax.
 
-* **Tables.** `commandtable.d` holds the command tables, row for row: name, permission letter,
-  handler name, help text, sub-table, and for `.modify`'s field rows the update field. Row order
-  matters, because the first row a word abbreviates wins.
-* **Dispatch.** `commands.d` parses a command line and walks the tables. A row names its handler
-  (`HandleGMOnCommand`); the session method of that name with a lower-case first letter runs it.
-  `callHandler` is a `switch` generated at compile time over every handler the tables name, with a
-  case for each method that exists; the rest answer "Not yet implemented." So a new handler is one
-  method, and the tables never change.
-* **Permissions.** `Character.permissions` is a string of permission letters, from `account.gmlevel`
-  through the `gm_permissions` setting (`loadSecurity`); `canUseCommand` checks a command's letter.
-  Other code asks `hasPermissions` (instant logout, no speed check, cross-faction invites, flood
-  protection), `hasGMPermissions`, or a letter (`c` for languages and channel moderation, `u` for
-  `.gmannounce`). The `OnlinePlayer` interface carries `canUseCommand` and `hasPermissions` to
-  groups and channels.
-* **Handlers** live in `gmlevel0.d` .. `gmlevel3.d`, `gminstance.d`, `gmquest.d` and `gmdebug.d`
-  (also recall and battleground); their module comments note where the database schema forces a
-  difference. `gmactions.d` holds what they do to a
-  player (levels, speeds, items, skills, saving, world-wide messages); a handler acting on another
-  player calls that player's session. A handler's parameters are its arguments: `invoke` reads the
-  command's words into them with `std.conv.to`, using each parameter's type (`Rest` for the rest of
-  the line, `OnOff`, `Nullable` for optional words) and default value, and shows the command's help
-  when a word is missing or does not convert: "12abc" and "abc" are mistakes, not 12 and 0.
-* **Messages** go out through `systemMessage`, `redSystemMessage`, `greenSystemMessage`,
-  `blueSystemMessage` and `sendMultilineMessage`; `gmLog` writes to `gm_command_log`.
-* **Across a cluster,** a command that names a player another node simulates runs on that node
-  (`gmtargets.d`), and its messages come back to the GM (docs/CLUSTER.md).
-
-Account and ban commands use the login server's `LoginDatabase` (`context.accounts`). A timed
-shutdown is a `ShutdownTimer` that `WorldContext.update` counts down. COMMANDS.md, generated by
-`tools/commands_doc.py`, lists every command and whether it works yet.
+* `commandtable.d` registers commands. `commands.d` resolves exact names before existing
+  abbreviations and converts arguments from the handler's parameter types. A group menu and
+  `.help` apply the same permissions as execution.
+* `gmaccess.d` defines named capabilities and maps shortcuts to their canonical permission paths.
+  The shared login database stores roles, their capabilities and enrolled accounts. Enrolled
+  accounts combine the grants of their roles. Unenrolled accounts use the legacy configuration.
+  Command authorization rereads the database before dispatch and survives worker handoffs.
+* Command handlers live in modules named for their duties, including `gmlearn.d`, `gmcheat.d`,
+  `gmguild.d`, `gmticket.d` and `gmwaypoint.d`. `gmactions.d` holds reusable gameplay actions.
+  `gmtargets.d` routes supported remote commands to the target player's worker.
+* `gmLog` records audited actions in the configured `gm_command_log` file. The reference is
+  generated by `tools/commands_doc.py`.
 
 ## Testing
 

@@ -12,11 +12,13 @@ import dmangos.cluster.services : ServiceKind;
 import std.typecons : Nullable, nullable;
 
 import dmangos.crypto.srp6 : sessionKeyLength;
-import dmangos.mysql : MySqlConnection;
+import dmangos.mysql : DatabaseException, MySqlConnection;
+import dmangos.world.gmaccess : GmAccess;
 import dmangos.auth.accounts : AccountLevel, canonicalAccountName, decodeBigNumberHex, toAccountLevel;
 import dmangos.world.characterdb : CharacterOwner, CharacterStatements, DeleteOptions, GuidCounters, NameInfo;
 public import dmangos.world.characterdb : GroupMemberRecord, GroupRecord;
 import dmangos.world.movement : Position;
+import dmangos.world.motion : MotionType, WaypointNode;
 import dmangos.world.creature : CreatureSpawn;
 import dmangos.world.gameobject : GameObjectSpawn;
 import dmangos.world.inventory : ItemChange, ItemRecord, ItemState;
@@ -568,6 +570,9 @@ interface WorldDatabase
     /// The account named `username`, or null.
     @DatabaseRead Nullable!WorldAccount findAccount(string username);
 
+    @DatabaseRead GmAccess gmAccessFor(uint accountId);
+    @DatabaseWrite bool changeGmRole(uint accountId, string role, bool grant);
+
     /// Whether the account or the address has a ban in force.
     @DatabaseRead bool isBanned(uint accountId, string ip);
 
@@ -923,6 +928,8 @@ interface WorldDatabase
     /// A saved spawn with a direct creature entry.
     @DatabaseRead Nullable!CreatureSpawn savedCreatureSpawn(uint guid);
 
+    @DatabaseWrite bool saveSpawnWaypoints(uint spawn, MotionType mode, const(WaypointNode)[] nodes);
+
     /// Direct creature spawn rows added above a node's initial world-data snapshot.
     @DatabaseRead CreatureSpawn[] savedCreatureSpawnsAfter(uint guid);
 
@@ -942,6 +949,12 @@ interface WorldDatabase
 
     /// A creature template's scale a GM fixed (`creature_template.Scale`).
     void updateCreatureScale(uint entry, float scale);
+
+    @DatabaseWrite bool insertTrainerLesson(uint entry, uint spell, uint cost, ubyte requiredLevel);
+    @DatabaseRead imported!"dmangos.world.npcdata".TrainerSpell[] loadTrainerLessons(uint entry,
+        const imported!"dmangos.world.spells".SpellData spells);
+    @DatabaseRead imported!"dmangos.world.quests".QuestData loadQuestCatalog();
+    @DatabaseWrite imported!"dmangos.world.quests".QuestData reloadQuestCatalog();
 
     /// A vendor's ware a GM added (`npc_vendor`: unlimited, in `slot`) or removed.
     void insertVendorItem(uint entry, uint item);
@@ -1597,6 +1610,28 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
         return rows.length ? nullable(cast(CreatureSpawn) rows[0]) : Nullable!CreatureSpawn.init;
     }
 
+    bool saveSpawnWaypoints(uint spawn, MotionType mode, const(WaypointNode)[] nodes)
+    {
+        import std.math : isFinite;
+
+        if (world.query!("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() "
+            ~ "AND table_name IN ('creature', 'creature_movement') AND engine='InnoDB'")()[0].get!uint(0) != 2)
+            return false;
+        bool saved;
+        world.transaction({
+            if (!world.query!"SELECT guid FROM creature WHERE guid=? FOR UPDATE"(spawn).length)
+                return;
+            world.execute!"DELETE FROM creature_movement WHERE Id=?"(spawn);
+            foreach (ref node; nodes)
+                world.execute!("INSERT INTO creature_movement (Id, Point, PositionX, PositionY, PositionZ, Orientation, WaitTime, ScriptId) "
+                    ~ "VALUES (?, ?, ?, ?, ?, ?, ?, ?)")(spawn, node.point, node.x, node.y, node.z,
+                    node.orientation.isFinite ? node.orientation : 100.0f, node.delay, node.scriptId);
+            world.execute!"UPDATE creature SET MovementType=? WHERE guid=?"(cast(uint) mode, spawn);
+            saved = true;
+        });
+        return saved;
+    }
+
     CreatureSpawn[] savedCreatureSpawnsAfter(uint guid)
     {
         return world.queryAs!(CreatureSpawn, creatureSpawnQuery ~ " WHERE guid > ? AND id <> 0")(guid);
@@ -1651,6 +1686,36 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
             world.execute!"UPDATE creature_template SET Scale = ? WHERE Entry = ?"(scale, entry);
         });
     }
+    bool insertTrainerLesson(uint entry, uint spell, uint cost, ubyte requiredLevel)
+    {
+        bool inserted;
+        catalog.change(WorldCatalogKey(WorldCatalog.trainer, entry), {
+            inserted = world.execute!("INSERT IGNORE INTO npc_trainer (entry, spell, spellcost, reqlevel) "
+                ~ "VALUES (?, ?, ?, ?)")(entry, spell, cost, requiredLevel) != 0;
+        });
+        return inserted;
+    }
+
+    imported!"dmangos.world.npcdata".TrainerSpell[] loadTrainerLessons(uint entry,
+        const imported!"dmangos.world.spells".SpellData spells)
+    {
+        import dmangos.world.npcdata : NpcData;
+        return NpcData.loadTrainer(world, entry, spells);
+    }
+
+    imported!"dmangos.world.quests".QuestData loadQuestCatalog()
+    {
+        import dmangos.world.quests : QuestData;
+        return QuestData.load(world);
+    }
+
+    imported!"dmangos.world.quests".QuestData reloadQuestCatalog()
+    {
+        auto snapshot = loadQuestCatalog();
+        catalog.change(WorldCatalogKey(WorldCatalog.quests, 0));
+        return snapshot;
+    }
+
     void insertVendorItem(uint entry, uint item)
     {
         catalog.change(WorldCatalogKey(WorldCatalog.vendor, entry), {
@@ -2009,6 +2074,58 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
             }
         }
         return nullable(account);
+    }
+
+    GmAccess gmAccessFor(uint accountId)
+    {
+        GmAccess access;
+        try
+        {
+            foreach (row; login.query!("SELECT COALESCE(r.role_name, ''), COALESCE(p.capability, '') FROM dmangos_gm_enrollment e "
+                ~ "LEFT JOIN dmangos_gm_account_role ar ON ar.account_id=e.account_id "
+                ~ "LEFT JOIN dmangos_gm_role r ON r.role_name=ar.role_name "
+                ~ "LEFT JOIN dmangos_gm_role_permission p ON p.role_name=r.role_name "
+                ~ "WHERE e.account_id=? ORDER BY r.role_name, p.capability")(accountId))
+            {
+                import std.algorithm.searching : canFind;
+
+                access.managed = true;
+                const role = row.get!string(0), capability = row.get!string(1);
+                if (role.length && !access.roles.canFind(role))
+                    access.roles ~= role;
+                if (capability.length && !access.grants.canFind(capability))
+                    access.grants ~= capability;
+            }
+        }
+        catch (DatabaseException error)
+        {
+            if (error.code != 1146 || login.query!("SELECT COUNT(*) FROM information_schema.tables "
+                ~ "WHERE table_schema=DATABASE() AND table_name IN ('dmangos_gm_enrollment', '"
+                ~ "dmangos_gm_account_role', 'dmangos_gm_role', 'dmangos_gm_role_permission')")()[0].get!uint(0))
+                throw error;
+        }
+        return access;
+    }
+
+    bool changeGmRole(uint accountId, string role, bool grant)
+    {
+        bool changed;
+        login.transaction({
+            changed = false;
+            if (!login.query!("SELECT role_name FROM dmangos_gm_role WHERE role_name=? LOCK IN SHARE MODE")(role).length)
+                return;
+            if (grant)
+            {
+                login.execute!"INSERT IGNORE INTO dmangos_gm_enrollment (account_id) VALUES (?)"(accountId);
+                login.execute!("INSERT INTO dmangos_gm_account_role (account_id, role_name) VALUES (?, ?) "
+                    ~ "ON DUPLICATE KEY UPDATE role_name=VALUES(role_name)")(accountId, role);
+                changed = true;
+            }
+            else
+                changed = login.execute!"DELETE FROM dmangos_gm_account_role WHERE account_id=? AND role_name=?"
+                    (accountId, role) != 0;
+        });
+        return changed;
     }
 
     bool isBanned(uint accountId, string ip)
@@ -3485,6 +3602,18 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
             return nullable(*row);
         return Nullable!CreatureSpawn.init;
     }
+    WaypointNode[][uint] waypointRows;
+
+    bool saveSpawnWaypoints(uint spawn, MotionType mode, const(WaypointNode)[] nodes)
+    {
+        auto creature = spawn in creatureSpawnRows;
+        if (creature is null)
+            return false;
+        creature.movementType = mode;
+        waypointRows[spawn] = nodes.dup;
+        return true;
+    }
+
     CreatureSpawn[] savedCreatureSpawnsAfter(uint guid)
     {
         CreatureSpawn[] spawns;
@@ -3523,6 +3652,39 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
         markWorldCatalogReload(WorldCatalogKey(WorldCatalog.creatureScale, entry));
     }
     uint[2][] vendorRows; /// what `insertVendorItem` wrote (entry, item), less what `deleteVendorItem` removed
+    uint[3][ulong] trainerLessonRows;
+
+    bool insertTrainerLesson(uint entry, uint spell, uint cost, ubyte requiredLevel)
+    {
+        const key = (ulong(entry) << 32) | spell;
+        if (key in trainerLessonRows)
+            return false;
+        trainerLessonRows[key] = [spell, cost, requiredLevel];
+        markWorldCatalogReload(WorldCatalogKey(WorldCatalog.trainer, entry));
+        return true;
+    }
+
+    imported!"dmangos.world.npcdata".TrainerSpell[] loadTrainerLessons(uint entry,
+        const imported!"dmangos.world.spells".SpellData spells)
+    {
+        import dmangos.world.npcdata : TrainerSpell, trainerLesson;
+
+        TrainerSpell[] result;
+        foreach (key, lesson; trainerLessonRows)
+            if (key >> 32 == entry)
+                result ~= trainerLesson(spells, lesson[0], lesson[1], lesson[2]);
+        return result;
+    }
+
+    imported!"dmangos.world.quests".QuestData questCatalog;
+    imported!"dmangos.world.quests".QuestData loadQuestCatalog() { return questCatalog; }
+    imported!"dmangos.world.quests".QuestData reloadQuestCatalog()
+    {
+        if (questCatalog !is null)
+            markWorldCatalogReload(WorldCatalogKey(WorldCatalog.quests, 0));
+        return questCatalog;
+    }
+
     void insertVendorItem(uint entry, uint item)
     {
         vendorRows ~= [entry, item];
@@ -3770,6 +3932,11 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
             return nullable(*account);
         return Nullable!WorldAccount.init;
     }
+
+    GmAccess[uint] gmAccessRows;
+
+    GmAccess gmAccessFor(uint accountId) { return gmAccessRows.get(accountId, GmAccess.init); }
+    bool changeGmRole(uint accountId, string role, bool grant) { return false; }
 
     bool isBanned(uint accountId, string ip)
     {

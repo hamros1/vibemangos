@@ -34,7 +34,7 @@ import dmangos.world.loot : lootColumns, lootRow, LootStore, LootStores;
 import dmangos.world.npcdata : BroadcastText, NpcData;
 import dmangos.script.api : Location, Waypoint;
 import dmangos.world.objects : HighGuid, makeGuid, temporaryCounterStart;
-import dmangos.world.quests : QuestData, QuestGreeting, questQuery, QuestRow, QuestPhaseState, QuestSpawnPhase;
+import dmangos.world.quests : QuestData, QuestPhaseState, QuestSpawnPhase;
 import dmangos.world.spells : SpellData;
 
 /// The `item_template` fields the character screen and character creation use.
@@ -832,22 +832,7 @@ final class WorldData
         }
         import dmangos.world.alteracair : completeBeaconTemplates, placePrisoner;
         completeBeaconTemplates(gameObjectTemplates);
-        foreach (row; world.queryAs!(QuestRow, questQuery)())
-            quests.quests[row.id] = row.toQuest();
-        foreach (row; world.query!"SELECT id, quest FROM creature_questrelation"())
-            quests.creatureStarts[row.get!uint(0)] ~= row.get!uint(1);
-        foreach (row; world.query!"SELECT id, quest FROM creature_involvedrelation"())
-            quests.creatureEnds[row.get!uint(0)] ~= row.get!uint(1);
-        foreach (row; world.query!"SELECT id, quest FROM gameobject_questrelation"())
-            quests.gameObjectStarts[row.get!uint(0)] ~= row.get!uint(1);
-        foreach (row; world.query!"SELECT id, quest FROM gameobject_involvedrelation"())
-            quests.gameObjectEnds[row.get!uint(0)] ~= row.get!uint(1);
-        foreach (row; world.query!"SELECT Entry, Type, IFNULL(Text, ''), EmoteId, EmoteDelay FROM questgiver_greeting"())
-            quests.greetings[(ulong(row.get!uint(1)) << 32) | row.get!uint(0)] = QuestGreeting(row.get!string(2).idup,
-                row.get!uint(3), row.get!uint(4));
-        foreach (row; world.query!"SELECT id, quest FROM areatrigger_involvedrelation"())
-            quests.triggerQuests[row.get!uint(0)] = row.get!uint(1);
-        quests.link();
+        quests = QuestData.load(world);
         foreach (row; world.query!("SELECT creature_id, RewOnKillRepFaction1, RewOnKillRepFaction2, MaxStanding1, "
             ~ "IsTeamAward1, RewOnKillRepValue1, MaxStanding2, IsTeamAward2, RewOnKillRepValue2, TeamDependent "
             ~ "FROM creature_onkill_reputation")())

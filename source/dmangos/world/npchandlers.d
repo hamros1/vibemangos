@@ -842,7 +842,7 @@ private:
         KnownAbilities loaded;
         auto builder = new CharacterBuilder(context.data, context.client, context.creationSettings,
             &context.nextItemGuid);
-        if (!builder.loadAbilities(player.data.race, player.data.classId, player.data.level, account.level,
+        if (!builder.loadAbilities(player.data.race, player.data.classId, player.data.level, security,
             currentSkills, player.data.spells, loaded))
             return;
         const result = builder.learnInWorld(spell);

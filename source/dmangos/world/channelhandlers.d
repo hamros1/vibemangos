@@ -30,7 +30,7 @@ private:
             return false;
         }
         // Chat links and colours ('|') are for game masters.
-        if (account.level == AccountLevel.player && channel.canFind('|'))
+        if (security == AccountLevel.player && channel.canFind('|'))
         {
             deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.invalidName, channel));
             return false;

@@ -18,6 +18,27 @@ mixin template QuestCommands()
 
 private:
 
+    bool handleQuestLoadCommand()
+    {
+        import dmangos.mysql : DatabaseException;
+
+        try
+        {
+            auto catalog = context.canWrite() ? context.database.reloadQuestCatalog() : null;
+            if (catalog is null)
+                systemMessage("The quest catalog could not be reloaded.");
+            else
+            {
+                context.data.quests = catalog;
+                gmLog(format!"reloaded %s quest definitions"(catalog.quests.length));
+                systemMessage(format!"Reloaded %s quests. Other workers will refresh automatically."(catalog.quests.length));
+            }
+        }
+        catch (DatabaseException)
+            systemMessage("The world database could not reload the quest catalog.");
+        return true;
+    }
+
     /// The selected player, else the GM itself ("Auto-targeting self.").
     auto questTarget()
     {

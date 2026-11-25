@@ -448,7 +448,7 @@ mixin template RitualSummoning()
 
     /**
      * The client accepts a summons (`HandleSummonResponseOpcode`, `Player::SummonIfPossible`); a game master's mass
-     * summon is answered the same way (`dmangos.world.gmlevel3`).
+     * summon is answered the same way (`dmangos.world.gmadmin`).
      */
     @Handles(Opcode.CMSG_SUMMON_RESPONSE, WorldState.inWorld)
     void handleSummonResponse(const imported!"dmangos.world.packets".ClientSummonResponse response)

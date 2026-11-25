@@ -520,6 +520,7 @@ private:
             instanceId_ = 0; // not a dungeon: no copy, whatever came along
         else if (context.instanceState(instanceId_) is null)
             instanceId_ = context.instanceFor(guid, character.map);
+        refreshGmAccess();
         player = makePlayer(character, false);
         player.movement = movement;
         player.speeds = speeds; // as the client has them; auras loaded below change them as they did there
@@ -1708,7 +1709,7 @@ private:
             return "";
         }
         deliver(Opcode.SMSG_WHO, whoList(request, candidates, cast(uint) context.client.teamForRace(player.data.race),
-            account.level, config.allowTwoSideWhoList, config.gmLevelInWhoList, config.maxWhoListReturns, &areaName));
+            security, config.allowTwoSideWhoList, config.gmLevelInWhoList, config.maxWhoListReturns, &areaName));
     }
 
     /// Everyone within `range` yards hears it, the speaker included (say, yell, text emotes).

@@ -1,12 +1,4 @@
-/**
- * The `.debug` GM commands that need no AI, spells or line of sight, the
- * `.recall` group, and the battleground commands `playsound` and
- * `setworldstate`. Their permissions and messages match ArcEmu 2.4.3's
- * exactly. Mixed into `dmangos.world.character.Character`.
- *
- * Recall locations are the `game_tele` table,
- * which `.recall` reads and writes here, in name order.
- */
+/// GM movement and combat diagnostics, plus database-backed recall locations.
 module dmangos.world.gmdebug;
 
 /// See the module documentation.
@@ -74,6 +66,86 @@ private:
     // -----------------------------------------------------------------------
     // .debug
     // -----------------------------------------------------------------------
+
+    bool handleAIMoveCommand(float x, float y, float z)
+    {
+        if (!context.client.isValidMapCoord(map.id, x, y, z))
+            return false;
+        if (auto creature = getSelectedCreature(true))
+            npcWalkTo(creature, Position(x, y, z));
+        return true;
+    }
+
+    bool handleMoveInfoCommand()
+    {
+        if (auto creature = getSelectedCreature(true))
+        {
+            const at = creature.position;
+            systemMessage(format!"Spawn %s, movement %s, position %.3f %.3f %.3f, orientation %.3f, combat %s."
+                (creature.spawn.guid, creature.generator.type, at.x, at.y, at.z, at.orientation, creature.ai.inCombat));
+        }
+        return true;
+    }
+
+    bool handleGetTransporterTime()
+    {
+        import dmangos.world.objects : HighGuid, counterOf, highGuidOf;
+
+        const guid = player.movement.transportGuid;
+        if (highGuidOf(guid) == HighGuid.moTransport)
+            foreach (ref ship; context.data.ships)
+                if (ship.entry == counterOf(guid) && ship.period)
+                {
+                    systemMessage(format!"%s is %s ms into its %s ms circuit."
+                        (ship.name, context.transportNow() % ship.period, ship.period));
+                    return true;
+                }
+        systemMessage("Board a scheduled ship or zeppelin first.");
+        return true;
+    }
+
+    bool handleDebugDumpCoordsCommmand()
+    {
+        const at = player.position;
+        systemMessage(format!"Map %s, copy %s, x %.6f, y %.6f, z %.6f, facing %.6f."
+            (map.id, map.instanceId, at.x, at.y, at.z, at.orientation));
+        return true;
+    }
+
+    bool handleFadeCommand(uint percent)
+    {
+        return percent <= 100 && handleThreatModCommand(-cast(int) percent);
+    }
+
+    bool handleThreatModCommand(int percent)
+    {
+        if (percent < -100 || percent > 100)
+            return false;
+        if (auto creature = getSelectedCreature(true))
+        {
+            const before = creature.ai.threatOf(player.guid);
+            creature.ai.modifyThreatPercent(player.guid, percent);
+            const after = creature.ai.threatOf(player.guid);
+            systemMessage(format!"Your threat on %s was %.2f and is now %.2f."
+                (creature.template_.name, before, after));
+            gmLog(format!"adjusted own threat on spawn %s by %s percent"(creature.spawn.guid, percent));
+        }
+        return true;
+    }
+
+    bool handleCalcThreatCommand(uint damage, uint spellId)
+    {
+        import dmangos.world.spellmods : SpellModOp;
+
+        const spell = context.data.spells.spell(spellId);
+        if (spell is null || spell.casting.school >= player.damageMods.threat.length)
+            return false;
+        const schoolFactor = player.damageMods.threat[spell.casting.school];
+        const spellFactor = spellMod(SpellModOp.threat, spell, 1.0f);
+        systemMessage(format!"%s damage gives %.2f threat with your current modifiers (school %.3f, spell %.3f)."
+            (damage, damage * schoolFactor * spellFactor, schoolFactor, spellFactor));
+        return true;
+    }
 
     bool handleThreatListCommand()
     {
@@ -566,6 +638,54 @@ private:
             systemMessage(format!"%s, copy %s, %s."(copy.type, copy.instance, copy.status));
         else
             systemMessage("You're not in a battleground!");
+        return true;
+    }
+
+    bool handleBattlegroundCommand()
+    {
+        handleBGInfoCommnad();
+        systemMessage("Use .battleground to list match-management commands.");
+        return true;
+    }
+
+    bool handleGetBattlegroundQueueCommand()
+    {
+        import dmangos.world.bgqueue : BattlegroundPlayer, BattlegroundQueueHost, BattlegroundQueueStats;
+
+        context.services.call!(BattlegroundQueueHost.stats)(BattlegroundPlayer(player.guid, context.nodeId),
+            (BattlegroundQueueStats report) {
+                if (player !is null)
+                    systemMessage(format!"%s queued or invited across all brackets, %s active matches."
+                        (report.queuedPlayers, report.activeMatches));
+            });
+        return true;
+    }
+
+    bool handleSetBattlefieldStatusCommand(string action)
+    {
+        if (action != "start")
+            return false;
+        return handleStartBGCommand();
+    }
+
+    bool handleSetBGScoreCommand(string teamName, uint score)
+    {
+        import dmangos.world.arathi : resourceStates, maxResources;
+        import dmangos.world.bgqueue : BattlegroundStatus, BattlegroundType;
+        import dmangos.world.warsong : captureStates, maxCaptures;
+
+        if (teamName != "alliance" && teamName != "horde")
+            return false;
+        const team = teamName == "alliance" ? 0 : 1;
+        auto copy = currentBattleground();
+        if (copy is null || copy.status != BattlegroundStatus.inProgress)
+            systemMessage("Join a match in progress first.");
+        else if (copy.type == BattlegroundType.warsongGulch && score < maxCaptures)
+            copy.setWorldState(captureStates[team], score);
+        else if (copy.type == BattlegroundType.arathiBasin && score < maxResources)
+            copy.setWorldState(resourceStates[team], score);
+        else
+            systemMessage("Set a below-win score in Warsong Gulch or Arathi Basin.");
         return true;
     }
 

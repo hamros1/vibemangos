@@ -78,9 +78,9 @@ Redirected logs are plain text. Set `NO_COLOR=1` to disable colors in a terminal
 | `packet_log` | a directory where every packet sent to each client is written (time, opcode, body in hex), for finding what a client cannot take; empty for none | `""` |
 | `cluster` | this node's place in the [cluster](CLUSTER.md#configuration) | example config starts node 1; omitted means standalone |
 | `logout_delay`, `player_save_interval` | seconds a logout takes (GMs and resting players: none); seconds between saves of each character | `20`, `900` |
-| `gm_permissions` | the permission letters of `account.gmlevel` 1, 2 and 3 | `{"1": "bcghiltuv", "2": "a", "3": "az"}` |
+| `gm_permissions` | legacy command permissions for unenrolled accounts at levels 1, 2 and 3 | `{"1": "bcghiltuv", "2": "a", "3": "az"}` |
 | `command_overrides` | other permission letters for commands: `[{"command": "gm on", "group": "m"}]` | none |
-| `allow_player_commands`, `gm_command_log` | accounts without permissions may use the `0` commands; the file GM commands are logged to | `false`, none |
+| `allow_player_commands`, `gm_command_log` | allows players to use public commands, and configures the log file for audited staff actions | `false`, none |
 | `gamemaster_list_only_active_gms`, `gamemaster_hide_permissions` | `.gm list` shows players only GMs with the tag on; it hides GMs' permissions from players | `false`, `false` |
 | `send_stats_on_join`, `gm_client_channel` | everyone, not only GMs, is told the population on entering the world; a channel only accounts with permissions may join | `true`, none |
 | `flood_lines`, `flood_seconds`, `flood_message` | lines a player without permissions may say per period, and whether it is told (0 = off) | `0`, `0`, `false` |

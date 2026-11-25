@@ -322,6 +322,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 case WorldCatalog.teleports:
                     data.setTeleports(database.loadAreaTriggerTeleports(), database.loadTeleports(), client);
                     break;
+                case WorldCatalog.quests:
+                    data.quests = database.loadQuestCatalog();
+                    break;
+                case WorldCatalog.trainer:
+                    data.npcs.trainers[key.entry] = database.loadTrainerLessons(key.entry, data.spells);
+                    break;
                 }
                 loadedCatalogVersions[key] = version_.revision;
             }

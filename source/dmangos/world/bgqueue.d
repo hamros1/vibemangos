@@ -1109,6 +1109,13 @@ struct BattlegroundInvited
     uint count;
 }
 
+/// A snapshot of the battlegroup queue coordinator's live state.
+struct BattlegroundQueueStats
+{
+    uint queuedPlayers;
+    uint activeMatches;
+}
+
 /// The queues as a cluster service: on the node the cluster places it on.
 @Service(ServiceKind.battlegroundQueue)
 struct BattlegroundQueueHost
@@ -1239,6 +1246,16 @@ struct BattlegroundQueueHost
     @Call BattlegroundInvited invited(const ref BattlegroundInstance r)
     {
         return BattlegroundInvited(queue.invited(r.instance));
+    }
+
+    /// Reads the aggregate queue and match counts without changing queue state.
+    @Call BattlegroundQueueStats stats(const ref BattlegroundPlayer)
+    {
+        uint matches;
+        foreach (ref copy; queue.copies)
+            if (copy.status < BattlegroundStatus.waitLeave)
+                ++matches;
+        return BattlegroundQueueStats(cast(uint) queue.queuedPlayers, matches);
     }
 
     ///

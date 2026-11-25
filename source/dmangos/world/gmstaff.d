@@ -1,11 +1,5 @@
-/**
- * The moderator-level GM commands: announcements, `.gm on` and `.gm off`, `.gps`,
- * `.kickplayer`, `.character additem`, `.summon`, `.appear`, `.modify speed`
- * and `.modify gold`, the skill commands, `.npc emote`, `.gotrig` and
- * `.character unlearn`. Their behaviour and messages match ArcEmu 2.4.3's. Mixed into
- * `dmangos.world.session.Character`.
- */
-module dmangos.world.gmlevel1;
+/// Staff presence, announcements, and player support tools.
+module dmangos.world.gmstaff;
 
 import dmangos.world.commands;
 
@@ -32,7 +26,7 @@ unittest
 }
 
 /// See the module documentation.
-mixin template Level1Commands()
+mixin template StaffCommands()
 {
     import std.algorithm.comparison : min;
     import std.format : format;
@@ -40,7 +34,7 @@ mixin template Level1Commands()
     import dmangos.world.commands;
     import dmangos.world.gmtargets : GmRemoteOp;
     import dmangos.world.names : normalizedName;
-    import dmangos.world.gmlevel1 : announceColor, itemQualityColor;
+    import dmangos.world.gmstaff : announceColor, itemQualityColor;
     import dmangos.world.movement : Position;
     import dmangos.world.player : PlayerFlags;
     import dmangos.world.updatefields;

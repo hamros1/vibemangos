@@ -80,6 +80,13 @@ private:
         send(ServerCharCreate(result));
     }
 
+    private AccountLevel accountRankForCharacterScreen()
+    {
+        import dmangos.world.gmaccess : readGmAccess;
+
+        return readGmAccess(context.database, account.id).rank(account.level);
+    }
+
     /// Creates a character as the client asked; returns the result code for `SMSG_CHAR_CREATE`.
     ubyte createCharacter(const ref ClientCharCreate request)
     {
@@ -87,7 +94,8 @@ private:
         const config = context.config;
         if (!admitted) // in a cluster, the account may still be in the world on another node
             return R.CHAR_CREATE_ERROR;
-        const isPlayer = account.level == AccountLevel.player;
+        const rank = accountRankForCharacterScreen();
+        const isPlayer = rank == AccountLevel.player;
 
         if (isPlayer && config.charactersCreatingDisabled)
         {
@@ -151,7 +159,7 @@ private:
         uint characterGuid;
         if (!context.takeId(IdKind.character, characterGuid))
             return R.CHAR_CREATE_ERROR; // a cluster member whose block of ids has not come
-        if (!builder.create(characterGuid, account.id, account.level, create, skipCinematic, character))
+        if (!builder.create(characterGuid, account.id, rank, create, skipCinematic, character))
             return R.CHAR_CREATE_ERROR;
 
         context.database.saveNewCharacter(character, tutorialRowMissing);
@@ -199,7 +207,7 @@ private:
         const nameResult = checkPlayerName(name, config.minPlayerName, config.strictPlayerNames, config.realmZone);
         if (nameResult != CharNameResult.CHAR_NAME_SUCCESS)
             return answer(nameResult);
-        if (account.level == AccountLevel.player && (toLowerName(name) in context.data.reservedNames) !is null)
+        if (accountRankForCharacterScreen() == AccountLevel.player && (toLowerName(name) in context.data.reservedNames) !is null)
             return answer(CharNameResult.CHAR_NAME_RESERVED);
         if (context.database.nameTaken(name))
             return answer(cast(ubyte) CharacterResponse.CHAR_CREATE_NAME_IN_USE);
@@ -326,6 +334,7 @@ mixin template CharacterLogin()
     {
         const recovered = checkpoints !is null;
         const guid = character.guid;
+        refreshGmAccess();
         player = makePlayer(character, !recovered);
         loadCooldowns(); // before the spellbook is sent: it shows them
         loadTalentReset();
@@ -395,7 +404,7 @@ mixin template CharacterLogin()
         KnownAbilities abilities;
         auto builder = new CharacterBuilder(context.data, context.client, context.creationSettings,
             &context.nextItemGuid);
-        builder.loadAbilities(character.race, character.classId, character.level, account.level, character.skills,
+        builder.loadAbilities(character.race, character.classId, character.level, security, character.skills,
             character.spells, abilities);
         auto made = new Player(character, abilities, context.data, context.client, &context.nextItemGuid,
             context.playerGuid(character.guid));

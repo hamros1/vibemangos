@@ -1,16 +1,7 @@
 /**
- * The GM chat command tables. They must match ArcEmu 2.4.3's row for row:
- * the same names, in the same order, with the same permission letters,
- * handler names and help texts; edit them by hand only to keep it so.
- * Order matters: a typed word takes the first row it abbreviates, so `.k`
- * is `.kill`.
- *
- * `dmangos.world.commands` calls the `Character` method named by `handler`
- * with a lower-case first letter (`"HandleGMOnCommand"` is
- * `handleGMOnCommand`); a row whose method does not exist yet answers "Not
- * yet implemented.". Rows without a handler either have `children` (a
- * sub-table) or are `.modify` field rows, which set the update field `field`
- * (and its maximum, `fieldMax`) to the values typed.
+ * Registers staff commands and their usage. Table order is the fallback for existing
+ * abbreviations. Exact names take precedence. The group key supplies a named capability
+ * for database roles and a compatible permission letter for legacy accounts.
  */
 module dmangos.world.commandtable;
 
@@ -69,7 +60,7 @@ immutable ChatCommand[] modifyCommandTable = [
 immutable ChatCommand[] debugCommandTable = [
     ChatCommand("infront", 'd', "HandleDebugInFrontCommand", "", null, null, null, 0),
     ChatCommand("showreact", 'd', "HandleShowReactionCommand", "", null, null, null, 0),
-    ChatCommand("aimove", 'd', "HandleAIMoveCommand", "", null, null, null, 0),
+    ChatCommand("aimove", 'd', "HandleAIMoveCommand", ".debug aimove <x> <y> <z>", null, null, null, 0),
     ChatCommand("dist", 'd', "HandleDistanceCommand", "", null, null, null, 0),
     ChatCommand("face", 'd', "HandleFaceCommand", "", null, null, null, 0),
     ChatCommand("moveinfo", 'd', "HandleMoveInfoCommand", "", null, null, null, 0),
@@ -84,11 +75,11 @@ immutable ChatCommand[] debugCommandTable = [
     ChatCommand("castspellne", 'd', "HandleCastSpellNECommand", ".castspellne <spellid> - Casts spell on target (only plays animations, doesnt handle effects or range/facing/etc.", null, null, null, 0),
     ChatCommand("aggrorange", 'd', "HandleAggroRangeCommand", ".aggrorange - Shows aggro Range of the selected Creature.", null, null, null, 0),
     ChatCommand("knockback", 'd', "HandleKnockBackCommand", ".knockback <value> - Knocks you back.", null, null, null, 0),
-    ChatCommand("fade", 'd', "HandleFadeCommand", ".fade <value> - calls ModThreatModifyer().", null, null, null, 0),
-    ChatCommand("threatMod", 'd', "HandleThreatModCommand", ".threatMod <value> - calls ModGeneratedThreatModifyer().", null, null, null, 0),
-    ChatCommand("calcThreat", 'd', "HandleCalcThreatCommand", ".calcThreat <dmg> <spellId> - calculates threat.", null, null, null, 0),
+    ChatCommand("fade", 'd', "HandleFadeCommand", ".debug fade <0-100> — Reduces your threat on the selected creature by a percentage.", null, null, null, 0),
+    ChatCommand("threatMod", 'd', "HandleThreatModCommand", ".debug threatMod <-100–100> — Adjusts your threat on the selected creature by a percentage.", null, null, null, 0),
+    ChatCommand("calcThreat", 'd', "HandleCalcThreatCommand", ".debug calcThreat <damage> <spell-id> — Estimates threat with your current modifiers.", null, null, null, 0),
     ChatCommand("threatList", 'd', "HandleThreatListCommand", ".threatList  - returns all AI_Targets of the selected Creature.", null, null, null, 0),
-    ChatCommand("gettptime", 'd', "HandleGetTransporterTime", "grabs transporter travel time", null, null, null, 0),
+    ChatCommand("gettptime", 'd', "HandleGetTransporterTime", "Shows the current ship or zeppelin circuit time.", null, null, null, 0),
     ChatCommand("itempushresult", 'd', "HandleSendItemPushResult", "sends item push result", null, null, null, 0),
     ChatCommand("setbit", 'd', "HandleModifyBitCommand", "", null, null, null, 0),
     ChatCommand("setvalue", 'd', "HandleModifyValueCommand", "", null, null, null, 0),
@@ -109,21 +100,22 @@ immutable ChatCommand[] debugCommandTable = [
 
 /// The `.waypoint` commands.
 immutable ChatCommand[] waypointCommandTable = [
-    ChatCommand("add", 'w', "HandleWPAddCommand", "Add wp at current pos", null, null, null, 0),
-    ChatCommand("show", 'w', "HandleWPShowCommand", "Show wp's for creature", null, null, null, 0),
-    ChatCommand("hide", 'w', "HandleWPHideCommand", "Hide wp's for creature", null, null, null, 0),
-    ChatCommand("delete", 'w', "HandleWPDeleteCommand", "Delete selected wp", null, null, null, 0),
-    ChatCommand("movehere", 'w', "HandleWPMoveHereCommand", "Move to this wp", null, null, null, 0),
+    ChatCommand("add", 'w', "HandleWPAddCommand", ".waypoint add [wait-ms] — Adds your position to the draft", null, null, null, 0),
+    ChatCommand("show", 'w', "HandleWPShowCommand", ".waypoint show — Lists the selected spawn’s draft", null, null, null, 0),
+    ChatCommand("hide", 'w', "HandleWPHideCommand", ".waypoint hide — Closes the draft and discards unsaved edits", null, null, null, 0),
+    ChatCommand("delete", 'w', "HandleWPDeleteCommand", ".waypoint delete <point>", null, null, null, 0),
+    ChatCommand("movehere", 'w', "HandleWPMoveHereCommand", ".waypoint movehere <point>", null, null, null, 0),
     ChatCommand("flags", 'w', "HandleWPFlagsCommand", "Wp flags", null, null, null, 0),
-    ChatCommand("waittime", 'w', "HandleWPWaitCommand", "Wait time at this wp", null, null, null, 0),
+    ChatCommand("waittime", 'w', "HandleWPWaitCommand", ".waypoint waittime <point> <milliseconds>", null, null, null, 0),
     ChatCommand("emote", 'w', "HandleWPEmoteCommand", "Emote at this wp", null, null, null, 0),
     ChatCommand("skin", 'w', "HandleWPSkinCommand", "Skin at this wp", null, null, null, 0),
-    ChatCommand("change", 'w', "HandleWPChangeNoCommand", "Change at this wp", null, null, null, 0),
-    ChatCommand("info", 'w', "HandleWPInfoCommand", "Show info for wp", null, null, null, 0),
-    ChatCommand("movetype", 'w', "HandleWPMoveTypeCommand", "Movement type at wp", null, null, null, 0),
-    ChatCommand("generate", 'w', "HandleGenerateWaypoints", "Randomly generate wps", null, null, null, 0),
-    ChatCommand("save", 'w', "HandleSaveWaypoints", "Save all waypoints", null, null, null, 0),
-    ChatCommand("deleteall", 'w', "HandleDeleteWaypoints", "Delete all waypoints", null, null, null, 0),
+    ChatCommand("change", 'w', "HandleWPChangeNoCommand", ".waypoint change <point> <new-point>", null, null, null, 0),
+    ChatCommand("info", 'w', "HandleWPInfoCommand", ".waypoint info <point>", null, null, null, 0),
+    ChatCommand("movetype", 'w', "HandleWPMoveTypeCommand", ".waypoint movetype <loop|linear>", null, null, null, 0),
+    ChatCommand("generate", 'w', "HandleGenerateWaypoints", ".waypoint generate — Extends the draft to your position using the navigation mesh.", null, null, null, 0),
+    ChatCommand("script", 'w', "HandleWPScriptCommand", ".waypoint script <point> <script-id|0> — Attaches or clears a movement script", null, null, null, 0),
+    ChatCommand("save", 'w', "HandleSaveWaypoints", ".waypoint save — Persists the selected route", null, null, null, 0),
+    ChatCommand("deleteall", 'w', "HandleDeleteWaypoints", ".waypoint deleteall — Clears the selected draft", null, null, null, 0),
     ChatCommand("addfly", 'w', "HandleWaypointAddFlyCommand", "Adds a flying waypoint", null, null, null, 0),
 ];
 
@@ -158,24 +150,24 @@ immutable ChatCommand[] gameObjectCommandTable = [
     ChatCommand("enable", 'o', "HandleGOEnable", "Enables the selected GO for use.", null, null, null, 0),
     ChatCommand("scale", 'o', "HandleGOScale", "Sets scale of selected GO", null, null, null, 0),
     ChatCommand("animprogress", 'o', "HandleGOAnimProgress", "Sets anim progress", null, null, null, 0),
-    ChatCommand("export", 'o', "HandleGOExport", "Exports the current GO selected", null, null, null, 0),
+    ChatCommand("export", 'o', "HandleGOExport", "Prints coordinates and rotation of the selected game object.", null, null, null, 0),
     ChatCommand("move", 'g', "HandleGOMove", "Moves gameobject to player xyz", null, null, null, 0),
     ChatCommand("rotate", 'g', "HandleGORotate", "<Axis> <Value> - Rotates the object. <Axis> x,y, Default o.", null, null, null, 0),
 ];
 
 /// The `.battleground` commands.
 immutable ChatCommand[] battlegroundCommandTable = [
-    ChatCommand("setbgscore", 'e', "HandleSetBGScoreCommand", "<Teamid> <Score> - Sets battleground score. 2 Arguments.", null, null, null, 0),
+    ChatCommand("setbgscore", 'e', "HandleSetBGScoreCommand", ".battleground setbgscore <alliance|horde> <score> — Sets a below-win score in Warsong Gulch or Arathi Basin.", null, null, null, 0),
     ChatCommand("startbg", 'e', "HandleStartBGCommand", "Starts current battleground match.", null, null, null, 0),
     ChatCommand("pausebg", 'e', "HandlePauseBGCommand", "Pauses current battleground match.", null, null, null, 0),
     ChatCommand("bginfo", 'e', "HandleBGInfoCommnad", "Displays information about current battleground.", null, null, null, 0),
-    ChatCommand("battleground", 'e', "HandleBattlegroundCommand", "Shows BG Menu", null, null, null, 0),
+    ChatCommand("battleground", 'e', "HandleBattlegroundCommand", "Shows the current match and how to list match commands.", null, null, null, 0),
     ChatCommand("setworldstate", 'e', "HandleSetWorldStateCommand", "<var> <val> - Var can be in hex. WS Value.", null, null, null, 0),
     ChatCommand("setworldstates", 'e', "HandleSetWorldStatesCommand", "<var> <val> - Var can be in hex. WS Value.", null, null, null, 0),
     ChatCommand("playsound", 'e', "HandlePlaySoundCommand", "<val>. Val can be in hex.", null, null, null, 0),
-    ChatCommand("setbfstatus", 'e', "HandleSetBattlefieldStatusCommand", ".setbfstatus - NYI.", null, null, null, 0),
+    ChatCommand("setbfstatus", 'e', "HandleSetBattlefieldStatusCommand", ".battleground setbfstatus start — Starts the current match.", null, null, null, 0),
     ChatCommand("leave", 'e', "HandleBattlegroundExitCommand", "Leaves the current battleground.", null, null, null, 0),
-    ChatCommand("getqueue", 'z', "HandleGetBattlegroundQueueCommand", "Gets common battleground queue information.", null, null, null, 0),
+    ChatCommand("getqueue", 'z', "HandleGetBattlegroundQueueCommand", "Shows queue and match counts from the battlegroup coordinator.", null, null, null, 0),
     ChatCommand("forcestart", 'z', "HandleInitializeAllQueuedBattlegroundsCommand", "Forces initialitation of all battlegrounds with active queue.", null, null, null, 0),
 ];
 
@@ -188,7 +180,8 @@ immutable ChatCommand[] nPCCommandTable = [
     ChatCommand("delete", 'n', "HandleDeleteCommand", "Deletes mob from db and world.", null, null, null, 0),
     ChatCommand("info", 'n', "HandleNpcInfoCommand", "Displays NPC information", null, null, null, 0),
     ChatCommand("addAgent", 'n', "HandleAddAIAgentCommand", ".npc addAgent <agent> <procEvent> <procChance> <procCount> <spellId> <spellType> <spelltargetType> <spellCooldown> <floatMisc1> <Misc2>", null, null, null, 0),
-    ChatCommand("listAgent", 'n', "HandleListAIAgentCommand", ".npc listAgent", null, null, null, 0),
+    ChatCommand("traineradd", 'm', "HandleAddTrainerSpellCommand", ".npc traineradd <teaching-spell-id> [cost-in-copper] [required-level]", null, null, null, 0),
+    ChatCommand("listAgent", 'n', "HandleListAIAgentCommand", ".npc listAgent — Shows the selected creature’s scripts and combat spells", null, null, null, 0),
     ChatCommand("say", 'n', "HandleMonsterSayCommand", ".npc say <text> - Makes selected mob say text <text>.", null, null, null, 0),
     ChatCommand("yell", 'n', "HandleMonsterYellCommand", ".npc yell <Text> - Makes selected mob yell text <text>.", null, null, null, 0),
     ChatCommand("come", 'n', "HandleNpcComeCommand", ".npc come - Makes npc move to your position", null, null, null, 0),
@@ -267,7 +260,7 @@ immutable ChatCommand[] questCommandTable = [
     ChatCommand("finisher", '2', "HandleQuestFinisherCommand", "Lookup quest finisher for quest <id>", null, null, null, 0),
     ChatCommand("item", '2', "HandleQuestItemCommand", "Lookup itemid necessary for quest <id>", null, null, null, 0),
     ChatCommand("list", '2', "HandleQuestListCommand", "Lists the quests for the npc <id>", null, null, null, 0),
-    ChatCommand("load", '2', "HandleQuestLoadCommand", "Loads quests from database", null, null, null, 0),
+    ChatCommand("load", '2', "HandleQuestLoadCommand", "Reloads quest definitions and giver relationships on all workers.", null, null, null, 0),
     ChatCommand("lookup", '2', "HandleQuestLookupCommand", "Looks up quest string x", null, null, null, 0),
     ChatCommand("giver", '2', "HandleQuestGiverCommand", "Lookup quest giver for quest <id>", null, null, null, 0),
     ChatCommand("remove", '2', "HandleQuestRemoveCommand", "Removes the quest <id> from the targeted player", null, null, null, 0),
@@ -386,6 +379,18 @@ immutable ChatCommand[] arenaCommandTable = [
     ChatCommand("resetallratings", 'z', "HandleArenaResetAllRatingsCommand", "Resets all area teams to their default rating", null, null, null, 0),
 ];
 
+immutable ChatCommand[] travelCommandTable = [
+    ChatCommand("coords", 'v', "HandleWorldPortCommand", "Usage: .travel coords <map> <x> <y> <z>", null, null, null, 0),
+    ChatCommand("player", 'v', "HandleAppearCommand", "Usage: .travel player <name>", null, null, null, 0),
+    ChatCommand("summon", 'v', "HandleSummonCommand", "Usage: .travel summon <name>", null, null, null, 0),
+];
+
+immutable ChatCommand[] accessCommandTable = [
+    ChatCommand("whoami", '0', "HandleGmAccessInfoCommand", "Shows your active staff roles and capabilities.", null, null, null, 0),
+    ChatCommand("grant", 'z', "HandleGmAccessGrantCommand", "Usage: .access grant <account> <role>", null, null, null, 0),
+    ChatCommand("revoke", 'z', "HandleGmAccessRevokeCommand", "Usage: .access revoke <account> <role>", null, null, null, 0),
+];
+
 /// The top-level commands, in lookup order; a group's row points to its sub-table.
 immutable ChatCommand[] commandTable = [
     ChatCommand("commands", '0', "HandleCommandsCommand", "Shows Commands", null, null, null, 0),
@@ -444,5 +449,8 @@ immutable ChatCommand[] commandTable = [
     ChatCommand("logcomment", '1', "HandleGmLogCommentCommand", "Adds a comment to the GM log for the admins to read.", null, null, null, 0),
     ChatCommand("removesickness", 'm', "HandleRemoveRessurectionSickessAuraCommand", "Removes ressurrection sickness from the target", null, null, null, 0),
     ChatCommand("fixscale", 'm', "HandleFixScaleCommand", "", null, null, null, 0),
-    ChatCommand("addtrainerspell", 'm', "HandleAddTrainerSpellCommand", "", null, null, null, 0),
+    ChatCommand("addtrainerspell", 'm', "HandleAddTrainerSpellCommand", ".addtrainerspell <teaching-spell-id> [cost-in-copper] [required-level]", null, null, null, 0),
+    ChatCommand("travel", 'v', null, "", travelCommandTable, null, null, 0),
+    ChatCommand("access", '0', null, "", accessCommandTable, null, null, 0),
+    ChatCommand("learn", 'm', "HandleLearnCommand", "Usage: .learn <spell-id|all>", null, null, null, 0),
 ];

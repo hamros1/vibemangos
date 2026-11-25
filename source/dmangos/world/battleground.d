@@ -2152,7 +2152,7 @@ mixin template BattlegroundHandlers()
         bool deserted;
         if (auto copy = context.battlegrounds.find(battleground_.instance))
         {
-            deserted = copy.deserting && account.level < AccountLevel.gameMaster && context.config.battlegroundCastDeserter;
+            deserted = copy.deserting && security < AccountLevel.gameMaster && context.config.battlegroundCastDeserter;
             leaveTeamRaid(copy, battleground_.team);
             copy.removed(player.guid);
         }

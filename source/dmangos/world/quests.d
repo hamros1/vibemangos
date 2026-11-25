@@ -284,6 +284,29 @@ final class QuestData
     uint[][uint] creatureEnds;     /// creature entry -> quests it takes back (`creature_involvedrelation`)
     uint[][int] exclusiveGroups;   /// `ExclusiveGroup` -> its quests
 
+    /// Loads a complete quest catalog before it replaces the version workers currently use.
+    static QuestData load(imported!"dmangos.mysql".MySqlConnection world)
+    {
+        auto data = new QuestData;
+        foreach (row; world.queryAs!(QuestRow, questQuery)())
+            data.quests[row.id] = row.toQuest();
+        foreach (row; world.query!"SELECT id, quest FROM creature_questrelation"())
+            data.creatureStarts[row.get!uint(0)] ~= row.get!uint(1);
+        foreach (row; world.query!"SELECT id, quest FROM creature_involvedrelation"())
+            data.creatureEnds[row.get!uint(0)] ~= row.get!uint(1);
+        foreach (row; world.query!"SELECT id, quest FROM gameobject_questrelation"())
+            data.gameObjectStarts[row.get!uint(0)] ~= row.get!uint(1);
+        foreach (row; world.query!"SELECT id, quest FROM gameobject_involvedrelation"())
+            data.gameObjectEnds[row.get!uint(0)] ~= row.get!uint(1);
+        foreach (row; world.query!"SELECT Entry, Type, IFNULL(Text, ''), EmoteId, EmoteDelay FROM questgiver_greeting"())
+            data.greetings[(ulong(row.get!uint(1)) << 32) | row.get!uint(0)] = QuestGreeting(row.get!string(2).idup,
+                row.get!uint(3), row.get!uint(4));
+        foreach (row; world.query!"SELECT id, quest FROM areatrigger_involvedrelation"())
+            data.triggerQuests[row.get!uint(0)] = row.get!uint(1);
+        data.link();
+        return data;
+    }
+
     /// The quest, or null.
     const(Quest)* quest(uint id) const
     {

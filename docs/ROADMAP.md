@@ -32,7 +32,7 @@ describes how players use the systems available today.
 | Teleports | Near and far teleports with the client's acknowledgements, area trigger teleports with their entry checks (level, raid, items, quests), `worldport` | `world/teleport.d` |
 | Groups | Parties and raids, saved and reloaded; invitations, leaders, assistants, sub-groups, kicks, loot settings, icons, ready checks, rolls, pings, member stats, group chat, real health for members; meeting stones (the looking-for-group queue, on the coordinator) | `world/group.d`, `world/grouphandlers.d`, `world/meetingstone.d` |
 | Chat | Channels (built-in ones following the zone, custom ones with moderation), AFK/DND with replies and chat tags, raid warnings | `world/channel.d`, `world/channelhandlers.d`, `world/inworld.d` |
-| GM system | Behaves exactly as ArcEmu 2.4.3's GM system (the compatibility contract): its command tables, permission letters (from `gmlevel` via `gm_permissions`), lookup, messages, GM tag, whisper blocking, GM log. 217 of its 298 commands work: teleports, `.modify`, levels, items, spells, skills, lookups, accounts, bans, kicks, mutes, shutdowns, announcements, cheats, debugging (docs/COMMANDS.md) | `world/commandtable.d`, `world/commands.d`, `world/gm*.d` |
+| GM system | Named staff roles, command-specific grants, role management, command discovery, and tools for moderation, testing, route editing and trainer lessons. [Command reference](COMMANDS.md) | `world/commandtable.d`, `world/commands.d`, `world/gm*.d` |
 | Update loop | A 50 ms tick: 20-second logout, regeneration, rested XP in inns and capitals (and offline), periodic saves, timed shutdowns | `net/server.d`, `context.d`, `inworld.d`, `timer.d` |
 | Creatures and game objects | Every spawn (with pools, spawn groups and game events), loaded per grid cell when players come near, with levels, health, models, equipment, mounts and emotes; creature and game object queries; `.npc info` | `creature.d`, `gameobject.d`, `map.d`, `worlddata.d` |
 | Creature movement | Wandering (`spawndist`) and waypoint paths (`creature_movement`, `creature_movement_template`; round, or back and forth) with waits and facings; `SMSG_MONSTER_MOVE`; walks in create blocks; moving creatures change cell and come into and out of sight | `spline.d`, `motion.d`, `map.d` |
@@ -48,8 +48,9 @@ describes how players use the systems available today.
   Ebonroc, Flamegor, Chromaggus, and Nefarian.
   The Suppression Room keeps disarmed device timers and Lashlayer's room-wide shutdown.
   See [dungeon failover](CLUSTER.md#dungeons-and-battlegrounds) for coverage across instances.
-* **GM commands.** The [command reference](COMMANDS.md#not-yet-implemented) lists the remaining
-  ArcEmu commands, including waypoint editing, arena administration and the flight cheat.
+* **GM commands.** The [command reference](COMMANDS.md#edit-a-route-or-trainer) documents native
+  waypoint and trainer editing and quest catalog reload. Legacy entries still pending include
+  battleground pause, arena administration and player flight.
 
 Outdoor database scripts share world-state variables by realm and map. Delayed steps commit
 their variable changes with the script cursor, and ClassicDB's binary expressions can gate spawn
@@ -256,8 +257,7 @@ GM command set has none).
   ordered casts (opener spells). Creatures noticing pets on sight: done. The owner's death sends the pet
   away until the owner lives again: done.
 * Quests: done (above).
-* The rest of the GM commands, as their systems arrive (COMMANDS.md lists them): each is one
-  method of the handler group it belongs to.
+* The GM command reference inventories legacy entries and the features they depend on.
 
 ### Earlier test failures
 

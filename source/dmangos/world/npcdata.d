@@ -261,46 +261,57 @@ final class NpcData
         }
     }
 
+    static TrainerSpell[] loadTrainer(MySqlConnection world, uint entry, const SpellData spells)
+    {
+        return loadTrainers(world.query!(trainerQuery ~ "npc_trainer WHERE entry=?")(entry), spells).get(entry, null);
+    }
+
     /// Rows whose spell teaches another, keyed by creature entry or template id.
     static TrainerSpell[][uint] loadTrainers(Rows)(Rows rows, const SpellData spells)
     {
-        enum uint targetNone = 0, targetUnitCaster = 1; // TARGET_NONE, TARGET_UNIT_CASTER
         TrainerSpell[][uint] trainers;
         foreach (row; rows)
         {
             const entry = row.get!uint(0), spellId = row.get!uint(1);
-            const spell = spells.spell(spellId);
-            if (spell is null || spell.effect[0] != SpellEffect.learnSpell)
+            TrainerSpell trainerSpell = trainerLesson(spells, spellId, row.get!uint(2), row.get!uint(5));
+            if (!trainerSpell.learnedSpell)
             {
-                trace!"trainer %s: spell %s does not teach a spell; ignored"(entry, spellId);
+                trace!"trainer %s: spell %s is not a supported lesson; ignored"(entry, spellId);
                 continue;
             }
-            TrainerSpell trainerSpell;
-            trainerSpell.spell = spellId;
-            trainerSpell.cost = row.get!uint(2);
             trainerSpell.reqSkill = row.get!uint(3);
             trainerSpell.reqSkillValue = row.get!uint(4);
-            trainerSpell.reqLevel = row.get!uint(5);
             foreach (i; 0 .. 3)
-                trainerSpell.reqAbility[i] = row.get!uint(6 + i); // NULL: 0
+                trainerSpell.reqAbility[i] = row.get!uint(6 + i);
             trainerSpell.conditionId = row.get!uint(9);
-            trainerSpell.providedReqLevel = trainerSpell.reqLevel > 0;
-            // The listed spell is usually the trainer's, cast on the player to teach another one.
-            trainerSpell.learnedSpell = spellId;
-            foreach (i; 0 .. 3)
-                if (spell.effect[i] == SpellEffect.learnSpell && spell.triggerSpell[i]
-                    && (spell.implicitTargetA[i] == targetNone || spell.implicitTargetA[i] == targetUnitCaster))
-                    trainerSpell.learnedSpell = spell.triggerSpell[i];
-            // Legacy Classic-DB lists teach a pet-only Elemental Fury (877) and zzOLDHip Shot III (1973).
-            // Filter the learned ID so direct and template lessons agree for both listing and purchasing.
-            if (trainerSpell.learnedSpell == 877 || trainerSpell.learnedSpell == 1973)
-                continue;
-            if (!trainerSpell.reqLevel)
-                trainerSpell.reqLevel = spell.spellLevel;
             trainers[entry] ~= trainerSpell;
         }
         return trainers;
     }
+}
+
+/// Resolves the taught spell using the trainer spell's learn effect.
+TrainerSpell trainerLesson(const SpellData spells, uint spellId, uint cost, uint requiredLevel)
+{
+    enum uint targetNone = 0, targetUnitCaster = 1;
+    const spell = spells.spell(spellId);
+    if (spell is null || spell.effect[0] != SpellEffect.learnSpell)
+        return TrainerSpell.init;
+    uint learned = spellId;
+    foreach (i; 0 .. 3)
+        if (spell.effect[i] == SpellEffect.learnSpell && spell.triggerSpell[i]
+            && (spell.implicitTargetA[i] == targetNone || spell.implicitTargetA[i] == targetUnitCaster))
+            learned = spell.triggerSpell[i];
+    // Classic-DB's pet-only Elemental Fury and zzOLDHip Shot III are obsolete player lessons.
+    if (learned == 877 || learned == 1973)
+        return TrainerSpell.init;
+    TrainerSpell lesson;
+    lesson.spell = spellId;
+    lesson.cost = cost;
+    lesson.reqLevel = requiredLevel ? requiredLevel : spell.spellLevel;
+    lesson.providedReqLevel = requiredLevel != 0;
+    lesson.learnedSpell = learned;
+    return lesson;
 }
 
 private enum trainerQuery = "SELECT entry, spell, spellcost, reqskill, reqskillvalue, reqlevel, ReqAbility1, "
