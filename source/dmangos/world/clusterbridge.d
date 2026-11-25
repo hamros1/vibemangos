@@ -1138,6 +1138,14 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
             if (auto route = gatewayRoutes.get(account, null))
                 route.client.packetReturned(cast(Opcode) opcode, data);
             return;
+        case PlayerMessageKind.gatewayFlush:
+            // Everything the gateway relayed here for the player came before this, and what had to go back went back.
+            node.sendTo(peer, PlayerMessage(PlayerMessageKind.gatewayFlushed, account, 0, null));
+            return;
+        case PlayerMessageKind.gatewayFlushed:
+            if (auto route = gatewayRoutes.get(account, null))
+                route.client.returnsCame(peer);
+            return;
         case PlayerMessageKind.toHome:
             if (auto route = gatewayRoutes.get(account, null))
             {

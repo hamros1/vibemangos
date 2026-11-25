@@ -925,7 +925,11 @@ chat, commands, casts and moves alike. A movement heartbeat right after another 
 only says where the client is; starts, stops, jumps and landings are kept in turn. The owner checks the
 moves as it would have live, from the position it loaded, so a client that went further than its speed
 allows meanwhile is put back. A packet the gateway relayed to the old owner just before the move, which
-reached it after the player left, goes back to the gateway and is sent ahead of those held since. Past
+reached it after the player left, goes back to the gateway and is sent ahead of those held since. To know
+when nothing more can come back, the gateway asks the old owner, after the last packet it relayed there and
+on the same link, to say when it has sent back what it had (`gatewayFlush`, `gatewayFlushed`), and holds
+the client's packets until then, even once the next owner has the player: sent on at once, they would
+overtake those still coming back. It waits at most 5 s, or until the old owner is no longer linked. Past
 1024 packets or 256 KiB the client is disconnected; when the character leaves or is restored from its
 checkpoint instead, what was held is dropped and logged. The ordered relay retains outgoing packets for the gateway's same incarnation.
 

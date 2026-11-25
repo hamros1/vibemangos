@@ -93,6 +93,8 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
     package ushort homeNode;               // owner: the node holding this session's client; 0: here
     package bool releaseWhenBack;          // home: the client left while elsewhere; release once the owner saved
     private bool gatewayPaused_;           // home: keep the socket alive while its owner is unreachable
+    private ushort returnsFrom;            // home: the old owner that may still send packets back (`awaitReturns`)
+    private MonoTime returnsBy;            // home: until when they are waited for
     private HeldPacket[] heldPackets;      // home: what the client sent meanwhile, in order (`holdPacket`)
     private size_t heldBytes, returnedPackets;
     private MonoTime heldSince;
@@ -117,22 +119,60 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
     /// The most packets, and bytes, held for one client during a hand-off; beyond them it is disconnected.
     enum size_t maxHeldPackets = 1024, maxHeldBytes = 256 * 1024;
 
+    /// How long a gateway waits for its player's old owner to send back what reached it after the player left.
+    enum Duration returnsWait = 5.seconds;
+
     /**
      * Home (a gateway): while true the player's route is changing (a hand-off to another worker, or its owner out
-     * of reach). What the client sends meanwhile is held (`holdPacket`), and goes on to the owner, in order, once
-     * the route is ready again.
+     * of reach), or its old owner may still send back packets that reached it after the player left
+     * (`awaitReturns`). What the client sends meanwhile is held (`holdPacket`), and goes on to the owner, in order,
+     * once the route is ready again and the old owner has sent back what it had.
      */
     package @property bool gatewayPaused() const
     {
-        return gatewayPaused_;
+        return gatewayPaused_ || returnsFrom;
     }
 
-    /// ditto
+    /// ditto: the route changes, or is ready again.
     package @property void gatewayPaused(bool paused)
     {
-        const resumed = gatewayPaused_ && !paused;
+        const resumed = gatewayPaused && !paused && !returnsFrom;
         gatewayPaused_ = paused;
         if (resumed)
+            releaseHeldPackets();
+    }
+
+    /**
+     * Home: the player has just left `oldOwner`, which sends back the client's packets that reach it after that
+     * (`packetReturned`), then says it has no more (`returnsCame`): it was asked after the last packet relayed to it,
+     * on the same link. Until then, or for at most `returnsWait`, the client's packets are held even once the
+     * route is ready again: sent on to the next owner at once, they would overtake those still coming back.
+     */
+    package void awaitReturns(ushort oldOwner)
+    {
+        returnsFrom = oldOwner;
+        returnsBy = context.clock() + returnsWait;
+    }
+
+    /// Home: the old owner the client's packets wait for (`awaitReturns`), if it has been waited for until `now`.
+    package ushort returnsOverdue(MonoTime now) const
+    {
+        return returnsFrom && now >= returnsBy ? returnsFrom : 0;
+    }
+
+    /// Home: the old owner awaited (`awaitReturns`); 0 if none.
+    package @property ushort awaitedOwner() const
+    {
+        return returnsFrom;
+    }
+
+    /// Home: `oldOwner` has sent back what it had (or is gone): once the route is ready, what was held goes on.
+    package void returnsCame(ushort oldOwner)
+    {
+        if (!returnsFrom || returnsFrom != oldOwner)
+            return;
+        returnsFrom = 0;
+        if (!gatewayPaused_)
             releaseHeldPackets();
     }
 
@@ -177,7 +217,7 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
     {
         import std.array : insertInPlace;
 
-        if (!gatewayPaused_ || state_ != WorldState.elsewhere)
+        if (!gatewayPaused || state_ != WorldState.elsewhere)
         {
             if (state_ == WorldState.elsewhere)
                 context.relayToOwner(ownerNode, account.id, cast(ushort) opcode, body_); // late, but not lost
@@ -205,9 +245,9 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
             trace!released(remoteAddress, held.length, account.username, waited);
         foreach (i, packet; held)
         {
-            if (gatewayPaused_ || wantsClose)
+            if (gatewayPaused || wantsClose)
             {
-                if (gatewayPaused_)
+                if (gatewayPaused)
                     foreach (rest; held[i .. $])
                         holdPacket(rest.opcode, rest.body_);
                 return;
@@ -220,6 +260,7 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
     /// Home: the route did not go on as it was (the character left, or is restored from its checkpoint).
     package void dropHeldPackets(string why)
     {
+        returnsFrom = 0; // what still comes back would go to a character that is not there
         if (!heldPackets.length)
             return;
         info!"%s: %s packet(s) '%s' sent during its hand-off dropped: %s"(remoteAddress, heldPackets.length,
@@ -704,7 +745,7 @@ package:
                     finishGatewayRecovery();
                 else if (opcode == Opcode.CMSG_PING)
                     dispatchPacket(opcode, WorldState.characterScreen, reader);
-                else if (gatewayPaused_ && state_ == WorldState.elsewhere)
+                else if (gatewayPaused && state_ == WorldState.elsewhere)
                     holdPacket(opcode, reader.readBytes(reader.remaining));
                 return;
             }
@@ -1229,6 +1270,8 @@ unittest
 /// A gateway holds a client's packets during a hand-off: heartbeats coalesce, returned packets go first, the bound kicks.
 unittest
 {
+    import std.typecons : BlackHole;
+    import dmangos.world.context : PlayerRelay;
     import dmangos.world.testclient;
 
     auto client = TestClient(new WorldSession(newContext(newDatabase()), "127.0.0.1"), testKey);
@@ -1252,6 +1295,28 @@ unittest
     assert(session.heldPackets.length == 7, "after a stop, a heartbeat is kept");
     session.dropHeldPackets("a test");
     assert(session.heldPackets.length == 0 && session.heldBytes == 0 && session.returnedPackets == 0);
+
+    // The route is ready before the old owner has sent back all it had: the client's packets wait for its word, and
+    // what comes back meanwhile still goes before them.
+    final class Relay : BlackHole!PlayerRelay
+    {
+        ubyte[] sent; // the first byte of each packet sent to the owner
+        override void toOwner(ushort, uint, ushort, const(ubyte)[] body_) { sent ~= body_[0]; }
+    }
+    auto relay = new Relay;
+    session.context.playerRelay = relay;
+    session.awaitReturns(5);
+    session.holdPacket(Opcode.CMSG_MESSAGECHAT, [20]);
+    session.gatewayPaused = false;
+    session.holdPacket(Opcode.CMSG_MESSAGECHAT, [21]);
+    session.packetReturned(Opcode.CMSG_MESSAGECHAT, [19]);
+    session.returnsCame(6);
+    assert(session.gatewayPaused && relay.sent.length == 0, "held until that old owner's word");
+    assert(session.returnsOverdue(session.context.clock() + WorldSession.returnsWait) == 5);
+    session.returnsCame(5);
+    assert(!session.gatewayPaused && relay.sent == [19, 20, 21], "then sent on, those that came back first");
+    session.context.playerRelay = null;
+    session.gatewayPaused = true;
 
     foreach (i; 0 .. WorldSession.maxHeldPackets)
         session.holdPacket(Opcode.CMSG_MESSAGECHAT, [1]);

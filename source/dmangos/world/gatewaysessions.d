@@ -64,6 +64,10 @@ package mixin template GatewaySessions()
             return;
         route.state = state.dup;
         setGatewayRoute(route, account, SessionRouteKind.move, node.simulationOwner(target));
+        // What the client sent just before the gateway heard may still reach the old owner, which sends it back:
+        // asked after the last of it, on the same link, the old owner says when it has (`returnsCame`).
+        if (previous != node.id && node.sendTo(previous, PlayerMessage(PlayerMessageKind.gatewayFlush, account, 0, null)))
+            route.client.awaitReturns(previous);
     }
 
     private void setGatewayRoute(GatewayRoute route, uint account, SessionRouteKind kind, SimulationOwner target)
@@ -172,6 +176,17 @@ package mixin template GatewaySessions()
 
     private void gatewayTick(MonoTime now)
     {
+        import dmangos.log : warning;
+
+        foreach (route; gatewayRoutes)
+            if (const oldOwner = route.client.awaitedOwner)
+                if (!linkedOwner(oldOwner).node || route.client.returnsOverdue(now))
+                {
+                    warning!"gateway: '%s's old owner, node %s, %s: its held packets go on without what it may still send back"(
+                        route.client.account.username, oldOwner, linkedOwner(oldOwner).node ? "did not answer in time"
+                        : "is not linked");
+                    route.client.returnsCame(oldOwner);
+                }
         const coordinator = node.simulationOwner(node.coordinatorNode);
         if (!coordinator.node || !context.canWrite() || !node.version_)
         {
