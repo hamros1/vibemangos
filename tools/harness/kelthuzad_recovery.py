@@ -186,10 +186,19 @@ def guardians(fixture):
     wait_for("a Guardian of Icecrown", lambda: seen(raid.logs(), GUARDIAN) or None, 20)
     first_at = time.monotonic()
     wait_for("the second guardian", lambda: len(seen(raid.logs(), GUARDIAN)) >= 2 or None, GUARDIANS_EVERY + 4)
-    raid.stage([[f"targetnpc:{GUARDIAN}", f"cmd:.debug cast {SHACKLE}"], [], []])
-    shackled = wait_for("a guardian shackled", lambda: next(
-        (spawn for spawn in seen(raid.logs(), GUARDIAN, True)
-         if f"[creature aura] {unit_guid(GUARDIAN, spawn):#018x} received {SHACKLE}" in raid.logs()[0]), None), 8)
+    def shackled_one():
+        return next((spawn for spawn in seen(raid.logs(), GUARDIAN, True)
+                     if f"[creature aura] {unit_guid(GUARDIAN, spawn):#018x} received {SHACKLE}" in raid.logs()[0]), None)
+
+    # The leader's cast can find the guardian out of reach or the leader still casting: tried again, three times.
+    for attempt in range(3):
+        raid.stage([[f"targetnpc:{GUARDIAN}", f"cmd:.debug cast {SHACKLE}"], [], []])
+        try:
+            shackled = wait_for("a guardian shackled", shackled_one, 4 if attempt < 2 else 8)
+            break
+        except RuntimeError:
+            if attempt == 2:
+                raise
     # His next ability or guardian checkpoints him; the clients are given half a second to see a guardian it brought.
     host = raid.next_checkpoint(raid.checkpoints(), "a checkpoint of his last phase", GUARDIANS_EVERY + 2)
     time.sleep(0.5)
