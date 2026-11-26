@@ -275,9 +275,11 @@ struct TempleOfAhnQiraj
      * fight's count of the fallen starts from those away already (devoured in a fight before a wipe), so that the last
      * one standing still dies.
      */
-    private void setTrio(ref InstanceContext copy, EncounterState state)
+    private void setTrio(ref InstanceContext copy, EncounterState state, EntityRef from = EntityRef.init)
     {
         const was = encounters[Aq40Encounter.bugTrio];
+        if (was == EncounterState.inProgress && state == was && from.isCreature && copy.alive(from))
+            return copy.checkpointCreature(from); // another of them joins: saved again, with its timers now
         if (was == state || was == EncounterState.done)
             return;
         encounters[Aq40Encounter.bugTrio] = state;
@@ -423,11 +425,11 @@ struct TempleOfAhnQiraj
             if (state == EncounterState.special)
                 royalDevoured(copy, e.from);
             else
-                setTrio(copy, state);
+                setTrio(copy, state, e.from);
             return;
         }
         if (which == Aq40Encounter.twins)
-            return setTwins(copy, state);
+            return setTwins(copy, state, e.from);
         if (which == Aq40Encounter.ouro)
             return setOuro(copy, state, e.from);
         encounters[which] = state;
@@ -458,8 +460,10 @@ struct TempleOfAhnQiraj
      * crash resumes their fight, the door in shut (`Restored`), even one that came before the first blow, which no
      * snapshot of a hurt creature holds.
      */
-    private void setTwins(ref InstanceContext copy, EncounterState state)
+    private void setTwins(ref InstanceContext copy, EncounterState state, EntityRef from = EntityRef.init)
     {
+        if (twinsActive && state == EncounterState.inProgress && from.isCreature && copy.alive(from))
+            return copy.checkpointCreature(from); // his brother joins: saved again, with his timers now
         if (encounters[Aq40Encounter.twins] == state || encounters[Aq40Encounter.twins] == EncounterState.done)
             return;
         encounters[Aq40Encounter.twins] = state;
@@ -1000,6 +1004,7 @@ private mixin template Royalty()
         me.despawn(3000);
     }
 
+    /// Its fight began: told to the copy last, once its timers are set (the copy saves it with them).
     private void royalEngaged(ref CreatureContext me)
     {
         me.signalDungeon(Aq40Encounter.bugTrio, EncounterState.inProgress);
@@ -1071,10 +1076,10 @@ struct Kri
 
     void on(ref CreatureContext me, const ref EnteredCombat e)
     {
-        royalEngaged(me);
         steps.after(Step.cleave, between(me, 4000, 8000));
         steps.after(Step.volley, between(me, 6000, 30_000));
         steps.after(Step.thrash, 6.seconds);
+        royalEngaged(me);
     }
 
     void on(ref CreatureContext me, Step step)
@@ -1118,10 +1123,10 @@ struct Vem
 
     void on(ref CreatureContext me, const ref EnteredCombat e)
     {
-        royalEngaged(me);
         steps.after(Step.charge, between(me, 15_000, 27_000));
         steps.after(Step.knockAway, between(me, 10_000, 20_000));
         steps.after(Step.knockdown, between(me, 5000, 8000));
+        royalEngaged(me);
     }
 
     void on(ref CreatureContext me, Step step)
@@ -1171,10 +1176,10 @@ struct Yauj
 
     void on(ref CreatureContext me, const ref EnteredCombat e)
     {
-        royalEngaged(me);
         steps.after(Step.heal, between(me, 20_000, 30_000));
         steps.after(Step.fear, between(me, 12_000, 24_000));
         steps.after(Step.ravage, 12.seconds);
+        royalEngaged(me);
     }
 
     void on(ref CreatureContext me, Step step)
@@ -1652,10 +1657,15 @@ private mixin template Emperor(uint twin, uint bugSpell)
 
     private void emperorEngaged(ref CreatureContext me)
     {
-        me.signalDungeon(Aq40Encounter.twins, EncounterState.inProgress);
         steps.after(Step.berserk, 15 * 60.seconds);
         steps.after(Step.bugAbility, between(me, 7000, 14_000));
         steps.after(Step.healCheck, 2.seconds);
+    }
+
+    /// His fight began: told to the copy last, once his timers are set (the copy saves him with them).
+    private void emperorPulled(ref CreatureContext me)
+    {
+        me.signalDungeon(Aq40Encounter.twins, EncounterState.inProgress);
     }
 
     private void emperorDamaged(ref CreatureContext me, const ref Damaged e)
@@ -1781,6 +1791,7 @@ struct Veknilash
         me.say(sayAggro1 - cast(int) me.random(4));
         steps.after(Step.uppercut, between(me, 14_000, 29_000));
         steps.after(Step.unbalancing, between(me, 8000, 18_000));
+        emperorPulled(me);
     }
 
     void on(ref CreatureContext me, const ref KilledUnit e) { me.say(saySlay); }
@@ -1839,6 +1850,7 @@ struct Veklor
         steps.after(Step.blizzard, between(me, 15_000, 20_000));
         steps.after(Step.arcaneBurst, 1.seconds);
         steps.after(Step.swap, 35.seconds);
+        emperorPulled(me);
     }
 
     void on(ref CreatureContext me, const ref KilledUnit e) { me.sayText(slayText); }
@@ -3223,11 +3235,11 @@ unittest
         auto c = InstanceContext(room);
         runtime.raise(h, c, Signal(lor, Aq40Encounter.twins, EncounterState.inProgress));
         runtime.raise(h, c, Signal(nilash, Aq40Encounter.twins, EncounterState.inProgress));
-        assert(c.checkpointSummons == [lor, nilash], "the twins' pull saves them, once");
+        assert(c.checkpointSummons == [lor, nilash, nilash], "the twins' pull saves them, the second again as he joins");
         runtime.raise(h, c, CreatureLoaded(ouro, true));
         runtime.raise(h, c, Signal(ouro, Aq40Encounter.ouro, EncounterState.inProgress));
         runtime.raise(h, c, Signal(ouro, Aq40Signal.saveOuro));
-        assert(c.checkpointSummons == [lor, nilash, ouro, ouro], "Ouro not saved with his fight");
+        assert(c.checkpointSummons == [lor, nilash, nilash, ouro, ouro], "Ouro not saved with his fight");
     }
     ByteWriter saved;
     runtime.save(h, saved);

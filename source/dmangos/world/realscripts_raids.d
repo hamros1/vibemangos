@@ -1835,6 +1835,10 @@ unittest
         format!"the twins not fighting after the crash (%s, %s), the door in open %s"(lor.ai.inCombat,
         nilash.ai.inCombat, s.doorOpen(goTwinsEnterDoor)));
     assert(s.ask(Aq40Encounter.twins) == EncounterState.inProgress && !s.doorOpen(goTwinsEnterDoor));
+    // Saved as the fight began, with his timers: he goes after his foe and casts (not idle for the rest of it).
+    s.forget();
+    assert(s.runUntil(() => s.castBy(npcVeklor, Veklor.shadowBolt), 30.seconds),
+        "Vek'lor idle after the crash: saved before his timers were set\n" ~ s.seen());
     s.wipe(nilash);
     assert(s.runUntil(() => s.doorOpen(goTwinsEnterDoor) && !nilash.ai.inCombat && !lor.ai.inCombat, 30.seconds),
         "the door in shut after the wipe");
