@@ -3573,6 +3573,61 @@ unittest
 }
 
 /**
+ * Thekal and his Zealots through a worker's crash. Zath, brought down, is down when the worker dies: he comes back
+ * down and rises on his timer. Then the three are brought down together: Thekal rises as the tiger and the Zealots
+ * stay down, as without the crash (each restored with its death prevention).
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.script.api : EncounterState;
+    import dmangos.scripts.zulgurub;
+
+    const b = Boss("High Priest Thekal", 309, npcThekal, ZgEncounter.thekal, [npcLorkhan, npcZath], null);
+    Scene s;
+    auto thekal = setUp(b, s, cluster: true);
+    s.stayWithin = 20;
+    foreach (c; [thekal, s.the(npcLorkhan), s.the(npcZath)])
+        s.engage(c);
+    s.run(2.seconds);
+    foreach (c; [thekal, s.the(npcLorkhan), s.the(npcZath)])
+        s.hurtTo(c, 60);
+    s.kill(s.the(npcZath));
+    s.run(1.seconds);
+    assert(s.ask(ZgEncounter.zath) == EncounterState.special, "Zath not down");
+    const downAt = s.elapsedMs;
+    s.run(2500.msecs); // the native fights' next snapshot
+
+    s.restartAfterCrash();
+    auto zath = s.the(npcZath);
+    assert(zath.alive && s.ask(ZgEncounter.zath) == EncounterState.special
+        && (zath.values.get!UNIT_FIELD_FLAGS & 0x0200_0000), "Zath not down after the crash");
+    assert(s.runUntil(() => s.ask(ZgEncounter.zath) == EncounterState.inProgress, 12.seconds),
+        "Zath does not rise after the crash");
+    assert(s.elapsedMs - downAt <= 11_500, format!"Zath rose %s ms after his fall"(s.elapsedMs - downAt));
+
+    // The three down together: the tiger, and the Zealots stay down.
+    thekal = s.the(npcThekal);
+    auto lk = s.the(npcLorkhan);
+    s.stayWith = thekal;
+    foreach (c; [thekal, lk, zath])
+        s.engage(c);
+    s.run(1.seconds);
+    s.forget();
+    foreach (c; [lk, zath, thekal])
+        s.kill(c);
+    assert(lk.alive && zath.alive, "a Zealot died for good after the crash");
+    assert(s.runUntil(() => s.castBy(npcThekal, Thekal.tigerForm), 20.seconds), "no Tiger Form\n" ~ s.seen());
+    s.run(12.seconds);
+    assert(s.ask(ZgEncounter.lorkhan) == EncounterState.special && s.ask(ZgEncounter.zath) == EncounterState.special,
+        "the Zealots rose again");
+    s.kill(thekal);
+    s.run(2.seconds);
+    assert(!thekal.alive && s.ask(ZgEncounter.thekal) == EncounterState.done, "his death\n" ~ s.seen());
+}
+
+/**
  * Mandokir, his keepers slain, comes down from his perch; the worker dies before he is down. Back on his perch,
  * untouchable, he comes down again and fights the raid.
  */
