@@ -51,6 +51,11 @@ enum : uint
     npcZulianProwler = 15101,
     npcBatRider = 14750,
     npcFrenziedBat = 14965,
+    npcGrilek = 15082,     /// the Edge of Madness's four, the Brazier of Madness's (one a fortnight)
+    npcHazzarah = 15083,
+    npcRenataki = 15084,
+    npcWushoolay = 15085,
+    npcGahzranka = 15114,  /// the Mudskunk Lure's
 
     goGongOfBethekk = 180526,
     goForcefield = 180497,
@@ -108,6 +113,13 @@ struct ZulGurub
     @transient EntityRef[] prowlers;
     @transient bool recoveringArlokk; /// her fight came back from its checkpoint: she fights the first player back
 
+    /// A boss the raid calls with an item it spends (the Brazier of Madness, the Mudskunk Lure): a summon, kept in the
+    /// copy's checkpoint while he lives, so a crash does not take him and the item with him.
+    private static bool isCalledBoss(uint entry)
+    {
+        return (entry >= npcGrilek && entry <= npcWushoolay) || entry == npcGahzranka;
+    }
+
     private bool arlokkActive() const
     {
         return encounters[ZgEncounter.arlokk] == EncounterState.inProgress;
@@ -144,6 +156,10 @@ struct ZulGurub
             break;
         case npcJindo:
             jindo = e.creature;
+            break;
+        case npcGrilek, npcHazzarah, npcRenataki, npcWushoolay, npcGahzranka:
+            if (e.summoned) // called, back from the checkpoint, or brought by a handoff: kept till slain
+                copy.checkpointCreature(e.creature);
             break;
         case npcPantherTrigger:
             addTrigger(e.creature, where(copy, e.creature).y);
@@ -200,6 +216,9 @@ struct ZulGurub
      */
     void on(ref InstanceContext copy, const ref Restored e)
     {
+        foreach (entry; [npcGrilek, npcHazzarah, npcRenataki, npcWushoolay, npcGahzranka])
+            if (copy.hasSavedCreature(entry))
+                copy.waitForPlayer(); // a called boss comes back with the first player
         if (!arlokkActive)
             return;
         if (copy.hasSavedCreature(npcArlokk))
@@ -239,6 +258,12 @@ struct ZulGurub
         import std.algorithm.mutation : remove;
         import std.algorithm.searching : countUntil;
 
+        if (isCalledBoss(e.creature.entry))
+        {
+            copy.releaseCheckpointActor(e.creature); // slain, he stays slain
+            copy.checkpoint();
+            return;
+        }
         const slain = prowlers.countUntil(e.creature);
         if (slain >= 0)
         {

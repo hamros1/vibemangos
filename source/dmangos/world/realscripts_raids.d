@@ -4121,6 +4121,49 @@ unittest
 }
 
 /**
+ * Zul'Gurub's called bosses survive a worker's crash. An Edge of Madness boss (Gri'lek, the Brazier of Madness's) and
+ * Gahz'ranka (the Mudskunk Lure's) are summons: the copy keeps each in its checkpoint while he lives. Crashed with both
+ * hurt, the worker comes back with the same two at their health; slain, neither comes back after another crash.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import std.math : abs;
+    import dmangos.scripts.zulgurub;
+
+    const at = Position(-11901.3f, -1906.52f, 65.36f); // where the brazier calls him
+    auto s = new Scene(309, Position(at.x + 6, at.y, at.z), [classWarrior, classMage], cluster: true);
+    s.run(1.seconds);
+    Creature[2] called = [s.summon(npcGrilek, at), s.summon(npcGahzranka, Position(at.x, at.y + 8, at.z))];
+    ulong[2] guids;
+    double[2] health;
+    foreach (k, c; called)
+    {
+        s.hurtTo(c, 60);
+        guids[k] = c.guid;
+    }
+    s.run(1.seconds);
+    s.runUntilSaved(); // a crash just after the checkpoint
+    foreach (k, c; called)
+        health[k] = s.healthOf(c);
+    s.forget();
+    s.restartAfterCrash();
+    foreach (k, entry; [npcGrilek, npcGahzranka])
+    {
+        auto back = s.all(entry);
+        assert(back.length == 1 && back[0].guid == guids[k], format!"%s of %s after the crash, not the same one"(
+            back.length, entry));
+        assert(abs(s.healthOf(back[0]) - health[k]) <= 1, format!"%s at %s%% after the crash, %s%% before"(entry,
+            s.healthOf(back[0]), health[k]));
+        s.kill(back[0]);
+    }
+    s.run(2.seconds);
+    s.restartAfterCrash();
+    assert(s.all(npcGrilek).length == 0 && s.all(npcGahzranka).length == 0, "a called boss back after his death");
+}
+
+/**
  * Arlokk's fight survives a worker's crash. She is a summon (the gong's), so nothing but the copy's checkpoint can
  * bring her back. Crashed at 60% with her prowlers about, the worker comes back with the same Arlokk at her health, her
  * forcefield shut and the same prowlers; more come. Slain, she opens her forcefield and her prowlers stop, and after

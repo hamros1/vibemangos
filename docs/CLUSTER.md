@@ -589,7 +589,9 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   Mandokir, back on his perch after his keepers fell (the Vilebranch Speaker's death, saved at
   once), comes down again. High Priest Thekal's Zealots come back from their fight snapshots with
   their death prevention, so a Zealot down when the worker dies rises on its saved timer, and the
-  three brought down together still make Thekal the tiger.
+  three brought down together still make Thekal the tiger. The bosses the raid calls with an item it
+  spends, Gahz'ranka (the Mudskunk Lure) and the Edge of Madness's four (the Brazier of Madness),
+  are kept in the checkpoint while they live, so a crash brings the same one back at his health.
   In Blackwing Lair, Razorgore's destroyed eggs stay gone and surviving defenders return with
   their saved health and wave timer. A player uses the orb again to resume control during the
   egg phase. The freed dragon's fight and the open exit after his death also survive a crash.

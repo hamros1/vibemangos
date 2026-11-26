@@ -102,13 +102,13 @@ describes how players use the systems available today.
   snapshots, and none of their summons does: Magmadar's Lava Bombs, for one. Nothing of the copy's
   state waits on them.
   Zul'Gurub has recovery tests for Arlokk's fight, a crash before she comes, and her death, for
-  Mandokir sent down from his perch, and for Thekal with a Zealot down. The
-  [crash points](CLUSTER.md#zulgurubs-crash-points) list what the clients saw. Open: Mandokir's
-  Ohgan and chained spirits are summons the copy does not save: a crash in his fight brings him
-  back from his fight snapshot without them, so no spirit revives a fallen player and Ohgan's
-  death never enrages him. Jeklik's bat riders, Mar'li's spiders and Jin'do's totems and shades go
-  the same way. Gahz'ranka and the Edge of Madness bosses are summons too: a crash loses the boss
-  and the item spent calling him, though nothing in the copy's state refuses calling one again.
+  Mandokir sent down from his perch, and for Thekal with a Zealot down. The [crash
+  points](CLUSTER.md#zulgurubs-crash-points) list what the clients saw. Open: Mandokir's Ohgan and
+  chained spirits are summons the copy does not save: a crash in his fight brings him back from his
+  fight snapshot without them, so no spirit revives a fallen player and Ohgan's death never enrages
+  him. Jeklik's bat riders, Mar'li's spiders and Jin'do's totems and shades go the same way.
+  Gahz'ranka and the Edge of Madness bosses, called with an item the raid spends, are kept in the
+  checkpoint while they live: a crash brings the same boss back at his health.
   The Temple of Ahn'Qiraj has C'Thun recovery tests for the Eye's phase, the crash between the
   Eye's death and C'Thun's rise, a player in his stomach, and a wipe in his phase. It also has
   recovery tests for the Bug Trio with one devoured and after their end, the Twin Emperors pulled
