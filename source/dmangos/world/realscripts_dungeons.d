@@ -1115,6 +1115,115 @@ unittest
 }
 
 /**
+ * Zul'Farrak on a cluster worker: Gahz'rilla (7273), the gong's summons (its event's database script), is kept by the
+ * copy's checkpoint, so a crash while she lives brings the same one back; one a save does not have (an older
+ * lockout's) the gong calls again, once.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import std.algorithm.searching : findSplit;
+    import dmangos.scripts.zulfarrak : Fight, ZulFarrak;
+
+    enum uint gong = 141832, gahzrilla = 7273;
+    auto d = Dungeon.enter(209, 45, cluster: true);
+    d.use(d.objectOf(gong));
+    assert(d.runUntil(() => d.find(gahzrilla) !is null, 15.seconds), "Gahz'rilla\n" ~ d.story);
+    d.run(1.seconds);
+    const original = d.find(gahzrilla).guid;
+    const withHer = d.data;
+    d.restartAfterCrash();
+    assert(d.all(gahzrilla).length == 1 && d.find(gahzrilla).guid == original, "the same Gahz'rilla after the crash");
+    assert(d.saved!ZulFarrak.gahzrillaFight == Fight.inProgress);
+
+    d.w.db.saveInstanceData(d.instanceId, withHer.findSplit(":summons1:")[0]);
+    d.restartAfterCrash();
+    assert(d.all(gahzrilla).length == 0 && d.saved!ZulFarrak.gahzrillaFight == Fight.failed, d.story);
+    d.use(d.objectOf(gong));
+    assert(d.runUntil(() => d.find(gahzrilla) !is null, 15.seconds), "the gong calls her again\n" ~ d.story);
+    d.use(d.objectOf(gong));
+    d.run(15.seconds);
+    assert(d.all(gahzrilla).length == 1, "once");
+    d.kill(d.find(gahzrilla));
+    d.run(1.seconds);
+    d.restartAfterCrash();
+    assert(d.all(gahzrilla).length == 0 && d.saved!ZulFarrak.gahzrillaFight == Fight.done, "slain, she stays slain");
+}
+
+/**
+ * Zul'Farrak's pyramid on a cluster worker: the siege's Sandfury, Nekrum (7796) and Sezz'ziz (7275) are its event's
+ * summons, and the prisoners walk its steps. The copy keeps them and the event's database steps in its checkpoint, so
+ * a crash during the siege brings the same Sandfury back, the prisoners free, and Nekrum and Sezz'ziz come on time;
+ * dead, they open the End Door (146084). A lockout saved before the siege was kept brings the two at once.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import std.algorithm.searching : findSplit;
+    import dmangos.scripts.zulfarrak : Fight, ZulFarrak;
+
+    enum uint bly = 7604, nekrum = 7796, sezzziz = 7275, endDoor = 146084, factionFreed = 495;
+    static immutable uint[3] sandfury = [7787, 7788, 7789];
+    auto d = Dungeon.enter(209, 46, cluster: true);
+    d.spawned(bly, 0, 10);
+    d.event(2609);
+    d.run(60.seconds);
+    ulong[] siege;
+    foreach (entry; sandfury)
+        foreach (c; d.all(entry))
+            if (c.summon.type != imported!"dmangos.world.creature".TempSpawnType.none)
+                siege ~= c.guid;
+    assert(siege.length >= 20, format!"the Sandfury come: %s\n%s"(siege.length, d.story));
+    d.run(2100.msecs);
+    d.restartAfterCrash();
+    size_t back;
+    foreach (guid; siege)
+        back += d.map.creatureAt(guid) !is null && d.map.creatureAt(guid).alive;
+    assert(back + 2 >= siege.length, format!"the same Sandfury after the crash: %s of %s"(back, siege.length));
+    auto sergeant = d.spawned(bly, 0, 10);
+    assert(sergeant.values.get!UNIT_FIELD_FACTIONTEMPLATE == factionFreed, "the prisoners still free");
+    assert(!Dungeon.isOpen(d.objectOf(endDoor)) && d.saved!ZulFarrak.pyramid == Fight.inProgress);
+    // The siege's steps go on: Nekrum and Sezz'ziz at its 250 seconds, the outage not counted.
+    assert(d.runUntil(() => d.find(nekrum) !is null && d.find(sezzziz) !is null, 200.seconds),
+        "Nekrum and Sezz'ziz come\n" ~ d.story);
+    assert(d.all(nekrum).length == 1 && d.all(sezzziz).length == 1);
+    const boss = d.find(nekrum).guid;
+    d.run(2100.msecs);
+    d.restartAfterCrash();
+    assert(d.all(nekrum).length == 1 && d.find(nekrum).guid == boss && d.all(sezzziz).length == 1,
+        "the same two after a crash");
+    d.kill(d.find(nekrum));
+    d.kill(d.find(sezzziz));
+    d.run(2.seconds);
+    assert(Dungeon.isOpen(d.objectOf(endDoor)), "the End Door opens\n" ~ d.story);
+
+    // An older lockout's siege (nothing of it in the checkpoint, its steps lost): the two come at once.
+    auto older = Dungeon.enter(209, 46, cluster: true);
+    older.spawned(bly, 0, 10);
+    older.event(2609);
+    older.run(5.seconds);
+    auto state = older.saved!ZulFarrak;
+    state.pyramidKept = false;
+    import dmangos.bytes : ByteWriter;
+    import dmangos.script.state : saveScript;
+    import dmangos.world.instancescripting : instanceDataPrefix, toHex;
+
+    ByteWriter w;
+    saveScript(state, w);
+    older.w.db.saveInstanceData(older.instanceId, instanceDataPrefix ~ toHex(w.data));
+    older.restartAfterCrash();
+    older.goTo(Position(ZulFarrak.nekrumAt.x + 5, ZulFarrak.nekrumAt.y, ZulFarrak.nekrumAt.z));
+    assert(older.all(nekrum).length == 1 && older.all(sezzziz).length == 1, "Nekrum and Sezz'ziz at once\n"
+        ~ older.story);
+    older.kill(older.find(nekrum));
+    older.kill(older.find(sezzziz));
+    older.run(2.seconds);
+    assert(Dungeon.isOpen(older.objectOf(endDoor)), "the End Door opens");
+}
+
+/**
  * Witch Doctor Zum'rah (7271): come near, he turns hostile ("Sands consume you!", -1209000) and fights
  * (-1209001); his Shadow Bolt (12739), and the graves give up their dead (zombies 7286).
  */

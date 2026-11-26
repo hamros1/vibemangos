@@ -465,3 +465,35 @@ unittest
     Stratholme restored;
     assert(loadScript(restored, reader) && restored.timmyDead && restored.malownPlace == city.malownPlace);
 }
+
+unittest
+{
+    // Zul'Farrak's siege of the pyramid kept in the checkpoint was appended: lockouts saved before it (and the
+    // enum-blind saves of 219ecf7 keyed off that older layout) still load, the siege not kept.
+    import dmangos.scripts.zulfarrak : Fight, ZulFarrak;
+
+    static assert(fnv1a(layoutOf!(ZulFarrak, 0)) == 0x9d03d77813dec195UL);
+    static assert(legacyDungeonLayout(0x9d03d77813dec195UL) == 0x783120410c6378bfUL);
+
+    ZulFarrak copy;
+    copy.pyramid = Fight.inProgress;
+    copy.pyramidKept = true;
+    ByteWriter current;
+    saveScript(copy, current);
+    const body = current.data[ulong.sizeof .. $ - bool.sizeof];
+
+    foreach (const stored; [0x9d03d77813dec195UL, 0x783120410c6378bfUL])
+    {
+        ByteWriter old;
+        old.put(stored);
+        old.putBytes(body);
+        auto reader = ByteReader(old.data);
+        ZulFarrak restored;
+        assert(loadScript(restored, reader), "an earlier Zul'Farrak lockout no longer loads");
+        assert(restored.pyramid == Fight.inProgress && !restored.pyramidKept);
+    }
+
+    auto reader = ByteReader(current.data);
+    ZulFarrak restored;
+    assert(loadScript(restored, reader) && restored.pyramidKept);
+}

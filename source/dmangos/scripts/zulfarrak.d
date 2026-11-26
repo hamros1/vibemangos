@@ -8,6 +8,7 @@
 module dmangos.scripts.zulfarrak;
 
 import dmangos.script;
+import dmangos.script.state : appended;
 
 /// Creatures and objects of Zul'Farrak.
 enum : uint
@@ -29,9 +30,15 @@ enum : uint
     zombie = 7286,
     deadHero = 7276,
 
+    ravenPrisoner = 7605,
+    oroEyegouge = 7606,
+    weegliBlastfuse = 7607,
+    murtaGrimgut = 7608,
+
     shallowGrave = 128403,
     shallowGrave2 = 128308, // the graves' spawns are one or the other (`gameobject_spawn_entry`)
     endDoor = 146084,
+    trollCageFirst = 141070, // .. 141074, the prisoners' cages
 }
 
 /// The gong's event (event_go_zulfarrak_gong) and the cage's (event_spell_unlocking).
@@ -56,10 +63,57 @@ struct ZulFarrak
     enum Step : ubyte { sendTroll }
     Schedule!Step steps;
 
+    // A crash takes the summons with the old world: Gahz'rilla, the Sandfury of the siege, Nekrum and Sezz'ziz. While
+    // they are under way the copy keeps them in its checkpoint, with the prisoners and the siege's database steps.
+    @appended bool pyramidKept; /// the siege's steps and actors are in the checkpoint (not in an older lockout's)
+    @transient bool bringNekrum, bringSezzziz;
+    @transient Pack!5 prisoners;
+
+    static immutable Location nekrumAt = Location(1882.32f, 1201.45f, 8.96f, 6.05f);
+    static immutable Location sezzzizAt = Location(1883.98f, 1201.66f, 8.96f, 1.71f);
+
+    void on(ref InstanceContext zf, const ref Restored e)
+    {
+        if (gahzrillaFight == Fight.inProgress)
+        {
+            if (zf.hasSavedCreature(gahzrilla))
+                zf.waitForPlayer();
+            else
+                gahzrillaFight = Fight.failed; // gone with the old world: the gong calls her again
+        }
+        if (pyramid == Fight.inProgress)
+        {
+            if (pyramidKept || zf.hasSavedCreature(nekrum) || zf.hasSavedCreature(sezzziz))
+                zf.waitForPlayer();
+            if (!pyramidKept)
+            {
+                // An older lockout's siege lost its steps: the two who end it come at once.
+                bringNekrum = !nekrumDead && !zf.hasSavedCreature(nekrum);
+                bringSezzziz = !sezzzizDead && !zf.hasSavedCreature(sezzziz);
+            }
+        }
+    }
+
+    void on(ref InstanceContext zf, const ref PlayerEntered e)
+    {
+        if (bringNekrum)
+            if (const him = zf.summon(nekrum, nekrumAt))
+                zf.checkpointCreature(him);
+        if (bringSezzziz)
+            if (const him = zf.summon(sezzziz, sezzzizAt))
+                zf.checkpointCreature(him);
+        bringNekrum = bringSezzziz = false;
+    }
+
     void on(ref InstanceContext zf, const ref ObjectLoaded e)
     {
         if (e.object.entry == shallowGrave || e.object.entry == shallowGrave2)
             graves.add(e.object);
+        else if (e.object.entry >= trollCageFirst && e.object.entry < trollCageFirst + 5)
+        {
+            if (pyramid != Fight.notStarted)
+                zf.door(e.object, true); // the prisoners went free
+        }
         else if (e.object.entry == endDoor)
         {
             door = e.object;
@@ -73,10 +127,26 @@ struct ZulFarrak
         switch (e.creature.entry)
         {
         case antusul: antusulRef = e.creature; break;
-        case sergeantBly: blyRef = e.creature; break;
+        case sergeantBly, ravenPrisoner, oroEyegouge, weegliBlastfuse, murtaGrimgut:
+            if (e.creature.entry == sergeantBly)
+                blyRef = e.creature;
+            prisoners.add(e.creature);
+            if (pyramid == Fight.inProgress)
+                zf.checkpointCreature(e.creature);
+            break;
         case zumrah: zumrahRef = e.creature; break;
         case sandfurySlave, sandfuryDrudge, sandfuryCretin, sandfuryAcolyte, sandfuryZealot:
             trolls.add(e.creature);
+            if (e.summoned && pyramid == Fight.inProgress)
+                zf.checkpointCreature(e.creature);
+            break;
+        case nekrum, sezzziz:
+            if (e.summoned && pyramid == Fight.inProgress)
+                zf.checkpointCreature(e.creature);
+            break;
+        case gahzrilla:
+            if (e.summoned && gahzrillaFight == Fight.inProgress)
+                zf.checkpointCreature(e.creature);
             break;
         default:
             break;
@@ -97,7 +167,12 @@ struct ZulFarrak
             if (pyramid == Fight.notStarted)
             {
                 pyramid = Fight.inProgress; // the database script brings the Sandfury
+                pyramidKept = true;
                 steps.after(Step.sendTroll, 20.seconds);
+                foreach (who; prisoners)
+                    zf.checkpointCreature(who);
+                zf.checkpointDatabaseScripts([unlockingEvent]);
+                zf.checkpointEvent(e);
             }
             else
                 zf.consume();
@@ -148,6 +223,9 @@ struct ZulFarrak
         {
             pyramid = Fight.done;
             steps.clear();
+            foreach (who; prisoners)
+                zf.releaseCheckpointActor(who);
+            zf.checkpointDatabaseScripts(null);
             zf.log("Nekrum and Sezz'ziz are slain: the way on opens");
             if (door)
                 zf.door(door, true);
