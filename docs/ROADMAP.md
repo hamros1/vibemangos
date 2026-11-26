@@ -51,11 +51,12 @@ describes how players use the systems available today.
   It also has Sapphiron recovery tests for the birth window, the ground phase, the air phase
   with a player frozen before Frost Breath, the breath begun, a wipe followed by a crash, and
   his death. The [crash points](CLUSTER.md#sapphirons-crash-points) list what the clients saw.
-  Open: his Summon Blizzard does nothing yet. Neither `spell_sapphiron_blizzard` nor the
-  Blizzard creature (16474) is ported, so no blizzard needs recovering. A frozen player on a
-  regular home logs in again with the auras of the last character save. A frozen gateway
-  player who returns after he has landed, or to a fight that a restore failed, stays frozen
-  until the aura ends.
+  His blizzard (16474) comes at a player's feet and goes after a player of his choosing, its Chill
+  (28534) chilling those it passes over; it is kept with his fight through a crash. Open: the core
+  does not load `creature_template_addon` auras, so the copy gives the blizzard its Chill. A frozen
+  player on a regular home logs in again with the auras of the last character save. A frozen gateway
+  player who returns after he has landed, or to a fight that a restore failed, stays frozen until
+  the aura ends.
   The Four Horsemen have recovery tests for a crash after two deaths, a crash after the last
   death, the last death saved with the checkpoint after it lost, and a wipe after two deaths
   followed by a crash. The [crash points](CLUSTER.md#the-four-horsemens-crash-points) list what

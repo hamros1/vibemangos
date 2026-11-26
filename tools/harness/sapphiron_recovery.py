@@ -28,7 +28,8 @@ from dungeon_recovery import open_party, start_cluster, wait
 
 MAP = 533
 SAPPHIRON, ICE_BLOCK, WATERFALL = 15989, 181247, 181225
-FROST_AURA, LIFE_DRAIN, BLIZZARD, DRAGON_HOVER = 28529, 28542, 28560, 18430
+FROST_AURA, LIFE_DRAIN, DRAGON_HOVER = 28529, 28542, 18430
+BLIZZARD = 16474  # his blizzard: a creature at a player's feet, kept with his fight
 ICEBOLT, ICEBOLT_IMMUNITY, FROST_BREATH, FROST_BREATH_TRIGGERED = 28522, 31800, 28524, 29318
 LAIR = (3521.48, -5225.87, 137.626)
 HOVER = (3522.386, -5236.784, 137.709)
@@ -256,6 +257,10 @@ def air(fixture):
           f"the one behind the block; he landed and the block melted")
 
 
+def blizzards_seen(logs):
+    return {int(g) for log in logs for g in re.findall(rf"\[creature\] {BLIZZARD} guid (\d+):", log)}
+
+
 def ground(fixture):
     raid = Raid(fixture)
     sap = raid.sapphiron(COMES_AFTER_BIRTH + 8)
@@ -263,8 +268,9 @@ def ground(fixture):
     top = int(re.findall(rf"\[creature\] {SAPPHIRON} guid {sap}: .*?health (\d+),", raid.logs()[0])[-1])
     # The leader (a GM) hurts him to 80%: an ungeared level 60 warrior hardly touches him.
     raid.stage([[f"targetnpc:{SAPPHIRON}", f"cmd:.modify hp {top * 4 // 5} {top}"], [], []])
-    wait_for("Life Drain and a blizzard", lambda: all(f"[spell go] {spell} by {sap}" in raid.logs()[0]
-                                                      for spell in (LIFE_DRAIN, BLIZZARD)), 20)
+    wait_for("Life Drain and a blizzard", lambda: f"[spell go] {LIFE_DRAIN} by {sap}" in raid.logs()[0]
+             and any(f"[creature] {BLIZZARD} guid" in log for log in raid.logs()), 20)
+    blizzards = blizzards_seen(raid.logs())
     host = raid.next_checkpoint(raid.checkpoints(), "a checkpoint of the ground phase", 12)
     checkpointed = time.monotonic()
     assert checkpointed - engaged < RISE_AFTER - 8, "too late for the ground phase"
@@ -283,6 +289,8 @@ def ground(fixture):
     # `on`, not a toggle: the recovered sessions keep their GM toggles, and a toggle would leave them to his Cleave.
     raid.stage([["cmd:.cheat god on"] for _ in range(3)])
     wait_for("the members immune again", lambda: all("Damage immunity: on for" in log for log in after()), 5)
+    # The same blizzard back (a new one may come on his twenty-second timer as well).
+    wait_for(f"his blizzard {blizzards} back", lambda: blizzards_seen(after()) & blizzards, 5)
     for member, log in enumerate(after()):
         assert sapphirons(log) == {sap}, f"member {member} sees Sapphirons {sapphirons(log)}, not {sap}"
         assert f"[creature aura] {unit_hex(sap)} received {FROST_AURA}" in log, f"member {member}: no Frost Aura"

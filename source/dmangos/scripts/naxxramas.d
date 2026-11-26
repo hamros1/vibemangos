@@ -92,6 +92,7 @@ enum : uint
     npcUnstoppableAbom = 16_428,
     npcSoulWeaver = 16_429,
     npcGuardianIcecrown = 16_441,
+    npcBlizzard = 16_474, /// Sapphiron's: chases a player, chilling those it passes over
     npcShadowFissure = 16_129, /// Kel'Thuzad's: erupts (Void Blast) five seconds after it opens
     npcInvisibleMan = 17_286,
 
@@ -317,6 +318,19 @@ struct Naxxramas
             if (kelthuzadActive) // a clean handoff brings him in without a signal: he stays in the checkpoint
                 copy.checkpointCreature(kelthuzad);
             break;
+        case npcBlizzard:
+            import std.algorithm.searching : canFind;
+
+            // Its Chill, its template's aura (`creature_template_addon`, whose auras the core does not load yet).
+            if (!copy.hasAura(e.creature, Sapphiron.chill))
+                copy.castSpell(e.creature, Sapphiron.chill, e.creature);
+            // His blizzards as they come, and as a handoff or the checkpoint brings them back: kept with his fight.
+            if (e.summoned && sapphironActive && !blizzards.canFind(e.creature))
+            {
+                blizzards ~= e.creature;
+                copy.checkpointCreature(e.creature);
+            }
+            break;
         case npcSoldierFrozen, npcUnstoppableAbom, npcSoulWeaver, npcGuardianIcecrown, npcShadowFissure:
             import std.algorithm.searching : canFind;
 
@@ -438,10 +452,20 @@ struct Naxxramas
             if (sapphiron)
                 copy.releaseCheckpointActor(sapphiron);
             meltIceBlocks(copy);
+            foreach (blizzard; blizzards)
+            {
+                copy.releaseCheckpointActor(blizzard);
+                copy.despawn(blizzard);
+            }
+            blizzards = null;
         }
         updateDoors(copy);
         copy.checkpoint();
     }
+
+    /// His blizzards while his fight is under way: saved in the checkpoint, not in this layout, each back in the list as
+    /// it comes back into the world (`CreatureLoaded`). His fight over, they go.
+    @transient EntityRef[] blizzards;
 
     /// The air phase's ice blocks go (he lands, a wipe, his death), and out of the checkpoint.
     private void meltIceBlocks(ref InstanceContext copy)
@@ -2663,6 +2687,7 @@ struct Sapphiron
         tailSweep = 15_847,
         lifeDrain = 28_542,
         summonBlizzard = 28_560,
+        chill = 28_534, /// his blizzard's: a patch of cold where it is, every three seconds
         dragonHover = 18_430,
         icebolt = 28_522,
         frostBreathDummy = 30_101, frostBreath = 28_524, iceboltImmunity = 31_800,
@@ -2847,8 +2872,18 @@ struct Sapphiron
             again(me, step, me.castSelf(lifeDrain) == ActionResult.ok, 24.seconds);
             break;
         case Step.blizzard:
+            // Summon Blizzard (28560): its player calls the Blizzard (28561, five minutes) at their feet, and it goes
+            // after a player of his choosing (CMaNGOS's `SummonBlizzard`, `JustSummoned`). Its Chill (28534, its
+            // template's aura) chills and slows those it passes over.
             if (const target = me.selectTarget(Pick.random, PickFilter.player))
-                me.castSpell(summonBlizzard, target, true);
+            {
+                Location at;
+                if (me.locationOf(target, at))
+                {
+                    const chased = me.selectTarget(Pick.random, PickFilter.player);
+                    me.summon(npcBlizzard, at, 300_000, chased ? chased : target);
+                }
+            }
             again(me, step, true, 20.seconds);
             break;
         }

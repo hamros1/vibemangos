@@ -2573,7 +2573,8 @@ unittest
 
 /**
  * Sapphiron: the Frostwyrm Lair's way open (the copy's "special"), he comes 22 s later and fights all there:
- * Frost Aura, Cleave, Tail Sweep, Life Drain, his blizzard; at 46 s he takes to the air (Icebolt) and lands. The
+ * Frost Aura, Cleave, Tail Sweep, Life Drain, his blizzard (16474, at a player, chilling them: Chill's 28547); at 46 s
+ * he takes to the air (Icebolt) and lands. The
  * air phase ends in Frost Breath and the ice blocks melt; landed, he fights in melee again (Cleave).
  */
 unittest
@@ -2590,8 +2591,12 @@ unittest
     s.stayWithin = 60;
     assert(s.runUntil(() => sap.ai.inCombat, 10.seconds), "Sapphiron does not fight");
     s.run(17.seconds);
-    foreach (spell; [28_529, 19_983, 15_847, 28_542, 28_560])
+    foreach (spell; [28_529, 19_983, 15_847, 28_542])
         assert(s.castBy(sapphironEntry, spell), format!"Sapphiron: %s not cast\n%s"(spell, s.seen()));
+    auto blizzards = s.all(16_474);
+    assert(blizzards.length == 1, format!"%s blizzards 17 s into his fight"(blizzards.length));
+    assert(blizzards[0].auras.find(28_534) !is null, "the blizzard without its Chill");
+    assert(s.runUntil(() => s.cast_(28_547, blizzards[0].guid), 4.seconds), "the blizzard chills nobody\n" ~ s.seen());
     s.forget();
     s.run(50.seconds);
     assert(s.castBy(sapphironEntry, 28_522), "Sapphiron: no Icebolt from the air\n" ~ s.seen());
@@ -3225,9 +3230,10 @@ unittest
     assert(s.runUntil(() => sap.ai.inCombat, 2.seconds), "Sapphiron does not fight");
     const engagedAt = s.elapsedMs;
     s.run(20.seconds);
-    foreach (spell; [Sapphiron.frostAura, Sapphiron.cleave, Sapphiron.tailSweep, Sapphiron.lifeDrain,
-            Sapphiron.summonBlizzard])
+    foreach (spell; [Sapphiron.frostAura, Sapphiron.cleave, Sapphiron.tailSweep, Sapphiron.lifeDrain])
         assert(s.castBy(npcSapphiron, spell), format!"Sapphiron: %s not cast\n%s"(spell, s.seen()));
+    assert(s.all(npcBlizzard).length == 1, format!"%s blizzards"(s.all(npcBlizzard).length));
+    const blizzard = s.all(npcBlizzard)[0].guid;
     s.hurtTo(sap, 60);
     s.run(2.seconds);
     assert(s.runUntilSaved());
@@ -3240,6 +3246,8 @@ unittest
         && abs(cast(long) sap.values.get!UNIT_FIELD_HEALTH - health) * 100 < sap.values.get!UNIT_FIELD_MAXHEALTH, format!"Sapphiron %s (was %s), %s of him, in combat %s, %s of %s health"(
         sap.guid, sapGuid, s.all(npcSapphiron).length, sap.ai.inCombat, sap.values.get!UNIT_FIELD_HEALTH, health));
     assert(sap.auras.find(Sapphiron.frostAura) !is null && !hovering(s), "no Frost Aura on him, or in the air");
+    assert(s.all(npcBlizzard).length == 1 && s.all(npcBlizzard)[0].guid == blizzard,
+        format!"%s blizzards after the crash, not the same one"(s.all(npcBlizzard).length));
     assert(s.ask(NaxxEncounter.sapphiron) == EncounterState.inProgress && !s.doorOpen(181_225));
     s.stayWith = sap;
     const sinceEngaged = s.elapsedMs - engagedAt;
