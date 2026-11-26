@@ -66,6 +66,16 @@ describes how players use the systems available today.
   mark stops. Between checkpoints the survivors come back from the copy's last two-second save.
   One horseman giving up his fight while the others fight on fails the encounter and brings the
   slain back, as a wipe does.
+  Kel'Thuzad has recovery tests for his opening waves, his guardian phase with a guardian
+  shackled and five raiders in his Chains, a wipe in his first phase followed by a crash, and his
+  death. The [crash points](CLUSTER.md#kelthuzads-crash-points) list what the clients saw.
+  Open: a crash loses what lasts five seconds or less of his second phase: a Frost Blast or
+  Detonate Mana on a player, and a Shadow Fissure (16129) not yet erupted. His channel visual
+  is the dummy 29422, cast once, not the channel 29423 that pulses it, so clients see no
+  channel in his first phase, crash or not. His first phase follows the older script: soldiers
+  every 3 s, abominations every 25 s, soul weavers every 30 s and the transition at 5:25. The
+  minions attack at once rather than gathering, and none goes at 5:10. The chaos suite cannot
+  test Chains, which needs six raiders in his threat list; the real-data tests cover them.
   The Temple of Ahn'Qiraj has C'Thun recovery tests for the Eye's phase, the crash between the
   Eye's death and C'Thun's rise, a player in his stomach, and a wipe in his phase.
   See [dungeon failover](CLUSTER.md#dungeons-and-battlegrounds) for coverage across instances.

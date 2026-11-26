@@ -320,8 +320,8 @@ merge and a player handoff. Set `EXPECT_BALANCING=1` to check these events in a 
 After harness setup and a release build, run the opt-in suite with
 `python3 tools/harness/chaos.py`. It runs the quorum partition and heal, coordinator kill,
 paused battlegroup host, gateway checkpoint retry, departure retry, lease lapse arrival, worker
-rejoin, stall release, gateway return, C'Thun recovery, Sapphiron recovery, Four Horsemen
-recovery, loot award crash, migration stall, standby login and standby bundle cases against
+rejoin, stall release, gateway return, C'Thun recovery, Sapphiron recovery, Four Horsemen recovery,
+Kel'Thuzad recovery, loot award crash, migration stall, standby login and standby bundle cases against
 isolated fixtures.
 Use `--repeat 3` to check repeatability. Each case prints the harness directory containing
 its process logs and uses fresh login and character schemas.
@@ -381,6 +381,14 @@ checks the slain stay dead with their spirits, the survivors' health and mark ti
 marks, the door, and one chest. `wipe` crashes after a wipe and checks the four are home and can
 be fought again. [The Four Horsemen's crash points](CLUSTER.md#the-four-horsemens-crash-points)
 has the details.
+Run `python3 tools/harness/kelthuzad_recovery.py --phase waves` (or `guardians`) to kill the
+Naxxramas worker during Kel'Thuzad's fight. Three scripted raid members on a gateway step on the
+trigger in his chamber. The test checks that their original sockets come back to the same copy
+with the same Kel'Thuzad, his living minions or guardians, and his saved timers: the next wave or
+guardian comes when the saved timer says, once. The waves case then has the raid leave his chamber
+(a wipe) and kills the worker again; the guardians case shackles a guardian first and kills him
+after. The guardians case waits out his 5:25 first phase, so it takes about seven minutes.
+[Kel'Thuzad's crash points](CLUSTER.md#kelthuzads-crash-points) has the details.
 
 Run `python3 tools/harness/loot_award_crash.py` to kill (`SIGKILL`) a party member's worker after
 it claims a remote loot award, while a second MariaDB session locks the member's inventory so the

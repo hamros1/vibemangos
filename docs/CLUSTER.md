@@ -589,6 +589,24 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   wipe sends the spirits away and brings the slain back for the next pull, and a crash after the
   wipe keeps it so. A lockout saved before this, after a wipe that left horsemen dead, brings them
   back as the raid returns.
+  Kel'Thuzad's fight keeps him, his minions and his Guardians of Icecrown in the checkpoint while
+  it is under way. He saves himself after each wave, ability and phase change, so a crash resumes
+  him from the last step. A crash during his opening waves brings back the same Kel'Thuzad,
+  channelling and untouchable, with the living minions; slain ones stay slain. The waves and his
+  5:25 transition go on from their saved timers, and each minion comes once. A crash in his last
+  phase brings him back at his health with the guardians already sent, and a shackled guardian
+  still shackled. Those still to come follow on their timer, five in all. Raiders his Chains of
+  Kel'Thuzad held come back under his control until the Chains' saved twenty seconds are up.
+  The Chains are a creature controlling players, so the rule that keeps a creature a player
+  controls out of its snapshot does not apply. A player's own checkpoint cannot carry the charm,
+  because Kel'Thuzad comes back only as the first player enters. Instead his saved state keeps
+  whom he holds and for how long, and he chains each again as they return. One back after that
+  time, or not held, is cleared of any Chains its character save brought back. His minions are
+  undead, and Shackle Undead stuns them without control, so none is ever left out of a snapshot.
+  A raid that wipes while he channels (nobody alive within 120 yards of him) makes him give up:
+  his minions go and his chamber opens, and a crash after that keeps him at home for the next
+  pull. A fight saved without him (an older save) fails, and the trigger in his chamber begins it
+  again. His death opens his chamber for the rest of the lockout.
   In the Temple of Ahn'Qiraj, C'Thun's fight keeps the Eye of C'Thun, C'Thun and every living
   tentacle with their health, auras and timers. A crash in the Eye's phase resumes its beams and
   tentacle waves on their saved timers. A crash in the five seconds between the Eye's death and
@@ -1480,6 +1498,25 @@ who see 80 yards, and the four take them on. The test kills the worker that host
 The real-data tests in `source/dmangos/world/realscripts_raids.d` cover the same crash points in
 cluster mode. They add a crash with the last death saved and the checkpoint after it lost: the
 copy comes back with the encounter done, the door open and the same single chest.
+### Kel'Thuzad's crash points
+
+`tools/harness/kelthuzad_recovery.py` sends three scripted raid members on a gateway to the trigger
+in Kel'Thuzad's chamber (4112), which begins his fight. It kills the worker that hosts Naxxramas
+with `SIGKILL`, just after an encounter checkpoint, at these points:
+
+| `--phase` | Crash point | What the original clients saw after recovery |
+|---|---|---|
+| `waves` | About 45 s into the fight, with 11 soldiers, an abomination and a soul weaver alive and two soldiers slain | All three sockets back in the same copy. The same Kel'Thuzad (same GUID), untouchable, with the chamber shut. The abomination, the soul weaver and the soldiers alive at the checkpoint came back with their GUIDs, and the two slain soldiers did not. The next abomination came 55 s into the fight and the next soul weaver at 70 s, counted without the outage, one each |
+| `waves`, second crash | After the raid left his chamber (a wipe in his first phase), on the worker that took over | Back in his chamber: Kel'Thuzad at home and touchable, no minion and the chamber open. The trigger began his fight again, and its first soldier came 5 s later, once. The first worker is restarted beforehand so that the voters keep a majority |
+| `guardians` | In his last phase, after he called for aid below 40%: two Guardians of Icecrown come, one shackled by the leader (a priest), just after his next checkpoint | The same Kel'Thuzad at the saved health, within 1%, with the chamber shut. The same two guardians (same GUIDs), the shackled one still carrying Shackle Undead. The third came on the saved timer, counted without the outage, and five came in all, each once. Slain, he opened his chamber |
+
+The real-data tests in `source/dmangos/world/realscripts_raids.d` cover the same crash points in
+cluster mode, with exact counts: twelve abominations and ten soul weavers come in his first phase
+across the crash, and he fights 5:25 into it. They add his Chains: crashed two seconds after the
+Chains took five of six raiders, the five come back under his control (charmed by him, not in
+control of their characters) and are freed when the Chains' twenty seconds are up. A wipe in his
+first phase followed by a crash leaves him at home for the next pull, and his death keeps his
+chamber open through another crash.
 
 The cluster code is tested in memory: links wired back to back and a fake clock, with whole clusters
 of world contexts (joining, views, heartbeats, timeouts, restarts and fencing; handovers with no cell
