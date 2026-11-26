@@ -615,7 +615,7 @@ private:
     }
 
     /// A trainer's spells: its own (`npc_trainer`), then its template's.
-    const(TrainerSpell)[] trainerSpells(Npc trainer)
+    package const(TrainerSpell)[] trainerSpells(Npc trainer)
     {
         const npcs = context.data.npcs;
         return npcs.trainers.get(trainer.npcTemplate.entry, null)

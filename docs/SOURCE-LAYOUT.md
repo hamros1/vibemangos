@@ -66,7 +66,9 @@ source/dmangos/world/       the world server
   gmaccess.d                  staff role inspection and administration
   gmcontent.d                 saved creature links, AI tests and transport schedules
   gmactions.d                 shared actions for levels, speeds, items, skills and saving
-  gmlearn.d, gmcheat.d, gmguild.d, gmwaypoint.d and other gm modules group handlers by task
+  gmlearn.d, gmcheat.d, gmguild.d, gmwaypoint.d and other gm modules group handlers by task: each a
+                              function taking the player who typed the command first, not a part of Character
+  gmstate.d                   what a player's commands keep between one and the next (a waypoint draft, ...)
   gminstance.d                GM commands: .instance
   gmquest.d                   GM commands: .quest (those quests support)
   gmdebug.d                   GM commands: debugging, .recall, .battleground

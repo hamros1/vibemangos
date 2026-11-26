@@ -29,7 +29,7 @@ private:
     }
 
     /// The other session of an online player.
-    static Character sessionOf(OnlinePlayer player)
+    package static Character sessionOf(OnlinePlayer player)
     {
         return cast(Character) player;
     }

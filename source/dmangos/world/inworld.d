@@ -1230,7 +1230,7 @@ private:
     }
 
     /// Starts the movement check afresh at the player's position: at login and after teleports.
-    void resetMovementCheck()
+    package void resetMovementCheck()
     {
         checkpoint = player.position;
         checkpointTime = context.clock();

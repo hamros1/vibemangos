@@ -84,7 +84,9 @@ another node mean serializing a connection from the inside.
 * `WorldSession` is the **connection**: framing, encryption, the account, the protocol state,
   authentication, pings and the character screen. It stays on the player's home node.
 * `Character` (`character.d`) is the **simulation**: the player and every gameplay handler group. It
-  exists only while the player is in the world. Packet handlers are methods of its mixins.
+  exists only while the player is in the world. Packet handlers are methods of its mixins. GM commands are
+  not: each is a function of a command module (`gmcheat.d`, `gmworld.d`, ...) taking the `Character` who
+  typed it, so the commands are clients of the character, not part of it.
 * The login's checks stay with the connection; the rest is `CharacterLogin`. An arrival from another
   node makes a `Character` on the arriving connection.
 * The context's online players, the map and every system know the `Character`. The session table,

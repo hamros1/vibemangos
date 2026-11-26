@@ -458,7 +458,7 @@ mixin template RitualSummoning()
         import dmangos.mysql : DatabaseException;
         import dmangos.world.defines : UnitFlags;
 
-        if (acceptGmSummonOffer())
+        if (imported!"dmangos.world.gmadmin".acceptGmSummonOffer(this))
             return;
         const summoner = response.summoner;
         if (!player.alive || inCombat)

@@ -1,5 +1,14 @@
-/// Spell learning.
+/**
+ * Spell learning.
+ *
+ * `.character learn`: a spell, or every spell of the character's class (and race), taught.
+ *
+ * Each command's action is a function here taking first the player who typed it (`gm`); the catalog
+ * (`dmangos.world.commandtable`) names it and `dmangos.world.commands` calls it.
+ */
 module dmangos.world.gmlearn;
+
+import dmangos.world.character : Character;
 
 /// The spells `.learn all` teaches each class (by class id).
 immutable uint[][] classSpells = [
@@ -143,75 +152,70 @@ immutable uint[][] mageRaceSpells = [
     [3561, 3562, 3565, 10059, 11416, 11419, 32266, 32271, 33690, 33691, 49359, 49360],
 ];
 
-/// `.character learn`: a spell, or every spell of the character's class (and race), taught.
-mixin template LearningCommands()
-{
-    import std.algorithm.searching : canFind;
-    import std.conv : ConvException, to;
-    import std.format : format;
-    import std.uni : sicmp;
-    import dmangos.world.defines : PlayerClass;
-    import dmangos.world.gmlearn : classSpells, mageRaceSpells, paladinRaceSpells, priestRaceSpells, shamanRaceSpells;
-    import dmangos.world.spells : SpellEffect;
+import std.algorithm.searching : canFind;
+import std.conv : ConvException, to;
+import std.format : format;
+import std.uni : sicmp;
+import dmangos.world.defines : PlayerClass;
+import dmangos.world.spells : SpellEffect;
 
-private:
-    /// `.learn <spell|all>`: the spell taught to the selected player, or its class's spells.
-    bool handleLearnCommand(string spellOrAll)
+/// `.learn <spell|all>`: the spell taught to the selected player, or its class's spells.
+bool handleLearnCommand(Character gm, string spellOrAll)
+{
+    auto target = gm.selectedCharacter(true);
+    if (target is null)
     {
-        auto target = selectedCharacter(true);
-        if (target is null)
-        {
-            target = this;
-            systemMessage("Targeting yourself.");
-        }
-        if (sicmp(spellOrAll, "all") == 0)
-        {
-            gmLog(format!"taught %s all spells."(target.player.data.name));
-            learnAllSpells(target);
-            return true;
-        }
-        uint spell;
-        try
-            spell = spellOrAll.to!uint;
-        catch (ConvException)
-            return false;
-        const info = context.data.spells.spell(spell);
-        if (info is null)
-        {
-            redSystemMessage(format!"Unknown spell ID %u."(spell));
-            return true;
-        }
-        if (!target.allowsStaff("staff.game_master") && info.effect[].canFind(SpellEffect.instantKill))
-        {
-            redSystemMessage("Only staff characters can learn instant-kill spells.");
-            gmLog(format!"refused instant-kill spell %s for %s"(spell, target.player.data.name));
-            return true;
-        }
-        if (target.player.knowsSpell(spell))
-        {
-            redSystemMessage(target.player.data.name ~ " already knows that spell.");
-            return true;
-        }
-        target.learn(spell);
-        gmLog(format!"taught %s spell %u"(target.player.data.name, spell));
-        target.blueSystemMessage(format!"%s taught you spell %u."(player.data.name, spell));
-        greenSystemMessage(format!"Taught %s spell %u."(target.player.data.name, spell));
+        target = gm;
+        gm.systemMessage("Targeting yourself.");
+    }
+    if (sicmp(spellOrAll, "all") == 0)
+    {
+        gm.gmLog(format!"taught %s all spells."(target.player.data.name));
+        gm.learnAllSpells(target);
         return true;
     }
-
-    /// `.learn all`: the spells of `target`'s class, and those its race adds to some classes.
-    void learnAllSpells(Character target)
+    uint spell;
+    try
+        spell = spellOrAll.to!uint;
+    catch (ConvException)
+        return false;
+    const info = gm.context.data.spells.spell(spell);
+    if (info is null)
     {
-        const classId = target.player.data.classId, race = target.player.data.race;
-        foreach (spell; classId < classSpells.length ? classSpells[classId] : null)
-            target.learn(spell); // spells 1.12 does not have are skipped
-        const(uint[][]) raceSpells = classId == PlayerClass.paladin ? paladinRaceSpells
-            : classId == PlayerClass.priest ? priestRaceSpells
-            : classId == PlayerClass.mage ? mageRaceSpells
-            : classId == PlayerClass.shaman ? shamanRaceSpells
-            : null;
-        if (race < raceSpells.length)
-            foreach (spell; raceSpells[race])
-                target.learn(spell);
+        gm.redSystemMessage(format!"Unknown spell ID %u."(spell));
+        return true;
     }
+    if (!target.allowsStaff("staff.game_master") && info.effect[].canFind(SpellEffect.instantKill))
+    {
+        gm.redSystemMessage("Only staff characters can learn instant-kill spells.");
+        gm.gmLog(format!"refused instant-kill spell %s for %s"(spell, target.player.data.name));
+        return true;
+    }
+    if (target.player.knowsSpell(spell))
+    {
+        gm.redSystemMessage(target.player.data.name ~ " already knows that spell.");
+        return true;
+    }
+    target.learn(spell);
+    gm.gmLog(format!"taught %s spell %u"(target.player.data.name, spell));
+    target.blueSystemMessage(format!"%s taught you spell %u."(gm.player.data.name, spell));
+    gm.greenSystemMessage(format!"Taught %s spell %u."(target.player.data.name, spell));
+    return true;
 }
+
+/// `.learn all`: the spells of `target`'s class, and those its race adds to some classes.
+void learnAllSpells(Character gm, Character target)
+{
+    const classId = target.player.data.classId, race = target.player.data.race;
+    foreach (spell; classId < classSpells.length ? classSpells[classId] : null)
+        target.learn(spell); // spells 1.12 does not have are skipped
+    const(uint[][]) raceSpells = classId == PlayerClass.paladin ? paladinRaceSpells
+        : classId == PlayerClass.priest ? priestRaceSpells
+        : classId == PlayerClass.mage ? mageRaceSpells
+        : classId == PlayerClass.shaman ? shamanRaceSpells
+        : null;
+    if (race < raceSpells.length)
+        foreach (spell; raceSpells[race])
+            target.learn(spell);
+}
+

@@ -22,7 +22,7 @@ mixin template GmActions()
 
 private:
     /// The player at `level`: the new level's stats, `SMSG_LEVELUP_INFO`, and the group told.
-    void applyLevel(uint level)
+    package void applyLevel(uint level)
     {
         const changed = level != player.data.level;
         const info = player.changeLevel(level, context.data, context.client);
@@ -56,7 +56,7 @@ private:
 
     /// `.modify speed`: the run, swim and run-back speeds; the player is told with
     /// forced changes, those around it with moves. Swimming backwards keeps its speed.
-    void applySpeed(float speed)
+    package void applySpeed(float speed)
     {
         player.speeds[MoveType.run] = speed;
         player.speeds[MoveType.swim] = speed;
@@ -80,7 +80,7 @@ private:
     }
 
     /// An order that only names the player: root, unroot, water walk, land walk.
-    void sendMovementOrder(Opcode opcode)()
+    package void sendMovementOrder(Opcode opcode)()
     {
         send(ServerMovementOrder!opcode(player.guid, moveOrderCounter++));
     }
@@ -102,7 +102,7 @@ private:
     }
 
     /// A spell forgotten. A spell taught by default comes back at the next login.
-    bool unlearn(uint spell)
+    package bool unlearn(uint spell)
     {
         import std.algorithm.mutation : remove;
 
@@ -125,7 +125,7 @@ private:
     }
 
     /// A skill's value and maximum set, and its row saved; a maximum of 0 removes the skill.
-    bool applySkill(uint skill, ushort value, ushort maximum)
+    package bool applySkill(uint skill, ushort value, ushort maximum)
     {
         if (!player.setSkill(skill, value, maximum))
             return false;
@@ -169,7 +169,7 @@ private:
     }
 
     /// The player saved, as far as this server saves.
-    void savePlayer()
+    package void savePlayer()
     {
         const progress = player.progress(secondsInWorld());
         context.database.saveProgress(progress);
@@ -197,26 +197,26 @@ private:
     }
 
     /// A system message to everyone in the world.
-    void sendWorldText(string text)
+    package void sendWorldText(string text)
     {
         toEveryone(Opcode.SMSG_MESSAGECHAT, chatMessage(ChatType.CHAT_MSG_SYSTEM, Language.LANG_UNIVERSAL, 0, text));
     }
 
     /// A system message to staff announcement recipients.
-    void sendGmWorldText(string text)
+    package void sendGmWorldText(string text)
     {
         context.toEveryone(Opcode.SMSG_MESSAGECHAT, chatMessage(ChatType.CHAT_MSG_SYSTEM, Language.LANG_UNIVERSAL, 0,
             text), true);
     }
 
     /// `SMSG_AREA_TRIGGER_MESSAGE` to everyone, in the middle of the screen.
-    void sendWorldWideScreenText(string text)
+    package void sendWorldWideScreenText(string text)
     {
         toEveryone(Opcode.SMSG_AREA_TRIGGER_MESSAGE, packetBody(ServerAreaTriggerMessage(text)));
     }
 
     /// Sends a body to everyone in the world, on every node.
-    void toEveryone(Opcode opcode, const(ubyte)[] body_)
+    package void toEveryone(Opcode opcode, const(ubyte)[] body_)
     {
         context.toEveryone(opcode, body_);
     }

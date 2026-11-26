@@ -3,185 +3,183 @@
  * `.instance info`, `.instance exit`, and `.character showinstances`, on this server's instances
  * (`WorldContext`'s copies and binds). Their behaviour and messages match ArcEmu 2.4.3's exactly.
  * Vanilla has one difficulty, the one the messages call "normal"; a persistent
- * instance is a raid copy (it lasts until its reset). Mixed into `dmangos.world.character.Character`.
+ * instance is a raid copy (it lasts until its reset).
+ *
+ * Each command's action is a function here taking first the player who typed it (`gm`); the catalog
+ * (`dmangos.world.commandtable`) names it and `dmangos.world.commands` calls it.
  */
 module dmangos.world.gminstance;
 
-/// See the module documentation.
-mixin template InstanceCommands()
+import dmangos.world.character : Character;
+
+import std.format : format;
+import dmangos.cluster.protocol : GmRemote;
+import dmangos.world.commands;
+import dmangos.world.gmtargets : GmRemoteOp;
+
+
+/// A request from this GM to another node, about `target`.
+GmRemote remoteRequest(Character gm, GmRemoteOp op, ulong target)
 {
-    import std.format : format;
-    import dmangos.cluster.protocol : GmRemote;
-    import dmangos.world.commands;
-    import dmangos.world.gminstance : describeInstance, instanceHere, mapName, mapTypeString, resetAllHere,
-        resetInstanceHere, shutdownInstanceHere;
-    import dmangos.world.gmtargets : GmRemoteOp;
-
-private:
-
-    /// A request from this GM to another node, about `target`.
-    GmRemote remoteRequest(GmRemoteOp op, ulong target)
-    {
-        GmRemote request;
-        request.op = op;
-        request.gm = player.guid;
-        request.gmName = player.data.name;
-        request.target = target;
-        return request;
-    }
-
-    /**
-     * In a cluster, the copy `id` is another node's (its dungeon's host): the command goes there and
-     * its answer comes back. False if this node hosts it, or it is nobody's (no such instance).
-     */
-    bool instanceElsewhere(uint id, GmRemoteOp op, ulong target = 0)
-    {
-        if (context.gmRemote is null || instanceHere(context, id))
-            return false;
-        const mapId = context.database.instanceMapOf(id);
-        if (mapId == uint.max)
-            return false;
-        const host = context.dungeonHost(mapId);
-        if (host == 0 || host == context.nodeId)
-            return false;
-        auto request = remoteRequest(op, target);
-        request.gmCanKickGms = allowsStaff("staff.admin");
-        request.instance = id;
-        context.gmRemote(host, request);
-        return true;
-    }
-
-    /// `.instance resetall`: the selected player's empty, non-persistent copies reset, on every node.
-    bool handleResetAllInstancesCommand()
-    {
-        auto target = selectedCharacter(true);
-        if (target is null)
-            return true;
-        systemMessage(format!"Trying to reset all instances of player %s..."(target.player.data.name));
-        resetAllHere(context, target.player.guid);
-        // In a cluster each dungeon's host resets its own copies.
-        if (context.gmRemote !is null)
-        {
-            const request = remoteRequest(GmRemoteOp.instanceResetAll, target.player.guid);
-            foreach (node; context.otherNodes())
-                context.gmRemote(node, request);
-        }
-        systemMessage("...done");
-        gmLog(format!"used reset all instances command on %s,"(target.player.data.name));
-        return true;
-    }
-
-    /// `.instance reset`: one copy taken from the selected player, where its dungeon is hosted.
-    bool handleResetInstanceCommand(uint instanceId = 0)
-    {
-        if (instanceId == 0)
-            return false;
-        auto target = selectedCharacter(true);
-        if (target is null)
-            return true;
-        if (!instanceElsewhere(instanceId, GmRemoteOp.instanceReset, target.player.guid))
-            resetInstanceHere(context, instanceId, target.player.guid, target.player.data.name,
-                allowsStaff("staff.admin"), gmSink);
-        gmLog(format!"used reset instance command on %s, instance %u,"(target.player.data.name, instanceId));
-        return true;
-    }
-
-    /// `.instance shutdown`: a copy emptied and unloaded, where its dungeon is hosted.
-    bool handleShutdownInstanceCommand(uint instanceId = 0)
-    {
-        if (instanceId == 0)
-            return false;
-        if (!instanceElsewhere(instanceId, GmRemoteOp.instanceShutdown))
-            shutdownInstanceHere(context, instanceId, gmSink);
-        gmLog(format!"used shutdown instance command on instance %u,"(instanceId));
-        return true;
-    }
-
-    /// `.instance info`: a copy by id, or the one the GM is in.
-    bool handleGetInstanceInfoCommand(uint instanceId = 0)
-    {
-        if (player is null)
-            return false;
-        const given = instanceId != 0;
-        if (!given)
-        {
-            instanceId = instanceId_;
-            if (instanceId == 0)
-                return false;
-        }
-        if (given && instanceElsewhere(instanceId, GmRemoteOp.instanceInfo))
-            return true;
-        if (context.instanceState(instanceId) is null)
-        {
-            if (!given)
-                return false;
-            redSystemMessage(format!"Instance with id %u not found."(instanceId));
-            return true;
-        }
-        describeInstance(context, instanceId, gmSink);
-        return true;
-    }
-
-    /// `.instance exit`: back to where the GM entered the instance.
-    bool handleExitInstanceCommand()
-    {
-        blueSystemMessage("Attempting to exit from instance...");
-        if (!exitInstance())
-        {
-            redSystemMessage("Entry points not found.");
-            return true;
-        }
-        greenSystemMessage("Removal successful.");
-        return true;
-    }
-
-    /// `.character showinstances`: the selected player's binds, with each copy's state.
-    bool handleShowInstancesCommand()
-    {
-        auto target = selectedCharacter(true);
-        if (target is null)
-            return true;
-        systemMessage("Persistent instances for " ~ colored(ChatColor.cyan, target.player.data.name));
-        auto binds = context.bindsOf(target.player.guid).dup;
-        if (context.gmRemote !is null)
-            foreach (mapId, id; context.database.instanceBindsOf(cast(uint) target.player.guid))
-                if (mapId !in binds)
-                    binds[mapId] = id;
-        foreach (mapId, id; binds)
-        {
-            const host = context.dungeonHost(mapId);
-            auto copy = context.instanceMap(id);
-            string status;
-            if (context.gmRemote !is null && host != context.nodeId)
-                status = colored(ChatColor.cyan, format!"Node %s"(host));
-            else if (context.instanceState(id) is null)
-                status = colored(ChatColor.red, "Expired");
-            else if (copy is null || !copy.population)
-                status = colored(ChatColor.softRed, copy is null ? "Shut down" : "Idle");
-            else
-                status = colored(ChatColor.green, "In use");
-            systemMessage(format!"%s  ·  %s  ·  %s  ·  %s"(colored(ChatColor.cyan, format!"%s"(id)),
-                colored(ChatColor.cyan, mapName(context, mapId)), mapTypeString(context, mapId), status));
-        }
-        if (!binds.length)
-            systemMessage("This player has no persistent instance binds.");
-        else
-            systemMessage(format!"Player is assigned to %s persistent instances."(
-                colored(ChatColor.cyan, format!"%s"(binds.length))));
-        gmLog(format!"used show instances command on %s,"(target.player.data.name));
-        return true;
-    }
-
-package:
-    /// Back to where the player was before going into an instance; false if that is not known.
-    bool exitInstance()
-    {
-        if (entryMap == uint.max)
-            return false;
-        commandTeleport(entryMap, entryPoint, 0);
-        return true;
-    }
+    GmRemote request;
+    request.op = op;
+    request.gm = gm.player.guid;
+    request.gmName = gm.player.data.name;
+    request.target = target;
+    return request;
 }
+
+/**
+ * In a cluster, the copy `id` is another node's (its dungeon's host): the command goes there and
+ * its answer comes back. False if this node hosts it, or it is nobody's (no such instance).
+ */
+bool instanceElsewhere(Character gm, uint id, GmRemoteOp op, ulong target = 0)
+{
+    if (gm.context.gmRemote is null || instanceHere(gm.context, id))
+        return false;
+    const mapId = gm.context.database.instanceMapOf(id);
+    if (mapId == uint.max)
+        return false;
+    const host = gm.context.dungeonHost(mapId);
+    if (host == 0 || host == gm.context.nodeId)
+        return false;
+    auto request = gm.remoteRequest(op, target);
+    request.gmCanKickGms = gm.allowsStaff("staff.admin");
+    request.instance = id;
+    gm.context.gmRemote(host, request);
+    return true;
+}
+
+/// `.instance resetall`: the selected player's empty, non-persistent copies reset, on every node.
+bool handleResetAllInstancesCommand(Character gm)
+{
+    auto target = gm.selectedCharacter(true);
+    if (target is null)
+        return true;
+    gm.systemMessage(format!"Trying to reset all instances of player %s..."(target.player.data.name));
+    resetAllHere(gm.context, target.player.guid);
+    // In a cluster each dungeon's host resets its own copies.
+    if (gm.context.gmRemote !is null)
+    {
+        const request = gm.remoteRequest(GmRemoteOp.instanceResetAll, target.player.guid);
+        foreach (node; gm.context.otherNodes())
+            gm.context.gmRemote(node, request);
+    }
+    gm.systemMessage("...done");
+    gm.gmLog(format!"used reset all instances command on %s,"(target.player.data.name));
+    return true;
+}
+
+/// `.instance reset`: one copy taken from the selected player, where its dungeon is hosted.
+bool handleResetInstanceCommand(Character gm, uint instanceId = 0)
+{
+    if (instanceId == 0)
+        return false;
+    auto target = gm.selectedCharacter(true);
+    if (target is null)
+        return true;
+    if (!gm.instanceElsewhere(instanceId, GmRemoteOp.instanceReset, target.player.guid))
+        resetInstanceHere(gm.context, instanceId, target.player.guid, target.player.data.name,
+            gm.allowsStaff("staff.admin"), gm.gmSink);
+    gm.gmLog(format!"used reset instance command on %s, instance %u,"(target.player.data.name, instanceId));
+    return true;
+}
+
+/// `.instance shutdown`: a copy emptied and unloaded, where its dungeon is hosted.
+bool handleShutdownInstanceCommand(Character gm, uint instanceId = 0)
+{
+    if (instanceId == 0)
+        return false;
+    if (!gm.instanceElsewhere(instanceId, GmRemoteOp.instanceShutdown))
+        shutdownInstanceHere(gm.context, instanceId, gm.gmSink);
+    gm.gmLog(format!"used shutdown instance command on instance %u,"(instanceId));
+    return true;
+}
+
+/// `.instance info`: a copy by id, or the one the GM is in.
+bool handleGetInstanceInfoCommand(Character gm, uint instanceId = 0)
+{
+    if (gm.player is null)
+        return false;
+    const given = instanceId != 0;
+    if (!given)
+    {
+        instanceId = gm.instanceId_;
+        if (instanceId == 0)
+            return false;
+    }
+    if (given && gm.instanceElsewhere(instanceId, GmRemoteOp.instanceInfo))
+        return true;
+    if (gm.context.instanceState(instanceId) is null)
+    {
+        if (!given)
+            return false;
+        gm.redSystemMessage(format!"Instance with id %u not found."(instanceId));
+        return true;
+    }
+    describeInstance(gm.context, instanceId, gm.gmSink);
+    return true;
+}
+
+/// `.instance exit`: back to where the GM entered the instance.
+bool handleExitInstanceCommand(Character gm)
+{
+    gm.blueSystemMessage("Attempting to exit from instance...");
+    if (!gm.exitInstance())
+    {
+        gm.redSystemMessage("Entry points not found.");
+        return true;
+    }
+    gm.greenSystemMessage("Removal successful.");
+    return true;
+}
+
+/// `.character showinstances`: the selected player's binds, with each copy's state.
+bool handleShowInstancesCommand(Character gm)
+{
+    auto target = gm.selectedCharacter(true);
+    if (target is null)
+        return true;
+    gm.systemMessage("Persistent instances for " ~ colored(ChatColor.cyan, target.player.data.name));
+    auto binds = gm.context.bindsOf(target.player.guid).dup;
+    if (gm.context.gmRemote !is null)
+        foreach (mapId, id; gm.context.database.instanceBindsOf(cast(uint) target.player.guid))
+            if (mapId !in binds)
+                binds[mapId] = id;
+    foreach (mapId, id; binds)
+    {
+        const host = gm.context.dungeonHost(mapId);
+        auto copy = gm.context.instanceMap(id);
+        string status;
+        if (gm.context.gmRemote !is null && host != gm.context.nodeId)
+            status = colored(ChatColor.cyan, format!"Node %s"(host));
+        else if (gm.context.instanceState(id) is null)
+            status = colored(ChatColor.red, "Expired");
+        else if (copy is null || !copy.population)
+            status = colored(ChatColor.softRed, copy is null ? "Shut down" : "Idle");
+        else
+            status = colored(ChatColor.green, "In use");
+        gm.systemMessage(format!"%s  ·  %s  ·  %s  ·  %s"(colored(ChatColor.cyan, format!"%s"(id)),
+            colored(ChatColor.cyan, mapName(gm.context, mapId)), mapTypeString(gm.context, mapId), status));
+    }
+    if (!binds.length)
+        gm.systemMessage("This player has no persistent instance binds.");
+    else
+        gm.systemMessage(format!"Player is assigned to %s persistent instances."(
+            colored(ChatColor.cyan, format!"%s"(binds.length))));
+    gm.gmLog(format!"used show instances command on %s,"(target.player.data.name));
+    return true;
+}
+
+/// Back to where the player was before going into an instance; false if that is not known.
+bool exitInstance(Character gm)
+{
+    if (gm.entryMap == uint.max)
+        return false;
+    gm.commandTeleport(gm.entryMap, gm.entryPoint, 0);
+    return true;
+}
+
 
 // ---------------------------------------------------------------------------
 // The commands' work on the node hosting the copy (the GM's, or in a cluster its dungeon's host)

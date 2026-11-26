@@ -145,7 +145,7 @@ mixin template GmTargets()
             try
                 zone = order.text.to!uint;
             catch (ConvException) {}
-            return summonRequest(order.gm, zone, order.map, at);
+            return imported!"dmangos.world.gmadmin".summonRequest(this, order.gm, zone, order.map, at);
         }
     }
 
@@ -273,8 +273,8 @@ mixin template GmTargets()
         gm.green(format!"%s is a %s %s %s"(data.name, female ? "Female" : "Male",
             races[data.race < races.length ? data.race : 0],
             classes[data.classId < classes.length ? data.classId : 0]));
-        gm.blue(format!"%s has played %s at this level"(pronoun, playedText(progress.levelTime)));
-        gm.blue(format!"and %s overall"(playedText(progress.totalTime)));
+        gm.blue(format!"%s has played %s at this level"(pronoun, imported!"dmangos.world.gmadmin".playedText(progress.levelTime)));
+        gm.blue(format!"and %s overall"(imported!"dmangos.world.gmadmin".playedText(progress.totalTime)));
         gm.blue(format!"%s is connecting from account '%s'[%u] with permissions '%s'"(pronoun, account.username,
             account.id, staffRoles));
         gm.blue(format!"%s uses %s (build %u)"(pronoun, "WoW", build));

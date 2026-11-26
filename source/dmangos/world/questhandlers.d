@@ -57,7 +57,7 @@ private:
     }
 
     /// The quest log slot holding `id`; `maxQuestLogSize` if none (0: a free slot).
-    uint questSlot(uint id)
+    package uint questSlot(uint id)
     {
         foreach (slot; 0 .. maxQuestLogSize)
             if (player.values[PLAYER_QUEST_LOG_1_1 + 3 * slot] == id)
@@ -66,7 +66,7 @@ private:
     }
 
     /// Puts quest `id` in log slot `slot`, its counters and state cleared, with its timer.
-    void setQuestSlot(uint slot, uint id, uint timer = 0)
+    package void setQuestSlot(uint slot, uint id, uint timer = 0)
     {
         player.values.setSlot(PLAYER_QUEST_LOG_1_1 + 3 * slot, id);
         player.values.setSlot(PLAYER_QUEST_LOG_1_1 + 3 * slot + 1, 0);
@@ -112,7 +112,7 @@ private:
     }
 
     /// The status of `id`, made if there is none.
-    ref QuestStatus statusOf(uint id)
+    package ref QuestStatus statusOf(uint id)
     {
         return player.questStatus.require(id, QuestStatus(id));
     }

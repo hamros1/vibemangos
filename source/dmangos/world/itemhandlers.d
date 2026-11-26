@@ -94,7 +94,7 @@ private:
      * update carries it all: new and changed items, then the player's fields that point at them, then
      * the items gone.
      */
-    void flushInventory(bool moneyChanged = false,
+    package void flushInventory(bool moneyChanged = false,
         const imported!"dmangos.world.database".InstanceChestRecord chest = imported!"dmangos.world.database".InstanceChestRecord.init,
         const LootAwardKey award = LootAwardKey.init, bool alreadySaved = false,
         const imported!"dmangos.world.database".InstanceCorpseRecord corpse = imported!"dmangos.world.database".InstanceCorpseRecord.init,

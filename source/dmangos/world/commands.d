@@ -28,6 +28,27 @@ unittest
 }
 
 /// Distinct method names for the compile-time dispatch switch.
+/**
+ * The function that runs the command action named `name` in the catalog: `bool name(Character gm, arguments...)` in
+ * one of the command modules, `gm` the player who typed it. The arguments are read from the typed words by their
+ * types (`ChatCommands.invoke`).
+ */
+package template commandHandler(string name)
+{
+    static import dmangos.world.gmaccess, dmangos.world.gmadmin, dmangos.world.gmcheat, dmangos.world.gmcontent,
+        dmangos.world.gmdebug, dmangos.world.gmguild, dmangos.world.gmhelp, dmangos.world.gminstance,
+        dmangos.world.gmlearn, dmangos.world.gmquest, dmangos.world.gmstaff, dmangos.world.gmticket,
+        dmangos.world.gmwaypoint, dmangos.world.gmworld;
+    import std.meta : AliasSeq;
+
+    static foreach (m; AliasSeq!(dmangos.world.gmaccess, dmangos.world.gmadmin, dmangos.world.gmcheat,
+            dmangos.world.gmcontent, dmangos.world.gmdebug, dmangos.world.gmguild, dmangos.world.gmhelp,
+            dmangos.world.gminstance, dmangos.world.gmlearn, dmangos.world.gmquest, dmangos.world.gmstaff,
+            dmangos.world.gmticket, dmangos.world.gmwaypoint, dmangos.world.gmworld))
+        static if (__traits(hasMember, m, name))
+            alias commandHandler = __traits(getMember, m, name);
+}
+
 package string[] commandMethods(immutable(ChatCommand)[] table) pure @safe
 {
     import std.algorithm.searching : canFind;
@@ -320,7 +341,7 @@ private:
     enum methods = commandMethods(commandTable);
 
     /// A catalog row the typed words named, with its permission path and its preferred spelling.
-    struct CommandMatch
+    package struct CommandMatch
     {
         const(ChatCommand)* row;
         string path;
@@ -365,7 +386,7 @@ private:
     }
 
     /// The command the words of `text` name, which then holds the arguments; no row if none.
-    CommandMatch readCommand(ref string text, bool abbreviations = true) const
+    package CommandMatch readCommand(ref string text, bool abbreviations = true) const
     {
         CommandMatch match;
         immutable(ChatCommand)[] table = commandTable;
@@ -434,7 +455,7 @@ private:
     }
 
     /// The answer to a command that does not exist or this player may not use.
-    void unknownCommand()
+    package void unknownCommand()
     {
         redSystemMessage("Command unavailable. Try .commands.");
     }
@@ -446,7 +467,7 @@ private:
     }
 
     /// The matched action's usage and description, or why it is unavailable.
-    void showCommandHelp(const ref CommandMatch match)
+    package void showCommandHelp(const ref CommandMatch match)
     {
         const row = actionFor(*match.row);
         blueSystemMessage(commandUsage(match.label, *row));
@@ -458,7 +479,7 @@ private:
 
     /// The actions of the matched group (or the top-level commands, those starting with `filter`) this player
     /// may use.
-    void showCommandList(CommandMatch match, string filter = null)
+    package void showCommandList(CommandMatch match, string filter = null)
     {
         import std.algorithm.sorting : sort;
         import std.array : join;
@@ -520,9 +541,20 @@ private:
         import std.conv : ConvException, to;
         import std.traits : ParameterDefaults, Parameters;
 
-        alias method = __traits(getMember, typeof(this), member);
-        Parameters!method values;
-        static foreach (i, T; Parameters!method)
+        // A handler is a function of a command module taking the player who typed it first (`commandHandler`), or
+        // (honor's, which change the player's own standing) a method of the player's.
+        static if (__traits(hasMember, typeof(this), member))
+        {
+            alias method = __traits(getMember, typeof(this), member);
+            enum first = 0;
+        }
+        else
+        {
+            alias method = commandHandler!member;
+            enum first = 1;
+        }
+        Parameters!method[first .. $] values;
+        static foreach (i, T; Parameters!method[first .. $])
         {{
             static if (is(T == Rest))
             {
@@ -533,8 +565,8 @@ private:
                 const rest = nextWord(text);
             if (rest.length == 0)
             {
-                static if (!is(ParameterDefaults!method[i] == void))
-                    values[i] = ParameterDefaults!method[i];
+                static if (!is(ParameterDefaults!method[i + first] == void))
+                    values[i] = ParameterDefaults!method[i + first];
                 else static if (!is(T : Nullable!U, U))
                     return false;
             }
@@ -554,7 +586,10 @@ private:
                     return false;
             }
         }}
-        return __traits(getMember, this, member)(values);
+        static if (first)
+            return method(this, values);
+        else
+            return __traits(getMember, this, member)(values);
     }
 
     // -----------------------------------------------------------------------
@@ -562,38 +597,38 @@ private:
     // -----------------------------------------------------------------------
 
     /// A system message to this player, cut at 1023 bytes.
-    void systemMessage(string text)
+    package void systemMessage(string text)
     {
         send(ServerMessageChat(chatMessage(ChatType.CHAT_MSG_SYSTEM, Language.LANG_UNIVERSAL, 0,
             systemChatText(text))));
     }
 
     /// A system message in the colour `color`.
-    void colorSystemMessage(ChatColor color, string text)
+    package void colorSystemMessage(ChatColor color, string text)
     {
         systemMessage(systemChatText(text, color));
     }
 
     /// A system message in light red.
-    void redSystemMessage(string text)
+    package void redSystemMessage(string text)
     {
         colorSystemMessage(ChatColor.softRed, text);
     }
 
     /// A system message in green.
-    void greenSystemMessage(string text)
+    package void greenSystemMessage(string text)
     {
         colorSystemMessage(ChatColor.green, text);
     }
 
     /// A system message in light blue.
-    void blueSystemMessage(string text)
+    package void blueSystemMessage(string text)
     {
         colorSystemMessage(ChatColor.sky, text);
     }
 
     /// One system message per line of `text`.
-    void sendMultilineMessage(string text)
+    package void sendMultilineMessage(string text)
     {
         import std.array : split;
 
@@ -605,7 +640,7 @@ private:
     }
 
     /// A line in the GM command log, if there is one.
-    void gmLog(string text)
+    package void gmLog(string text)
     {
         context.writeGmLog(format!"Account %s [%s], IP %s, Player %s :: %s"(account.id, account.username,
             remoteAddress, player is null ? "" : player.data.name, text));
@@ -617,7 +652,7 @@ private:
 
     /// The selected player on this map, oneself if nothing is selected; null (with an error message if
     /// `showError`) if the selection is not a player here.
-    Character selectedCharacter(bool showError)
+    package Character selectedCharacter(bool showError)
     {
         const guid = player.values.get!UNIT_FIELD_TARGET;
         if (guid == 0)
@@ -633,7 +668,7 @@ private:
     }
 
     /// The selected creature, or null (with an error message if `showError`).
-    Creature selectedCreature(bool showError)
+    package Creature selectedCreature(bool showError)
     {
         const guid = player.values.get!UNIT_FIELD_TARGET;
         Creature creature;

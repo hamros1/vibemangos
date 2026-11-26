@@ -654,7 +654,7 @@ private:
      * The corpse is gone, and so is its row; bones lie where it was for an hour (CMaNGOS's
      * `ConvertCorpseForPlayer`, `Death.Bones.World` and `.BattleGround` on), if its map is here. Returns them.
      */
-    Corpse spawnCorpseBones()
+    package Corpse spawnCorpseBones()
     {
         import dmangos.world.objects : HighGuid, makeGuid;
 

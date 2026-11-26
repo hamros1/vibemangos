@@ -35,12 +35,7 @@ import dmangos.world.channelhandlers : ChannelHandlers;
 import dmangos.world.charscreen : CharacterLogin;
 import dmangos.world.commands : ChatCommands;
 import dmangos.world.gmactions : GmActions;
-import dmangos.world.gmlearn : LearningCommands;
-import dmangos.world.gmcheat : CheatCommands;
-import dmangos.world.gmguild : GuildAdminCommands;
-import dmangos.world.gmticket : TicketCommands;
-import dmangos.world.gmwaypoint : WaypointCommands;
-import dmangos.world.gmaccess : AccessCommands, GmAccess, readGmAccess;
+import dmangos.world.gmaccess : GmAccess, readGmAccess;
 import dmangos.world.gmtargets : GmTargets;
 import dmangos.world.combathandlers : CombatHandlers;
 import dmangos.world.death : DeathHandlers;
@@ -73,20 +68,12 @@ import dmangos.world.creature : Creature;
 import dmangos.world.loot : Looter;
 import dmangos.world.combat : Fighter, MeleeDamage;
 import dmangos.world.relations : Relating;
-import dmangos.world.gmdebug : DebugCommands;
-import dmangos.world.gmcontent : ContentCommands;
-import dmangos.world.gmhelp : SupportCommands;
-import dmangos.world.gmstaff : StaffCommands;
-import dmangos.world.gmworld : WorldAdminCommands;
-import dmangos.world.gminstance : InstanceCommands;
 import dmangos.world.sessionscripting : SessionScripting;
 import dmangos.world.social : FriendInfo, SocialHandlers;
 import dmangos.world.guildhandlers : GuildHandlers;
 import dmangos.world.pethandlers : PetHandlers;
 import dmangos.world.petauras : PetAuraRules;
 import dmangos.script.api : MenuOption, QuestProgress;
-import dmangos.world.gmquest : QuestCommands;
-import dmangos.world.gmadmin : AdminCommands;
 import dmangos.world.grouphandlers : GroupHandlers;
 import dmangos.world.exploration : Exploration;
 import dmangos.world.environment : EnvironmentHandlers;
@@ -134,6 +121,8 @@ final class Character : OnlinePlayer, Looter
         bool castTimeCheat;       // `.cheat casttime`: every cast instant
         bool godModeCheat;        // `.cheat god`: no damage taken
         bool powerCheat;          // `.cheat power`: spells cost nothing
+        bool invincible;          // `.invincible`: creatures do not attack it
+        imported!"dmangos.world.gmstate".GmState gmState; // what its commands keep between one and the next
         bool[ulong] gmTargets;    // `.gm allowwhispers`: players who may whisper while the GM tag is on
         uint floodLines;          // flood protection: chat lines counted until `floodTime`
         long floodTime;
@@ -208,7 +197,7 @@ final class Character : OnlinePlayer, Looter
     // The connection's, as the gameplay code knows them
     // -----------------------------------------------------------------------
 
-    private
+    package
     {
         @property ref inout(WorldAccount) account() inout { return connection.account; }
         @property string remoteAddress() const { return connection.remoteAddress; }
@@ -859,7 +848,7 @@ private:
     }
 
     /// The map the player is on.
-    @property Map map()
+    package @property Map map()
     in (player !is null)
     {
         return context.map(player.data.map, instanceId_);
@@ -883,7 +872,7 @@ private:
     }
 
     /// A message in the middle of the screen.
-    void sendNotification(string text)
+    package void sendNotification(string text)
     {
         send(ServerNotification(text));
     }
@@ -903,15 +892,13 @@ private:
     mixin Exploration;
     mixin EnvironmentHandlers;
     mixin MovementOrders;
-    private GmAccess gmAccess;
+    package GmAccess gmAccess;
 
     private void refreshGmAccess()
     {
         gmAccess = readGmAccess(context.database, account.id);
     }
 
-    mixin AccessCommands;
-    mixin WaypointCommands;
     mixin ChatCommands;
     mixin GmActions;
     mixin GmTargets;
@@ -950,19 +937,7 @@ private:
     mixin ItemUseHandlers;
     mixin ProfessionHandlers;
     mixin HonorHandlers;
-    mixin SupportCommands;
-    mixin StaffCommands;
-    mixin WorldAdminCommands;
-    mixin InstanceCommands;
     mixin SessionScripting;
-    mixin QuestCommands;
-    mixin AdminCommands;
-    mixin LearningCommands;
-    mixin CheatCommands;
-    mixin GuildAdminCommands;
-    mixin TicketCommands;
-    mixin DebugCommands;
-    mixin ContentCommands;
 }
 
 version (unittest)
