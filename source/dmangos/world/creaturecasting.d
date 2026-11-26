@@ -1583,10 +1583,17 @@ mixin template CreatureCasting()
     /// `SPELL_EFFECT_HEAL` on itself or a friend.
     /**
      * `SPELL_EFFECT_SUMMON`, `_SUMMON_WILD`, `_SUMMON_GUARDIAN`: the creature of the effect's misc value (several for
-     * a wild summon's value, at most five) beside the caster, for the spell's duration, fighting its victim.
+     * a wild summon's value, at most five) beside the caster, for the spell's duration, fighting its victim. A spell
+     * aimed at a place puts the first there: its destination, or its target's position (Kel'Thuzad's Shadow Fissure,
+     * `TARGET_LOCATION_CASTER_TARGET_POSITION`). One no unit may touch (`UNIT_FLAG_NOT_SELECTABLE`: the fissure, which
+     * erupts on an out-of-combat timer) does not fight.
      */
-    package void summonBySpell(const(SpellInfo)* spell, size_t i, int value)
+    package void summonBySpell(const(SpellInfo)* spell, size_t i, int value,
+        const imported!"dmangos.world.spellcast".SpellTargets targets = imported!"dmangos.world.spellcast".SpellTargets.init)
     {
+        import dmangos.world.spellcast : TargetFlags;
+        import dmangos.world.spellids : ImplicitTarget;
+
         import std.math : cos, sin, PI;
         import dmangos.world.creature : TempSpawnType;
         import dmangos.world.spellcast : duration;
@@ -1597,15 +1604,30 @@ mixin template CreatureCasting()
         const count = spell.effect[i] == SpellEffect.summonWild && value > 1 ? (value > 5 ? 5 : value) : 1;
         const ms = duration(*spell, lore.clientData, me.values.get!UNIT_FIELD_LEVEL);
         auto victim = world_.unit(currentVictim);
+        bool placed;
+        Position place;
+        if (targets.mask & TargetFlags.destLocation)
+        {
+            place = Position(targets.dest[0], targets.dest[1], targets.dest[2], me.position.orientation);
+            placed = true;
+        }
+        else if (spell.implicitTargetA[i] == ImplicitTarget.locationCasterTargetPosition && targets.unit)
+            if (auto aimed = world_.unit(targets.unit))
+            {
+                place = aimed.position;
+                placed = true;
+            }
         foreach (n; 0 .. count)
         {
             const angle = me.position.orientation + PI / 2 + n * 2 * PI / count;
             auto at = me.position;
             at.x += 3 * cos(angle);
             at.y += 3 * sin(angle);
+            if (placed && n == 0)
+                at = place;
             auto summoned = lore.summon(world_, entry, at, ms > 0 ? TempSpawnType.timedOutOfCombatOrDead : TempSpawnType.dead,
                 ms > 0 ? ms : 0, me.guid);
-            if (summoned !is null && victim)
+            if (summoned !is null && victim && !(summoned.values.get!UNIT_FIELD_FLAGS & UnitFlags.uninteractible))
                 summoned.ai.attackStart(victim, world_);
         }
     }

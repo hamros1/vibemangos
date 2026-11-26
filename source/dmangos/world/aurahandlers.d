@@ -980,13 +980,14 @@ private:
         scope (exit) loadingSavedAuras = false;
         while (!state.empty)
         {
-            import dmangos.scripts.naxxramas : isSapphironFreeze;
+            import dmangos.scripts.naxxramas : pausesWithItsFight;
 
             auto aura = Aura.loadState(state, (uint id) => context.data.spells.spell(id));
             if (aura.spell is null || !recoverableEncounterAura(aura.spell.id))
                 continue;
-            // Sapphiron's freeze waits with his air phase, which a crash pauses: it keeps the time it had.
-            const lost = isSapphironFreeze(aura.spell.id) ? 0 : elapsed;
+            // Sapphiron's freeze waits with his air phase, which a crash pauses, and Kel'Thuzad's Frost Blast and Detonate
+            // Mana with his fight: they keep the time they had.
+            const lost = pausesWithItsFight(aura.spell.id) ? 0 : elapsed;
             if (aura.duration >= 0 && aura.duration <= lost)
                 continue;
             if (aura.duration > 0)
@@ -1186,6 +1187,8 @@ private:
             return periodicLog(player.guid, aura, i, amount, cast(uint) aura.misc(i));
         case AuraType.periodicTriggerSpell:
             if (classPeriodicTrigger(aura, i)) // Frenzied Regeneration
+                return;
+            if (aura.caster != player.guid && creatureAuraTickScript(aura, i)) // Kel'Thuzad's Detonate Mana
                 return;
             if (const spell = context.data.spells.spell(aura.spell.triggerSpell[i]))
             {
@@ -1796,6 +1799,53 @@ unittest
         "the frozen player came back thawed: the outage counted against the freeze");
     assert(immunity !is null && immunity.duration == 27_000, "the frozen player lost the immunity");
     assert(session.player.auras.find(Sapphiron.lifeDrain) is null, "Life Drain outlasted its time");
+}
+
+/**
+ * Kel'Thuzad's Frost Blast and Detonate Mana come back from a gateway player's checkpoint with the time they had, their
+ * next ticks too: his fight's timers do not count a crash's outage, and neither do they.
+ */
+unittest
+{
+    import core.time : MonoTime, seconds;
+    import dmangos.bytes : ByteReader;
+    import dmangos.cluster.protocol : SimulationOwner;
+    import dmangos.scripts.naxxramas : Kelthuzad;
+    import dmangos.world.auras : makeAura;
+    import dmangos.world.movement : Position;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.spellids : AuraType, SpellEffect;
+    import dmangos.world.testclient;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    foreach (id; [Kelthuzad.frostBlast, Kelthuzad.manaDetonation])
+    {
+        context.data.spells.spells[id] = testSpell(id, SpellEffect.applyAura, 6, 0);
+        context.data.spells.spells.edit(id).casting.applyAuraName[0] = AuraType.dummy;
+    }
+    auto client = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    auto session = client.session.inWorld;
+    client.session.gatewayHome = SimulationOwner(4, 1);
+    const kelthuzad = 0xF130_0000_0000_0100UL | (ulong(15_990) << 24);
+    session.addAura(makeAura(context.data.spells.spell(Kelthuzad.frostBlast), kelthuzad, 63, 4_000, false, [0, 0, 0]));
+    session.addAura(makeAura(context.data.spells.spell(Kelthuzad.manaDetonation), kelthuzad, 63, 5_000, false,
+        [0, 0, 0]));
+    assert(db.loadPlayerSummons(7).length, "the blast was not checkpointed as it came");
+    const saved = session.encounterAuraRecoveryState();
+    foreach (id; [Kelthuzad.frostBlast, Kelthuzad.manaDetonation])
+        session.removeAura(session.player.auras.find(id));
+
+    now += 10.seconds; // the worker is lost; the player comes back ten seconds on (longer than either lasts)
+    auto state = ByteReader(saved);
+    session.restoreEncounterAuraRecovery(state);
+    auto blast = session.player.auras.find(Kelthuzad.frostBlast);
+    auto detonate = session.player.auras.find(Kelthuzad.manaDetonation);
+    assert(blast !is null && blast.duration == 4_000 && blast.caster == kelthuzad,
+        "the Frost Blast came back gone or short: the outage counted against it");
+    assert(detonate !is null && detonate.duration == 5_000, "the Detonate Mana came back gone or short");
 }
 
 /**

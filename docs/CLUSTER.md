@@ -653,6 +653,9 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   whom he holds and for how long, and he chains each again as they return. One back after that
   time, or not held, is cleared of any Chains its character save brought back. His minions are
   undead, and Shackle Undead stuns them without control, so none is ever left out of a snapshot.
+  His second phase's short effects come back too: a Shadow Fissure is kept with his fight and erupts
+  after the crash, and a player's Frost Blast and Detonate Mana come back from the player's
+  checkpoint with the time they had, his fight's timers and theirs not counting the outage.
   A raid that wipes while he channels (nobody alive within 120 yards of him) makes him give up:
   his minions go and his chamber opens, and a crash after that keeps him at home for the next
   pull. A fight saved without him (an older save) fails, and the trigger in his chamber begins it

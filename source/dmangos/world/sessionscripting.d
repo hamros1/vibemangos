@@ -71,6 +71,29 @@ mixin template SessionScripting()
     }
 
     /**
+     * A periodic trigger of a creature's aura on this player ticks: its spell's script, if it has one, runs the tick
+     * here (Detonate Mana, Frost Blast); true if it did (`SpellContext.consume`), and the trigger's own spell is not cast.
+     */
+    package bool creatureAuraTickScript(imported!"dmangos.world.auras".Aura aura, size_t i)
+    {
+        import dmangos.script.api : AuraTicked;
+
+        auto handle = context.spellScript(aura.spell.id);
+        if (!handle || aura.period[i] <= 0)
+            return false;
+        const outer = scriptSpell;
+        scriptSpell = aura.spell;
+        scope (exit)
+            scriptSpell = outer;
+        auto c = SpellContext(scriptHost);
+        const ticks = aura.maxDuration > 0 ? aura.maxDuration / aura.period[i] : 0;
+        const tick = aura.maxDuration > 0 ? (aura.maxDuration - aura.duration) / aura.period[i] : 0;
+        context.scripts.raise(handle, c, AuraTicked(EntityRef(aura.caster), EntityRef(player.guid), cast(ubyte) i,
+            tick, ticks, aura.amount[i]));
+        return c.consumed;
+    }
+
+    /**
      * Spell scripts of items, quests and the world: `event` (a cast's, an aura's) reaches `spell`'s script, if
      * it has one, around this player; true if the script refused the cast (`CastChecked`), for `refusal`.
      */

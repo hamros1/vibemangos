@@ -92,6 +92,7 @@ enum : uint
     npcUnstoppableAbom = 16_428,
     npcSoulWeaver = 16_429,
     npcGuardianIcecrown = 16_441,
+    npcShadowFissure = 16_129, /// Kel'Thuzad's: erupts (Void Blast) five seconds after it opens
     npcInvisibleMan = 17_286,
 
     goSapphironBirth = 181_356,
@@ -316,7 +317,7 @@ struct Naxxramas
             if (kelthuzadActive) // a clean handoff brings him in without a signal: he stays in the checkpoint
                 copy.checkpointCreature(kelthuzad);
             break;
-        case npcSoldierFrozen, npcUnstoppableAbom, npcSoulWeaver, npcGuardianIcecrown:
+        case npcSoldierFrozen, npcUnstoppableAbom, npcSoulWeaver, npcGuardianIcecrown, npcShadowFissure:
             import std.algorithm.searching : canFind;
 
             // His summons as they come, and as a handoff or the checkpoint brings them back: kept with his fight.
@@ -537,7 +538,7 @@ struct Naxxramas
         if (!kelthuzadActive)
             return;
         foreach (add; kelthuzadAdds)
-            if (copy.alive(add) && !copy.alive(copy.victimOf(add)))
+            if (add.entry != npcShadowFissure && copy.alive(add) && !copy.alive(copy.victimOf(add)))
                 copy.attack(add, player);
         if (kelthuzad && copy.alive(kelthuzad))
             copy.signal(kelthuzad, NaxxSignal.kelthuzadPlayerBack, cast(int) player.guid);
@@ -2856,11 +2857,27 @@ struct Sapphiron
 
 /**
  * The auras of the copy's fights a gateway player's checkpoint keeps (`Character.encounterAuraRecoveryState`):
- * Sapphiron's Icebolt freeze, the immunity that goes with it, and Life Drain; the Horsemen's marks, with their stacks.
+ * Sapphiron's Icebolt freeze, the immunity that goes with it, and Life Drain; the Horsemen's marks, with their stacks;
+ * Kel'Thuzad's Frost Blast and Detonate Mana.
  */
 bool isNaxxramasRecoveryAura(uint spell) pure nothrow @nogc @safe
 {
-    return isSapphironFreeze(spell) || spell == Sapphiron.lifeDrain || isHorsemenMark(spell);
+    return isSapphironFreeze(spell) || spell == Sapphiron.lifeDrain || isHorsemenMark(spell) || isKelthuzadBurst(spell);
+}
+
+/**
+ * Kel'Thuzad's Frost Blast and Detonate Mana: a few seconds each, and his fight's timers do not count a crash's
+ * outage, so neither do they. Restored, each keeps the time it had when last saved, its next tick too.
+ */
+bool isKelthuzadBurst(uint spell) pure nothrow @nogc @safe
+{
+    return spell == Kelthuzad.frostBlast || spell == Kelthuzad.manaDetonation;
+}
+
+/// The auras a crash's outage does not count against (they wait with their fights' timers).
+bool pausesWithItsFight(uint spell) pure nothrow @nogc @safe
+{
+    return isSapphironFreeze(spell) || isKelthuzadBurst(spell);
 }
 
 /**
@@ -2870,6 +2887,46 @@ bool isNaxxramasRecoveryAura(uint spell) pure nothrow @nogc @safe
 bool isSapphironFreeze(uint spell) pure nothrow @nogc @safe
 {
     return spell == Sapphiron.icebolt || spell == Sapphiron.iceboltImmunity;
+}
+
+/**
+ * Kel'Thuzad's Frost Blast (27808): each second of its stun, he strikes the player for a quarter of their health and a
+ * bit more (29879, 26% of the most they have; CMaNGOS's `FrostBlast`).
+ */
+@spell("spell_kel_thuzad_frost_blast")
+struct FrostBlastKelthuzad
+{
+    enum uint damage = 29_879;
+
+    void on(ref SpellContext it, const ref AuraTicked e)
+    {
+        if (e.effect != 1)
+            return;
+        it.consume();
+        if (const amount = it.maxHealth(e.target) * 26 / 100)
+            it.castCustom(e.caster, damage, e.target, [cast(int) amount, 0, 0]);
+    }
+}
+
+/**
+ * Kel'Thuzad's Detonate Mana (27819): at its five seconds, half the player's mana burns, and as much strikes those
+ * about them (27820, the player's; CMaNGOS's `DetonateManaKelThuzad`).
+ */
+@spell("spell_detonate_mana_kt") @spellIds(Kelthuzad.manaDetonation)
+struct DetonateManaKelthuzad
+{
+    enum uint detonation = 27_820;
+
+    void on(ref SpellContext it, const ref AuraTicked e)
+    {
+        it.consume();
+        const mana = it.power(e.target, Power.mana);
+        const burnt = mana / 2;
+        if (burnt <= 0)
+            return;
+        it.setPower(e.target, Power.mana, mana - burnt);
+        it.castCustom(e.target, detonation, e.target, [burnt, 0, 0]);
+    }
 }
 
 /// Chains of Kel'Thuzad (28408): its script effect has him chain the raid (`Kelthuzad.chainRaid`).

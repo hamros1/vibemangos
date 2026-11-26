@@ -3578,6 +3578,72 @@ unittest
 }
 
 /**
+ * Kel'Thuzad's second phase. His Frost Blast strikes its player each second for a quarter of their health and more
+ * (29879); his Detonate Mana burns half a mage's mana at its five seconds and strikes about them (27820). A Shadow
+ * Fissure (16129) just opened as the worker dies comes back with his fight, the same one, and erupts (Void Blast,
+ * 27812). (A gateway player's checkpoint keeps the blast and the detonation through a crash: the unit tests in
+ * `aurahandlers` and the chaos suite cover that; this kit's characters come back fresh.)
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.script.api : ActionResult;
+    import dmangos.scripts.naxxramas;
+    import dmangos.world.defines : Power;
+
+    enum uint voidBlast = 27_812, blastDamage = 29_879, detonation = 27_820;
+    auto s = new Scene(533, kelthuzadChamber, [classWarrior, classMage], cluster: true);
+    s.run(1.seconds);
+    auto kt = s.the(npcKelthuzad);
+    s.signalCopy(NaxxSignal.triggerBase + Naxxramas.triggerKelthuzad, 0);
+    KelthuzadMinions minions;
+    s.stayWith = kt;
+    s.stayWithin = 30;
+    const fights = s.runUntil(() {
+        minions.note(s);
+        foreach (entry; KelthuzadMinions.entries[0 .. 3])
+            foreach (m; s.all(entry))
+                s.kill(m);
+        return kt.ai.inCombat && (kt.values.get!UNIT_FIELD_FLAGS & 0x0200_0000) == 0;
+    }, 330.seconds, 1.seconds);
+    assert(fights, "Kel'Thuzad never fights");
+    s.engage(kt);
+    s.run(2.seconds);
+    s.forget();
+    const warrior = s.hero(0).guid, mage = s.hero(1).guid;
+    const manaBefore = s.hero(1).values.get!UNIT_FIELD_POWER1(Power.mana);
+    assert(manaBefore > 0, "the mage has no mana");
+    assert(kt.ai.castFor(s.map, Kelthuzad.frostBlast, warrior, true) == ActionResult.ok, "no Frost Blast");
+    assert(kt.ai.castFor(s.map, Kelthuzad.manaDetonation, mage, true) == ActionResult.ok, "no Detonate Mana");
+    s.run(5500.msecs);
+    assert(s.castCount(blastDamage, kt.guid) >= 3, format!"the Frost Blast struck %s times\n%s"(
+        s.castCount(blastDamage, kt.guid), s.seen()));
+    assert(s.cast_(detonation, mage), "the mana did not detonate\n" ~ s.seen());
+    const manaAfter = s.hero(1).values.get!UNIT_FIELD_POWER1(Power.mana);
+    assert(manaAfter <= manaBefore / 2 + manaBefore / 10, format!"the mage's mana %s after the detonation, %s before"(
+        manaAfter, manaBefore));
+
+    assert(kt.ai.castFor(s.map, Kelthuzad.shadowFissure, warrior, true) == ActionResult.ok, "no Shadow Fissure");
+    s.run(200.msecs);
+    auto fissures = s.all(npcShadowFissure);
+    assert(fissures.length == 1, format!"%s Shadow Fissures"(fissures.length));
+    const fissure = fissures[0].guid;
+    const wasInCombat = fissures[0].ai.inCombat;
+    s.runUntilSaved(); // a crash just after the checkpoint, before it erupts
+    assert(!s.castBy(npcShadowFissure, voidBlast), "the fissure erupted before the crash");
+    s.forget();
+    s.restartAfterCrash();
+    auto back = s.all(npcShadowFissure);
+    assert(back.length == 1 && back[0].guid == fissure, format!"%s Shadow Fissures after the crash, not the same"(
+        back.length));
+    s.stayWith = null;
+    assert(s.runUntil(() => s.castBy(npcShadowFissure, voidBlast), 7.seconds),
+        format!"the fissure did not erupt after the crash (in combat %s, alive %s, before the crash in combat %s)\n%s"(
+        back[0].ai.inCombat, back[0].alive, wasInCombat, s.seen()));
+}
+
+/**
  * Kel'Thuzad's guardian phase survives a worker's crash. Below 40%, two Guardians of Icecrown come, a priest shackles
  * one, and his Chains hold five raiders; the worker dies two seconds on. It comes back with the same Kel'Thuzad at his
  * health, the same two guardians (the shackled one still shackled) and the five raiders his again until the Chains'

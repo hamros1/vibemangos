@@ -1857,7 +1857,17 @@ mixin template ClassSpells()
     ActionResult hostCastCustom(EntityRef caster, uint spellId, EntityRef target, int[3] values, ubyte which)
     {
         if (caster.guid != player.guid)
-            return ActionResult.notAllowed;
+        {
+            // A creature's aura on this player whose tick its script runs here (Frost Blast): that creature casts.
+            import dmangos.world.eventai : castTriggered;
+
+            auto creature = caster.isCreature && map !is null ? map.creatureAt(caster.guid) : null;
+            if (creature is null || creature.ai is null || !creature.alive)
+                return ActionResult.notHere;
+            creature.ai.bind(map);
+            return creature.ai.castSpell(context.data.spells.spell(spellId), target.guid, castTriggered,
+                CustomValues(values, which)) ? ActionResult.ok : ActionResult.notAllowed;
+        }
         const result = castCustom(spellId, target.guid, CustomValues(values, which));
         return result == SpellCastResult.ok ? ActionResult.ok : result == SpellCastResult.unknown ? ActionResult.failed
             : ActionResult.notAllowed;

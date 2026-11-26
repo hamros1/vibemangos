@@ -241,7 +241,7 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
             }
         }
         else if (c.once(i)) // once for the effect, whatever its targets
-            ai.summonBySpell(spell, i, value);
+            ai.summonBySpell(spell, i, value, c.targets);
         break;
     case SpellEffect.persistentAreaAura: // SPELL_EFFECT_PERSISTENT_AREA_AURA: a spot that hurts who stands in it, made once a cast
         if (!c.once(i))
@@ -667,7 +667,7 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
             summonWildObject(caster, spell, i, c.targets);
         }
         else if (p is null)
-            ai.summonBySpell(spell, i, value);
+            ai.summonBySpell(spell, i, value, c.targets);
         else
             p.summonGuardianEffect(spell, i, value, c.targets, c.triggered, c.castItemEntry, effect == SpellEffect.summon);
         break;
