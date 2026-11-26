@@ -475,11 +475,14 @@ struct RuinsOfAhnQiraj
         }
     }
 
-    /// The next wave of the army charges; the last is Rajaxx himself.
+    /// The next wave of the army charges; the last is Rajaxx himself. Each is saved as it comes (a checkpoint): a
+    /// worker's crash after it does not send it again.
     private void sendWave(ref InstanceContext copy)
     {
         if (encounters[Aq20Encounter.rajaxx] != EncounterState.inProgress)
             return;
+        scope (exit)
+            copy.checkpoint();
         waveMembers[] = EntityRef.init;
         if (wave >= waveCaptains.length)
         {
