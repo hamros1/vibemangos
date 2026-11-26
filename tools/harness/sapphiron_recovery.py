@@ -86,23 +86,25 @@ def waterfall_state(log):
 
 
 class Raid:
-    """Three raid members in Sapphiron's lair, driven stage by stage."""
+    """Three raid members in Sapphiron's lair (or at `at` in Naxxramas, the leader `leader_appearance`'s race and
+    class), driven stage by stage."""
 
-    def __init__(self, fixture):
+    def __init__(self, fixture, at=None, leader_appearance=(1, 1)):
         self.fixture = fixture
         characters, names, leader, client, nodes, _ = start_cluster(fixture, new_party=False, raid=True,
-                                                                     extra_member=True)
+                                                                     extra_member=True,
+                                                                     leader_appearance=leader_appearance)
         self.characters, self.names, self.nodes = characters, names, nodes
         self.guids = [int(fixture.query(f"SELECT guid FROM characters WHERE name='{name}'", characters))
                       for name in names]
         # Attuned to Naxxramas (The Dread Citadel - Naxxramas, the entrance's quest).
         fixture.query("INSERT INTO character_queststatus (guid, quest, status, rewarded) VALUES "
                       + ",".join(f"({guid},{ATTUNEMENT},1,1)" for guid in self.guids), characters)
-        entrance = f"worldport:{MAP}:" + ":".join(map(str, LAIR))
+        entrance = f"worldport:{MAP}:" + ":".join(map(str, at or LAIR))
         first = [fixture.directory / f"stage-0-{member}" for member in range(3)]
         # A step into the lair springs the birth's trap.
-        actions = [(f"move:{LAIR[0] + 0.5}:{LAIR[1] - 1}:{LAIR[2]}", f"waitactions:{first[member]}")
-                   for member in range(3)]
+        step = () if at else (f"move:{LAIR[0] + 0.5}:{LAIR[1] - 1}:{LAIR[2]}",)
+        actions = [(*step, f"waitactions:{first[member]}") for member in range(3)]
         self.copy, self.logs, self.clients = open_party(fixture, characters, names, leader, client, nodes, False,
                                                         actions, map_id=MAP, entrance=entrance)
         self.next = first
