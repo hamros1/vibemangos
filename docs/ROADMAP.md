@@ -117,22 +117,22 @@ describes how players use the systems available today.
   army's third wave and Ossirian with his crystals placed. The [crash points](CLUSTER.md#the-
   ahnqiraj-raids-crash-points) list what the clients saw.
   Ouro's sand wakes as a living player comes within 50 yards (no player can strike it); the chaos
-  suite's case crashes just after his rise and again after his death. Viscidus has no case: the
-  scripted client cannot deal 200 frost hits and 150 blows. His globs lost with a worker rejoin him
-  rather than crawl back, so he rises at once with their health. A devoured royal comes back with
-  its cell and goes again at once: clients see it appear and vanish. An emperor or royal not yet
-  fighting when the checkpoint was written comes back out of combat and joins as the raid returns. A
-  wave captain who charged but was never struck comes back home, and his wave charges again, with
-  Rajaxx's yell. A captain whose cell no player's sight has loaded charges with nobody (crash or
-  not), and the next wave follows five seconds later. The crystal by Ossirian's entrance is not
-  kept: it is placed again as a player enters. Summons of the other bosses are lost in a crash
-  (Moam's mana fiends, Ayamiss's swarmers and larvae, Buru's hatchlings, Skeram's images,
-  Fankriss's spawn);
-  each fight goes on without them, and Moam turns back from stone at the end of his 90 s. A boss
-  crashed between his pull and the first blow comes back at home with his encounter in progress
-  (Kurinnaxx, Moam, Buru, Ayamiss, Skeram, Sartura, Fankriss, Huhuran, Viscidus); the next pull or
-  reset settles it, but Sartura's room no longer calls her until then.
-  See [dungeon failover](CLUSTER.md#dungeons-and-battlegrounds) for coverage across instances.
+  suite's case crashes just after his rise and again after his death. Viscidus's case has the leader
+  freeze and shatter him with frostbolts in bursts, crashes with two globs slain, and again after
+  his death. His globs lost with a worker rejoin him rather than crawl back, so he rises at once
+  with their health. A devoured royal comes back with its cell and goes again at once: clients see
+  it appear and vanish. An emperor or royal not yet fighting when the checkpoint was written comes
+  back out of combat and joins as the raid returns. A wave captain who charged but was never struck
+  comes back home, and his wave charges again, with Rajaxx's yell. A captain whose cell no player's
+  sight has loaded charges with nobody (crash or not), and the next wave follows five seconds later.
+  The crystal by Ossirian's entrance is not kept: it is placed again as a player enters. Summons of
+  the other bosses are lost in a crash (Moam's mana fiends, Ayamiss's swarmers and larvae, Buru's
+  hatchlings, Skeram's images, Fankriss's spawn); each fight goes on without them, and Moam turns
+  back from stone at the end of his 90 s. A boss crashed between his pull and the first blow comes
+  back at home with his encounter in progress (Kurinnaxx, Moam, Buru, Ayamiss, Skeram, Sartura,
+  Fankriss, Huhuran, Viscidus); the next pull or reset settles it, but Sartura's room no longer
+  calls her until then. See [dungeon failover](CLUSTER.md#dungeons-and-battlegrounds) for coverage
+  across instances.
 * **GM commands.** The [command reference](COMMANDS.md#edit-a-route-or-trainer) documents native
   waypoint and trainer editing, NPC formations, battleground pause and quest catalog reload.
   The remaining unavailable entries require client support for later game features.

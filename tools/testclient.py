@@ -46,6 +46,8 @@ in order:
     wait:SECONDS              do nothing for a while (packets queue up)
     listen:SECONDS            print what other players do for a while
     cmd:TEXT                  say a chat command (".recall port Goldshire") and print what follows
+    cmdburst:COUNT:MS:TEXT    say a chat command COUNT times, MS milliseconds apart (".debug castspell 116" at a
+                              boss that counts its frost hits), then listen a moment
     trigger:ID                walk into an area trigger (78 = the Deadmines entrance)
     worldport:MAP:X:Y:Z[:O]   the client's worldport command (administrators)
     invite:NAME  accept  decline  leave  raid
@@ -1279,6 +1281,13 @@ while step < len(actions):
     elif kind == "cmd":
         wsend(0x095, struct.pack("<II", 0, 7) + ":".join(args).encode() + b"\0"); print(f"command '{':'.join(args)}'")
         listen_for(1.5)
+    elif kind == "cmdburst":
+        count, gap, text = int(args[0]), int(args[1]) / 1000, ":".join(args[2:])
+        print(f"command '{text}' x{count}")
+        for _ in range(count):
+            wsend(0x095, struct.pack("<II", 0, 7) + text.encode() + b"\0")
+            listen_for(gap)
+        listen_for(1)
     elif kind == "trigger":
         wsend(0x0B4, struct.pack("<I", int(args[0]))); print(f"area trigger {args[0]}"); listen_for(1.5)
     elif kind == "cancelaura":

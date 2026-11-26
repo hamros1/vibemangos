@@ -21,6 +21,10 @@ Three scripted raid members (GMs, on a gateway) stand by the bosses.
                    same emperors come back fighting, with the door shut and no snapshot of a hurt creature of them.
                    Slain, both die and the doors in and out open.
 
+    --phase viscidus  the leader, casting instantly, puts frostbolts into Viscidus until he freezes and strikes him
+                   frozen until he shatters into globs; two globs are slain, and the worker dies. All three
+                   original sockets come back to the same copy with the same Viscidus, who rises (the lost globs
+                   rejoin him) and fights. Slain, he stays dead through another crash.
     --phase ouro   the raid comes near Ouro's sand, which wakes him, and the worker dies just after the checkpoint of
                    his rise. All three original sockets come back to the same copy with the same Ouro, fighting. He
                    is slain; the worker that took over dies just after the checkpoint of his death, and neither he
@@ -43,6 +47,7 @@ KRI, YAUJ, VEM = 15511, 15543, 15544
 VEKLOR, VEKNILASH, HUHURAN = 15276, 15275, 15509
 DOOR_IN, DOOR_OUT, BY_THE_DOOR_IN = 180634, 180635, (-8922.0, 1352.0, -104.2)
 OURO, OURO_SAND = 15517, 15957
+VISCIDUS, GLOB, FROSTBOLT = 15299, 15667, 116
 
 RUINS = 509
 KURINNAXX, ANDOROV, KALDOREI, RAJAXX = 15348, 15471, 15473, 15341
@@ -278,6 +283,57 @@ def ouro(fixture):
           f"nor his sand came back")
 
 
+def copy_host(raid):
+    """The live worker that holds the copy's map now: the one that made it or took the map over last (Viscidus's fight
+    keeps no encounter checkpoint to tell)."""
+    lines = (f"instance {raid.copy} of map {raid.map} made", f"dungeon map {raid.map} is hosted here now")
+    latest = {}
+    for tag, process in raid.nodes.items():
+        if process.poll() is None:
+            stamps = [l[:19] for l in raid.fixture.log(tag).splitlines() if any(x in l for x in lines)]
+            if stamps:
+                latest[tag] = stamps[-1]
+    return max(latest, key=latest.get)
+
+
+def viscidus(fixture):
+    spawn, at = spawn_of(fixture, VISCIDUS)
+    raid = Raid(fixture, TEMPLE, beside(at, 8))
+    wait_for("Viscidus in sight", lambda: seen(raid.logs()[:1], VISCIDUS) == {spawn}, 15)
+    burst = f"cmdburst:{{}}:40:.debug castspell {FROSTBOLT}"
+    # The leader faces him (attacking him) and casts instantly, without cooldowns or mana.
+    raid.stage([["cmd:.cheat casttime on", "cmd:.cheat cooldown on", "cmd:.cheat power on", f"attack:{VISCIDUS}",
+                 f"targetnpc:{VISCIDUS}", burst.format(260)], [f"attack:{VISCIDUS}"], [f"attack:{VISCIDUS}"]])
+    # Frozen (his frost count reached), then struck frozen: he shatters into globs.
+    raid.stage([[f"targetnpc:{VISCIDUS}", burst.format(200)], [], []])
+    globs = wait_for("his globs", lambda: (lambda found: found if len(found) >= 5 else None)(
+        seen(raid.logs(), GLOB, True)), 90)
+    raid.stage([[f"killpack:one:{GLOB}", f"killpack:one:{GLOB}"], [], []])
+    wait_for("two globs slain", lambda: len(globs - seen(raid.logs(), GLOB, True)) >= 2 or None, 15)
+    time.sleep(3)  # the fight's snapshots and the copy's save written (his fight keeps no encounter checkpoint)
+    host = copy_host(raid)
+    since = raid.crash(host, lambda part: f"[creature] {VISCIDUS} guid {spawn}:" in part)
+
+    def fighting(log):
+        return re.search(rf"\[(swing|attack start)\] {spawn} -> |\[spell (go|start)\] \d+ by {spawn}\b", log)
+    wait_for("Viscidus risen and fighting after the crash", lambda: any(fighting(log) for log in since()), 40)
+    assert seen(since(), VISCIDUS, True) == {spawn}, f"Viscidus after the crash: {seen(since(), VISCIDUS, False)}"
+    raid.restart(host)  # three voters again: the next crash leaves a majority
+    first = host
+    raid.stage([[f"killpack:{VISCIDUS}"], [], []])
+    wait_for("Viscidus slain", lambda: any(slain(log, VISCIDUS, spawn) for log in since()), 15)
+    time.sleep(3)  # his death written
+    host = copy_host(raid)
+    after = raid.crash(host)
+    time.sleep(4)
+    assert not seen(after(), VISCIDUS, True), "Viscidus alive after his death"
+    raid.same_copy()
+    raid.finish()
+    print(f"PASS: killed {first} with Viscidus shattered into {len(globs)} globs, two slain; the original clients came "
+          f"back to raid copy {raid.copy} with the same Viscidus {spawn}, who rose and fought; killed {host} after his "
+          f"death and he stayed dead")
+
+
 def said(logs, text):
     """Whether a creature's line beginning with `text` reached one of `logs`."""
     return any(f": '{text}" in log for log in logs)
@@ -389,7 +445,7 @@ def distance(a, b):
     return sum((x - y) ** 2 for x, y in zip(a, b)) ** 0.5
 
 
-PHASES = {"trio": trio, "twins": twins, "ouro": ouro, "army": army}
+PHASES = {"trio": trio, "twins": twins, "ouro": ouro, "viscidus": viscidus, "army": army}
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)

@@ -91,11 +91,12 @@ class Raid:
     """Three raid members in Sapphiron's lair (or at `at` in Naxxramas, or in the raid `map_id`, attuned by the quest
     `attunement`; the leader `leader_appearance`'s race and class), driven stage by stage."""
 
-    def __init__(self, fixture, at=None, leader_appearance=(1, 1), map_id=MAP, attunement=ATTUNEMENT):
+    def __init__(self, fixture, at=None, leader_appearance=(1, 1), map_id=MAP, attunement=ATTUNEMENT, size=3):
         self.fixture = fixture
         self.map = map_id
+        self.size = size
         characters, names, leader, client, nodes, _ = start_cluster(fixture, new_party=False, raid=True,
-                                                                     extra_member=True,
+                                                                     members=size,
                                                                      leader_appearance=leader_appearance)
         self.characters, self.names, self.nodes = characters, names, nodes
         self.guids = [int(fixture.query(f"SELECT guid FROM characters WHERE name='{name}'", characters))
@@ -104,10 +105,10 @@ class Raid:
         fixture.query("INSERT INTO character_queststatus (guid, quest, status, rewarded) VALUES "
                       + ",".join(f"({guid},{attunement},1,1)" for guid in self.guids), characters)
         entrance = f"worldport:{map_id}:" + ":".join(map(str, at or LAIR))
-        first = [fixture.directory / f"stage-0-{member}" for member in range(3)]
+        first = [fixture.directory / f"stage-0-{member}" for member in range(size)]
         # A step into the lair springs the birth's trap.
         step = () if at else (f"move:{LAIR[0] + 0.5}:{LAIR[1] - 1}:{LAIR[2]}",)
-        actions = [(*step, f"waitactions:{first[member]}") for member in range(3)]
+        actions = [(*step, f"waitactions:{first[member]}") for member in range(size)]
         self.copy, self.logs, self.clients = open_party(fixture, characters, names, leader, client, nodes, False,
                                                         actions, map_id=map_id, entrance=entrance)
         self.next = first
@@ -116,7 +117,8 @@ class Raid:
     def stage(self, actions):
         """Each member's next actions (a list per member), written at once; each waits for its next stage after."""
         self.number += 1
-        for member in range(3):
+        actions = list(actions) + [[] for _ in range(self.size - len(actions))]  # the others: nothing new
+        for member in range(self.size):
             path = self.next[member]
             following = self.fixture.directory / f"stage-{self.number}-{member}"
             path.write_text("\n".join([*actions[member], f"waitactions:{following}"]) + "\n")
@@ -140,7 +142,7 @@ class Raid:
         assert fixture.query(f"SELECT id FROM instance WHERE map={self.map}", characters) == str(self.copy), \
             "a second raid copy"
         assert fixture.query(f"SELECT COUNT(*) FROM character_instance WHERE instance={self.copy}",
-                             characters) == "3"
+                             characters) == str(self.size)
 
     def sapphiron(self, seconds):
         """Sapphiron's spawn guid, once one client sees him."""

@@ -23,8 +23,12 @@ BEASTS = {8925: 4, 8926: 2, 8927: 5, 8928: 3, 8933: 3, 8932: 7}
 CHAMPIONS = set(range(9027, 9033))
 
 
+MEMBER_NAMES = ("Ringkeeper", "Ringwatcher", "Ringhelper", "Ringguard", "Ringwarden", "Ringbearer")
+
+
 def start_cluster(fixture, new_party, *, world=None, leader_appearance=(1, 1), extra_member=False, cluster=None,
-                  raid=False):
+                  raid=False, members=None):
+    """`members`: how many characters (two by default, three with `extra_member`, at most six)."""
     login = fixture.fresh_schema("login", "classicrealmd.sql")
     characters = fixture.fresh_schema("chars", "classiccharacters.sql")
     ports = available_ports(9)
@@ -35,11 +39,9 @@ def start_cluster(fixture, new_party, *, world=None, leader_appearance=(1, 1), e
     seed = fixture.start_world("seed", dict(base, port=ports[0], write_log="seed.writes"))
     wait_for("the seed world", lambda: "listening on" in fixture.log("seed"), 30)
 
-    accounts = ("RINGKEEPER", "RINGWATCHER")
-    names = ("Ringkeeper", "Ringwatcher")
-    if extra_member:
-        accounts += ("RINGHELPER",)
-        names += ("Ringhelper",)
+    count = members or (3 if extra_member else 2)
+    names = MEMBER_NAMES[:count]
+    accounts = tuple(name.upper() for name in names)
     password = "TESTRINGRECOVERY"
     auth = fixture.directory / "auth.json"
     auth.write_text(json.dumps(dict(login_database=login, mysql_library=fixture.base["mysql_library"],

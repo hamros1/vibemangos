@@ -13,6 +13,10 @@ his fight: he channels, untouchable, while his minions come from the alcoves.
     --phase guardians  the worker dies in his last phase, two Guardians of Icecrown come and one shackled by the
                        leader (a priest). He comes back at his health with the same two guardians, the shackled one
                        still shackled; the other three come on their timer, five in all. Slain, he opens his chamber.
+    --phase chains     six members (Chains needs six raiders in his threat list): in his last phase all six strike
+                       him, he casts Chains of Kel'Thuzad (made to by the leader) and five are his; the worker dies
+                       just after his next checkpoint. All six original sockets come back to the same copy, and the
+                       same five are his again until the Chains' twenty seconds are up, then free.
 """
 
 import argparse
@@ -31,6 +35,8 @@ TRIGGER, TRIGGER_AT = 4112, (3716.38, -5106.78, 141.29)
 CHAMBER_DOOR = 181228
 UNTOUCHABLE = 0x0200_0000
 SHACKLE, SMITE = 10955, 585
+CHAINS, CHAINED = 28408, 28410  # Chains of Kel'Thuzad; its control aura on each raider it takes
+CHAINS_LAST = 20
 PHASE_TWO_SPELLS = (28478, 28479, 27819, 27810, 27808)
 # His waves: soldiers from 5 s every 3 s, abominations from 30 s every 25 s, soul weavers from 40 s every 30 s; he
 # fights at 5:25. Guardians every 10 s from 5 s after he calls for aid, five in all.
@@ -78,7 +84,7 @@ def newcomer(raid, entry, known, since=None):
 def begin(raid):
     """The leader steps on the trigger; Kel'Thuzad's spawn guid and when his fight began (by his first soldier)."""
     kt = wait_for("Kel'Thuzad", lambda: next(iter(seen(raid.logs(), KELTHUZAD, True)), None), 10)
-    raid.stage([[f"trigger:{TRIGGER}"], [], []])
+    raid.stage([[f"trigger:{TRIGGER}"]])
     wait_for("his first soldier", lambda: seen(raid.logs(), SOLDIER) or None, SOLDIERS_AT + 5)
     return kt, time.monotonic() - SOLDIERS_AT
 
@@ -163,6 +169,54 @@ def waves(fixture):
           f"his fight again (its first soldier {again - pulled:.1f} s after the trigger)")
 
 
+def to_last_phase(raid, kt, started):
+    """His minions slain as they come (the members kept busy within their wait), till he fights; when he did."""
+    while not any(re.search(rf"\[spell (?:start|go)\] (?:{'|'.join(map(str, PHASE_TWO_SPELLS))}) by {kt}\b", log)
+                  for log in raid.logs()):
+        assert time.monotonic() - started < PHASE_TWO_AT + 40, "Kel'Thuzad never fought"
+        alive = [entry for entry in MINIONS if seen(raid.logs(), entry, True)]
+        # Each member says something every round: a client silent past the idle timeout is dropped.
+        raid.stage([[f"killpack:{':'.join(map(str, alive))}"] if alive else ["cmd:.cheat status"]]
+                   + [["cmd:.cheat status"] for _ in range(raid.size - 1)])
+        time.sleep(20)
+    return time.monotonic()
+
+
+def chained(logs):
+    """The players the clients saw take, and still hold, his Chains' control aura."""
+    held = set()
+    for log in logs:
+        for guid, what in re.findall(rf"\[player aura\] (\d+) (received|ended) {CHAINED}\b", log):
+            (held.add if what == "received" else held.discard)(int(guid))
+    return held
+
+
+def chains(fixture):
+    raid = Raid(fixture, at=TRIGGER_AT, leader_appearance=(1, 5), size=6)
+    kt, started = begin(raid)
+    to_last_phase(raid, kt, started)
+    # All six in his threat list, then his Chains (the leader makes him cast it: its own timer is a minute on).
+    raid.stage([[f"attack:{KELTHUZAD}"] for _ in range(raid.size)])
+    time.sleep(3)
+    raid.stage([[f"targetnpc:{KELTHUZAD}", f"cmd:.debug castself {CHAINS}"]])
+    held = wait_for("five raiders in his Chains", lambda: (lambda h: h if len(h) >= 5 else None)(
+        chained(raid.logs())), 10)
+    chained_at = time.monotonic()
+    host = raid.next_checkpoint(raid.checkpoints(), "a checkpoint with the raid in his Chains", 8)
+    _, back, after = raid.crash(host, lambda part: f"[creature] {KELTHUZAD} guid {kt}:" in part)
+    raid.stage([["cmd:.cheat god on"] for _ in range(raid.size)])
+    left = CHAINS_LAST - (time.monotonic() - chained_at)
+    if left > 3:
+        again = wait_for("the same five his again after the crash", lambda: (lambda h: h if h == held else None)(
+            chained(after())), min(left - 1, 10))
+        assert again == held
+    wait_for("the Chains' twenty seconds up", lambda: not chained(after()) or None, max(left, 0) + 15)
+    raid.same_copy()
+    raid.finish()
+    print(f"PASS: killed {host} with five of the six raiders in Kel'Thuzad's Chains; the original clients came back "
+          f"to raid copy {raid.copy}, the same five his again until the Chains' {CHAINS_LAST} s were up, then free")
+
+
 def guardians(fixture):
     raid = Raid(fixture, at=TRIGGER_AT, leader_appearance=(1, 5))  # a human priest leads
     kt, started = begin(raid)
@@ -239,7 +293,7 @@ def guardians(fixture):
           f"his chamber")
 
 
-PHASES = {"waves": waves, "guardians": guardians}
+PHASES = {"chains": chains, "waves": waves, "guardians": guardians}
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
