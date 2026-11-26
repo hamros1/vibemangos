@@ -3572,3 +3572,27 @@ unittest
     assert(s.runUntil(() => s.find(npcArlokk) !is null, 15.seconds), "the gong calls no Arlokk after the crash");
 }
 
+/**
+ * Mandokir, his keepers slain, comes down from his perch; the worker dies before he is down. Back on his perch,
+ * untouchable, he comes down again and fights the raid.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.script.api : EncounterState;
+    import dmangos.scripts.zulgurub;
+
+    auto s = new Scene(309, Position(-12190, -1948, 130.3f), [classWarrior, classMage], cluster: true);
+    s.run(1.seconds);
+    auto mandokir = s.the(npcMandokir);
+    const perch = mandokir.position;
+    s.signalCopy(ZgEncounter.ohgan, EncounterState.special);
+    s.run(400.msecs);
+    assert(!mandokir.ai.inCombat && Scene.distance(mandokir.position, perch) < 30, "Mandokir already down");
+    s.restartAfterCrash();
+    mandokir = s.the(npcMandokir);
+    assert(!mandokir.ai.inCombat && s.ask(ZgEncounter.ohgan) == EncounterState.special);
+    assert(s.runUntil(() => mandokir.ai.inCombat, 60.seconds), "Mandokir stays on his perch after the crash");
+    assert(s.ask(ZgEncounter.ohgan) == EncounterState.inProgress);
+}

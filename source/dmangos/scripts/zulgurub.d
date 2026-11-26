@@ -85,7 +85,8 @@ private enum retry = 400.msecs;
 /**
  * What the copy remembers: its encounters (saved in `instance.data`). While Arlokk's fight is under way she and her
  * prowlers, summons, are kept in the copy's checkpoint (`setArlokk`): a worker's crash resumes her fight, and one saved
- * without her fails, so that her forcefield opens and the gong calls her again.
+ * without her fails, so that her forcefield opens and the gong calls her again. Mandokir, his keepers slain, comes
+ * down from his perch again as he comes back into the world there.
  */
 @instance("instance_zulgurub")
 struct ZulGurub
@@ -124,6 +125,7 @@ struct ZulGurub
             break;
         case npcMandokir:
             mandokir = e.creature;
+            mandokirBack(copy);
             break;
         case npcArlokk:
             arlokk = e.creature;
@@ -158,6 +160,19 @@ struct ZulGurub
             forcefield = e.object;
             copy.door(e.object, encounters[ZgEncounter.arlokk] != EncounterState.inProgress);
         }
+    }
+
+    /**
+     * Mandokir came into the world. His keepers slain (the Vilebranch Speaker's death says so) and he not yet slain,
+     * one back on his perch, untouchable (after a crash, or the copy reloaded), comes down again: nothing else would
+     * bring him to the raid.
+     */
+    private void mandokirBack(ref InstanceContext copy)
+    {
+        const state = encounters[ZgEncounter.ohgan];
+        if (state != EncounterState.notStarted && state != EncounterState.done
+            && (copy.unitFlagsOf(mandokir) & UnitFlag.immuneToPlayer) && !copy.alive(copy.victimOf(mandokir)))
+            copy.signal(mandokir, ZgSignal.comeDown);
     }
 
     /// The panther triggers by Arlokk's altar, left and right of it.
