@@ -4,7 +4,7 @@ module dmangos.world.spellselection;
 import std.algorithm.comparison : max;
 import std.algorithm.searching : canFind;
 import dmangos.world.clientdata : ClientData;
-import dmangos.world.creatureai : CombatWorld;
+import dmangos.world.map : Map;
 import dmangos.world.gameobject : GameObjectAction;
 import dmangos.world.map : Map, MapObject;
 import dmangos.world.movement : Position;
@@ -195,7 +195,7 @@ package uint namedCreatureEntry(UnitRef candidate)
 }
 
 /// Select across the caster's owned and observed creatures, sharing any target limit between them.
-package UnitRef[] namedCreaturesInArea(CombatWorld world, Position center, float reach, const(uint)[] entries,
+package UnitRef[] namedCreaturesInArea(Map world, Position center, float reach, const(uint)[] entries,
     bool acrossNodes, uint maxTargets, ImplicitTarget shape, int cone, scope bool delegate(ulong) visible = null)
 {
     import std.algorithm.sorting : sort;
@@ -218,7 +218,7 @@ package UnitRef[] namedCreaturesInArea(CombatWorld world, Position center, float
 }
 
 /// Compare owned and observed creatures by distance, with a stable tie break.
-package UnitRef nearestNamedCreature(CombatWorld world, Position center, float reach, const(uint)[] entries,
+package UnitRef nearestNamedCreature(Map world, Position center, float reach, const(uint)[] entries,
     ulong caster, bool acrossNodes, scope bool delegate(ulong) visible = null)
 {
     UnitRef nearest;
@@ -239,7 +239,7 @@ private float distanceSquared(Position a, Position b)
     return (a.x - b.x) ^^ 2 + (a.y - b.y) ^^ 2 + (a.z - b.z) ^^ 2;
 }
 
-private void visitNamedCreatures(CombatWorld world, Position center, float reach, const(uint)[] entries, ulong exclude,
+private void visitNamedCreatures(Map world, Position center, float reach, const(uint)[] entries, ulong exclude,
     bool acrossNodes, scope void delegate(UnitRef, float) visit)
 {
     import std.math : isFinite;
@@ -260,7 +260,7 @@ private void visitNamedCreatures(CombatWorld world, Position center, float reach
     foreach (creature; world.creaturesNear(center, reach))
         consider(world.unitOf(creature), creature.spawn.entry);
     if (acrossNodes)
-        if (auto map = cast(Map) world)
+        if (auto map = world)
             foreach (object; map.objectsNear(center, reach))
                 if (auto copy = cast(Replica) object)
                     if (copy.fields.type == TypeId.unit)

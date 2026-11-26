@@ -79,6 +79,7 @@ package uint creatureWeaponSpellDamage(SpellEffect effect, uint damage, int valu
 /// See the module documentation.
 mixin template CreatureCasting()
 {
+    import dmangos.world.map : Map;
     import dmangos.world.spellids;
     import std.math : PI, sqrt;
     import std.random : uniform, uniform01;
@@ -104,7 +105,7 @@ mixin template CreatureCasting()
 
     private
     {
-        CombatWorld world_;            // the map, while the AI acts
+        Map world_;            // the map, while the AI acts
         EventAI script;                // its `creature_ai_scripts`; null if it has none
         WorldContext lore;
         const(SpellInfo)* casting_;    // the spell being cast
@@ -167,10 +168,9 @@ mixin template CreatureCasting()
 
     package void detachGroundHandoff()
     {
-        import dmangos.world.map : Map;
         import dmangos.world.spellareas : detachGroundAreas;
 
-        if (auto map_ = cast(Map) world_)
+        if (auto map_ = world_)
             detachGroundAreas(map_, persistentAreas_);
     }
 
@@ -208,7 +208,7 @@ mixin template CreatureCasting()
     }
 
     /// A player's spell hit it (its script hears of it).
-    void spellHitBy(ulong caster, uint spell, uint schoolMask, CombatWorld world)
+    void spellHitBy(ulong caster, uint spell, uint schoolMask, Map world)
     {
         world_ = world;
         raiseScript(SpellHit(EntityRef(caster), spell, schoolMask));
@@ -217,7 +217,7 @@ mixin template CreatureCasting()
         script.spellHit(this, caster, spell, schoolMask);
     }
 
-    package void healedBy(uint spell, CombatWorld world)
+    package void healedBy(uint spell, Map world)
     {
         import dmangos.script.api : CreatureHealed;
 
@@ -229,7 +229,7 @@ mixin template CreatureCasting()
     }
 
     /// Its aura of `spell` from `caster` went (`Creature.loseAura`): its script hears of it.
-    void auraLost(ulong caster, uint spell, CombatWorld world)
+    void auraLost(ulong caster, uint spell, Map world)
     {
         world_ = world;
         // A charm's aura went: the charmer lets it go (`Unit::Uncharm`).
@@ -247,7 +247,7 @@ mixin template CreatureCasting()
     }
 
     /// A player's text emote at it.
-    void receivedEmote(ulong player, uint textEmote, CombatWorld world)
+    void receivedEmote(ulong player, uint textEmote, Map world)
     {
         import dmangos.script.api : EmoteReceived;
 
@@ -262,7 +262,7 @@ mixin template CreatureCasting()
     }
 
     /// `.castself` on a creature: it casts `spell` at itself.
-    void castFromCommand(const(SpellInfo)* spell, CombatWorld world)
+    void castFromCommand(const(SpellInfo)* spell, Map world)
     {
         world_ = world;
         castSpell(spell, me.guid, 0);
@@ -382,7 +382,6 @@ mixin template CreatureCasting()
     {
         import dmangos.cluster.protocol : AreaDamage;
         import dmangos.world.context : WorldContext;
-        import dmangos.world.map : Map;
         import dmangos.world.spellcast : spellFailurePacket, SpellCastResult;
 
         auto spell = channelSpell;
@@ -398,7 +397,7 @@ mixin template CreatureCasting()
         me.values.set!UNIT_FIELD_CHANNEL_OBJECT(0UL);
         if (world_ is null)
             return;
-        if (auto map_ = cast(Map) world_)
+        if (auto map_ = world_)
             map_.trackCreatureCombat(me, inCombat);
         if (cancelled)
         {
@@ -417,7 +416,7 @@ mixin template CreatureCasting()
                         world_.flushCreature(target);
                     }
             }
-            else if (auto map_ = cast(Map) world_)
+            else if (auto map_ = world_)
                 if (const peer = currentChannelPeer(map_, guid))
                     if (auto context = lore)
                         context.sendReplicaSpell(map_, peer, spell,
@@ -430,7 +429,7 @@ mixin template CreatureCasting()
         world_.flushCreature(me);
         if (!cancelled && channelToken)
             if (auto context = lore)
-                if (auto map = cast(Map) world_)
+                if (auto map = world_)
                     context.completeNamedChannel(map, map.unitOf(me), guid, spell, channelToken);
     }
 
@@ -442,7 +441,6 @@ mixin template CreatureCasting()
 
     private void updateCreatureChannel(int diff)
     {
-        import dmangos.world.map : Map;
         import dmangos.world.spelldamage : permanentNamedCreatureVisual;
 
         const spell = channelSpell;
@@ -474,7 +472,7 @@ mixin template CreatureCasting()
         {
             const ushort peer = target.replica is null ? 0 : target.replica.owner;
             if (peer && peer != namedChannelPeer)
-                if (auto map = cast(Map) world_)
+                if (auto map = world_)
                     map.holdCasterReplica(me.guid, peer, cast(uint) channelTimer + 5000, true);
             namedChannelPeer = peer;
         }
@@ -580,7 +578,7 @@ mixin template CreatureCasting()
      * channelling visual would hold it busy for good), as CMaNGOS's `LoadCreatureAddon` adds them. One it has already
      * (brought by a handoff) is left.
      */
-    package void castAddonAuras(CombatWorld world, const(uint)[] ids)
+    package void castAddonAuras(Map world, const(uint)[] ids)
     {
         import dmangos.world.spellauras : applyAura;
         import dmangos.world.spellids : SpellEffect;
@@ -638,7 +636,6 @@ mixin template CreatureCasting()
         // caster is the target), triggered: a Death Talon Captain's Mark of Detonation on a player marks the player.
         if ((flags & castForceTargetSelf) && target && target != me.guid)
         {
-            import dmangos.world.map : Map;
             import dmangos.world.unit : UnitKind;
 
             auto other = world_.unit(target);
@@ -652,7 +649,7 @@ mixin template CreatureCasting()
                 return true;
             }
             auto creature = world_.creatureAt(target);
-            auto map = cast(Map) world_;
+            auto map = world_;
             if (creature is null || creature.ai is null || map is null)
                 return refuse(SpellCastResult.badTargets);
             return creature.ai.castFor(map, spell.id, target, true) == ActionResult.ok
@@ -931,12 +928,11 @@ mixin template CreatureCasting()
     private UnitRef spellTarget(ulong guid)
     {
         import dmangos.world.context : WorldContext;
-        import dmangos.world.map : Map;
         import dmangos.world.replication : Replica;
 
         if (auto visible = combatTarget(world_, guid))
             return visible;
-        if (auto map = cast(Map) world_)
+        if (auto map = world_)
             if (auto context = lore)
                 if (context.sendAreaDamage !is null)
                     if (auto copy = cast(Replica) map.findObject(guid))
@@ -1079,7 +1075,6 @@ mixin template CreatureCasting()
     {
         import dmangos.script.api : CreatureCastFinished;
         import dmangos.world.context : WorldContext;
-        import dmangos.world.map : Map;
         import dmangos.world.spellcast : spellFailurePacket, SpellCastResult;
         import dmangos.world.spelldamage : creatureTargetInRange, databaseSpellEffect, namedCreatureShape;
         import dmangos.world.spellselection : namedCreatureCenter, namedCreatureCone, namedCreatureRadius,
@@ -1179,7 +1174,7 @@ mixin template CreatureCasting()
         UnitRef[] named;
         if (namedArea)
         {
-            auto map = cast(Map) world_;
+            auto map = world_;
             const database = context is null ? null : spell.id in context.data.spellTargets;
             hasNamedCenter = namedCreatureCenter(*spell, namedEffect, lore.clientData, map is null ? me.spawn.map : map.id,
                 me.position, database, null, namedCenter);
@@ -1215,7 +1210,7 @@ mixin template CreatureCasting()
                 }
                 else if (objectShape != ImplicitTarget.none)
                 {
-                    if (auto map = cast(Map) world_)
+                    if (auto map = world_)
                     {
                         Position center;
                         reached[i] = context.namedGameObjectTargets(map, spell, i, objectShape, objectOrigin, center);
@@ -1419,14 +1414,13 @@ mixin template CreatureCasting()
     private bool sendCreatureAreaEffects(const(SpellInfo)* spell, ulong target, bool triggered, bool auraAbsent)
     {
         import dmangos.world.context : WorldContext;
-        import dmangos.world.map : Map;
         import dmangos.world.replication : Replica;
         import dmangos.world.spelldamage : creatureAreaShape;
         import dmangos.world.spellselection : excludedAreaTarget;
         import dmangos.world.unit : combatRelations;
 
         auto context = lore;
-        auto map = cast(Map) world_;
+        auto map = world_;
         if (context is null || map is null || context.sendAreaDamage is null)
             return false;
         bool sent;
@@ -1457,17 +1451,16 @@ mixin template CreatureCasting()
         }
         return sent;
     }
-    /// It as a spell's caster (`dmangos.world.caster`): its map is the world's only `CombatWorld`, its lore the
+    /// It as a spell's caster (`dmangos.world.caster`): its map is the world's only `Map`, its lore the
     /// `WorldContext`.
-    package imported!"dmangos.world.caster".Caster spellCaster(CombatWorld world = null)
+    package imported!"dmangos.world.caster".Caster spellCaster(Map world = null)
     {
         import dmangos.world.caster : Caster;
         import dmangos.world.context : WorldContext;
-        import dmangos.world.map : Map;
 
         if (world !is null)
             world_ = world;
-        return Caster.of(me, cast(Map) world_, lore);
+        return Caster.of(me, world_, lore);
     }
 
     /**
@@ -1731,7 +1724,6 @@ mixin template CreatureCasting()
     {
         import std.algorithm.sorting : sort;
         import dmangos.world.combat : creatureSwingInReach;
-        import dmangos.world.map : Map;
         import dmangos.world.replication : Replica;
         import dmangos.world.spelldamage : spellJumpRadius;
         import dmangos.world.unit : UnitKind, combatRelations;
@@ -1757,7 +1749,7 @@ mixin template CreatureCasting()
             if (creature.ai !is null)
                 consider(world_.unitOf(creature));
         if (includeReplicas)
-            if (auto map = cast(Map) world_)
+            if (auto map = world_)
                 foreach (object; map.objectsNear(center, spellJumpRadius))
                     if (auto replica = cast(Replica) object)
                         if (replica.fields.type == TypeId.player
@@ -1960,7 +1952,6 @@ mixin template CreatureCasting()
     {
         import dmangos.world.context : WorldContext;
         import dmangos.world.defines : UnitFlags;
-        import dmangos.world.map : Map;
         import dmangos.world.replication : Replica;
 
         auto context = lore;
@@ -2012,7 +2003,7 @@ mixin template CreatureCasting()
             consider(world_.unitOf(other), other.values);
         }
         if (count && context.sendAreaDamage !is null)
-            if (auto map = cast(Map) world_)
+            if (auto map = world_)
                 foreach (object; map.objectsNear(me.position, radius))
                     if (auto copy = cast(Replica) object)
                         if (copy.fields.type == TypeId.unit && (copy.fields.get!UNIT_FIELD_FLAGS & UnitFlags.inCombat))
@@ -2288,7 +2279,7 @@ mixin template CreatureCasting()
     }
 
     /// Another creature's AI event, for its script.
-    void aiEventFrom(uint type, Creature sender, ulong invoker, CombatWorld world)
+    void aiEventFrom(uint type, Creature sender, ulong invoker, Map world)
     {
         if (script is null)
             return;

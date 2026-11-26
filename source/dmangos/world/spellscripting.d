@@ -6,11 +6,11 @@
 module dmangos.world.spellscripting;
 
 import dmangos.script.api : ActionResult, CreatureHost, EntityRef;
-import dmangos.world.creatureai : CombatWorld;
+import dmangos.world.map : Map;
 import dmangos.world.updatefields;
 
 /// The creature `who` here as a script's host, acting on `world`; null if it is not here.
-CreatureHost creatureHost(CombatWorld world, EntityRef who)
+CreatureHost creatureHost(Map world, EntityRef who)
 {
     if (world is null || !who.isCreature)
         return null;
@@ -19,7 +19,7 @@ CreatureHost creatureHost(CombatWorld world, EntityRef who)
 }
 
 /// `SMSG_PLAY_SPELL_VISUAL`: visual kit `kit` on `who`, for all who see it and a player itself.
-ActionResult playVisual(CombatWorld world, EntityRef who, uint kit)
+ActionResult playVisual(Map world, EntityRef who, uint kit)
 {
     import dmangos.bytes : ByteWriter;
     import dmangos.world.opcodes : Opcode;
@@ -40,7 +40,7 @@ ActionResult playVisual(CombatWorld world, EntityRef who, uint kit)
 
 /// The living creatures within `range` yards of `of` hostile to it, critters not (CMaNGOS's
 /// `AnyUnfriendlyUnitInObjectRangeCheck` and `IsEnemy`), as many as `into` holds.
-size_t enemiesNear(CombatWorld world, EntityRef of, float range, EntityRef[] into)
+size_t enemiesNear(Map world, EntityRef of, float range, EntityRef[] into)
 {
     import dmangos.world.relations : isEnemy;
     import dmangos.world.unit : UnitKind;
@@ -66,7 +66,7 @@ size_t enemiesNear(CombatWorld world, EntityRef of, float range, EntityRef[] int
 }
 
 /// Whether a unit here is fighting (`UNIT_FLAG_IN_COMBAT`).
-bool inCombat(CombatWorld world, EntityRef who)
+bool inCombat(Map world, EntityRef who)
 {
     import dmangos.world.defines : UnitFlags;
 
@@ -77,7 +77,7 @@ bool inCombat(CombatWorld world, EntityRef who)
 }
 
 /// A unit's aura of `spell` goes.
-ActionResult removeAura(CombatWorld world, EntityRef who, uint spell)
+ActionResult removeAura(Map world, EntityRef who, uint spell)
 {
     import dmangos.world.unit : UnitKind;
 
@@ -91,7 +91,7 @@ ActionResult removeAura(CombatWorld world, EntityRef who, uint spell)
 }
 
 /// A unit's power of kind `power`; -1 if it has none of it (no maximum) or is not here.
-int power(CombatWorld world, EntityRef who, ubyte power)
+int power(Map world, EntityRef who, ubyte power)
 {
     if (world is null || power > 4)
         return -1;
@@ -102,7 +102,7 @@ int power(CombatWorld world, EntityRef who, ubyte power)
 }
 
 /// A unit's own model; 0 if it is not here.
-uint nativeDisplay(CombatWorld world, EntityRef who)
+uint nativeDisplay(Map world, EntityRef who)
 {
     if (world is null)
         return 0;
@@ -111,7 +111,7 @@ uint nativeDisplay(CombatWorld world, EntityRef who)
 }
 
 /// The transform aura of `spell` on a player shows `model`: its model now, and again when a newer one goes.
-ActionResult transformModel(CombatWorld world, EntityRef who, uint spell, uint model)
+ActionResult transformModel(Map world, EntityRef who, uint spell, uint model)
 {
     import dmangos.world.unit : UnitKind;
 
@@ -124,7 +124,7 @@ ActionResult transformModel(CombatWorld world, EntityRef who, uint spell, uint m
 }
 
 /// Byte `index` of a player's `UNIT_FIELD_BYTES_0` (0 its race, 2 its sex); `otherwise` for anything else.
-ubyte playerByte(CombatWorld world, EntityRef who, uint index, ubyte otherwise)
+ubyte playerByte(Map world, EntityRef who, uint index, ubyte otherwise)
 {
     import dmangos.world.unit : UnitKind;
 
@@ -136,7 +136,7 @@ ubyte playerByte(CombatWorld world, EntityRef who, uint index, ubyte otherwise)
 }
 
 /// `SMSG_PLAY_SOUND` for a player alone.
-ActionResult playSound(CombatWorld world, EntityRef player, uint sound)
+ActionResult playSound(Map world, EntityRef player, uint sound)
 {
     import dmangos.bytes : ByteWriter;
     import dmangos.world.opcodes : Opcode;

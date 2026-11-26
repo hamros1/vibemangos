@@ -290,7 +290,7 @@ mixin template CreatureEvents()
     }
 
     /// It summoned `summoned`: its script hears of it (`EVENT_T_SUMMONED_UNIT`).
-    void summonedCreature(CombatWorld world, Creature summoned)
+    void summonedCreature(Map world, Creature summoned)
     {
         if (script is null)
             return;
@@ -315,7 +315,7 @@ mixin template CreatureEvents()
      * `who` came into its sight while it has no victim: its script's events for those in its sight
      * (`EVENT_T_OOC_LOS`), hostile to it or not, as far as they ask and in line of sight.
      */
-    private void scriptSaw(UnitRef who, CombatWorld world)
+    private void scriptSaw(UnitRef who, Map world)
     {
         if (script is null || !script.watchesLineOfSight || victim || !me.alive || who.combatGuid == me.guid)
             return;

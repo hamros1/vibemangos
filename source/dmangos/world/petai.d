@@ -93,7 +93,7 @@ mixin template PetBehaviour()
     }
 
     /// Attacks `who`, chasing it (or casting from afar, the imp).
-    void petAttack(UnitRef who, CombatWorld world)
+    void petAttack(UnitRef who, Map world)
     {
         world_ = world;
         if (!me.alive || !who || who.combatGuid == me.guid)
@@ -121,7 +121,7 @@ mixin template PetBehaviour()
     }
 
     /// It stops fighting and goes back to its owner (or its place).
-    void petStopAttack(CombatWorld world)
+    void petStopAttack(Map world)
     {
         world_ = world;
         interruptCast();
@@ -137,7 +137,7 @@ mixin template PetBehaviour()
 
     /// Its owner was attacked, its owner attacked, or it was attacked: unless passive, staying out of
     /// it, or already fighting, it attacks.
-    void petAssist(UnitRef enemy, CombatWorld world)
+    void petAssist(UnitRef enemy, Map world)
     {
         if (react == ReactState.passive || victim || !me.alive || !enemy)
             return;
@@ -147,7 +147,7 @@ mixin template PetBehaviour()
     }
 
     /// The pet's tick: its fight, its spells, following or staying.
-    void petUpdate(CombatWorld world, int diff)
+    void petUpdate(Map world, int diff)
     {
         world_ = world;
         attackTimer = attackTimer > diff ? attackTimer - diff : 0;
@@ -216,7 +216,7 @@ mixin template PetBehaviour()
      * An aggressive pet looks around: the nearest enemy (not a civilian) within its
      * attack distance and in sight. Whether it found one.
      */
-    private bool petLookAround(CombatWorld world)
+    private bool petLookAround(Map world)
     {
         import dmangos.world.relations : isEnemy;
 
@@ -247,7 +247,7 @@ mixin template PetBehaviour()
      * A spell its owner tells it to cast (`CMSG_PET_ACTION`, `CMSG_PET_CAST_SPELL`) at `target` (0: its
      * victim, or itself); at an enemy, it attacks it too. Whether it is cast.
      */
-    bool petCastByCommand(const(SpellInfo)* info, ulong target, CombatWorld world)
+    bool petCastByCommand(const(SpellInfo)* info, ulong target, Map world)
     {
         world_ = world;
         if (info is null || !petSpellReady(info) || !me.alive)
@@ -275,7 +275,7 @@ mixin template PetBehaviour()
      * Its cooldown for `info` begins; its owner's bar shows it (`Creature::AddCooldown`: `SMSG_SPELL_COOLDOWN` with
      * the pet, the spell and its recovery time).
      */
-    private void startPetCooldown(const(SpellInfo)* info, CombatWorld world)
+    private void startPetCooldown(const(SpellInfo)* info, Map world)
     {
         import dmangos.world.petai : petCooldownPacket;
 
@@ -298,7 +298,7 @@ mixin template PetBehaviour()
     }
 
     /// The spells it casts by itself, at its victim, when ready and in range.
-    private void petAutocast(CombatWorld world)
+    private void petAutocast(Map world)
     {
         if (lore is null)
             return;
@@ -322,7 +322,7 @@ mixin template PetBehaviour()
     }
 
     /// Back to where it was told to stay.
-    private void petHoldStay(CombatWorld world)
+    private void petHoldStay(Map world)
     {
         if (!pet.hasStay)
         {
@@ -342,7 +342,7 @@ mixin template PetBehaviour()
     }
 
     /// To its place beside its owner, setting off again when it moved on.
-    private void petFollow(Position owner, CombatWorld world)
+    private void petFollow(Position owner, Map world)
     {
         const angle = owner.orientation + petFollowAngle;
         const x = owner.x + petFollowDistance * cos(angle), y = owner.y + petFollowDistance * sin(angle);

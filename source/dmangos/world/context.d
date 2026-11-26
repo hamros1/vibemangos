@@ -55,7 +55,7 @@ import dmangos.world.wareffort : WarEffort, WarEffortHost;
 import dmangos.world.worldpvp : WorldPvp, WorldPvpFollower, WorldPvpHost;
 import dmangos.cluster.protocol : ChannelCommand;
 import dmangos.world.opcodes : ChatType, Language, Opcode;
-import dmangos.world.creatureai : CombatWorld;
+import dmangos.world.map : Map;
 import dmangos.world.npcdata : BroadcastText;
 import dmangos.world.spells : SpellInfo;
 import dmangos.script.api : ActionResult, EntityRef, GameObjectHost, Location, QuestProgress, Waypoint;
@@ -3986,9 +3986,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         return conditionRealmState(id);
     }
 
-    bool worldStateExpressionMet(CombatWorld world, uint expression)
+    bool worldStateExpressionMet(Map world, uint expression)
     {
-        auto where = cast(Map) world;
+        auto where = world;
         if (where is null)
             return false;
         const now = unixTime;
@@ -8427,10 +8427,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
      * Summons a creature of `entry` at `at` on `world` (near `summoner` when
      * `at` is all zeros), not saved and never respawned, gone as `type` says after `durationMs`.
      */
-    Creature summonCreature(CombatWorld world, uint entry, Position at, TempSpawnType type, uint durationMs,
+    Creature summonCreature(Map world, uint entry, Position at, TempSpawnType type, uint durationMs,
         ulong summoner)
     {
-        auto map = cast(Map) world;
+        auto map = world;
         if (map is null)
             return null;
         auto creature = prepareCreatureSummon(map, entry, at, type, durationMs, summoner);
@@ -8514,7 +8514,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     /// Summons a creature of `entry` at `at` (all zeros: near `summoner`), going as `type`
 
     /// (`TempSpawnType`) says after `durationMs`; null if it could not be made.
-    Creature summon(CombatWorld world, uint entry, Position at, uint type, uint durationMs, ulong summoner)
+    Creature summon(Map world, uint entry, Position at, uint type, uint durationMs, ulong summoner)
     {
         auto summoned = summonCreature(world, entry, at, cast(TempSpawnType) type, durationMs, summoner);
         if (summoned !is null && summoner) // its summoner's script hears of it (`EVENT_T_SUMMONED_UNIT`)
@@ -8981,12 +8981,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
      * A `Signal` for creature `to` on `world`: its script here, or
      * (a replica here: another node simulates it) a `ScriptSignal` to that node.
      */
-    ActionResult signalCreature(CombatWorld world, EntityRef from, EntityRef to, uint id, int value)
+    ActionResult signalCreature(Map world, EntityRef from, EntityRef to, uint id, int value)
     {
         import dmangos.script.api : ActionResult;
         import dmangos.world.replication : Replica;
 
-        auto map = cast(Map) world;
+        auto map = world;
         if (map is null)
             return ActionResult.notHere;
         if (auto creature = map.creatureAt(to.guid))
@@ -9585,16 +9585,16 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     }
 
     /// The guid of the nearest game object of `entry` within `range` yards of `center` on `world`; 0 if none.
-    ulong gameObjectNear(CombatWorld world, Position center, uint entry, float range)
+    ulong gameObjectNear(Map world, Position center, uint entry, float range)
     {
-        auto map = cast(Map) world;
+        auto map = world;
         return map is null ? 0 : nearestGameObject(map, center, entry, range);
     }
 
     /// Uses game object `guid` on `world` as a door or button is used: open for its time.
-    ActionResult useGameObject(CombatWorld world, ulong guid)
+    ActionResult useGameObject(Map world, ulong guid)
     {
-        auto map = cast(Map) world;
+        auto map = world;
         auto g = map is null ? null : cast(GameObject) map.findObject(guid);
         if (g is null)
             return ActionResult.notHere;
@@ -9705,7 +9705,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     }
 
     /// `creature`, not fighting, goes back to its spawn point and then moves as it does by itself.
-    void sendCreatureHome(CombatWorld world, Creature c)
+    void sendCreatureHome(Map world, Creature c)
     {
         import dmangos.vmap.math : Vector3;
         import dmangos.world.motion : PointMovement, selectMovement;
@@ -9728,9 +9728,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     }
 
     /// A `Signal` from `from` for the script of the continent `world` is (nothing in a dungeon, or without one).
-    void signalWorldMap(CombatWorld world, EntityRef from, uint id, int value)
+    void signalWorldMap(Map world, EntityRef from, uint id, int value)
     {
-        if (auto map = cast(Map) world)
+        if (auto map = world)
             if (map.instanceId == 0)
                 signalWorld(map.id, from, id, value);
     }
@@ -9791,12 +9791,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     /// `defender`'s zone is under attack by `attacker` (a player, or a pet): the players of the other side
 
     /// on this node are told (`SMSG_ZONE_UNDER_ATTACK`; the client writes it in its defense channel).
-    void zoneUnderAttack(CombatWorld world, Creature defender, ulong attacker)
+    void zoneUnderAttack(Map world, Creature defender, ulong attacker)
     {
         import dmangos.bytes : ByteWriter;
         import dmangos.world.unit : UnitKind;
 
-        auto map = cast(Map) world;
+        auto map = world;
         if (map is null)
             return;
         auto unit = map.unit(attacker);
@@ -9873,11 +9873,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
 
     /// Scripted event `event` (a creature's `SEND_EVENT`) happens on `world`, `source` starting it at
 
-    /// `target`: its script, the dungeon's, then its database script (`WorldContext.scriptedEvent`).
-    void scriptedEvent(uint event, CombatWorld world, ulong source, ulong target)
-    {
-        scriptedEvent(event, cast(Map) world, source, target);
-    }
 
     /// Open-world round 2: see `AreaTriggerContext.respawnObjectsNear` (a used-up object, or one not there by default).
     uint respawnObjectsNear(Map map, uint entry, Location near, float range, uint seconds)
@@ -9903,13 +9898,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     }
 
     /// Starts relay script `id` (`DbScriptType.relay`) on `world` (negative `id`: one of the relay group -`id`).
-    void startRelay(int id, CombatWorld world, ulong source, ulong target)
+    void startRelay(int id, Map world, ulong source, ulong target)
     {
         import dmangos.world.dbscripts : DbScriptType;
 
         const relay = id < 0 ? data.dbScripts.randomRelay(-id) : id;
         if (relay)
-            startScript(DbScriptType.relay, relay, cast(Map) world, source, target);
+            startScript(DbScriptType.relay, relay, world, source, target);
     }
 
     /// `.respawn`: the corpse goes now, and the creature comes back in a second.

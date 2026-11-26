@@ -416,7 +416,7 @@ distance, a few dozen create blocks per packet, and they go out of range like pl
 A `GameObject` keeps a loot state (`GoLootState`): ready, activated (a door open, a goober
 in use, a chest's loot open), just deactivated. It is a `Moving` for the map's tick only while
 something is pending (a door's closing time, a goober's, a chest's despawn and loot rolls), and its
-map is a `GameObjectWorld` that flushes its fields and, when a consumable one is used up
+map flushes its fields and, when a consumable one is used up
 (`gameObjectUsedUp`), removes it and tells the context, which saves its respawn time in
 `gameobject_respawn` and makes it anew when that time comes (`gameObjectsDue`). It is a `PerViewer`
 for `GAMEOBJECT_DYN_FLAGS`: a quest object (`WorldContext.isQuestObject`) sparkles for those whose
@@ -526,7 +526,7 @@ Three modules, split by what they depend on:
 * `relations.d` decides who may attack or help whom, by the rules the client itself applies:
   faction template reactions, a player's base reputations, `canAttack`.
 * `unit.d` is the rules every unit shares (docs/DESIGN.md). A `UnitRef` is a unit on a map,
-  a player (its session) or a creature, as a small value made where needed (`CombatWorld.unit`,
+  a player (its session) or a creature, as a small value made where needed (`Map.unit`,
   `Map.unitOf`); its methods branch on the kind with `final switch`, so each rule handles both kinds.
   `dealDamage` is the one way damage reaches a unit, from a swing, a spell or
   an aura's tick, whoever deals it. A player suffers it in `Character.takeBlow` (standing up, rage,
@@ -539,7 +539,7 @@ Three modules, split by what they depend on:
 
 * `creatureai.d` is the creature's side: `CreatureAI` with its threat list, combat timers and
   leash, chasing and going home. It sees whatever it fights as a `UnitRef` (a player or
-  another creature: a pet) and its map as a `CombatWorld` (units by guid, line of sight, field
+  another creature: a pet) and its `Map` (units by guid, line of sight, field
   updates, waking a resting creature). The map
   calls `moveInLineOfSight` for the creatures a player sees when it moves, and for the players who
   see a creature when it moves. A creature with something to do (a fight, the way home, health or
@@ -562,7 +562,7 @@ Three modules, split by what they depend on:
   What it needs of the world's data (spells, the client's tables, broadcast texts, listen ranges) comes
   from the `WorldContext` itself (`lore`), handed to a scripted creature as it is made (null in a test's map);
   as a caster it is a `Caster` (`spellCaster`); a friend (a heal) never rolls to be missed. The area
-  ones are found with `CombatWorld.playersNear`, texts go out with `CombatWorld.sendInRange`.
+  ones are found with `Map.playersNear`, texts go out with `Map.sendInRange`.
 
 ## Pets
 
@@ -770,7 +770,7 @@ a plain `MapObject` the map shows like any other (`Map.addObject`, `removeObject
 hides spirit healers and guides from the living.
 
 A dead creature keeps its place in the map's tick until its corpse timer runs out
-(`Creature.corpseTimer`); then `CombatWorld.corpseExpired` takes it off the map. The context keeps
+(`Creature.corpseTimer`); then `Map.corpseExpired` takes it off the map. The context keeps
 the respawn times (`respawnAt`, by spawn guid, saved in `creature_respawn`): a cell loading skips
 spawns still dead, and once a second the creatures whose time has come are made anew where their
 cell is loaded.

@@ -50,11 +50,10 @@ import dmangos.bytes : ByteWriter;
 public import dmangos.world.grid : cellSize;
 import dmangos.world.grid : cellCoordinate, cellKey, cellKeyAt, noCell;
 import dmangos.world.creatureai : LinkEvent;
-import dmangos.world.creatureai : CombatWorld;
 import dmangos.world.unit : UnitRef;
 import dmangos.world.creature : Creature, TempSpawnType;
 import dmangos.world.elevators : ElevatorPath;
-import dmangos.world.gameobject : GameObject, GameObjectTemplate, GameObjectType, GameObjectWorld, goStateReady;
+import dmangos.world.gameobject : GameObject, GameObjectTemplate, GameObjectType, goStateReady;
 import dmangos.world.gameobjectcollision : GameObjectCollision;
 import dmangos.world.elevators : DockRoute;
 import dmangos.world.motion : MotionWorld;
@@ -379,7 +378,7 @@ private void dropValue(T)(ref T[] list, T value)
 }
 
 /// See the module documentation.
-final class Map : CombatWorld, GameObjectWorld
+final class Map : MotionWorld
 {
     immutable uint id;
 
@@ -2391,7 +2390,7 @@ final class Map : CombatWorld, GameObjectWorld
             at(v).player.deliver(opcode, body_);
     }
 
-    /// See `CombatWorld.unit`.
+    /// The unit with this guid on the map: a player simulated here, or a creature; none if neither.
     UnitRef unit(ulong guid)
     {
         import dmangos.world.character : Character;
@@ -2404,7 +2403,7 @@ final class Map : CombatWorld, GameObjectWorld
         return UnitRef.of(cast(Creature) at(slot).object, this);
     }
 
-    /// See `CombatWorld.unitOf`.
+    /// `creature` as a unit on this map.
     UnitRef unitOf(Creature creature)
     {
         return UnitRef.of(creature, this);
@@ -2452,7 +2451,11 @@ final class Map : CombatWorld, GameObjectWorld
             clearInterest(slot);
     }
 
-    /// See `CombatWorld.linked`: what linked creatures follow (`dmangos.world.creaturelinking`).
+    /// Something happened to `source` that linked creatures follow (`dmangos.world.creaturelinking`): it was
+
+    /// attacked by `enemy` (`LinkEvent.aggro`) or evades.
+
+    /// What linked creatures follow (`dmangos.world.creaturelinking`).
     void linked(Creature source, LinkEvent event, ulong enemy)
     {
         if (world !is null)
@@ -2501,7 +2504,9 @@ final class Map : CombatWorld, GameObjectWorld
         });
     }
 
-    /// See `CombatWorld.inLineOfSight`: terrain and objects at eye height.
+    /// Whether nothing built stands between two points (at eye height).
+
+    /// Terrain and objects at eye height.
     bool inLineOfSight(Position a, Position b)
     {
         enum eyes = 2.0f;
@@ -2535,7 +2540,7 @@ final class Map : CombatWorld, GameObjectWorld
         return true;
     }
 
-    /// See `CombatWorld.creaturesNear`.
+    /// The creatures within `range` yards of `center` here.
     Creature[] creaturesNear(Position center, float range)
     {
         Creature[] found;
@@ -2545,21 +2550,21 @@ final class Map : CombatWorld, GameObjectWorld
         return found;
     }
 
-    /// See `CombatWorld.creatureAt`.
+    /// The creature with this guid here; null if none.
     Creature creatureAt(ulong guid)
     {
         const slot = slotFor(guid);
         return slot == uint.max ? null : cast(Creature) at(slot).object;
     }
 
-    /// See `CombatWorld.gameObjectAt`.
+    /// The game object with this guid here; null if none.
     GameObject gameObjectAt(ulong guid)
     {
         const slot = slotFor(guid);
         return slot == uint.max ? null : cast(GameObject) at(slot).object;
     }
 
-    /// See `CombatWorld.positionOf`.
+    /// Where the object (a replica too) with this guid is on the map; false if it is not here.
     bool positionOf(ulong guid, out Position at_)
     {
         const slot = slotFor(guid);
@@ -2569,7 +2574,7 @@ final class Map : CombatWorld, GameObjectWorld
         return true;
     }
 
-    /// See `CombatWorld.playersNear`.
+    /// The players within `range` yards of `center` here, as units.
     UnitRef[] playersNear(Position center, float range)
     {
         UnitRef[] found;
@@ -2605,7 +2610,9 @@ final class Map : CombatWorld, GameObjectWorld
             each(object);
     }
 
-    /// See `CombatWorld.corpseExpired`: the world brings the creature back later.
+    /// A dead creature's corpse has lasted its time: it goes, and comes back when its respawn time is up.
+
+    /// The world brings the creature back later.
     void corpseExpired(Creature creature)
     {
         removeObject(creature.guid);
@@ -2613,13 +2620,13 @@ final class Map : CombatWorld, GameObjectWorld
             world.corpseRemoved(creature);
     }
 
-    /// See `GameObjectWorld.flushGameObject`.
+    /// Sends what changed in its fields to those who see it.
     void flushGameObject(GameObject go)
     {
         flushObjectChanges(go);
     }
 
-    /// See `GameObjectWorld.gameObjectUsedUp`.
+    /// It is used up: it goes, and comes back when its spawn's respawn time is up.
     void gameObjectUsedUp(GameObject go)
     {
         removeObject(go.guid);
@@ -2627,7 +2634,7 @@ final class Map : CombatWorld, GameObjectWorld
             world.gameObjectUsedUp(go); // to bring it back later
     }
 
-    /// See `CombatWorld.flushCreature`.
+    /// Sends what changed in the creature's fields to those who see it.
     void flushCreature(Creature creature)
     {
         flushObjectChanges(creature);

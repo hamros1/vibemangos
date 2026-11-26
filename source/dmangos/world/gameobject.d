@@ -10,6 +10,8 @@
  */
 module dmangos.world.gameobject;
 
+import dmangos.world.map : Map;
+
 /**
  * The clock transports' create blocks carry (`WorldContext.transportNow`): one for elevators and ships, so
  * the client keeps one transport time. Unset (tests), an elevator gives the server time.
@@ -72,19 +74,6 @@ enum GoLootState : ubyte
     ready,              /// as spawned
     activated,          /// in use: open, looted from
     justDeactivated,    /// done: back to ready, or gone
-}
-
-/// What a game object needs of its map while it acts (the map implements it).
-interface GameObjectWorld
-{
-    /// Sends what changed in its fields to those who see it.
-    void flushGameObject(GameObject go);
-
-    /// It is used up: it goes, and comes back when its spawn's respawn time is up.
-    void gameObjectUsedUp(GameObject go);
-
-    /// A trap's timed fuse expired. Cast its spell at its position.
-    void triggerTimedTrap(GameObject trap);
 }
 
 /// A `gameobject_template` row.
@@ -279,7 +268,7 @@ final class GameObject : Replicable, Moving, PerViewer
     }
 
     /// Open (or closed) for its time, if it is not in use already.
-    void useDoorOrButton(GameObjectWorld world, uint restoreMs = 0, bool alternative = false)
+    void useDoorOrButton(Map world, uint restoreMs = 0, bool alternative = false)
     {
         if (lootState != GoLootState.ready)
             return;
@@ -296,7 +285,7 @@ final class GameObject : Replicable, Moving, PerViewer
     }
 
     /// Opened (or closed) for `restoreMs`, unless it is so already.
-    void useOpenable(GameObjectWorld world, bool open, uint restoreMs)
+    void useOpenable(Map world, bool open, uint restoreMs)
     {
         if (goState == (open ? goStateActive : goStateReady))
             return;
@@ -320,7 +309,7 @@ final class GameObject : Replicable, Moving, PerViewer
     }
 
     /// Apply a state-only spell action. No normal use event, trap, or loot is triggered.
-    package bool applySpellState(GameObjectWorld world, GameObjectAction action)
+    package bool applySpellState(Map world, GameObjectAction action)
     {
         switch (action)
         {
@@ -374,7 +363,7 @@ final class GameObject : Replicable, Moving, PerViewer
     }
 
     /// The goober used (`GAMEOBJECT_TYPE_GOOBER` in `Use`): in use and open for its time.
-    void activateGoober(GameObjectWorld world)
+    void activateGoober(Map world)
     {
         values.set!GAMEOBJECT_FLAGS(values.get!GAMEOBJECT_FLAGS | goFlagInUse);
         lootState = GoLootState.activated;
@@ -383,7 +372,7 @@ final class GameObject : Replicable, Moving, PerViewer
         world.flushGameObject(this);
     }
 
-    package void forceDespawn(GameObjectWorld world, uint delayMs)
+    package void forceDespawn(Map world, uint delayMs)
     {
         import std.algorithm.comparison : min;
 
@@ -398,7 +387,7 @@ final class GameObject : Replicable, Moving, PerViewer
     {
         if (elevator.active)
             elevator.advance(stationaryPosition);
-        auto world = cast(GameObjectWorld) w;
+        auto world = cast(Map) w;
         if (world is null)
             return;
         if (forcedDespawnMs > 0 && (forcedDespawnMs -= diff) <= 0)

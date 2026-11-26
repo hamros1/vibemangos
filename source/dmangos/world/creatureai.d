@@ -9,7 +9,9 @@
  */
 module dmangos.world.creatureai;
 
-/// What a creature's linked creatures react to (`CombatWorld.linked`).
+import dmangos.world.map : Map;
+
+/// What a creature's linked creatures react to (`Map.linked`).
 enum LinkEvent : ubyte { aggro, evade, despawn }
 
 import std.math : atan2, cos, sin, sqrt;
@@ -37,55 +39,6 @@ import dmangos.world.updatefields;
 import dmangos.vmap.math : Vector3;
 import dmangos.world.unit : combatRelations, UnitKind, UnitRef;
 
-
-/// What a creature's AI needs of its map.
-interface CombatWorld : MotionWorld
-{
-    /// The unit with this guid on the map: a player simulated here, or a creature; none if neither.
-    UnitRef unit(ulong guid);
-
-    /// `creature` as a unit on this map.
-    UnitRef unitOf(Creature creature);
-
-    /// Whether nothing built stands between two points (at eye height).
-    bool inLineOfSight(Position a, Position b);
-
-    /// Puts a resting creature back in the tick.
-    void wake(ulong guid);
-
-    /// A dead creature's corpse has lasted its time: it goes, and comes back when its respawn time is up.
-    void corpseExpired(Creature creature);
-
-    /// The creatures within `range` yards of `center` here.
-    Creature[] creaturesNear(Position center, float range);
-
-    bool mayAskRemoteAssistance() const;
-    void askRemoteAssistance(Creature caller, UnitRef enemy, float radius);
-
-    /// The players within `range` yards of `center` here, as units.
-    UnitRef[] playersNear(Position center, float range);
-
-    /// The creature with this guid here; null if none.
-    Creature creatureAt(ulong guid);
-
-    /// Where the object (a replica too) with this guid is on the map; false if it is not here.
-    bool positionOf(ulong guid, out Position at);
-
-    /// Something happened to `source` that linked creatures follow (`dmangos.world.creaturelinking`): it was
-    /// attacked by `enemy` (`LinkEvent.aggro`) or evades.
-    void linked(Creature source, LinkEvent event, ulong enemy);
-
-    /// A packet for the players within `range` yards of `center`.
-    void sendInRange(Position center, float range, Opcode opcode, const(ubyte)[] body_);
-
-    // Kalimdor scripts:
-
-    /// The game object with this guid here; null if none.
-    GameObject gameObjectAt(ulong guid);
-
-    /// Sends what changed in the game object's fields to those who see it.
-    void flushGameObject(GameObject go);
-}
 
 /// How far a creature's call for help reaches (yards), how long its allies take to come (ms), and
 /// how near an ally a fighting creature must pass to pull it in (yards).
@@ -293,7 +246,7 @@ final class CreatureAI : Scripted, CreatureHost, ScourgeCampHost
      * aggressive creature that may attack it on sight attacks it if it is within its aggro radius
      * and line of sight.
      */
-    void moveInLineOfSight(UnitRef who, CombatWorld world)
+    void moveInLineOfSight(UnitRef who, Map world)
     {
         world_ = world;
         if (behaviour && me.alive)
@@ -363,7 +316,7 @@ final class CreatureAI : Scripted, CreatureHost, ScourgeCampHost
     }
 
     /// Hit (or swung at) by `attacker`; it fights back if it is not fighting yet.
-    void attackedBy(UnitRef attacker, CombatWorld world)
+    void attackedBy(UnitRef attacker, Map world)
     {
         world_ = world;
         if (me.petOwner)
@@ -388,7 +341,7 @@ final class CreatureAI : Scripted, CreatureHost, ScourgeCampHost
         reportDamage(attacker.combatGuid, damage);
     }
 
-    package void remoteDamageTaken(ulong attacker, uint damage, float threatFactor, CombatWorld world)
+    package void remoteDamageTaken(ulong attacker, uint damage, float threatFactor, Map world)
     {
         if (!me.alive || evadingHome || me.petOwner)
             return;
@@ -421,7 +374,7 @@ final class CreatureAI : Scripted, CreatureHost, ScourgeCampHost
     }
 
     /// It died: it fights nobody any more.
-    void died(CombatWorld world)
+    void died(Map world)
     {
         world_ = world;
         if (auto map = cast(imported!"dmangos.world.map".Map) world)
@@ -460,7 +413,7 @@ final class CreatureAI : Scripted, CreatureHost, ScourgeCampHost
      * The creature's AI tick: the combat timers and leash, `updateAI` (choosing its victim,
      * evading when there is none, chasing, swinging), and regeneration out of combat.
      */
-    void update(CombatWorld world, int diff)
+    void update(Map world, int diff)
     {
         if (!me.alive)
             return;
@@ -613,13 +566,13 @@ final class CreatureAI : Scripted, CreatureHost, ScourgeCampHost
     }
 
     /// The world it acts in, for a script that drives it before it ticks.
-    void bind(CombatWorld world)
+    void bind(Map world)
     {
         world_ = world;
     }
 
     /// A linked creature brings it into a fight with `who`: it attacks, or (fighting already) counts it as a threat.
-    void joinLinkedFight(UnitRef who, CombatWorld world)
+    void joinLinkedFight(UnitRef who, Map world)
     {
         if (inCombat_)
             addThreat(who, 0);
@@ -628,7 +581,7 @@ final class CreatureAI : Scripted, CreatureHost, ScourgeCampHost
     }
 
     /// A linked creature evades: it does too, if it fights.
-    void evadeWithLinked(CombatWorld world)
+    void evadeWithLinked(Map world)
     {
         if (inCombat_)
             enterEvadeMode(world);
@@ -683,7 +636,7 @@ private:
      * Taunted by `who` (`SPELL_EFFECT_ATTACK_ME`, CMaNGOS's `EffectTaunt`): its threat raised to the
      * highest in the list and attacked at once. Its taunt aura, if any, then holds it there (`tauntedBy`).
      */
-    public void taunt(UnitRef who, CombatWorld world)
+    public void taunt(UnitRef who, Map world)
     {
         if (!me.alive || evadingHome || me.petOwner)
             return;
@@ -711,7 +664,7 @@ private:
      * player, which deletes its hostile references): out of the threat list, told so; with nobody left
      * it evades at its next update.
      */
-    public void forget(ulong guid, CombatWorld world)
+    public void forget(ulong guid, Map world)
     {
         if ((guid in threat) is null)
             return;
@@ -731,7 +684,7 @@ private:
      * Distracted (`SPELL_EFFECT_DISTRACT`: Distract): out of combat and able to react, it stops where it
      * is, faces `at`, and stands so for `ms` before it moves as it did (CMaNGOS's `MoveDistract`).
      */
-    public void distract(Position at, int ms, CombatWorld world)
+    public void distract(Position at, int ms, Map world)
     {
         import dmangos.vmap.math : Vector3;
         import dmangos.world.motion : DistractMovement;
@@ -780,7 +733,7 @@ private:
     private bool[ulong] remoteThreat;
 
     /// Forgets everyone it fought, each told it no longer threatens them (a beast tamed, gone from the world).
-    package void dropThreat(CombatWorld world)
+    package void dropThreat(Map world)
     {
         foreach (guid, _; threat)
             notifyRemoved(guid, world);
@@ -788,7 +741,7 @@ private:
         remoteThreat = null;
     }
 
-    void notifyRemoved(ulong guid, CombatWorld world)
+    void notifyRemoved(ulong guid, Map world)
     {
         if (world !is null)
             if (auto who = world.unit(guid))
@@ -798,7 +751,7 @@ private:
     /**
      * Attacks `who`, enters combat with it, and chases it.
      */
-    void attackStart(UnitRef who, CombatWorld world)
+    void attackStart(UnitRef who, Map world)
     {
         if (react == ReactState.passive || !me.alive)
             return;
@@ -852,7 +805,7 @@ private:
      * the allies near it (`CallForHelp` yards, or 5) that may join are told, and join in after a
      * moment and a half.
      */
-    void callAssistance(UnitRef enemy, CombatWorld world)
+    void callAssistance(UnitRef enemy, Map world)
     {
         if (calledAssistance || !canCallForAssistance)
             return;
@@ -924,7 +877,7 @@ private:
     }
 
     /// The help called for arrives: each ally still free to come, and whose faction answers, attacks.
-    void deliverAssistance(CombatWorld world)
+    void deliverAssistance(Map world)
     {
         auto enemy = world.unit(assistanceEnemy);
         auto receivers = assistanceReceivers;
@@ -943,7 +896,7 @@ private:
     }
 
     /// A borrowed creature answers once the caller and enemy are authoritative on this map.
-    package void answerRemoteAssistance(Creature caller, UnitRef enemy, CombatWorld world)
+    package void answerRemoteAssistance(Creature caller, UnitRef enemy, Map world)
     {
         if (enemy && caller !is null && caller.ai !is null && caller.ai.inCombat && caller.ai.currentVictim == enemy.combatGuid
             && canAssistAgainst(caller, enemy) && answersCallsForHelp && world.inLineOfSight(me.position, caller.position))
@@ -954,7 +907,7 @@ private:
     }
 
     /// Attacks `enemy`, or (fighting already, in a dungeon) adds it to those it fights.
-    void joinFightAgainst(UnitRef enemy, CombatWorld world)
+    void joinFightAgainst(UnitRef enemy, Map world)
     {
         if (inCombat_)
             addThreat(enemy, 0);
@@ -966,7 +919,7 @@ private:
      * Pulling in help: a fighting creature that comes within 5 yards of an
      * ally free to help (and seen by it) pulls it into the fight against its victim.
      */
-    void checkForHelp(CombatWorld world)
+    void checkForHelp(Map world)
     {
         if (!victim || !canCallForAssistance)
             return;
@@ -980,7 +933,7 @@ private:
     }
 
     /// Combat starts where it stands; its way of moving waits until it is home.
-    void enterCombat(CombatWorld world)
+    void enterCombat(Map world)
     {
         inCombat_ = true;
         if (auto map = remoteMeleeMap(world))
@@ -1009,7 +962,7 @@ private:
     }
 
     /// Stops swinging.
-    void meleeStop(CombatWorld world)
+    void meleeStop(Map world)
     {
         if (meleeAttacking)
         {
@@ -1023,7 +976,7 @@ private:
      * where the timer last started has got away; past its template's leash distance from where the
      * fight began, it gives up whatever the timer says.
      */
-    void updateCombatManager(CombatWorld world, int diff)
+    void updateCombatManager(Map world, int diff)
     {
         combatTimer = combatTimer > diff ? combatTimer - diff : 0;
         combatTick += diff;
@@ -1056,7 +1009,7 @@ private:
      * evades every attack; after 10 s it goes home if the victim was its only enemy, and otherwise
      * leaves that one be and turns to another. Reachable again, it fights on.
      */
-    void updateReachability(CombatWorld world, int diff)
+    void updateReachability(Map world, int diff)
     {
         if (!combatMovement_ || !victim || victimReachable)
         {
@@ -1082,7 +1035,7 @@ private:
      * Its fight each tick: choosing its victim (the threat list without those gone, dead or no longer
      * to be attacked; evading if nobody is left), then chasing and swinging when ready.
      */
-    void updateAI(CombatWorld world)
+    void updateAI(Map world)
     {
         const canSwingRemotely = remoteMeleeMap(world) !is null;
         const waitsForTargetHandoff = canSwingRemotely && (me.guardianOwner || nextSwing !is null);
@@ -1151,21 +1104,21 @@ private:
         meleeAttackIfReady(target, world);
     }
 
-    private imported!"dmangos.world.map".Map remoteMeleeMap(CombatWorld world)
+    private imported!"dmangos.world.map".Map remoteMeleeMap(Map world)
     {
         import dmangos.world.map : Map;
 
-        auto map = cast(Map) world;
+        auto map = world;
         return map !is null && map.swingsRemotely
             && (!relating.playerControlled || (me.meleeController && meleeEnabled)) ? map : null;
     }
 
-    private imported!"dmangos.world.replication".Replica meleeReplica(CombatWorld world, ulong guid)
+    private imported!"dmangos.world.replication".Replica meleeReplica(Map world, ulong guid)
     {
         import dmangos.world.map : Map;
         import dmangos.world.replication : Replica;
 
-        if (auto map = cast(Map) world)
+        if (auto map = world)
             if (auto copy = cast(Replica) map.findObject(guid))
                 if (copy.fields.type == TypeId.player
                     || copy.fields.type == TypeId.unit && (copy.meleeController || me.meleeController))
@@ -1173,7 +1126,7 @@ private:
         return null;
     }
 
-    package UnitRef combatTarget(CombatWorld world, ulong guid)
+    package UnitRef combatTarget(Map world, ulong guid)
     {
         auto local = world.unit(guid);
         if (local || !guid)
@@ -1188,7 +1141,7 @@ private:
      * The next victim: the most hated, but the current victim keeps its place
      * unless another has more than 110% of its threat in melee reach, or 130% anywhere.
      */
-    ulong selectNextVictim(CombatWorld world)
+    ulong selectNextVictim(Map world)
     {
         import std.algorithm.sorting : sort;
 
@@ -1235,7 +1188,7 @@ private:
      * Chasing: runs to its target until it can reach it, setting off again when the
      * target has moved on, and faces it.
      */
-    void chase(UnitRef target, CombatWorld world)
+    void chase(UnitRef target, Map world)
     {
         import std.algorithm.comparison : min;
 
@@ -1335,7 +1288,7 @@ private:
      * first, in order, else one by their probabilities; each at its target (`creature_spell_targeting`),
      * then again after its repeat time. A spell is used at all in a fight by its availability.
      */
-    private void spellListTick(CombatWorld world, int diff)
+    private void spellListTick(Map world, int diff)
     {
         import std.random : uniform;
 
@@ -1415,7 +1368,7 @@ private:
         spellListTimers[pick] = castSpell(spell, target, 0) ? span(e.repeatMin, e.repeatMax) : 500;
     }
 
-    package bool testCombatSpell(CombatWorld world, const ref SpellListEntry row)
+    package bool testCombatSpell(Map world, const ref SpellListEntry row)
     {
         if (lore is null || !me.alive)
             return false;
@@ -1425,7 +1378,7 @@ private:
     }
 
     /// The target `creature_spell_targeting` row `id` names for it now; 0 if none.
-    private ulong spellListTarget(int id, CombatWorld world)
+    private ulong spellListTarget(int id, Map world)
     {
         import std.random : uniform;
 
@@ -1497,7 +1450,7 @@ private:
     }
 
     /// A creature's melee: a swing whenever it is ready and can.
-    void meleeAttackIfReady(UnitRef target, CombatWorld world)
+    void meleeAttackIfReady(UnitRef target, Map world)
     {
         if (!meleeAttacking || attackTimer || !meleeEnabled || (me.values.get!UNIT_FIELD_FLAGS & UnitFlags.pacified))
             return;
@@ -1525,7 +1478,7 @@ private:
     private bool extraSwing;    /// one of them being swung
 
     /// One swing at `target`.
-    private void swing(UnitRef target, CombatWorld world)
+    private void swing(UnitRef target, Map world)
     {
         if (target.replica !is null)
         {
@@ -1570,7 +1523,7 @@ private:
      * Evading: stops fighting, forgets its threat list, and runs back
      * to where the fight began, evading every attack on the way.
      */
-    void enterEvadeMode(CombatWorld world)
+    void enterEvadeMode(Map world)
     {
         const wasFighting = inCombat_;
         if (auto map = cast(imported!"dmangos.world.map".Map) world)
@@ -1625,7 +1578,7 @@ private:
             reachedHome(world);
     }
 
-    private bool launchEvadePath(CombatWorld world)
+    private bool launchEvadePath(Map world)
     {
         me.refreshSwimming(world);
         const home = combatStart;
@@ -1644,7 +1597,7 @@ private:
      * and its own buffs, but not its passives (`creatureevents.removedOnEvade`). Its health comes back as it does
      * out of combat, a third every five seconds, from the moment it turns for home.
      */
-    void removeAurasOnEvade(CombatWorld world)
+    void removeAurasOnEvade(Map world)
     {
         import dmangos.world.creatureevents : removedOnEvade;
 
@@ -1654,7 +1607,7 @@ private:
     }
 
     /// Back home; it moves as before the fight.
-    void reachedHome(CombatWorld world)
+    void reachedHome(Map world)
     {
         evadingHome = false;
         evadingAcrossShore = false;
@@ -1671,7 +1624,7 @@ private:
     }
 
     /// Regeneration: a third of its health every five seconds out of combat.
-    void regenerate(CombatWorld world, int diff)
+    void regenerate(Map world, int diff)
     {
         const health = me.values.get!UNIT_FIELD_HEALTH, maximum = me.values.get!UNIT_FIELD_MAXHEALTH;
         const mana = me.values.get!UNIT_FIELD_POWER1, maxMana = me.values.get!UNIT_FIELD_MAXPOWER1;
@@ -1715,7 +1668,7 @@ enum uint spellAttrExNoThreat = 0x00000400, spellAttrEx2NoInitialThreat = 0x0040
  * shared out among them as threat (`assistThreatEach`). A spell with `SPELL_ATTR_EX_NO_THREAT` or
  * `SPELL_ATTR_EX2_NO_INITIAL_THREAT` angers no one.
  */
-bool assistThreat(CombatWorld world, const(ulong)[] fightingHelped, UnitRef helper, uint amount,
+bool assistThreat(Map world, const(ulong)[] fightingHelped, UnitRef helper, uint amount,
     const ref SpellInfo spell, const Relating* remote = null)
 {
     import dmangos.world.relations : canAttack;

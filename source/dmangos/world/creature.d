@@ -15,7 +15,8 @@ import dmangos.world.pet : PetState;
 import dmangos.world.combat : Fighter;
 import dmangos.world.auras : AuraSet, AuraTick, Aura, AuraType;
 import dmangos.world.loot : Loot, LootItem;
-import dmangos.world.creatureai : CombatWorld, CreatureAI;
+import dmangos.world.creatureai : CreatureAI;
+import dmangos.world.map : Map;
 import dmangos.world.clientdata : FactionTemplateEntry;
 import dmangos.world.defines : UnitFlags;
 
@@ -594,7 +595,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     immutable(uint)[] addonAuras;
     private bool addonAurasDue;
 
-    private void castAddonAuras(CombatWorld world)
+    private void castAddonAuras(Map world)
     {
         addonAurasDue = false;
         if (ai !is null)
@@ -909,7 +910,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             if (castSpeed != values.get!UNIT_MOD_CAST_SPEED)
             {
                 values.set!UNIT_MOD_CAST_SPEED(castSpeed);
-                if (auto combat = cast(CombatWorld) world)
+                if (auto combat = cast(Map) world)
                     combat.flushCreature(this);
             }
             const melee = cast(uint)(template_.meleeBaseAttackTime * auras.attackTimeFactor(0)),
@@ -919,7 +920,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
                 values.set!UNIT_FIELD_BASEATTACKTIME(melee);
                 values.set!UNIT_FIELD_BASEATTACKTIME(1, melee);
                 values.set!UNIT_FIELD_RANGEDATTACKTIME(ranged);
-                if (auto combat = cast(CombatWorld) world)
+                if (auto combat = cast(Map) world)
                     combat.flushCreature(this);
             }
         }
@@ -1000,7 +1001,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         if (flagged != flags)
         {
             values.set!UNIT_FIELD_FLAGS(flagged);
-            if (auto combat = cast(CombatWorld) world)
+            if (auto combat = cast(Map) world)
                 combat.flushCreature(this);
         }
         if (held == auraHeld)
@@ -1039,7 +1040,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
      * may not stay beside it goes, and it shows what it does to its look. Returns the aura it has now (the one it had,
      * one stack more: `isNew` false).
      */
-    Aura receiveAura(Aura aura, CombatWorld world, out bool isNew)
+    Aura receiveAura(Aura aura, Map world, out bool isNew)
     {
         if (auto displaced = auras.displacedBy(aura, values)) // another's that may not stay
             loseAura(displaced, world);
@@ -1079,7 +1080,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
 
     /// Its aura goes (it ran out, `expired`, was dispelled or cancelled, or a script took it away): its script, and
     /// its spell's, hear of it.
-    void loseAura(Aura aura, CombatWorld world, bool expired = false)
+    void loseAura(Aura aura, Map world, bool expired = false)
     {
         import dmangos.script.api : AuraEnded, EntityRef;
 
@@ -1099,7 +1100,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
 
     /// An aura can expire before the caster's completion reaches this creature's owner.
     package bool consumeChannelCompletion(uint spell, ulong caster, ulong token, size_t effect, uint now,
-        CombatWorld world)
+        Map world)
     {
         import std.algorithm.mutation : remove;
 
@@ -1120,7 +1121,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     }
 
     /// Its auras' time passes: their casters do what their ticks do; those that ended go.
-    void updateAuras(CombatWorld world, int diff)
+    void updateAuras(Map world, int diff)
     {
         import std.algorithm.mutation : remove;
         import std.algorithm.searching : canFind;
@@ -1181,7 +1182,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
      * `OBS_MOD_HEALTH` and `OBS_MOD_MANA` that share of its maximum, `PERIODIC_ENERGIZE` its amount of its power;
      * shown in the combat log (`SMSG_PERIODICAURALOG`). Damage is its caster's doing (`UnitRef.auraTick`).
      */
-    private void selfTick(CombatWorld world, Aura aura, size_t i)
+    private void selfTick(Map world, Aura aura, size_t i)
     {
         import dmangos.bytes : ByteWriter;
         import dmangos.world.opcodes : Opcode;
@@ -1424,7 +1425,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         values.set!UNIT_FIELD_TARGET(0UL);
         values.set!UNIT_FIELD_FLAGS(values.get!UNIT_FIELD_FLAGS & ~UnitFlags.inCombat);
         if (ai !is null)
-            ai.died(cast(CombatWorld) world);
+            ai.died(cast(Map) world);
     }
 
     private uint corpseLifetime() const
@@ -1455,7 +1456,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     {
         if (questActorWait > 0)
         {
-            auto combat = cast(CombatWorld) world;
+            auto combat = cast(Map) world;
             if (combat !is null && combat.unit(questActorWaitFor))
                 questActorWait = 0;
             else if ((questActorWait -= diff) > 0)
@@ -1468,7 +1469,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         }
         if (summon.type != TempSpawnType.none && summon.update(this, diff))
         {
-            if (auto combat = cast(CombatWorld) world)
+            if (auto combat = cast(Map) world)
             {
                 // Eastern Kingdoms scripts: alive, its summoner's script hears it went.
                 if (alive && summon.summoner)
@@ -1480,7 +1481,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             return;
         }
         if (addonAurasDue && alive)
-            if (auto combat = cast(CombatWorld) world)
+            if (auto combat = cast(Map) world)
                 castAddonAuras(combat);
         if (!alive)
         {
@@ -1489,12 +1490,12 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
                 loot.update();
             corpseTimer -= diff;
             if (corpseTimer <= 0)
-                if (auto combat = cast(CombatWorld) world)
+                if (auto combat = cast(Map) world)
                     combat.corpseExpired(this);
             return;
         }
         if (auras.list.length)
-            if (auto combat = cast(CombatWorld) world)
+            if (auto combat = cast(Map) world)
                 updateAuras(combat, diff);
         if (!alive)
             return;
@@ -1509,7 +1510,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             import dmangos.world.pet : showPetStats;
 
             showPetStats(this);
-            if (auto combat = cast(CombatWorld) world)
+            if (auto combat = cast(Map) world)
                 combat.flushCreature(this);
         }
         if (!spline.finalized && (spline.flags & SplineFlags.falling))
@@ -1520,7 +1521,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             return;
         }
         if (ai !is null)
-            if (auto combat = cast(CombatWorld) world)
+            if (auto combat = cast(Map) world)
                 ai.update(combat, diff);
         followSpline(this, diff);
         generator.update(this, world, diff);

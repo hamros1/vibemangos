@@ -230,7 +230,7 @@ mixin template SessionScripting()
         int hostAffectingAuraTotal(EntityRef who, ubyte auraType) { return scriptSpell is null ? 0 : this.outer.affectingAuraTotal(who, scriptSpell, auraType); }
         int hostSpellPower(EntityRef who) { return scriptSpell is null || who.guid != player.guid ? 0 : cast(int) spellDamageBonus(scriptSpell, scriptSpell.casting.school); }
         // Spell scripts of items, quests and the world (`dmangos.world.spellscripting`):
-        private imported!"dmangos.world.creatureai".CombatWorld scriptWorld() { return map; }
+        private imported!"dmangos.world.map".Map scriptWorld() { return map; }
         import dmangos.world.spellscripting : SpellScriptActions;
         mixin SpellScriptActions;
         // Eastern Kingdoms scripts:

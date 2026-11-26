@@ -9,6 +9,7 @@ module dmangos.world.creaturescripting;
 /// See the module documentation.
 mixin template CreatureScripting()
 {
+    import dmangos.world.map : Map;
     import dmangos.bytes : ByteReader, ByteWriter;
     import dmangos.script.api;
     import dmangos.script.registry : ScriptHandle, ScriptRuntime;
@@ -189,16 +190,15 @@ mixin template CreatureScripting()
 
     private void checkpointQuestActor(bool immediate)
     {
-        import dmangos.world.map : Map;
 
-        if (auto map = cast(Map) world_)
+        if (auto map = world_)
             if (map.world !is null)
                 map.world.questActorChanged(map, me, questActorPlayer(), immediate);
     }
 
     /// Raises `event` from outside its own moments (a player's gossip, a quest): its world as given.
     /// Whether the script consumed it (`CreatureContext.consume`).
-    bool raiseFrom(E)(CombatWorld world, const E event)
+    bool raiseFrom(E)(Map world, const E event)
     {
         if (!behaviour)
             return false;
@@ -231,7 +231,7 @@ mixin template CreatureScripting()
     }
 
     /// A `Signal` from another script.
-    void signalled(EntityRef from, uint id, int value, CombatWorld world)
+    void signalled(EntityRef from, uint id, int value, Map world)
     {
         if (world !is null)
             world_ = world;
@@ -433,7 +433,7 @@ mixin template CreatureScripting()
 
     /// Spell scripts of items, quests and the world: `event` (an aura's) reaches `spell`'s script, if it has one,
     /// with this creature its host, acting on `world`.
-    package void spellScriptEvent(E)(const(SpellInfo)* spell, const auto ref E event, CombatWorld world)
+    package void spellScriptEvent(E)(const(SpellInfo)* spell, const auto ref E event, Map world)
     {
         import dmangos.script.api : SpellContext;
 
@@ -550,7 +550,7 @@ mixin template CreatureScripting()
         ActionResult hostCastHighestRank(EntityRef, uint, bool) { return ActionResult.failed; }
 
         // Spell scripts of items, quests and the world (`dmangos.world.spellscripting`):
-        private CombatWorld scriptWorld() { return world_; }
+        private Map scriptWorld() { return world_; }
         import dmangos.world.spellscripting : SpellScriptActions;
         mixin SpellScriptActions;
     }
@@ -565,14 +565,14 @@ mixin template CreatureScripting()
     }
 
     /// A spell script acts on it (`dmangos.world.spellscripting`): through its own script's host, on `world`.
-    CreatureHost hostIn(CombatWorld world)
+    CreatureHost hostIn(Map world)
     {
         world_ = world;
         return this;
     }
 
     /// A spell script has it cast `spellId` at `target`.
-    ActionResult castFor(CombatWorld world, uint spellId, ulong target, bool triggered)
+    ActionResult castFor(Map world, uint spellId, ulong target, bool triggered)
     {
         world_ = world;
         return hostCast(spellId, EntityRef(target), triggered);
@@ -603,7 +603,7 @@ mixin template CreatureScripting()
     }
 
     /// Another creature's script has it say `broadcast_text` `text`.
-    void sayFor(CombatWorld world, uint text, ulong target)
+    void sayFor(Map world, uint text, ulong target)
     {
         world_ = world;
         scriptText(text, target);
@@ -640,7 +640,7 @@ mixin template CreatureScripting()
     }
 
     /// Another creature's script has it go in `delayMs`.
-    void despawnFor(CombatWorld world, uint delayMs)
+    void despawnFor(Map world, uint delayMs)
     {
         world_ = world;
         scriptDespawn(delayMs);
@@ -803,7 +803,7 @@ mixin template CreatureScripting()
     // -----------------------------------------------------------------------
 
     /// A creature it summoned died: its script hears of it.
-    package void summonedDied(CombatWorld world, EntityRef summoned, EntityRef killer)
+    package void summonedDied(Map world, EntityRef summoned, EntityRef killer)
     {
         if (world !is null)
             world_ = world;
@@ -816,7 +816,7 @@ mixin template CreatureScripting()
     }
 
     /// A creature it summoned went away alive, its time up: its script hears of it.
-    package void summonedGone(CombatWorld world, ulong summoned)
+    package void summonedGone(Map world, ulong summoned)
     {
         if (world !is null)
             world_ = world;
@@ -1009,10 +1009,9 @@ mixin template CreatureScripting()
 
     ActionResult hostTeleportPlayer(EntityRef who, Location at)
     {
-        import dmangos.world.map : Map;
         import dmangos.world.unit : UnitKind;
 
-        auto map = cast(Map) world_;
+        auto map = world_;
         if (map is null)
             return ActionResult.notHere;
         auto unit = world_.unit(who.guid);
@@ -1053,7 +1052,7 @@ mixin template CreatureScripting()
     }
 
     /// Something else's script (an area trigger's) has it say `script_texts` row `entry`.
-    ActionResult sayScriptFor(CombatWorld world, int entry, EntityRef target)
+    ActionResult sayScriptFor(Map world, int entry, EntityRef target)
     {
         world_ = world;
         return hostSay(entry, target);
@@ -1371,7 +1370,6 @@ mixin template CreatureScripting()
 
     void hostTeleport(Location at)
     {
-        import dmangos.world.map : Map;
         import dmangos.world.motion : stopMoving;
         import dmangos.world.spline : monsterStop;
 
@@ -1380,7 +1378,7 @@ mixin template CreatureScripting()
         stopMoving(me, world_);
         me.movement.position = Position(at.x, at.y, at.z, at.orientation);
         world_.sendToObservers(me.guid, Opcode.SMSG_MONSTER_MOVE, monsterStop(me.guid, me.position, me.spline.id));
-        if (auto map = cast(Map) world_)
+        if (auto map = world_)
             map.objectRelocated(me);
     }
 
@@ -1615,7 +1613,6 @@ mixin template CreatureScripting()
 
     bool hostDisruptEngineer(EntityRef who)
     {
-        import dmangos.world.map : Map;
         auto session = playerSession(who);
         if (me.template_.entry != 16230 || !me.alive || session is null) return false;
         const spell = lore.spellInfo(31315);
@@ -1624,7 +1621,7 @@ mixin template CreatureScripting()
         if (rune <= 0 || !count || session.player.inventory.count(rune) < count) return false;
         if (session.scriptCast(spell.id, me.guid, true) != ActionResult.ok) return false;
         session.takeItem(rune, count);
-        if (auto map = cast(Map) world_)
+        if (auto map = world_)
             if (const shield = hostObjectNearby(181142, 3))
                 map.removeObject(shield.guid);
         return true;
