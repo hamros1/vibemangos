@@ -398,8 +398,21 @@ package bool harms(const ref SpellInfo s)
                 periodicManaLeech, modStalked, empathy, modStun, modFear, modConfuse, modRoot, modDecreaseSpeed,
                 modSilence, modPacify))
             return true;
+        // Any aura aimed at an enemy is a debuff (Demoralizing Roar's attack power, Expose Weakness's damage taken).
+        if (s.effect[i] == applyAura && (isEnemyTarget(s.implicitTargetA[i])
+                || isEnemyTarget(s.casting.implicitTargetB[i])))
+            return true;
     }
     return false;
+}
+
+/// Whether an implicit target is the caster's enemy or enemies (`TARGET_UNIT_ENEMY`, its areas and cone).
+private bool isEnemyTarget(ImplicitTarget t)
+{
+    import std.algorithm.comparison : among;
+
+    return t.among(ImplicitTarget.enemy, ImplicitTarget.enemiesAroundSource, ImplicitTarget.enemiesAroundDest,
+        ImplicitTarget.enemiesInCone) != 0;
 }
 
 /// Who effect `i` of `s` is at.

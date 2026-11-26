@@ -947,6 +947,10 @@ private final class NpcSweeper
         auto me = cast(Player) client.session.character;
         foreach (power; 0 .. 5)
             me.values.set!UNIT_FIELD_POWER1(power, me.values.get!UNIT_FIELD_MAXPOWER1(power));
+        // Health enough to live through an elite's blow: a spell's aura after its damage (Mortal Strike's, War
+        // Stomp's stun) is on a living target, not stripped by its death.
+        me.values.set!UNIT_FIELD_MAXHEALTH(me.values.get!UNIT_FIELD_MAXHEALTH * 50);
+        me.values.set!UNIT_FIELD_HEALTH(me.values.get!UNIT_FIELD_MAXHEALTH);
         client.read();
         return client;
     }

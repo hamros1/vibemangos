@@ -4,24 +4,20 @@
 # (DMANGOS_NPC_SWEEP_REPORT); the causes: "not done: <effect>" (dmangos.world.spelleffects.doneBy says a creature's
 # cast does not do the effect), "aura <type>: not on the <unit>" (or on it without its effect), "targeting: ...",
 # "refused: <reason>", "crash: ...", "no caster: ..." (no creature casts it in the data).
-568: Arcane Burst: aura modDecreaseSpeed: not on the player (effect 2)
 674: Dual Wield: not done: dualWield (effect 0)
 1848: Divining Chant: heal: no heal of the caster (effect 0)
 3408: Crippling Poison: not done: enchantItemTemporary (effect 0)
 4507: Target Dummy Spawn Effect: refused: dontReport
 4947: Magic Backlash: heal: no heal of the caster (effect 0)
-7140: Expose Weakness: aura modDamageTaken: not on the player (effect 0)
 7344: Recombobulate: no caster: no creature casts it in the data
 9220: "Plucky" Resumes Chicken Form: aura transform: on the caster, its look unchanged (effect 0)
 9738: Rift Spawn Becomes Visible: no caster: no creature casts it in the data
 10227: Beast Tracking: not done: learnSpell (effect 0); not done: skillStep (effect 1)
-10451: Implosion: aura modStun: not on the player (effect 1)
 10454: Into the Rift: no caster: no creature casts it in the data
 10805: Shackle Shatter: no caster: no creature casts it in the data
 10834: Shackle Shatter: no caster: no creature casts it in the data
 10835: Shackle Shatter: no caster: no creature casts it in the data
 10836: Shackle Shatter: no caster: no creature casts it in the data
-10967: Echoing Roar: aura modResistancePct: not on the player (effect 0)
 11462: Summon Pirate Treasure and Trigger Mob: no caster: no creature casts it in the data
 11463: Summon Treasure Hunting Pirate: no caster: no creature casts it in the data
 11485: Summon Treasure Hunting Bucanneer: no caster: no creature casts it in the data
@@ -37,8 +33,6 @@
 13912: Princess Summons Portal: not done: portal (effect 0)
 15065: Create Tablet Transcript: no caster: no creature casts it in the data
 15366: Songflower Serenade: no caster: no creature casts it in the data
-15708: Mortal Strike: aura modHealingPct: not on the player (effect 1)
-15727: Demoralizing Roar: aura modAttackPower: not on the player (effect 0)
 16054: Flames of the Black Flight: not done: summonObjectWild (effect 1: no object 175322); not done: activateObject (effect 2)
 16472: Wicked Milking: no caster: no creature casts it in the data
 16569: Health Funnel: targeting: aura periodicHeal at the caster, not the friendly creature (effect 0)
@@ -52,7 +46,6 @@
 20680: Blizzard: persistentAreaAura: no area, nothing on the player (effect 0)
 20687: Starfall: persistentAreaAura: no area, nothing on the player (effect 0)
 20733: Black Arrow: refused: outOfRange
-21066: Void Bolt: aura modDecreaseSpeed: not on the player (effect 1)
 21950: Recite Words of Celebras: not done: activateObject (effect 0)
 22438: Mark of Detonation: targeting: aura procTriggerSpell at the caster, not the player (effect 0)
 22817: Fengus' Ferocity: no caster: no creature casts it in the data
@@ -64,11 +57,8 @@
 22925: Conjure Dull Flat Elven Blade DND: no caster: no creature casts it in the data
 23059: Create Thorium Brotherhood Contract DND: no caster: no creature casts it in the data
 23187: Frost Burn: aura modMeleeHaste: not on the player (effect 1)
-23331: Blast Wave: schoolDamage: no damage to the player (effect 0); aura modDecreaseSpeed: not on the player (effect 1)
 23362: Raise Drakonids: not done: activateObject (effect 0)
 23460: Teleport to Blackwing Lair DND: no caster: no creature casts it in the data
-23461: Flame Breath: aura periodicDamage: not on the player (effect 1)
-23513: Essence of the Red: aura periodicEnergize: not on the player (effect 0); aura periodicEnergize: not on the player (effect 1); aura periodicEnergize: not on the player (effect 2)
 23735: Sayge's Dark Fortune of Strength: no caster: no creature casts it in the data
 23736: Sayge's Dark Fortune of Agility: no caster: no creature casts it in the data
 23737: Sayge's Dark Fortune of Stamina: no caster: no creature casts it in the data
@@ -78,21 +68,16 @@
 23767: Sayge's Dark Fortune of Armor: no caster: no creature casts it in the data
 23768: Sayge's Dark Fortune of Damage: no caster: no creature casts it in the data
 23769: Sayge's Dark Fortune of Resistance: no caster: no creature casts it in the data
-23774: System Shock: powerDrain: no mana drained from the player (effect 1): the player killed by its leech first (a dead player is not drained: CMaNGOS's EffectPowerDrain)
 23958: Mind Exhaustion: no caster: no creature casts it in the data
 24082: Hatch Spider Egg: not done: activateObject (effect 0)
 24083: Hatch Eggs: not done: activateObject (effect 0)
 24202: Create Heart of Hakkar Rift: no caster: no creature casts it in the data
 24203: Heart of Hakkar Banning: no caster: no creature casts it in the data
 24204: Heart of Hakkar Implode: no caster: no creature casts it in the data
-24213: Ravage: aura modStun: not on the player (effect 1)
 24215: Create Heart of Hakkar Explosion: no caster: no creature casts it in the data
 24217: Quest - Heart of Hakkar, Ritual Cast Visual: no caster: no creature casts it in the data
 24267: Gurubashi Mojo Madness: no caster: no creature casts it in the data
 24341: Revive: not done: resurrect (effect 0)
-24375: War Stomp: aura modStun: not on the player (effect 0)
-24408: Charge: not done: charge (effect 0: the caster did not move); aura modStun: not on the player (effect 2)
-24573: Mortal Strike: aura modHealingPct: not on the player (effect 1)
 24596: Intoxicating Venom: not done: inebriate (effect 1)
 24670: Inferno: not done: summonDemon (effect 0: no creature 89)
 24690: Aspect of Arlokk: not done: sanctuary (effect 2)
@@ -118,10 +103,8 @@
 24958: Despawn Putrid Mushrooms: not done: activateObject (effect 0)
 25201: Anachronos Quest Credit DND: not done: questComplete (effect 0)
 25599: Thundercrash: schoolDamage: no damage to the player (effect 0)
-25756: Purge: not done: dispel (effect 1); aura modStun: not on the player (effect 2)
 26063: Ouro Submerge Visual: not done: activateObject (effect 1)
 26095: Felcloth Bag: no caster: no creature casts it in the data
-26102: Sand Blast: aura modStun: not on the player (effect 1)
 26313: Cluster Rocket, PURPLE - D: summonObjectWild: no object 180856 (effect 1)
 26314: Cluster Rocket, PURPLE - N: summonObjectWild: no object 180856 (effect 1)
 26315: Cluster Rocket, PURPLE - SE: summonObjectWild: no object 180856 (effect 1)
@@ -135,13 +118,9 @@
 26454: Holiday - Lunar Teleport: Stormwind: no caster: no creature casts it in the data
 26455: Holiday - Lunar Teleport: Thunderbluff: no caster: no creature casts it in the data
 26456: Holiday - Lunar Teleport: Undercity: no caster: no creature casts it in the data
-26613: Unbalancing Strike: aura modSkill: not on the player (effect 1)
 27618: Blizzard: refused: noPower
 27663: Holiday - Valentine,  gift given: not done: activateObject (effect 0)
 27680: Berserk: refused: dontReport
-27758: War Stomp: aura modStun: not on the player (effect 0)
-27825: Shadow Mark: aura dummy: not on the player (effect 0)
-27993: Stomp: aura modDecreaseSpeed: not on the player (effect 1)
 28089: Polarity Shift: refused: dontReport
 28160: Thadius Spawn: refused: dontReport
 28167: Chain Lightning: refused: dontReport
@@ -161,12 +140,8 @@
 28265: Scourge Strike: instantKill: the player lives (effect 0)
 28287: Create Handbook DND: no caster: no creature casts it in the data
 28299: Ball Lightning: refused: dontReport
-28335: Whirlwind: aura modStun: not on the player (effect 1)
 28404: Zombie Chow Search: no caster: no creature casts it in the data
 28450: Arcane Explosion: aura modStun: on the caster, its unit flag not set (effect 0)
-28478: Frostbolt: aura modDecreaseSpeed: not on the player (effect 1)
-28479: aura modDecreaseSpeed: not on the player (effect 1): Kel'Thuzad's Frostbolt, its slow seen or not by the rolls before it (main's build alone, DMANGOS_NPC_SWEEP_ONLY=28479, misses it too)
-28522: Icebolt: aura modStun: not on the player (effect 0); aura periodicTriggerSpell: not on the player (effect 2)
 28622: Web Wrap: refused: dontReport
 29099: Create Flame of Darnassus: no caster: no creature casts it in the data
 29101: Create Flame of Stormwind: no caster: no creature casts it in the data
@@ -176,11 +151,8 @@
 29133: Create Flame of The Undercity: no caster: no creature casts it in the data
 29181: Teleport to Twin Emps Effect DND: no caster: no creature casts it in the data
 29190: Teleport to Final Chamber Effect DND: no caster: no creature casts it in the data
-29915: Flesh Rot: aura periodicDamage: not on the player (effect 1)
 29931: Flight Path: not done: sendTaxi (effect 0)
 29934: Flight Path: not done: sendTaxi (effect 0)
 29994: Flight Path: not done: sendTaxi (effect 0)
 31725: Summon Nightmare: no caster: no creature casts it in the data
 31726: Summon Holy Mount Visual: no caster: no creature casts it in the data
-32309: Slime Bolt: aura periodicDamage: not on the player (effect 1)
-25174: aura modResistance: not on the player (effect 1): Sundering Cleave (weapon damage + armor aura, both at the target): the aura never lands, at every seeded attempt (sent to the spell pipeline work)
