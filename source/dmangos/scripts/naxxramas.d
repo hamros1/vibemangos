@@ -61,6 +61,10 @@ enum : uint
     npcZeliek = 16_063,
     npcThane = 16_064,
     npcBlaumeux = 16_065,
+    npcSpiritOfMograine = 16_775,
+    npcSpiritOfBlaumeux = 16_776,
+    npcSpiritOfZeliek = 16_777,
+    npcSpiritOfKorthazz = 16_778,
     npcSapphiron = 15_989,
     npcKelthuzad = 15_990,
     npcGothik = 16_060,
@@ -214,11 +218,14 @@ struct Naxxramas
     static immutable constructPlatforms = Location(3479, -2964, 312);
 
     EncounterState[NaxxEncounter.max + 1] encounters;
-    ubyte horsemenKilled;
+    ubyte horsemenKilled; /// how many of the Four Horsemen lie dead (counted from their deaths, `horsemenSlain`)
     bool faerlinaIntroDone;
 
     @transient EntityRef[naxxDoors.length] doors;
     @transient EntityRef thaddius, kelthuzad, faerlina, sapphiron;
+    /// The Four Horsemen and the spirits the slain left, in the order of `horsemenEntries`.
+    @transient EntityRef[4] horsemen, horsemenSpirits;
+    @transient bool recoveringHorsemen, respawnHorsemen, horsemenRewardDue;
 
     /// The events of `event_naxxramas`: Gluth's Decimate; Kel'Thuzad's guardians counted from now; a guardian shackled.
     enum uint decimateEvent = 10_495, clearShacklesEvent = 10_536, guardianShackleEvent = 10_537;
@@ -283,6 +290,8 @@ struct Naxxramas
 
     void on(ref InstanceContext copy, const ref CreatureLoaded e)
     {
+        if (horsemanLoaded(copy, e))
+            return;
         switch (e.creature.entry)
         {
         case npcGothik:
@@ -309,6 +318,7 @@ struct Naxxramas
 
     void on(ref InstanceContext copy, const ref PlayerEntered e)
     {
+        horsemenPlayerEntered(copy);
         // The portals of the quarters ended stand open; Sapphiron, once born, is there.
         foreach (i, wing; wingEnds)
             if (encounters[wing] == EncounterState.done)
@@ -341,6 +351,7 @@ struct Naxxramas
 
     void on(ref InstanceContext copy, const ref Restored e)
     {
+        restoreHorsemen(copy);
         steps.cancel(Step.tankSwap);
         tankSwapRestored = encounters[NaxxEncounter.thaddius] == EncounterState.inProgress;
         if (tankSwapRestored)
@@ -509,13 +520,10 @@ struct Naxxramas
         auto state = cast(EncounterState) e.value;
         if (which == NaxxEncounter.fourHorsemen)
         {
-            // Four deaths make the encounter.
-            if (state == EncounterState.done && ++horsemenKilled < 4)
-                return;
-            if (state == EncounterState.failed)
-                horsemenKilled = 0;
-            if (state == EncounterState.done)
-                copy.respawnObject(goChestHorsemen, 30 * 60);
+            // A pull, or a wipe; their deaths make the encounter as the copy hears of them (`CreatureDied`).
+            if (state != EncounterState.done)
+                setHorsemen(copy, state);
+            return;
         }
         if (which == NaxxEncounter.thaddius)
         {
@@ -532,7 +540,7 @@ struct Naxxramas
                 steps.every(Step.tankSwap, 21.seconds);
             }
         }
-        if ((which == NaxxEncounter.thaddius || which == NaxxEncounter.fourHorsemen) && encounters[which] == state)
+        if (which == NaxxEncounter.thaddius && encounters[which] == state)
             return;
         encounters[which] = state;
         foreach (i, wing; wingEnds)
@@ -543,9 +551,183 @@ struct Naxxramas
         updateDoors(copy);
     }
 
+    // The Four Horsemen ------------------------------------------------------------------------------------------
+
+    private static immutable uint[4] horsemenEntries = [npcBlaumeux, npcMograine, npcThane, npcZeliek];
+    private static immutable uint[4] spiritEntries = [npcSpiritOfBlaumeux, npcSpiritOfMograine, npcSpiritOfKorthazz,
+        npcSpiritOfZeliek];
+
+    private static bool isHorseman(uint entry)
+    {
+        import std.algorithm.searching : canFind;
+
+        return horsemenEntries[].canFind(entry);
+    }
+
+    private bool horsemenActive() const
+    {
+        return encounters[NaxxEncounter.fourHorsemen] == EncounterState.inProgress;
+    }
+
+    /// How many of the Four Horsemen lie dead in the copy: their deaths, not a count a crash could part from them.
+    private ubyte horsemenSlain(ref InstanceContext copy)
+    {
+        ubyte slain;
+        foreach (entry; horsemenEntries)
+            if (copy.entryKilled(entry))
+                ++slain;
+        return slain;
+    }
+
+    /// A horseman or a slain one's spirit came into the copy: known, and saved with the fight under way.
+    private bool horsemanLoaded(ref InstanceContext copy, const ref CreatureLoaded e)
+    {
+        foreach (i; 0 .. 4)
+        {
+            if (e.creature.entry != (e.summoned ? spiritEntries[i] : horsemenEntries[i]))
+                continue;
+            if (e.summoned)
+                horsemenSpirits[i] = e.creature;
+            else
+                horsemen[i] = e.creature;
+            if (horsemenActive && copy.alive(e.creature)) // a clean handoff, or a spirit as its horseman falls
+                copy.checkpointCreature(e.creature);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * The Four Horsemen's encounter in `state`. While it is under way the living horsemen and the spirits of the slain
+     * (who mark the raid on) are saved with the copy, so a worker's crash resumes the fight (`Restored`). A wipe lets
+     * them go: the spirits go, and the slain come back for the next pull. The four dead are the encounter, for the
+     * lockout: their chest and the quarter's portal appear, and the spirits go.
+     */
+    private void setHorsemen(ref InstanceContext copy, EncounterState state)
+    {
+        const was = encounters[NaxxEncounter.fourHorsemen];
+        if (was == EncounterState.done || was == state)
+            return;
+        encounters[NaxxEncounter.fourHorsemen] = state;
+        if (horsemenActive)
+        {
+            foreach (actor; horsemen[] ~ horsemenSpirits[])
+                if (actor && copy.alive(actor))
+                    copy.checkpointCreature(actor);
+        }
+        else
+        {
+            recoveringHorsemen = false;
+            foreach (horseman; horsemen)
+                if (horseman)
+                    copy.releaseCheckpointActor(horseman);
+            foreach (ref spirit; horsemenSpirits)
+                if (spirit)
+                {
+                    copy.releaseCheckpointActor(spirit);
+                    if (copy.alive(spirit))
+                        copy.despawn(spirit);
+                    spirit = EntityRef.init;
+                }
+            if (state == EncounterState.failed)
+                foreach (entry; horsemenEntries)
+                    if (copy.entryKilled(entry))
+                        copy.respawnKilled(entry);
+            horsemenKilled = state == EncounterState.done ? 4 : horsemenSlain(copy);
+            if (state == EncounterState.done)
+                horsemenReward(copy);
+        }
+        updateDoors(copy);
+        copy.checkpoint();
+    }
+
+    /// Their chest, once for the lockout (the core keeps it, opened or not, and makes no second), and the portal.
+    private void horsemenReward(ref InstanceContext copy)
+    {
+        copy.respawnObject(goChestHorsemen, 30 * 60);
+        foreach (i, wing; wingEnds)
+            if (wing == NaxxEncounter.fourHorsemen)
+                copy.respawnObject(portals[i], 30 * 60);
+    }
+
+    /// A horseman fell (his death is in the copy's deaths already): the fourth makes the encounter, saved with it.
+    private void horsemanDied(ref InstanceContext copy, EntityRef horseman)
+    {
+        copy.releaseCheckpointActor(horseman);
+        horsemenKilled = horsemenSlain(copy);
+        if (horsemenKilled >= 4)
+            setHorsemen(copy, EncounterState.done);
+        else
+            copy.checkpoint();
+    }
+
+    /**
+     * The copy came back from its save. The four dead with the encounter not done (the last death landed, the save
+     * after it did not): it is done, and their chest appears once the copy is loaded. A fight under way resumes from
+     * its checkpoint when a player comes back, the slain still dead; one saved without the horsemen (an older save)
+     * fails. Not under way, the slain come back for the next pull (a crash in the wipe, or a lockout saved before
+     * wipes brought them back).
+     */
+    private void restoreHorsemen(ref InstanceContext copy)
+    {
+        import std.algorithm.searching : any;
+
+        if (encounters[NaxxEncounter.fourHorsemen] == EncounterState.done)
+            return;
+        horsemenKilled = horsemenSlain(copy);
+        if (horsemenKilled >= 4)
+        {
+            encounters[NaxxEncounter.fourHorsemen] = EncounterState.done;
+            horsemenRewardDue = true;
+            copy.checkpoint();
+            return;
+        }
+        if (horsemenActive)
+        {
+            if (horsemenEntries[].any!(entry => copy.hasSavedCreature(entry)))
+            {
+                recoveringHorsemen = true;
+                copy.waitForPlayer();
+                return;
+            }
+            encounters[NaxxEncounter.fourHorsemen] = EncounterState.failed;
+            copy.checkpoint();
+        }
+        respawnHorsemen = horsemenKilled > 0;
+    }
+
+    /// A player came into the copy: what the restore left for a loaded copy is done; in a resumed fight, they join it.
+    private void horsemenPlayerEntered(ref InstanceContext copy)
+    {
+        if (horsemenRewardDue)
+        {
+            horsemenRewardDue = false;
+            copy.respawnObject(goChestHorsemen, 30 * 60); // the portal: as for every quarter ended, below
+        }
+        if (respawnHorsemen)
+        {
+            respawnHorsemen = false;
+            if (!horsemenActive && encounters[NaxxEncounter.fourHorsemen] != EncounterState.done)
+            {
+                foreach (entry; horsemenEntries)
+                    if (copy.entryKilled(entry))
+                        copy.respawnKilled(entry);
+                horsemenKilled = 0;
+                copy.checkpoint();
+            }
+        }
+        // Back in the fight a crash resumed, each player joins it again (horsemen and spirits).
+        if (horsemenActive && recoveringHorsemen)
+            foreach (actor; horsemen[] ~ horsemenSpirits[])
+                if (actor && copy.alive(actor))
+                    copy.zoneCombat(actor);
+    }
+
     /// Gothik gave up his fight, or his checkpoint could not bring him back: his gates must not stay shut on the raid.
     void on(ref InstanceContext copy, const ref CreatureEvaded e)
     {
+        if (isHorseman(e.creature.entry) && horsemenActive)
+            setHorsemen(copy, EncounterState.failed); // a horseman the checkpoint could not bring back, or a wipe
         if (e.creature.entry == npcGothik && gothikActive)
             setGothik(copy, EncounterState.failed);
         if (e.creature.entry == npcSapphiron && sapphironActive)
@@ -583,6 +765,8 @@ struct Naxxramas
         import std.algorithm.mutation : remove;
         import std.algorithm.searching : countUntil;
 
+        if (!e.summoned && isHorseman(e.creature.entry))
+            return horsemanDied(copy, e.creature);
         if (e.creature.entry == npcGothik && !e.summoned)
             return setGothik(copy, EncounterState.done);
         if (e.creature.entry == npcSapphiron)
@@ -2928,8 +3112,10 @@ version (unittest)
         uint[] castSpells;
         EntityRef[ulong] victims;
         uint[ulong] flags;
+        bool[uint] killedEntries; /// the copy's dead spawns, by entry
         override uint hostPlayerCount() { return 1; }
-        override bool hostAlive(EntityRef who) { return cast(bool) who; }
+        override bool hostAlive(EntityRef who) { return who && (who.isPlayer || who.entry !in killedEntries); }
+        override bool hostEntryKilled(uint entry) { return (entry in killedEntries) !is null; }
         override EntityRef hostVictimOf(EntityRef who) { return victims.get(who.guid, EntityRef.init); }
         override uint hostUnitFlagsOf(EntityRef who) { return flags.get(who.guid, 0); }
         override size_t hostCreaturesNear(Location, uint entry, float, EntityRef[] into)
@@ -3058,10 +3244,15 @@ unittest
     runtime.raise(h, c, Signal(EntityRef.init, NaxxEncounter.anubRekhan, EncounterState.done));
     assert(naxx.opened[door.guid] && naxx.opened[gate.guid]);
 
-    foreach (i; 0 .. 3)
-        runtime.raise(h, c, Signal(EntityRef.init, NaxxEncounter.fourHorsemen, EncounterState.done));
-    assert(naxx.respawned.length == 0, "three of four");
-    runtime.raise(h, c, Signal(EntityRef.init, NaxxEncounter.fourHorsemen, EncounterState.done));
+    foreach (i, entry; [npcBlaumeux, npcMograine, npcThane, npcZeliek])
+    {
+        const horseman = EntityRef(0xF130_0000_0000_0010UL | (ulong(entry) << 24));
+        runtime.raise(h, c, Signal(horseman, NaxxEncounter.fourHorsemen, EncounterState.done));
+        naxx.killedEntries[entry] = true;
+        runtime.raise(h, c, CreatureDied(horseman, EntityRef.init, false));
+        if (i < 3)
+            assert(naxx.respawned.length == 0, "three of four");
+    }
     assert(naxx.respawned == [goChestHorsemen, 181_578]);
 
     const thaddius = EntityRef(0xF130_0000_0000_0002UL | (ulong(npcThaddius) << 24));
@@ -3078,6 +3269,171 @@ unittest
     auto ask = InstanceContext(naxx);
     runtime.raise(h, ask, Asked(EntityRef.init, Naxxramas.askFrostwyrm));
     assert(ask.answerGiven == 0, "Maexxna, Loatheb and Thaddius live");
+}
+
+version (unittest)
+{
+    /// The Four Horsemen's room for the copy's script: what it brought back, sent away and pulled into the fight.
+    class FakeHorsemenRoom : FakeNecropolis
+    {
+        uint[] respawnedKilled;
+        EntityRef[] despawned, zoned;
+        override void hostRespawnKilled(uint entry)
+        {
+            if (killedEntries.remove(entry))
+                respawnedKilled ~= entry;
+        }
+        override ActionResult hostDespawn(EntityRef c, uint) { despawned ~= c; return ActionResult.ok; }
+        override ActionResult hostZoneCombat(EntityRef c) { zoned ~= c; return ActionResult.ok; }
+    }
+
+    EntityRef naxxCreature(uint entry, ulong counter = 0x10)
+    {
+        return EntityRef(0xF130_0000_0000_0000UL | (ulong(entry) << 24) | counter);
+    }
+}
+
+/**
+ * The Four Horsemen's fight in the copy's checkpoint: under way, the living horsemen and the spirits of the slain are
+ * saved with it, and each death is a checkpoint. A copy restored mid-fight waits for the raid with them, the slain
+ * still dead, and each player back joins the fight. A wipe brings the slain back and sends the spirits away. The four
+ * dead are the encounter, with their chest, even when the save after the last death was lost; a save of the fight
+ * without the horsemen (an older one), or of a wipe that left the slain dead, brings the slain back for the next pull.
+ */
+unittest
+{
+    import std.algorithm.searching : canFind, count;
+    import dmangos.bytes : ByteReader, ByteWriter;
+
+    alias self = dmangos.scripts.naxxramas;
+    auto runtime = ScriptRuntime.of!self();
+    static immutable uint[4] entries = [npcBlaumeux, npcMograine, npcThane, npcZeliek];
+    EntityRef[4] four;
+    foreach (i, entry; entries)
+        four[i] = naxxCreature(entry);
+    const blaumeuxSpirit = naxxCreature(npcSpiritOfBlaumeux, 0x200), mograineSpirit = naxxCreature(npcSpiritOfMograine,
+        0x201);
+    int ask(FakeHorsemenRoom host, typeof(runtime.create(ScriptKind.instance, "")) of)
+    {
+        auto c = InstanceContext(host);
+        runtime.raise(of, c, Asked(EntityRef.init, NaxxEncounter.fourHorsemen));
+        return c.answerGiven;
+    }
+    auto restoredFrom(FakeHorsemenRoom room, const(ubyte)[] saved, const(EntityRef)[] summons, out bool waiting)
+    {
+        auto h = runtime.create(ScriptKind.instance, "instance_naxxramas");
+        auto reader = ByteReader(saved);
+        assert(runtime.load(h, reader));
+        auto c = InstanceContext(room);
+        c.savedSummons = summons;
+        runtime.raise(h, c, Restored());
+        waiting = c.waitingForPlayer;
+        return h;
+    }
+
+    auto room = new FakeHorsemenRoom;
+    auto h = runtime.create(ScriptKind.instance, "instance_naxxramas");
+    {
+        auto c = InstanceContext(room);
+        foreach (horseman; four)
+            runtime.raise(h, c, CreatureLoaded(horseman));
+        runtime.raise(h, c, Signal(four[0], NaxxEncounter.fourHorsemen, EncounterState.inProgress));
+        assert(c.checkpointSummons == four[] && c.checkpointRequested, "the pull saves the four with the copy");
+    }
+    foreach (i; 0 .. 2)
+    {
+        auto c = InstanceContext(room);
+        runtime.raise(h, c, Signal(four[i], NaxxEncounter.fourHorsemen, EncounterState.done));
+        room.killedEntries[entries[i]] = true;
+        runtime.raise(h, c, CreatureLoaded(i ? mograineSpirit : blaumeuxSpirit, true));
+        runtime.raise(h, c, CreatureDied(four[i], EntityRef(7), false));
+        assert(c.releasedCheckpointActors == [four[i]] && c.checkpointSummons == [i ? mograineSpirit : blaumeuxSpirit]
+            && c.checkpointRequested, "a death and the spirit it leaves are saved at once");
+    }
+    assert(ask(room, h) == EncounterState.inProgress && !room.respawned.length, "two of four");
+    ByteWriter fighting;
+    runtime.save(h, fighting);
+
+    // A worker's crash after two deaths: the survivors and the spirits come back, the slain stay dead.
+    auto room2 = new FakeHorsemenRoom;
+    room2.killedEntries = room.killedEntries.dup;
+    bool waiting;
+    auto h2 = restoredFrom(room2, fighting.data, [four[2], four[3], blaumeuxSpirit, mograineSpirit], waiting);
+    assert(waiting && ask(room2, h2) == EncounterState.inProgress && !room2.respawnedKilled.length);
+    {
+        auto c = InstanceContext(room2);
+        foreach (actor; [four[2], four[3]])
+            runtime.raise(h2, c, CreatureLoaded(actor));
+        foreach (actor; [blaumeuxSpirit, mograineSpirit])
+            runtime.raise(h2, c, CreatureLoaded(actor, true));
+        runtime.raise(h2, c, PlayerEntered(EntityRef(7)));
+        runtime.raise(h2, c, PlayerEntered(EntityRef(8)));
+    }
+    assert(room2.zoned.length == 8 && room2.zoned.canFind(four[2]) && room2.zoned.canFind(mograineSpirit)
+        && !room2.zoned.canFind(four[0]), "each player back joins the fight of the living and the spirits");
+
+    // A wipe: the slain come back, the spirits go, and nothing of the fight stays saved.
+    {
+        auto c = InstanceContext(room2);
+        runtime.raise(h2, c, Signal(four[2], NaxxEncounter.fourHorsemen, EncounterState.failed));
+        assert(room2.respawnedKilled == entries[0 .. 2] && room2.despawned == [blaumeuxSpirit, mograineSpirit]
+            && c.checkpointRequested, "the wipe left the slain dead or the spirits standing");
+        foreach (actor; [four[2], four[3], blaumeuxSpirit, mograineSpirit])
+            assert(c.releasedCheckpointActors.canFind(actor));
+    }
+    assert(ask(room2, h2) == EncounterState.failed);
+    {
+        auto c = InstanceContext(room2);
+        foreach (i, horseman; four)
+        {
+            room2.killedEntries[entries[i]] = true;
+            runtime.raise(h2, c, CreatureDied(horseman, EntityRef(7), false));
+            assert(room2.respawned.length == (i < 3 ? 0 : 2), "the slain of the wipe counted for the next pull");
+        }
+    }
+    assert(ask(room2, h2) == EncounterState.done && room2.respawned == [goChestHorsemen, 181_578]);
+
+    // The four dead, the save after the last death lost: the encounter is done, the chest comes once the copy loads.
+    auto room3 = new FakeHorsemenRoom;
+    foreach (entry; entries)
+        room3.killedEntries[entry] = true;
+    auto h3 = restoredFrom(room3, fighting.data, [four[2], four[3]], waiting);
+    assert(ask(room3, h3) == EncounterState.done && !room3.respawned.length);
+    foreach (player; [7, 8])
+    {
+        auto c = InstanceContext(room3);
+        runtime.raise(h3, c, PlayerEntered(EntityRef(player)));
+    }
+    assert(room3.respawned.count(goChestHorsemen) == 1 && room3.respawned.canFind(181_578)
+        && !room3.respawnedKilled.length, "the chest not once, or no portal");
+
+    // A fight saved without the horsemen (an older save): it failed, and the slain come back as the raid returns.
+    auto room4 = new FakeHorsemenRoom;
+    room4.killedEntries = room.killedEntries.dup;
+    auto h4 = restoredFrom(room4, fighting.data, null, waiting);
+    assert(ask(room4, h4) == EncounterState.failed && !room4.respawnedKilled.length);
+    {
+        auto c = InstanceContext(room4);
+        runtime.raise(h4, c, PlayerEntered(EntityRef(7)));
+    }
+    assert(room4.respawnedKilled == entries[0 .. 2] && !room4.zoned.length);
+
+    // A lockout saved after a wipe that left two slain (before wipes brought them back): back for the next pull.
+    ByteWriter wiped;
+    {
+        auto old = runtime.create(ScriptKind.instance, "instance_naxxramas");
+        auto c = InstanceContext(new FakeHorsemenRoom);
+        runtime.raise(old, c, Signal(four[2], NaxxEncounter.fourHorsemen, EncounterState.failed));
+        runtime.save(old, wiped);
+    }
+    auto room5 = new FakeHorsemenRoom;
+    room5.killedEntries = room.killedEntries.dup;
+    auto h5 = restoredFrom(room5, wiped.data, null, waiting);
+    {
+        auto c = InstanceContext(room5);
+        runtime.raise(h5, c, PlayerEntered(EntityRef(7)));
+    }
+    assert(ask(room5, h5) == EncounterState.failed && room5.respawnedKilled == entries[0 .. 2]);
 }
 
 version (unittest)

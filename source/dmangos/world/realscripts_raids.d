@@ -1777,6 +1777,221 @@ unittest
     assert(s.objects(181_366).length, "no chest of the Four Horsemen");
 }
 
+/// The Four Horsemen's entries (Blaumeux, Mograine, Korth'azz, Zeliek), their marks and the spirits they leave.
+private static immutable uint[4] horsemenEntries = [16_065, 16_062, 16_064, 16_063];
+private static immutable uint[4] horsemenMarks = [28_833, 28_834, 28_832, 28_835];
+private static immutable uint[4] horsemenSpirits = [16_776, 16_775, 16_778, 16_777];
+private enum uint horsemenDoor = 181_119, horsemenChest = 181_366, horsemenPortal = 181_578;
+
+/// A cluster copy of Naxxramas past Gothik, its characters beside the Four Horsemen, the trash cleared.
+private Scene horsemenScene(out Creature[4] four)
+{
+    import dmangos.script.api : EncounterState;
+    import dmangos.scripts.naxxramas : NaxxEncounter;
+
+    auto at = spawnOf(533, horsemenEntries[0]);
+    auto s = new Scene(533, Position(at.x + 3, at.y, at.z), [classWarrior, classMage], cluster: true);
+    s.run(1.seconds);
+    s.signalCopy(NaxxEncounter.gothik, EncounterState.done); // the way to the Horsemen open
+    foreach (i, entry; horsemenEntries)
+        four[i] = s.the(entry);
+    s.clear(four[0].position, 60, horsemenEntries[]);
+    return s;
+}
+
+/// When the creature `guid` last cast `spell` (the test's milliseconds), -1 if it did not.
+private long lastCast(Scene s, ulong guid, uint spell)
+{
+    long at = -1;
+    foreach (c; s.casts)
+        if (c.caster == guid && c.spell == spell && !c.started)
+            at = c.atMs;
+    return at;
+}
+
+/**
+ * The Four Horsemen survive a worker's crash after two of them fell. Killed just after the checkpoint of the second
+ * death, the worker comes back with the slain still dead and their spirits marking, the survivors in the fight at
+ * their health with their marks on the timers they had, the encounter under way and the door shut. The last two
+ * slain, the encounter is done, the door and the quarter's portal open and there is one chest; a crash just after the
+ * last death keeps that one chest, and a crash with the death saved before the encounter's save still makes only one.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import std.math : abs;
+    import dmangos.script.api : EncounterState;
+    import dmangos.scripts.naxxramas : NaxxEncounter;
+
+    Creature[4] four;
+    auto s = horsemenScene(four);
+    assert(s.doorOpen(horsemenDoor), "the Horsemen's door shut before the fight");
+    foreach (h; four)
+        s.engage(h);
+    s.stayWith = four[0];
+    s.stayWithin = 60;
+    s.run(23.seconds);
+    assert(s.ask(NaxxEncounter.fourHorsemen) == EncounterState.inProgress && !s.doorOpen(horsemenDoor));
+    s.stayWith = four[2];
+    ulong[4] guids;
+    foreach (i, h; four)
+        guids[i] = h.guid;
+    s.kill(four[0]);
+    s.run(400.msecs);
+    s.kill(four[1]);
+    s.run(400.msecs);
+    foreach (i; 0 .. 2)
+        assert(s.all(horsemenSpirits[i]).length == 1, format!"horseman %s left no spirit"(horsemenEntries[i]));
+    s.hurtTo(four[2], 70);
+    s.hurtTo(four[3], 55);
+    s.run(2600.msecs);
+    s.runUntilSaved();
+    uint[4] health;
+    foreach (i; 2 .. 4)
+        health[i] = four[i].values.get!UNIT_FIELD_HEALTH;
+    long[4] marked;
+    foreach (i; 2 .. 4)
+    {
+        marked[i] = lastCast(s, guids[i], horsemenMarks[i]);
+        assert(marked[i] >= 0, format!"horseman %s cast no mark before the crash"(horsemenEntries[i]));
+    }
+    const crashedAt = s.elapsedMs;
+
+    s.restartAfterCrash();
+    assert(s.ask(NaxxEncounter.fourHorsemen) == EncounterState.inProgress && !s.doorOpen(horsemenDoor),
+        format!"after the crash the encounter is %s and the door open %s"(s.ask(NaxxEncounter.fourHorsemen),
+        s.doorOpen(horsemenDoor)));
+    foreach (i; 0 .. 2)
+    {
+        assert(s.find(horsemenEntries[i]) is null, format!"the slain horseman %s is back"(horsemenEntries[i]));
+        assert(s.all(horsemenSpirits[i]).length == 1, format!"%s spirits of horseman %s after the crash"(
+            s.all(horsemenSpirits[i]).length, horsemenEntries[i]));
+    }
+    foreach (i; 2 .. 4)
+    {
+        four[i] = s.the(horsemenEntries[i]);
+        assert(four[i].guid == guids[i] && s.all(horsemenEntries[i]).length == 1 && four[i].ai.inCombat
+            && abs(cast(long) four[i].values.get!UNIT_FIELD_HEALTH - health[i]) * 100
+                < four[i].values.get!UNIT_FIELD_MAXHEALTH,
+            format!"horseman %s back in combat %s, at %s of %s health"(horsemenEntries[i], four[i].ai.inCombat,
+            four[i].values.get!UNIT_FIELD_HEALTH, health[i]));
+    }
+    // Their marks come on the timers they had (twelve seconds on), not on a pull's twenty.
+    s.stayWith = four[2];
+    s.forget();
+    assert(s.runUntil(() => lastCast(s, guids[2], horsemenMarks[2]) >= 0 && lastCast(s, guids[3], horsemenMarks[3]) >= 0,
+        13.seconds), "the survivors did not mark again after the crash\n" ~ s.seen());
+    foreach (i; 2 .. 4)
+    {
+        const next = lastCast(s, guids[i], horsemenMarks[i]) - crashedAt, due = marked[i] + 12_000 - crashedAt;
+        assert(abs(next - due) <= 1_200, format!"horseman %s marked %s ms after the crash, not %s"(horsemenEntries[i],
+            next, due));
+    }
+    // The spirits of the slain mark on (twenty seconds after they came, then every twelve).
+    assert(s.runUntil(() => s.castBy(horsemenSpirits[0], horsemenMarks[0]) && s.castBy(horsemenSpirits[1],
+        horsemenMarks[1]), 21.seconds), "the spirits of the slain did not mark after the crash\n" ~ s.seen());
+
+    // The third falls; the fourth's death is saved, but the crash comes before the encounter's own save.
+    s.kill(four[2]);
+    s.run(400.msecs);
+    assert(s.ask(NaxxEncounter.fourHorsemen) == EncounterState.inProgress && !s.objects(horsemenChest).length);
+    const beforeLast = s.savedData();
+    s.kill(four[3]);
+    s.run(400.msecs);
+    assert(s.ask(NaxxEncounter.fourHorsemen) == EncounterState.done && s.doorOpen(horsemenDoor),
+        "the four slain, the encounter not done or the door shut");
+    assert(s.objects(horsemenChest).length == 1 && s.objects(horsemenPortal).length,
+        format!"%s chests of the Four Horsemen, %s portals"(s.objects(horsemenChest).length,
+        s.objects(horsemenPortal).length));
+    const chest = s.objects(horsemenChest)[0].guid;
+
+    s.restartAfterCrash(); // just after the last death
+    assert(s.ask(NaxxEncounter.fourHorsemen) == EncounterState.done && s.doorOpen(horsemenDoor));
+    assert(s.objects(horsemenChest).length == 1 && s.objects(horsemenChest)[0].guid == chest,
+        format!"%s chests after a crash just after the last death"(s.objects(horsemenChest).length));
+    foreach (entry; horsemenEntries)
+        assert(s.find(entry) is null, format!"horseman %s alive again"(entry));
+
+    s.w.db.saveInstanceData(s.instance, beforeLast); // the death landed, the encounter's save after it did not
+    s.restartAfterCrash();
+    assert(s.ask(NaxxEncounter.fourHorsemen) == EncounterState.done && s.doorOpen(horsemenDoor),
+        "the four dead, but the encounter is not done after the crash");
+    assert(s.objects(horsemenChest).length == 1 && s.objects(horsemenChest)[0].guid == chest,
+        format!"%s chests after the encounter's save was lost"(s.objects(horsemenChest).length));
+}
+
+/**
+ * A wipe after two of the Four Horsemen fell brings the slain back: the four at home and whole, the encounter failed,
+ * the door open and the spirits gone. A worker's crash after the wipe keeps it so, and the four can be fought again:
+ * slain, the encounter is done with one chest.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.script.api : EncounterState;
+    import dmangos.scripts.naxxramas : NaxxEncounter;
+
+    Creature[4] four;
+    auto s = horsemenScene(four);
+    foreach (h; four)
+        s.engage(h);
+    s.stayWith = four[0];
+    s.stayWithin = 60;
+    s.run(3.seconds);
+    s.stayWith = four[2];
+    s.kill(four[1]); // Mograine, whom the others follow (`creature_linking_template`)
+    s.run(400.msecs);
+    s.kill(four[0]);
+    s.run(400.msecs);
+    s.stayWith = null;
+    s.wipe(four[2]);
+
+    bool home()
+    {
+        foreach (entry; horsemenEntries)
+        {
+            auto h = s.find(entry);
+            if (h is null || h.ai.inCombat || h.ai.evading || s.healthOf(h) < 100)
+                return false;
+        }
+        return true;
+    }
+
+    assert(s.runUntil(&home, 60.seconds), "the Four Horsemen not all home and whole after the wipe");
+    assert(s.ask(NaxxEncounter.fourHorsemen) == EncounterState.failed && s.doorOpen(horsemenDoor),
+        "after the wipe the encounter is not failed, or the door is shut");
+    foreach (spirit; horsemenSpirits)
+        assert(!s.all(spirit).length, format!"spirit %s stayed after the wipe"(spirit));
+    s.revive();
+    s.moveHeroes(Position(four[0].spawn.x + 70, four[0].spawn.y, four[0].spawn.z)); // out of their reach
+    s.godlike = true;
+    s.run(1.seconds);
+
+    s.restartAfterCrash();
+    assert(s.ask(NaxxEncounter.fourHorsemen) == EncounterState.failed && s.doorOpen(horsemenDoor),
+        "after the crash the encounter is not failed, or the door is shut");
+    s.run(2.seconds);
+    assert(home(), "the Four Horsemen not all home after the crash");
+    foreach (i, entry; horsemenEntries)
+        four[i] = s.the(entry);
+    s.moveHeroes(Position(four[0].spawn.x + 3, four[0].spawn.y, four[0].spawn.z));
+    foreach (h; four)
+        s.engage(h);
+    s.run(1.seconds);
+    assert(s.ask(NaxxEncounter.fourHorsemen) == EncounterState.inProgress, "they cannot be fought again");
+    foreach (h; four)
+    {
+        s.kill(h);
+        s.run(400.msecs);
+    }
+    s.run(1.seconds);
+    assert(s.ask(NaxxEncounter.fourHorsemen) == EncounterState.done && s.doorOpen(horsemenDoor)
+        && s.objects(horsemenChest).length == 1, format!"the four slain again: encounter %s, %s chests"(
+        s.ask(NaxxEncounter.fourHorsemen), s.objects(horsemenChest).length));
+}
+
 /**
  * Thaddius: Stalagg and Feugen fall (each a fake death; the other's death within the window keeps both down), then
  * Thaddius wakes: Polarity Shift (15 s), Chain Lightning, Ball Lightning when no one is in his reach.
