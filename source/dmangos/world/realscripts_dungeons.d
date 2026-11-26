@@ -921,6 +921,45 @@ unittest
 }
 
 /**
+ * The Cathedral on a cluster worker: a crash after Mograine (3976) fell, with Whitemane (3977) on her way to him and
+ * unhurt, brings both back together from the copy's checkpoint: he lies fallen, she comes to the fight, raises him at
+ * half her health, and both slain, the cathedral is done.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.scripts.scarletmonastery : Encounter, ScarletMonastery;
+
+    enum uint mograine = 3976, whitemane = 3977, door = 104600;
+    auto d = Dungeon.enter(189, 42, cluster: true);
+    auto him = d.spawned(mograine, 0, 30);
+    const his = him.guid;
+    d.pull(him);
+    d.run(3.seconds);
+    d.kill(him);
+    d.run(1.seconds);
+    assert(him.alive && d.heard(-1189008), "he falls and she comes\n" ~ d.story);
+    auto her = d.find(whitemane);
+    const hers = her.guid;
+    assert(!her.ai.inCombat, "on her way");
+    d.restartAfterCrash();
+    him = d.map.creatureAt(his);
+    her = d.map.creatureAt(hers);
+    assert(him !is null && him.alive && her !is null && her.alive, "both back");
+    assert(d.saved!ScarletMonastery.cathedral == Encounter.inProgress && Dungeon.isOpen(d.objectOf(door)));
+    bool fighting() { return her.ai.inCombat; }
+    assert(d.runUntil(&fighting, 20.seconds), "she comes to the fight\n" ~ d.story);
+    d.hurtTo(her, 45);
+    assert(d.runUntil(() => d.heard(-1189007), 30.seconds), "she raises him\n" ~ d.story);
+    d.run(5.seconds);
+    d.kill(him);
+    d.kill(her);
+    d.run(2.seconds);
+    assert(d.saved!ScarletMonastery.cathedral == Encounter.done, "both slain, the cathedral is done\n" ~ d.story);
+}
+
+/**
  * Razorfen Downs and Blackfathom Deeps, a restart in the middle of an event: its summons are gone with it, so the
  * event can go on (the gong rung again calls its next wave; the Fathom Stone calls Baron Aquanis again), not wait for
  * them forever.

@@ -81,6 +81,36 @@ struct ScarletMonastery
             scarlet.add(e.creature);
     }
 
+    /**
+     * Mograine and Whitemane each came back from his own fight snapshot after a crash, taken apart, if at all: she, on
+     * her way to the fallen Mograine and unhurt, had none and stood at home again, and he lay there. From his fall the
+     * copy keeps the two together in its checkpoint. A save without them (an older one's) starts the fight again,
+     * unless one of them is slain.
+     */
+    void on(ref InstanceContext sm, const ref Restored e)
+    {
+        if (cathedral != Encounter.inProgress && cathedral != Encounter.resurrected)
+            return;
+        if (sm.hasSavedCreature(mograine) || sm.hasSavedCreature(whitemane))
+        {
+            recovering = true;
+            sm.waitForPlayer();
+        }
+        else if (!mograineDead && !whitemaneDead)
+            cathedral = Encounter.failed;
+    }
+
+    void on(ref InstanceContext sm, const ref PlayerEntered e)
+    {
+        if (!recovering)
+            return;
+        recovering = false;
+        if (whitemaneRef && sm.alive(whitemaneRef) && !sm.alive(sm.victimOf(whitemaneRef)))
+            sm.attack(whitemaneRef, e.player); // she was coming for them
+    }
+
+    @transient bool recovering;
+
     void on(ref InstanceContext sm, const ref CreatureDied e)
     {
         switch (e.creature.entry)
@@ -118,6 +148,9 @@ struct ScarletMonastery
                 sm.door(door, true);
             if (whitemaneRef)
                 sm.signal(whitemaneRef, Whitemane.Signals.mograineFell);
+            foreach (who; [mograineRef, whitemaneRef])
+                if (who && sm.alive(who))
+                    sm.checkpointCreature(who);
             break;
         case Signals.ashbringer:
             if (ashbringerCame)
@@ -145,8 +178,12 @@ struct ScarletMonastery
             if (door)
                 sm.door(door, false);
             foreach (who; [mograineRef, whitemaneRef])
+            {
                 if (who && who != e.from)
                     sm.signal(who, Mograine.Signals.reset);
+                if (who)
+                    sm.releaseCheckpointActor(who);
+            }
             break;
         default:
             break;
