@@ -2978,3 +2978,287 @@ unittest
         assert(!canAttack(s.heroUnit(free).relating, s.heroUnit(k).relating, s.w.context.client));
     }
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Kel'Thuzad's crash recovery
+// ---------------------------------------------------------------------------------------------------------------
+
+/// Kel'Thuzad's chamber: where the characters stand, three yards off him.
+private Position kelthuzadChamber()
+{
+    const at = spawnOf(533, 15_990);
+    return Position(at.x + 3, at.y, at.z);
+}
+
+/// The minions and guardians of Kel'Thuzad's fight each client could have seen, dead or alive, by entry and guid.
+private struct KelthuzadMinions
+{
+    enum uint[4] entries = [16_427, 16_428, 16_429, 16_441];
+    long[ulong][uint] came; /// when each came (the test's time), by entry and guid
+
+    /// The ones the map has now noted.
+    void note(Scene s)
+    {
+        foreach (entry; entries)
+            foreach (c; s.all(entry, true))
+                if (c.guid !in came.require(entry))
+                    came[entry][c.guid] = s.elapsedMs;
+    }
+
+    /// The world goes on for `span`, those that come noted every 200 ms; the living slain as they come if `slay`.
+    void run(Scene s, imported!"core.time".Duration span, bool slay = false)
+    {
+        for (long done; done < span.total!"msecs"; done += 200)
+        {
+            s.run(200.msecs);
+            note(s);
+            if (slay)
+                foreach (entry; entries[0 .. 3])
+                    foreach (c; s.all(entry))
+                        s.kill(c);
+        }
+    }
+
+    size_t count(uint entry) const
+    {
+        const seen = entry in came;
+        return seen is null ? 0 : seen.length;
+    }
+
+    /// When the last of `entry` came (-1: none did).
+    long lastAt(uint entry) const
+    {
+        long last = -1;
+        if (const seen = entry in came)
+            foreach (at; seen.byValue)
+                if (at > last)
+                    last = at;
+        return last;
+    }
+}
+
+/// The living minions and guardians of his fight, by guid.
+private bool[ulong] livingMinions(Scene s)
+{
+    bool[ulong] living;
+    foreach (entry; KelthuzadMinions.entries)
+        foreach (c; s.all(entry))
+            living[c.guid] = true;
+    return living;
+}
+
+/**
+ * Kel'Thuzad's first phase survives a worker's crash. Killed 45 seconds into the waves (soldiers, an abomination and a
+ * soul weaver alive, two soldiers slain), the worker comes back with the same Kel'Thuzad channelling, untouchable, the
+ * same living minions and none of the slain; the trigger begins nothing twice. The waves go on from their saved
+ * timers (the next abomination 55 s into the fight, the next soul weaver at 70 s), each minion comes once, and he
+ * fights 5:25 into the fight, as without the crash.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import std.math : abs;
+    import dmangos.script.api : EncounterState;
+    import dmangos.scripts.naxxramas;
+
+    enum uint chamberDoor = 181_228;
+    auto s = new Scene(533, kelthuzadChamber, [classWarrior, classMage], cluster: true);
+    s.run(1.seconds);
+    auto kt = s.the(npcKelthuzad);
+    const ktGuid = kt.guid, instance = s.instance;
+    s.signalCopy(NaxxSignal.triggerBase + Naxxramas.triggerKelthuzad, 0);
+    const startedAt = s.elapsedMs;
+    assert(s.ask(NaxxEncounter.kelthuzad) == EncounterState.inProgress && !s.doorOpen(chamberDoor));
+    KelthuzadMinions minions;
+    minions.run(s, 45.seconds);
+    auto soldiers = s.all(npcSoldierFrozen);
+    assert(soldiers.length >= 4 && s.all(npcUnstoppableAbom).length == 1 && s.all(npcSoulWeaver).length == 1,
+        format!"%s soldiers, %s abominations, %s soul weavers after 45 s"(soldiers.length,
+        s.all(npcUnstoppableAbom).length, s.all(npcSoulWeaver).length));
+    const ulong[2] slain = [soldiers[0].guid, soldiers[1].guid];
+    s.kill(soldiers[0]);
+    s.kill(soldiers[1]);
+    assert(s.runUntilSaved());
+    const living = livingMinions(s);
+    assert(living.length >= 4);
+
+    s.forget();
+    s.restartAfterCrash();
+    kt = s.the(npcKelthuzad);
+    assert(s.instance == instance && kt.guid == ktGuid && s.all(npcKelthuzad).length == 1, "another Kel'Thuzad");
+    assert(s.ask(NaxxEncounter.kelthuzad) == EncounterState.inProgress && !s.doorOpen(chamberDoor),
+        "his encounter or his door after the crash");
+    assert((kt.values.get!UNIT_FIELD_FLAGS & 0x0200_0000) && !kt.ai.inCombat,
+        format!"Kel'Thuzad not channelling after the crash: flags %#x, in combat %s"(kt.values.get!UNIT_FIELD_FLAGS,
+        kt.ai.inCombat));
+    const back = livingMinions(s);
+    foreach (guid; living.byKey)
+        assert(guid in back, format!"minion %#x did not come back"(guid));
+    foreach (guid; slain)
+        assert(guid !in back, format!"the slain soldier %#x came back"(guid));
+    assert(back.length <= living.length + 1, format!"%s minions before the crash, %s after"(living.length, back.length));
+    s.signalCopy(NaxxSignal.triggerBase + Naxxramas.triggerKelthuzad, 0); // a player in his chamber again
+    minions.note(s);
+    const abominations = minions.count(npcUnstoppableAbom), weavers = minions.count(npcSoulWeaver);
+    minions.run(s, (71_000 - (s.elapsedMs - startedAt)).msecs);
+    assert(minions.count(npcUnstoppableAbom) == abominations + 1 && minions.count(npcSoulWeaver) == weavers + 1,
+        format!"abominations %s then %s, soul weavers %s then %s: a wave twice, or none"(abominations,
+        minions.count(npcUnstoppableAbom), weavers, minions.count(npcSoulWeaver)));
+    assert(abs(minions.lastAt(npcUnstoppableAbom) - startedAt - 55_000) <= 600
+        && abs(minions.lastAt(npcSoulWeaver) - startedAt - 70_000) <= 600, format!(
+        "the waves did not go on from their timers: an abomination %s ms, a soul weaver %s ms into the fight")(
+        minions.lastAt(npcUnstoppableAbom) - startedAt, minions.lastAt(npcSoulWeaver) - startedAt));
+
+    // His minions slain as they come, till he fights: on his first timer.
+    s.stayWith = kt;
+    s.stayWithin = 30;
+    long fightsAt = -1;
+    while (s.elapsedMs - startedAt < 330_000 && fightsAt < 0)
+    {
+        minions.run(s, 1.seconds, true);
+        if (kt.ai.inCombat && !(kt.values.get!UNIT_FIELD_FLAGS & 0x0200_0000))
+            fightsAt = s.elapsedMs;
+    }
+    assert(fightsAt >= 0, "Kel'Thuzad never fights");
+    assert(abs(fightsAt - startedAt - 325_000) <= 1_200, format!"he fought %s ms into the fight, not 325000"(
+        fightsAt - startedAt));
+    // 30 s, then every 25 s till 5:25; 40 s, then every 30 s: twelve abominations and ten soul weavers, each once.
+    assert(minions.count(npcUnstoppableAbom) == 12 && minions.count(npcSoulWeaver) == 10, format!(
+        "%s abominations and %s soul weavers came in his first phase, not 12 and 10")(minions.count(npcUnstoppableAbom),
+        minions.count(npcSoulWeaver)));
+    assert(s.all(npcKelthuzad).length == 1);
+}
+
+/**
+ * Kel'Thuzad's guardian phase survives a worker's crash. Below 40%, two Guardians of Icecrown come, a priest shackles
+ * one, and his Chains hold five raiders; the worker dies two seconds on. It comes back with the same Kel'Thuzad at his
+ * health, the same two guardians (the shackled one still shackled) and the five raiders his again until the Chains'
+ * twenty seconds are up. The other three guardians come on their timer, five in all. Slain, he opens his chamber for
+ * the rest of the lockout, through another crash.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import std.math : abs;
+    import dmangos.script.api : ActionResult, EncounterState;
+    import dmangos.scripts.naxxramas;
+    import dmangos.world.updatefields : UNIT_FIELD_CHARMEDBY;
+
+    enum uint chamberDoor = 181_228, shackle = 10_955, chains = 28_408, chainsTarget = 28_410, guardianCount = 5;
+    auto s = new Scene(533, kelthuzadChamber, [classWarrior, classWarrior, classWarrior, classWarrior, classMage,
+        classPriest], cluster: true);
+    s.run(1.seconds);
+    auto kt = s.the(npcKelthuzad);
+    const ktGuid = kt.guid;
+    s.signalCopy(NaxxSignal.triggerBase + Naxxramas.triggerKelthuzad, 0);
+    KelthuzadMinions minions;
+    s.stayWith = kt;
+    s.stayWithin = 30;
+    const fights = s.runUntil(() {
+        minions.note(s);
+        foreach (entry; KelthuzadMinions.entries[0 .. 3])
+            foreach (m; s.all(entry))
+                s.kill(m);
+        return kt.ai.inCombat && (kt.values.get!UNIT_FIELD_FLAGS & 0x0200_0000) == 0;
+    }, 330.seconds, 1.seconds);
+    assert(fights, "Kel'Thuzad never fights");
+    s.engage(kt);
+    s.run(2.seconds);
+    s.hurtTo(kt, 39);
+    minions.run(s, 16.seconds);
+    auto guardians = s.all(npcGuardianIcecrown);
+    assert(guardians.length == 2, format!"%s Guardians of Icecrown 16 s into his last phase"(guardians.length));
+    const shackled = guardians[0].guid;
+    s.castTriggered(5, shackle, shackled);
+    assert(guardians[0].auras.find(shackle) !is null, "the guardian not shackled");
+    assert(kt.ai.castFor(s.map, chains, kt.guid, true) == ActionResult.ok);
+    const chainedAt = s.elapsedMs;
+    size_t[] chained;
+    foreach (k; 0 .. s.heroes.length)
+        if (s.hero(k).auras.find(chainsTarget) !is null)
+            chained ~= k;
+    assert(chained.length == 5, format!"%s raiders chained"(chained.length));
+    s.run(2.seconds);
+    assert(s.runUntilSaved());
+    const health = kt.values.get!UNIT_FIELD_HEALTH;
+    const shackleLeft = s.map.creatureAt(shackled).auras.find(shackle).duration;
+    bool[ulong] guardiansBefore;
+    foreach (g; s.all(npcGuardianIcecrown))
+        guardiansBefore[g.guid] = true;
+
+    s.forget();
+    s.restartAfterCrash();
+    kt = s.the(npcKelthuzad);
+    assert(kt.guid == ktGuid && s.all(npcKelthuzad).length == 1 && kt.ai.inCombat
+        && abs(cast(long) kt.values.get!UNIT_FIELD_HEALTH - health) * 100 < kt.values.get!UNIT_FIELD_MAXHEALTH,
+        format!"Kel'Thuzad back in combat %s at %s of %s health"(kt.ai.inCombat, kt.values.get!UNIT_FIELD_HEALTH, health));
+    assert(s.ask(NaxxEncounter.kelthuzad) == EncounterState.inProgress && !s.doorOpen(chamberDoor));
+    auto after = s.all(npcGuardianIcecrown);
+    assert(after.length == 2, format!"%s guardians after the crash"(after.length));
+    foreach (g; after)
+        assert(g.guid in guardiansBefore, format!"guardian %#x is not one of before the crash"(g.guid));
+    auto bound = s.map.creatureAt(shackled);
+    assert(bound !is null && bound.auras.find(shackle) !is null
+        && abs(bound.auras.find(shackle).duration - shackleLeft) <= 1_000, "the shackled guardian came back free");
+    foreach (k; chained)
+        assert(s.hero(k).auras.find(chainsTarget) !is null
+            && s.hero(k).values.get!UNIT_FIELD_CHARMEDBY == kt.guid && !s.heroes[k].session.inWorld.inControl,
+            format!"raider %s came back free of the Chains"(k));
+    s.stayWith = kt;
+    assert(s.runUntil(() => s.hero(chained[0]).auras.find(chainsTarget) is null, 25.seconds));
+    const freedAt = s.elapsedMs - chainedAt;
+    assert(freedAt >= 19_000 && freedAt <= 21_400, format!"the Chains held %s ms, not their twenty seconds"(freedAt));
+    foreach (k; chained)
+        assert(s.hero(k).values.get!UNIT_FIELD_CHARMEDBY == 0 && s.heroes[k].session.inWorld.inControl);
+    minions.run(s, 40.seconds);
+    assert(minions.count(npcGuardianIcecrown) == guardianCount, format!"%s Guardians of Icecrown, not %s"(
+        minions.count(npcGuardianIcecrown), guardianCount));
+
+    s.kill(kt);
+    s.run(1.seconds);
+    assert(s.ask(NaxxEncounter.kelthuzad) == EncounterState.done && s.doorOpen(chamberDoor));
+    s.restartAfterCrash();
+    assert(s.ask(NaxxEncounter.kelthuzad) == EncounterState.done && s.doorOpen(chamberDoor), "his chamber shut again");
+    assert(s.find(npcKelthuzad) is null && !s.all(npcGuardianIcecrown).length, "Kel'Thuzad or a guardian back");
+}
+
+/**
+ * A wipe in Kel'Thuzad's first phase, then a worker's crash: with nobody alive in his chamber he gives up, his minions
+ * go and his chamber opens; the copy comes back with the encounter failed and him at home, not channelling, with no
+ * minion, and the trigger begins it again, its waves from the start.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.script.api : EncounterState;
+    import dmangos.scripts.naxxramas;
+
+    enum uint chamberDoor = 181_228;
+    auto s = new Scene(533, kelthuzadChamber, [classWarrior, classMage], cluster: true);
+    s.run(1.seconds);
+    auto kt = s.the(npcKelthuzad);
+    s.signalCopy(NaxxSignal.triggerBase + Naxxramas.triggerKelthuzad, 0);
+    s.run(20.seconds);
+    assert(s.all(npcSoldierFrozen).length >= 4);
+    s.wipe(kt);
+    assert(s.runUntil(() => s.ask(NaxxEncounter.kelthuzad) == EncounterState.failed, 4.seconds),
+        "the raid wiped in his first phase, and he channels on");
+    s.run(1.seconds);
+    assert(!livingMinions(s).length && s.doorOpen(chamberDoor), "his minions stay, or his chamber stays shut");
+    s.revive();
+    s.godlike = true;
+    s.restartAfterCrash();
+    kt = s.the(npcKelthuzad);
+    assert(s.ask(NaxxEncounter.kelthuzad) == EncounterState.failed && s.all(npcKelthuzad).length == 1
+        && s.doorOpen(chamberDoor));
+    assert(!(kt.values.get!UNIT_FIELD_FLAGS & 0x0200_0000)
+        && !livingMinions(s).length, "channelling, or his minions back, after the crash");
+    s.signalCopy(NaxxSignal.triggerBase + Naxxramas.triggerKelthuzad, 0);
+    assert(s.ask(NaxxEncounter.kelthuzad) == EncounterState.inProgress && !s.doorOpen(chamberDoor));
+    s.run(6.seconds);
+    assert(s.all(npcSoldierFrozen).length == 1 && (kt.values.get!UNIT_FIELD_FLAGS & 0x0200_0000),
+        format!"%s soldiers 6 s into the second pull"(s.all(npcSoldierFrozen).length));
+}

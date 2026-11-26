@@ -115,6 +115,8 @@ enum NaxxSignal : uint
     gothikWave = 112,    /// a scheduled wave of living adds (`value`: their entry)
     saveGothik = 113,    /// the boss moved to the floor or changed sides
     saveSapphiron = 114, /// Sapphiron to the copy: a phase, a timer or a cast changed (checkpoint me)
+    saveKelthuzad = 120, /// Kel'Thuzad to the copy: a wave, a phase, a timer or his Chains changed (checkpoint me)
+    kelthuzadPlayerBack = 121, /// the copy to Kel'Thuzad: the player of guid `value` is back in his fight's copy
     triggerBase = 1000, /// an area trigger: `triggerBase + id`
 }
 
@@ -243,6 +245,9 @@ struct Naxxramas
     @transient float gothikDividerY = -3360.78f; // center of the combat gate in Classic-DB
     /// The ice blocks of Sapphiron's air phase (saved with his fight under way; appended after Gothik's adds).
     @AppendedSince(2) EntityRef[] iceBlocks;
+    /// Kel'Thuzad's living minions and guardians while his fight is under way. They are saved in the checkpoint, not
+    /// in this layout: each comes back into the list as it comes back into the world (`CreatureLoaded`).
+    @transient EntityRef[] kelthuzadAdds;
 
     private bool gothikActive() const
     {
@@ -302,6 +307,18 @@ struct Naxxramas
             break;
         case npcKelthuzad:
             kelthuzad = e.creature;
+            if (kelthuzadActive) // a clean handoff brings him in without a signal: he stays in the checkpoint
+                copy.checkpointCreature(kelthuzad);
+            break;
+        case npcSoldierFrozen, npcUnstoppableAbom, npcSoulWeaver, npcGuardianIcecrown:
+            import std.algorithm.searching : canFind;
+
+            // His summons as they come, and as a handoff or the checkpoint brings them back: kept with his fight.
+            if (e.summoned && kelthuzadActive && !kelthuzadAdds.canFind(e.creature))
+            {
+                kelthuzadAdds ~= e.creature;
+                copy.checkpointCreature(e.creature);
+            }
             break;
         case npcFaerlina:
             faerlina = e.creature;
@@ -343,6 +360,7 @@ struct Naxxramas
                     if (const target = gothikTarget(copy, where(copy, add)))
                         copy.attack(add, target);
         }
+        kelthuzadPlayerBack(copy, e.player);
     }
 
     /// A restore during Stalagg and Feugen's fight keeps their swap going: adds restored still fighting
@@ -372,6 +390,7 @@ struct Naxxramas
                 setGothik(copy, EncounterState.failed);
         }
         restoreSapphiron(copy);
+        restoreKelthuzad(copy);
     }
 
     private bool sapphironActive() const
@@ -443,6 +462,71 @@ struct Naxxramas
         }
     }
 
+    private bool kelthuzadActive() const
+    {
+        return encounters[NaxxEncounter.kelthuzad] == EncounterState.inProgress;
+    }
+
+    /**
+     * Kel'Thuzad's encounter in `state`. While it is under way he, his minions and his guardians are saved with the
+     * copy: a worker's crash resumes the fight (`Restored`) in its phase, with its timers, its waves and his Chains. A
+     * wipe or his death lets them go, and the minions go with it. His death is for the rest of the lockout.
+     */
+    private void setKelthuzad(ref InstanceContext copy, EncounterState state)
+    {
+        if (encounters[NaxxEncounter.kelthuzad] == EncounterState.done)
+            return;
+        encounters[NaxxEncounter.kelthuzad] = state;
+        if (kelthuzadActive)
+        {
+            if (kelthuzad && copy.alive(kelthuzad))
+                copy.checkpointCreature(kelthuzad);
+        }
+        else
+        {
+            if (kelthuzad)
+                copy.releaseCheckpointActor(kelthuzad);
+            foreach (add; kelthuzadAdds)
+            {
+                copy.releaseCheckpointActor(add);
+                if (copy.alive(add))
+                    copy.despawn(add);
+            }
+            kelthuzadAdds = null;
+        }
+        updateDoors(copy);
+        copy.checkpoint();
+    }
+
+    /**
+     * The copy came back from its save. His fight under way resumes from its checkpoint when a player comes back;
+     * one saved without him (an older save) failed, and the trigger in his chamber begins it again. His death that
+     * reached the database before the checkpoint that counts it is his death.
+     */
+    private void restoreKelthuzad(ref InstanceContext copy)
+    {
+        if (!kelthuzadActive)
+            return;
+        if (copy.entryKilled(npcKelthuzad))
+            setKelthuzad(copy, EncounterState.done);
+        else if (copy.hasSavedCreature(npcKelthuzad))
+            copy.waitForPlayer();
+        else
+            setKelthuzad(copy, EncounterState.failed);
+    }
+
+    /// A player back in the copy (after a crash, say) during his fight: back in it, its minions after whoever is here.
+    private void kelthuzadPlayerBack(ref InstanceContext copy, EntityRef player)
+    {
+        if (!kelthuzadActive)
+            return;
+        foreach (add; kelthuzadAdds)
+            if (copy.alive(add) && !copy.alive(copy.victimOf(add)))
+                copy.attack(add, player);
+        if (kelthuzad && copy.alive(kelthuzad))
+            copy.signal(kelthuzad, NaxxSignal.kelthuzadPlayerBack, cast(int) player.guid);
+    }
+
     /// The question whether the way to Sapphiron is open (every quarter ended).
     enum uint askFrostwyrm = 100;
 
@@ -491,6 +575,23 @@ struct Naxxramas
         }
         if (e.id == NaxxEncounter.sapphiron)
             return setSapphiron(copy, cast(EncounterState) e.value); // his birth
+        if (e.from.isCreature && e.from.entry == npcKelthuzad)
+        {
+            kelthuzad = e.from;
+            if (e.id == NaxxEncounter.kelthuzad)
+                return setKelthuzad(copy, cast(EncounterState) e.value);
+            if (e.id == NaxxSignal.saveKelthuzad)
+            {
+                if (kelthuzadActive && copy.alive(e.from))
+                {
+                    copy.checkpointCreature(e.from);
+                    foreach (add; kelthuzadAdds)
+                        if (copy.alive(add))
+                            copy.checkpointCreature(add); // one a player's charm kept out of a snapshot is back in
+                }
+                return;
+            }
+        }
         if (e.from.entry == npcGothik)
         {
             if (e.id == NaxxEncounter.gothik)
@@ -740,6 +841,8 @@ struct Naxxramas
             setGothik(copy, EncounterState.failed);
         if (e.creature.entry == npcSapphiron && sapphironActive)
             setSapphiron(copy, EncounterState.failed); // he comes again for the next pull (`PlayerEntered`)
+        if (e.creature.entry == npcKelthuzad && kelthuzadActive)
+            setKelthuzad(copy, EncounterState.failed); // the trigger in his chamber begins it again
     }
 
     private void setGothik(ref InstanceContext copy, EncounterState state)
@@ -779,6 +882,15 @@ struct Naxxramas
             return setGothik(copy, EncounterState.done);
         if (e.creature.entry == npcSapphiron)
             return setSapphiron(copy, EncounterState.done);
+        if (e.creature.entry == npcKelthuzad && !e.summoned)
+            return setKelthuzad(copy, EncounterState.done);
+        const slain = kelthuzadAdds.countUntil(e.creature);
+        if (slain >= 0)
+        {
+            kelthuzadAdds = kelthuzadAdds.remove(slain);
+            copy.releaseCheckpointActor(e.creature); // a minion slain stays slain
+            return;
+        }
 
         const index = gothikAdds.countUntil(e.creature);
         if (index < 0)
@@ -855,9 +967,8 @@ struct Naxxramas
             const kt = encounters[NaxxEncounter.kelthuzad];
             if ((kt == EncounterState.notStarted || kt == EncounterState.failed) && kelthuzad)
             {
-                encounters[NaxxEncounter.kelthuzad] = EncounterState.inProgress;
+                setKelthuzad(copy, EncounterState.inProgress);
                 copy.signal(kelthuzad, NaxxSignal.startKt);
-                updateDoors(copy);
             }
             break;
         case triggerFaerlinaIntro:
@@ -2702,12 +2813,7 @@ bool isSapphironFreeze(uint spell) pure nothrow @nogc @safe
     return spell == Sapphiron.icebolt || spell == Sapphiron.iceboltImmunity;
 }
 
-/**
- * Kel'Thuzad: summons the dead from his alcoves for five minutes while he channels; then fights with
- * Frostbolt, Frost Bolt Nova, Mana Detonation, Shadow Fissure and Frost Blast; below 40% the Lich King
- * sends him Guardians of Icecrown. His Chains turn raiders against their allies, and he breaks
- * the shackles when more than three of them are shackled (the copy counts them).
- */
+/// Chains of Kel'Thuzad (28408): its script effect has him chain the raid (`Kelthuzad.chainRaid`).
 @spell("spell_chains_kel_thuzad")
 struct ChainsOfKelthuzad
 {
@@ -2718,6 +2824,19 @@ struct ChainsOfKelthuzad
     }
 }
 
+/**
+ * Kel'Thuzad: summons the dead from his alcoves for five minutes while he channels; then fights with
+ * Frostbolt, Frost Bolt Nova, Mana Detonation, Shadow Fissure and Frost Blast; below 40% the Lich King
+ * sends him Guardians of Icecrown. His Chains turn raiders against their allies, and he breaks
+ * the shackles when more than three of them are shackled (the copy counts them). A raid that wipes while he
+ * channels (nobody alive in his chamber) leaves him to give up.
+ *
+ * The copy saves him, his minions and his guardians while he fights (`Naxxramas.setKelthuzad`); he asks it to
+ * (`NaxxSignal.saveKelthuzad`) as each wave, phase or timer moves on, after the change, so that a worker's crash
+ * resumes him where he was: channelling in his first phase, with the waves still to come and none twice, or fighting
+ * with his guardians sent and those to come. His Chains are his to keep: the raiders he holds, back in the copy
+ * after a crash, are his again until the Chains' saved time is up (`Step.unchain`).
+ */
 @creature("boss_kelthuzad")
 struct Kelthuzad
 {
@@ -2735,24 +2854,47 @@ struct Kelthuzad
         frostBlast = 27_808,
         guardianInit = 29_898,     /// the copy starts counting shackled guardians (event 10536)
         clearAllShackles = 29_910,
+        chains = 28_408, chainsTarget = 28_410, chainsScale = 28_409,
     }
     enum uint sayShackles = 13_492;
+    /// The Guardians of Icecrown the Lich King sends, one every ten seconds.
+    enum ubyte guardianCount = 5;
+    /// How long his Chains hold a raider (28410's twenty seconds).
+    enum chainsLast = 20.seconds;
+    /// How far from him the raid fights in his first phase: with nobody alive within it, the raid wiped.
+    enum float chamber = 120;
 
     enum Step : ubyte { soldiers, abominations, weavers, phase2, frostBolt, nova, detonation, fissure, blast,
-        guardians, lichKing, chains }
+        guardians, lichKing, chains, unchain }
     Schedule!(Step, 13) steps;
     ubyte phase, guardiansSent;
-    EntityRef[64] minions;
     EntityRef[] chained;
+
+    /// The copy checkpoints him as he is now: called last, after the change.
+    private void save(ref CreatureContext me)
+    {
+        me.signalDungeon(NaxxSignal.saveKelthuzad);
+    }
 
     private void releaseRaid(ref CreatureContext me)
     {
         foreach (who; chained)
         {
-            me.removeAura(who, 28410);
-            me.removeAura(who, 28409);
+            me.removeAura(who, chainsTarget);
+            me.removeAura(who, chainsScale);
         }
         chained = null;
+        steps.cancel(Step.unchain);
+    }
+
+    /// `who` is his: the Chains' charm and their scale on them, and no threat of theirs left.
+    private bool chain(ref CreatureContext me, EntityRef who)
+    {
+        if (me.castSpell(chainsTarget, who, true) != ActionResult.ok || !me.hasAura(who, chainsTarget))
+            return false;
+        me.castAs(who, chainsScale, who, true);
+        me.modifyThreat(who, -100);
+        return true;
     }
 
     private void chainRaid(ref CreatureContext me)
@@ -2779,18 +2921,49 @@ struct Kelthuzad
         }
         me.sayText(13017 + me.random(2));
         foreach (who; chosen)
-            if (me.castSpell(28410, who, true) == ActionResult.ok && me.hasAura(who, 28410))
-            {
+            if (chain(me, who))
                 chained ~= who;
-                me.castAs(who, 28409, who, true);
-                me.modifyThreat(who, -100);
-            }
+        if (chained.length)
+        {
+            steps.after(Step.unchain, chainsLast);
+            save(me);
+        }
+    }
+
+    /**
+     * A player is back in his copy (after a crash, say). Channelling, he channels on, untouchable; fighting, he takes
+     * them into his fight. One his Chains held when the copy was saved is his again until the Chains' saved time is
+     * up; one they no longer hold is free of any Chains its own save brought back.
+     */
+    private void playerBack(ref CreatureContext me, EntityRef player)
+    {
+        import std.algorithm.searching : canFind;
+
+        if (phase == 1)
+            return channel(me);
+        if (phase < 2)
+            return;
+        me.zoneCombat();
+        me.removeAura(player, chainsTarget);
+        me.removeAura(player, chainsScale);
+        if (chained.canFind(player) && steps.pending(Step.unchain) && me.alive(player))
+            chain(me, player);
+    }
+
+    /// His first phase as it holds him: untouchable, rooted, no melee.
+    private void channel(ref CreatureContext me)
+    {
+        me.unitFlags(UnitFlag.uninteractible, true);
+        me.rooted(true);
+        me.melee(false);
     }
 
     void on(ref CreatureContext me, const ref Signal e)
     {
         if (e.id == NaxxSignal.chains)
             return chainRaid(me);
+        if (e.id == NaxxSignal.kelthuzadPlayerBack)
+            return playerBack(me, EntityRef(cast(uint) e.value));
         if (e.id == NaxxSignal.clearShackles)
         {
             me.sayText(sayShackles);
@@ -2803,30 +2976,32 @@ struct Kelthuzad
         phase = 1;
         me.sayText(saySummonMinions);
         me.castSelf(channelVisual, true);
-        me.unitFlags(UnitFlag.uninteractible, true);
-        me.rooted(true);
-        me.melee(false);
+        channel(me);
         steps.after(Step.soldiers, 5.seconds);
         steps.after(Step.abominations, 30.seconds);
         steps.after(Step.weavers, 40.seconds);
         steps.after(Step.phase2, (5 * 60 + 25).seconds);
+        save(me);
     }
 
-    /// A minion of `entry` from one of the alcoves, after someone.
+    /**
+     * A minion of `entry` from one of the alcoves, after someone. Called last in its step: the copy saves it with
+     * him as it comes (`Naxxramas.on(CreatureLoaded)`), so his timer for the next is already set.
+     */
     private void fromAlcove(ref CreatureContext me, uint entry)
     {
         EntityRef[12] alcoves;
         const n = me.creaturesNearby(npcWorldTrigger, 120, alcoves[]);
         if (!n)
             return;
-        const made = me.summon(entry, where(me, alcoves[me.random(cast(uint) n)]), 0,
-            me.selectTarget(Pick.random, PickFilter.player));
-        foreach (ref m; minions)
-            if (!m)
-            {
-                m = made;
-                break;
-            }
+        me.summon(entry, where(me, alcoves[me.random(cast(uint) n)]), 0, me.selectTarget(Pick.random, PickFilter.player));
+    }
+
+    /// Whether anyone of the raid lives in his chamber; nobody, and the raid wiped in his first phase.
+    private bool raidHere(ref CreatureContext me)
+    {
+        EntityRef[1] anyone;
+        return me.playersNear(chamber, anyone[]) > 0;
     }
 
     void on(ref CreatureContext me, const ref EnteredCombat e)
@@ -2850,7 +3025,20 @@ struct Kelthuzad
             me.castSelf(guardianInit, true);
             steps.after(Step.lichKing, 4.seconds);
             steps.after(Step.guardians, 5.seconds);
+            save(me);
         }
+    }
+
+    /// A wave of his first phase: `step` again after `interval`, then the minion (last: the copy saves both).
+    private void wave(ref CreatureContext me, Step step, uint entry, Duration interval)
+    {
+        if (phase != 1)
+            return;
+        if (!raidHere(me))
+            return giveUp(me);
+        steps.after(step, interval);
+        fromAlcove(me, entry);
+        save(me);
     }
 
     void on(ref CreatureContext me, Step step)
@@ -2858,25 +3046,13 @@ struct Kelthuzad
         final switch (step)
         {
         case Step.soldiers:
-            if (phase == 1)
-            {
-                fromAlcove(me, npcSoldierFrozen);
-                steps.after(step, 3.seconds);
-            }
+            wave(me, step, npcSoldierFrozen, 3.seconds);
             break;
         case Step.abominations:
-            if (phase == 1)
-            {
-                fromAlcove(me, npcUnstoppableAbom);
-                steps.after(step, 25.seconds);
-            }
+            wave(me, step, npcUnstoppableAbom, 25.seconds);
             break;
         case Step.weavers:
-            if (phase == 1)
-            {
-                fromAlcove(me, npcSoulWeaver);
-                steps.after(step, 30.seconds);
-            }
+            wave(me, step, npcSoulWeaver, 30.seconds);
             break;
         case Step.phase2:
             phase = 2;
@@ -2893,34 +3069,36 @@ struct Kelthuzad
             steps.after(Step.detonation, 20.seconds);
             steps.after(Step.fissure, 25.seconds);
             steps.after(Step.blast, between(me, 30_000, 60_000));
+            save(me);
             break;
         case Step.frostBolt:
-            steps.after(step, me.castSpell(frostBolt) == ActionResult.ok ? between(me, 1000, 60_000) : retry);
+            const bolted = me.castSpell(frostBolt) == ActionResult.ok;
+            again(me, step, bolted, between(me, 1000, 60_000));
             break;
         case Step.nova:
-            steps.after(step, me.castSelf(frostBoltNova) == ActionResult.ok ? 15.seconds : retry);
+            again(me, step, me.castSelf(frostBoltNova) == ActionResult.ok, 15.seconds);
             break;
         case Step.detonation:
             const target = me.selectTarget(Pick.random, PickFilter.player | PickFilter.manaUser);
-            steps.after(step, target && me.castSpell(manaDetonation, target) == ActionResult.ok ? 20.seconds : retry);
+            again(me, step, target && me.castSpell(manaDetonation, target) == ActionResult.ok, 20.seconds);
             break;
         case Step.fissure:
             const target = me.selectTarget(Pick.random, PickFilter.player);
-            steps.after(step, target && me.castSpell(shadowFissure, target) == ActionResult.ok ? 25.seconds : retry);
+            again(me, step, target && me.castSpell(shadowFissure, target) == ActionResult.ok, 25.seconds);
             break;
         case Step.blast:
             const target = me.selectTarget(Pick.random, PickFilter.player);
-            if (target && me.castSpell(frostBlast, target) == ActionResult.ok)
-            {
-                if (me.random(2))
-                    me.sayText(sayFrostBlast);
-                steps.after(step, between(me, 30_000, 60_000));
-            }
-            else
-                steps.after(step, retry);
+            const blasted = target && me.castSpell(frostBlast, target) == ActionResult.ok;
+            if (blasted && me.random(2))
+                me.sayText(sayFrostBlast);
+            again(me, step, blasted, between(me, 30_000, 60_000));
             break;
         case Step.chains:
-            steps.after(step, me.castSelf(28408) == ActionResult.ok ? 60.seconds : retry);
+            again(me, step, me.castSelf(chains) == ActionResult.ok, 60.seconds);
+            break;
+        case Step.unchain:
+            releaseRaid(me);
+            save(me);
             break;
         case Step.lichKing:
             EntityRef[1] lichKing;
@@ -2928,17 +3106,27 @@ struct Kelthuzad
                 me.sayAs(lichKing[0], sayAnswerRequest);
             break;
         case Step.guardians:
-            if (guardiansSent < 5)
+            if (guardiansSent < guardianCount)
             {
                 ++guardiansSent;
-                fromAlcove(me, npcGuardianIcecrown);
                 steps.after(step, 10.seconds);
+                fromAlcove(me, npcGuardianIcecrown);
+                save(me);
             }
             break;
         }
     }
 
-    void on(ref CreatureContext me, const ref Reset e)
+    /// `step` again after `interval` (one whose cast failed: soon), the change saved.
+    private void again(ref CreatureContext me, Step step, bool casted, Duration interval)
+    {
+        steps.after(step, casted ? interval : retry);
+        if (casted)
+            save(me);
+    }
+
+    /// Home, as before the fight: the copy's encounter failed (it lets his minions go).
+    private void reset(ref CreatureContext me)
     {
         releaseRaid(me);
         steps.clear();
@@ -2947,13 +3135,19 @@ struct Kelthuzad
         me.unitFlags(UnitFlag.uninteractible, false);
         me.rooted(false);
         me.melee(true);
-        foreach (ref m; minions)
-            if (m)
-            {
-                me.despawn(m);
-                m = EntityRef.init;
-            }
         me.signalDungeon(NaxxEncounter.kelthuzad, EncounterState.failed);
+    }
+
+    /// The raid wiped while he channelled: nobody left to fight, he is home again (he never entered combat to leave).
+    private void giveUp(ref CreatureContext me)
+    {
+        me.interrupt();
+        reset(me);
+    }
+
+    void on(ref CreatureContext me, const ref Reset e)
+    {
+        reset(me);
     }
 
     void on(ref CreatureContext me, const ref Died e)
@@ -2962,12 +3156,6 @@ struct Kelthuzad
         steps.clear();
         me.sayText(deathLine);
         me.signalDungeon(NaxxEncounter.kelthuzad, EncounterState.done);
-        foreach (ref m; minions)
-            if (m)
-            {
-                me.despawn(m);
-                m = EntityRef.init;
-            }
     }
 }
 
@@ -3530,6 +3718,37 @@ unittest
         runtime.raise(h, c, EventHappened(Naxxramas.guardianShackleEvent, EntityRef.init, EntityRef.init));
     runtime.tick(h, c, 2000);
     assert(naxx.signals == [Signal(kt, NaxxSignal.clearShackles, 0)]);
+}
+
+/// Kel'Thuzad's fight saved without him (a lockout saved before his checkpoint) failed when the copy comes back: his
+/// chamber opens, and the trigger begins his fight again.
+unittest
+{
+    import dmangos.bytes : ByteReader, ByteWriter;
+
+    alias self = dmangos.scripts.naxxramas;
+    auto runtime = ScriptRuntime.of!self();
+    auto naxx = new FakeNecropolis;
+    auto c = InstanceContext(naxx);
+    auto h = runtime.create(ScriptKind.instance, "instance_naxxramas");
+    const kt = EntityRef(0xF130_0000_0000_0001UL | (ulong(npcKelthuzad) << 24));
+    runtime.raise(h, c, CreatureLoaded(kt));
+    runtime.raise(h, c, Signal(EntityRef.init, NaxxSignal.triggerBase + Naxxramas.triggerKelthuzad, 0));
+    assert(naxx.signals == [Signal(kt, NaxxSignal.startKt, 0)]);
+    ByteWriter saved;
+    runtime.save(h, saved);
+
+    auto back = runtime.create(ScriptKind.instance, "instance_naxxramas");
+    auto reader = ByteReader(saved.data);
+    assert(runtime.load(back, reader));
+    auto restored = InstanceContext(naxx);
+    runtime.raise(back, restored, Restored());
+    runtime.raise(back, restored, CreatureLoaded(kt));
+    runtime.raise(back, restored, Asked(EntityRef.init, NaxxEncounter.kelthuzad));
+    assert(restored.answerGiven == EncounterState.failed, "his fight, saved without him, stays under way for good");
+    naxx.signals = null;
+    runtime.raise(back, restored, Signal(EntityRef.init, NaxxSignal.triggerBase + Naxxramas.triggerKelthuzad, 0));
+    assert(naxx.signals == [Signal(kt, NaxxSignal.startKt, 0)], "the trigger does not begin his fight again");
 }
 
 /// Maexxna throws up to three players to the invisible men on her walls (one each); a man wraps his player
