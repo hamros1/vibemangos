@@ -305,6 +305,12 @@ struct Naxxramas
         case npcThaddius:
             thaddius = e.creature;
             break;
+        case npcStalagg, npcFeugen:
+            // The two die together. One that comes back alive with the other slain for the lockout lost its death with
+            // a crash between the two deaths' writes: it dies now, or it would rise again by itself for good.
+            if (copy.entryKilled(e.creature.entry == npcStalagg ? npcFeugen : npcStalagg))
+                copy.signal(e.creature, NaxxSignal.addsDone, 1);
+            break;
         case npcKelthuzad:
             kelthuzad = e.creature;
             if (kelthuzadActive) // a clean handoff brings him in without a signal: he stays in the checkpoint
@@ -370,6 +376,12 @@ struct Naxxramas
     void on(ref InstanceContext copy, const ref Restored e)
     {
         restoreHorsemen(copy);
+        // Stalagg or Feugen slain with his fight still under way in the save (the deaths' writes reached the database,
+        // the checkpoint after them did not), or failed (a wipe on Thaddius): Thaddius waits for nobody but the raid.
+        const thaddiusFight = encounters[NaxxEncounter.thaddius];
+        if ((thaddiusFight == EncounterState.inProgress || thaddiusFight == EncounterState.failed)
+            && (copy.entryKilled(npcStalagg) || copy.entryKilled(npcFeugen)))
+            encounters[NaxxEncounter.thaddius] = EncounterState.special;
         steps.cancel(Step.tankSwap);
         tankSwapRestored = encounters[NaxxEncounter.thaddius] == EncounterState.inProgress;
         if (tankSwapRestored)
@@ -2417,9 +2429,10 @@ private mixin template ThaddiusAdd(uint other, uint warstompOrPull, uint aggro, 
             steps.after(Step.resumeChase, 3.seconds);
             return;
         }
-        if (e.id == NaxxSignal.addsDone && down)
+        if (e.id == NaxxSignal.addsDone && (down || e.value))
         {
-            // The other fell within our window and died: so do we (else we rose again beside Thaddius).
+            // The other fell within our window and died: so do we (else we rose again beside Thaddius). With a value,
+            // the copy found the other slain for the lockout as we came back (`Naxxramas`, `CreatureLoaded`).
             steps.clear();
             me.sayText(death);
             me.deathPrevention(false);
@@ -2521,6 +2534,8 @@ struct Thaddius
             if (!me.hasAura(me.self, spawn))
                 me.castSelf(spawn, true); // waiting, stunned, till his coils' masters fall
         }
+        else if (!awake && !steps.pending(Step.wake))
+            steps.after(Step.wake, 10.seconds); // they fell before this world (a crash in his ten seconds): he wakes
     }
 
     void on(ref CreatureContext me, const ref Signal e)

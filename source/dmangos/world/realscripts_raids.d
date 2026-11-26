@@ -2027,6 +2027,63 @@ unittest
     assert(s.ask(12) == 3, "his encounter not done");
 }
 
+/**
+ * Thaddius on a cluster worker: Stalagg and Feugen engaged, the copy moves to another node, and their deaths still wake
+ * Thaddius there (the copy's reference to him, rebuilt after the handoff). A crash in the ten seconds between their
+ * deaths and his waking, a crash that lost the checkpoint after their deaths, and one that lost the second death's
+ * write each leave him waking and slain for good.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.scripts.naxxramas : NaxxEncounter, Naxxramas;
+    import dmangos.script.api : EncounterState;
+    import dmangos.world.realscriptkit : Dungeon;
+
+    enum uint stalagg = 15_929, feugen = 15_930, thaddiusEntry = 15_928;
+    const at = spawnOf(533, stalagg);
+
+    Dungeon fight(string crash)
+    {
+        auto d = Dungeon.enter(533, 60, 1, 1, Position(at.x + 3, at.y, at.z), cluster: true);
+        d.pull(d.spawned(stalagg, 0, 3));
+        d.pull(d.spawned(feugen, 0, 3));
+        d.run(2.seconds);
+        assert(d.saved!Naxxramas.encounters[NaxxEncounter.thaddius] == EncounterState.inProgress, crash);
+        const during = d.data;
+        if (crash == "handoff")
+            d.handoff();
+        auto st = d.spawned(stalagg, 0, 3);
+        d.kill(st);
+        d.kill(d.spawned(feugen, 0, 3));
+        d.run(1.seconds);
+        assert(!d.find(stalagg).alive && !d.find(feugen).alive, crash ~ ": both adds down\n" ~ d.story);
+        assert(d.saved!Naxxramas.encounters[NaxxEncounter.thaddius] == EncounterState.special, crash);
+        if (crash == "checkpoint lost")
+            d.w.db.saveInstanceData(d.instanceId, during);
+        if (crash == "second death lost")
+            d.w.db.deleteInstanceRespawn(cast(uint)(d.find(feugen).guid & 0xFF_FFFF), d.instanceId);
+        if (crash != "handoff")
+            d.restartAfterCrash();
+        return d;
+    }
+
+    foreach (crash; ["handoff", "in his ten seconds", "checkpoint lost", "second death lost"])
+    {
+        auto d = fight(crash);
+        auto th = d.spawned(thaddiusEntry, 0, 10);
+        assert(d.runUntil(() => th.ai.inCombat, 20.seconds), crash ~ ": Thaddius does not wake\n" ~ d.story);
+        assert(d.all(stalagg).length == 0 && d.all(feugen).length == 0, crash ~ ": an add stands again");
+        d.kill(th);
+        d.run(2.seconds);
+        assert(d.saved!Naxxramas.encounters[NaxxEncounter.thaddius] == EncounterState.done, crash ~ ": not done");
+        d.restartAfterCrash();
+        assert(d.all(thaddiusEntry).length == 0 && d.all(stalagg).length == 0 && d.all(feugen).length == 0,
+            crash ~ ": slain for the lockout");
+    }
+}
+
 /// Both actual platform spawns pull the opposite tank. Movement packets, threat and pickup agree.
 unittest
 {
