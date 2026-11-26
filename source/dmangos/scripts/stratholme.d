@@ -166,6 +166,8 @@ struct Stratholme
             else
                 bringMalown = true;
         }
+        if (strat.hasSavedCreature(undeadPostman)) // a postbox's postmen, not yet slain
+            kept = true;
         if (kept)
             strat.waitForPlayer();
     }
@@ -339,7 +341,8 @@ struct Stratholme
             }
             else if (postboxesUsed < 3)
                 foreach (_; 0 .. 3)
-                    strat.summon(undeadPostman, at, 0, e.from);
+                    if (const postman = strat.summon(undeadPostman, at, 0, e.from))
+                        strat.checkpointCreature(postman); // a crash must not take them: kept till slain
             break;
         case Signals.auriusRewarded:
             auriusDone = true;
@@ -485,6 +488,9 @@ struct Stratholme
             break;
         case postmasterMalown:
             malownDead = true;
+            break;
+        case undeadPostman:
+            strat.releaseCheckpointActor(e.creature); // slain, it stays slain
             break;
         case crimsonInitiate, crimsonGallant, crimsonGuardsman, crimsonConjurer, crimsonBattleMage:
             if (courtyard.died(e.creature) && courtyard.allDead && !timmyCalled)

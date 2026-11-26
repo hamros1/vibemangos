@@ -81,11 +81,11 @@ describes how players use the systems available today.
   fight: with an add slain, a fight saved as under way goes on with his door shut, and he wakes.
   Woken after a crash, he takes every player in the copy into his fight, as his waking does.
   Stratholme has recovery tests for Ramstein, the mindless undead and Black Guards, Ysida during and
-  after the Baron's run, Timmy and the Postmaster. The [crash points](CLUSTER.md#stratholmes-crash-points)
-  list what the clients saw. Open: the undead postmen are not kept. A lockout saved before this that
-  had slain Timmy brings him again; one that had called the Postmaster has no place to call him to,
-  so he is not brought. Ysida comes back where the checkpoint caught her, so she may stand in her
-  cage's doorway rather than beside it.
+  after the Baron's run, Timmy and the Postmaster. The [crash
+  points](CLUSTER.md#stratholmes-crash-points) list what the clients saw. The undead postmen are
+  kept until slain. Open: A lockout saved before this that had slain Timmy brings him again; one
+  that had called the Postmaster has no place to call him to, so he is not brought. Ysida comes back
+  where the checkpoint caught her, so she may stand in her cage's doorway rather than beside it.
   Razorfen Downs, Zul'Farrak (Gahz'rilla and the pyramid), Wailing Caverns, Gnomeregan and the
   Scarlet Monastery's Cathedral have recovery tests too. The waves before Tuten'kash are kept in the
   checkpoint: a crash brings the living back, and the gong waits for them. The pyramid's siege sends
@@ -99,8 +99,7 @@ describes how players use the systems available today.
   with his living guard: a crash brings the same Majordomo and guards back fighting. Ragnaros' death
   is checkpointed in the tick he dies, the writes before it settled, so only a crash within that
   tick brings him back alive, and then nothing that follows his death (his loot) was saved either.
-  Open: the other bosses, the copy's own spawns, come back from their fight snapshots, and none of
-  their summons does: Magmadar's Lava Bombs, for one. Nothing of the copy's state waits on them.
+  Magmadar's Lava Bombs are kept, with their time left, until they burn out.
   Zul'Gurub has recovery tests for Arlokk's fight, a crash before she comes, and her death, for
   Mandokir sent down from his perch, and for Thekal with a Zealot down. The [crash
   points](CLUSTER.md#zulgurubs-crash-points) list what the clients saw. Mandokir's Ohgan and chained

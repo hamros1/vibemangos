@@ -2060,8 +2060,28 @@ unittest
     d.restartAfterCrash();
     assert(d.all(timmy).length == 0, "slain, he stays slain");
 
-    foreach (_; 0 .. 3)
+    // The first two postboxes' undead postmen, three each, are kept till slain: one slain stays slain, the rest come
+    // back through a crash.
+    enum uint postman = 11142;
+    foreach (_; 0 .. 2)
         d.w.context.signalDungeon(d.instanceId, EntityRef(d.player.guid), Stratholme.Signals.postboxUsed, 0);
+    d.run(1.seconds);
+    auto postmen = d.all(postman);
+    assert(postmen.length == 6, format!"%s undead postmen from two postboxes"(postmen.length));
+    d.kill(postmen[0]);
+    d.run(1.seconds);
+    bool[ulong] living;
+    foreach (p; postmen[1 .. $])
+        living[p.guid] = true;
+    d.restartAfterCrash();
+    bool[ulong] back;
+    foreach (p; d.all(postman))
+        back[p.guid] = true;
+    assert(back == living, format!"postmen %s after the crash, %s before"(back.keys, living.keys));
+    foreach (p; d.all(postman))
+        d.kill(p);
+    d.run(1.seconds);
+    d.w.context.signalDungeon(d.instanceId, EntityRef(d.player.guid), Stratholme.Signals.postboxUsed, 0);
     d.run(1.seconds);
     assert(d.summoned(malown) == 1, d.story);
     const postmaster = d.find(malown).guid;

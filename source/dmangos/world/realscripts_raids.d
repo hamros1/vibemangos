@@ -3873,6 +3873,36 @@ private bool[ulong] livingOf(Scene s, uint entry)
 }
 
 /**
+ * Magmadar's Lava Bombs survive a worker's crash: each is a summoned object the copy keeps, with its time left, until
+ * it burns out. One just landed comes back after a crash in its place, and is gone once its thirty seconds are up.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.script.api : EntityRef, Signal;
+    import dmangos.scripts.moltencore;
+
+    const at = spawnOf(409, npcMagmadar);
+    auto s = new Scene(409, Position(at.x + 10, at.y, at.z), [classWarrior, classMage], cluster: true);
+    s.run(1.seconds);
+    auto magmadar = s.the(npcMagmadar);
+    s.w.context.instanceScript(s.instance).raise(Signal(EntityRef(magmadar.guid), McSignal.lavaBomb,
+        cast(int) s.hero(0).guid));
+    s.run(1.seconds);
+    auto bombs = s.objects(goLavaBomb);
+    assert(bombs.length == 1, format!"%s Lava Bombs where it landed"(bombs.length));
+    const bomb = bombs[0].guid, landedAt = bombs[0].position;
+    s.runUntilSaved(); // a crash just after the checkpoint
+    s.restartAfterCrash();
+    bombs = s.objects(goLavaBomb);
+    assert(bombs.length == 1 && bombs[0].guid == bomb && Scene.distance(bombs[0].position, landedAt) < 0.1f,
+        format!"%s Lava Bombs after the crash, not the same"(bombs.length));
+    s.run(31.seconds);
+    assert(s.objects(goLavaBomb).length == 0, "the Lava Bomb outlasted its thirty seconds");
+}
+
+/**
  * Majordomo's fight survives a worker's crash. He and his guard are summons, so nothing but the copy's checkpoint can
  * bring them back. Crashed with three of his eight guards slain, the worker comes back with the same Majordomo at his
  * health in his fight and the same five guards, and no other; the rest slain, he submits as without the crash. After

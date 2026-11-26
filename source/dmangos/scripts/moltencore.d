@@ -238,6 +238,8 @@ struct MoltenCore
      */
     void on(ref InstanceContext copy, const ref Restored e)
     {
+        if (copy.hasSavedGameObject(goLavaBomb))
+            copy.waitForPlayer(); // Magmadar's bombs still burning come back with the first player
         if (majordomoActive)
         {
             if (copy.hasSavedCreature(npcMajordomo))
@@ -354,7 +356,8 @@ struct MoltenCore
             const target = EntityRef(cast(uint) e.value);
             Location at;
             if (e.from.entry == npcMagmadar && copy.locationOf(target, at))
-                copy.summonObject(goLavaBomb, at, e.id == McSignal.lavaBombMana ? 60 : 30);
+                if (const bomb = copy.summonObject(goLavaBomb, at, e.id == McSignal.lavaBombMana ? 60 : 30))
+                    copy.checkpointObject(bomb); // kept, with its time left, until it burns out
             return;
         }
         if (e.id == McSignal.saveRagnaros)
