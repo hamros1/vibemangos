@@ -11,8 +11,8 @@
 #   tools/harness/check.sh --fast [MODULE ...]
 #       the loop of one change (about a minute): every module compiled, the unit tests and real-data tests of the
 #       modules named (all of them if none: dmangos.world.realscripts_raids, or a prefix such as dmangos.cluster.),
-#       and unoptimized servers in $H/fastbin for a chaos case:
-#       WORLDSERVER=$H/fastbin/worldserver AUTHSERVER=$H/fastbin/authserver python3 tools/harness/chaos.py CASE
+#       and unoptimized servers in $BUILD/fastbin for a chaos case:
+#       WORLDSERVER=$BUILD/fastbin/worldserver AUTHSERVER=$BUILD/fastbin/authserver python3 tools/harness/chaos.py CASE
 #
 # Needs dmd and dub on the PATH (see docs/DEVELOPING.md, "Toolchain"). Compilers run as many at once as the free
 # memory allows (CHECK_JOBS overrides), and one check at a time on the machine builds (flock on $BUILD_LOCK).
@@ -24,7 +24,7 @@ case "$1" in
     --fast) mode=fast; shift ;;
 esac
 modules=$(echo "$*" | tr ' ' ',')
-U="$H/unittest"
+U="$BUILD/unittest"
 mkdir -p "$U"
 started=$(date +%s)
 stage() { echo "== $1 ($(( $(date +%s) - started )) s)"; }
@@ -43,7 +43,7 @@ if ! dmd -unittest -main -of="$U/test" $(find "$U/obj" -name '*.o') thirdparty/b
     grep -m 20 -i error "$U/build.log"; echo "FAIL: the tests do not link"; exit 1
 fi
 
-# The servers, while the tests run (fast: unoptimized ones, in $H/fastbin).
+# The servers, while the tests run (fast: unoptimized ones, in $BUILD/fastbin).
 server_mode=full; [ $mode = fast ] && server_mode=fast
 with_build_lock sh "$REPO/tools/harness/build.sh" servers $server_mode > "$U/servers.log" 2>&1 &
 servers_pid=$!
@@ -93,7 +93,7 @@ if ! wait $servers_pid; then
     echo "FAIL: a server build failed"; exit 1
 fi
 echo "built"
-if [ $mode = fast ]; then echo "PASS (fast; servers in $H/fastbin) in $(( $(date +%s) - started )) s"; exit 0; fi
+if [ $mode = fast ]; then echo "PASS (fast; servers in $BUILD/fastbin) in $(( $(date +%s) - started )) s"; exit 0; fi
 if [ $mode = quick ]; then echo "PASS (quick: no regression) in $(( $(date +%s) - started )) s"; exit 0; fi
 stage "cluster regression"
 sh "$REPO/tools/harness/regression.sh" || exit 1

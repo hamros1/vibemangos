@@ -1,11 +1,11 @@
 #!/bin/sh
 # The builds of tools/harness/check.sh, each run under the machine's build lock (common.sh, `with_build_lock`):
-#   build.sh units          every module but the mains compiled with -unittest into $H/unittest/obj
+#   build.sh units          every module but the mains compiled with -unittest into $BUILD/unittest/obj
 #   build.sh servers full   release builds of the three servers into bin/ (dub, `release-fast`)
-#   build.sh servers fast   unoptimized builds of them into $H/fastbin, in seconds, for chaos cases
+#   build.sh servers fast   unoptimized builds of them into $BUILD/fastbin, in seconds, for chaos cases
 . "$(dirname "$0")/common.sh"
 cd "$REPO" || exit 1
-U="$H/unittest"
+U="$BUILD/unittest"
 
 case "$1" in
 units)
@@ -19,13 +19,13 @@ units)
 servers)
     if [ "$2" = fast ]; then
         # Unoptimized: the optimizer alone takes minutes over the world server's largest module (context.d).
-        mkdir -p "$H/fastbin"
+        mkdir -p "$BUILD/fastbin"
         files=$(find source -name '*.d' ! -path '*/auth/main.d' ! -path '*/extractor/*' ! -path '*/loadgen/main.d')
-        dmd -release -version=Have_dmangos -Isource -of="$H/fastbin/worldserver" $files thirdparty/build/libdmnav.a \
+        dmd -release -version=Have_dmangos -Isource -of="$BUILD/fastbin/worldserver" $files thirdparty/build/libdmnav.a \
             -L-lstdc++ > "$U/fast-worldserver.log" 2>&1 || exit 1
-        dmd -release -i=dmangos -version=Have_dmangos -Isource -of="$H/fastbin/authserver" \
+        dmd -release -i=dmangos -version=Have_dmangos -Isource -of="$BUILD/fastbin/authserver" \
             source/dmangos/auth/main.d > "$U/fast-authserver.log" 2>&1 || exit 1
-        dmd -release -i=dmangos -version=Have_dmangos -Isource -of="$H/fastbin/loadgen" \
+        dmd -release -i=dmangos -version=Have_dmangos -Isource -of="$BUILD/fastbin/loadgen" \
             source/dmangos/loadgen/main.d thirdparty/build/libdmnav.a -L-lstdc++ > "$U/fast-loadgen.log" 2>&1 || exit 1
         exit 0
     fi

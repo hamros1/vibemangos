@@ -301,7 +301,9 @@ to 4 GB and the world server's release build 6 GB, so `check.sh` runs as many co
 `flock` on `$XDG_RUNTIME_DIR/dmangos-build.lock` (`DMANGOS_BUILD_LOCK`), so checks in several
 worktrees queue their compilers instead of running the machine out of memory together. The test
 binary's runner (`source/dmangos/testrunner.d`) takes `DMANGOS_TEST_MODULES`, `DMANGOS_TEST_SHARD=i/n`
-and `DMANGOS_TEST_TIMES=FILE` (each module's seconds).
+and `DMANGOS_TEST_TIMES=FILE` (each module's seconds). Sessions checking at once from several worktrees each set `DMANGOS_BUILD_DIR` (their test
+binary and fast servers) and share the harness's database; the cluster regression uses fixed ports
+and schemas, so only one full check runs at a time.
 
 The harness lives in `~/.cache/dmangos-harness` (`DMANGOS_HARNESS`). It needs an unpacked MariaDB
 (`MARIADB_ROOT`, by default the dev server's in `~/dmangos-server/mariadb`) and extracted client data

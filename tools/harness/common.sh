@@ -11,6 +11,9 @@ WORLDSERVER="${WORLDSERVER:-$REPO/bin/worldserver}"
 LOADGEN="${LOADGEN:-$REPO/bin/loadgen}"
 MYSQL_LIB="$(find "$MARIADB_ROOT/usr/lib" -name 'libmariadb.so.3' 2>/dev/null | head -1)"
 SOCK="$H/run/mysql.sock"
+# Where check.sh builds and keeps its test binary and fast servers: by default in the harness, but one per
+# worktree when several sessions check at once (they share the harness's database).
+BUILD="${DMANGOS_BUILD_DIR:-$H}"
 # The harness's MariaDB runs without grant tables, on a private socket only: any password works.
 db_info() { echo ".;$SOCK;mangos;harness;$1"; }
 
