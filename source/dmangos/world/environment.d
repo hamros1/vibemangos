@@ -1015,7 +1015,7 @@ unittest
     import dmangos.world.updatefields;
 
     // Rows 0-31: the open sea, 32-63 a lake, both 40 deep (to 100); 64-79 lava a yard deep; beyond, dry land at 60.
-    const dir = buildPath(tempDir, "dmangos-environment-test");
+    const dir = buildPath(tempDir, imported!"std.format".format!"dmangos-environment-test-%s"(imported!"std.process".thisProcessID));
     scope (exit)
         rmdirRecurse(dir);
     mkdirRecurse(buildPath(dir, "maps"));

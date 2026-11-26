@@ -5895,7 +5895,7 @@ unittest
     import dmangos.world.updatefields;
     import dmangos.world.grid : cellKeyAt;
 
-    const directory = buildPath(tempDir, "dmangos-spell-handoff-test");
+    const directory = buildPath(tempDir, imported!"std.format".format!"dmangos-spell-handoff-test-%s"(imported!"std.process".thisProcessID));
     writeTestHouseVmaps(directory);
     scope (exit)
         rmdirRecurse(directory);

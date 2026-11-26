@@ -471,7 +471,7 @@ unittest
     assert(!group.liquidLevel(Vector3(9, 9, 0), level), "past the liquid's tiles");
 
     // Written and read back.
-    const path = buildPath(tempDir, "dmangos-model-test.vmo");
+    const path = buildPath(tempDir, imported!"std.format".format!"dmangos-model-test-%s.vmo"(imported!"std.process".thisProcessID));
     scope (exit)
         remove(path);
     model.write(path);

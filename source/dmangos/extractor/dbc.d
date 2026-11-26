@@ -151,7 +151,7 @@ unittest
         TestFile("DBFilesClient\\Gone.dbc", [0]),
     ]), "patch.MPQ");
 
-    const output = buildPath(tempDir, "dmangos-extract-test");
+    const output = buildPath(tempDir, imported!"std.format".format!"dmangos-extract-test-%s"(imported!"std.process".thisProcessID));
     scope (exit)
         if (exists(output))
             rmdirRecurse(output);

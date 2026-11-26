@@ -907,7 +907,7 @@ unittest
     import dmangos.world.testdata;
 
     const client = testClientData();
-    const dir = buildPath(tempDir, "dmangos-terrain-test");
+    const dir = buildPath(tempDir, imported!"std.format".format!"dmangos-terrain-test-%s"(imported!"std.process".thisProcessID));
     scope (exit)
         rmdirRecurse(dir);
     mkdirRecurse(buildPath(dir, "maps"));
@@ -999,7 +999,7 @@ unittest
     import std.file : rmdirRecurse, tempDir;
     import dmangos.world.testdata;
 
-    const dir = buildPath(tempDir, "dmangos-vmap-test");
+    const dir = buildPath(tempDir, imported!"std.format".format!"dmangos-vmap-test-%s"(imported!"std.process".thisProcessID));
     scope (exit)
         rmdirRecurse(dir);
     writeTestHouseVmaps(dir);

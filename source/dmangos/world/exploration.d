@@ -294,7 +294,7 @@ unittest
     import dmangos.world.updatefields;
 
     // One tile: Elwynn in its first eight rows of cells, Goldshire beyond.
-    const dir = buildPath(tempDir, "dmangos-exploration-test");
+    const dir = buildPath(tempDir, imported!"std.format".format!"dmangos-exploration-test-%s"(imported!"std.process".thisProcessID));
     scope (exit)
         rmdirRecurse(dir);
     mkdirRecurse(buildPath(dir, "maps"));
