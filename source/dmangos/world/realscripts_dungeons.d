@@ -1614,7 +1614,10 @@ unittest
     import dmangos.world.defines : UnitFlags;
 
     enum uint questGiver = 2; // UNIT_NPC_FLAG_QUESTGIVER
-    enum uint ysida = 16031, baron = 10440, gate = 175357, cage = 181071;
+    import dmangos.script.api : QuestProgress;
+    import dmangos.world.quests : QuestState;
+
+    enum uint ysida = 16031, baron = 10440, gate = 175357, cage = 181071, plea = 8945;
     auto d = Dungeon.enter(329, 60, cluster: true);
     d.spawned(baron, 0, 60);
     d.use(d.objectOf(gate));
@@ -1628,10 +1631,17 @@ unittest
     assert(her.values.get!UNIT_FIELD_FLAGS & UnitFlags.spawning);
     assert(left - d.saved!Stratholme.runLeftMs < 5000, "the run's clock does not count the outage");
 
+    // The leader is on "Dead Man's Plea": her rescue is its objective, kept with the checkpoint of the Baron's death.
+    d.party[0].session.inWorld.addQuest(*d.w.context.data.quests.quest(plea));
     d.kill(d.spawned(baron, 0, 20));
     d.run(1.seconds);
     assert(d.saved!Stratholme.run == Fight.done && Dungeon.isOpen(d.objectOf(cage)), "saved\n" ~ d.story);
+    assert(d.questStatus(plea) == QuestProgress.complete, "her rescue is the quest's objective");
     d.restartAfterCrash();
+    // (The kit's character comes back afresh: the saved row is what a real one would log in with.)
+    const saved = d.player.data.guid in d.w.db.questRows;
+    assert(saved !is null && plea in *saved && (*saved)[plea].status == QuestState.complete,
+        "the quest's credit saved with the checkpoint, to outlive the crash");
     her = d.find(ysida);
     assert(her !is null && her.guid == original && d.all(ysida).length == 1, "she waits for the turn-in");
     assert(!(her.values.get!UNIT_FIELD_FLAGS & UnitFlags.spawning)

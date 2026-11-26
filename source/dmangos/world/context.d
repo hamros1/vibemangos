@@ -4656,11 +4656,15 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 auto script = InstanceScript.make(scripts, *name, instance, id, state is null ? null : state.data,
                     (string saved, bool checkpoint) {
                         const durable = checkpoint && config.cluster.enabled && hostsDungeon(id) && canWrite();
-                        // The gateway picks the recovery map from the saved character's position.
+                        // The gateway picks the recovery map from the saved character's position. The quest credit
+                        // the script gave (Ysida saved, "Dead Man's Plea" done) is kept with the checkpoint that
+                        // records it, or a crash would leave the encounter done and the credit lost for the lockout.
                         if (durable)
                             foreach (who; created.playersNow())
                                 if (auto session = cast(Character) who)
                                 {
+                                    if (!session.savedUnread)
+                                        session.saveQuests();
                                     const progress = who.character.progress(session.secondsInWorld());
                                     database.saveProgress(progress);
                                 }
