@@ -80,8 +80,6 @@ describes how players use the systems available today.
   he wakes, the checkpoint after his adds' deaths lost, the second death's write lost, and his own
   fight: with an add slain, a fight saved as under way goes on with his door shut, and he wakes.
   Woken after a crash, he takes every player in the copy into his fight, as his waking does.
-  The Temple of Ahn'Qiraj has C'Thun recovery tests for the Eye's phase, the crash between the
-  Eye's death and C'Thun's rise, a player in his stomach, and a wipe in his phase.
   Stratholme has recovery tests for Ramstein, the mindless undead and Black Guards, Ysida during and
   after the Baron's run, Timmy and the Postmaster. The [crash points](CLUSTER.md#stratholmes-crash-points)
   list what the clients saw. Open: the undead postmen are not kept. A lockout saved before this that
@@ -111,6 +109,7 @@ describes how players use the systems available today.
   death never enrages him. Jeklik's bat riders, Mar'li's spiders and Jin'do's totems and shades go
   the same way. Gahz'ranka and the Edge of Madness bosses are summons too: a crash loses the boss
   and the item spent calling him, though nothing in the copy's state refuses calling one again.
+  The Temple of Ahn'Qiraj has C'Thun recovery tests for the Eye's phase, the crash between the
   Eye's death and C'Thun's rise, a player in his stomach, and a wipe in his phase. It also has
   recovery tests for the Bug Trio with one devoured and after their end, the Twin Emperors pulled
   and not yet struck, Viscidus shattered, and Ouro just come up; the Ruins of Ahn'Qiraj for the
