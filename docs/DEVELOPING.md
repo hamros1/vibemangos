@@ -321,7 +321,7 @@ After harness setup and a release build, run the opt-in suite with
 `python3 tools/harness/chaos.py`. It runs the quorum partition and heal, coordinator kill,
 paused battlegroup host, gateway checkpoint retry, departure retry, lease lapse arrival, worker
 rejoin, stall release, gateway return, C'Thun recovery, Sapphiron recovery, Four Horsemen recovery,
-Kel'Thuzad recovery, loot award crash, migration stall, standby login and standby bundle cases against
+Kel'Thuzad recovery, Stratholme recovery, loot award crash, migration stall, standby login and standby bundle cases against
 isolated fixtures.
 Use `--repeat 3` to check repeatability. Each case prints the harness directory containing
 its process logs and uses fresh login and character schemas.
@@ -389,6 +389,13 @@ guardian comes when the saved timer says, once. The waves case then has the raid
 (a wipe) and kills the worker again; the guardians case shackles a guardian first and kills him
 after. The guardians case waits out his 5:25 first phase, so it takes about seven minutes.
 [Kel'Thuzad's crash points](CLUSTER.md#kelthuzads-crash-points) has the details.
+
+Run `python3 tools/harness/stratholme_recovery.py --phase ramstein` (or `ysida`) to kill the
+Stratholme worker while its summoned encounters live. Two scripted party members on a gateway bring
+out Ramstein, then the undead and the Black Guards, or open the Baron's run with Ysida caged. The test
+checks that their original sockets come back to the same copy with the same summons, the slain still
+dead, the Baron's door opening with the last guard, and Ysida taking "Dead Man's Plea" in after a
+crash. [Stratholme's crash points](CLUSTER.md#stratholmes-crash-points) has the details.
 
 Run `python3 tools/harness/loot_award_crash.py` to kill (`SIGKILL`) a party member's worker after
 it claims a remote loot award, while a second MariaDB session locks the member's inventory so the

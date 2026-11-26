@@ -542,6 +542,26 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   In Sunken Temple, the statue puzzle keeps its lit statues and Atal'alarion resumes as the same
   creature. The Avatar of Hakkar ritual keeps its extinguished flames, closed doors, surviving
   summons and pending waves. Defeating the Avatar keeps the doors open after a crash.
+  In Stratholme, the summons the way to the Baron waits on are kept in the checkpoint from their
+  coming to their death: Ramstein, the thirty mindless undead and the five Black Guards after him,
+  Ysida through the Baron's run and after it, Timmy the Cruel and Postmaster Malown. A crash brings
+  back the same creatures, the slain stay slain, and the last guard's death opens the Baron's door.
+  Ysida comes back caged during the run, the run's clock not counting the outage, and free by her
+  open cage after it, to take "Dead Man's Plea" in. One a save does not have (an older lockout's)
+  is called again: Ramstein from the slaughterhouse, the guards, Ysida, Timmy, and the Postmaster
+  where the third postbox called him.
+  An encounter checkpoint saves the quest log of the players in the copy with their positions, so a
+  script's quest credit (Ysida's rescue) is not lost with a crash after the checkpoint that records it.
+  In Razorfen Downs, Tuten'kash is kept in the checkpoint until slain; a save without him lets the
+  gong call him again. In Zul'Farrak, Gahz'rilla is kept while her fight is under way, and a save
+  without her lets the gong call her again. The pyramid's siege keeps its event's pending database
+  steps, the Sandfury it brought, Nekrum, Sezz'ziz and the five prisoners, so Nekrum and Sezz'ziz
+  come at the saved time and their deaths open the End Door. A siege saved before it was kept brings
+  the two at once.
+  In Wailing Caverns, the Disciple of Naralex and what he calls at each stop are kept together, so he
+  does not wait for summons that went with the old world. In Gnomeregan, Blastmaster Emi, her troggs,
+  Grubbis and Chomper are kept together while her stand is under way. In the Scarlet Monastery,
+  Mograine and Whitemane are kept together from his fall, and she comes back on her way to the fight.
   Onyxia keeps her health, flight phase, surviving whelps and the remaining time to the next wave.
   The recovered fight can proceed through landing and her final ground phase.
   In Blackwing Lair, Razorgore's destroyed eggs stay gone and surviving defenders return with
@@ -562,7 +582,11 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   and ability timers. Firemaw's Flame Buffet stacks and Shadow of Ebonroc keep their original
   expiration deadlines. Ebonroc keeps healing already received through his mark, and Flamegor
   keeps the Frenzy already in progress.
-  In Naxxramas, Gothik keeps his upcoming waves and the living and spectral adds that survived.
+  In Naxxramas, Thaddius wakes after a crash in the ten seconds between Stalagg's and Feugen's deaths
+  and his waking. With either add slain and the fight still under way in the save (the checkpoint after
+  the deaths lost), or failed after a wipe on Thaddius, the copy comes back with him waiting for a pull.
+  An add that comes back alive with the other slain (the second death's write lost) dies as it loads.
+  Gothik keeps his upcoming waves and the living and spectral adds that survived.
   The first players back resume the saved timers. On the floor he keeps his health, side and
   remaining teleports. The central gate stays in its saved state and opens after four side changes
   or when he reaches 30% health. His death opens the exit for the rest of the lockout.
@@ -1498,6 +1522,27 @@ who see 80 yards, and the four take them on. The test kills the worker that host
 The real-data tests in `source/dmangos/world/realscripts_raids.d` cover the same crash points in
 cluster mode. They add a crash with the last death saved and the checkpoint after it lost: the
 copy comes back with the encounter done, the door open and the same single chest.
+### Stratholme's crash points
+
+`tools/harness/stratholme_recovery.py` sends two scripted party members on a gateway into Stratholme.
+It kills the worker that hosts the city with `SIGKILL`, just after an encounter checkpoint, at these
+points:
+
+| `--phase` | Crash point | What the original clients saw after recovery |
+|---|---|---|
+| `ramstein` | The square's abominations slain, Ramstein out of the slaughterhouse, hurt to 60% | Both sockets back in the same copy. The same Ramstein (same GUID) at the saved health, within 1% |
+| `ramstein`, second crash | Ramstein slain, the five Black Guards waiting, ten or more mindless undead come and two slain, on the worker that took over | The same five guards and living undead; the slain ones' corpses, none alive. The rest came on, 30 in all, and the last guard's death opened the Baron's door. The first worker is restarted beforehand so that the voters keep a majority |
+| `ysida` | The leader, on "Dead Man's Plea", opened the gauntlet's gate: the Baron's run began and Ysida came to her cage | The same Ysida (same GUID), caged and out of reach. The leader came back at the gate, where the checkpoint saved him |
+| `ysida`, second crash | The Baron slain: the quest's objective done and her cage open, on the worker that took over | The same Ysida, free, by her open cage. The leader handed the quest in to her, and it was saved rewarded |
+
+The real-data tests in `source/dmangos/world/realscripts_dungeons.d` cover the same crash points in
+cluster mode, with Timmy and the Postmaster, and a save without Ysida, which calls her again. They
+also cover Tuten'kash, Gahz'rilla, the pyramid's siege, the Disciple of Naralex at his first corner,
+Emi with Grubbis out, and Mograine fallen with Whitemane on her way, each with a crash. The
+real-data tests in `source/dmangos/world/realscripts_raids.d` cover Thaddius after a handoff during
+his adds' fight, after a crash in his ten seconds, with the checkpoint after the adds' deaths lost,
+and with the second death's write lost.
+
 ### Kel'Thuzad's crash points
 
 `tools/harness/kelthuzad_recovery.py` sends three scripted raid members on a gateway to the trigger

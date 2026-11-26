@@ -76,8 +76,27 @@ describes how players use the systems available today.
   every 3 s, abominations every 25 s, soul weavers every 30 s and the transition at 5:25. The
   minions attack at once rather than gathering, and none goes at 5:10. The chaos suite cannot
   test Chains, which needs six raiders in his threat list; the real-data tests cover them.
+  Thaddius has recovery tests for a handoff during his adds' fight, a crash in the ten seconds before
+  he wakes, the checkpoint after his adds' deaths lost, and the second death's write lost. Open: with
+  either add slain, a fight saved as under way is taken for the adds' fight, so a crash in Thaddius's
+  own fight opens his door until he dies or the raid wipes. Woken after a crash, he takes every player
+  in the copy into his fight, as his waking does.
   The Temple of Ahn'Qiraj has C'Thun recovery tests for the Eye's phase, the crash between the
   Eye's death and C'Thun's rise, a player in his stomach, and a wipe in his phase.
+  Stratholme has recovery tests for Ramstein, the mindless undead and Black Guards, Ysida during and
+  after the Baron's run, Timmy and the Postmaster. The [crash points](CLUSTER.md#stratholmes-crash-points)
+  list what the clients saw. Open: the undead postmen are not kept. A lockout saved before this that
+  had slain Timmy brings him again; one that had called the Postmaster has no place to call him to,
+  so he is not brought. Ysida comes back where the checkpoint caught her, so she may stand in her
+  cage's doorway rather than beside it.
+  Razorfen Downs, Zul'Farrak (Gahz'rilla and the pyramid), Wailing Caverns, Gnomeregan and the
+  Scarlet Monastery's Cathedral have recovery tests too. Open: the waves before Tuten'kash are lost
+  with a crash and the gong calls the next. The pyramid's Sandfury the checkpoint lost stay among
+  those the siege sends up the steps, so fewer come. A lockout saved with Naralex awake because Lord
+  Serpentis's EventAI set its instance data (before the signal was moved) keeps the disciple silent.
+  A summon a restore fails to bring back leaves the Disciple of Naralex waiting for its death.
+  Emi leaves the checkpoint with Grubbis's death: a crash in the half minute after it loses the rest
+  of her stand, the northern tunnel's blast among it.
   See [dungeon failover](CLUSTER.md#dungeons-and-battlegrounds) for coverage across instances.
 * **GM commands.** The [command reference](COMMANDS.md#edit-a-route-or-trainer) documents native
   waypoint and trainer editing, NPC formations, battleground pause and quest catalog reload.
