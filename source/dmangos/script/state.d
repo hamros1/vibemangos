@@ -427,3 +427,41 @@ unittest
     Naxxramas restored;
     assert(loadScript(restored, reader) && restored.iceBlocks == copy.iceBlocks);
 }
+
+unittest
+{
+    // Stratholme's crash-recovery fields were appended: lockouts saved before them (and the enum-blind saves of
+    // 219ecf7 keyed off that older layout) still load, with Timmy and the Postmaster alive and nowhere to call him.
+    import dmangos.script.api : Location;
+    import dmangos.scripts.stratholme : Fight, Stratholme;
+
+    static assert(fnv1a(layoutOf!(Stratholme, 0)) == 0x2ff3a5ff97f3461eUL);
+    static assert(legacyDungeonLayout(0x2ff3a5ff97f3461eUL) == 0xfdf53dada7b5b9a0UL);
+
+    Stratholme city;
+    city.slaughter = Fight.done;
+    city.timmyCalled = true;
+    ByteWriter current;
+    saveScript(city, current);
+    const body = current.data[ulong.sizeof .. $ - 3 * bool.sizeof - 4 * float.sizeof];
+
+    foreach (const stored; [0x2ff3a5ff97f3461eUL, 0xfdf53dada7b5b9a0UL])
+    {
+        ByteWriter old;
+        old.put(stored);
+        old.putBytes(body);
+        auto reader = ByteReader(old.data);
+        Stratholme restored;
+        assert(loadScript(restored, reader), "an earlier Stratholme lockout no longer loads");
+        assert(restored.slaughter == Fight.done && restored.timmyCalled && !restored.timmyDead
+            && restored.malownPlace == Location.init && !restored.guardsOut);
+    }
+
+    city.timmyDead = true;
+    city.malownPlace = Location(3700, -3300, 130);
+    ByteWriter withFields;
+    saveScript(city, withFields);
+    auto reader = ByteReader(withFields.data);
+    Stratholme restored;
+    assert(loadScript(restored, reader) && restored.timmyDead && restored.malownPlace == city.malownPlace);
+}

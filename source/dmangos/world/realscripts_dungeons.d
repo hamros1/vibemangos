@@ -1536,6 +1536,161 @@ unittest
     assert(d.heard(-1329012), "the time is up: Ysida dies\n" ~ d.story);
 }
 
+/**
+ * Stratholme on a cluster worker: Ramstein the Gorger (10439) and the mindless undead (11030) and Black Guards (10394)
+ * after him are summons, kept by the copy's checkpoint. A crash while Ramstein lives brings the same one back; a
+ * crash among the undead brings back those alive, the rest come on, and the last guard's death opens the Baron's
+ * door (175796).
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.scripts.stratholme : Fight, Stratholme;
+
+    enum uint ramstein = 10439, zombie = 11030, guard = 10394, baronDoor = 175796;
+    auto d = Dungeon.enter(329, 60, cluster: true);
+    d.goTo(Position(4033, -3431, 120)); // the slaughter square, its abominations loaded
+    d.run(1.seconds);
+    foreach (entry; [10416u, 10417])
+        foreach (abomination; d.all(entry))
+            d.kill(abomination);
+    assert(d.runUntil(() => d.find(ramstein) !is null, 5.seconds), "Ramstein comes\n" ~ d.story);
+    auto him = d.find(ramstein);
+    const original = him.guid;
+    d.pull(him);
+    d.hurtTo(him, 60);
+    d.run(2100.msecs);
+    d.restartAfterCrash();
+    him = d.find(ramstein);
+    assert(him !is null && him.guid == original && d.all(ramstein).length == 1, "the same Ramstein after the crash");
+    assert(him.values.get!UNIT_FIELD_HEALTH < him.values.get!UNIT_FIELD_MAXHEALTH * 2 / 3, "hurt as he was");
+    d.kill(him);
+    d.run(1.seconds);
+    assert(d.saved!Stratholme.slaughter == Fight.done && d.all(guard).length == 5, "his death calls the guards");
+
+    assert(d.runUntil(() => d.all(zombie).length >= 10, 10.seconds), "the undead come\n" ~ d.story);
+    auto first = d.all(zombie);
+    const slain = first[0].guid, survivor = first[1].guid;
+    d.kill(first[0]);
+    d.run(500.msecs);
+    d.restartAfterCrash();
+    assert(d.map.creatureAt(survivor) !is null && d.map.creatureAt(survivor).alive, "a living one comes back");
+    auto dead = d.map.creatureAt(slain);
+    assert(dead is null || !dead.alive, "a slain one stays slain");
+    assert(d.all(guard).length == 5, "the same guards wait");
+    // The rest come on, thirty in all; each slain as it comes.
+    bool allCame()
+    {
+        foreach (z; d.all(zombie))
+            d.kill(z);
+        return d.saved!Stratholme.mindlessCount >= 30 && d.all(zombie).length == 0;
+    }
+    assert(d.runUntil(&allCame, 30.seconds), "thirty undead\n" ~ d.story);
+    assert(d.saved!Stratholme.mindlessCount == 30, "none more");
+    d.run(30.seconds);
+    d.restartAfterCrash(); // while the guards wait their minute
+    assert(d.all(guard).length == 5);
+    d.run(35.seconds); // the minute out: they come out of the slaughterhouse
+    foreach (g; d.all(guard))
+        d.kill(g);
+    d.run(1.seconds);
+    assert(d.saved!Stratholme.blackGuards == Fight.done && Dungeon.isOpen(d.objectOf(baronDoor)),
+        "the last guard's death opens the Baron's door\n" ~ d.story);
+    d.restartAfterCrash();
+    assert(Dungeon.isOpen(d.objectOf(baronDoor)) && d.all(guard).length == 0, "for the rest of the lockout");
+}
+
+/**
+ * Stratholme on a cluster worker: Ysida Harmon (16031), a summon, is kept by the copy's checkpoint through the Baron's
+ * run and after it, so a crash neither strands her cage nor takes away the one who ends "Dead Man's Plea" (8945).
+ * A lockout saved before she was kept calls her again.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.scripts.stratholme : Fight, Stratholme;
+    import dmangos.world.defines : UnitFlags;
+
+    enum uint questGiver = 2; // UNIT_NPC_FLAG_QUESTGIVER
+    enum uint ysida = 16031, baron = 10440, gate = 175357, cage = 181071;
+    auto d = Dungeon.enter(329, 60, cluster: true);
+    d.spawned(baron, 0, 60);
+    d.use(d.objectOf(gate));
+    d.run(3.seconds);
+    assert(d.saved!Stratholme.run == Fight.inProgress && d.summoned(ysida) == 1, d.story);
+    const original = d.find(ysida).guid;
+    const left = d.saved!Stratholme.runLeftMs;
+    d.restartAfterCrash();
+    auto her = d.find(ysida);
+    assert(her !is null && her.guid == original && d.all(ysida).length == 1, "the same Ysida, caged");
+    assert(her.values.get!UNIT_FIELD_FLAGS & UnitFlags.spawning);
+    assert(left - d.saved!Stratholme.runLeftMs < 5000, "the run's clock does not count the outage");
+
+    d.kill(d.spawned(baron, 0, 20));
+    d.run(1.seconds);
+    assert(d.saved!Stratholme.run == Fight.done && Dungeon.isOpen(d.objectOf(cage)), "saved\n" ~ d.story);
+    d.restartAfterCrash();
+    her = d.find(ysida);
+    assert(her !is null && her.guid == original && d.all(ysida).length == 1, "she waits for the turn-in");
+    assert(!(her.values.get!UNIT_FIELD_FLAGS & UnitFlags.spawning)
+        && (her.values.get!UNIT_NPC_FLAGS & questGiver), "free, and the quest is hers to end");
+    assert(Dungeon.isOpen(d.objectOf(cage)), "her cage stays open");
+
+    // A save without her (a lockout saved before she was kept, or one whose restore lost her): she comes again.
+    import std.algorithm.searching : findSplit;
+
+    const withoutHer = d.data.findSplit(":summons1:")[0];
+    d.w.db.saveInstanceData(d.instanceId, withoutHer);
+    d.restartAfterCrash();
+    assert(d.all(ysida).length == 1 && d.find(ysida).guid != original, "Ysida called again\n" ~ d.story);
+    assert(!(d.find(ysida).values.get!UNIT_FIELD_FLAGS & UnitFlags.spawning));
+}
+
+/**
+ * Stratholme on a cluster worker: Timmy the Cruel (10808) and Postmaster Malown (11143) are summons, kept by the
+ * copy's checkpoint until slain, so a crash does not take either from the lockout.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.script.api : EntityRef;
+    import dmangos.scripts.stratholme : Stratholme;
+
+    enum uint timmy = 10808, malown = 11143;
+    static immutable uint[5] scarlet = [10420, 10424, 10418, 10419, 10425];
+    const courtyard = Stratholme.timmyCourtyard;
+    auto d = Dungeon.enter(329, 60, cluster: true);
+    d.goTo(Position(courtyard.x, courtyard.y, courtyard.z));
+    d.run(1.seconds);
+    foreach (entry; scarlet)
+        foreach (c; d.all(entry))
+            if ((c.position.x - courtyard.x) ^^ 2 + (c.position.y - courtyard.y) ^^ 2 < 40 ^^ 2)
+                d.kill(c);
+    assert(d.runUntil(() => d.find(timmy) !is null, 5.seconds), "Timmy comes\n" ~ d.story);
+    const original = d.find(timmy).guid;
+    d.restartAfterCrash();
+    assert(d.all(timmy).length == 1 && d.find(timmy).guid == original, "the same Timmy after the crash");
+    d.kill(d.find(timmy));
+    d.run(1.seconds);
+    d.restartAfterCrash();
+    assert(d.all(timmy).length == 0, "slain, he stays slain");
+
+    foreach (_; 0 .. 3)
+        d.w.context.signalDungeon(d.instanceId, EntityRef(d.player.guid), Stratholme.Signals.postboxUsed, 0);
+    d.run(1.seconds);
+    assert(d.summoned(malown) == 1, d.story);
+    const postmaster = d.find(malown).guid;
+    d.restartAfterCrash();
+    assert(d.all(malown).length == 1 && d.find(malown).guid == postmaster, "the same Postmaster after the crash");
+    d.kill(d.find(malown));
+    d.run(1.seconds);
+    d.restartAfterCrash();
+    assert(d.all(malown).length == 0, "slain, he stays slain");
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Blackrock Depths (230)
 // ---------------------------------------------------------------------------------------------------------------

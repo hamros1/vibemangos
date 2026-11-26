@@ -13,6 +13,7 @@
 module dmangos.scripts.stratholme;
 
 import dmangos.script;
+import dmangos.script.state : appended;
 
 /// Creatures of the city.
 enum : uint
@@ -119,6 +120,117 @@ struct Stratholme
     @transient int[2] trapRearmMs, trapReopenMs, trapSwarmMs;
     @transient EntityRef[2] trapVictim;
 
+    // A crash takes the summons with the old world. Those the city waits on are kept in its checkpoint
+    // (`checkpointCreature`): Ramstein, the mindless undead and the Black Guards, Ysida, Timmy and the Postmaster.
+    // One a save does not have (an older one's, or one its restore lost) is brought again or counted gone.
+    @appended bool timmyDead, malownDead;
+    @appended Location malownPlace; /// where the third postbox called him (0, 0, 0: an older save's)
+    @appended bool guardsOut;       /// the Black Guards came out of the slaughterhouse
+    @transient bool bringRamstein, bringGuards, bringYsida, bringTimmy, bringMalown;
+
+    void on(ref InstanceContext strat, const ref Restored e)
+    {
+        bool kept;
+        if (slaughter == Fight.inProgress || slaughter == Fight.failed) // he came out and lives
+        {
+            if (strat.hasSavedCreature(ramstein))
+                kept = true;
+            else
+                bringRamstein = true;
+        }
+        if (slaughter == Fight.done && blackGuards != Fight.done)
+        {
+            kept |= keepSaved(strat, mindless) | keepSaved(strat, guards);
+            mindlessGone();
+            // Their deaths are in the checkpoint with them: guards all gone but not slain went with the old world.
+            bringGuards = guards.allDead || guards.empty;
+        }
+        if (run == Fight.inProgress || run == Fight.done)
+        {
+            if (ysidaRef && strat.hasSavedCreature(ysidaRef))
+                kept = true;
+            else
+                bringYsida = true;
+        }
+        if (timmyCalled && !timmyDead)
+        {
+            if (strat.hasSavedCreature(timmy))
+                kept = true;
+            else
+                bringTimmy = true;
+        }
+        if (postboxesUsed >= 3 && !malownDead && malownPlace != Location.init)
+        {
+            if (strat.hasSavedCreature(postmasterMalown))
+                kept = true;
+            else
+                bringMalown = true;
+        }
+        if (kept)
+            strat.waitForPlayer();
+    }
+
+    void on(ref InstanceContext strat, const ref PlayerEntered e)
+    {
+        bringBack(strat);
+    }
+
+    /// The summons `Restored` (or a failed restore) found missing come again, as they were.
+    private void bringBack(ref InstanceContext strat)
+    {
+        if (bringRamstein)
+        {
+            bringRamstein = false;
+            slaughter = Fight.notStarted;
+            callRamstein(strat);
+        }
+        if (bringGuards)
+        {
+            bringGuards = false;
+            summonGuards(strat);
+            if (guardsOut)
+                steps.after(Step.blackGuards, 1.seconds);
+        }
+        if (bringYsida)
+        {
+            bringYsida = false;
+            summonYsida(strat);
+            if (run == Fight.done && ysidaRef)
+                strat.unitFlags(ysidaRef, UnitFlag.notAttackable, false);
+        }
+        if (bringTimmy)
+        {
+            bringTimmy = false;
+            if (const him = strat.summon(timmy, timmySpawn))
+                strat.checkpointCreature(him);
+        }
+        if (bringMalown)
+        {
+            bringMalown = false;
+            if (const him = strat.summon(postmasterMalown, malownPlace))
+                strat.checkpointCreature(him);
+        }
+    }
+
+    /// The members of `pack` the checkpoint does not bring back are gone; whether it brings any.
+    private static bool keepSaved(P)(ref InstanceContext strat, ref P pack)
+    {
+        EntityRef[] lost;
+        foreach (who; pack)
+            if (!strat.hasSavedCreature(who))
+                lost ~= who;
+        foreach (who; lost)
+            pack.died(who);
+        return pack.alive > 0;
+    }
+
+    /// The thirty mindless undead all come and slain (or gone with the old world): the Black Guards come in a minute.
+    private void mindlessGone()
+    {
+        if (mindlessCount >= 30 && mindless.allDead && !guardsOut && !steps.pending(Step.blackGuards))
+            steps.after(Step.blackGuards, 60.seconds);
+    }
+
     void on(ref InstanceContext strat, const ref ObjectLoaded e)
     {
         const entry = e.object.entry;
@@ -159,7 +271,11 @@ struct Stratholme
             if (slaughter == Fight.done)
                 strat.door(e.object, true);
             break;
-        case ysidaCage: cage = e.object; break;
+        case ysidaCage:
+            cage = e.object;
+            if (run == Fight.done)
+                strat.door(e.object, true);
+            break;
         default: break;
         }
     }
@@ -199,9 +315,7 @@ struct Stratholme
             runLeftMs = 45 * 60 * 1000;
             runYells = 0;
             strat.say(baronRef, sayRunStart);
-            ysidaRef = strat.summon(ysida, ysidaSpawn);
-            if (ysidaRef)
-                strat.unitFlags(ysidaRef, UnitFlag.notAttackable);
+            summonYsida(strat);
             steps.every(Step.runClock, 1.seconds);
             break;
         case Signals.serviceGateUsed:
@@ -218,7 +332,11 @@ struct Stratholme
             if (!e.from || !strat.locationOf(e.from, at))
                 break;
             if (++postboxesUsed == 3)
-                strat.summon(postmasterMalown, at, 0, e.from);
+            {
+                malownPlace = at;
+                if (const him = strat.summon(postmasterMalown, at, 0, e.from))
+                    strat.checkpointCreature(him);
+            }
             else if (postboxesUsed < 3)
                 foreach (_; 0 .. 3)
                     strat.summon(undeadPostman, at, 0, e.from);
@@ -256,6 +374,8 @@ struct Stratholme
 
     void on(ref InstanceContext strat, const ref CreatureEvaded e)
     {
+        // A summon the checkpoint kept but could not bring back is raised as evaded, and is not here.
+        const lost = e.creature.entry != baron && !strat.alive(e.creature);
         switch (e.creature.entry)
         {
         case baron:
@@ -266,14 +386,30 @@ struct Stratholme
         case ramstein:
             slaughter = Fight.failed;
             openSlaughterhouse(strat, true);
+            bringRamstein = lost;
             break;
         case mindlessUndead, blackGuard:
             if (blackGuards == Fight.inProgress)
                 blackGuards = Fight.failed;
+            if (lost && (mindless.died(e.creature) || guards.died(e.creature)))
+            {
+                mindlessGone();
+                bringGuards = guards.allDead && blackGuards != Fight.done;
+            }
+            break;
+        case ysida:
+            bringYsida = lost && e.creature == ysidaRef && (run == Fight.inProgress || run == Fight.done);
+            break;
+        case timmy:
+            bringTimmy = lost && !timmyDead;
+            break;
+        case postmasterMalown:
+            bringMalown = lost && !malownDead && malownPlace != Location.init;
             break;
         default:
             break;
         }
+        bringBack(strat);
     }
 
     void on(ref InstanceContext strat, const ref CreatureDied e)
@@ -315,15 +451,12 @@ struct Stratholme
             openSlaughterhouse(strat, false);
             mindlessCount = 0;
             mindless.clear();
-            guards.clear();
-            foreach (_; 0 .. 5)
-                if (const guard = strat.summon(blackGuard, guardSpawn))
-                    guards.add(guard);
+            summonGuards(strat);
             steps.after(Step.mindless, 500.msecs);
             break;
         case mindlessUndead:
-            if (mindless.died(e.creature) && mindless.allDead && mindlessCount >= 30)
-                steps.after(Step.blackGuards, 60.seconds);
+            if (mindless.died(e.creature))
+                mindlessGone();
             break;
         case blackGuard:
             if (guards.died(e.creature) && guards.allDead && blackGuards != Fight.done)
@@ -347,11 +480,18 @@ struct Stratholme
         case aurius:
             strat.say(e.creature, sayAuriusDeath);
             break;
+        case timmy:
+            timmyDead = true;
+            break;
+        case postmasterMalown:
+            malownDead = true;
+            break;
         case crimsonInitiate, crimsonGallant, crimsonGuardsman, crimsonConjurer, crimsonBattleMage:
             if (courtyard.died(e.creature) && courtyard.allDead && !timmyCalled)
             {
                 timmyCalled = true;
-                strat.summon(timmy, timmySpawn, 0, e.killer);
+                if (const him = strat.summon(timmy, timmySpawn, 0, e.killer))
+                    strat.checkpointCreature(him);
             }
             break;
         default:
@@ -379,6 +519,7 @@ struct Stratholme
                 {
                     mindless.add(zombie);
                     strat.moveTo(zombie, to, 0, true);
+                    strat.checkpointCreature(zombie);
                 }
                 ++mindlessCount;
                 steps.after(Step.mindless, 400.msecs);
@@ -386,6 +527,8 @@ struct Stratholme
             break;
         case Step.blackGuards:
             // The Black Guards come out of the slaughterhouse.
+            guardsOut = true;
+            strat.checkpoint();
             openSlaughterhouse(strat, true);
             foreach (guard; guards)
                 if (!strat.victimOf(guard))
@@ -552,13 +695,44 @@ struct Stratholme
             return;
         if (abominations.alive > 0)
             return;
+        callRamstein(strat);
+    }
+
+    private void callRamstein(ref InstanceContext strat)
+    {
         slaughter = Fight.inProgress;
         openSlaughterhouse(strat, true);
         steps.after(Step.slaughterDoorClose, 10.seconds);
         if (baronRef)
             strat.say(baronRef, sayRamstein);
         if (const him = strat.summon(ramstein, ramsteinSpawn))
+        {
             strat.moveTo(him, squareCenter, 0, false);
+            strat.checkpointCreature(him);
+        }
+    }
+
+    /// The five Black Guards, waiting in the slaughterhouse for the mindless undead to fall.
+    private void summonGuards(ref InstanceContext strat)
+    {
+        guards.clear();
+        foreach (_; 0 .. 5)
+            if (const guard = strat.summon(blackGuard, guardSpawn))
+            {
+                guards.add(guard);
+                strat.checkpointCreature(guard);
+            }
+    }
+
+    /// Ysida in her cage, out of reach while the Baron lives.
+    private void summonYsida(ref InstanceContext strat)
+    {
+        ysidaRef = strat.summon(ysida, run == Fight.done ? ysidaFree : ysidaSpawn);
+        if (ysidaRef)
+        {
+            strat.unitFlags(ysidaRef, UnitFlag.notAttackable);
+            strat.checkpointCreature(ysidaRef);
+        }
     }
 
     private void openSlaughterhouse(ref InstanceContext strat, bool open)
