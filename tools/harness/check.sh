@@ -1,65 +1,100 @@
 #!/bin/sh
-# What every change goes through before it is committed:
+# What every change goes through before it is pushed:
 #   1. the unit tests (every module but the mains, built with -unittest; fails on any compile error),
 #   2. release builds of the world server, the login server and the load generator,
-#   3. the cluster regression (tools/harness/regression.sh), unless --quick.
+#   3. the spell audit and the real-data tests (the unit tests again, on the client data and world database),
+#   4. the cluster regression (tools/harness/regression.sh), unless --quick.
+# The release builds run while the tests run; the real-data run is split across processes.
 #
-#   tools/harness/check.sh [--quick]
-# Needs dmd and dub on the PATH (see docs/DEVELOPING.md, "Toolchain").
+#   tools/harness/check.sh            the whole gate (about 8 minutes on an idle 32-core machine)
+#   tools/harness/check.sh --quick    without the regression
+#   tools/harness/check.sh --fast [MODULE ...]
+#       the loop of one change (about a minute): every module compiled, the unit tests and real-data tests of the
+#       modules named (all of them if none: dmangos.world.realscripts_raids, or a prefix such as dmangos.cluster.),
+#       and unoptimized servers in $H/fastbin for a chaos case:
+#       WORLDSERVER=$H/fastbin/worldserver AUTHSERVER=$H/fastbin/authserver python3 tools/harness/chaos.py CASE
+#
+# Needs dmd and dub on the PATH (see docs/DEVELOPING.md, "Toolchain"). Compilers run as many at once as the free
+# memory allows (CHECK_JOBS overrides), and one check at a time on the machine builds (flock on $BUILD_LOCK).
 . "$(dirname "$0")/common.sh"
 cd "$REPO" || exit 1
-mkdir -p "$H/unittest"
-make -s -C thirdparty || { echo "FAIL: the native navigation library did not build"; exit 1; }
-echo "== unit tests"
-rm -f "$H/unittest/test"
-# Each module compiled on its own, all at once (-allinst: each emits the template instances it uses, which
-# separate compilation needs), then linked: seconds, where one dmd for all of them took ten minutes.
-rm -rf "$H/unittest/obj" && mkdir -p "$H/unittest/obj"
-: > "$H/unittest/build.log"
-# CHECK_JOBS limits the compilers at once (each can take 4 GB): set it low when other builds run alongside.
-if ! find source -name '*.d' ! -name main.d | xargs -P "${CHECK_JOBS:-$(nproc)}" -I{} \
-        sh -c 'dmd -c -unittest -allinst -Isource -od="$1" -op "$2" > "$1/$(echo "$2" | tr / _).log" 2>&1' _ "$H/unittest/obj" {}; then
-    cat "$H/unittest/obj"/*.log >> "$H/unittest/build.log"
-    grep -m 20 Error "$H/unittest/build.log"; echo "FAIL: the tests do not compile"; exit 1
+mode=full
+case "$1" in
+    --quick) mode=quick; shift ;;
+    --fast) mode=fast; shift ;;
+esac
+modules=$(echo "$*" | tr ' ' ',')
+U="$H/unittest"
+mkdir -p "$U"
+started=$(date +%s)
+stage() { echo "== $1 ($(( $(date +%s) - started )) s)"; }
+
+with_build_lock make -s -C thirdparty || { echo "FAIL: the native navigation library did not build"; exit 1; }
+
+stage "unit tests"
+rm -f "$U/test"
+: > "$U/build.log"
+if ! with_build_lock sh "$REPO/tools/harness/build.sh" units; then
+    cat "$U/obj"/*.log >> "$U/build.log"
+    grep -m 20 Error "$U/build.log"; echo "FAIL: the tests do not compile"; exit 1
 fi
-if ! dmd -unittest -main -of="$H/unittest/test" $(find "$H/unittest/obj" -name '*.o') thirdparty/build/libdmnav.a \
-        -L-lstdc++ >> "$H/unittest/build.log" 2>&1; then
-    grep -m 20 -i error "$H/unittest/build.log"; echo "FAIL: the tests do not link"; exit 1
+if ! dmd -unittest -main -of="$U/test" $(find "$U/obj" -name '*.o') thirdparty/build/libdmnav.a \
+        -L-lstdc++ >> "$U/build.log" 2>&1; then
+    grep -m 20 -i error "$U/build.log"; echo "FAIL: the tests do not link"; exit 1
 fi
-"$H/unittest/test" > "$H/unittest/run.log" 2>&1 || { tail -20 "$H/unittest/run.log"; echo "FAIL: unit tests"; exit 1; }
-grep "modules passed unittests" "$H/unittest/run.log"
-echo "== names defined twice in Character"
-python3 "$REPO/tools/harness/mixin-names.py" || { echo "FAIL: a name is defined twice in Character"; exit 1; }
-echo "== release builds"
-# `release-fast` optimizes without -inline. The world server is the only large build.
-# Build in sequence so a low-memory machine need only run one compiler here.
-failed=0
-for c in worldserver authserver loadgen; do
-    dub build -q -c "$c" -b release-fast > "$H/unittest/dub-$c.log" 2>&1 || failed=1
-done
-if [ $failed = 1 ]; then
-    for c in worldserver authserver loadgen; do grep -m 10 -E "Error|error" "$H/unittest/dub-$c.log"; done
-    echo "FAIL: a release build failed"; exit 1
-fi
-# Each output must exist and be runnable before the regression starts.
-for c in worldserver authserver loadgen; do
-    [ -s "bin/$c" ] || { echo "FAIL: bin/$c is missing after its build"; exit 1; }
-    chmod +x "bin/$c"
-done
-echo "built"
-[ "$1" = "--quick" ] && { echo "PASS (quick: no regression)"; exit 0; }
-echo "== spells a player can learn, against what the server does"
+
+# The servers, while the tests run (fast: unoptimized ones, in $H/fastbin).
+server_mode=full; [ $mode = fast ] && server_mode=fast
+with_build_lock sh "$REPO/tools/harness/build.sh" servers $server_mode > "$U/servers.log" 2>&1 &
+servers_pid=$!
+
+# The unit tests, the spell audit and the real-data tests at once: the real-data run split across processes (about
+# 1 GB each; the longest module takes 11 s, and each process first loads the data).
+DMANGOS_TEST_MODULES="$modules" "$U/test" > "$U/run.log" 2>&1 &
+unit_pid=$!
+stage "names defined twice in Character"
+python3 "$REPO/tools/harness/mixin-names.py" || { echo "FAIL: a name is defined twice in Character"; kill $servers_pid $unit_pid 2>/dev/null; exit 1; }
 db_start || exit 1
-python3 "$REPO/tools/harness/spell-audit.py" env LD_LIBRARY_PATH="$(dirname "$MYSQL_LIB")" "$MARIADB_ROOT/usr/bin/mariadb" \
-    -S "$SOCK" -u root classicmangos -- "$CLIENT_DATA/dbc" || { echo "FAIL: a learnable spell does what the server does not"; exit 1; }
-echo "== spells on the real data (dmangos.world.realspelltests, and the sweep of every learnable spell:"
-echo "   dmangos.world.realspellsweep, its known failures in tools/harness/realspell-known.txt; and of every spell"
-echo "   a creature casts: dmangos.world.realnpcsweep, its known failures in tools/harness/realnpc-known.txt)"
-if ! DMANGOS_REAL_DATA="$CLIENT_DATA|$MYSQL_LIB|$(db_info classicmangos)" "$H/unittest/test" > "$H/unittest/real.log" 2>&1; then
-    grep -m 10 -E "Error@|Exception@|realspellsweep: FAILS|realnpcsweep: FAILS" "$H/unittest/real.log"
-    echo "FAIL: a spell on the real data"; exit 1
+if [ $mode != fast ]; then
+    stage "spells a player can learn, against what the server does"
+    python3 "$REPO/tools/harness/spell-audit.py" env LD_LIBRARY_PATH="$(dirname "$MYSQL_LIB")" "$MARIADB_ROOT/usr/bin/mariadb" \
+        -S "$SOCK" -u root classicmangos -- "$CLIENT_DATA/dbc" || { echo "FAIL: a learnable spell does what the server does not"; kill $servers_pid $unit_pid 2>/dev/null; exit 1; }
 fi
-grep "^realspellsweep:" "$H/unittest/real.log"
-grep -E "^realnpcsweep: ([0-9]|passes now)" "$H/unittest/real.log"
-echo "== cluster regression"
-sh "$REPO/tools/harness/regression.sh"
+stage "the tests on the real data (dmangos.world.realspelltests, the sweeps of every learnable spell and every"
+echo "   spell a creature casts, their known failures in tools/harness/realspell-known.txt and realnpc-known.txt)"
+shards=${CHECK_REAL_SHARDS:-$(jobs_for 2)}
+[ "$shards" -gt 12 ] && shards=12
+[ -n "$modules" ] && shards=1
+pids=""
+for i in $(seq 0 $((shards - 1))); do
+    DMANGOS_TEST_MODULES="$modules" DMANGOS_TEST_SHARD="$i/$shards" \
+        DMANGOS_REAL_DATA="$CLIENT_DATA|$MYSQL_LIB|$(db_info classicmangos)" "$U/test" > "$U/real-$i.log" 2>&1 &
+    pids="$pids $!"
+done
+failed=0
+for pid in $pids; do wait "$pid" || failed=1; done
+cat "$U"/real-[0-9]*.log > "$U/real.log"
+rm -f "$U"/real-[0-9]*.log
+if ! wait $unit_pid; then
+    tail -20 "$U/run.log"; echo "FAIL: unit tests"; kill $servers_pid 2>/dev/null; exit 1
+fi
+grep "modules passed unittests" "$U/run.log"
+if [ $failed = 1 ]; then
+    grep -m 10 -E "Error@|Exception@|realspellsweep: FAILS|realnpcsweep: FAILS" "$U/real.log"
+    echo "FAIL: a test on the real data (all of it in $U/real.log)"; kill $servers_pid 2>/dev/null; exit 1
+fi
+grep "^realspellsweep:" "$U/real.log"
+grep -E "^realnpcsweep: ([0-9]|passes now)" "$U/real.log"
+
+stage "server builds"
+if ! wait $servers_pid; then
+    cat "$U/servers.log"
+    for log in "$U"/dub-*.log "$U"/fast-*.log; do [ -f "$log" ] && grep -m 10 -E "Error|error" "$log"; done
+    echo "FAIL: a server build failed"; exit 1
+fi
+echo "built"
+if [ $mode = fast ]; then echo "PASS (fast; servers in $H/fastbin) in $(( $(date +%s) - started )) s"; exit 0; fi
+if [ $mode = quick ]; then echo "PASS (quick: no regression) in $(( $(date +%s) - started )) s"; exit 0; fi
+stage "cluster regression"
+sh "$REPO/tools/harness/regression.sh" || exit 1
+echo "PASS in $(( $(date +%s) - started )) s"

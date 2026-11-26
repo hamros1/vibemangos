@@ -14,6 +14,24 @@ SOCK="$H/run/mysql.sock"
 # The harness's MariaDB runs without grant tables, on a private socket only: any password works.
 db_info() { echo ".;$SOCK;mangos;harness;$1"; }
 
+# How many processes of about $1 GB fit in the memory free now, at most the cores, at least one. The compilers of
+# the unit tests take up to 4 GB each: as many as the cores would run this machine out of memory.
+jobs_for() {
+    free_kb=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo 2>/dev/null)
+    jobs=$(( ${free_kb:-0} / ($1 * 1024 * 1024) ))
+    cores=$(nproc)
+    [ "$jobs" -gt "$cores" ] && jobs=$cores
+    [ "$jobs" -lt 1 ] && jobs=1
+    echo "$jobs"
+}
+
+# Runs "$@" holding the machine's one build lock: the compilers of two checks at once (two agents, two
+# worktrees) do not add up past the memory, whatever harness directory each uses.
+BUILD_LOCK="${DMANGOS_BUILD_LOCK:-${XDG_RUNTIME_DIR:-/tmp}/dmangos-build.lock}"
+with_build_lock() {
+    flock "$BUILD_LOCK" "$@"
+}
+
 db_running() { [ -f "$H/run/mariadb.pid" ] && kill -0 "$(cat "$H/run/mariadb.pid")" 2>/dev/null; }
 
 db_start() {

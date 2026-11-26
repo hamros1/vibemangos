@@ -269,10 +269,17 @@ the databases (so load tests never touch a dev server's characters):
 
 ```sh
 tools/harness/setup.sh SOURCE_DATADIR   # once: copies a stopped MariaDB data directory, writes configs
-tools/harness/check.sh                  # unit tests, release builds, then the cluster regression
-tools/harness/check.sh --quick          # without the regression: unit tests (each module compiled on its
-                                        # own, in parallel, then linked), then the three release builds
-                                        # with `-b release-fast`. Use `dub build -b release` for benchmarks.
+tools/harness/check.sh --fast [MODULE ...]  # one change's loop, about a minute: every module compiled, the
+                                        # unit and real-data tests of the modules named (all if none; a name
+                                        # or a prefix, dmangos.world.realscripts_raids, dmangos.cluster.),
+                                        # and unoptimized servers in $DMANGOS_HARNESS/fastbin for chaos cases
+tools/harness/check.sh                  # the gate before a push, about 8 minutes: unit tests, release
+                                        # builds (`-b release-fast`) while the spell audit and the real-data
+                                        # tests run, then the cluster regression. `dub build -b release` for
+                                        # benchmarks.
+tools/harness/check.sh --quick          # the gate without the regression
+WORLDSERVER=~/.cache/dmangos-harness/fastbin/worldserver AUTHSERVER=~/.cache/dmangos-harness/fastbin/authserver \
+    python3 tools/harness/chaos.py -j 4 [CASE ...]  # chaos cases four at a time against the fast servers
 tools/harness/regression.sh             # two nodes, 250 bots in a crowd while regions split and merge
 python3 tools/harness/quorum.py         # three voters and a gateway, with clients connected during failover
 python3 tools/harness/realms.py         # sign into two clusters through one login server and check isolation
@@ -286,6 +293,15 @@ tools/harness/db.sh start|stop|status
 # spells, talents, what they trigger) against what the server does; it fails on an effect left undone or an aura
 # type the code never names, unless tools/harness/spell-audit-known.txt lists it with its reason.
 ```
+
+The checks size themselves to the machine's free memory, not its cores: a unit-test compiler takes up
+to 4 GB and the world server's release build 6 GB, so `check.sh` runs as many compilers as
+`MemAvailable` allows (`CHECK_JOBS` overrides) and the real-data tests in up to 12 processes of about
+1 GB (`CHECK_REAL_SHARDS`). Only one check on the machine builds at a time: every build holds
+`flock` on `$XDG_RUNTIME_DIR/dmangos-build.lock` (`DMANGOS_BUILD_LOCK`), so checks in several
+worktrees queue their compilers instead of running the machine out of memory together. The test
+binary's runner (`source/dmangos/testrunner.d`) takes `DMANGOS_TEST_MODULES`, `DMANGOS_TEST_SHARD=i/n`
+and `DMANGOS_TEST_TIMES=FILE` (each module's seconds).
 
 The harness lives in `~/.cache/dmangos-harness` (`DMANGOS_HARNESS`). It needs an unpacked MariaDB
 (`MARIADB_ROOT`, by default the dev server's in `~/dmangos-server/mariadb`) and extracted client data
