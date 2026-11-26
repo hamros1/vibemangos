@@ -161,3 +161,98 @@ unittest
     }
     assert(player.player.auras.find(chill) !is null, "her Frost Armor did not chill the one who struck her");
 }
+
+/**
+ * Invisibility hides a player from enemies who cannot see through it, as stealth does from those who do not detect
+ * it: a human under Lesser Invisibility (3680, its potion's) leaves an orc's sight, and Detect Lesser Invisibility
+ * (132) on the orc brings it back. Its own side still sees it.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import core.time : msecs;
+    import std.algorithm.searching : canFind;
+    import dmangos.world.testdata : raceOrc;
+
+    enum uint lesserInvisibility = 3680, detectLesser = 132;
+    auto w = RealWorld.make();
+    auto human = w.character(1, "Hider", classWarriorId, 30, []);
+    auto friend = w.character(2, "Friend", classWarriorId, 30, []);
+    auto orc = w.character(3, "Seeker", classWarriorId, 30, [], raceOrc);
+    auto map = w.context.map(0);
+    void settle()
+    {
+        foreach (_; 0 .. 4)
+        {
+            w.now += 600.msecs;
+            w.context.update(w.now);
+        }
+        foreach (c; [&human, &friend, &orc])
+            c.read();
+    }
+    const hider = human.session.inWorld.player.guid;
+    settle();
+    assert(map.knownTo(orc.session.inWorld.player.guid).canFind(hider), "the orc does not see the human at all");
+    assert(w.cast_(human, lesserInvisibility) == imported!"dmangos.world.spellcast".SpellCastResult.ok);
+    settle();
+    assert(human.session.inWorld.player.auras.find(lesserInvisibility) !is null, "not invisible");
+    assert(!map.knownTo(orc.session.inWorld.player.guid).canFind(hider), "the orc sees the invisible human");
+    assert(map.knownTo(friend.session.inWorld.player.guid).canFind(hider), "its own side lost the invisible human");
+    {
+        import dmangos.world.spellcast : SpellTargets, TargetFlags;
+
+        auto seeker = orc.session.inWorld;
+        seeker.castSpell(w.context.data.spells.spell(detectLesser), SpellTargets(TargetFlags.self,
+            seeker.player.guid), true, 0); // a warlock's, given to the orc
+    }
+    settle();
+    assert(orc.session.inWorld.player.auras.find(detectLesser) !is null, "no Detect Lesser Invisibility");
+    assert(map.knownTo(orc.session.inWorld.player.guid).canFind(hider), "Detect Lesser Invisibility does not see it");
+}
+
+/**
+ * A stealthed rogue edging up to a Venture Co. Lookout (7307) from in front is first near enough to put it on its
+ * guard, not to be seen: its script calls out (-1010007 or -1010008, `StealthAlert`). Nearer still it sees the rogue.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import std.math : cos, sin;
+    import dmangos.world.packets : ClientTeleportAck;
+    import dmangos.world.spellcast : SpellTargets, TargetFlags;
+
+    enum uint lookout = 7307, stealth = 1784;
+    enum ubyte classRogue = 4;
+    auto w = RealWorld.make();
+    auto rogue = w.character(1, "Sneak", classRogue, 23, []);
+    auto map = w.context.map(0);
+    auto it = cast(Creature) map.findObject(w.enemy(rogue, lookout));
+    it.tick(map, 100);
+    auto me = rogue.session.inWorld;
+    me.castSpell(w.context.data.spells.spell(stealth), SpellTargets(TargetFlags.self, me.player.guid), true, 0);
+    assert(me.player.auras.find(stealth) !is null, "not stealthed");
+    rogue.read();
+    const facing = it.position.orientation;
+    bool alerted, seen;
+    foreach_reverse (yards; 2 .. 30)
+    {
+        auto at = it.position;
+        at.x += yards * cos(facing);
+        at.y += yards * sin(facing);
+        me.teleportTo(0, at, null, 0, true);
+        rogue.write(Opcode.MSG_MOVE_TELEPORT_ACK, ClientTeleportAck(me.player.guid, 0, 0));
+        it.ai.moveInLineOfSight(map.unit(me.player.guid), map);
+        foreach (p; rogue.read())
+            if (p.opcode == Opcode.SMSG_MESSAGECHAT && !it.ai.inCombat) // its alert, not an aggro line
+                alerted = true;
+        if (it.ai.inCombat)
+        {
+            seen = true;
+            break;
+        }
+    }
+    assert(alerted, "the lookout never called out at the rogue it almost saw");
+    assert(seen, "the lookout never saw the rogue in front of it");
+}

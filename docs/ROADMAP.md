@@ -226,8 +226,9 @@ The largest area. In order:
    regeneration's auras, Holy Shield, Blessing of Sacrifice; `effecthandlers.d`): done. Players'
    guardians (engineering dragonlings, dummies, the sheep; `guardians.d`), wild objects,
    and wear by spells (`durability.d`), Ritual of Summoning and the meeting stones' summons (`rituals.d`): done; a guardian's evade walks back to where it was summoned before it follows
-   again. Not yet: Eye of Kilrogg (`SUMMON_POSSESSED`), invisibility and its
-   detection, traps hidden from those not in the hunter's group.
+   again. Eye of Kilrogg (`SUMMON_POSSESSED`), invisibility and its detection (an enemy who
+   cannot see through it loses sight of the player), and traps hidden from those not in the
+   hunter's group: done.
 6. **Duels and trades: done** (`tradehandlers.d`, `duelhandlers.d`). Players fight players in
    melee and with spells where the relations allow (duelists,
    PvP-flagged enemies). The PvP flag (`pvp.d`): `/pvp`, enforced zones, contested players, free-for-all
@@ -290,8 +291,8 @@ creatures' mana drains on players; and 32 item and holiday spells CMaNGOS's core
 the Deviate Fish, the engineers' gadgets, the costumes, ...). Of the spell scripts, not yet: those needing
 creatures to cast as they die (the tribal deaths), summons and destinations a script shapes (the Lunar
 Festival's fireworks, which need players' game object summons too), effect chances (the silithid egg), and the raids'. Not yet
-(about 20 names, each module's documentation and SCRIPTING.md say why): what needs stealth detection
-(Venture Co. lookouts, Gallywix), caravans and the Eastern Kingdoms' world map script.
+(about 20 names, each module's documentation and SCRIPTING.md say why): caravans and the Eastern Kingdoms'
+world map script. The Venture Co. lookouts, Gallywix and Silixiz, on their guard against stealth, are done.
 The original Scourge Invasion, the audited raid possession and mind-control interactions, and Heigan's floor
 have dedicated tests. Gluth's Decimate trigger still needs a reference combat log.
 The [dungeon and raid coverage audit](research/DUNGEON-SCRIPT-COVERAGE.md) records which maps use instance-wide
