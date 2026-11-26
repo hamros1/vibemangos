@@ -186,12 +186,16 @@ struct ZulFarrak
             return;
         if (blyRef && !zf.alive(blyRef))
             return; // the prisoners are lost: the trolls stay where they are
-        const n = trolls.alive;
+        // Of those in the world now: one the checkpoint lost (never slain, never back) would send nobody up.
+        uint n;
+        foreach (troll; trolls)
+            if (zf.alive(troll))
+                ++n;
         if (n > 0)
         {
             uint pick = zf.random(n);
             foreach (troll; trolls)
-                if (pick-- == 0)
+                if (zf.alive(troll) && pick-- == 0)
                 {
                     if (!zf.victimOf(troll))
                     {

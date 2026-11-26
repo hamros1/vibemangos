@@ -1332,6 +1332,24 @@ unittest
     auto sergeant = d.spawned(bly, 0, 10);
     assert(sergeant.values.get!UNIT_FIELD_FACTIONTEMPLATE == factionFreed, "the prisoners still free");
     assert(!Dungeon.isOpen(d.objectOf(endDoor)) && d.saved!ZulFarrak.pyramid == Fight.inProgress);
+    // Sandfury the checkpoint lost (gone, never slain) do not hold up the siege: of the last one left in the world,
+    // the siege sends that one up the steps.
+    {
+        float distance(Position a, Position b) { return ((a.x - b.x) ^^ 2 + (a.y - b.y) ^^ 2) ^^ 0.5f; }
+        Creature last;
+        foreach (entry; [7787u, 7788, 7789, 8876, 8877])
+            foreach (c; d.all(entry))
+                if (last is null && c.summon.type != imported!"dmangos.world.creature".TempSpawnType.none
+                    && !c.ai.inCombat && distance(c.position, sergeant.position) > 25)
+                    last = c;
+                else
+                    d.map.removeObject(c.guid); // as a restore that could not bring it back leaves it
+        assert(last !is null, "a Sandfury left\n" ~ d.story);
+        const from = distance(last.position, sergeant.position);
+        assert(d.runUntil(() => !last.alive || distance(last.position, sergeant.position) < from - 10,
+            40.seconds), format!"the last Sandfury not sent up the steps (%s yards from Bly)\n%s"(
+            distance(last.position, sergeant.position), d.story));
+    }
     // The siege's steps go on: Nekrum and Sezz'ziz at its 250 seconds, the outage not counted.
     assert(d.runUntil(() => d.find(nekrum) !is null && d.find(sezzziz) !is null, 200.seconds),
         "Nekrum and Sezz'ziz come\n" ~ d.story);

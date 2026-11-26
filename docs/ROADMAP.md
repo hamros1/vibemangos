@@ -88,12 +88,11 @@ describes how players use the systems available today.
   cage's doorway rather than beside it.
   Razorfen Downs, Zul'Farrak (Gahz'rilla and the pyramid), Wailing Caverns, Gnomeregan and the
   Scarlet Monastery's Cathedral have recovery tests too. The waves before Tuten'kash are kept in the
-  checkpoint: a crash brings the living back, and the gong waits for them. Open: the pyramid's
-  Sandfury the checkpoint lost stay among those the siege sends up the steps, so fewer come. A
-  lockout saved with Naralex awake because Lord Serpentis's EventAI set its instance data (before
-  the signal was moved) keeps the disciple silent. Emi leaves the checkpoint with Grubbis's death: a
-  crash in the half minute after it loses the rest of her stand, the northern tunnel's blast among
-  it.
+  checkpoint: a crash brings the living back, and the gong waits for them. The pyramid's siege sends
+  up the steps only Sandfury in the world, not those the checkpoint lost. Open: a lockout saved with
+  Naralex awake because Lord Serpentis's EventAI set its instance data (before the signal was moved)
+  keeps the disciple silent. Emi leaves the checkpoint with Grubbis's death: a crash in the half
+  minute after it loses the rest of her stand, the northern tunnel's blast among it.
   Molten Core has Ragnaros recovery tests for his fight, his sons under the lava, a wipe followed
   by a crash, a crash between his summoning and his pull, and his death. The
   [crash points](CLUSTER.md#ragnaros-crash-points) list what the clients saw. Majordomo's
