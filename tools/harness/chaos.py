@@ -18,6 +18,7 @@ import threading
 import time
 from pathlib import Path
 
+import ahnqiraj_recovery
 import battlegroup_failover
 from cluster_fixture import HARNESS, run_test
 import cthun_recovery
@@ -66,6 +67,8 @@ CASES = (
     ("ragnaros-wipe-recovery", ragnaros_recovery.wipe),
     ("zulgurub-arlokk-recovery", zulgurub_recovery.arlokk),
     ("zulgurub-mandokir-recovery", zulgurub_recovery.mandokir),
+    ("aq40-trio-recovery", ahnqiraj_recovery.trio),
+    ("aq40-twins-recovery", ahnqiraj_recovery.twins),
     ("loot-award-crash", loot_award_crash.main),
     ("migration-stall", migration_stall.run),
     ("standby-login", standby_login.run),

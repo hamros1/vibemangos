@@ -30,7 +30,7 @@ in order:
     fish                     reel in the visible fishing bobber and loot the catch
     cancelchannel:SPELL      cancel the specified channel
     loot[:N]                  take the last creature's loot, or only N items and leave the money
-    killpack:[one:]ENTRY...    select and kill matching visible living creatures (GM)
+    killpack:[one:][any:]ENTRY...  select and kill matching visible living creatures (GM; any: none is no failure)
     castopen:SPELL:ENTRY      cast at the nearest game object of ENTRY without taking its loot
     castgo:SPELL:ENTRY[:N]    cast at a game object and take up to N loot slots (all if omitted)
     rolloffer  rollvote:N     keep the next group loot prompt, then pass (0), need (1) or greed (2)
@@ -1348,9 +1348,12 @@ while step < len(actions):
         first_only = args[0] == "one"
         if first_only:
             args = args[1:]
+        any_seen = args[0] == "any"  # none in sight is no failure
+        if any_seen:
+            args = args[1:]
         entries = set(map(int, args))
         targets = sorted(g for g in living_creatures if seen_objects[g][1] in entries)
-        if not targets:
+        if not targets and not any_seen:
             raise RuntimeError(f"no living creatures of {entries} in sight")
         if first_only:
             targets = targets[:1]
