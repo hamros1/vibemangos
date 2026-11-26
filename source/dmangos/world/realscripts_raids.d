@@ -3319,3 +3319,159 @@ unittest
     assert(s.all(npcSoldierFrozen).length == 1 && (kt.values.get!UNIT_FIELD_FLAGS & 0x0200_0000),
         format!"%s soldiers 6 s into the second pull"(s.all(npcSoldierFrozen).length));
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Molten Core's and Zul'Gurub's crash recovery
+// ---------------------------------------------------------------------------------------------------------------
+
+/// The guids of the living creatures of `entry`.
+private bool[ulong] livingOf(Scene s, uint entry)
+{
+    bool[ulong] living;
+    foreach (c; s.all(entry))
+        living[c.guid] = true;
+    return living;
+}
+
+/**
+ * A cluster copy of Molten Core with every rune doused and Majordomo's fight won, its characters by Ragnaros' lair:
+ * Majordomo, asked, summons Ragnaros, is burnt, and Ragnaros fights them. Ragnaros, fighting; when he began (the
+ * test's milliseconds).
+ */
+private Creature ragnarosFight(out Scene s, out long pulledAt)
+{
+    import dmangos.script.api : EncounterState;
+    import dmangos.scripts.moltencore;
+
+    s = new Scene(409, Position(845, -815, -229.6f), [classWarrior, classMage], cluster: true);
+    s.run(1.seconds);
+    s.signalCopy(Encounter.lucifron, EncounterState.done);
+    s.signalCopy(Encounter.majordomo, EncounterState.done);
+    foreach (encounter; Encounter.magmadar .. Encounter.majordomo)
+    {
+        s.signalCopy(encounter, EncounterState.done);
+        s.signalCopy(encounter, EncounterState.special);
+    }
+    s.run(1.seconds);
+    auto majordomo = s.the(npcMajordomo);
+    s.gossip(majordomo, [0, 0, 0]);
+    assert(s.runUntil(() => s.find(npcRagnaros) !is null && !majordomo.alive, 90.seconds),
+        "no Ragnaros, or Majordomo lives\n" ~ s.seen());
+    auto ragnaros = s.the(npcRagnaros);
+    s.stayWith = ragnaros;
+    s.stayWithin = 6;
+    assert(s.runUntil(() => ragnaros.ai.inCombat, 20.seconds), "Ragnaros does not fight\n" ~ s.seen());
+    pulledAt = s.elapsedMs;
+    assert(s.ask(Encounter.ragnaros) == EncounterState.inProgress);
+    return ragnaros;
+}
+
+/**
+ * Ragnaros' fight survives a worker's crash. He is a summon (Majordomo's), so nothing but the copy's checkpoint can
+ * bring him back. Crashed with him at 70%, the worker comes back with the same Ragnaros at his health and his fight
+ * under way, and no Majordomo (burnt by his master); he submerges three minutes into the fight, as without the crash.
+ * Crashed again with three of his eight Sons of Flame slain, the same five come back and he stays under the lava
+ * until they are slain. His death is for the rest of the lockout: after another crash neither he nor Majordomo comes.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import std.math : abs;
+    import dmangos.script.api : EncounterState;
+    import dmangos.scripts.moltencore;
+
+    enum int submerged = Ragnaros.sayReinforcements1;
+    enum uint emerge = Ragnaros.emerge;
+    Scene s;
+    long pulledAt;
+    auto ragnaros = ragnarosFight(s, pulledAt);
+    s.hurtTo(ragnaros, 70);
+    s.run(20.seconds);
+    s.runUntilSaved(); // a crash just after the checkpoint (none without the encounter's actors in it)
+    const guid = ragnaros.guid;
+    const health = s.healthOf(ragnaros);
+
+    s.forget();
+    s.restartAfterCrash();
+    auto back = s.all(npcRagnaros);
+    assert(back.length == 1 && back[0].guid == guid, format!"%s Ragnaros after the crash, not the same one"(back.length));
+    ragnaros = back[0];
+    assert(abs(s.healthOf(ragnaros) - health) <= 1, format!"Ragnaros at %s%% after the crash, %s%% before"(
+        s.healthOf(ragnaros), health));
+    assert(s.ask(Encounter.ragnaros) == EncounterState.inProgress, "his fight no longer under way");
+    assert(s.find(npcMajordomo) is null, "Majordomo came again during Ragnaros' fight");
+    s.stayWith = ragnaros;
+    assert(s.runUntil(() => s.said(submerged), 170.seconds), "Ragnaros does not submerge after the crash\n" ~ s.seen());
+    assert(abs(s.saidAt(submerged) - pulledAt - 180_000) <= 2_000, format!"he submerged %s ms into his fight, not 180000"(
+        s.saidAt(submerged) - pulledAt));
+
+    // Under the lava, his sons fighting: three slain, then the worker dies.
+    s.stayWith = null;
+    s.run(4.seconds);
+    auto sons = s.all(npcSonOfFlame);
+    assert(sons.length == 8, format!"%s Sons of Flame"(sons.length));
+    foreach (son; sons[0 .. 3])
+        s.kill(son);
+    s.run(1.seconds);
+    s.runUntilSaved(); // a crash just after the checkpoint (none without the encounter's actors in it)
+    auto living = livingOf(s, npcSonOfFlame);
+    assert(living.length == 5);
+    s.forget();
+    s.restartAfterCrash();
+    ragnaros = s.the(npcRagnaros);
+    assert(ragnaros.guid == guid && s.all(npcRagnaros).length == 1);
+    assert(livingOf(s, npcSonOfFlame) == living, format!"Sons of Flame %s after the crash, %s before"(
+        livingOf(s, npcSonOfFlame).keys, living.keys));
+    assert(ragnaros.values.get!UNIT_FIELD_FLAGS & 0x0200_0000, "Ragnaros up from the lava with his sons alive");
+    s.run(3.seconds);
+    assert(!s.castBy(npcRagnaros, emerge), "Ragnaros came up with his sons alive\n" ~ s.seen());
+    foreach (son; s.all(npcSonOfFlame))
+        s.kill(son);
+    assert(s.runUntil(() => s.castBy(npcRagnaros, emerge), 5.seconds), "Ragnaros does not come up\n" ~ s.seen());
+
+    // His death, through another crash.
+    s.kill(ragnaros);
+    s.run(2.seconds);
+    assert(s.ask(Encounter.ragnaros) == EncounterState.done, "his encounter not done");
+    s.restartAfterCrash();
+    s.run(2.seconds);
+    assert(s.ask(Encounter.ragnaros) == EncounterState.done && s.find(npcRagnaros) is null
+        && s.find(npcMajordomo) is null, "Ragnaros or Majordomo back after his death and a crash");
+}
+
+/// A wipe in Ragnaros' fight, then a worker's crash: Majordomo waits by the lair again, and, asked, summons him anew.
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.script.api : EncounterState;
+    import dmangos.scripts.moltencore;
+
+    Scene s;
+    long pulledAt;
+    auto ragnaros = ragnarosFight(s, pulledAt);
+    s.run(5.seconds);
+    s.wipe(ragnaros);
+    assert(s.runUntil(() => s.ask(Encounter.ragnaros) == EncounterState.failed, 20.seconds),
+        "the raid wiped, and his fight goes on");
+    const guid = ragnaros.guid;
+    s.revive();
+    s.godlike = true;
+    s.restartAfterCrash();
+    assert(s.ask(Encounter.ragnaros) == EncounterState.failed && s.find(npcRagnaros) is null,
+        "Ragnaros back from his failed fight after the crash");
+    auto majordomo = s.find(npcMajordomo);
+    assert(majordomo !is null, "no Majordomo to summon Ragnaros again");
+    s.forget();
+    s.gossip(majordomo, [0, 0, 0]);
+    assert(s.said(Majordomo.saySummon0), "Majordomo does not answer\n" ~ s.seen());
+    assert(s.runUntil(() => s.find(npcRagnaros) !is null && !majordomo.alive, 90.seconds),
+        "no Ragnaros summoned again\n" ~ s.seen());
+    ragnaros = s.the(npcRagnaros);
+    assert(ragnaros.guid != guid && s.all(npcRagnaros).length == 1);
+    s.stayWith = ragnaros;
+    assert(s.runUntil(() => ragnaros.ai.inCombat, 20.seconds), "Ragnaros does not fight again\n" ~ s.seen());
+    assert(s.ask(Encounter.ragnaros) == EncounterState.inProgress);
+}
+

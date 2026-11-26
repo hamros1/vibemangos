@@ -389,6 +389,15 @@ unittest
 
 unittest
 {
+    // Ragnaros' crash recovery keeps nothing in the layout (the checkpoint holds him and his sons): Molten Core's
+    // lockouts load as before.
+    import dmangos.scripts.moltencore : MoltenCore;
+
+    static assert(layoutFingerprint!MoltenCore == 0xb67098a4d5e07cbaUL);
+}
+
+unittest
+{
     // Naxxramas' ice blocks of Sapphiron's fight were appended after Gothik's adds: lockouts saved before Gothik's
     // list (and the enum-blind saves of 219ecf7 keyed off that layout), and those saved with it, still load, with no
     // blocks to restore.

@@ -110,6 +110,7 @@ enum McSignal : uint
     majordomoDown = 107, /// Majordomo to Ragnaros: killed by his fire; the fight is near
     lavaBomb = 108,    /// Magmadar's landed bomb, `value`: the target's player GUID
     lavaBombMana = 109,
+    saveRagnaros = 110, /// Ragnaros to the copy: a phase or a timer of his fight changed (checkpoint me)
 }
 
 /// A random length between `low` and `high` milliseconds.
@@ -121,7 +122,11 @@ private Duration between(ref CreatureContext me, uint low, uint high)
 /// A step whose cast failed is tried again this soon.
 private enum retry = 400.msecs;
 
-/// What the copy remembers: its encounters (saved in `instance.data`).
+/**
+ * What the copy remembers: its encounters (saved in `instance.data`). While Ragnaros' fight is under way he and his
+ * Sons of Flame, summons, are kept in the copy's checkpoint (`setRagnaros`): a worker's crash resumes his fight, and
+ * one saved without him fails, so that Majordomo comes again to summon him.
+ */
 @instance("instance_molten_core")
 struct MoltenCore
 {
@@ -130,6 +135,15 @@ struct MoltenCore
     @transient EntityRef[7] circles;   /// the flame circles, as they load
     @transient EntityRef majordomo;    /// once summoned (or loaded) in this run of the server
     @transient EntityRef[8] guard;     /// his guard, summoned with him
+    @transient EntityRef ragnaros;     /// once Majordomo summons him (or the checkpoint brings him back)
+    /// His living Sons of Flame while his fight is under way: saved in the checkpoint, not in this layout, each back in
+    /// the list as it comes back into the world (`CreatureLoaded`).
+    @transient EntityRef[] sons;
+
+    private bool ragnarosActive() const
+    {
+        return encounters[Encounter.ragnaros] == EncounterState.inProgress;
+    }
 
     void on(ref InstanceContext copy, const ref ObjectLoaded e)
     {
@@ -148,13 +162,86 @@ struct MoltenCore
 
     void on(ref InstanceContext copy, const ref CreatureLoaded e)
     {
-        if (e.creature.entry == npcMajordomo)
+        import std.algorithm.searching : canFind;
+
+        switch (e.creature.entry)
+        {
+        case npcMajordomo:
             majordomo = e.creature;
+            break;
+        case npcRagnaros:
+            ragnaros = e.creature;
+            if (ragnarosActive) // a clean handoff brings him in without a signal: he stays in the checkpoint
+                copy.checkpointCreature(ragnaros);
+            break;
+        case npcSonOfFlame:
+            // His sons as they come, and as a handoff or the checkpoint brings them back: kept with his fight.
+            if (e.summoned && ragnarosActive && !sons.canFind(e.creature))
+            {
+                sons ~= e.creature;
+                copy.checkpointCreature(e.creature);
+            }
+            break;
+        default:
+            break;
+        }
     }
 
     void on(ref InstanceContext copy, const ref PlayerEntered e)
     {
+        if (ragnarosActive && ragnaros && copy.alive(ragnaros))
+        {
+            // Back in the copy (after a crash, say): back in his fight, his idle sons after whoever is here.
+            copy.zoneCombat(ragnaros);
+            foreach (son; sons)
+                if (copy.alive(son) && !copy.alive(copy.victimOf(son)))
+                    copy.attack(son, e.player);
+        }
         summonMajordomo(copy, true);
+    }
+
+    /**
+     * The copy came back from its save. Ragnaros' fight under way resumes from its checkpoint when a player comes
+     * back; one saved without him (an older save) failed, and Majordomo comes again to summon him.
+     */
+    void on(ref InstanceContext copy, const ref Restored e)
+    {
+        if (!ragnarosActive)
+            return;
+        if (copy.hasSavedCreature(npcRagnaros))
+            copy.waitForPlayer();
+        else
+            setRagnaros(copy, EncounterState.failed);
+    }
+
+    /// Ragnaros gave up his fight, or his checkpoint could not bring him back: Majordomo may summon him again.
+    void on(ref InstanceContext copy, const ref CreatureEvaded e)
+    {
+        if (e.creature.entry == npcRagnaros && ragnarosActive)
+            setRagnaros(copy, EncounterState.failed);
+    }
+
+    /**
+     * Ragnaros' encounter in `state`. While his fight is under way he and his Sons of Flame are saved with the copy;
+     * a wipe or his death lets them go.
+     */
+    private void setRagnaros(ref InstanceContext copy, EncounterState state)
+    {
+        encounters[Encounter.ragnaros] = state;
+        if (ragnarosActive)
+        {
+            if (ragnaros && copy.alive(ragnaros))
+                copy.checkpointCreature(ragnaros);
+        }
+        else
+        {
+            if (ragnaros)
+                copy.releaseCheckpointActor(ragnaros);
+            foreach (son; sons)
+                copy.releaseCheckpointActor(son);
+            sons = null;
+        }
+        copy.checkpoint();
     }
 
     void on(ref InstanceContext copy, const ref Asked e)
@@ -165,6 +252,16 @@ struct MoltenCore
 
     void on(ref InstanceContext copy, const ref CreatureDied e)
     {
+        import std.algorithm.mutation : remove;
+        import std.algorithm.searching : countUntil;
+
+        const slain = sons.countUntil(e.creature);
+        if (slain >= 0)
+        {
+            sons = sons.remove(slain);
+            copy.releaseCheckpointActor(e.creature); // a son slain stays slain
+            return;
+        }
         if (e.creature.entry != npcFlamewakerHealer && e.creature.entry != npcFlamewakerElite)
             return;
         bool his;
@@ -190,6 +287,15 @@ struct MoltenCore
                 copy.summonObject(goLavaBomb, at, e.id == McSignal.lavaBombMana ? 60 : 30);
             return;
         }
+        if (e.id == McSignal.saveRagnaros)
+        {
+            if (ragnarosActive && copy.alive(e.from))
+            {
+                ragnaros = e.from;
+                copy.checkpointCreature(ragnaros);
+            }
+            return;
+        }
         if (e.id == McSignal.unsummonAdds)
         {
             foreach (ref g; guard)
@@ -211,6 +317,12 @@ struct MoltenCore
         // A rune is doused only once its guard has fallen.
         if (state == EncounterState.special && encounters[which] != EncounterState.done)
             return;
+        if (which == Encounter.ragnaros)
+        {
+            if (e.from.isCreature && e.from.entry == npcRagnaros)
+                ragnaros = e.from;
+            return setRagnaros(copy, state);
+        }
         encounters[which] = state;
         if (which == Encounter.majordomo && state == EncounterState.done)
             copy.respawnObject(goCacheOfTheFireLord, 3600);
@@ -231,6 +343,9 @@ struct MoltenCore
         if (copy.playerCount == 0)
             return;
         const won = encounters[Encounter.majordomo] == EncounterState.done;
+        // Burnt by his master, he comes no more while Ragnaros is here (his fight resumed, or home after a wipe).
+        if (won && (ragnarosActive || (ragnaros && copy.alive(ragnaros))))
+            return;
         majordomo = copy.summon(npcMajordomo, majordomoAt[won ? 1 : 0], 2 * 3600 * 1000);
         if (!majordomo)
             return;
@@ -1204,6 +1319,10 @@ struct Majordomo
  * Ragnaros: rooted in his lava, Wrath of Ragnaros knocks his foes back, the Hand of Ragnaros falls on
  * those with mana, Magma Blast whoever is out of his reach, lava bursts; every three minutes he sinks
  * into the lava for ninety seconds and his Sons of Flame fight for him.
+ *
+ * The copy saves him and his sons while he fights (`MoltenCore.setRagnaros`); he asks it to
+ * (`McSignal.saveRagnaros`) as his fight begins and as he sinks and rises, after the change, so that a worker's
+ * crash resumes him in his phase with its timers.
  */
 @creature("boss_ragnaros")
 struct Ragnaros
@@ -1275,6 +1394,13 @@ struct Ragnaros
             return;
         me.signalDungeon(Encounter.ragnaros, EncounterState.inProgress);
         startFight();
+        save(me); // his timers with the fight the copy saved as it began
+    }
+
+    /// The copy checkpoints him as he is now: called last, after the change.
+    private void save(ref CreatureContext me)
+    {
+        me.signalDungeon(McSignal.saveRagnaros);
     }
 
     private void startFight()
@@ -1390,7 +1516,10 @@ struct Ragnaros
             if (phase == Phase.submerged && me.creaturesNearby(npcSonOfFlame, 150, sons[]) == 0)
             {
                 if (steps.remaining(Step.transition) > 1000)
+                {
                     steps.after(Step.transition, 1.seconds);
+                    save(me);
+                }
             }
             else if (phase == Phase.submerged)
                 steps.after(step, 1.seconds);
@@ -1443,6 +1572,7 @@ struct Ragnaros
             me.melee(true);
             break;
         }
+        save(me);
     }
 
     /// Eight Sons of Flame, round him, each fighting whoever is nearest.
@@ -1587,6 +1717,74 @@ unittest
     // A doused rune loads doused.
     runtime.raise(again, c2, ObjectLoaded(objectRef(176956, 2)));
     assert(copy2.doorsOpened == [objectRef(176956, 2)]);
+}
+
+/// Ragnaros' fight keeps him and his sons in the copy's checkpoint, and Majordomo away; saved without him (an older
+/// save), it fails as the copy comes back, and Majordomo comes again to summon him.
+unittest
+{
+    import dmangos.bytes : ByteReader, ByteWriter;
+
+    alias self = dmangos.scripts.moltencore;
+    auto runtime = ScriptRuntime.of!self();
+    auto copy = new FakeCopy;
+    auto c = InstanceContext(copy);
+    auto h = runtime.create(ScriptKind.instance, "instance_molten_core");
+    runtime.raise(h, c, Signal(EntityRef.init, Encounter.lucifron, EncounterState.done));
+    runtime.raise(h, c, Signal(EntityRef.init, Encounter.majordomo, EncounterState.done));
+    foreach (which; Encounter.magmadar .. Encounter.majordomo)
+    {
+        runtime.raise(h, c, Signal(EntityRef.init, which, EncounterState.done));
+        runtime.raise(h, c, Signal(EntityRef.init, which, EncounterState.special));
+    }
+    assert(copy.summoned.length == 1 && copy.summoned[0].entry == npcMajordomo, "Majordomo not by the lair");
+
+    const ragnaros = EntityRef(0xF130_0000_0000_0100UL | (ulong(npcRagnaros) << 24));
+    const son = EntityRef(0xF130_0000_0000_0101UL | (ulong(npcSonOfFlame) << 24));
+    runtime.raise(h, c, CreatureLoaded(ragnaros, true));
+    auto fight = InstanceContext(copy);
+    runtime.raise(h, fight, Signal(ragnaros, Encounter.ragnaros, EncounterState.inProgress));
+    assert(fight.checkpointSummons == [ragnaros] && fight.checkpointRequested, "his pull does not save him");
+    auto sons = InstanceContext(copy);
+    runtime.raise(h, sons, CreatureLoaded(son, true));
+    assert(sons.checkpointSummons == [son], "a Son of Flame is not saved with his fight");
+    ByteWriter saved;
+    runtime.save(h, saved);
+
+    // Back from the checkpoint with him: his fight waits for the raid, and Majordomo stays burnt.
+    {
+        auto back = runtime.create(ScriptKind.instance, "instance_molten_core");
+        auto reader = ByteReader(saved.data);
+        assert(runtime.load(back, reader));
+        auto again = new FakeCopy;
+        auto restored = InstanceContext(again);
+        const EntityRef[1] kept = [ragnaros];
+        restored.savedSummons = kept[];
+        runtime.raise(back, restored, Restored());
+        assert(restored.waitingForPlayer, "his fight does not wait for the raid");
+        auto loaded = InstanceContext(again);
+        runtime.raise(back, loaded, CreatureLoaded(ragnaros, true));
+        runtime.raise(back, loaded, PlayerEntered(EntityRef(7)));
+        auto q = InstanceContext(again);
+        runtime.raise(back, q, Asked(EntityRef.init, Encounter.ragnaros));
+        assert(q.answerGiven == EncounterState.inProgress && again.summoned.length == 0,
+            "Majordomo came back during Ragnaros' fight");
+    }
+
+    // Saved without him: his fight failed, and Majordomo comes to summon him again.
+    auto back = runtime.create(ScriptKind.instance, "instance_molten_core");
+    auto reader = ByteReader(saved.data);
+    assert(runtime.load(back, reader));
+    auto again = new FakeCopy;
+    auto restored = InstanceContext(again);
+    runtime.raise(back, restored, Restored());
+    assert(!restored.waitingForPlayer && restored.checkpointRequested);
+    runtime.raise(back, restored, PlayerEntered(EntityRef(7)));
+    auto q = InstanceContext(again);
+    runtime.raise(back, q, Asked(EntityRef.init, Encounter.ragnaros));
+    assert(q.answerGiven == EncounterState.failed, "his fight, saved without him, stays under way for good");
+    assert(again.summoned.length == 1 && again.summoned[0].entry == npcMajordomo
+        && again.signals[$ - 1] == Signal(again.summoned[0], McSignal.setUp, 1), "no Majordomo to summon him again");
 }
 
 version (unittest)
