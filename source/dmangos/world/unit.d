@@ -636,6 +636,21 @@ private void creatureDamaged(UnitRef attacker, UnitRef victim, uint damage, cons
     if (credited !is null && !creature.petOwner)
         credited.tapCreature(creature);
     const killed = creature.takeDamage(damage);
+    // Its auras that proc as it is struck (Frost Armor's chill on the one who strikes it), as a player's do
+    // (`Character.sufferDamage`); one from another node's blow procs there (`WorldContext`'s remote spell damage).
+    if (!killed && attacker && creature.ai !is null && blow.kind != BlowKind.periodic)
+    {
+        import dmangos.world.aurahandlers : ProcFlag;
+        import dmangos.world.procs : ProcEx, ProcHit, procExOfSwing;
+
+        creature.ai.bind(map);
+        if (blow.kind == BlowKind.melee)
+            creature.ai.procAuras(ProcFlag.takeMeleeSwing, attacker, ProcHit(null, procExOfSwing(blow.melee.outcome),
+                damage, cast(ubyte) blow.melee.type, true));
+        else
+            creature.ai.procAuras(ProcFlag.takeHarmfulSpell, attacker, ProcHit(null, blow.crit ? ProcEx.criticalHit
+                : ProcEx.normalHit, damage));
+    }
     if (!killed && map.checkpointCreatureFight !is null)
         map.checkpointCreatureFight(creature);
     map.flushObjectChanges(creature);

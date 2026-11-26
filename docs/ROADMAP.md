@@ -314,7 +314,8 @@ charges (Clearcasting, Presence of Mind, Nature's Swiftness: spent by the cast t
 `spell_proc_event` (`procs.d`) and the talents whose procs or effects are code (`classspells.d`: Ignite,
 Deep Wounds, Seal Fate, Ruthlessness, Illumination, Blessed Recovery, Nightfall, Combustion, Master of
 Elements, Shatter, Frostbite and the other Add Target Triggers). Not yet: the remaining override class scripts
-(Improved Blizzard, Arcane Concentration's script), procs of a creature's own auras, Pyroclasm.
+(Improved Blizzard, Arcane Concentration's script), Pyroclasm. A creature's auras proc as it strikes and as it
+  is struck (Thrash, Frost Armor's chill on the one who strikes it), its addon's among them.
 
 ### Mail
 

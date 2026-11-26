@@ -124,3 +124,40 @@ unittest
     w.now += 61.minutes;
     assert(enter(dungeons[5]), "an hour on");
 }
+
+/**
+ * A creature's own auras: its addon's (`creature_template_addon`), put on it at its first tick, and those that proc as
+ * it is struck. Surena Caledon (881) has Frost Armor (12544) from her addon; a player's swing that lands on her
+ * chills them (Chill, 6136), as Frost Armor's proc says.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.world.combat : MeleeDamage, MeleeHitOutcome;
+    import dmangos.world.unit : Blow, dealDamage;
+
+    enum uint surena = 881, frostArmor = 12_544, chill = 6136;
+    auto w = RealWorld.make();
+    auto hero = w.character(1, "Hero", classWarriorId, 9, []); // her level: far above her, her spells miss
+    auto map = w.context.map(0);
+    auto her = cast(Creature) map.findObject(w.enemy(hero, surena));
+    her.tick(map, 100);
+    assert(her.auras.find(frostArmor) !is null, "no Frost Armor from her addon");
+    auto player = hero.session.inWorld;
+    assert(player.player.auras.find(chill) is null);
+    MeleeDamage d;
+    d.attacker = player.player.guid;
+    d.target = her.guid;
+    d.outcome = MeleeHitOutcome.normal;
+    d.damage = 20;
+    // (Her Chill is a spell at them, which may miss: a few swings.)
+    foreach (_; 0 .. 10)
+    {
+        dealDamage(player.unit, map.unit(her.guid), d.damage, Blow.swing(d));
+        hero.read();
+        if (player.player.auras.find(chill) !is null)
+            break;
+    }
+    assert(player.player.auras.find(chill) !is null, "her Frost Armor did not chill the one who struck her");
+}
