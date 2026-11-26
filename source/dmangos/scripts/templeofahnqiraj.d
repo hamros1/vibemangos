@@ -91,6 +91,7 @@ enum Aq40Signal : uint
     resumeCthun = 112,   /// the copy to C'Thun: a player is back after a recovery
     stomachPlayer = 113, /// the copy to C'Thun: a player came back in the stomach (`value`: their guid)
     leftStomach = 114,   /// the stomach's way out to the copy: someone climbed out
+    saveOuro = 115,      /// Ouro to the copy: his phase or timers changed (checkpoint me)
 }
 
 private enum uint triggerTwinEmperors = 4047, triggerSartura = 4052;
@@ -153,6 +154,10 @@ struct TempleOfAhnQiraj
     // Appended to keep earlier lockout saves readable.
     @appended EntityRef[] cthunAdds; /// the tentacles living in C'Thun's fight under way (saved with it)
     @transient bool recoveringCthun, respawnEye;
+    /// The Bug Trio devoured in their fight a worker's crash resumed (a bit for each of `trio`): they stay away.
+    @transient ubyte trioDevoured;
+    @transient bool recoveringTrio, recoveringTwins, recoveringOuro, wakeOuroSpawner;
+    @transient EntityRef ouro, ouroSpawner;
 
     private static immutable uint[3] doorEntries = [goSkeramGate, goTwinsEnterDoor, goTwinsExitDoor];
 
@@ -174,11 +179,22 @@ struct TempleOfAhnQiraj
     {
         switch (e.creature.entry)
         {
-        case npcVeklor:
-            veklor = e.creature;
+        case npcVeklor, npcVeknilash:
+            (e.creature.entry == npcVeklor ? veklor : veknilash) = e.creature;
+            if (twinsActive && copy.alive(e.creature)) // a clean handoff: he stays in the checkpoint
+                copy.checkpointCreature(e.creature);
             break;
-        case npcVeknilash:
-            veknilash = e.creature;
+        case npcOuro:
+            if (!e.summoned)
+                break;
+            ouro = e.creature;
+            if (ouroActive && copy.alive(ouro))
+                copy.checkpointCreature(ouro);
+            break;
+        case npcOuroSpawner:
+            ouroSpawner = e.creature;
+            if (wakeOuroSpawner)
+                copy.signal(ouroSpawner, Aq40Signal.ouroGone); // no Ouro of a fight lost: his sand wakes again
             break;
         case npcMastersEye:
             mastersEye = e.creature;
@@ -215,18 +231,113 @@ struct TempleOfAhnQiraj
             if (!skeram)
                 skeram = e.creature;
             break;
-        case npcKri:
-            trio[0] = e.creature;
-            break;
-        case npcYauj:
-            trio[1] = e.creature;
-            break;
-        case npcVem:
-            trio[2] = e.creature;
+        case npcKri, npcYauj, npcVem:
+            if (!e.summoned)
+                royalLoaded(copy, e.creature);
             break;
         default:
             break;
         }
+    }
+
+    // The Bug Trio --------------------------------------------------------------------------------------------------
+
+    private static immutable uint[3] royalEntries = [npcKri, npcYauj, npcVem];
+
+    private bool trioActive() const
+    {
+        return encounters[Aq40Encounter.bugTrio] == EncounterState.inProgress;
+    }
+
+    /**
+     * One of the Bug Trio came into the copy. One devoured is not dead (it went), and its cell brings it back when it
+     * loads again: in a fight a worker's crash resumed, or after the trio's end, it goes again at once.
+     */
+    private void royalLoaded(ref InstanceContext copy, EntityRef royal)
+    {
+        foreach (i, entry; royalEntries)
+        {
+            if (royal.entry != entry)
+                continue;
+            trio[i] = royal;
+            const away = (trioActive && (trioDevoured & (1 << i)))
+                || (encounters[Aq40Encounter.bugTrio] == EncounterState.done && !copy.killed(royal));
+            if (away)
+                copy.despawn(royal);
+            else if (trioActive && copy.alive(royal)) // a clean handoff: it stays in the checkpoint
+                copy.checkpointCreature(royal);
+        }
+    }
+
+    /**
+     * The Bug Trio's encounter in `state`. While it is under way those of them living are saved with the copy, so that
+     * a worker's crash resumes the fight with the same ones (`Restored`): those devoured are not, and stay away. The
+     * fight's count of the fallen starts from those away already (devoured in a fight before a wipe), so that the last
+     * one standing still dies.
+     */
+    private void setTrio(ref InstanceContext copy, EncounterState state)
+    {
+        const was = encounters[Aq40Encounter.bugTrio];
+        if (was == state || was == EncounterState.done)
+            return;
+        encounters[Aq40Encounter.bugTrio] = state;
+        if (state == EncounterState.inProgress)
+        {
+            trioDeaths = 0;
+            foreach (royal; trio)
+                if (royal && !copy.alive(royal))
+                    ++trioDeaths;
+                else if (royal)
+                    copy.checkpointCreature(royal);
+        }
+        else
+        {
+            recoveringTrio = false;
+            trioDevoured = 0;
+            foreach (royal; trio)
+                if (royal)
+                    copy.releaseCheckpointActor(royal);
+        }
+        copy.checkpoint();
+    }
+
+    /// One of the three fell, devoured: the others are told (the second to fall is devoured too), and it is not saved.
+    private void royalDevoured(ref InstanceContext copy, EntityRef royal)
+    {
+        ++trioDeaths;
+        foreach (i, t; trio)
+            if (t == royal)
+                trioDevoured |= 1 << i;
+        copy.releaseCheckpointActor(royal);
+        foreach (t; trio)
+            if (t && t != royal && copy.alive(t))
+                copy.signal(t, Aq40Signal.royalDown, trioDeaths);
+    }
+
+    /// The copy came back from its save with the trio's fight under way: those saved with it are the living, and the
+    /// others were devoured. A fight saved without any of them (an older save) has failed.
+    private void restoreTrio(ref InstanceContext copy)
+    {
+        if (!trioActive)
+            return;
+        trioDevoured = 0;
+        trioDeaths = 0;
+        foreach (i, entry; royalEntries)
+            if (!copy.hasSavedCreature(entry))
+            {
+                trioDevoured |= 1 << i;
+                ++trioDeaths;
+            }
+        if (trioDeaths < royalEntries.length)
+        {
+            recoveringTrio = true;
+            copy.waitForPlayer();
+            return;
+        }
+        trioDevoured = 0;
+        trioDeaths = 0;
+        encounters[Aq40Encounter.bugTrio] = EncounterState.failed;
+        copy.checkpoint();
     }
 
     void on(ref InstanceContext copy, const ref ObjectLoaded e)
@@ -280,6 +391,15 @@ struct TempleOfAhnQiraj
                 copy.checkpointCreature(e.from);
             return;
         }
+        if (e.id == Aq40Signal.saveOuro)
+        {
+            if (ouroActive && copy.alive(e.from))
+            {
+                ouro = e.from;
+                copy.checkpointCreature(e.from);
+            }
+            return;
+        }
         if (e.id == Aq40Signal.leftStomach)
         {
             if (cthunActive)
@@ -298,23 +418,146 @@ struct TempleOfAhnQiraj
             return;
         const which = cast(Aq40Encounter) e.id;
         const state = cast(EncounterState) e.value;
-        if (which == Aq40Encounter.bugTrio && state == EncounterState.special)
+        if (which == Aq40Encounter.bugTrio)
         {
-            // One of the three fell: the others are told (and the second to fall is devoured).
-            ++trioDeaths;
-            foreach (t; trio)
-                if (t && t != e.from && copy.alive(t))
-                    copy.signal(t, Aq40Signal.royalDown, trioDeaths);
+            if (state == EncounterState.special)
+                royalDevoured(copy, e.from);
+            else
+                setTrio(copy, state);
             return;
         }
-        if (which == Aq40Encounter.bugTrio && state == EncounterState.inProgress)
-            trioDeaths = 0;
-        if (which == Aq40Encounter.twins && encounters[which] == state)
-            return;
+        if (which == Aq40Encounter.twins)
+            return setTwins(copy, state);
+        if (which == Aq40Encounter.ouro)
+            return setOuro(copy, state, e.from);
         encounters[which] = state;
+        updateDoors(copy);
+    }
+
+    private void updateDoors(ref InstanceContext copy)
+    {
         foreach (i, d; doors)
             if (d)
                 copy.door(d, doorOpen(i));
+    }
+
+    // The Twin Emperors and Ouro --------------------------------------------------------------------------------
+
+    private bool twinsActive() const
+    {
+        return encounters[Aq40Encounter.twins] == EncounterState.inProgress;
+    }
+
+    private bool ouroActive() const
+    {
+        return encounters[Aq40Encounter.ouro] == EncounterState.inProgress;
+    }
+
+    /**
+     * The Twin Emperors' encounter in `state`. While it is under way both are saved with the copy, so that a worker's
+     * crash resumes their fight, the door in shut (`Restored`), even one that came before the first blow, which no
+     * snapshot of a hurt creature holds.
+     */
+    private void setTwins(ref InstanceContext copy, EncounterState state)
+    {
+        if (encounters[Aq40Encounter.twins] == state || encounters[Aq40Encounter.twins] == EncounterState.done)
+            return;
+        encounters[Aq40Encounter.twins] = state;
+        foreach (twin; [veklor, veknilash])
+            if (twin && twinsActive && copy.alive(twin))
+                copy.checkpointCreature(twin);
+            else if (twin && !twinsActive)
+                copy.releaseCheckpointActor(twin);
+        if (!twinsActive)
+            recoveringTwins = false;
+        updateDoors(copy);
+        copy.checkpoint();
+    }
+
+    /**
+     * Ouro's encounter in `state` (`from`: Ouro, when he tells it). He is a summon: while his fight is under way he is
+     * saved with the copy, so that a worker's crash resumes it with him (`Restored`); a fight lost without him wakes
+     * his sand again.
+     */
+    private void setOuro(ref InstanceContext copy, EncounterState state, EntityRef from)
+    {
+        if (from.isCreature && from.entry == npcOuro)
+            ouro = from;
+        const was = encounters[Aq40Encounter.ouro];
+        if (was == state || was == EncounterState.done)
+            return;
+        encounters[Aq40Encounter.ouro] = state;
+        if (ouroActive)
+        {
+            wakeOuroSpawner = false;
+            if (ouro && copy.alive(ouro))
+                copy.checkpointCreature(ouro);
+        }
+        else
+        {
+            recoveringOuro = false;
+            if (ouro)
+                copy.releaseCheckpointActor(ouro);
+        }
+        copy.checkpoint();
+    }
+
+    /// The copy came back from its save: the Twins' and Ouro's fights under way resume from the checkpoint when a
+    /// player comes back; one saved without them (an older save, a crash before the checkpoint) has failed.
+    private void restoreTwinsAndOuro(ref InstanceContext copy)
+    {
+        if (twinsActive)
+        {
+            if (copy.entryKilled(npcVeklor) && copy.entryKilled(npcVeknilash))
+                encounters[Aq40Encounter.twins] = EncounterState.done; // their deaths landed, the save after did not
+            else if (copy.hasSavedCreature(npcVeklor) || copy.hasSavedCreature(npcVeknilash))
+            {
+                recoveringTwins = true;
+                copy.waitForPlayer();
+            }
+            else
+                encounters[Aq40Encounter.twins] = EncounterState.failed; // the door in opens as it loads
+            copy.checkpoint();
+        }
+        if (ouroActive && copy.hasSavedCreature(npcOuro))
+        {
+            recoveringOuro = true;
+            copy.waitForPlayer();
+            return;
+        }
+        if (ouroActive)
+        {
+            encounters[Aq40Encounter.ouro] = EncounterState.failed;
+            copy.checkpoint();
+        }
+        // No Ouro: his sand, if a snapshot of it from his coming brought it back still, wakes again.
+        wakeOuroSpawner = encounters[Aq40Encounter.ouro] != EncounterState.done;
+    }
+
+    /// A creature of the copy gave up its fight, or a checkpoint could not bring it back: its encounter has failed.
+    void on(ref InstanceContext copy, const ref CreatureEvaded e)
+    {
+        switch (e.creature.entry)
+        {
+        case npcKri, npcYauj, npcVem:
+            if (trioActive)
+                setTrio(copy, EncounterState.failed);
+            break;
+        case npcVeklor, npcVeknilash:
+            if (twinsActive)
+                setTwins(copy, EncounterState.failed);
+            break;
+        case npcOuro:
+            if (ouroActive)
+            {
+                setOuro(copy, EncounterState.failed, e.creature);
+                if (ouroSpawner)
+                    copy.signal(ouroSpawner, Aq40Signal.ouroGone);
+            }
+            break;
+        default:
+            break;
+        }
     }
 
     private bool cthunActive() const
@@ -363,6 +606,8 @@ struct TempleOfAhnQiraj
     {
         import std.algorithm.mutation : remove;
 
+        restoreTrio(copy);
+        restoreTwinsAndOuro(copy);
         const state = encounters[Aq40Encounter.cthun];
         if (state == EncounterState.done)
             return;
@@ -391,6 +636,17 @@ struct TempleOfAhnQiraj
 
     void on(ref InstanceContext copy, const ref PlayerEntered e)
     {
+        // Back in a fight a crash resumed (the trio's, the Twins', Ouro's), each player joins it again.
+        EntityRef[] resumed;
+        if (recoveringTrio && trioActive)
+            resumed ~= trio[];
+        if (recoveringTwins && twinsActive)
+            resumed ~= [veklor, veknilash];
+        if (recoveringOuro && ouroActive)
+            resumed ~= ouro;
+        foreach (actor; resumed)
+            if (actor && copy.alive(actor))
+                copy.zoneCombat(actor);
         if (respawnEye)
         {
             respawnEye = false;
@@ -1663,8 +1919,14 @@ struct Ouro
         me.rooted(true);
         me.combatMovement(false);
         me.melee(false);
+        steps.after(Step.emerge, 300.msecs); // before his fight begins: the copy saves him with it
         me.zoneCombat();
-        steps.after(Step.emerge, 300.msecs);
+    }
+
+    /// The copy saves him with his fight, as his phase or his timers change (a worker's crash resumes him there).
+    private void checkpointMe(ref CreatureContext me)
+    {
+        me.signalDungeon(Aq40Signal.saveOuro);
     }
 
     void on(ref CreatureContext me, const ref EnteredCombat e)
@@ -1689,6 +1951,7 @@ struct Ouro
             enraged = true;
             steps.cancel(Step.submerge);
             steps.cancel(Step.noMelee);
+            checkpointMe(me);
         }
     }
 
@@ -1705,6 +1968,7 @@ struct Ouro
         foreach (ref m; mounds)
             m = me.summon(npcDirtMound, me.location, 30_000, me.selectTarget(Pick.random, PickFilter.player));
         steps.after(Step.resurface, 30.seconds);
+        checkpointMe(me);
     }
 
     void on(ref CreatureContext me, Step step)
@@ -1714,6 +1978,7 @@ struct Ouro
         case Step.emerge:
             me.castSelf(birth);
             steps.after(Step.attack, 4.seconds);
+            checkpointMe(me);
             break;
         case Step.attack:
             me.melee(true);
@@ -1724,6 +1989,7 @@ struct Ouro
                 me.castSpell(groundRupture, target);
             }
             fightSteps(me);
+            checkpointMe(me);
             break;
         case Step.resurface:
             // Up under one of those his mounds chased.
@@ -1738,6 +2004,7 @@ struct Ouro
                 me.teleport(where(me, prey));
             me.resetThreat();
             steps.after(Step.emerge, 0.msecs);
+            checkpointMe(me);
             break;
         case Step.submerge:
             burrow(me);
@@ -2878,4 +3145,152 @@ unittest
     host.z = 100;
     runtime.tick(h, me, 1000);
     assert(host.went.length == 1 && host.went[0].z == 100);
+}
+
+/**
+ * The copy's side of the Bug Trio's, the Twin Emperors' and Ouro's recovery: under way, those living are saved with
+ * the copy; restored, they wait for the raid and each player back joins their fight, those of the trio devoured stay
+ * away and the count of the fallen goes on; a fight saved without them has failed, and Ouro's sand wakes again.
+ */
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import dmangos.bytes : ByteReader, ByteWriter;
+
+    static class FakeChambers : BlackHole!InstanceHost
+    {
+        uint[] killed;
+        EntityRef[] gone, despawned, zoned;
+        Signal[] signals;
+        override bool hostAlive(EntityRef c) { return !gone.canFind(c); }
+        override bool hostEntryKilled(uint entry) { return killed.canFind(entry); }
+        override bool hostKilled(EntityRef c) { return killed.canFind(c.entry); }
+        override ActionResult hostDespawn(EntityRef c, uint)
+        {
+            despawned ~= c;
+            gone ~= c;
+            return ActionResult.ok;
+        }
+        override ActionResult hostZoneCombat(EntityRef c) { zoned ~= c; return ActionResult.ok; }
+        override ActionResult hostSignal(EntityRef to, uint id, int value)
+        {
+            signals ~= Signal(to, id, value);
+            return ActionResult.ok;
+        }
+    }
+    EntityRef creature(uint entry, uint spawn) { return EntityRef(0xF130_0000_0000_0000UL | (ulong(entry) << 24) | spawn); }
+
+    alias self = dmangos.scripts.templeofahnqiraj;
+    auto runtime = ScriptRuntime.of!self();
+    const kri = creature(npcKri, 1), yauj = creature(npcYauj, 2), vem = creature(npcVem, 3);
+    const lor = creature(npcVeklor, 4), nilash = creature(npcVeknilash, 5);
+    const spawner = creature(npcOuroSpawner, 6), ouro = creature(npcOuro, 0x100);
+    int ask(FakeChambers room, typeof(runtime.create(ScriptKind.instance, "")) of, Aq40Encounter which)
+    {
+        auto c = InstanceContext(room);
+        runtime.raise(of, c, Asked(EntityRef.init, which));
+        return c.answerGiven;
+    }
+    auto restoredFrom(FakeChambers room, const(ubyte)[] saved, const(EntityRef)[] summons, out bool waiting)
+    {
+        auto h = runtime.create(ScriptKind.instance, "instance_temple_of_ahnqiraj");
+        auto reader = ByteReader(saved);
+        assert(runtime.load(h, reader));
+        auto c = InstanceContext(room);
+        c.savedSummons = summons;
+        runtime.raise(h, c, Restored());
+        waiting = c.waitingForPlayer;
+        return h;
+    }
+
+    // The three fights under way; Kri devoured.
+    auto room = new FakeChambers;
+    auto h = runtime.create(ScriptKind.instance, "instance_temple_of_ahnqiraj");
+    {
+        auto c = InstanceContext(room);
+        foreach (actor; [kri, yauj, vem, lor, nilash, spawner])
+            runtime.raise(h, c, CreatureLoaded(actor));
+        runtime.raise(h, c, Signal(kri, Aq40Encounter.bugTrio, EncounterState.inProgress));
+        assert(c.checkpointSummons == [kri, yauj, vem] && c.checkpointRequested, "the trio's pull saves the three");
+    }
+    {
+        auto c = InstanceContext(room);
+        runtime.raise(h, c, Signal(kri, Aq40Encounter.bugTrio, EncounterState.special));
+        assert(c.releasedCheckpointActors == [kri] && c.checkpointRequested, "the devoured still saved");
+        assert(room.signals == [Signal(yauj, Aq40Signal.royalDown, 1), Signal(vem, Aq40Signal.royalDown, 1)]);
+    }
+    {
+        auto c = InstanceContext(room);
+        runtime.raise(h, c, Signal(lor, Aq40Encounter.twins, EncounterState.inProgress));
+        runtime.raise(h, c, Signal(nilash, Aq40Encounter.twins, EncounterState.inProgress));
+        assert(c.checkpointSummons == [lor, nilash], "the twins' pull saves them, once");
+        runtime.raise(h, c, CreatureLoaded(ouro, true));
+        runtime.raise(h, c, Signal(ouro, Aq40Encounter.ouro, EncounterState.inProgress));
+        runtime.raise(h, c, Signal(ouro, Aq40Signal.saveOuro));
+        assert(c.checkpointSummons == [lor, nilash, ouro, ouro], "Ouro not saved with his fight");
+    }
+    ByteWriter saved;
+    runtime.save(h, saved);
+
+    // A worker's crash: Yauj, Vem, the twins and Ouro in the checkpoint; Kri, devoured, comes with his cell and goes.
+    auto room2 = new FakeChambers;
+    bool waiting;
+    auto h2 = restoredFrom(room2, saved.data, [yauj, vem, lor, nilash, ouro], waiting);
+    assert(waiting);
+    {
+        auto c = InstanceContext(room2);
+        foreach (actor; [kri, yauj, vem, lor, nilash, spawner])
+            runtime.raise(h2, c, CreatureLoaded(actor));
+        runtime.raise(h2, c, CreatureLoaded(ouro, true));
+        runtime.raise(h2, c, PlayerEntered(EntityRef(7)));
+    }
+    assert(room2.despawned == [kri], "the devoured Kri back");
+    foreach (actor; [yauj, vem, lor, nilash, ouro])
+        assert(room2.zoned.canFind(actor), "the player back does not join the fight it resumed");
+    assert(!room2.zoned.canFind(kri) && !room2.signals.canFind!(s => s.id == Aq40Signal.ouroGone));
+    foreach (which; [Aq40Encounter.bugTrio, Aq40Encounter.twins, Aq40Encounter.ouro])
+        assert(ask(room2, h2, which) == EncounterState.inProgress);
+    {
+        auto c = InstanceContext(room2);
+        runtime.raise(h2, c, Signal(vem, Aq40Encounter.bugTrio, EncounterState.special));
+    }
+    assert(room2.signals.canFind(Signal(yauj, Aq40Signal.royalDown, 2)), "Yauj not told she is the last");
+    {
+        auto c = InstanceContext(room2);
+        room2.killed ~= npcYauj;
+        runtime.raise(h2, c, Signal(yauj, Aq40Encounter.bugTrio, EncounterState.done));
+        assert(c.releasedCheckpointActors.canFind(yauj));
+    }
+
+    // After the trio's end, the devoured come with their cells and go again.
+    ByteWriter ended;
+    runtime.save(h2, ended);
+    auto room3 = new FakeChambers;
+    room3.killed = [npcYauj];
+    auto h3 = restoredFrom(room3, ended.data, [lor, nilash, ouro], waiting);
+    {
+        auto c = InstanceContext(room3);
+        foreach (actor; [kri, yauj, vem])
+            runtime.raise(h3, c, CreatureLoaded(actor));
+    }
+    assert(room3.despawned == [kri, vem] && ask(room3, h3, Aq40Encounter.bugTrio) == EncounterState.done);
+
+    // A save without them (an older one, or a crash before the checkpoint): the fights failed; Ouro's sand wakes.
+    auto room4 = new FakeChambers;
+    auto h4 = restoredFrom(room4, saved.data, null, waiting);
+    foreach (which; [Aq40Encounter.bugTrio, Aq40Encounter.twins, Aq40Encounter.ouro])
+        assert(ask(room4, h4, which) == EncounterState.failed);
+    {
+        auto c = InstanceContext(room4);
+        foreach (actor; [kri, yauj, vem, lor, nilash, spawner])
+            runtime.raise(h4, c, CreatureLoaded(actor));
+        runtime.raise(h4, c, PlayerEntered(EntityRef(7)));
+    }
+    assert(!room4.despawned.length && !room4.zoned.length);
+    assert(room4.signals == [Signal(spawner, Aq40Signal.ouroGone, 0)], "his sand not woken for the next pull");
+    // Both twins slain, the save after it lost: done.
+    auto room5 = new FakeChambers;
+    room5.killed = [npcVeklor, npcVeknilash];
+    auto h5 = restoredFrom(room5, saved.data, [lor, nilash], waiting);
+    assert(ask(room5, h5, Aq40Encounter.twins) == EncounterState.done);
 }

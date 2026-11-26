@@ -1698,6 +1698,56 @@ unittest
 }
 
 /**
+ * The Bug Trio's fight survives a worker's crash: Kri devoured before it, the two left come back as they were, the
+ * next brought down is devoured and the last one dies, and the encounter is done.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.script.api : EncounterState;
+    import dmangos.scripts.templeofahnqiraj;
+
+    auto at = spawnOf(531, npcKri);
+    auto s = new Scene(531, Position(at.x + 3, at.y, at.z), [classWarrior, classMage], cluster: true);
+    s.run(1.seconds);
+    auto k = s.the(npcKri), y = s.the(npcYauj), v = s.the(npcVem);
+    const yaujGuid = y.guid, vemGuid = v.guid;
+    s.clear(k.position, 60, [npcKri, npcYauj, npcVem]);
+    s.stayWith = k;
+    s.stayWithin = 15;
+    s.pressing = false;
+    foreach (c; [k, y, v])
+        s.engage(c);
+    s.run(1.seconds);
+    s.kill(k);
+    s.run(4.seconds);
+    assert(s.said(-1_531_048) && s.find(npcKri) is null, "Kri not devoured\n" ~ s.seen());
+    s.hurtTo(y, 80);
+    s.hurtTo(v, 80);
+    s.run(2400.msecs); // a periodic save of the fight
+    s.restartAfterCrash();
+    y = s.the(npcYauj);
+    v = s.the(npcVem);
+    assert(y.guid == yaujGuid && v.guid == vemGuid, "another Yauj or Vem after the crash");
+    assert(s.find(npcKri) is null, "the devoured Kri back after the crash");
+    assert(s.ask(Aq40Encounter.bugTrio) == EncounterState.inProgress, "the trio's encounter not under way");
+    s.stayWith = y;
+    s.forget();
+    s.kill(v);
+    s.run(4.seconds);
+    assert(s.said(-1_531_048) && s.find(npcVem) is null && y.alive, "Vem not devoured after the crash\n" ~ s.seen());
+    s.kill(y);
+    s.run(2.seconds);
+    assert(!y.alive && s.ask(Aq40Encounter.bugTrio) == EncounterState.done,
+        format!"Yauj, the last, does not die after the crash, or the encounter is not done (%s)"(
+        s.ask(Aq40Encounter.bugTrio)));
+    s.restartAfterCrash();
+    assert(s.ask(Aq40Encounter.bugTrio) == EncounterState.done && s.find(npcKri) is null && s.find(npcVem) is null
+        && s.find(npcYauj) is null, "a royal back after the trio's end");
+}
+
+/**
  * Viscidus shattered survives a worker's crash: his globs were summons and went with the worker, and those not
  * slain before it rejoin him (he rises with their health); slain, he is the encounter's end.
  */
@@ -1745,6 +1795,114 @@ unittest
     s.kill(viscidus);
     s.run(1.seconds);
     assert(s.ask(Aq40Encounter.viscidus) == EncounterState.done, "his encounter not done");
+}
+
+/**
+ * The Twin Emperors' fight survives a worker's crash before anyone struck them: they come back fighting, the door in
+ * shut; a wipe opens it; pulled again and slain, both die and the way out opens.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.script.api : EncounterState;
+    import dmangos.scripts.templeofahnqiraj;
+
+    auto at = spawnOf(531, npcVeknilash);
+    auto s = new Scene(531, Position(at.x + 3, at.y, at.z), [classWarrior, classMage, classWarrior], cluster: true);
+    s.run(1.seconds);
+    auto lor = s.the(npcVeklor), nilash = s.the(npcVeknilash);
+    const lorGuid = lor.guid, nilashGuid = nilash.guid;
+    s.clear(nilash.position, 100, [npcVeklor, npcVeknilash]);
+    s.following = 2;
+    s.placeHero(2, Position(-8922, 1352, -104.2f)); // the third by the door in, which the others do not see
+    s.run(1.seconds);
+    s.signalCopy(Aq40Encounter.huhuran, EncounterState.done); // the way to them open
+    assert(s.doorOpen(goTwinsEnterDoor), "the door in shut before their fight");
+    s.pressing = false;
+    // Pulled, not struck: no blow lands before the crash.
+    nilash.ai.attackedBy(s.heroUnit(0), s.map);
+    lor.ai.attackedBy(s.heroUnit(1), s.map);
+    s.run(1.seconds);
+    assert(s.ask(Aq40Encounter.twins) == EncounterState.inProgress && !s.doorOpen(goTwinsEnterDoor),
+        "their fight not under way, or the door in open");
+    s.restartAfterCrash();
+    lor = s.the(npcVeklor);
+    nilash = s.the(npcVeknilash);
+    assert(lor.guid == lorGuid && nilash.guid == nilashGuid && s.all(npcVeklor).length == 1
+        && s.all(npcVeknilash).length == 1);
+    assert(s.runUntil(() => lor.ai.inCombat && nilash.ai.inCombat, 3.seconds),
+        format!"the twins not fighting after the crash (%s, %s), the door in open %s"(lor.ai.inCombat,
+        nilash.ai.inCombat, s.doorOpen(goTwinsEnterDoor)));
+    assert(s.ask(Aq40Encounter.twins) == EncounterState.inProgress && !s.doorOpen(goTwinsEnterDoor));
+    s.wipe(nilash);
+    assert(s.runUntil(() => s.doorOpen(goTwinsEnterDoor) && !nilash.ai.inCombat && !lor.ai.inCombat, 30.seconds),
+        "the door in shut after the wipe");
+    assert(s.ask(Aq40Encounter.twins) == EncounterState.failed);
+    s.revive();
+    s.godlike = true;
+    s.restartAfterCrash();
+    lor = s.the(npcVeklor);
+    nilash = s.the(npcVeknilash);
+    assert(s.doorOpen(goTwinsEnterDoor) && !lor.ai.inCombat && !nilash.ai.inCombat, "after the wipe and a crash");
+    s.engage(nilash);
+    s.engage(lor);
+    s.run(1.seconds);
+    assert(!s.doorOpen(goTwinsEnterDoor));
+    s.kill(nilash);
+    s.run(2.seconds);
+    assert(!lor.alive && !nilash.alive && s.ask(Aq40Encounter.twins) == EncounterState.done
+        && s.doorOpen(goTwinsExitDoor) && s.doorOpen(goTwinsEnterDoor), "the twins' end, or the doors");
+}
+
+/**
+ * Ouro's fight survives a worker's crash just after he came up from his sand: the same Ouro comes back and fights, his
+ * sand not woken twice; slain, the encounter is done. A wipe sends him under, and his sand wakes again.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.script.api : EncounterState;
+    import dmangos.scripts.templeofahnqiraj;
+
+    const b = Boss("Ouro", 531, npcOuroSpawner, Aq40Encounter.ouro, [npcOuroSpawner], null);
+    Scene s;
+    auto spawner = setUp(b, s, cluster: true);
+    s.stayWith = null;
+    s.moveHeroes(spawner.position);
+    s.engage(spawner);
+    assert(s.runUntil(() => s.find(npcOuro) !is null, 5.seconds), "Ouro does not come up");
+    auto ouro = s.the(npcOuro);
+    const guid = ouro.guid;
+    s.run(1.seconds);
+    assert(s.ask(Aq40Encounter.ouro) == EncounterState.inProgress, "his encounter not under way");
+    s.restartAfterCrash();
+    assert(s.runUntil(() => s.find(npcOuro) !is null, 5.seconds), "no Ouro after the crash");
+    ouro = s.the(npcOuro);
+    assert(ouro.guid == guid && s.all(npcOuro).length == 1, "another Ouro after the crash");
+    s.stayWith = ouro;
+    s.stayWithin = 20;
+    assert(s.runUntil(() => ouro.ai.inCombat, 3.seconds), "Ouro not fighting after the crash");
+    s.forget();
+    s.run(35.seconds);
+    assert(s.castBy(npcOuro, Ouro.sweep) || s.castBy(npcOuro, Ouro.sandBlast), "Ouro idle after the crash\n" ~ s.seen());
+    assert(s.all(npcOuro).length == 1, "his sand woke twice");
+    s.wipe(ouro);
+    assert(s.runUntil(() => s.find(npcOuro) is null, 30.seconds), "Ouro does not go under after the wipe");
+    assert(s.ask(Aq40Encounter.ouro) == EncounterState.failed);
+    s.revive();
+    s.godlike = true;
+    s.restartAfterCrash();
+    spawner = s.the(npcOuroSpawner);
+    s.moveHeroes(spawner.position);
+    s.engage(spawner);
+    assert(s.runUntil(() => s.find(npcOuro) !is null, 5.seconds), "his sand does not wake after the wipe and a crash");
+    ouro = s.the(npcOuro);
+    s.run(5.seconds);
+    s.kill(ouro);
+    s.run(1.seconds);
+    assert(s.ask(Aq40Encounter.ouro) == EncounterState.done, "his encounter not done");
 }
 
 // ---------------------------------------------------------------------------------------------------------------

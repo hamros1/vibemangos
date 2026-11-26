@@ -370,6 +370,9 @@ unittest
     import dmangos.scripts.templeofahnqiraj : Aq40Encounter, TempleOfAhnQiraj;
 
     static assert(fnv1a(layoutOf!(TempleOfAhnQiraj, 0)) == 0x2b625e18f5cc90f1UL);
+    // The Bug Trio's, the Twins' and Ouro's recovery keeps its state transient: lockouts saved with C'Thun's list
+    // load as they are.
+    static assert(layoutFingerprint!TempleOfAhnQiraj == 0xf0112dfb37a20ee9UL, "C'Thun's layout, as main saved it");
     static assert(legacyDungeonLayout(0x2b625e18f5cc90f1UL) == 0x1930997e372b81b0UL);
 
     TempleOfAhnQiraj temple;
