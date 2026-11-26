@@ -33,7 +33,7 @@ mixin template CreatureProcs()
 
         if (inCreatureProc || !me.alive || world_ is null || me.auras.list.length == 0)
             return;
-        auto context = cast(WorldContext) lore;
+        auto context = lore;
         if (context is null)
             return;
         inCreatureProc = true;

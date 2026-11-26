@@ -100,12 +100,13 @@ mixin template CreatureCasting()
     import dmangos.world.updatefields;
     import dmangos.world.npcdata : BroadcastText;
     import dmangos.script.api : AuraRemoved, EntityRef, KilledUnit, SpellHit;
+    import dmangos.world.context : WorldContext;
 
     private
     {
         CombatWorld world_;            // the map, while the AI acts
         EventAI script;                // its `creature_ai_scripts`; null if it has none
-        CreatureLore lore;
+        WorldContext lore;
         const(SpellInfo)* casting_;    // the spell being cast
         ulong castTarget;
         int castTimer;                 // until it goes off
@@ -128,7 +129,7 @@ mixin template CreatureCasting()
     bool deathPrevention;              /// damage leaves it at 1 health
 
     /// What its casts and texts need of the world's data (every creature made in the world has it).
-    void setLore(CreatureLore lore)
+    void setLore(WorldContext lore)
     {
         this.lore = lore;
     }
@@ -363,7 +364,7 @@ mixin template CreatureCasting()
             stopMoving(me, world_);
         channelSpell = spell;
         channelTimer = ms;
-        namedChannelSequence = named ? (cast(WorldContext) lore).nextGameplaySequence() : 0;
+        namedChannelSequence = named ? lore.nextGameplaySequence() : 0;
         namedChannelPeer = target.replica is null ? 0 : target.replica.owner;
         missingChannelTarget = 0;
         visualRenewalMs = namedVisualRenewalMs;
@@ -418,7 +419,7 @@ mixin template CreatureCasting()
             }
             else if (auto map_ = cast(Map) world_)
                 if (const peer = currentChannelPeer(map_, guid))
-                    if (auto context = cast(WorldContext) lore)
+                    if (auto context = lore)
                         context.sendReplicaSpell(map_, peer, spell,
                             AreaDamage(caster: me.guid, target: guid, spell: spell.id, map: map_.id,
                                 instance: map_.instanceId, creatureCast: true, namedCreature: true,
@@ -428,7 +429,7 @@ mixin template CreatureCasting()
         }
         world_.flushCreature(me);
         if (!cancelled && channelToken)
-            if (auto context = cast(WorldContext) lore)
+            if (auto context = lore)
                 if (auto map = cast(Map) world_)
                     context.completeNamedChannel(map, map.unitOf(me), guid, spell, channelToken);
     }
@@ -489,7 +490,7 @@ mixin template CreatureCasting()
         namedChannelPeer = peer;
         if (peer)
         {
-            if (auto context = cast(WorldContext) lore)
+            if (auto context = lore)
                 context.sendReplicaSpell(target.map, peer, spell,
                     AreaDamage(caster: me.guid, target: target.combatGuid, spell: spell.id, map: target.map.id,
                         instance: target.map.instanceId, creatureCast: true, namedCreature: true, channelled: true,
@@ -558,7 +559,7 @@ mixin template CreatureCasting()
         import dmangos.world.context : WorldContext;
         import dmangos.world.spelldamage : databaseSpellEffect, namedCreatureEffect;
 
-        if (auto context = cast(WorldContext) lore)
+        if (auto context = lore)
             return context.namedCreatureRouting(spell);
 
         const effect = namedCreatureEffect(*spell);
@@ -658,7 +659,7 @@ mixin template CreatureCasting()
                 || refuse(creature.ai.castRefusal);
         }
         const namedEffect = selectableNamedCreatureEffect(spell);
-        auto context = cast(WorldContext) lore;
+        auto context = lore;
         const namedObject = context !is null && context.onlyNamedGameObjectEffects(spell);
         const channelEffect = (!triggered || imported!"dmangos.world.spelldamage".permanentNamedCreatureVisual(spell.id))
             && !me.meleeController && context !is null
@@ -936,7 +937,7 @@ mixin template CreatureCasting()
         if (auto visible = combatTarget(world_, guid))
             return visible;
         if (auto map = cast(Map) world_)
-            if (auto context = cast(WorldContext) lore)
+            if (auto context = lore)
                 if (context.sendAreaDamage !is null)
                     if (auto copy = cast(Replica) map.findObject(guid))
                         if (copy.fields.type == TypeId.unit || copy.fields.type == TypeId.player)
@@ -984,7 +985,7 @@ mixin template CreatureCasting()
             if (frostBreath && a == ImplicitTarget.database)
             {
                 import dmangos.world.context : WorldContext;
-                auto context = cast(WorldContext) lore;
+                auto context = lore;
                 if (context !is null)
                     if (const fixed = spell.id in context.data.spellTargets)
                         center = fixed.at;
@@ -1087,7 +1088,7 @@ mixin template CreatureCasting()
         // EventAI may start a triggered cast from the death callback. A living caster killed
         // during one of its own effects still stops at that effect.
         const castOnDeath = !me.alive && !takeMana;
-        auto context = cast(WorldContext) lore;
+        auto context = lore;
         import dmangos.world.spelldamage : namedVisualLifetimeMs, permanentNamedCreatureVisual;
 
         const channelEffect = (takeMana || permanentNamedCreatureVisual(spell.id)) && !me.meleeController
@@ -1424,7 +1425,7 @@ mixin template CreatureCasting()
         import dmangos.world.spellselection : excludedAreaTarget;
         import dmangos.world.unit : combatRelations;
 
-        auto context = cast(WorldContext) lore;
+        auto context = lore;
         auto map = cast(Map) world_;
         if (context is null || map is null || context.sendAreaDamage is null)
             return false;
@@ -1466,7 +1467,7 @@ mixin template CreatureCasting()
 
         if (world !is null)
             world_ = world;
-        return Caster.of(me, cast(Map) world_, cast(WorldContext) lore);
+        return Caster.of(me, cast(Map) world_, lore);
     }
 
     /**
@@ -1962,7 +1963,7 @@ mixin template CreatureCasting()
         import dmangos.world.map : Map;
         import dmangos.world.replication : Replica;
 
-        auto context = cast(WorldContext) lore;
+        auto context = lore;
         const(SpellInfo)*[3] spells;
         size_t[3] effects;
         size_t count;

@@ -55,7 +55,7 @@ import dmangos.world.wareffort : WarEffort, WarEffortHost;
 import dmangos.world.worldpvp : WorldPvp, WorldPvpFollower, WorldPvpHost;
 import dmangos.cluster.protocol : ChannelCommand;
 import dmangos.world.opcodes : ChatType, Language, Opcode;
-import dmangos.world.creatureai : CombatWorld, CreatureLore;
+import dmangos.world.creatureai : CombatWorld;
 import dmangos.world.npcdata : BroadcastText;
 import dmangos.world.spells : SpellInfo;
 import dmangos.script.api : ActionResult, EntityRef, GameObjectHost, Location, QuestProgress, Waypoint;
@@ -201,7 +201,7 @@ struct ShutdownTimer
  *
  * The server runs a single-threaded event loop, so none of this needs locking.
  */
-final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureLore
+final class WorldContext : GroupDirectory, IdCounters, SessionHandler
 {
     import dmangos.world.dbscripts : DbScriptRunner;
 
@@ -4047,7 +4047,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return false;
     }
 
-    /// See `CreatureLore.warEffortHandIn`: the quest's first required items, for the service to count.
+    /// The war effort: what quest `quest` asked for counts as `resource` (`dmangos.world.wareffort`): the quest's
+    /// first required items, for the service to count.
     void warEffortHandIn(uint quest, uint resource)
     {
         import dmangos.world.wareffort : AqResource, resourceCount, WarEffortContribution;
@@ -4058,7 +4059,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         services.call!(WarEffortHost.contribute)(WarEffortContribution(cast(AqResource) resource, q.reqItemCount[0]));
     }
 
-    /// See `CreatureLore.warEffortColossusFell`.
+    /// The war effort: a Colossus of Silithus fell (`Colossus`).
     void warEffortColossusFell(uint colossus)
     {
         import dmangos.world.wareffort : Colossus, WarEffortColossus;
@@ -4430,7 +4431,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return map(who.character.data.map, who.instanceId);
     }
 
-    /// See `CreatureLore.teleportBySpell`.
+    /// Spell `spell` teleports player `guid` to its `spell_target_position` (a creature's cast: a boss's room).
     void teleportBySpell(ulong guid, uint spell)
     {
         if (const to = spell in data.spellTargets)
@@ -7293,7 +7294,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return parts;
     }
 
-    /// See `CreatureLore.changeEntry`.
+    /// `creature` becomes a creature of `entry` (`Creature.changeEntry`); false if there is no such entry.
     bool changeEntry(Creature creature, uint entry)
     {
         import dmangos.world.creature : chooseDisplay;
@@ -7375,28 +7376,28 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     // -----------------------------------------------------------------------
-    // What creatures' scripts need (`CreatureLore`)
+    // What creatures' scripts need
     // -----------------------------------------------------------------------
 
-    /// See `CreatureLore`.
+    /// The spell; null if there is none.
     const(SpellInfo)* spellInfo(uint id)
     {
         return data.spells.spell(id);
     }
 
-    /// ditto
+    /// The client's tables.
     @property const(ClientData) clientData()
     {
         return client;
     }
 
-    /// ditto
+    /// A `broadcast_text`; null if there is none.
     const(BroadcastText)* broadcastText(uint id)
     {
         return id in data.npcs.broadcastTexts;
     }
 
-    /// ditto
+    /// `ListenRange.Say`, `.Yell`, `.TextEmote` in yards.
     float listenRange(ChatType type)
     {
         switch (type)
@@ -8510,7 +8511,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return creature;
     }
 
-    /// See `CreatureLore.summon`.
+    /// Summons a creature of `entry` at `at` (all zeros: near `summoner`), going as `type`
+
+    /// (`TempSpawnType`) says after `durationMs`; null if it could not be made.
     Creature summon(CombatWorld world, uint entry, Position at, uint type, uint durationMs, ulong summoner)
     {
         auto summoned = summonCreature(world, entry, at, cast(TempSpawnType) type, durationMs, summoner);
@@ -8521,13 +8524,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return summoned;
     }
 
-    /// See `CreatureLore.sameGroup`.
+    /// Whether two players are in one group.
     bool sameGroup(ulong a, ulong b)
     {
         return groups.sameGroup(a, b);
     }
 
-    /// See `CreatureLore.summonSpot`.
+    /// A `creature_ai_summons` row: where, and for how long; false if there is none.
     bool summonSpot(uint id, out Position at, out uint seconds)
     {
         if (const spot = id in data.eventAi.summons)
@@ -8910,7 +8913,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return raiseObject(go, map, TrapDisarmed(EntityRef(player)));
     }
 
-    /// See `CreatureLore.scriptText`.
+    /// A `script_texts` row; null if there is none. Its sound (0: none).
     const(BroadcastText)* scriptText(int entry)
     {
         return entry in data.scriptTexts;
@@ -8922,7 +8925,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return data.scriptTextSounds.get(entry, 0);
     }
 
-    /// See `CreatureLore.virtualItem`.
+    /// What a creature holding item `entry` shows (nothing for 0 or an unknown item).
     VirtualItem virtualItem(uint entry)
     {
         if (const item = entry in data.items)
@@ -8931,7 +8934,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return VirtualItem.init;
     }
 
-    /// See `CreatureLore.scriptRuntime`.
+    /// The server's scripts, and the script of spell `id` (no handle if none serves it).
     @property ScriptRuntime scriptRuntime()
     {
         return scripts;
@@ -8975,7 +8978,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /**
-     * See `CreatureLore.signalCreature`: a `Signal` for creature `to` on `world`: its script here, or
+     * A `Signal` for creature `to` on `world`: its script here, or
      * (a replica here: another node simulates it) a `ScriptSignal` to that node.
      */
     ActionResult signalCreature(CombatWorld world, EntityRef from, EntityRef to, uint id, int value)
@@ -9110,7 +9113,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             }
     }
 
-    /// See `CreatureLore.escortPath`.
+    /// The escort path (`script_waypoint`) of creature `entry`; empty if it has none.
     const(Waypoint)[] escortPath(uint entry)
     {
         return data.escortPaths.get(entry, null);
@@ -9581,14 +9584,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return best;
     }
 
-    /// See `CreatureLore.gameObjectNear`.
+    /// The guid of the nearest game object of `entry` within `range` yards of `center` on `world`; 0 if none.
     ulong gameObjectNear(CombatWorld world, Position center, uint entry, float range)
     {
         auto map = cast(Map) world;
         return map is null ? 0 : nearestGameObject(map, center, entry, range);
     }
 
-    /// See `CreatureLore.useGameObject`.
+    /// Uses game object `guid` on `world` as a door or button is used: open for its time.
     ActionResult useGameObject(CombatWorld world, ulong guid)
     {
         auto map = cast(Map) world;
@@ -9607,14 +9610,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return goHost_;
     }
 
-    /// See `CreatureLore.signalDungeon`.
-    /// See `CreatureLore.spellList`.
+    /// A `Signal` for the script of dungeon copy `instance` (nothing if it has none).
+    /// Spell list `id`'s spells (`creature_spell_list`); empty if none.
     const(SpellListEntry)[] spellList(uint id)
     {
         return data.creatureSpellLists.get(id, null);
     }
 
-    /// See `CreatureLore.displayOf`.
+    /// A model of creature `entry` (its template's first); 0 if none.
     uint displayOf(uint entry)
     {
         if (const t = entry in data.creatureTemplates)
@@ -9693,7 +9696,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         map.addObject(go);
     }
 
-    /// See `CreatureLore.askDungeon`.
+    /// The answer of dungeon copy `instance`'s script to question `id` from `from` (0: none).
     int askDungeon(uint instance, EntityRef from, uint id)
     {
         if (auto script = instance in instanceScripts)
@@ -9701,7 +9704,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return 0;
     }
 
-    /// Open-world round 2: see `CreatureLore.sendCreatureHome`.
+    /// `creature`, not fighting, goes back to its spawn point and then moves as it does by itself.
     void sendCreatureHome(CombatWorld world, Creature c)
     {
         import dmangos.vmap.math : Vector3;
@@ -9724,7 +9727,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             script.raise(Signal(from, id, value));
     }
 
-    /// Open-world round 2: see `CreatureLore.signalWorldMap`.
+    /// A `Signal` from `from` for the script of the continent `world` is (nothing in a dungeon, or without one).
     void signalWorldMap(CombatWorld world, EntityRef from, uint id, int value)
     {
         if (auto map = cast(Map) world)
@@ -9732,7 +9735,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 signalWorld(map.id, from, id, value);
     }
 
-    /// See `CreatureLore.spellScriptTargets`.
+    /// The creature entries `spell_script_target` gives spell `spell` (type 1); empty if none.
     const(uint)[] spellScriptTargets(uint spell, size_t effect = size_t.max)
     {
         const entries = data.spellScriptTargets.get(spell, null);
@@ -9752,7 +9755,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return 0;
     }
 
-    /// See `CreatureLore.conditionMet`.
+    /// Whether the player `player` (a pet's owner for a pet) meets condition `id` (`conditions`); false if the
+
+    /// player is not online here.
     bool conditionMet(uint id, ulong player)
     {
         auto c = onlinePlayer(player);
@@ -9761,14 +9766,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return c.conditionMet(id);
     }
 
-    /// See `CreatureLore.zoneAndAreaAt`.
+    /// The zone and area at `at` on map `map`; zeros where the terrain is not known.
     uint[2] zoneAndAreaAt(uint map, Position at)
     {
         auto t = terrain(map);
         return t is null || !t.knows(at.x, at.y) ? [0u, 0u] : t.zoneAndArea(at.x, at.y, at.z);
     }
 
-    /// See `CreatureLore.creatureBaseDamage`.
+    /// A creature's base damage at `level` for its class (`creature_template_classlevelstats`); 0 if none.
     float creatureBaseDamage(uint level, uint unitClass)
     {
         import dmangos.world.creature : classStatsKey;
@@ -9777,13 +9782,15 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return stats is null ? 0 : stats.baseDamage;
     }
 
-    /// Open-world round 2: see `CreatureLore.creaturePath`.
+    /// The waypoint path a creature of `entry` (spawn `guid`) walks by default; none if it has none.
     const(imported!"dmangos.world.motion".WaypointNode)[] creaturePath(uint entry, uint guid, uint pathId = 0)
     {
         return data.waypoints is null ? null : data.waypoints.pathFor(entry, guid, pathId, false);
     }
 
-    /// Open-world round 2: see `CreatureLore.zoneUnderAttack`.
+    /// `defender`'s zone is under attack by `attacker` (a player, or a pet): the players of the other side
+
+    /// on this node are told (`SMSG_ZONE_UNDER_ATTACK`; the client writes it in its defense channel).
     void zoneUnderAttack(CombatWorld world, Creature defender, ulong attacker)
     {
         import dmangos.bytes : ByteWriter;
@@ -9814,7 +9821,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     c.deliver(Opcode.SMSG_ZONE_UNDER_ATTACK, w.data);
     }
 
-    /// See `CreatureLore.signalDungeon`.
+    /// A `Signal` for the script of dungeon copy `instance` (nothing if it has none).
     void signalDungeon(uint instance, EntityRef from, uint id, int value)
     {
         import dmangos.script.api : Signal;
@@ -9823,7 +9830,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             script.raise(Signal(from, id, value));
     }
 
-    /// See `CreatureLore.dungeonFight`.
+    /// A creature of dungeon copy `instance` began fighting `enemy`, or (no enemy) gave its fight up:
+
+    /// the copy's script hears of it (`CreatureEngaged`, `CreatureEvaded`).
     void dungeonFight(uint instance, EntityRef creature, EntityRef enemy)
     {
         import dmangos.script.api : CreatureEngaged, CreatureEvaded;
@@ -9862,7 +9871,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         startScript(DbScriptType.event, event, map, source, target);
     }
 
-    /// See `CreatureLore.scriptedEvent`.
+    /// Scripted event `event` (a creature's `SEND_EVENT`) happens on `world`, `source` starting it at
+
+    /// `target`: its script, the dungeon's, then its database script (`WorldContext.scriptedEvent`).
     void scriptedEvent(uint event, CombatWorld world, ulong source, ulong target)
     {
         scriptedEvent(event, cast(Map) world, source, target);
@@ -9891,7 +9902,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return count;
     }
 
-    /// See `CreatureLore.startRelay`.
+    /// Starts relay script `id` (`DbScriptType.relay`) on `world` (negative `id`: one of the relay group -`id`).
     void startRelay(int id, CombatWorld world, ulong source, ulong target)
     {
         import dmangos.world.dbscripts : DbScriptType;

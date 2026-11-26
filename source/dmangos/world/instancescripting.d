@@ -12,7 +12,7 @@ import dmangos.script.api;
 import dmangos.script.registry : KindInfo, ScriptHandle, ScriptKind, ScriptRuntime;
 import std.meta : staticIndexOf;
 import dmangos.world.creature : Creature, TempSpawnType;
-import dmangos.world.creatureai : CreatureLore;
+import dmangos.world.context : WorldContext;
 import dmangos.world.movement : Position;
 import dmangos.world.gameobject : GameObject;
 import dmangos.world.map : Map, MapObject;
@@ -57,7 +57,7 @@ final class InstanceScript : InstanceHost
     MapObject[] loading;
 
     /// The world's creatures (summons); null in tests without one.
-    CreatureLore lore;
+    WorldContext lore;
 
     /// Read-only capture and cold restore of creatures that the encounter opted to checkpoint.
     Migrant delegate(EntityRef) captureSummon;

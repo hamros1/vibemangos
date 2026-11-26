@@ -560,7 +560,7 @@ Three modules, split by what they depend on:
   `CreatureAI`: a creature's casts (`castSpell`: checks, cast time, `go` with the targets, whose effects
   are the shared pipeline's: docs/SPELLS.md), fleeing, and the actions' texts, emotes and target choice.
   What it needs of the world's data (spells, the client's tables, broadcast texts, listen ranges) comes
-  through `CreatureLore`, which `WorldContext` implements and hands to a scripted creature as it makes it;
+  from the `WorldContext` itself (`lore`), handed to a scripted creature as it is made (null in a test's map);
   as a caster it is a `Caster` (`spellCaster`); a friend (a heal) never rolls to be missed. The area
   ones are found with `CombatWorld.playersNear`, texts go out with `CombatWorld.sendInRange`.
 

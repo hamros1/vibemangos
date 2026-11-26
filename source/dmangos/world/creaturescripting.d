@@ -1633,7 +1633,7 @@ mixin template CreatureScripting()
     long hostInvasionCampaign(out uint generation)
     {
         import dmangos.world.context : WorldContext;
-        auto context = cast(WorldContext) lore;
+        auto context = lore;
         if (context is null || context.invasionLayout is null || world_ is null) return 0;
         const site = context.invasionLayout.nearest(context.invasionLayout.camps, me.spawn.map, me.position);
         if (site is null || !site.present(context.invasion)) return 0;
@@ -1645,7 +1645,7 @@ mixin template CreatureScripting()
     {
         import dmangos.world.context : WorldContext;
         import dmangos.world.scourge : InvasionHost;
-        auto context = cast(WorldContext) lore;
+        auto context = lore;
         if (!campaign || context is null || context.invasionLayout is null) return;
         const site = context.invasionLayout.nearest(context.invasionLayout.camps, me.spawn.map, me.position);
         if (site is null) return;
