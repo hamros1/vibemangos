@@ -34,6 +34,145 @@ package bool mutatesGuild(Opcode opcode)
 }
 
 /// Workers can change different guild fields and recheck permissions with a stale local view.
+/**
+ * Guild changes on a cluster member, one at a time across the cluster: a guild command runs inside `commit`, on the
+ * guilds as the database has them now and writing through the change's transaction; what it would tell others
+ * waits (`after`) until the change is committed. Between changes the node reads the guilds again when another node
+ * changed them (`poll`).
+ */
+struct GuildWriter
+{
+    import core.time : MonoTime;
+    import dmangos.world.context : WorldContext;
+    import dmangos.world.database : WorldDatabase;
+    import dmangos.world.guild : Guilds;
+
+    private bool active_, changed_;
+    private ulong mirrored;              // the guild revision this node has loaded
+    private void delegate()[] afterCommit;
+    private MonoTime nextPoll;
+
+    /// Whether a change is being made now (what it tells waits).
+    @property bool active() const { return active_; }
+
+
+    bool serializes(const WorldContext world) const
+    {
+        return world.config.cluster.nodeId && world.regionOwnerAround !is null;
+    }
+
+    /// Runs `change` (a guild handler) on the guilds as the database has them now, writing through the transaction.
+    bool commit(WorldContext world, scope void delegate() change)
+    {
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
+        import dmangos.world.fencing : FencedBase;
+
+        if (!serializes(world) || active_)
+        {
+            change();
+            return true;
+        }
+        if (!world.canWrite() || !world.settleWrites())
+            return false;
+        auto original = world.database;
+        auto published = world.guilds;
+        active_ = true;
+        changed_ = false;
+        bool committed, refreshed;
+        scope (exit)
+        {
+            active_ = false;
+            afterCommit = null;
+            if (!committed)
+            {
+                world.guilds = published;
+                mirrored = 0;
+                nextPoll = MonoTime.init;
+            }
+        }
+        try
+        {
+            const revision = original.commitGuildChange((WorldDatabase transaction, ulong current) {
+                refreshed = mirrored != current;
+                if (refreshed)
+                {
+                    world.guilds = new Guilds;
+                    world.guilds.load(transaction.loadGuilds());
+                }
+                else
+                    world.guilds = published.copy();
+
+                world.database = transaction;
+                scope (exit) world.database = original;
+                change();
+                if (auto fenced = cast(FencedBase) original)
+                    if (!fenced.writesAllowedNow)
+                        throw new DatabaseException("the guild writer's lease lapsed");
+                return changed_;
+            });
+            if (!revision)
+                return false;
+            if (!refreshed && !changed_)
+                world.guilds = published;
+            mirrored = revision;
+            committed = true;
+        }
+        catch (DatabaseException error)
+        {
+            warning!"guild change could not be committed: %s"(error.msg);
+            return false;
+        }
+        active_ = false;
+        foreach (effect; afterCommit)
+            effect();
+        if (refreshed || changed_)
+            world.guildFieldsHere();
+        return true;
+    }
+
+    void after(void delegate() effect)
+    {
+        if (active_)
+            afterCommit ~= effect;
+        else
+            effect();
+    }
+
+    void changed(WorldContext world, uint id)
+    {
+        if (active_)
+            changed_ = true;
+        else
+            world.guildFieldsHere();
+        if (world.guildReloadElsewhere !is null)
+            after(() => world.guildReloadElsewhere(id));
+    }
+
+    void poll(WorldContext world, MonoTime now)
+    {
+        import core.time : seconds;
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
+
+        if (!serializes(world) || now < nextPoll)
+            return;
+        nextPoll = now + 5.seconds;
+        try
+        {
+            const current = world.database.guildRevision();
+            if (current && mirrored != current)
+            {
+                world.guilds.load(world.database.loadGuilds());
+                mirrored = current;
+                world.guildFieldsHere();
+            }
+        }
+        catch (DatabaseException error)
+            warning!"guild mirror will be refreshed again: %s"(error.msg);
+    }
+}
+
 unittest
 {
     import dmangos.bytes : ByteWriter;
@@ -95,11 +234,11 @@ unittest
     const oldMotd = before.motd;
     const oldRank = before.member(7).rank;
     bool notified;
-    assert(!first.commitGuildChange({
+    assert(!first.guildWriter.commit(first, {
         auto staged = first.guilds.find(record.id);
         staged.motd = "Uncommitted";
         staged.member(7).rank = 3;
-        first.afterGuildWrite(() { notified = true; });
+        first.guildWriter.after(() { notified = true; });
         throw new DatabaseException("save failed");
     }));
     assert(first.guilds.find(record.id) is before);

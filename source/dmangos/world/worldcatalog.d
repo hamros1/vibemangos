@@ -98,6 +98,70 @@ struct WorldCatalogJournal
 }
 
 /// Workers refresh saved GM edits without a peer message or a restart.
+/**
+ * What a node has loaded of the world catalogs: every five seconds (on a cluster member) the journal's versions are
+ * read, and a catalog another node's staff changed is loaded again (`WorldCatalogJournal`).
+ */
+struct CatalogFollower
+{
+    import core.time : MonoTime;
+    import dmangos.world.context : WorldContext;
+
+    private MonoTime nextPoll;
+    private ulong[WorldCatalogKey] loaded; // the revision loaded of each
+
+    /// Each tick: the changed catalogs of `world` loaded again.
+    void poll(WorldContext world, MonoTime now)
+    {
+        import core.time : seconds;
+        import dmangos.log : warning;
+        import dmangos.mysql : DatabaseException;
+
+        if (!world.config.cluster.nodeId || now < nextPoll)
+            return;
+        nextPoll = now + 5.seconds;
+        try
+        {
+            foreach (ref version_; world.database.worldCatalogVersions())
+            {
+                const key = version_.key;
+                if (!version_.pending && loaded.get(key, 0) == version_.revision)
+                    continue;
+                final switch (key.catalog)
+                {
+                case WorldCatalog.vendor:
+                    world.data.npcs.vendors[key.entry] = world.database.loadVendorItems(key.entry);
+                    break;
+                case WorldCatalog.questStarter:
+                    world.data.quests.creatureStarts[key.entry] = world.database.loadCreatureQuestRelations(true, key.entry);
+                    break;
+                case WorldCatalog.questFinisher:
+                    world.data.quests.creatureEnds[key.entry] = world.database.loadCreatureQuestRelations(false, key.entry);
+                    break;
+                case WorldCatalog.creatureScale:
+                    const scale = world.database.loadCreatureScale(key.entry);
+                    if (!scale.isNull)
+                        if (auto creature = world.data.creatureTemplates.edit(key.entry))
+                            creature.scale = scale.get;
+                    break;
+                case WorldCatalog.teleports:
+                    world.data.setTeleports(world.database.loadAreaTriggerTeleports(), world.database.loadTeleports(), world.client);
+                    break;
+                case WorldCatalog.quests:
+                    world.data.quests = world.database.loadQuestCatalog();
+                    break;
+                case WorldCatalog.trainer:
+                    world.data.npcs.trainers[key.entry] = world.database.loadTrainerLessons(key.entry, world.data.spells);
+                    break;
+                }
+                loaded[key] = version_.revision;
+            }
+        }
+        catch (DatabaseException error)
+            warning!"world catalog updates will be retried: %s"(error.msg);
+    }
+}
+
 unittest
 {
     import core.time : MonoTime, seconds;

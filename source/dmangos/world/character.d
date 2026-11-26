@@ -162,12 +162,12 @@ final class Character : OnlinePlayer, Looter
         import dmangos.world.guild : GuildCommand, GuildError;
         import dmangos.world.guildmutation : mutatesGuild;
 
-        if (state != WorldState.inWorld || !context.serializesGuildWrites || !mutatesGuild(opcode))
+        if (state != WorldState.inWorld || !context.guildWriter.serializes(context) || !mutatesGuild(opcode))
             return dispatchPacket(opcode, state, reader);
         auto pending = reader;
         bool started;
         DispatchResult result;
-        const saved = context.commitGuildChange({
+        const saved = context.guildWriter.commit(context, {
             started = true;
             result = dispatchPacket(opcode, state, pending);
         });
@@ -531,7 +531,7 @@ final class Character : OnlinePlayer, Looter
         import dmangos.world.guild : Guild;
 
         Guild made;
-        const saved = context.commitGuildChange({
+        const saved = context.guildWriter.commit(context, {
             if (ownGuild() is null)
                 made = foundGuild(name);
         });
@@ -541,7 +541,7 @@ final class Character : OnlinePlayer, Looter
     /// For `.guild removeplayer`: this player leaves its guild (removed, as a kick).
     package void gmLeaveGuild()
     {
-        context.commitGuildChange({
+        context.guildWriter.commit(context, {
             if (auto g = ownGuild())
                 removeGuildMember(g, player.data.guid);
         });
@@ -550,7 +550,7 @@ final class Character : OnlinePlayer, Looter
     /// For `.guild disband`: this player's guild is disbanded.
     package void gmDisbandGuild()
     {
-        context.commitGuildChange({
+        context.guildWriter.commit(context, {
             if (auto g = ownGuild())
                 disbandGuild(g);
         });

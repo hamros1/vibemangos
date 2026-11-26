@@ -212,60 +212,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// The realm's weather as this node knows it (`dmangos.world.weatherservice.ZoneWeather`).
     ZoneWeather weather;
 
-    import dmangos.world.worldcatalog : WorldCatalog, WorldCatalogKey;
+    import dmangos.world.worldcatalog : CatalogFollower;
 
-    private MonoTime nextCatalogPoll;
-    private ulong[WorldCatalogKey] loadedCatalogVersions;
-
-    private void pollWorldCatalog(MonoTime now)
-    {
-        import core.time : seconds;
-        import dmangos.log : warning;
-        import dmangos.mysql : DatabaseException;
-
-        if (!config.cluster.nodeId || now < nextCatalogPoll)
-            return;
-        nextCatalogPoll = now + 5.seconds;
-        try
-        {
-            foreach (ref version_; database.worldCatalogVersions())
-            {
-                const key = version_.key;
-                if (!version_.pending && loadedCatalogVersions.get(key, 0) == version_.revision)
-                    continue;
-                final switch (key.catalog)
-                {
-                case WorldCatalog.vendor:
-                    data.npcs.vendors[key.entry] = database.loadVendorItems(key.entry);
-                    break;
-                case WorldCatalog.questStarter:
-                    data.quests.creatureStarts[key.entry] = database.loadCreatureQuestRelations(true, key.entry);
-                    break;
-                case WorldCatalog.questFinisher:
-                    data.quests.creatureEnds[key.entry] = database.loadCreatureQuestRelations(false, key.entry);
-                    break;
-                case WorldCatalog.creatureScale:
-                    const scale = database.loadCreatureScale(key.entry);
-                    if (!scale.isNull)
-                        if (auto creature = data.creatureTemplates.edit(key.entry))
-                            creature.scale = scale.get;
-                    break;
-                case WorldCatalog.teleports:
-                    data.setTeleports(database.loadAreaTriggerTeleports(), database.loadTeleports(), client);
-                    break;
-                case WorldCatalog.quests:
-                    data.quests = database.loadQuestCatalog();
-                    break;
-                case WorldCatalog.trainer:
-                    data.npcs.trainers[key.entry] = database.loadTrainerLessons(key.entry, data.spells);
-                    break;
-                }
-                loadedCatalogVersions[key] = version_.revision;
-            }
-        }
-        catch (DatabaseException error)
-            warning!"world catalog updates will be retried: %s"(error.msg);
-    }
+    /// The world catalogs (vendors, trainers, quests, ...) as staff edits on any node change them.
+    CatalogFollower catalogs;
 
     WorldConfig config;
     WorldDatabase database;
@@ -9061,126 +9011,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     // Guilds across the node (and, through these, the cluster)
     // -----------------------------------------------------------------------
 
-    private bool guildWriteActive, guildWriteChanged;
-    private ulong mirroredGuildRevision;
-    private void delegate()[] guildAfterCommit;
-    private MonoTime nextGuildPoll;
+    import dmangos.world.guildmutation : GuildWriter;
 
-    package bool serializesGuildWrites() const
-    {
-        return config.cluster.nodeId && regionOwnerAround !is null;
-    }
-
-    /// Run the regular guild handler with the current guilds and the transaction's database.
-    package bool commitGuildChange(scope void delegate() change)
-    {
-        import dmangos.log : warning;
-        import dmangos.mysql : DatabaseException;
-        import dmangos.world.fencing : FencedBase;
-
-        if (!serializesGuildWrites() || guildWriteActive)
-        {
-            change();
-            return true;
-        }
-        if (!canWrite() || !settleWrites())
-            return false;
-        auto original = database;
-        auto published = guilds;
-        guildWriteActive = true;
-        guildWriteChanged = false;
-        bool committed, refreshed;
-        scope (exit)
-        {
-            guildWriteActive = false;
-            guildAfterCommit = null;
-            if (!committed)
-            {
-                guilds = published;
-                mirroredGuildRevision = 0;
-                nextGuildPoll = MonoTime.init;
-            }
-        }
-        try
-        {
-            const revision = original.commitGuildChange((WorldDatabase transaction, ulong current) {
-                refreshed = mirroredGuildRevision != current;
-                if (refreshed)
-                {
-                    guilds = new Guilds;
-                    guilds.load(transaction.loadGuilds());
-                }
-                else
-                    guilds = published.copy();
-
-                database = transaction;
-                scope (exit) database = original;
-                change();
-                if (auto fenced = cast(FencedBase) original)
-                    if (!fenced.writesAllowedNow)
-                        throw new DatabaseException("the guild writer's lease lapsed");
-                return guildWriteChanged;
-            });
-            if (!revision)
-                return false;
-            if (!refreshed && !guildWriteChanged)
-                guilds = published;
-            mirroredGuildRevision = revision;
-            committed = true;
-        }
-        catch (DatabaseException error)
-        {
-            warning!"guild change could not be committed: %s"(error.msg);
-            return false;
-        }
-        guildWriteActive = false;
-        foreach (effect; guildAfterCommit)
-            effect();
-        if (refreshed || guildWriteChanged)
-            guildFieldsHere();
-        return true;
-    }
-
-    package void afterGuildWrite(void delegate() effect)
-    {
-        if (guildWriteActive)
-            guildAfterCommit ~= effect;
-        else
-            effect();
-    }
-
-    package void guildChangedHere(uint id)
-    {
-        if (guildWriteActive)
-            guildWriteChanged = true;
-        else
-            guildFieldsHere();
-        if (guildReloadElsewhere !is null)
-            afterGuildWrite(() => guildReloadElsewhere(id));
-    }
-
-    private void pollGuildMirror(MonoTime now)
-    {
-        import core.time : seconds;
-        import dmangos.log : warning;
-        import dmangos.mysql : DatabaseException;
-
-        if (!serializesGuildWrites() || now < nextGuildPoll)
-            return;
-        nextGuildPoll = now + 5.seconds;
-        try
-        {
-            const current = database.guildRevision();
-            if (current && mirroredGuildRevision != current)
-            {
-                guilds.load(database.loadGuilds());
-                mirroredGuildRevision = current;
-                guildFieldsHere();
-            }
-        }
-        catch (DatabaseException error)
-            warning!"guild mirror will be refreshed again: %s"(error.msg);
-    }
+    /// On a cluster member, guild changes made one at a time across the cluster (`GuildWriter`).
+    GuildWriter guildWriter;
 
     /// A guild's packet for its members online here whose rank has `right` (0: all).
     void guildToMembersHere(uint guild, Opcode opcode, const(ubyte)[] body_, uint right)
@@ -9200,13 +9034,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     continue; // a disbanded guild's last word: to those who were in it
                 if (right && m !is null && !g.hasRight(m.rank, cast(GuildRight) right))
                     continue;
-                if (guildWriteActive)
+                if (guildWriter.active)
                     recipients ~= session;
                 else
                     session.deliver(opcode, body_);
             }
         if (recipients.length)
-            afterGuildWrite({
+            guildWriter.after({
                 foreach (session; recipients)
                     session.deliver(opcode, body_);
             });
@@ -11067,8 +10901,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             script.tick(cast(int) elapsed.total!"msecs");
         gameObjectScriptsTick(cast(int) elapsed.total!"msecs"); // open-world round 2
         weather.poll(now);
-        pollWorldCatalog(now);
-        pollGuildMirror(now);
+        catalogs.poll(this, now);
+        guildWriter.poll(this, now);
         addPendingNavigation();
         checkHonorWeek(now);
         services.tick(elapsed);

@@ -87,7 +87,7 @@ mixin template GuildHandlers()
         if (context.guildBroadcastElsewhere !is null)
         {
             const id = g.id;
-            context.afterGuildWrite(() => context.guildBroadcastElsewhere(id, right, cast(ushort) opcode, body_));
+            context.guildWriter.after(() => context.guildBroadcastElsewhere(id, right, cast(ushort) opcode, body_));
         }
     }
 
@@ -101,7 +101,7 @@ mixin template GuildHandlers()
     /// A guild changed: saved, its members' fields here brought up to date, the other nodes told.
     package void guildChanged(Guild g)
     {
-        context.guildChangedHere(g.id);
+        context.guildWriter.changed(context, g.id);
     }
 
     private void guildEvent(Guild g, GuildEvent event, const(string)[] strings, ulong guid = 0)
@@ -547,10 +547,10 @@ mixin template GuildHandlers()
         {
             if (here.guildInvited)
                 return guildResult(GuildCommand.invite, realName, GuildError.alreadyInvitedS);
-            context.afterGuildWrite(() => here.guildInvite(g.id, inviter, inviterName, g.name));
+            context.guildWriter.after(() => here.guildInvite(g.id, inviter, inviterName, g.name));
         }
         else if (context.guildInviteElsewhere !is null)
-            context.afterGuildWrite(() => context.guildInviteElsewhere(node, guid, g.id, inviter, inviterName, g.name));
+            context.guildWriter.after(() => context.guildInviteElsewhere(node, guid, g.id, inviter, inviterName, g.name));
         logGuildEvent(g, GuildEventLogType.invitePlayer, player.data.guid, low);
         guildChanged(g); // the other nodes' copies hold the log too
         guildResult(GuildCommand.invite, realName, GuildError.noMoreInGuild); // `ERR_PLAYER_NO_MORE_IN_GUILD`: 0, "invited"
