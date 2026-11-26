@@ -1831,6 +1831,15 @@ struct Gothik
     }
 }
 
+/// The Horsemen's marks: each stacks on the raid, the spirit of a slain horseman marks on with his.
+enum uint markOfKorthazz = 28_832, markOfBlaumeux = 28_833, markOfMograine = 28_834, markOfZeliek = 28_835;
+
+/// Whether `spell` is one of the Horsemen's marks (a gateway player's checkpoint keeps them, `isNaxxramasRecoveryAura`).
+bool isHorsemenMark(uint spell) pure nothrow @nogc @safe
+{
+    return spell >= markOfKorthazz && spell <= markOfZeliek;
+}
+
 /**
  * What the Four Horsemen share: their mark every twelve seconds, their special every twelve, shield walls
  * at 50% and 20%; each that dies leaves its spirit; the four dead are the encounter.
@@ -1916,7 +1925,7 @@ private mixin template Horseman(uint mark, uint special, uint spirit, uint aggro
 @creature("boss_lady_blaumeux")
 struct LadyBlaumeux
 {
-    mixin Horseman!(28_833, 28_863, 28_931, 13_010, 13_013, 13_012, 13_011) horseman;
+    mixin Horseman!(markOfBlaumeux, 28_863, 28_931, 13_010, 13_013, 13_012, 13_011) horseman;
     alias steps = horseman.steps;
     alias on = horseman.on;
 }
@@ -1925,7 +1934,7 @@ struct LadyBlaumeux
 @creature("boss_alexandros_mograine")
 struct HighlordMograine
 {
-    mixin Horseman!(28_834, 28_882, 28_928, 13_051, 13_057, 13_055, 13_054) horseman;
+    mixin Horseman!(markOfMograine, 28_882, 28_928, 13_051, 13_057, 13_055, 13_054) horseman;
     alias steps = horseman.steps;
     alias on = horseman.on;
 }
@@ -1934,7 +1943,7 @@ struct HighlordMograine
 @creature("boss_thane_korthazz")
 struct ThaneKorthazz
 {
-    mixin Horseman!(28_832, 28_884, 28_932, 13_034, 13_037, 13_036, 13_035) horseman;
+    mixin Horseman!(markOfKorthazz, 28_884, 28_932, 13_034, 13_037, 13_036, 13_035) horseman;
     alias steps = horseman.steps;
     alias on = horseman.on;
 }
@@ -1943,7 +1952,7 @@ struct ThaneKorthazz
 @creature("boss_sir_zeliek")
 struct SirZeliek
 {
-    mixin Horseman!(28_835, 28_883, 28_934, 13_097, 13_100, 13_099, 13_098) horseman;
+    mixin Horseman!(markOfZeliek, 28_883, 28_934, 13_097, 13_100, 13_099, 13_098) horseman;
     alias steps = horseman.steps;
     alias on = horseman.on;
 }
@@ -2668,12 +2677,12 @@ struct Sapphiron
 }
 
 /**
- * The auras of Sapphiron's fight a gateway player's checkpoint keeps (`Character.encounterAuraRecoveryState`): his
- * Icebolt's freeze, the immunity that goes with it, and Life Drain.
+ * The auras of the copy's fights a gateway player's checkpoint keeps (`Character.encounterAuraRecoveryState`):
+ * Sapphiron's Icebolt freeze, the immunity that goes with it, and Life Drain; the Horsemen's marks, with their stacks.
  */
 bool isNaxxramasRecoveryAura(uint spell) pure nothrow @nogc @safe
 {
-    return isSapphironFreeze(spell) || spell == Sapphiron.lifeDrain;
+    return isSapphironFreeze(spell) || spell == Sapphiron.lifeDrain || isHorsemenMark(spell);
 }
 
 /**

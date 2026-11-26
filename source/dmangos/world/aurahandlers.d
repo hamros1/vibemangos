@@ -1786,3 +1786,45 @@ unittest
     assert(immunity !is null && immunity.duration == 27_000, "the frozen player lost the immunity");
     assert(session.player.auras.find(Sapphiron.lifeDrain) is null, "Life Drain outlasted its time");
 }
+
+/**
+ * The Four Horsemen's marks come back from a gateway player's checkpoint with their stacks: each mark is saved as it
+ * stacks, and the outage counts against its time, as against Life Drain's.
+ */
+unittest
+{
+    import core.time : MonoTime, seconds;
+    import dmangos.bytes : ByteReader;
+    import dmangos.cluster.protocol : SimulationOwner;
+    import dmangos.scripts.naxxramas : markOfKorthazz;
+    import dmangos.world.auras : makeAura;
+    import dmangos.world.movement : Position;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.spellids : AuraType, SpellEffect;
+    import dmangos.world.testclient;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    context.data.spells.spells[markOfKorthazz] = testSpell(markOfKorthazz, SpellEffect.applyAura, 6, 0);
+    context.data.spells.spells.edit(markOfKorthazz).casting.applyAuraName[0] = AuraType.dummy;
+    context.data.spells.spells.edit(markOfKorthazz).casting.stackAmount = 99;
+    auto client = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    auto session = client.session.inWorld;
+    client.session.gatewayHome = SimulationOwner(4, 1);
+    const thane = 0xF130_0000_0000_0100UL | (ulong(16_064) << 24);
+    foreach (_; 0 .. 3)
+        session.addAura(makeAura(context.data.spells.spell(markOfKorthazz), thane, 63, 75_000, false, [0, 0, 0]));
+    assert(session.player.auras.find(markOfKorthazz).stacks == 3);
+    assert(db.loadPlayerSummons(7).length, "the mark was not checkpointed as it stacked");
+    const saved = session.encounterAuraRecoveryState();
+    session.removeAura(session.player.auras.find(markOfKorthazz));
+
+    now += 10.seconds; // the worker is lost; the player comes back ten seconds on
+    auto state = ByteReader(saved);
+    session.restoreEncounterAuraRecovery(state);
+    auto mark = session.player.auras.find(markOfKorthazz);
+    assert(mark !is null && mark.stacks == 3 && mark.caster == thane, "the marks did not come back with their stacks");
+    assert(mark.duration <= 65_000 && mark.duration > 64_000, "the outage did not count against the mark");
+}
