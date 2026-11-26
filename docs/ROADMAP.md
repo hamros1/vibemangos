@@ -91,7 +91,6 @@ describes how players use the systems available today.
   with a crash and the gong calls the next. The pyramid's Sandfury the checkpoint lost stay among
   those the siege sends up the steps, so fewer come. A lockout saved with Naralex awake because Lord
   Serpentis's EventAI set its instance data (before the signal was moved) keeps the disciple silent.
-  A summon a restore fails to bring back leaves the Disciple of Naralex waiting for its death.
   Emi leaves the checkpoint with Grubbis's death: a crash in the half minute after it loses the rest
   of her stand, the northern tunnel's blast among it.
   Molten Core has Ragnaros recovery tests for his fight, his sons under the lava, a wipe followed

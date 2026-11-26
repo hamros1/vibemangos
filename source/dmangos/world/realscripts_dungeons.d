@@ -482,20 +482,23 @@ unittest
 /**
  * Wailing Caverns on a cluster worker: the Disciple of Naralex (3678) waits at each stop for what he called there to
  * die. A crash at his first corner, a raptor (3636) slain and the disciple hurt, brings back him and the living
- * raptor together from the copy's checkpoint, and the awakening goes on to Naralex's waking.
+ * raptor together from the copy's checkpoint, and the awakening goes on to Naralex's waking. With the raptor lost to
+ * the restore (gone with no death), the disciple, told what is left of his summons, goes on all the same.
  */
 unittest
 {
     if (!haveRealData())
         return;
     enum uint disciple = 3678, ravager = 3636;
-    auto d = Dungeon.enter(43, 20, cluster: true);
-    auto him = d.spawned(disciple, 0, 15);
-    foreach (fanglord; [3669u, 3670, 3671, 3673])
+    foreach (lost; [false, true])
     {
-        auto f = d.spawned(fanglord, 0, 30);
-        d.goTo(Position(him.position.x + 10, him.position.y, him.position.z));
-        d.kill(f);
+        auto d = Dungeon.enter(43, 20, cluster: true);
+        auto him = d.spawned(disciple, 0, 15);
+        foreach (fanglord; [3669u, 3670, 3671, 3673])
+        {
+            auto f = d.spawned(fanglord, 0, 30);
+            d.goTo(Position(him.position.x + 10, him.position.y, him.position.z));
+            d.kill(f);
     }
     d.run(2.seconds);
     // A Fanglord's EventAI sets its instance data (Serpentis's is field 3) as it fights: Naralex is not awake for it,
@@ -528,13 +531,17 @@ unittest
     assert(raptor !is null && raptor.alive, "with the raptor still alive");
     auto slain = d.map.creatureAt(raptors[0].guid);
     assert(slain is null || !slain.alive, "and the slain one dead");
+    if (lost)
+        d.map.removeObject(survivor); // as a restore that could not bring it back leaves it: no death, no despawn
     bool awake()
     {
         d.keepUp(him);
         d.defend(him);
         return d.heard(1271);
     }
-    assert(d.runUntil(&awake, 600.seconds), format!"Naralex wakes (the disciple at %s)\n%s"(him.position, d.story));
+    assert(d.runUntil(&awake, 600.seconds), format!"Naralex wakes (the disciple at %s, raptor lost: %s)\n%s"(
+        him.position, lost, d.story));
+    }
 }
 
 // ---------------------------------------------------------------------------------------------------------------

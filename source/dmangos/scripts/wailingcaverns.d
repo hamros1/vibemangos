@@ -31,11 +31,17 @@ struct WailingCaverns
 {
     /// Signals: to the disciple, the Fanglords slain; from him, Naralex awake. The copy's own are above the data
     /// fields its creatures' EventAI sets (`ACTION_T_SET_INST_DATA`: a Fanglord's 0 to 3, Mutanus's 5), as signals too.
-    enum Signals : uint { fanglordsSlain = 1, naralexAwake = 100 }
+    enum Signals : uint { fanglordsSlain = 1, naralexAwake = 100, summonsLeft = 101 }
 
     bool[4] fanglordDead;
     bool naralexAwake;
     @transient EntityRef discipleRef;
+    /// What the disciple called, as it came into this world (back from the checkpoint too), till it dies.
+    @transient EntityRef[] discipleSummons;
+    @transient bool restored; /// back from the checkpoint with him in it: he hears what is left of his summons
+
+    enum Step : ubyte { recount }
+    @transient Schedule!(Step, 1) steps;
 
     private static immutable uint[4] fanglords = [cobrahn, pythas, anacondra, serpentis];
 
@@ -49,6 +55,8 @@ struct WailingCaverns
 
     void on(ref InstanceContext caverns, const ref CreatureLoaded e)
     {
+        import std.algorithm.searching : canFind;
+
         switch (e.creature.entry)
         {
         case disciple:
@@ -58,6 +66,8 @@ struct WailingCaverns
             break;
         case ravager, viper, DiscipleOfNaralex.adder, moccasin, ectoplasm, mutanus:
             // What the disciple called at a stop of his, whose deaths he waits for: kept with him in the checkpoint.
+            if (e.summoned && !naralexAwake && !discipleSummons.canFind(e.creature))
+                discipleSummons ~= e.creature;
             if (e.summoned && discipleRef && caverns.alive(discipleRef) && !naralexAwake)
             {
                 caverns.checkpointCreature(discipleRef);
@@ -77,11 +87,40 @@ struct WailingCaverns
     void on(ref InstanceContext caverns, const ref Restored e)
     {
         if (caverns.hasSavedCreature(disciple))
+        {
             caverns.waitForPlayer();
+            restored = true;
+        }
+    }
+
+    /// Back from the checkpoint: once what it brings back is in the world, the disciple hears how many of his summons
+    /// are alive. One the restore could not bring back would leave him waiting for its death for good.
+    void on(ref InstanceContext caverns, const ref PlayerEntered e)
+    {
+        if (restored && !steps.pending(Step.recount))
+            steps.after(Step.recount, 5.seconds);
+    }
+
+    void on(ref InstanceContext caverns, Step step)
+    {
+        restored = false;
+        if (!discipleRef || !caverns.alive(discipleRef) || naralexAwake)
+            return;
+        int left;
+        foreach (s; discipleSummons)
+            if (caverns.alive(s))
+                ++left;
+        caverns.signal(discipleRef, Signals.summonsLeft, left);
     }
 
     void on(ref InstanceContext caverns, const ref CreatureDied e)
     {
+        import std.algorithm.mutation : remove;
+        import std.algorithm.searching : countUntil;
+
+        const summon = discipleSummons.countUntil(e.creature);
+        if (summon >= 0)
+            discipleSummons = discipleSummons.remove(summon);
         foreach (i, entry; fanglords)
             if (e.creature.entry == entry && !fanglordDead[i])
             {
@@ -150,6 +189,17 @@ struct DiscipleOfNaralex
 
     void on(ref CreatureContext me, const ref Signal e)
     {
+        if (e.id == WailingCaverns.Signals.summonsLeft && e.value < alive)
+        {
+            // Back from a crash with fewer than he called (one the restore lost): he waits for no more than those.
+            alive = cast(ubyte) e.value;
+            if (!alive && waitingForDead)
+            {
+                waitingForDead = false;
+                steps.after(Step.event, 2.seconds);
+            }
+            return;
+        }
         if (e.id == WailingCaverns.Signals.fanglordsSlain && !fanglordsSlain)
         {
             fanglordsSlain = true;

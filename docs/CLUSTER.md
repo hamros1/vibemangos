@@ -559,7 +559,8 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   come at the saved time and their deaths open the End Door. A siege saved before it was kept brings
   the two at once.
   In Wailing Caverns, the Disciple of Naralex and what he calls at each stop are kept together, so he
-  does not wait for summons that went with the old world. In Gnomeregan, Blastmaster Emi, her troggs,
+  does not wait for summons that went with the old world; five seconds after a player comes back, he
+  hears how many are alive, so one the restore lost does not hold him. In Gnomeregan, Blastmaster Emi, her troggs,
   Grubbis and Chomper are kept together while her stand is under way. In the Scarlet Monastery,
   Mograine and Whitemane are kept together from his fall, and she comes back on her way to the fight.
   Onyxia keeps her health, flight phase, surviving whelps and the remaining time to the next wave.
