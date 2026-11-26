@@ -38,6 +38,7 @@ import standby_bundle
 import standby_login
 import stratholme_recovery
 import worker_rejoin
+import zulgurub_recovery
 
 
 CASES = (
@@ -63,6 +64,8 @@ CASES = (
     ("stratholme-ysida-recovery", stratholme_recovery.ysida),
     ("ragnaros-fight-recovery", ragnaros_recovery.fight),
     ("ragnaros-wipe-recovery", ragnaros_recovery.wipe),
+    ("zulgurub-arlokk-recovery", zulgurub_recovery.arlokk),
+    ("zulgurub-mandokir-recovery", zulgurub_recovery.mandokir),
     ("loot-award-crash", loot_award_crash.main),
     ("migration-stall", migration_stall.run),
     ("standby-login", standby_login.run),
