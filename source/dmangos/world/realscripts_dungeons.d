@@ -479,6 +479,64 @@ unittest
     assert(d.heard(1272) && d.heard(2103) && d.cast_(8153, disciple), "thanks, farewell, and away\n" ~ d.story);
 }
 
+/**
+ * Wailing Caverns on a cluster worker: the Disciple of Naralex (3678) waits at each stop for what he called there to
+ * die. A crash at his first corner, a raptor (3636) slain and the disciple hurt, brings back him and the living
+ * raptor together from the copy's checkpoint, and the awakening goes on to Naralex's waking.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint disciple = 3678, ravager = 3636;
+    auto d = Dungeon.enter(43, 20, cluster: true);
+    auto him = d.spawned(disciple, 0, 15);
+    foreach (fanglord; [3669u, 3670, 3671, 3673])
+    {
+        auto f = d.spawned(fanglord, 0, 30);
+        d.goTo(Position(him.position.x + 10, him.position.y, him.position.z));
+        d.kill(f);
+    }
+    d.run(2.seconds);
+    // A Fanglord's EventAI sets its instance data (Serpentis's is field 3) as it fights: Naralex is not awake for it,
+    // and after a crash the disciple still knows the four slain.
+    assert(!d.saved!(imported!"dmangos.scripts.wailingcaverns".WailingCaverns).naralexAwake, "Naralex woken early");
+    d.restartAfterCrash();
+    him = d.spawned(disciple, 0, 15);
+    d.talkTo(him);
+    d.choose(him, 0);
+    d.run(1.seconds);
+    bool atCorner()
+    {
+        d.keepUp(him);
+        return d.summoned(ravager) == 2;
+    }
+    assert(d.runUntil(&atCorner, 300.seconds), "the raptors at his first corner\n" ~ d.story);
+    const guid = him.guid;
+    Creature[] raptors;
+    foreach (s; d.summons)
+        if (s.entry == ravager)
+            raptors ~= cast(Creature) d.map.findObject(s.guid);
+    const survivor = raptors[1].guid;
+    d.kill(raptors[0]);
+    d.hit(him, him.values.get!UNIT_FIELD_HEALTH / 10);
+    d.run(2100.msecs);
+    d.restartAfterCrash();
+    him = d.map.creatureAt(guid);
+    assert(him !is null && him.alive && d.all(disciple).length == 1, "the same disciple after the crash");
+    auto raptor = d.map.creatureAt(survivor);
+    assert(raptor !is null && raptor.alive, "with the raptor still alive");
+    auto slain = d.map.creatureAt(raptors[0].guid);
+    assert(slain is null || !slain.alive, "and the slain one dead");
+    bool awake()
+    {
+        d.keepUp(him);
+        d.defend(him);
+        return d.heard(1271);
+    }
+    assert(d.runUntil(&awake, 600.seconds), format!"Naralex wakes (the disciple at %s)\n%s"(him.position, d.story));
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Razorfen Kraul (47)
 // ---------------------------------------------------------------------------------------------------------------

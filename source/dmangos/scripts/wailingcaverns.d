@@ -29,7 +29,9 @@ enum : uint
 @instance("instance_wailing_caverns")
 struct WailingCaverns
 {
-    enum Signals : uint { fanglordsSlain = 1, naralexAwake = 3 }
+    /// Signals: to the disciple, the Fanglords slain; from him, Naralex awake. The copy's own are above the data
+    /// fields its creatures' EventAI sets (`ACTION_T_SET_INST_DATA`: a Fanglord's 0 to 3, Mutanus's 5), as signals too.
+    enum Signals : uint { fanglordsSlain = 1, naralexAwake = 100 }
 
     bool[4] fanglordDead;
     bool naralexAwake;
@@ -47,12 +49,35 @@ struct WailingCaverns
 
     void on(ref InstanceContext caverns, const ref CreatureLoaded e)
     {
-        if (e.creature.entry == disciple)
+        switch (e.creature.entry)
         {
+        case disciple:
             discipleRef = e.creature;
             if (allSlain() && !naralexAwake)
                 caverns.signal(e.creature, Signals.fanglordsSlain, 0); // no second call for aid
+            break;
+        case ravager, viper, DiscipleOfNaralex.adder, moccasin, ectoplasm, mutanus:
+            // What the disciple called at a stop of his, whose deaths he waits for: kept with him in the checkpoint.
+            if (e.summoned && discipleRef && caverns.alive(discipleRef) && !naralexAwake)
+            {
+                caverns.checkpointCreature(discipleRef);
+                caverns.checkpointCreature(e.creature);
+            }
+            break;
+        default:
+            break;
         }
+    }
+
+    /**
+     * A crash takes the disciple's summons with the old world, and his fight snapshot, kept apart from them, brought
+     * him back waiting for their deaths for good. From his first stop the copy keeps him and them together in its
+     * checkpoint; he leaves it when he goes.
+     */
+    void on(ref InstanceContext caverns, const ref Restored e)
+    {
+        if (caverns.hasSavedCreature(disciple))
+            caverns.waitForPlayer();
     }
 
     void on(ref InstanceContext caverns, const ref CreatureDied e)
