@@ -389,11 +389,13 @@ unittest
 
 unittest
 {
-    // Ragnaros' crash recovery keeps nothing in the layout (the checkpoint holds him and his sons): Molten Core's
-    // lockouts load as before.
+    // Ragnaros', Arlokk's and their adds' crash recovery keeps nothing in the layout (the checkpoint holds them): Molten
+    // Core's and Zul'Gurub's lockouts load as before.
     import dmangos.scripts.moltencore : MoltenCore;
+    import dmangos.scripts.zulgurub : ZulGurub;
 
     static assert(layoutFingerprint!MoltenCore == 0xb67098a4d5e07cbaUL);
+    static assert(layoutFingerprint!ZulGurub == 0x83881956a512360fUL);
 }
 
 unittest

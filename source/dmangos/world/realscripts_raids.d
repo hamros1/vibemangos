@@ -3475,3 +3475,100 @@ unittest
     assert(s.ask(Encounter.ragnaros) == EncounterState.inProgress);
 }
 
+/**
+ * Arlokk's fight survives a worker's crash. She is a summon (the gong's), so nothing but the copy's checkpoint can
+ * bring her back. Crashed at 60% with her prowlers about, the worker comes back with the same Arlokk at her health, her
+ * forcefield shut and the same prowlers; more come. Slain, she opens her forcefield and her prowlers stop, and after
+ * another crash it stays open and the gong calls no Arlokk.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import std.math : abs;
+    import dmangos.script.api : EncounterState;
+    import dmangos.scripts.zulgurub;
+
+    const gongAt = objectSpawnOf(309, goGongOfBethekk);
+    auto s = new Scene(309, Position(gongAt.x + 3, gongAt.y, gongAt.z), [classWarrior, classMage], cluster: true);
+    s.run(1.seconds);
+    s.use(s.objects(goGongOfBethekk)[0]);
+    assert(s.runUntil(() => s.find(npcArlokk) !is null, 15.seconds), "the gong called no Arlokk");
+    auto arlokk = s.the(npcArlokk);
+    s.stayWith = arlokk;
+    s.stayWithin = 10;
+    s.engage(arlokk);
+    s.run(8.seconds);
+    assert(s.ask(ZgEncounter.arlokk) == EncounterState.inProgress && !s.doorOpen(goForcefield));
+    s.hurtTo(arlokk, 60);
+    s.run(2.seconds);
+    s.runUntilSaved(); // a crash just after the checkpoint (none without the encounter's actors in it)
+    const guid = arlokk.guid;
+    const health = s.healthOf(arlokk);
+    const prowlers = livingOf(s, npcZulianProwler);
+    assert(prowlers.length >= 2, format!"%s prowlers 10 s into her fight"(prowlers.length));
+
+    s.forget();
+    s.restartAfterCrash();
+    auto back = s.all(npcArlokk);
+    assert(back.length == 1 && back[0].guid == guid, format!"%s Arlokk after the crash, not the same one"(back.length));
+    arlokk = back[0];
+    assert(abs(s.healthOf(arlokk) - health) <= 1, format!"Arlokk at %s%% after the crash, %s%% before"(
+        s.healthOf(arlokk), health));
+    assert(s.ask(ZgEncounter.arlokk) == EncounterState.inProgress && !s.doorOpen(goForcefield),
+        "her fight or her forcefield after the crash");
+    const prowlersBack = livingOf(s, npcZulianProwler);
+    foreach (prowler; prowlers.byKey)
+        assert(prowler in prowlersBack, format!"prowler %#x did not come back"(prowler));
+    s.stayWith = arlokk;
+    s.run(10.seconds);
+    assert(arlokk.ai.inCombat, "Arlokk does not fight after the crash");
+    size_t sent()
+    {
+        bool[ulong] all;
+        foreach (c; s.all(npcZulianProwler, true))
+            all[c.guid] = true;
+        return all.length;
+    }
+    assert(sent() > prowlersBack.length, "no prowler came after the crash");
+
+    s.kill(arlokk);
+    s.run(2.seconds);
+    assert(s.ask(ZgEncounter.arlokk) == EncounterState.done && s.doorOpen(goForcefield), "her death\n" ~ s.seen());
+    const before = sent();
+    s.run(20.seconds);
+    assert(sent() == before, "her prowlers come on after her death");
+    s.restartAfterCrash();
+    s.run(1.seconds);
+    assert(s.ask(ZgEncounter.arlokk) == EncounterState.done && s.doorOpen(goForcefield),
+        "her death or her forcefield after another crash");
+    s.use(s.objects(goGongOfBethekk)[0]);
+    s.run(15.seconds);
+    assert(s.find(npcArlokk) is null, "the gong called Arlokk again after her death");
+}
+
+/**
+ * Arlokk's fight comes back without her (the crash came between the gong and her coming, the gong's ten seconds): it
+ * failed. Her forcefield opens, and the gong calls her again.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.script.api : EncounterState;
+    import dmangos.scripts.zulgurub;
+
+    const gongAt = objectSpawnOf(309, goGongOfBethekk);
+    auto s = new Scene(309, Position(gongAt.x + 3, gongAt.y, gongAt.z), [classWarrior, classMage], cluster: true);
+    s.run(1.seconds);
+    s.use(s.objects(goGongOfBethekk)[0]);
+    s.run(2.seconds);
+    assert(s.ask(ZgEncounter.arlokk) == EncounterState.inProgress && s.find(npcArlokk) is null);
+    s.restartAfterCrash();
+    s.run(12.seconds);
+    assert(s.find(npcArlokk) is null && s.ask(ZgEncounter.arlokk) == EncounterState.failed
+        && s.doorOpen(goForcefield), "the crash before Arlokk came left her fight under way");
+    s.use(s.objects(goGongOfBethekk)[0]);
+    assert(s.runUntil(() => s.find(npcArlokk) !is null, 15.seconds), "the gong calls no Arlokk after the crash");
+}
+

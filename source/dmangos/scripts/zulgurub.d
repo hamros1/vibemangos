@@ -82,7 +82,11 @@ private Duration between(ref CreatureContext me, uint low, uint high)
 /// A step whose cast failed is tried again this soon.
 private enum retry = 400.msecs;
 
-/// What the copy remembers: its encounters (saved in `instance.data`).
+/**
+ * What the copy remembers: its encounters (saved in `instance.data`). While Arlokk's fight is under way she and her
+ * prowlers, summons, are kept in the copy's checkpoint (`setArlokk`): a worker's crash resumes her fight, and one saved
+ * without her fails, so that her forcefield opens and the gong calls her again.
+ */
 @instance("instance_zulgurub")
 struct ZulGurub
 {
@@ -97,6 +101,16 @@ struct ZulGurub
     @transient ubyte lefts, rights;
     @transient bool prowling;
     @transient uint prowlersSent;
+    @transient EntityRef arlokk;
+    /// Her living prowlers while her fight is under way: saved in the checkpoint, not in this layout, each back in the
+    /// list as it comes back into the world (`CreatureLoaded`).
+    @transient EntityRef[] prowlers;
+    @transient bool recoveringArlokk; /// her fight came back from its checkpoint: she fights the first player back
+
+    private bool arlokkActive() const
+    {
+        return encounters[ZgEncounter.arlokk] == EncounterState.inProgress;
+    }
 
     enum Step : ubyte { prowlers }
     Schedule!Step steps;
@@ -110,6 +124,21 @@ struct ZulGurub
             break;
         case npcMandokir:
             mandokir = e.creature;
+            break;
+        case npcArlokk:
+            arlokk = e.creature;
+            if (arlokkActive) // a clean handoff brings her in without a signal: she stays in the checkpoint
+                copy.checkpointCreature(arlokk);
+            break;
+        case npcZulianProwler:
+            import std.algorithm.searching : canFind;
+
+            // Her prowlers as they come, and as a handoff or the checkpoint brings them back: kept with her fight.
+            if (e.summoned && arlokkActive && !prowlers.canFind(e.creature))
+            {
+                prowlers ~= e.creature;
+                copy.checkpointCreature(e.creature);
+            }
             break;
         case npcJindo:
             jindo = e.creature;
@@ -149,6 +178,90 @@ struct ZulGurub
             copy.answer(encounters[e.id]);
     }
 
+    /**
+     * The copy came back from its save. Arlokk's fight under way resumes from its checkpoint when a player comes back;
+     * one saved without her (an older save, or a crash before she came) failed: her forcefield opens, her prowlers stop
+     * and the gong calls her again.
+     */
+    void on(ref InstanceContext copy, const ref Restored e)
+    {
+        if (!arlokkActive)
+            return;
+        if (copy.hasSavedCreature(npcArlokk))
+        {
+            recoveringArlokk = true;
+            copy.waitForPlayer();
+        }
+        else
+            setArlokk(copy, EncounterState.failed);
+    }
+
+    /// A player back in the copy (after a crash, say) during Arlokk's fight: she and her idle prowlers go after them.
+    void on(ref InstanceContext copy, const ref PlayerEntered e)
+    {
+        if (!arlokkActive)
+            return;
+        if (recoveringArlokk)
+        {
+            recoveringArlokk = false;
+            if (arlokk && copy.alive(arlokk) && !copy.alive(copy.victimOf(arlokk)))
+                copy.attack(arlokk, e.player);
+        }
+        foreach (prowler; prowlers)
+            if (copy.alive(prowler) && !copy.alive(copy.victimOf(prowler)))
+                copy.attack(prowler, e.player);
+    }
+
+    /// Arlokk's checkpoint could not bring her back: her forcefield must not stay shut on the raid.
+    void on(ref InstanceContext copy, const ref CreatureEvaded e)
+    {
+        if (e.creature.entry == npcArlokk && arlokkActive)
+            setArlokk(copy, EncounterState.failed);
+    }
+
+    void on(ref InstanceContext copy, const ref CreatureDied e)
+    {
+        import std.algorithm.mutation : remove;
+        import std.algorithm.searching : countUntil;
+
+        const slain = prowlers.countUntil(e.creature);
+        if (slain >= 0)
+        {
+            prowlers = prowlers.remove(slain);
+            copy.releaseCheckpointActor(e.creature); // a prowler slain stays slain
+        }
+    }
+
+    /**
+     * Arlokk's encounter in `state`: her forcefield shut while it is under way, and she and her prowlers saved with the
+     * copy; a wipe or her death opens it, stops her prowlers and lets them go. Her death weakens Hakkar.
+     */
+    private void setArlokk(ref InstanceContext copy, EncounterState state)
+    {
+        encounters[ZgEncounter.arlokk] = state;
+        if (forcefield)
+            copy.door(forcefield, !arlokkActive);
+        if (state == EncounterState.done && hakkar && copy.alive(hakkar))
+            copy.signal(hakkar, ZgSignal.powerDown);
+        if (arlokkActive)
+        {
+            if (arlokk && copy.alive(arlokk))
+                copy.checkpointCreature(arlokk);
+        }
+        else
+        {
+            prowling = false;
+            recoveringArlokk = false;
+            steps.cancel(Step.prowlers);
+            if (arlokk)
+                copy.releaseCheckpointActor(arlokk);
+            foreach (prowler; prowlers)
+                copy.releaseCheckpointActor(prowler);
+            prowlers = null;
+        }
+        copy.checkpoint();
+    }
+
     void on(ref InstanceContext copy, const ref Signal e)
     {
         if (e.id == ZgSignal.prowlers)
@@ -172,6 +285,12 @@ struct ZulGurub
             return;
         const which = cast(ZgEncounter) e.id;
         const state = cast(EncounterState) e.value;
+        if (which == ZgEncounter.arlokk)
+        {
+            if (e.from.isCreature && e.from.entry == npcArlokk)
+                arlokk = e.from;
+            return setArlokk(copy, state);
+        }
         encounters[which] = state;
         final switch (which)
         {
@@ -179,16 +298,7 @@ struct ZulGurub
             if (state == EncounterState.done && hakkar && copy.alive(hakkar))
                 copy.signal(hakkar, ZgSignal.powerDown);
             break;
-        case ZgEncounter.arlokk:
-            if (forcefield)
-                copy.door(forcefield, state != EncounterState.inProgress);
-            if (state == EncounterState.done && hakkar && copy.alive(hakkar))
-                copy.signal(hakkar, ZgSignal.powerDown);
-            if (state != EncounterState.inProgress)
-            {
-                prowling = false;
-                steps.cancel(Step.prowlers);
-            }
+        case ZgEncounter.arlokk: // `setArlokk`
             break;
         case ZgEncounter.ohgan:
             if (state == EncounterState.special && mandokir)
@@ -1470,6 +1580,41 @@ unittest
 
     runtime.raise(h, c, Signal(EntityRef.init, ZgEncounter.ohgan, EncounterState.special));
     assert(copy.signals[$ - 1] == Signal(mandokir, ZgSignal.comeDown, 0));
+}
+
+/// Arlokk's fight saved without her (an older save, or a crash before the gong's summons came) failed when the copy
+/// comes back: her forcefield opens, her prowlers stop, and the gong may call her again.
+unittest
+{
+    import dmangos.bytes : ByteReader, ByteWriter;
+
+    alias self = dmangos.scripts.zulgurub;
+    auto runtime = ScriptRuntime.of!self();
+    auto copy = new FakeZgCopy;
+    auto c = InstanceContext(copy);
+    auto h = runtime.create(ScriptKind.instance, "instance_zulgurub");
+    runtime.raise(h, c, Signal(EntityRef.init, ZgEncounter.arlokk, EncounterState.inProgress));
+    runtime.raise(h, c, Signal(EntityRef.init, ZgSignal.prowlers, 1));
+    ByteWriter saved;
+    runtime.save(h, saved);
+
+    auto back = runtime.create(ScriptKind.instance, "instance_zulgurub");
+    auto reader = ByteReader(saved.data);
+    assert(runtime.load(back, reader));
+    auto again = new FakeZgCopy;
+    auto restored = InstanceContext(again);
+    runtime.raise(back, restored, Restored());
+    assert(!restored.waitingForPlayer && restored.checkpointRequested);
+    const field = EntityRef(0xF110_0000_0000_0003UL | (ulong(goForcefield) << 24));
+    runtime.raise(back, restored, ObjectLoaded(field));
+    foreach (i; 0 .. 4)
+        runtime.raise(back, restored, CreatureLoaded(EntityRef(0xF130_0000_0000_0010UL | (ulong(npcPantherTrigger) << 24) | i)));
+    runtime.tick(back, restored, 10_000);
+    assert(again.opened[field.guid], "her forcefield stays shut");
+    assert(again.summoned.length == 0, "her prowlers come on without her");
+    auto q = InstanceContext(again);
+    runtime.raise(back, q, Asked(EntityRef.init, ZgEncounter.arlokk));
+    assert(q.answerGiven == EncounterState.failed, "her fight, saved without her, stays under way: the gong refuses");
 }
 
 /// Mandokir's gaze: its player is told; gaining threat on him while it lasts, they are charged when it ends.
