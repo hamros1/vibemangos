@@ -152,10 +152,12 @@ package enum GameObjectAction : uint
     disturb = 5,
     unlock = 6,
     lock = 7,
+    open = 8,
     openAndUnlock = 9,
     close = 10,
     destroy = 12,
     rebuild = 13,
+    despawn = 15,
     closeAndLock = 18,
 }
 
@@ -325,10 +327,11 @@ final class GameObject : Replicable, Moving, PerViewer
         case GameObjectAction.unlock, GameObjectAction.lock:
             setLocked(action == GameObjectAction.lock);
             break;
-        case GameObjectAction.openAndUnlock:
+        case GameObjectAction.openAndUnlock, GameObjectAction.open:
             if (!doorOrButton)
                 return false;
-            setLocked(false);
+            if (action == GameObjectAction.openAndUnlock)
+                setLocked(false);
             useOpenable(world, true, 0);
             break;
         case GameObjectAction.destroy:

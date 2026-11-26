@@ -428,6 +428,7 @@ mixin template CharacterLogin()
             : context.config.rateRestOfflineInWilderness / 4;
         made.setRestBonus(character.restBonus + (offline > 0 ? made.computeRest(offline, rate) : 0),
             context.config.maxPlayerLevel);
+        made.setDrunkAfter(character.drunk, character.logoutTime > 0 ? context.unixTime - character.logoutTime : 0);
         made.loadQuestLog(context.data.quests);
         made.reputation = loadedReputation(character.guid, character.race, character.classId);
         made.clearChanges();

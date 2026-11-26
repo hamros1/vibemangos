@@ -1046,6 +1046,13 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         auto applied = auras.apply(aura, values, isNew);
         if (isNew && applied.has(AuraType.transform))
             refreshLook();
+        // Its crowd control at once (CMaNGOS's `SetStunned` as the aura lands), not at its next tick: a stun of a
+        // tenth of a second (Arcane Explosion's on its caster) would run out first.
+        with (AuraType)
+            if (isNew && (applied.has(modStun) || applied.has(modFear) || applied.has(modConfuse) || applied.has(modSilence)
+                    || applied.has(modPacify) || applied.has(modDisarm) || applied.has(modRoot)))
+                if (auto motion = cast(MotionWorld) world)
+                    refreshAuraMovement(motion);
         return applied;
     }
 

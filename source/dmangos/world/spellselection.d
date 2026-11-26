@@ -42,12 +42,11 @@ package ImplicitTarget namedGameObjectShape(const ref SpellInfo spell, size_t ef
         || (spell.casting.speed > 0 && namedGameObjectAnimation(spell, effect) < 0) || (spell.attributesEx & channels))
         return ImplicitTarget.none;
     const action = cast(GameObjectAction) spell.miscValue[effect];
-    // These spells disturb a database-selected trap. Other disturb actions use different object types.
-    const disturbTrap = action == GameObjectAction.disturb
-        && (spell.id == 15746 || spell.id == 16556 || spell.id == 19873 || (spell.id >= 30116 && spell.id <= 30119));
-    if (!disturbTrap && namedGameObjectAnimation(spell, effect) < 0
-        && !action.among(GameObjectAction.unlock, GameObjectAction.lock, GameObjectAction.openAndUnlock,
-            GameObjectAction.close, GameObjectAction.destroy, GameObjectAction.rebuild, GameObjectAction.closeAndLock))
+    // Disturb sets off a trap (or uses a button); open uses a door, a button or a goober; despawn takes it away.
+    if (namedGameObjectAnimation(spell, effect) < 0
+        && !action.among(GameObjectAction.disturb, GameObjectAction.unlock, GameObjectAction.lock, GameObjectAction.open,
+            GameObjectAction.openAndUnlock, GameObjectAction.close, GameObjectAction.destroy, GameObjectAction.rebuild,
+            GameObjectAction.despawn, GameObjectAction.closeAndLock))
         return ImplicitTarget.none;
     const a = spell.implicitTargetA[effect], b = spell.casting.implicitTargetB[effect];
     if (a == ImplicitTarget.gameobjectScriptNearCaster && b == ImplicitTarget.none)

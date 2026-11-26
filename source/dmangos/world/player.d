@@ -95,6 +95,7 @@ struct CharacterData
     bool[uint] rewardedQuests;   /// `character_queststatus` rows with `rewarded` set
     float restBonus = 0;         /// `rest_bonus`: rested XP
     long logoutTime;             /// `logout_time`, Unix time
+    uint drunk;                  /// `drunk`: how drunk, 0 .. 0xFFFF (`Player.drunk`)
     bool logoutResting;          /// `is_logout_resting`: logged out in an inn or a city
     long deathExpireTime;        /// `death_expire_time`: deaths until then make the corpse wait longer
     uint[8] taxiMask;            /// `taximask`: the flight masters' nodes it knows, a bit each
@@ -127,6 +128,7 @@ struct CharacterProgress
     long deathExpireTime; /// `death_expire_time`
     string taxiMask;      /// `taximask`: 8 numbers, each followed by a space
     string taxiPath;      /// `taxi_path`: the flight under way, if any
+    ushort drunk;         /// `drunk`
 }
 
 /// Who looks at a player: the player itself, a member of its group, or anyone else.
@@ -584,6 +586,7 @@ final class Player : InventoryOwner
         p.playerFlags = values.get!PLAYER_FLAGS;
         p.deathExpireTime = data.deathExpireTime;
         p.taxiPath = data.taxiPath;
+        p.drunk = drunk;
         foreach (value; data.taxiMask)
         {
             import std.conv : to;
@@ -809,6 +812,44 @@ final class Player : InventoryOwner
             return false;
         values.set!UNIT_FIELD_POWER1(power, next);
         return true;
+    }
+
+    /**
+     * How drunk the player is (CMaNGOS's `m_drunk`): 0 sober, from 0x2 tipsy, from 12800 drunk, from 23000 smashed;
+     * the client sees it beside the gender (`PLAYER_BYTES_3`'s first half, its low bit the gender). It wears off
+     * (`soberUp`) and death ends it.
+     */
+    package ushort drunk;
+    private int drunkMs; // since it last wore off by a step
+
+    /// Sets how drunk it is (`SetDrunkValue`).
+    package void setDrunk(uint value)
+    {
+        drunk = cast(ushort)(value > 0xFFFF ? 0xFFFF : value);
+        values.setHalf!PLAYER_BYTES_3(0, cast(ushort)((data.gender & 1) | (drunk & 0xFFFE)));
+        if (!drunk)
+            drunkMs = 0;
+    }
+
+    /// Time passes: 256 less every 10 seconds (`HandleSobering`).
+    package void soberUp(int ms)
+    {
+        if (!drunk)
+            return;
+        drunkMs += ms;
+        if (drunkMs > 10_000)
+        {
+            drunkMs = 0;
+            setDrunk(drunk <= 256 ? 0 : drunk - 256);
+        }
+    }
+
+    /// At login: as drunk as it was, less for the time away (sober after 15 minutes, CMaNGOS's `soberFactor`).
+    package void setDrunkAfter(uint saved, long secondsAway)
+    {
+        enum long sober = 15 * 60;
+        const away = secondsAway < 0 ? 0 : secondsAway;
+        setDrunk(away >= sober ? 0 : cast(uint)(saved * (1 - cast(double) away / sober)));
     }
 
     /// Sets the rest (`dmangos.world.experience.restCap`: at most one and a half levels), shown as "rested" over 10.

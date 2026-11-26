@@ -51,6 +51,7 @@ struct NpcSpell
     uint[] casters;   /// creature entries
     uint flags;       /// the caster's cast flags (`dmangos.world.eventai`'s `cast*`)
     string source;    /// eai, list, script, template, dbscript
+    int eaiTarget = -1; /// the EventAI cast's target type (0: itself); -1 for any other source
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -90,7 +91,7 @@ NpcSpell[] npcSpells(const WorldData data)
         db.close();
 
     NpcSpell[uint] found;
-    void add(uint spell, uint entry, string source, uint flags)
+    void add(uint spell, uint entry, string source, uint flags, int eaiTarget = -1)
     {
         if (spell == 0 || data.spells.spell(spell) is null)
             return;
@@ -106,6 +107,7 @@ NpcSpell[] npcSpells(const WorldData data)
             {
                 sp.source = source;
                 sp.flags = flags;
+                sp.eaiTarget = eaiTarget;
             }
             sp.casters ~= entry;
         }
@@ -114,13 +116,14 @@ NpcSpell[] npcSpells(const WorldData data)
     // EventAI: the cast action (11), its spell, its flags.
     enum eaiCast = 11, eaiRelay = 53;
     uint[][uint] relayCreatures; // relay script -> the creatures whose EventAI starts it
-    foreach (row; db.query!("SELECT creature_id, action1_type, action1_param1, action1_param3, action2_type, "
-            ~ "action2_param1, action2_param3, action3_type, action3_param1, action3_param3 FROM creature_ai_scripts")())
+    foreach (row; db.query!("SELECT creature_id, action1_type, action1_param1, action1_param3, action1_param2, "
+            ~ "action2_type, action2_param1, action2_param3, action2_param2, action3_type, action3_param1, "
+            ~ "action3_param3, action3_param2 FROM creature_ai_scripts")())
         foreach (k; 0 .. 3)
         {
-            const type = positive(row, 1 + 3 * k), param = positive(row, 2 + 3 * k);
+            const type = positive(row, 1 + 4 * k), param = positive(row, 2 + 4 * k);
             if (type == eaiCast && param > 0)
-                add(param, positive(row, 0), "eai", positive(row, 3 + 3 * k));
+                add(param, positive(row, 0), "eai", positive(row, 3 + 4 * k), cast(int) positive(row, 4 + 4 * k));
             else if (type == eaiRelay && param > 0)
                 relayCreatures[param] ~= positive(row, 0);
         }
@@ -400,7 +403,27 @@ private final class NpcSweeper
         const pullsPlayer = s.hasEffect(SpellEffect.pullTowards);
         const moves = teleportsPlayer || pullsPlayer || s.hasEffect(SpellEffect.leap);
         const destination = teleportsPlayer ? sp.id in data.spellTargets : null;
-        const entry = sp.casters[0];
+        // Its first caster; one that can pay for it if the first cannot (a level 35 Sea Witch has a Blizzard of 1400
+        // mana among her spells, more than she has: she never casts it, Volida does).
+        uint entry = sp.casters[0];
+        {
+            import dmangos.world.spellcast : powerCost;
+
+            bool affords(uint e)
+            {
+                const ct = e in data.creatureTemplates;
+                if (ct is null || s.casting.powerType != 0)
+                    return true;
+                return powerCost(*s, ct.maxLevel, ct.maxLevelMana, ct.maxLevelHealth, ct.maxLevelMana) <= ct.maxLevelMana;
+            }
+            if (!affords(entry))
+                foreach (other; sp.casters[1 .. $])
+                    if (affords(other))
+                    {
+                        entry = other;
+                        break;
+                    }
+        }
         const t = entry in data.creatureTemplates;
         string[] problems;
         bool mayRoll, checkedAny;
@@ -426,7 +449,10 @@ private final class NpcSweeper
                         enumUnitsScriptAoeAtSrcLoc, enumUnitsScriptAoeAtDestLoc, enumUnitsScriptInCone60)))
                     return Who.friend;
             const by = whoOf(*s, i, true);
-            return by == Who.pet ? Who.nobody : by == Who.friend && atItself ? Who.caster : by;
+            // A friend's spell its script casts at itself (`CAST_FORCE_TARGET_SELF`: a Cannibal Ghoul's Health
+            // Funnel heals the ghoul) is at the caster.
+            const self = atItself || (sp.flags & castForceTargetSelf);
+            return by == Who.pet ? Who.nobody : by == Who.friend && self ? Who.caster : by;
         }
         bool any(Who wanted)
         {
@@ -445,7 +471,8 @@ private final class NpcSweeper
                 || (s.effect[i] == SpellEffect.applyAura && s.casting.applyAuraName[i].among(
                     AuraType.periodicManaLeech, AuraType.powerBurnMana) && s.miscValue[i] == 0);
         const level = clamp(t.maxLevel, 1, 60);
-        const distance = r[1] <= 5 ? 2.0f : max(2.0f, min(r[0] + (pullsPlayer ? 20 : 3), r[1] - 1));
+        // (A spell of no range at an enemy, Black Arrow, reaches as far as the two combat reaches: in melee, a yard.)
+        const distance = r[1] == 0 ? 1.0f : r[1] <= 5 ? 2.0f : max(2.0f, min(r[0] + (pullsPlayer ? 20 : 3), r[1] - 1));
         const facing = moves ? PI / 4 : 0;
         auto heroAt = spot;
         heroAt.x += distance * cos(facing);
@@ -510,6 +537,15 @@ private final class NpcSweeper
         }
         if (hostileSpell)
             fighting(caster);
+        // Free of what its spawn holds it in (Thaddius stunned until his adds die, a target dummy's spawn stun): a
+        // creature so held casts nothing, as in CMaNGOS.
+        {
+            import dmangos.world.defines : UnitFlags;
+
+            enum uint held = UnitFlags.stunned | UnitFlags.fleeing | UnitFlags.confused | UnitFlags.silenced
+                | UnitFlags.pacified;
+            caster.values.set!UNIT_FIELD_FLAGS(caster.values.get!UNIT_FIELD_FLAGS & ~held);
+        }
         const makeHostile = hostileSpell && !canAttack(caster.ai.relatingOf, heroUnit.relating, context.client);
         if (makeHostile)
             caster.ai.scriptFaction(14);
@@ -573,13 +609,46 @@ private final class NpcSweeper
                 break;
             }
         }
+        // A resurrection is at the player, dead (Mandokir's chained spirits revive the raid's dead).
+        const raisesHero = s.hasEffect(SpellEffect.resurrect) || s.hasEffect(SpellEffect.resurrectNew);
+        if (raisesHero)
+        {
+            import dmangos.world.unit : Blow;
+
+            me.sufferDamage(UnitRef.init, 100_000_000, Blow.spell());
+        }
         hero.read();
 
         // Its target: the player for what is at an enemy, else its friend, else itself.
         ulong target = wantsEnemy ? me.player.guid : wantsFriend && friend !is null ? friend.guid : caster.guid;
         // A spell of no range (around itself) is cast at itself, as its script would.
-        if ((sp.flags & castForceTargetSelf) || atItself)
+        // One its script makes its target cast on itself (`CAST_FORCE_TARGET_SELF`) is at the player if it is at an
+        // enemy (Mark of Detonation), else at itself.
+        if (((sp.flags & castForceTargetSelf) && (!wantsEnemy || sp.eaiTarget == 0)) || atItself)
             target = caster.guid;
+        // So is a flight (William Kielar's gossip sends the player to Naxxramas).
+        const flies = s.hasEffect(SpellEffect.sendTaxi);
+        if (raisesHero || flies)
+            target = me.player.guid;
+        // The player at the path's first node: a flight begins there, as the gossip's player stands by it.
+        foreach (i; 0 .. 3)
+            if (s.effect[i] == SpellEffect.sendTaxi)
+                if (const path = context.client.taxiPaths.lookup(cast(uint) s.miscValue[i]))
+                    if (const node = context.client.taxiNodes.lookup(path.from))
+                        if (node.mapId == map.id)
+                            me.player.movement.position = Position(node.x, node.y, node.z, 0);
+        // A spell whose script passes the player over (Scourge Strike kills the invasion's defenders, not players:
+        // `TargetChecked`) has nothing to show at the player.
+        if (target == me.player.guid)
+        {
+            bool kept;
+            foreach (i; 0 .. 3)
+                kept |= s.effect[i] && caster.ai.scriptPicked(s, i, [me.player.guid]).length > 0;
+            if (!kept)
+                return NpcOutcome(true, null, false, true);
+        }
+        const drunkBefore = me.player.drunk;
+        bool resurrectAsked;
 
         // What there is before.
         const all = [Who.caster, Who.enemy, Who.friend];
@@ -630,6 +699,19 @@ private final class NpcSweeper
         bool[3] summonSeen, healLogged;
         bool[ulong] damageLogged; // the units its damage log names
         bool areaSeen, displayChanged;
+        // A transform into the look it has (Plucky's chicken form, back from the human one his script gave him: its
+        // creature is himself) changes nothing to see.
+        bool intoOwnLook(size_t i, Who x)
+        {
+            auto unit = unitOf(x);
+            const t = cast(uint) s.miscValue[i] in data.creatureTemplates;
+            if (!unit || t is null || x !in displayBefore)
+                return false;
+            foreach (model; t.modelIds)
+                if (model && model != displayBefore[x])
+                    return false;
+            return true;
+        }
         uint[3] leastHealth = healthOf, mostPower = powerOf;
         bool[Who] diedSeen;
         bool landed;
@@ -676,6 +758,8 @@ private final class NpcSweeper
                     hero.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
                     landed = true;
                 }
+                else if (p.opcode == Opcode.SMSG_RESURRECT_REQUEST)
+                    resurrectAsked = true;
                 else if (p.opcode == Opcode.SMSG_SPELLHEALLOG)
                 {
                     auto rd = ByteReader(p.body_);
@@ -783,7 +867,10 @@ private final class NpcSweeper
                 }
                 break;
             case heal, healMaxHealth, healMechanical:
-                if (unit && !healLogged[i])
+                // A heal of nothing (Divining Chant, Magic Backlash: a visual) has nothing to see.
+                if (effect != healMaxHealth && imported!"dmangos.world.spellcast".effectValue(*s, i, 60, 1) <= 0)
+                    checked = false;
+                else if (unit && !healLogged[i])
                     failed = format!"no heal of the %s"(name);
                 break;
             case applyAura, applyAreaAuraParty, applyAreaAuraFriend, applyAreaAuraEnemy, applyAreaAuraPet:
@@ -815,7 +902,7 @@ private final class NpcSweeper
                 else if (kind == AuraType.periodicDamage && s.casting.amplitude[i] && s.casting.amplitude[i] <= 5000
                         && leastHealth[i] >= healthOf[i] && !diedSeen.get(x, false) && healthOf[i] > 0)
                     failed = format!"aura %s: on the %s, no damage"(kind, name);
-                else if (kind == AuraType.transform && !displayChanged)
+                else if (kind == AuraType.transform && !displayChanged && !intoOwnLook(i, x))
                     failed = format!"aura %s: on the %s, its look unchanged"(kind, name);
                 break;
             case persistentAreaAura:
@@ -905,6 +992,23 @@ private final class NpcSweeper
                 else if (unit && !dispellableBefore[i])
                     checked = false;
                 break;
+            case inebriate: // the player more drunk
+                if (x == Who.enemy && unit)
+                {
+                    if (me.player.drunk <= drunkBefore)
+                        failed = "the player no more drunk";
+                }
+                else
+                    checked = false;
+                break;
+            case sendTaxi: // the player on the path
+                if (!me.flying)
+                    failed = "the player not flying";
+                break;
+            case resurrect, resurrectNew: // the dead player offered to come back
+                if (!resurrectAsked)
+                    failed = "no resurrection offered the player";
+                break;
             default:
                 checked = false;
                 break;
@@ -948,8 +1052,17 @@ private final class NpcSweeper
         foreach (power; 0 .. 5)
             me.values.set!UNIT_FIELD_POWER1(power, me.values.get!UNIT_FIELD_MAXPOWER1(power));
         // Health enough to live through an elite's blow: a spell's aura after its damage (Mortal Strike's, War
-        // Stomp's stun) is on a living target, not stripped by its death.
-        me.values.set!UNIT_FIELD_MAXHEALTH(me.values.get!UNIT_FIELD_MAXHEALTH * 50);
+        // Stomp's stun; Frost Burn's slow before its mana burn's damage) is on a living target, not stripped by its
+        // death. An aura's, so that a recount of its stats as an aura lands keeps it.
+        {
+            import dmangos.world.auras : makeAura;
+
+            static SpellInfo hardy;
+            hardy.id = uint.max - 1;
+            hardy.effect[0] = SpellEffect.applyAura;
+            hardy.casting.applyAuraName[0] = AuraType.modIncreaseHealth;
+            client.session.inWorld.addAura(makeAura(&hardy, guid, level, -1, true, [500_000, 0, 0]));
+        }
         me.values.set!UNIT_FIELD_HEALTH(me.values.get!UNIT_FIELD_MAXHEALTH);
         client.read();
         return client;

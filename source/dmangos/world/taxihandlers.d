@@ -196,6 +196,65 @@ mixin template TaxiHandlers()
             flight.to, flight.cost, taxiSpline.duration);
     }
 
+    /**
+     * A spell's flight (`SPELL_EFFECT_SEND_TAXI`, CMaNGOS's `ActivateTaxiPathTo(pathId, spellId)`): along taxi path
+     * `pathId`, free, on its first node's mount for the player's team (none if it has none). The player is near its
+     * first node, if that node has a place (CMaNGOS's bound: a squared distance of 1000, about 31.6 yards); the mount
+     * and a shapeshift it may not fly in come off, its cast and its fight stop.
+     */
+    package bool flyTaxiPath(uint pathId)
+    {
+        import dmangos.world.auras : AuraType;
+
+        const entry = context.client.taxiPaths.lookup(pathId);
+        if (entry is null || flying || player is null)
+            return false;
+        if (loggingOut || inCombat)
+        {
+            sendTaxiReply(TaxiReply.playerBusy);
+            return false;
+        }
+        const start = context.client.taxiNodes.lookup(entry.from);
+        if (start is null)
+        {
+            sendTaxiReply(TaxiReply.noSuchPath);
+            return false;
+        }
+        const at = player.position;
+        if ((start.x != 0 || start.y != 0 || start.z != 0) && (start.mapId != map.id
+                || (start.x - at.x) ^^ 2 + (start.y - at.y) ^^ 2 + (start.z - at.z) ^^ 2 > 1000))
+        {
+            sendTaxiReply(TaxiReply.tooFarAway);
+            return false;
+        }
+        TaxiFlight flight;
+        if (!planFlight(context.client, [entry.from, entry.to], 0, flight))
+        {
+            sendTaxiReply(TaxiReply.unspecified);
+            return false;
+        }
+        enum ubyte battleStance = 17, defensiveStance = 18, berserkerStance = 19, shadow = 28, stealth = 30;
+        const form = player.values.getByte!UNIT_FIELD_BYTES_1(2);
+        const keepsForm = !form || form == battleStance || form == defensiveStance || form == berserkerStance
+            || form == shadow || form == stealth;
+        foreach (aura; player.auras.list.dup)
+            if (aura.has(AuraType.mounted) || (!keepsForm && aura.has(AuraType.modShapeshift)))
+                removeAura(aura);
+        if (player is null)
+            return false;
+        interruptCast(SpellCastResult.interrupted);
+        const mountCreature = taxiMountCreature(start, context.client.teamForRace(player.data.race));
+        const mountTemplate = mountCreature in context.data.creatureTemplates;
+        const display = mountTemplate is null ? 0 : chooseDisplay(*mountTemplate, map.random);
+        stopAttack(false);
+        cancelTrade(true);
+        sendTaxiReply(TaxiReply.ok);
+        takeOff(flight, display);
+        info!"%s: '%s' flies by a spell along path %s from node %s to %s (%s ms)"(remoteAddress, player.data.name,
+            pathId, flight.from, flight.to, taxiSpline.duration);
+        return true;
+    }
+
     /// Mounted on `display`, flagged, along `flight` from where the player is.
     private void takeOff(ref TaxiFlight flight, uint display)
     {

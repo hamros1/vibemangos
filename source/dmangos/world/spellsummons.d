@@ -24,6 +24,16 @@ void summonWildObject(ref Caster caster, const(SpellInfo)* spell, size_t i, cons
     context.placeWildGameObject(caster.map, entry, wildObjectDestination(caster, targets), wildObjectDuration(caster, spell));
 }
 
+/// A creature's `SPELL_EFFECT_SUMMON_OBJECT_SLOT1` .. 4: its trap ahead of it, or at the cast's destination.
+void summonCreatureTrap(ref Caster caster, const(SpellInfo)* spell, size_t i, const ref SpellTargets targets)
+{
+    auto creature = caster.creature;
+    if (creature is null)
+        return;
+    caster.context.summonCreatureTrap(caster.map, creature, cast(uint) spell.miscValue[i],
+        wildObjectDestination(caster, targets), wildObjectDuration(caster, spell));
+}
+
 package enum OutdoorObjectCast { ordinary, committed, failed }
 
 /// Saves an immediate object-only spell's placement before its cast success goes to the client.

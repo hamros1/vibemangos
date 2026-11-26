@@ -914,6 +914,7 @@ private:
         updateTotemEnchants();
         updatePetMood(elapsed);
         updateTaxi(cast(int) elapsed.total!"msecs");
+        player.soberUp(cast(int) elapsed.total!"msecs");
         updateCrowdControl(cast(int) elapsed.total!"msecs");
         updateReactives(cast(int) elapsed.total!"msecs");
         updateTimedQuests();

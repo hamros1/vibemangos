@@ -449,7 +449,8 @@ package ImplicitTarget creatureAreaShape(const ref SpellInfo spell, size_t i)
     with (ImplicitTarget)
     {
         const shape = b.among(enemiesAroundSource, enemiesAroundDest) ? b
-            : a.among(enemiesAroundSource, enemiesAroundDest, enemiesInCone) ? a : none;
+            : a.among(enemiesAroundSource, enemiesAroundDest, enemiesInCone) ? a
+            : a == enumUnitsEnemyInCone54 ? enemiesInCone : none; // its cone as the other's
         if (shape == none)
             return none;
         if (isDirectMagicDamageEffect(spell, i))

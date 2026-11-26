@@ -124,7 +124,7 @@ private struct CharacterRow
     @Column("totaltime") uint totalTime;
     @Column("leveltime") uint levelTime;
     @Column("at_login") uint atLogin;
-    uint watchedFaction, health, power1, power2, power3, power4, power5;
+    uint watchedFaction, drunk, health, power1, power2, power3, power4, power5;
     string exploredZones;
     uint ammoId;
     ubyte actionBars;
@@ -145,7 +145,7 @@ private struct CharacterRow
         static foreach (field; ["guid", "account", "name", "race", "classId", "gender", "level", "xp", "money",
             "playerBytes", "playerBytes2", "playerFlags", "map", "zone", "cinematic", "totalTime", "levelTime",
             "atLogin", "watchedFaction", "health", "exploredZones", "ammoId", "actionBars", "restBonus",
-            "logoutTime", "deathExpireTime", "taxiPath"])
+            "logoutTime", "deathExpireTime", "taxiPath", "drunk"])
             __traits(getMember, c, field) = __traits(getMember, this, field);
         c.position = Position(x, y, z, orientation);
         c.power = [power1, power2, power3, power4, power5];
@@ -386,11 +386,12 @@ final class CharacterStatements
             ~ "map = ?, zone = ?, totaltime = ?, leveltime = ?, logout_time = ?, health = ?, power1 = ?, "
             ~ "power2 = ?, power3 = ?, power4 = ?, power5 = ?, actionBars = ?, cinematic = ?, at_login = (at_login & 1) | ?, "
             ~ "level = ?, xp = ?, money = ?, exploredZones = ?, equipmentCache = ?, ammoId = ?, rest_bonus = ?, "
-            ~ "is_logout_resting = ?, playerFlags = ?, death_expire_time = ?, taximask = ?, taxi_path = ? WHERE guid = ?")(
+            ~ "is_logout_resting = ?, playerFlags = ?, death_expire_time = ?, taximask = ?, taxi_path = ?, drunk = ? "
+            ~ "WHERE guid = ?")(
             p.position.x, p.position.y, p.position.z, p.position.orientation, p.map, p.zone, p.totalTime, p.levelTime,
             now, p.health, p.power[0], p.power[1], p.power[2], p.power[3], p.power[4], p.actionBars, p.cinematic,
             p.atLogin, p.level, p.xp, p.money, p.exploredZones, p.equipmentCache, p.ammoId, p.restBonus,
-            p.resting ? 1 : 0, p.playerFlags, p.deathExpireTime, p.taxiMask, p.taxiPath, p.guid);
+            p.resting ? 1 : 0, p.playerFlags, p.deathExpireTime, p.taxiMask, p.taxiPath, p.drunk, p.guid);
     }
 
     /// See `WorldDatabase.saveCorpse`.

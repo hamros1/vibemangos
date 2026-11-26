@@ -50,16 +50,16 @@ struct SpellCast
 
 /// The effects no caster's cast does yet (some, such as skills and proficiencies, are done when a spell is learned).
 private enum SpellEffect[] notDoneByAny = [SpellEffect.portalTeleport, SpellEffect.environmentalDamage,
-    SpellEffect.bind, SpellEffect.portal, SpellEffect.ritualBase, SpellEffect.ritualSpecialize,
+    SpellEffect.bind, SpellEffect.ritualBase, SpellEffect.ritualSpecialize,
     SpellEffect.ritualActivatePortal, SpellEffect.dodge, SpellEffect.evade, SpellEffect.parry, SpellEffect.block,
     SpellEffect.weapon, SpellEffect.defense, SpellEffect.triggerMissile, SpellEffect.summonChangeItem,
     SpellEffect.spellDefense, SpellEffect.language, SpellEffect.dualWield,
-    SpellEffect.skillStep, SpellEffect.addHonor, SpellEffect.tradeSkill, SpellEffect.stealth,
+    SpellEffect.addHonor, SpellEffect.tradeSkill, SpellEffect.stealth,
     SpellEffect.forceCriticalHit, SpellEffect.guaranteeHit, SpellEffect.proficiency, SpellEffect.healthFunnel,
     SpellEffect.powerFunnel, SpellEffect.pull, SpellEffect.healMechanical, SpellEffect.createHouse,
     SpellEffect.bindSight, SpellEffect.threatAll, SpellEffect.enchantHeldItem,
-    SpellEffect.summonPhantasm, SpellEffect.inebriate, SpellEffect.destroyAllTotems, SpellEffect.summonDemon,
-    SpellEffect.spiritHeal, SpellEffect.skill, SpellEffect.teleportGraveyard, SpellEffect.n122, SpellEffect.sendTaxi,
+    SpellEffect.summonPhantasm, SpellEffect.destroyAllTotems,
+    SpellEffect.spiritHeal, SpellEffect.skill, SpellEffect.teleportGraveyard, SpellEffect.n122,
     SpellEffect.modifyThreatPercent, SpellEffect.n126, SpellEffect.n127,
     SpellEffect.applyAreaAuraFriend, SpellEffect.applyAreaAuraEnemy];
 
@@ -93,7 +93,17 @@ private enum SpellEffect[] creaturesDo = [SpellEffect.none, SpellEffect.schoolDa
     SpellEffect.learnSpell, SpellEffect.createItem, SpellEffect.addComboPoints, SpellEffect.spawn, SpellEffect.detect,
     SpellEffect.attackMe, SpellEffect.attack, SpellEffect.persistentAreaAura, SpellEffect.dispel, SpellEffect.dispelMechanic,
     SpellEffect.charge, SpellEffect.leap, SpellEffect.addExtraAttacks, SpellEffect.summonTotem, SpellEffect.summonTotemSlot1,
-    SpellEffect.summonTotemSlot2, SpellEffect.summonTotemSlot3, SpellEffect.summonTotemSlot4];
+    SpellEffect.summonTotemSlot2, SpellEffect.summonTotemSlot3, SpellEffect.summonTotemSlot4,
+    // What CMaNGOS does for a creature's cast: nothing for a temporary enchantment, a lock, a skill step or Portal
+    // (a player's, an item's, unused); the rest as for a player's.
+    SpellEffect.enchantItemTemporary, SpellEffect.openLock, SpellEffect.openLockItem, SpellEffect.skillStep,
+    SpellEffect.portal, SpellEffect.questComplete, SpellEffect.resurrect, SpellEffect.resurrectNew,
+    SpellEffect.sanctuary, SpellEffect.summonObjectSlot1, SpellEffect.summonObjectSlot2, SpellEffect.summonObjectSlot3,
+    SpellEffect.summonObjectSlot4, SpellEffect.inebriate, SpellEffect.sendTaxi, SpellEffect.summonDemon];
+
+/// What a player's cast does not do yet, though a creature's does (a warlock's Inferno summons by its own script; a
+/// skill step comes with the learning of a spell).
+private enum SpellEffect[] notDoneByPlayers = [SpellEffect.summonDemon, SpellEffect.skillStep];
 
 /// Whether a cast of `kind` does `effect` (the NPC sweep names what is not done by this).
 bool doneBy(UnitKind kind, const ref SpellInfo spell, size_t i) pure nothrow @nogc @safe
@@ -108,13 +118,14 @@ bool doneBy(UnitKind kind, const ref SpellInfo spell, size_t i) pure nothrow @no
     final switch (kind)
     {
     case UnitKind.none: return false;
-    case UnitKind.player: return true;
+    case UnitKind.player: return !undoneByPlayers[effect];
     case UnitKind.creature: return doneByCreatures[effect];
     }
 }
 
 /// The two lists as tables by effect, made at compile time.
-private immutable bool[SpellEffect.max + 1] undoneByAny = table(notDoneByAny), doneByCreatures = table(creaturesDo);
+private immutable bool[SpellEffect.max + 1] undoneByAny = table(notDoneByAny), doneByCreatures = table(creaturesDo),
+    undoneByPlayers = table(notDoneByPlayers);
 
 private bool[SpellEffect.max + 1] table(const SpellEffect[] effects) pure nothrow @safe
 {
@@ -190,7 +201,13 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         if (!manaExplosion && !mayHurt(caster, victim))
             break;
         // (its modifiers, `SPELLMOD_DAMAGE`, on the damage with the spell power)
-        const damage = p !is null ? p.classSchoolDamage(spell, i, target, value) : value;
+        auto damage = p !is null ? p.classSchoolDamage(spell, i, target, value) : value;
+        enum uint thundercrash = 25599; // General Rajaxx's: half the target's health, at least 200, and its threat
+        if (spell.id == thundercrash && p is null && target != caster.guid) // doubled (CMaNGOS's `EffectSchoolDMG`)
+        {
+            ai.modifyThreatPercent(target, 100);
+            damage = victim.health / 2 < 200 ? 200 : cast(int)(victim.health / 2);
+        }
         spellDamage(caster, spell, victim, damage > 0 ? damage : 0, spell.casting.school,
             SpellDamage(true, SpellModOp.damage, bounce: SpellBounce(spell.casting.dmgMultiplier[i], bounce)));
         break;
@@ -341,7 +358,11 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         p.selfResurrect(spell, i, value);
         break;
     case SpellEffect.resurrect, SpellEffect.resurrectNew: // SPELL_EFFECT_RESURRECT (a share of health and mana), SPELL_EFFECT_RESURRECT_NEW (amounts)
-        p.resurrectEffect(spell, i, target, value, c);
+        if (p !is null)
+            p.resurrectEffect(spell, i, target, value, c);
+        else // a creature's at a dead player (Mandokir's chained spirits): offered to come back beside the creature
+            if (auto who = cast(typeof(p)) context.onlinePlayer(target))
+                who.resurrectedByCreature(spell, i, value, map.id, caster.position, caster.guid);
         break;
     case SpellEffect.dispel: // SPELL_EFFECT_DISPEL
     {
@@ -357,6 +378,8 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         p.skinCreature(target);
         break;
     case SpellEffect.openLock, SpellEffect.openLockItem: // SPELL_EFFECT_OPEN_LOCK, _OPEN_LOCK_ITEM: a game object's lock, or an item's
+        if (p is null) // a creature opens none (`EffectOpenLock`: "No Player Caster")
+            break;
         if (c.targets.gameObject)
             p.openLock(spell, i, c.targets.gameObject, c.castItemEntry);
         else if (c.targets.item)
@@ -364,7 +387,7 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         break;
     case SpellEffect.questComplete: // SPELL_EFFECT_QUEST_COMPLETE: the target player's quest of the misc value (`AreaExploredOrEventHappens`)
     {
-        auto who = target == caster.guid ? p : cast(typeof(p)) context.onlinePlayer(target);
+        auto who = p !is null && target == caster.guid ? p : cast(typeof(p)) context.onlinePlayer(target);
         if (who !is null && who.player !is null && spell.miscValue[i] > 0)
             who.areaExploredOrEventHappens(cast(uint) spell.miscValue[i]);
         break;
@@ -511,8 +534,30 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         p.enchantTarget(c.targets, cast(uint) spell.miscValue[i], false, 0);
         p.updateCraftSkill(spell.id);
         break;
-    case SpellEffect.enchantItemTemporary: // SPELL_EFFECT_ENCHANT_ITEM_TEMPORARY
-        p.enchantTarget(c.targets, cast(uint) spell.miscValue[i], true, value);
+    case SpellEffect.enchantItemTemporary: // SPELL_EFFECT_ENCHANT_ITEM_TEMPORARY: a player's item; a creature's poison is nothing
+        if (p !is null)
+            p.enchantTarget(c.targets, cast(uint) spell.miscValue[i], true, value);
+        break;
+    case SpellEffect.portal: // SPELL_EFFECT_PORTAL: unused since 1.2 (CMaNGOS's `EffectUnused`)
+    case SpellEffect.skillStep: // SPELL_EFFECT_SKILL_STEP: a creature's (Beast Tracking on itself) is nothing
+        break;
+    case SpellEffect.inebriate: // SPELL_EFFECT_INEBRIATE: the target player more drunk, 256 a point (`EffectInebriate`)
+    {
+        auto who = p !is null && target == caster.guid ? p : cast(typeof(p)) context.onlinePlayer(target);
+        if (who !is null && who.player !is null && value > 0)
+            who.player.setDrunk(who.player.drunk + value * 256);
+        break;
+    }
+    case SpellEffect.sendTaxi: // SPELL_EFFECT_SEND_TAXI: the target player flies the misc value's taxi path, free
+    {
+        auto who = p !is null && target == caster.guid ? p : cast(typeof(p)) context.onlinePlayer(target);
+        if (who !is null && who.player !is null && spell.miscValue[i] > 0)
+            who.flyTaxiPath(cast(uint) spell.miscValue[i]);
+        break;
+    }
+    case SpellEffect.summonDemon: // SPELL_EFFECT_SUMMON_DEMON: a creature's (Inferno): its demons at the destination
+        if (c.once(i))
+            ai.summonBySpell(spell, i, value, c.targets);
         break;
     case SpellEffect.triggerSpell: // SPELL_EFFECT_TRIGGER_SPELL
         if (const triggered = context.data.spells.spell(spell.triggerSpell[i]))
@@ -563,7 +608,10 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         break;
     }
     case SpellEffect.sanctuary: // SPELL_EFFECT_SANCTUARY: Vanish, Divine Intervention
-        p.sanctuaryEffect(spell, i, target);
+        if (p !is null)
+            p.sanctuaryEffect(spell, i, target);
+        else if (auto who = cast(typeof(p)) context.onlinePlayer(target)) // Aspect of Arlokk's: the player forgotten
+            who.sanctuaryByCreature(spell, i, caster.guid);
         break;
     case SpellEffect.charge: // SPELL_EFFECT_CHARGE: Charge, Intercept, Feral Charge; a creature's rush
         if (p !is null)
@@ -642,7 +690,14 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         break;
     case SpellEffect.summonObjectSlot1, SpellEffect.summonObjectSlot2, SpellEffect.summonObjectSlot3,
             SpellEffect.summonObjectSlot4: // SPELL_EFFECT_SUMMON_OBJECT_SLOT1 .. 4: the hunters' traps
-        if (target == caster.guid)
+        if (p is null)
+        {
+            import dmangos.world.spellsummons : summonCreatureTrap;
+
+            if (c.once(i))
+                summonCreatureTrap(caster, spell, i, c.targets);
+        }
+        else if (target == caster.guid)
             p.summonTrapEffect(spell, i, c.targets);
         break;
     case SpellEffect.detect: // SPELL_EFFECT_DETECT: Detect's marker; CMaNGOS does nothing with it either

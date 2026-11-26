@@ -192,6 +192,14 @@ mixin template EffectHandlers()
         logExecute(spell, i, executeTarget(target));
     }
 
+    /// A creature's `SPELL_EFFECT_SANCTUARY` at this player (Aspect of Arlokk): it leaves every fight (`EffectSanctuary`).
+    package void sanctuaryByCreature(const(SpellInfo)* spell, size_t i, ulong caster)
+    {
+        if (player is null)
+            return;
+        leaveAllFights();
+    }
+
     /// A successful Feign Death lasts: creatures leave the player alone (`untouchable`).
     package bool feigningDeath;
 

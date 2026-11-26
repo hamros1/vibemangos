@@ -219,6 +219,7 @@ private:
         spellsOnLeave(false);
         worldPvpDied(); // Silithyst falls where its carrier does
         removeAurasOnDeath();
+        player.setDrunk(0); // death sobers (`SetDeathState`)
         cancelTrade(true);
         stopAttack(false);
         if (byCreature)
@@ -537,7 +538,8 @@ private:
      * Another's resurrection spell would bring this dead player back (`SMSG_RESURRECT_REQUEST`): remembered
      * until the player answers. A second offer while one waits is not made.
      */
-    package void resurrectRequested(ulong caster, uint mapId, Position at, uint health, uint mana, bool waitForTimer)
+    package void resurrectRequested(ulong caster, uint mapId, Position at, uint health, uint mana, bool waitForTimer,
+        string casterName = "")
     {
         import dmangos.bytes : ByteWriter;
 
@@ -550,11 +552,42 @@ private:
         resurrectMana = mana;
         ByteWriter w;
         w.put(caster);
-        w.put(1u);       // the name's length with its end: a player's is not sent
-        w.putCString("");
+        w.put(cast(uint)(casterName.length + 1)); // the name's length with its end: a player's is not sent, a creature's is
+        w.putCString(casterName);
         w.put(ubyte(0)); // not a spirit healer
         w.put(ubyte(waitForTimer ? 1 : 0));
         deliver(Opcode.SMSG_RESURRECT_REQUEST, w.data);
+    }
+
+    /**
+     * A creature's resurrection spell at this dead player (CMaNGOS's `EffectResurrect` of a creature's cast: Mandokir's
+     * chained spirits' Revive): offered to come back beside creature `caster`, of `name`, with the effect's share of
+     * health and mana (or, for `SPELL_EFFECT_RESURRECT_NEW`, its amounts).
+     */
+    package void resurrectedByCreature(const(SpellInfo)* spell, size_t i, int value, uint mapId, Position at,
+        ulong caster)
+    {
+        import dmangos.world.spellids : SpellEffect;
+
+        if (player is null || player.deathState == DeathState.alive)
+            return;
+        uint health, mana;
+        if (spell.effect[i] == SpellEffect.resurrectNew)
+        {
+            health = value > 0 ? value : 0;
+            mana = spell.miscValue[i] > 0 ? spell.miscValue[i] : 0;
+        }
+        else
+        {
+            const share = value > 0 ? value : 0;
+            health = cast(uint)(ulong(player.values.get!UNIT_FIELD_MAXHEALTH) * share / 100);
+            mana = cast(uint)(ulong(player.values.get!UNIT_FIELD_MAXPOWER1(0)) * share / 100);
+        }
+        string name;
+        if (auto creature = map is null ? null : map.creatureAt(caster))
+            name = creature.template_.name;
+        enum uint noResurrectTimer = 0x00000010; // SPELL_ATTR_EX3_NO_RES_TIMER
+        resurrectRequested(caster, mapId, at, health, mana, !(spell.casting.attributesEx3 & noResurrectTimer), name);
     }
 
     /**

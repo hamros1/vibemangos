@@ -633,9 +633,30 @@ mixin template CreatureCasting()
         if (!triggered && spell.casting.preventionType == preventionSilence && spell.casting.school < schoolLockMs.length
                 && schoolLockMs[spell.casting.school] > 0)
             return refuse(SpellCastResult.notReady);
-        // `CAST_FORCE_TARGET_SELF`: the target casts it on itself; only it itself can be made to.
-        if ((flags & castForceTargetSelf) && target != me.guid)
-            return refuse(SpellCastResult.badTargets);
+        // `CAST_FORCE_TARGET_SELF`: the target casts it on itself (CMaNGOS's EventAI `DoCastSpellIfCan`: the
+        // caster is the target), triggered: a Death Talon Captain's Mark of Detonation on a player marks the player.
+        if ((flags & castForceTargetSelf) && target && target != me.guid)
+        {
+            import dmangos.world.map : Map;
+            import dmangos.world.unit : UnitKind;
+
+            auto other = world_.unit(target);
+            if (!other || !other.alive)
+                return refuse(SpellCastResult.badTargets);
+            if ((flags & castAuraNotPresent) && other.hasAuraOf(spell.id))
+                return refuse(SpellCastResult.dontReport);
+            if (other.kind == UnitKind.player)
+            {
+                other.session.castForcedOnSelf(spell.id);
+                return true;
+            }
+            auto creature = world_.creatureAt(target);
+            auto map = cast(Map) world_;
+            if (creature is null || creature.ai is null || map is null)
+                return refuse(SpellCastResult.badTargets);
+            return creature.ai.castFor(map, spell.id, target, true) == ActionResult.ok
+                || refuse(creature.ai.castRefusal);
+        }
         const namedEffect = selectableNamedCreatureEffect(spell);
         auto context = cast(WorldContext) lore;
         const namedObject = context !is null && context.onlyNamedGameObjectEffects(spell);
@@ -950,7 +971,9 @@ mixin template CreatureCasting()
                 return targets;
             }
         const area = a == ImplicitTarget.enemiesAroundSource || a == ImplicitTarget.enemiesAroundDest || b == ImplicitTarget.enemiesAroundSource || b == ImplicitTarget.enemiesAroundDest;
-        if (area || a == ImplicitTarget.enemiesInCone)
+        // A cone in front (`TARGET_UNIT_CONE_ENEMY`, `TARGET_ENUM_UNITS_ENEMY_IN_CONE_54`: Magmadar's Lava Breath).
+        const cone = a == ImplicitTarget.enemiesInCone || a == ImplicitTarget.enumUnitsEnemyInCone54;
+        if (area || cone)
         {
             auto center = me.position;
             if (area && a != ImplicitTarget.casterSource && a != ImplicitTarget.caster && target != me.guid)
@@ -977,7 +1000,7 @@ mixin template CreatureCasting()
                 if (frostBreath && (!world_.inLineOfSight(center, other.position)
                     || (f.stealthed && !detects(me.fighter, f, r))))
                     continue;
-                if (a == ImplicitTarget.enemiesInCone && !hasInArc(me.position, f.position, PI / 2))
+                if (cone && !hasInArc(me.position, f.position, PI / 2))
                     continue;
                 found ~= other.combatGuid;
             }
@@ -993,7 +1016,7 @@ mixin template CreatureCasting()
                 foreach (other; world_.creaturesNear(center, r))
                     if (other !is me && other.alive && !other.totemOwner && other.ai !is null
                             && canAttack(relating, other.ai.relatingOf, me.client)
-                            && (a != ImplicitTarget.enemiesInCone || hasInArc(me.position, other.position, PI / 2)))
+                            && (!cone || hasInArc(me.position, other.position, PI / 2)))
                         found ~= other.guid;
             return found;
         }
@@ -1339,6 +1362,23 @@ mixin template CreatureCasting()
                 foreach (guid; reached[i])
                     c.auraEffects[guid] |= cast(ubyte)(1 << i);
         }
+        // A persistent area is made once, wherever its destination is, whoever stands there yet (CMaNGOS's
+        // `EffectPersistentAA` at `m_destPos`): at the target's place for an area at the destination (a creature's
+        // Blizzard at a player), else at the caster (Starfall around it).
+        foreach (i; 0 .. 3)
+            if (spell.effect[i] == SpellEffect.persistentAreaAura && !reached[i].length)
+            {
+                reached[i] = [me.guid];
+                const a = spell.implicitTargetA[i];
+                if (!(c.targets.mask & TargetFlags.destLocation) && target != me.guid
+                    && a != ImplicitTarget.caster && a != ImplicitTarget.casterSource
+                    && a != ImplicitTarget.locationCasterDest)
+                    if (auto other = world_.unit(target))
+                    {
+                        c.targets.mask |= TargetFlags.destLocation;
+                        c.targets.dest = [other.position.x, other.position.y, other.position.z];
+                    }
+            }
         auto caster = spellCaster();
         foreach (i; 0 .. 3)
         {
@@ -1630,8 +1670,13 @@ mixin template CreatureCasting()
         const entry = cast(uint) spell.miscValue[i];
         if (entry == 0 || lore is null || world_ is null)
             return;
-        const count = spell.effect[i] == SpellEffect.summonWild && value > 1 ? (value > 5 ? 5 : value) : 1;
-        const ms = duration(*spell, lore.clientData, me.values.get!UNIT_FIELD_LEVEL);
+        // A demon (`SPELL_EFFECT_SUMMON_DEMON`, Inferno's Infernal): as many as its value, of the caster's level, for
+        // an hour or until it dies (`EffectSummonDemon`).
+        const demon = spell.effect[i] == SpellEffect.summonDemon;
+        if (demon && value <= 0)
+            return;
+        const count = (spell.effect[i] == SpellEffect.summonWild || demon) && value > 1 ? (value > 5 ? 5 : value) : 1;
+        const ms = demon ? 3_600_000 : duration(*spell, lore.clientData, me.values.get!UNIT_FIELD_LEVEL);
         auto victim = world_.unit(currentVictim);
         bool placed;
         Position place;
@@ -1654,8 +1699,10 @@ mixin template CreatureCasting()
             at.y += 3 * sin(angle);
             if (placed && n == 0)
                 at = place;
-            auto summoned = lore.summon(world_, entry, at, ms > 0 ? TempSpawnType.timedOutOfCombatOrDead : TempSpawnType.dead,
-                ms > 0 ? ms : 0, me.guid);
+            auto summoned = lore.summon(world_, entry, at, demon ? TempSpawnType.timedOrDead
+                : ms > 0 ? TempSpawnType.timedOutOfCombatOrDead : TempSpawnType.dead, ms > 0 ? ms : 0, me.guid);
+            if (summoned !is null && demon)
+                summoned.values.set!UNIT_FIELD_LEVEL(me.values.get!UNIT_FIELD_LEVEL);
             if (summoned !is null && victim && !(summoned.values.get!UNIT_FIELD_FLAGS & UnitFlags.uninteractible))
                 summoned.ai.attackStart(victim, world_);
         }

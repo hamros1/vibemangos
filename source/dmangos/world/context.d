@@ -1278,7 +1278,22 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             gameObjectUsed(object, map_, casterGuid);
         }
         else if (spell.miscValue[effect] == GameObjectAction.disturb)
-            return disturbEncounterTrap(map_, object);
+        {
+            // A trap: its spell; a button (Celebras's staff): used.
+            if (object.template_.type == GameObjectType.trap)
+                return disturbEncounterTrap(map_, object);
+            if (object.template_.type != GameObjectType.button)
+                return false;
+            usedBySpell(object, map_, casterGuid);
+        }
+        else if (spell.miscValue[effect] == GameObjectAction.open && !object.doorOrButton)
+        {
+            if (object.template_.type != GameObjectType.goober)
+                return false;
+            usedBySpell(object, map_, casterGuid); // a cage, an egg: used as a player uses it
+        }
+        else if (spell.miscValue[effect] == GameObjectAction.despawn)
+            map_.removeObject(object.guid);
         else
         {
             if (!object.applySpellState(map_, cast(GameObjectAction) spell.miscValue[effect]))
@@ -1286,6 +1301,30 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             map_.wake(object.guid);
         }
         return true;
+    }
+
+    /**
+     * `object` used by a spell of `casterGuid`'s (a creature's open or disturb): what a player's use does but what is
+     * the player's own (quest credit, page, the goober's spell on its user): its script, its use scripts, and a
+     * button's or a goober's own use with its event.
+     */
+    private void usedBySpell(GameObject object, Map map_, ulong casterGuid)
+    {
+        import dmangos.world.dbscripts : DbScriptType;
+
+        if (gameObjectUsed(object, map_, casterGuid))
+            return;
+        startScript(DbScriptType.goTemplateUse, object.spawn.entry, map_, casterGuid, object.guid);
+        startScript(DbScriptType.goUse, object.spawn.guid, map_, casterGuid, object.guid);
+        if (object.template_.type == GameObjectType.button)
+            object.useDoorOrButton(map_);
+        else
+        {
+            object.activateGoober(map_);
+            if (const event = object.template_.data[2])
+                scriptedEvent(event, map_, casterGuid, object.guid);
+        }
+        map_.wake(object.guid);
     }
 
     /// Cast a dungeon trap's spell at the trap. The egg creates a second proximity trap and each
@@ -8876,9 +8915,27 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
         if (unixTime < trap.trapReadyAt || trap.lootState != GoLootState.ready)
             return;
-        if (trap.owner)
-            return; // a hunter's: its owner's spell, sprung on its owner's enemies (`Character.updateTraps`)
         const spell = cast(uint) trap.template_.data[3];
+        if (trap.owner)
+        {
+            import dmangos.world.relations : canAttack;
+
+            // A creature's (`summonCreatureTrap`): its owner's spell at the enemy that stepped in, from the trap.
+            // A hunter's is its owner's to spring (`Character.updateTraps`).
+            auto owner = map.creatureAt(trap.owner);
+            import dmangos.world.character : Character;
+
+            auto victim = UnitRef.of(cast(Character) who);
+            if (owner is null || owner.ai is null || !owner.alive || spell == 0 || !victim || !victim.alive
+                || !canAttack(owner.ai.relatingOf, victim.relating, client))
+                return;
+            trap.trapReadyAt = unixTime + (trap.template_.data[5] > 0 ? trap.template_.data[5] : 4);
+            owner.ai.castFor(map, spell, victim.combatGuid, true);
+            const charges = trap.template_.data[4];
+            if (charges > 0 && ++trap.trapUses >= charges)
+                map.gameObjectUsedUp(trap);
+            return;
+        }
         if (spell == 0 && !trap.behaviour)
             return;
         if (trap.spawn.battlegroundPowerUp)
@@ -9784,6 +9841,25 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     GameObject summonWildGameObject(Map map, uint entry, Position at, uint seconds)
     {
         return summonGameObjectAt(map, entry, Location(at.x, at.y, at.z, at.orientation), seconds);
+    }
+
+    /**
+     * A creature's trap (`SPELL_EFFECT_SUMMON_OBJECT_SLOT1` .. 4 of a creature's cast: a hunter mob's Immolation
+     * Trap): `entry` at `at` for `seconds` (0: until it goes), made by `owner` at its level, so that its owner casts
+     * the trap's spell at an enemy that steps in (`trapSprung`) and players see it as they see a hunter's.
+     */
+    package GameObject summonCreatureTrap(Map map, Creature owner, uint entry, Position at, uint seconds)
+    {
+        import dmangos.world.updatefields : GAMEOBJECT_LEVEL, OBJECT_FIELD_CREATED_BY, UNIT_FIELD_LEVEL;
+
+        auto go = prepareGameObjectSummon(map, entry, Location(at.x, at.y, at.z, at.orientation));
+        if (go is null)
+            return null;
+        go.owner = owner.guid;
+        go.values.set!OBJECT_FIELD_CREATED_BY(owner.guid);
+        go.values.set!GAMEOBJECT_LEVEL(owner.values.get!UNIT_FIELD_LEVEL);
+        publishGameObjectSummon(map, go, seconds ? unixTime + seconds : 0);
+        return go;
     }
 
     private GameObject summonGameObjectAt(Map map, uint entry, Location at, uint seconds)

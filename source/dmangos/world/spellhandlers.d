@@ -572,6 +572,20 @@ private:
         castSpell(spell, SpellTargets(TargetFlags.unit, target ? target : player.guid), true, 0);
     }
 
+    /**
+     * A creature's script makes this player cast `spellId` on itself (EventAI's `CAST_FORCE_TARGET_SELF`: a Death Talon
+     * Captain's Mark of Detonation), triggered: a harmful spell too, which CMaNGOS lets a caster cast at itself.
+     */
+    package void castForcedOnSelf(uint spellId)
+    {
+        forcedOnSelf = true;
+        scope (exit)
+            forcedOnSelf = false;
+        castTriggeredAt(spellId, player is null ? 0 : player.guid);
+    }
+
+    private bool forcedOnSelf; // `castForcedOnSelf`: its harmful spell may be at the player itself
+
     // -----------------------------------------------------------------------
     // Auto-repeating spells (Auto Shot, a wand's Shoot)
     // -----------------------------------------------------------------------
@@ -2864,7 +2878,7 @@ private:
         }
         const guid = unitTarget ? unitTarget : player.guid;
         if (guid == player.guid)
-            return needsEnemy ? SpellCastResult.badTargets : SpellCastResult.ok;
+            return needsEnemy && !forcedOnSelf ? SpellCastResult.badTargets : SpellCastResult.ok;
         if (!map.questSpawnVisible(player, guid))
             return SpellCastResult.badTargets;
         auto creature = cast(Creature) map.findObject(guid);

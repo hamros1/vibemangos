@@ -122,6 +122,25 @@ primary sources (docs/FORMULAS.md); CMaNGOS and vmangos are second opinions.
   NPC sweep's player before its debuff lands is listed with that note.
 * **A creature's active totems** cast at the players and creatures it fights; a player's at creatures, as
   before.
+* **What CMaNGOS does nothing with for a creature's cast is done as nothing**: a temporary enchantment
+  (Crippling Poison), a lock (Opening Cage's), a skill step (Beast Tracking), Portal (unused since 1.2).
+* **EventAI's `CAST_FORCE_TARGET_SELF` at another unit makes that unit cast the spell on itself**, triggered
+  (CMaNGOS's `DoCastSpellIfCan`): a Death Talon Captain's Mark of Detonation marks the random player it picks.
+  A player so made may cast a harmful spell at itself (`castForcedOnSelf`); no other cast may.
+* **A creature's persistent area is made at its destination even with nobody there yet** (CMaNGOS's
+  `EffectPersistentAA`): its Blizzard at a player's place, Starfall around itself.
+* **A creature's crowd control sets its unit flags as the aura lands**, not at its next tick (CMaNGOS's
+  `SetStunned`): a tenth of a second's stun (Arcane Explosion's on its caster) is seen.
+* **A creature's trap** (`SUMMON_OBJECT_SLOT1` .. 4: a hunter mob's Immolation Trap) is its own: made by it at
+  its level, sprung by its enemies stepping in, its spell cast by it at them.
+* **Drunkenness** (`SPELL_EFFECT_INEBRIATE`, 256 a point: Booze Spit, Intoxicating Venom) is kept beside the
+  gender in `PLAYER_BYTES_3`, wears off by 256 every 10 seconds, ends with death, is saved (`characters.drunk`)
+  and comes back less for the time away (sober after 15 minutes), as CMaNGOS's `SetDrunkValue`. Its drunk-only
+  invisibility detection is not done.
+* **A spell's flight** (`SPELL_EFFECT_SEND_TAXI`: William Kielar's to Naxxramas) is free, starts within
+  CMaNGOS's bound of the path's first node (a squared distance of 1000), takes the mount and a shapeshift off.
+* **A creature's Dual Wield does nothing yet**: creatures swing no off-hand weapon. Giving them one (its own
+  timer, an off-hand's damage) changes the damage of every mob that casts it, a decision of its own.
 
 ## Status
 
@@ -132,6 +151,7 @@ primary sources (docs/FORMULAS.md); CMaNGOS and vmangos are second opinions.
 | 2. damage, heals, power | done | 606 |
 | 3. auras and their ticks | done | 556 |
 | 4. what creatures lacked: wild objects, persistent areas, pets, items, spells taught, spawn, dispels, charges, extra attacks, totems, mana; the hit roll shared | done | 204 (101 with no creature to cast them) |
+| 4b. the rest of the sweep's: object open, disturb and despawn, resurrection, quest credit, sanctuary, traps, Infernals, flights, drunkenness, Thundercrash, the cone of 54; the sweep's own misreadings (its player dying, debuffs seen as friendly, stunned casters) | done | 108: 101 with no creature to cast them, Dual Wield, and six rockets whose object (180856) is not in the world database |
 | 5. targets once | not yet: a creature still resolves its implicit targets in `creaturecasting.d` (`targetsFor`), a player in `spellhandlers.d` (`go`, `areaTargets`) |  |
 | 6. procs once | in part: every creature's auras proc now (a mob's Thrash, not only a pet's), through `creatureprocs.d`; a player's are `procs.d`'s, with its class rules, cooldowns and weapon checks |  |
 
@@ -147,7 +167,9 @@ shared target limit to local and remote objects. It supports nearest-object, cas
 and database-destination selection. The object can play animation slots 0–3 or Onyxia's
 Eruption animation, change its lock flag, or apply a door or button state such as the
 alternate state used when the Zul'Farrak door is blown open. These effects can run
-alongside other spell effects. Actions that run a normal use interaction remain open.
+alongside other spell effects. A creature's open (a goober: Sharpbeak's cage, a spider egg) and
+disturb (a trap's spell, or a button: Celebras's staff) use the object as a player's use does, without
+what is the player's own (quest credit, a page); despawn takes it away (Despawn Putrid Mushrooms).
 
-Remaining creature effects include teleports facing the caster, leaps, taxis, inebriation,
-pulls and effects that require a player's spellbook, inventory or client.
+What a creature's cast does not do yet: Dual Wield (above), and effects that need a player's
+spellbook, inventory or client.

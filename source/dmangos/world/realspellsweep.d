@@ -1252,7 +1252,8 @@ package bool summonsCreature(SpellEffect effect)
 {
     with (SpellEffect)
         return effect.among(summon, summonWild, summonGuardian, summonPet, summonTotem, summonTotemSlot1,
-            summonTotemSlot2, summonTotemSlot3, summonTotemSlot4, summonPossessed, summonCritter, summonPhantasm) != 0;
+            summonTotemSlot2, summonTotemSlot3, summonTotemSlot4, summonPossessed, summonCritter, summonPhantasm,
+            summonDemon) != 0;
 }
 
 /// Whether `effect` summons a game object.
