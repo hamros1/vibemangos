@@ -321,9 +321,6 @@ struct Naxxramas
         case npcBlizzard:
             import std.algorithm.searching : canFind;
 
-            // Its Chill, its template's aura (`creature_template_addon`, whose auras the core does not load yet).
-            if (!copy.hasAura(e.creature, Sapphiron.chill))
-                copy.castSpell(e.creature, Sapphiron.chill, e.creature);
             // His blizzards as they come, and as a handoff or the checkpoint brings them back: kept with his fight.
             if (e.summoned && sapphironActive && !blizzards.canFind(e.creature))
             {

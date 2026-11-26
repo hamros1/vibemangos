@@ -476,8 +476,9 @@ unittest
         Stage(0, 32, [18435, 19983, 15847, 18500, 19633]),
         Stage(64, 30, [18392], [-1_249_002], [[whelp, 2]]),
         Stage(0, 1, null, null, null, null, toDelegate(airborne)),
-        // in the air every 25 s a deep breath across the lair (its emote) or a flight to the next spot
-        Stage(0, 100, null, [-1_249_004]),
+        // in the air every 15 to 25 s a deep breath across the lair (its emote) or a flight to the next spot, one in
+        // three a breath: 200 s, about nine choices, so that hardly any seed sees none
+        Stage(0, 200, null, [-1_249_004]),
         Stage(39, 20, [18431], [-1_249_003]),
     ], -1_249_000, 0, 2, Position.init, [classWarrior, classMage], null, 80);
     fight(onyxia);
@@ -1644,7 +1645,9 @@ unittest
     assert(cthun.guid == cthunGuid && cthun.values.get!UNIT_FIELD_HEALTH == cthunHealth && s.all(npcCthun).length == 1);
     assert(s.all(npcFleshTentacle).length == 1 && s.all(npcFleshTentacle)[0].guid == survivor,
         format!"%s Flesh Tentacles after the crash"(s.all(npcFleshTentacle).length));
-    assert(s.runUntil(() => s.castBy(npcCthun, Cthun.digestiveAcid), 5500.msecs), "the acid lost the swallowed");
+    // The acid on the swallowed one (its aura: the casts heard are the first character's, who may be the one inside).
+    assert(s.runUntil(() => s.hero(swallowed).auras.find(Cthun.digestiveAcid) !is null, 5500.msecs),
+        "the acid lost the swallowed\n" ~ s.seen());
     s.kill(s.all(npcFleshTentacle)[0]);
     assert(s.runUntil(() => cthun.auras.find(Cthun.vulnerable) !is null, 1.seconds),
         "the second Flesh Tentacle's death did not weaken him: the first one's was lost");
@@ -1655,7 +1658,8 @@ unittest
     s.restartAfterCrash();
     s.forget();
     s.run(6.seconds);
-    assert(!s.castBy(npcCthun, Cthun.digestiveAcid), "the acid still finds one out of the stomach");
+    // The one who climbed out (another may be swallowed meanwhile, and rightly burn).
+    assert(s.hero(swallowed).auras.find(Cthun.digestiveAcid) is null, "the acid still finds one out of the stomach");
     cthun = s.the(npcCthun);
     s.kill(cthun);
     s.run(400.msecs);
@@ -3179,10 +3183,14 @@ unittest
         "the breath begun before the crash never landed\n" ~ s.seen());
     const landedAt = s.elapsedMs;
     assert(landedAt - breathAt <= 7_600, format!"the breath landed %s ms after it began"(landedAt - breathAt));
-    assert(s.hero(hider).values.get!UNIT_FIELD_HEALTH > 990_000, format!"the player behind the block at %s health"(
-        s.hero(hider).values.get!UNIT_FIELD_HEALTH));
-    assert(s.hero(exposed).values.get!UNIT_FIELD_HEALTH < 950_000, format!"the player in the open at %s health"(
-        s.hero(exposed).values.get!UNIT_FIELD_HEALTH));
+    // Untouched behind the block: at full health (an aura's stat refresh, a blizzard's Chill, may have put the
+    // maximum back from the test's million to the character's own).
+    assert(s.hero(hider).values.get!UNIT_FIELD_HEALTH * 100 >= s.hero(hider).values.get!UNIT_FIELD_MAXHEALTH * 99,
+        format!"the player behind the block at %s of %s health"(s.hero(hider).values.get!UNIT_FIELD_HEALTH,
+        s.hero(hider).values.get!UNIT_FIELD_MAXHEALTH));
+    assert(s.hero(exposed).values.get!UNIT_FIELD_HEALTH * 100 < s.hero(exposed).values.get!UNIT_FIELD_MAXHEALTH * 95,
+        format!"the player in the open at %s of %s health"(s.hero(exposed).values.get!UNIT_FIELD_HEALTH,
+        s.hero(exposed).values.get!UNIT_FIELD_MAXHEALTH));
     assert(s.runUntil(() => !hovering(s) && !s.objects(goIceBlock).length, 3.seconds), "he did not land");
     assert(s.castCount(Sapphiron.frostBreath) == 1, format!"%s breaths"(s.castCount(Sapphiron.frostBreath)));
     assert(s.hero(frozen).auras.find(Sapphiron.icebolt) is null, "still frozen after he landed");
@@ -3434,7 +3442,8 @@ unittest
     assert(canAttack(s.heroUnit(free).relating, s.heroUnit(chained[0]).relating, s.w.context.client));
     s.run(2.seconds);
     assert(s.heroes[chained[0]].session.inWorld.attacking == s.hero(free).guid,
-        "the charmed raider did not turn on the remaining ally");
+        format!"the charmed raider did not turn on the remaining ally (attacks %#x, free %#x)"(
+        s.heroes[chained[0]].session.inWorld.attacking, s.hero(free).guid));
     assert(s.runUntil(() => s.hero(chained[0]).auras.find(28410) is null, 30.seconds));
     foreach (k; chained)
     {

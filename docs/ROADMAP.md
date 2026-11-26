@@ -34,7 +34,7 @@ describes how players use the systems available today.
 | Chat | Channels (built-in ones following the zone, custom ones with moderation), AFK/DND with replies and chat tags, raid warnings | `world/channel.d`, `world/channelhandlers.d`, `world/inworld.d` |
 | GM system | Named staff roles, command-specific grants, role management, command discovery, and tools for moderation, testing, route editing and trainer lessons. [Command reference](COMMANDS.md) | `world/commandtable.d`, `world/commands.d`, `world/gm*.d` |
 | Update loop | A 50 ms tick: 20-second logout, regeneration, rested XP in inns and capitals (and offline), periodic saves, timed shutdowns | `net/server.d`, `context.d`, `inworld.d`, `timer.d` |
-| Creatures and game objects | Every spawn (with pools, spawn groups and game events), loaded per grid cell when players come near, with levels, health, models, equipment, mounts and emotes; creature and game object queries; `.npc info` | `creature.d`, `gameobject.d`, `map.d`, `worlddata.d` |
+| Creatures and game objects | Every spawn (with pools, spawn groups and game events), loaded per grid cell when players come near, with levels, health, models, equipment, mounts, emotes and their addons' auras (put on them as auras, not cast); creature and game object queries; `.npc info` | `creature.d`, `gameobject.d`, `map.d`, `worlddata.d` |
 | Creature movement | Wandering (`spawndist`) and waypoint paths (`creature_movement`, `creature_movement_template`; round, or back and forth) with waits and facings; `SMSG_MONSTER_MOVE`; walks in create blocks; moving creatures change cell and come into and out of sight | `spline.d`, `motion.d`, `map.d` |
 | NPC services | Gossip menus with their texts, conditions, map flags and scripts (`gossip_menu.script_id`, options' `action_script_id`; `box_money` is TBC's and unused, as in CMaNGOS classic); trainers (lists with each spell's state, lessons that teach spells, ranks and profession skills); innkeepers (binding the hearthstone); bankers (opening the bank); vendors' lists | `npchandlers.d`, `npcdata.d`, `conditions.d` |
 | Inventory and trade | The inventory rules, shared by creation and the world: moving, swapping, splitting, equipping (two-handers, dual wield, quivers, unique items), bags, the bank and its bag slots, the keyring, destroying, ammo; buying (with vendors' limited stock), selling, buyback and repairs; every change saved at once with the money; reputation-gated items, item use checks, bind on use, charges, the equip cooldown, timed items, wear on hit, ammo damage and quiver haste | `inventory.d`, `itemhandlers.d`, `itemuse.d` |
@@ -52,11 +52,10 @@ describes how players use the systems available today.
   with a player frozen before Frost Breath, the breath begun, a wipe followed by a crash, and
   his death. The [crash points](CLUSTER.md#sapphirons-crash-points) list what the clients saw.
   His blizzard (16474) comes at a player's feet and goes after a player of his choosing, its Chill
-  (28534) chilling those it passes over; it is kept with his fight through a crash. Open: the core
-  does not load `creature_template_addon` auras, so the copy gives the blizzard its Chill. A frozen
-  player on a regular home logs in again with the auras of the last character save. A frozen gateway
-  player who returns after he has landed, or to a fight that a restore failed, stays frozen until
-  the aura ends.
+  (28534) chilling those it passes over; it is kept with his fight through a crash. A frozen player
+  on a regular home logs in again with the auras of the last character save. A frozen gateway player
+  who returns after he has landed, or to a fight that a restore failed, stays frozen until the aura
+  ends.
   The Four Horsemen have recovery tests for a crash after two deaths, a crash after the last
   death, the last death saved with the checkpoint after it lost, and a wipe after two deaths
   followed by a crash. The [crash points](CLUSTER.md#the-four-horsemens-crash-points) list what

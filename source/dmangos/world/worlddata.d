@@ -22,7 +22,7 @@ import dmangos.world.dbscripts : DbScriptData;
 import dmangos.world.worldstateexpression : WorldStateExpressions;
 import dmangos.world.reputation : Spillover;
 import dmangos.world.creature : CreatureAddon, CreatureClassStats, CreatureSpawn, CreatureTemplate, classStatsKey,
-    creatureTemplateQuery;
+    creatureTemplateQuery, parseAddonAuras;
 import dmangos.world.gameobject : GameObjectSpawn, GameObjectTemplate, GameObjectType;
 import dmangos.world.bgqueue : BattlegroundTemplate, BattlegroundType;
 import dmangos.world.enchantments : EnchantmentEffect, EnchantmentType, RandomEnchantment;
@@ -945,13 +945,14 @@ final class WorldData
         }
         foreach (row; world.query!"SELECT entry, equipentry1, equipentry2, equipentry3 FROM creature_equip_template"())
             creatureEquipment[row.get!uint(0)] = [row.get!uint(1), row.get!uint(2), row.get!uint(3)];
-        foreach (row; world.query!"SELECT guid, mount, stand_state, sheath_state, emote FROM creature_addon"())
+        foreach (row; world.query!("SELECT guid, mount, stand_state, sheath_state, emote, IFNULL(auras, '') "
+            ~ "FROM creature_addon")())
             creatureAddons[row.get!uint(0)] = CreatureAddon(row.get!uint(1), row.get!uint(2), row.get!uint(3),
-                row.get!uint(4));
-        foreach (row; world.query!("SELECT entry, mount, stand_state, sheath_state, emote "
+                row.get!uint(4), parseAddonAuras(row.get!string(5)));
+        foreach (row; world.query!("SELECT entry, mount, stand_state, sheath_state, emote, IFNULL(auras, '') "
             ~ "FROM creature_template_addon")())
             creatureTemplateAddons[row.get!uint(0)] = CreatureAddon(row.get!uint(1), row.get!uint(2), row.get!uint(3),
-                row.get!uint(4));
+                row.get!uint(4), parseAddonAuras(row.get!string(5)));
         foreach (row; world.query!("SELECT Level, Class, BaseHealthExp0, BaseMana, BaseDamageExp0, "
             ~ "BaseMeleeAttackPower, BaseRangedAttackPower, BaseArmor FROM creature_template_classlevelstats")())
             creatureClassStats[classStatsKey(row.get!uint(0), row.get!uint(1))] = CreatureClassStats(row.get!uint(2),

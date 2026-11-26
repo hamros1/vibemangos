@@ -147,6 +147,8 @@ enum uint eventRepeatable = 0x01, eventRandomAction = 0x20, eventRangedModeOnly 
 /// The cast flags of the cast action.
 enum uint castInterruptPrevious = 0x01, castTriggered = 0x02, castForceCast = 0x04, castNoMeleeIfOom = 0x08,
     castForceTargetSelf = 0x10, castAuraNotPresent = 0x20;
+/// The core's own, above the database's: an aura's pulse, which goes off beside the cast under way, not cutting it short.
+enum uint castBesideCurrent = 0x1000;
 
 /// The targets of actions, the ones handled.
 enum EventTarget : int

@@ -574,6 +574,31 @@ mixin template CreatureCasting()
      */
     import dmangos.world.classspells : CustomValues;
 
+    /**
+     * Its addon's auras (`Creature.addonAuras`), each put on itself as an aura, not cast: no cast, no channel (a
+     * channelling visual would hold it busy for good), as CMaNGOS's `LoadCreatureAddon` adds them. One it has already
+     * (brought by a handoff) is left.
+     */
+    package void castAddonAuras(CombatWorld world, const(uint)[] ids)
+    {
+        import dmangos.world.spellauras : applyAura;
+        import dmangos.world.spellids : SpellEffect;
+
+        if (lore is null || world is null)
+            return;
+        world_ = world;
+        auto caster = spellCaster(world);
+        foreach (id; ids)
+            if (me.auras.find(id) is null)
+                if (const spell = lore.spellInfo(id))
+                    foreach (i; 0 .. 3)
+                        if (spell.effect[i] == SpellEffect.applyAura)
+                        {
+                            applyAura(caster, spell, i, world.unitOf(me), 0);
+                            break;
+                        }
+    }
+
     bool castSpell(const(SpellInfo)* spell, ulong target, uint flags, CustomValues custom = CustomValues.init)
     {
         return prepareCast(spell, target, flags, custom, false);
@@ -680,7 +705,8 @@ mixin template CreatureCasting()
                 return refuse(SpellCastResult.noPower);
             }
         }
-        if (casting_ !is null)
+        // An aura's pulse (Unholy Aura's) goes off beside the cast under way (CMaNGOS's periodic trigger does).
+        if (casting_ !is null && !(flags & castBesideCurrent))
             interruptCast();
         if (channelSpell !is null && (flags & castInterruptPrevious))
             finishCreatureChannel(true);

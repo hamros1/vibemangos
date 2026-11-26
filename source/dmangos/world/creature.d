@@ -223,13 +223,43 @@ struct CreatureSpawn
     uint respawnSecondsMax;     /// `spawntimesecsmax`: the respawn time is between the two
 }
 
-/// `creature_addon` or `creature_template_addon`: how a creature stands, sits, rides or loops an emote.
+/// `creature_addon` or `creature_template_addon`: how a creature stands, sits, rides or loops an emote, and the
+/// auras it has from its spawn.
 struct CreatureAddon
 {
     uint mount;       /// a display id
     uint standState;
     uint sheathState;
     uint emote;
+    immutable(uint)[] auras; /// `auras`: spells it casts on itself as it comes (CMaNGOS's `LoadCreatureAddon`)
+}
+
+/// The spell ids of an addon's `auras` column (spaces between them); those that are no number are left out.
+immutable(uint)[] parseAddonAuras(const(char)[] text) pure @safe
+{
+    import std.array : split;
+    import std.conv : ConvException, to;
+
+    uint[] ids;
+    foreach (word; text.split)
+    {
+        try
+        {
+            if (const id = word.to!uint)
+                ids ~= id;
+        }
+        catch (ConvException)
+        {
+        }
+    }
+    return ids.idup;
+}
+
+unittest
+{
+    assert(parseAddonAuras("") == []);
+    assert(parseAddonAuras("28534") == [28534]);
+    assert(parseAddonAuras(" 18950  8601 x 0 ") == [18950, 8601]);
 }
 
 /// `creature_template_classlevelstats` for one level and class.
@@ -546,6 +576,9 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         if (factionTemplate !is null && (factionTemplate.flags & 0x800))
             values.set!UNIT_FIELD_FLAGS(values.get!UNIT_FIELD_FLAGS | UnitFlags.pvp);
         templateEquipment = parts.equipment;
+        if (parts.addon !is null)
+            addonAuras = parts.addon.auras;
+        addonAurasDue = addonAuras.length > 0;
         ai = new CreatureAI(this);
         // The model's collision height, scaled; `defaultCollisionHeight` if it has none.
         const height = parts.collisionHeight * values.get!OBJECT_FIELD_SCALE_X;
@@ -555,6 +588,18 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
 
     /// What its template gives it to hold (main hand, off hand, ranged).
     VirtualItem[3] templateEquipment;
+
+    /// Its addon's auras (`creature_addon`, else `creature_template_addon`), cast on itself at its first tick; one it
+    /// has already (brought by a handoff with its state) is not cast again.
+    immutable(uint)[] addonAuras;
+    private bool addonAurasDue;
+
+    private void castAddonAuras(CombatWorld world)
+    {
+        addonAurasDue = false;
+        if (ai !is null)
+            ai.castAddonAuras(world, addonAuras);
+    }
 
     /// What it holds in `slot` (0 main hand, 1 off hand, 2 ranged); no display: nothing.
     void setVirtualItem(size_t slot, const VirtualItem item)
@@ -1426,6 +1471,9 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             }
             return;
         }
+        if (addonAurasDue && alive)
+            if (auto combat = cast(CombatWorld) world)
+                castAddonAuras(combat);
         if (!alive)
         {
             // A corpse: rolls on its loot end; when its time is up it goes.

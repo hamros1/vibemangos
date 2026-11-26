@@ -468,7 +468,7 @@ void periodicTick(ref Caster caster, imported!"dmangos.world.creature".Creature 
     case AuraType.periodicTriggerSpell:
         if (caster.kind == UnitKind.creature && caster.creature is target)
         {
-            import dmangos.world.eventai : EventTarget, castTriggered;
+            import dmangos.world.eventai : EventTarget, castBesideCurrent, castTriggered;
 
             import std.algorithm.comparison : among;
 
@@ -484,8 +484,8 @@ void periodicTick(ref Caster caster, imported!"dmangos.world.creature".Creature 
                     const selected = aura.spell.id == fireBlossom
                         ? caster.ai.moreTargetFor(EventTarget.hostileRandomPlayer, 0, child.id, castTriggered)
                         : caster.guid;
-                    if (selected)
-                        caster.castTriggered(child, selected);
+                    if (selected) // beside a cast under way, not cutting it short
+                        caster.ai.castSpell(child, selected, castTriggered | castBesideCurrent);
                 }
         }
         break;

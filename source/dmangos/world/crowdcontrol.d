@@ -100,6 +100,9 @@ mixin template CrowdControlHandlers()
         {
             if (who.session is null || who.session is this || !who.alive || who.untouchable || !canAttack(relatingNow(), who.relating, context.client))
                 continue;
+            // Another the same master holds is on its side (CMaNGOS: the charmer's faction, a friend).
+            if (who.session.player !is null && who.session.player.values.get!(imported!"dmangos.world.updatefields".UNIT_FIELD_CHARMEDBY) == npcCharmer)
+                continue;
             const d = (at.x - who.position.x) ^^ 2 + (at.y - who.position.y) ^^ 2 + (at.z - who.position.z) ^^ 2;
             if (d < best)
             {
