@@ -1389,6 +1389,45 @@ unittest
     assert(d.loadedObject(rocket) !is null, "the red rockets");
 }
 
+/**
+ * Gnomeregan on a cluster worker: Emi Shortfuse (7998) waits at the northern cave-in for Grubbis (7361), a summon, to
+ * die. A crash with him out and her hurt brings back her and the same Grubbis together from the copy's checkpoint;
+ * his death brings the red rockets (103820), and she finishes her stand (-1090022).
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint emi = 7998, ambusher = 6207, grubbis = 7361, rocket = 103820;
+    auto d = Dungeon.enter(90, 32, cluster: true);
+    auto her = d.spawned(emi, 0, 15);
+    const guid = her.guid;
+    d.talkTo(her);
+    d.choose(her, 0);
+    d.run(1.seconds);
+    bool grubbisOut()
+    {
+        if (d.find(grubbis) !is null && d.heard(-1090023))
+            return true; // out, and not slain yet
+        d.keepUp(her);
+        d.defend(her);
+        d.killSummons([ambusher, 6206u]);
+        return false;
+    }
+    assert(d.runUntil(&grubbisOut, 600.seconds), "Grubbis comes\n" ~ d.story);
+    const him = d.find(grubbis).guid;
+    d.hit(her, her.values.get!UNIT_FIELD_HEALTH / 10);
+    d.run(2100.msecs);
+    d.restartAfterCrash();
+    her = d.map.creatureAt(guid);
+    assert(her !is null && her.alive && d.all(emi).length == 1, "the same Emi after the crash");
+    assert(d.all(grubbis).length == 1 && d.find(grubbis).guid == him, format!"with the same Grubbis (%s of them, %s)\n%s"(
+        d.all(grubbis).length, d.saved!(imported!"dmangos.scripts.gnomeregan".Gnomeregan).grubbisFight, d.story));
+    d.kill(d.find(grubbis));
+    assert(d.runUntil(() => d.heard(-1090022), 60.seconds), "she finishes her stand\n" ~ d.story);
+    assert(d.loadedObject(rocket) !is null, "the red rockets");
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // The Sunken Temple (109)
 // ---------------------------------------------------------------------------------------------------------------

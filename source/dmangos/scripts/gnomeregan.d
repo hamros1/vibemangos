@@ -93,12 +93,45 @@ struct Gnomeregan
 
     void on(ref InstanceContext city, const ref CreatureLoaded e)
     {
-        if (e.creature.entry == blastmaster)
+        switch (e.creature.entry)
         {
+        case blastmaster:
             emi = e.creature;
             if (grubbisFight == Fight.done)
                 city.signal(e.creature, Emi.Signals.grubbisDone);
+            else if (grubbisFight == Fight.inProgress)
+                city.checkpointCreature(e.creature);
+            break;
+        case grubbis, chomper, caverndeepAmbusher, caverndeepBurrower:
+            // Her troggs, and Grubbis and Chomper for whose deaths she waits: kept with her in the checkpoint.
+            if (e.summoned && grubbisFight == Fight.inProgress)
+                city.checkpointCreature(e.creature);
+            break;
+        default:
+            break;
         }
+    }
+
+    /**
+     * A crash takes Emi's summons with the old world, and her fight snapshot, kept apart from them, brought her back
+     * waiting for a Grubbis who never came. While her stand is under way the copy keeps her and them together in its
+     * checkpoint; a save without her (an older one's) ends it, and she may be asked again.
+     */
+    void on(ref InstanceContext city, const ref Restored e)
+    {
+        if (grubbisFight != Fight.inProgress)
+            return;
+        if (city.hasSavedCreature(blastmaster))
+            city.waitForPlayer();
+        else
+            grubbisFight = Fight.failed;
+    }
+
+    /// Grubbis, kept by the checkpoint but not brought back: he comes out of the tunnel again, for her.
+    void on(ref InstanceContext city, const ref CreatureEvaded e)
+    {
+        if (e.creature.entry == grubbis && grubbisFight == Fight.inProgress && !city.alive(e.creature))
+            emiEvent(city, Emi.Event.grubbis);
     }
 
     void on(ref InstanceContext city, const ref CreatureDied e)
@@ -107,6 +140,8 @@ struct Gnomeregan
         if (e.creature.entry == grubbis && grubbisFight == Fight.inProgress)
         {
             grubbisFight = Fight.done;
+            if (emi)
+                city.releaseCheckpointActor(emi);
             city.spawnObjects(redRocket, 3600, Location(-511, -139, -152), 10);
             if (emi)
                 city.signal(emi, Emi.Signals.grubbisDead);
@@ -211,6 +246,8 @@ struct Gnomeregan
         {
         case Emi.Event.started:
             grubbisFight = Fight.inProgress;
+            if (emi)
+                city.checkpointCreature(emi);
             break;
         case Emi.Event.openSouth, Emi.Event.closeSouth:
             if (caveIns[0])
