@@ -24,6 +24,7 @@ import cthun_recovery
 import departure_retry
 import gateway_checkpoint_retry
 import gateway_return
+import horsemen_recovery
 import lease_lapse_arrival
 import loot_award_crash
 import migration_stall
@@ -51,6 +52,8 @@ CASES = (
     ("sapphiron-air-recovery", sapphiron_recovery.air),
     ("sapphiron-ground-recovery", sapphiron_recovery.ground),
     ("sapphiron-birth-recovery", sapphiron_recovery.birth),
+    ("horsemen-kills-recovery", horsemen_recovery.kills),
+    ("horsemen-wipe-recovery", horsemen_recovery.wipe),
     ("loot-award-crash", loot_award_crash.main),
     ("migration-stall", migration_stall.run),
     ("standby-login", standby_login.run),
