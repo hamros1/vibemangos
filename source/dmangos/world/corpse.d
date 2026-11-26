@@ -64,7 +64,7 @@ final class Corpse : Replicable
         type = CorpseType.bones;
         ghostTime = now;
         values = UpdateValues(TypeId.corpse);
-        const v = &body_.values;
+        ref const v = body_.values;
         values.set!OBJECT_FIELD_GUID(guid);
         values.set!OBJECT_FIELD_SCALE_X(1.0f);
         values.set!CORPSE_FIELD_OWNER(v.get!CORPSE_FIELD_OWNER);
@@ -103,7 +103,7 @@ final class Corpse : Replicable
         values.set!CORPSE_FIELD_POS_X(at.x);
         values.set!CORPSE_FIELD_POS_Y(at.y);
         values.set!CORPSE_FIELD_POS_Z(at.z);
-        const v = &player.values;
+        ref const v = player.values;
         values.setByte!CORPSE_FIELD_BYTES_1(1, player.data.race);
         values.setByte!CORPSE_FIELD_BYTES_1(2, player.data.gender);
         values.setByte!CORPSE_FIELD_BYTES_1(3, v.getByte!PLAYER_BYTES(0)); // skin

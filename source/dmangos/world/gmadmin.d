@@ -244,7 +244,7 @@ bool handleReviveCommand(Character gm)
         target.bringBack(1);
         target.spawnCorpseBones();
     }
-    auto values = &target.player.values;
+    ref values = target.player.values;
     values.set!UNIT_FIELD_HEALTH(values.get!UNIT_FIELD_MAXHEALTH);
     values.set!UNIT_FIELD_POWER1(values.get!UNIT_FIELD_MAXPOWER1);
     values.set!UNIT_FIELD_POWER4(values.get!UNIT_FIELD_MAXPOWER4);
@@ -1478,7 +1478,7 @@ bool handleNpcInfoCommand(Character gm)
     auto creature = gm.selectedCreature(true);
     if (creature is null)
         return false;
-    const values = &creature.values;
+    ref const values = creature.values;
     gm.blueSystemMessage("Showing creature info for " ~ creature.template_.name);
     gm.systemMessage(format!"GUID: %d"(cast(uint) creature.guid));
     gm.systemMessage(format!"Faction: %d"(values.get!UNIT_FIELD_FACTIONTEMPLATE));

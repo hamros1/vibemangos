@@ -1101,7 +1101,7 @@ unittest
     assert(credit.length == 1);
     auto r = ByteReader(credit[0].body_);
     assert(r.read!uint == 25 && r.read!ulong == human.player.guid);
-    const v = &orc.player.values;
+    ref const v = orc.player.values;
     assert((v.get!PLAYER_FIELD_SESSION_KILLS & 0xFFFF) == 1 && v.get!PLAYER_FIELD_LIFETIME_HONORBALE_KILLS == 1);
     assert(v.get!PLAYER_FIELD_THIS_WEEK_CONTRIBUTION == 25 && v.get!PLAYER_FIELD_THIS_WEEK_KILLS == 1);
 

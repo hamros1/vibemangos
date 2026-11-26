@@ -41,7 +41,7 @@ mixin template CombatHandlers()
     /// How the relations see this player.
     package Relating relatingNow()
     {
-        const v = &player.values;
+        ref const v = player.values;
         if (npcCharmer)
             return Relating(v.get!UNIT_FIELD_FLAGS, context.client.factionTemplates.lookup(v.get!UNIT_FIELD_FACTIONTEMPLATE), false, 0, 0, player.alive);
         Relating r = Relating(v.get!UNIT_FIELD_FLAGS,

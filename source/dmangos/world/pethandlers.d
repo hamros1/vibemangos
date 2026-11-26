@@ -256,7 +256,7 @@ mixin template PetHandlers()
             }
         const s = petStats(state.type, *t, level, context.data.pets.statsFor(statsEntry, level), classStats,
             minScale, minScaleLevel, maxScale, maxScaleLevel);
-        auto v = &creature.values;
+        ref v = creature.values;
         v.set!UNIT_FIELD_LEVEL(level);
         state.base = s;
         if (state.type == PetType.hunter)
@@ -297,7 +297,7 @@ mixin template PetHandlers()
             creature.movement = handoff.movement;
         state.owner = player.guid;
         creature.becomePet(player.guid, state);
-        auto v = &creature.values;
+        ref v = creature.values;
         if (modelId)
         {
             v.set!UNIT_FIELD_DISPLAYID(modelId);
@@ -430,7 +430,7 @@ mixin template PetHandlers()
             return;
         if (slot == PetSlot.current && !pet_.alive)
             slot = PetSlot.notInSlot;
-        auto v = &pet_.values;
+        ref v = pet_.values;
         const power = state.type == PetType.hunter ? v.get!UNIT_FIELD_POWER1(2) : v.get!UNIT_FIELD_POWER1(0);
         if (state.type == PetType.hunter)
             state.happiness = v.get!UNIT_FIELD_POWER1(4);
@@ -1267,7 +1267,7 @@ mixin template PetHandlers()
     {
         if (pet_ is null || !pet_.alive || petState().type != PetType.hunter || xp == 0)
             return;
-        auto v = &pet_.values;
+        ref v = pet_.values;
         uint level = v.get!UNIT_FIELD_LEVEL;
         const most = player.data.level < context.config.maxPlayerLevel ? player.data.level : context.config.maxPlayerLevel;
         if (level >= most)

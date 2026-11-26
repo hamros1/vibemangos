@@ -507,7 +507,7 @@ private:
     {
         if (player.deathState == DeathState.alive)
             return;
-        const v = &player.values;
+        ref const v = player.values;
         const maxHealth = v.get!UNIT_FIELD_MAXHEALTH, maxMana = v.get!UNIT_FIELD_MAXPOWER1(Power.mana);
         uint health, mana;
         if (value < 0)
@@ -614,7 +614,7 @@ private:
         if (resurrectMap == player.data.map)
             teleportTo(resurrectMap, Position(resurrectAt.x, resurrectAt.y, resurrectAt.z, player.position.orientation));
         bringBack(0);
-        auto v = &player.values;
+        ref v = player.values;
         const maxHealth = v.get!UNIT_FIELD_MAXHEALTH, maxMana = v.get!UNIT_FIELD_MAXPOWER1(Power.mana);
         v.set!UNIT_FIELD_HEALTH(health == 0 ? 1 : health < maxHealth ? health : maxHealth);
         v.set!UNIT_FIELD_POWER1(Power.mana, mana < maxMana ? mana : maxMana);
@@ -634,7 +634,7 @@ private:
         sendMovementOrder!(Opcode.SMSG_FORCE_MOVE_UNROOT)();
         enum ubyte releaseTimer = 0x08;
         player.values.setByte!PLAYER_FIELD_BYTES(0, player.values.getByte!PLAYER_FIELD_BYTES(0) & ~releaseTimer);
-        auto v = &player.values;
+        ref v = player.values;
         if (restore > 0)
         {
             v.set!UNIT_FIELD_HEALTH(cast(uint)(v.get!UNIT_FIELD_MAXHEALTH * restore));

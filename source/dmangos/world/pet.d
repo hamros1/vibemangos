@@ -514,7 +514,7 @@ void showPetStats(C)(C creature, bool full = false)
     if (state is null || state.base.health == 0) // (a charmed creature keeps its own)
         return;
     const s = withAuras(state.base, creature.auras);
-    auto v = &creature.values;
+    ref v = creature.values;
     const health = v.get!UNIT_FIELD_HEALTH, maxHealth = v.get!UNIT_FIELD_MAXHEALTH;
     v.set!UNIT_FIELD_MAXHEALTH(s.health);
     if (full || (health && (health >= maxHealth || health > s.health)))

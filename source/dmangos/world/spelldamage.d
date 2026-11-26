@@ -715,7 +715,7 @@ void changeUnitPower(ref Caster caster, UnitRef who, imported!"dmangos.world.def
         who.session.player.modifyPower(power, amount);
         break;
     case UnitKind.creature:
-        auto v = &who.creature.values;
+        ref v = who.creature.values;
         const now = cast(long) v.get!UNIT_FIELD_POWER1(power) + amount, top = v.get!UNIT_FIELD_MAXPOWER1(power);
         v.set!UNIT_FIELD_POWER1(power, cast(uint)(now < 0 ? 0 : now > top ? top : now));
         break;

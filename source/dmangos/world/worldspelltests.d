@@ -205,7 +205,7 @@ unittest
     auto hero = loggedIn(context, db, 7, "Varian", here, AccountLevel.player, raceHuman, mapEasternKingdoms, 20);
     hero.read();
     auto session = hero.session.inWorld;
-    auto v = &session.player.values;
+    ref v = session.player.values;
     const own = v.get!UNIT_FIELD_NATIVEDISPLAYID;
     session.castSpell(trap, SpellTargets(TargetFlags.self, 0), true, 0);
     uint taken;
@@ -230,7 +230,7 @@ unittest
     auto hero = loggedIn(context, db, 7, "Varian", here, AccountLevel.player, raceHuman, mapEasternKingdoms, 20);
     hero.read();
     auto session = hero.session.inWorld;
-    auto v = &session.player.values;
+    ref v = session.player.values;
     v.set!UNIT_FIELD_NATIVEDISPLAYID(49u); // a human man
     v.set!UNIT_FIELD_DISPLAYID(49u);
     session.castSpell(orb, SpellTargets(TargetFlags.self, 0), true, 0);
@@ -256,7 +256,7 @@ unittest
     auto hunter = loggedIn(context, db, 7, "Thrall", here, AccountLevel.player, raceOrc, mapEasternKingdoms, 60);
     hunter.read();
     auto session = hunter.session.inWorld;
-    auto v = &session.player.values;
+    ref v = session.player.values;
     const top = v.get!UNIT_FIELD_MAXPOWER1(Power.mana);
     assert(top > 0, "a hunter has mana");
     v.set!UNIT_FIELD_POWER1(Power.mana, top);
@@ -338,7 +338,7 @@ unittest
     hero.read();
     auto map = context.map(mapEasternKingdoms);
     auto guardian = creatureBeside(context, 16384, 90108);
-    auto v = &hero.session.inWorld.player.values;
+    ref v = hero.session.inWorld.player.values;
     const health = v.get!UNIT_FIELD_HEALTH;
     guardian.ai.castFor(map, 28265, hero.session.character.guid, true);
     assert(v.get!UNIT_FIELD_HEALTH < health, "without its script it strikes");

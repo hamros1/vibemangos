@@ -1166,7 +1166,7 @@ private:
     {
         if (player.deathState != DeathState.alive)
             return;
-        auto v = &player.values;
+        ref v = player.values;
         const amount = aura.amount[i] > 0 ? aura.amount[i] : 0;
         uint healed;
         switch (aura.type(i))
@@ -1300,7 +1300,7 @@ private:
         if (kind < 0 || kind > Power.happiness)
             return;
         const power = cast(Power) kind;
-        auto v = &player.values;
+        ref v = player.values;
         if (v.get!UNIT_FIELD_MAXPOWER1(power) == 0)
             return;
         const now = v.get!UNIT_FIELD_POWER1(power);

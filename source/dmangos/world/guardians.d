@@ -183,7 +183,7 @@ mixin template GuardianSummons()
             return false;
         if (level != g.values.get!UNIT_FIELD_LEVEL)
             context.setCreatureLevel(g, level);
-        auto v = &g.values;
+        ref v = g.values;
         const faction = player.values.get!UNIT_FIELD_FACTIONTEMPLATE;
         v.set!UNIT_FIELD_FACTIONTEMPLATE(faction);
         g.factionTemplate = context.client.factionTemplates.lookup(faction);

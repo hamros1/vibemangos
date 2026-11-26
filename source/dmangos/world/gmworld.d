@@ -304,7 +304,7 @@ bool handleGameObjectInfoCommand(Character gm)
     auto go = gm.selectedGameObject(true);
     if (go is null)
         return true;
-    const values = &go.values;
+    ref const values = go.values;
     gm.colorSystemMessage(ChatColor.silver, go.template_.name);
     void field(T)(string label, T value)
     {
@@ -330,7 +330,7 @@ bool handleGameObjectActivateCommand(Character gm)
     auto go = gm.selectedGameObject(true);
     if (go is null)
         return true;
-    auto values = &go.values;
+    ref values = go.values;
     if (values.get!GAMEOBJECT_STATE == 1)
     {
         values.set!GAMEOBJECT_STATE(0u);
@@ -628,7 +628,7 @@ bool handleDeMorphCommand(Character gm)
     auto target = gm.selectedCharacter(true);
     if (target is null)
         target = gm;
-    auto values = &target.player.values;
+    ref values = target.player.values;
     values.set!UNIT_FIELD_DISPLAYID(values.get!UNIT_FIELD_NATIVEDISPLAYID);
     target.flushPlayerChanges();
     return true;
@@ -649,7 +649,7 @@ bool handleMountCommand(Character gm, uint modelId = 0)
         gm.redSystemMessage("No target found.");
         return true;
     }
-    auto values = target !is null ? &target.player.values : &creature.values;
+    ref values = target !is null ? target.player.values : creature.values;
     if (values.get!UNIT_FIELD_MOUNTDISPLAYID != 0)
     {
         gm.redSystemMessage("Target is already mounted.");

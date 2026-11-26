@@ -138,7 +138,7 @@ bool handleDismountCommand(Character gm)
         gm.redSystemMessage("No target found.");
         return true;
     }
-    auto values = target !is null ? &target.player.values : &creature.values;
+    ref values = target !is null ? target.player.values : creature.values;
     if (values.get!UNIT_FIELD_MOUNTDISPLAYID == 0)
     {
         gm.redSystemMessage("Target is not mounted.");

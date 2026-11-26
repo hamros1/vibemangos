@@ -389,7 +389,7 @@ final class Item
         import dmangos.world.battlegroup : realmPlayerGuid;
 
         auto item = new Item(record.guid, proto, owner);
-        auto v = &item.values;
+        ref v = item.values;
         if (record.creator)
             v.set!ITEM_FIELD_CREATOR(realmPlayerGuid(cast(uint)(owner >> 32), record.creator));
         if (record.giftCreator)

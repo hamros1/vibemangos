@@ -2466,7 +2466,8 @@ private:
             {
                 import dmangos.world.aurastate : auraStateFlag;
 
-                const values = other.kind == UnitKind.creature ? &other.creature.values : &other.session.player.values;
+                ref const values = other.kind == UnitKind.creature ? other.creature.values
+                    : other.session.player.values;
                 if (!(values.get!UNIT_FIELD_AURASTATE & auraStateFlag(cast(AuraState) spell.casting.targetAuraState)))
                     return SpellCastResult.targetAuraState;
             }
@@ -4204,7 +4205,7 @@ private:
         auto other = owner == player.guid ? null : playerOnMap(owner);
         if (other is null || other.player.deathState == DeathState.alive)
             return;
-        const v = &other.player.values;
+        ref const v = other.player.values;
         uint health, mana;
         if (spell.effect[i] == SpellEffect.resurrectNew)
         {

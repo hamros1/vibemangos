@@ -112,7 +112,7 @@ imported!"dmangos.world.creature".Creature summonTotem(ref Caster caster, const(
         ms > 0 ? ms : 0, caster.guid);
     if (totem is null)
         return null;
-    auto v = &totem.values;
+    ref v = totem.values;
     const faction = caster.fields.get!UNIT_FIELD_FACTIONTEMPLATE;
     v.set!UNIT_FIELD_FACTIONTEMPLATE(faction);
     totem.factionTemplate = context.client.factionTemplates.lookup(faction);

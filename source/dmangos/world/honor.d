@@ -564,7 +564,7 @@ mixin template HonorHandlers()
         honorRank_ = rankOf(rp);
         if (honorRank_.visualRank > 0 && honorRank_.rank > honorStored.highestRank)
             honorStored.highestRank = honorRank_.rank;
-        auto v = &player.values;
+        ref v = player.values;
         v.setByte!PLAYER_BYTES_3(3, honorRank_.rank);
         v.setByte!PLAYER_FIELD_BYTES(3, cast(ubyte) honorStored.highestRank);
         v.setByte!PLAYER_FIELD_BYTES2(0, cast(ubyte) rankBar(rp, honorRank_));
@@ -679,7 +679,7 @@ mixin template HonorHandlers()
             return;
         if (other !is this && canAttack(relatingNow(), other.relatingNow(), context.client))
             return;
-        const v = &other.player.values;
+        ref const v = other.player.values;
         ByteWriter w;
         w.put(guid);
         w.put(v.getByte!PLAYER_FIELD_BYTES2(0));
