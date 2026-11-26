@@ -316,7 +316,12 @@ struct ZulGurub
         case ZgEncounter.arlokk: // `setArlokk`
             break;
         case ZgEncounter.ohgan:
-            if (state == EncounterState.special && mandokir)
+            if (state != EncounterState.special)
+                break;
+            // His keepers slain (the Speaker's death, already on its way to the database): saved with it, or a crash
+            // could keep the death and lose what it means, and nothing would bring him down.
+            copy.checkpoint();
+            if (mandokir)
                 copy.signal(mandokir, ZgSignal.comeDown);
             break;
         case ZgEncounter.lorkhan, ZgEncounter.zath:
