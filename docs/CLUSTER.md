@@ -656,6 +656,24 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   swallowed before a crash comes back in the stomach, where the acid finds them again. A Flesh
   Tentacle slain before the crash stays slain, so the other one's death weakens him. A wipe in his
   phase, or a crash after it, brings the Eye back for the next pull. His death stays recorded.
+  The Bug Trio's fight keeps those of the three still living in the checkpoint. One devoured is
+  gone, not dead, and its cell brings it back when it loads again: after a crash in the fight, or
+  after the trio's end, it goes again at once. The count of the fallen comes from those gone, so
+  the next brought down is devoured and the last one standing dies, after a crash or a wipe.
+  The Twin Emperors' fight keeps both emperors in the checkpoint from the pull, before any blow, and
+  each is saved with his timers. A crash then brings them back fighting with the door to them shut;
+  a wipe opens it, and their deaths open both doors. Viscidus shattered keeps his phase in the
+  snapshot of a hurt creature, and his globs, summons, go with the worker: those not slain before
+  the crash rejoin him, so he rises with their health. Ouro, a summon, is kept in the checkpoint
+  while his fight is under way and asks for a checkpoint as his phase changes. A crash brings back
+  the same Ouro fighting; one saved without him (an older save) fails, and his sand wakes for the
+  next pull even if it came back from a snapshot taken as it woke him.
+  In the Ruins of Ahn'Qiraj, General Andorov and his four Kaldorei are kept in the checkpoint while
+  the army fights, and each wave is saved as it charges. A crash brings Andorov back where he
+  fights. The wave under way is found again from the deaths and the fighting: waves beaten stay
+  beaten, a captain fighting goes on, and the next follow it. Rajaxx's death keeps the army beaten,
+  and Andorov trades. Ossirian comes back from the snapshot of a hurt creature, and the crystals
+  placed in his fight are kept in the checkpoint, so a crystal used after a crash weakens him.
 * **GM commands.** `.instance info`, `.instance shutdown` and `.instance reset` of a copy another node
   hosts go to that node and its answer comes back; `.instance resetall` goes to every node.
 
@@ -1622,6 +1640,32 @@ cluster mode. They add a crash in the gong's ten seconds, before Arlokk comes: h
 forcefield opens and the gong calls her again. High Priest Thekal's test crashes the worker with
 Zealot Zath down: he comes back down, rises on his saved timer, and the three brought down together
 make Thekal the tiger while the Zealots stay down.
+### The Ahn'Qiraj raids' crash points
+
+`tools/harness/ahnqiraj_recovery.py` sends three scripted raid members on a gateway into the Temple
+or the Ruins of Ahn'Qiraj. It kills the worker that hosts the raid with `SIGKILL`, just after an
+encounter checkpoint, at these points:
+
+| `--phase` | Crash point | What the original clients saw after recovery |
+|---|---|---|
+| `trio` | Each member had taken on one of Lord Kri, Princess Yauj and Vem, and Kri was brought down and devoured (his emote). The crash came just after the checkpoint of it, Kri still standing at 1 health | All three sockets back in the same copy. The same Yauj and Vem. Kri came back from the snapshot of a hurt creature as he was, at 1 health and untouchable, and went out of sight at once. Vem brought down was devoured, and Yauj, the last, died |
+| `trio`, second crash | After Yauj's death, just after its checkpoint, on the worker that took over | Kri and Vem came with their cells, whole, and went out of sight at once; Yauj lay dead. None of the three fought. The first worker is restarted beforehand so that the voters keep a majority |
+| `twins` | The leader had slain Princess Huhuran, and the door to the emperors opened; he watched it. The others pulled Vek'nilash and Vek'lor, and the crash came just after the checkpoint of the pull, the door shut | The same emperors, fighting: Vek'nilash struck, and Vek'lor cast or went after his foe (every player in the copy joins their fight, the one by the door too). The door stayed shut, and neither emperor had a snapshot of a hurt creature: the encounter's checkpoint held them. Slain, both died and the doors in and out opened |
+| `army` | In the Ruins, Kurinnaxx slain, General Andorov had walked to the gates and been asked to lead the attack; the first two waves were beaten, and Captain Drenn's, the third, charged. The crash came just after the checkpoint of that charge. The members do not strike back, so Drenn was never hurt | The same Andorov (same GUID) where he fights and the same four Kaldorei. Drenn, with no snapshot of a hurt creature, was back home, and his wave, the one under way, charged once more with Rajaxx's yell; the two beaten did not come again. The next four followed; Rajaxx came, fell, and Andorov traded |
+
+The `army` case is run on its own, not in the chaos suite: before any crash, Andorov now and
+then keeps fighting the player who asked him and never starts the army (docs/ROADMAP.md).
+
+The real-data tests in `source/dmangos/world/realscripts_raids.d` cover the same crash points in
+cluster mode, and those the chaos suite cannot reach. The army's third wave with Captain Drenn
+struck: he fought on after the crash, and his wave did not charge again. Viscidus shattered with two
+globs slain: he rose within seconds with the share of the eight lost with the worker, and slain, his
+encounter was done. Ouro crashed a second after he came up: the same Ouro fought on and cast, one
+only; after a wipe and another crash his sand woke for the next pull. Ossirian with his five
+crystals placed: the same crystals were back, and one used weakened him. The emperors' test adds a
+wipe after the crash (the door opens) and checks that Vek'lor casts again, which a checkpoint
+written before his timers were set prevented. Unit tests in the scripts cover a fight saved without
+its actors (an older save), which fails and, for Ouro, wakes his sand.
 
 The cluster code is tested in memory: links wired back to back and a fake clock, with whole clusters
 of world contexts (joining, views, heartbeats, timeouts, restarts and fencing; handovers with no cell
