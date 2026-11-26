@@ -136,9 +136,9 @@ def stomach(fixture):
     paths = (fixture.directory / name for name in ("engage", "kill-eye", "kill-flesh", "god", "kill-last", "climb",
                                                    "rejoin", "finish"))
     engage, kill_eye, kill_flesh, god, kill_last, climb, rejoin, finish = paths
-    # A GM's cheats are the session's, not the character's: the recovered session is given god mode again.
+    # The recovered session keeps its GM toggles (`dmangos_gm_session`); `on`, not a toggle, so that it stays immune.
     actions = [(wait(engage), f"attack:{EYE}", wait(kill_eye), f"killpack:{EYE}", wait(kill_flesh),
-                f"killpack:one:{FLESH}", wait(god), "cmd:.cheat god", wait(kill_last), f"killpack:{FLESH}", wait(climb),
+                f"killpack:one:{FLESH}", wait(god), "cmd:.cheat god on", wait(kill_last), f"killpack:{FLESH}", wait(climb),
                 platform,
                 f"trigger:{PLATFORM}", wait(finish), "logout"),
                (outside, wait(rejoin), f"trigger:{entrance}", wait(finish), "logout")]

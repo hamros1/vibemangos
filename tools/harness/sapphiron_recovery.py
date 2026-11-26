@@ -204,10 +204,11 @@ def air(fixture):
     assert ":summons1:" in fixture.query(f"SELECT data FROM instance WHERE id={raid.copy}", raid.characters)
 
     killed, back, after = raid.crash(host, lambda part: f"[creature] {SAPPHIRON} guid {sap}:" in part)
-    # A GM's cheats are the session's: the frozen member and the one behind the block are made immune to the Frost
-    # Aura again, so that they live to the breath; the one in the open is given health enough to take it.
-    cheats = [["cmd:.cheat god"] for _ in range(3)]
-    cheats[exposed] = ["cmd:.modify hp 400000"]
+    # The recovered sessions keep their GM toggles (`dmangos_gm_session`): `on`, not a toggle, keeps the frozen
+    # member and the one behind the block immune to the Frost Aura, so that they live to the breath; the one in the
+    # open is made mortal, with health enough to take it.
+    cheats = [["cmd:.cheat god on"] for _ in range(3)]
+    cheats[exposed] = ["cmd:.cheat god off", "cmd:.modify hp 400000"]
     raid.stage(cheats)
     logs = after()
     for member, log in enumerate(logs):
@@ -275,7 +276,9 @@ def ground(fixture):
         and any(waterfall_state(log) == 1 for log in raid.logs()), "the waterfall not shut during the fight"
 
     killed, back, after = raid.crash(host, lambda part: f"[creature] {SAPPHIRON} guid {sap}:" in part)
-    raid.stage([["cmd:.cheat god"] for _ in range(3)])
+    # `on`, not a toggle: the recovered sessions keep their GM toggles, and a toggle would leave them to his Cleave.
+    raid.stage([["cmd:.cheat god on"] for _ in range(3)])
+    wait_for("the members immune again", lambda: all("Damage immunity: on for" in log for log in after()), 5)
     for member, log in enumerate(after()):
         assert sapphirons(log) == {sap}, f"member {member} sees Sapphirons {sapphirons(log)}, not {sap}"
         assert f"[creature aura] {unit_hex(sap)} received {FROST_AURA}" in log, f"member {member}: no Frost Aura"
