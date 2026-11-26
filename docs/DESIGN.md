@@ -131,6 +131,11 @@ queue in steady use allocates nothing. Inside a system, direct calls stay. The f
 map's creature deaths, read in the deaths phase. There is no event bus, no observer on every change,
 and no string-named signal.
 
+What the world does about something that happens on a map (a creature's death, a trap sprung, an object
+gone, a player put on the map, a waypoint's script) is a method of `WorldContext`, called by the map
+where it happens through `Map.world` (null for a map on its own, in a test). The map has no callbacks
+for these to be wired into: to find what follows, read the method the map calls.
+
 ## Registration at compile time
 
 Scripts (`@creature`, `@instance`, ...), packet handlers (`@Handles`), GM commands (the command

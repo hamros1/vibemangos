@@ -444,7 +444,12 @@ final class Map : CombatWorld, GameObjectWorld
     /// Sends replicas of this map's own objects to other nodes; null when standalone.
     Replicator replicator;
 
-    package bool delegate() battlegroundPaused;
+    /**
+     * The world this map is part of; null for a map on its own (a test's). What the world does about something
+     * that happens here (a creature's death, a trap sprung, an object gone, a player put on the map) is a method
+     * of it, called where it happens.
+     */
+    package imported!"dmangos.world.context".WorldContext world;
 
     package ElevatorPath delegate(ulong guid, const ref UpdateValues fields) elevatorPath;
     package uint delegate() elevatorClock;
@@ -712,7 +717,7 @@ final class Map : CombatWorld, GameObjectWorld
                     continue;
                 else if (personal !is null && personal.personalized)
                 {
-                    auto view = ViewerAdjust(personal, guid, groupOf is null ? 0 : groupOf(guid));
+                    auto view = ViewerAdjust(personal, guid, world is null ? 0 : world.groupIdOf(guid));
                     UpdateData own;
                     own.addValues(object.guid, object.fields, seenByEveryone, &view.adjust);
                     deliverUpdate(who, own);
@@ -733,18 +738,14 @@ final class Map : CombatWorld, GameObjectWorld
         object.fields.clearChanges();
     }
 
-    /// The group a player is in (0: none), for what a `PerViewer` shows it; null: nobody is.
-    uint delegate(ulong player) groupOf;
-
     /// Map-local variables set by database scripts. The instance's encounter conditions read their saved state.
     int[uint] scriptedWorldStates;
-    uint delegate(ulong, const ref UpdateValues, const Player) const groupViewerFaction;
 
     private void personalizeGroupFaction(Inhabitant who, MapObject object, bool reset)
     {
-        if (groupViewerFaction is null)
+        if (world is null)
             return;
-        const faction = groupViewerFaction(object.guid, object.fields, who.character);
+        const faction = world.groupViewerFaction(object.guid, object.fields, who.character);
         if (!faction && !reset)
             return;
         uint adjusted(size_t, uint value) const { return faction ? faction : value; }
@@ -804,7 +805,7 @@ final class Map : CombatWorld, GameObjectWorld
         if (personal is null || (!always && !personal.personalized))
             return;
         const viewer = who.character.guid;
-        auto view = ViewerAdjust(personal, viewer, groupOf is null ? 0 : groupOf(viewer));
+        auto view = ViewerAdjust(personal, viewer, world is null ? 0 : world.groupIdOf(viewer));
         bool differs = always;
         foreach (slot; personal.personalSlots)
             if (view.adjust(slot, object.fields[slot]) != object.fields[slot])
@@ -977,7 +978,7 @@ final class Map : CombatWorld, GameObjectWorld
                 due.remove(e.home); // a corpse
                 continue;
             }
-            if ((keepIdleObjectLoaded !is null && keepIdleObjectLoaded(e.object))
+            if ((world !is null && world.keepsIdleObjectLoaded(this, e.object))
                 || (creature !is null && ((creature.keepSpawnLoaded && creature.alive)
                 || (!creature.alive && creature.summon.type != TempSpawnType.none
                     && (creature.loot !is null || creature.skinnable))
@@ -1021,8 +1022,8 @@ final class Map : CombatWorld, GameObjectWorld
         if (auto go = cast(GameObject) object)
             indexTrap(go.guid, go.template_, go.values);
         replicate(slot, cell);
-        if (onObjectArrived !is null)
-            onObjectArrived(object);
+        if (world !is null)
+            world.objectArrived(this, object);
     }
 
     /// A replica's slot holds the real object from now on, homed in `home` and in cell `cell`.
@@ -1621,8 +1622,8 @@ final class Map : CombatWorld, GameObjectWorld
         auto migrant = save(object);
         if (migrant.kind == MigrantKind.none)
             return migrant; // a player's corpse or pet stays here
-        if (onObjectGone !is null)
-            onObjectGone(object); // its state is in the migrant: what it held here goes
+        if (world !is null)
+            world.objectLeft(this, object); // its state is in the migrant: what it held here goes
         migrant.home = home;
         clearInterest(slot);
         releaseCasterReplicas(slot);
@@ -1700,8 +1701,8 @@ final class Map : CombatWorld, GameObjectWorld
                 creature.ai.resumeSpellHandoff(this);
             }
         if (auto go = cast(GameObject) object)
-            if (onGameObjectMigrated !is null)
-                onGameObjectMigrated(go);
+            if (world !is null)
+                world.noteTickingObject(go, this); // its script can resume ticking
         replicate(slot, at_);
         updateObjectVisibility(object);
     }
@@ -1738,14 +1739,12 @@ final class Map : CombatWorld, GameObjectWorld
         return result;
     }
 
-    void delegate(Creature, UnitRef, float) remoteAssistance;
-
-    bool mayAskRemoteAssistance() const { return remoteAssistance !is null; }
+    bool mayAskRemoteAssistance() const { return world !is null && world.lendsCreatures(this); }
 
     void askRemoteAssistance(Creature caller, UnitRef enemy, float radius)
     {
-        if (remoteAssistance !is null)
-            remoteAssistance(caller, enemy, radius);
+        if (mayAskRemoteAssistance())
+            world.askCreatureLoans(this, caller, enemy, radius);
     }
 
     /// Cells were gained: every player looks around again, so those near them load, and so do cells other nodes want.
@@ -2421,27 +2420,25 @@ final class Map : CombatWorld, GameObjectWorld
 
     /**
      * A creature died of something no player is credited with (a creature's blow, a pet of its own):
-     * `Creature.die`, and what the world does about a death (`onCreatureDeath`).
+     * `Creature.die`, and what the world does about a death (`WorldContext.creatureDies`).
      */
     void creatureDeath(Creature creature)
     {
-        if (onCreatureDeath !is null)
-            onCreatureDeath(creature);
+        if (world !is null)
+            world.creatureDies(this, creature);
         else
             creature.die(this, 0);
     }
 
-    /// Told to let a creature die (`WorldContext`: `die`, and the death queued).
-    void delegate(Creature creature) onCreatureDeath;
+    /// Whether a creature here sends its due melee swing to its target's node (`remoteCreatureSwing`).
+    bool swingsRemotely() const { return world !is null && world.swingsRemotely(this); }
 
-    package void delegate(Creature creature) checkpointCreatureFight;
-
-    /// A player's damage aura ticked on a creature here after the caster left this map.
-    void delegate(UnitRef victim, imported!"dmangos.world.auras".Aura aura, size_t effect) remotePeriodicTick;
-
-    /// Sends a due melee swing from a creature here to its target's node.
-    bool delegate(Creature attacker, UnitRef target, uint spell, int spellValue, float spellThreat, bool secondary)
-        remoteCreatureSwing;
+    /// Sends a due melee swing from a creature here to its target's node; false if it could not be sent.
+    bool remoteCreatureSwing(Creature attacker, UnitRef target, uint spell, int spellValue, float spellThreat,
+        bool secondary)
+    {
+        return swingsRemotely() && world.queueCreatureSwing(attacker, target, spell, spellValue, spellThreat, secondary);
+    }
 
     /// Keep player replicas near this creature while it has an active fight, even without a local player.
     package void trackCreatureCombat(Creature creature, bool fighting)
@@ -2455,14 +2452,11 @@ final class Map : CombatWorld, GameObjectWorld
             clearInterest(slot);
     }
 
-    /// Told what linked creatures follow (`WorldContext`: `dmangos.world.creaturelinking`).
-    void delegate(Map map, Creature source, LinkEvent event, ulong enemy) onLinked;
-
-    /// See `CombatWorld.linked`.
+    /// See `CombatWorld.linked`: what linked creatures follow (`dmangos.world.creaturelinking`).
     void linked(Creature source, LinkEvent event, ulong enemy)
     {
-        if (onLinked !is null)
-            onLinked(this, source, event, enemy);
+        if (world !is null)
+            world.linkedEvent(this, source, event, enemy);
     }
 
     /**
@@ -2585,28 +2579,20 @@ final class Map : CombatWorld, GameObjectWorld
         return found;
     }
 
-    /// Told when a creature reaches a waypoint with a script.
-    void delegate(Creature creature, uint scriptId) onWaypointScript;
-    package void delegate(Creature creature, ulong player, bool immediate) checkpointQuestActor;
-
-    /// See `MotionWorld.waypointScript`.
+    /// See `MotionWorld.waypointScript`: a creature reached a waypoint with a script.
     void waypointScript(Creature creature, uint scriptId)
     {
-        if (onWaypointScript !is null)
-            onWaypointScript(creature, scriptId);
+        version (unittest)
+            waypointScriptsReached ~= scriptId;
+        if (world !is null)
+            world.waypointScript(this, creature, scriptId);
     }
 
-    /// Told when an object leaves this map for good (gone, or handed to another node) after its state was saved.
-    void delegate(MapObject object) onObjectGone;
-
-    /// Objects with a durable lifetime keep their cell loaded until they expire or leave the map.
-    bool delegate(MapObject object) keepIdleObjectLoaded;
-
-    /// A freshly spawned object became this map's own (loaded with its cell or put here by a script).
-    void delegate(MapObject object) onObjectArrived;
-
-    /// A game object has been installed from a migration or checkpoint; its script can resume ticking.
-    void delegate(GameObject object) onGameObjectMigrated;
+    version (unittest)
+    {
+        uint[] waypointScriptsReached; /// the scripts of the waypoints reached, for a test of a map on its own
+        ulong[] timedTrapsFired;       /// the traps whose fuse ran out, likewise
+    }
 
     /// Every object here, replicas included.
     void forEachObject(scope void delegate(MapObject object) each)
@@ -2619,19 +2605,13 @@ final class Map : CombatWorld, GameObjectWorld
             each(object);
     }
 
-    /// Told when a creature's corpse goes, to bring it back later; null: never comes back.
-    void delegate(Creature creature) onCorpseRemoved;
-
-    /// See `CombatWorld.corpseExpired`.
+    /// See `CombatWorld.corpseExpired`: the world brings the creature back later.
     void corpseExpired(Creature creature)
     {
         removeObject(creature.guid);
-        if (onCorpseRemoved !is null)
-            onCorpseRemoved(creature);
+        if (world !is null)
+            world.corpseRemoved(creature);
     }
-
-    /// Told when a game object is used up, to bring it back later.
-    void delegate(GameObject go) onGameObjectUsedUp;
 
     /// See `GameObjectWorld.flushGameObject`.
     void flushGameObject(GameObject go)
@@ -2643,8 +2623,8 @@ final class Map : CombatWorld, GameObjectWorld
     void gameObjectUsedUp(GameObject go)
     {
         removeObject(go.guid);
-        if (onGameObjectUsedUp !is null)
-            onGameObjectUsedUp(go);
+        if (world !is null)
+            world.gameObjectUsedUp(go); // to bring it back later
     }
 
     /// See `CombatWorld.flushCreature`.
@@ -2688,38 +2668,29 @@ final class Map : CombatWorld, GameObjectWorld
             {
                 // A trap within whose radius the player now stands.
                 const radius = go.trapRadius;
-                if (radius > 0 && onTrap !is null && distanceSquared(go.position, atNow) <= radius * radius)
-                    onTrap(who, go);
+                if (radius > 0 && world !is null && distanceSquared(go.position, atNow) <= radius * radius)
+                    world.trapSprung(this, who, go);
             }
-            else if (onReplicaNoticing !is null && highGuidOf(at(k).guid) == HighGuid.unit)
+            else if (world !is null && highGuidOf(at(k).guid) == HighGuid.unit)
                 if (auto replica = cast(Replica) object)
                 {
                     // Another node's creature, alive and not fighting: would it notice the player?
                     const values = &replica.fields();
                     if (values.get!UNIT_FIELD_HEALTH > 0 && !(values.get!UNIT_FIELD_FLAGS & UnitFlags.inCombat)
                         && distanceSquared(replica.position, atNow) < noticeDistance ^^ 2)
-                        onReplicaNoticing(who, replica);
+                        world.replicaNoticing(who, replica);
                 }
         }
     }
 
-    /// Told when a player steps within a trap's radius (it may spring).
-    void delegate(Inhabitant who, GameObject trap) onTrap;
-
-    /// The context fires a trap whose fuse has expired at its position.
-    void delegate(GameObject trap) onTimedTrap;
-
+    /// A trap's fuse ran out: the world fires it where it is (`WorldContext.disturbEncounterTrap`).
     void triggerTimedTrap(GameObject trap)
     {
-        if (onTimedTrap !is null)
-            onTimedTrap(trap);
+        version (unittest)
+            timedTrapsFired ~= trap.guid;
+        if (world !is null)
+            world.disturbEncounterTrap(this, trap);
     }
-
-    /**
-     * Told of another node's creature (its replica here, alive, out of combat) near a player who
-     * moved, to decide whether it notices the player (and the player must go to that node to fight).
-     */
-    void delegate(Inhabitant who, Replica replica) onReplicaNoticing;
 
     /// The players who see a creature are noticed by it, when it has moved; a pet that moved is noticed by the creatures near it.
     private void creatureNoticing(Creature creature, uint slot)
@@ -2794,8 +2765,6 @@ final class Map : CombatWorld, GameObjectWorld
         return slot == uint.max ? null : at(slot).player;
     }
 
-    /// Raid scripts: a player was put on the map (`add`).
-    void delegate(Inhabitant who) onPlayerAdded;
 
     /// Puts a player on the map, and introduces it to everyone in sight.
     void add(Inhabitant who, bool shipsShown = false)
@@ -2824,8 +2793,8 @@ final class Map : CombatWorld, GameObjectWorld
         if (!shipsShown) // the session showed them already, before the player's own create block
             foreach (object; everywhere_)
                 deliverUpdate(who, object.appearance(serverTime()));
-        if (onPlayerAdded !is null) // Raid scripts: a copy's script hears of it
-            onPlayerAdded(who);
+        if (world !is null) // Raid scripts: a copy's script hears of it
+            world.playerAdded(this, who);
     }
 
     private MapObject[] everywhere_; /// objects every player here sees wherever they are (ships)
@@ -3226,8 +3195,8 @@ private:
             foreach (peer; at(slot).replicatedTo)
                 replicator.remove(peer, id, at(slot).guid);
             at(slot).replicatedTo = null;
-            if (onObjectGone !is null)
-                onObjectGone(at(slot).object);
+            if (world !is null)
+                world.objectLeft(this, at(slot).object);
             if (entities.holds(slot))
                 dropEntity(slot);
         }

@@ -1148,8 +1148,9 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
                 && tick.aura.type(tick.effect).among(AuraType.periodicDamage, AuraType.periodicLeech, AuraType.periodicManaLeech))
             {
                 auto victim = world.unitOf(this);
-                if (victim.map.remotePeriodicTick !is null)
-                    victim.map.remotePeriodicTick(victim, tick.aura, tick.effect);
+                if (victim.map.world !is null) // its caster left this map: the tick is resolved for it
+                    imported!"dmangos.world.spellauras".remotePeriodicCreatureTick(victim.map.world, victim, tick.aura,
+                        tick.effect);
             }
         }
         // Crowd control breaking early (`SPELL_ATTR_HEARTBEAT_RESIST`).

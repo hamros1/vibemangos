@@ -493,8 +493,8 @@ names (instead of its EventAI), and makes an `InstanceScript` with each dungeon 
 one. `CreatureAI` raises the events at the moments its EventAI would hear of (combat, damage, kills, death,
 evading, home, spells hitting it) and ticks the schedules in its update; a creature with steps
 pending keeps ticking out of combat. A creature's script state is written at the end of
-`Creature.saveState` and read in `loadState`, so a region handover carries it. `Map.onObjectGone`
-frees a creature's script state when it leaves the map for good, and dropping a dungeon copy
+`Creature.saveState` and read in `loadState`, so a region handover carries it. `WorldContext.objectLeft`
+(called by the map) frees a creature's script state when it leaves the map for good, and dropping a dungeon copy
 frees its scripts. `InstanceScript.raise` saves the dungeon script's state (hex, after
 `dmangos-script:`) in `instance.data` whenever an event changed it. Game objects get their script
 in `makeGameObject`; `useGameObject` raises `ObjectUsed` through `WorldContext.gameObjectUsed`

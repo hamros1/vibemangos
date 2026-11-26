@@ -1329,7 +1329,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     /// Cast a dungeon trap's spell at the trap. The egg creates a second proximity trap and each
     /// plague fissure casts its own short-range Eruption at its location on the floor.
-    private bool disturbEncounterTrap(Map map_, GameObject object)
+    package bool disturbEncounterTrap(Map map_, GameObject object)
     {
         import dmangos.world.defines : UnitFlags;
         import dmangos.world.gameobject : GoLootState, gameObjectAnimation;
@@ -1680,7 +1680,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     bool delegate(ushort, const ref CreatureSwing) sendCreatureSwing;
     private ulong[ushort] lastCreatureSwing, lastCreatureSwingReply;
 
-    private bool queueCreatureSwing(Creature attacker, UnitRef target, uint spell, int spellValue, float spellThreat,
+    package bool queueCreatureSwing(Creature attacker, UnitRef target, uint spell, int spellValue, float spellThreat,
         bool secondary)
     {
         import dmangos.world.combat : creatureTypeHumanoid;
@@ -3315,7 +3315,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /// `source` was attacked by `enemy` or evades: its linked creatures follow (see the module).
-    private void linkedEvent(Map m, Creature source, LinkEvent event, ulong enemy)
+    package void linkedEvent(Map m, Creature source, LinkEvent event, ulong enemy)
     {
         if (!data.creatureLinks.involves(source.spawnId, source.template_.entry))
             return;
@@ -4624,70 +4624,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         created.elevatorHomes = elevatorHomesFor(id);
         if (instance == 0) // a dungeon's copies are all on one node: nobody else needs replicas of them
             created.replicator = replicator;
-        created.onCorpseRemoved = &corpseRemoved;
+        created.world = this; // what happens beyond the map is this world's, called from the map where it happens
         created.visibilityFacts = (ulong viewer, ulong seen, Position seenAt) => visibilityFacts(created, viewer,
             seen, seenAt);
-        created.onReplicaNoticing = &replicaNoticing;
-        if (!instance && sendCreatureSwing !is null)
-            created.remoteCreatureSwing = &queueCreatureSwing;
-        if (!instance && sendCreatureLoan !is null)
-            created.remoteAssistance = (Creature caller, UnitRef enemy, float radius) {
-                askCreatureLoans(created, caller, enemy, radius);
-            };
-        created.onTrap = (Inhabitant who, GameObject trap) { trapSprung(created, who, trap); };
-        created.onTimedTrap = (GameObject trap) { disturbEncounterTrap(created, trap); };
-        created.onWaypointScript = (Creature creature, uint scriptId) {
-            import dmangos.world.dbscripts : DbScriptType;
-
-            startScript(DbScriptType.creatureMovement, scriptId, created, creature.guid, creature.guid);
-        };
-        if (!instance && config.cluster.enabled)
-        {
-            created.keepIdleObjectLoaded = (MapObject object) {
-                if (object.guid !in outdoorQuestActors)
-                    return false;
-                if (auto creature = cast(Creature) object)
-                    return creature.alive && (creature.summon.timed || hasOutdoorFactionChange(creature));
-                return (cast(GameObject) object) !is null;
-            };
-            created.checkpointQuestActor = (Creature creature, ulong player, bool immediate) {
-                checkpointQuestActor(created, creature, player, immediate);
-            };
-            created.checkpointCreatureFight = &checkpointOutdoorFight;
-        }
-        else if (instance && config.cluster.enabled && !battlegroundOfMap(id))
-            created.checkpointCreatureFight = (Creature creature) => checkpointDungeonFight(created, creature);
-        created.onGameObjectUsedUp = &gameObjectUsedUp;
-        created.onObjectGone = (MapObject object) {
-            if (auto creature = cast(Creature) object)
-                ownedSummonGone(created, creature);
-            else if (auto trap = cast(GameObject) object)
-                if (trap.type == GameObjectType.trap && trap.owner)
-                    if (auto session = onlinePlayer(trap.owner))
-                        if (session.currentMap is created)
-                            session.checkpointSummons(true, trap.guid);
-            objectGone(created, object);
-        };
-        created.onObjectArrived = (MapObject o) { // open-world round 2: a scripted game object's `Spawned`
-            if (auto go = cast(GameObject) o)
-                if (go.behaviour && scripts.handles!(imported!"dmangos.script.api".Spawned)(go.behaviour))
-                    objectArrivals ~= GameObjectArrival(go, created);
-        };
-        created.onGameObjectMigrated = (GameObject go) => noteTickingObject(go, created);
-        created.onCreatureDeath = (Creature c) {
-            linkedDeath(created, c); // its pack's part first, while it is still known
-            c.die(created, unixTime);
-            if (const checkpoint = c.guid in outdoorQuestActors)
-                if (!checkpoint.player)
-                    discardQuestActor(c);
-            ownedSummonGone(created, c);
-            created.creatureDeaths.put(c);
-            battlegroundCreatureKilled(created, c.template_.entry, 0);
-        };
-        created.remotePeriodicTick = (UnitRef victim, imported!"dmangos.world.auras".Aura aura, size_t effect) {
-            imported!"dmangos.world.spellauras".remotePeriodicCreatureTick(this, victim, aura, effect);
-        };
-        created.onLinked = &linkedEvent;
         if (instance)
             if (const name = id in data.instanceScriptNames)
             {
@@ -4791,50 +4730,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     script.signalObject = &gameObjectSignalled;
                     script.respawnObjectOf = &respawnObjectOfEntry;
                     script.summonObjectAt = &summonGameObjectAt;
-                    created.keepIdleObjectLoaded = (MapObject object) => cast(GameObject) object !is null
-                        && script.keepsCheckpoint(EntityRef(object.guid));
                     instanceScripts[instance] = script;
                     if (!copyArriving) // a copy from another node brings its creatures: their fights go on
                         script.restored();
                 }
             }
-        if (instance || config.cluster.enabled)
-            created.onPlayerAdded = (Inhabitant who) {
-                import dmangos.script.api : PlayerEntered;
-
-                if (auto s = instance in instanceScripts)
-                    s.raise(PlayerEntered(EntityRef(who.character.guid)));
-                if (const state = instance in instances)
-                    if (state.corpses.length || state.chests.length)
-                        created.forEachObject((MapObject object) {
-                            if (auto corpse = cast(Creature) object)
-                                if (corpse.loot !is null && corpse.spawn.guid in state.corpses)
-                                    corpse.loot.resumeRollsFor(who.character.guid);
-                            if (auto chest = cast(GameObject) object)
-                                if (chest.loot !is null && chest.spawn.guid in state.chests)
-                                    chest.loot.resumeRollsFor(who.character.guid);
-                        });
-                if (!instance)
-                {
-                    foreach (ref corpse; outdoorCorpses.byValue)
-                    {
-                        const spawn = outdoorCorpseSpawn(corpse);
-                        if (spawn.guid && spawn.map == id)
-                            if (auto creature = created.creatureAt(loanGuid(&spawn)))
-                                if (creature.loot !is null)
-                                    creature.loot.resumeRollsFor(who.character.guid);
-                    }
-                    foreach (guid; outdoorChests.byKey)
-                        if (const index = guid in gameObjectSpawnIndex)
-                        {
-                            const spawn = &data.gameObjectSpawns[*index];
-                            if (spawn.map == id)
-                                if (auto chest = created.gameObjectAt(makeGuid(HighGuid.gameObject, spawn.entry, guid)))
-                                    if (chest.loot !is null)
-                                        chest.loot.resumeRollsFor(who.character.guid);
-                        }
-                }
-            };
         if (instance == 0) // open-world round 2: the continent's script (`world_template`)
             if (const name = id in data.worldScriptNames)
                 if (auto script = InstanceScript.makeWorld(scripts, *name, id))
@@ -4851,13 +4751,157 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             foreach (ref ship; ships)
                 if (ship.map == id)
                     created.addEverywhere(ship.object);
-        created.groupOf = (ulong player) {
-            auto group = groups.of(player);
-            return group is null ? 0 : group.id;
-        };
-        created.battlegroundPaused = () => battlegroundPaused(created);
-        created.groupViewerFaction = &groupViewerFaction;
         return created;
+    }
+
+    // -----------------------------------------------------------------------
+    // What a map tells its world of (`Map.world`): each called by the map where it happens.
+    // -----------------------------------------------------------------------
+
+    /// The group player `player` is in (0: none), for what a `PerViewer` shows it.
+    package uint groupIdOf(ulong player)
+    {
+        auto group = groups.of(player);
+        return group is null ? 0 : group.id;
+    }
+
+    /**
+     * Whether `object` keeps its cell of `map` loaded with nobody near: in a dungeon, a game object its script keeps
+     * in its checkpoint; outdoors on a clustered server, a quest's actor that lasts (a timed summon, one whose
+     * faction a quest changed) or its game object.
+     */
+    package bool keepsIdleObjectLoaded(Map map, MapObject object)
+    {
+        if (map.instanceId)
+        {
+            auto script = map.instanceId in instanceScripts;
+            return script !is null && cast(GameObject) object !is null
+                && script.keepsCheckpoint(EntityRef(object.guid));
+        }
+        if (!config.cluster.enabled || object.guid !in outdoorQuestActors)
+            return false;
+        if (auto creature = cast(Creature) object)
+            return creature.alive && (creature.summon.timed || hasOutdoorFactionChange(creature));
+        return (cast(GameObject) object) !is null;
+    }
+
+    /// A freshly spawned object became `map`'s own (loaded with its cell or put there by a script): a scripted game
+    /// object's `Spawned` is raised in the world's phase.
+    package void objectArrived(Map map, MapObject object)
+    {
+        if (auto go = cast(GameObject) object)
+            if (go.behaviour && scripts.handles!(imported!"dmangos.script.api".Spawned)(go.behaviour))
+                objectArrivals ~= GameObjectArrival(go, map);
+    }
+
+    /// An object left `map` for good (gone, or handed to another node) after its state was saved: what the world
+    /// held of it goes.
+    package void objectLeft(Map map, MapObject object)
+    {
+        if (auto creature = cast(Creature) object)
+            ownedSummonGone(map, creature);
+        else if (auto trap = cast(GameObject) object)
+            if (trap.type == GameObjectType.trap && trap.owner)
+                if (auto session = onlinePlayer(trap.owner))
+                    if (session.currentMap is map)
+                        session.checkpointSummons(true, trap.guid);
+        objectGone(map, object);
+    }
+
+    /// A creature of `map` died of something no player is credited with: it dies, and its death is queued for the
+    /// deaths phase.
+    package void creatureDies(Map map, Creature c)
+    {
+        linkedDeath(map, c); // its pack's part first, while it is still known
+        c.die(map, unixTime);
+        if (const checkpoint = c.guid in outdoorQuestActors)
+            if (!checkpoint.player)
+                discardQuestActor(c);
+        ownedSummonGone(map, c);
+        map.creatureDeaths.put(c);
+        battlegroundCreatureKilled(map, c.template_.entry, 0);
+    }
+
+    /// A creature of `map` was hurt and lives: its fight is kept for a crash (a clustered server's).
+    package void checkpointCreatureFight(Map map, Creature creature)
+    {
+        if (!config.cluster.enabled)
+            return;
+        if (!map.instanceId)
+            checkpointOutdoorFight(creature);
+        else if (!battlegroundOfMap(map.id))
+            checkpointDungeonFight(map, creature);
+    }
+
+    /// A quest's actor on `map` did something its script's state follows: kept for a crash (outdoors, clustered).
+    package void questActorChanged(Map map, Creature creature, ulong player, bool immediate)
+    {
+        if (!map.instanceId && config.cluster.enabled)
+            checkpointQuestActor(map, creature, player, immediate);
+    }
+
+    /// Whether a creature of `map` may ask another node's creatures for help, and send its swings to a target there
+    /// (the open world of a clustered server).
+    package bool lendsCreatures(const Map map) const
+    {
+        return !map.instanceId && sendCreatureLoan !is null;
+    }
+
+    package bool swingsRemotely(const Map map) const /// ditto
+    {
+        return !map.instanceId && sendCreatureSwing !is null;
+    }
+
+    /// A creature of `map` reached a waypoint with a script: the script starts, the creature its source and target.
+    package void waypointScript(Map map, Creature creature, uint scriptId)
+    {
+        import dmangos.world.dbscripts : DbScriptType;
+
+        startScript(DbScriptType.creatureMovement, scriptId, map, creature.guid, creature.guid);
+    }
+
+    /// A player was put on `map`: its dungeon's script hears of it, and the rolls under way on what lies there are
+    /// the player's to join again.
+    package void playerAdded(Map map, Inhabitant who)
+    {
+        import dmangos.script.api : PlayerEntered;
+
+        const instance = map.instanceId, id = map.id;
+        if (!instance && !config.cluster.enabled)
+            return;
+        auto created = map;
+        if (auto s = instance in instanceScripts)
+            s.raise(PlayerEntered(EntityRef(who.character.guid)));
+        if (const state = instance in instances)
+            if (state.corpses.length || state.chests.length)
+                created.forEachObject((MapObject object) {
+                    if (auto corpse = cast(Creature) object)
+                        if (corpse.loot !is null && corpse.spawn.guid in state.corpses)
+                            corpse.loot.resumeRollsFor(who.character.guid);
+                    if (auto chest = cast(GameObject) object)
+                        if (chest.loot !is null && chest.spawn.guid in state.chests)
+                            chest.loot.resumeRollsFor(who.character.guid);
+                });
+        if (!instance)
+        {
+            foreach (ref corpse; outdoorCorpses.byValue)
+            {
+                const spawn = outdoorCorpseSpawn(corpse);
+                if (spawn.guid && spawn.map == id)
+                    if (auto creature = created.creatureAt(loanGuid(&spawn)))
+                        if (creature.loot !is null)
+                            creature.loot.resumeRollsFor(who.character.guid);
+            }
+            foreach (guid; outdoorChests.byKey)
+                if (const index = guid in gameObjectSpawnIndex)
+                {
+                    const spawn = &data.gameObjectSpawns[*index];
+                    if (spawn.map == id)
+                        if (auto chest = created.gameObjectAt(makeGuid(HighGuid.gameObject, spawn.entry, guid)))
+                            if (chest.loot !is null)
+                                chest.loot.resumeRollsFor(who.character.guid);
+                }
+        }
     }
 
     /// Per-viewer faction for an opposite-faction party member. The authoritative faction never changes.
@@ -4872,7 +4916,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return viewer.values.get!UNIT_FIELD_FACTIONTEMPLATE;
     }
 
-    private bool battlegroundPaused(Map map)
+    package bool battlegroundPaused(Map map)
     {
         if (map.instanceId)
             if (auto copy = battlegrounds.find(map.instanceId))
@@ -5812,7 +5856,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         }
     }
 
-    /// An object left its map for good (`Map.onObjectGone`): its script's state goes.
+    /// An object left its map for good (`objectLeft`): its script's state goes.
     private void objectGone(Map map, MapObject object)
     {
         if (auto creature = cast(Creature) object)
@@ -7875,7 +7919,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return null;
     }
 
-    private void askCreatureLoans(Map map_, Creature caller, UnitRef enemy, float radius)
+    package void askCreatureLoans(Map map_, Creature caller, UnitRef enemy, float radius)
     {
         import dmangos.world.grid : cellKeyAt;
         import dmangos.world.defines : UnitFlags;
@@ -8414,7 +8458,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /// A corpse went; if it died elsewhere, restore the original respawn deadline.
-    private void corpseRemoved(Creature creature)
+    package void corpseRemoved(Creature creature)
     {
         import std.algorithm.comparison : max;
 
@@ -8630,7 +8674,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
      * for the same creature once in 30 seconds, so one that does not attack after all is not
      * followed back and forth.
      */
-    private void replicaNoticing(Inhabitant who, Replica replica)
+    package void replicaNoticing(Inhabitant who, Replica replica)
     {
         import dmangos.world.combat : levelFor;
         import dmangos.world.creatureai : isNeutralToAll;
@@ -9398,7 +9442,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /// A game object's script with steps pending ticks from now on.
-    private void noteTickingObject(GameObject go, Map map)
+    package void noteTickingObject(GameObject go, Map map)
     {
         if (go.behaviour && scripts.busy(go.behaviour))
             tickingObjects[GameObjectOnMap(map, go.guid)] = true;
@@ -10324,7 +10368,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /// A game object used up: it comes back after its spawn's respawn time.
-    private void gameObjectUsedUp(GameObject go)
+    package void gameObjectUsedUp(GameObject go)
     {
         if (go.spawn.guid >= temporaryCounterStart)
             return;

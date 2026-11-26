@@ -1300,17 +1300,12 @@ unittest
         WaypointNode(2, above.x, above.y, above.z, 1.5f, 10, 102),
         WaypointNode(3, bank.x, bank.y, bank.z, float.nan, 10, 103)];
     walker.generator = new WaypointMovement(path, false);
-    uint[] reached;
-    map.onWaypointScript = (Creature creature, uint script) {
-        assert(creature is walker);
-        reached ~= script;
-    };
     map.addObject(walker);
     walker.tick(map, 1);
     assert(!walker.spline.finalized && walker.spline.finalDestination == land,
         "the first walking spline excludes the submerged waypoint");
     walker.tick(map, walker.spline.duration + 1);
-    assert(reached == [101u] && !walker.fighter.swimming && !walker.spline.finalized);
+    assert(map.waypointScriptsReached == [101u] && !walker.fighter.swimming && !walker.spline.finalized);
     assert(map.swimmableAt(walker.spline.finalDestination, walker.collisionHeight));
     ByteWriter saved;
     walker.generator.save(saved);
@@ -1319,14 +1314,14 @@ unittest
     resumed.load(reader);
     walker.generator = resumed;
     walker.tick(map, walker.spline.duration + 1);
-    assert(reached == [101u] && walker.fighter.swimming && walker.spline.finalDestination == above,
+    assert(map.waypointScriptsReached == [101u] && walker.fighter.swimming && walker.spline.finalDestination == above,
         "a restored shoreline leg does not signal the waypoint script");
     walker.tick(map, walker.spline.duration + 1);
-    assert(reached == [101u, 102] && walker.spline.finalized);
+    assert(map.waypointScriptsReached == [101u, 102] && walker.spline.finalized);
     walker.tick(map, 11);
     assert(!walker.spline.finalized && walker.fighter.swimming);
     walker.tick(map, walker.spline.duration + 1);
-    assert(reached == [101u, 102] && !walker.fighter.swimming && walker.spline.finalDestination == bank);
+    assert(map.waypointScriptsReached == [101u, 102] && !walker.fighter.swimming && walker.spline.finalDestination == bank);
     walker.tick(map, walker.spline.duration + 1);
-    assert(reached == [101u, 102, 103]);
+    assert(map.waypointScriptsReached == [101u, 102, 103]);
 }

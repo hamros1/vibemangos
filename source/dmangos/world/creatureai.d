@@ -1284,7 +1284,7 @@ private:
         import dmangos.world.map : Map;
 
         auto map = cast(Map) world;
-        return map !is null && map.remoteCreatureSwing !is null
+        return map !is null && map.swingsRemotely
             && (!relating.playerControlled || (me.meleeController && meleeEnabled)) ? map : null;
     }
 

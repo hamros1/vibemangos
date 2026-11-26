@@ -192,8 +192,8 @@ mixin template CreatureScripting()
         import dmangos.world.map : Map;
 
         if (auto map = cast(Map) world_)
-            if (map.checkpointQuestActor !is null)
-                map.checkpointQuestActor(me, questActorPlayer(), immediate);
+            if (map.world !is null)
+                map.world.questActorChanged(map, me, questActorPlayer(), immediate);
     }
 
     /// Raises `event` from outside its own moments (a player's gossip, a quest): its world as given.

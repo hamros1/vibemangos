@@ -772,17 +772,12 @@ unittest
     assert(restored.goState == goStateActive && restored.restoreTimer == 488);
     auto restoredTrap = next.gameObjectAt(sprung.guid);
     assert(restoredTrap.trapReadyAt == 3910 && restoredTrap.trapUses == 1);
-    uint fired;
-    next.onTimedTrap = (GameObject object) {
-        assert(object.guid == fused.guid);
-        ++fired;
-    };
     next.update(487.msecs);
-    assert(restored.goState == goStateActive && fired == 0);
+    assert(restored.goState == goStateActive && next.timedTrapsFired.length == 0);
     next.update(1.msecs);
-    assert(fired == 1);
+    assert(next.timedTrapsFired == [fused.guid]);
     next.update(1000.msecs);
-    assert(fired == 1);
+    assert(next.timedTrapsFired == [fused.guid]);
     assert(restored.goState == goStateReady && restored.lootState == GoLootState.ready
         && !(restored.values.get!GAMEOBJECT_FLAGS & goFlagInUse));
     assert(next.objectCount == 3 && !next.isReplica(restored.guid));

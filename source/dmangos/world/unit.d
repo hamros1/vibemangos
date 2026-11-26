@@ -547,7 +547,7 @@ Character creditedPlayer(UnitRef unit)
  */
 void dealDamage(UnitRef attacker, UnitRef victim, uint damage, const Blow blow)
 {
-    if (victim.map !is null && victim.map.battlegroundPaused !is null && victim.map.battlegroundPaused())
+    if (victim.map !is null && victim.map.world !is null && victim.map.world.battlegroundPaused(victim.map))
         return;
     // A player's worn items wear a little with the damage it deals and takes (`Unit::DealDamage`).
     if (damage)
@@ -651,8 +651,8 @@ private void creatureDamaged(UnitRef attacker, UnitRef victim, uint damage, cons
             creature.ai.procAuras(ProcFlag.takeHarmfulSpell, attacker, ProcHit(null, blow.crit ? ProcEx.criticalHit
                 : ProcEx.normalHit, damage));
     }
-    if (!killed && map.checkpointCreatureFight !is null)
-        map.checkpointCreatureFight(creature);
+    if (!killed && map.world !is null)
+        map.world.checkpointCreatureFight(map, creature);
     map.flushObjectChanges(creature);
     if (!killed)
         return;
