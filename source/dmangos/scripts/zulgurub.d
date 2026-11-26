@@ -52,6 +52,9 @@ enum : uint
     npcBatRider = 14750,
     npcFrenziedBat = 14965,
     npcSpawnOfMarli = 15041,
+    npcShadeOfJindo = 14986,      /// Jin'do's: Delusions bring them, seen only by those it marks
+    npcPowerfulHealingWard = 14987,
+    npcBrainWashTotem = 15112,
     npcGrilek = 15082,     /// the Edge of Madness's four, the Brazier of Madness's (one a fortnight)
     npcHazzarah = 15083,
     npcRenataki = 15084,
@@ -134,6 +137,26 @@ struct ZulGurub
 
     /// Those summons, as they come into the world (back from the checkpoint too), till they die or their fight ends.
     @transient EntityRef[] fightSummons;
+    /// Jin'do's shades and totems, kept the same way: his fight has no encounter state, so they are kept as they come
+    /// and let go (sent away) as he dies or gives up his fight.
+    @transient EntityRef[] jindoSummons;
+
+    private static bool isJindoSummon(uint entry)
+    {
+        return entry == npcShadeOfJindo || entry == npcPowerfulHealingWard || entry == npcBrainWashTotem;
+    }
+
+    private void jindoOver(ref InstanceContext copy)
+    {
+        foreach (summon; jindoSummons)
+        {
+            copy.releaseCheckpointActor(summon);
+            if (copy.alive(summon))
+                copy.despawn(summon);
+        }
+        jindoSummons = null;
+        copy.checkpoint();
+    }
 
     private void keepFightSummons(ref InstanceContext copy, ZgEncounter which)
     {
@@ -156,6 +179,8 @@ struct ZulGurub
                 }
             }
     }
+
+    enum uint shadePassive = 24_307, randomAggro = 23_878, shadeVisual = 24_313;
 
     private bool arlokkActive() const
     {
@@ -202,6 +227,20 @@ struct ZulGurub
             fightSummons ~= e.creature;
             if (encounters[fightSummonOf[e.creature.entry]] == EncounterState.inProgress)
                 copy.checkpointCreature(e.creature);
+            break;
+        case npcShadeOfJindo, npcPowerfulHealingWard, npcBrainWashTotem:
+            import std.algorithm.searching : canFind;
+
+            if (!e.summoned || jindoSummons.canFind(e.creature))
+                break;
+            const fresh = !copy.hasSavedCreature(e.creature);
+            jindoSummons ~= e.creature;
+            copy.checkpointCreature(e.creature);
+            // A shade as it comes (CMaNGOS's `SummonShadeOfJindo`): unseen but by those Delusions marks, after
+            // whoever it finds, and its visual. One back from the checkpoint has them already.
+            if (fresh && e.creature.entry == npcShadeOfJindo)
+                foreach (spell; [shadePassive, randomAggro, shadeVisual])
+                    copy.castSpell(e.creature, spell, e.creature);
             break;
         case npcGrilek, npcHazzarah, npcRenataki, npcWushoolay, npcGahzranka:
             if (e.summoned) // called, back from the checkpoint, or brought by a handoff: kept till slain
@@ -263,7 +302,7 @@ struct ZulGurub
     void on(ref InstanceContext copy, const ref Restored e)
     {
         foreach (entry; [npcGrilek, npcHazzarah, npcRenataki, npcWushoolay, npcGahzranka, npcOhgan, npcChainedSpirit,
-                npcBatRider, npcFrenziedBat, npcSpawnOfMarli])
+                npcBatRider, npcFrenziedBat, npcSpawnOfMarli, npcShadeOfJindo, npcPowerfulHealingWard, npcBrainWashTotem])
             if (copy.hasSavedCreature(entry))
                 copy.waitForPlayer(); // a called boss, or a fight's summons, come back with the first player
         if (!arlokkActive)
@@ -298,6 +337,8 @@ struct ZulGurub
     {
         if (e.creature.entry == npcArlokk && arlokkActive)
             setArlokk(copy, EncounterState.failed);
+        if (e.creature.entry == npcJindo && jindoSummons.length)
+            jindoOver(copy); // he gave up his fight: his shades and totems go
     }
 
     void on(ref InstanceContext copy, const ref CreatureDied e)
@@ -318,6 +359,21 @@ struct ZulGurub
                     copy.signal(mandokir, ZgSignal.ohganSlain);
                 return;
             }
+        }
+        if (e.creature.entry == npcJindo)
+            return jindoOver(copy);
+        if (isJindoSummon(e.creature.entry))
+        {
+            import std.algorithm.mutation : remove;
+            import std.algorithm.searching : countUntil;
+
+            const kept = jindoSummons.countUntil(e.creature);
+            if (kept >= 0)
+            {
+                jindoSummons = jindoSummons.remove(kept);
+                copy.releaseCheckpointActor(e.creature); // slain, it stays slain
+            }
+            return;
         }
         if (isCalledBoss(e.creature.entry))
         {
@@ -1127,6 +1183,20 @@ struct Arlokk
 }
 
 /// `spell_arlokk_vanish`, `spell_renataki_vanish`: the vanish took hold; its caster's script hides it.
+/// Delusions of Jin'do (24306): on its player, Jin'do calls a Shade of Jin'do (24308), whom only those it marks see
+/// (CMaNGOS's `DelusionsOfJindo`).
+@spell("spell_delusions_of_jindo")
+struct DelusionsOfJindo
+{
+    enum uint summonShade = 24_308;
+
+    void on(ref SpellContext it, const ref AuraApplied e)
+    {
+        if (e.effect == 0 && e.caster.isCreature)
+            it.castSpell(e.caster, summonShade, e.caster, true);
+    }
+}
+
 @spell("spell_arlokk_vanish", "spell_renataki_vanish")
 struct ZgVanish
 {

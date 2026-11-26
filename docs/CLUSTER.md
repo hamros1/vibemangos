@@ -595,6 +595,8 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   Mandokir's Ohgan and chained spirits, Jeklik's bat riders and bats and Mar'li's hatchlings are
   kept while their fights are under way. Their bosses come back from fight snapshots that no longer
   know them, so the copy tells Mandokir of Ohgan's death and sends away what a boss's end would.
+  Jin'do's shades and totems are kept as they come (his fight has no encounter state) and sent away
+  when he dies or gives up his fight.
   In Blackwing Lair, Razorgore's destroyed eggs stay gone and surviving defenders return with
   their saved health and wave timer. A player uses the orb again to resume control during the
   egg phase. The freed dragon's fight and the open exit after his death also survive a crash.

@@ -105,10 +105,11 @@ describes how players use the systems available today.
   points](CLUSTER.md#zulgurubs-crash-points) list what the clients saw. Mandokir's Ohgan and chained
   spirits, Jeklik's bat riders and bats and Mar'li's hatchlings are kept with their fights: a crash
   brings them back, a spirit still revives the fallen, Ohgan's death still enrages him, and each
-  boss's end sends away those it would. Open: Jin'do's totems and shades go with the old world (his
-  fight has no encounter state to keep them by). Gahz'ranka and the Edge of Madness bosses, called
-  with an item the raid spends, are kept in the checkpoint while they live: a crash brings the same
-  boss back at his health.
+  boss's end sends away those it would. Jin'do's Delusions bring his Shades (CMaNGOS's spell
+  scripts, not ported before), and his shades and totems are kept as they come and sent away when he
+  dies or gives up his fight. Gahz'ranka and the Edge of Madness bosses, called with an item the
+  raid spends, are kept in the checkpoint while they live: a crash brings the same boss back at his
+  health.
   The Temple of Ahn'Qiraj has C'Thun recovery tests for the Eye's phase, the crash between the
   Eye's death and C'Thun's rise, a player in his stomach, and a wipe in his phase. It also has
   recovery tests for the Bug Trio with one devoured and after their end, the Twin Emperors pulled

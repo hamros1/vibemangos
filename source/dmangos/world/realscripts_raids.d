@@ -4216,6 +4216,52 @@ unittest
 }
 
 /**
+ * Jin'do the Hexxer: Delusions of Jin'do on a player brings a Shade of Jin'do (CMaNGOS's spell scripts), with its
+ * passive, visual and random aggro. His shades and totems (a Powerful Healing Ward, a Brain Wash Totem) are kept in
+ * the copy's checkpoint, his fight having no encounter state: after a crash the same come back, and his death sends
+ * them away.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.script.api : ActionResult;
+    import dmangos.scripts.zulgurub;
+
+    enum uint delusions = 24_306, healingWard = 24_309, brainWash = 24_262;
+    const at = spawnOf(309, npcJindo);
+    auto s = new Scene(309, Position(at.x + 4, at.y, at.z), [classWarrior, classMage], cluster: true);
+    s.run(1.seconds);
+    auto jindo = s.the(npcJindo);
+    s.stayWith = jindo;
+    s.stayWithin = 40;
+    s.engage(jindo);
+    s.run(1.seconds);
+    assert(jindo.ai.castFor(s.map, delusions, s.hero(1).guid, true) == ActionResult.ok, "no Delusions of Jin'do");
+    assert(jindo.ai.castFor(s.map, healingWard, jindo.guid, true) == ActionResult.ok, "no Powerful Healing Ward");
+    assert(jindo.ai.castFor(s.map, brainWash, jindo.guid, true) == ActionResult.ok, "no Brain Wash Totem");
+    s.run(1.seconds);
+    ulong[uint] kept;
+    foreach (entry; [npcShadeOfJindo, npcPowerfulHealingWard, npcBrainWashTotem])
+    {
+        auto found = s.all(entry);
+        assert(found.length == 1, format!"%s of %s in his fight"(found.length, entry));
+        kept[entry] = found[0].guid;
+    }
+    assert(s.all(npcShadeOfJindo)[0].auras.find(ZulGurub.shadePassive) !is null, "the shade without its passive");
+    s.runUntilSaved(); // a crash just after the checkpoint
+    s.forget();
+    s.restartAfterCrash();
+    foreach (entry, guid; kept)
+        assert(s.all(entry).length == 1 && s.all(entry)[0].guid == guid, format!"%s of %s after the crash"(
+            s.all(entry).length, entry));
+    s.kill(s.the(npcJindo));
+    s.run(2.seconds);
+    foreach (entry, _; kept)
+        assert(s.all(entry).length == 0, format!"%s of Jin'do's %s outlived him"(s.all(entry).length, entry));
+}
+
+/**
  * Zul'Gurub's called bosses survive a worker's crash. An Edge of Madness boss (Gri'lek, the Brazier of Madness's) and
  * Gahz'ranka (the Mudskunk Lure's) are summons: the copy keeps each in its checkpoint while he lives. Crashed with both
  * hurt, the worker comes back with the same two at their health; slain, neither comes back after another crash.
