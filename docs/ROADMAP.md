@@ -97,6 +97,22 @@ describes how players use the systems available today.
   A summon a restore fails to bring back leaves the Disciple of Naralex waiting for its death.
   Emi leaves the checkpoint with Grubbis's death: a crash in the half minute after it loses the rest
   of her stand, the northern tunnel's blast among it.
+  Molten Core has Ragnaros recovery tests for his fight, his sons under the lava, a wipe followed
+  by a crash, a crash between his summoning and his pull, and his death. The
+  [crash points](CLUSTER.md#ragnaros-crash-points) list what the clients saw. Open: Majordomo's
+  own fight is not saved, so a crash during it brings him back with all eight guards, his fight to
+  begin again. A crash after Ragnaros' death but before its checkpoint brings him back alive from
+  his last checkpoint. The other bosses, the copy's own spawns, come back from their fight
+  snapshots, and none of their summons does: Magmadar's Lava Bombs, for one. Nothing of the copy's
+  state waits on them.
+  Zul'Gurub has recovery tests for Arlokk's fight, a crash before she comes, and her death, for
+  Mandokir sent down from his perch, and for Thekal with a Zealot down. The
+  [crash points](CLUSTER.md#zulgurubs-crash-points) list what the clients saw. Open: Mandokir's
+  Ohgan and chained spirits are summons the copy does not save: a crash in his fight brings him
+  back from his fight snapshot without them, so no spirit revives a fallen player and Ohgan's
+  death never enrages him. Jeklik's bat riders, Mar'li's spiders and Jin'do's totems and shades go
+  the same way. Gahz'ranka and the Edge of Madness bosses are summons too: a crash loses the boss
+  and the item spent calling him, though nothing in the copy's state refuses calling one again.
   See [dungeon failover](CLUSTER.md#dungeons-and-battlegrounds) for coverage across instances.
 * **GM commands.** The [command reference](COMMANDS.md#edit-a-route-or-trainer) documents native
   waypoint and trainer editing, NPC formations, battleground pause and quest catalog reload.

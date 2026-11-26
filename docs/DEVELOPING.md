@@ -323,6 +323,8 @@ paused battlegroup host, gateway checkpoint retry, departure retry, lease lapse 
 rejoin, stall release, gateway return, C'Thun recovery, Sapphiron recovery, Four Horsemen recovery,
 Kel'Thuzad recovery, Stratholme recovery, loot award crash, migration stall, standby login and standby bundle cases against
 isolated fixtures.
+Kel'Thuzad recovery, Ragnaros recovery, Zul'Gurub recovery, loot award crash, migration stall, standby
+login and standby bundle cases against isolated fixtures.
 Use `--repeat 3` to check repeatability. Each case prints the harness directory containing
 its process logs and uses fresh login and character schemas.
 
@@ -396,6 +398,20 @@ out Ramstein, then the undead and the Black Guards, or open the Baron's run with
 checks that their original sockets come back to the same copy with the same summons, the slain still
 dead, the Baron's door opening with the last guard, and Ysida taking "Dead Man's Plea" in after a
 crash. [Stratholme's crash points](CLUSTER.md#stratholmes-crash-points) has the details.
+Run `python3 tools/harness/ragnaros_recovery.py --phase fight` (or `wipe`) to kill the Molten Core
+worker during Ragnaros' fight. The test rewrites the copy's saved state with the runes doused and
+Majordomo's fight won, and kills the worker once to bring it in. Three scripted raid members on a
+gateway then ask Majordomo, who summons Ragnaros. `fight` checks that the original sockets come back
+to the same Ragnaros at his health, that he submerges on his saved timer and that his death stays
+recorded after another crash. `wipe` crashes after a wipe and checks that Majordomo summons him anew.
+The fight case waits out his first three minutes, so it takes about six minutes.
+[Ragnaros' crash points](CLUSTER.md#ragnaros-crash-points) has the details.
+
+Run `python3 tools/harness/zulgurub_recovery.py --phase arlokk` (or `mandokir`) to kill the
+Zul'Gurub worker during Arlokk's fight, or as Mandokir comes down from his perch. `arlokk` checks the
+same Arlokk at her health, her forcefield shut and her prowlers, and after her death and another
+crash the forcefield open and the gong calling no Arlokk. `mandokir` checks that he comes down again
+and fights. [Zul'Gurub's crash points](CLUSTER.md#zulgurubs-crash-points) has the details.
 
 Run `python3 tools/harness/loot_award_crash.py` to kill (`SIGKILL`) a party member's worker after
 it claims a remote loot award, while a second MariaDB session locks the member's inventory so the

@@ -564,6 +564,24 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   Mograine and Whitemane are kept together from his fall, and she comes back on her way to the fight.
   Onyxia keeps her health, flight phase, surviving whelps and the remaining time to the next wave.
   The recovered fight can proceed through landing and her final ground phase.
+  In Molten Core, Ragnaros, Majordomo's summon, is kept in the checkpoint with his Sons of Flame while
+  his fight is under way. He saves himself as his fight begins, after each ability and as he sinks
+  and rises, so a crash resumes him from the last step: at his health, in the lava or out of it, on
+  the timers he had. Majordomo does not come back while Ragnaros is there. Sons slain before the
+  crash stay slain, and the living ones keep him under the lava until they fall. A wipe, or a crash
+  after one, brings Majordomo back by the lair to summon him anew. A crash between the summoning and
+  the pull does the same. His death stays recorded, and after it neither he nor Majordomo comes.
+  Majordomo's own fight restarts after a crash, with his eight guards. The other bosses are the
+  copy's own spawns and resume from their fight snapshots.
+  In Zul'Gurub, High Priestess Arlokk, the gong's summon, is kept in the checkpoint with her prowlers
+  while her fight is under way. A crash brings back the same Arlokk at her health, with her
+  forcefield shut and her living prowlers, and more come on the copy's timer. A crash before she
+  comes (the gong's ten seconds), or a fight saved without her, fails: the forcefield opens and the
+  gong calls her again. Her death opens the forcefield for the rest of the lockout. Bloodlord
+  Mandokir, back on his perch after his keepers fell (the Vilebranch Speaker's death, saved at
+  once), comes down again. High Priest Thekal's Zealots come back from their fight snapshots with
+  their death prevention, so a Zealot down when the worker dies rises on its saved timer, and the
+  three brought down together still make Thekal the tiger.
   In Blackwing Lair, Razorgore's destroyed eggs stay gone and surviving defenders return with
   their saved health and wave timer. A player uses the orb again to resume control during the
   egg phase. The freed dragon's fight and the open exit after his death also survive a crash.
@@ -1285,6 +1303,10 @@ python3 tools/harness/outdoor_chest_recovery.py --pooled
 python3 tools/harness/dreadsteed_recovery.py
 python3 tools/harness/cthun_recovery.py --phase transition
 python3 tools/harness/cthun_recovery.py --phase stomach
+python3 tools/harness/ragnaros_recovery.py --phase fight
+python3 tools/harness/ragnaros_recovery.py --phase wipe
+python3 tools/harness/zulgurub_recovery.py --phase arlokk
+python3 tools/harness/zulgurub_recovery.py --phase mandokir
 python3 tools/harness/escort_recovery.py
 python3 tools/harness/outdoor_script_recovery.py
 python3 tools/harness/outdoor_script_recovery.py --clean
@@ -1562,6 +1584,44 @@ Chains took five of six raiders, the five come back under his control (charmed b
 control of their characters) and are freed when the Chains' twenty seconds are up. A wipe in his
 first phase followed by a crash leaves him at home for the next pull, and his death keeps his
 chamber open through another crash.
+
+### Ragnaros' crash points
+
+`tools/harness/ragnaros_recovery.py` sends three scripted raid members on a gateway to Ragnaros'
+lair in Molten Core. The copy's own saved state is rewritten with every rune doused and
+Majordomo's fight won, and its worker killed, so the replacement brings that state in: Majordomo
+waits by the lair. The leader asks him, he summons Ragnaros and is burnt, and Ragnaros fights the
+members. The test kills the worker that hosts Molten Core with `SIGKILL`, just after an encounter
+checkpoint, at these points:
+
+| `--phase` | Crash point | What the original clients saw after recovery |
+|---|---|---|
+| `fight` | About 11 s into his fight, with him at 70%, just after the checkpoint of his first Might of Ragnaros (its cast begun) | All three sockets back in the same copy. The same Ragnaros (same GUID) at the saved health, within 1%, fighting, and no Majordomo. He submerged 180 s into his fight, counted without the outage, with his eight Sons of Flame, came up once they were slain, and was slain |
+| `fight`, second crash | After his death, just after its checkpoint, on the worker that took over | Neither Ragnaros nor Majordomo. The first worker is restarted beforehand so that the voters keep a majority |
+| `wipe` | The members killed with `.killplr` while he fought, just after the wipe was saved (his encounter failed) | No Ragnaros, and Majordomo by the lair again (another GUID). Asked, he summoned Ragnaros anew (another GUID), who fought the members |
+
+The real-data tests in `source/dmangos/world/realscripts_raids.d` cover the same crash points in
+cluster mode. They add a crash under the lava with three of his sons slain: the same five come back
+and he stays under until they are slain. A crash between the summoning and the pull brings
+Majordomo back by the lair, and asked, he summons Ragnaros once more.
+
+### Zul'Gurub's crash points
+
+`tools/harness/zulgurub_recovery.py` sends three scripted raid members on a gateway into Zul'Gurub
+and kills the worker that hosts it with `SIGKILL`, just after an encounter checkpoint, at these
+points:
+
+| `--phase` | Crash point | What the original clients saw after recovery |
+|---|---|---|
+| `arlokk` | The leader struck the Gong of Bethekk, Arlokk came ten seconds later and the members fought her. With her at 60%, her forcefield shut and her prowlers about, just after the checkpoint of the next prowler's coming | All three sockets back in the same copy. The same Arlokk (same GUID) at the saved health, within 1%, the forcefield shut and her prowlers back but for any of the last two, which came after the checkpoint. More came on the copy's timer. Slain, she opened the forcefield, and no prowler came in the 18 s after |
+| `arlokk`, second crash | After her death, just after its checkpoint, on the worker that took over | The forcefield open, no Arlokk, and the gong, struck again, called none |
+| `mandokir` | The leader slew the Vilebranch Speaker, and Mandokir set off down from his perch: just after the checkpoint of the Speaker's death, before he was down | Mandokir on his perch, untouchable, with the same GUID. He came down and attacked the members about 5 s after recovery |
+
+The real-data tests in `source/dmangos/world/realscripts_raids.d` cover the same crash points in
+cluster mode. They add a crash in the gong's ten seconds, before Arlokk comes: her fight fails, the
+forcefield opens and the gong calls her again. High Priest Thekal's test crashes the worker with
+Zealot Zath down: he comes back down, rises on his saved timer, and the three brought down together
+make Thekal the tiger while the Zealots stay down.
 
 The cluster code is tested in memory: links wired back to back and a fake clock, with whole clusters
 of world contexts (joining, views, heartbeats, timeouts, restarts and fencing; handovers with no cell
