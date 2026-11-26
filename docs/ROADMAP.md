@@ -313,9 +313,9 @@ from spirit (Spiritual Guidance); shield block value; lowering the target's resi
 charges (Clearcasting, Presence of Mind, Nature's Swiftness: spent by the cast they change); procs by
 `spell_proc_event` (`procs.d`) and the talents whose procs or effects are code (`classspells.d`: Ignite,
 Deep Wounds, Seal Fate, Ruthlessness, Illumination, Blessed Recovery, Nightfall, Combustion, Master of
-Elements, Shatter, Frostbite and the other Add Target Triggers). Not yet: the remaining override class scripts
-(Improved Blizzard, Arcane Concentration's script), Pyroclasm. A creature's auras proc as it strikes and as it
-  is struck (Thrash, Frost Armor's chill on the one who strikes it), its addon's among them.
+Elements, Shatter, Frostbite and the other Add Target Triggers), and the override class scripts of Improved
+Blizzard, Arcane Concentration and Pyroclasm. A creature's auras proc as it strikes and as it is struck (Thrash,
+Frost Armor's chill on the one who strikes it), its addon's among them.
 
 ### Mail
 
