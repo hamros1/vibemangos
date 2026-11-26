@@ -354,6 +354,16 @@ unittest
 
 unittest
 {
+    // The Ruins of Ahn'Qiraj's crash recovery keeps its state transient: lockouts saved before it (and the enum-blind
+    // saves of 219ecf7) load as they are.
+    import dmangos.scripts.ruinsofahnqiraj : RuinsOfAhnQiraj;
+
+    static assert(layoutFingerprint!RuinsOfAhnQiraj == 0xe7bcf2f0f0cfae55UL);
+    static assert(legacyDungeonLayout(0xe7bcf2f0f0cfae55UL) == 0xa676c85b7c5997c7UL);
+}
+
+unittest
+{
     // The Temple of Ahn'Qiraj's C'Thun recovery list was appended: lockouts saved before it (and the enum-blind
     // saves of 219ecf7 keyed off that older layout) still load, with no tentacles to restore.
     import dmangos.script.api : EncounterState, EntityRef;

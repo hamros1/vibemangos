@@ -114,15 +114,29 @@ struct RuinsOfAhnQiraj
     EncounterState[Aq20Encounter.max + 1] encounters;
 
     @transient EntityRef ossirian, rajaxx, andorov;
+    @transient EntityRef[4] kaldorei; /// Andorov's Kaldorei Elites
     @transient EntityRef[7] captains;
     @transient EntityRef[12] triggers;
     @transient ubyte triggerCount;
     @transient EntityRef[6] crystals;
     @transient ubyte wave;
     @transient EntityRef[24] waveMembers;
+    /// Restored with the army under way: the wave fighting is found again at the next look (`findWave`); Rajaxx's
+    /// death landed and the save after it did not (`rajaxxDoneDue`).
+    @transient bool findWave, rajaxxDoneDue;
 
     enum Step : ubyte { nextWave, waveCheck }
     Schedule!Step steps;
+
+    private bool armyActive() const
+    {
+        return encounters[Aq20Encounter.rajaxx] == EncounterState.inProgress;
+    }
+
+    private bool ossirianActive() const
+    {
+        return encounters[Aq20Encounter.ossirian] == EncounterState.inProgress;
+    }
 
     void on(ref InstanceContext copy, const ref CreatureLoaded e)
     {
@@ -135,7 +149,25 @@ struct RuinsOfAhnQiraj
             rajaxx = e.creature;
             break;
         case npcAndorov:
+            if (!e.summoned)
+                break;
             andorov = e.creature;
+            if (armyActive && copy.alive(andorov)) // a clean handoff: he stays in the checkpoint
+                copy.checkpointCreature(andorov);
+            break;
+        case npcKaldoreiElite:
+            import std.algorithm.searching : canFind;
+
+            if (!e.summoned || kaldorei[].canFind(e.creature))
+                break;
+            foreach (ref elite; kaldorei)
+                if (!elite)
+                {
+                    elite = e.creature;
+                    if (armyActive && copy.alive(elite))
+                        copy.checkpointCreature(elite);
+                    break;
+                }
             break;
         case npcOssirianTrigger:
             if (triggerCount < triggers.length)
@@ -162,10 +194,72 @@ struct RuinsOfAhnQiraj
 
     void on(ref InstanceContext copy, const ref PlayerEntered e)
     {
+        if (rajaxxDoneDue)
+        {
+            rajaxxDoneDue = false;
+            set(copy, Aq20Encounter.rajaxx, EncounterState.done); // Andorov, back from the checkpoint, trades
+        }
         if (encounters[Aq20Encounter.kurinnaxx] == EncounterState.done)
             summonAndorov(copy);
         if (!crystals[0] && encounters[Aq20Encounter.ossirian] != EncounterState.done && triggerCount)
             crystals[0] = copy.summonObject(goOssirianCrystal, where(copy, triggers[0]));
+    }
+
+    /**
+     * The copy came back from its save. With the army under way, Andorov and his Kaldorei come back from the
+     * checkpoint when a player does, and the wave fighting then is found again (`findWave`): the army's timers wait
+     * for the raid. Ossirian's fight under way brings back the crystals placed in it.
+     */
+    void on(ref InstanceContext copy, const ref Restored e)
+    {
+        if (armyActive)
+        {
+            if (copy.entryKilled(npcRajaxx)) // his death landed, the save after it did not
+            {
+                encounters[Aq20Encounter.rajaxx] = EncounterState.done;
+                steps.clear();
+                rajaxxDoneDue = true;
+                copy.checkpoint();
+            }
+            else
+            {
+                findWave = true;
+                if (!steps.pending(Step.waveCheck))
+                    steps.every(Step.waveCheck, 5.seconds);
+            }
+            copy.waitForPlayer();
+        }
+        if (ossirianActive)
+        {
+            if (copy.entryKilled(npcOssirian))
+            {
+                encounters[Aq20Encounter.ossirian] = EncounterState.done;
+                copy.checkpoint();
+            }
+            copy.waitForPlayer();
+        }
+    }
+
+    /// A crystal of Ossirian's fight back from the checkpoint (or with a clean handoff): one of his again.
+    void on(ref InstanceContext copy, const ref ObjectLoaded e)
+    {
+        import std.algorithm.searching : canFind;
+
+        if (e.object.entry != goOssirianCrystal || crystals[].canFind(e.object))
+            return;
+        size_t slot = 1;
+        while (slot < crystals.length && crystals[slot])
+            ++slot;
+        if (!crystals[0] && triggerCount)
+        {
+            const at = where(copy, e.object), entrance = where(copy, triggers[0]);
+            if ((at.x - entrance.x) ^^ 2 + (at.y - entrance.y) ^^ 2 < 25)
+                slot = 0; // the one by the entrance
+        }
+        if (slot < crystals.length)
+            crystals[slot] = e.object;
+        if (slot > 0 && ossirianActive)
+            copy.checkpointObject(e.object);
     }
 
     void on(ref InstanceContext copy, const ref Asked e)
@@ -248,9 +342,13 @@ struct RuinsOfAhnQiraj
             copy.castSpell(nearest, weakness, ossirian);
         if (ossirian)
             copy.signal(ossirian, Aq20Signal.weakened, weakness);
-        foreach (ref c; crystals)
+        foreach (i, ref c; crystals)
             if (c == e.object)
+            {
+                if (i > 0)
+                    copy.releaseCheckpointActor(c);
                 c = EntityRef.init;
+            }
         copy.despawnObject(e.object);
         spawnCrystals(copy, 1);
     }
@@ -295,7 +393,25 @@ struct RuinsOfAhnQiraj
                 return;
             const trigger = triggers[1 + copy.random(triggerCount - 1)];
             crystals[slot] = copy.summonObject(goOssirianCrystal, where(copy, trigger));
+            // Placed in his fight: saved with it, so that a worker's crash does not leave him supreme for good.
+            if (crystals[slot] && ossirianActive)
+                copy.checkpointObject(crystals[slot]);
         }
+    }
+
+    /// The crystals placed in Ossirian's fight are no longer saved with it (it ended); a wipe takes them away.
+    private void releaseCrystals(ref InstanceContext copy, bool despawn)
+    {
+        foreach (ref c; crystals[1 .. $])
+            if (c)
+            {
+                copy.releaseCheckpointActor(c);
+                if (despawn)
+                {
+                    copy.despawnObject(c);
+                    c = EntityRef.init;
+                }
+            }
     }
 
     /// An encounter's new state, and what follows.
@@ -316,27 +432,30 @@ struct RuinsOfAhnQiraj
         case Aq20Encounter.rajaxx:
             if (state == EncounterState.inProgress && was != EncounterState.inProgress)
             {
+                // Andorov and his Kaldorei fight the army: saved with it, so that a worker's crash brings them back.
+                foreach (ally; andorov ~ kaldorei[])
+                    if (ally && copy.alive(ally))
+                        copy.checkpointCreature(ally);
                 wave = 0;
+                findWave = false;
                 sendWave(copy);
                 steps.every(Step.waveCheck, 5.seconds);
+                copy.checkpoint();
             }
-            else if (state == EncounterState.done)
+            else if (state != EncounterState.inProgress)
             {
+                foreach (ally; andorov ~ kaldorei[])
+                    if (ally)
+                        copy.releaseCheckpointActor(ally);
+                findWave = false;
                 steps.clear();
-                if (andorov && copy.alive(andorov))
+                if (state == EncounterState.done && andorov && copy.alive(andorov))
                     copy.signal(andorov, Aq20Signal.rajaxxDone);
             }
-            else if (state == EncounterState.failed)
-                steps.clear();
             break;
         case Aq20Encounter.ossirian:
-            if (state == EncounterState.failed)
-                foreach (ref c; crystals[1 .. $])
-                    if (c)
-                    {
-                        copy.despawnObject(c);
-                        c = EntityRef.init;
-                    }
+            if (state != EncounterState.inProgress)
+                releaseCrystals(copy, state == EncounterState.failed);
             break;
         case Aq20Encounter.moam, Aq20Encounter.buru, Aq20Encounter.ayamiss:
             break;
@@ -391,14 +510,59 @@ struct RuinsOfAhnQiraj
         steps.after(Step.nextWave, 3 * 60.seconds);
     }
 
+    /**
+     * After a worker's crash, which wave is under way: the first whose captain lives is next, or fights already (the
+     * army fighting the raid is that wave); waves beaten stay beaten. False while no player alive is back to tell.
+     */
+    private bool foundWave(ref InstanceContext copy)
+    {
+        const raider = copy.anyPlayer();
+        if (!raider)
+            return false;
+        findWave = false;
+        ubyte first;
+        while (first < waveCaptains.length && copy.entryKilled(waveCaptains[first]))
+            ++first;
+        bool fighting(EntityRef c) { return c && copy.alive(c) && copy.alive(copy.victimOf(c)); }
+        if (first == waveCaptains.length && fighting(rajaxx))
+        {
+            // Rajaxx himself fights: the waves are over.
+            wave = cast(ubyte)(waveCaptains.length + 1);
+            steps.cancel(Step.nextWave);
+            steps.cancel(Step.waveCheck);
+            return false;
+        }
+        wave = cast(ubyte)(first < waveCaptains.length && fighting(captains[first]) ? first + 1 : first);
+        // The army fighting the raid now is the wave under way.
+        waveMembers[] = EntityRef.init;
+        size_t n;
+        const at = where(copy, raider);
+        foreach (entry; waveCaptains[] ~ [npcQirajiWarrior, npcSwarmguardNeedler])
+        {
+            EntityRef[24] near;
+            foreach (c; near[0 .. copy.creaturesNear(at, entry, 150, near[])])
+                if (n < waveMembers.length && fighting(c))
+                    waveMembers[n++] = c;
+        }
+        return true;
+    }
+
     void on(ref InstanceContext copy, Step step)
     {
         final switch (step)
         {
         case Step.nextWave:
+            if (findWave && !foundWave(copy))
+            {
+                if (findWave) // nobody alive back yet: the wave comes once someone is
+                    steps.after(step, 5.seconds);
+                break;
+            }
             sendWave(copy);
             break;
         case Step.waveCheck:
+            if (findWave && !foundWave(copy))
+                break;
             // The wave beaten before its three minutes: the next comes at once.
             foreach (m; waveMembers)
                 if (m && copy.alive(m))
@@ -510,15 +674,26 @@ struct GeneralAndorov
             follow(me);
             break;
         case 2:
-            me.npcFlags(npcFlagGossip);
             ++point;
+            if (me.askDungeon(Aq20Encounter.rajaxx) == EncounterState.inProgress)
+            {
+                // Come again while the army fights (a worker's crash lost the one who led it): on to the fight.
+                me.unitFlags(UnitFlag.immuneToNpc, false);
+                me.moveTo(andorovMoves[point], point, true);
+                follow(me);
+            }
+            else
+                me.npcFlags(npcFlagGossip);
             break;
         case 4:
             if (point == 4)
             {
-                dialogueStep = 2;
-                steps.after(Step.dialogue, 0.msecs);
                 ++point;
+                if (me.askDungeon(Aq20Encounter.rajaxx) != EncounterState.inProgress)
+                {
+                    dialogueStep = 2;
+                    steps.after(Step.dialogue, 0.msecs);
+                }
             }
             break;
         default:
@@ -1473,4 +1648,142 @@ unittest
     runtime.raise(h, c, ObjectUsedHere(ruins.objects[1], EntityRef(7)));
     assert(ruins.signals[$ - 1].from == ossirian && ruins.signals[$ - 1].id == Aq20Signal.weakened);
     assert(ruins.objectsGone == [ruins.objects[1]] && ruins.objects.length == 5);
+}
+
+/**
+ * The Ruins' copy after a worker's crash: Andorov and his Kaldorei, saved with the army's fight, wait for the raid
+ * with its timers; the wave fighting then is the one under way, those beaten stay beaten, and the next follows it.
+ * Ossirian's crystals are saved with his fight, and come back as his.
+ */
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import dmangos.bytes : ByteReader, ByteWriter;
+
+    static class FakeRuinsAfter : FakeRuins
+    {
+        uint[] killed;
+        EntityRef[] fighting;
+        override bool hostEntryKilled(uint entry) { return killed.canFind(entry); }
+        override EntityRef hostVictimOf(EntityRef c) { return fighting.canFind(c) ? EntityRef(7) : EntityRef.init; }
+        override EntityRef hostAnyPlayer() { return EntityRef(7); }
+        override bool hostLocationOf(EntityRef who, out Location at)
+        {
+            at = Location(who.guid & 0xFFF, 0, 0); // each apart (the crystals far from the triggers)
+            return true;
+        }
+    }
+
+    alias self = dmangos.scripts.ruinsofahnqiraj;
+    auto runtime = ScriptRuntime.of!self();
+    const rajaxx = aqCreature(npcRajaxx, 1), ossirian = aqCreature(npcOssirian, 2);
+    EntityRef[7] captains;
+    foreach (i, entry; [npcCaptainQeez, npcCaptainTuubid, npcCaptainDrenn, npcCaptainXurrem, npcMajorYeggeth,
+            npcMajorPakkon, npcColonelZerran])
+        captains[i] = aqCreature(entry, cast(uint)(10 + i));
+    void load(H)(H h, ref InstanceContext c)
+    {
+        runtime.raise(h, c, CreatureLoaded(rajaxx));
+        runtime.raise(h, c, CreatureLoaded(ossirian));
+        foreach (captain; captains)
+            runtime.raise(h, c, CreatureLoaded(captain));
+        foreach (i; 0 .. 4)
+            runtime.raise(h, c, CreatureLoaded(aqCreature(npcOssirianTrigger, 30 - i)));
+    }
+
+    // The army under way: Andorov and his four saved with it; Ossirian's crystals saved with his fight.
+    auto ruins = new FakeRuins;
+    auto h = runtime.create(ScriptKind.instance, "instance_ruins_of_ahnqiraj");
+    EntityRef[] allies;
+    {
+        auto c = InstanceContext(ruins);
+        load(h, c);
+        runtime.raise(h, c, PlayerEntered(EntityRef(7)));
+        runtime.raise(h, c, CreatureDied(aqCreature(npcKurinnaxx, 3), EntityRef(7)));
+        allies = ruins.summoned.dup;
+        foreach (i, ally; allies)
+            runtime.raise(h, c, CreatureLoaded(ally, true));
+    }
+    {
+        auto c = InstanceContext(ruins);
+        runtime.raise(h, c, Signal(allies[0], Aq20Signal.startEvent, 0));
+        assert(c.checkpointSummons == allies && c.checkpointRequested, "Andorov and his four not saved with the army");
+    }
+    {
+        auto c = InstanceContext(ruins);
+        runtime.raise(h, c, CreatureEngaged(ossirian, EntityRef(7)));
+        runtime.raise(h, c, Signal(ossirian, RuinsOfAhnQiraj.ossirianSpawnCrystals, 2));
+        assert(c.checkpointSummons == ruins.objects[1 .. 3], "the crystals of his fight not saved with it");
+    }
+    {
+        auto c = InstanceContext(ruins);
+        runtime.raise(h, c, ObjectUsedHere(ruins.objects[1], EntityRef(7)));
+        assert(c.releasedCheckpointActors == [ruins.objects[1]] && c.checkpointSummons == [ruins.objects[3]]);
+    }
+    ByteWriter saved;
+    runtime.save(h, saved);
+
+    // A worker's crash in the third wave: the first two captains slain, Captain Drenn and his warriors fighting.
+    auto after = new FakeRuinsAfter;
+    after.killed = [npcKurinnaxx, npcCaptainQeez, npcCaptainTuubid];
+    auto h2 = runtime.create(ScriptKind.instance, "instance_ruins_of_ahnqiraj");
+    auto reader = ByteReader(saved.data);
+    assert(runtime.load(h2, reader));
+    {
+        auto c = InstanceContext(after);
+        c.savedSummons = allies ~ ruins.objects[2 .. 4];
+        runtime.raise(h2, c, Restored());
+        assert(c.waitingForPlayer, "the army's timers do not wait for the raid");
+    }
+    {
+        auto c = InstanceContext(after);
+        load(h2, c);
+        foreach (ally; allies)
+            runtime.raise(h2, c, CreatureLoaded(ally, true));
+        foreach (crystal; ruins.objects[2 .. 4])
+            runtime.raise(h2, c, ObjectLoaded(crystal));
+        assert(c.checkpointSummons == allies ~ ruins.objects[2 .. 4], "what came back not saved again");
+        runtime.raise(h2, c, PlayerEntered(EntityRef(7)));
+    }
+    assert(!after.summoned.length, "another Andorov, his first back from the checkpoint");
+    after.fighting = [captains[2], aqCreature(npcQirajiWarrior, 0x200), aqCreature(npcQirajiWarrior, 0x300)];
+    {
+        auto c = InstanceContext(after);
+        runtime.tick(h2, c, 5000);
+    }
+    assert(!after.zoned.length && !after.said.length, "a wave sent while the third fights on");
+    after.dead[captains[2].guid] = true;
+    after.dead[aqCreature(npcQirajiWarrior, 0x200).guid] = true;
+    after.dead[aqCreature(npcQirajiWarrior, 0x300).guid] = true;
+    {
+        auto c = InstanceContext(after);
+        runtime.tick(h2, c, 5000);
+    }
+    assert(after.zoned.length && after.zoned[0] == captains[3] && after.said == [-1_509_006],
+        "the fourth wave not next after the third");
+
+    // Used after the crash, a crystal of his fight weakens him, and is no longer saved.
+    {
+        auto c = InstanceContext(after);
+        runtime.raise(h2, c, ObjectUsedHere(ruins.objects[2], EntityRef(7)));
+        assert(after.signals[$ - 1] == Signal(ossirian, Aq20Signal.weakened, after.signals[$ - 1].value));
+        assert(c.releasedCheckpointActors == [ruins.objects[2]]);
+    }
+
+    // Rajaxx's death saved, the checkpoint after it lost: the army is beaten, and Andorov (back) trades.
+    auto beaten = new FakeRuinsAfter;
+    beaten.killed = [npcKurinnaxx, npcRajaxx];
+    auto h3 = runtime.create(ScriptKind.instance, "instance_ruins_of_ahnqiraj");
+    reader = ByteReader(saved.data);
+    assert(runtime.load(h3, reader));
+    {
+        auto c = InstanceContext(beaten);
+        c.savedSummons = allies;
+        runtime.raise(h3, c, Restored());
+        runtime.raise(h3, c, CreatureLoaded(allies[0], true));
+        runtime.raise(h3, c, PlayerEntered(EntityRef(7)));
+        runtime.raise(h3, c, Asked(EntityRef.init, Aq20Encounter.rajaxx));
+        assert(c.answerGiven == EncounterState.done);
+    }
+    assert(beaten.signals.canFind(Signal(allies[0], Aq20Signal.rajaxxDone, 0)) && !beaten.summoned.length);
 }

@@ -1187,6 +1187,138 @@ unittest
     assert(andorov.alive && (andorov.values.get!UNIT_NPC_FLAGS & vendorFlag), "Andorov does not trade");
 }
 
+/**
+ * The army's waves survive a worker's crash in the third wave: the same Andorov comes back where he fights, with his
+ * Kaldorei, the third wave fights on and the next ones follow it (none of the first two again), Rajaxx last; his
+ * death ends it, and Andorov trades.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.script.api : EncounterState;
+    import dmangos.scripts.ruinsofahnqiraj;
+
+    enum uint gossipFlag = 1, vendorFlag = 0x80;
+    static immutable uint[9] armies = [15385, 15388, 15386, 15390, 15389, 15392, 15391, 15387, 15344];
+    const fightsAt = Position(-8940.45f, 1550.69f, 21.616f); // where Andorov fights the army
+    auto s = new Scene(509, Position(-8822, 1630, 21), [classWarrior, classMage], cluster: true);
+    s.run(1.seconds);
+    s.kill(s.the(npcKurinnaxx));
+    s.run(2.seconds);
+    auto andorov = s.the(npcAndorov);
+    const andorovGuid = andorov.guid;
+    s.stayWith = andorov;
+    s.stayWithin = 15;
+    s.pressing = false;
+    assert(s.runUntil(() => (andorov.values.get!UNIT_NPC_FLAGS & gossipFlag) != 0, 120.seconds),
+        format!"Andorov does not wait at the gates (at %s)"(andorov.position));
+    s.moveHeroes(andorov.position);
+    s.run(400.msecs);
+    s.gossip(andorov, [0]);
+    assert(s.runUntil(() => s.ask(Aq20Encounter.rajaxx) == EncounterState.inProgress, 90.seconds),
+        "the army does not come");
+    s.stayWith = null;
+    s.moveHeroes(fightsAt);
+    // The first two waves beaten; the third (Captain Drenn's) charges.
+    auto drenn = s.the(npcCaptainDrenn);
+    const drennGuid = drenn.guid;
+    assert(s.runUntil(() {
+        if (drenn.ai.inCombat)
+            return true;
+        foreach (entry; armies)
+            foreach (c; s.all(entry))
+                if (c.ai.inCombat)
+                    s.kill(c);
+        return false;
+    }, 400.seconds, 1.seconds), "the third wave never comes\n" ~ s.seen());
+    assert(s.said(-1_509_005), "Rajaxx's yell at the third wave\n" ~ s.seen());
+    assert(Scene.distance(andorov.position, fightsAt) < 15, format!"Andorov not where he fights: at %s"(andorov.position));
+    s.run(3.seconds);
+    s.hurtTo(drenn, 90);
+    s.run(2400.msecs); // a periodic save of the fight
+    s.restartAfterCrash();
+    assert(s.ask(Aq20Encounter.rajaxx) == EncounterState.inProgress, "the army's encounter not under way");
+    assert(s.all(npcAndorov).length == 1, format!"%s Andorovs after the crash"(s.all(npcAndorov).length));
+    andorov = s.the(npcAndorov);
+    assert(andorov.guid == andorovGuid && Scene.distance(andorov.position, fightsAt) < 20,
+        format!"Andorov after the crash: guid %#x (before %#x), at %s"(andorov.guid, andorovGuid, andorov.position));
+    assert(s.all(npcKaldoreiElite).length == 4, format!"%s Kaldorei after the crash"(s.all(npcKaldoreiElite).length));
+    drenn = s.the(npcCaptainDrenn);
+    assert(drenn.guid == drennGuid && drenn.ai.inCombat, "Captain Drenn not fighting on after the crash");
+    s.forget();
+    auto rajaxx = s.the(npcRajaxx);
+    assert(s.runUntil(() {
+        foreach (entry; armies)
+            foreach (c; s.all(entry))
+                if (c.ai.inCombat)
+                    s.kill(c);
+        return rajaxx.ai.inCombat;
+    }, 600.seconds, 1.seconds), "Rajaxx never comes after the crash\n" ~ s.seen());
+    assert(!s.said(-1_509_005), "the third wave came again after the crash\n" ~ s.seen());
+    foreach (line; [-1_509_006, -1_509_007, -1_509_008, -1_509_009, -1_509_010])
+        assert(s.said(line), format!"Rajaxx: line %s not said after the crash\n%s"(line, s.seen()));
+    s.kill(rajaxx);
+    s.run(2.seconds);
+    assert(s.ask(Aq20Encounter.rajaxx) == EncounterState.done, "the Rajaxx encounter not done");
+    andorov = s.the(npcAndorov);
+    assert(andorov.guid == andorovGuid && (andorov.values.get!UNIT_NPC_FLAGS & vendorFlag), "Andorov does not trade");
+}
+
+/**
+ * Ossirian's fight survives a worker's crash: the same Ossirian comes back with the crystals placed in his fight, and
+ * one used weakens him; slain, the encounter is done.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import std.algorithm.setops : setIntersection;
+    import std.algorithm.iteration : map;
+    import std.algorithm.sorting : sort;
+    import std.array : array;
+    import dmangos.script.api : EncounterState;
+    import dmangos.scripts.ruinsofahnqiraj;
+
+    static immutable uint[5] weaknesses = [25177, 25178, 25180, 25181, 25183];
+    enum uint supreme = 25176;
+    const b = Boss("Ossirian", 509, npcOssirian, Aq20Encounter.ossirian, [], null);
+    Scene s;
+    auto ossirian = setUp(b, s, cluster: true);
+    const guid = ossirian.guid;
+    s.engage(ossirian);
+    ulong[] crystals() { return s.objects(goOssirianCrystal).map!(c => c.guid).array.sort.release; }
+    assert(s.runUntil(() => crystals().length >= 5, 12.seconds), format!"%s crystals"(crystals().length));
+    const before = crystals();
+    s.run(2400.msecs);
+    s.restartAfterCrash();
+    ossirian = s.the(npcOssirian);
+    assert(ossirian.guid == guid && s.ask(Aq20Encounter.ossirian) == EncounterState.inProgress);
+    s.run(1.seconds);
+    const after = crystals();
+    assert(setIntersection(before, after).array.length >= 5 && after.length >= before.length,
+        format!"crystals after the crash %s, before %s"(after, before));
+    // The raid takes him to the crystal nearest him, and uses it.
+    auto all = s.objects(goOssirianCrystal);
+    auto nearest = all[0];
+    foreach (c; all)
+        if (Scene.distance(c.position, ossirian.position) < Scene.distance(nearest.position, ossirian.position))
+            nearest = c;
+    s.stayWith = null;
+    s.moveHeroes(nearest.position);
+    assert(s.runUntil(() => Scene.distance(ossirian.position, nearest.position) < 15, 30.seconds),
+        "Ossirian does not follow to the crystal");
+    s.use(nearest);
+    s.run(1.seconds);
+    bool weak;
+    foreach (w; weaknesses)
+        weak |= hasAura(ossirian, w);
+    assert(weak && !hasAura(ossirian, supreme), "Ossirian not weakened by a crystal after the crash\n" ~ s.seen());
+    s.kill(ossirian);
+    s.run(1.seconds);
+    assert(s.ask(Aq20Encounter.ossirian) == EncounterState.done, "his encounter not done");
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Temple of Ahn'Qiraj (531)
 // ---------------------------------------------------------------------------------------------------------------
