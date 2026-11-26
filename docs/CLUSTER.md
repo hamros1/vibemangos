@@ -592,6 +592,9 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   three brought down together still make Thekal the tiger. The bosses the raid calls with an item it
   spends, Gahz'ranka (the Mudskunk Lure) and the Edge of Madness's four (the Brazier of Madness),
   are kept in the checkpoint while they live, so a crash brings the same one back at his health.
+  Mandokir's Ohgan and chained spirits, Jeklik's bat riders and bats and Mar'li's hatchlings are
+  kept while their fights are under way. Their bosses come back from fight snapshots that no longer
+  know them, so the copy tells Mandokir of Ohgan's death and sends away what a boss's end would.
   In Blackwing Lair, Razorgore's destroyed eggs stay gone and surviving defenders return with
   their saved health and wave timer. A player uses the orb again to resume control during the
   egg phase. The freed dragon's fight and the open exit after his death also survive a crash.

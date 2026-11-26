@@ -661,8 +661,11 @@ mixin template CreatureCasting()
         {
             if (other)
             {
-                if (!other.alive)
+                // Only a resurrection is for the dead (Mandokir's chained spirits' Revive).
+                if (!other.alive && !spell.hasEffect(SpellEffect.resurrect) && !spell.hasEffect(SpellEffect.resurrectNew))
                     return refuse(SpellCastResult.targetsDead);
+                if (other.alive && (spell.hasEffect(SpellEffect.resurrect) || spell.hasEffect(SpellEffect.resurrectNew)))
+                    return refuse(SpellCastResult.badTargets);
                 if ((flags & castAuraNotPresent) && other.hasAuraOf(spell.id))
                     return refuse(SpellCastResult.dontReport);
                 if (other.replica !is null && !selectedChannelTarget && !missiles)

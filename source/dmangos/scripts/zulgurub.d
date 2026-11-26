@@ -51,6 +51,7 @@ enum : uint
     npcZulianProwler = 15101,
     npcBatRider = 14750,
     npcFrenziedBat = 14965,
+    npcSpawnOfMarli = 15041,
     npcGrilek = 15082,     /// the Edge of Madness's four, the Brazier of Madness's (one a fortnight)
     npcHazzarah = 15083,
     npcRenataki = 15084,
@@ -73,6 +74,7 @@ enum ZgSignal : uint
     revive = 106,       /// a resurrect spell script to its caster
     evade = 107,        /// Thekal to his Zealots: back home with me
     gratsJindo = 108,   /// Mandokir to the copy: Jin'do congratulates him
+    ohganSlain = 109,   /// the copy to Mandokir: his raptor fell (a summon back from the checkpoint tells only it)
 }
 
 private static immutable float[3] mandokirDownstairs = [-12196.30f, -1948.37f, 130.31f];
@@ -120,6 +122,41 @@ struct ZulGurub
         return (entry >= npcGrilek && entry <= npcWushoolay) || entry == npcGahzranka;
     }
 
+    /// The summons of a boss's fight (spawns themselves, the bosses come back from their fight snapshots): kept in
+    /// the copy's checkpoint while the fight is under way, so a crash brings them back with it. Mandokir's raptor and
+    /// the chained spirits that revive the fallen, Jeklik's bat riders and bats, Mar'li's hatchlings.
+    private static immutable ZgEncounter[uint] fightSummonOf;
+    shared static this()
+    {
+        fightSummonOf = [npcOhgan: ZgEncounter.ohgan, npcChainedSpirit: ZgEncounter.ohgan,
+            npcBatRider: ZgEncounter.jeklik, npcFrenziedBat: ZgEncounter.jeklik, npcSpawnOfMarli: ZgEncounter.marli];
+    }
+
+    /// Those summons, as they come into the world (back from the checkpoint too), till they die or their fight ends.
+    @transient EntityRef[] fightSummons;
+
+    private void keepFightSummons(ref InstanceContext copy, ZgEncounter which)
+    {
+        import std.algorithm.mutation : remove;
+
+        const active = encounters[which] == EncounterState.inProgress;
+        foreach_reverse (i, summon; fightSummons)
+            if (fightSummonOf[summon.entry] == which)
+            {
+                if (active && copy.alive(summon))
+                    copy.checkpointCreature(summon);
+                else if (!active)
+                {
+                    copy.releaseCheckpointActor(summon);
+                    // Mandokir's go with his fight, and Jeklik's bat riders (each sends hers away herself, but one
+                    // back from a crash knows them no more).
+                    if ((which == ZgEncounter.ohgan || summon.entry == npcBatRider) && copy.alive(summon))
+                        copy.despawn(summon);
+                    fightSummons = fightSummons.remove(i);
+                }
+            }
+    }
+
     private bool arlokkActive() const
     {
         return encounters[ZgEncounter.arlokk] == EncounterState.inProgress;
@@ -156,6 +193,15 @@ struct ZulGurub
             break;
         case npcJindo:
             jindo = e.creature;
+            break;
+        case npcOhgan, npcChainedSpirit, npcBatRider, npcFrenziedBat, npcSpawnOfMarli:
+            import std.algorithm.searching : canFind;
+
+            if (!e.summoned || fightSummons.canFind(e.creature))
+                break;
+            fightSummons ~= e.creature;
+            if (encounters[fightSummonOf[e.creature.entry]] == EncounterState.inProgress)
+                copy.checkpointCreature(e.creature);
             break;
         case npcGrilek, npcHazzarah, npcRenataki, npcWushoolay, npcGahzranka:
             if (e.summoned) // called, back from the checkpoint, or brought by a handoff: kept till slain
@@ -216,9 +262,10 @@ struct ZulGurub
      */
     void on(ref InstanceContext copy, const ref Restored e)
     {
-        foreach (entry; [npcGrilek, npcHazzarah, npcRenataki, npcWushoolay, npcGahzranka])
+        foreach (entry; [npcGrilek, npcHazzarah, npcRenataki, npcWushoolay, npcGahzranka, npcOhgan, npcChainedSpirit,
+                npcBatRider, npcFrenziedBat, npcSpawnOfMarli])
             if (copy.hasSavedCreature(entry))
-                copy.waitForPlayer(); // a called boss comes back with the first player
+                copy.waitForPlayer(); // a called boss, or a fight's summons, come back with the first player
         if (!arlokkActive)
             return;
         if (copy.hasSavedCreature(npcArlokk))
@@ -258,6 +305,20 @@ struct ZulGurub
         import std.algorithm.mutation : remove;
         import std.algorithm.searching : countUntil;
 
+        {
+            import std.algorithm.mutation : remove;
+            import std.algorithm.searching : countUntil;
+
+            const kept = fightSummons.countUntil(e.creature);
+            if (kept >= 0)
+            {
+                fightSummons = fightSummons.remove(kept);
+                copy.releaseCheckpointActor(e.creature); // slain, it stays slain
+                if (e.creature.entry == npcOhgan && mandokir && copy.alive(mandokir))
+                    copy.signal(mandokir, ZgSignal.ohganSlain);
+                return;
+            }
+        }
         if (isCalledBoss(e.creature.entry))
         {
             copy.releaseCheckpointActor(e.creature); // slain, he stays slain
@@ -332,6 +393,11 @@ struct ZulGurub
             return setArlokk(copy, state);
         }
         encounters[which] = state;
+        if (which == ZgEncounter.ohgan || which == ZgEncounter.jeklik || which == ZgEncounter.marli)
+        {
+            keepFightSummons(copy, which);
+            copy.checkpoint();
+        }
         final switch (which)
         {
         case ZgEncounter.jeklik, ZgEncounter.venoxis, ZgEncounter.thekal, ZgEncounter.marli:
@@ -1153,6 +1219,8 @@ struct Mandokir
     {
         if (e.id == ZgSignal.comeDown)
             me.moveTo(Location(mandokirDownstairs[0], mandokirDownstairs[1], mandokirDownstairs[2]), 1, true);
+        else if (e.id == ZgSignal.ohganSlain)
+            ohganFell(me);
     }
 
     void on(ref CreatureContext me, const ref MovementDone e)
@@ -1184,11 +1252,18 @@ struct Mandokir
     }
 
     /// Ohgan slain: his master rages. (Told by his death: summoned to go when dead, he is gone from the map at
-    /// once, and `alive` of a creature not here says yes.)
+    /// once, and `alive` of a creature not here says yes. One back from the copy's checkpoint after a crash has
+    /// no summoner to tell: the copy tells him then, `ZgSignal.ohganSlain`.)
     void on(ref CreatureContext me, const ref SummonedDied e)
     {
-        if (e.gone || e.summoned != ohgan)
-            return;
+        if (!e.gone && e.summoned == ohgan)
+            ohganFell(me);
+    }
+
+    private void ohganFell(ref CreatureContext me)
+    {
+        if (me.hasAura(me.self, enrage))
+            return; // told twice (his summoner's word and the copy's)
         ohgan = EntityRef.init;
         me.castSelf(enrage, true);
         me.say(emoteRage);
@@ -1231,13 +1306,15 @@ struct Mandokir
         reviveFallen(me, e.victim);
     }
 
-    /// The chained spirit nearest the fallen player brings it back.
+    /// The chained spirit nearest the fallen player brings it back. (Found about him: all of them are his, and one
+    /// back from the copy's checkpoint after a crash is not among those he remembers summoning.)
     private void reviveFallen(ref CreatureContext me, EntityRef player)
     {
         EntityRef best;
         float nearest = 50;
         const at = where(me, player);
-        foreach (s; chained)
+        EntityRef[spirits.length] near;
+        foreach (s; near[0 .. me.creaturesNearby(npcChainedSpirit, 150, near[])])
             if (s && me.alive(s))
             {
                 const there = where(me, s);

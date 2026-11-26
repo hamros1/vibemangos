@@ -4138,6 +4138,54 @@ unittest
 }
 
 /**
+ * High Priestess Jeklik's bat riders survive a worker's crash. Below 35% two Gurubashi Bat Riders come to her aid:
+ * summons, kept in the copy's checkpoint while her fight is under way. After a crash the same two are back, and her
+ * death sends them away, though she no longer knows them.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.scripts.zulgurub;
+
+    enum uint jeklikEntry = 14_517;
+    const at = spawnOf(309, jeklikEntry);
+    auto s = new Scene(309, Position(at.x + 3, at.y, at.z), [classWarrior, classMage], cluster: true);
+    s.run(1.seconds);
+    auto jeklik = s.the(jeklikEntry);
+    s.stayWith = jeklik;
+    s.stayWithin = 40;
+    s.engage(jeklik);
+    s.run(2.seconds);
+    s.hurtTo(jeklik, 30);
+    s.run(2.seconds);
+    // Hers (the summoned ones: riders of the temple's own are about too).
+    Creature[] hers()
+    {
+        Creature[] called;
+        foreach (c; s.all(npcBatRider))
+            if (c.summon.type != imported!"dmangos.world.creature".TempSpawnType.none)
+                called ~= c;
+        return called;
+    }
+    auto riders = hers();
+    assert(riders.length == 2, format!"%s bat riders below 35%%"(riders.length));
+    bool[ulong] before;
+    foreach (r; riders)
+        before[r.guid] = true;
+    s.runUntilSaved(); // a crash just after the checkpoint
+    s.forget();
+    s.restartAfterCrash();
+    bool[ulong] after;
+    foreach (r; hers())
+        after[r.guid] = true;
+    assert(after == before, format!"bat riders %s after the crash, %s before"(after.keys, before.keys));
+    s.kill(s.the(jeklikEntry));
+    s.run(2.seconds);
+    assert(hers().length == 0, "her bat riders outlived her");
+}
+
+/**
  * Zul'Gurub's called bosses survive a worker's crash. An Edge of Madness boss (Gri'lek, the Brazier of Madness's) and
  * Gahz'ranka (the Mudskunk Lure's) are summons: the copy keeps each in its checkpoint while he lives. Crashed with both
  * hurt, the worker comes back with the same two at their health; slain, neither comes back after another crash.
@@ -4355,4 +4403,40 @@ unittest
     assert(!mandokir.ai.inCombat && s.ask(ZgEncounter.ohgan) == EncounterState.special);
     assert(s.runUntil(() => mandokir.ai.inCombat, 60.seconds), "Mandokir stays on his perch after the crash");
     assert(s.ask(ZgEncounter.ohgan) == EncounterState.inProgress);
+
+    // In his fight Ohgan and the chained spirits are summons the copy keeps: after a crash the same come back, and
+    // Ohgan slain enrages him.
+    s.run(2.seconds);
+    auto ohgans = s.all(npcOhgan);
+    assert(ohgans.length == 1, format!"%s Ohgans in his fight"(ohgans.length));
+    const ohgan = ohgans[0].guid;
+    const spirits = s.all(npcChainedSpirit).length;
+    assert(spirits == Mandokir.spirits.length, format!"%s chained spirits"(spirits));
+    s.runUntilSaved(); // a crash just after the checkpoint
+    s.forget();
+    s.restartAfterCrash();
+    mandokir = s.the(npcMandokir);
+    assert(s.all(npcOhgan).length == 1 && s.all(npcOhgan)[0].guid == ohgan, format!"%s Ohgans after the crash"(
+        s.all(npcOhgan).length));
+    assert(s.all(npcChainedSpirit).length == spirits, format!"%s chained spirits after the crash, %s before"(
+        s.all(npcChainedSpirit).length, spirits));
+    // A player he slays a spirit brings back, though none of them is one he remembers summoning.
+    {
+        import dmangos.world.unit : Blow, dealDamage;
+
+        mortal(s);
+        dealDamage(s.map.unitOf(mandokir), s.heroUnit(1), s.hero(1).values.get!UNIT_FIELD_HEALTH + 1, Blow.spell());
+        s.listen();
+        assert(!s.hero(1).alive, "the player not slain");
+        mandokir.ai.killedBySpell(s.hero(1).guid); // his kill (his script hears of his swing's or his spell's)
+        // Revive (24341) offers the fallen a resurrection to accept.
+        assert(s.runUntil(() => s.cast_(Mandokir.revive), 6.seconds),
+            "no chained spirit revived the slain player after the crash\n" ~ s.seen());
+    }
+    s.kill(s.the(npcOhgan));
+    assert(s.runUntil(() => mandokir.auras.find(Mandokir.enrage) !is null, 2.seconds),
+        "Ohgan slain after the crash, Mandokir not enraged\n" ~ s.seen());
+    s.kill(mandokir);
+    s.run(2.seconds);
+    assert(s.all(npcChainedSpirit).length == 0, "the chained spirits outlived Mandokir");
 }
