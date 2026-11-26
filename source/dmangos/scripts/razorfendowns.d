@@ -67,13 +67,40 @@ struct RazorfenDowns
             at.x += (cast(int) downs.random(9) - 4) * 0.5f;
             at.y += (cast(int) downs.random(9) - 4) * 0.5f;
             if (const made = downs.summon(waveEntry[wave], at, 0, e.source))
+            {
                 summoned.add(made);
+                if (made.entry == tutenKash)
+                    downs.checkpointCreature(made); // the boss of the lockout: a crash must not take him
+            }
         }
         ++wave;
         if (e.target)
             gongRef = e.target;
         if (gongRef)
             downs.objectFlags(gongRef, ObjectFlag.noInteract);
+    }
+
+    /// Tuten'kash called and alive comes back from the checkpoint; one a save does not have (an older one's) the
+    /// gong calls again. A wave before him is lost with the old world, and the gong may call the next.
+    void on(ref InstanceContext downs, const ref Restored e)
+    {
+        if (wave < waveEntry.length || tutenKashDead)
+            return;
+        if (downs.hasSavedCreature(tutenKash))
+            downs.waitForPlayer();
+        else
+            wave = cast(ubyte)(waveEntry.length - 1);
+    }
+
+    /// Tuten'kash, kept by the checkpoint but not brought back: the gong may call him again.
+    void on(ref InstanceContext downs, const ref CreatureEvaded e)
+    {
+        if (e.creature.entry == tutenKash && !tutenKashDead && !downs.alive(e.creature))
+        {
+            wave = cast(ubyte)(waveEntry.length - 1);
+            if (gongRef)
+                downs.objectFlags(gongRef, 0, ObjectFlag.noInteract);
+        }
     }
 
     void on(ref InstanceContext downs, const ref CreatureDied e)

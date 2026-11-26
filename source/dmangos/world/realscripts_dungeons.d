@@ -597,6 +597,57 @@ unittest
 }
 
 /**
+ * Razorfen Downs on a cluster worker: Tuten'kash (7355), a summon, is kept by the copy's checkpoint, so a crash while he
+ * lives brings the same one back, hurt as he was; one a save does not have (an older lockout's) the gong calls again.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import std.algorithm.searching : findSplit;
+    import dmangos.scripts.razorfendowns : RazorfenDowns;
+
+    enum uint gong = 148917, tutenKash = 7355;
+    auto d = Dungeon.enter(129, 35, cluster: true);
+    foreach (wave; 0 .. 3)
+    {
+        d.use(d.objectOf(gong));
+        d.run(2.seconds);
+        if (wave < 2)
+        {
+            d.killSummons();
+            d.run(2.seconds);
+        }
+    }
+    auto him = d.find(tutenKash);
+    assert(him !is null, "Tuten'kash\n" ~ d.story);
+    const original = him.guid;
+    const before = d.data; // with him in the checkpoint
+    d.pull(him);
+    d.hurtTo(him, 70);
+    d.run(2100.msecs);
+    d.restartAfterCrash();
+    him = d.find(tutenKash);
+    assert(him !is null && him.guid == original && d.all(tutenKash).length == 1, "the same Tuten'kash after the crash");
+    assert(him.values.get!UNIT_FIELD_HEALTH < him.values.get!UNIT_FIELD_MAXHEALTH * 3 / 4, "hurt as he was");
+
+    // A save without him (a lockout saved before he was kept): the gong calls him again, once.
+    d.w.db.saveInstanceData(d.instanceId, before.findSplit(":summons1:")[0]);
+    d.restartAfterCrash();
+    assert(d.all(tutenKash).length == 0 && d.saved!RazorfenDowns.wave == 2, d.story);
+    d.use(d.objectOf(gong));
+    d.run(2.seconds);
+    assert(d.all(tutenKash).length == 1, "the gong calls him again\n" ~ d.story);
+    d.kill(d.find(tutenKash));
+    d.run(1.seconds);
+    d.restartAfterCrash();
+    assert(d.all(tutenKash).length == 0 && d.saved!RazorfenDowns.tutenKashDead, "slain, he stays slain");
+    d.use(d.objectOf(gong));
+    d.run(2.seconds);
+    assert(d.all(tutenKash).length == 0, "and the gong calls nothing more");
+}
+
+/**
  * Belnistrasz (8516): "Extinguishing the Idol" (3525) taken, he runs to the idol, starts his ritual (-1129006, Idol
  * Shutdown 12774) and holds it three minutes while the quilboar come (7333, 7329, 7335, Plaguemaw 7356 last), counting
  * the minutes (-1129009 .. -1129011); done (-1129012), the quest is complete and his brazier (152097) appears.
