@@ -512,7 +512,13 @@ unittest
     bool atCorner()
     {
         d.keepUp(him);
-        return d.summoned(ravager) == 2;
+        if (d.summoned(ravager) == 2)
+            return true;
+        // A wanderer that falls on him on the way (a Deviate Adder, one run in forty) is the party's to kill, or he
+        // never gets there; the raptors he calls are not: the crash is to find them alive.
+        if (d.summoned(ravager) == 0)
+            d.defend(him);
+        return false;
     }
     assert(d.runUntil(&atCorner, 300.seconds), "the raptors at his first corner\n" ~ d.story);
     const guid = him.guid;
