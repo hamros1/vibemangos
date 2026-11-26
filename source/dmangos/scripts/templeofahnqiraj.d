@@ -1275,7 +1275,9 @@ struct Viscidus
                         g = EntityRef.init;
                         continue;
                     }
-                    if (me.distanceTo(g) < 4)
+                    // Not here (and so `alive`): a summon lost with a worker's crash, which he waited on for good. Not
+                    // slain (its death would have freed its place), it rejoins him.
+                    if (me.distanceTo(g) < 4 || me.distanceTo(g) == float.infinity)
                     {
                         ++globsBack;
                         me.despawn(g);

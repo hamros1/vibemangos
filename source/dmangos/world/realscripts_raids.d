@@ -1697,6 +1697,56 @@ unittest
     assertReady("after the crash");
 }
 
+/**
+ * Viscidus shattered survives a worker's crash: his globs were summons and went with the worker, and those not
+ * slain before it rejoin him (he rises with their health); slain, he is the encounter's end.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.script.api : EncounterState;
+    import dmangos.scripts.templeofahnqiraj;
+    import dmangos.world.defines : UnitFlags;
+
+    const b = Boss("Viscidus", 531, npcViscidus, Aq40Encounter.viscidus, [], null);
+    Scene s;
+    auto viscidus = setUp(b, s, cluster: true);
+    const guid = viscidus.guid;
+    s.engage(viscidus);
+    s.run(2.seconds);
+    s.hurtTo(viscidus, 50);
+    foreach (k; 0 .. 400)
+    {
+        if (s.said(Viscidus.emoteFrozen))
+            break;
+        s.castTriggered(1, 116, viscidus.guid);
+        if (k % 10 == 0)
+            s.run(200.msecs);
+    }
+    s.pressing = false;
+    foreach (k; 0 .. 150)
+        s.engage(viscidus);
+    s.run(400.msecs);
+    assert(s.said(Viscidus.emoteExplode), "Viscidus does not shatter\n" ~ s.seen());
+    auto globs = s.all(npcGlobOfViscidus);
+    assert(globs.length >= 9, format!"%s globs"(globs.length));
+    s.kill(globs[0]);
+    s.kill(globs[1]);
+    s.run(2400.msecs);
+    assert(viscidus.values.get!UNIT_FIELD_FLAGS & UnitFlags.uninteractible, "he rose before the crash");
+    s.restartAfterCrash();
+    viscidus = s.the(npcViscidus);
+    assert(viscidus.guid == guid && s.ask(Aq40Encounter.viscidus) == EncounterState.inProgress);
+    assert(s.runUntil(() => !(viscidus.values.get!UNIT_FIELD_FLAGS & UnitFlags.uninteractible), 10.seconds),
+        format!"Viscidus stays shattered after the crash (%s globs)"(s.all(npcGlobOfViscidus).length));
+    assert(viscidus.alive && s.healthOf(viscidus) > 0 && s.healthOf(viscidus) <= 45,
+        format!"Viscidus rose at %s%%"(s.healthOf(viscidus)));
+    s.kill(viscidus);
+    s.run(1.seconds);
+    assert(s.ask(Aq40Encounter.viscidus) == EncounterState.done, "his encounter not done");
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Naxxramas (533)
 // ---------------------------------------------------------------------------------------------------------------
