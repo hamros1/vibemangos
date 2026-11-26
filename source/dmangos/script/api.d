@@ -1549,12 +1549,71 @@ unittest
 }
 
 // ---------------------------------------------------------------------------
+// Spell rules: what the server must know of a spell that its data does not say
+// ---------------------------------------------------------------------------
+
+/**
+ * A rule the server keeps for one spell, declared by the script module that owns the spell: a module-level
+ * `immutable SpellRule[] spellRules`, found at compile time with the module's scripts and asked for with
+ * `ScriptRuntime.rule`. The server's own code names no boss's spell: it asks what the spell's rule says.
+ */
+struct SpellRule
+{
+    uint spell;
+
+    /**
+     * A player's aura of it is part of its raid's crash checkpoint (docs/CLUSTER.md): saved as it lands and changes,
+     * and given back when the raid is restored (Sapphiron's Life Drain, a Horseman's mark, Chromaggus' afflictions).
+     */
+    bool keptThroughCrash;
+
+    /// Such an aura waits with its fight: a crash's outage, which the fight's timers do not count, is not taken
+    /// from its time either (Sapphiron's Icebolt, Kel'Thuzad's Frost Blast).
+    bool pausesWithFight;
+
+    /// Each of its ticks is saved with the checkpoint, so that a crash between two keeps the damage done and the
+    /// ticks left (Frost Blast: a few seconds of heavy damage).
+    bool savedEachTick;
+
+    /// Its area effect, cast for a player by a script with amounts of its own, is at the player's friends around
+    /// it and not the player (Kel'Thuzad's Detonate Mana: the mana lost burns the others near).
+    bool harmsFriendsAround;
+}
+
+/**
+ * A rule the server keeps for one quest, declared by the script module that owns the quest: a module-level
+ * `immutable QuestRule[] questRules`, found with the module's scripts and listed by `ScriptRuntime.questRules`.
+ */
+struct QuestRule
+{
+    uint quest;
+
+    /**
+     * While the quest is under way, another player's direct help to its player (a heal, a helpful aura) is told
+     * to the creature of entry `aidWatcher` near the player, as `Signal` `aidSignal` from the player: the quest's
+     * own script decides what follows (Eris Havenfire fails "The Balance of Light and Shadow").
+     */
+    uint aidWatcher;
+    uint aidSignal; /// ditto
+}
+
+// ---------------------------------------------------------------------------
 // Spell scripts (`@spell`, bound by `spell_scripts.ScriptName`), one per spell
 // ---------------------------------------------------------------------------
 
 /// A dummy or script effect of the spell (`effect`, its index; `value`, its amount) hit `target`.
 /// `SpellContext.consume` keeps the spell's database script from running too.
 struct EffectHit
+{
+    EntityRef caster;
+    EntityRef target;
+    ubyte effect;
+    int value;
+}
+
+/// A direct damage effect of a creature's spell (`effect`; `value`, its amount before the target's defences) is
+/// about to strike `target`. `SpellContext.setAmount` changes the amount (Thundercrash: half the target's health).
+struct EffectDamage
 {
     EntityRef caster;
     EntityRef target;

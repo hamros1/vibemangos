@@ -194,20 +194,15 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         if (!victim)
             break;
         // A player's at a creature or an enemy; a creature's at whatever its targets are, itself too (Quiet Suicide).
-        import dmangos.scripts.naxxramas : DetonateManaKelthuzad;
-
-        const manaExplosion = spell.id == DetonateManaKelthuzad.detonation && c.triggered && c.custom.has(i)
-            && victim.kind == UnitKind.player && target != caster.guid;
-        if (!manaExplosion && !mayHurt(caster, victim))
+        // ... and one a script casts for a player at the player's friends (`SpellRule.harmsFriendsAround`).
+        const atFriends = c.triggered && c.custom.has(i) && victim.kind == UnitKind.player && target != caster.guid
+            && context !is null && context.scripts.rule(spell.id).harmsFriendsAround;
+        if (!atFriends && !mayHurt(caster, victim))
             break;
         // (its modifiers, `SPELLMOD_DAMAGE`, on the damage with the spell power)
         auto damage = p !is null ? p.classSchoolDamage(spell, i, target, value) : value;
-        enum uint thundercrash = 25599; // General Rajaxx's: half the target's health, at least 200, and its threat
-        if (spell.id == thundercrash && p is null && target != caster.guid) // doubled (CMaNGOS's `EffectSchoolDMG`)
-        {
-            ai.modifyThreatPercent(target, 100);
-            damage = victim.health / 2 < 200 ? 200 : cast(int)(victim.health / 2);
-        }
+        if (p is null) // a creature's: its spell's script may set the amount (`EffectDamage`: Thundercrash)
+            damage = ai.effectDamageScript(spell, i, target, damage);
         spellDamage(caster, spell, victim, damage > 0 ? damage : 0, spell.casting.school,
             SpellDamage(true, SpellModOp.damage, bounce: SpellBounce(spell.casting.dmgMultiplier[i], bounce)));
         break;

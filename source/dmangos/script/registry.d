@@ -187,7 +187,7 @@ template KindInfo(ScriptKind kind)
     else static if (kind == ScriptKind.spell)
     {
         alias Context = SpellContext;
-        alias Events = AliasSeq!(EffectHit, AuraApplied, AuraTicked,
+        alias Events = AliasSeq!(EffectHit, EffectDamage, AuraApplied, AuraTicked,
             // Spell scripts of items, quests and the world:
             CastChecked, CastStarted, AuraHeartbeat, AuraEnded, AuraTickEnded, TargetChecked,
             // Class spells:
@@ -496,6 +496,22 @@ final class ScriptRuntime
     private Pool[] pools;
     private ushort[string][ScriptKind.max + 1] byName;
     private string[uint] spellsById; // `spellIds`: the names of the scripts serving spells by id
+    private SpellRule[uint] rules;   // the modules' `spellRules`, by spell
+    private QuestRule[] questRules_; // the modules' `questRules`
+
+    /// What the script modules say of quests (`QuestRule`).
+    @property const(QuestRule)[] questRules() const
+    {
+        return questRules_;
+    }
+
+    /// What the script modules say of spell `id` (`SpellRule`); nothing (every rule off) if none names it.
+    SpellRule rule(uint id) const
+    {
+        if (const found = id in rules)
+            return *found;
+        return SpellRule(id);
+    }
 
     /// The name of the spell script serving spell `id` by id (`spellIds`); null if none.
     string spellScriptById(uint id) const
@@ -517,6 +533,16 @@ final class ScriptRuntime
         enum duplicate = duplicateOf(servedNames!Modules());
         static assert(duplicate is null, "two scripts serve " ~ duplicate);
         auto runtime = new ScriptRuntime;
+        static foreach (M; Modules)
+            static if (__traits(hasMember, M, "spellRules")) // the module's rules for its spells
+                foreach (r; __traits(getMember, M, "spellRules"))
+                {
+                    assert(r.spell !in runtime.rules, "two modules give a rule for one spell");
+                    runtime.rules[r.spell] = r;
+                }
+        static foreach (M; Modules)
+            static if (__traits(hasMember, M, "questRules"))
+                runtime.questRules_ ~= __traits(getMember, M, "questRules");
         static foreach (M; Modules)
             static foreach (member; __traits(allMembers, M))
                 static if (is(__traits(getMember, M, member) == struct))

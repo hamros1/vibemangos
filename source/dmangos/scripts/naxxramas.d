@@ -2034,12 +2034,6 @@ unittest
     assert(HorsemenMark.damageAt(4) == 3000 && HorsemenMark.damageAt(5) == 5000 && HorsemenMark.damageAt(9) == 9000);
 }
 
-/// Whether `spell` is one of the Horsemen's marks (a gateway player's checkpoint keeps them, `isNaxxramasRecoveryAura`).
-bool isHorsemenMark(uint spell) pure nothrow @nogc @safe
-{
-    return spell >= markOfKorthazz && spell <= markOfZeliek;
-}
-
 /**
  * What the Four Horsemen share: their mark every twelve seconds, their special every twelve, shield walls
  * at 50% and 20%; each that dies leaves its spirit; the four dead are the encounter.
@@ -2891,38 +2885,28 @@ struct Sapphiron
 }
 
 /**
- * The auras of the copy's fights a gateway player's checkpoint keeps (`Character.encounterAuraRecoveryState`):
- * Sapphiron's Icebolt freeze, the immunity that goes with it, and Life Drain; the Horsemen's marks, with their stacks;
- * Kel'Thuzad's Frost Blast and Detonate Mana.
+ * What the server keeps of this raid's spells (`SpellRule`). The auras a gateway player's checkpoint keeps
+ * (`Character.encounterAuraRecoveryState`):
+ * $(UL
+ *   $(LI Sapphiron's Icebolt freeze and the immunity that goes with it, which last until he lands: a crash's
+ *     outage, which his timers do not count, does not count against them either; and his Life Drain;)
+ *   $(LI the Horsemen's marks, with their stacks;)
+ *   $(LI Kel'Thuzad's Frost Blast and Detonate Mana, a few seconds each, which wait with his fight's timers too;
+ *     Frost Blast's ticks are saved one by one.))
+ * And the detonation's burn, which strikes those about the player and not the player.
  */
-bool isNaxxramasRecoveryAura(uint spell) pure nothrow @nogc @safe
-{
-    return isSapphironFreeze(spell) || spell == Sapphiron.lifeDrain || isHorsemenMark(spell) || isKelthuzadBurst(spell);
-}
-
-/**
- * Kel'Thuzad's Frost Blast and Detonate Mana: a few seconds each, and his fight's timers do not count a crash's
- * outage, so neither do they. Restored, each keeps the time it had when last saved, its next tick too.
- */
-bool isKelthuzadBurst(uint spell) pure nothrow @nogc @safe
-{
-    return spell == Kelthuzad.frostBlast || spell == Kelthuzad.manaDetonation;
-}
-
-/// The auras a crash's outage does not count against (they wait with their fights' timers).
-bool pausesWithItsFight(uint spell) pure nothrow @nogc @safe
-{
-    return isSapphironFreeze(spell) || isKelthuzadBurst(spell);
-}
-
-/**
- * Sapphiron's freeze (Icebolt's stun, and its immunity): it lasts until he lands, and a crash's outage, which his
- * timers do not count, does not count against it either. Restored, it keeps the time it had when last saved.
- */
-bool isSapphironFreeze(uint spell) pure nothrow @nogc @safe
-{
-    return spell == Sapphiron.icebolt || spell == Sapphiron.iceboltImmunity;
-}
+immutable SpellRule[] spellRules = [
+    SpellRule(Sapphiron.icebolt, keptThroughCrash: true, pausesWithFight: true),
+    SpellRule(Sapphiron.iceboltImmunity, keptThroughCrash: true, pausesWithFight: true),
+    SpellRule(Sapphiron.lifeDrain, keptThroughCrash: true),
+    SpellRule(markOfKorthazz, keptThroughCrash: true),
+    SpellRule(markOfBlaumeux, keptThroughCrash: true),
+    SpellRule(markOfMograine, keptThroughCrash: true),
+    SpellRule(markOfZeliek, keptThroughCrash: true),
+    SpellRule(Kelthuzad.frostBlast, keptThroughCrash: true, pausesWithFight: true, savedEachTick: true),
+    SpellRule(Kelthuzad.manaDetonation, keptThroughCrash: true, pausesWithFight: true),
+    SpellRule(DetonateManaKelthuzad.detonation, harmsFriendsAround: true),
+];
 
 /**
  * Kel'Thuzad's Frost Blast (27808): each second of its stun, he strikes the player for a quarter of their health and a

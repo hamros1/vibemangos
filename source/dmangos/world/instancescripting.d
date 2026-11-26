@@ -983,24 +983,3 @@ unittest
     assert(fromHex(toHex([0, 1, 0xAB, 0xFF])) == [0, 1, 0xAB, 0xFF]);
     assert(fromHex("zz") is null);
 }
-
-// What a script makes of a death is written as a checkpoint (the death itself is already queued), and only what
-// changed is written.
-unittest
-{
-    static import dmangos.scripts.deadmines;
-    import dmangos.scripts.deadmines : rhahkZor;
-    import dmangos.world.objects : HighGuid, makeGuid;
-
-    bool[] checkpoints;
-    auto script = InstanceScript.make(ScriptRuntime.of!(dmangos.scripts.deadmines)(), "instance_deadmines", 1, 36,
-        null, (string, bool checkpoint) { checkpoints ~= checkpoint; }, (MigrantKind, uint) => EntityRef.init,
-        (uint) => false);
-    const guard = EntityRef(makeGuid(HighGuid.unit, rhahkZor, 90002));
-    script.raiseCheckpointed(CreatureDied(guard, EntityRef.init, false));
-    assert(checkpoints == [true], "Rhahk'Zor's death settled with its door");
-    script.raiseCheckpointed(CreatureDied(guard, EntityRef.init, false));
-    assert(checkpoints == [true], "nothing changed: nothing written");
-    script.raise(CreatureDied(EntityRef(makeGuid(HighGuid.unit, 4417, 90003)), EntityRef.init, false));
-    assert(checkpoints == [true]);
-}

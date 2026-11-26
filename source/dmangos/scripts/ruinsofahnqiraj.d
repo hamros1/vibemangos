@@ -1568,6 +1568,23 @@ struct AnubisathGuardian
     }
 }
 
+/**
+ * General Rajaxx's Thundercrash (25599): half the health of each it strikes, at least 200, and that one's threat
+ * on him doubled (CMaNGOS's `EffectSchoolDMG`).
+ */
+@spell("spell_thundercrash") @spellIds(25_599)
+struct Thundercrash
+{
+    void on(ref SpellContext it, const ref EffectDamage e)
+    {
+        if (e.target == e.caster)
+            return;
+        it.modifyThreat(e.caster, e.target, 100);
+        const half = it.health(e.target) / 2;
+        it.setAmount(half < 200 ? 200 : cast(int) half);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

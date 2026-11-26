@@ -413,6 +413,24 @@ mixin template CreatureScripting()
         lore.scriptRuntime.raise(handle, c, EffectHit(EntityRef(me.guid), EntityRef(target), cast(ubyte) i, value));
     }
 
+    /// A direct damage effect `i` of its `spell` is about to strike `target` for `value`: what its script makes of
+    /// the amount (`EffectDamage`), or `value` as it is.
+    package int effectDamageScript(const(SpellInfo)* spell, size_t i, ulong target, int value)
+    {
+        import dmangos.script.api : EffectDamage, SpellContext;
+
+        auto handle = lore is null ? ScriptHandle.init : lore.spellScript(spell.id);
+        if (!handle)
+            return value;
+        auto outer = scriptSpell;
+        scriptSpell = spell;
+        scope (exit)
+            scriptSpell = outer;
+        auto c = SpellContext(castHost);
+        lore.scriptRuntime.raise(handle, c, EffectDamage(EntityRef(me.guid), EntityRef(target), cast(ubyte) i, value));
+        return c.amountChanged ? c.amount : value;
+    }
+
     /// Spell scripts of items, quests and the world: `event` (an aura's) reaches `spell`'s script, if it has one,
     /// with this creature its host, acting on `world`.
     package void spellScriptEvent(E)(const(SpellInfo)* spell, const auto ref E event, CombatWorld world)

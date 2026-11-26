@@ -4374,9 +4374,8 @@ private:
         }
 
         ulong[] found;
-        import dmangos.scripts.naxxramas : DetonateManaKelthuzad;
-
-        if (spell.id == DetonateManaKelthuzad.detonation && kind == ImplicitTarget.friendsAroundDest)
+        // The friends about the player and not the player itself (`SpellRule.harmsFriendsAround`).
+        if (kind == ImplicitTarget.friendsAroundDest && context.scripts.rule(spell.id).harmsFriendsAround)
         {
             foreach (who; map.near(center, r))
             {

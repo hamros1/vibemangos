@@ -134,6 +134,25 @@ code) what is not here or not allowed. Nothing a script keeps can dangle.
 Each kind adds a context type, an event list and a host interface; the registry, pools, schedules
 and persistence are shared, so a new kind is a few dozen lines in the framework.
 
+### Rules the server asks a script module for
+
+The server's own code names no boss, spell or quest of a script. What it must know that the data does
+not say, the module that owns the spell or quest declares, and the server asks the framework:
+
+* `immutable SpellRule[] spellRules` in a script module (`ScriptRuntime.rule(spell)`): a player's aura
+  kept with its raid's crash checkpoint (`keptThroughCrash`), one that waits with its fight
+  (`pausesWithFight`), one whose every tick is saved (`savedEachTick`), an area effect at the caster's
+  friends and not the caster (`harmsFriendsAround`). Naxxramas and Blackwing Lair declare theirs.
+* `immutable QuestRule[] questRules` (`ScriptRuntime.questRules`): a quest whose creature is told when
+  another player helps (`aidWatcher`, `aidSignal`: Eris Havenfire's).
+* A spell's own formula is its `@spell` script's: `EffectDamage` is raised before a creature's direct
+  damage strikes, and `SpellContext.setAmount` sets it (General Rajaxx's Thundercrash, half the target's
+  health).
+
+`tools/harness/check.sh` fails if a module of `dmangos.world` other than a test imports a module of
+`dmangos.scripts`. Still in the server's code, to move the same way: Kurinnaxx's Sand Trap and
+Sapphiron's Frost Breath targets (`creaturecasting.d`), and the class spells' ids.
+
 ### Components: the escort
 
 Behaviour shared by many scripts is a *component*: a struct among the script's fields, not a base

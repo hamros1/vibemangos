@@ -388,6 +388,11 @@ struct DarrowshirePamela
     }
 }
 
+/// "The Balance of Light and Shadow" is the priest's alone: another player's help is told to Eris (`QuestRule`).
+immutable QuestRule[] questRules = [
+    QuestRule(ErisHavenfire.questBalanceOfLightAndShadow, aidWatcher: 14494, aidSignal: ErisHavenfire.outsideAid),
+];
+
 /**
  * Eris Havenfire: taken on the quest, eight Scourge Archers take their places on the hills and waves
  * of peasants (eleven, then one more each wave) come down the road to the light, where those who

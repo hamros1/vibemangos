@@ -81,10 +81,21 @@ private immutable uint[BwlEncounter.max + 1] checkpointedBossEntries = [
 
 private enum uint shadowOfEbonroc = 23340, flameBuffet = 23341, flamegorFrenzy = 23342, ebonrocShadowHeal = 23394;
 
-bool isBlackwingRecoveryAura(uint spell)
-{
-    return spell == shadowOfEbonroc || spell == flameBuffet || Chromaggus.isRecoveryAura(spell);
-}
+/// The auras of the lair's fights a gateway player's checkpoint keeps (`SpellRule`): Shadow of Ebonroc, Flame
+/// Buffet, and Chromaggus' brood afflictions with what five of them make of a player.
+immutable SpellRule[] spellRules = [
+    SpellRule(shadowOfEbonroc, keptThroughCrash: true),
+    SpellRule(flameBuffet, keptThroughCrash: true),
+    SpellRule(Chromaggus.afflictions[0], keptThroughCrash: true),
+    SpellRule(Chromaggus.afflictions[1], keptThroughCrash: true),
+    SpellRule(Chromaggus.afflictions[2], keptThroughCrash: true),
+    SpellRule(Chromaggus.afflictions[3], keptThroughCrash: true),
+    SpellRule(Chromaggus.afflictions[4], keptThroughCrash: true),
+    SpellRule(Chromaggus.timeStop, keptThroughCrash: true),
+    SpellRule(Chromaggus.mutation, keptThroughCrash: true),
+    SpellRule(Chromaggus.mutationStats, keptThroughCrash: true),
+    SpellRule(Chromaggus.mutationSpeed, keptThroughCrash: true),
+];
 
 /// The weekly selection's events (`event_weekly_chromatic_selection`): Chromaggus' left breath (five), his right
 /// (five), then the left tunnel's drakonids (five) and the right's, in the order of `leftBreaths` and `spawners`.
@@ -1509,14 +1520,6 @@ struct Chromaggus
             me.say(emoteFrenzy);
             me.signalDungeon(BwlSignal.saveBossCombat);
         }
-    }
-
-    static bool isRecoveryAura(uint spell)
-    {
-        import std.algorithm.searching : canFind;
-
-        return afflictions[].canFind(spell) || spell == timeStop || spell == mutation
-            || spell == mutationStats || spell == mutationSpeed;
     }
 
     private void afflict(ref CreatureContext me)

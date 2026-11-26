@@ -1644,3 +1644,171 @@ unittest
     assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_EMOTE), "its next step runs");
     assert(context.runningScripts == 0 && db.loadOutdoorScripts(context.config.realmId).length == 0);
 }
+
+// ---------------------------------------------------------------------------
+// The raids' auras in a gateway player's checkpoint (`SpellRule.keptThroughCrash`; `dmangos.world.aurahandlers`)
+// ---------------------------------------------------------------------------
+
+/**
+ * Sapphiron's freeze comes back from a gateway player's checkpoint with the time it had, however long the crash's
+ * outage: his air phase does not count it either, and his breath must find the frozen still frozen. Life Drain loses
+ * the outage, as Chromaggus's afflictions do.
+ */
+unittest
+{
+    import core.time : MonoTime, seconds;
+    import dmangos.bytes : ByteReader;
+    import dmangos.cluster.protocol : SimulationOwner;
+    import dmangos.scripts.naxxramas : Sapphiron;
+    import dmangos.world.auras : makeAura;
+    import dmangos.world.movement : Position;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.spellids : AuraType, SpellEffect;
+    import dmangos.world.testclient;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    foreach (spell; [Sapphiron.icebolt, Sapphiron.iceboltImmunity, Sapphiron.lifeDrain])
+    {
+        context.data.spells.spells[spell] = testSpell(spell, SpellEffect.applyAura, 6, 0);
+        context.data.spells.spells.edit(spell).casting.applyAuraName[0] = spell == Sapphiron.icebolt
+            ? AuraType.modStun : spell == Sapphiron.lifeDrain ? AuraType.periodicLeech : AuraType.schoolImmunity;
+    }
+    auto client = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    auto session = client.session.inWorld;
+    client.session.gatewayHome = SimulationOwner(4, 1);
+    const sapphiron = 0xF130_0000_0000_0100UL | (ulong(15_989) << 24);
+    session.addAura(makeAura(context.data.spells.spell(Sapphiron.icebolt), sapphiron, 63, 25_000, false, [0, 0, 0]));
+    session.addAura(makeAura(context.data.spells.spell(Sapphiron.iceboltImmunity), 7, 60, 27_000, true, [127, 0, 0]));
+    session.addAura(makeAura(context.data.spells.spell(Sapphiron.lifeDrain), sapphiron, 63, 12_000, false, [100, 0, 0]));
+    assert(db.loadPlayerSummons(7).length, "the freeze was not checkpointed as it came");
+    const saved = session.encounterAuraRecoveryState();
+    foreach (spell; [Sapphiron.icebolt, Sapphiron.iceboltImmunity, Sapphiron.lifeDrain])
+        session.removeAura(session.player.auras.find(spell));
+
+    // The worker is lost; the player comes back thirty seconds on (longer than any of the three lasts).
+    now += 30.seconds;
+    auto state = ByteReader(saved);
+    session.restoreEncounterAuraRecovery(state);
+    auto freeze = session.player.auras.find(Sapphiron.icebolt), immunity = session.player.auras.find(
+        Sapphiron.iceboltImmunity);
+    assert(freeze !is null && freeze.duration == 25_000 && freeze.caster == sapphiron,
+        "the frozen player came back thawed: the outage counted against the freeze");
+    assert(immunity !is null && immunity.duration == 27_000, "the frozen player lost the immunity");
+    assert(session.player.auras.find(Sapphiron.lifeDrain) is null, "Life Drain outlasted its time");
+}
+
+/**
+ * Kel'Thuzad's Frost Blast and Detonate Mana come back from a gateway player's checkpoint with the time they had, their
+ * next ticks too: his fight's timers do not count a crash's outage, and neither do they.
+ */
+unittest
+{
+    import core.time : MonoTime, seconds;
+    import dmangos.bytes : ByteReader;
+    import dmangos.cluster.protocol : SimulationOwner;
+    import dmangos.scripts.naxxramas : Kelthuzad;
+    import dmangos.world.auras : makeAura;
+    import dmangos.world.movement : Position;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.spellids : AuraType, SpellEffect;
+    import dmangos.world.testclient;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    foreach (id; [Kelthuzad.frostBlast, Kelthuzad.manaDetonation])
+    {
+        context.data.spells.spells[id] = testSpell(id, SpellEffect.applyAura, 6, 0);
+        context.data.spells.spells.edit(id).casting.applyAuraName[0] = AuraType.dummy;
+    }
+    auto client = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    auto session = client.session.inWorld;
+    client.session.gatewayHome = SimulationOwner(4, 1);
+    const kelthuzad = 0xF130_0000_0000_0100UL | (ulong(15_990) << 24);
+    session.addAura(makeAura(context.data.spells.spell(Kelthuzad.frostBlast), kelthuzad, 63, 4_000, false, [0, 0, 0]));
+    session.addAura(makeAura(context.data.spells.spell(Kelthuzad.manaDetonation), kelthuzad, 63, 5_000, false,
+        [0, 0, 0]));
+    assert(db.loadPlayerSummons(7).length, "the blast was not checkpointed as it came");
+    const saved = session.encounterAuraRecoveryState();
+    foreach (id; [Kelthuzad.frostBlast, Kelthuzad.manaDetonation])
+        session.removeAura(session.player.auras.find(id));
+
+    now += 10.seconds; // the worker is lost; the player comes back ten seconds on (longer than either lasts)
+    auto state = ByteReader(saved);
+    session.restoreEncounterAuraRecovery(state);
+    auto blast = session.player.auras.find(Kelthuzad.frostBlast);
+    auto detonate = session.player.auras.find(Kelthuzad.manaDetonation);
+    assert(blast !is null && blast.duration == 4_000 && blast.caster == kelthuzad,
+        "the Frost Blast came back gone or short: the outage counted against it");
+    assert(detonate !is null && detonate.duration == 5_000, "the Detonate Mana came back gone or short");
+}
+
+/**
+ * The Four Horsemen's marks come back from a gateway player's checkpoint with their stacks: each mark is saved as it
+ * stacks, and the outage counts against its time, as against Life Drain's.
+ */
+unittest
+{
+    import core.time : MonoTime, seconds;
+    import dmangos.bytes : ByteReader;
+    import dmangos.cluster.protocol : SimulationOwner;
+    import dmangos.scripts.naxxramas : markOfKorthazz;
+    import dmangos.world.auras : makeAura;
+    import dmangos.world.movement : Position;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.spellids : AuraType, SpellEffect;
+    import dmangos.world.testclient;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    context.data.spells.spells[markOfKorthazz] = testSpell(markOfKorthazz, SpellEffect.applyAura, 6, 0);
+    context.data.spells.spells.edit(markOfKorthazz).casting.applyAuraName[0] = AuraType.dummy;
+    context.data.spells.spells.edit(markOfKorthazz).casting.stackAmount = 99;
+    auto client = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    auto session = client.session.inWorld;
+    client.session.gatewayHome = SimulationOwner(4, 1);
+    const thane = 0xF130_0000_0000_0100UL | (ulong(16_064) << 24);
+    foreach (_; 0 .. 3)
+        session.addAura(makeAura(context.data.spells.spell(markOfKorthazz), thane, 63, 75_000, false, [0, 0, 0]));
+    assert(session.player.auras.find(markOfKorthazz).stacks == 3);
+    assert(db.loadPlayerSummons(7).length, "the mark was not checkpointed as it stacked");
+    const saved = session.encounterAuraRecoveryState();
+    session.removeAura(session.player.auras.find(markOfKorthazz));
+
+    now += 10.seconds; // the worker is lost; the player comes back ten seconds on
+    auto state = ByteReader(saved);
+    session.restoreEncounterAuraRecovery(state);
+    auto mark = session.player.auras.find(markOfKorthazz);
+    assert(mark !is null && mark.stacks == 3 && mark.caster == thane, "the marks did not come back with their stacks");
+    assert(mark.duration <= 65_000 && mark.duration > 64_000, "the outage did not count against the mark");
+}
+
+// What a script makes of a death is written as a checkpoint (the death itself is already queued), and only what
+// changed is written.
+unittest
+{
+    static import dmangos.scripts.deadmines;
+    import dmangos.script.api : CreatureDied, EntityRef;
+    import dmangos.script.registry : ScriptRuntime;
+    import dmangos.scripts.deadmines : rhahkZor;
+    import dmangos.world.instancescripting : InstanceScript;
+    import dmangos.world.objects : HighGuid, makeGuid;
+
+    bool[] checkpoints;
+    auto script = InstanceScript.make(ScriptRuntime.of!(dmangos.scripts.deadmines)(), "instance_deadmines", 1, 36,
+        null, (string, bool checkpoint) { checkpoints ~= checkpoint; }, (MigrantKind, uint) => EntityRef.init,
+        (uint) => false);
+    const guard = EntityRef(makeGuid(HighGuid.unit, rhahkZor, 90002));
+    script.raiseCheckpointed(CreatureDied(guard, EntityRef.init, false));
+    assert(checkpoints == [true], "Rhahk'Zor's death settled with its door");
+    script.raiseCheckpointed(CreatureDied(guard, EntityRef.init, false));
+    assert(checkpoints == [true], "nothing changed: nothing written");
+    script.raise(CreatureDied(EntityRef(makeGuid(HighGuid.unit, 4417, 90003)), EntityRef.init, false));
+    assert(checkpoints == [true]);
+}

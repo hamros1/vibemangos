@@ -938,12 +938,10 @@ private:
 
     private bool loadingSavedAuras;
 
-    private static bool recoverableEncounterAura(uint spell)
+    /// Whether an aura of `spell` is part of its raid's crash checkpoint (its script module's `SpellRule`).
+    private bool recoverableEncounterAura(uint spell)
     {
-        import dmangos.scripts.blackwinglair : isBlackwingRecoveryAura;
-        import dmangos.scripts.naxxramas : isNaxxramasRecoveryAura;
-
-        return isBlackwingRecoveryAura(spell) || isNaxxramasRecoveryAura(spell);
+        return context.scripts.rule(spell).keptThroughCrash;
     }
 
     private void checkpointEncounterAura(const Aura aura)
@@ -980,14 +978,12 @@ private:
         scope (exit) loadingSavedAuras = false;
         while (!state.empty)
         {
-            import dmangos.scripts.naxxramas : pausesWithItsFight;
-
             auto aura = Aura.loadState(state, (uint id) => context.data.spells.spell(id));
             if (aura.spell is null || !recoverableEncounterAura(aura.spell.id))
                 continue;
             // Sapphiron's freeze waits with his air phase, which a crash pauses, and Kel'Thuzad's Frost Blast and Detonate
             // Mana with his fight: they keep the time they had.
-            const lost = pausesWithItsFight(aura.spell.id) ? 0 : elapsed;
+            const lost = context.scripts.rule(aura.spell.id).pausesWithFight ? 0 : elapsed;
             if (aura.duration >= 0 && aura.duration <= lost)
                 continue;
             if (aura.duration > 0)
@@ -1102,26 +1098,24 @@ private:
         }
         if (player.auras.list.length == 0)
             return;
-        import dmangos.scripts.naxxramas : Kelthuzad;
-
         AuraTick[] ticks;
         Aura[] expired, heartbeats;
 
-        bool frostBlastTick;
+        bool savedTick; // a tick its rule has saved with the raid's checkpoint (`SpellRule.savedEachTick`)
         player.auras.update(ms, ticks, expired, heartbeats);
         foreach (tick; ticks)
         {
             import dmangos.script.api : AuraTickEnded, EntityRef;
 
             selfTick(tick.aura, tick.effect);
-            frostBlastTick |= tick.aura.spell.id == Kelthuzad.frostBlast && tick.aura.duration > 0;
+            savedTick |= tick.aura.duration > 0 && context.scripts.rule(tick.aura.spell.id).savedEachTick;
             if (player is null)
                 return;
             spellScriptEvent(tick.aura.spell, AuraTickEnded(EntityRef(tick.aura.caster), EntityRef(player.guid),
                 cast(ubyte) tick.effect));
         }
-        // A raid checkpoint can save this health before the next tick. Keep the remaining blast with it.
-        if (frostBlastTick && player.alive)
+        // A raid checkpoint can save this health before the next tick. Keep the remaining ticks with it.
+        if (savedTick && player.alive)
             checkpointSummons(true);
         // Crowd control breaking early (`SPELL_ATTR_HEARTBEAT_RESIST`).
         foreach (aura; heartbeats)
@@ -1756,144 +1750,4 @@ unittest
     auto me = client.session.inWorld;
     assert(me.player.auras.find(evocation) is null, "no channel, no channel aura");
     assert(me.player.auras.find(blessing) !is null);
-}
-
-/**
- * Sapphiron's freeze comes back from a gateway player's checkpoint with the time it had, however long the crash's
- * outage: his air phase does not count it either, and his breath must find the frozen still frozen. Life Drain loses
- * the outage, as Chromaggus's afflictions do.
- */
-unittest
-{
-    import core.time : MonoTime, seconds;
-    import dmangos.bytes : ByteReader;
-    import dmangos.cluster.protocol : SimulationOwner;
-    import dmangos.scripts.naxxramas : Sapphiron;
-    import dmangos.world.auras : makeAura;
-    import dmangos.world.movement : Position;
-    import dmangos.world.spellhandlers : testSpell;
-    import dmangos.world.spellids : AuraType, SpellEffect;
-    import dmangos.world.testclient;
-
-    auto db = newDatabase();
-    auto context = newCreationContext(db);
-    auto now = MonoTime.currTime;
-    context.clock = () => now;
-    foreach (spell; [Sapphiron.icebolt, Sapphiron.iceboltImmunity, Sapphiron.lifeDrain])
-    {
-        context.data.spells.spells[spell] = testSpell(spell, SpellEffect.applyAura, 6, 0);
-        context.data.spells.spells.edit(spell).casting.applyAuraName[0] = spell == Sapphiron.icebolt
-            ? AuraType.modStun : spell == Sapphiron.lifeDrain ? AuraType.periodicLeech : AuraType.schoolImmunity;
-    }
-    auto client = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
-    auto session = client.session.inWorld;
-    client.session.gatewayHome = SimulationOwner(4, 1);
-    const sapphiron = 0xF130_0000_0000_0100UL | (ulong(15_989) << 24);
-    session.addAura(makeAura(context.data.spells.spell(Sapphiron.icebolt), sapphiron, 63, 25_000, false, [0, 0, 0]));
-    session.addAura(makeAura(context.data.spells.spell(Sapphiron.iceboltImmunity), 7, 60, 27_000, true, [127, 0, 0]));
-    session.addAura(makeAura(context.data.spells.spell(Sapphiron.lifeDrain), sapphiron, 63, 12_000, false, [100, 0, 0]));
-    assert(db.loadPlayerSummons(7).length, "the freeze was not checkpointed as it came");
-    const saved = session.encounterAuraRecoveryState();
-    foreach (spell; [Sapphiron.icebolt, Sapphiron.iceboltImmunity, Sapphiron.lifeDrain])
-        session.removeAura(session.player.auras.find(spell));
-
-    // The worker is lost; the player comes back thirty seconds on (longer than any of the three lasts).
-    now += 30.seconds;
-    auto state = ByteReader(saved);
-    session.restoreEncounterAuraRecovery(state);
-    auto freeze = session.player.auras.find(Sapphiron.icebolt), immunity = session.player.auras.find(
-        Sapphiron.iceboltImmunity);
-    assert(freeze !is null && freeze.duration == 25_000 && freeze.caster == sapphiron,
-        "the frozen player came back thawed: the outage counted against the freeze");
-    assert(immunity !is null && immunity.duration == 27_000, "the frozen player lost the immunity");
-    assert(session.player.auras.find(Sapphiron.lifeDrain) is null, "Life Drain outlasted its time");
-}
-
-/**
- * Kel'Thuzad's Frost Blast and Detonate Mana come back from a gateway player's checkpoint with the time they had, their
- * next ticks too: his fight's timers do not count a crash's outage, and neither do they.
- */
-unittest
-{
-    import core.time : MonoTime, seconds;
-    import dmangos.bytes : ByteReader;
-    import dmangos.cluster.protocol : SimulationOwner;
-    import dmangos.scripts.naxxramas : Kelthuzad;
-    import dmangos.world.auras : makeAura;
-    import dmangos.world.movement : Position;
-    import dmangos.world.spellhandlers : testSpell;
-    import dmangos.world.spellids : AuraType, SpellEffect;
-    import dmangos.world.testclient;
-
-    auto db = newDatabase();
-    auto context = newCreationContext(db);
-    auto now = MonoTime.currTime;
-    context.clock = () => now;
-    foreach (id; [Kelthuzad.frostBlast, Kelthuzad.manaDetonation])
-    {
-        context.data.spells.spells[id] = testSpell(id, SpellEffect.applyAura, 6, 0);
-        context.data.spells.spells.edit(id).casting.applyAuraName[0] = AuraType.dummy;
-    }
-    auto client = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
-    auto session = client.session.inWorld;
-    client.session.gatewayHome = SimulationOwner(4, 1);
-    const kelthuzad = 0xF130_0000_0000_0100UL | (ulong(15_990) << 24);
-    session.addAura(makeAura(context.data.spells.spell(Kelthuzad.frostBlast), kelthuzad, 63, 4_000, false, [0, 0, 0]));
-    session.addAura(makeAura(context.data.spells.spell(Kelthuzad.manaDetonation), kelthuzad, 63, 5_000, false,
-        [0, 0, 0]));
-    assert(db.loadPlayerSummons(7).length, "the blast was not checkpointed as it came");
-    const saved = session.encounterAuraRecoveryState();
-    foreach (id; [Kelthuzad.frostBlast, Kelthuzad.manaDetonation])
-        session.removeAura(session.player.auras.find(id));
-
-    now += 10.seconds; // the worker is lost; the player comes back ten seconds on (longer than either lasts)
-    auto state = ByteReader(saved);
-    session.restoreEncounterAuraRecovery(state);
-    auto blast = session.player.auras.find(Kelthuzad.frostBlast);
-    auto detonate = session.player.auras.find(Kelthuzad.manaDetonation);
-    assert(blast !is null && blast.duration == 4_000 && blast.caster == kelthuzad,
-        "the Frost Blast came back gone or short: the outage counted against it");
-    assert(detonate !is null && detonate.duration == 5_000, "the Detonate Mana came back gone or short");
-}
-
-/**
- * The Four Horsemen's marks come back from a gateway player's checkpoint with their stacks: each mark is saved as it
- * stacks, and the outage counts against its time, as against Life Drain's.
- */
-unittest
-{
-    import core.time : MonoTime, seconds;
-    import dmangos.bytes : ByteReader;
-    import dmangos.cluster.protocol : SimulationOwner;
-    import dmangos.scripts.naxxramas : markOfKorthazz;
-    import dmangos.world.auras : makeAura;
-    import dmangos.world.movement : Position;
-    import dmangos.world.spellhandlers : testSpell;
-    import dmangos.world.spellids : AuraType, SpellEffect;
-    import dmangos.world.testclient;
-
-    auto db = newDatabase();
-    auto context = newCreationContext(db);
-    auto now = MonoTime.currTime;
-    context.clock = () => now;
-    context.data.spells.spells[markOfKorthazz] = testSpell(markOfKorthazz, SpellEffect.applyAura, 6, 0);
-    context.data.spells.spells.edit(markOfKorthazz).casting.applyAuraName[0] = AuraType.dummy;
-    context.data.spells.spells.edit(markOfKorthazz).casting.stackAmount = 99;
-    auto client = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
-    auto session = client.session.inWorld;
-    client.session.gatewayHome = SimulationOwner(4, 1);
-    const thane = 0xF130_0000_0000_0100UL | (ulong(16_064) << 24);
-    foreach (_; 0 .. 3)
-        session.addAura(makeAura(context.data.spells.spell(markOfKorthazz), thane, 63, 75_000, false, [0, 0, 0]));
-    assert(session.player.auras.find(markOfKorthazz).stacks == 3);
-    assert(db.loadPlayerSummons(7).length, "the mark was not checkpointed as it stacked");
-    const saved = session.encounterAuraRecoveryState();
-    session.removeAura(session.player.auras.find(markOfKorthazz));
-
-    now += 10.seconds; // the worker is lost; the player comes back ten seconds on
-    auto state = ByteReader(saved);
-    session.restoreEncounterAuraRecovery(state);
-    auto mark = session.player.auras.find(markOfKorthazz);
-    assert(mark !is null && mark.stacks == 3 && mark.caster == thane, "the marks did not come back with their stacks");
-    assert(mark.duration <= 65_000 && mark.duration > 64_000, "the outage did not count against the mark");
 }

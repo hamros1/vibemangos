@@ -52,6 +52,12 @@ servers_pid=$!
 # 1 GB each; the longest module takes 11 s, and each process first loads the data).
 DMANGOS_TEST_MODULES="$modules" "$U/test" > "$U/run.log" 2>&1 &
 unit_pid=$!
+stage "engine modules that import a script module"
+# The world's own code knows no boss: what it must know of a script's spell or quest the script module declares
+# (`SpellRule`, `QuestRule`, a `@spell` script), and only the tests name scripts.
+if grep -nE 'import dmangos\.scripts\.' $(ls "$REPO"/source/dmangos/world/*.d | grep -vE '/(real[^/]*|[^/]*tests?|testclient|testdata)\.d$'); then
+    echo "FAIL: an engine module imports a script module"; kill $servers_pid $unit_pid 2>/dev/null; exit 1
+fi
 stage "names defined twice in Character"
 python3 "$REPO/tools/harness/mixin-names.py" || { echo "FAIL: a name is defined twice in Character"; kill $servers_pid $unit_pid 2>/dev/null; exit 1; }
 db_start || exit 1

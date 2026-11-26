@@ -91,22 +91,29 @@ private:
         player.values.setSlot(index, on ? value | (state << 24) : value & ~(state << 24));
     }
 
-    /// A different player directly helped this priest during Eris Havenfire's ongoing rescue.
+    /**
+     * A different player directly helped this one (a heal, a helpful aura). A quest under way whose rule watches for
+     * that (`QuestRule.aidWatcher`: Eris Havenfire's rescue, which the priest must do alone) has its creature near
+     * told, and its script decides.
+     */
     package void outsideQuestAid(ulong helper)
     {
         import dmangos.script.api : EntityRef;
-        import dmangos.scripts.easternplaguelands : ErisHavenfire;
 
-        if (helper == player.guid || !EntityRef(helper).isPlayer || map.id != 0
-            || questState(ErisHavenfire.questBalanceOfLightAndShadow) != QuestState.incomplete)
+        if (helper == player.guid || !EntityRef(helper).isPlayer)
             return;
-        foreach (object; map.objectsNear(player.position, 100))
+        foreach (rule; context.scripts.questRules)
         {
-            const ref_ = EntityRef(object.guid);
-            if (ref_.isCreature && ref_.entry == 14494)
+            if (!rule.aidWatcher || questState(rule.quest) != QuestState.incomplete)
+                continue;
+            foreach (object; map.objectsNear(player.position, 100))
             {
-                context.signalCreature(map, EntityRef(player.guid), ref_, ErisHavenfire.outsideAid, 0);
-                return;
+                const ref_ = EntityRef(object.guid);
+                if (ref_.isCreature && ref_.entry == rule.aidWatcher)
+                {
+                    context.signalCreature(map, EntityRef(player.guid), ref_, rule.aidSignal, 0);
+                    break;
+                }
             }
         }
     }
