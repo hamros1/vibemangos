@@ -19,17 +19,38 @@ AUTH = Path(os.environ.get("AUTHSERVER", REPO / "bin/authserver")).resolve()
 LOADGEN = Path(os.environ.get("LOADGEN", REPO / "bin/loadgen")).resolve()
 
 
+# Ports handed out lately, by any case on this machine: a port is free when it is chosen but bound only when its
+# server starts, so two cases starting together (chaos.py -j, several sessions) could be given the same one.
+PORTS_TAKEN = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / "dmangos-harness-ports.json"
+PORT_HOLD_SECONDS = 600
+
+
 def available_ports(count):
-    sockets = []
-    try:
-        for _ in range(count):
-            reserve = socket.socket()
-            sockets.append(reserve)
-            reserve.bind(("127.0.0.1", 0))
-        return [reserve.getsockname()[1] for reserve in sockets]
-    finally:
-        for reserve in sockets:
-            reserve.close()
+    import fcntl
+
+    with open(PORTS_TAKEN.with_suffix(".lock"), "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        now = time.time()
+        try:
+            taken = {int(port): at for port, at in json.loads(PORTS_TAKEN.read_text()).items()
+                     if now - at < PORT_HOLD_SECONDS}
+        except (OSError, ValueError):
+            taken = {}
+        chosen, sockets = [], []
+        try:
+            while len(chosen) < count:
+                reserve = socket.socket()
+                sockets.append(reserve)
+                reserve.bind(("127.0.0.1", 0))
+                port = reserve.getsockname()[1]
+                if port not in taken and port not in chosen:
+                    chosen.append(port)
+        finally:
+            for reserve in sockets:
+                reserve.close()
+        taken.update({port: now for port in chosen})
+        PORTS_TAKEN.write_text(json.dumps(taken))
+        return chosen
 
 
 def wait_for(description, check, seconds):
