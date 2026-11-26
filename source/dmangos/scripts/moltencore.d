@@ -1321,8 +1321,8 @@ struct Majordomo
  * into the lava for ninety seconds and his Sons of Flame fight for him.
  *
  * The copy saves him and his sons while he fights (`MoltenCore.setRagnaros`); he asks it to
- * (`McSignal.saveRagnaros`) as his fight begins and as he sinks and rises, after the change, so that a worker's
- * crash resumes him in his phase with its timers.
+ * (`McSignal.saveRagnaros`) as his fight begins, after each ability and as he sinks and rises, after the change, so
+ * that a worker's crash resumes him in his phase with its timers.
  */
 @creature("boss_ragnaros")
 struct Ragnaros
@@ -1480,6 +1480,7 @@ struct Ragnaros
                 foreach (p; near[0 .. me.playersNear(10, near[])])
                     me.modifyThreat(p, -100);
                 steps.after(step, 25.seconds);
+                save(me);
             }
             else
                 steps.after(step, retry);
@@ -1490,6 +1491,7 @@ struct Ragnaros
             {
                 me.say(sayHammer);
                 steps.after(step, between(me, 11_000, 30_000));
+                save(me);
             }
             else
                 steps.after(step, retry);
@@ -1506,9 +1508,14 @@ struct Ragnaros
                     next = 2500;
             }
             steps.after(step, next.msecs);
+            if (next > 500)
+                save(me);
             break;
         case Step.lavaBurst:
-            steps.after(step, me.castSelf(lavaBurst) == ActionResult.ok ? between(me, 5000, 25_000) : retry);
+            const burst = me.castSelf(lavaBurst) == ActionResult.ok;
+            steps.after(step, burst ? between(me, 5000, 25_000) : retry);
+            if (burst)
+                save(me);
             break;
         case Step.sonsCheck:
             // All his sons slain: he comes up soon.
