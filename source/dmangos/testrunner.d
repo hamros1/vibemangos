@@ -42,9 +42,25 @@ private UnitTestResult runModules()
     }
     const timesPath = environment.get("DMANGOS_TEST_TIMES", "");
 
-    bool chosen(string name)
+    bool matches(string name, string pattern)
     {
-        return !wanted.length || wanted.any!(w => w.endsWith(".") ? name.startsWith(w) : name == w);
+        return pattern.endsWith(".") ? name.startsWith(pattern) : name == pattern;
+    }
+
+    foreach (pattern; wanted)
+    {
+        bool found;
+        foreach (m; ModuleInfo)
+            if (m !is null && m.unitTest !is null && matches(m.name, pattern))
+            {
+                found = true;
+                break;
+            }
+        if (!found)
+        {
+            stderr.writeln("No unit-test module matches ", pattern);
+            return UnitTestResult(1, 0, false, false);
+        }
     }
 
     UnitTestResult result;
@@ -54,7 +70,7 @@ private UnitTestResult runModules()
         if (m is null)
             continue;
         auto test = m.unitTest;
-        if (test is null || !chosen(m.name))
+        if (test is null || (wanted.length && !wanted.any!(w => matches(m.name, w))))
             continue;
         if (index++ % shards != shard)
             continue;

@@ -183,7 +183,11 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         if (!victim)
             break;
         // A player's at a creature or an enemy; a creature's at whatever its targets are, itself too (Quiet Suicide).
-        if (!mayHurt(caster, victim))
+        import dmangos.scripts.naxxramas : DetonateManaKelthuzad;
+
+        const manaExplosion = spell.id == DetonateManaKelthuzad.detonation && c.triggered && c.custom.has(i)
+            && victim.kind == UnitKind.player && target != caster.guid;
+        if (!manaExplosion && !mayHurt(caster, victim))
             break;
         // (its modifiers, `SPELLMOD_DAMAGE`, on the damage with the spell power)
         const damage = p !is null ? p.classSchoolDamage(spell, i, target, value) : value;

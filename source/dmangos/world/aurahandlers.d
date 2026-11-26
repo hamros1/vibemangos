@@ -1102,19 +1102,27 @@ private:
         }
         if (player.auras.list.length == 0)
             return;
+        import dmangos.scripts.naxxramas : Kelthuzad;
+
         AuraTick[] ticks;
         Aura[] expired, heartbeats;
+
+        bool frostBlastTick;
         player.auras.update(ms, ticks, expired, heartbeats);
         foreach (tick; ticks)
         {
             import dmangos.script.api : AuraTickEnded, EntityRef;
 
             selfTick(tick.aura, tick.effect);
+            frostBlastTick |= tick.aura.spell.id == Kelthuzad.frostBlast && tick.aura.duration > 0;
             if (player is null)
                 return;
             spellScriptEvent(tick.aura.spell, AuraTickEnded(EntityRef(tick.aura.caster), EntityRef(player.guid),
                 cast(ubyte) tick.effect));
         }
+        // A raid checkpoint can save this health before the next tick. Keep the remaining blast with it.
+        if (frostBlastTick && player.alive)
+            checkpointSummons(true);
         // Crowd control breaking early (`SPELL_ATTR_HEARTBEAT_RESIST`).
         foreach (aura; heartbeats)
         {

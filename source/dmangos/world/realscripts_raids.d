@@ -1271,6 +1271,16 @@ unittest
     assert(s.ask(Aq20Encounter.rajaxx) == EncounterState.done, "the Rajaxx encounter not done");
     andorov = s.the(npcAndorov);
     assert(andorov.guid == andorovGuid && (andorov.values.get!UNIT_NPC_FLAGS & vendorFlag), "Andorov does not trade");
+    s.run(60.seconds);
+    s.restartAfterCrash();
+    andorov = s.the(npcAndorov);
+    assert(andorov.guid == andorovGuid && (andorov.values.get!UNIT_NPC_FLAGS & vendorFlag));
+    s.run(65.seconds);
+    assert(s.find(npcAndorov) !is null, "Andorov left his trading post early");
+    s.run(15.seconds);
+    assert(s.find(npcAndorov) is null, "the crash restarted Andorov's trading window");
+    s.restartAfterCrash();
+    assert(s.find(npcAndorov) is null, "Andorov returned after his trading window ended");
 }
 
 /**
@@ -3643,6 +3653,61 @@ unittest
         back[0].ai.inCombat, back[0].alive, wasInCombat, s.seen()));
 }
 
+/// The explosion hits nearby allies across raid subgroups. Each Frost Blast tick saves its health and remaining stun.
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.cluster.protocol : SimulationOwner;
+    import dmangos.script.api : ActionResult;
+    import dmangos.scripts.naxxramas : Kelthuzad, npcKelthuzad, DetonateManaKelthuzad;
+    import dmangos.world.instancescripting : toHex;
+    import dmangos.world.defines : Power;
+
+    auto s = new Scene(533, kelthuzadChamber(), [classMage, classWarrior, classPriest, classMage], cluster: true);
+    const mage = s.hero(0).guid;
+    auto raid = s.w.context.groups.newGroup();
+    assert(raid.addLeaderInvite(mage, s.hero(0).data.name));
+    raid.create();
+    raid.convertToRaid();
+    foreach (i; 1 .. 4)
+        assert(raid.addMember(s.hero(i).guid, s.hero(i).data.name));
+    raid.changeSubGroup(s.hero(2).guid, 1);
+    auto far = s.hero(3).position;
+    far.x += 50;
+    s.moveHero(3, far);
+    s.godlike = false;
+    foreach (hero; s.heroes)
+        hero.session.inWorld.godModeCheat = false;
+    uint hp(size_t i) { return s.hero(i).values.get!UNIT_FIELD_HEALTH; }
+    const full = hp(0), mana = s.hero(0).values.get!UNIT_FIELD_POWER1(Power.mana);
+    auto kt = s.the(npcKelthuzad);
+    assert(kt.ai.castFor(s.map, Kelthuzad.manaDetonation, mage, true) == ActionResult.ok);
+    s.run(5100.msecs);
+    assert(s.castCount(DetonateManaKelthuzad.detonation, mage) == 1);
+    assert(s.hero(0).values.get!UNIT_FIELD_POWER1(Power.mana) < mana);
+    assert(hp(0) == full && hp(3) == full && hp(1) < full && hp(2) < full,
+        format!"health after detonation: %s, %s, %s, %s"(hp(0), hp(1), hp(2), hp(3)));
+
+    auto target = s.heroes[1].session;
+    target.gatewayHome = SimulationOwner(4, 1);
+    const guid = s.hero(1).data.guid, before = hp(1);
+    assert(kt.ai.castFor(s.map, Kelthuzad.frostBlast, guid, true) == ActionResult.ok);
+    const start = s.hero(1).auras.find(Kelthuzad.frostBlast).duration;
+    foreach (tick; 1 .. 3)
+    {
+        s.run(1.seconds);
+        auto blast = s.hero(1).auras.find(Kelthuzad.frostBlast);
+        assert(blast !is null && blast.duration == start - 1000 * tick);
+        import std.algorithm.searching : find;
+        import std.range : retro;
+        auto writes = s.w.db.progressSaves.retro.find!(saved => saved.guid == guid);
+        assert(!writes.empty && writes.front.health == hp(1) && hp(1) < before);
+        assert(s.w.db.loadPlayerSummons(guid).canFind(toHex(target.inWorld.encounterAuraRecoveryState())),
+            "the saved health must have the remaining blast and its next tick");
+    }
+}
+
 /**
  * Kel'Thuzad's guardian phase survives a worker's crash. Below 40%, two Guardians of Icecrown come, a priest shackles
  * one, and his Chains hold five raiders; the worker dies two seconds on. It comes back with the same Kel'Thuzad at his
@@ -3817,7 +3882,15 @@ unittest
     auto majordomo = s.the(npcMajordomo);
     s.stayWith = majordomo;
     s.engage(majordomo);
-    s.run(3.seconds);
+    const pulled = majordomo.guid;
+    s.restartAfterCrash(); // the first checkpoint, before any of his abilities went off
+    majordomo = s.the(npcMajordomo);
+    assert(majordomo.guid == pulled && majordomo.ai.inCombat);
+    s.stayWith = majordomo;
+    s.forget();
+    s.run(40.seconds);
+    assert(s.cast_(Majordomo.magicReflection, pulled) || s.cast_(Majordomo.damageReflection, pulled));
+    assert(s.cast_(Majordomo.teleportTarget, pulled) || s.cast_(Majordomo.teleportRandom, pulled));
     assert(s.ask(Encounter.majordomo) == EncounterState.inProgress, "his fight not under way");
     foreach (k; 0 .. 3)
     {

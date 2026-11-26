@@ -301,7 +301,9 @@ to 4 GB and the world server's release build 6 GB, so `check.sh` runs as many co
 `flock` on `$XDG_RUNTIME_DIR/dmangos-build.lock` (`DMANGOS_BUILD_LOCK`), so checks in several
 worktrees queue their compilers instead of running the machine out of memory together. The test
 binary's runner (`source/dmangos/testrunner.d`) takes `DMANGOS_TEST_MODULES`, `DMANGOS_TEST_SHARD=i/n`
-and `DMANGOS_TEST_TIMES=FILE` (each module's seconds). Sessions checking at once from several worktrees each set `DMANGOS_BUILD_DIR` (their test
+and `DMANGOS_TEST_TIMES=FILE` (each module's seconds). Every requested module name or prefix must
+match a module with tests before the runner applies the shard filter.
+Sessions checking at once from several worktrees each set `DMANGOS_BUILD_DIR` (their test
 binary and fast servers) and share the harness's database; the cluster regression uses fixed ports
 and schemas, so only one full check runs at a time.
 
@@ -447,7 +449,7 @@ stopped cleanly (it drains), and the coordinator is killed as soon as the worker
 The test compares the original and resent bundles byte for byte and checks that each region
 arrives once with its original object count. The worker must keep its lease through the takeover, and
 the standby must grant it nothing: the player moves on to the standby, saved, not restored from its checkpoint. On the
-original connection it must not see the same living NPC's GUID twice, and must receive a chat reply.
+original connection the NPC's GUID must still be visible after the chat reply. The test also checks for duplicate appearances.
 
 Run `python3 tools/harness/battleground_recovery.py --cross-realm --map arathi` to kill the
 active match worker and check the same match's objectives, scoreboard and PvP on its standby.

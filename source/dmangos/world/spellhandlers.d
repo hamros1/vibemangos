@@ -4360,6 +4360,18 @@ private:
         }
 
         ulong[] found;
+        import dmangos.scripts.naxxramas : DetonateManaKelthuzad;
+
+        if (spell.id == DetonateManaKelthuzad.detonation && kind == ImplicitTarget.friendsAroundDest)
+        {
+            foreach (who; map.near(center, r))
+            {
+                const guid = who.character.guid;
+                if (guid != player.guid && who.character.alive && within(who.character.position) && assistable(guid))
+                    found ~= guid;
+            }
+            return found;
+        }
         with (ImplicitTarget) if (kind == enemiesAroundSource || kind == enemiesAroundDest || kind == enemiesInCone)
         {
             const excluded = excludedAreaTarget(spell.id, i, targets.unit);

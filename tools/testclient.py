@@ -35,6 +35,7 @@ in order:
     castgo:SPELL:ENTRY[:N]    cast at a game object and take up to N loot slots (all if omitted)
     rolloffer  rollvote:N     keep the next group loot prompt, then pass (0), need (1) or greed (2)
     rollcast:N                vote on the last group loot prompt without waiting for the result
+    visiblecreatures          print the creature GUIDs currently visible to this client
     waitfile:PATH             keep receiving packets until another test process creates this file
     waitactions:PATH          the same, then run the actions the file lists (one a line) before the rest
     release  corpse  tocorpse  reclaim  spirithealer
@@ -201,6 +202,7 @@ seen_objects = {}
 seen_positions = {}   # creature guid -> where it was created
 last_roll_offer = None
 living_creatures = set()
+visible_creatures = set()
 here = [0.0, 0.0, 0.0]  # where this client last put its character
 corpse_at = [0.0, 0.0, 0.0]
 last_target = [0]
@@ -375,6 +377,7 @@ def describe(op, p):
                 for guid in g:
                     creature_auras.pop(guid, None)
                     living_creatures.discard(guid)
+                    visible_creatures.discard(guid)
                 print(f"  [out of range] {', '.join(str(x & 0xFFFFFFFF) for x in g)}")
             elif kind in (2, 3) and t == 4:
                 seen_objects[g] = (t, 0)
@@ -392,6 +395,7 @@ def describe(op, p):
                 entry = v.get(3, 0); seen_objects[g] = (t, entry)
                 if move: seen_positions[g] = move[:3]
                 if t == 3:
+                    visible_creatures.add(g)
                     if v.get(OBJECT_END + 0x10, 0):
                         living_creatures.add(g)
                     else:
@@ -514,7 +518,13 @@ def describe(op, p):
     elif op == 0x0C5:
         g, pos = packed_guid(p, 0); x, y, z = struct.unpack_from("<3f", p, pos + 8); print(f"  [teleports] {g} to {x:.1f} {y:.1f} {z:.1f}")
     elif op == 0x03F: print(f"  [loading screen] map {struct.unpack('<I', p)[0]}")
+    elif op == 0x0AA:  # SMSG_DESTROY_OBJECT
+        guid, = struct.unpack_from("<Q", p)
+        visible_creatures.discard(guid)
+        living_creatures.discard(guid)
+        print(f"  [destroyed] {guid}")
     elif op == 0x03E:
+        visible_creatures.clear()
         living_creatures.clear()
         print("  [new world] map %d at %.1f %.1f %.1f; answering" % struct.unpack("<I4f", p)[:4]); wsend(0x0DC, b"")
     elif op == 0x040: print(f"  [transfer aborted] reason {p[0]}")
@@ -710,7 +720,6 @@ def describe(op, p):
     elif op == 0x103: print("  [animation] emote %d by %d" % struct.unpack("<IQ", p))
     elif op == 0x105:
         g, text, num, n = struct.unpack_from("<QIII", p); print(f"  [text emote] {text} by {g} at '{p[20:20 + n - 1].decode()}'")
-    elif op == 0x0AA: print(f"  [destroyed] {struct.unpack('<Q', p)[0]}")
     elif op == 0x17D:
         g, text, n = struct.unpack_from("<QII", p); pos = 16; items = []
         for _ in range(n):
@@ -1039,6 +1048,8 @@ while step < len(actions):
         loot, slot, _ = last_roll_offer
         wsend(0x2A0, struct.pack("<QIB", loot, slot, int(args[0])))
         listen_for(0.5)
+    elif kind == "visiblecreatures":
+        print("visible creature GUIDs:", *sorted(visible_creatures))
     elif kind in ("waitfile", "waitactions"):
         from pathlib import Path
         path = Path(":".join(args))

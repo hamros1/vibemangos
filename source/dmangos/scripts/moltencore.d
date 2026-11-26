@@ -1198,11 +1198,11 @@ struct Majordomo
             me.castSelf(separationAnxiety, true);
         if (!me.hasAura(me.self, aegis))
             me.castSelf(aegis, true);
-        me.signalDungeon(Encounter.majordomo, EncounterState.inProgress);
         steps.after(Step.shield, 15.seconds);
         steps.after(Step.teleportRandom, 15.seconds);
         steps.after(Step.teleportTarget, 30.seconds);
         steps.after(Step.aegis, 5.seconds);
+        me.signalDungeon(Encounter.majordomo, EncounterState.inProgress); // the pull checkpoint includes these timers
     }
 
     void on(ref CreatureContext me, const ref KilledUnit e)

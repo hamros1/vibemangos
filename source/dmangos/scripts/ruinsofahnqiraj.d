@@ -69,6 +69,8 @@ enum Aq20Signal : uint
     crystalUsed = 102, /// a crystal to the copy
     eggBurst = 103,    /// an egg to Buru: it burst near him
     startEvent = 104,  /// Andorov to the copy: the army comes (after his words)
+    spawnCrystals = 105, /// Ossirian asks for crystals
+    vendorLeaving = 106, /// Andorov's trading window has ended
 }
 
 /// The waves of the army, in order: their captain and Rajaxx's yell as they come.
@@ -152,7 +154,7 @@ struct RuinsOfAhnQiraj
             if (!e.summoned)
                 break;
             andorov = e.creature;
-            if (armyActive && copy.alive(andorov)) // a clean handoff: he stays in the checkpoint
+            if ((armyActive || encounters[Aq20Encounter.rajaxx] == EncounterState.done) && copy.alive(andorov))
                 copy.checkpointCreature(andorov);
             break;
         case npcKaldoreiElite:
@@ -229,6 +231,8 @@ struct RuinsOfAhnQiraj
             }
             copy.waitForPlayer();
         }
+        else if (encounters[Aq20Encounter.rajaxx] == EncounterState.done && copy.hasSavedCreature(npcAndorov))
+            copy.waitForPlayer(); // resume the vendor's remaining time
         if (ossirianActive)
         {
             if (copy.entryKilled(npcOssirian))
@@ -357,6 +361,13 @@ struct RuinsOfAhnQiraj
     {
         switch (e.id)
         {
+        case Aq20Signal.spawnCrystals:
+            spawnCrystals(copy, cast(uint) e.value);
+            return;
+        case Aq20Signal.vendorLeaving:
+            if (e.from == andorov)
+                copy.releaseCheckpointActor(andorov);
+            return;
         case Aq20Signal.startEvent:
             set(copy, Aq20Encounter.rajaxx, EncounterState.inProgress);
             return;
@@ -366,14 +377,9 @@ struct RuinsOfAhnQiraj
             set(copy, cast(Aq20Encounter) e.id, cast(EncounterState) e.value);
             return;
         default:
-            if (e.id == ossirianSpawnCrystals)
-                spawnCrystals(copy, cast(uint) e.value);
             return;
         }
     }
-
-    /// Ossirian asks for crystals (`value` of them).
-    enum uint ossirianSpawnCrystals = 105;
 
     /// `count` crystals at triggers chosen at random (the first, by the entrance, left out).
     private void spawnCrystals(ref InstanceContext copy, uint count)
@@ -444,13 +450,18 @@ struct RuinsOfAhnQiraj
             }
             else if (state != EncounterState.inProgress)
             {
-                foreach (ally; andorov ~ kaldorei[])
+                foreach (ally; kaldorei)
                     if (ally)
                         copy.releaseCheckpointActor(ally);
                 findWave = false;
                 steps.clear();
                 if (state == EncounterState.done && andorov && copy.alive(andorov))
+                {
                     copy.signal(andorov, Aq20Signal.rajaxxDone);
+                    copy.checkpointCreature(andorov);
+                }
+                else if (andorov)
+                    copy.releaseCheckpointActor(andorov);
             }
             break;
         case Aq20Encounter.ossirian:
@@ -793,6 +804,7 @@ struct GeneralAndorov
             }
             break;
         case Step.despawn:
+            me.signalDungeon(Aq20Signal.vendorLeaving);
             me.say(sayDespawn);
             me.despawn(2500);
             break;
@@ -1403,7 +1415,7 @@ struct Ossirian
         final switch (step)
         {
         case Step.initialSpawn:
-            me.signalDungeon(RuinsOfAhnQiraj.ossirianSpawnCrystals, 5);
+            me.signalDungeon(Aq20Signal.spawnCrystals, 5);
             break;
         case Step.supreme:
             if (me.hasAura(me.self, supreme) || me.castSelf(supreme) == ActionResult.ok)
@@ -1646,7 +1658,7 @@ unittest
     assert(ruins.signals[$ - 1] == Signal(ruins.summoned[0], Aq20Signal.rajaxxDone, 0));
 
     // Ossirian: crystals at the start of his fight; one used weakens him and another appears.
-    runtime.raise(h, c, Signal(ossirian, RuinsOfAhnQiraj.ossirianSpawnCrystals, 3));
+    runtime.raise(h, c, Signal(ossirian, Aq20Signal.spawnCrystals, 3));
     assert(ruins.objects.length == 4);
     runtime.raise(h, c, ObjectUsedHere(ruins.objects[1], EntityRef(7)));
     assert(ruins.signals[$ - 1].from == ossirian && ruins.signals[$ - 1].id == Aq20Signal.weakened);
@@ -1715,7 +1727,7 @@ unittest
     {
         auto c = InstanceContext(ruins);
         runtime.raise(h, c, CreatureEngaged(ossirian, EntityRef(7)));
-        runtime.raise(h, c, Signal(ossirian, RuinsOfAhnQiraj.ossirianSpawnCrystals, 2));
+        runtime.raise(h, c, Signal(ossirian, Aq20Signal.spawnCrystals, 2));
         assert(c.checkpointSummons == ruins.objects[1 .. 3], "the crystals of his fight not saved with it");
     }
     {

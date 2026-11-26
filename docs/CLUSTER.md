@@ -577,8 +577,9 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   the pull does the same. His death stays recorded, and after it neither he nor Majordomo comes.
   Majordomo and his guard, summons too, are kept in the checkpoint while his fight is under way: a
   crash brings back the same Majordomo at his health, fighting, with his living guards, and a guard
-  slain stays slain. His surrender or a wipe lets them go; one saved without him (an older save)
-  fails, and he comes again with all eight. The other bosses are the copy's own spawns and resume
+  slain stays slain. His first checkpoint includes the shield and teleport timers. A surrender or wipe
+  releases the summons. Older saves without Majordomo reset the encounter with all eight guards.
+  The other bosses are the copy's own spawns and resume
   from their fight snapshots.
   In Zul'Gurub, High Priestess Arlokk, the gong's summon, is kept in the checkpoint with her prowlers
   while her fight is under way. A crash brings back the same Arlokk at her health, with her
@@ -655,7 +656,8 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   undead, and Shackle Undead stuns them without control, so none is ever left out of a snapshot.
   His second phase's short effects come back too: a Shadow Fissure is kept with his fight and erupts
   after the crash, and a player's Frost Blast and Detonate Mana come back from the player's
-  checkpoint with the time they had, his fight's timers and theirs not counting the outage.
+  checkpoint with their remaining duration. Each Frost Blast damage tick saves the player's health
+  and the time to the next tick together. Detonate Mana hits nearby allies across raid subgroups.
   A raid that wipes while he channels (nobody alive within 120 yards of him) makes him give up:
   his minions go and his chamber opens, and a crash after that keeps him at home for the next
   pull. A fight saved without him (an older save) fails, and the trigger in his chamber begins it
@@ -683,8 +685,9 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   the army fights, and each wave is saved as it charges. A crash brings Andorov back where he
   fights. The wave under way is found again from the deaths and the fighting: waves beaten stay
   beaten, a captain fighting goes on, and the next follow it. Rajaxx's death keeps the army beaten,
-  and Andorov trades. Ossirian comes back from the snapshot of a hurt creature, and the crystals
-  placed in his fight are kept in the checkpoint, so a crystal used after a crash weakens him.
+  and Andorov trades for 135 seconds. After a crash he trades for the remaining time.
+  Ossirian comes back from the snapshot of a hurt creature, and the crystals placed in his fight
+  are kept in the checkpoint, so a crystal used after a crash weakens him.
 * **GM commands.** `.instance info`, `.instance shutdown` and `.instance reset` of a copy another node
   hosts go to that node and its answer comes back; `.instance resetall` goes to every node.
 

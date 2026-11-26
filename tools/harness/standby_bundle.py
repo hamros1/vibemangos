@@ -57,7 +57,7 @@ def exercise(fixture, proxy, loop, world_ports, auth_port, releases):
                       f"WHERE name='{NAME}'", cluster.chars)
         held = fixture.directory / f"held{attempt}"
         player = cluster.client(f"player{attempt}", FOURTH, f"login:{NAME}", f"waitfile:{held}",
-                                "say:after the takeover", "logout")
+                                "say:after the takeover", "visiblecreatures", "logout")
         arrival = f"'{NAME}' arrived from another node (map {map_id} at {x:.1f} {y:.1f})"
         host = wait_for("the player's worker", lambda: next(
             (node for node in (COORDINATOR, STANDBY, WORKER) if arrival in cluster.log(node, alive)), None), 30)
@@ -129,6 +129,10 @@ def exercise(fixture, proxy, loop, world_ports, auth_port, releases):
     if player.wait(timeout=40):
         raise RuntimeError(fixture.log(label)[-2500:])
     assert "heard: 'after the takeover'" in fixture.log(label), "the player could not play on"
+    entry, spawn = map(int, npc)
+    guid = (0xF130 << 48) | (entry << 24) | spawn
+    visible = re.search(r"^visible creature GUIDs:(.*)$", fixture.log(label), re.MULTILINE)
+    assert visible and guid in map(int, visible[1].split()), f"NPC {npc} disappeared during handoff"
     shown = NPC.findall(fixture.log(label)[client_offset:]).count(npc)
     assert shown <= 1, f"NPC {npc} shown {shown} times after the drain began"
     objects = sum(counts.values())
