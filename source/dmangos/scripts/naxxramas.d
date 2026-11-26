@@ -579,7 +579,11 @@ struct Naxxramas
         return slain;
     }
 
-    /// A horseman or a slain one's spirit came into the copy: known, and saved with the fight under way.
+    /**
+     * A horseman or a slain one's spirit came into the copy: known, and saved with the fight under way. A spirit comes
+     * as its horseman dies, before the copy hears of his death: it is saved with that (`horsemanDied`), so no save
+     * holds it beside him alive.
+     */
     private bool horsemanLoaded(ref InstanceContext copy, const ref CreatureLoaded e)
     {
         foreach (i; 0 .. 4)
@@ -590,8 +594,8 @@ struct Naxxramas
                 horsemenSpirits[i] = e.creature;
             else
                 horsemen[i] = e.creature;
-            if (horsemenActive && copy.alive(e.creature)) // a clean handoff, or a spirit as its horseman falls
-                copy.checkpointCreature(e.creature);
+            if (horsemenActive && copy.alive(e.creature) && (!e.summoned || copy.entryKilled(horsemenEntries[i])))
+                copy.checkpointCreature(e.creature); // a clean handoff, or a restore
             return true;
         }
         return false;
@@ -650,10 +654,14 @@ struct Naxxramas
                 copy.respawnObject(portals[i], 30 * 60);
     }
 
-    /// A horseman fell (his death is in the copy's deaths already): the fourth makes the encounter, saved with it.
+    /// A horseman fell (his death is in the copy's deaths already): his spirit is saved with it; the fourth makes the
+    /// encounter.
     private void horsemanDied(ref InstanceContext copy, EntityRef horseman)
     {
         copy.releaseCheckpointActor(horseman);
+        foreach (i, entry; horsemenEntries)
+            if (entry == horseman.entry && horsemenActive && copy.alive(horsemenSpirits[i]))
+                copy.checkpointCreature(horsemenSpirits[i]);
         horsemenKilled = horsemenSlain(copy);
         if (horsemenKilled >= 4)
             setHorsemen(copy, EncounterState.done);
@@ -3353,8 +3361,9 @@ unittest
     {
         auto c = InstanceContext(room);
         runtime.raise(h, c, Signal(four[i], NaxxEncounter.fourHorsemen, EncounterState.done));
-        room.killedEntries[entries[i]] = true;
         runtime.raise(h, c, CreatureLoaded(i ? mograineSpirit : blaumeuxSpirit, true));
+        assert(!c.checkpointSummons.length, "the spirit saved before its horseman's death");
+        room.killedEntries[entries[i]] = true;
         runtime.raise(h, c, CreatureDied(four[i], EntityRef(7), false));
         assert(c.releasedCheckpointActors == [four[i]] && c.checkpointSummons == [i ? mograineSpirit : blaumeuxSpirit]
             && c.checkpointRequested, "a death and the spirit it leaves are saved at once");
