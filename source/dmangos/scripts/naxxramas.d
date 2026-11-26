@@ -372,18 +372,22 @@ struct Naxxramas
     /// A restore during Stalagg and Feugen's fight keeps their swap going: adds restored still fighting
     /// never enter combat again to restart it. Until a swap finds them fighting, a fresh pull restarts it.
     @transient bool tankSwapRestored;
+    /// Restored with Thaddius's fight under way and his adds slain: he wakes, his fight still on.
+    @transient bool thaddiusAddsSlain;
 
     void on(ref InstanceContext copy, const ref Restored e)
     {
         restoreHorsemen(copy);
-        // Stalagg or Feugen slain with his fight still under way in the save (the deaths' writes reached the database,
-        // the checkpoint after them did not), or failed (a wipe on Thaddius): Thaddius waits for nobody but the raid.
+        // Stalagg or Feugen slain with the fight still under way in the save: Thaddius's own fight, or the adds' with
+        // the checkpoint after their deaths lost (their writes reached the database). Either way it goes on, his
+        // door shut, and he wakes (`askThaddiusWakes`). A wipe on Thaddius (failed): he waits for nobody but the raid.
         const thaddiusFight = encounters[NaxxEncounter.thaddius];
-        if ((thaddiusFight == EncounterState.inProgress || thaddiusFight == EncounterState.failed)
-            && (copy.entryKilled(npcStalagg) || copy.entryKilled(npcFeugen)))
+        const addSlain = copy.entryKilled(npcStalagg) || copy.entryKilled(npcFeugen);
+        thaddiusAddsSlain = addSlain && thaddiusFight == EncounterState.inProgress;
+        if (thaddiusFight == EncounterState.failed && addSlain)
             encounters[NaxxEncounter.thaddius] = EncounterState.special;
         steps.cancel(Step.tankSwap);
-        tankSwapRestored = encounters[NaxxEncounter.thaddius] == EncounterState.inProgress;
+        tankSwapRestored = encounters[NaxxEncounter.thaddius] == EncounterState.inProgress && !thaddiusAddsSlain;
         if (tankSwapRestored)
             steps.every(Step.tankSwap, 21.seconds);
         if (gothikActive)
@@ -541,6 +545,8 @@ struct Naxxramas
 
     /// The question whether the way to Sapphiron is open (every quarter ended).
     enum uint askFrostwyrm = 100;
+    /// Whether Thaddius is to wake: his adds slain, his fight not yet begun or under way (back from a crash).
+    enum uint askThaddiusWakes = 101;
 
     void on(ref InstanceContext copy, const ref Asked e)
     {
@@ -548,6 +554,9 @@ struct Naxxramas
             copy.answer(encounters[e.id]);
         else if (e.id == askFrostwyrm)
             copy.answer(frostwyrmOpen ? 1 : 0);
+        else if (e.id == askThaddiusWakes)
+            copy.answer(encounters[NaxxEncounter.thaddius] == EncounterState.special
+                || (thaddiusAddsSlain && encounters[NaxxEncounter.thaddius] == EncounterState.inProgress) ? 1 : 0);
     }
 
     void on(ref InstanceContext copy, const ref Signal e)
@@ -2562,7 +2571,7 @@ struct Thaddius
 
     void on(ref CreatureContext me, const ref Spawned e)
     {
-        if (me.askDungeon(NaxxEncounter.thaddius) != EncounterState.special)
+        if (!me.askDungeon(Naxxramas.askThaddiusWakes))
         {
             me.unitFlags(UnitFlag.uninteractible | UnitFlag.immuneToPlayer, true);
             me.reactState(Reaction.passive);

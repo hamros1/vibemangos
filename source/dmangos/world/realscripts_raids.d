@@ -2417,7 +2417,7 @@ unittest
             d.w.db.saveInstanceData(d.instanceId, during);
         if (crash == "second death lost")
             d.w.db.deleteInstanceRespawn(cast(uint)(d.find(feugen).guid & 0xFF_FFFF), d.instanceId);
-        if (crash != "handoff")
+        if (crash != "handoff" && crash != "in his fight")
             d.restartAfterCrash();
         return d;
     }
@@ -2434,6 +2434,38 @@ unittest
         d.restartAfterCrash();
         assert(d.all(thaddiusEntry).length == 0 && d.all(stalagg).length == 0 && d.all(feugen).length == 0,
             crash ~ ": slain for the lockout");
+    }
+
+    // A crash in Thaddius's own fight: he fights on (or wakes again), and his door stays shut until his death.
+    {
+        import dmangos.script.api : EntityRef, Signal;
+
+        enum uint door = 181_121; // from Gluth's room: open once Gluth is done, shut while Thaddius's fight is on
+        auto d = fight("in his fight");
+        d.w.context.instanceScript(d.instanceId).raise(Signal(EntityRef.init, NaxxEncounter.gluth,
+            EncounterState.done)); // Gluth slain: the door is the fight's alone
+        auto th = d.spawned(thaddiusEntry, 0, 10);
+        assert(d.runUntil(() => th.ai.inCombat, 20.seconds), "Thaddius does not wake\n" ~ d.story);
+        d.run(3.seconds);
+        assert(d.saved!Naxxramas.encounters[NaxxEncounter.thaddius] == EncounterState.inProgress, "his fight not on");
+        d.restartAfterCrash();
+        th = d.spawned(thaddiusEntry, 0, 10);
+        bool shut = true;
+        const fights = d.runUntil(() {
+            if (auto go = d.loadedObject(door))
+                shut = shut && !Dungeon.isOpen(go);
+            return th.ai.inCombat;
+        }, 20.seconds);
+        assert(fights, "Thaddius not fighting after the crash in his fight\n" ~ d.story);
+        d.run(2.seconds);
+        if (auto go = d.loadedObject(door))
+            shut = shut && !Dungeon.isOpen(go);
+        assert(shut, "his door opened after the crash in his fight");
+        assert(d.saved!Naxxramas.encounters[NaxxEncounter.thaddius] == EncounterState.inProgress,
+            "his fight not under way after the crash");
+        d.kill(th);
+        d.run(2.seconds);
+        assert(d.saved!Naxxramas.encounters[NaxxEncounter.thaddius] == EncounterState.done, "not done after the crash");
     }
 }
 
@@ -3690,6 +3722,84 @@ private bool[ulong] livingOf(Scene s, uint entry)
     foreach (c; s.all(entry))
         living[c.guid] = true;
     return living;
+}
+
+/**
+ * Majordomo's fight survives a worker's crash. He and his guard are summons, so nothing but the copy's checkpoint can
+ * bring them back. Crashed with three of his eight guards slain, the worker comes back with the same Majordomo at his
+ * health in his fight and the same five guards, and no other; the rest slain, he submits as without the crash. After
+ * another crash, no second Majordomo comes.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import std.algorithm.searching : canFind;
+    import std.math : abs;
+    import dmangos.script.api : EncounterState;
+    import dmangos.scripts.moltencore;
+
+    auto s = new Scene(409, Position(760, -1170, -118.6f), [classWarrior, classMage], cluster: true);
+    s.run(1.seconds);
+    s.signalCopy(Encounter.lucifron, EncounterState.done);
+    foreach (encounter; Encounter.magmadar .. Encounter.majordomo)
+    {
+        s.signalCopy(encounter, EncounterState.done);
+        s.signalCopy(encounter, EncounterState.special);
+    }
+    s.run(1.seconds);
+    auto majordomo = s.the(npcMajordomo);
+    s.stayWith = majordomo;
+    s.engage(majordomo);
+    s.run(3.seconds);
+    assert(s.ask(Encounter.majordomo) == EncounterState.inProgress, "his fight not under way");
+    foreach (k; 0 .. 3)
+    {
+        s.kill(s.all(k < 2 ? npcFlamewakerElite : npcFlamewakerHealer)[0]);
+        s.run(1.seconds);
+    }
+    s.hurtTo(majordomo, 80);
+    s.run(1.seconds);
+    s.runUntilSaved(); // a crash just after the checkpoint
+    const guid = majordomo.guid;
+    const health = s.healthOf(majordomo);
+    bool[ulong] guards;
+    foreach (entry; [npcFlamewakerElite, npcFlamewakerHealer])
+        foreach (k, v; livingOf(s, entry))
+            guards[k] = v;
+    assert(guards.length == 5, format!"%s guards alive before the crash"(guards.length));
+
+    s.forget();
+    s.restartAfterCrash();
+    s.run(2.seconds);
+    auto back = s.all(npcMajordomo);
+    assert(back.length == 1 && back[0].guid == guid, format!"%s Majordomo after the crash, not the same one"(back.length));
+    majordomo = back[0];
+    assert(abs(s.healthOf(majordomo) - health) <= 1, format!"Majordomo at %s%% after the crash, %s%% before"(
+        s.healthOf(majordomo), health));
+    assert(s.ask(Encounter.majordomo) == EncounterState.inProgress, "his fight no longer under way");
+    assert(majordomo.ai.inCombat, "Majordomo not fighting after the crash");
+    bool[ulong] after;
+    foreach (entry; [npcFlamewakerElite, npcFlamewakerHealer])
+        foreach (k, v; livingOf(s, entry))
+            after[k] = v;
+    assert(after == guards, format!"guards %s after the crash, %s before"(after.keys, guards.keys));
+
+    // The rest of his guard slain: he submits.
+    s.stayWith = majordomo;
+    foreach (entry; [npcFlamewakerElite, npcFlamewakerHealer])
+        foreach (c; s.all(entry))
+        {
+            s.kill(c);
+            s.run(1.seconds);
+        }
+    assert(s.runUntil(() => s.ask(Encounter.majordomo) == EncounterState.done, 40.seconds),
+        "Majordomo does not submit after the crash\n" ~ s.seen());
+    s.restartAfterCrash();
+    s.run(2.seconds);
+    assert(s.all(npcMajordomo).length == 1, format!"%s Majordomo after his surrender and a crash"(
+        s.all(npcMajordomo).length));
+    assert(s.all(npcFlamewakerElite).length + s.all(npcFlamewakerHealer).length == 0, "his guard back after his surrender");
 }
 
 /**

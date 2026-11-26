@@ -571,8 +571,11 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   crash stay slain, and the living ones keep him under the lava until they fall. A wipe, or a crash
   after one, brings Majordomo back by the lair to summon him anew. A crash between the summoning and
   the pull does the same. His death stays recorded, and after it neither he nor Majordomo comes.
-  Majordomo's own fight restarts after a crash, with his eight guards. The other bosses are the
-  copy's own spawns and resume from their fight snapshots.
+  Majordomo and his guard, summons too, are kept in the checkpoint while his fight is under way: a
+  crash brings back the same Majordomo at his health, fighting, with his living guards, and a guard
+  slain stays slain. His surrender or a wipe lets them go; one saved without him (an older save)
+  fails, and he comes again with all eight. The other bosses are the copy's own spawns and resume
+  from their fight snapshots.
   In Zul'Gurub, High Priestess Arlokk, the gong's summon, is kept in the checkpoint with her prowlers
   while her fight is under way. A crash brings back the same Arlokk at her health, with her
   forcefield shut and her living prowlers, and more come on the copy's timer. A crash before she
@@ -601,8 +604,9 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   expiration deadlines. Ebonroc keeps healing already received through his mark, and Flamegor
   keeps the Frenzy already in progress.
   In Naxxramas, Thaddius wakes after a crash in the ten seconds between Stalagg's and Feugen's deaths
-  and his waking. With either add slain and the fight still under way in the save (the checkpoint after
-  the deaths lost), or failed after a wipe on Thaddius, the copy comes back with him waiting for a pull.
+  and his waking. With either add slain and the fight still under way in the save (his own fight, or
+  the adds' with the checkpoint after their deaths lost), the fight goes on with his door shut and he
+  wakes. Failed after a wipe on Thaddius, the copy comes back with him waiting for a pull.
   An add that comes back alive with the other slain (the second death's write lost) dies as it loads.
   Gothik keeps his upcoming waves and the living and spectral adds that survived.
   The first players back resume the saved timers. On the floor he keeps his health, side and
@@ -1581,7 +1585,7 @@ also cover Tuten'kash, Gahz'rilla, the pyramid's siege, the Disciple of Naralex 
 Emi with Grubbis out, and Mograine fallen with Whitemane on her way, each with a crash. The
 real-data tests in `source/dmangos/world/realscripts_raids.d` cover Thaddius after a handoff during
 his adds' fight, after a crash in his ten seconds, with the checkpoint after the adds' deaths lost,
-and with the second death's write lost.
+with the second death's write lost, and in his own fight, his door shut throughout.
 
 ### Kel'Thuzad's crash points
 
@@ -1616,11 +1620,14 @@ checkpoint, at these points:
 |---|---|---|
 | `fight` | About 11 s into his fight, with him at 70%, just after the checkpoint of his first Might of Ragnaros (its cast begun) | All three sockets back in the same copy. The same Ragnaros (same GUID) at the saved health, within 1%, fighting, and no Majordomo. He submerged 180 s into his fight, counted without the outage, with his eight Sons of Flame, came up once they were slain, and was slain |
 | `fight`, second crash | After his death, just after its checkpoint, on the worker that took over | Neither Ragnaros nor Majordomo. The first worker is restarted beforehand so that the voters keep a majority |
+| `majordomo` | The saved state rewritten with the runes doused and Majordomo not fought; the members by him and his eight guards. The leader attacked him, three guards were slain, and the crash came two seconds after the third death | All three sockets back in the same copy. The same Majordomo (same GUID), fighting, and the same five guards. The rest slain, he submitted |
+| `majordomo`, second crash | After his surrender was saved, on the worker that took over (the first restarted beforehand) | Neither Majordomo (he waits by Ragnaros' lair) nor a guard where he fought; his encounter still done |
 | `wipe` | The members killed with `.killplr` while he fought, just after the wipe was saved (his encounter failed) | No Ragnaros, and Majordomo by the lair again (another GUID). Asked, he summoned Ragnaros anew (another GUID), who fought the members |
 
 The real-data tests in `source/dmangos/world/realscripts_raids.d` cover the same crash points in
 cluster mode. They add a crash under the lava with three of his sons slain: the same five come back
-and he stays under until they are slain. A crash between the summoning and the pull brings
+and he stays under until they are slain. Majordomo crashed with three guards slain and him at 80%
+comes back at his health with the same five. A crash between the summoning and the pull brings
 Majordomo back by the lair, and asked, he summons Ragnaros once more.
 
 ### Zul'Gurub's crash points

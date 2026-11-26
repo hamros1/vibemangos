@@ -318,12 +318,12 @@ merge and a player handoff. Set `EXPECT_BALANCING=1` to check these events in a 
 ### Cluster chaos suite
 
 After harness setup and a release build, run the opt-in suite with
-`python3 tools/harness/chaos.py`. It runs the quorum partition and heal, coordinator kill,
-paused battlegroup host, gateway checkpoint retry, departure retry, lease lapse arrival, worker
-rejoin, stall release, gateway return, C'Thun recovery, Sapphiron recovery, Four Horsemen recovery,
-Kel'Thuzad recovery, Stratholme recovery, Ragnaros recovery, Zul'Gurub recovery, Ahn'Qiraj recovery
-(the Bug Trio, the Twin Emperors, Ouro, Rajaxx's army), loot award crash, migration stall, standby login and standby
-bundle cases against isolated fixtures.
+`python3 tools/harness/chaos.py`. It runs the quorum partition and heal, coordinator kill, paused
+battlegroup host, gateway checkpoint retry, departure retry, lease lapse arrival, worker rejoin,
+stall release, gateway return, C'Thun recovery, Sapphiron recovery, Four Horsemen recovery,
+Kel'Thuzad recovery, Stratholme recovery, Ragnaros and Majordomo recovery, Zul'Gurub recovery,
+Ahn'Qiraj recovery (the Bug Trio, the Twin Emperors, Ouro, Rajaxx's army), loot award crash,
+migration stall, standby login and standby bundle cases against isolated fixtures.
 Use `--repeat 3` to check repeatability. Each case prints the harness directory containing
 its process logs and uses fresh login and character schemas.
 
@@ -403,6 +403,8 @@ Majordomo's fight won, and kills the worker once to bring it in. Three scripted 
 gateway then ask Majordomo, who summons Ragnaros. `fight` checks that the original sockets come back
 to the same Ragnaros at his health, that he submerges on his saved timer and that his death stays
 recorded after another crash. `wipe` crashes after a wipe and checks that Majordomo summons him anew.
+`--phase majordomo` rewrites the state with Majordomo not yet fought, crashes in his fight with three
+of his guards slain, and checks that the same Majordomo and five guards come back and that he submits.
 The fight case waits out his first three minutes, so it takes about six minutes.
 [Ragnaros' crash points](CLUSTER.md#ragnaros-crash-points) has the details.
 

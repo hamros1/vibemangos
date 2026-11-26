@@ -65,6 +65,7 @@ CASES = (
     ("stratholme-ysida-recovery", stratholme_recovery.ysida),
     ("ragnaros-fight-recovery", ragnaros_recovery.fight),
     ("ragnaros-wipe-recovery", ragnaros_recovery.wipe),
+    ("majordomo-recovery", ragnaros_recovery.majordomo),
     ("zulgurub-arlokk-recovery", zulgurub_recovery.arlokk),
     ("zulgurub-mandokir-recovery", zulgurub_recovery.mandokir),
     ("aq20-army-recovery", ahnqiraj_recovery.army),

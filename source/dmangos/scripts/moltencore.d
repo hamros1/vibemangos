@@ -125,7 +125,8 @@ private enum retry = 400.msecs;
 /**
  * What the copy remembers: its encounters (saved in `instance.data`). While Ragnaros' fight is under way he and his
  * Sons of Flame, summons, are kept in the copy's checkpoint (`setRagnaros`): a worker's crash resumes his fight, and
- * one saved without him fails, so that Majordomo comes again to summon him.
+ * one saved without him fails, so that Majordomo comes again to summon him. Majordomo's own fight is kept the same
+ * way, with his living guard (`setMajordomo`): a guard slain stays slain, and one saved without him fails.
  */
 @instance("instance_molten_core")
 struct MoltenCore
@@ -143,6 +144,16 @@ struct MoltenCore
     private bool ragnarosActive() const
     {
         return encounters[Encounter.ragnaros] == EncounterState.inProgress;
+    }
+
+    private bool majordomoActive() const
+    {
+        return encounters[Encounter.majordomo] == EncounterState.inProgress;
+    }
+
+    private static bool isGuard(uint entry)
+    {
+        return entry == npcFlamewakerHealer || entry == npcFlamewakerElite;
     }
 
     void on(ref InstanceContext copy, const ref ObjectLoaded e)
@@ -168,6 +179,19 @@ struct MoltenCore
         {
         case npcMajordomo:
             majordomo = e.creature;
+            if (majordomoActive) // back from the checkpoint, or brought by a handoff: kept with his fight
+                copy.checkpointCreature(majordomo);
+            break;
+        case npcFlamewakerHealer, npcFlamewakerElite:
+            // His guard as the checkpoint or a handoff brings it back, while his fight is under way.
+            if (e.summoned && majordomoActive && !guard[].canFind(e.creature))
+                foreach (ref g; guard)
+                    if (!g || !copy.alive(g))
+                    {
+                        g = e.creature;
+                        copy.checkpointCreature(e.creature);
+                        break;
+                    }
             break;
         case npcRagnaros:
             ragnaros = e.creature;
@@ -189,6 +213,14 @@ struct MoltenCore
 
     void on(ref InstanceContext copy, const ref PlayerEntered e)
     {
+        if (majordomoActive && majordomo && copy.alive(majordomo))
+        {
+            // Back in the copy after a crash: back in his fight, his guard with him.
+            copy.zoneCombat(majordomo);
+            foreach (g; guard)
+                if (g && copy.alive(g))
+                    copy.zoneCombat(g);
+        }
         if (ragnarosActive && ragnaros && copy.alive(ragnaros))
         {
             // Back in the copy (after a crash, say): back in his fight, his idle sons after whoever is here.
@@ -206,6 +238,13 @@ struct MoltenCore
      */
     void on(ref InstanceContext copy, const ref Restored e)
     {
+        if (majordomoActive)
+        {
+            if (copy.hasSavedCreature(npcMajordomo))
+                copy.waitForPlayer();
+            else
+                setMajordomo(copy, EncounterState.failed); // he comes again with his guard, his fight to begin
+        }
         if (!ragnarosActive)
             return;
         if (copy.hasSavedCreature(npcRagnaros))
@@ -244,6 +283,32 @@ struct MoltenCore
         copy.checkpoint();
     }
 
+    /**
+     * Majordomo's encounter in `state`. While his fight is under way he and his living guard are saved with the copy;
+     * his surrender or a wipe lets them go.
+     */
+    private void setMajordomo(ref InstanceContext copy, EncounterState state)
+    {
+        encounters[Encounter.majordomo] = state;
+        if (majordomoActive)
+        {
+            if (majordomo && copy.alive(majordomo))
+                copy.checkpointCreature(majordomo);
+            foreach (g; guard)
+                if (g && copy.alive(g))
+                    copy.checkpointCreature(g);
+        }
+        else
+        {
+            if (majordomo)
+                copy.releaseCheckpointActor(majordomo);
+            foreach (g; guard)
+                if (g)
+                    copy.releaseCheckpointActor(g);
+        }
+        copy.checkpoint();
+    }
+
     void on(ref InstanceContext copy, const ref Asked e)
     {
         if (e.id <= Encounter.max)
@@ -262,7 +327,7 @@ struct MoltenCore
             copy.releaseCheckpointActor(e.creature); // a son slain stays slain
             return;
         }
-        if (e.creature.entry != npcFlamewakerHealer && e.creature.entry != npcFlamewakerElite)
+        if (!isGuard(e.creature.entry))
             return;
         bool his;
         int left;
@@ -272,6 +337,11 @@ struct MoltenCore
                 his = true;
             else if (g && copy.alive(g))
                 ++left;
+        }
+        if (his && majordomoActive)
+        {
+            copy.releaseCheckpointActor(e.creature); // a guard slain stays slain
+            copy.checkpoint();
         }
         if (his && majordomo)
             copy.signal(majordomo, McSignal.addsLeft, left);
@@ -323,9 +393,16 @@ struct MoltenCore
                 ragnaros = e.from;
             return setRagnaros(copy, state);
         }
+        if (which == Encounter.majordomo)
+        {
+            if (state == encounters[which])
+                return;
+            setMajordomo(copy, state);
+            if (state == EncounterState.done)
+                copy.respawnObject(goCacheOfTheFireLord, 3600);
+            return;
+        }
         encounters[which] = state;
-        if (which == Encounter.majordomo && state == EncounterState.done)
-            copy.respawnObject(goCacheOfTheFireLord, 3600);
         if (state == EncounterState.special)
             summonMajordomo(copy, false);
     }
@@ -335,7 +412,7 @@ struct MoltenCore
     {
         if (encounters[Encounter.majordomo] == EncounterState.done && encounters[Encounter.ragnaros] == EncounterState.done)
             return;
-        if (majordomo)
+        if (majordomo || majordomoActive) // his fight under way: the checkpoint brings him and his guard back
             return;
         foreach (i; Encounter.magmadar .. Encounter.majordomo)
             if (encounters[i] != EncounterState.special)

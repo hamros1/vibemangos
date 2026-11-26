@@ -75,10 +75,9 @@ describes how players use the systems available today.
   minions attack at once rather than gathering, and none goes at 5:10. The chaos suite cannot
   test Chains, which needs six raiders in his threat list; the real-data tests cover them.
   Thaddius has recovery tests for a handoff during his adds' fight, a crash in the ten seconds before
-  he wakes, the checkpoint after his adds' deaths lost, and the second death's write lost. Open: with
-  either add slain, a fight saved as under way is taken for the adds' fight, so a crash in Thaddius's
-  own fight opens his door until he dies or the raid wipes. Woken after a crash, he takes every player
-  in the copy into his fight, as his waking does.
+  he wakes, the checkpoint after his adds' deaths lost, the second death's write lost, and his own
+  fight: with an add slain, a fight saved as under way goes on with his door shut, and he wakes.
+  Woken after a crash, he takes every player in the copy into his fight, as his waking does.
   The Temple of Ahn'Qiraj has C'Thun recovery tests for the Eye's phase, the crash between the
   Eye's death and C'Thun's rise, a player in his stomach, and a wipe in his phase.
   Stratholme has recovery tests for Ramstein, the mindless undead and Black Guards, Ysida during and
@@ -97,9 +96,9 @@ describes how players use the systems available today.
   of her stand, the northern tunnel's blast among it.
   Molten Core has Ragnaros recovery tests for his fight, his sons under the lava, a wipe followed
   by a crash, a crash between his summoning and his pull, and his death. The
-  [crash points](CLUSTER.md#ragnaros-crash-points) list what the clients saw. Open: Majordomo's
-  own fight is not saved, so a crash during it brings him back with all eight guards, his fight to
-  begin again. A crash after Ragnaros' death but before its checkpoint brings him back alive from
+  [crash points](CLUSTER.md#ragnaros-crash-points) list what the clients saw. Majordomo's
+  fight is saved with his living guard: a crash brings the same Majordomo and guards back fighting.
+  Open: a crash after Ragnaros' death but before its checkpoint brings him back alive from
   his last checkpoint. The other bosses, the copy's own spawns, come back from their fight
   snapshots, and none of their summons does: Magmadar's Lava Bombs, for one. Nothing of the copy's
   state waits on them.
