@@ -59,9 +59,9 @@ describes how players use the systems available today.
   The Four Horsemen have recovery tests for a crash after two deaths, a crash after the last
   death, the last death saved with the checkpoint after it lost, and a wipe after two deaths
   followed by a crash. The [crash points](CLUSTER.md#the-four-horsemens-crash-points) list what
-  the clients saw. Open: the marks only stack. Their damage by stack count (`28836`, which
-  CMaNGOS deals as a mark lands) is not ported. A marked player on a regular home logs in again
-  with the marks of the last character save. A crash after a horseman's death reached the
+  the clients saw. Each mark's next stack strikes the player for shadow damage by the stacks
+  (`28836`): none at one, 250 at two, 1000 at three, 3000 at four, then 1000 a stack. A marked
+  player on a regular home logs in again with the marks of the last character save. A crash after a horseman's death reached the
   database but before the checkpoint written with it keeps him dead and loses his spirit, so his
   mark stops. Between checkpoints the survivors come back from the copy's last two-second save.
   One horseman giving up his fight while the others fight on fails the encounter and brings the
@@ -70,10 +70,8 @@ describes how players use the systems available today.
   shackled and five raiders in his Chains, a wipe in his first phase followed by a crash, and his
   death. The [crash points](CLUSTER.md#kelthuzads-crash-points) list what the clients saw.
   Open: a crash loses what lasts five seconds or less of his second phase: a Frost Blast or
-  Detonate Mana on a player, and a Shadow Fissure (16129) not yet erupted. His channel visual
-  is the dummy 29422, cast once, not the channel 29423 that pulses it, so clients see no
-  channel in his first phase, crash or not. His first phase follows the older script: soldiers
-  every 3 s, abominations every 25 s, soul weavers every 30 s and the transition at 5:25. The
+  Detonate Mana on a player, and a Shadow Fissure (16129) not yet erupted. His first phase
+  follows the older script: soldiers every 3 s, abominations every 25 s, soul weavers every 30 s and the transition at 5:25. The
   minions attack at once rather than gathering, and none goes at 5:10. The chaos suite cannot
   test Chains, which needs six raiders in his threat list; the real-data tests cover them.
   Thaddius has recovery tests for a handoff during his adds' fight, a crash in the ten seconds before
@@ -118,21 +116,18 @@ describes how players use the systems available today.
   and not yet struck, Viscidus shattered, and Ouro just come up; the Ruins of Ahn'Qiraj for the
   army's third wave and Ossirian with his crystals placed. The [crash points](CLUSTER.md#the-
   ahnqiraj-raids-crash-points) list what the clients saw.
-  Open: Ouro's sand is untouchable in the world data and wakes only when struck, so no player can
-  begin his fight (crash or not), and the chaos suite has no case for him. Viscidus has none
-  either: the scripted client cannot deal 200 frost hits and 150 blows. His globs lost with a
-  worker rejoin him rather than crawl back, so he rises at once with their health. A devoured
-  royal comes back with its cell and goes again at once: clients see it appear and vanish. An
-  emperor or royal not yet fighting when the checkpoint was written comes back out of combat and
-  joins as the raid returns. A wave captain who charged but was never struck comes back home, and
-  his wave charges again, with Rajaxx's yell. A captain whose cell no player's sight has loaded
-  charges with nobody (crash or not), and the next wave follows five seconds later. Seen in the
-  army's chaos case, before any crash: General Andorov turns on the player who asked him to lead
-  the attack (in every run), and now and then keeps fighting them and never reaches his place, so
-  the army does not come (the case, left out of the suite for it, clears the scarabs about his
-  place first); the cause is not yet found. The crystal by Ossirian's entrance is not kept: it is
-  placed again as a player enters. Summons of the other bosses are lost in a crash (Moam's mana
-  fiends, Ayamiss's swarmers and larvae, Buru's hatchlings, Skeram's images, Fankriss's spawn);
+  Ouro's sand wakes as a living player comes within 50 yards (no player can strike it); the chaos
+  suite's case crashes just after his rise and again after his death. Viscidus has no case: the
+  scripted client cannot deal 200 frost hits and 150 blows. His globs lost with a worker rejoin him
+  rather than crawl back, so he rises at once with their health. A devoured royal comes back with
+  its cell and goes again at once: clients see it appear and vanish. An emperor or royal not yet
+  fighting when the checkpoint was written comes back out of combat and joins as the raid returns. A
+  wave captain who charged but was never struck comes back home, and his wave charges again, with
+  Rajaxx's yell. A captain whose cell no player's sight has loaded charges with nobody (crash or
+  not), and the next wave follows five seconds later. The crystal by Ossirian's entrance is not
+  kept: it is placed again as a player enters. Summons of the other bosses are lost in a crash
+  (Moam's mana fiends, Ayamiss's swarmers and larvae, Buru's hatchlings, Skeram's images,
+  Fankriss's spawn);
   each fight goes on without them, and Moam turns back from stone at the end of his 90 s. A boss
   crashed between his pull and the first blow comes back at home with his encounter in progress
   (Kurinnaxx, Moam, Buru, Ayamiss, Skeram, Sartura, Fankriss, Huhuran, Viscidus); the next pull or

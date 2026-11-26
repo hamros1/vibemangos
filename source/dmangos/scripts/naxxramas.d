@@ -1965,6 +1965,41 @@ struct Gothik
 /// The Horsemen's marks: each stacks on the raid, the spirit of a slain horseman marks on with his.
 enum uint markOfKorthazz = 28_832, markOfBlaumeux = 28_833, markOfMograine = 28_834, markOfZeliek = 28_835;
 
+/**
+ * A Horseman's mark, one more stack on a player: the Horseman's Mark (28836) strikes the player for shadow damage
+ * by the stacks (CMaNGOS's `spell_horsemen_mark`): none at the first, 250 at the second, 1000 at the third, 3000
+ * at the fourth, then 1000 for each.
+ */
+@spell("spell_horsemen_mark") @spellIds(markOfKorthazz, markOfBlaumeux, markOfMograine, markOfZeliek)
+struct HorsemenMark
+{
+    enum uint markDamage = 28_836;
+
+    static int damageAt(uint stacks) pure nothrow @nogc @safe
+    {
+        switch (stacks)
+        {
+        case 0, 1: return 0;
+        case 2: return 250;
+        case 3: return 1000;
+        case 4: return 3000;
+        default: return 1000 * cast(int) stacks;
+        }
+    }
+
+    void on(ref SpellContext it, const ref AuraStacked e)
+    {
+        if (const damage = damageAt(e.stacks))
+            it.castCustom(e.caster, markDamage, e.target, [damage, 0, 0]);
+    }
+}
+
+unittest
+{
+    assert(HorsemenMark.damageAt(1) == 0 && HorsemenMark.damageAt(2) == 250 && HorsemenMark.damageAt(3) == 1000);
+    assert(HorsemenMark.damageAt(4) == 3000 && HorsemenMark.damageAt(5) == 5000 && HorsemenMark.damageAt(9) == 9000);
+}
+
 /// Whether `spell` is one of the Horsemen's marks (a gateway player's checkpoint keeps them, `isNaxxramasRecoveryAura`).
 bool isHorsemenMark(uint spell) pure nothrow @nogc @safe
 {
@@ -2861,7 +2896,7 @@ struct Kelthuzad
     enum uint slayLine = 13_021;
     enum : uint
     {
-        channelVisual = 29_422,
+        channelVisual = 29_423, // "Kel'Thuzad Channel": pulses its effect (29422) every second
         frostBolt = 28_478,
         frostBoltNova = 28_479,
         manaDetonation = 27_819,

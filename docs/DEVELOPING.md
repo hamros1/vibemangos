@@ -322,7 +322,7 @@ After harness setup and a release build, run the opt-in suite with
 paused battlegroup host, gateway checkpoint retry, departure retry, lease lapse arrival, worker
 rejoin, stall release, gateway return, C'Thun recovery, Sapphiron recovery, Four Horsemen recovery,
 Kel'Thuzad recovery, Stratholme recovery, Ragnaros recovery, Zul'Gurub recovery, Ahn'Qiraj recovery
-(the Bug Trio, the Twin Emperors), loot award crash, migration stall, standby login and standby
+(the Bug Trio, the Twin Emperors, Ouro, Rajaxx's army), loot award crash, migration stall, standby login and standby
 bundle cases against isolated fixtures.
 Use `--repeat 3` to check repeatability. Each case prints the harness directory containing
 its process logs and uses fresh login and character schemas.
@@ -411,17 +411,16 @@ Zul'Gurub worker during Arlokk's fight, or as Mandokir comes down from his perch
 same Arlokk at her health, her forcefield shut and her prowlers, and after her death and another
 crash the forcefield open and the gong calling no Arlokk. `mandokir` checks that he comes down again
 and fights. [Zul'Gurub's crash points](CLUSTER.md#zulgurubs-crash-points) has the details.
-Run `python3 tools/harness/ahnqiraj_recovery.py --phase trio` (or `twins`, or `army`) to kill the
+Run `python3 tools/harness/ahnqiraj_recovery.py --phase trio` (or `twins`, `ouro` or `army`) to kill the
 worker of an Ahn'Qiraj raid. In the Temple, `trio` crashes with Lord Kri devoured and checks that
 the same Yauj and Vem come back without him and that the last of them dies, then crashes again
 after her death. `twins` crashes just after the Twin Emperors' pull and checks that they come back
-fighting with the door to them shut, and that their deaths open both doors. In the Ruins, `army`
+fighting with the door to them shut, and that their deaths open both doors. `ouro` crashes just
+after the raid's approach wakes Ouro from his sand and checks that the same Ouro fights on, then
+crashes again after his death and checks that neither he nor his sand comes back. In the Ruins, `army`
 crashes in the third of the army's waves and checks that the same General Andorov comes back where
 he fights and that the waves go on from there to Rajaxx. The army case waits for Andorov's walk to
-the gates, so it takes about six minutes. It is not in the chaos suite: before any crash,
-Andorov now and then keeps fighting the player who asked him and never starts the army (an open
-fault in [the roadmap](ROADMAP.md#known-gaps-in-what-exists)). Of eight runs, five passed; the three
-that failed did so before the crash.
+the gates, so it takes about six minutes.
 [The Ahn'Qiraj raids' crash points](CLUSTER.md#the-ahnqiraj-raids-crash-points) has the details.
 
 Run `python3 tools/harness/loot_award_crash.py` to kill (`SIGKILL`) a party member's worker after

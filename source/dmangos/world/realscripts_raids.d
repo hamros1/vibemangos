@@ -1164,6 +1164,14 @@ unittest
     s.run(400.msecs);
     s.forget();
     s.gossip(andorov, [0]);
+    // A Qiraji fighting the one who asked calls for help: Andorov, the Qiraji's enemy, does not answer it.
+    auto needler = s.summon(15344, andorov.position);
+    s.engage(needler);
+    s.run(3.seconds);
+    foreach (k; 0 .. 2)
+        assert(s.heroUnit(k).combatGuid !in andorov.ai.threatList,
+            format!"Andorov fights hero %s, helping the Qiraji"(k));
+    s.kill(needler);
     assert(s.runUntil(() => s.ask(1) == 1, 90.seconds), format!"the army does not come (Andorov at %s)\n%s"(
         andorov.position, s.seen()));
     foreach (line; [-1_509_004, -1_509_003, -1_509_029, -1_509_030])
@@ -1361,8 +1369,7 @@ unittest
             Stage(19, 33, [26615])], 0, 0, 2, Position.init, [classWarrior, classMage], null, 20, true, null,
             spawnOf(531, ouroSpawner), (Scene s) {
                 auto spawner = s.the(ouroSpawner);
-                s.moveHeroes(spawner.position);
-                s.engage(spawner);
+                s.moveHeroes(spawner.position); // come near, his sand wakes: no player can strike it
                 assert(s.runUntil(() => s.find(ouroEntry) !is null, 5.seconds), "Ouro does not come up");
                 return s.the(ouroEntry);
             }),
@@ -1875,7 +1882,6 @@ unittest
     auto spawner = setUp(b, s, cluster: true);
     s.stayWith = null;
     s.moveHeroes(spawner.position);
-    s.engage(spawner);
     assert(s.runUntil(() => s.find(npcOuro) !is null, 5.seconds), "Ouro does not come up");
     auto ouro = s.the(npcOuro);
     const guid = ouro.guid;
@@ -2107,6 +2113,9 @@ unittest
     foreach (h; horsemen)
         assert(s.castBy(h[0], h[1]) && s.castBy(h[0], h[2]), format!"horseman %s: mark %s or special %s not cast\n%s"(
             h[0], h[1], h[2], s.seen()));
+    // The second marks, twelve seconds on: each mark of two stacks strikes (28836, 250 shadow), none at the first.
+    assert(!s.cast_(28_836), "a mark of one stack struck\n" ~ s.seen());
+    assert(s.runUntil(() => s.cast_(28_836), 14.seconds), "a mark of two stacks did not strike\n" ~ s.seen());
     s.stayWith = null;
     foreach (i, h; four)
     {
@@ -2574,7 +2583,11 @@ unittest
     s.signalCopy(1000 + 4112, 0);
     s.run(1.seconds);
     assert(s.ask(14) == 1, format!"the trigger did not begin it (%s)"(s.ask(14)));
-    s.run(41.seconds);
+    // His channel: its aura on him, pulsing its effect each second for the clients to see.
+    s.run(3.seconds);
+    assert(hasAura(kt, 29_423), "Kel'Thuzad does not channel\n" ~ s.seen());
+    assert(s.cast_(29_422, kt.guid), "Kel'Thuzad's channel does not pulse\n" ~ s.seen());
+    s.run(38.seconds);
     foreach (e; [soldier, abomination, weaver])
         assert(s.all(e).length, format!"no minion %s from the alcoves"(e));
     // His minions slain as they come, till he fights.
@@ -2587,6 +2600,7 @@ unittest
         return kt.ai.inCombat && (kt.values.get!UNIT_FIELD_FLAGS & 0x0200_0000) == 0;
     }, 330.seconds, 1.seconds);
     assert(fights, "Kel'Thuzad never fights");
+    assert(!hasAura(kt, 29_423), "Kel'Thuzad channels in his fight");
     s.forget();
     s.run(61.seconds);
     foreach (spell; [28_478, 28_479, 27_819, 27_810, 27_808, 28_408])
@@ -3565,6 +3579,7 @@ unittest
         return kt.ai.inCombat && (kt.values.get!UNIT_FIELD_FLAGS & 0x0200_0000) == 0;
     }, 330.seconds, 1.seconds);
     assert(fights, "Kel'Thuzad never fights");
+    assert(!hasAura(kt, 29_423), "Kel'Thuzad channels in his fight");
     s.engage(kt);
     s.run(2.seconds);
     s.hurtTo(kt, 39);

@@ -191,7 +191,9 @@ template KindInfo(ScriptKind kind)
             // Spell scripts of items, quests and the world:
             CastChecked, CastStarted, AuraHeartbeat, AuraEnded, AuraTickEnded, TargetChecked,
             // Class spells:
-            SpellCast, SpellLanded);
+            SpellCast, SpellLanded,
+            // Raid scripts:
+            AuraStacked);
         alias Attribute = .spell;
     }
     else static if (kind == ScriptKind.areaTrigger)

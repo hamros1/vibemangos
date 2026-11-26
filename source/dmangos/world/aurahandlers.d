@@ -419,6 +419,8 @@ private:
         bool isNew;
         if (auto displaced = player.auras.displacedBy(aura, player.values)) // another's that may not stay beside it
             removeAura(displaced);
+        const had = player.auras.find(aura.spell.id, aura.caster);
+        const stacksBefore = had is null ? 0 : had.stacks;
         auto applied = player.auras.apply(aura, player.values, isNew);
         if (applied is null)
             return false;
@@ -437,6 +439,15 @@ private:
                 if (applied.effects & (1 << i))
                     spellScriptEvent(applied.spell, AuraApplied(EntityRef(applied.caster), EntityRef(player.guid),
                         cast(ubyte) i, applied.amount[i]));
+        }
+        else if (applied.stacks > stacksBefore && stacksBefore) // a creature's, one more stack: its script hears
+        {
+            import dmangos.script.api : AuraStacked, EntityRef;
+
+            if (auto caster = map.creatureAt(applied.caster))
+                if (caster.ai !is null)
+                    caster.ai.spellScriptEvent(applied.spell, AuraStacked(EntityRef(caster.guid),
+                        EntityRef(player.guid), applied.stacks), map);
         }
         return true;
     }

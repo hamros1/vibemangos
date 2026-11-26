@@ -470,13 +470,16 @@ void periodicTick(ref Caster caster, imported!"dmangos.world.creature".Creature 
         {
             import dmangos.world.eventai : EventTarget, castTriggered;
 
-            enum uint fireBlossom = 19636, unholyAura = 17467, drakonidSpawner = 22653;
-            if (aura.spell.id != fireBlossom && aura.spell.id != unholyAura && aura.spell.id != drakonidSpawner)
+            import std.algorithm.comparison : among;
+
+            enum uint fireBlossom = 19636, unholyAura = 17467, drakonidSpawner = 22653, kelThuzadChannel = 29423;
+            if (!aura.spell.id.among(fireBlossom, unholyAura, drakonidSpawner, kelThuzadChannel))
                 caster.ai.arcaneMissilesTick(aura.spell, i);
             else
                 if (const child = caster.context.data.spells.spell(aura.spell.triggerSpell[i]))
                 {
-                    // Fire Blossom chooses a raider. Unholy Aura and Drakonid Spawner use their caster.
+                    // Fire Blossom chooses a raider. Unholy Aura, Drakonid Spawner and Kel'Thuzad's channel (the
+                    // effect its clients see pulse) use their caster.
                     const selected = aura.spell.id == fireBlossom
                         ? caster.ai.moreTargetFor(EventTarget.hostileRandomPlayer, 0, child.id, castTriggered)
                         : caster.guid;

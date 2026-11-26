@@ -1007,7 +1007,7 @@ private:
     /**
      * Whether it may help `who` against `enemy` (CMaNGOS's `CanAssistInCombatAgainst`): one that would attack
      * `enemy`, and outside dungeons not fighting already and an ally of `who` (friendly to it). In a dungeon (or
-     * a battleground) any creature that may attack `enemy` joins, fighting or not, whatever its faction.
+     * a battleground) any creature that may attack `enemy` and is no enemy of `who` joins, fighting or not.
      */
     bool canAssistAgainst(const Creature who, UnitRef enemy)
     {
@@ -1018,11 +1018,15 @@ private:
         const self = relating, target = enemy.relating;
         if (!enemy.alive || enemy.untouchable || !canAttack(self, target, me.client))
             return false;
+        // Never for its own enemy (CMaNGOS's `CanAssist`): General Andorov, free to fight the Qiraji, does not
+        // join one of them against the raid he leads, though a player neutral to him is one he may attack.
+        const ally = who.ai.relating;
+        if (isEnemy(self, ally, me.client))
+            return false;
         if (instanceable)
             return victim != enemy.combatGuid;
         if (inCombat_ || who.values.get!UNIT_FIELD_FLAGS & UnitFlags.uninteractible)
             return false;
-        const ally = who.ai.relating;
         if (reactionTo(self, ally, me.client) < ReputationRank.friendly)
             return false;
         return isEnemy(self, target, me.client);

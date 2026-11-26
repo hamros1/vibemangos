@@ -1571,6 +1571,15 @@ struct AuraApplied
     int amount;
 }
 
+/// The aura of the spell `caster` put on `target` took one more stack: `stacks` now (CMaNGOS's `OnApply`, which
+/// runs at each stack). Raised for a creature's aura on a player, in the creature's own script context.
+struct AuraStacked
+{
+    EntityRef caster;
+    EntityRef target;
+    uint stacks;
+}
+
 /// A periodic effect of the spell's aura on `target` ticks: the `tick`th of `ticks`, of `amount`.
 /// `SpellContext.setAmount` changes what this tick does.
 struct AuraTicked

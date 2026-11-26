@@ -2097,7 +2097,20 @@ struct OuroSpawner
         me.melee(false);
     }
 
+    /// A living player within 50 yards disturbs the sand (CMaNGOS's `MoveInLineOfSight`): the world data makes
+    /// it one no player can strike, so coming near is the only way to begin his fight.
+    void on(ref CreatureContext me, const ref UnitInSight e)
+    {
+        if (e.unit.isPlayer && me.alive(e.unit) && me.distanceTo(e.unit) <= 50)
+            wake(me);
+    }
+
     void on(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        wake(me);
+    }
+
+    private void wake(ref CreatureContext me)
     {
         if (summoned || me.askDungeon(Aq40Encounter.ouro) == EncounterState.done)
             return;

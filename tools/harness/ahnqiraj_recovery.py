@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Kill the Ahn'Qiraj raids' worker in the Bug Trio's or the Twin Emperors' fight (the Temple), or in the army's waves
+"""Kill the Ahn'Qiraj raids' worker in the Bug Trio's, the Twin Emperors' or Ouro's fight (the Temple), or in the army's waves
 (the Ruins), and resume it in the same raid copy on the same sockets.
 
 Three scripted raid members (GMs, on a gateway) stand by the bosses.
@@ -11,8 +11,6 @@ Three scripted raid members (GMs, on a gateway) stand by the bosses.
                    Kaldorei. Drenn, never struck (the members do not fight back), had no snapshot of a hurt creature
                    and comes back home: his wave, the one under way, charges once more. The next four follow, none
                    of the first two again, and Rajaxx last; slain, Andorov trades.
-                   Not in chaos.py: before any crash, Andorov now and then keeps fighting the member who
-                   asked him and never starts the army (an open fault, docs/ROADMAP.md).
 
     --phase trio   each member takes on one of Lord Kri, Princess Yauj and Vem; Kri is brought down and devoured, and
                    the worker dies just after the checkpoint of it. All three original sockets come back to the same
@@ -23,8 +21,10 @@ Three scripted raid members (GMs, on a gateway) stand by the bosses.
                    same emperors come back fighting, with the door shut and no snapshot of a hurt creature of them.
                    Slain, both die and the doors in and out open.
 
-Ouro's fight has no case: his sand is untouchable and wakes only when struck, so no client can begin it (the real-data
-tests in source/dmangos/world/realscripts_raids.d strike it, and cover his crash).
+    --phase ouro   the raid comes near Ouro's sand, which wakes him, and the worker dies just after the checkpoint of
+                   his rise. All three original sockets come back to the same copy with the same Ouro, fighting. He
+                   is slain; the worker that took over dies just after the checkpoint of his death, and neither he
+                   nor his sand comes back.
 """
 
 import argparse
@@ -42,6 +42,7 @@ TEMPLE = 531
 KRI, YAUJ, VEM = 15511, 15543, 15544
 VEKLOR, VEKNILASH, HUHURAN = 15276, 15275, 15509
 DOOR_IN, DOOR_OUT, BY_THE_DOOR_IN = 180634, 180635, (-8922.0, 1352.0, -104.2)
+OURO, OURO_SAND = 15517, 15957
 
 RUINS = 509
 KURINNAXX, ANDOROV, KALDOREI, RAJAXX = 15348, 15471, 15473, 15341
@@ -244,6 +245,39 @@ def twins(fixture):
           f"{raid.copy} with the same emperors fighting and the door in shut; slain, both died and the doors opened")
 
 
+def ouro(fixture):
+    _, sand_at = spawn_of(fixture, OURO_SAND)
+    raid = Raid(fixture, TEMPLE, beside(sand_at, 90))  # beyond the 50 yards that disturb his sand
+    time.sleep(3)
+    assert not seen(raid.logs(), OURO), "Ouro up with nobody near his sand"
+    before = raid.checkpoints()
+    raid.stage([[raid.port(beside(sand_at, 10 + 3 * member))] for member in range(3)])
+    wait_for("Ouro up from his sand", lambda: seen(raid.logs(), OURO), 15)
+    host = raid.next_checkpoint(before, "the checkpoint of Ouro's rise", 10)
+    (ouro,) = seen(raid.logs(), OURO)
+    since = raid.crash(host, lambda part: f"[creature] {OURO} guid {ouro}:" in part)
+
+    def acting(log):
+        return re.search(rf"\[(swing|attack start)\] {ouro} -> |\[spell (go|start)\] \d+ by {ouro}\b", log) is not None
+    wait_for("Ouro fighting after the crash", lambda: any(acting(log) for log in since()), 20)
+    assert seen(since(), OURO) == {ouro}, f"Ouros after the crash: {seen(since(), OURO, living=False)}"
+    raid.restart(host)  # three voters again: the next crash leaves a majority
+    first = host
+    before = raid.checkpoints()
+    raid.stage([[f"killpack:{OURO}"], [], []])
+    wait_for("Ouro slain", lambda: any(slain(log, OURO, ouro) for log in since()), 10)
+    host = raid.next_checkpoint(before, "the checkpoint of Ouro's death", 5)
+    after = raid.crash(host)
+    time.sleep(4)
+    for member, log in enumerate(after()):
+        assert not seen([log], OURO), f"member {member}: Ouro alive after his death"
+    raid.same_copy()
+    raid.finish()
+    print(f"PASS: killed {first} just after Ouro rose from the sand the raid came near; the original clients came back "
+          f"to raid copy {raid.copy} with the same Ouro {ouro} fighting; killed {host} after his death and neither he "
+          f"nor his sand came back")
+
+
 def said(logs, text):
     """Whether a creature's line beginning with `text` reached one of `logs`."""
     return any(f": '{text}" in log for log in logs)
@@ -355,7 +389,7 @@ def distance(a, b):
     return sum((x - y) ** 2 for x, y in zip(a, b)) ** 0.5
 
 
-PHASES = {"trio": trio, "twins": twins, "army": army}
+PHASES = {"trio": trio, "twins": twins, "ouro": ouro, "army": army}
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
