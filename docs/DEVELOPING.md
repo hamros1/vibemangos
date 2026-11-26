@@ -321,12 +321,9 @@ After harness setup and a release build, run the opt-in suite with
 `python3 tools/harness/chaos.py`. It runs the quorum partition and heal, coordinator kill,
 paused battlegroup host, gateway checkpoint retry, departure retry, lease lapse arrival, worker
 rejoin, stall release, gateway return, C'Thun recovery, Sapphiron recovery, Four Horsemen recovery,
-Kel'Thuzad recovery, Stratholme recovery, loot award crash, migration stall, standby login and standby bundle cases against
-isolated fixtures.
-Kel'Thuzad recovery, Ragnaros recovery, Zul'Gurub recovery, loot award crash, migration stall, standby
-login and standby bundle cases against isolated fixtures.
-Kel'Thuzad recovery, Ahn'Qiraj recovery (the Bug Trio, the Twin Emperors), loot award
-crash, migration stall, standby login and standby bundle cases against isolated fixtures.
+Kel'Thuzad recovery, Stratholme recovery, Ragnaros recovery, Zul'Gurub recovery, Ahn'Qiraj recovery
+(the Bug Trio, the Twin Emperors), loot award crash, migration stall, standby login and standby
+bundle cases against isolated fixtures.
 Use `--repeat 3` to check repeatability. Each case prints the harness directory containing
 its process logs and uses fresh login and character schemas.
 
