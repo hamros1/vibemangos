@@ -3522,11 +3522,62 @@ private bool[ulong] livingMinions(Scene s)
 }
 
 /**
- * Kel'Thuzad's first phase survives a worker's crash. Killed 45 seconds into the waves (soldiers, an abomination and a
- * soul weaver alive, two soldiers slain), the worker comes back with the same Kel'Thuzad channelling, untouchable, the
- * same living minions and none of the slain; the trigger begins nothing twice. The waves go on from their saved
- * timers (the next abomination 55 s into the fight, the next soul weaver at 70 s), each minion comes once, and he
- * fights 5:25 into the fight, as without the crash.
+ * Kel'Thuzad's first phase as CMaNGOS has it: the alcoves' minions (at 4, 9 and 12 s) stay idle in their alcoves,
+ * the raid in the middle; his waves walk out to him and join the fight as they reach him; at 5:10 the idle ones
+ * go and he speaks, untouchable yet; at 5:25 he fights.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.scripts.naxxramas;
+
+    auto s = new Scene(533, kelthuzadChamber, [classWarrior, classMage], cluster: true);
+    s.run(1.seconds);
+    auto kt = s.the(npcKelthuzad);
+    s.signalCopy(NaxxSignal.triggerBase + Naxxramas.triggerKelthuzad, 0);
+    const startedAt = s.elapsedMs;
+    s.run(13.seconds);
+    auto idle = s.all(npcSoldierFrozen) ~ s.all(npcUnstoppableAbom) ~ s.all(npcSoulWeaver);
+    assert(idle.length == 63 + 21 + 7 + 1, format!"%s minions 14 s in (the alcoves' 91 and a soldier walking)"(
+        idle.length));
+    // A soldier of his waves walks out to him and fights as it reaches him; the alcoves' stay idle.
+    assert(s.runUntil(() {
+        foreach (c; s.all(npcSoldierFrozen))
+            if (c.ai.inCombat)
+                return true;
+        return false;
+    }, 60.seconds), "no soldier of his waves reached him and fought");
+    size_t idleNow;
+    foreach (c; idle)
+        idleNow += c.alive && !c.ai.inCombat;
+    assert(idleNow >= 85, format!"%s of the alcoves' 91 idle a minute in"(idleNow));
+    // At 5:10 the idle ones go and he speaks, untouchable yet.
+    s.run((311_000 - (s.elapsedMs - startedAt)).msecs);
+    size_t left;
+    foreach (c; idle)
+        left += s.map.creatureAt(c.guid) !is null && c.alive && !c.ai.inCombat; // gone from the map
+    assert(left == 0, format!"%s of the alcoves' idle minions stayed at 5:10"(left));
+    {
+        import std.algorithm.searching : canFind;
+
+        // One of his three aggro lines (broadcast texts), at 5:10.
+        assert(s.texts.canFind!(t => t.speaker == "Kel'Thuzad" && t.atMs - startedAt >= 305_000),
+            "he did not speak at 5:10\n" ~ s.seen());
+    }
+    assert((kt.values.get!UNIT_FIELD_FLAGS & 0x0200_0000) != 0, "fighting before 5:25");
+    assert(s.runUntil(() => kt.ai.inCombat && !(kt.values.get!UNIT_FIELD_FLAGS & 0x0200_0000), 16.seconds),
+        "he does not fight at 5:25");
+}
+
+/**
+ * Kel'Thuzad's first phase survives a worker's crash. At 4, 9 and 12 s nine soldiers, three abominations and a soul
+ * weaver come in each of his seven alcoves, idle there; his waves walk out to him, ever faster (CMaNGOS's timeline:
+ * an abomination at 45 s, a soul weaver at 41 s and 61 s, soldiers from 12 s). Killed 50 seconds in, two soldiers
+ * slain, the worker comes back with the same Kel'Thuzad channelling, untouchable, the same living minions and none of
+ * the slain; the trigger begins nothing twice. The waves go on from their saved timers (the next abomination 75 s into
+ * the fight, the next soul weaver at 61 s), each minion comes once, and he fights 5:25 into the fight, as without
+ * the crash: 35 abominations and 21 soul weavers in all, the alcoves' and the waves'.
  */
 unittest
 {
@@ -3545,11 +3596,13 @@ unittest
     const startedAt = s.elapsedMs;
     assert(s.ask(NaxxEncounter.kelthuzad) == EncounterState.inProgress && !s.doorOpen(chamberDoor));
     KelthuzadMinions minions;
-    minions.run(s, 45.seconds);
+    minions.run(s, 50.seconds);
     auto soldiers = s.all(npcSoldierFrozen);
-    assert(soldiers.length >= 4 && s.all(npcUnstoppableAbom).length == 1 && s.all(npcSoulWeaver).length == 1,
-        format!"%s soldiers, %s abominations, %s soul weavers after 45 s"(soldiers.length,
-        s.all(npcUnstoppableAbom).length, s.all(npcSoulWeaver).length));
+    // The alcoves' (seven of each: 63, 21, 7) and the waves' so far (soldiers from 12 s every 5 s; an abomination at
+    // 45 s; a soul weaver at 41 s).
+    assert(soldiers.length == 63 + 8 && s.all(npcUnstoppableAbom).length == 21 + 1
+        && s.all(npcSoulWeaver).length == 7 + 1, format!"%s soldiers, %s abominations, %s soul weavers after 50 s"(
+        soldiers.length, s.all(npcUnstoppableAbom).length, s.all(npcSoulWeaver).length));
     const ulong[2] slain = [soldiers[0].guid, soldiers[1].guid];
     s.kill(soldiers[0]);
     s.kill(soldiers[1]);
@@ -3575,12 +3628,12 @@ unittest
     s.signalCopy(NaxxSignal.triggerBase + Naxxramas.triggerKelthuzad, 0); // a player in his chamber again
     minions.note(s);
     const abominations = minions.count(npcUnstoppableAbom), weavers = minions.count(npcSoulWeaver);
-    minions.run(s, (71_000 - (s.elapsedMs - startedAt)).msecs);
+    minions.run(s, (76_000 - (s.elapsedMs - startedAt)).msecs);
     assert(minions.count(npcUnstoppableAbom) == abominations + 1 && minions.count(npcSoulWeaver) == weavers + 1,
         format!"abominations %s then %s, soul weavers %s then %s: a wave twice, or none"(abominations,
         minions.count(npcUnstoppableAbom), weavers, minions.count(npcSoulWeaver)));
-    assert(abs(minions.lastAt(npcUnstoppableAbom) - startedAt - 55_000) <= 600
-        && abs(minions.lastAt(npcSoulWeaver) - startedAt - 70_000) <= 600, format!(
+    assert(abs(minions.lastAt(npcUnstoppableAbom) - startedAt - 75_000) <= 600
+        && abs(minions.lastAt(npcSoulWeaver) - startedAt - 61_000) <= 600, format!(
         "the waves did not go on from their timers: an abomination %s ms, a soul weaver %s ms into the fight")(
         minions.lastAt(npcUnstoppableAbom) - startedAt, minions.lastAt(npcSoulWeaver) - startedAt));
 
@@ -3597,9 +3650,9 @@ unittest
     assert(fightsAt >= 0, "Kel'Thuzad never fights");
     assert(abs(fightsAt - startedAt - 325_000) <= 1_200, format!"he fought %s ms into the fight, not 325000"(
         fightsAt - startedAt));
-    // 30 s, then every 25 s till 5:25; 40 s, then every 30 s: twelve abominations and ten soul weavers, each once.
-    assert(minions.count(npcUnstoppableAbom) == 12 && minions.count(npcSoulWeaver) == 10, format!(
-        "%s abominations and %s soul weavers came in his first phase, not 12 and 10")(minions.count(npcUnstoppableAbom),
+    // The alcoves' 21 and 7 and the waves' 14 and 14, each once.
+    assert(minions.count(npcUnstoppableAbom) == 35 && minions.count(npcSoulWeaver) == 21, format!(
+        "%s abominations and %s soul weavers came in his first phase, not 35 and 21")(minions.count(npcUnstoppableAbom),
         minions.count(npcSoulWeaver)));
     assert(s.all(npcKelthuzad).length == 1);
 }
@@ -3855,8 +3908,10 @@ unittest
     s.signalCopy(NaxxSignal.triggerBase + Naxxramas.triggerKelthuzad, 0);
     assert(s.ask(NaxxEncounter.kelthuzad) == EncounterState.inProgress && !s.doorOpen(chamberDoor));
     s.run(6.seconds);
-    assert(s.all(npcSoldierFrozen).length == 1 && (kt.values.get!UNIT_FIELD_FLAGS & 0x0200_0000),
-        format!"%s soldiers 6 s into the second pull"(s.all(npcSoldierFrozen).length));
+    // From the start: the alcoves' soldiers at 4 s (nine in each of seven), their abominations not before 9 s.
+    assert(s.all(npcSoldierFrozen).length == 63 && s.all(npcUnstoppableAbom).length == 0
+        && (kt.values.get!UNIT_FIELD_FLAGS & 0x0200_0000), format!"%s soldiers, %s abominations 6 s into the second pull"(
+        s.all(npcSoldierFrozen).length, s.all(npcUnstoppableAbom).length));
 }
 
 // ---------------------------------------------------------------------------------------------------------------

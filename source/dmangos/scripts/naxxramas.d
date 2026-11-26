@@ -558,9 +558,12 @@ struct Naxxramas
     {
         if (!kelthuzadActive)
             return;
-        foreach (add; kelthuzadAdds)
-            if (add.entry != npcShadowFissure && copy.alive(add) && !copy.alive(copy.victimOf(add)))
-                copy.attack(add, player);
+        // His first phase's minions are his to send on (some idle in the alcoves by design); his later ones the copy's.
+        const channelling = kelthuzad && (copy.unitFlagsOf(kelthuzad) & UnitFlag.uninteractible);
+        if (!channelling)
+            foreach (add; kelthuzadAdds)
+                if (add.entry != npcShadowFissure && copy.alive(add) && !copy.alive(copy.victimOf(add)))
+                    copy.attack(add, player);
         if (kelthuzad && copy.alive(kelthuzad))
             copy.signal(kelthuzad, NaxxSignal.kelthuzadPlayerBack, cast(int) player.guid);
     }
@@ -3013,10 +3016,48 @@ struct Kelthuzad
     enum float chamber = 120;
 
     enum Step : ubyte { soldiers, abominations, weavers, phase2, frostBolt, nova, detonation, fissure, blast,
-        guardians, lichKing, chains, unchain }
-    Schedule!(Step, 13) steps;
+        guardians, lichKing, chains, unchain, introSoldiers, introAbominations, introWeavers, introOver }
+    Schedule!(Step, 17) steps;
     ubyte phase, guardiansSent;
     EntityRef[] chained;
+
+    /**
+     * His first phase (CMaNGOS's `boss_kelthuzad`): at 4, 9 and 12 seconds nine soldiers, three abominations and a
+     * soul weaver in each of the seven alcoves, idle there unless someone comes near; and from the alcoves, ever
+     * faster, the minions that walk out to him and join his fight as they reach him: 120 soldiers, 14 abominations,
+     * 14 soul weavers. At 5:10 the alcoves' idle ones go, and he speaks; at 5:25 he fights.
+     */
+    static struct Wave
+    {
+        uint entry;
+        uint firstMs;          /// its periodic summoning begins (from his first pulse)
+        ubyte[2][] rates;      /// how many come at each pace: [count, seconds apart]
+    }
+    static immutable Wave[3] waves = [
+        Wave(npcSoldierFrozen, 7000, [[13, 5], [15, 4], [18, 3], [27, 2], [47, 1]]),
+        Wave(npcUnstoppableAbom, 15_000, [[2, 30], [2, 25], [5, 20], [3, 15], [2, 10]]),
+        Wave(npcSoulWeaver, 1000, [[1, 40], [1, 20], [3, 30], [9, 15]]),
+    ];
+    enum ubyte[3] introPerAlcove = [9, 3, 1];
+    enum uint introOverMs = (5 * 60 + 10) * 1000, phaseTwoMs = (5 * 60 + 25) * 1000;
+    /// Those of each wave summoned so far.
+    ushort[3] summoned;
+    /// The alcoves' idle ones, those walking out to him, and those that reached him and fight: his to send on after
+    /// a crash (the copy leaves his first phase's minions to him).
+    EntityRef[] intro, walking, arrived;
+
+    /// How long until the next of wave `w`, its `summoned[w]` come already; zero: none more.
+    private uint nextInMs(size_t w) const
+    {
+        uint done;
+        foreach (rate; waves[w].rates)
+        {
+            done += rate[0];
+            if (summoned[w] < done)
+                return rate[1] * 1000;
+        }
+        return 0;
+    }
 
     /// The copy checkpoints him as he is now: called last, after the change.
     private void save(ref CreatureContext me)
@@ -3088,7 +3129,18 @@ struct Kelthuzad
         import std.algorithm.searching : canFind;
 
         if (phase == 1)
-            return channel(me);
+        {
+            // Back after a crash: those walking out go on to him, those that reached him fight, the alcoves' idle
+            // ones stay idle.
+            channel(me);
+            foreach (minion; walking)
+                if (me.alive(minion))
+                    me.moveCreature(minion, me.location, 0, false);
+            foreach (minion; arrived)
+                if (me.alive(minion))
+                    me.attack(minion, player);
+            return;
+        }
         if (phase < 2)
             return;
         me.zoneCombat();
@@ -3122,13 +3174,18 @@ struct Kelthuzad
             return;
         // Phase one: he channels, untouchable, while his minions come from the alcoves.
         phase = 1;
+        summoned = 0;
+        intro = walking = arrived = null;
         me.sayText(saySummonMinions);
         me.castSelf(channelVisual, true);
         channel(me);
-        steps.after(Step.soldiers, 5.seconds);
-        steps.after(Step.abominations, 30.seconds);
-        steps.after(Step.weavers, 40.seconds);
-        steps.after(Step.phase2, (5 * 60 + 25).seconds);
+        steps.after(Step.introSoldiers, 4.seconds);
+        steps.after(Step.introAbominations, 9.seconds);
+        steps.after(Step.introWeavers, 12.seconds);
+        foreach (w, step; [Step.soldiers, Step.abominations, Step.weavers])
+            steps.after(step, (waves[w].firstMs + nextInMs(w)).msecs);
+        steps.after(Step.introOver, introOverMs.msecs);
+        steps.after(Step.phase2, phaseTwoMs.msecs);
         save(me);
     }
 
@@ -3143,6 +3200,84 @@ struct Kelthuzad
         if (!n)
             return;
         me.summon(entry, where(me, alcoves[me.random(cast(uint) n)]), 0, me.selectTarget(Pick.random, PickFilter.player));
+    }
+
+    /// A minion of his first phase's waves out of a random alcove, walking to him (it fights as it reaches him).
+    private void walkOut(ref CreatureContext me, uint entry)
+    {
+        EntityRef[12] alcoves;
+        const n = me.creaturesNearby(npcWorldTrigger, 120, alcoves[]);
+        if (!n)
+            return;
+        if (const minion = me.summon(entry, near(me, where(me, alcoves[me.random(cast(uint) n)]), 4)))
+        {
+            walking ~= minion;
+            me.moveCreature(minion, me.location, 0, false);
+        }
+    }
+
+    /// `count` of `entry` idle in each alcove, within a few yards of it.
+    private void introIn(ref CreatureContext me, uint entry, ubyte count)
+    {
+        EntityRef[12] alcoves;
+        foreach (alcove; alcoves[0 .. me.creaturesNearby(npcWorldTrigger, 120, alcoves[])])
+            foreach (_; 0 .. count)
+                if (const minion = me.summon(entry, near(me, where(me, alcove), 10)))
+                    intro ~= minion;
+    }
+
+    /// A place within `yards` of `at`.
+    private static Location near(ref CreatureContext me, Location at, uint yards)
+    {
+        import std.math : cos, sin, PI;
+
+        const angle = me.random(360) * PI / 180, d = float(me.random(yards * 10)) / 10;
+        at.x += d * cos(angle);
+        at.y += d * sin(angle);
+        return at;
+    }
+
+    /// One of his waves reached him: it fights.
+    void on(ref CreatureContext me, const ref SummonedArrived e)
+    {
+        import std.algorithm.mutation : remove;
+        import std.algorithm.searching : countUntil;
+
+        const i = walking.countUntil(e.summoned);
+        if (i < 0)
+            return;
+        walking = walking.remove(i);
+        arrived ~= e.summoned;
+        if (const target = me.selectTarget(Pick.random, PickFilter.player))
+            me.attack(e.summoned, target);
+        save(me);
+    }
+
+    void on(ref CreatureContext me, const ref SummonedDied e)
+    {
+        import std.algorithm.mutation : remove;
+        import std.algorithm.searching : countUntil;
+
+        foreach (list; [&intro, &walking, &arrived])
+        {
+            const i = (*list).countUntil(e.summoned);
+            if (i >= 0)
+                *list = (*list).remove(i);
+        }
+    }
+
+    /// Whether `minion` is still at an alcove (idle there, not drawn out into the fight).
+    private bool nearAlcove(ref CreatureContext me, EntityRef minion)
+    {
+        EntityRef[12] alcoves;
+        const at = where(me, minion);
+        foreach (alcove; alcoves[0 .. me.creaturesNearby(npcWorldTrigger, 120, alcoves[])])
+        {
+            const there = where(me, alcove);
+            if ((at.x - there.x) ^^ 2 + (at.y - there.y) ^^ 2 <= 16 * 16)
+                return true;
+        }
+        return false;
     }
 
     /// Whether anyone of the raid lives in his chamber; nobody, and the raid wiped in his first phase.
@@ -3177,15 +3312,28 @@ struct Kelthuzad
         }
     }
 
-    /// A wave of his first phase: `step` again after `interval`, then the minion (last: the copy saves both).
-    private void wave(ref CreatureContext me, Step step, uint entry, Duration interval)
+    /// Wave `w` of his first phase: its next timed (if any more come), then its minion (last: the copy saves both).
+    private void wave(ref CreatureContext me, Step step, size_t w)
     {
         if (phase != 1)
             return;
         if (!raidHere(me))
             return giveUp(me);
-        steps.after(step, interval);
-        fromAlcove(me, entry);
+        ++summoned[w];
+        if (const next = nextInMs(w))
+            steps.after(step, next.msecs);
+        walkOut(me, waves[w].entry);
+        save(me);
+    }
+
+    /// An intro batch: `count` of `entry` in each alcove.
+    private void introBatch(ref CreatureContext me, uint entry, ubyte count)
+    {
+        if (phase != 1)
+            return;
+        if (!raidHere(me))
+            return giveUp(me);
+        introIn(me, entry, count);
         save(me);
     }
 
@@ -3194,13 +3342,26 @@ struct Kelthuzad
         final switch (step)
         {
         case Step.soldiers:
-            wave(me, step, npcSoldierFrozen, 3.seconds);
+            wave(me, step, 0);
             break;
         case Step.abominations:
-            wave(me, step, npcUnstoppableAbom, 25.seconds);
+            wave(me, step, 1);
             break;
         case Step.weavers:
-            wave(me, step, npcSoulWeaver, 30.seconds);
+            wave(me, step, 2);
+            break;
+        case Step.introSoldiers, Step.introAbominations, Step.introWeavers:
+            const w = step - Step.introSoldiers;
+            introBatch(me, waves[w].entry, introPerAlcove[w]);
+            break;
+        case Step.introOver:
+            // The alcoves' idle ones go (those that something drew out of their alcove fight on), and he speaks.
+            foreach (minion; intro)
+                if (me.alive(minion) && nearAlcove(me, minion))
+                    me.despawn(minion);
+            intro = null;
+            me.sayText(aggroLines[me.random(3)]);
+            save(me);
             break;
         case Step.phase2:
             phase = 2;
@@ -3210,7 +3371,7 @@ struct Kelthuzad
             me.rooted(false);
             me.melee(true);
             me.zoneCombat();
-            me.sayText(aggroLines[me.random(3)]);
+            walking = arrived = null;
             steps.after(Step.frostBolt, between(me, 1000, 60_000));
             steps.after(Step.chains, 60.seconds);
             steps.after(Step.nova, 15.seconds);
@@ -3279,6 +3440,8 @@ struct Kelthuzad
         releaseRaid(me);
         steps.clear();
         phase = guardiansSent = 0;
+        summoned = 0;
+        intro = walking = arrived = null;
         me.removeAura(me.self, channelVisual);
         me.unitFlags(UnitFlag.uninteractible, false);
         me.rooted(false);

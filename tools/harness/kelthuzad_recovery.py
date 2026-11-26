@@ -4,12 +4,13 @@
 Three scripted raid members (GMs, on a gateway) stand in Kel'Thuzad's chamber, on the trigger (4112) that begins
 his fight: he channels, untouchable, while his minions come from the alcoves.
 
-    --phase waves      the worker dies 45 seconds into the waves, with soldiers, an abomination and a soul weaver
-                       alive and two soldiers slain. All three original sockets come back to the same copy with the
-                       same Kel'Thuzad channelling, untouchable, the living minions and none of the slain; the next
-                       abomination and soul weaver come on the saved timers, once each. The raid then leaves his
-                       chamber (a wipe): he gives up. The worker dies again, and back in his chamber the raid finds
-                       him at home with no minion; the trigger begins his fight again, its waves from the start.
+    --phase waves      the worker dies about 50 seconds into his first phase, the alcoves' minions idle, his waves' first
+                       abomination and soul weaver come and two soldiers slain. All three original sockets come back
+                       to the same copy with the same Kel'Thuzad channelling, untouchable, the living minions and none
+                       of the slain; the next soul weaver (61 s) and abomination (75 s) come on the saved timers, once
+                       each. The raid then leaves his chamber (a wipe): he gives up. The worker dies again, and back
+                       in his chamber the raid finds him at home with no minion; the trigger begins his fight again,
+                       the alcoves filling from the start.
     --phase guardians  the worker dies in his last phase, two Guardians of Icecrown come and one shackled by the
                        leader (a priest). He comes back at his health with the same two guardians, the shackled one
                        still shackled; the other three come on their timer, five in all. Slain, he opens his chamber.
@@ -38,9 +39,13 @@ SHACKLE, SMITE = 10955, 585
 CHAINS, CHAINED = 28408, 28410  # Chains of Kel'Thuzad; its control aura on each raider it takes
 CHAINS_LAST = 20
 PHASE_TWO_SPELLS = (28478, 28479, 27819, 27810, 27808)
-# His waves: soldiers from 5 s every 3 s, abominations from 30 s every 25 s, soul weavers from 40 s every 30 s; he
-# fights at 5:25. Guardians every 10 s from 5 s after he calls for aid, five in all.
-SOLDIERS_AT, ABOMINATIONS_AT, ABOMINATIONS_EVERY, WEAVERS_AT, WEAVERS_EVERY = 5, 30, 25, 40, 30
+# His first phase (CMaNGOS's): at 4, 9 and 12 s nine soldiers, three abominations and a soul weaver in each of his seven
+# alcoves, idle there; his waves walk out to him, ever faster: soldiers from 12 s, an abomination at 45 s and 75 s,
+# a soul weaver at 41 s and 61 s, and on. He fights at 5:25. Guardians every 10 s from 5 s after he calls for aid,
+# five in all.
+SOLDIERS_AT = 4  # the alcoves' soldiers
+INTRO = {16427: 63, 16428: 21, 16429: 7}
+ABOMINATIONS_AT, ABOMINATIONS_NEXT, WEAVERS_AT, WEAVERS_NEXT = 45, 75, 41, 61
 PHASE_TWO_AT, GUARDIANS_EVERY, GUARDIAN_COUNT = 325, 10, 5
 
 
@@ -93,17 +98,21 @@ def waves(fixture):
     raid = Raid(fixture, at=TRIGGER_AT)
     kt, started = begin(raid)
     assert all(door_state(log, CHAMBER_DOOR) in (None, 1) for log in raid.logs()), "his chamber open in his fight"
-    wait_for("an abomination", lambda: seen(raid.logs(), ABOMINATION) or None, ABOMINATIONS_AT + 6)
-    wait_for("a soul weaver", lambda: seen(raid.logs(), WEAVER) or None, WEAVERS_AT - ABOMINATIONS_AT + 6)
+    # His first wave's abomination and soul weaver (beyond the alcoves' idle ones).
+    wait_for("a soul weaver of his waves", lambda: len(seen(raid.logs(), WEAVER)) > INTRO[WEAVER] or None,
+             WEAVERS_AT + 6)
+    wait_for("an abomination of his waves", lambda: len(seen(raid.logs(), ABOMINATION)) > INTRO[ABOMINATION] or None,
+             ABOMINATIONS_AT - WEAVERS_AT + 8)
     raid.stage([[f"killpack:one:{SOLDIER}", f"killpack:one:{SOLDIER}"], [], []])
     slain = wait_for("two soldiers slain", lambda: (lambda dead: dead if len(dead) >= 2 else None)(
         seen(raid.logs(), SOLDIER) - seen(raid.logs(), SOLDIER, True)), 10)
     host = raid.next_checkpoint(raid.checkpoints(), "a checkpoint of the waves", 5)
     checkpointed = time.monotonic()
-    assert checkpointed - started < ABOMINATIONS_AT + ABOMINATIONS_EVERY - 3, "too late for the waves"
+    assert checkpointed - started < WEAVERS_NEXT - 3, "too late for the waves"
     living = {entry: seen(raid.logs(), entry, True) for entry in MINIONS}
     came = {entry: seen(raid.logs(), entry) for entry in MINIONS}
-    assert len(living[ABOMINATION]) == 1 and len(living[WEAVER]) == 1 and len(living[SOLDIER]) >= 4, living
+    assert len(living[ABOMINATION]) == INTRO[ABOMINATION] + 1 and len(living[WEAVER]) == INTRO[WEAVER] + 1 \
+        and len(living[SOLDIER]) >= INTRO[SOLDIER], {entry: len(guids) for entry, guids in living.items()}
 
     killed, back, after = raid.crash(host, lambda part: f"[creature] {KELTHUZAD} guid {kt}:" in part
                                      and f"[creature] {ABOMINATION} guid" in part)
@@ -122,12 +131,11 @@ def waves(fixture):
     assert not slain & back_alive[SOLDIER], f"slain soldiers {slain & back_alive[SOLDIER]} came back"
 
     # The waves go on from the saved timers, the outage not counted.
-    abomination_at = wait_for("the next abomination", newcomer(raid, ABOMINATION, came[ABOMINATION], after),
-                              ABOMINATIONS_AT + ABOMINATIONS_EVERY + 8) and time.monotonic()
     weaver_at = wait_for("the next soul weaver", newcomer(raid, WEAVER, came[WEAVER], after),
-                         WEAVERS_AT + WEAVERS_EVERY + 8) and time.monotonic()
-    for name, at, due in (("abomination", abomination_at, ABOMINATIONS_AT + ABOMINATIONS_EVERY),
-                          ("soul weaver", weaver_at, WEAVERS_AT + WEAVERS_EVERY)):
+                         WEAVERS_NEXT + 8) and time.monotonic()
+    abomination_at = wait_for("the next abomination", newcomer(raid, ABOMINATION, came[ABOMINATION], after),
+                              ABOMINATIONS_NEXT + 8) and time.monotonic()
+    for name, at, due in (("abomination", abomination_at, ABOMINATIONS_NEXT), ("soul weaver", weaver_at, WEAVERS_NEXT)):
         expected = started + outage + due
         assert abs(at - expected) < 4, f"the next {name} came {at - back:.1f} s after the recovery, not " \
                                        f"{expected - back:.1f} s: its timer did not go on"
@@ -155,15 +163,16 @@ def waves(fixture):
     raid.stage([[f"trigger:{TRIGGER}"], [], []])
     pulled = time.monotonic()
     again = wait_for("a soldier of the next pull", newcomer(raid, SOLDIER, before), SOLDIERS_AT + 5) and time.monotonic()
-    assert abs(again - pulled - SOLDIERS_AT) < 3, f"the next pull's first soldier came {again - pulled:.1f} s after " \
+    assert abs(again - pulled - SOLDIERS_AT) < 3, f"the next pull's first soldiers came {again - pulled:.1f} s after " \
                                                   f"the trigger, not {SOLDIERS_AT}"
     time.sleep(1)
-    assert len(seen(raid.logs(), SOLDIER) - before) == 1, "the next pull's first wave came twice"
+    fresh = len(seen(raid.logs(), SOLDIER) - before)
+    assert fresh == INTRO[SOLDIER], f"the next pull's alcoves: {fresh} soldiers, not {INTRO[SOLDIER]} (once each)"
     raid.same_copy()
     raid.finish()
-    print(f"PASS: killed {first} 45 s into Kel'Thuzad's waves; the original clients came back to raid copy "
+    print(f"PASS: killed {first} 50 s into Kel'Thuzad's first phase; the original clients came back to raid copy "
           f"{raid.copy} with the same Kel'Thuzad {kt} channelling, the {len(back_alive[SOLDIER])} soldiers, the "
-          f"abomination and the soul weaver alive and the two slain gone; the next abomination came "
+          f"abominations and the soul weavers alive and the two slain gone; the next abomination came "
           f"{abomination_at - back:.1f} s and the next soul weaver {weaver_at - back:.1f} s after recovery, once each; "
           f"the raid left, he gave up, and after killing {host} the raid found him at home with no minion and began "
           f"his fight again (its first soldier {again - pulled:.1f} s after the trigger)")

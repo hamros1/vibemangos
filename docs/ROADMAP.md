@@ -71,11 +71,13 @@ describes how players use the systems available today.
   [crash points](CLUSTER.md#kelthuzads-crash-points) list what the clients saw. His second phase
   keeps a Shadow Fissure (16129) not yet erupted and a player's Frost Blast or Detonate Mana through
   a crash, their time paused with his fight; the blast strikes each second for 26% of the player's
-  health and the detonation burns half their mana, as CMaNGOS has them. Open: his first phase
-  follows the older script: soldiers every 3 s, abominations every 25 s, soul weavers every 30 s and
-  the transition at 5:25. The minions attack at once rather than gathering, and none goes at 5:10.
-  The chaos suite cannot test Chains, which needs six raiders in his threat list; the real-data
-  tests cover them.
+  health and the detonation burns half their mana, as CMaNGOS has them. His first phase follows
+  CMaNGOS's: at 4, 9 and 12 s nine soldiers, three abominations and a soul weaver idle in each of
+  his seven alcoves; his waves (120 soldiers, 14 abominations, 14 soul weavers, ever faster) walk
+  out to him and fight as they reach him; at 5:10 the alcoves' idle ones go and he speaks; at 5:25
+  he fights. The chaos suite crashes Chains with six raiders. Open: which alcove a wave's minion
+  comes from is CMaNGOS's spell scripts' choice (not read); here it is one at random, and the
+  alcoves' minions call for aid as any do.
   Thaddius has recovery tests for a handoff during his adds' fight, a crash in the ten seconds before
   he wakes, the checkpoint after his adds' deaths lost, the second death's write lost, and his own
   fight: with an add slain, a fight saved as under way goes on with his door shut, and he wakes.
