@@ -3440,6 +3440,43 @@ unittest
         && s.find(npcMajordomo) is null, "Ragnaros or Majordomo back after his death and a crash");
 }
 
+/// Ragnaros summoned and not yet fighting (his and Majordomo's lines) when the worker dies: Majordomo waits by the lair
+/// again, and, asked, summons him anew, once.
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.script.api : EncounterState;
+    import dmangos.scripts.moltencore;
+
+    auto s = new Scene(409, Position(845, -815, -229.6f), [classWarrior, classMage], cluster: true);
+    s.run(1.seconds);
+    s.signalCopy(Encounter.lucifron, EncounterState.done);
+    s.signalCopy(Encounter.majordomo, EncounterState.done);
+    foreach (encounter; Encounter.magmadar .. Encounter.majordomo)
+    {
+        s.signalCopy(encounter, EncounterState.done);
+        s.signalCopy(encounter, EncounterState.special);
+    }
+    s.run(1.seconds);
+    s.gossip(s.the(npcMajordomo), [0, 0, 0]);
+    assert(s.runUntil(() => s.find(npcRagnaros) !is null, 40.seconds), "no Ragnaros\n" ~ s.seen());
+    s.run(5.seconds);
+    assert(!s.the(npcRagnaros).ai.inCombat && s.ask(Encounter.ragnaros) == EncounterState.notStarted);
+    s.restartAfterCrash();
+    assert(s.find(npcRagnaros) is null, "Ragnaros back before his fight");
+    auto majordomo = s.find(npcMajordomo);
+    assert(majordomo !is null, "no Majordomo to summon Ragnaros again");
+    s.gossip(majordomo, [0, 0, 0]);
+    assert(s.runUntil(() => s.find(npcRagnaros) !is null && !majordomo.alive, 90.seconds),
+        "no Ragnaros summoned again\n" ~ s.seen());
+    auto ragnaros = s.the(npcRagnaros);
+    s.stayWith = ragnaros;
+    s.stayWithin = 6;
+    assert(s.runUntil(() => ragnaros.ai.inCombat, 20.seconds), "Ragnaros does not fight\n" ~ s.seen());
+    assert(s.all(npcRagnaros).length == 1);
+}
+
 /// A wipe in Ragnaros' fight, then a worker's crash: Majordomo waits by the lair again, and, asked, summons him anew.
 unittest
 {
