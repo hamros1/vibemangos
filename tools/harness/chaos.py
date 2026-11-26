@@ -35,6 +35,7 @@ import sapphiron_recovery
 import stall_release
 import standby_bundle
 import standby_login
+import stratholme_recovery
 import worker_rejoin
 
 
@@ -57,6 +58,8 @@ CASES = (
     ("horsemen-wipe-recovery", horsemen_recovery.wipe),
     ("kelthuzad-waves-recovery", kelthuzad_recovery.waves),
     ("kelthuzad-guardians-recovery", kelthuzad_recovery.guardians),
+    ("stratholme-ramstein-recovery", stratholme_recovery.ramstein),
+    ("stratholme-ysida-recovery", stratholme_recovery.ysida),
     ("loot-award-crash", loot_award_crash.main),
     ("migration-stall", migration_stall.run),
     ("standby-login", standby_login.run),
