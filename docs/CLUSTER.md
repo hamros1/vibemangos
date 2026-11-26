@@ -552,8 +552,9 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   where the third postbox called him.
   An encounter checkpoint saves the quest log of the players in the copy with their positions, so a
   script's quest credit (Ysida's rescue) is not lost with a crash after the checkpoint that records it.
-  In Razorfen Downs, Tuten'kash is kept in the checkpoint until slain; a save without him lets the
-  gong call him again. In Zul'Farrak, Gahz'rilla is kept while her fight is under way, and a save
+  In Razorfen Downs, the gong's Tomb Fiends and Tomb Reavers and Tuten'kash are kept in the
+  checkpoint until slain, and the gong waits for the living; a save without him lets the gong call
+  him again. In Zul'Farrak, Gahz'rilla is kept while her fight is under way, and a save
   without her lets the gong call her again. The pyramid's siege keeps its event's pending database
   steps, the Sandfury it brought, Nekrum, Sezz'ziz and the five prisoners, so Nekrum and Sezz'ziz
   come at the saved time and their deaths open the End Door. A siege saved before it was kept brings
@@ -1582,7 +1583,7 @@ points:
 
 The real-data tests in `source/dmangos/world/realscripts_dungeons.d` cover the same crash points in
 cluster mode, with Timmy and the Postmaster, and a save without Ysida, which calls her again. They
-also cover Tuten'kash, Gahz'rilla, the pyramid's siege, the Disciple of Naralex at his first corner,
+also cover Tuten'kash and the waves before him, Gahz'rilla, the pyramid's siege, the Disciple of Naralex at his first corner,
 Emi with Grubbis out, and Mograine fallen with Whitemane on her way, each with a crash. The
 real-data tests in `source/dmangos/world/realscripts_raids.d` cover Thaddius after a handoff during
 his adds' fight, after a crash in his ten seconds, with the checkpoint after the adds' deaths lost,

@@ -713,6 +713,44 @@ unittest
 }
 
 /**
+ * Razorfen Downs on a cluster worker: a wave before Tuten'kash is kept by the copy's checkpoint too. A crash with three
+ * of the eight Tomb Fiends (7349) slain brings the same five back; the gong calls nothing while they live, and once
+ * they are slain it calls the Tomb Reavers (7351), not the fiends again.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint gong = 148917, fiend = 7349, reaver = 7351;
+    auto d = Dungeon.enter(129, 35, cluster: true);
+    d.use(d.objectOf(gong));
+    d.run(2.seconds);
+    auto fiends = d.all(fiend);
+    assert(fiends.length == 8, "eight fiends\n" ~ d.story);
+    foreach (f; fiends[0 .. 3])
+        d.kill(f);
+    d.run(2100.msecs);
+    bool[ulong] living;
+    foreach (f; fiends[3 .. $])
+        living[f.guid] = true;
+    d.restartAfterCrash();
+    d.run(1.seconds);
+    bool[ulong] back;
+    foreach (f; d.all(fiend))
+        back[f.guid] = true;
+    assert(back == living, format!"fiends %s after the crash, %s before"(back.keys, living.keys));
+    d.use(d.objectOf(gong));
+    d.run(2.seconds);
+    assert(d.all(fiend).length == 5 && d.all(reaver).length == 0, "the gong calls while the wave lives\n" ~ d.story);
+    foreach (f; d.all(fiend))
+        d.kill(f);
+    d.run(2.seconds);
+    d.use(d.objectOf(gong));
+    d.run(2.seconds);
+    assert(d.all(reaver).length == 4 && d.all(fiend).length == 0, "the gong calls the reavers next\n" ~ d.story);
+}
+
+/**
  * Belnistrasz (8516): "Extinguishing the Idol" (3525) taken, he runs to the idol, starts his ritual (-1129006, Idol
  * Shutdown 12774) and holds it three minutes while the quilboar come (7333, 7329, 7335, Plaguemaw 7356 last), counting
  * the minutes (-1129009 .. -1129011); done (-1129012), the quest is complete and his brazier (152097) appears.
@@ -967,9 +1005,9 @@ unittest
 }
 
 /**
- * Razorfen Downs and Blackfathom Deeps, a restart in the middle of an event: its summons are gone with it, so the
- * event can go on (the gong rung again calls its next wave; the Fathom Stone calls Baron Aquanis again), not wait for
- * them forever.
+ * Razorfen Downs and Blackfathom Deeps, a restart in the middle of an event: the event goes on, not waiting forever.
+ * The gong's wave is kept by the copy's checkpoint and comes back with it, and slain, the gong calls the next; the
+ * Fathom Stone's summons are gone with the restart, and it calls Baron Aquanis again.
  */
 unittest
 {
@@ -983,6 +1021,11 @@ unittest
         assert(d.summoned(fiend) == 8);
         d.restart();
         d.forget();
+        d.run(1.seconds);
+        assert(d.all(fiend).length == 8, format!"%s fiends back after a restart\n%s"(d.all(fiend).length, d.story));
+        foreach (f; d.all(fiend))
+            d.kill(f);
+        d.run(2.seconds);
         d.use(d.objectOf(gong));
         d.run(2.seconds);
         assert(d.summoned(reaver) == 4, "the next wave after a restart\n" ~ d.story);

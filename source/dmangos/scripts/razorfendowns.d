@@ -35,7 +35,8 @@ struct RazorfenDowns
 
     ubyte wave;      /// waves called so far
     bool tutenKashDead;
-    /// The wave under way; not saved: a restart takes its creatures away, and the gong may call the next.
+    /// The wave under way. Not in this layout: its creatures are kept in the copy's checkpoint till slain, and each
+    /// comes back into the pack as it comes back into the world (`CreatureLoaded`).
     @transient Pack!8 summoned;
     @transient EntityRef gongRef;
 
@@ -69,8 +70,7 @@ struct RazorfenDowns
             if (const made = downs.summon(waveEntry[wave], at, 0, e.source))
             {
                 summoned.add(made);
-                if (made.entry == tutenKash)
-                    downs.checkpointCreature(made); // the boss of the lockout: a crash must not take him
+                downs.checkpointCreature(made); // a crash must not take the wave, nor the boss of the lockout
             }
         }
         ++wave;
@@ -80,16 +80,30 @@ struct RazorfenDowns
             downs.objectFlags(gongRef, ObjectFlag.noInteract);
     }
 
-    /// Tuten'kash called and alive comes back from the checkpoint; one a save does not have (an older one's) the
-    /// gong calls again. A wave before him is lost with the old world, and the gong may call the next.
+    /// A wave under way, and Tuten'kash called and alive, come back from the checkpoint: the gong waits for them.
+    /// Tuten'kash a save does not have (an older one's) the gong calls again; a wave it does not have (an older save),
+    /// the gong may call the next.
     void on(ref InstanceContext downs, const ref Restored e)
     {
-        if (wave < waveEntry.length || tutenKashDead)
+        if (tutenKashDead || wave == 0)
             return;
-        if (downs.hasSavedCreature(tutenKash))
+        if (downs.hasSavedCreature(waveEntry[wave - 1]))
             downs.waitForPlayer();
-        else
+        else if (wave == waveEntry.length)
             wave = cast(ubyte)(waveEntry.length - 1);
+    }
+
+    /// One of the wave under way, back from the checkpoint (or brought by a handoff): in the pack again, and the gong
+    /// silent till the wave is slain.
+    void on(ref InstanceContext downs, const ref CreatureLoaded e)
+    {
+        if (!e.summoned || tutenKashDead || wave == 0 || e.creature.entry != waveEntry[wave - 1])
+            return;
+        if (!summoned.has(e.creature) && downs.alive(e.creature))
+            summoned.add(e.creature);
+        downs.checkpointCreature(e.creature);
+        if (gongRef)
+            downs.objectFlags(gongRef, ObjectFlag.noInteract);
     }
 
     /// Tuten'kash, kept by the checkpoint but not brought back: the gong may call him again.
@@ -107,6 +121,8 @@ struct RazorfenDowns
     {
         if (e.creature.entry == tutenKash)
             tutenKashDead = true;
+        if (summoned.has(e.creature))
+            downs.releaseCheckpointActor(e.creature); // slain, it stays slain
         if (summoned.died(e.creature) && summoned.allDead && !tutenKashDead && gongRef)
             downs.objectFlags(gongRef, 0, ObjectFlag.noInteract); // it may be rung again
     }
