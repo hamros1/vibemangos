@@ -1333,7 +1333,9 @@ while step < len(actions):
         wsend(op, body); print(kind); listen_for(1)
     elif kind == "npc":
         entry = int(args[0])
-        npc = next((g for g, (t, e) in seen_objects.items() if t == 3 and e == entry), None)
+        # A living one first: one seen before it died (a summon, dead and summoned again) is not the one to speak to.
+        known = [g for g, (t, e) in seen_objects.items() if t == 3 and e == entry]
+        npc = next((g for g in known if g in living_creatures), known[0] if known else None)
         print(f"npc {entry}: " + (str(npc) if npc else "not in sight"))
     elif kind == "targetnpc":
         entry = int(args[0])

@@ -31,6 +31,7 @@ import loot_award_crash
 import migration_stall
 import quorum
 import quorum_partition
+import ragnaros_recovery
 import sapphiron_recovery
 import stall_release
 import standby_bundle
@@ -60,6 +61,8 @@ CASES = (
     ("kelthuzad-guardians-recovery", kelthuzad_recovery.guardians),
     ("stratholme-ramstein-recovery", stratholme_recovery.ramstein),
     ("stratholme-ysida-recovery", stratholme_recovery.ysida),
+    ("ragnaros-fight-recovery", ragnaros_recovery.fight),
+    ("ragnaros-wipe-recovery", ragnaros_recovery.wipe),
     ("loot-award-crash", loot_award_crash.main),
     ("migration-stall", migration_stall.run),
     ("standby-login", standby_login.run),
