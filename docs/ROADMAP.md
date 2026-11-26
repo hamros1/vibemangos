@@ -56,6 +56,16 @@ describes how players use the systems available today.
   regular home logs in again with the auras of the last character save. A frozen gateway
   player who returns after he has landed, or to a fight that a restore failed, stays frozen
   until the aura ends.
+  The Four Horsemen have recovery tests for a crash after two deaths, a crash after the last
+  death, the last death saved with the checkpoint after it lost, and a wipe after two deaths
+  followed by a crash. The [crash points](CLUSTER.md#the-four-horsemens-crash-points) list what
+  the clients saw. Open: the marks only stack. Their damage by stack count (`28836`, which
+  CMaNGOS deals as a mark lands) is not ported. A marked player on a regular home logs in again
+  with the marks of the last character save. A crash after a horseman's death reached the
+  database but before the checkpoint written with it keeps him dead and loses his spirit, so his
+  mark stops. Between checkpoints the survivors come back from the copy's last two-second save.
+  One horseman giving up his fight while the others fight on fails the encounter and brings the
+  slain back, as a wipe does.
   The Temple of Ahn'Qiraj has C'Thun recovery tests for the Eye's phase, the crash between the
   Eye's death and C'Thun's rise, a player in his stomach, and a wipe in his phase.
   See [dungeon failover](CLUSTER.md#dungeons-and-battlegrounds) for coverage across instances.

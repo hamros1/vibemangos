@@ -320,8 +320,9 @@ merge and a player handoff. Set `EXPECT_BALANCING=1` to check these events in a 
 After harness setup and a release build, run the opt-in suite with
 `python3 tools/harness/chaos.py`. It runs the quorum partition and heal, coordinator kill,
 paused battlegroup host, gateway checkpoint retry, departure retry, lease lapse arrival, worker
-rejoin, stall release, gateway return, C'Thun recovery, Sapphiron recovery, loot award crash,
-migration stall, standby login and standby bundle cases against isolated fixtures.
+rejoin, stall release, gateway return, C'Thun recovery, Sapphiron recovery, Four Horsemen
+recovery, loot award crash, migration stall, standby login and standby bundle cases against
+isolated fixtures.
 Use `--repeat 3` to check repeatability. Each case prints the harness directory containing
 its process logs and uses fresh login and character schemas.
 
@@ -372,6 +373,14 @@ Sapphiron and his saved phase and timers. The air phase also checks the same ice
 still frozen, and a single breath that spares the member behind the block. The test's
 `waitactions:` steps send members where the frozen member's block gives cover.
 [Sapphiron's crash points](CLUSTER.md#sapphirons-crash-points) has the details.
+
+Run `python3 tools/harness/horsemen_recovery.py --phase kills` (or `wipe`) to kill the Naxxramas
+worker during the Four Horsemen's fight. Three scripted raid members on a gateway slay Gothik and
+come into the Horsemen's room. `kills` crashes after two horsemen fell, then after the last. It
+checks the slain stay dead with their spirits, the survivors' health and mark timers, the members'
+marks, the door, and one chest. `wipe` crashes after a wipe and checks the four are home and can
+be fought again. [The Four Horsemen's crash points](CLUSTER.md#the-four-horsemens-crash-points)
+has the details.
 
 Run `python3 tools/harness/loot_award_crash.py` to kill (`SIGKILL`) a party member's worker after
 it claims a remote loot award, while a second MariaDB session locks the member's inventory so the

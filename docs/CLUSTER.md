@@ -578,6 +578,17 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   Sapphiron at home for the next pull. His death opens the waterfall to Kel'Thuzad for the rest
   of the lockout. A gateway player's freeze (Icebolt and its immunity) keeps the time it had
   when saved, since his timers do not count the outage. Life Drain keeps its original deadline.
+  The Four Horsemen's fight keeps the living horsemen and the spirits of the slain in the
+  checkpoint, and each death is a checkpoint. A crash after some have fallen brings the slain back
+  dead with their spirits, which mark on. The survivors come back with their health, Shield Walls
+  and timers for their marks, specials and berserk. Gateway players keep the marks they bore, with
+  their stacks. The encounter counts the horsemen dead among the copy's deaths, not in a number of
+  its own. The fourth death opens the Horsemen's door and the quarter's eye and portal and brings
+  their chest, in the checkpoint of that death, and a crash after it keeps the one chest. With the
+  last death saved and the checkpoint after it lost, the copy comes back done, with one chest. A
+  wipe sends the spirits away and brings the slain back for the next pull, and a crash after the
+  wipe keeps it so. A lockout saved before this, after a wipe that left horsemen dead, brings them
+  back as the raid returns.
   In the Temple of Ahn'Qiraj, C'Thun's fight keeps the Eye of C'Thun, C'Thun and every living
   tentacle with their health, auras and timers. A crash in the Eye's phase resumes its beams and
   tentacle waves on their saved timers. A crash in the five seconds between the Eye's death and
@@ -1451,6 +1462,24 @@ The real-data tests in `source/dmangos/world/realscripts_raids.d` cover the same
 cluster mode. They add a crash with the breath begun, where the cast resumes and lands once, and a
 wipe in the air phase followed by a crash, after which one Sapphiron waits at home and can be
 fought again.
+
+### The Four Horsemen's crash points
+
+`tools/harness/horsemen_recovery.py` sends three scripted raid members on a gateway into
+Naxxramas. They slay Gothik, so that the Horsemen's door opens, and one member watches the door
+from below the Horsemen's platform, out of their sight. The other two come before the Horsemen,
+who see 80 yards, and the four take them on. The test kills the worker that hosts Naxxramas with
+`SIGKILL`, just after an encounter checkpoint, at these points:
+
+| `--phase` | Crash point | What the original clients saw after recovery |
+|---|---|---|
+| `kills` | Each horseman had marked once. Korth'azz was hurt to 70% and Zeliek to 55%, and Blaumeux and Mograine slain. The crash came just after the checkpoint of Mograine's death, about 4 s after the first marks | All three sockets back in the same copy. Blaumeux and Mograine still dead, and one spirit of each, the same GUID as before. Korth'azz and Zeliek the same creatures at the saved health, within 1%. Both marked 7.3 to 8.3 s after recovery, within 0.2 s of what their saved timers had left, and both spirits marked again. The two members by the Horsemen came back with every mark they bore, before any new mark landed. The door stayed shut |
+| `kills`, second crash | After Korth'azz's death, just after the checkpoint of Zeliek's, on the worker that took over | Before the crash no chest stood after the third death, and with the fourth the door and the quarter's portal opened and one chest came. After recovery the same single chest (GUID 5330075), the four dead and the door open. The first worker is restarted beforehand so that the voters keep a majority |
+| `wipe` | Blaumeux and Mograine slain, then the raid killed with `.killplr`. The crash came just after the checkpoint of the wipe, with the two slain home again | The four alive at home with their GUIDs, no spirit, and the door open. Pulled again, the door shut. Slain, they left one chest |
+
+The real-data tests in `source/dmangos/world/realscripts_raids.d` cover the same crash points in
+cluster mode. They add a crash with the last death saved and the checkpoint after it lost: the
+copy comes back with the encounter done, the door open and the same single chest.
 
 The cluster code is tested in memory: links wired back to back and a fake clock, with whole clusters
 of world contexts (joining, views, heartbeats, timeouts, restarts and fencing; handovers with no cell
