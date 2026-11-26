@@ -214,10 +214,10 @@ unittest
     foreach (ref season; rainy)
         season = SeasonChances(100, 0, 0);
     context.data.weatherChances[zone] = rainy;
-    assert(context.weatherFor(zone).length == 13);
+    assert(context.weather.packetFor(zone).length == 13);
     auto weather = context.services.local!WeatherHost().weatherOf(zone);
     assert(weather !is null);
-    assert(context.weatherFor(zone + 1000) == fineWeatherPacket(), "no row: fine");
+    assert(context.weather.packetFor(zone + 1000) == fineWeatherPacket(), "no row: fine");
     auto now = MonoTime.currTime;
     context.update(now);
     bool heard;

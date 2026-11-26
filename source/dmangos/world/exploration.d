@@ -129,7 +129,7 @@ private:
         {
             player.data.zone = zone;
             sendInitWorldStates(zone);
-            deliver(Opcode.SMSG_WEATHER, context.weatherFor(zone)); // the zone's weather
+            deliver(Opcode.SMSG_WEATHER, context.weather.packetFor(zone)); // the zone's weather
             if (const zoneName = context.client.areaName(zone))
                 context.channelCommand(this, ChannelOp.zoneChanged, null, zoneName);
         }

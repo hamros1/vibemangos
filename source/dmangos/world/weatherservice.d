@@ -166,6 +166,102 @@ struct WeatherHost
 }
 
 /// Workers share a zone's weather, and a clean service handoff preserves its next change.
+/**
+ * The realm's weather as one node knows it: the last state heard for each zone. The weather service
+ * (`WeatherHost`, on one node of the cluster) decides the weather; a node hosting it asks it directly, any other
+ * asks at most every 30 seconds per zone and is told of changes, and tells its players in the zone. A zone without
+ * a `game_weather` row is always fine.
+ */
+struct ZoneWeather
+{
+    import core.time : MonoTime, seconds;
+    import dmangos.world.context : WorldContext;
+
+    private WorldContext world;
+    private WeatherNotice[uint] heardOf;      // by zone
+    private MonoTime[uint] nextRequest;       // by zone: not asked again before
+    private MonoTime nextPoll;
+    private ushort lastHost;
+
+    this(WorldContext world)
+    {
+        this.world = world;
+    }
+
+    /// `SMSG_WEATHER`'s body for a player entering `zone`. Asks the service if this node has not heard yet.
+    ubyte[] packetFor(uint zone)
+    {
+        import dmangos.world.weather : fineWeatherPacket;
+
+        if (zone !in world.data.weatherChances)
+            return fineWeatherPacket();
+        if (auto host = world.services.local!WeatherHost())
+        {
+            const request = WeatherWatch(zone);
+            const current = host.watch(request);
+            heardOf[zone] = current;
+            return current.packet();
+        }
+        watch(zone, world.clock());
+        if (const current = zone in heardOf)
+            return current.packet();
+        return fineWeatherPacket();
+    }
+
+    /// Each tick: the zones this node's players are in are asked about, every five seconds; a new host node is asked
+    /// at once.
+    void poll(MonoTime now)
+    {
+        const host = hostNode();
+        if (lastHost != host)
+        {
+            lastHost = host;
+            nextRequest = null;
+            nextPoll = MonoTime.init;
+        }
+        if (now < nextPoll || !world.data.weatherChances.length)
+            return;
+        nextPoll = now + 5.seconds;
+        foreach (player; world.online)
+            if (player.character !is null && player.character.data.zone in world.data.weatherChances)
+                watch(player.character.data.zone, now);
+    }
+
+    /// The service told of a zone's weather: kept, and if it changed the players in the zone are told.
+    void heard(const ref WeatherNotice current)
+    {
+        import dmangos.world.opcodes : Opcode;
+
+        if (current.zone !in world.data.weatherChances || heardOf.get(current.zone, WeatherNotice.init) == current)
+            return;
+        heardOf[current.zone] = current;
+        const body_ = current.packet();
+        foreach (player; world.online.values)
+            if (player.character !is null && player.character.data.zone == current.zone)
+                player.deliver(Opcode.SMSG_WEATHER, body_);
+    }
+
+    private void watch(uint zone, MonoTime now)
+    {
+        if (now < nextRequest.get(zone, MonoTime.init))
+            return;
+        nextRequest[zone] = now + 30.seconds;
+        const host = hostNode();
+        const before = heardOf.get(zone, WeatherNotice.init);
+        world.services.call!(WeatherHost.watch)(WeatherWatch(zone), (WeatherNotice current) {
+            if (host == hostNode() && before == heardOf.get(zone, WeatherNotice.init))
+                heard(current);
+        });
+    }
+
+    private ushort hostNode()
+    {
+        import dmangos.cluster.services : ServiceKind;
+
+        return world.services.placement is null ? 0 : world.services.placement(ServiceKind.weather);
+    }
+}
+
 unittest
 {
     import core.time : msecs;
@@ -214,19 +310,19 @@ unittest
         };
     }
 
-    holder.weatherFor(zone);
+    holder.weather.packetFor(zone);
     auto local = holder.services.local!WeatherHost();
     auto opening = local.weatherOf(zone);
     opening.type = WeatherType.rain;
     opening.grade = 0.65f;
-    const initial = holder.weatherFor(zone);
-    assert(follower.weatherFor(zone) == fineWeatherPacket() && requests.length == 1);
-    follower.weatherFor(zone);
+    const initial = holder.weather.packetFor(zone);
+    assert(follower.weather.packetFor(zone) == fineWeatherPacket() && requests.length == 1);
+    follower.weather.packetFor(zone);
     assert(requests.length == 1, "two arrivals share one weather query");
     holder.services.receiveCall(2, requests[0]);
     const received = east.read();
     assert(received.length == 1 && received[0].opcode == Opcode.SMSG_WEATHER && received[0].body_ == initial);
-    assert(follower.weatherFor(zone) == initial);
+    assert(follower.weather.packetFor(zone) == initial);
 
     local.weatherOf(zone).timer = 1250;
     const handoff = holder.services.stop(ServiceKind.weather);
@@ -234,7 +330,7 @@ unittest
     assert(next.services.start(ServiceKind.weather, handoff));
     local = next.services.local!WeatherHost();
     local.random = Random(7);
-    assert(local.weatherOf(zone).timer == 1250 && next.weatherFor(zone) == initial);
+    assert(local.weatherOf(zone).timer == 1250 && next.weather.packetFor(zone) == initial);
     next.services.tick(250.msecs);
     assert(local.weatherOf(zone).timer == 1000 && !east.read().length);
 
@@ -252,7 +348,7 @@ unittest
         if (left.length)
         {
             assert(left.length == 1 && right.length == 1 && left[0].opcode == Opcode.SMSG_WEATHER);
-            assert(left[0].body_ == right[0].body_ && left[0].body_ == next.weatherFor(zone));
+            assert(left[0].body_ == right[0].body_ && left[0].body_ == next.weather.packetFor(zone));
             changed = true;
             break;
         }
@@ -286,7 +382,7 @@ unittest
     old.clock = () => now;
     next.clock = () => nextClock;
     assert(old.services.start(ServiceKind.weather));
-    const original = old.weatherFor(zoneElwynn);
+    const original = old.weather.packetFor(zoneElwynn);
     old.services.local!WeatherHost().weatherOf(zoneElwynn).timer = 12_500;
     now += 11.seconds;
     old.services.tick(0.msecs);

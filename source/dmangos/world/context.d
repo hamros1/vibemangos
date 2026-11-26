@@ -207,87 +207,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     mixin DbScriptRunner; // `dbscripts_on_*` under way
 
-    import dmangos.world.weatherservice : WeatherHost, WeatherNotice, WeatherWatch;
+    import dmangos.world.weatherservice : WeatherHost, WeatherNotice, ZoneWeather;
 
-    private WeatherNotice[uint] realmWeather;
-    private MonoTime[uint] nextWeatherRequest;
-    private MonoTime nextWeatherPoll;
-    private ushort lastWeatherHost;
-
-    /**
-     * Weather for a player entering a zone. The service sends the current state if the worker
-     * has not heard it yet. Zones without a `game_weather` row are always fine.
-     */
-    ubyte[] weatherFor(uint zone)
-    {
-        import dmangos.world.weather : fineWeatherPacket;
-
-        if (zone !in data.weatherChances)
-            return fineWeatherPacket();
-        if (auto host = services.local!WeatherHost())
-        {
-            const request = WeatherWatch(zone);
-            const current = host.watch(request);
-            realmWeather[zone] = current;
-            return current.packet();
-        }
-        watchWeather(zone, clock());
-        if (const current = zone in realmWeather)
-            return current.packet();
-        return fineWeatherPacket();
-    }
-
-    private void watchWeather(uint zone, MonoTime now)
-    {
-        import core.time : seconds;
-
-        if (now < nextWeatherRequest.get(zone, MonoTime.init))
-            return;
-        nextWeatherRequest[zone] = now + 30.seconds;
-        const host = weatherHostNode();
-        const before = realmWeather.get(zone, WeatherNotice.init);
-        services.call!(WeatherHost.watch)(WeatherWatch(zone), (WeatherNotice current) {
-            if (host == weatherHostNode() && before == realmWeather.get(zone, WeatherNotice.init))
-                weatherHeard(current);
-        });
-    }
-
-    private ushort weatherHostNode()
-    {
-        return services.placement is null ? 0 : services.placement(ServiceKind.weather);
-    }
-
-    private void pollWeather(MonoTime now)
-    {
-        import core.time : seconds;
-
-        const host = weatherHostNode();
-        if (lastWeatherHost != host)
-        {
-            lastWeatherHost = host;
-            nextWeatherRequest = null;
-            nextWeatherPoll = MonoTime.init;
-        }
-        if (now < nextWeatherPoll || !data.weatherChances.length)
-            return;
-        nextWeatherPoll = now + 5.seconds;
-        foreach (player; online)
-            if (player.character !is null && player.character.data.zone in data.weatherChances)
-                watchWeather(player.character.data.zone, now);
-    }
-
-    private void weatherHeard(const ref WeatherNotice current)
-    {
-        import dmangos.world.opcodes : Opcode;
-
-        if (current.zone !in data.weatherChances || realmWeather.get(current.zone, WeatherNotice.init) == current)
-            return;
-        realmWeather[current.zone] = current;
-        const body_ = current.packet();
-        foreach (player; online.values)
-            if (player.character !is null && player.character.data.zone == current.zone)
-                player.deliver(Opcode.SMSG_WEATHER, body_);
-    }
+    /// The realm's weather as this node knows it (`dmangos.world.weatherservice.ZoneWeather`).
+    ZoneWeather weather;
 
     import dmangos.world.worldcatalog : WorldCatalog, WorldCatalogKey;
 
@@ -377,7 +300,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private GameObjectModels gameObjectModels;
 
     /// Players in the world, by guid and by lower-cased name.
-    private Character[ulong] online;
+    package Character[ulong] online;
     private Character[dstring] onlineByName;
 
     /// Parties and raids, online or not.
@@ -3231,7 +3154,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         services.provide!InvasionHost(&newInvasionHost);
         services.listen!(InvasionHost, InvasionState)(&invasionHeard);
         services.provide!WeatherHost((const(ubyte)[] state) => WeatherHost(this, state));
-        services.listen!(WeatherHost, WeatherNotice)(&weatherHeard);
+        weather = ZoneWeather(this);
+        services.listen!(WeatherHost, WeatherNotice)(&weather.heard);
         services.provide!WarEffortHost(&newWarEffortHost);
         services.listen!(WarEffortHost, WarEffort)(&warEffortHeard); // before it starts: it tells as it does
         worldPvp = new WorldPvpFollower(this);
@@ -11142,7 +11066,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         foreach (script; worldScripts) // open-world round 2: the continents'
             script.tick(cast(int) elapsed.total!"msecs");
         gameObjectScriptsTick(cast(int) elapsed.total!"msecs"); // open-world round 2
-        pollWeather(now);
+        weather.poll(now);
         pollWorldCatalog(now);
         pollGuildMirror(now);
         addPendingNavigation();
