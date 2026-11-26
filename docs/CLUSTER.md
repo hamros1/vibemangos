@@ -559,11 +559,13 @@ cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
   steps, the Sandfury it brought, Nekrum, Sezz'ziz and the five prisoners, so Nekrum and Sezz'ziz
   come at the saved time and their deaths open the End Door. A siege saved before it was kept brings
   the two at once.
-  In Wailing Caverns, the Disciple of Naralex and what he calls at each stop are kept together, so he
-  does not wait for summons that went with the old world; five seconds after a player comes back, he
-  hears how many are alive, so one the restore lost does not hold him. In Gnomeregan, Blastmaster Emi, her troggs,
-  Grubbis and Chomper are kept together while her stand is under way. In the Scarlet Monastery,
-  Mograine and Whitemane are kept together from his fall, and she comes back on her way to the fight.
+  In Wailing Caverns, the Disciple of Naralex and what he calls at each stop are kept together, so
+  he does not wait for summons that went with the old world; five seconds after a player comes back,
+  he hears how many are alive, so one the restore lost does not hold him. In Gnomeregan, Blastmaster
+  Emi, her troggs, Grubbis and Chomper are kept together while her stand is under way, and she stays
+  kept after Grubbis's death until her last line, so a crash before the northern blast does not lose
+  it. In the Scarlet Monastery, Mograine and Whitemane are kept together from his fall, and she
+  comes back on her way to the fight.
   Onyxia keeps her health, flight phase, surviving whelps and the remaining time to the next wave.
   The recovered fight can proceed through landing and her final ground phase.
   In Molten Core, Ragnaros, Majordomo's summon, is kept in the checkpoint with his Sons of Flame while
@@ -1583,11 +1585,12 @@ points:
 
 The real-data tests in `source/dmangos/world/realscripts_dungeons.d` cover the same crash points in
 cluster mode, with Timmy and the Postmaster, and a save without Ysida, which calls her again. They
-also cover Tuten'kash and the waves before him, Gahz'rilla, the pyramid's siege, the Disciple of Naralex at his first corner,
-Emi with Grubbis out, and Mograine fallen with Whitemane on her way, each with a crash. The
-real-data tests in `source/dmangos/world/realscripts_raids.d` cover Thaddius after a handoff during
-his adds' fight, after a crash in his ten seconds, with the checkpoint after the adds' deaths lost,
-with the second death's write lost, and in his own fight, his door shut throughout.
+also cover Tuten'kash and the waves before him, Gahz'rilla, the pyramid's siege, the Disciple of
+Naralex at his first corner, Emi with Grubbis out and after his death, and Mograine fallen with
+Whitemane on her way, each with a crash. The real-data tests in
+`source/dmangos/world/realscripts_raids.d` cover Thaddius after a handoff during his adds' fight,
+after a crash in his ten seconds, with the checkpoint after the adds' deaths lost, with the second
+death's write lost, and in his own fight, his door shut throughout.
 
 ### Kel'Thuzad's crash points
 

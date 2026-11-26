@@ -57,6 +57,8 @@ struct Gnomeregan
     @transient EntityRef door, emi;
     @transient EntityRef[6] faces;
     @transient EntityRef[2] caveIns; /// south, north
+    /// Grubbis slain, Emi's stand not yet over (its northern blast to come): she stays in the checkpoint till it is.
+    @transient bool emiFinishing;
 
     enum Step : ubyte { face0, face1, face2, face3, face4, face5 }
     @transient Schedule!(Step, 6) bombTimers;
@@ -99,7 +101,7 @@ struct Gnomeregan
             emi = e.creature;
             if (grubbisFight == Fight.done)
                 city.signal(e.creature, Emi.Signals.grubbisDone);
-            else if (grubbisFight == Fight.inProgress)
+            if (grubbisFight == Fight.inProgress || emiFinishing)
                 city.checkpointCreature(e.creature);
             break;
         case grubbis, chomper, caverndeepAmbusher, caverndeepBurrower:
@@ -119,6 +121,12 @@ struct Gnomeregan
      */
     void on(ref InstanceContext city, const ref Restored e)
     {
+        if (grubbisFight == Fight.done && city.hasSavedCreature(blastmaster))
+        {
+            emiFinishing = true; // Grubbis slain, her stand's end to come
+            city.waitForPlayer();
+            return;
+        }
         if (grubbisFight != Fight.inProgress)
             return;
         if (city.hasSavedCreature(blastmaster))
@@ -140,14 +148,15 @@ struct Gnomeregan
         if (e.creature.entry == grubbis && grubbisFight == Fight.inProgress)
         {
             grubbisFight = Fight.done;
-            if (emi)
-                city.releaseCheckpointActor(emi);
+            emiFinishing = emi && city.alive(emi); // she leaves the checkpoint when her stand is over
             city.spawnObjects(redRocket, 3600, Location(-511, -139, -152), 10);
             if (emi)
                 city.signal(emi, Emi.Signals.grubbisDead);
         }
         else if (e.creature.entry == blastmaster && grubbisFight == Fight.inProgress)
             grubbisFight = Fight.failed;
+        else if (e.creature.entry == blastmaster && emiFinishing)
+            emiOver(city);
         else if (e.creature.entry == thermaplugg)
             thermapluggOver(city, Fight.done);
     }
@@ -240,6 +249,15 @@ struct Gnomeregan
         bombs.clear();
     }
 
+    /// Emi's stand is over: she leaves the checkpoint.
+    private void emiOver(ref InstanceContext city)
+    {
+        emiFinishing = false;
+        if (emi)
+            city.releaseCheckpointActor(emi);
+        city.checkpoint();
+    }
+
     private void emiEvent(ref InstanceContext city, Emi.Event what)
     {
         final switch (what)
@@ -263,6 +281,10 @@ struct Gnomeregan
         case Emi.Event.chargeNorth:
             city.spawnObjects(explosiveCharge, 40, northCaveIn, 12);
             break;
+        case Emi.Event.finished:
+            if (emiFinishing)
+                emiOver(city);
+            break;
         case Emi.Event.grubbis:
             // Grubbis and Chomper come out of the northern tunnel, for Emi.
             if (const him = city.summon(grubbis, Location(-476.3761f, -108.1901f, -145.7763f, 1.919862f), 0, emi))
@@ -279,7 +301,7 @@ struct Emi
 {
     enum Signals : uint { grubbisDone = 1, grubbisDead = 2 }
     /// What she tells the city's script.
-    enum Event : int { started, openSouth, closeSouth, openNorth, closeNorth, chargeSouth, chargeNorth, grubbis }
+    enum Event : int { started, openSouth, closeSouth, openNorth, closeNorth, chargeSouth, chargeNorth, grubbis, finished }
     enum uint begin = 1;
     enum : int
     {
@@ -527,6 +549,7 @@ struct Emi
         case 40:
             me.castSelf(fireworksRed);
             me.say(sayFinish2);
+            me.signalDungeon(Gnomeregan.Signals.emi, Event.finished); // her stand is over
             break;
         default:
             break;

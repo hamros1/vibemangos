@@ -1531,8 +1531,16 @@ unittest
     assert(d.all(grubbis).length == 1 && d.find(grubbis).guid == him, format!"with the same Grubbis (%s of them, %s)\n%s"(
         d.all(grubbis).length, d.saved!(imported!"dmangos.scripts.gnomeregan".Gnomeregan).grubbisFight, d.story));
     d.kill(d.find(grubbis));
+    // A crash in the half minute after his death, before her northern blast: she comes back and finishes her stand.
+    d.run(3.seconds);
+    assert(!d.heard(-1090022), "her stand over already");
+    d.restartAfterCrash();
+    her = d.map.creatureAt(guid);
+    assert(her !is null && her.alive && d.all(emi).length == 1, "the same Emi after a crash in her stand's end");
     assert(d.runUntil(() => d.heard(-1090022), 60.seconds), "she finishes her stand\n" ~ d.story);
     assert(d.loadedObject(rocket) !is null, "the red rockets");
+    if (auto north = d.loadedObject(146_085))
+        assert(!Dungeon.isOpen(north), "the northern tunnel not blasted shut");
 }
 
 // ---------------------------------------------------------------------------------------------------------------
