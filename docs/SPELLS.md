@@ -161,6 +161,9 @@ primary sources (docs/FORMULAS.md); CMaNGOS and vmangos are second opinions.
 * **A creature's chained spell jumps** (Chain Lightning; Chain Heal to the most hurt friend), as a player's does,
   to units near the one before (`chainFrom`): at its enemies, the players and what they control; each jump struck
   less by the spell's multiplier. It struck its first target only before. The jumps are to units on its node.
+* **A creature's area at its place in the database** (`TARGET_LOCATION_DATABASE`, `spell_target_position`) is
+  there, on its map, as CMaNGOS's is: Onyxia's Deep Breath, each Breath of its chain at the next point across her
+  lair. It was around her (or its target) unless a `SpellRule` said otherwise (Sapphiron's Frost Breath).
 * **A creature swings its off hand** as CMaNGOS's does: when it holds a weapon there (310 creatures' equipment),
   its template forces it (`CREATURE_EXTRA_FLAG_DUAL_WIELD_FORCED`, 14) or Dual Wield (674) taught it
   (`Creature.canDualWield`). The off hand has its own timer, never within 200 ms of the main hand's, hits for half

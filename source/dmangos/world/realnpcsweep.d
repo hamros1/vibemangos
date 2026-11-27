@@ -402,7 +402,33 @@ private final class NpcSweeper
         const teleportsPlayer = s.hasEffect(SpellEffect.teleportUnits) || s.hasEffect(SpellEffect.teleportUnitsFaceCaster);
         const pullsPlayer = s.hasEffect(SpellEffect.pullTowards);
         const moves = teleportsPlayer || pullsPlayer || s.hasEffect(SpellEffect.leap);
-        const destination = teleportsPlayer ? sp.id in data.spellTargets : null;
+        // An area of enemies at its place in the database (Onyxia's Breaths across her lair): the player stands there,
+        // in a copy of its dungeon if it is one.
+        bool atDatabaseArea(size_t i)
+        {
+            with (ImplicitTarget)
+                return s.effect[i] && s.implicitTargetA[i] == database
+                    && s.casting.implicitTargetB[i].among(enemiesAroundDest, enemiesAroundSource);
+        }
+        const databaseAt = sp.id in data.spellTargets;
+        const databaseArea = databaseAt !is null && (databaseAt.map == 0
+            || context.dungeons.instanceable(databaseAt.map)) && (atDatabaseArea(0) || atDatabaseArea(1)
+            || atDatabaseArea(2));
+        const destination = teleportsPlayer || databaseArea ? databaseAt : null;
+        // ... and the caster in sight of it (its spell's next steps, as the player sees them), but farther from it than
+        // its area reaches: only an area at the database's place, not one around the caster, finds the player.
+        const usualSpot = spot;
+        scope (exit)
+            spot = usualSpot;
+        if (databaseArea)
+        {
+            float reach = 0;
+            foreach (i; 0 .. 3)
+                if (atDatabaseArea(i))
+                    reach = max(reach, radius(*s, i, context.client));
+            spot = databaseAt.at;
+            spot.x += reach + 10;
+        }
         // Its first caster; one that can pay for it if the first cannot (a level 35 Sea Witch has a Blizzard of 1400
         // mana among her spells, more than she has: she never casts it, Volida does).
         uint entry = sp.casters[0];
@@ -441,6 +467,8 @@ private final class NpcSweeper
         Who who(size_t i)
         {
             const a = s.implicitTargetA[i], b = s.casting.implicitTargetB[i];
+            if (databaseArea && atDatabaseArea(i))
+                return Who.enemy;
             if (s.effect[i] == SpellEffect.pullTowards && a == ImplicitTarget.unit)
                 return Who.enemy; // Magnetic Pull's explicit target is a player.
             with (ImplicitTarget)
@@ -478,6 +506,8 @@ private final class NpcSweeper
         heroAt.x += distance * cos(facing);
         heroAt.y += distance * sin(facing);
         heroAt.orientation = moves ? 0 : PI;
+        if (databaseArea)
+            heroAt = databaseAt.at;
         const guid = nextGuid++;
         auto hero = player(guid, takesMana ? 8 : 1, level, heroAt);
         auto me = hero.session.inWorld;
@@ -628,6 +658,9 @@ private final class NpcSweeper
         // One its script makes its target cast on itself (`CAST_FORCE_TARGET_SELF`) is at the player if it is at an
         // enemy (Mark of Detonation), else at itself.
         if (((sp.flags & castForceTargetSelf) && (!wantsEnemy || sp.eaiTarget == 0)) || atItself)
+            target = caster.guid;
+        // So is an area at its place in the database, as its caster casts it (Onyxia her Breaths).
+        if (databaseArea)
             target = caster.guid;
         // So is a flight (William Kielar's gossip sends the player to Naxxramas).
         const flies = s.hasEffect(SpellEffect.sendTaxi);

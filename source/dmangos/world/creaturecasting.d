@@ -985,9 +985,12 @@ mixin template CreatureCasting()
                     center = other.position;
             import dmangos.world.combat : detects;
             const rule = lore is null ? typeof(lore.scripts.rule(0)).init : lore.scripts.rule(spell.id);
-            if (rule.areaSeenFromCenter && a == ImplicitTarget.database)
+            // At its place in the database (`TARGET_LOCATION_DATABASE`, `spell_target_position`), on this map: Onyxia's
+            // Deep Breath, each Breath of it at the next point across her lair; Frost Breath's spot below Sapphiron.
+            if (a == ImplicitTarget.database && lore !is null)
                 if (const fixed = spell.id in lore.data.spellTargets)
-                    center = fixed.at;
+                    if (fixed.map == world_.id)
+                        center = fixed.at;
             import dmangos.world.spellselection : mostAffected, unitsInArea;
 
             const r = radius(*spell, i, lore.clientData);
