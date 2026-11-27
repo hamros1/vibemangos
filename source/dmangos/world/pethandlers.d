@@ -1565,7 +1565,7 @@ mixin template PetHandlers()
         ByteWriter state;
         state.put(map.id);
         state.put(map.instanceId);
-        state.put(context.transportNow());
+        state.put(context.fleet.transportNow());
         const now = context.clock();
         const countAt = state.length;
         state.put(0u);
@@ -1769,7 +1769,7 @@ mixin template PetHandlers()
 
         if (state.empty || state.read!uint != map.id || state.read!uint != map.instanceId)
             return;
-        const elapsed = cast(int)(context.transportNow() - state.read!uint);
+        const elapsed = cast(int)(context.fleet.transportNow() - state.read!uint);
         const now = context.clock();
         const then = now - (elapsed > 0 ? elapsed : 0).msecs;
         foreach (_; 0 .. state.read!uint)
@@ -2252,7 +2252,7 @@ mixin template PetHandlers()
                     if (near(mirror.position))
                     {
                         const pulse = TotemWeaponEnchant(totem.guid, player.guid, member.guid,
-                            group.id, aura, map.id, map.instanceId, context.transportNow() + ms,
+                            group.id, aura, map.id, map.instanceId, context.fleet.transportNow() + ms,
                             cast(ubyte) auraEffect, cast(ubyte) effect);
                         context.sendTotemWeaponEnchant(mirror.owner, pulse);
                     }

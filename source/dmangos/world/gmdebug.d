@@ -146,7 +146,7 @@ bool handleGetTransporterTimeCommand(Character gm)
             if (ship.entry == counterOf(guid) && ship.period)
             {
                 gm.systemMessage(format!"%s is %s ms into its %s ms circuit."
-                    (ship.name, gm.context.transportNow() % ship.period, ship.period));
+                    (ship.name, gm.context.fleet.transportNow() % ship.period, ship.period));
                 return true;
             }
     gm.redSystemMessage("Board a scheduled ship or zeppelin first.");

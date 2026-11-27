@@ -1140,7 +1140,7 @@ private:
         Position elevator, current;
         float maxSpeed;
         if (!offset.isFinite || abs(offset.x) > 100 || abs(offset.y) > 100 || abs(offset.z) > 100
-            || !context.elevatorPose(map, move.transportGuid, elevator, maxSpeed))
+            || !context.fleet.elevatorPose(map, move.transportGuid, elevator, maxSpeed))
         {
             alignedElevator = 0;
             return;

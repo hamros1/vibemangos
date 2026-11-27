@@ -123,7 +123,7 @@ private:
     {
         import std.math : isFinite;
 
-        const expiresIn = cast(int)(renewal.deadline - context.transportNow());
+        const expiresIn = cast(int)(renewal.deadline - context.fleet.transportNow());
         if (expiresIn <= 0 || expiresIn > PartyAreaAura.lifetime + 500 || renewal.radius <= 0
             || !isFinite(renewal.radius) || !context.client.isValidMapCoord(renewal.map, renewal.x, renewal.y, renewal.z)
             || !inPartyAuraRange(player.position, Position(renewal.x, renewal.y, renewal.z), renewal.radius)
@@ -156,7 +156,7 @@ private:
 
     private void expirePartyAreaAuras()
     {
-        const now = context.transportNow();
+        const now = context.fleet.transportNow();
         foreach (key; receivedAreaAuras.keys)
         {
             auto row = receivedAreaAuras[key];
@@ -300,7 +300,7 @@ private:
                         const ms = aura.duration < 0 ? PartyAreaAura.lifetime
                             : min(cast(uint) aura.duration, PartyAreaAura.lifetime);
                         const renewal = PartyAreaAura(src.guid, player.guid, recipient.guid, group.id, aura.spell.id,
-                            map.id, map.instanceId, context.transportNow() + ms, aura.casterLevel,
+                            map.id, map.instanceId, context.fleet.transportNow() + ms, aura.casterLevel,
                             src.at.x, src.at.y, src.at.z, r, aura.amount, cast(ubyte) effects);
                         map.holdCasterReplica(src.guid, recipient.owner, ms + 1_000);
                         context.sendPartyAreaAura(recipient.owner, renewal);
@@ -960,7 +960,7 @@ private:
                 {
                     state.put(map.id);
                     state.put(map.instanceId);
-                    state.put(context.transportNow());
+                    state.put(context.fleet.transportNow());
                 }
                 aura.saveState(state);
             }
@@ -973,7 +973,7 @@ private:
 
         if (state.empty || state.read!uint != map.id || state.read!uint != map.instanceId)
             return;
-        const elapsed = max(0, cast(int)(context.transportNow() - state.read!uint));
+        const elapsed = max(0, cast(int)(context.fleet.transportNow() - state.read!uint));
         loadingSavedAuras = true;
         scope (exit) loadingSavedAuras = false;
         while (!state.empty)

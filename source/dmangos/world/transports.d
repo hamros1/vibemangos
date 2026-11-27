@@ -533,7 +533,7 @@ unittest
             stop = i;
     void to(uint progress)
     {
-        const at = context.transportNow() % period;
+        const at = context.fleet.transportNow() % period;
         now += ((progress + period - at) % period).msecs;
         context.update(now);
     }

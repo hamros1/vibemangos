@@ -203,6 +203,11 @@ struct ShutdownTimer
  */
 final class WorldContext : GroupDirectory, IdCounters, SessionHandler
 {
+    import dmangos.world.ships : Ships;
+
+    /// See `dmangos.world.ships`.
+    Ships fleet;
+
     import dmangos.world.postoffice : PostOffice;
 
     /// See `dmangos.world.postoffice`.
@@ -821,7 +826,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         const spell = spellInfo(aura.triggerSpell[pulse.auraEffect]);
         if (spell is null || spell.effect[pulse.weaponEffect] != SpellEffect.enchantHeldItem)
             return;
-        const duration = cast(int) (pulse.expires - transportNow());
+        const duration = cast(int) (pulse.expires - fleet.transportNow());
         if (duration <= 0 || duration > aura.casting.amplitude[pulse.auraEffect] * 2)
             return;
         const reach = radius(*spell, pulse.weaponEffect, client);
@@ -1368,7 +1373,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
             return;
 
         const now = clock();
-        const transferTime = transportNow();
+        const transferTime = fleet.transportNow();
         foreach (ref impact; replicaSpellImpacts)
         {
             if (impact.retired || impact.hit.caster != caster)
@@ -1416,7 +1421,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         if (!count)
             return;
         const now = clock();
-        const arrived = transportNow();
+        const arrived = fleet.transportNow();
         ReplicaSpellImpact[] restored;
         foreach (_; 0 .. count)
         {
@@ -2270,7 +2275,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
             || !victim.map.inLineOfSight(from, to))
             return;
         if (!victim.creature.consumeChannelCompletion(spell.id, caster.combatGuid, token,
-                namedChannelTriggerEffect(*spell), transportNow(), victim.map))
+                namedChannelTriggerEffect(*spell), fleet.transportNow(), victim.map))
             return;
         import dmangos.world.spelldamage : crystalPrisonCompletion, crystalPrisonConjure;
 
@@ -3027,8 +3032,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
 
     /// When the server started, in Unix time and on `MonoTime`'s clock.
     private long startUnixTime;
-    private long startUnixMillis; /// the same, to the millisecond (ships' schedules)
-    private MonoTime startClock;
+    package long startUnixMillis; /// the same, to the millisecond (ships' schedules)
+    package MonoTime startClock;
 
     /// Chooses creatures' models and levels.
     private Random spawnRandom;
@@ -3054,6 +3059,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         LoginDatabase accounts = null, Battlegroup sharedBattles = null)
     in (database !is null && data !is null && client !is null)
     {
+        fleet = new Ships(this);
         postOffice = new PostOffice(this);
         dungeons = new Dungeons(this);
         this.accounts = accounts is null ? new MemoryLoginDatabase : accounts;
@@ -3086,7 +3092,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         {
             import dmangos.world.gameobject : transportClockSource;
 
-            transportClockSource = &transportNow;
+            transportClockSource = &fleet.transportNow;
         }
         this.next = database.highestGuids();
         this.groups = new Groups(database, this, next.group, config.battlegroup.length ? config.realmId : 0);
@@ -4212,168 +4218,15 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     // Ships and zeppelins (`dmangos.world.transports`)
     // -----------------------------------------------------------------------
 
-    /// A ship sailing: its schedule, its object, and the map it is on now (`uint.max`: not placed yet).
-    private struct ShipAtSea
-    {
-        const(Ship)* ship;
-        ShipObject object;
-        uint map = uint.max;
-    }
 
-    private ShipAtSea[] ships;
 
-    /// The transport clock now: the wall clock's milliseconds, moving with `clock`.
-    uint transportNow()
-    {
-        return transportClock(startUnixMillis + (clock() - startClock).total!"msecs");
-    }
 
-    private struct ElevatorAnimation
-    {
-        uint entry;
-        float[4] rotation;
-        ElevatorPath path;
-    }
 
-    private ElevatorAnimation[ulong] elevatorAnimations;
-    private bool[ulong][uint] longElevatorHomes;
 
-    /// Keep routes longer than a grid cell available while this map is active.
-    private bool[ulong] elevatorHomesFor(uint mapId)
-    {
-        import dmangos.world.gameobject : GameObjectType;
-        import dmangos.world.grid : cellSize;
 
-        if (auto homes = mapId in longElevatorHomes)
-            return *homes;
-        bool[ulong] homes;
-        foreach (cell, indices; data.gameObjectCells.get(mapId, null))
-            foreach (index; indices)
-            {
-                const spawn = &data.gameObjectSpawns[index];
-                const proto = spawn.entry in data.gameObjectTemplates;
-                if (proto is null || proto.type != GameObjectType.transport || proto.data[1] || spawn.respawnSeconds < 0)
-                    continue;
-                const path = ElevatorPath(client.transportFrames(spawn.entry), spawn.worldRotation);
-                if (path.travelsAcross(cellSize))
-                {
-                    homes[cell] = true;
-                    break;
-                }
-            }
-        longElevatorHomes[mapId] = homes;
-        return homes;
-    }
 
-    private void refreshElevatorHomes(Map map_)
-    {
-        longElevatorHomes.remove(map_.id);
-        map_.elevatorHomes = elevatorHomesFor(map_.id);
-    }
 
-    private ElevatorPath elevatorPathOf(ulong guid, const ref UpdateValues fields)
-    {
-        import dmangos.world.gameobject : GameObjectType;
-        import dmangos.world.updatefields;
 
-        if (fields.type != TypeId.gameObject || fields.get!GAMEOBJECT_TYPE_ID != GameObjectType.transport
-            || fields.get!GAMEOBJECT_LEVEL != 0)
-            return ElevatorPath.init;
-        const entry = fields.get!OBJECT_FIELD_ENTRY;
-        float[4] rotation;
-        foreach (i, ref component; rotation)
-            component = fields.get!GAMEOBJECT_ROTATION(i);
-        auto animation = guid in elevatorAnimations;
-        if (animation is null || animation.entry != entry || animation.rotation != rotation)
-        {
-            elevatorAnimations[guid] = ElevatorAnimation(entry, rotation, ElevatorPath(client.transportFrames(entry), rotation));
-            animation = guid in elevatorAnimations;
-        }
-        return animation.path;
-    }
-
-    /// The current pose of a loaded elevator (local object or replica).
-    package bool elevatorPose(Map map_, ulong guid, out Position at, out float maxSpeed)
-    {
-        import dmangos.world.updatefields;
-
-        auto platform = map_.findObject(guid);
-        if (platform is null)
-            return false;
-        const fields = &platform.fields();
-        const path = elevatorPathOf(guid, *fields);
-        if (!path.valid)
-            return false;
-
-        const stationary = Position(fields.get!GAMEOBJECT_POS_X, fields.get!GAMEOBJECT_POS_Y,
-            fields.get!GAMEOBJECT_POS_Z, fields.get!GAMEOBJECT_FACING);
-        at = path.positionAt(stationary, transportNow());
-        maxSpeed = path.maxSpeed;
-        return at.isFinite;
-    }
-
-    /**
-     * Each tick: each ship is where its schedule says. One that came to another map leaves the old one (its
-     * players forget it) for the new one (its players get it), and the players aboard cross with it.
-     * Ships on dungeon maps are not sailed.
-     */
-    private void updateShips()
-    {
-        import dmangos.log : info;
-        import dmangos.world.movement : MovementFlags, Position;
-
-        if (ships.length == 0 && data.ships.length)
-            foreach (ref ship; data.ships)
-            {
-                import std.algorithm.searching : canFind;
-
-                if (config.disabledTransports.canFind(ship.entry))
-                    continue; // left out by the configuration
-                bool dungeon;
-                foreach (ref k; ship.frames)
-                    dungeon |= dungeons.instanceable(k.node.map);
-                if (dungeon)
-                    continue;
-                const k = ship.frames[0];
-                const t = ship.entry in data.gameObjectTemplates;
-                ships ~= ShipAtSea(&ship, new ShipObject(t, ship.period,
-                    Position(k.node.x, k.node.y, k.node.z, k.facing), &transportNow));
-            }
-        const clock = transportNow();
-        foreach (ref s; ships)
-        {
-            size_t frame;
-            const map = mapAt(s.ship.frames, clock % s.ship.period, frame);
-            // Arriving at a crossing, it is at the next frame, on the next map.
-            auto k = &s.ship.frames[frame];
-            if (k.teleport)
-                k = &s.ship.frames[(frame + 1) % s.ship.frames.length];
-            const at = Position(k.node.x, k.node.y, k.node.z, k.facing);
-            s.object.moveTo(at);
-            if (map == s.map)
-                continue;
-            const from = s.map;
-            s.map = map;
-            Character[] aboard;
-            if (from != uint.max)
-                if (auto old = existingMap(from))
-                {
-                    foreach (who; old.playersNow())
-                    {
-                        const move = &who.character.movement;
-                        if (move.has(MovementFlags.onTransport) && move.transportGuid == s.object.guid)
-                            if (auto session = cast(Character) who)
-                                aboard ~= session;
-                    }
-                    old.removeEverywhere(s.object.guid);
-                }
-            if (auto there = existingMap(map))
-                there.addEverywhere(s.object);
-            info!"%s sails to map %s (%s aboard)"(s.ship.name, map, aboard.length);
-            foreach (session; aboard)
-                session.rideShipAcross(map, at, s.object.guid, s.ship.entry);
-        }
-    }
 
     // -----------------------------------------------------------------------
     // GM tickets (`gm_tickets`)
@@ -4509,13 +4362,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         auto created = new Map(id, MapSettings(config.visibilityDistance, config.visibilityRelocationLimit,
             config.gridCleanUpDelay * 1000),
             &serverTime, spawner, mapTerrain, owns, gameObjectModels is null ? null :
-                new GameObjectCollision(gameObjectModels, client, &transportNow));
+                new GameObjectCollision(gameObjectModels, client, &fleet.transportNow));
         created.instanceId = instance;
         created.questSpawnPhases = data.questSpawnPhases;
         created.gameObjectTemplate = (uint entry) => entry in data.gameObjectTemplates;
-        created.elevatorPath = &elevatorPathOf;
-        created.elevatorClock = &transportNow;
-        created.elevatorHomes = elevatorHomesFor(id);
+        created.elevatorPath = &fleet.elevatorPathOf;
+        created.elevatorClock = &fleet.transportNow;
+        created.elevatorHomes = fleet.elevatorHomesFor(id);
         if (instance == 0) // a dungeon's copies are all on one node: nobody else needs replicas of them
             created.replicator = replicator;
         created.world = this; // what happens beyond the map is this world's, called from the map where it happens
@@ -4642,7 +4495,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                     worldScripts[id] = script;
                 }
         if (instance == 0) // the ships on this map now
-            foreach (ref ship; ships)
+            foreach (ref ship; fleet.ships)
                 if (ship.map == id)
                     created.addEverywhere(ship.object);
         return created;
@@ -6013,9 +5866,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                 warning!"migration: could not refresh saved game-object placements on map %s: %s"(mapId, error.msg);
             if (movedElevator)
             {
-                longElevatorHomes.remove(mapId);
+                fleet.longElevatorHomes.remove(mapId);
                 if (auto m = existingMap(mapId))
-                    m.elevatorHomes = elevatorHomesFor(mapId);
+                    m.elevatorHomes = fleet.elevatorHomesFor(mapId);
             }
         }
         return edited;
@@ -6530,7 +6383,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         {
             if (departing && creature.loot !is null)
                 creature.loot.sendReleaseForAll();
-            const now = transportNow();
+            const now = fleet.transportNow();
             auto kind = MigrantKind.creature;
             if (creature.spawn.guid >= temporaryCounterStart && creature.summon.type != TempSpawnType.none)
             {
@@ -6569,7 +6422,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
             kind = MigrantKind.summonedGameObject;
             serialize(w, gameObject.spawn);
         }
-        gameObject.saveState(w, transportNow(), expires);
+        gameObject.saveState(w, fleet.transportNow(), expires);
         return Migrant(kind, gameObject.spawn.guid, 0, w.data);
     }
 
@@ -6583,7 +6436,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         auto reader = ByteReader(migrant.state);
         deserialize!CreatureSpawn(reader);
         const summon = deserialize!TempSpawn(reader);
-        const elapsed = cast(int) (transportNow() - reader.read!uint);
+        const elapsed = cast(int) (fleet.transportNow() - reader.read!uint);
         if (summon.summoner != owner || (summon.timed && summon.timer <= elapsed))
             return null;
         return cast(Creature) restoreWorldMigrant(migrant, destination);
@@ -6612,7 +6465,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
             auto creature = makeCreature(&data.creatureSpawns[*at]);
             if (creature is null)
                 return null;
-            loadMigrantCreature(creature, instance, transportNow(), r);
+            loadMigrantCreature(creature, instance, fleet.transportNow(), r);
             return creature;
         }
         const at = m.spawn in gameObjectSpawnIndex;
@@ -6622,7 +6475,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
             return null;
         }
         auto gameObject = makeGameObject(data.gameObjectSpawns[*at]);
-        gameObject.loadState(r, transportNow());
+        gameObject.loadState(r, fleet.transportNow());
         return gameObject;
     }
 
@@ -6664,7 +6517,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                 return null;
             auto restored = makeGameObject(spawn);
             restored.instanceId = destination.instanceId;
-            restored.loadState(state, transportNow());
+            restored.loadState(state, fleet.transportNow());
             if (!registerMigratedExpiry(restored, destination, !destination.instanceId))
                 return null;
             bindMigrantLoot(restored, destination);
@@ -6675,7 +6528,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
             auto state = ByteReader(migrant.state);
             const spawn = deserialize!CreatureSpawn(state);
             const summon = deserialize!TempSpawn(state);
-            const now = transportNow();
+            const now = fleet.transportNow();
             const transit = cast(int)(now - state.read!uint);
             if (durable || migrant.spawn > 0xFF_FFFF || spawn.guid != migrant.spawn
                 || spawn.entry !in data.creatureTemplates || summon.type > TempSpawnType.timedOutOfCombatOrCorpse
@@ -6712,7 +6565,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                     return null;
                 registerGameObjectSpawn(saved.get);
                 if (template_.type == GameObjectType.transport)
-                    refreshElevatorHomes(destination);
+                    fleet.refreshElevatorHomes(destination);
             }
         }
         catch (DatabaseException error)
@@ -6733,7 +6586,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                     replaceGameObjectSpawn(*index, placement);
                     if (const template_ = placement.entry in data.gameObjectTemplates)
                         if (template_.type == GameObjectType.transport)
-                            refreshElevatorHomes(destination);
+                            fleet.refreshElevatorHomes(destination);
                 }
             }
         auto restored = restoreMigrantInInstance(migrant, destination.instanceId);
@@ -6828,9 +6681,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                 registerGameObjectSpawn(saved);
                 if (template_.type == GameObjectType.transport)
                 {
-                    longElevatorHomes.remove(saved.map);
+                    fleet.longElevatorHomes.remove(saved.map);
                     if (auto map_ = saved.map in maps)
-                        (*map_).elevatorHomes = elevatorHomesFor(saved.map);
+                        (*map_).elevatorHomes = fleet.elevatorHomesFor(saved.map);
                 }
             }
         }
@@ -7786,7 +7639,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         auto go = makeGameObject(data.gameObjectSpawns[index]);
         go.instanceId = map.instanceId;
         if (go.type == GameObjectType.transport)
-            refreshElevatorHomes(map);
+            fleet.refreshElevatorHomes(map);
         map.addObject(go);
         return go;
     }
@@ -7836,7 +7689,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         auto made = makeGameObject(data.gameObjectSpawns[*at]);
         made.instanceId = map.instanceId;
         if (made.type == GameObjectType.transport)
-            refreshElevatorHomes(map);
+            fleet.refreshElevatorHomes(map);
         map.addObject(made);
         return made;
     }
@@ -7888,7 +7741,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         unsavedGameObjectSpawns.remove(s.guid);
         map.removeObject(go.guid);
         if (go.type == GameObjectType.transport)
-            refreshElevatorHomes(map);
+            fleet.refreshElevatorHomes(map);
         return true;
     }
 
@@ -9020,7 +8873,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     GameObject makeGameObject(scope const ref GameObjectSpawn spawn)
     {
         auto go = new GameObject(spawn, spawn.entry in data.gameObjectTemplates);
-        go.setElevator(elevatorPathOf(go.guid, go.fields), &transportNow);
+        go.setElevator(fleet.elevatorPathOf(go.guid, go.fields), &fleet.transportNow);
         if (const kit = worldPvp is null ? 0 : worldPvp.artKitOf(spawn.entry, spawn.x, spawn.y, spawn.z))
         {
             import dmangos.world.updatefields : GAMEOBJECT_ARTKIT;
@@ -9107,7 +8960,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
 
             const visibleUntil = scriptedGameObjects.get(GameObjectOnMap(map, go.guid), long.max);
             ByteWriter w;
-            go.saveState(w, transportNow(), 0, claimed, looter);
+            go.saveState(w, fleet.transportNow(), 0, claimed, looter);
             const previous = outdoorChests.get(go.spawn.guid, InstanceChestRecord.init);
             const openedUntil = go.despawnTimer > 0 ? unixTime + (go.despawnTimer + 999L) / 1000 : 0;
             auto record = InstanceChestRecord(0, go.spawn.guid,
@@ -9189,7 +9042,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         try
         {
             auto bytes = ByteReader(fromHex(chest.loot));
-            go.loadState(bytes, transportNow());
+            go.loadState(bytes, fleet.transportNow());
             if (chest.expiresAt && chest.expiresAt <= unixTime)
             {
                 go.loot = null;
@@ -9871,7 +9724,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
             eventMails();
             groupService.meetingStonesTick(elapsed); // the meeting stones' queue is the groups' keeper's
         }
-        updateShips();
+        fleet.updateShips();
         linkFollowers();
         scriptedGameObjectsDue();
         respawnDue(now);

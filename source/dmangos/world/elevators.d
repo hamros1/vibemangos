@@ -204,8 +204,8 @@ unittest
     }
     void tickTo(uint progress)
     {
-        ownerNow += ((progress + period - owner.transportNow() % period) % period).msecs;
-        viewerNow += ((progress + period - viewer.transportNow() % period) % period).msecs;
+        ownerNow += ((progress + period - owner.fleet.transportNow() % period) % period).msecs;
+        viewerNow += ((progress + period - viewer.fleet.transportNow() % period) % period).msecs;
         owner.update(ownerNow);
         viewer.update(viewerNow);
     }
@@ -258,7 +258,7 @@ unittest
     assert(opcodesOf(witness.read()).canFind(Opcode.MSG_MOVE_HEARTBEAT), "the rider's position was sent to observers");
     Position localPose;
     float maxSpeed;
-    assert(owner.elevatorPose(owner.map(0), platform.guid, localPose, maxSpeed));
+    assert(owner.fleet.elevatorPose(owner.map(0), platform.guid, localPose, maxSpeed));
     assert(localPose == Position(150, 10, 40) && maxSpeed > 0);
     assert(platform.position == localPose && viewer.map(0).findObject(platform.guid).position == localPose);
     assert(viewer.map(0).knownTo(9).canFind(platform.guid), "the animated platform came into view");

@@ -755,7 +755,7 @@ unittest
     auto current = next.context.map(kalimdor);
     auto resumed = current.creatureAt(guid);
     assert(to.creatureAt(guid) is null && resumed !is null);
-    const transit = max(0, cast(int)(next.context.transportNow() - owner.context.transportNow()));
+    const transit = max(0, cast(int)(next.context.fleet.transportNow() - owner.context.fleet.transportNow()));
     assert(resumed.summon.timer == 130_000 - transit);
     assert(current.creaturesNear(at, 1).length == 1, "the same temporary boss keeps its remaining lifetime");
 

@@ -232,7 +232,7 @@ mixin template RitualSummoning()
         state.put(cast(uint) go.ritualUsers.length);
         foreach (guid; go.ritualUsers)
             state.put(guid);
-        go.saveState(state, context.transportNow());
+        go.saveState(state, context.fleet.transportNow());
         return state.data;
     }
 
@@ -271,7 +271,7 @@ mixin template RitualSummoning()
             return false;
         go.owner = player.guid;
         go.instanceId = map.instanceId;
-        go.loadState(state, context.transportNow());
+        go.loadState(state, context.fleet.transportNow());
         map.addObject(go);
         ritualPortal = go.guid;
         return true;

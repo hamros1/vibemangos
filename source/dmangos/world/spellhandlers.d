@@ -1870,7 +1870,7 @@ private:
         state.put(bobberAge);
         state.put(bobberBite);
         state.put(bobberGone);
-        go.saveState(state, context.transportNow());
+        go.saveState(state, context.fleet.transportNow());
         return state.data;
     }
 
@@ -1897,7 +1897,7 @@ private:
         ByteWriter state;
         state.put(map.id);
         state.put(map.instanceId);
-        state.put(context.transportNow());
+        state.put(context.fleet.transportNow());
         state.put(channelSpell.id);
         state.put(channelTarget);
         state.put(channelTimer);
@@ -1911,7 +1911,7 @@ private:
 
         if (state.empty || state.read!uint != map.id || state.read!uint != map.instanceId)
             return;
-        const elapsed = max(0, cast(int)(context.transportNow() - state.read!uint));
+        const elapsed = max(0, cast(int)(context.fleet.transportNow() - state.read!uint));
         const spell = context.spellInfo(state.read!uint);
         const target = state.read!ulong;
         const remaining = state.read!int - elapsed;
@@ -1948,7 +1948,7 @@ private:
         bobber = go.guid;
         go.owner = player.guid;
         go.instanceId = map.instanceId;
-        go.loadState(state, context.transportNow());
+        go.loadState(state, context.fleet.transportNow());
         map.addObject(go);
         if (age < bite && bobberAge >= bite)
             bobberSplash(go);
@@ -1964,7 +1964,7 @@ private:
         ByteWriter state;
         state.put(map.id);
         state.put(map.instanceId);
-        state.put(context.transportNow());
+        state.put(context.fleet.transportNow());
         state.put(channel ? channelSpell.id : 0u);
         if (channel)
         {
@@ -1985,7 +1985,7 @@ private:
 
         if (state.empty || state.read!uint != map.id || state.read!uint != map.instanceId)
             return;
-        const elapsed = max(0, cast(int)(context.transportNow() - state.read!uint));
+        const elapsed = max(0, cast(int)(context.fleet.transportNow() - state.read!uint));
         const id = state.read!uint;
         ulong target;
         int remaining, nextCost;
@@ -2129,7 +2129,7 @@ private:
         ByteWriter state;
         state.put(map.id);
         state.put(map.instanceId);
-        state.put(context.transportNow());
+        state.put(context.fleet.transportNow());
         writeCastHandoff(state);
         writeFlightHandoff(state);
         context.writeReplicaImpacts(player.guid, state, false);
@@ -2163,7 +2163,7 @@ private:
     {
         if (state.empty || state.read!uint != map.id || state.read!uint != map.instanceId)
             return;
-        const elapsed = max(0, cast(int)(context.transportNow() - state.read!uint));
+        const elapsed = max(0, cast(int)(context.fleet.transportNow() - state.read!uint));
         readCastHandoff(state, elapsed);
         if (!state.empty)
             readFlightHandoff(state);
@@ -2325,7 +2325,7 @@ private:
             FlightHandoff state;
             state.mapId = map.id;
             state.instance = map.instanceId;
-            const now = context.transportNow();
+            const now = context.fleet.transportNow();
             foreach (ref hit; pendingHits)
             {
                 auto saved = MissileHandoff(snapshotCast(hit.casting), now + cast(uint) hit.left, hit.bounce,
@@ -2362,7 +2362,7 @@ private:
         decode(bytes, state);
         if (state.mapId != map.id || state.instance != map.instanceId)
             return;
-        const now = context.transportNow();
+        const now = context.fleet.transportNow();
         foreach (ref saved; state.hits)
         {
             auto c = restoreCast(saved.cast_);

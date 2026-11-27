@@ -1166,7 +1166,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             if (alive && ai !is null && effect != noEffect && (aura.effects & (1u << effect)))
                 if (auto context = ai.spellCaster(world).context)
                 {
-                    const now = context.transportNow();
+                    const now = context.fleet.transportNow();
                     expiredChannels = expiredChannels.remove!(result => cast(int)(result.deadline - now) <= 0);
                     const grace = aura.spell.id == crystalPrison ? 6_000 : 5_000;
                     expiredChannels ~= ExpiredChannel(aura.spell.id, now + grace, aura.caster, aura.channelToken);

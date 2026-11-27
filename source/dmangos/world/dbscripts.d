@@ -497,7 +497,7 @@ mixin template DbScriptRunner()
     {
         enum maxTransitMs = 2_000;
         if (!peer || message.sequence <= lastCreatureStep.get(peer, 0) || !canWrite()
-            || message.table > DbScriptType.max || cast(int) (transportNow() - message.sentAt) > maxTransitMs)
+            || message.table > DbScriptType.max || cast(int) (fleet.transportNow() - message.sentAt) > maxTransitMs)
             return;
         if (client.maps.lookup(message.map) is null || dungeons.instanceable(message.map))
             return;
@@ -863,7 +863,7 @@ mixin template DbScriptRunner()
         import dmangos.world.migration : Migrant, MigrantKind;
 
         Migrant[] runs;
-        const now = transportNow();
+        const now = fleet.transportNow();
         foreach (run; scriptRuns)
         {
             if (run.mapId != map.id || run.instanceId || run.home == noCell || run.next >= run.steps.length)
@@ -897,7 +897,7 @@ mixin template DbScriptRunner()
         auto r = ByteReader(migrant.state);
         const type = cast(DbScriptType) r.read!ubyte;
         const next = r.read!uint, elapsed = r.read!uint;
-        const transit = max(0, cast(int)(transportNow() - r.read!uint));
+        const transit = max(0, cast(int)(fleet.transportNow() - r.read!uint));
         const source = r.read!ulong, target = r.read!ulong, anchor = r.read!ulong;
         if (type > DbScriptType.max || (anchor != source && anchor != target))
             return;
@@ -1713,7 +1713,7 @@ mixin template DbScriptRunner()
                 return false;
         }
         const message = ScriptCreatureStep(nextGameplaySequence(), actor.guid, source.guid, target.guid,
-            map.id, step.id, step.fingerprint, transportNow(), cast(ubyte) type);
+            map.id, step.id, step.fingerprint, fleet.transportNow(), cast(ubyte) type);
         sendScriptCreatureStep(actor.mirror.owner, message);
         return false;
     }
@@ -2216,7 +2216,7 @@ mixin template DbScriptRunner()
                 else if (owner && owner != from && !forwarded && sendScriptCreatureStep !is null)
                 {
                     const message = ScriptCreatureStep(nextGameplaySequence(), source, source, target, map.id, step.id,
-                        step.fingerprint, transportNow(), cast(ubyte) type, from != 0, at.x, at.y, at.z, at.orientation);
+                        step.fingerprint, fleet.transportNow(), cast(ubyte) type, from != 0, at.x, at.y, at.z, at.orientation);
                     sendScriptCreatureStep(owner, message);
                 }
                 return;

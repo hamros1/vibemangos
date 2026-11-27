@@ -560,7 +560,7 @@ mixin template EnvironmentHandlers()
         ByteWriter state;
         state.put(map.id);
         state.put(map.instanceId);
-        state.put(context.transportNow());
+        state.put(context.fleet.transportNow());
         writeEnvironmentHandoff(state);
         state.put(fallingAtCheckpoint);
         return state.data;
@@ -573,7 +573,7 @@ mixin template EnvironmentHandlers()
 
         if (state.empty || state.read!uint != map.id || state.read!uint != map.instanceId)
             return;
-        const elapsed = cast(uint) max(0, cast(int)(context.transportNow() - state.read!uint));
+        const elapsed = cast(uint) max(0, cast(int)(context.fleet.transportNow() - state.read!uint));
         auto snapshot = deserialize!EnvironmentHandoff(state);
         foreach (ref timer; snapshot.timers)
         {

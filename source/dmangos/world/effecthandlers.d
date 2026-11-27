@@ -632,7 +632,7 @@ mixin template EffectHandlers()
                 {
                     ByteWriter object;
                     serialize(object, trap.spawn);
-                    trap.saveState(object, context.transportNow());
+                    trap.saveState(object, context.fleet.transportNow());
                     state.put(cast(ubyte) slot);
                     state.put(trapTimes[slot]);
                     state.put(cast(uint) object.length);
@@ -669,7 +669,7 @@ mixin template EffectHandlers()
             auto trap = new GameObject(spawn, proto);
             trap.owner = player.guid;
             trap.instanceId = map.instanceId;
-            trap.loadState(object, context.transportNow());
+            trap.loadState(object, context.fleet.transportNow());
             trapSlots[slot] = trap.guid;
             trapTimes[slot] = left == int.max ? left : left - elapsed;
             map.addObject(trap);
