@@ -64,8 +64,20 @@ unittest
 }
 
 /// See the module documentation.
-mixin template RitualSummoning()
+final class Rituals
 {
+    import dmangos.world.character : Character;
+    import dmangos.world.session : Handles, WorldState;
+    import dmangos.bytes : ByteReader, ByteWriter;
+
+    private Character me;
+
+    ///
+    this(Character me)
+    {
+        this.me = me;
+    }
+
     import dmangos.cluster.protocol : PartySummon;
     import dmangos.world.gameobject : GameObject, GameObjectSpawn, GameObjectType;
     import dmangos.world.movement : Position;
@@ -78,10 +90,10 @@ mixin template RitualSummoning()
     /// The ten raiders at a faction lord's ritual visibly channel the altar's own animation.
     package bool channelRitualAt(GameObject go, uint animation)
     {
-        if (auto spell = context.data.spells.spell(animation))
+        if (auto spell = me.context.data.spells.spell(animation))
         {
-            channelObject = go.guid;
-            startChannel(spell, go.guid);
+            me.channelObject = go.guid;
+            me.startChannel(spell, go.guid);
             return channelsRitualAt(go.guid);
         }
         return false;
@@ -89,11 +101,11 @@ mixin template RitualSummoning()
 
     package bool channelsRitualAt(ulong guid)
     {
-        return channelSpell !is null && channelTarget == guid;
+        return me.channelSpell !is null && me.channelTarget == guid;
     }
 
     private ulong ritualPortal; /// the portal of the ritual this player channels; 0: none
-    private ulong ritualChannelOwner; /// also set for a participant whose portal is owned by another player
+    package ulong ritualChannelOwner; /// also set for a participant whose portal is owned by another player
 
     private PartySummon summonPoint; // a summons waiting for the player's answer
     private ulong latestSummon;
@@ -116,17 +128,17 @@ mixin template RitualSummoning()
         summonPoint = deserialize!PartySummon(reader);
     }
 
-    private void openPartySummonCheckpoint(scope const(imported!"dmangos.world.session".GatewayRecoveryCheckpoints)* checkpoints)
+    package void openPartySummonCheckpoint(scope const(imported!"dmangos.world.session".GatewayRecoveryCheckpoints)* checkpoints)
     {
         import dmangos.log : warning;
         import dmangos.serialization : deserialize;
         import dmangos.world.instancescripting : fromHex;
 
-        if (!context.config.cluster.enabled)
+        if (!me.context.config.cluster.enabled)
             return;
         if (checkpoints is null)
         {
-            context.database.deletePartySummonOffer(player.data.guid);
+            me.context.database.deletePartySummonOffer(me.player.data.guid);
             return;
         }
         try
@@ -136,16 +148,16 @@ mixin template RitualSummoning()
             if (!checkpoint.state.length)
                 return;
             auto state = ByteReader(fromHex(checkpoint.state));
-            const home = connection.gatewayHome;
+            const home = me.connection.gatewayHome;
             if (state.read!ubyte != summonOfferVersion || state.read!ushort != home.node
                 || state.read!ulong != home.incarnation)
                 return;
             const offer = deserialize!PartySummon(state);
-            if (offer.target == player.guid && offer.sequence == latestSummon && offer.expires > context.unixTime)
+            if (offer.target == me.player.guid && offer.sequence == latestSummon && offer.expires > me.context.unixTime)
                 showPartySummon(offer);
         }
         catch (Exception error)
-            warning!"could not restore the party summon offer for player %s: %s"(player.data.guid, error.msg);
+            warning!"could not restore the party summon offer for player %s: %s"(me.player.data.guid, error.msg);
     }
 
     /// Whether `t` is a summoning portal (`SPELL_EFFECT_TRANS_DOOR` makes one instead of a bobber).
@@ -161,55 +173,55 @@ mixin template RitualSummoning()
     package void openRitualPortal(const(SpellInfo)* spell, size_t i)
     {
         const entry = cast(uint) spell.miscValue[i];
-        const t = entry in context.data.gameObjectTemplates;
+        const t = entry in me.context.data.gameObjectTemplates;
         if (!isRitualPortal(t))
             return;
         closeRitualPortal();
-        const at = player.position;
-        GameObjectSpawn spawn = {guid: context.nextTemporaryCounter(), entry: entry, map: map.id, x: at.x, y: at.y,
+        const at = me.player.position;
+        GameObjectSpawn spawn = {guid: me.context.nextTemporaryCounter(), entry: entry, map: me.map.id, x: at.x, y: at.y,
             z: at.z, orientation: at.orientation, respawnSeconds: -1};
         spawn.rotation = [0, 0, sin(at.orientation / 2), cos(at.orientation / 2)];
         auto go = new GameObject(spawn, t);
-        go.owner = player.guid;
-        go.instanceId = map.instanceId;
+        go.owner = me.player.guid;
+        go.instanceId = me.map.instanceId;
         go.ritualSpell = spell.id;
-        go.ritualUsers = [player.guid];
-        go.ritualTarget = player.values.get!UNIT_FIELD_TARGET;
-        go.values.set!OBJECT_FIELD_CREATED_BY(player.guid);
-        go.values.set!GAMEOBJECT_LEVEL(player.data.level);
-        map.addObject(go);
+        go.ritualUsers = [me.player.guid];
+        go.ritualTarget = me.player.values.get!UNIT_FIELD_TARGET;
+        go.values.set!OBJECT_FIELD_CREATED_BY(me.player.guid);
+        go.values.set!GAMEOBJECT_LEVEL(me.player.data.level);
+        me.map.addObject(go);
         ritualPortal = go.guid;
-        channelObject = go.guid; // the channel is at it
+        me.channelObject = go.guid; // the channel is at it
     }
 
     /// The caster's channel ended: its portal goes (`Unit::RemoveGameObject` at the spell's end).
     package void closeRitualPortal()
     {
-        if (ritualPortal && map !is null)
-            map.removeObject(ritualPortal);
+        if (ritualPortal && me.map !is null)
+            me.map.removeObject(ritualPortal);
         ritualPortal = 0;
     }
 
     /// Only a player-owned ritual follows its caster. An altar belongs to its own map.
-    private bool carriesRitualChannel()
+    package bool carriesRitualChannel()
     {
         return ritualChannelOwner != 0;
     }
 
-    private ulong currentRitualOwner()
+    package ulong currentRitualOwner()
     {
         import dmangos.world.replication : Replica;
 
-        if (auto go = map.gameObjectAt(channelTarget))
+        if (auto go = me.map.gameObjectAt(me.channelTarget))
             return isRitualPortal(go.template_) ? go.owner : 0;
-        if (auto mirror = cast(Replica) map.findObject(channelTarget))
+        if (auto mirror = cast(Replica) me.map.findObject(me.channelTarget))
             if (mirror.fields.type == TypeId.gameObject
-                && isRitualPortal(mirror.fields.get!OBJECT_FIELD_ENTRY in context.data.gameObjectTemplates))
+                && isRitualPortal(mirror.fields.get!OBJECT_FIELD_ENTRY in me.context.data.gameObjectTemplates))
                 return mirror.fields.get!OBJECT_FIELD_CREATED_BY;
         return 0;
     }
 
-    private const(ubyte)[] takeRitualHandoff()
+    package const(ubyte)[] takeRitualHandoff()
     {
         const state = ritualPortalState();
         if (state.length)
@@ -217,62 +229,62 @@ mixin template RitualSummoning()
         return state;
     }
 
-    private const(ubyte)[] ritualPortalState()
+    package const(ubyte)[] ritualPortalState()
     {
         import dmangos.serialization : serialize;
 
-        auto go = map.gameObjectAt(ritualPortal);
-        if (go is null || go.owner != player.guid || !channelsRitualAt(go.guid))
+        auto go = me.map.gameObjectAt(ritualPortal);
+        if (go is null || go.owner != me.player.guid || !channelsRitualAt(go.guid))
             return null;
         ByteWriter state;
-        state.put(map.instanceId);
+        state.put(me.map.instanceId);
         serialize(state, go.spawn);
         state.put(go.ritualSpell);
         state.put(go.ritualTarget);
         state.put(cast(uint) go.ritualUsers.length);
         foreach (guid; go.ritualUsers)
             state.put(guid);
-        go.saveState(state, context.fleet.transportNow());
+        go.saveState(state, me.context.fleet.transportNow());
         return state.data;
     }
 
-    private void restoreRitualHandoff(ref ByteReader reader)
+    package void restoreRitualHandoff(ref ByteReader reader)
     {
         auto state = ByteReader(reader.readBytes(reader.read!uint));
         if (!state.empty)
             restoreRitualPortal(state);
-        if (channelSpell !is null && !ritualChannelOwner)
+        if (me.channelSpell !is null && !ritualChannelOwner)
             ritualChannelOwner = currentRitualOwner();
     }
 
-    private bool restoreRitualPortal(ref ByteReader state)
+    package bool restoreRitualPortal(ref ByteReader state)
     {
         import dmangos.serialization : deserialize;
         import dmangos.world.objects : temporaryCounterStart;
 
-        if (state.empty || channelSpell is null || state.read!uint != map.instanceId)
+        if (state.empty || me.channelSpell is null || state.read!uint != me.map.instanceId)
             return false;
         const spawn = deserialize!GameObjectSpawn(state);
-        const proto = spawn.entry in context.data.gameObjectTemplates;
+        const proto = spawn.entry in me.context.data.gameObjectTemplates;
         if (!isRitualPortal(proto) || spawn.guid < temporaryCounterStart || spawn.guid > 0xFF_FFFF
-            || spawn.map != map.id || !context.client.isValidMapCoord(spawn.map, spawn.x, spawn.y, spawn.z, spawn.orientation))
+            || spawn.map != me.map.id || !me.context.client.isValidMapCoord(spawn.map, spawn.x, spawn.y, spawn.z, spawn.orientation))
             return false;
         auto go = new GameObject(spawn, proto);
-        if (go.guid != channelTarget)
+        if (go.guid != me.channelTarget)
             return false;
         go.ritualSpell = state.read!uint;
         go.ritualTarget = state.read!ulong;
         const count = state.read!uint;
-        if (go.ritualSpell != channelSpell.id || !count || count > RitualData.of(proto.data[]).participants)
+        if (go.ritualSpell != me.channelSpell.id || !count || count > RitualData.of(proto.data[]).participants)
             return false;
         foreach (_; 0 .. count)
             go.ritualUsers ~= state.read!ulong;
-        if (go.ritualUsers[0] != player.guid)
+        if (go.ritualUsers[0] != me.player.guid)
             return false;
-        go.owner = player.guid;
-        go.instanceId = map.instanceId;
-        go.loadState(state, context.fleet.transportNow());
-        map.addObject(go);
+        go.owner = me.player.guid;
+        go.instanceId = me.map.instanceId;
+        go.loadState(state, me.context.fleet.transportNow());
+        me.map.addObject(go);
         ritualPortal = go.guid;
         return true;
     }
@@ -287,32 +299,32 @@ mixin template RitualSummoning()
     {
         const r = RitualData.of(go.template_.data[]);
         enum uint notInCombat = 0x10000000; // SPELL_ATTR_NOT_IN_COMBAT_ONLY_PEACEFUL
-        const summonSpell = context.data.spells.spell(r.spell);
-        if (summonSpell !is null && (summonSpell.attributes & notInCombat) && inCombat)
+        const summonSpell = me.context.data.spells.spell(r.spell);
+        if (summonSpell !is null && (summonSpell.attributes & notInCombat) && me.inCombat)
             return;
-        auto owner = go.owner ? context.onlinePlayer(go.owner) : null;
+        auto owner = go.owner ? me.context.onlinePlayer(go.owner) : null;
         if (go.owner)
         {
             // The caster's group only, the caster not again, and only while it channels.
-            if (owner is null || owner is this || owner.map !is map || !owner.channelsRitualAt(go.guid)
-                    || !context.groups.sameGroup(player.guid, go.owner))
+            if (owner is null || owner is me || owner.map !is me.map || !owner.rituals.channelsRitualAt(go.guid)
+                    || !me.context.groups.sameGroup(me.player.guid, go.owner))
                 return;
         }
-        else if (go.ritualUsers.length && r.grouped && !context.groups.sameGroup(player.guid, go.ritualUsers[0]))
+        else if (go.ritualUsers.length && r.grouped && !me.context.groups.sameGroup(me.player.guid, go.ritualUsers[0]))
             return;
         import std.algorithm.searching : canFind;
 
         if (go.owner && !r.animSpell)
             pruneRitualChannels(go);
-        if (go.ritualUsers.canFind(player.guid))
+        if (go.ritualUsers.canFind(me.player.guid))
             return;
-        go.ritualUsers ~= player.guid;
-        if (const anim = r.animSpell ? context.data.spells.spell(r.animSpell) : null)
-            castSpell(anim, SpellTargets(TargetFlags.self, 0), false, 0);
-        else if (const ritual = context.data.spells.spell(go.ritualSpell))
+        go.ritualUsers ~= me.player.guid;
+        if (const anim = r.animSpell ? me.context.data.spells.spell(r.animSpell) : null)
+            me.castSpell(anim, SpellTargets(TargetFlags.self, 0), false, 0);
+        else if (const ritual = me.context.data.spells.spell(go.ritualSpell))
         {
-            channelObject = go.guid; // the ritual's channel alone, without its effects (`TRIGGERED_CHANNEL_ONLY`)
-            startChannel(ritual, go.guid);
+            me.channelObject = go.guid; // the ritual's channel alone, without its effects (`TRIGGERED_CHANNEL_ONLY`)
+            me.startChannel(ritual, go.guid);
         }
         if (go.ritualUsers.length >= r.participants)
             completeRitual(go, r, owner);
@@ -329,12 +341,12 @@ mixin template RitualSummoning()
         {
             if (guid != go.owner)
             {
-                if (auto member = context.onlinePlayer(guid))
+                if (auto member = me.context.onlinePlayer(guid))
                 {
-                    if (member.map !is map || !member.channelsRitualAt(go.guid))
+                    if (member.map !is me.map || !member.rituals.channelsRitualAt(go.guid))
                         continue;
                 }
-                else if (auto mirror = cast(Replica) map.findObject(guid))
+                else if (auto mirror = cast(Replica) me.map.findObject(guid))
                 {
                     if (mirror.fields.type != TypeId.player || mirror.fields.get!UNIT_FIELD_CHANNEL_OBJECT != go.guid)
                         continue;
@@ -348,32 +360,32 @@ mixin template RitualSummoning()
     }
 
     /// Enough have joined (`TriggerSummoningRitual`): the channels end, the portal goes, the summons is cast.
-    private void completeRitual(GameObject go, const RitualData r, typeof(this) owner)
+    private void completeRitual(GameObject go, const RitualData r, Character owner)
     {
-        auto caster = owner !is null ? owner : go.ritualUsers.length ? context.onlinePlayer(
+        auto caster = owner !is null ? owner : go.ritualUsers.length ? me.context.onlinePlayer(
             go.ritualUsers[0]) : null;
         const target = go.ritualTarget;
         foreach (guid; go.ritualUsers)
         {
-            if (auto user = context.onlinePlayer(guid))
+            if (auto user = me.context.onlinePlayer(guid))
             {
-                if (user.map is map && user.channelsRitualAt(go.guid))
+                if (user.map is me.map && user.rituals.channelsRitualAt(go.guid))
                     user.endChannel(false);
             }
             else if (owner !is null)
-                owner.sendRitualAction(PartySummon.Action.finishRitual, guid, go.guid);
+                owner.rituals.sendRitualAction(PartySummon.Action.finishRitual, guid, go.guid);
         }
         if (r.persistent)
             go.ritualUsers = null;
         else
-            map.removeObject(go.guid);
+            me.map.removeObject(go.guid);
         if (caster !is null && caster.player !is null)
-            if (const spell = context.data.spells.spell(r.spell))
+            if (const spell = me.context.data.spells.spell(r.spell))
             {
                 import dmangos.world.spellids : SpellEffect;
 
-                if (spell.hasEffect(SpellEffect.summonPlayer) && !map.unit(target))
-                    caster.summonPlayerEffect(target);
+                if (spell.hasEffect(SpellEffect.summonPlayer) && !me.map.unit(target))
+                    caster.rituals.summonPlayerEffect(target);
                 else
                     caster.castSpell(spell, SpellTargets(TargetFlags.unit, target), true, 0);
             }
@@ -388,17 +400,17 @@ mixin template RitualSummoning()
         sendRitualAction(PartySummon.Action.invite, target);
     }
 
-    private void sendRitualAction(PartySummon.Action action, ulong target, ulong portal = 0)
+    package void sendRitualAction(PartySummon.Action action, ulong target, ulong portal = 0)
     {
-        auto group = context.groups.of(player.guid);
-        if (group is null || target == player.guid || !group.isMember(target))
+        auto group = me.context.groups.of(me.player.guid);
+        if (group is null || target == me.player.guid || !group.isMember(target))
             return;
-        const at = player.position;
-        const area = player.area ? player.area : player.data.zone;
-        const deadline = context.unixTime + (action == PartySummon.Action.invite ? summonAcceptSeconds : 5);
-        const offer = PartySummon(context.nextGameplaySequence(), player.guid, target, group.id,
-            map.id, map.instanceId, area, at.x, at.y, at.z, deadline, action: action, portal: portal);
-        context.groupRelay.routePartySummon(offer);
+        const at = me.player.position;
+        const area = me.player.area ? me.player.area : me.player.data.zone;
+        const deadline = me.context.unixTime + (action == PartySummon.Action.invite ? summonAcceptSeconds : 5);
+        const offer = PartySummon(me.context.nextGameplaySequence(), me.player.guid, target, group.id,
+            me.map.id, me.map.instanceId, area, at.x, at.y, at.z, deadline, action: action, portal: portal);
+        me.context.groupRelay.routePartySummon(offer);
     }
 
     package void offerPartySummon(const ref PartySummon offer)
@@ -410,14 +422,14 @@ mixin template RitualSummoning()
 
         if (offer.action == PartySummon.Action.finishRitual)
         {
-            if (offer.portal && map.id == offer.map && map.instanceId == offer.instance && channelsRitualAt(offer.portal))
-                endChannel(false);
+            if (offer.portal && me.map.id == offer.map && me.map.instanceId == offer.instance && channelsRitualAt(offer.portal))
+                me.endChannel(false);
             return;
         }
         enum uint evilTwin = 23445;
-        if (offer.sequence <= latestSummon || player.auras.find(evilTwin) !is null)
+        if (offer.sequence <= latestSummon || me.player.auras.find(evilTwin) !is null)
             return;
-        const home = connection.gatewayHome;
+        const home = me.connection.gatewayHome;
         if (home.node)
         {
             ByteWriter checkpoint;
@@ -427,12 +439,12 @@ mixin template RitualSummoning()
             serialize(checkpoint, offer);
             try
             {
-                if (!context.database.publishPartySummonOffer(player.data.guid, offer.sequence, toHex(checkpoint.data)))
+                if (!me.context.database.publishPartySummonOffer(me.player.data.guid, offer.sequence, toHex(checkpoint.data)))
                     return;
             }
             catch (DatabaseException error)
             {
-                warning!"could not save a party summon for player %s: %s"(player.data.guid, error.msg);
+                warning!"could not save a party summon for player %s: %s"(me.player.data.guid, error.msg);
                 return;
             }
         }
@@ -443,8 +455,8 @@ mixin template RitualSummoning()
     private void showPartySummon(const ref PartySummon offer)
     {
         summonPoint = offer;
-        const ms = cast(uint) (offer.expires - context.unixTime) * 1000;
-        deliver(Opcode.SMSG_SUMMON_REQUEST, summonRequest(offer.summoner, offer.area, ms));
+        const ms = cast(uint) (offer.expires - me.context.unixTime) * 1000;
+        me.deliver(Opcode.SMSG_SUMMON_REQUEST, summonRequest(offer.summoner, offer.area, ms));
     }
 
     /**
@@ -458,40 +470,40 @@ mixin template RitualSummoning()
         import dmangos.mysql : DatabaseException;
         import dmangos.world.defines : UnitFlags;
 
-        if (imported!"dmangos.world.gmadmin".acceptGmSummonOffer(this))
+        if (imported!"dmangos.world.gmadmin".acceptGmSummonOffer(me))
             return;
         const summoner = response.summoner;
-        if (!player.alive || inCombat)
+        if (!me.player.alive || me.inCombat)
             return;
         const point = summonPoint;
-        if (summoner != point.summoner || point.summoner == 0 || point.expires <= context.unixTime)
+        if (summoner != point.summoner || point.summoner == 0 || point.expires <= me.context.unixTime)
             return;
         // A database that is slow or away would stop a move to another node after the offer is spent: the offer
         // stays, shown again, and is taken once the writes go through.
-        if (!context.settleWrites())
+        if (!me.context.settleWrites())
             return showPartySummon(point);
-        if (connection.gatewayHome.node && consumedSummon != point.sequence)
+        if (me.connection.gatewayHome.node && consumedSummon != point.sequence)
             try
             {
-                if (!context.database.consumePartySummonOffer(player.data.guid, point.sequence))
+                if (!me.context.database.consumePartySummonOffer(me.player.data.guid, point.sequence))
                     return;
                 consumedSummon = point.sequence;
             }
             catch (DatabaseException error)
             {
-                warning!"could not consume the party summon for player %s: %s"(player.data.guid, error.msg);
+                warning!"could not consume the party summon for player %s: %s"(me.player.data.guid, error.msg);
                 return;
             }
         summonPoint = PartySummon.init;
-        if (taxi.flying) // the flight stops (`TaxiFlightInterrupt`)
+        if (me.taxi.flying) // the flight stops (`TaxiFlightInterrupt`)
         {
-            taxi.taxiDestination = 0;
-            player.data.taxiPath = null;
-            player.values.set!UNIT_FIELD_MOUNTDISPLAYID(0u);
-            player.values.set!UNIT_FIELD_FLAGS(player.values.get!UNIT_FIELD_FLAGS & ~UnitFlags.taxiFlight);
+            me.taxi.taxiDestination = 0;
+            me.player.data.taxiPath = null;
+            me.player.values.set!UNIT_FIELD_MOUNTDISPLAYID(0u);
+            me.player.values.set!UNIT_FIELD_FLAGS(me.player.values.get!UNIT_FIELD_FLAGS & ~UnitFlags.taxiFlight);
         }
-        if (!teleportTo(point.map, Position(point.x, point.y, point.z, player.position.orientation),
-            null, point.instance) && player !is null && !context.settleWrites())
+        if (!me.teleportTo(point.map, Position(point.x, point.y, point.z, me.player.position.orientation),
+            null, point.instance) && me.player !is null && !me.context.settleWrites())
             showPartySummon(point); // the move to another node waits on the database: the offer is accepted again
     }
 
@@ -502,25 +514,25 @@ mixin template RitualSummoning()
     package void useMeetingStoneToSummon(GameObject go)
     {
         enum uint meetingStoneRitual = 23598;
-        const target = player.values.get!UNIT_FIELD_TARGET;
-        if (!target || target == player.guid || !context.groups.sameGroup(player.guid, target))
+        const target = me.player.values.get!UNIT_FIELD_TARGET;
+        if (!target || target == me.player.guid || !me.context.groups.sameGroup(me.player.guid, target))
             return;
         uint mateLevel;
-        if (auto mate = context.onlinePlayer(target))
+        if (auto mate = me.context.onlinePlayer(target))
         {
             if (mate.character !is null)
                 mateLevel = mate.character.data.level;
         }
-        else if (const presence = context.remotePlayer(target))
+        else if (const presence = me.context.remotePlayer(target))
             mateLevel = presence.entry.level;
         if (!mateLevel)
             return;
         const minLevel = cast(uint) go.template_.data[0], maxLevel = cast(uint) go.template_.data[1];
-        foreach (level; [player.data.level, mateLevel])
+        foreach (level; [me.player.data.level, mateLevel])
             if (level < minLevel || level > maxLevel)
                 return;
-        if (const spell = context.data.spells.spell(meetingStoneRitual))
-            castSpell(spell, SpellTargets(TargetFlags.unit, player.guid), false, 0);
+        if (const spell = me.context.data.spells.spell(meetingStoneRitual))
+            me.castSpell(spell, SpellTargets(TargetFlags.unit, me.player.guid), false, 0);
     }
 }
 
@@ -654,7 +666,7 @@ unittest
     auto moved = relay.remote.inWorld;
     auto restored = next.map(0).gameObjectAt(original.guid);
     assert(restored !is null && restored.owner == moved.player.guid && restored.ritualTarget == original.ritualTarget);
-    assert(restored.ritualUsers == original.ritualUsers && moved.channelsRitualAt(original.guid));
+    assert(restored.ritualUsers == original.ritualUsers && moved.rituals.channelsRitualAt(original.guid));
     anduin.write(Opcode.CMSG_CANCEL_CHANNELLING, cancel.data);
     assert(next.map(0).gameObjectAt(original.guid) is null);
 }
@@ -695,7 +707,7 @@ unittest
         return true;
     };
     called.read();
-    caller.session.inWorld.summonPlayerEffect(8);
+    caller.session.inWorld.rituals.summonPlayerEffect(8);
     uint requests;
     foreach (packet; called.read())
         if (packet.opcode == Opcode.SMSG_SUMMON_REQUEST)

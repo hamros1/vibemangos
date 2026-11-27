@@ -106,7 +106,7 @@ final class GroupRelay
             return;
         if (auto member = world.onlinePlayer(message.target))
             if (member.player !is null && !member.transferring)
-                return member.offerPartySummon(message);
+                return member.rituals.offerPartySummon(message);
         if (world.sendPartySummon is null || message.forwarded)
             return;
         ushort owner;

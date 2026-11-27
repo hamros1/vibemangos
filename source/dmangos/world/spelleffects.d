@@ -268,8 +268,8 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
             if (c.once(i))
                 summonWildObject(caster, spell, i, c.targets);
         }
-        else if (p.isRitualPortal(cast(uint) spell.miscValue[i] in context.data.gameObjectTemplates))
-            p.openRitualPortal(spell, i); // `dmangos.world.rituals`
+        else if (p.rituals.isRitualPortal(cast(uint) spell.miscValue[i] in context.data.gameObjectTemplates))
+            p.rituals.openRitualPortal(spell, i); // `dmangos.world.rituals`
         else if (p.isFishingBobber(cast(uint) spell.miscValue[i] in context.data.gameObjectTemplates))
             p.castBobber(spell, i);
         else
@@ -724,7 +724,7 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         break;
     case SpellEffect.summonPlayer: // SPELL_EFFECT_SUMMON_PLAYER: the target asked to come (`dmangos.world.rituals`)
         if (c.once(i))
-            p.summonPlayerEffect(c.targets.unit ? c.targets.unit : target);
+            p.rituals.summonPlayerEffect(c.targets.unit ? c.targets.unit : target);
         break;
     case SpellEffect.durabilityDamage, SpellEffect.durabilityDamagePct: // a player's gear worn (`dmangos.world.durability`)
     {

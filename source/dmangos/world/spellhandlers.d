@@ -126,8 +126,8 @@ private:
         Used[] used;
     }
 
-    const(SpellInfo)* channelSpell;  // the spell being channelled, if any
-    ulong channelObject;             // an object the channel is at (a fishing bobber)
+    package const(SpellInfo)* channelSpell;  // the spell being channelled, if any
+    package ulong channelObject;             // an object the channel is at (a fishing bobber)
     ulong bobber;                    // this angler's fishing bobber, while it floats
     int bobberAge, bobberBite, bobberGone; // ms since cast; when the fish bites; when the bobber goes
     bool bobberLooted;               // the catch is being looted: the bobber stays until then
@@ -164,7 +164,7 @@ private:
         Aura[] hadAtStart;
         bool triggered;
     }
-    ulong channelTarget;             // ... at whom
+    package ulong channelTarget;             // ... at whom
     int channelTimer;                // ... for so many more milliseconds
     Casting nextSwing;               // the spell waiting for the next main-hand swing, if any
     MonoTime[uint] spellReadyAt;     // when each spell's cooldown ends
@@ -1115,7 +1115,7 @@ private:
      * A channelled spell (`SPELL_ATTR_EX_IS_CHANNELED`, `_IS_SELF_CHANNELED`)
      * goes on for its duration: `MSG_CHANNEL_START`, and the caster's channel fields for everyone.
      */
-    void startChannel(const(SpellInfo)* spell, ulong target)
+    package void startChannel(const(SpellInfo)* spell, ulong target)
     {
         import dmangos.world.spellcast : duration;
 
@@ -1138,9 +1138,9 @@ private:
         channelObject = 0;
         channelTimer = ms;
         channelCostTimer = 1000;
-        ritualChannelOwner = currentRitualOwner();
+        rituals.ritualChannelOwner = rituals.currentRitualOwner();
         if ((bobber && bobber == channelTarget) || (persistentAreas.length && spell.hasEffect(SpellEffect.persistentAreaAura))
-            || activeRecoveryChannelAura() !is null || ritualChannelOwner)
+            || activeRecoveryChannelAura() !is null || rituals.ritualChannelOwner)
             checkpointSummons(true);
         showChannelStart();
         // Mind Vision (`SPELL_AURA_BIND_SIGHT`): the player sees through the channel's target while it lasts.
@@ -1317,9 +1317,9 @@ private:
         if (channelSpell is null)
             return;
         const spell = channelSpell;
-        const checkpointedChannel = activeRecoveryChannelAura() !is null || ritualChannelOwner || cameraChannel();
+        const checkpointedChannel = activeRecoveryChannelAura() !is null || rituals.ritualChannelOwner || cameraChannel();
         channelSpell = null;
-        ritualChannelOwner = 0;
+        rituals.ritualChannelOwner = 0;
         if (checkpointedChannel)
             checkpointSummons(true);
         const canCredit = !followingNamedCreature || namedChannelConfirmed;
@@ -1371,7 +1371,7 @@ private:
         }
         if (bobber && !bobberLooted)
             removeBobber();
-        closeRitualPortal(); // a ritual's portal goes with its caster's channel
+        rituals.closeRitualPortal(); // a ritual's portal goes with its caster's channel
         // Tame Beast's twenty seconds are up: the beast is tamed.
         if (!cancelled && spell.id == imported!"dmangos.world.pethandlers".spellTameBeast)
             tameBeastChannelDone(channelTarget);
@@ -1845,7 +1845,7 @@ private:
         if (channelSpell is null || channelSpell.casting.applyAuraName[].any!(a =>
             a.among(AuraType.modCharm, AuraType.modPossess, AuraType.modPossessPet)))
             return false;
-        if (followingNamedCreature || carriesRitualChannel() || cameraChannel())
+        if (followingNamedCreature || rituals.carriesRitualChannel() || cameraChannel())
             return true;
         if (channelSpell.hasEffect(SpellEffect.persistentAreaAura))
             return persistentAreas.length != 0;
@@ -2038,7 +2038,7 @@ private:
             }
         }
         writeGroundAreas(persistentAreas, state);
-        state.put(ritualChannelOwner);
+        state.put(rituals.ritualChannelOwner);
         detachGroundAreas(map, persistentAreas);
         writer.put(cast(uint) state.data.length);
         writer.putBytes(state.data);
@@ -2071,7 +2071,7 @@ private:
         auto caster = Caster.of(this);
         persistentAreas = readGroundAreas(caster, state);
         if (!state.empty)
-            ritualChannelOwner = state.read!ulong;
+            rituals.ritualChannelOwner = state.read!ulong;
         if (channelSpell !is null)
         {
             player.values.set!UNIT_CHANNEL_SPELL(channelSpell.id);
@@ -2143,8 +2143,8 @@ private:
             state.put(pushbacks);
             aura.saveState(state);
         }
-        state.put(ritualChannelOwner != 0);
-        if (ritualChannelOwner)
+        state.put(rituals.ritualChannelOwner != 0);
+        if (rituals.ritualChannelOwner)
             writeRitualRecovery(state);
         const camera = cameraHandoffState();
         if (camera.guid)
@@ -2205,13 +2205,13 @@ private:
 
     private void writeRitualRecovery(ref ByteWriter state)
     {
-        state.put(ritualChannelOwner);
+        state.put(rituals.ritualChannelOwner);
         state.put(channelSpell.id);
         state.put(channelTarget);
         state.put(channelTimer);
         state.put(channelCostTimer);
         state.put(pushbacks);
-        state.putBytes(ritualPortalState());
+        state.putBytes(rituals.ritualPortalState());
     }
 
     private void readRitualRecovery(ref ByteReader state, int elapsed)
@@ -2226,12 +2226,12 @@ private:
             return;
         channelSpell = spell;
         channelTarget = target;
-        if (owner == player.guid && !restoreRitualPortal(state))
+        if (owner == player.guid && !rituals.restoreRitualPortal(state))
         {
             channelSpell = null;
             return;
         }
-        ritualChannelOwner = owner;
+        rituals.ritualChannelOwner = owner;
         channelTimer = remaining;
         channelCostTimer = elapsed < nextCost ? nextCost - elapsed : 1000 - (elapsed - nextCost) % 1000;
         pushbacks = delays;

@@ -59,7 +59,7 @@ import dmangos.world.crowdcontrol : CrowdControl;
 import dmangos.world.mounting : Mounting;
 import dmangos.world.guardians : Guardians;
 import dmangos.world.durability : DurabilityRules;
-import dmangos.world.rituals : RitualSummoning;
+import dmangos.world.rituals : Rituals;
 import dmangos.world.homebind : Homebind;
 import dmangos.world.unit : Blow, UnitRef;
 import dmangos.world.auras : Aura, makeAura;
@@ -102,9 +102,10 @@ final class Character : OnlinePlayer, Looter
     /// The connection its client talks through (here, or relaying to its home node).
     WorldSession connection;
 
-    mixin PacketDispatch!(Handles, "taxi", "mailbox", "auctioneer", "reputations", "talents", "trading", "dueling", "channels", "contacts", "enchanting", "professions", "homebind", "guardians", "crowdControl", "mounting", "pvp");
+    mixin PacketDispatch!(Handles, "taxi", "mailbox", "auctioneer", "reputations", "talents", "trading", "dueling", "channels", "contacts", "enchanting", "professions", "homebind", "guardians", "crowdControl", "mounting", "pvp", "rituals");
 
     Taxi taxi; /// flight masters and the flight under way (`dmangos.world.taxihandlers`)
+    Rituals rituals; /// summoning rituals: the portal, its clickers and the summoned (`dmangos.world.rituals`)
     PvP pvp; /// the PvP flag (`dmangos.world.pvp`)
     Mounting mounting; /// mounts (`dmangos.world.mounting`)
     CrowdControl crowdControl; /// fear, charm and mind control (`dmangos.world.crowdcontrol`)
@@ -177,6 +178,7 @@ final class Character : OnlinePlayer, Looter
         this.connection = connection;
         this.context = context;
         taxi = new Taxi(this);
+        rituals = new Rituals(this);
         pvp = new PvP(this);
         mounting = new Mounting(this);
         crowdControl = new CrowdControl(this);
@@ -954,7 +956,6 @@ private:
     mixin QuestHandlers;
     mixin GameObjectHandlers;
     mixin DurabilityRules;
-    mixin RitualSummoning;
     mixin BattlegroundHandlers;
     mixin WorldPvpHandlers;
     mixin ItemUseHandlers;

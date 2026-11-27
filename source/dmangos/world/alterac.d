@@ -649,10 +649,10 @@ private:
         size_t count;
         foreach (guid; go.ritualUsers)
             if (auto c = participant(guid))
-                if (c.channelsRitualAt(go.guid))
+                if (c.rituals.channelsRitualAt(go.guid))
                     go.ritualUsers[count++] = guid;
         go.ritualUsers.length = count;
-        if (!go.ritualUsers.canFind(who) && newcomer.channelRitualAt(go, ritual.animSpell))
+        if (!go.ritualUsers.canFind(who) && newcomer.rituals.channelRitualAt(go, ritual.animSpell))
             go.ritualUsers ~= who;
         if (go.ritualUsers.length < ritual.participants)
             return;

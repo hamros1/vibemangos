@@ -375,7 +375,7 @@ mixin template CharacterLogin()
         talents.applyPassiveSpells();
         petsOnArrival(); // the saved current pet comes back
         taxi.resumeSavedFlight(); // logged out in flight: it flies on
-        openPartySummonCheckpoint(checkpoints);
+        rituals.openPartySummonCheckpoint(checkpoints);
         openSummonCheckpoint(checkpoints);
         info!"%s: '%s' entered the world as '%s' (guid %s, map %s at %.1f %.1f %.1f)"(remoteAddress,
             account.username, character.name, guid, character.map, character.position.x, character.position.y,

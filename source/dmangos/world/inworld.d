@@ -359,7 +359,7 @@ private:
 
         const camera = takeCameraHandoff();
         const fishing = takeFishingHandoff();
-        const ritual = takeRitualHandoff();
+        const ritual = rituals.takeRitualHandoff();
         const summons = takeSummonsOnHandoff();
         ByteWriter w;
         w.put(account.id);
@@ -432,7 +432,7 @@ private:
         writeEnvironmentHandoff(w);
         writeRemoteLootHandoff(w);
         writeQuestOffer(w);
-        writeSummonOffer(w);
+        rituals.writeSummonOffer(w);
         writePetPossession(w, petControl);
         w.put(homeNode); // last: `migrationHome` reads it there
 
@@ -572,7 +572,7 @@ private:
         readChannelAndGroundHandoff(r);
         restoreCameraHandoff(r);
         restoreFishingHandoff(r);
-        restoreRitualHandoff(r);
+        rituals.restoreRitualHandoff(r);
         restoreSummonsOnHandoff(r);
         readCastHandoff(r);
         readSaved(() => loadAuras());
@@ -590,7 +590,7 @@ private:
         readEnvironmentHandoff(r);
         readRemoteLootHandoff(r);
         readQuestOffer(r);
-        readSummonOffer(r);
+        rituals.readSummonOffer(r);
         petsOnArrival(readPetPossession(r));
         checkpointSummons();
         pendingArrival = action; // done at the first tick here, once the move is complete everywhere
