@@ -612,7 +612,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
 
     void partyHeal(ushort peer, const ref PartyHeal message)
     {
-        context.partyHealArrived(peer, message);
+        context.remoteSpells.partyHealArrived(peer, message);
     }
 
     bool sendAreaDamage(ushort peer, const ref AreaDamage message)
@@ -678,7 +678,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
 
     void totemWeaponEnchant(ushort peer, const ref TotemWeaponEnchant message)
     {
-        context.totemWeaponEnchantArrived(peer, message);
+        context.remoteSpells.totemWeaponEnchantArrived(peer, message);
     }
 
     import dmangos.cluster.protocol : MindVisionTarget;
@@ -690,7 +690,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
 
     void mindVisionTarget(ushort peer, const ref MindVisionTarget message)
     {
-        context.mindVisionTargetArrived(peer, message);
+        context.remoteSpells.mindVisionTargetArrived(peer, message);
     }
 
     bool sendPartyAreaAura(ushort peer, const ref PartyAreaAura message)
@@ -701,7 +701,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
 
     void partyAreaAura(ushort peer, const ref PartyAreaAura message)
     {
-        context.partyAreaAuraArrived(peer, message);
+        context.remoteSpells.partyAreaAuraArrived(peer, message);
     }
 
     bool sendCreatureSwing(ushort peer, const ref CreatureSwing message)

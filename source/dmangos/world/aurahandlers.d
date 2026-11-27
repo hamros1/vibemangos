@@ -162,7 +162,7 @@ private:
             auto row = receivedAreaAuras[key];
             const r = &row.renewal;
             if (cast(int)(r.deadline - now) > 0 && player.alive && map.id == r.map && map.instanceId == r.instance
-                && context.sameAuraSubgroup(r.controller, player.guid, r.group) && !duelingWith(r.controller)
+                && context.remoteSpells.sameAuraSubgroup(r.controller, player.guid, r.group) && !duelingWith(r.controller)
                 && inPartyAuraRange(player.position, Position(r.x, r.y, r.z), r.radius))
                 continue;
             receivedAreaAuras.remove(key);

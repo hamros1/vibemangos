@@ -5468,13 +5468,13 @@ unittest
 
         foreach (ref heal; requests)
         {
-            owner.partyHealArrived(1, heal);
-            owner.partyHealArrived(1, heal);
+            owner.remoteSpells.partyHealArrived(1, heal);
+            owner.remoteSpells.partyHealArrived(1, heal);
         }
         foreach (ref heal; replies)
         {
-            origin.partyHealArrived(2, heal);
-            origin.partyHealArrived(2, heal);
+            origin.remoteSpells.partyHealArrived(2, heal);
+            origin.remoteSpells.partyHealArrived(2, heal);
         }
         assert(replies.length == requests.length && opcodesOf(caster.read()).count(Opcode.SMSG_SPELLHEALLOG) == replies.length);
         assert(second.session.character.values.get!UNIT_FIELD_HEALTH == 55u, "the remote recipient applies its own modifier once");
@@ -5496,12 +5496,12 @@ unittest
         const before = moving.position;
         moving.movement.position.x += 50;
         owner.map(0).relocated(second.session.inWorld);
-        owner.partyHealArrived(1, requests[2]);
+        owner.remoteSpells.partyHealArrived(1, requests[2]);
         moving.movement.position = before;
         owner.map(0).relocated(second.session.inWorld);
-        owner.partyHealArrived(1, requests[2]);
+        owner.remoteSpells.partyHealArrived(1, requests[2]);
         owner.groups.of(7).removeMember(10, RemoveMethod.leave);
-        owner.partyHealArrived(1, requests[3]);
+        owner.remoteSpells.partyHealArrived(1, requests[3]);
         assert(replies.length == 2 && moving.values.get!UNIT_FIELD_HEALTH == 55u
             && third.session.character.values.get!UNIT_FIELD_HEALTH == 65u);
     }
@@ -5644,12 +5644,12 @@ unittest
     caster.session.update(castMs.msecs);
     assert(heals.length == 1 && healer.values.get!UNIT_FIELD_POWER1(Power.mana) == mana - cost);
     caster.session.inWorld.addAura(makeAura(healProc in origin.data.spells.spells, 7, 20, -1, true, [0, 0, 0]));
-    owner.partyHealArrived(1, heals[0]);
-    owner.partyHealArrived(1, heals[0]);
+    owner.remoteSpells.partyHealArrived(1, heals[0]);
+    owner.remoteSpells.partyHealArrived(1, heals[0]);
     assert(receipts.length == 1 && healed.values.get!UNIT_FIELD_HEALTH == 100u);
     assert(mob.ai.threatOf(7) == 10, "threat uses restored health rather than overhealing");
-    origin.partyHealArrived(2, receipts[0]);
-    origin.partyHealArrived(2, receipts[0]);
+    origin.remoteSpells.partyHealArrived(2, receipts[0]);
+    origin.remoteSpells.partyHealArrived(2, receipts[0]);
     assert(caster.session.inWorld.hasAuraOf(buff) && !caster.session.inWorld.hasAuraOf(healProc));
 
     origin.groups.of(7).removeMember(8, RemoveMethod.leave);
@@ -5830,12 +5830,12 @@ unittest
     auto movingPlayer = cast(Player) moving.session.character;
     movingPlayer.movement.position = far;
     owner.map(0).relocated(moving.session.inWorld);
-    owner.partyHealArrived(1, requests[0]);
-    owner.partyHealArrived(1, requests[0]);
-    owner.partyHealArrived(1, requests[1]);
+    owner.remoteSpells.partyHealArrived(1, requests[0]);
+    owner.remoteSpells.partyHealArrived(1, requests[0]);
+    owner.remoteSpells.partyHealArrived(1, requests[1]);
     movingPlayer.movement.position = near;
     owner.map(0).relocated(moving.session.inWorld);
-    owner.partyHealArrived(1, requests[1]);
+    owner.remoteSpells.partyHealArrived(1, requests[1]);
 
     assert(other.values.get!UNIT_FIELD_HEALTH == 35u, "only the target node applies its healing penalty, once");
     assert(distant.session.character.values.get!UNIT_FIELD_HEALTH == 20u
@@ -5843,8 +5843,8 @@ unittest
         && movingPlayer.values.get!UNIT_FIELD_HEALTH == 20u);
     assert(replies.length == 1 && replies[0].amount == 15);
     assert(!caster.session.inWorld.isPvP);
-    origin.partyHealArrived(2, replies[0]);
-    origin.partyHealArrived(2, replies[0]);
+    origin.remoteSpells.partyHealArrived(2, replies[0]);
+    origin.remoteSpells.partyHealArrived(2, replies[0]);
     const logged = caster.read();
     assert(opcodesOf(logged).count(Opcode.SMSG_SPELLHEALLOG) == 1);
     assert(bodyOf(logged, Opcode.SMSG_SPELLHEALLOG) == healLog(9, 7, heal, 15, false));

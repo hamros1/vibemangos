@@ -179,7 +179,7 @@ unittest
     source.context.sendPartyAreaAura = (ushort peer, const ref PartyAreaAura renewal) {
         assert(peer == 2 && renewal.spell == devotion && renewal.target == 8);
         ++renewals;
-        owner.context.partyAreaAuraArrived(1, renewal);
+        owner.context.remoteSpells.partyAreaAuraArrived(1, renewal);
         return true;
     };
     assert(source.cast_(paladin, devotion) == SpellCastResult.ok);
@@ -1096,9 +1096,9 @@ unittest
     };
     owner.context.sendMindVisionTarget = (ushort peer, const ref MindVisionTarget message) {
         assert(peer == 1 && message.reply && message.state.length);
-        source.context.mindVisionTargetArrived(3, message); // another peer cannot answer it
-        source.context.mindVisionTargetArrived(2, message);
-        source.context.mindVisionTargetArrived(2, message);
+        source.context.remoteSpells.mindVisionTargetArrived(3, message); // another peer cannot answer it
+        source.context.remoteSpells.mindVisionTargetArrived(2, message);
+        source.context.remoteSpells.mindVisionTargetArrived(2, message);
         return true;
     };
     void castSight(uint id)
@@ -1111,18 +1111,18 @@ unittest
 
     castSight(shortSight);
     assert(queries == 1 && relay.remote is null);
-    owner.context.mindVisionTargetArrived(1, request);
+    owner.context.remoteSpells.mindVisionTargetArrived(1, request);
     assert(relay.remote is null && caster.player.values.get!UNIT_FIELD_POWER1 == mana);
     assert(!caster.player.values.get!PLAYER_FARSIGHT);
     castSight(longSight);
     ByteWriter cancel;
     cancel.put(longSight);
     watcher.write(Opcode.CMSG_CANCEL_CAST, cancel.data);
-    owner.context.mindVisionTargetArrived(1, request);
+    owner.context.remoteSpells.mindVisionTargetArrived(1, request);
     assert(queries == 2 && relay.remote is null && caster.player.values.get!UNIT_FIELD_POWER1 == mana);
 
     castSight(longSight);
-    owner.context.mindVisionTargetArrived(1, request);
+    owner.context.remoteSpells.mindVisionTargetArrived(1, request);
     assert(queries == 3 && relay.remote !is null);
     relay.remote.update(1.msecs);
     auto moved = relay.remote.inWorld;
@@ -1176,8 +1176,8 @@ unittest
         assert(peer == 2 && pulse.totem == totem.guid && pulse.controller == 7 && pulse.target == 8);
         ++pulses;
         to.replicaCreated(1, cellKeyAt(totem.position.x, totem.position.y), totem.guid, encodeState(totem, 0));
-        owner.context.totemWeaponEnchantArrived(1, pulse);
-        owner.context.totemWeaponEnchantArrived(1, pulse);
+        owner.context.remoteSpells.totemWeaponEnchantArrived(1, pulse);
+        owner.context.remoteSpells.totemWeaponEnchantArrived(1, pulse);
         return true;
     };
     caster.updateTotemEnchants();
