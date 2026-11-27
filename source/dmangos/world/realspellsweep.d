@@ -398,9 +398,9 @@ package bool harms(const ref SpellInfo s)
                 periodicManaLeech, modStalked, empathy, modStun, modFear, modConfuse, modRoot, modDecreaseSpeed,
                 modSilence, modPacify))
             return true;
-        // Any aura aimed at an enemy is a debuff (Demoralizing Roar's attack power, Expose Weakness's damage taken).
-        if (s.effect[i] == applyAura && (isEnemyTarget(s.implicitTargetA[i])
-                || isEnemyTarget(s.casting.implicitTargetB[i])))
+        // Any aura aimed at an enemy is a debuff (Demoralizing Roar's attack power, Expose Weakness's damage taken), and
+        // any other effect aimed at enemies is against them too (War Stomp's knockback).
+        if (s.effect[i] && (isEnemyTarget(s.implicitTargetA[i]) || isEnemyTarget(s.casting.implicitTargetB[i])))
             return true;
     }
     return false;

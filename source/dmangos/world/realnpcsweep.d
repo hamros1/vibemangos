@@ -718,6 +718,8 @@ private final class NpcSweeper
         uint[3] leastHealth = healthOf, mostPower = powerOf;
         bool[Who] diedSeen;
         bool landed;
+        bool knockedBack;     // the player was told of a knockback
+        bool[uint] spellsGone; // the spells whose cast went off, as the player saw them (a triggered one's)
         MovementInfo flight;
         int launchMs;
         bool pullInFlight, pullLanded;
@@ -732,6 +734,16 @@ private final class NpcSweeper
                 map.wake(caster.guid);
             }
             foreach (p; hero.read())
+            {
+                if (p.opcode == Opcode.SMSG_MOVE_KNOCK_BACK)
+                    knockedBack = true;
+                else if (p.opcode == Opcode.SMSG_SPELL_GO)
+                {
+                    auto rd = ByteReader(p.body_);
+                    rd.readPackedGuid();
+                    rd.readPackedGuid();
+                    spellsGone[rd.read!uint] = true;
+                }
                 if (pullsPlayer && p.opcode == Opcode.SMSG_MOVE_KNOCK_BACK)
                 {
                     auto packet = ByteReader(p.body_);
@@ -790,6 +802,7 @@ private final class NpcSweeper
                     imported!"std.stdio".stderr.writefln("  %s: %s %(%02x %)", ms, cast(Opcode) p.opcode, p.body_);
                 else if (p.opcode == Opcode.SMSG_SPELLLOGMISS)
                     mayRoll = true;
+            }
             if (pullInFlight && ms > launchMs)
             {
                 const duration = -2 * flight.jumpVelocity / jumpGravity; // Both ends are on level ground.
@@ -988,6 +1001,27 @@ private final class NpcSweeper
             case instantKill:
                 if (unit && !diedSeen.get(x, false))
                     failed = format!"the %s lives"(name);
+                break;
+            case knockBack: // the player is thrown (a creature is moved by the server, not told)
+                if (x != Who.enemy || !unit)
+                    checked = false;
+                else if (!knockedBack)
+                {
+                    failed = "the player was not knocked back";
+                    mayRoll = true;
+                }
+                break;
+            case triggerSpell: // the spell it triggers goes off (seen by the player, near the caster)
+                if (const triggered = s.triggerSpell[i])
+                {
+                    if (!spellsGone.get(triggered, false))
+                    {
+                        failed = format!"its triggered spell %s did not go off"(triggered);
+                        mayRoll = true;
+                    }
+                }
+                else
+                    checked = false;
                 break;
             case dispel:
                 if (unit && dispellableBefore[i] && hasDispellable(unit, s.miscValue[i]))
