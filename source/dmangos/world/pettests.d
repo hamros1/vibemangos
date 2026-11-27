@@ -1343,6 +1343,45 @@ unittest
     assert(atLauncher && !beforeCaster, "the rocket at its launcher, not before the caster");
 }
 
+/// What a creature summons ahead and to its left (`TARGET_LOCATION_CASTER_FRONT_LEFT`) comes there, as CMaNGOS's.
+unittest
+{
+    import std.math : abs, atan2, PI;
+    import dmangos.script.api : ActionResult;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.spellids : ImplicitTarget, SpellEffect;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    auto rexxar = loggedIn(context, db, 7, "Rexxar", Position(-8949.95f, -132.49f, 83.53f, 0), AccountLevel.player,
+        raceOrc);
+    rexxar.read();
+    addPetData(&rexxar, context);
+    auto map = context.map(0);
+    enum uint call = 97906;
+    auto spell = testSpell(call, SpellEffect.summonWild, ImplicitTarget.locationCasterFrontLeft, 1); // one
+    spell.miscValue[0] = boar;
+    context.data.spells.spells[call] = spell;
+    auto caster = context.summonCreature(map, wolf, Position(-8945, -132.49f, 83.53f, 0), TempSpawnType.dead, 0, 0);
+    assert(caster !is null);
+    assert(caster.ai.castFor(map, call, caster.guid, true) == ActionResult.ok);
+    Creature summoned;
+    foreach (o; map.objectsNear(caster.position, 10))
+        if (auto c = cast(Creature) o)
+            if (c !is caster && c.template_.entry == boar)
+                summoned = c;
+    assert(summoned !is null, "summoned");
+    const bearing = atan2(summoned.position.y - caster.position.y, summoned.position.x - caster.position.x)
+        - caster.position.orientation;
+    import std.format : format;
+
+    assert(abs(bearing - PI / 4) < 0.05f, format!"ahead and to its left, not to its side: %s at %s from %s"(bearing,
+        summoned.position, caster.position));
+}
+
 /// A creature's spell at its friends around it (`TARGET_ENUM_UNITS_FRIEND_AOE_AT_SRC_LOC`: a Battle Command)
 /// reaches itself and the friend beside it, and not the player's pet there.
 unittest

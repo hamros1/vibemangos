@@ -1806,12 +1806,31 @@ mixin template CreatureCasting()
                 place = aimed.position;
                 placed = true;
             }
+        // Where it comes about the caster (CMaNGOS's `SetTargetMap`): to its left (`TARGET_LOCATION_UNIT_MINION_POSITION`,
+        // or none said), ahead, behind or to a side as the target says, at the effect's radius (3 yards if none).
+        // (The radius is the distance for those only: another's is its area's, not where it comes.)
+        float side = PI / 2;
+        bool relative = true;
+        with (ImplicitTarget) switch (spell.implicitTargetA[i])
+        {
+        case locationUnitMinionPosition, locationCasterLeft: break;
+        case locationCasterFront: side = 0; break;
+        case locationCasterFrontLeft: side = PI / 4; break;
+        case locationCasterBackLeft: side = PI * 3 / 4; break;
+        case locationCasterBack: side = PI; break;
+        case locationCasterBackRight: side = PI * 5 / 4; break;
+        case locationCasterRight: side = -PI / 2; break;
+        case locationCasterFrontRight: side = PI * 7 / 4; break;
+        default: relative = false; break;
+        }
+        const reach = relative && spell.casting.radiusIndex[i] ? radius(*spell, i, lore.clientData) : 0;
+        const away = reach > 0 ? reach : 3;
         foreach (n; 0 .. count)
         {
-            const angle = me.position.orientation + PI / 2 + n * 2 * PI / count;
+            const angle = me.position.orientation + side + n * 2 * PI / count;
             auto at = me.position;
-            at.x += 3 * cos(angle);
-            at.y += 3 * sin(angle);
+            at.x += away * cos(angle);
+            at.y += away * sin(angle);
             if (placed && n == 0)
                 at = place;
             auto summoned = lore.summon(world_, entry, at, demon ? TempSpawnType.timedOrDead
