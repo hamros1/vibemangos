@@ -1191,25 +1191,26 @@ mixin template ClassSpells()
     }
 
     /**
-     * Whether this player's ward sends `spell` back (`SPELL_AURA_REFLECT_SPELLS_SCHOOL`, of the spell's school): Fire
-     * Ward's and Frost Ward's amount is none, the chance their talents' (Improved Fire Ward's, Frost Warding's dummy
-     * effect: "gives your Frost Ward a 20% chance to reflect Frost spells and effects while active").
+     * Whether this player sends `spell` back: a reflect of any school (`SPELL_AURA_REFLECT_SPELLS`: the Sheen of
+     * Zanza), or its ward of the spell's (`SPELL_AURA_REFLECT_SPELLS_SCHOOL`): Fire Ward's and Frost Ward's amount is
+     * none, the chance their talents' (Improved Fire Ward's, Frost Warding's dummy effect: "gives your Frost Ward a
+     * 20% chance to reflect Frost spells and effects while active").
      */
     package bool reflectsSpell(const(SpellInfo)* spell)
     {
-        enum uint magic = 1; // SPELL_DAMAGE_CLASS_MAGIC
-        if (spell.casting.dmgClass != magic || spell.casting.school >= 7)
+        import dmangos.world.spellcast : isReflectable, reflectChance;
+
+        if (!isReflectable(*spell))
             return false;
+        // Its reflects' chances, summed and rolled once (CMaNGOS's `GetReflectChance`): a Sheen of Zanza's, and the
+        // ward of the spell's school with its talent's.
+        int chance = reflectChance(player.auras, spell.casting.school);
         foreach (aura; player.auras.list)
             foreach (k; 0 .. 3)
                 if ((aura.effects & (1 << k)) && aura.type(k) == AuraType.reflectSpellsSchool
                         && (aura.misc(k) & (1 << spell.casting.school)))
-                {
-                    const chance = aura.amount[k] + wardTalentChance(aura.spell);
-                    if (chance > 0 && uniform01(map.random) * 100 < chance)
-                        return true;
-                }
-        return false;
+                    chance += wardTalentChance(aura.spell);
+        return chance > 0 && uniform01(map.random) * 100 < chance;
     }
 
     /// The reflect chance a mage's talent gives `ward` (Fire Ward: Improved Fire Ward; Frost Ward: Frost Warding).

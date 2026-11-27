@@ -817,6 +817,32 @@ bool usesWeaponSkill(const ref SpellInfo spell) pure nothrow @nogc @safe
         || (spell.casting.dmgClass == DamageClass.ranged && (spell.attributes & usesRangedSlot));
 }
 
+/**
+ * Whether a reflect may send `spell` back (CMaNGOS's `IsReflectableSpell`): a magic spell, not an ability, a passive
+ * or one unaffected by immunities, not marked never reflected. (Only a harmful one is: the caller's is at an enemy.)
+ */
+bool isReflectable(const ref SpellInfo spell) pure nothrow @nogc @safe
+{
+    enum uint magic = 1; // SPELL_DAMAGE_CLASS_MAGIC
+    enum uint ability = 0x10, passive = 0x40, noImmunities = 0x2000_0000; // SPELL_ATTR_*
+    enum uint noReflection = 0x80; // SPELL_ATTR_EX_NO_REFLECTION
+    return spell.casting.dmgClass == magic && spell.casting.school < 7 && !(spell.attributes & (ability | passive
+        | noImmunities)) && !(spell.attributesEx & noReflection);
+}
+
+/**
+ * The chance, in percent, that a unit with `auras` sends back a spell of `school` (CMaNGOS's `GetReflectChance`):
+ * `REFLECT_SPELLS` (Spell Reflection, Ward of the Eye, the Sheen of Zanza) and the ward of its school
+ * (`REFLECT_SPELLS_SCHOOL`).
+ */
+int reflectChance(A)(const ref A auras, uint school)
+{
+    import dmangos.world.spellids : AuraType;
+
+    return auras.total(AuraType.reflectSpells) + (school < 7 ? auras.totalByMiscMask(AuraType.reflectSpellsSchool,
+        1 << school) : 0);
+}
+
 SpellMissInfo rollSpellHit(Rng)(const Fighter caster, const Fighter victim, const ref SpellInfo spell,
     int resistance, float hitBonus, ref Rng rng)
 {

@@ -167,6 +167,11 @@ primary sources (docs/FORMULAS.md); CMaNGOS and vmangos are second opinions.
 * **A creature's spell at the enemies around itself** (`TARGET_ENUM_UNITS_ENEMY_WITHIN_CASTER_RANGE`, with a
   radius: Walking Bomb's explosion, Biletoad Infection) strikes every enemy within the radius of it, as CMaNGOS's
   `PUSH_SELF_CENTER` does; it struck only the unit it was cast at.
+* **Reflects** are summed and rolled once (CMaNGOS's `GetReflectChance`): `REFLECT_SPELLS` of any school (the Sheen
+  of Zanza; a creature's Ward of the Eye, Spell Reflection) and the ward of the spell's (Fire Ward, Frost Ward, with
+  their talents), for a reflectable spell (`isReflectable`: magic, not an ability or a passive). A creature sends a
+  player's spell back as its own cast once the player's is done; what it sends back is not reflected again. Before,
+  only a player's wards reflected, and only a creature's spells.
 * **What a creature summons at what its spell names nearest it** (`TARGET_LOCATION_SCRIPT_NEAR_CASTER`,
   `spell_script_target`: Rockwing Gargoyles at their statue, the festival's fireworks at their launcher) comes there,
   within the spell's range, a creature before a game object, as CMaNGOS's `CheckScriptTargeting` sets it. It came

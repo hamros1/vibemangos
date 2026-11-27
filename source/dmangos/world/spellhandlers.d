@@ -3082,6 +3082,7 @@ private:
         const(SpellJump)[] spellChain;
         uint[ulong] bounceOf;
         SpellMissInfo[ulong] missOf;
+        Creature[] reflectedByCreatures; // the creatures that send it back (their reflect), once its effects are done
         ulong[][3] effectTargets;
         Position objectDestination;
         bool hasObjectDestination;
@@ -3249,6 +3250,22 @@ private:
                 if (target !in missOf)
                 {
                     missOf[target] = c.custom.alwaysHits ? SpellMissInfo.none : rollHit(*spell, target);
+                    // A creature's reflect sends it back at the player (Ward of the Eye, Spell Reflection: CMaNGOS's
+                    // `GetReflectChance`), as the creature's own cast once this one is done.
+                    if (missOf[target] == SpellMissInfo.none && target != player.guid)
+                        if (auto creature = map.creatureAt(target))
+                        {
+                            import dmangos.world.spellcast : isReflectable, reflectChance;
+                            import std.random : uniform01;
+
+                            const chance = isReflectable(*spell) && spellEnemy(creature)
+                                ? reflectChance(creature.auras, spell.casting.school) : 0;
+                            if (chance > 0 && uniform01(map.random) * 100 < chance)
+                            {
+                                missOf[target] = SpellMissInfo.reflect;
+                                reflectedByCreatures ~= creature;
+                            }
+                        }
                     results ~= TargetResult(target, missOf[target]);
                 }
             }
@@ -3386,6 +3403,9 @@ private:
             sendRolledPartyHeal(spell, c, remote);
         foreach (ref remote; remoteDamage)
             sendRolledReplicaEffect(spell, c, remote);
+        foreach (creature; reflectedByCreatures)
+            if (creature.alive && creature.ai !is null)
+                creature.ai.reflectBack(map, spell, player.guid);
         // A channelled spell goes on (`SPELL_ATTR_EX_IS_CHANNELED`, `_IS_SELF_CHANNELED`).
         enum uint channeled = 0x04, selfChanneled = 0x40;
         if ((spell.attributesEx & (channeled | selfChanneled)) && !c.triggered && !channelFailed)

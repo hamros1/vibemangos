@@ -1370,7 +1370,7 @@ mixin template CreatureCasting()
                         // to proc on (Magic Absorption).
                         if (other.kind == imported!"dmangos.world.unit".UnitKind.player)
                         {
-                            if (miss == SpellMissInfo.none && other.session.reflectsSpell(spell))
+                            if (miss == SpellMissInfo.none && !sendingBack && other.session.reflectsSpell(spell))
                             {
                                 miss = SpellMissInfo.reflect;
                                 reflectedBy ~= other;
@@ -1842,6 +1842,18 @@ mixin template CreatureCasting()
         }
     }
 
+
+    /// Its cast of a player's spell it reflects (`reflectBack`): not reflected again (CMaNGOS: "full circle").
+    private bool sendingBack;
+
+    /// It sends a player's `spell` back at its caster (a reflect: Ward of the Eye, Spell Reflection), as its own cast.
+    package void reflectBack(Map map, const(SpellInfo)* spell, ulong caster)
+    {
+        sendingBack = true;
+        scope (exit)
+            sendingBack = false;
+        castFor(map, spell.id, caster, true);
+    }
 
     /// The spell on its next swing, instead of the swing (`true`): its weapon damage.
     private bool swingSpell(UnitRef target)

@@ -1382,6 +1382,43 @@ unittest
         summoned.position, caster.position));
 }
 
+/// A creature with a reflect (`REFLECT_SPELLS`: Ward of the Eye, Spell Reflection) sends a player's spell back at the
+/// player, as CMaNGOS's `GetReflectChance` does; the creature is not struck.
+unittest
+{
+    import dmangos.world.auras : AuraType, makeAura;
+    import dmangos.world.spellcast : SpellTargets, TargetFlags, spellAttrEx3AlwaysHit;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.spellids : ImplicitTarget, SpellEffect;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    auto rexxar = loggedIn(context, db, 7, "Rexxar", Position(-8949.95f, -132.49f, 83.53f, 0), AccountLevel.player,
+        raceOrc);
+    rexxar.read();
+    addPetData(&rexxar, context);
+    auto me = rexxar.session.inWorld;
+    auto map = context.map(0);
+    enum uint bolt = 97907, ward = 97908;
+    auto spell = testSpell(bolt, SpellEffect.schoolDamage, ImplicitTarget.enemy, 30);
+    spell.casting.school = 4; // frost
+    spell.casting.attributesEx3 |= spellAttrEx3AlwaysHit;
+    context.data.spells.spells[bolt] = spell;
+    auto reflect = testSpell(ward, SpellEffect.applyAura, ImplicitTarget.caster, 100);
+    reflect.casting.applyAuraName[0] = AuraType.reflectSpells;
+    context.data.spells.spells[ward] = reflect;
+    auto boar_ = context.summonCreature(map, boar, Position(-8945, -132.49f, 83.53f, 0), TempSpawnType.dead, 0, 0);
+    assert(boar_ !is null);
+    bool added;
+    boar_.receiveAura(makeAura(context.data.spells.spell(ward), boar_.guid, 10, -1, true, [100, 0, 0]), map, added);
+    const myHealth = me.player.values.get!UNIT_FIELD_HEALTH, itsHealth = boar_.values.get!UNIT_FIELD_HEALTH;
+    me.castSpell(context.data.spells.spell(bolt), SpellTargets(TargetFlags.unit, boar_.guid), true, 0);
+    assert(boar_.values.get!UNIT_FIELD_HEALTH == itsHealth, "the boar not struck");
+    assert(me.player.values.get!UNIT_FIELD_HEALTH < myHealth, "the bolt back at Rexxar");
+}
+
 /// A creature's spell at its friends around it (`TARGET_ENUM_UNITS_FRIEND_AOE_AT_SRC_LOC`: a Battle Command)
 /// reaches itself and the friend beside it, and not the player's pet there.
 unittest
