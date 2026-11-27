@@ -27,11 +27,8 @@ import dmangos.world.unit : UnitKind, UnitRef;
 /// See the module documentation.
 struct Caster
 {
-    UnitKind kind;
-    Character character; /// a player's
-    CreatureAI ai;       /// a creature's (a pet's, a totem's)
-    Creature creature;   /// ... and the creature
-    Map map;             /// where it casts
+    /// The unit casting: a player, or a creature (with its map).
+    UnitRef unit;
     WorldContext context;
 
     /// The player of `character`, on its map; none if it is not in the world.
@@ -39,7 +36,7 @@ struct Caster
     {
         if (character is null || character.player is null)
             return Caster.init;
-        return Caster(UnitKind.player, character, null, null, character.currentMap, character.context);
+        return Caster(UnitRef.of(character), character.context);
     }
 
     /// `creature`, its AI casting, on `map`, in `context`.
@@ -47,8 +44,15 @@ struct Caster
     {
         if (creature is null || creature.ai is null || map is null)
             return Caster.init;
-        return Caster(UnitKind.creature, null, creature.ai, creature, map, context);
+        return Caster(UnitRef.of(creature, map), context);
     }
+
+    /// What kind of unit it is, and that unit as a player, a creature or its AI (null for the other kind); its map.
+    @property UnitKind kind() const { return unit.kind; }
+    @property inout(Character) character() inout { return unit.session; } /// ditto
+    @property inout(Creature) creature() inout { return unit.creature; } /// ditto
+    @property CreatureAI ai() { return unit.creature is null ? null : unit.creature.ai; } /// ditto
+    @property inout(Map) map() inout { return unit.map; } /// ditto
 
     /// Whether it is a caster at all.
     bool opCast(B : bool)() const
@@ -64,17 +68,6 @@ struct Caster
         case UnitKind.none: return 0;
         case UnitKind.player: return character.player.guid;
         case UnitKind.creature: return creature.guid;
-        }
-    }
-
-    /// It as a unit.
-    @property UnitRef unit()
-    {
-        final switch (kind)
-        {
-        case UnitKind.none: return UnitRef.init;
-        case UnitKind.player: return character.unit;
-        case UnitKind.creature: return UnitRef.of(creature, map);
         }
     }
 
