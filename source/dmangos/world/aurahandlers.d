@@ -426,7 +426,7 @@ private:
             return false;
         if (isNew)
             auraEffects(applied, true);
-        else // one more stack (Blessing of the Claw's health): the stats of its amounts again
+        else if (changesStats(applied)) // one more stack (Blessing of the Claw's health): the stats of its amounts again
             player.refreshEquipmentStats(context.data);
         checkpointEncounterAura(applied);
         sendAuraDuration(applied);
@@ -550,29 +550,22 @@ private:
     }
 
     /**
-     * What an aura's effects do as it begins (`apply`) and ends: the aura types this
-     * server handles.
+     * Whether one of the aura's effects counts in the player's stats (an attribute, resistance, attack power, health or
+     * power, a skill, damage done or taken, the melee chances or a speed of attack or cast), so that its coming, going or
+     * stacking works them out again. Another's (Defensive State's, a periodic damage's) leaves them, and with them a
+     * game master's `.modify hp`, as they are.
      */
-    void auraEffects(Aura aura, bool apply)
+    static bool changesStats(const Aura aura)
     {
-        bool stats, speeds, movement, movementAuras, breathing;
-        classAuraChanged(aura, apply); // a seal
-        petOwnerAuraChanged(aura, apply); // a talent of its pet's (`dmangos.world.petauras`)
-        {
-            import dmangos.world.tooltipeffects : hiddenEffectsOf;
+        import dmangos.world.tooltipeffects : hiddenEffectsOf;
 
-            stats = hiddenEffectsOf(aura.spell.id).length > 0; // what only its tooltip gives counts in the stats
-        }
+        if (hiddenEffectsOf(aura.spell.id).length > 0) // what only its tooltip gives
+            return true;
         foreach (i; 0 .. 3)
-        {
-            if (!(aura.effects & (1 << i)))
-                continue;
-            switch (aura.type(i))
-            {
-            case AuraType.aoeCharm:
-                npcCharmChanged(aura, apply);
-                break;
-            case AuraType.modStat, AuraType.modPercentStat, AuraType.modResistance, AuraType.modAttackPower,
+            if (aura.effects & (1 << i))
+                switch (aura.type(i))
+                {
+                case AuraType.modStat, AuraType.modPercentStat, AuraType.modResistance, AuraType.modAttackPower,
                     AuraType.modRangedAttackPower, AuraType.modIncreaseHealth, AuraType.modIncreaseEnergy,
                     AuraType.modTotalStatPercentage, AuraType.modBaseResistancePct, AuraType.modResistancePct,
                     AuraType.modIncreaseHealthPercent, AuraType.modIncreaseEnergyPercent, AuraType.modAttackPowerPct,
@@ -582,7 +575,32 @@ private:
                     AuraType.modMeleeHaste, AuraType.modRangedHaste, AuraType.modAttackSpeed, AuraType.modRangedAmmoHaste,
                     AuraType.modResistanceExclusive, AuraType.modCastingSpeed, AuraType.modResistanceOfStatPercent,
                     AuraType.modCritPercent, AuraType.modDodgePercent, AuraType.modParryPercent, AuraType.modBlockPercent:
-                stats = true; // (the melee chances too: Holy Shield's block, a talent's crit)
+                case AuraType.modDisarm: // the weapon's damage
+                    return true;
+                default:
+                    break;
+                }
+        return false;
+    }
+
+    /**
+     * What an aura's effects do as it begins (`apply`) and ends: the aura types this
+     * server handles.
+     */
+    void auraEffects(Aura aura, bool apply)
+    {
+        bool speeds, movement, movementAuras, breathing;
+        bool stats = changesStats(aura);
+        classAuraChanged(aura, apply); // a seal
+        petOwnerAuraChanged(aura, apply); // a talent of its pet's (`dmangos.world.petauras`)
+        foreach (i; 0 .. 3)
+        {
+            if (!(aura.effects & (1 << i)))
+                continue;
+            switch (aura.type(i))
+            {
+            case AuraType.aoeCharm:
+                npcCharmChanged(aura, apply);
                 break;
             // Speeds (`dmangos.world.moveorders`: `speedRate`).
             case AuraType.modIncreaseSpeed, AuraType.modDecreaseSpeed, AuraType.modIncreaseSwimSpeed,
@@ -752,7 +770,6 @@ private:
                 break;
             case AuraType.modDisarm:
                 crowdControlFlag(UnitFlags.disarmed, AuraType.modDisarm, apply, false);
-                stats = true; // the weapon's damage goes
                 break;
             default:
                 break;
@@ -1751,3 +1768,4 @@ unittest
     assert(me.player.auras.find(evocation) is null, "no channel, no channel aura");
     assert(me.player.auras.find(blessing) !is null);
 }
+

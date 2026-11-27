@@ -2962,6 +2962,26 @@ unittest
 }
 
 /**
+ * An aura come again that counts in no stat (Defensive State, 5302, as each block or dodge gives it) leaves them as
+ * they are: a game master's `.modify hp` holds through it, as Blessing of the Claw's stacks above do not.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = druid(w, 419, [9858]);
+    auto me = who.session.inWorld;
+    me.player.values.set!UNIT_FIELD_MAXHEALTH(400_000u);
+    me.player.values.set!UNIT_FIELD_HEALTH(400_000u);
+    giveAura(w, who, 5302);
+    giveAura(w, who, 5302);
+    assert(me.player.auras.find(5302) !is null, "Defensive State");
+    assert(me.player.values.get!UNIT_FIELD_MAXHEALTH == 400_000 && me.player.values.get!UNIT_FIELD_HEALTH == 400_000,
+        format!"the health kept: %s/%s"(me.player.values.get!UNIT_FIELD_HEALTH, me.player.values.get!UNIT_FIELD_MAXHEALTH));
+}
+
+/**
  * Sentry Totem (6495): a totem of 100 health, and its aura on the shaman (to see through it). Far Sight (6196): the
  * shaman's view at the place, a minute.
  */
