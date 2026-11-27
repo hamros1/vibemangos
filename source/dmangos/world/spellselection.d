@@ -161,8 +161,12 @@ package bool namedCreatureCenter(const ref SpellInfo spell, size_t effect, const
     return client.isValidMapCoord(map, center.x, center.y, center.z, center.orientation);
 }
 
-/// The first rank can set a signed cone angle. Classic defaults to a 60-degree forward cone.
-package int namedCreatureCone(const WorldData data, uint spell)
+/**
+ * How wide spell `spell`'s cone is, in degrees (`spell_cone`, by its first rank; negative: behind the caster): every
+ * cone a spell targets, a player's (Cone of Cold) or a creature's (a breath), is this wide. Classic's default is a
+ * 60-degree cone in front.
+ */
+package int spellCone(const WorldData data, uint spell)
 {
     if (data is null)
         return 60;
@@ -171,7 +175,8 @@ package int namedCreatureCone(const WorldData data, uint spell)
     return degrees >= -360 && degrees <= 360 ? degrees : 60;
 }
 
-package bool inNamedCreatureCone(Position origin, Position target, int degrees)
+/// Whether `target` is in the cone of `degrees` (`spellCone`) the caster at `origin` faces.
+package bool inSpellCone(Position origin, Position target, int degrees)
 {
     import std.math : PI;
     import dmangos.world.combat : hasInArc;
@@ -203,7 +208,7 @@ package UnitRef[] namedCreaturesInArea(Map world, Position center, float reach, 
     UnitRef[] targets;
     visitNamedCreatures(world, center, reach, entries, 0, acrossNodes, (UnitRef candidate, float) {
         if ((visible is null || visible(candidate.combatGuid))
-            && (shape != ImplicitTarget.enumUnitsScriptInCone60 || inNamedCreatureCone(center, candidate.position, cone)))
+            && (shape != ImplicitTarget.enumUnitsScriptInCone60 || inSpellCone(center, candidate.position, cone)))
             targets ~= candidate;
     });
     if (maxTargets && targets.length > maxTargets)

@@ -1835,7 +1835,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         import dmangos.world.spelldamage : creatureAreaShape, creatureTargetInRange, databaseSpellEffect,
             isCreatureTargetEffect, isHostileAreaEffect, isHostileChainEffect, isRemoteLeechChannel, isTargetedProcEffect,
             namedCreatureShape, remoteTargetAuraEffects, rollRemoteAreaDamage, spellJumpRadius, unblockedAuraEffects;
-        import dmangos.world.spellselection : inNamedCreatureCone, namedCreatureCenter, namedCreatureCone,
+        import dmangos.world.spellselection : inSpellCone, namedCreatureCenter, spellCone,
             namedCreatureRadius;
         import dmangos.world.spellids : ImplicitTarget, SpellEffect;
         import dmangos.world.unit : Blow, UnitKind, UnitRef, combatRelations;
@@ -1960,8 +1960,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
             if (!attacker.alive && !(message.triggered && casterFields.type == TypeId.unit
                 && shape != ImplicitTarget.unitScriptNearCaster))
                 return replyCreatureCast(peer, message, SpellMissInfo.evade);
-            if (shape == ImplicitTarget.enumUnitsScriptInCone60 && !inNamedCreatureCone(
-                Position(message.x, message.y, message.z, message.facing), p, namedCreatureCone(data, spell.id)))
+            if (shape == ImplicitTarget.enumUnitsScriptInCone60 && !inSpellCone(
+                Position(message.x, message.y, message.z, message.facing), p, spellCone(data, spell.id)))
                 return replyCreatureCast(peer, message, SpellMissInfo.evade);
             if (shape == ImplicitTarget.enumUnitsScriptAoeAtDestLoc)
             {
@@ -2014,7 +2014,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                 return;
             auto origin = caster.position;
             origin.orientation = message.facing;
-            if (shape == ImplicitTarget.enemiesInCone && !hasInArc(origin, victim.position, PI / 2))
+            if (shape == ImplicitTarget.enemiesInCone && !imported!"dmangos.world.spellselection".inSpellCone(origin,
+                    victim.position, imported!"dmangos.world.spellselection".spellCone(data, spell.id)))
                 return;
             if (message.auraAbsent && victim.hasAuraOf(spell.id))
                 return;

@@ -3053,7 +3053,7 @@ private:
         RemotePartyHeal[] remoteHeals;
         RemoteAreaDamage[] remoteDamage;
         import dmangos.world.spelldamage : databaseSpellEffect, namedCreatureShape;
-        import dmangos.world.spellselection : namedCreatureCenter, namedCreatureCone, namedCreatureRadius,
+        import dmangos.world.spellselection : namedCreatureCenter, spellCone, namedCreatureRadius,
             namedCreatureEntry, namedCreaturesInArea, nearestNamedCreature;
 
         const namedEffect = context.namedCreatureRouting(spell);
@@ -3078,7 +3078,7 @@ private:
                 player.position, spell.id in context.data.spellTargets, &c.targets, namedCenter);
             if (hasNamedCenter)
                 scripted = namedCreaturesInArea(map, namedCenter, namedRange, entries, routeNamed,
-                    spell.casting.maxAffectedTargets, namedShape, namedCreatureCone(context.data, spell.id), &visible);
+                    spell.casting.maxAffectedTargets, namedShape, spellCone(context.data, spell.id), &visible);
         }
         const namedDestination = namedShape == ImplicitTarget.enumUnitsScriptAoeAtDestLoc && hasNamedCenter;
         const(SpellJump)[] spellChain;
@@ -4305,9 +4305,10 @@ private:
         import std.algorithm.comparison : among;
 
         with (ImplicitTarget)
-            return spell.implicitTargetA[i].among(enemiesAroundSource, enemiesAroundDest, enemiesInCone,
+            return spell.implicitTargetA[i].among(enemiesAroundSource, enemiesAroundDest, enemiesInCone, enumUnitsEnemyInCone54,
                 partyAroundSource, partyInRange, friendsAroundSource, friendsAroundDest, party) != 0
                 || spell.casting.implicitTargetB[i].among(enemiesAroundSource, enemiesAroundDest, enemiesInCone,
+                enumUnitsEnemyInCone54,
                 partyAroundSource, partyInRange, friendsAroundSource, friendsAroundDest) != 0;
     }
 
@@ -4339,7 +4340,9 @@ private:
         import dmangos.world.spellselection : excludedAreaTarget;
 
         const a = spell.implicitTargetA[i], b = spell.casting.implicitTargetB[i];
-        auto kind = b != ImplicitTarget.none && isAreaTargetKind(b) ? b : a;
+        ImplicitTarget kind = b != ImplicitTarget.none && isAreaTargetKind(b) ? b : a;
+        if (kind == ImplicitTarget.enumUnitsEnemyInCone54)
+            kind = ImplicitTarget.enemiesInCone; // the other cone of enemies in front (`TARGET_ENUM_UNITS_ENEMY_IN_CONE_54`)
         if (!isAreaTargetKind(kind))
             return null;
         const r = spellMod(SpellModOp.radius, spell, radius(*spell, i, context.client));
@@ -4360,18 +4363,18 @@ private:
                 partyOf = targets.unit;
                 center = friend.character.position;
             }
+        import dmangos.world.spellselection : inSpellCone, spellCone;
+
+        const coneDegrees = spellCone(context.data, spell.id);
         bool within(Position p)
         {
             if ((p.x - center.x) ^^ 2 + (p.y - center.y) ^^ 2 + (p.z - center.z) ^^ 2 > r * r)
                 return false;
             if (kind != ImplicitTarget.enemiesInCone)
                 return true;
-            double angle = atan2(p.y - center.y, p.x - center.x) - player.position.orientation;
-            while (angle > PI)
-                angle -= 2 * PI;
-            while (angle < -PI)
-                angle += 2 * PI;
-            return angle >= -PI / 3 && angle <= PI / 3;
+            auto origin = center;
+            origin.orientation = player.position.orientation;
+            return inSpellCone(origin, p, coneDegrees);
         }
 
         ulong[] found;
@@ -4444,8 +4447,8 @@ private:
         import std.algorithm.comparison : among;
 
         with (ImplicitTarget)
-            return kind.among(enemiesAroundSource, enemiesAroundDest, enemiesInCone, partyAroundSource, partyInRange,
-                friendsAroundSource, friendsAroundDest, party, unitFriendAndParty) != 0;
+            return kind.among(enemiesAroundSource, enemiesAroundDest, enemiesInCone, enumUnitsEnemyInCone54,
+                partyAroundSource, partyInRange, friendsAroundSource, friendsAroundDest, party, unitFriendAndParty) != 0;
     }
 
     /// Whether this player may help `guid` with a spell: a unit here it may not attack.

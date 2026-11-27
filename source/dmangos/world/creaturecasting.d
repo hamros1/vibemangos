@@ -970,6 +970,8 @@ mixin template CreatureCasting()
         const area = a == ImplicitTarget.enemiesAroundSource || a == ImplicitTarget.enemiesAroundDest || b == ImplicitTarget.enemiesAroundSource || b == ImplicitTarget.enemiesAroundDest;
         // A cone in front (`TARGET_UNIT_CONE_ENEMY`, `TARGET_ENUM_UNITS_ENEMY_IN_CONE_54`: Magmadar's Lava Breath).
         const cone = a == ImplicitTarget.enemiesInCone || a == ImplicitTarget.enumUnitsEnemyInCone54;
+        import dmangos.world.spellselection : inSpellCone, spellCone;
+        const coneDegrees = spellCone(lore is null ? null : lore.data, spell.id);
         if (area || cone)
         {
             auto center = me.position;
@@ -992,7 +994,7 @@ mixin template CreatureCasting()
                 if (rule.areaSeenFromCenter && (!world_.inLineOfSight(center, other.position)
                     || (f.stealthed && !detects(me.fighter, f, r))))
                     continue;
-                if (cone && !hasInArc(me.position, f.position, PI / 2))
+                if (cone && !inSpellCone(me.position, f.position, coneDegrees))
                     continue;
                 found ~= other.combatGuid;
             }
@@ -1007,7 +1009,7 @@ mixin template CreatureCasting()
                 foreach (other; world_.creaturesNear(center, r))
                     if (other !is me && other.alive && !other.totemOwner && other.ai !is null
                             && canAttack(relating, other.ai.relatingOf, me.client)
-                            && (!cone || hasInArc(me.position, other.position, PI / 2)))
+                            && (!cone || inSpellCone(me.position, other.position, coneDegrees)))
                         found ~= other.guid;
             return found;
         }
@@ -1071,7 +1073,7 @@ mixin template CreatureCasting()
         import dmangos.world.context : WorldContext;
         import dmangos.world.spellcast : spellFailurePacket, SpellCastResult;
         import dmangos.world.spelldamage : creatureTargetInRange, databaseSpellEffect, namedCreatureShape;
-        import dmangos.world.spellselection : namedCreatureCenter, namedCreatureCone, namedCreatureRadius,
+        import dmangos.world.spellselection : namedCreatureCenter, spellCone, namedCreatureRadius,
             namedCreatureEntry, namedCreaturesInArea, nearestNamedCreature;
 
         // EventAI may start a triggered cast from the death callback. A living caster killed
@@ -1175,7 +1177,7 @@ mixin template CreatureCasting()
             if (hasNamedCenter)
                 named = namedCreaturesInArea(world_, namedCenter, namedRange, namedEntries, routeNamed,
                     spell.casting.maxAffectedTargets, namedShape,
-                    namedCreatureCone(context is null ? null : context.data, spell.id));
+                    spellCone(context is null ? null : context.data, spell.id));
         }
         else if (namedShape == ImplicitTarget.unitScriptNearCaster)
             if (auto nearest = nearestNamedCreature(world_, me.position, namedRange, namedEntries, me.guid, routeNamed))
@@ -1438,7 +1440,9 @@ mixin template CreatureCasting()
                         auto other = UnitRef.observed(copy, map);
                         if (other.combatGuid != excluded && other.alive
                             && canAttack(relating, other.combatRelations(me.client), me.client)
-                            && (shape != ImplicitTarget.enemiesInCone || hasInArc(me.position, other.position, PI / 2)))
+                            && (shape != ImplicitTarget.enemiesInCone || imported!"dmangos.world.spellselection".inSpellCone(
+                                me.position, other.position, imported!"dmangos.world.spellselection".spellCone(
+                                lore is null ? null : lore.data, spell.id))))
                             sent |= sendCreatureTargetSpell(context, spell, other, triggered, auraAbsent,
                                 cast(int) i, at, reach);
                     }

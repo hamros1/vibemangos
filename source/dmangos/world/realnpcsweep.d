@@ -522,6 +522,9 @@ private final class NpcSweeper
         }
         quiet(caster);
         caster.movement.position.orientation = facing;
+        // A cone behind the caster (`spell_cone`'s negative angle: a dragon's Tail Sweep) is at the player behind it.
+        if (!moves && imported!"dmangos.world.spellselection".spellCone(data, sp.id) < 0)
+            caster.movement.position.orientation = facing + PI;
         // An enemy of the player for what harms it (one friendly to it is made a monster: as it would cast at its
         // enemies).
         auto heroUnit = map.unit(me.player.guid);
