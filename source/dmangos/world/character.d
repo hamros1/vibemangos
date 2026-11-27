@@ -50,7 +50,7 @@ import dmangos.world.tradehandlers : TradeHandlers;
 import dmangos.world.duelhandlers : DuelHandlers;
 import dmangos.world.questhandlers : QuestHandlers;
 import dmangos.world.talenthandlers : TalentHandlers;
-import dmangos.world.mailhandlers : MailHandlers;
+import dmangos.world.mailhandlers : Mailbox;
 import dmangos.world.reputationhandlers : ReputationHandlers;
 import dmangos.world.gameobjecthandlers : GameObjectHandlers;
 import dmangos.world.auctionhandlers : AuctionHandlers;
@@ -103,9 +103,10 @@ final class Character : OnlinePlayer, Looter
     /// The connection its client talks through (here, or relaying to its home node).
     WorldSession connection;
 
-    mixin PacketDispatch!(Handles, "taxi");
+    mixin PacketDispatch!(Handles, "taxi", "mailbox");
 
     Taxi taxi; /// flight masters and the flight under way (`dmangos.world.taxihandlers`)
+    Mailbox mailbox; /// the mailbox: letters sent, read and taken (`dmangos.world.mailhandlers`)
 
     package
     {
@@ -157,6 +158,7 @@ final class Character : OnlinePlayer, Looter
         this.connection = connection;
         this.context = context;
         taxi = new Taxi(this);
+        mailbox = new Mailbox(this);
     }
 
     /// One of the player's packets (the connection's protocol state `state`): handled here, or not one of its.
@@ -922,7 +924,6 @@ private:
     mixin DuelHandlers;
     mixin QuestHandlers;
     mixin TalentHandlers;
-    mixin MailHandlers;
     mixin ReputationHandlers;
     mixin GameObjectHandlers;
     mixin AuctionHandlers;

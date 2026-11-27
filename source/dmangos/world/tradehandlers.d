@@ -107,7 +107,7 @@ private:
     }
 
     /// The item at `guid` in this player's inventory; null if it is not there.
-    Item itemByGuid(ulong guid)
+    package Item itemByGuid(ulong guid)
     {
         if (guid == 0)
             return null;
@@ -126,7 +126,7 @@ private:
     }
 
     /// Whether an item may be traded: not bound, not an equipped or non-empty bag, not worn.
-    bool canBeTraded(const Item item)
+    package bool canBeTraded(const Item item)
     {
         if (item.bound)
             return false;

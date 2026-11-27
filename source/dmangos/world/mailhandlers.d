@@ -1,5 +1,5 @@
 /**
- * Mail: the mailbox opcodes and posting letters, mixed into `dmangos.world.character.Character`.
+ * Mail: the mailbox opcodes and posting letters.
  *
  * At a mailbox a player sends a letter to a character of its faction (30 copper), with an item,
  * money or cash on delivery; reads its letters (`mail`, newest last, 50 at most); takes their money
@@ -54,8 +54,19 @@ enum uint postage = 30;
 enum uint maxMailMoney = int.max;
 
 /// See the module documentation.
-mixin template MailHandlers()
+final class Mailbox
 {
+    import dmangos.world.character : Character, Handles;
+    import dmangos.world.session : WorldState;
+
+    private Character me;
+
+    ///
+    this(Character me)
+    {
+        this.me = me;
+    }
+
     import dmangos.world.money : Copper;
     import dmangos.bytes : ByteReader, ByteWriter;
     import dmangos.log : info;
@@ -69,15 +80,15 @@ mixin template MailHandlers()
     import dmangos.world.opcodes;
     import dmangos.world.updatefields;
 
-private:
+package:
     /// Whether `guid` is a mailbox (game object type 19) within reach.
     bool nearMailbox(ulong guid)
     {
         enum uint typeMailbox = 19;
-        auto box = cast(GameObject) map.findObject(guid);
+        auto box = cast(GameObject) me.map.findObject(guid);
         if (box is null || box.template_.type != typeMailbox)
             return false;
-        const a = player.position, b = box.position;
+        const a = me.player.position, b = box.position;
         return (a.x - b.x) ^^ 2 + (a.y - b.y) ^^ 2 + (a.z - b.z) ^^ 2 <= 10.0f ^^ 2;
     }
 
@@ -96,7 +107,7 @@ private:
             w.put(itemGuid);
             w.put(itemCount);
         }
-        deliver(Opcode.SMSG_SEND_MAIL_RESULT, w.data);
+        me.deliver(Opcode.SMSG_SEND_MAIL_RESULT, w.data);
     }
 
     /**
@@ -105,7 +116,7 @@ private:
      */
     package void postMail(MailRecord mail, uint delay)
     {
-        context.postOffice.postMail(mail, delay);
+        me.context.postOffice.postMail(mail, delay);
     }
 
     /// The player sends a letter: checked, paid for, and posted.
@@ -121,32 +132,32 @@ private:
         const money = reader.read!uint, cod = reader.read!uint;
         if (!nearMailbox(mailbox) || receiverName.length == 0)
             return;
-        const receiver = normalizePlayerName(receiverName) ? context.database.characterGuid(receiverName) : 0;
+        const receiver = normalizePlayerName(receiverName) ? me.context.database.characterGuid(receiverName) : 0;
         if (receiver == 0)
             return sendMailResult(0, MailAction.send, MailError.recipientNotFound);
-        if (receiver == player.data.guid)
+        if (receiver == me.player.data.guid)
             return sendMailResult(0, MailAction.send, MailError.cannotSendToSelf);
         // As money: a uint sum near uint.max would wrap, and a wrapped sum would pass this check for free.
         const cost = Copper(money) + Copper(postage);
-        if (money > maxMailMoney || !player.canAfford(cost))
+        if (money > maxMailMoney || !me.player.canAfford(cost))
             return sendMailResult(0, MailAction.send, MailError.notEnoughMoney);
-        const raceAccount = context.database.characterRaceAccount(receiver);
-        if (context.client.teamForRace(cast(ubyte) raceAccount[0]) != context.client.teamForRace(player.data.race)
-            && !isStaff)
+        const raceAccount = me.context.database.characterRaceAccount(receiver);
+        if (me.context.client.teamForRace(cast(ubyte) raceAccount[0]) != me.context.client.teamForRace(me.player.data.race)
+            && !me.isStaff)
             return sendMailResult(0, MailAction.send, MailError.notYourTeam);
-        if (context.database.loadMail(receiver).length > 100)
+        if (me.context.database.loadMail(receiver).length > 100)
             return sendMailResult(0, MailAction.send, MailError.recipientCapReached);
         Item item;
         if (itemGuid)
         {
-            item = itemByGuid(itemGuid);
-            if (item is null || !canBeTraded(item) || item.values[ITEM_FIELD_DURATION])
+            item = me.itemByGuid(itemGuid);
+            if (item is null || !me.canBeTraded(item) || item.values[ITEM_FIELD_DURATION])
                 return sendMailResult(0, MailAction.send, MailError.attachmentInvalid);
         }
         sendMailResult(0, MailAction.send, MailError.ok);
-        player.pay(cost);
+        me.player.pay(cost);
         MailRecord mail;
-        mail.sender = player.data.guid;
+        mail.sender = me.player.data.guid;
         mail.receiver = receiver;
         mail.subject = subject;
         mail.money = money;
@@ -154,8 +165,8 @@ private:
         mail.checked = body.length ? mailHasBody : mailCopied;
         if (body.length)
         {
-            mail.itemTextId = context.nextMailId();
-            context.database.saveItemText(mail.itemTextId, body);
+            mail.itemTextId = me.context.nextMailId();
+            me.context.database.saveItemText(mail.itemTextId, body);
         }
         if (item !is null)
         {
@@ -163,25 +174,25 @@ private:
             auto record = item.record;
             mail.itemGuid = record.guid;
             mail.itemEntry = record.entry;
-            player.inventory.destroy(item.bagSlot, item.slot);
-            flushInventory(true);
+            me.player.inventory.destroy(item.bagSlot, item.slot);
+            me.flushInventory(true);
             record.bag = 0;
-            context.database.saveLooseItem(record, receiver);
+            me.context.database.saveLooseItem(record, receiver);
         }
         else
-            flushInventory(true);
+            me.flushInventory(true);
         // Anniversary realms deliver mail between characters on the same account immediately.
-        const delay = item !is null && raceAccount[1] != account.id ? context.config.mailDeliveryDelay : 0;
+        const delay = item !is null && raceAccount[1] != me.account.id ? me.context.config.mailDeliveryDelay : 0;
         postMail(mail, delay);
-        info!"%s: '%s' mailed %s (item %s, %s copper, %s on delivery)"(remoteAddress, player.data.name, receiverName,
+        info!"%s: '%s' mailed %s (item %s, %s copper, %s on delivery)"(me.remoteAddress, me.player.data.name, receiverName,
             mail.itemEntry, money, mail.cod);
     }
 
     /// The player's letter `id`, delivered; null otherwise.
     MailRecord* deliveredMail(uint id)
     {
-        auto found = context.database.mailById(id);
-        if (found.isNull || found.get.receiver != player.data.guid || found.get.deliverTime > context.unixTime)
+        auto found = me.context.database.mailById(id);
+        if (found.isNull || found.get.receiver != me.player.data.guid || found.get.deliverTime > me.context.unixTime)
             return null;
         auto mail = new MailRecord;
         *mail = found.get;
@@ -194,10 +205,10 @@ private:
     {
         if (!nearMailbox(reader.read!ulong))
             return;
-        const now = context.unixTime;
+        const now = me.context.unixTime;
         ByteWriter list;
         ubyte count;
-        foreach (ref m; context.database.loadMail(player.data.guid))
+        foreach (ref m; me.context.database.loadMail(me.player.data.guid))
         {
             if (count >= 50)
                 break;
@@ -213,7 +224,7 @@ private:
             list.put(m.itemTextId);
             list.put(0u);
             list.put(uint(m.stationery));
-            auto item = m.itemGuid ? context.database.looseItem(m.itemGuid) : typeof(context.database.looseItem(0)).init;
+            auto item = m.itemGuid ? me.context.database.looseItem(m.itemGuid) : typeof(me.context.database.looseItem(0)).init;
             const has = !item.isNull;
             list.put(has ? item.get.entry : 0u);
             list.put(0u); // permanent enchantment
@@ -221,7 +232,7 @@ private:
             list.put(0u); // suffix factor
             list.put(cast(ubyte)(has ? item.get.count : 0));
             list.put(0u); // charges
-            const proto = has ? item.get.entry in context.data.items : null;
+            const proto = has ? item.get.entry in me.context.data.items : null;
             list.put(proto is null ? 0u : proto.maxDurability);
             list.put(has ? item.get.durability : 0u);
             list.put(m.money);
@@ -234,7 +245,7 @@ private:
         ByteWriter w;
         w.put(count);
         w.putBytes(list.data);
-        deliver(Opcode.SMSG_MAIL_LIST_RESULT, w.data);
+        me.deliver(Opcode.SMSG_MAIL_LIST_RESULT, w.data);
     }
 
     /// The player takes a letter's money.
@@ -248,10 +259,10 @@ private:
         if (mail is null)
             return sendMailResult(id, MailAction.moneyTaken, MailError.internalError);
         sendMailResult(id, MailAction.moneyTaken, MailError.ok);
-        player.receive(Copper(mail.money));
+        me.player.receive(Copper(mail.money));
         mail.money = 0;
-        context.database.updateMail(*mail);
-        flushInventory(true);
+        me.context.database.updateMail(*mail);
+        me.flushInventory(true);
     }
 
     /// The player takes a letter's item: into the bags; cash on delivery paid, and mailed to the sender.
@@ -264,36 +275,36 @@ private:
         auto mail = deliveredMail(id);
         if (mail is null || mail.itemGuid == 0)
             return sendMailResult(id, MailAction.itemTaken, MailError.internalError);
-        if (!player.canAfford(Copper(mail.cod)))
+        if (!me.player.canAfford(Copper(mail.cod)))
             return sendMailResult(id, MailAction.itemTaken, MailError.notEnoughMoney);
-        const record = context.database.looseItem(mail.itemGuid);
-        const proto = record.isNull ? null : record.get.entry in context.data.items;
+        const record = me.context.database.looseItem(mail.itemGuid);
+        const proto = record.isNull ? null : record.get.entry in me.context.data.items;
         if (proto is null)
             return sendMailResult(id, MailAction.itemTaken, MailError.internalError);
-        auto item = Item.load(record.get, proto, player.guid);
+        auto item = Item.load(record.get, proto, me.player.guid);
         ItemPosCount[] dest;
         ubyte bagSlot;
-        const result = player.inventory.canStore(nullBag, nullSlot, dest, item, false, bagSlot);
+        const result = me.player.inventory.canStore(nullBag, nullSlot, dest, item, false, bagSlot);
         if (result != InventoryResult.ok)
             return sendMailResult(id, MailAction.itemTaken, MailError.equipError, result);
         if (mail.cod)
         {
             MailRecord payment;
-            payment.sender = player.data.guid;
+            payment.sender = me.player.data.guid;
             payment.receiver = mail.sender;
             payment.subject = mail.subject;
             payment.money = mail.cod;
             payment.checked = mailCodPayment;
             postMail(payment, 0);
-            player.pay(Copper(mail.cod));
+            me.player.pay(Copper(mail.cod));
             mail.cod = 0;
         }
         const count = item.count, entry = item.entry;
-        player.inventory.store(dest, item);
+        me.player.inventory.store(dest, item);
         mail.itemGuid = 0;
         mail.itemEntry = 0;
-        context.database.updateMail(*mail);
-        flushInventory(true);
+        me.context.database.updateMail(*mail);
+        me.flushInventory(true);
         sendMailResult(id, MailAction.itemTaken, MailError.ok, 0, entry, count);
     }
 
@@ -308,10 +319,10 @@ private:
         {
             // "if you read the mail, it'll only last for 3 days" (WoWWiki "Mail", 2006-11; docs/FORMULAS.md "Mail").
             enum long readLasts = 3 * 24 * 60 * 60;
-            if (!(mail.checked & mailRead) && mail.expireTime > context.unixTime + readLasts)
-                mail.expireTime = context.unixTime + readLasts;
+            if (!(mail.checked & mailRead) && mail.expireTime > me.context.unixTime + readLasts)
+                mail.expireTime = me.context.unixTime + readLasts;
             mail.checked |= mailRead;
-            context.database.updateMail(*mail);
+            me.context.database.updateMail(*mail);
         }
     }
 
@@ -326,7 +337,7 @@ private:
         {
             if (mail.cod)
                 return sendMailResult(id, MailAction.deleted, MailError.internalError);
-            context.database.deleteMail(id);
+            me.context.database.deleteMail(id);
         }
         sendMailResult(id, MailAction.deleted, MailError.ok);
     }
@@ -341,11 +352,11 @@ private:
         auto mail = deliveredMail(id);
         if (mail is null)
             return sendMailResult(id, MailAction.returnedToSender, MailError.internalError);
-        context.database.deleteMail(id);
+        me.context.database.deleteMail(id);
         if (mail.messageType == 0 && mail.sender)
         {
             MailRecord back;
-            back.sender = player.data.guid;
+            back.sender = me.player.data.guid;
             back.receiver = mail.sender;
             back.subject = mail.subject;
             back.itemTextId = mail.itemTextId;
@@ -354,8 +365,8 @@ private:
             back.itemEntry = mail.itemEntry;
             back.checked = mailReturned;
             if (back.itemGuid)
-                if (auto item = context.database.looseItem(back.itemGuid))
-                    context.database.saveLooseItem(item.get, back.receiver);
+                if (auto item = me.context.database.looseItem(back.itemGuid))
+                    me.context.database.saveLooseItem(item.get, back.receiver);
             postMail(back, 0); // "Return mail arrives immediately" (WoWWiki "Mail", 2006-11)
         }
         sendMailResult(id, MailAction.returnedToSender, MailError.ok);
@@ -372,17 +383,17 @@ private:
         if (mail is null || mail.itemTextId == 0)
             return sendMailResult(id, MailAction.madePermanent, MailError.internalError);
         ItemPosCount[] dest;
-        const result = player.inventory.canStoreNew(nullBag, nullSlot, dest, mailBodyItem, 1);
+        const result = me.player.inventory.canStoreNew(nullBag, nullSlot, dest, mailBodyItem, 1);
         if (result != InventoryResult.ok)
             return sendMailResult(id, MailAction.madePermanent, MailError.equipError, result);
-        if (auto letter = player.inventory.storeNew(dest, mailBodyItem))
+        if (auto letter = me.player.inventory.storeNew(dest, mailBodyItem))
         {
             letter.values.set!ITEM_FIELD_ITEM_TEXT_ID(mail.itemTextId);
             letter.values.set!ITEM_FIELD_CREATOR(ulong(mail.sender));
         }
         mail.checked |= mailCopied;
-        context.database.updateMail(*mail);
-        flushInventory();
+        me.context.database.updateMail(*mail);
+        me.flushInventory();
         sendMailResult(id, MailAction.madePermanent, MailError.ok);
     }
 
@@ -393,22 +404,22 @@ private:
         const textId = reader.read!uint;
         ByteWriter w;
         w.put(textId);
-        w.putCString(context.database.itemText(textId));
-        deliver(Opcode.SMSG_ITEM_TEXT_QUERY_RESPONSE, w.data);
+        w.putCString(me.context.database.itemText(textId));
+        me.deliver(Opcode.SMSG_ITEM_TEXT_QUERY_RESPONSE, w.data);
     }
 
     /// The client asks when mail comes next: 0 if there is unread mail, else a day ago.
     @Handles(Opcode.MSG_QUERY_NEXT_MAIL_TIME, WorldState.inWorld)
     void handleQueryNextMailTime()
     {
-        const now = context.unixTime;
+        const now = me.context.unixTime;
         bool unread;
-        foreach (ref m; context.database.loadMail(player.data.guid))
+        foreach (ref m; me.context.database.loadMail(me.player.data.guid))
             if (m.deliverTime <= now && !(m.checked & mailRead))
                 unread = true;
         ByteWriter w;
         w.put(unread ? 0.0f : -86_400.0f);
-        deliver(Opcode.MSG_QUERY_NEXT_MAIL_TIME, w.data);
+        me.deliver(Opcode.MSG_QUERY_NEXT_MAIL_TIME, w.data);
     }
 }
 
