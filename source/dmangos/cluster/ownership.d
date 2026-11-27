@@ -439,11 +439,17 @@ final class RegionAuthority
             }
     }
 
-    /// `node` has stopped simulating a region it was asked to give up.
+    /**
+     * `node` has stopped simulating a region it was asked to give up. Also one this table still shows granted to it
+     * at that epoch: a standby that took over with a table older than the old coordinator's last, whose revoke it
+     * never saw, hears the release (sent again) before the node's drain; refused, the region would wait on a node
+     * that has let it go. No other node holds it at that epoch, so taking the release grants no second owner.
+     */
     bool released(ushort node, uint region, ulong epoch)
     {
         foreach (ref r; regions_)
-            if (r.id == region && r.owner == node && r.epoch == epoch && r.state == RegionState.revoking)
+            if (r.id == region && r.owner == node && r.epoch == epoch
+                && (r.state == RegionState.revoking || r.state == RegionState.granted))
             {
                 auto target = movingTo.get(r.id, 0);
                 movingTo.remove(r.id);
@@ -1468,6 +1474,39 @@ unittest
     assert(coordinator.released(1, region.id, region.epoch));
     coordinator.tick();
     assert(coordinator.regions[0].owner == 2 && coordinator.regions[0].state == RegionState.granted);
+}
+
+// A standby that took over with a table older than the old coordinator's last: a draining node's region still
+// granted to it there, though it had released it to the old coordinator (which died before taking it). The node's
+// drain and its release, sent again, reach the standby: the region goes on to a next owner, not left unowned.
+unittest
+{
+    import core.time : seconds;
+
+    auto now = MonoTime.currTime;
+    const stale = Region(1, 0, CellRect(0, 0, 10, 10), 3, 5, RegionState.granted);
+    const other = Region(2, 0, CellRect(10, 0, 20, 10), 4, 6, RegionState.granted);
+    foreach (releaseFirst; [false, true])
+    {
+        auto authority = RegionAuthority.adopt([stale, other], 9, [1: 100UL, 2: 100UL], 2, [2, 3, 4], 1, now,
+            5.seconds, () => now);
+        now += 1.seconds;
+        bool released;
+        if (releaseFirst)
+            released = authority.released(3, 1, 5);
+        authority.drain(3);
+        if (!releaseFirst)
+            released = authority.released(3, 1, 5);
+        foreach (_; 0 .. 3)
+        {
+            now += 3.seconds;
+            authority.tick();
+        }
+        import std.format : format;
+
+        assert(authority.grantedAfter(1) != 0, format!"granted on (release %s the drain; taken: %s; %s)"(
+            releaseFirst ? "before" : "after", released, authority.regions));
+    }
 }
 
 // A standby that took over grants nothing for a lease, a region released to it meanwhile included: the old

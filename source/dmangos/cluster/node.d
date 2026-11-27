@@ -1833,6 +1833,9 @@ final class ClusterNode : LinkOwner
                 const release = decode!RegionReleased(payload);
                 if (authority.released(peer, release.region, release.epoch))
                     handOver(release.region, release.objects);
+                else // (as a release this coordinator's table no longer waits for: a stale one, or one too early)
+                    info!"cluster: node %s released region %s at epoch %s, which the table does not wait on: refused"(
+                        peer, release.region, release.epoch);
                 return;
             case MessageType.creatureLoan:
                 const request = decode!CreatureLoan(payload);
