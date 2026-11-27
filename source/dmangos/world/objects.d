@@ -600,9 +600,10 @@ struct UpdateData
 
 /**
  * The zlib level update packets are compressed with (the `Compression` setting: 1, the fastest,
- * by default); set from the configuration at start-up.
+ * by default); set from the configuration as the world starts. The world's thread's own: the only one that
+ * builds update packets (the database writer's thread builds none).
  */
-__gshared int updateCompression = 1; // written once at start-up, before any other thread; read after
+int updateCompression = 1;
 
 /**
  * The most bytes of blocks one update packet should carry before it is compressed:
