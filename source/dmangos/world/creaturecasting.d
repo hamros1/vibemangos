@@ -1004,13 +1004,16 @@ mixin template CreatureCasting()
 
                 return [found[uniform(0, found.length, world_.random)]];
             }
-            // A player's totem's (Fire Nova, Magma Totem): the creatures there its owner may attack too.
-            if (me.totemOwner)
-                foreach (other; world_.creaturesNear(center, r))
-                    if (other !is me && other.alive && !other.totemOwner && other.ai !is null
-                            && canAttack(relating, other.ai.relatingOf, me.client)
-                            && (!cone || inSpellCone(me.position, other.position, coneDegrees)))
-                        found ~= other.guid;
+            // The creatures there it may attack too: a creature's area strikes what the players control (their pets,
+            // guardians and totems), and a player's totem's (Fire Nova, Magma Totem) the creatures its owner may fight.
+            // Not one creature's area at another of the world's: an escort's fight (Isillien's Mana Burn at Taelan) is
+            // scripted as it is.
+            foreach (other; world_.creaturesNear(center, r))
+                if (other !is me && other.alive && other.ai !is null && other.guid != excluded
+                        && (me.totemOwner ? !other.totemOwner : other.ai.relatingOf.playerControlled)
+                        && canAttack(relating, other.ai.relatingOf, me.client)
+                        && (!cone || inSpellCone(me.position, other.position, coneDegrees)))
+                    found ~= other.guid;
             import dmangos.world.spellselection : mostAffected;
 
             return mostAffected(world_, found, spell.casting.maxAffectedTargets, target, center);

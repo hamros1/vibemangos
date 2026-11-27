@@ -1137,3 +1137,47 @@ unittest
     gul.write(Opcode.CMSG_PET_CAST_SPELL, castAt(growl));
     assert(gul.read().length == 0, "Growl too");
 }
+
+/// A creature's area strikes a player's pet in it, as it strikes the player (CMaNGOS: any unit it may attack), and
+/// spares a creature of its own faction beside it.
+unittest
+{
+    import dmangos.bytes : floatBits;
+    import dmangos.script.api : ActionResult;
+    import dmangos.world.clientdata : spellRadiusFormat;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.spellids : ImplicitTarget, SpellEffect;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    uint[spellRadiusFormat.length] radiusRow;
+    radiusRow[0] = 1;
+    radiusRow[1] = floatBits(20);
+    context.client.spellRadii = typeof(context.client.spellRadii).parse(buildDbc(spellRadiusFormat, [radiusRow[]]),
+        "SpellRadius.dbc");
+    auto rexxar = loggedIn(context, db, 7, "Rexxar", Position(-8949.95f, -132.49f, 83.53f, 0), AccountLevel.player,
+        raceOrc);
+    rexxar.read();
+    addPetData(&rexxar, context);
+    auto session = rexxar.session.inWorld;
+    auto map = context.map(0);
+    auto beast = context.summonCreature(map, wolf, Position(-8947, -132.49f, 83.53f, 0), TempSpawnType.dead, 0, 0);
+    auto tame = effectSpell(spellTameBeastDone, 55);
+    session.tameCreature(&tame, beast.guid);
+    auto pet = session.ownPet;
+    assert(pet !is null && pet.ai.relatingOf.playerControlled);
+
+    enum uint nova = 97901;
+    auto spell = testSpell(nova, SpellEffect.schoolDamage, ImplicitTarget.casterSource, 30);
+    spell.casting.implicitTargetB[0] = ImplicitTarget.enemiesAroundSource;
+    spell.casting.radiusIndex[0] = 1;
+    context.data.spells.spells[nova] = spell;
+    auto caster = context.summonCreature(map, boar, Position(-8945, -132.49f, 83.53f, 0), TempSpawnType.dead, 0, 0);
+    auto neighbour = context.summonCreature(map, boar, Position(-8944, -130, 83.53f, 0), TempSpawnType.dead, 0, 0);
+    const petHealth = pet.values.get!UNIT_FIELD_HEALTH, neighbourHealth = neighbour.values.get!UNIT_FIELD_HEALTH;
+    assert(caster.ai.castFor(map, nova, caster.guid, true) == ActionResult.ok);
+    assert(pet.values.get!UNIT_FIELD_HEALTH < petHealth, "the pet struck");
+    assert(neighbour.values.get!UNIT_FIELD_HEALTH == neighbourHealth, "its friend not");
+}

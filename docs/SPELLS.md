@@ -145,6 +145,11 @@ primary sources (docs/FORMULAS.md); CMaNGOS and vmangos are second opinions.
   and a creature's 90, always in front.
 * **An area spell's `MaxAffectedTargets` limits a creature's as it does a player's**: the one aimed at, then the
   nearest (`mostAffected`). A creature's area reached everyone in it before.
+* **A creature's enemy area strikes what the players control in it**: their pets, guardians and totems, as it
+  strikes the players (before, a boss's area passed a hunter's pet by). It does not strike the world's other
+  creatures it is hostile to: CMaNGOS would, but the scripted fights between them are written for what they
+  do now (Isillien's Mana Burn at Taelan and Tirion would stop "In Dreams"). A player's totem's area strikes every
+  creature its owner may fight, as before.
 * **A creature's Dual Wield does nothing yet**: creatures swing no off-hand weapon. Giving them one (its own
   timer, an off-hand's damage) changes the damage of every mob that casts it, a decision of its own.
 
