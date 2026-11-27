@@ -1769,11 +1769,11 @@ unittest
     assert(pickups(me.currentMap).length == 1);
     {
         const selected = pickups(me.currentMap)[0].spawn.guid;
-        const bytes = w.context.snapshotBattleground(basin);
+        const bytes = w.context.dungeons.snapshotBattleground(basin);
         const key = basin.powerUpSlot(selected);
         const active = basin.powerUps[key];
         basin.powerUps.remove(key); // older matches capture the object with no recorded pool slot
-        const legacy = w.context.snapshotBattleground(basin);
+        const legacy = w.context.dungeons.snapshotBattleground(basin);
         basin.powerUps[key] = active;
         auto originalPools = w.context.data.pools;
         scope (exit) w.context.data.pools = originalPools;
@@ -1801,7 +1801,7 @@ unittest
             auto warm = pickups(map);
             assert(warm.length == 1 && warm[0].spawn.guid == alternate);
 
-            successor.context.restoreBattleground(arathi, basin.instance, snapshot);
+            successor.context.dungeons.restoreBattleground(arathi, basin.instance, snapshot);
             auto restored = pickups(map);
             assert(restored.length == 1 && restored[0].spawn.guid == selected,
                 "the checkpoint's active pickup replaces the variant already loaded by this worker");
@@ -1812,7 +1812,7 @@ unittest
     step(pos);
     assert(!pickups(me.currentMap).length);
     w.now += 90.seconds;
-    const bytes = w.context.snapshotBattleground(basin);
+    const bytes = w.context.dungeons.snapshotBattleground(basin);
     auto replacement = RealWorld.make();
     auto clock = w.now + 30.seconds;
     replacement.context.clock = () => clock;
@@ -1820,7 +1820,7 @@ unittest
     auto map = replacement.context.map(arathi, basin.instance);
     map.loadCell(cellKeyAt(pos.x, pos.y));
     assert(pickups(map).length == 1);
-    replacement.context.restoreBattleground(arathi, basin.instance, bytes);
+    replacement.context.dungeons.restoreBattleground(arathi, basin.instance, bytes);
     auto recovered = replacement.context.battlegrounds.find(basin.instance);
     clock += 89.seconds;
     recovered.tick(Duration.zero);
@@ -2055,7 +2055,7 @@ final class Battlegrounds
                     return false;
                 try
                 {
-                    context.restoreBattleground(map, saved.instance, Base64.decode(saved.state[checkpointFormat.length .. $]),
+                    context.dungeons.restoreBattleground(map, saved.instance, Base64.decode(saved.state[checkpointFormat.length .. $]),
                         formatVersion);
                     find(saved.instance).checkpointRevision = saved.revision + 1;
                     info!"battleground: copy %s restored on node %s after loss of its map host"(saved.instance, context.nodeId);
@@ -2091,7 +2091,7 @@ final class Battlegrounds
 
     private bool canCheckpoint(uint map)
     {
-        return context.hostsDungeon(map) && context.battlegroundMapEpoch(map) && context.canWrite();
+        return context.dungeons.hostsDungeon(map) && context.battlegroundMapEpoch(map) && context.canWrite();
     }
 
     private bool retireCheckpoint(Battleground copy)
@@ -2115,7 +2115,7 @@ final class Battlegrounds
         try
         {
             const format = copy.finalPublicationPending ? pendingResultFormat : checkpointFormat;
-            const state = retire ? null : format ~ Base64.encode(context.snapshotBattleground(copy)).idup;
+            const state = retire ? null : format ~ Base64.encode(context.dungeons.snapshotBattleground(copy)).idup;
             const row = BattlegroundCheckpoint(copy.instance, copy.checkpointRevision, context.unixTime, state);
             // Its objectives' rewards with it, each named by this revision (which only one save can take) and its
             // place: written again after a failed save, they are the same rows, and a superseded owner writes none.
@@ -2142,7 +2142,7 @@ final class Battlegrounds
         const now = context.clock();
         foreach (map; mapRecoveryDue.keys)
         {
-            if (!context.hostsDungeon(map))
+            if (!context.dungeons.hostsDungeon(map))
             {
                 mapRecoveryDue.remove(map);
                 continue;
@@ -2175,7 +2175,7 @@ final class Battlegrounds
         ulong epoch;
         if (durable)
         {
-            if (!context.hostsDungeon(copy.mapId))
+            if (!context.dungeons.hostsDungeon(copy.mapId))
                 return;
             epoch = context.battlegroundMapEpoch(copy.mapId);
         }
@@ -2483,7 +2483,7 @@ mixin template BattlegroundHandlers()
      */
     package void battlegroundOnLogin(bool migrated = false)
     {
-        if (battlegroundOfMap(player.data.map) == BattlegroundType.none || !context.hostsDungeon(player.data.map))
+        if (battlegroundOfMap(player.data.map) == BattlegroundType.none || !context.dungeons.hostsDungeon(player.data.map))
             return;
         auto copy = currentBattleground();
         if (copy !is null && (migrated || copy.status != BattlegroundStatus.waitLeave || copy.canRejoinFinalScore()))
@@ -3456,7 +3456,7 @@ unittest
     assert(copy.sinceMs == pausedAt);
     auto successor = newCreationContext(db);
     successor.clock = () => now;
-    successor.restoreBattleground(copy.mapId, copy.instance, context.snapshotBattleground(copy));
+    successor.dungeons.restoreBattleground(copy.mapId, copy.instance, context.dungeons.snapshotBattleground(copy));
     auto restored = successor.battlegrounds.find(copy.instance);
     assert(restored.paused && restored.sinceMs == pausedAt && restored.worldStates[9999] == 42);
     assert(restored.setPaused(false));
@@ -3615,7 +3615,7 @@ unittest
     auto successor = newCreationContext(db);
     successor.clock = () => now;
     successor.battlegroundMapEpoch = (uint) => 1UL;
-    successor.restoreBattleground(copy.mapId, copy.instance, context.snapshotBattleground(copy));
+    successor.dungeons.restoreBattleground(copy.mapId, copy.instance, context.dungeons.snapshotBattleground(copy));
     auto restored = successor.battlegrounds.find(copy.instance);
     assert(restored.members[7].offlineSince != MonoTime.init && 7 in restored.offlineByCrash);
     restored.end(winnerAlliance);

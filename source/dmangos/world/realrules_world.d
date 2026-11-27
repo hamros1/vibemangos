@@ -84,9 +84,9 @@ unittest
     bool known;
     if (w.context.client.resetIntervalDays(409, known) == 0 && !known)
         return; // no data/instance-resets.csv: instance_template's (tools/fetch-instance-resets.py)
-    assert(w.context.raidResetDays(409) == 7 && w.context.raidResetDays(469) == 7 && w.context.raidResetDays(533) == 7);
-    assert(w.context.raidResetDays(309) == 3 && w.context.raidResetDays(509) == 3);
-    assert(w.context.raidResetDays(249) == 5);
+    assert(w.context.dungeons.raidResetDays(409) == 7 && w.context.dungeons.raidResetDays(469) == 7 && w.context.dungeons.raidResetDays(533) == 7);
+    assert(w.context.dungeons.raidResetDays(309) == 3 && w.context.dungeons.raidResetDays(509) == 3);
+    assert(w.context.dungeons.raidResetDays(249) == 5);
     assert(w.context.client.resetIntervalDays(36, known) == 0 && known, "the Deadmines: no lockout");
 }
 

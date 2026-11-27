@@ -203,6 +203,11 @@ struct ShutdownTimer
  */
 final class WorldContext : GroupDirectory, IdCounters, SessionHandler
 {
+    import dmangos.world.dungeons : Dungeons;
+
+    /// The dungeon copies this node hosts and the binds to them (`dmangos.world.dungeons`).
+    Dungeons dungeons;
+
     import dmangos.world.dbscripts : DbScriptRunner;
 
     mixin DbScriptRunner; // `dbscripts_on_*` under way
@@ -234,7 +239,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
 
     /// The gameplay scripts (docs/SCRIPTING.md), found in `dmangos.scripts` at compile time.
     ScriptRuntime scripts;
-    private InstanceScript[uint] instanceScripts; // by instance id: the scripts of the copies loaded here
+    package InstanceScript[uint] instanceScripts; // by instance id: the scripts of the copies loaded here
     private InstanceScript[uint] worldScripts;    // by map id, the continents' scripts here
 
     /// Next free character, item and mail ids.
@@ -244,7 +249,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     private Kickable[uint] sessions;
 
     /// The maps that have players on them, by map id.
-    private Map[uint] maps;
+    package Map[uint] maps;
     private Terrain[uint] terrains;
     private ModelCache vmapModels;     // the buildings and doodads all maps share
     private GameObjectModels gameObjectModels;
@@ -503,7 +508,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         if (!canWrite() || !message.sequence || !message.summoner || message.summoner == message.target
             || message.expires <= now || message.expires > now + summonAcceptSeconds + 5
             || !client.isValidMapCoord(message.map, message.x, message.y, message.z)
-            || (message.instance && !instanceable(message.map)))
+            || (message.instance && !dungeons.instanceable(message.map)))
             return;
         auto group = groups.of(message.target);
         if (group is null || group.id != message.group || !group.isMember(message.summoner))
@@ -3044,6 +3049,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         LoginDatabase accounts = null, Battlegroup sharedBattles = null)
     in (database !is null && data !is null && client !is null)
     {
+        dungeons = new Dungeons(this);
         this.accounts = accounts is null ? new MemoryLoginDatabase : accounts;
         this.config = config;
         this.database = database;
@@ -3090,7 +3096,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         scripts = ScriptRuntime.of!scriptModules();
         reportScripts();
         signalSequence = ulong(startUnixTime) << 20; // above what an earlier run of this node sent
-        loadInstances();
+        dungeons.loadInstances();
         if (config.cluster.enabled && !config.cluster.gateway)
             readOutdoorWorldStates();
         // The cluster services this node can run (docs/SERVICES.md); standalone it runs them all at once.
@@ -3137,7 +3143,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     // -----------------------------------------------------------------------
 
     /// The spawn of creature spawn guid `guid`; null if unknown.
-    private const(CreatureSpawn)* creatureSpawnOf(uint guid)
+    package const(CreatureSpawn)* creatureSpawnOf(uint guid)
     {
         if (spawnIndex is null)
             foreach (i, ref spawn; data.creatureSpawns)
@@ -3256,11 +3262,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
 
     /// A dead creature of dungeon copy `m` (its corpse `corpse`, or none: gone already) is back
     /// now, as a linked boss's wipe brings its adds back; the copy's script hears of it as of any creature.
-    private void respawnInCopy(Map m, const(CreatureSpawn)* spawn, Creature corpse)
+    package void respawnInCopy(Map m, const(CreatureSpawn)* spawn, Creature corpse)
     {
         if (corpse !is null && m.findObject(corpse.guid) is corpse)
             m.corpseExpired(corpse);
-        if (auto state = m.instanceId in instances)
+        if (auto state = m.instanceId in dungeons.instances)
         {
             state.trashRespawns.remove(spawn.guid);
             if (state.dead.remove(spawn.guid))
@@ -3311,7 +3317,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                             if (master.instanceId)
                             {
                                 // In a copy only the dead come back (one not loaded yet is not dead).
-                                if (auto state = master.instanceId in instances)
+                                if (auto state = master.instanceId in dungeons.instances)
                                     if (guid in state.dead)
                                         respawnInCopy(m, spawn, null);
                             }
@@ -3372,7 +3378,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     }
 
     /// A spawned creature of a pack waits to be linked (once its cell holds it).
-    private void queueLinked(uint mapId, uint instance, Creature c)
+    package void queueLinked(uint mapId, uint instance, Creature c)
     {
         if (!data.creatureLinks.involves(c.spawnId, c.template_.entry) && c.spawnId !in data.formationSlots)
             return;
@@ -3384,7 +3390,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
      * In a dungeon copy, a slave that waits on its master: `cantSpawnIfBossDead` while its master
      * is dead, `cantSpawnIfBossAlive` while it lives.
      */
-    private bool cantSpawnWhileBossDead(const ref CreatureSpawn spawn, const(InstanceState)* state)
+    package bool cantSpawnWhileBossDead(const ref CreatureSpawn spawn, const(dungeons.InstanceState)* state)
     {
         if (state is null)
             return false;
@@ -3755,7 +3761,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                         {
                             const spawn = &data.creatureSpawns[index];
                             if (spawn.guid !in data.creatureGameEvents || !creatureInEvents(spawn.guid)
-                                    || !groupSpawnAllowed(m, 0, spawn.guid) || !upInPool(PoolMember.Kind.creature, spawn.guid))
+                                    || !dungeons.groupSpawnAllowed(m, 0, spawn.guid) || !upInPool(PoolMember.Kind.creature, spawn.guid))
                                 continue;
                             if (awaitingRespawn(spawn.guid) || creatureOnLoan(spawn.guid))
                                 continue;
@@ -3784,7 +3790,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         }
         foreach (m; maps.values)
             refresh(m);
-        foreach (m; instanceMaps.values)
+        foreach (m; dungeons.instanceMaps.values)
             refresh(m);
     }
 
@@ -3982,13 +3988,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                 if (!data.annoraScorpidSpawns.length)
                     return 0;
                 foreach (guid; data.annoraScorpidSpawns)
-                    if (!deadInInstance(where.instanceId, guid))
+                    if (!dungeons.deadInInstance(where.instanceId, guid))
                         return 0;
                 return 1;
             }
             if (const states = where.id in data.encounterCreatureByWorldState)
                 if (const boss = id in *states)
-                    return entryKilledInInstance(where.instanceId, *boss);
+                    return dungeons.entryKilledInInstance(where.instanceId, *boss);
         }
         return conditionRealmState(id);
     }
@@ -4010,7 +4016,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         if (where.instanceId)
             if (const encounters = where.id in data.encounterCreatureById)
                 if (const boss = id in *encounters)
-                    return entryKilledInInstance(where.instanceId, *boss);
+                    return dungeons.entryKilledInInstance(where.instanceId, *boss);
         return false;
     }
 
@@ -4150,8 +4156,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     /// A battleground copy closed: its map goes (its players have left it).
     void closeBattlegroundMap(uint instance)
     {
-        instances.remove(instance);
-        dropInstanceMap(instance);
+        dungeons.instances.remove(instance);
+        dungeons.dropInstanceMap(instance);
     }
 
     /// The channels, if this node hosts them (standalone it does); null if another node does.
@@ -4319,7 +4325,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                     continue; // left out by the configuration
                 bool dungeon;
                 foreach (ref k; ship.frames)
-                    dungeon |= instanceable(k.node.map);
+                    dungeon |= dungeons.instanceable(k.node.map);
                 if (dungeon)
                     continue;
                 const k = ship.frames[0];
@@ -4418,12 +4424,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
             return battlegroup.host.map(id, instance);
         if (instance == 0)
             return map(id);
-        if (auto found = instance in instanceMaps)
+        if (auto found = instance in dungeons.instanceMaps)
             return *found;
-        if (instance !in instances)
-            instances[instance] = InstanceState(id, 0, unixTime);
-        auto created = instanceMaps[instance] = makeMap(id, instance);
-        if (!copyArriving)
+        if (instance !in dungeons.instances)
+            dungeons.instances[instance] = dungeons.InstanceState(id, 0, unixTime);
+        auto created = dungeons.instanceMaps[instance] = makeMap(id, instance);
+        if (!dungeons.copyArriving)
         {
             restoreInstanceCorpses(created);
             if (ownsDungeonFights(created))
@@ -4492,7 +4498,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
             owns = (ulong cell) => !recoveryHolds(id, cell);
         MapObject[] delegate(uint, ulong) spawner = &spawnCell;
         if (instance)
-            spawner = (uint m, ulong cell) => spawnCellIn(m, instance, cell);
+            spawner = (uint m, ulong cell) => dungeons.spawnCellIn(m, instance, cell);
         auto mapTerrain = terrain(id);
         auto created = new Map(id, MapSettings(config.visibilityDistance, config.visibilityRelocationLimit,
             config.gridCleanUpDelay * 1000),
@@ -4512,10 +4518,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         if (instance)
             if (const name = id in data.instanceScriptNames)
             {
-                auto state = instance in instances;
+                auto state = instance in dungeons.instances;
                 auto script = InstanceScript.make(scripts, *name, instance, id, state is null ? null : state.data,
                     (string saved, bool checkpoint) {
-                        const durable = checkpoint && config.cluster.enabled && hostsDungeon(id) && canWrite();
+                        const durable = checkpoint && config.cluster.enabled && dungeons.hostsDungeon(id) && canWrite();
                         // The gateway picks the recovery map from the saved character's position. The quest credit
                         // the script gave (Ysida saved, "Dead Man's Plea" done) is kept with the checkpoint that
                         // records it, or a crash would leave the encounter done and the credit lost for the lockout.
@@ -4528,7 +4534,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                                     const progress = who.character.progress(session.secondsInWorld());
                                     database.saveProgress(progress);
                                 }
-                        if (auto st = instance in instances)
+                        if (auto st = instance in dungeons.instances)
                             st.data = saved;
                         database.saveInstanceData(instance, saved);
                         if (durable && settleWrites())
@@ -4545,9 +4551,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                                 : EntityRef(makeGuid(HighGuid.gameObject, spawn.entry, guid));
                         }
                         const spawn = creatureSpawnOf(guid);
-                        return spawn is null || spawn.map != id || deadInInstance(instance, guid) ? EntityRef.init
+                        return spawn is null || spawn.map != id || dungeons.deadInInstance(instance, guid) ? EntityRef.init
                             : EntityRef(makeGuid(HighGuid.unit, spawn.entry, guid));
-                    }, (uint guid) => deadInInstance(instance, guid));
+                    }, (uint guid) => dungeons.deadInInstance(instance, guid));
                 if (script !is null)
                 {
                     script.map = created;
@@ -4606,14 +4612,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                         startScript(imported!"dmangos.world.dbscripts".DbScriptType.event, event,
                             created, source.guid, target.guid);
                     };
-                    script.entryKilled = &entryKilledInInstance;
-                    script.spawnKilled = (uint copy, ulong guid) => deadInInstance(copy, cast(uint)(guid & 0xFF_FFFF));
-                    script.respawnKilled = &respawnKilledInCopy;
+                    script.entryKilled = &dungeons.entryKilledInInstance;
+                    script.spawnKilled = (uint copy, ulong guid) => dungeons.deadInInstance(copy, cast(uint)(guid & 0xFF_FFFF));
+                    script.respawnKilled = &dungeons.respawnKilledInCopy;
                     script.signalObject = &gameObjectSignalled;
                     script.respawnObjectOf = &respawnObjectOfEntry;
                     script.summonObjectAt = &summonGameObjectAt;
                     instanceScripts[instance] = script;
-                    if (!copyArriving) // a copy from another node brings its creatures: their fights go on
+                    if (!dungeons.copyArriving) // a copy from another node brings its creatures: their fights go on
                         script.restored();
                 }
             }
@@ -4754,7 +4760,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         auto created = map;
         if (auto s = instance in instanceScripts)
             s.raise(PlayerEntered(EntityRef(who.character.guid)));
-        if (const state = instance in instances)
+        if (const state = instance in dungeons.instances)
             if (state.corpses.length || state.chests.length)
                 created.forEachObject((MapObject object) {
                     if (auto corpse = cast(Creature) object)
@@ -4826,920 +4832,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     {
         if (battlegroup !is null && battlegroup.host !is this && (instance & battlegroupInstance) && battlegroundOfMap(id))
             return battlegroup.host.existingMap(id, instance);
-        return instance ? instanceMaps.get(instance, null) : existingMap(id);
+        return instance ? dungeons.instanceMaps.get(instance, null) : existingMap(id);
     }
 
-    // -----------------------------------------------------------------------
-    // Dungeon instances: their copies, saved state and players' binds
-    // -----------------------------------------------------------------------
-
-    /// What is kept of an instance: its map, when it emptied, its dead and used-up spawns.
-    static struct InstanceState
-    {
-        uint mapId;
-        long resetAt;          /// a raid's reset (Unix time): its lockout lasts till then; 0 for a dungeon
-        long createdAt;        /// when it was made (or, saved, read back), Unix time
-        MonoTime emptySince;   /// MonoTime.init while someone is in it
-        bool[uint] dead;       /// creature spawns killed there
-        bool[uint] usedUp;     /// game object spawns used up there
-        string data;           /// its dungeon script's state (`instance.data`)
-        InstanceChestRecord[uint] chests; /// scripted reward loot, by spawn
-        InstanceCorpseRecord[uint] corpses; /// unexpired defeated creatures, by spawn
-        long[uint] trashRespawns;         /// Molten Core trash deadlines, by spawn
-    }
-
-    private Map[uint] instanceMaps;            // instance id -> its map
-    private InstanceState[uint] instances;     // instance id -> its state
-    private uint[uint][ulong] playerBinds;     // player guid -> map id -> instance (`character_instance`)
-    private uint[uint][ulong] groupBinds;      // group leader guid -> map id -> instance (`group_instance`)
-
-    /**
-     * Whether map `mapId` is a dungeon whose groups each get a copy of it.
-     * In a cluster a dungeon is one region (never split), and the node owning it hosts every copy.
-     */
-    bool instanceable(uint mapId)
-    {
-        const entry = client.maps.lookup(mapId);
-        return entry !is null && (entry.isDungeon || entry.isBattleground);
-    }
-
-    /**
-     * The node hosting dungeon `mapId`'s copies: the owner of its one region; this node standalone;
-     * 0 while nobody owns it (a lost owner's lease not over yet).
-     */
-    ushort dungeonHost(uint mapId)
-    {
-        if (regionOwnerAround is null)
-            return nodeId;
-        return regionOwnerAround(mapId, Position(0, 0, 0), 0);
-    }
-
-    /// Whether this node hosts dungeon `mapId`'s copies: it decides which one a player goes into.
-    bool hostsDungeon(uint mapId)
-    {
-        return regionOwnerAround is null || dungeonHost(mapId) == nodeId;
-    }
-
-    /**
-     * The instance of `mapId` the player goes into: its group's, else its own, else a new one, to
-     * which it (and its group) are bound.
-     * 0 for a map that is not instanced, or (in a cluster) a dungeon another node hosts: the player
-     * goes there (`InWorldHandlers.migrateTo`), and gets its copy there.
-     */
-    uint instanceFor(ulong player, uint mapId, scope bool delegate(uint) admit = null)
-    {
-        import dmangos.cluster.ownership : IdKind;
-        import dmangos.log : info, warning;
-
-        if (!instanceable(mapId) || !hostsDungeon(mapId))
-            return 0;
-        // A battleground's copy is the one the queue sent the player to.
-        if (battlegroundOfMap(mapId))
-            return database.loadBattlegroundData(cast(uint) player).instance;
-        auto group = groups.of(player);
-        const raid = client.maps.lookup(mapId).isRaid;
-        uint chosen = boundInstance(player, mapId);
-        const fresh = chosen == 0;
-        if (fresh)
-        {
-            // Ids are the cluster's (each node makes the copies of its own dungeons).
-            if (!takeId(IdKind.instance, chosen) || chosen == 0)
-            {
-                warning!"instance of map %s not made: no instance ids (the coordinator's next block has not come)"(mapId);
-                return 0;
-            }
-        }
-        if (admit !is null && !admit(chosen))
-            return 0;
-        if (fresh)
-        {
-            const resetAt = raid ? raidResetAt(mapId) : 0;
-            instances[chosen] = InstanceState(mapId, resetAt, unixTime);
-            database.saveInstance(chosen, mapId, resetAt);
-            info!"instance %s of map %s made"(chosen, mapId);
-        }
-        if (playerBinds.get(player, null).get(mapId, 0) != chosen)
-        {
-            playerBinds.require(player, null)[mapId] = chosen;
-            database.saveInstanceBind(false, cast(uint) player, chosen, raid);
-        }
-        if (group !is null && groupBinds.get(group.leader, null).get(mapId, 0) !in instances)
-        {
-            groupBinds.require(group.leader, null)[mapId] = chosen;
-            database.saveInstanceBind(true, cast(uint) group.leader, chosen, raid);
-        }
-        return chosen;
-    }
-
-    /// The copy of `mapId` the player would go into, of those that exist: a raid's lockout, its
-    /// group's, its own; 0 if a new one would be made.
-    uint boundInstance(ulong player, uint mapId)
-    {
-        const raid = client.maps.lookup(mapId).isRaid;
-        auto group = groups.of(player);
-        if (raid)
-            if (auto bound = mapId in playerBinds.get(player, null))
-                if (*bound in instances)
-                    return *bound;
-        if (group !is null)
-            if (auto bound = mapId in groupBinds.get(group.leader, null))
-                if (*bound in instances)
-                    return *bound;
-        if (auto bound = mapId in playerBinds.get(player, null))
-            if (*bound in instances)
-                return *bound;
-        return 0;
-    }
-
-    /**
-     * On the node hosting dungeon `mapId`: whether `player` may go in (into `toInstance`, uint.max:
-     * the copy it would get); 0 if so, else `SMSG_TRANSFER_ABORTED`'s reason (a lockout, a full copy).
-     */
-    ubyte dungeonEntryProblem(ulong player, uint mapId, uint toInstance, bool gameMaster)
-    {
-        enum ubyte abortMaxPlayers = 0x01, abortNotFound = 0x02;
-        if (!instanceable(mapId) || !hostsDungeon(mapId))
-            return abortNotFound;
-        if (toInstance == uint.max && lockedOutOfGroupRaid(player, mapId))
-            return abortNotFound;
-        const instance = toInstance != uint.max ? toInstance : boundInstance(player, mapId);
-        if (instance && !gameMaster)
-            if (const most = mapId in data.instanceMaxPlayers)
-                if (auto there = existingMap(mapId, instance))
-                    if (there.population >= *most)
-                        return abortMaxPlayers;
-        return 0;
-    }
-
-    bool instanceLimitReached(uint account, uint instance)
-    {
-        return database.instanceLimitReached(account, instance, unixTime);
-    }
-
-    bool enteredInstance(uint account, uint instance)
-    {
-        return database.admitInstance(account, instance, unixTime);
-    }
-
-    /// Asks the node hosting a dungeon whether a player may go in (`dungeonEntryProblem` there); null standalone.
-    void delegate(ushort host, ulong player, uint map, uint instance, bool gameMaster,
-        void delegate(ubyte abort) then) askDungeonEntry;
-
-    /**
-     * Entering a dungeon: a player who is not a game master, sent into a copy of `mapId` (summoned,
-     * appearing), is bound to it unless it is bound to a copy of that map already.
-     */
-    void bindOnEntering(ulong player, uint mapId, uint instance)
-    {
-        if (!instance || instance !in instances || mapId in playerBinds.get(player, null) || battlegroundOfMap(mapId))
-            return;
-        playerBinds.require(player, null)[mapId] = instance;
-        database.saveInstanceBind(false, cast(uint) player, instance, instances[instance].resetAt != 0);
-    }
-
-    /**
-     * A raid's lockout: whether the player is bound to another copy of raid `mapId` than its group's
-     * (such a player may not enter).
-     */
-    bool lockedOutOfGroupRaid(ulong player, uint mapId)
-    {
-        const entry = client.maps.lookup(mapId);
-        if (entry is null || !entry.isRaid || !instanceable(mapId))
-            return false;
-        auto group = groups.of(player);
-        if (group is null)
-            return false;
-        const mine = playerBinds.get(player, null).get(mapId, 0), theirs = groupBinds.get(group.leader, null).get(mapId, 0);
-        return mine && theirs && mine != theirs && mine in instances && theirs in instances;
-    }
-
-    /// The instances saved: their rows, binds and dead, read at start-up.
-    private long[uint] raidResets_;   /// each raid map's next reset (Unix time), as `instance_reset` keeps it
-    private bool raidResetsRead;
-
-    /**
-     * When the raid `mapId`'s copies next reset, all together: at `instance_reset_time_hour` every
-     * `raidResetDays` days, counted on from the last, kept in `instance_reset`.
-     */
-    long raidResetAt(uint mapId)
-    {
-        if (!raidResetsRead)
-        {
-            raidResetsRead = true;
-            raidResets_ = database.loadRaidResets();
-        }
-        const now = unixTime;
-        auto t = raidResets_.get(mapId, 0);
-        if (t > now)
-            return t;
-        const t2 = nextRaidReset(t, now, raidResetDays(mapId), config.instanceResetTimeHour);
-        raidResets_[mapId] = t2;
-        database.saveRaidReset(mapId, t2);
-        return t2;
-    }
-
-    /**
-     * How many days apart raid `mapId`'s copies reset: Blizzard's interval (`ClientData.resetIntervalDays`), else
-     * (no data/instance-resets.csv) `instance_template.reset_delay`, else a week.
-     */
-    uint raidResetDays(uint mapId) const
-    {
-        bool known;
-        const days = client.resetIntervalDays(mapId, known);
-        return known && days ? days : data.instanceResetDays.get(mapId, 7);
-    }
-
-    /**
-     * The reset after `last` (0: none yet) that is after `now`, every `days` days at `hour` (as the reference
-     * counts them: the first `days` after today).
-     */
-    static long nextRaidReset(long last, long now, uint days, uint hour) pure nothrow @nogc @safe
-    {
-        enum long day = 86_400;
-        const period = (days ? days : 7) * day, diff = (hour % 24) * 3600L;
-        const today = now / day * day;
-        if (last == 0)
-            return today + period + diff;
-        long t = last / day * day;
-        t += ((today - t) / period + 1) * period + diff;
-        while (t <= now)
-            t += period;
-        return t;
-    }
-
-    /// When copy `instance` resets (Unix time); 0 for none (a dungeon, or not a copy known here).
-    long instanceResetAt(uint instance)
-    {
-        if (auto s = instance in instances)
-            return s.resetAt;
-        return 0;
-    }
-
-    private void loadInstances()
-    {
-        loadInstancesOf((uint) => true);
-    }
-
-    /// The saved instances of the maps `which` accepts, read anew (replacing what was known of them).
-    private void loadInstancesOf(scope bool delegate(uint mapId) which)
-    {
-        import std.algorithm.comparison : max;
-        import dmangos.cluster.ownership : IdKind;
-
-        const saved = database.loadInstances();
-        foreach (r; saved.instances)
-            if (which(r.map))
-            {
-                instances[r.id] = InstanceState(r.map, r.resetTime, unixTime);
-                instances[r.id].data = r.data;
-                raise(IdKind.instance, r.id + 1);
-                if (!config.cluster.enabled) // its saved actors keep their GUIDs: the next summons count from above
-                {
-                    const highest = InstanceScript.highestSavedSummon(r.data);
-                    if (highest >= temporaryCounterStart)
-                        summonsMade = max(summonsMade, highest - temporaryCounterStart);
-                }
-            }
-        foreach (b; saved.binds)
-            if (auto state = b.instance in instances)
-                if (which(state.mapId))
-                {
-                    if (b.group)
-                        groupBinds.require(b.owner, null)[state.mapId] = b.instance;
-                    else
-                        playerBinds.require(b.owner, null)[state.mapId] = b.instance;
-                }
-        foreach (r; saved.respawns)
-            if (auto state = r.instance in instances)
-                if (which(state.mapId))
-                {
-                    if (r.gameObject)
-                        state.usedUp[r.spawnGuid] = true;
-                    else
-                    {
-                        state.dead[r.spawnGuid] = true;
-                        if (!config.cluster.enabled && r.spawnGuid >= temporaryCounterStart)
-                            summonsMade = max(summonsMade, r.spawnGuid - temporaryCounterStart);
-                        if (const spawn = creatureSpawnOf(r.spawnGuid))
-                            if (moltenCoreTrash(*spawn) && r.until > 0 && (!state.resetAt || r.until < state.resetAt))
-                                state.trashRespawns[r.spawnGuid] = r.until;
-                    }
-                }
-        foreach (chest; saved.chests)
-            if (auto state = chest.instance in instances)
-                if (which(state.mapId))
-                    state.chests[chest.spawn] = chest;
-        foreach (corpse; saved.corpses)
-            if (auto state = corpse.instance in instances)
-                if (which(state.mapId) && corpse.expiresAt > unixTime && corpse.spawn in state.dead)
-                    state.corpses[corpse.spawn] = corpse;
-    }
-
-    /**
-     * A dungeon's copies are another node's now (its region moved): what this node knew of them goes
-     * from memory (not from the database, which the new host reads). A copy with players in it stays
-     * until they have moved on (`unloadEmptyInstances`).
-     */
-    private void dungeonLost(uint mapId)
-    {
-        if (battlegroundOfMap(mapId))
-            battlegrounds.forgetMap(mapId);
-        foreach (id; instances.keys)
-            if (instances[id].mapId == mapId)
-            {
-                const m = instanceMaps.get(id, null);
-                if (m is null || m.population == 0)
-                    forgetInstance(id);
-            }
-    }
-
-    /// This node hosts dungeon `mapId` now: its copies, binds and dead as the last host saved them.
-    private void dungeonGained(uint mapId)
-    {
-        import dmangos.log : info;
-
-        foreach (id; instances.keys)
-            if (instances[id].mapId == mapId && instanceMaps.get(id, null) is null)
-                forgetInstance(id);
-        loadInstancesOf((uint m) => m == mapId);
-        size_t count;
-        foreach (ref state; instances)
-            count += state.mapId == mapId;
-        if (count)
-            info!"cluster: dungeon map %s is hosted here now, with %s saved instances"(mapId, count);
-    }
-
-    /// The copies of dungeon `mapId` and their pending database actions for the next owner.
-    private const(ubyte)[] dungeonCopiesOut(uint mapId, ushort next)
-    {
-        import dmangos.bytes : ByteWriter;
-        import dmangos.log : info;
-        import dmangos.world.battlegroundstate : BattlegroundState;
-        import dmangos.world.migration : encodeBundle;
-        import std.algorithm.searching : canFind;
-
-        ByteWriter w;
-        ByteWriter deadlines;
-        saveDungeonObjectDeadlines(mapId, deadlines); // before migrateOut removes the local objects and their timers
-        uint[] ids;
-        foreach (id, m; instanceMaps)
-            if (instances.get(id, InstanceState.init).mapId == mapId && m.instanceId == id)
-                ids ~= id;
-        const bg = battlegroundOfMap(mapId);
-        if (bg)
-            foreach (copy; battlegrounds.all)
-                if (copy.mapId == mapId && !ids.canFind(copy.instance))
-                    ids ~= copy.instance; // its first player may still be acknowledging the world port
-        w.put(cast(uint) ids.length);
-        // Each script's state goes first, with its encounter's creatures still here to capture (a save held back
-        // by its two-second pace would otherwise be lost): the next host makes the script from `instance.data`.
-        foreach (id; ids)
-            if (auto script = instanceScripts.get(id, null))
-                script.saveNow();
-        settleWrites();
-        foreach (id; ids)
-        {
-            auto m = instanceMaps.get(id, null);
-            const before = m is null ? 0 : m.objectCount - m.replicaCount;
-            const bundle = m is null ? encodeBundle(null, null) : m.migrateOut((ulong) => true, next, &saveMigrant);
-            w.put(id);
-            w.put(cast(uint) bundle.length);
-            w.putBytes(bundle);
-            if (bg)
-            {
-                ByteWriter match;
-                if (auto copy = battlegrounds.find(id))
-                {
-                    auto state = BattlegroundState(clock(), writer: &match);
-                    copy.transferState(state);
-                    auto stored = instances.get(id, InstanceState.init);
-                    state.transfer(stored.dead, stored.usedUp);
-                    copy.transferPause(state);
-                }
-                w.put(cast(uint) match.data.length);
-                w.putBytes(match.data);
-            }
-            info!"migration: instance %s of map %s leaves for node %s with %s objects"(id, mapId, next,
-                m is null ? 0 : before - (m.objectCount - m.replicaCount));
-        }
-        saveDungeonScriptRuns(mapId, w, true);
-        w.putBytes(deadlines.data);
-        return w.data;
-    }
-
-    /// A copy being made for `dungeonCopiesIn` (its script's `Restored` is not raised: its creatures come along).
-    private bool copyArriving;
-
-    /// The same object and match data used for a clean handoff, captured without releasing the live map.
-    package const(ubyte)[] snapshotBattleground(imported!"dmangos.world.battleground".Battleground copy)
-    {
-        import dmangos.world.battlegroundstate : BattlegroundState;
-        import dmangos.world.migration : encodeBundle;
-
-        auto m = existingMap(copy.mapId, copy.instance);
-        const bundle = m is null ? encodeBundle(null, null) : m.snapshotObjects((MapObject object) {
-            if (auto creature = cast(Creature) object)
-                if (creature.meleeController || creature.totemOwner || creature.guardianOwner)
-                    return Migrant.init;
-            return saveMigratingObject(object, false);
-        });
-        ByteWriter w, match;
-        auto state = BattlegroundState(clock(), writer: &match);
-        copy.transferState(state, durableSnapshot: true);
-        copy.transferPause(state);
-        w.put(cast(uint) match.length);
-        w.putBytes(match.data);
-        w.put(cast(uint) bundle.length);
-        w.putBytes(bundle);
-        auto stored = instances.get(copy.instance, InstanceState.init);
-        state.writer = &w;
-        state.transfer(stored.dead, stored.usedUp);
-        saveDungeonScriptRuns(copy.mapId, w, false, copy.instance);
-        saveDungeonObjectDeadlines(copy.mapId, w, copy.instance);
-        return w.data;
-    }
-
-    package void restoreBattleground(uint mapId, uint id, const(ubyte)[] bytes, uint formatVersion = 3)
-    {
-        import dmangos.world.battlegroundstate : BattlegroundState;
-
-        auto r = ByteReader(bytes);
-        auto match = ByteReader(r.readBytes(r.read!uint));
-        const bundle = r.readBytes(r.read!uint);
-        auto stored = InstanceState(mapId, 0, unixTime);
-        auto state = BattlegroundState(clock(), reader: &r);
-        state.transfer(stored.dead, stored.usedUp);
-        auto copy = battlegrounds.restore(id, battlegroundOfMap(mapId), match, formatVersion);
-        auto matchState = BattlegroundState(clock(), reader: &match);
-        copy.transferPause(matchState);
-        instances[id] = stored;
-        restoreDungeonCopy(mapId, id, bundle);
-        restoreDungeonScriptRuns(mapId, r);
-        restoreDungeonObjectDeadlines(mapId, r);
-        copy.recoveredAfterCrash();
-    }
-
-    /// What `dungeonCopiesOut` sent: each copy made here and its objects as they were.
-    private void dungeonCopiesIn(uint mapId, const(ubyte)[] copies)
-    {
-        import dmangos.bytes : ByteReader;
-        import dmangos.log : info;
-        import dmangos.world.battlegroundstate : BattlegroundState;
-
-        if (copies.length < 4)
-            return;
-        auto r = ByteReader(copies);
-        const bg = battlegroundOfMap(mapId);
-        foreach (_; 0 .. r.read!uint)
-        {
-            const id = r.read!uint;
-            const bundle = r.readBytes(r.read!uint);
-            if (bg)
-            {
-                const match = r.readBytes(r.read!uint);
-                if (!match.length)
-                    continue;
-                auto reader = ByteReader(match);
-                auto copy = battlegrounds.restore(id, bg, reader);
-                auto stored = InstanceState(mapId, 0, unixTime);
-                auto state = BattlegroundState(clock(), reader: &reader);
-                state.transfer(stored.dead, stored.usedUp);
-                copy.transferPause(state);
-                instances[id] = stored;
-            }
-            if (id !in instances)
-                continue; // reset meanwhile
-            info!"migration: instance %s of map %s arrived with %s objects"(id, mapId,
-                restoreDungeonCopy(mapId, id, bundle));
-        }
-        if (!r.empty) // older owners sent only the copy/object pairs
-        {
-            restoreDungeonScriptRuns(mapId, r);
-            restoreDungeonObjectDeadlines(mapId, r);
-        }
-    }
-
-    private size_t restoreDungeonCopy(uint mapId, uint id, const(ubyte)[] bundle)
-    {
-        import dmangos.world.gameobject : GameObject;
-
-        Map m;
-        {
-            copyArriving = true;
-            scope (exit) copyArriving = false;
-            m = map(mapId, id);
-        }
-        const before = m.objectCount - m.replicaCount;
-        auto copy = battlegroundOfMap(mapId) ? battlegrounds.find(id) : null;
-        ArrivedObject[] arrived;
-        m.migrateIn(bundle, (const ref Migrant migrant) {
-            auto object = restoreWorldMigrant(migrant, m);
-            if (auto creature = cast(Creature) object)
-                creature.instanceId = id;
-            else if (auto go = cast(GameObject) object)
-            {
-                if (copy !is null && go.spawn.battlegroundPowerUp
-                    && !copy.powerUpAvailable(go.spawn.guid, true))
-                    return null;
-                go.instanceId = id;
-            }
-            if (object !is null)
-                arrived ~= ArrivedObject(object.guid, migrant.kind);
-            return object;
-        });
-        if (ownsDungeonFights(m))
-            restoreDungeonFights(m, true);
-        const restored = m.objectCount - m.replicaCount - before;
-        if (copy !is null)
-            copy.reconcilePowerUps(m);
-        copyObjectsArrived(id, arrived);
-        return restored;
-    }
-
-    private static struct ArrivedObject
-    {
-        ulong guid;
-        MigrantKind kind;
-    }
-
-    /**
-     * A copy's objects came in from another node: its script, made afresh from `instance.data`, learns them as it
-     * would from their cells loading (`CreatureLoaded`, `ObjectLoaded`), so the doors and bosses it holds by
-     * reference answer again. A summon is told only if the encounter keeps it in its checkpoint, as when it comes
-     * back from one (`InstanceScript.restorePendingSummons`).
-     */
-    private void copyObjectsArrived(uint id, const(ArrivedObject)[] arrived)
-    {
-        import dmangos.script.api : CreatureLoaded, EntityRef, ObjectLoaded;
-
-        auto script = instanceScripts.get(id, null);
-        if (script is null)
-            return;
-        foreach (object; arrived)
-        {
-            const entity = EntityRef(object.guid);
-            final switch (object.kind)
-            {
-            case MigrantKind.creature:
-                script.raise(CreatureLoaded(entity));
-                break;
-            case MigrantKind.gameObject:
-                script.raise(ObjectLoaded(entity));
-                break;
-            case MigrantKind.summonedCreature:
-                if (script.keepsCheckpoint(entity))
-                    script.raise(CreatureLoaded(entity, true));
-                break;
-            case MigrantKind.summonedGameObject:
-                if (script.keepsCheckpoint(entity))
-                    script.raise(ObjectLoaded(entity));
-                break;
-            case MigrantKind.none, MigrantKind.creatureRespawn, MigrantKind.gameObjectRespawn, MigrantKind.scriptRun:
-                break;
-            }
-        }
-    }
-
-    /// An instance gone from this node's memory only (another node hosts it).
-    private void forgetInstance(uint id)
-    {
-        instances.remove(id);
-        dropInstanceMap(id);
-        foreach (ref binds; playerBinds)
-            foreach (mapId, instance; binds.dup)
-                if (instance == id)
-                    binds.remove(mapId);
-        foreach (ref binds; groupBinds)
-            foreach (mapId, instance; binds.dup)
-                if (instance == id)
-                    binds.remove(mapId);
-    }
-
-    /// Whether creature spawn `spawnGuid` is dead in instance `instance`.
-    bool deadInInstance(uint instance, uint spawnGuid)
-    {
-        if (auto state = instance in instances)
-            return (spawnGuid in state.dead) !is null;
-        return false;
-    }
-
-    private bool entryKilledInInstance(uint instance, uint entry)
-    {
-        if (auto state = instance in instances)
-            foreach (guid; state.dead.byKey)
-                if (const idx = guid in spawnIndex)
-                    if (data.creatureSpawns[*idx].entry == entry)
-                        return true;
-        return false;
-    }
-
-    private void respawnKilledInCopy(Map map, uint entry)
-    {
-        if (auto state = map.instanceId in instances)
-            foreach (guid; state.dead.keys)
-                if (const idx = guid in spawnIndex)
-                {
-                    const spawn = &data.creatureSpawns[*idx];
-                    if (spawn.entry == entry)
-                        respawnInCopy(map, spawn, cast(Creature) map.findObject(makeGuid(HighGuid.unit, entry, guid)));
-                }
-    }
-
-    /// The instances that are made.
-    @property size_t instanceCount() const
-    {
-        return instances.length;
-    }
-
-    private bool groupSpawnAllowed(Map where, uint type, uint guid)
-    {
-        if (const gate = guid in data.spawnConditions[type])
-            return where !is null && mapConditionMet(where, gate.condition)
-                && (!gate.expression || worldStateExpressionMet(where, gate.expression));
-        return true;
-    }
-
-    /// Activate or retire conditional placements in owned, already-loaded cells.
-    private void refreshConditionalSpawns()
-    {
-        void refresh(Map where)
-        {
-            const selected = where.id in data.conditionalSpawns;
-            if (selected is null)
-                return;
-            const instance = where.instanceId;
-            foreach (index; selected.creatures)
-            {
-                const spawn = &data.creatureSpawns[index];
-                const home = cellKeyAt(spawn.x, spawn.y);
-                if (!where.cellLoaded(home))
-                    continue;
-                const guid = makeGuid(HighGuid.unit, spawn.entry, spawn.guid);
-                auto alive = where.creatureAt(guid);
-                if (!groupSpawnAllowed(where, 0, spawn.guid))
-                {
-                    if (alive !is null && alive.alive && (alive.ai is null || !alive.ai.inCombat))
-                        where.removeObject(guid);
-                    continue;
-                }
-                if (alive !is null || (instance ? deadInInstance(instance, spawn.guid)
-                        : awaitingRespawn(spawn.guid) || creatureOnLoan(spawn.guid))
-                    || !creatureInEvents(spawn.guid) || !upInPool(PoolMember.Kind.creature, spawn.guid))
-                    continue;
-                if (auto creature = makeCreature(spawn))
-                {
-                    creature.instanceId = instance;
-                    where.addObject(creature);
-                    queueLinked(where.id, instance, creature);
-                }
-            }
-            foreach (index; selected.objects)
-            {
-                const ref spawn = data.gameObjectSpawns[index];
-                if (!where.cellLoaded(cellKeyAt(spawn.x, spawn.y)))
-                    continue;
-                const guid = makeGuid(HighGuid.gameObject, spawn.entry, spawn.guid);
-                auto present = cast(GameObject) where.findObject(guid);
-                if (!groupSpawnAllowed(where, 1, spawn.guid))
-                {
-                    if (present !is null)
-                        where.removeObject(guid);
-                }
-                else if (present is null)
-                {
-                    if (!instance)
-                    {
-                        if (auto object = spawnWorldGameObject(spawn))
-                            where.addObject(object);
-                        continue;
-                    }
-                    if (auto object = spawnGameObjectInCopy(where.id, instance, spawn))
-                    {
-                        where.addObject(object);
-                        if (auto script = instanceScripts.get(instance, null))
-                            script.raise(imported!"dmangos.script.api".ObjectLoaded(EntityRef(object.guid)));
-                    }
-                }
-            }
-        }
-        foreach (where; maps)
-            refresh(where);
-        foreach (where; instanceMaps)
-            refresh(where);
-    }
-
-    /// A cell of an instance loading: the cell's spawns but those killed or used up in it.
-    private MapObject[] spawnCellIn(uint mapId, uint instance, ulong cell)
-    {
-        import dmangos.world.gameobject : GameObject;
-
-        auto state = instance in instances;
-        auto script = instanceScripts.get(instance, null);
-        // A battleground's copy: only the spawns of its events now.
-        auto copy = battlegroundOfMap(mapId) ? battlegrounds.find(instance) : null;
-        MapObject[] spawned;
-        if (auto cells = mapId in data.creatureCells)
-            foreach (index; (*cells).get(cell, null))
-            {
-                if (state !is null && data.creatureSpawns[index].guid in state.dead)
-                    continue;
-                if (const tracking = instance in dungeonFights)
-                    if (const fight = data.creatureSpawns[index].guid in *tracking)
-                        if (instanceMaps[instance].creatureAt(fight.guid) !is null)
-                            continue;
-                if (script !is null && script.restoringEntity(EntityRef(makeGuid(HighGuid.unit,
-                    data.creatureSpawns[index].entry, data.creatureSpawns[index].guid))))
-                    continue;
-                if (!creatureInEvents(data.creatureSpawns[index].guid)
-                        || !groupSpawnAllowed(existingMap(mapId, instance), 0, data.creatureSpawns[index].guid)
-                        || !upInPool(PoolMember.Kind.creature, data.creatureSpawns[index].guid))
-                    continue;
-                if (copy !is null && !copy.spawnAllowed(data.creatureSpawns[index].guid in data.creatureBattleEvents))
-                    continue;
-                if (cantSpawnWhileBossDead(data.creatureSpawns[index], state))
-                    continue;
-                if (auto creature = makeCreature(&data.creatureSpawns[index]))
-                {
-                    creature.instanceId = instance;
-                    spawned ~= creature;
-                    queueLinked(mapId, instance, creature);
-                }
-            }
-        if (auto cells = mapId in data.gameObjectCells)
-            foreach (index; (*cells).get(cell, null))
-                if (auto go = spawnGameObjectInCopy(mapId, instance, data.gameObjectSpawns[index]))
-                    spawned ~= go;
-        if (script !is null)
-        {
-            import std.algorithm.searching : canFind;
-            import dmangos.script.api : CreatureLoaded, EntityRef, ObjectLoaded;
-
-            script.loading = spawned;
-            foreach (object; spawned)
-                if (cast(Creature) object)
-                    script.raise(CreatureLoaded(EntityRef(object.guid)));
-                else
-                    script.raise(ObjectLoaded(EntityRef(object.guid)));
-            if (script.loading.length != spawned.length)
-                foreach (object; spawned)
-                    if (auto go = cast(GameObject) object)
-                        if (!script.loading.canFind(object))
-                            scripts.destroy(go.behaviour);
-            spawned = script.loading;
-            script.loading = null;
-        }
-        return spawned;
-    }
-
-    private GameObject spawnGameObjectInCopy(uint mapId, uint instance, const ref GameObjectSpawn spawn)
-    {
-        if (auto script = instanceScripts.get(instance, null))
-            if (script.restoringEntity(EntityRef(makeGuid(HighGuid.gameObject, spawn.entry, spawn.guid))))
-                return null;
-        const state = instance in instances;
-        const reward = state is null ? null : spawn.guid in state.chests;
-        if ((spawn.respawnSeconds < 0 && reward is null) || (state !is null && spawn.guid in state.usedUp)
-            || !gameObjectInEvents(spawn.guid) || !groupSpawnAllowed(existingMap(mapId, instance), 1, spawn.guid))
-            return null;
-        auto copy = battlegroundOfMap(mapId) ? battlegrounds.find(instance) : null;
-        const available = copy !is null && spawn.battlegroundPowerUp ? copy.powerUpAvailable(spawn.guid)
-            : upInPool(PoolMember.Kind.gameObject, spawn.guid);
-        const event = spawn.guid in data.gameObjectBattleEvents;
-        if (!available || (copy !is null && !copy.spawnAllowed(event)))
-            return null;
-        auto go = makeGameObject(spawn);
-        go.instanceId = instance;
-        if (reward !is null && !restoreReward(go, *reward))
-        {
-            scripts.destroy(go.behaviour);
-            return null;
-        }
-        if (copy !is null && event !is null && (*event)[0] == 254 && copy.doorsOpen)
-            go.setDoorOpen(true);
-        return go;
-    }
-
-    /// After `Instance.UnloadDelay` empty, an instance's map is unloaded, and its binds go with it.
-    private void unloadEmptyInstances(MonoTime now)
-    {
-        import core.time : seconds;
-        import dmangos.log : info;
-
-        uint[] gone, elsewhere;
-        const time = unixTime;
-        foreach (id, ref state; instances)
-        {
-            const m = instanceMaps.get(id, null);
-            if (m !is null && m.population > 0)
-            {
-                state.emptySince = MonoTime.init;
-                continue;
-            }
-            if (!hostsDungeon(state.mapId))
-            {
-                elsewhere ~= id; // another node's (or nobody's yet): it saves and resets its copies, not this one
-                continue;
-            }
-            if (battlegroundOfMap(state.mapId))
-                continue; // a battleground's copy closes when it is over and empty (`dmangos.world.battleground`)
-            if (state.emptySince == MonoTime.init)
-                state.emptySince = now;
-            if (state.resetAt && time >= state.resetAt)
-                gone ~= id; // a raid's reset time: empty (its players were sent out), it goes now
-            else if (now - state.emptySince >= config.instanceUnloadDelay.seconds)
-            {
-                // A raid copy outlives its emptiness until its reset (only its map goes); a dungeon's resets.
-                if (state.resetAt && time < state.resetAt)
-                    dropInstanceMap(id, true);
-                else
-                    gone ~= id;
-            }
-        }
-        foreach (id; elsewhere)
-            forgetInstance(id);
-        foreach (id; gone)
-        {
-            info!"instance %s of map %s reset: empty for %s seconds"(id, instances[id].mapId, config.instanceUnloadDelay);
-            resetInstance(id);
-        }
-    }
-
-    /**
-     * The player (or, its group's leader, the group) resets its dungeons: each copy of a dungeon (not a
-     * raid) it is bound to, hosted here, with nobody in it, is reset (`reset`); one with players inside
-     * is not (`busy`). By map.
-     */
-    void resetDungeonsOf(ulong player, out uint[] reset, out uint[] busy)
-    {
-        import dmangos.log : info;
-
-        uint[uint]* binds;
-        if (auto group = groups.of(player))
-        {
-            if (group.leader != player)
-                return;
-            binds = group.leader in groupBinds;
-        }
-        else
-            binds = player in playerBinds;
-        if (binds is null)
-            return;
-        foreach (mapId, id; (*binds).dup)
-        {
-            const entry = client.maps.lookup(mapId);
-            if (entry is null || entry.isRaid || !hostsDungeon(mapId))
-                continue;
-            if (auto m = instanceMaps.get(id, null))
-                if (m.population > 0)
-                {
-                    busy ~= mapId;
-                    continue;
-                }
-            info!"instance %s of map %s reset by its owner"(id, mapId);
-            resetInstance(id);
-            reset ~= mapId;
-        }
-    }
-
-    /// An instance gone for good: its map, state, saved rows and binds.
-    void resetInstance(uint id)
-    {
-        instances.remove(id);
-        dropInstanceMap(id);
-        database.deleteInstance(id);
-        foreach (ref binds; playerBinds)
-            foreach (mapId, instance; binds.dup)
-                if (instance == id)
-                    binds.remove(mapId);
-        foreach (ref binds; groupBinds)
-            foreach (mapId, instance; binds.dup)
-                if (instance == id)
-                    binds.remove(mapId);
-    }
-
-    /**
-     * A copy's map goes from memory (unloaded, reset, shut down, another node's now): its scripts too. `keep`: the
-     * copy goes on (unloaded or shut down, its objects still here), so its script saves its state first.
-     */
-    private void dropInstanceMap(uint id, bool keep = false)
-    {
-        if (keep)
-            if (auto script = instanceScripts.get(id, null))
-                script.saveNow();
-        dungeonFights.remove(id);
-        pendingDungeonFights.remove(id);
-        if (auto m = instanceMaps.get(id, null))
-            m.forEachObject((MapObject o) => objectGone(m, o));
-        instanceMaps.remove(id);
-        if (auto script = id in instanceScripts)
-        {
-            script.release();
-            instanceScripts.remove(id);
-        }
-    }
 
     /// An object left its map for good (`objectLeft`): its script's state goes.
-    private void objectGone(Map map, MapObject object)
+    package void objectGone(Map map, MapObject object)
     {
         if (auto creature = cast(Creature) object)
         {
@@ -5837,43 +4935,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     }
 
     /// Instance `id`'s state, or null.
-    const(InstanceState)* instanceState(uint id) const
+    const(dungeons.InstanceState)* instanceState(uint id) const
     {
-        return id in instances;
+        return id in dungeons.instances;
     }
 
-    /// The instance's map if it is loaded, else null.
-    Map instanceMap(uint id)
-    {
-        return instanceMaps.get(id, null);
-    }
 
-    /// The player's binds: map id -> instance.
-    const(uint[uint]) bindsOf(ulong player)
-    {
-        return playerBinds.get(player, null);
-    }
 
-    /// Takes a player's bind to map `mapId` away.
-    void revokeBind(ulong player, uint mapId)
-    {
-        if (auto binds = player in playerBinds)
-            if (auto instance = mapId in *binds)
-            {
-                database.deleteInstanceBind(cast(uint) player, *instance);
-                (*binds).remove(mapId);
-            }
-    }
 
-    /// Shuts an instance down: its map goes (its state stays); false if it was not loaded.
-    bool shutdownInstance(uint id)
-    {
-        auto m = instanceMaps.get(id, null);
-        if (m is null)
-            return false;
-        dropInstanceMap(id, true);
-        return true;
-    }
 
     /**
      * What NPC services see of a map object: a creature, or a stand-in for a replica of a
@@ -5906,7 +4975,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     /// Every map that exists, instances included.
     Map[] allMaps()
     {
-        return maps.values ~ instanceMaps.values;
+        return maps.values ~ dungeons.instanceMaps.values;
     }
 
     /**
@@ -5933,7 +5002,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                 creatureLoanLost(r);
 
         foreach (ref r; lost)
-            if (instanceable(r.map) || physicalWorldRegion(r))
+            if (dungeons.instanceable(r.map) || physicalWorldRegion(r))
                 releaseRegionCharms(r);
 
         // A service's region (docs/SERVICES.md): it stops here, its state going along with it, or starts.
@@ -5952,18 +5021,18 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         // A dungeon's region: its copies' creatures and objects go along, copy by copy, before what was
         // known of the copies is forgotten here (the new host has read their rows by then).
         foreach (ref r; lost)
-            if (instanceable(r.map))
+            if (dungeons.instanceable(r.map))
             {
                 if (r.next)
-                    leaving[r.id] = cast(ubyte[]) dungeonCopiesOut(r.map, r.next);
-                dungeonLost(r.map);
+                    leaving[r.id] = cast(ubyte[]) dungeons.dungeonCopiesOut(r.map, r.next);
+                dungeons.dungeonLost(r.map);
             }
         foreach (ref r; gained)
-            if (instanceable(r.map))
+            if (dungeons.instanceable(r.map))
             {
-                dungeonGained(r.map);
+                dungeons.dungeonGained(r.map);
                 if (auto copies = r.id in arriving)
-                    dungeonCopiesIn(r.map, *copies);
+                    dungeons.dungeonCopiesIn(r.map, *copies);
                 if (battlegroundOfMap(r.map) && battlegroundMapEpoch !is null
                     && (battlegroup is null || battlegroup.host is this))
                     battlegrounds.recoverMap(r.map, (r.id in arriving) !is null);
@@ -6042,7 +5111,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
 
     private bool physicalWorldRegion(const ref Region region)
     {
-        return !region.creature.spawn && client.maps.lookup(region.map) !is null && !instanceable(region.map);
+        return !region.creature.spawn && client.maps.lookup(region.map) !is null && !dungeons.instanceable(region.map);
     }
 
     private bool outdoorRegionCovers(Spawn)(const(Spawn)* spawn, const(Region)[] regions)
@@ -6240,14 +5309,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         ulong guid;
         long savedAt;
     }
-    private ActiveDungeonFight[uint][uint] dungeonFights;
-    private bool[uint] pendingDungeonFights; // whether the map already has its live handoff bundle
+    package ActiveDungeonFight[uint][uint] dungeonFights;
+    package bool[uint] pendingDungeonFights; // whether the map already has its live handoff bundle
     private long retryDungeonFightsAt;
 
-    private bool ownsDungeonFights(Map where)
+    package bool ownsDungeonFights(Map where)
     {
         return config.cluster.enabled && where.instanceId && !battlegroundOfMap(where.id)
-            && canWrite() && hostsDungeon(where.id);
+            && canWrite() && dungeons.hostsDungeon(where.id);
     }
 
     private void checkpointDungeonFight(Map where, Creature creature)
@@ -6303,7 +5372,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                 database.deleteDungeonFight(instance, spawn);
     }
 
-    private void restoreDungeonFights(Map where, bool clean)
+    package void restoreDungeonFights(Map where, bool clean)
     {
         import dmangos.log : warning;
         import dmangos.mysql : DatabaseException;
@@ -6325,9 +5394,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         foreach (ref saved; records)
         {
             const spawn = creatureSpawnOf(saved.spawn);
-            if (spawn is null || spawn.map != where.id || deadInInstance(instance, saved.spawn)
+            if (spawn is null || spawn.map != where.id || dungeons.deadInInstance(instance, saved.spawn)
                 || !creatureInEvents(saved.spawn) || !upInPool(PoolMember.Kind.creature, saved.spawn)
-                || cantSpawnWhileBossDead(*spawn, instance in instances))
+                || cantSpawnWhileBossDead(*spawn, instance in dungeons.instances))
             {
                 database.deleteDungeonFight(instance, saved.spawn);
                 continue;
@@ -6382,11 +5451,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     {
         if (pendingDungeonFights.length && unixTime >= retryDungeonFightsAt)
             foreach (instance; pendingDungeonFights.keys)
-                if (auto where = instanceMaps.get(instance, null))
+                if (auto where = dungeons.instanceMaps.get(instance, null))
                     if (ownsDungeonFights(where))
                         restoreDungeonFights(where, pendingDungeonFights[instance]);
         foreach (instance, ref active; dungeonFights)
-            if (auto where = instanceMaps.get(instance, null))
+            if (auto where = dungeons.instanceMaps.get(instance, null))
                 if (ownsDungeonFights(where))
                     foreach (spawn; active.keys)
                     {
@@ -6878,7 +5947,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     {
         import dmangos.world.objects : highGuidOf;
 
-        const wholeMap = instanceable(region.map);
+        const wholeMap = dungeons.instanceable(region.map);
         foreach (who; online.values)
             if (auto controller = cast(Character) who)
                 if (auto creature = controller.charmed)
@@ -7179,7 +6248,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                     }
                 if (awaitingRespawn(spawn.guid))
                     continue; // dead: it comes back when its time is up
-                if (!creatureInEvents(spawn.guid) || !groupSpawnAllowed(existingMap(mapId), 0, spawn.guid))
+                if (!creatureInEvents(spawn.guid) || !dungeons.groupSpawnAllowed(existingMap(mapId), 0, spawn.guid))
                     continue; // its game event or spawn group says it is away
                 if (!upInPool(PoolMember.Kind.creature, spawn.guid))
                     continue; // another of its pool is up
@@ -7196,12 +6265,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         return spawned;
     }
 
-    private GameObject spawnWorldGameObject(const ref GameObjectSpawn spawn)
+    package GameObject spawnWorldGameObject(const ref GameObjectSpawn spawn)
     {
         // Negative respawn times reserve the spawn for an event, a script or world PvP.
         if ((spawn.respawnSeconds < 0 && !eventActivatesObject(spawn.guid)) || gameObjectAwaitingRespawn(spawn.guid)
             || !gameObjectInEvents(spawn.guid) || !upInPool(PoolMember.Kind.gameObject, spawn.guid)
-            || !groupSpawnAllowed(existingMap(spawn.map), 1, spawn.guid))
+            || !dungeons.groupSpawnAllowed(existingMap(spawn.map), 1, spawn.guid))
             return null;
         auto object = makeGameObject(spawn);
         if (const saved = spawn.guid in outdoorChests)
@@ -7441,7 +6510,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         return migrant;
     }
 
-    private Migrant saveMigratingObject(MapObject object, bool departing = true,
+    package Migrant saveMigratingObject(MapObject object, bool departing = true,
         const LootItem claimed = null, ulong looter = 0, long expiresOverride = 0, bool carryImpacts = true,
         scope const uint* factionOverride = null)
     {
@@ -7563,7 +6632,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     }
 
     /// A region may bring a saved GM spawn created after this node loaded its world data.
-    private MapObject restoreWorldMigrant(const ref Migrant migrant, Map destination)
+    package MapObject restoreWorldMigrant(const ref Migrant migrant, Map destination)
     {
         import dmangos.bytes : ByteReader;
         import dmangos.log : warning;
@@ -7712,7 +6781,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         }
     }
 
-    private size_t[uint] spawnIndex, gameObjectSpawnIndex; // spawn guid -> its place in the world data
+    package size_t[uint] spawnIndex, gameObjectSpawnIndex; // spawn guid -> its place in the world data
     private size_t indexedCreatureSpawns, indexedGameObjectSpawns;
     private uint initialCreatureSpawn, initialGameObjectSpawn;
 
@@ -7787,7 +6856,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     private Region[uint] localCreatureLoans;
     private MonoTime nextCreatureLoanCheck;
 
-    private bool creatureOnLoan(uint spawn)
+    package bool creatureOnLoan(uint spawn)
     {
         return creatureLease !is null && creatureLease(spawn).creature.spawn != 0;
     }
@@ -7927,7 +6996,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
             if (hasOutdoorRespawn(spawn.guid) && restoreLoanCorpse(map_, *spawn))
                 return;
             if (!awaitingRespawn(spawn.guid) && creatureInEvents(spawn.guid)
-                && groupSpawnAllowed(map_, 0, spawn.guid) && upInPool(PoolMember.Kind.creature, spawn.guid))
+                && dungeons.groupSpawnAllowed(map_, 0, spawn.guid) && upInPool(PoolMember.Kind.creature, spawn.guid))
                 if (auto creature = makeCreature(spawn))
                     map_.addObject(creature);
         }
@@ -8099,7 +7168,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     private MonoTime lastRespawnCheck;
     private InstanceCorpseRecord[uint] outdoorCorpses;
 
-    private bool moltenCoreTrash(const ref CreatureSpawn spawn)
+    package bool moltenCoreTrash(const ref CreatureSpawn spawn)
     {
         enum moltenCore = 409, lockout = 7 * 24 * 60 * 60, worldBossRank = 3, instanceBind = 0x01;
         if (spawn.map != moltenCore || spawn.respawnSeconds == 0 || spawn.respawnSeconds >= lockout)
@@ -8118,7 +7187,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         {
             // A script can flush a checkpoint in its death handler. Queue the spawn death first.
             if (!summoned)
-                if (auto state = creature.instanceId in instances)
+                if (auto state = creature.instanceId in dungeons.instances)
                 {
                     const guid = creature.spawn.guid;
                     state.dead[guid] = true;
@@ -8158,11 +7227,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         if (creature.alive || creature.corpseTimer <= 0 || creature.petOwner || creature.guardianOwner || creature.totemOwner)
             return false;
         if (creature.instanceId)
-            return (creature.instanceId in instances) !is null && !battlegroundOfMap(creature.spawn.map);
+            return (creature.instanceId in dungeons.instances) !is null && !battlegroundOfMap(creature.spawn.map);
         return config.cluster.enabled;
     }
 
-    private long instanceDeathDeadline(ref InstanceState state, const Creature creature)
+    private long instanceDeathDeadline(ref dungeons.InstanceState state, const Creature creature)
     {
         auto until = state.resetAt ? state.resetAt : unixTime + 86_400;
         if (moltenCoreTrash(creature.spawn) && creature.respawnAt < until)
@@ -8175,7 +7244,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     {
         if (!canCheckpointCorpse(creature))
             return;
-        if (auto state = creature.instanceId in instances)
+        if (auto state = creature.instanceId in dungeons.instances)
         {
             state.dead[creature.spawn.guid] = true;
             database.saveInstanceCorpse(checkpointCorpse(creature), instanceDeathDeadline(*state, creature));
@@ -8213,7 +7282,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     {
         return config.cluster.enabled && creature.alive && creature.summon.type == TempSpawnType.none
             && !creature.petOwner && creature.spawn.guid < temporaryCounterStart
-            && (!creature.instanceId || (creature.instanceId in instances && !battlegroundOfMap(creature.spawn.map)));
+            && (!creature.instanceId || (creature.instanceId in dungeons.instances && !battlegroundOfMap(creature.spawn.map)));
     }
 
     package PickpocketRecord checkpointPickpocket(Creature creature, const LootItem claimed = null, ulong looter = 0)
@@ -8254,7 +7323,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         const expiresAt = unixTime + (creature.corpseTimer + 999L) / 1000;
         const record = InstanceCorpseRecord(creature.instanceId, creature.spawn.guid, expiresAt,
             toHex(saveMigratingObject(creature, false, claimed, looter).state));
-        if (auto state = creature.instanceId in instances)
+        if (auto state = creature.instanceId in dungeons.instances)
             state.corpses[record.spawn] = record;
         else if (!creature.instanceId)
             outdoorCorpses[record.spawn] = record;
@@ -8263,7 +7332,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
 
     package void saveCorpseLoot(Creature creature)
     {
-        auto state = creature.instanceId in instances;
+        auto state = creature.instanceId in dungeons.instances;
         if (creature.instanceId && state is null)
             return;
         auto corpses = state is null ? &outdoorCorpses : &state.corpses;
@@ -8285,7 +7354,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         import dmangos.world.instancescripting : fromHex;
         import dmangos.world.migration : MigrantKind;
 
-        const state = map.instanceId in instances;
+        const state = map.instanceId in dungeons.instances;
         if (state is null)
             return;
         Migrant[] corpses;
@@ -8353,7 +7422,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         }
         if (creature.instanceId)
         {
-            if (auto state = creature.instanceId in instances)
+            if (auto state = creature.instanceId in dungeons.instances)
                 if (state.corpses.remove(creature.spawn.guid))
                     database.deleteInstanceCorpse(creature.instanceId, creature.spawn.guid);
             return;
@@ -8376,7 +7445,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         }
     }
 
-    private uint summonsMade; // standalone counters
+    package uint summonsMade; // standalone counters
     private ulong nextClusterTemporary, clusterTemporaryEnd; // reserved by the realm database
 
     /// Bones lying on a map here, with when they go (`bonesLifetime` after they were left).
@@ -9916,7 +8985,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         if (corpse.instanceId)
         {
             // In an instance: it comes back now, there.
-            if (auto state = corpse.instanceId in instances)
+            if (auto state = corpse.instanceId in dungeons.instances)
                 state.dead.remove(corpse.spawn.guid);
             map.corpseExpired(corpse);
             if (auto back = makeCreature(&corpse.spawn))
@@ -9986,7 +9055,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     {
         import dmangos.world.gameobject : GameObjectType;
 
-        return go.instanceId in instances && go.spawn.guid < temporaryCounterStart
+        return go.instanceId in dungeons.instances && go.spawn.guid < temporaryCounterStart
             && go.type == GameObjectType.chest && go.consumable && go.spawn.respawnSeconds < 0
             && !go.template_.data[4] && !go.template_.data[5];
     }
@@ -10040,7 +9109,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
             outdoorChests[go.spawn.guid] = record;
             return record;
         }
-        auto state = go.instanceId in instances;
+        auto state = go.instanceId in dungeons.instances;
         if (state is null)
             return InstanceChestRecord.init;
         const now = unixTime;
@@ -10062,11 +9131,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         if (!isInstanceReward(go))
             return;
         auto record = InstanceChestRecord(go.instanceId, go.spawn.guid, deadline, null);
-        instances[go.instanceId].chests[go.spawn.guid] = record;
+        dungeons.instances[go.instanceId].chests[go.spawn.guid] = record;
         database.saveInstanceChest(record);
     }
 
-    private bool restoreReward(GameObject go, const ref InstanceChestRecord reward)
+    package bool restoreReward(GameObject go, const ref InstanceChestRecord reward)
     {
         import dmangos.bytes : ByteReader, PacketException;
         import dmangos.log : warning;
@@ -10080,7 +9149,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
             return false;
         if (!reward.loot.length)
         {
-            scriptedGameObjects[GameObjectOnMap(instanceMaps[go.instanceId], go.guid)] = reward.expiresAt;
+            scriptedGameObjects[GameObjectOnMap(dungeons.instanceMaps[go.instanceId], go.guid)] = reward.expiresAt;
             return true;
         }
         auto r = ByteReader(fromHex(reward.loot));
@@ -10094,7 +9163,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
             go.loot = loot;
             go.lootState = GoLootState.activated;
             go.despawnTimer = cast(int)(remaining > int.max / 1000 ? int.max : remaining * 1000);
-            bindMigrantLoot(go, instanceMaps[go.instanceId]);
+            bindMigrantLoot(go, dungeons.instanceMaps[go.instanceId]);
             return true;
         }
         catch (PacketException e)
@@ -10141,7 +9210,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
             return;
         if (go.instanceId)
         {
-            if (auto state = go.instanceId in instances)
+            if (auto state = go.instanceId in dungeons.instances)
             {
                 state.usedUp[go.spawn.guid] = true;
                 if (auto copy = battlegrounds.find(go.instanceId))
@@ -10485,7 +9554,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                     }
                 }))
                 continue;
-            if (there is null || !there.cellLoaded(home) || !groupSpawnAllowed(there, 0, spawn.guid))
+            if (there is null || !there.cellLoaded(home) || !dungeons.groupSpawnAllowed(there, 0, spawn.guid))
                 continue;
             if (auto creature = makeCreature(spawn))
             {
@@ -10497,8 +9566,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
 
     private void respawnMoltenCoreTrash(long now)
     {
-        foreach (id, map; instanceMaps)
-            if (auto state = id in instances)
+        foreach (id, map; dungeons.instanceMaps)
+            if (auto state = id in dungeons.instances)
                 foreach (guid; state.trashRespawns.keys)
                 {
                     const readyAt = guid in state.trashRespawns;
@@ -10561,7 +9630,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                     continue;
             }
             if (there !is null && there.cellLoaded(home) && creatureInEvents(spawn.guid)
-                && groupSpawnAllowed(there, 0, spawn.guid))
+                && dungeons.groupSpawnAllowed(there, 0, spawn.guid))
                 if (auto creature = makeCreature(spawn))
                 {
                     there.addObject(creature);
@@ -10782,7 +9851,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                 tickMap(map_);
         }
         tickMaps(maps);
-        tickMaps(instanceMaps);
+        tickMaps(dungeons.instanceMaps);
         snapshotValues(online, tickPlayersNow);
         scope (exit) clearTickSnapshot(tickPlayersNow);
         foreach (player; tickPlayersNow) // an update may log a player out
@@ -10827,7 +9896,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
             {
                 creatureDied(creature);
                 if (config.cluster.enabled)
-                    if (const state = creature.instanceId in instances)
+                    if (const state = creature.instanceId in dungeons.instances)
                         savedCorpse |= (creature.spawn.guid in state.corpses) !is null;
             }
             if (savedCorpse && canWrite())
@@ -10843,7 +9912,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         }
         foreach (map_; maps)
             drain(map_);
-        foreach (map_; instanceMaps)
+        foreach (map_; dungeons.instanceMaps)
             drain(map_);
     }
 
@@ -10888,8 +9957,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
 
     private void worldPhase(MonoTime now, Duration elapsed)
     {
-        if (instances.length)
-            unloadEmptyInstances(now);
+        if (dungeons.instances.length)
+            dungeons.unloadEmptyInstances(now);
         refreshQuestActors(true);
         retryRegionRecovery();
         purgeExpiredOutdoorCorpses();
@@ -10926,7 +9995,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         if (lastConditionalSpawnCheck == MonoTime.init || now - lastConditionalSpawnCheck >= 1.seconds)
         {
             lastConditionalSpawnCheck = now;
-            refreshConditionalSpawns();
+            dungeons.refreshConditionalSpawns();
         }
         removeExpiredBones();
         if (forwardGroup is null) // the coordinator, or alone (not while starting: who coordinates is not known yet)
@@ -11266,13 +10335,13 @@ unittest
     where.loadCell(home);
     assert(where.creatureAt(guid) is null);
     where.scriptedWorldStates[flag] = 1;
-    context.refreshConditionalSpawns();
+    context.dungeons.refreshConditionalSpawns();
     auto shown = where.creatureAt(guid);
     assert(shown !is null);
-    context.refreshConditionalSpawns();
+    context.dungeons.refreshConditionalSpawns();
     assert(where.creatureAt(guid) is shown);
     where.scriptedWorldStates[flag] = 0;
-    context.refreshConditionalSpawns();
+    context.dungeons.refreshConditionalSpawns();
     assert(where.creatureAt(guid) is null);
 }
 
@@ -11617,8 +10686,8 @@ unittest
     copy.testing = true;
     copy.made = now - 31.seconds;
     copy.activeEvents[9] = 2;
-    from.instances[instance].dead[64] = true;
-    from.instances[instance].usedUp[65] = true;
+    from.dungeons.instances[instance].dead[64] = true;
+    from.dungeons.instances[instance].usedUp[65] = true;
     copy.members[42] = Battleground.Member(0, now - 4.seconds, 6);
     copy.awaitingResurrection[42] = 123;
     auto rules = cast(WarsongRules) copy.rules;
@@ -11639,7 +10708,7 @@ unittest
     assert(restored.made == later - 31.seconds && restored.untilSpiritHeal == 29.seconds);
     assert(restored.members[42].offlineSince == later - 4.seconds && restored.members[42].killingBlows == 6);
     assert(restored.awaitingResurrection[42] == 123 && restored.activeEvents[9] == 2);
-    assert(64 in to.instances[instance].dead && 65 in to.instances[instance].usedUp);
+    assert(64 in to.dungeons.instances[instance].dead && 65 in to.dungeons.instances[instance].usedUp);
     auto moved = cast(WarsongRules) restored.rules;
     assert(moved.carrier[1] == 42 && moved.dropped[0] == ground.guid && moved.dropLeft[0] == 12.seconds);
     assert(to.existingMap(mapWarsongGulch, instance).gameObjectAt(ground.guid) !is null);
@@ -12691,7 +11760,7 @@ unittest
     hero.say(".worldport 36 -18 -381 61");
     hero.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
     hero.read();
-    auto m = context.instanceMap(hero.session.inWorld.instanceId);
+    auto m = context.dungeons.instanceMap(hero.session.inWorld.instanceId);
     const addGuid = makeGuid(HighGuid.unit, creatureBanker, 90080);
     auto add = cast(Creature) m.findObject(addGuid);
     auto boss = cast(Creature) m.findObject(makeGuid(HighGuid.unit, creatureInnkeeper, 90081));
@@ -12704,12 +11773,12 @@ unittest
     kill(add);
     now += 100.msecs;
     context.update(now); // the deaths phase
-    assert(!add.alive && context.deadInInstance(m.instanceId, 90080));
+    assert(!add.alive && context.dungeons.deadInInstance(m.instanceId, 90080));
     kill(boss);
     now += 1100.msecs;
     context.update(now);
     auto back = cast(Creature) m.findObject(addGuid);
-    assert(back !is null && back.alive && !context.deadInInstance(m.instanceId, 90080), "the add came back");
+    assert(back !is null && back.alive && !context.dungeons.deadInInstance(m.instanceId, 90080), "the add came back");
 }
 
 // A helper that died on the node that borrowed it keeps its corpse and loot when that node loses the loan without a

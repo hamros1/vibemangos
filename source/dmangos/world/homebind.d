@@ -64,7 +64,7 @@ mixin template HomebindTimer()
             return;
         if (context.groups.of(player.guid) is null)
             instanceValid = false;
-        else if (context.boundInstance(player.guid, player.data.map) == instanceId)
+        else if (context.dungeons.boundInstance(player.guid, player.data.map) == instanceId)
             instanceValid = true;
     }
 

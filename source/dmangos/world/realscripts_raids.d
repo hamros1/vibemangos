@@ -42,7 +42,7 @@ unittest
     {
         s.kill(creature);
         s.run(200.msecs);
-        assert(context.deadInInstance(s.instance, creature.spawn.guid));
+        assert(context.dungeons.deadInInstance(s.instance, creature.spawn.guid));
         return creature.respawnAt;
     }
     const due = killAndRecord(surger);
@@ -50,11 +50,11 @@ unittest
     assert(saved.canFind!(row => !row.gameObject && row.instance == s.instance && row.spawnGuid == spawn && row.until == due));
     s.w.now += (due - context.unixTime() - 1).seconds;
     context.respawnDue(s.w.now);
-    assert(context.deadInInstance(s.instance, spawn));
+    assert(context.dungeons.deadInInstance(s.instance, spawn));
     s.w.now += 1.seconds;
     context.respawnDue(s.w.now);
     auto back = s.map.creatureAt(guid);
-    assert(back !is null && back !is surger && back.alive && !context.deadInInstance(s.instance, spawn));
+    assert(back !is null && back !is surger && back.alive && !context.dungeons.deadInInstance(s.instance, spawn));
 
     s.moveHero(0, spawnOf(moltenCore, garrEntry));
     auto garr = s.the(garrEntry);
@@ -63,7 +63,7 @@ unittest
     const blocked = killAndRecord(back);
     s.w.now += (blocked - context.unixTime()).seconds;
     context.respawnDue(s.w.now);
-    assert(context.deadInInstance(s.instance, spawn) && context.deadInInstance(s.instance, garr.spawn.guid));
+    assert(context.dungeons.deadInInstance(s.instance, spawn) && context.dungeons.deadInInstance(s.instance, garr.spawn.guid));
     auto dead = s.map.creatureAt(guid);
     assert(dead is null || !dead.alive);
 

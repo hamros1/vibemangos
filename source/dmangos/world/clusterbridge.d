@@ -806,7 +806,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
     /// See `ReplicationHandler.dungeonEntryRequest`.
     void dungeonEntryRequest(ushort peer, const ref DungeonEntryRequest m)
     {
-        node.sendTo(peer, DungeonEntryReply(m.request, context.dungeonEntryProblem(m.player, m.map, m.instance,
+        node.sendTo(peer, DungeonEntryReply(m.request, context.dungeons.dungeonEntryProblem(m.player, m.map, m.instance,
             m.gameMaster)));
     }
 

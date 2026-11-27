@@ -772,7 +772,7 @@ final class Dungeon
             const(ubyte)[][uint] arriving;
             arriving[regionId] = leaving[regionId];
             w.context.regionsChanged([Region(regionId, mapId)], null, arriving, leaving);
-            assert(w.context.instanceMap(copy) !is null, "the copy arrived");
+            assert(w.context.dungeons.instanceMap(copy) !is null, "the copy arrived");
         }
         if (!crash)
         {

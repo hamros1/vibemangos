@@ -821,12 +821,12 @@ unittest
     assert(rules.objectUsed(copy, 7, held));
     now += 2.minutes;
     copy.tick(2.minutes);
-    const snapshot = context.snapshotBattleground(copy);
+    const snapshot = context.dungeons.snapshotBattleground(copy);
     const mapId = copy.mapId, instance = copy.instance;
     context = newCreationContext(db);
     now += 1.minutes;
     context.clock = () => now;
-    context.restoreBattleground(mapId, instance, snapshot);
+    context.dungeons.restoreBattleground(mapId, instance, snapshot);
     copy = context.battlegrounds.find(instance);
     rules = cast(AlteracRules) copy.rules;
     rules.alive = (ulong) => true;

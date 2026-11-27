@@ -139,14 +139,14 @@ private:
         }
 
         // Five new dungeon or raid copies an hour (`WorldContext.instanceLimitReached`), game masters aside.
-        const entersCopy = context.instanceable(mapId) && !mapEntry.isBattleground
+        const entersCopy = context.dungeons.instanceable(mapId) && !mapEntry.isBattleground
             && (player.data.map != mapId || (toInstance != uint.max && toInstance != instanceId_))
             && !allowsStaff("staff.game_master");
-        if (context.instanceable(mapId) && !context.hostsDungeon(mapId))
+        if (context.dungeons.instanceable(mapId) && !context.dungeons.hostsDungeon(mapId))
         {
             import dmangos.world.inworld : ArrivalAction;
 
-            const host = context.dungeonHost(mapId);
+            const host = context.dungeons.dungeonHost(mapId);
             if (host == 0 || context.playerRelay is null || !context.canWrite() || transferring)
             {
                 enum ubyte transferAbortNotFound = 0x02; // nobody hosts it this moment (its node is changing)
@@ -159,7 +159,7 @@ private:
             action.teleportInstance = toInstance;
             action.requiresLiveBattleground = requiresLiveBattleground;
             enum ubyte transferAbortNotFound = 0x02;
-            if (context.askDungeonEntry is null)
+            if (context.dungeons.askDungeonEntry is null)
             {
                 if (migrateTo(host, action))
                     return true;
@@ -171,7 +171,7 @@ private:
                 return false; // one question at a time
             dungeonEntryAsked = context.clock();
             const asked = player.guid;
-            context.askDungeonEntry(host, player.guid, mapId, toInstance, allowsStaff("staff.game_master"),
+            context.dungeons.askDungeonEntry(host, player.guid, mapId, toInstance, allowsStaff("staff.game_master"),
                 (ubyte abort) {
                     dungeonEntryAsked = MonoTime.init;
                     if (player is null || player.guid != asked || state_ != WorldState.inWorld || transferring
@@ -188,7 +188,7 @@ private:
         }
 
         // A backfill invite to a battle already underway can never create a fresh copy after a crash.
-        if ((mapEntry.isBattleground && context.hostsDungeon(mapId) && !context.battlegrounds.mapReady(mapId))
+        if ((mapEntry.isBattleground && context.dungeons.hostsDungeon(mapId) && !context.battlegrounds.mapReady(mapId))
             || (requiresLiveBattleground && context.battlegrounds.find(toInstance) is null))
         {
             refusedBattlegroundEntry(toInstance);
@@ -223,7 +223,7 @@ private:
         }
 
         // A raid's lockout: bound to another copy than the group's, it does not go in.
-        if (player.data.map != mapId && toInstance == uint.max && context.lockedOutOfGroupRaid(player.guid, mapId))
+        if (player.data.map != mapId && toInstance == uint.max && context.dungeons.lockedOutOfGroupRaid(player.guid, mapId))
         {
             enum ubyte transferAbortNotFound = 0x02;
             deliver(Opcode.SMSG_TRANSFER_ABORTED, [transferAbortNotFound]);
@@ -236,8 +236,8 @@ private:
         if (instance == uint.max && player.data.map == mapId)
             instance = instanceId_;
         uint known;
-        if (context.instanceable(mapId))
-            known = instance != uint.max ? instance : context.boundInstance(player.guid, mapId);
+        if (context.dungeons.instanceable(mapId))
+            known = instance != uint.max ? instance : context.dungeons.boundInstance(player.guid, mapId);
         if (known && (player.data.map != mapId || known != instanceId_) && !allowsStaff("staff.game_master"))
             if (const most = mapId in context.data.instanceMaxPlayers)
                 if (auto there = context.existingMap(mapId, known))
@@ -254,15 +254,15 @@ private:
         }
         bool admit(uint copy)
         {
-            if (entersCopy && !context.enteredInstance(account.id, copy))
+            if (entersCopy && !context.dungeons.enteredInstance(account.id, copy))
                 return tooManyCopies();
             return true;
         }
         if (instance == uint.max)
         {
-            if (entersCopy && !known && context.instanceLimitReached(account.id, 0))
+            if (entersCopy && !known && context.dungeons.instanceLimitReached(account.id, 0))
                 return tooManyCopies(); // avoid allocating an ID when all five slots are occupied
-            instance = context.instanceFor(player.guid, mapId, &admit);
+            instance = context.dungeons.instanceFor(player.guid, mapId, &admit);
             if (entersCopy && !instance)
                 return false;
         }
@@ -333,7 +333,7 @@ private:
                 context.battlegrounds.open(instance, battlegroundOfMap(mapId));
             }
             if (toInstance != uint.max && !allowsStaff("staff.game_master"))
-                context.bindOnEntering(player.guid, mapId, instance);
+                context.dungeons.bindOnEntering(player.guid, mapId, instance);
             player.data.map = mapId;
             player.movement.position = destination;
             if (ridingShip)
@@ -471,8 +471,8 @@ private:
     /// In a raid copy: welcomed with the time to its reset as it arrives.
     private void raidArrived()
     {
-        const left = context.instanceResetAt(instanceId) - context.unixTime;
-        if (instanceId == 0 || context.instanceResetAt(instanceId) == 0)
+        const left = context.dungeons.instanceResetAt(instanceId) - context.unixTime;
+        if (instanceId == 0 || context.dungeons.instanceResetAt(instanceId) == 0)
             return;
         raidWarnedIn = instanceId;
         raidWarned = uint.max;
@@ -487,7 +487,7 @@ private:
     {
         if (instanceId == 0 || teleporting != Teleport.none)
             return;
-        const at = context.instanceResetAt(instanceId);
+        const at = context.dungeons.instanceResetAt(instanceId);
         if (at == 0)
             return;
         if (raidWarnedIn != instanceId)
@@ -765,11 +765,11 @@ unittest
     auto anduin = loggedIn(context, db, 7, "Anduin", at, AccountLevel.player, raceHuman, mapEasternKingdoms, 10);
     auto jaina = loggedIn(context, db, 8, "Jaina", at, AccountLevel.player, raceHuman, mapEasternKingdoms, 10);
     auto varian = loggedIn(context, db, 9, "Varian", at, AccountLevel.player, raceHuman, mapEasternKingdoms, 10);
-    assert(context.instanceable(mapDeadmines) && !context.instanceable(mapEasternKingdoms));
+    assert(context.dungeons.instanceable(mapDeadmines) && !context.dungeons.instanceable(mapEasternKingdoms));
 
-    const mine = context.instanceFor(7, mapDeadmines), hers = context.instanceFor(8, mapDeadmines);
+    const mine = context.dungeons.instanceFor(7, mapDeadmines), hers = context.dungeons.instanceFor(8, mapDeadmines);
     assert(mine && hers && mine != hers, "alone: a copy each");
-    assert(context.instanceFor(7, mapDeadmines) == mine, "bound to it");
+    assert(context.dungeons.instanceFor(7, mapDeadmines) == mine, "bound to it");
 
     // A group: Varian joins Jaina's and goes where her group is bound (she was bound before the group).
     jaina.write(Opcode.CMSG_GROUP_INVITE, ClientGroupName("varian"));
@@ -779,7 +779,7 @@ unittest
     jaina.session.inWorld.teleportTo(mapDeadmines, Position(-16, -383, 61));
     jaina.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
     const groupCopy = jaina.session.inWorld.instanceId;
-    assert(context.instanceFor(9, mapDeadmines) == groupCopy, "the group's copy");
+    assert(context.dungeons.instanceFor(9, mapDeadmines) == groupCopy, "the group's copy");
 
     // A creature of the dungeon killed in one copy lives in the other.
     CreatureSpawn defias = {guid: 79999, entry: creatureInnkeeper, map: mapDeadmines, x: -16, y: -383, z: 61};
@@ -794,16 +794,16 @@ unittest
     assert(b.alive && a.guid == b.guid, "the same spawn, two copies");
 
     // Everyone out of Anduin's copy (he was never in it): it goes after a minute, and his bind with it.
-    const count = context.instanceCount;
+    const count = context.dungeons.instanceCount;
     now += 30.seconds;
     context.update(now);
     now += 31.seconds;
     context.update(now);
     now += 31.seconds;
     context.update(now);
-    assert(context.instanceCount < count && context.existingMap(mapDeadmines, mine) is null, "reset");
+    assert(context.dungeons.instanceCount < count && context.existingMap(mapDeadmines, mine) is null, "reset");
     assert(context.existingMap(mapDeadmines, groupCopy) !is null, "Jaina's group's copy is in use");
-    const again = context.instanceFor(7, mapDeadmines);
+    const again = context.dungeons.instanceFor(7, mapDeadmines);
     assert(again != mine && again != groupCopy, "a fresh copy next time");
 
     // A full copy: no way in (here a limit of one, Jaina in it).
@@ -835,7 +835,7 @@ unittest
     auto anduin = loggedIn(context, db, 7, "Anduin", at, AccountLevel.player, raceHuman, mapEasternKingdoms, 60);
     auto jaina = loggedIn(context, db, 8, "Jaina", at, AccountLevel.player, raceHuman, mapEasternKingdoms, 60);
 
-    const his = context.instanceFor(7, mapMoltenCore), hers = context.instanceFor(8, mapMoltenCore);
+    const his = context.dungeons.instanceFor(7, mapMoltenCore), hers = context.dungeons.instanceFor(8, mapMoltenCore);
     assert(his && hers && his != hers);
     CreatureSpawn rager = {guid: 56000, entry: creatureInnkeeper, map: mapMoltenCore, x: 1, y: 1, z: 1};
     auto creature = context.makeCreature(&rager);
@@ -843,13 +843,13 @@ unittest
     context.map(mapMoltenCore, his).addObject(creature);
     creature.die(context.map(mapMoltenCore, his), context.unixTime);
     context.creatureDied(creature);
-    assert(context.deadInInstance(his, 56000));
+    assert(context.dungeons.deadInInstance(his, 56000));
 
     // Grouped under Jaina, whose copy the group is bound to: Anduin is locked to his own.
     jaina.write(Opcode.CMSG_GROUP_INVITE, ClientGroupName("anduin"));
     anduin.write(Opcode.CMSG_GROUP_ACCEPT, null);
-    assert(context.instanceFor(8, mapMoltenCore) == hers);
-    assert(context.lockedOutOfGroupRaid(7, mapMoltenCore) && !context.lockedOutOfGroupRaid(8, mapMoltenCore));
+    assert(context.dungeons.instanceFor(8, mapMoltenCore) == hers);
+    assert(context.dungeons.lockedOutOfGroupRaid(7, mapMoltenCore) && !context.dungeons.lockedOutOfGroupRaid(8, mapMoltenCore));
     context.config.instanceIgnoreRaid = true; // a party may enter, for the test
     anduin.read();
     assert(!anduin.session.inWorld.commandTeleport(mapMoltenCore, Position(1, 1, 1)), "locked out");
@@ -857,9 +857,9 @@ unittest
 
     // A restart: the copies, binds and dead are read back.
     auto again = newCreationContext(db);
-    assert(again.instanceCount == 2);
-    assert(again.instanceFor(7, mapMoltenCore) == his, "his lockout");
-    assert(again.deadInInstance(his, 56000), "its dead stay dead");
+    assert(again.dungeons.instanceCount == 2);
+    assert(again.dungeons.instanceFor(7, mapMoltenCore) == his, "his lockout");
+    assert(again.dungeons.deadInInstance(his, 56000), "its dead stay dead");
 }
 
 /**
@@ -937,8 +937,8 @@ unittest
     mesh.nodes = nodes;
     foreach (id, node; nodes)
         node.playerRelay = new Relay(mesh, id);
-    assert(nodes[2].hostsDungeon(mapDeadmines) && !nodes[1].hostsDungeon(mapDeadmines));
-    assert(nodes[1].instanceFor(7, mapDeadmines) == 0, "node 1 does not choose copies of node 2's dungeon");
+    assert(nodes[2].dungeons.hostsDungeon(mapDeadmines) && !nodes[1].dungeons.hostsDungeon(mapDeadmines));
+    assert(nodes[1].dungeons.instanceFor(7, mapDeadmines) == 0, "node 1 does not choose copies of node 2's dungeon");
 
     const outside = Position(deadminesEntrance[0], deadminesEntrance[1], deadminesEntrance[2]);
     auto anduin = loggedIn(nodes[1], db, 7, "Anduin", outside, AccountLevel.administrator, raceHuman,
@@ -956,12 +956,12 @@ unittest
     assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_NEW_WORLD));
     anduin.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
     const copy = there.inWorld.instanceId;
-    assert(copy && nodes[2].instanceMap(copy).population == 1 && nodes[1].instanceCount == 0);
+    assert(copy && nodes[2].dungeons.instanceMap(copy).population == 1 && nodes[1].dungeons.instanceCount == 0);
     assert(db.loadInstances().instances.canFind!(r => r.id == copy && r.map == mapDeadmines), "saved");
 
     // The host is asked first: with the copy full, Jaina does not move at all, and is told why.
-    nodes[1].askDungeonEntry = (ushort host, ulong player, uint map, uint instance, bool gm, void delegate(ubyte) then)
-        => then(nodes[host].dungeonEntryProblem(player, map, instance, gm));
+    nodes[1].dungeons.askDungeonEntry = (ushort host, ulong player, uint map, uint instance, bool gm, void delegate(ubyte) then)
+        => then(nodes[host].dungeons.dungeonEntryProblem(player, map, instance, gm));
     nodes[2].data.instanceMaxPlayers[mapDeadmines] = 1;
     jaina.read();
     jaina.session.inWorld.commandTeleport(mapDeadmines, Position(-16, -381, 61), copy);
@@ -972,15 +972,15 @@ unittest
 
     // Four previous entries on node 1. The full-copy refusal consumed no slot.
     foreach (prior; 1001u .. 1005u)
-        assert(nodes[1].enteredInstance(jainaAccount, prior));
+        assert(nodes[1].dungeons.enteredInstance(jainaAccount, prior));
     // Jaina is sent into Anduin's copy: she moves to node 2 and goes into that one.
     jaina.session.inWorld.commandTeleport(mapDeadmines, Position(-16, -381, 61), copy);
     auto hers = mesh.remotes[2][jainaAccount];
     hers.update(1.seconds);
     jaina.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
-    assert(hers.inWorld.instanceId == copy && nodes[2].instanceMap(copy).population == 2);
+    assert(hers.inWorld.instanceId == copy && nodes[2].dungeons.instanceMap(copy).population == 2);
     assert(nodes[2].seeEachOther(7, 8));
-    assert(nodes[1].instanceLimitReached(jainaAccount, 1005) && !nodes[1].instanceLimitReached(jainaAccount, copy),
+    assert(nodes[1].dungeons.instanceLimitReached(jainaAccount, 1005) && !nodes[1].dungeons.instanceLimitReached(jainaAccount, copy),
         "the host charged the shared account exactly once for the actual destination copy");
 
     // Out: Anduin goes back where he came in from, on node 1's ground: he moves home first and is
@@ -1045,8 +1045,8 @@ unittest
         n.clock = () => now;
         n.regionOwnerAround = (uint, Position, float) => host;
     }
-    const copy = a.instanceFor(7, mapDeadmines);
-    assert(copy && b.instanceFor(7, mapDeadmines) == 0, "node 2 does not host it");
+    const copy = a.dungeons.instanceFor(7, mapDeadmines);
+    assert(copy && b.dungeons.instanceFor(7, mapDeadmines) == 0, "node 2 does not host it");
     db.saveInstanceRespawn(false, 79999, copy, 0); // a creature killed there
 
     // A creature of the copy, loaded and hurt on node 1.
@@ -1092,7 +1092,7 @@ unittest
     b.regionsChanged(dungeon, null, arriving, leaving);
     import dmangos.world.creature : Creature;
 
-    auto there = b.instanceMap(copy);
+    auto there = b.dungeons.instanceMap(copy);
     assert(there !is null, "the copy came along");
     auto same = cast(Creature) there.findObject(hurt.guid);
     assert(same !is null && same.instanceId == copy && same.values.get!UNIT_FIELD_HEALTH == 7, "as it was");
@@ -1101,9 +1101,9 @@ unittest
     auto activeMove = cast(PointMovement) same.generator;
     assert(activeMove !is null && activeMove.notifyScript && activeMove.arrivalPoint == 82);
     assert(same.spline.path == hurt.spline.path && same.spline.timePassed == hurt.spline.timePassed);
-    assert(b.instanceFor(7, mapDeadmines) == copy, "the bind, as saved");
-    assert(b.deadInInstance(copy, 79999), "its dead stay dead");
-    const another = b.instanceFor(8, mapDeadmines);
+    assert(b.dungeons.instanceFor(7, mapDeadmines) == copy, "the bind, as saved");
+    assert(b.dungeons.deadInInstance(copy, 79999), "its dead stay dead");
+    const another = b.dungeons.instanceFor(8, mapDeadmines);
     assert(another && another > copy, "new ids above the saved ones");
     assert(a.instanceState(copy) is null, "node 1 forgot it");
     assert(db.loadInstances().instances.length == 2, "and deleted nothing");
@@ -1119,10 +1119,10 @@ unittest
     const at = Position(deadminesEntrance[0], deadminesEntrance[1], deadminesEntrance[2]);
     auto anduin = loggedIn(context, db, 7, "Anduin", at, AccountLevel.player, raceHuman, mapEasternKingdoms, 10);
     anduin.read();
-    const first = context.instanceFor(7, mapDeadmines);
+    const first = context.dungeons.instanceFor(7, mapDeadmines);
     anduin.write(Opcode.CMSG_RESET_INSTANCES, null);
     assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_INSTANCE_RESET), "reset");
-    assert(context.instanceFor(7, mapDeadmines) != first, "a new copy next time");
+    assert(context.dungeons.instanceFor(7, mapDeadmines) != first, "a new copy next time");
 
     anduin.session.inWorld.teleportTo(mapDeadmines, Position(-16, -383, 61));
     anduin.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
@@ -1140,16 +1140,16 @@ unittest
     // The schedule: the first a period after today at the hour, then a period on from the last.
     enum long day = 86_400;
     const now = 20_000 * day + 10 * 3600; // 10:00
-    assert(WorldContext.nextRaidReset(0, now, 7, 4) == 20_007 * day + 4 * 3600);
-    assert(WorldContext.nextRaidReset(20_000 * day + 4 * 3600, now, 7, 4) == 20_007 * day + 4 * 3600,
+    assert(imported!"dmangos.world.dungeons".Dungeons.nextRaidReset(0, now, 7, 4) == 20_007 * day + 4 * 3600);
+    assert(imported!"dmangos.world.dungeons".Dungeons.nextRaidReset(20_000 * day + 4 * 3600, now, 7, 4) == 20_007 * day + 4 * 3600,
         "this morning's past: a week on");
-    assert(WorldContext.nextRaidReset(19_990 * day + 4 * 3600, now, 3, 4) == 20_002 * day + 4 * 3600, "missed ones skipped");
+    assert(imported!"dmangos.world.dungeons".Dungeons.nextRaidReset(19_990 * day + 4 * 3600, now, 3, 4) == 20_002 * day + 4 * 3600, "missed ones skipped");
 
     auto db = newDatabase();
     auto context = newCreationContext(db);
     auto clock = MonoTime.currTime;
     context.clock = () => clock;
-    const reset = context.raidResetAt(mapMoltenCore);
+    const reset = context.dungeons.raidResetAt(mapMoltenCore);
     assert(reset > context.unixTime && db.loadRaidResets()[mapMoltenCore] == reset, "kept in instance_reset");
 
     auto ragna = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.administrator);
@@ -1158,7 +1158,7 @@ unittest
     ragna.read();
     ragna.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
     const copy = ragna.session.inWorld.instanceId;
-    assert(copy && context.instanceResetAt(copy) == reset, "its copy resets with the raid");
+    assert(copy && context.dungeons.instanceResetAt(copy) == reset, "its copy resets with the raid");
     const welcome = bodyOf(ragna.read(), Opcode.SMSG_RAID_INSTANCE_MESSAGE);
     assert(welcome.length == 12 && ByteReader(welcome).read!uint == 4, "welcomed");
 
@@ -1182,6 +1182,6 @@ unittest
     assert(ragna.session.character.data.map == mapEasternKingdoms);
     context.update(clock);
     context.update(clock + 1.seconds);
-    assert(context.instanceResetAt(copy) == 0, "the copy reset");
-    assert(context.raidResetAt(mapMoltenCore) > reset, "the next one");
+    assert(context.dungeons.instanceResetAt(copy) == 0, "the copy reset");
+    assert(context.dungeons.raidResetAt(mapMoltenCore) > reset, "the next one");
 }

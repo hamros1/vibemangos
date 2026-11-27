@@ -148,7 +148,7 @@ unittest
     const copy = hero.session.inWorld.instanceId;
     auto script = context.instanceScript(copy);
     assert(script !is null && script.name == "instance_deadmines");
-    auto map = context.instanceMap(copy);
+    auto map = context.dungeons.instanceMap(copy);
     auto door = cast(GameObject) map.findObject(makeDoorGuid(factoryDoor, 90001));
     assert(door !is null && door.goState == 1, "closed while Rhahk'Zor lives");
 
@@ -169,9 +169,9 @@ unittest
     auto back = loggedIn(again, db, 7, "Varian", Position(-16, -380, 61), AccountLevel.administrator, raceHuman,
         mapDeadmines, 60);
     assert(back.session.inWorld.instanceId == copy);
-    auto reloaded = cast(GameObject) again.instanceMap(copy).findObject(makeDoorGuid(factoryDoor, 90001));
+    auto reloaded = cast(GameObject) again.dungeons.instanceMap(copy).findObject(makeDoorGuid(factoryDoor, 90001));
     assert(reloaded !is null && reloaded.goState == 0, "open when it loads");
-    assert(again.instanceMap(copy).findObject(makeCreatureGuid(rhahkZor, 90002)) is null, "he stays dead");
+    assert(again.dungeons.instanceMap(copy).findObject(makeCreatureGuid(rhahkZor, 90002)) is null, "he stays dead");
 
     // The copy is shut down: its script goes from memory (its state stays saved).
     const live = again.scripts.liveScripts;
@@ -215,7 +215,7 @@ unittest
     hero.say(".worldport 36 -16 -380 61");
     hero.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
     const copy = hero.session.inWorld.instanceId;
-    auto inside = context.instanceMap(copy);
+    auto inside = context.dungeons.instanceMap(copy);
     const guid = hero.session.character.guid;
     assert(inside.find(guid) !is null);
     hero.write(Opcode.CMSG_SET_SELECTION, ClientGuid(guid));
@@ -273,7 +273,7 @@ unittest
     hero.say(".worldport 36 -16 -383 61");
     hero.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
     hero.read();
-    auto map = context.instanceMap(hero.session.inWorld.instanceId);
+    auto map = context.dungeons.instanceMap(hero.session.inWorld.instanceId);
     auto cannon = cast(GameObject) map.findObject(makeDoorGuid(cannonEntry, 90010));
     auto door = cast(GameObject) map.findObject(makeDoorGuid(ironCladDoor, 90011));
     assert(cannon !is null && cannon.behaviour && door.goState == 1);
@@ -958,7 +958,7 @@ unittest
     hero.say(".worldport 36 -18 -381 61");
     hero.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
     hero.read();
-    auto map = context.instanceMap(hero.session.inWorld.instanceId);
+    auto map = context.dungeons.instanceMap(hero.session.inWorld.instanceId);
     auto prisoner = cast(Creature) map.findObject(makeCreatureGuid(adamant, 90071));
     auto guard = cast(Creature) map.findObject(makeCreatureGuid(rethilgore, 90072));
     auto courtyard = cast(GameObject) map.findObject(makeDoorGuid(courtyardDoor, 90070));
@@ -1037,7 +1037,7 @@ unittest
     hero.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
     hero.say(".cheat god");
     hero.read();
-    auto map = context.instanceMap(hero.session.inWorld.instanceId);
+    auto map = context.dungeons.instanceMap(hero.session.inWorld.instanceId);
     Creature find(uint entry)
     {
         foreach (c; map.creaturesNear(Position(start.x + 20, start.y, start.z), 80))
@@ -1255,7 +1255,7 @@ unittest
     hero.say(".worldport 36 -16 -383 61");
     hero.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
     hero.read();
-    auto map = context.instanceMap(hero.session.inWorld.instanceId);
+    auto map = context.dungeons.instanceMap(hero.session.inWorld.instanceId);
     auto theGong = cast(GameObject) map.findObject(makeDoorGuid(gong, 90200));
     assert(theGong !is null);
     size_t fiends()
@@ -1299,7 +1299,7 @@ unittest
     hero.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
     hero.say(".cheat god");
     hero.read();
-    auto map = context.instanceMap(hero.session.inWorld.instanceId);
+    auto map = context.dungeons.instanceMap(hero.session.inWorld.instanceId);
     auto keeper = cast(Creature) map.findObject(makeCreatureGuid(stoneKeeper, 90300));
     assert(keeper !is null && !keeper.ai.inCombat);
 
@@ -1358,7 +1358,7 @@ unittest
     hero.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
     hero.say(".cheat god");
     hero.read();
-    auto map = context.instanceMap(hero.session.inWorld.instanceId);
+    auto map = context.dungeons.instanceMap(hero.session.inWorld.instanceId);
     auto theFire = cast(GameObject) map.findObject(makeDoorGuid(shrine1, 90400));
     auto boss = cast(Creature) map.findObject(makeCreatureGuid(kelris, 90401));
     assert(theFire !is null && boss !is null && theFire.goState == 1);
@@ -1420,7 +1420,7 @@ unittest
     hero.say(".worldport 36 -16 -383 61");
     hero.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
     hero.read();
-    auto map = context.instanceMap(hero.session.inWorld.instanceId);
+    auto map = context.dungeons.instanceMap(hero.session.inWorld.instanceId);
     auto theGate = cast(GameObject) map.findObject(makeDoorGuid(gateKirtonos, 90500));
     auto boss = cast(Creature) map.findObject(makeCreatureGuid(kirtonos, 90501));
     assert(theGate !is null && boss !is null);
@@ -1461,7 +1461,7 @@ unittest
     hero.say(".worldport 36 -16 -380 61");
     hero.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
     const copy = hero.session.inWorld.instanceId;
-    auto map = context.instanceMap(copy);
+    auto map = context.dungeons.instanceMap(copy);
     size_t count(uint entry)
     {
         size_t n;

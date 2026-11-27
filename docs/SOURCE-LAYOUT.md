@@ -158,6 +158,8 @@ source/dmangos/world/       the world server
   worlddata.d                 items, creatures, playercreateinfo_*, level stats from the world database
   realm.d                     realmlist/uptime registration
   config.d, context.d         configuration; state shared by sessions
+  dungeons.d                  the dungeon copies this node hosts, their saved state and the binds to them
+                              (`WorldContext.dungeons`)
 source/dmangos/extractor/   the client data extractor: main.d, dbc.d (DBC files), maps.d (terrain to .map files),
                               vmaps.d and assembler.d (buildings and doodads to vmaps), mmaps.d (movement maps)
 source/dmangos/vmap/        the vmap format and queries: math.d (vectors, boxes, rays), bih.d (the tree), model.d, maptree.d

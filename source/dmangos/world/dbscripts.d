@@ -499,7 +499,7 @@ mixin template DbScriptRunner()
         if (!peer || message.sequence <= lastCreatureStep.get(peer, 0) || !canWrite()
             || message.table > DbScriptType.max || cast(int) (transportNow() - message.sentAt) > maxTransitMs)
             return;
-        if (client.maps.lookup(message.map) is null || instanceable(message.map))
+        if (client.maps.lookup(message.map) is null || dungeons.instanceable(message.map))
             return;
         lastCreatureStep[peer] = message.sequence;
         const type = cast(DbScriptType) message.table;
@@ -541,7 +541,7 @@ mixin template DbScriptRunner()
     {
         if (!peer || command.sequence <= lastScriptGameObject.get(peer, 0) || !canWrite()
             || command.action > ScriptGameObject.Action.max
-            || client.maps.lookup(command.map) is null || instanceable(command.map))
+            || client.maps.lookup(command.map) is null || dungeons.instanceable(command.map))
             return;
         lastScriptGameObject[peer] = command.sequence;
         final switch (command.action)
@@ -914,7 +914,7 @@ mixin template DbScriptRunner()
     }
 
     /// Saves pending database script steps. A transfer detaches them from the old map.
-    private void saveDungeonScriptRuns(uint mapId, ref ByteWriter w, bool departing, uint onlyInstance = 0,
+    package void saveDungeonScriptRuns(uint mapId, ref ByteWriter w, bool departing, uint onlyInstance = 0,
         const(uint)[] selected = null)
     {
         import std.algorithm.mutation : remove;
@@ -929,7 +929,7 @@ mixin template DbScriptRunner()
             if (run.mapId != mapId || run.instanceId == 0 || (onlyInstance && run.instanceId != onlyInstance)
                 || run.next >= run.steps.length || (selected.length && !selected.canFind(run.id)))
                 continue;
-            auto copy = instanceMap(run.instanceId);
+            auto copy = dungeons.instanceMap(run.instanceId);
             if (copy is null)
                 continue;
             ++count;
@@ -954,7 +954,7 @@ mixin template DbScriptRunner()
     }
 
     /// Rebuilds transferred runs from the receiver's database without replaying their completed steps.
-    private void restoreDungeonScriptRuns(uint mapId, ref ByteReader r, bool cold = false)
+    package void restoreDungeonScriptRuns(uint mapId, ref ByteReader r, bool cold = false)
     {
         foreach (_; 0 .. r.read!uint)
         {
@@ -966,7 +966,7 @@ mixin template DbScriptRunner()
             const source = r.read!ulong, target = r.read!ulong;
             const waitForSource = r.read!bool, waitForTarget = r.read!bool;
             const waitUntil = r.read!long;
-            auto copy = instanceMap(instance);
+            auto copy = dungeons.instanceMap(instance);
             if (copy is null || copy.id != mapId || type > DbScriptType.max)
                 continue;
             const steps = data.dbScripts.steps(type, id);
@@ -1885,14 +1885,14 @@ mixin template DbScriptRunner()
 
     private long[GameObjectOnMap] scriptedGameObjects; // spawned by a script: when it goes (Unix time)
 
-    private void saveDungeonObjectDeadlines(uint mapId, ref ByteWriter w, uint onlyInstance = 0)
+    package void saveDungeonObjectDeadlines(uint mapId, ref ByteWriter w, uint onlyInstance = 0)
     {
         const countAt = w.length;
         w.put(0u);
         uint count;
         foreach (key, deadline; scriptedGameObjects)
             if (key.map.id == mapId && key.map.instanceId && (!onlyInstance || key.map.instanceId == onlyInstance)
-                && instanceMap(key.map.instanceId) is key.map)
+                && dungeons.instanceMap(key.map.instanceId) is key.map)
             {
                 ++count;
                 w.put(key.map.instanceId);
@@ -1902,7 +1902,7 @@ mixin template DbScriptRunner()
         w.patch(countAt, count);
     }
 
-    private void restoreDungeonObjectDeadlines(uint mapId, ref ByteReader r)
+    package void restoreDungeonObjectDeadlines(uint mapId, ref ByteReader r)
     {
         const now = unixTime;
         foreach (_; 0 .. r.read!uint)
@@ -1910,7 +1910,7 @@ mixin template DbScriptRunner()
             const instance = r.read!uint;
             const guid = r.read!ulong;
             const deadline = r.read!long;
-            auto copy = instanceMap(instance);
+            auto copy = dungeons.instanceMap(instance);
             if (copy is null || copy.id != mapId || cast(GameObject) copy.findObject(guid) is null)
                 continue;
             if (deadline <= now)
@@ -1946,7 +1946,7 @@ mixin template DbScriptRunner()
         if (template_ is null || template_.type == GameObjectType.door || template_.type == GameObjectType.fishingNode)
             return;
         if (template_.type == GameObjectType.chest)
-            if (const state = map.instanceId in instances)
+            if (const state = map.instanceId in dungeons.instances)
                 if (spawn.guid in state.usedUp || spawn.guid in state.chests)
                     return;
         auto made = makeGameObject(*spawn);

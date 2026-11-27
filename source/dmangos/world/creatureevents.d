@@ -522,7 +522,7 @@ unittest
     {
         now += ms.msecs;
         anduin.session.update(ms.msecs);
-        foreach (m; [map, context.instanceMap(anduin.session.inWorld.instanceId)])
+        foreach (m; [map, context.dungeons.instanceMap(anduin.session.inWorld.instanceId)])
             if (m !is null)
                 m.update(ms.msecs);
     }
@@ -553,7 +553,7 @@ unittest
     anduin.say(".worldport 36 -19 -383 61");
     anduin.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
     anduin.read();
-    auto copy = context.instanceMap(anduin.session.inWorld.instanceId);
+    auto copy = context.dungeons.instanceMap(anduin.session.inWorld.instanceId);
     auto guard = cast(Creature) copy.findObject(makeGuid(HighGuid.unit, creatureInnkeeper, 90900));
     assert(guard !is null && guard.ai.inDungeon && !keeper.ai.inDungeon);
     guard.values.set!UNIT_FIELD_MAXHEALTH(5000u);

@@ -202,7 +202,7 @@ private:
 
     void corpseArrivingFromHandoff()
     {
-        if (corpse !is null && (!corpse.instanceId || context.hostsDungeon(corpse.map)))
+        if (corpse !is null && (!corpse.instanceId || context.dungeons.hostsDungeon(corpse.map)))
             context.map(corpse.map, corpse.instanceId).addObject(corpse);
     }
 

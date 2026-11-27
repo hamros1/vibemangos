@@ -485,7 +485,7 @@ private final class NpcSweeper
         scope (exit) context.config.movementSpeedSlack = speedSlack;
         if (pullsPlayer)
             context.config.movementSpeedSlack = 1; // Reports must qualify for the server's pull allowance.
-        if (destination !is null && context.instanceable(destination.map))
+        if (destination !is null && context.dungeons.instanceable(destination.map))
         {
             // A boss casts its raid-room teleport within its own copy. Start the test player in that copy.
             if (!me.teleportTo(destination.map, heroAt, null, uint.max, true))

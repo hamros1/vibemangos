@@ -558,7 +558,7 @@ final class Scene
             h.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
         }
         run(200.msecs);
-        assert(w.context.shutdownInstance(instance), "the copy did not shut down");
+        assert(w.context.dungeons.shutdownInstance(instance), "the copy did not shut down");
         assert(w.context.existingMap(mapId, instance) is null, "the copy is still loaded");
         foreach (k, ref h; heroes)
         {

@@ -40,7 +40,7 @@ bool instanceElsewhere(Character gm, uint id, GmRemoteOp op, ulong target = 0)
     const mapId = gm.context.database.instanceMapOf(id);
     if (mapId == uint.max)
         return false;
-    const host = gm.context.dungeonHost(mapId);
+    const host = gm.context.dungeons.dungeonHost(mapId);
     if (host == 0 || host == gm.context.nodeId)
         return false;
     auto request = gm.remoteRequest(op, target);
@@ -141,15 +141,15 @@ bool handleShowInstancesCommand(Character gm)
     if (target is null)
         return true;
     gm.systemMessage("Persistent instances for " ~ colored(ChatColor.cyan, target.player.data.name));
-    auto binds = gm.context.bindsOf(target.player.guid).dup;
+    auto binds = gm.context.dungeons.bindsOf(target.player.guid).dup;
     if (gm.context.gmRemote !is null)
         foreach (mapId, id; gm.context.database.instanceBindsOf(cast(uint) target.player.guid))
             if (mapId !in binds)
                 binds[mapId] = id;
     foreach (mapId, id; binds)
     {
-        const host = gm.context.dungeonHost(mapId);
-        auto copy = gm.context.instanceMap(id);
+        const host = gm.context.dungeons.dungeonHost(mapId);
+        auto copy = gm.context.dungeons.instanceMap(id);
         string status;
         if (gm.context.gmRemote !is null && host != gm.context.nodeId)
             status = colored(ChatColor.cyan, format!"Node %s"(host));
@@ -236,7 +236,7 @@ void describeInstance(WorldContext context, uint id, GmSink sink)
     field("Created", dateTimeString(state.createdAt));
     field("Expires", dateTimeString(state.resetAt));
 
-    auto copy = context.instanceMap(id);
+    auto copy = context.dungeons.instanceMap(id);
     if (copy is null)
         field("Status", "Shut down", ChatColor.softRed);
     else if (copy.population)
@@ -260,13 +260,13 @@ void shutdownInstanceHere(WorldContext context, uint id, GmSink sink)
 {
     if (context.instanceState(id) is null)
         return sink.red(format!"There's no instance with id %u."(id));
-    if (context.instanceMap(id) is null)
+    if (context.dungeons.instanceMap(id) is null)
         return sink.red(format!"Instance with id %u already shut down."(id));
     sink.system(format!"Attempting to shutdown instance with id %u..."(id));
     foreach (inside; context.onlinePlayers)
         if (inside.instanceId == id && inside.character !is null)
             inside.exitInstance();
-    context.shutdownInstance(id);
+    context.dungeons.shutdownInstance(id);
     sink.system("...done");
 }
 
@@ -276,7 +276,7 @@ void resetInstanceHere(WorldContext context, uint id, ulong who, string name, bo
     const state = context.instanceState(id);
     if (state is null)
         return sink.red(format!"There's no instance with id %u."(id));
-    const binds = context.bindsOf(who);
+    const binds = context.dungeons.bindsOf(who);
     const bound = state.mapId in binds;
     if (state.resetAt) // persistent
     {
@@ -285,13 +285,13 @@ void resetInstanceHere(WorldContext context, uint id, ulong who, string name, bo
                 (id));
         if (bound !is null && *bound == id)
         {
-            context.revokeBind(who, state.mapId);
+            context.dungeons.revokeBind(who, state.mapId);
             return sink.system(format!"Instance with id %u (%s) is persistent and will only be revoked from player."
                 (id, "normal"));
         }
         return sink.red(format!"Player is not assigned to persistent instance with id %u."(id));
     }
-    auto copy = context.instanceMap(id);
+    auto copy = context.dungeons.instanceMap(id);
     if (copy !is null && copy.population)
         return sink.red(format!"Failed to reset non-persistent instance with id %u, due to player still inside."(id));
     if (bound is null || *bound != id)
@@ -302,15 +302,15 @@ void resetInstanceHere(WorldContext context, uint id, ulong who, string name, bo
 /// `.instance resetall`'s work here: the player's copies this node hosts that are not persistent and empty.
 void resetAllHere(WorldContext context, ulong who)
 {
-    foreach (mapId, id; context.bindsOf(who).dup)
+    foreach (mapId, id; context.dungeons.bindsOf(who).dup)
     {
         const state = context.instanceState(id);
         if (state is null || state.resetAt)
             continue;
-        auto copy = context.instanceMap(id);
+        auto copy = context.dungeons.instanceMap(id);
         if (copy !is null && copy.population)
             continue;
-        context.resetInstance(id);
+        context.dungeons.resetInstance(id);
     }
 }
 
@@ -368,7 +368,7 @@ unittest
     gm.say(format!".instance shutdown %s"(id));
     assert(systemMessages(gm.read())
         == ["Attempting to shutdown instance with id " ~ format!"%s"(id) ~ "...", "...done"]);
-    assert(context.instanceMap(id) is null && context.instanceState(id) !is null, "unloaded, kept");
+    assert(context.dungeons.instanceMap(id) is null && context.instanceState(id) !is null, "unloaded, kept");
     gm.say(format!".instance shutdown %s"(id));
     assert(systemMessages(gm.read()) == [ChatColor.softRed ~ "Instance with id " ~ format!"%s"(id)
         ~ " already shut down.|r"]);

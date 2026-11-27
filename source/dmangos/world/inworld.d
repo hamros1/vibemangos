@@ -183,7 +183,7 @@ private:
         }
         // The whole match moves together. Combat and recent player moves cannot keep it on the former map host.
         if (battleground_.instance && instanceId_ == battleground_.instance && battlegroundOfMap(player.data.map))
-            if (const owner = context.dungeonHost(player.data.map))
+            if (const owner = context.dungeons.dungeonHost(player.data.map))
                 return owner == context.nodeId ? 0 : owner;
         if (migratedAt != MonoTime.init && context.clock() - migratedAt < 10.seconds)
             return 0;
@@ -549,10 +549,10 @@ private:
         character.position = movement.position;
         // In a dungeon this node hosts: its copy, if this node knows it (its last host saved it);
         // else the one the player is bound to, or a new one (it logged in there on another node).
-        if (!context.instanceable(character.map))
+        if (!context.dungeons.instanceable(character.map))
             instanceId_ = 0; // not a dungeon: no copy, whatever came along
         else if (context.instanceState(instanceId_) is null)
-            instanceId_ = context.instanceFor(guid, character.map);
+            instanceId_ = context.dungeons.instanceFor(guid, character.map);
         refreshGmAccess();
         player = makePlayer(character, false);
         player.movement = movement;
@@ -1336,7 +1336,7 @@ private:
     void handleResetInstances()
     {
         uint[] reset, busy;
-        context.resetDungeonsOf(player.guid, reset, busy);
+        context.dungeons.resetDungeonsOf(player.guid, reset, busy);
         foreach (mapId; reset)
         {
             ByteWriter w;
