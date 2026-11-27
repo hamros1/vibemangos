@@ -207,9 +207,17 @@ def chains(fixture):
     # All six in his threat list, then his Chains (the leader makes him cast it: its own timer is a minute on).
     raid.stage([[f"attack:{KELTHUZAD}"] for _ in range(raid.size)])
     time.sleep(3)
-    raid.stage([[f"targetnpc:{KELTHUZAD}", f"cmd:.debug castself {CHAINS}"]])
-    held = wait_for("five raiders in his Chains", lambda: (lambda h: h if len(h) >= 5 else None)(
-        chained(raid.logs())), 10)
+    # A cast he is told to make while he casts one of his own (a Frostbolt) does not happen: tell him again.
+    held = None
+    for attempt in range(4):
+        raid.stage([[f"targetnpc:{KELTHUZAD}", f"cmd:.debug castself {CHAINS}"]])
+        try:
+            held = wait_for("five raiders in his Chains", lambda: (lambda h: h if len(h) >= 5 else None)(
+                chained(raid.logs())), 4 if attempt < 3 else 10)
+            break
+        except RuntimeError: # timed out
+            if attempt == 3 or any(f"[spell go] {CHAINS} by " in log for log in raid.logs()):
+                raise
     chained_at = time.monotonic()
     host = raid.next_checkpoint(raid.checkpoints(), "a checkpoint with the raid in his Chains", 8)
     _, back, after = raid.crash(host, lambda part: f"[creature] {KELTHUZAD} guid {kt}:" in part)
