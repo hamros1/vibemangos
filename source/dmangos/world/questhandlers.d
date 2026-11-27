@@ -1077,7 +1077,7 @@ private:
                     break; // a letter holds one item
                 }
         }
-        context.postMail(m, quest.rewMailDelaySecs);
+        context.postOffice.postMail(m, quest.rewMailDelaySecs);
     }
 
     void rewardQuest(const ref Quest quest, uint reward)

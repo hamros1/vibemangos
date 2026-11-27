@@ -161,7 +161,7 @@ private:
             mail.checked = mailCopied;
             mail.itemGuid = record.guid;
             mail.itemEntry = record.entry;
-            context.postMail(mail, 0);
+            context.postOffice.postMail(mail, 0);
             info!"%s: '%s' had no room for item %s (guid %s); it was mailed"(remoteAddress, player.data.name,
                 record.entry, record.guid);
         }

@@ -41,7 +41,7 @@ mixin template AuctionHandlers()
             const t = context.client.factionTemplates.lookup(factionTemplate);
             houseId = auctionHouseFor(factionTemplate, t is null ? 0 : t.groupMask);
         }
-        return context.auctionHouse(houseId);
+        return context.postOffice.auctionHouse(houseId);
     }
 
     /// Tells the client how an auction command went (`SMSG_AUCTION_COMMAND_RESULT`).
@@ -185,14 +185,14 @@ mixin template AuctionHandlers()
         player.pay(pays);
         flushPlayerChanges();
         if (a.bidder && !ownBid)
-            context.auctionOutbid(a); // the old bidder's money back
+            context.postOffice.auctionOutbid(a); // the old bidder's money back
         AuctionRecord after = a;
         after.bidder = player.data.guid;
         after.bid = price;
         sendAuctionResult(a.id, AuctionAction.bidPlaced, AuctionError.ok, 0, &after);
         if (buyout)
         {
-            context.auctionSold(after);
+            context.postOffice.auctionSold(after);
             info!"%s: '%s' bought out auction %s for %s"(remoteAddress, player.data.name, a.id, price);
         }
         else
@@ -220,11 +220,11 @@ mixin template AuctionHandlers()
         {
             // The bidder is told, and gets the bid back by mail.
             context.deliverTo(a.bidder, Opcode.SMSG_AUCTION_REMOVED_NOTIFICATION, removedNotification(a));
-            context.auctionMail(a.bidder, a, AuctionMail.cancelledToBidder, a.bid, false);
+            context.postOffice.auctionMail(a.bidder, a, AuctionMail.cancelledToBidder, a.bid, false);
         }
         player.pay(cut);
         flushPlayerChanges();
-        context.auctionMail(player.data.guid, a, AuctionMail.cancelled, 0, true);
+        context.postOffice.auctionMail(player.data.guid, a, AuctionMail.cancelled, 0, true);
         sendAuctionResult(a.id, AuctionAction.removed, AuctionError.ok);
     }
 

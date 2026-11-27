@@ -105,7 +105,7 @@ private:
      */
     package void postMail(MailRecord mail, uint delay)
     {
-        context.postMail(mail, delay);
+        context.postOffice.postMail(mail, delay);
     }
 
     /// The player sends a letter: checked, paid for, and posted.

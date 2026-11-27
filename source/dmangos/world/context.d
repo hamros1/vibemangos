@@ -203,6 +203,11 @@ struct ShutdownTimer
  */
 final class WorldContext : GroupDirectory, IdCounters, SessionHandler
 {
+    import dmangos.world.postoffice : PostOffice;
+
+    /// See `dmangos.world.postoffice`.
+    PostOffice postOffice;
+
     import dmangos.world.dungeons : Dungeons;
 
     /// The dungeon copies this node hosts and the binds to them (`dmangos.world.dungeons`).
@@ -3049,6 +3054,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         LoginDatabase accounts = null, Battlegroup sharedBattles = null)
     in (database !is null && data !is null && client !is null)
     {
+        postOffice = new PostOffice(this);
         dungeons = new Dungeons(this);
         this.accounts = accounts is null ? new MemoryLoginDatabase : accounts;
         this.config = config;
@@ -3710,7 +3716,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                     break; // a letter holds one item
                 }
         }
-        postMail(mail, 0);
+        postOffice.postMail(mail, 0);
     }
 
     /// After events changed: in every loaded map, spawns now away go, and spawns now in come (where their cells are loaded).
@@ -9346,151 +9352,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     // Mail and auctions settled outside a session
     // -----------------------------------------------------------------------
 
-    /**
-     * Posts a letter: into the database, delivered after `delay` seconds; the
-     * receiver, if online on any node and it is delivered now, hears of it.
-     */
-    void postMail(MailRecord mail, uint delay)
-    {
-        import dmangos.world.opcodes : Opcode;
 
-        const now = unixTime;
-        mail.id = nextMailId();
-        mail.deliverTime = now + delay;
-        mail.expireTime = mail.deliverTime + (mail.cod ? 3 : 30) * 24 * 60 * 60;
-        database.sendMail(mail);
-        if (delay == 0)
-            deliverTo(mail.receiver, Opcode.SMSG_RECEIVED_MAIL, [ubyte(0), 0, 0, 0]);
-    }
 
-    /**
-     * A mail from the auction house of `a` (the house as its sender): its subject
-     * says what happened; `money`, the auctioned item (handed to the receiver) and a body as given.
-     * A note with neither money nor item comes an hour later.
-     */
-    void auctionMail(uint receiver, const ref AuctionRecord a, AuctionMail what, uint money, bool withItem,
-        string body = null)
-    {
-        enum ubyte mailAuction = 2, stationeryAuction = 62;
-        enum uint checkCopied = 0x04;
-        MailRecord m;
-        m.messageType = mailAuction;
-        m.stationery = stationeryAuction;
-        m.sender = a.houseId;
-        m.receiver = receiver;
-        m.subject = auctionMailSubject(a, what);
-        m.money = money;
-        m.checked = checkCopied;
-        if (body.length)
-        {
-            m.itemTextId = nextMailId();
-            database.saveItemText(m.itemTextId, body);
-        }
-        if (withItem && a.itemGuid)
-        {
-            m.itemGuid = a.itemGuid;
-            m.itemEntry = a.itemEntry;
-            auto item = database.looseItem(a.itemGuid);
-            if (!item.isNull)
-                database.saveLooseItem(item.get, receiver); // now the receiver's
-        }
-        postMail(m, !withItem && !money ? 60 * 60 : 0);
-    }
 
-    /// The house of an auction (Stormwind's if it is not known).
-    const(AuctionHouseEntry)* auctionHouse(uint houseId)
-    {
-        auto house = client.auctionHouses.lookup(houseId);
-        return house !is null ? house : client.auctionHouses.lookup(1);
-    }
 
-    /**
-     * An auction won, once it is out of the table: the seller gets the bid and its
-     * deposit back less the house's cut, the buyer the item, and both hear of it if they are
-     * online.
-     */
-    void auctionSold(const ref AuctionRecord a)
-    {
-        import std.format : format;
-        import dmangos.world.opcodes : Opcode;
 
-        const house = auctionHouse(a.houseId);
-        const cut = house is null ? 0 : a.cut(*house, config.rateAuctionCut);
-        deliverTo(a.owner, Opcode.SMSG_AUCTION_OWNER_NOTIFICATION, ownerNotification(a, true));
-        auctionMail(a.owner, a, AuctionMail.successful, a.bid + a.deposit - cut, false,
-            format!"%16x:%s:%s:%s:%s"(a.bidder, a.bid, a.buyout, a.deposit, cut));
-        deliverTo(a.bidder, Opcode.SMSG_AUCTION_BIDDER_NOTIFICATION, bidderNotification(a, true));
-        auctionMail(a.bidder, a, AuctionMail.won, 0, true, format!"%16x:%s:%s"(a.owner, a.bid, a.buyout));
-    }
 
-    /// An auction expired: nobody bid; the item goes back to the seller.
-    void auctionExpired(const ref AuctionRecord a)
-    {
-        import dmangos.world.opcodes : Opcode;
 
-        deliverTo(a.owner, Opcode.SMSG_AUCTION_OWNER_NOTIFICATION, ownerNotification(a, false));
-        auctionMail(a.owner, a, AuctionMail.expired, 0, true);
-    }
-
-    /// Outbid: the bid of `old` (the auction as it was) back to its bidder.
-    void auctionOutbid(const ref AuctionRecord old)
-    {
-        import dmangos.world.opcodes : Opcode;
-
-        deliverTo(old.bidder, Opcode.SMSG_AUCTION_BIDDER_NOTIFICATION, bidderNotification(old, false));
-        auctionMail(old.bidder, old, AuctionMail.outbidded, old.bid, false);
-    }
-
-    /// The auctions over are settled (here only on the coordinator, or alone).
-    private void settleAuctions()
-    {
-        foreach (ref a; database.expiredAuctions(unixTime))
-        {
-            if (!database.deleteAuction(a.id, a.bid))
-                continue; // settled meanwhile (bought out)
-            if (a.bid)
-                auctionSold(a);
-            else
-                auctionExpired(a);
-        }
-    }
-    private MonoTime lastAuctionCheck, lastMailCheck;
-
-    /**
-     * Old mail: a player's letter with an item, not returned or paid for
-     * before, goes back to its sender for 30 days more; every other one whose time is up is deleted,
-     * with its item and its body.
-     */
-    private void settleOldMail()
-    {
-        enum uint checkReturned = 0x02, checkCodPayment = 0x08;
-        foreach (ref m; database.expiredMail(unixTime))
-        {
-            database.deleteMail(m.id);
-            // "After the expiry period the mail is returned to the sender" with its item or money; the auction
-            // house's and NPCs' is discarded (WoWWiki "Mail", 2006-11; docs/FORMULAS.md "Mail").
-            if ((m.itemGuid || m.money) && m.messageType == 0 && m.sender
-                && !(m.checked & (checkReturned | checkCodPayment)))
-            {
-                MailRecord back;
-                back.money = m.money;
-                back.sender = m.receiver;
-                back.receiver = m.sender;
-                back.subject = m.subject;
-                back.itemTextId = m.itemTextId;
-                back.itemGuid = m.itemGuid;
-                back.itemEntry = m.itemEntry;
-                back.checked = checkReturned;
-                if (back.itemGuid)
-                    if (auto item = database.looseItem(back.itemGuid))
-                        database.saveLooseItem(item.get, back.receiver);
-                postMail(back, 0);
-                continue;
-            }
-            if (m.itemGuid)
-                database.deleteLooseItem(m.itemGuid);
-        }
-    }
 
     /// Whether a spawn is dead and waiting to come back.
     bool awaitingRespawn(uint spawnGuid)
@@ -10007,20 +9875,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         linkFollowers();
         scriptedGameObjectsDue();
         respawnDue(now);
-        // Auctions over are settled once a minute, by one node; first at the first tick. (Not `now - init`:
-        // MonoTime counts from the machine's start, so that is its uptime, and an hour's check would
-        // wait for the first hour after a reboot.)
-        if (forwardGroup is null && (lastAuctionCheck == MonoTime.init || now - lastAuctionCheck >= 60.seconds))
-        {
-            lastAuctionCheck = now;
-            settleAuctions();
-        }
-        // Old mail, once an hour, by one node.
-        if (forwardGroup is null && (lastMailCheck == MonoTime.init || now - lastMailCheck >= 60.minutes))
-        {
-            lastMailCheck = now;
-            settleOldMail();
-        }
+        if (forwardGroup is null) // by one node
+            postOffice.update(now);
     }
 
     private bool[ulong] updatedPlayers; // the players the maps phase has updated this tick
