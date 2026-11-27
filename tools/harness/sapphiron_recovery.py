@@ -236,6 +236,10 @@ def air(fixture):
                                       f"{expected - back:.1f} s: its timer did not continue"
     wait_for("Frost Breath landed", lambda: all(f"[spell go] {FROST_BREATH} by {sap}" in log for log in after()), 10)
     wait_for("Sapphiron landing", lambda: all(not hovering(log, sap) for log in after()), 4)
+    # The damage is the triggered breath's (FROST_BREATH_TRIGGERED, cast as the first goes off): its line can come a
+    # moment after he lands. Wait for the exposed member's, then read them all.
+    struck = rf"\[spell damage\] (?:{FROST_BREATH}|{FROST_BREATH_TRIGGERED}): \d+ to {raid.guids[exposed]}\b"
+    wait_for("the breath's damage to the member in the open", lambda: any(re.search(struck, log) for log in after()), 6)
     logs = after()
     hits = {member: [int(amount) for amount in re.findall(
         rf"\[spell damage\] (?:{FROST_BREATH}|{FROST_BREATH_TRIGGERED}): (\d+) to {raid.guids[member]}\b",
