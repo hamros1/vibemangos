@@ -972,7 +972,12 @@ mixin template CreatureCasting()
                     targets ~= other.combatGuid;
                 return targets;
             }
-        const area = a == ImplicitTarget.enemiesAroundSource || a == ImplicitTarget.enemiesAroundDest || b == ImplicitTarget.enemiesAroundSource || b == ImplicitTarget.enemiesAroundDest;
+        // Its enemies in an area: around its source or a destination, or around itself
+        // (`TARGET_ENUM_UNITS_ENEMY_WITHIN_CASTER_RANGE`: Walking Bomb's explosion, CMaNGOS's `PUSH_SELF_CENTER`).
+        // (Without a radius it names no area: Sand Storms' summons come as before.)
+        const aroundItself = a == ImplicitTarget.enumUnitsEnemyWithinCasterRange && spell.casting.radiusIndex[i] != 0;
+        const area = aroundItself || a == ImplicitTarget.enemiesAroundSource || a == ImplicitTarget.enemiesAroundDest
+            || b == ImplicitTarget.enemiesAroundSource || b == ImplicitTarget.enemiesAroundDest;
         // A cone in front (`TARGET_UNIT_CONE_ENEMY`, `TARGET_ENUM_UNITS_ENEMY_IN_CONE_54`: Magmadar's Lava Breath).
         const cone = a == ImplicitTarget.enemiesInCone || a == ImplicitTarget.enumUnitsEnemyInCone54;
         import dmangos.world.spellselection : inSpellCone, spellCone;
@@ -983,7 +988,7 @@ mixin template CreatureCasting()
             // (`TARGET_LOCATION_CASTER_DEST`: a creature's cast at a unit gives no destination, so CMaNGOS sets it
             // at the caster).
             auto center = me.position;
-            if (area && a != ImplicitTarget.casterSource && a != ImplicitTarget.caster
+            if (area && !aroundItself && a != ImplicitTarget.casterSource && a != ImplicitTarget.caster
                     && a != ImplicitTarget.locationCasterDest && target != me.guid)
                 if (auto other = world_.unit(target))
                     center = other.position;

@@ -1242,6 +1242,63 @@ unittest
     assert(session.player.values.get!UNIT_FIELD_HEALTH == playerHealth, "the player it was cast at, five yards off, not");
 }
 
+/**
+ * A creature's spell at the enemies around itself (`TARGET_ENUM_UNITS_ENEMY_WITHIN_CASTER_RANGE`: Walking Bomb's
+ * explosion) strikes those there, not only the one it is cast at (CMaNGOS's `PUSH_SELF_CENTER`).
+ */
+unittest
+{
+    import dmangos.bytes : floatBits;
+    import dmangos.script.api : ActionResult;
+    import dmangos.world.clientdata : spellRadiusFormat;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.spellids : ImplicitTarget, SpellEffect;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    uint[spellRadiusFormat.length] radiusRow;
+    radiusRow[0] = 1;
+    radiusRow[1] = floatBits(3);
+    context.client.spellRadii = typeof(context.client.spellRadii).parse(buildDbc(spellRadiusFormat, [radiusRow[]]),
+        "SpellRadius.dbc");
+    auto rexxar = loggedIn(context, db, 7, "Rexxar", Position(-8949.95f, -132.49f, 83.53f, 0), AccountLevel.player,
+        raceOrc);
+    rexxar.read();
+    addPetData(&rexxar, context);
+    auto session = rexxar.session.inWorld;
+    auto map = context.map(0);
+    auto beast = context.summonCreature(map, wolf, Position(-8943, -132.49f, 83.53f, 0), TempSpawnType.dead, 0, 0);
+    auto tame = effectSpell(spellTameBeastDone, 55);
+    session.tameCreature(&tame, beast.guid);
+    auto pet = session.ownPet;
+
+    enum uint torch = 97904;
+    auto spell = testSpell(torch, SpellEffect.schoolDamage, ImplicitTarget.enumUnitsEnemyWithinCasterRange, 30);
+    spell.casting.radiusIndex[0] = 1;
+    spell.casting.attributesEx3 |= imported!"dmangos.world.spellcast".spellAttrEx3AlwaysHit;
+    context.data.spells.spells[torch] = spell;
+    // Beyond the pet, away from Rexxar: the pet in its area (3 yards), Rexxar out of it.
+    import std.math : sqrt;
+
+    const by = pet.position, me = session.player.position;
+    float dx = by.x - me.x, dy = by.y - me.y;
+    const apart = sqrt(dx * dx + dy * dy);
+    if (apart < 0.5f)
+        dx = 1, dy = 0;
+    else
+        dx /= apart, dy /= apart;
+    auto caster = context.summonCreature(map, boar, Position(by.x + 2.5f * dx, by.y + 2.5f * dy, by.z, 0), TempSpawnType.dead,
+        0, 0);
+    const cx = caster.position.x - me.x, cy = caster.position.y - me.y;
+    assert(cx * cx + cy * cy > 3.2f * 3.2f, "Rexxar out of its area");
+    const petHealth = pet.values.get!UNIT_FIELD_HEALTH, playerHealth = session.player.values.get!UNIT_FIELD_HEALTH;
+    assert(caster.ai.castFor(map, torch, session.player.guid, true) == ActionResult.ok);
+    assert(pet.values.get!UNIT_FIELD_HEALTH < petHealth, "the pet beside it struck");
+    assert(session.player.values.get!UNIT_FIELD_HEALTH == playerHealth, "the player it was cast at, five yards off, not");
+}
+
 /// A creature's spell at its friends around it (`TARGET_ENUM_UNITS_FRIEND_AOE_AT_SRC_LOC`: a Battle Command)
 /// reaches itself and the friend beside it, and not the player's pet there.
 unittest
