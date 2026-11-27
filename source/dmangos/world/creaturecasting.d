@@ -900,12 +900,17 @@ mixin template CreatureCasting()
     /// Within the spell's range of its target (and out of its minimum).
     private bool inRangeFor(const(SpellInfo)* spell, ulong target)
     {
+        import dmangos.world.spelldamage : spellRangeResult;
+        import dmangos.world.spellcast : SpellCastResult;
+
         if (target == me.guid)
             return true;
         const r = range(*spell, lore.clientData);
-        const d = distanceTo(target);
-        // Its combat reach and the target's count towards the maximum.
-        return d <= r[1] + me.fighter.combatReach + 1.5f && (r[0] == 0 || d >= r[0]);
+        // Its combat reach and the target's count towards the maximum, as a player's spell's (`spellRangeResult`).
+        auto other = world_.unit(target);
+        const reach = other ? other.fighter.combatReach : 1.5f;
+        return spellRangeResult(*spell, r[0], r[1], distanceTo(target), me.fighter.combatReach, reach)
+            == SpellCastResult.ok;
     }
 
     /// Yards to a target; infinity if it is not here.

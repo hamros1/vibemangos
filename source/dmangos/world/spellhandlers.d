@@ -2948,13 +2948,11 @@ private:
         r[1] = spellMod(SpellModOp.range, spell, r[1]);
         const p = player.position;
         const distance = ((p.x - at.x) ^^ 2 + (p.y - at.y) ^^ 2 + (p.z - at.z) ^^ 2) ^^ 0.5f;
-        const ownReach = player.values.get!UNIT_FIELD_COMBATREACH;
-        const melee = r[1] <= 5 && spell.casting.dmgClass == DamageClass.melee;
-        const maxRange = melee ? (ownReach + reach + 4.0f / 3 > 5 ? ownReach + reach + 4.0f / 3 : 5) : r[1] + ownReach + reach;
-        if (r[1] > 0 && distance > maxRange)
-            return SpellCastResult.outOfRange;
-        if (r[0] > 0 && distance < r[0])
-            return SpellCastResult.tooClose;
+        import dmangos.world.spelldamage : spellRangeResult;
+
+        const inRange = spellRangeResult(*spell, r[0], r[1], distance, player.values.get!UNIT_FIELD_COMBATREACH, reach);
+        if (inRange != SpellCastResult.ok)
+            return inRange;
         if (!map.inLineOfSight(p, at))
             return SpellCastResult.lineOfSight;
         return SpellCastResult.ok;

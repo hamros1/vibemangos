@@ -469,12 +469,35 @@ package ImplicitTarget creatureAreaShape(const ref SpellInfo spell, size_t i)
 bool creatureTargetInRange(const(SpellInfo)* spell, const imported!"dmangos.world.combat".Fighter caster,
     const imported!"dmangos.world.combat".Fighter target, const imported!"dmangos.world.clientdata".ClientData client)
 {
-    import dmangos.world.spellcast : range;
+    import dmangos.world.spellcast : range, SpellCastResult;
 
     const r = range(*spell, client);
     const a = caster.position, b = target.position;
-    const distanceSquared = (a.x - b.x) ^^ 2 + (a.y - b.y) ^^ 2 + (a.z - b.z) ^^ 2;
-    return distanceSquared >= r[0] ^^ 2 && distanceSquared <= (r[1] + caster.combatReach + target.combatReach) ^^ 2;
+    const distance = ((a.x - b.x) ^^ 2 + (a.y - b.y) ^^ 2 + (a.z - b.z) ^^ 2) ^^ 0.5f;
+    return spellRangeResult(*spell, r[0], r[1], distance, caster.combatReach, target.combatReach)
+        == SpellCastResult.ok;
+}
+
+/**
+ * Whether a caster `distance` yards from its target is in reach of `spell` (between `minRange` and `maxRange`, the
+ * spell's range after the caster's modifiers), any caster's: the two combat reaches count toward the maximum; a
+ * melee ability (a range of 5 at most, of the melee class) reaches as far as a melee swing does, 5 yards at least.
+ * `outOfRange`, `tooClose`, or `ok`. A range of 0 at another unit (Black Arrow) reaches as far as the two reaches.
+ */
+imported!"dmangos.world.spellcast".SpellCastResult spellRangeResult(const ref SpellInfo spell, float minRange,
+    float maxRange, float distance, float ownReach, float targetReach) pure nothrow @nogc @safe
+{
+    import dmangos.world.spellcast : SpellCastResult;
+    import dmangos.world.spellids : DamageClass;
+
+    const melee = maxRange > 0 && maxRange <= 5 && spell.casting.dmgClass == DamageClass.melee;
+    const reach = melee ? (ownReach + targetReach + 4.0f / 3 > 5 ? ownReach + targetReach + 4.0f / 3 : 5)
+        : maxRange + ownReach + targetReach;
+    if (distance > reach)
+        return SpellCastResult.outOfRange;
+    if (minRange > 0 && distance < minRange)
+        return SpellCastResult.tooClose;
+    return SpellCastResult.ok;
 }
 
 /// Resolve a remote hit using the recipient's current combat stats and auras.
