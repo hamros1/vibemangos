@@ -562,7 +562,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
 
     void groupLootRoll(ushort peer, const ref GroupLootRoll message)
     {
-        context.groupLootRollArrived(peer, message);
+        context.groupRelay.groupLootRollArrived(peer, message);
     }
 
     bool canSendLootCoins(ushort peer)
@@ -578,7 +578,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
 
     void lootCoinShare(ushort peer, const ref LootCoinShare message)
     {
-        context.lootCoinShareArrived(peer, message);
+        context.groupRelay.lootCoinShareArrived(peer, message);
     }
 
     bool sendPartyQuest(ushort peer, const ref PartyQuest message)
@@ -590,7 +590,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
     void partyQuest(ushort peer, const ref PartyQuest message)
     {
         if (context.canWrite())
-            context.receivePartyQuest(message);
+            context.groupRelay.receivePartyQuest(message);
     }
 
     bool sendQuestLootCheck(ushort peer, const ref QuestLootCheck message)
@@ -601,7 +601,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
 
     void questLootCheck(ushort peer, const ref QuestLootCheck message)
     {
-        context.questLootCheckArrived(peer, message);
+        context.groupRelay.questLootCheckArrived(peer, message);
     }
 
     bool sendPartyHeal(ushort peer, const ref PartyHeal message)
@@ -656,7 +656,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
 
     void partySummon(ushort peer, const ref PartySummon message)
     {
-        context.routePartySummon(message, peer);
+        context.groupRelay.routePartySummon(message, peer);
     }
 
     bool sendScriptCreatureStep(ushort peer, const ref ScriptCreatureStep message)

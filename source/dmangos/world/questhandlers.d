@@ -733,7 +733,7 @@ private:
         {
             auto confirm = pendingQuest;
             confirm.action = PartyQuest.Action.confirm;
-            context.routePartyQuest(confirm);
+            context.groupRelay.routePartyQuest(confirm);
             return;
         }
         acceptQuestFrom(guid, id);
@@ -1181,7 +1181,7 @@ private:
             {
                 auto offer = PartyQuest(action, player.guid, slot.guid, group.id, quest.id, map.id, instanceId_,
                     at.x, at.y, at.z, status.timer);
-                context.routePartyQuest(offer);
+                context.groupRelay.routePartyQuest(offer);
             }
     }
 
@@ -1202,7 +1202,7 @@ private:
                 PartyQuest grant = message;
                 grant.action = PartyQuest.Action.grant;
                 grant.deadline = player.questStatus[quest.id].timer;
-                context.routePartyQuest(grant);
+                context.groupRelay.routePartyQuest(grant);
             }
             return;
         case PartyQuest.Action.grant:
@@ -2078,12 +2078,12 @@ unittest
     destination.presence(1, true, [PresenceEntry(guid: 7), PresenceEntry(guid: 9)], null);
     context.sendPartyQuest = (ushort node, const ref PartyQuest m) {
         assert(node == 2);
-        destination.receivePartyQuest(m);
+        destination.groupRelay.receivePartyQuest(m);
         return true;
     };
     destination.sendPartyQuest = (ushort node, const ref PartyQuest m) {
         assert(node == 1);
-        context.receivePartyQuest(m);
+        context.groupRelay.receivePartyQuest(m);
         return true;
     };
     destination.deliverRemote = (ushort node, ulong guid, ushort op, const(ubyte)[] body_) {

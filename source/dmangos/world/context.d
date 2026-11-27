@@ -203,6 +203,11 @@ struct ShutdownTimer
  */
 final class WorldContext : GroupDirectory, IdCounters, SessionHandler
 {
+    import dmangos.world.grouprelay : GroupRelay;
+
+    /// See `dmangos.world.grouprelay`.
+    GroupRelay groupRelay;
+
     import dmangos.world.remotespells : RemoteSpells;
 
     /// See `dmangos.world.remotespells`.
@@ -468,9 +473,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     bool delegate(ushort, const ref LootCoinShare) sendRemoteLootCoins;
     bool delegate(ushort, const ref QuestLootCheck) sendQuestLootCheck;
     private ulong gameplaySequence;
-    private MonoTime nextLootCoinPoll;
-    private MonoTime nextBattlegroundRewardPoll;
-    private bool[uint] retryLootCoinRedemption;
 
     /// The cluster incarnation supplies a floor compatible with numbers issued before range reservations.
     ulong incarnation;
@@ -496,291 +498,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         return ++gameplaySequence;
     }
 
-    void groupLootRollArrived(ushort peer, const ref GroupLootRoll message)
-    {
-        if (!peer || !message.roll || message.slot >= maxLootItems || !canWrite())
-            return;
-        final switch (message.action)
-        {
-        case GroupLootRoll.Action.offer:
-            if (auto player = onlinePlayer(message.player))
-                if (player.character !is null && player.currentMap.id == message.map)
-                    player.offerRemoteLoot(peer, message);
-            return;
-        case GroupLootRoll.Action.award:
-        case GroupLootRoll.Action.masterAward:
-            receiveGroupLootAward(peer, message);
-            return;
-        case GroupLootRoll.Action.vote:
-        case GroupLootRoll.Action.result:
-            auto loot = lootOnMap(message.map, message.loot);
-            if (loot is null)
-                return;
-            if (message.action == GroupLootRoll.Action.vote)
-                loot.remoteVote(peer, message);
-            else
-                loot.remoteAwardResult(peer, message);
-            return;
-        }
-    }
-
-    private Loot lootOnMap(uint mapId, ulong target)
-    {
-        auto map_ = existingMap(mapId);
-        if (map_ is null)
-            return null;
-        auto object = map_.findObject(target);
-        if (auto creature = cast(Creature) object)
-            return creature.loot;
-        if (auto go = cast(GameObject) object)
-            return go.loot;
-        return null;
-    }
-
     bool delegate(ushort, const ref PartyQuest) sendPartyQuest;
-
-    void routePartyQuest(const ref PartyQuest message)
-    {
-        const guid = message.action == PartyQuest.Action.confirm ? message.sharer : message.member;
-        if (onlinePlayer(guid) !is null)
-            receivePartyQuest(message);
-        else if (sendPartyQuest !is null && canWrite())
-            if (const remote = remotePlayer(guid))
-                sendPartyQuest(remote.node, message);
-    }
-
-    void receivePartyQuest(const ref PartyQuest message)
-    {
-        const guid = message.action == PartyQuest.Action.confirm ? message.sharer : message.member;
-        auto session = onlinePlayer(guid);
-        if (session !is null && !session.transferring)
-            session.receivePartyQuest(message);
-    }
 
     import dmangos.cluster.protocol : PartySummon;
     bool delegate(ushort, const ref PartySummon) sendPartySummon;
 
-    package void routePartySummon(const ref PartySummon message, ushort peer = 0)
-    {
-        import dmangos.world.rituals : summonAcceptSeconds;
-
-        const now = unixTime;
-        if (!canWrite() || !message.sequence || !message.summoner || message.summoner == message.target
-            || message.expires <= now || message.expires > now + summonAcceptSeconds + 5
-            || !client.isValidMapCoord(message.map, message.x, message.y, message.z)
-            || (message.instance && !dungeons.instanceable(message.map)))
-            return;
-        auto group = groups.of(message.target);
-        if (group is null || group.id != message.group || !group.isMember(message.summoner))
-            return;
-        if (auto member = onlinePlayer(message.target))
-            if (member.player !is null && !member.transferring)
-                return member.offerPartySummon(message);
-        if (sendPartySummon is null || message.forwarded)
-            return;
-        ushort owner;
-        if (const hint = recentHandoff(message.target))
-            owner = hint.node;
-        else if (const presence = remotePlayer(message.target))
-            owner = presence.node;
-        if (owner && owner != peer && owner != nodeId)
-        {
-            PartySummon onward = message;
-            onward.forwarded = peer != 0;
-            sendPartySummon(owner, onward);
-        }
-    }
-
-    void questLootCheckArrived(ushort peer, const ref QuestLootCheck message)
-    {
-        if (!peer || !message.sequence || !canWrite())
-            return;
-        if (message.reply)
-        {
-            if (auto loot = lootOnMap(message.map, message.loot))
-                loot.acceptQuestLootCheck(peer, message);
-            return;
-        }
-        if (sendQuestLootCheck is null || message.items.length == 0 || message.items.length > maxLootItems)
-            return;
-        auto player = onlinePlayer(message.player);
-        if (player is null || player.character is null || player.transferring || player.currentMap.id != message.map)
-            return;
-        auto reply = QuestLootCheck(message.map, message.loot, message.player, message.sequence, true);
-        foreach (slot, entry; message.items)
-            if (entry && player.hasQuestForItem(entry))
-                reply.eligible |= cast(ushort)(1u << slot);
-        sendQuestLootCheck(peer, reply);
-    }
-
-    private void receiveGroupLootAward(ushort peer, const ref GroupLootRoll message)
-    {
-        import dmangos.log : warning;
-        import dmangos.mysql : DatabaseException;
-        import dmangos.world.inventory : InventoryResult;
-        import dmangos.world.loot : lootAwardKey;
-
-        const key = lootAwardKey(message);
-        if (sendRemoteGroupLoot is null || !key.player || playerGuid(key.player) != message.player
-            || !message.loot || !message.item || !message.count)
-            return;
-        auto player = onlinePlayer(message.player);
-        if (player is null || player.character is null || player.transferring || player.currentMap.id != message.map
-            || !settleWrites())
-            return;
-        try
-        {
-            const earlier = database.loadLootAward(key);
-            if (earlier.decided)
-                return; // the loot owner can read the original result even after both workers change
-            const master = message.action == GroupLootRoll.Action.masterAward;
-            auto localLoot = peer == nodeId ? lootOnMap(message.map, message.loot) : null;
-            const localDrop = localLoot !is null && localLoot.hasPendingRemoteAward(message);
-            if (peer == nodeId && !localDrop)
-                return;
-            if (!master && !player.acceptRemoteLootAward(peer, message, localDrop))
-                return;
-
-            GroupLootRoll result = message;
-            result.action = GroupLootRoll.Action.result;
-            result.inventoryError = InventoryResult.itemNotFound;
-            // A master award is for a group member: the loot's node checks the drop's members, and this node
-            // refuses a player who is in no group at all.
-            if (!master || (groups.of(message.player) !is null
-                && (!message.condition || player.conditionMet(message.condition))))
-                result.inventoryError = cast(ubyte) player.lootItemFits(message.item, message.count, !master);
-            // The token is claimed before the item exists: the loot's node may expire the award at any moment,
-            // and only one of the two can record it. Its refusal first: nothing is stored. The claim is not the
-            // result: the item's rows turn it into stored (`saveLootAward`), so a claim whose item was never written
-            // (this worker crashed, or its lease lapsed, before the write) is this recipient's to store again.
-            if (result.inventoryError == InventoryResult.ok)
-            {
-                if (earlier.claimed || database.claimLootAward(key, unixTime))
-                    result.inventoryError = cast(ubyte) player.storeLootItem(message.item, message.count,
-                        message.randomProperty, !master, award: key);
-                else
-                {
-                    const recorded = database.loadLootAward(key);
-                    if (!recorded.decided)
-                        return; // the claim was not written (the lease lapsed): the loot's node asks again
-                    result.inventoryError = recorded.error;
-                }
-            }
-            result.stored = result.inventoryError == InventoryResult.ok;
-            if (!result.stored)
-                database.saveLootAward(key, result.inventoryError, unixTime, 0, 0, null);
-            if (!settleWrites())
-                return; // the loot's node asks again; the token's row answers once the write is in
-            // The row, not this worker's view, is the outcome: the item's write is what turned the claim into stored.
-            const outcome = database.loadLootAward(key);
-            if (!outcome.decided)
-                return;
-            result.stored = !outcome.error;
-            result.inventoryError = outcome.error;
-            if (localDrop)
-                localLoot.remoteAwardResult(peer, result);
-            else
-                sendRemoteGroupLoot(peer, result);
-        }
-        catch (DatabaseException error)
-            warning!"group loot award %s could not be completed yet: %s"(key.token, error.msg);
-    }
-
-    /// The link only speeds up delivery. The database holds the credit if this player moves.
-    void lootCoinShareArrived(ushort peer, const ref LootCoinShare message)
-    {
-        import dmangos.world.objects : lowGuid;
-
-        if (!peer || !message.sequence || !message.copper || playerGuid(lowGuid(message.player)) != message.player)
-            return;
-        redeemLootCoinShare(lowGuid(message.player));
-    }
-
-    package void redeemLootCoinShare(uint guid)
-    {
-        import dmangos.log : warning;
-        import dmangos.mysql : DatabaseException;
-        import dmangos.world.loot : tellLootCoinShare;
-        import dmangos.world.updatefields : PLAYER_FIELD_COINAGE;
-
-        auto player = onlinePlayer(playerGuid(guid));
-        if (player is null || player.player is null || player.transferring || !canWrite())
-            return;
-        if (!settleWrites())
-        {
-            retryLootCoinRedemption[guid] = true;
-            return;
-        }
-        try
-        {
-            // The database adds the credits to the live purse, not to its own older copy of the money, and nothing
-            // runs between reading the purse and setting it to that sum: unsaved spending is not refunded, and the
-            // session and the database hold the same money afterwards.
-            const paid = database.redeemLootCoins(guid, player.player.money.amount, unixTime);
-            if (!paid.valid)
-                return;
-            retryLootCoinRedemption.remove(guid);
-            if (!paid.copper)
-                return;
-            player.player.values.set!PLAYER_FIELD_COINAGE(paid.wallet);
-            player.flushPlayerChanges();
-            tellLootCoinShare(player, paid.copper);
-        }
-        catch (DatabaseException error)
-        {
-            retryLootCoinRedemption[guid] = true;
-            warning!"could not redeem group coins for character %s: %s"(guid, error.msg);
-        }
-    }
-
-    private void pollBattlegroundRewards(MonoTime now)
-    {
-        import dmangos.log : warning;
-        import dmangos.mysql : DatabaseException;
-
-        if (!battlegrounds.durable || !online.length || now < nextBattlegroundRewardPoll || !canWrite())
-            return;
-        nextBattlegroundRewardPoll = now + 1.seconds;
-        try
-        {
-            foreach (ref reward; database.pendingBattlegroundRewards())
-                if (auto who = onlinePlayer(playerGuid(reward.player)))
-                    if (who.player !is null && !who.transferring)
-                        who.payBattlegroundReward(reward);
-            // Objectives' rewards during matches, to the players here: those online, and crash-offline ones back.
-            foreach (ref event; database.pendingBattlegroundEventRewards())
-                if (auto who = onlinePlayer(playerGuid(event.reward.player)))
-                    if (who.player !is null && !who.transferring)
-                        who.payBattlegroundEventReward(event);
-        }
-        catch (DatabaseException error)
-            warning!"could not deliver battleground rewards: %s"(error.msg);
-        catch (IdsExhausted error) // nothing was paid: the reward waits for the next poll, the tick goes on
-            warning!"could not deliver battleground rewards yet: %s"(error.msg);
-    }
-
-    private void pollLootCoinCredits(MonoTime now)
-    {
-        import dmangos.log : warning;
-        import dmangos.mysql : DatabaseException;
-
-        if ((sendRemoteLootCoins is null && !retryLootCoinRedemption.length) || !online.length
-            || now < nextLootCoinPoll || !canWrite())
-            return;
-        nextLootCoinPoll = now + 1.seconds;
-        try
-        {
-            foreach (guid; database.pendingLootCoinPlayers())
-                redeemLootCoinShare(guid);
-            foreach (guid; retryLootCoinRedemption.keys)
-                if (onlinePlayer(playerGuid(guid)) is null)
-                    retryLootCoinRedemption.remove(guid);
-                else
-                    redeemLootCoinShare(guid);
-        }
-        catch (DatabaseException error)
-            warning!"could not look up pending group coins: %s"(error.msg);
-    }
 
     bool delegate(ushort, const ref PartyHeal) sendPartyHeal;
     bool delegate(ushort, const ref imported!"dmangos.cluster.protocol".PartyAreaAura) sendPartyAreaAura;
@@ -1354,6 +1076,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         LoginDatabase accounts = null, Battlegroup sharedBattles = null)
     in (database !is null && data !is null && client !is null)
     {
+        groupRelay = new GroupRelay(this);
         remoteSpells = new RemoteSpells(this);
         migrants = new MigrantKeeper(this);
         loans = new CreatureLoans(this);
@@ -5221,10 +4944,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         addPendingNavigation();
         checkHonorWeek(now);
         services.tick(elapsed);
-        pollLootCoinCredits(now);
+        groupRelay.pollLootCoinCredits(now);
         pollScriptCredits(now);
         releaseSettledSessions();
-        pollBattlegroundRewards(now);
+        groupRelay.pollBattlegroundRewards(now);
         worldPvp.tick(elapsed);
         if (battlegroup is null || battlegroup.host is this) battlegrounds.tick(elapsed);
         remoteSpells.landObjectAnimations(now);

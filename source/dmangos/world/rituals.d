@@ -398,7 +398,7 @@ mixin template RitualSummoning()
         const deadline = context.unixTime + (action == PartySummon.Action.invite ? summonAcceptSeconds : 5);
         const offer = PartySummon(context.nextGameplaySequence(), player.guid, target, group.id,
             map.id, map.instanceId, area, at.x, at.y, at.z, deadline, action: action, portal: portal);
-        context.routePartySummon(offer);
+        context.groupRelay.routePartySummon(offer);
     }
 
     package void offerPartySummon(const ref PartySummon offer)
@@ -690,8 +690,8 @@ unittest
     casterNode.sendPartySummon = (ushort peer, const ref PartySummon offer) {
         assert(peer == 2 && offer.summoner == 7 && offer.target == 8);
         sent = offer;
-        calledNode.routePartySummon(offer, 1);
-        calledNode.routePartySummon(offer, 1);
+        calledNode.groupRelay.routePartySummon(offer, 1);
+        calledNode.groupRelay.routePartySummon(offer, 1);
         return true;
     };
     called.read();
@@ -713,7 +713,7 @@ unittest
     assert(called.session.inWorld.actAtReplica(nearby.guid, ArrivalAction.init));
     assert(relay.remote !is null);
     called.read();
-    next.routePartySummon(sent, 2);
+    next.groupRelay.routePartySummon(sent, 2);
     assert(!opcodesOf(called.read()).canFind(Opcode.SMSG_SUMMON_REQUEST));
     called.write(Opcode.CMSG_SUMMON_RESPONSE, ClientSummonResponse(7));
     assert(opcodesOf(called.read()).canFind(Opcode.MSG_MOVE_TELEPORT_ACK));

@@ -38,7 +38,7 @@ package void bindLootDelivery(WorldContext context, Map map, Loot loot, bool rol
         loot.sendRemoteRoll = (ushort node, const ref GroupLootRoll message) {
             if (node != context.nodeId)
                 return context.sendRemoteGroupLoot(node, message);
-            context.groupLootRollArrived(node, message);
+            context.groupRelay.groupLootRollArrived(node, message);
             return true;
         };
         loot.localAwardNode = context.nodeId;
@@ -114,7 +114,7 @@ package void bindLootDelivery(WorldContext context, Map map, Loot loot, bool rol
                 if (recipient.copper)
                 {
                     if (context.onlinePlayer(recipient.guid) !is null)
-                        context.redeemLootCoinShare(lowGuid(recipient.guid));
+                        context.groupRelay.redeemLootCoinShare(lowGuid(recipient.guid));
                     else if (recipient.node && context.sendRemoteLootCoins !is null)
                     {
                         const message = LootCoinShare(payout.token, recipient.guid, map.id, recipient.copper);
@@ -1619,18 +1619,18 @@ unittest
                     return true;
                 }
             }
-            currentMember.groupLootRollArrived(corpseNode.nodeId, message);
+            currentMember.groupRelay.groupLootRollArrived(corpseNode.nodeId, message);
             return true;
         };
         otherNode.sendRemoteGroupLoot = (ushort node, const ref GroupLootRoll message) {
             assert(node == corpseNode.nodeId);
-            corpseNode.groupLootRollArrived(otherNode.nodeId, message);
+            corpseNode.groupRelay.groupLootRollArrived(otherNode.nodeId, message);
             return true;
         };
         if (moving)
             successor.sendRemoteGroupLoot = (ushort node, const ref GroupLootRoll message) {
                 assert(node == corpseNode.nodeId);
-                corpseNode.groupLootRollArrived(successor.nodeId, message);
+                corpseNode.groupRelay.groupLootRollArrived(successor.nodeId, message);
                 return true;
             };
         corpseNode.deliverRemote = (ushort node, ulong guid, ushort opcode, const(ubyte)[] body_) {
@@ -1688,7 +1688,7 @@ unittest
         if (remoteWins)
         {
             assert(award.player == 8);
-            currentMember.groupLootRollArrived(corpseNode.nodeId, award);
+            currentMember.groupRelay.groupLootRollArrived(corpseNode.nodeId, award);
             assert(roller.character.inventory.count(itemJerky) == 1, "a repeated award cannot grant a second item");
         }
         else
@@ -1748,13 +1748,13 @@ unittest
             }
             else
                 assert(message.action == GroupLootRoll.Action.offer);
-            member.groupLootRollArrived(first.nodeId, message);
+            member.groupRelay.groupLootRollArrived(first.nodeId, message);
             return true;
         };
         successor.sendRemoteGroupLoot = (ushort peer, const ref GroupLootRoll message) {
             assert(peer == member.nodeId && message.action == GroupLootRoll.Action.award);
             awarded = message;
-            member.groupLootRollArrived(successor.nodeId, message);
+            member.groupRelay.groupLootRollArrived(successor.nodeId, message);
             return true;
         };
         member.sendRemoteGroupLoot = (ushort peer, const ref GroupLootRoll message) {
@@ -1763,7 +1763,7 @@ unittest
                 if (lostConfirmation)
                 {
                     if (message.action == GroupLootRoll.Action.vote)
-                        first.groupLootRollArrived(member.nodeId, message);
+                        first.groupRelay.groupLootRollArrived(member.nodeId, message);
                     else
                         assert(message.action == GroupLootRoll.Action.result && message.stored);
                     // The original confirmation is dropped after the award was saved.
@@ -1777,7 +1777,7 @@ unittest
             else
             {
                 assert(peer == successor.nodeId);
-                successor.groupLootRollArrived(member.nodeId, message);
+                successor.groupRelay.groupLootRollArrived(member.nodeId, message);
             }
             return true;
         };
@@ -1807,7 +1807,7 @@ unittest
         ubyte[][uint] leaving, unused;
         first.recovery.regionsChanged(null, [region], null, leaving);
         if (inFlight)
-            first.groupLootRollArrived(member.nodeId, pending);
+            first.groupRelay.groupLootRollArrived(member.nodeId, pending);
         region.owner = successor.nodeId;
         region.state = RegionState.granted;
         region.next = 0;
@@ -1831,7 +1831,7 @@ unittest
         assert(packets.canFind(Opcode.SMSG_LOOT_ROLL_WON) == !lostConfirmation
             && !packets.canFind(Opcode.SMSG_LOOT_START_ROLL));
         assert(awarded.roll && awarded.player == 8 && loot.itemInSlot(0).allowed.length == 0);
-        member.groupLootRollArrived(successor.nodeId, awarded);
+        member.groupRelay.groupLootRollArrived(successor.nodeId, awarded);
         assert(jaina.session.character.inventory.count(itemJerky) == 1 && anduin.session.character.inventory.count(itemJerky) == 0);
     }
 }
@@ -1924,11 +1924,11 @@ unittest
             anduin.write(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, ClientLootSlot(0));
             assert(anduin.session.character.inventory.count(itemJerky) == 1);
         }
-        memberNode.questLootCheckArrived(2, request);
+        memberNode.groupRelay.questLootCheckArrived(2, request);
         assert(reply.eligible == (scenario == Scenario.noQuest ? 0 : 1));
-        corpseNode.questLootCheckArrived(3, reply);
+        corpseNode.groupRelay.questLootCheckArrived(3, reply);
         assert(!loot.canLoot(8), "only the checked player's node can confirm eligibility");
-        corpseNode.questLootCheckArrived(1, reply);
+        corpseNode.groupRelay.questLootCheckArrived(1, reply);
         const remoteCanOpen = scenario != Scenario.noQuest && scenario != Scenario.sharedAlreadyTaken;
         assert(loot.canLoot(8) == remoteCanOpen);
         jaina.read();
@@ -1944,7 +1944,7 @@ unittest
         jaina.write(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, ClientLootSlot(0));
         const expectedRemote = remoteCanOpen && scenario != Scenario.abandoned ? 1 : 0;
         assert(relay.remote.character.inventory.count(itemJerky) == expectedRemote);
-        corpseNode.questLootCheckArrived(1, reply);
+        corpseNode.groupRelay.questLootCheckArrived(1, reply);
         jaina.write(Opcode.CMSG_LOOT, corpse);
         jaina.write(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, ClientLootSlot(0));
         assert(relay.remote.character.inventory.count(itemJerky) == expectedRemote);
@@ -2023,16 +2023,16 @@ unittest
     const expired = db.loadLootAward(expiredKey);
     assert(expired.recorded && expired.error);
 
-    otherNode.groupLootRollArrived(1, awards[0]);
+    otherNode.groupRelay.groupLootRollArrived(1, awards[0]);
     assert(!results.length && !jaina.session.character.inventory.count(itemJerky),
         "the expired award stores nothing when it arrives late");
 
     const sent = awards.length;
     anduin.write(Opcode.CMSG_LOOT_MASTER_GIVE, assignment);
     assert(awards.length == sent + 1 && awards[$ - 1].roll != awards[0].roll);
-    otherNode.groupLootRollArrived(1, awards[$ - 1]);
+    otherNode.groupRelay.groupLootRollArrived(1, awards[$ - 1]);
     assert(results.length == 1 && results[0].stored);
-    corpseNode.groupLootRollArrived(2, results[0]);
+    corpseNode.groupRelay.groupLootRollArrived(2, results[0]);
     assert(jaina.session.character.inventory.count(itemJerky) == 1 && item.allowed.length == 0);
 }
 
@@ -2119,7 +2119,7 @@ unittest
         racing.expiryFirst = expiryFirst;
         racing.expire = () => loot.update();
         otherNode.database = racing;
-        otherNode.groupLootRollArrived(1, awards[0]);
+        otherNode.groupRelay.groupLootRollArrived(1, awards[0]);
         now += 3.seconds;
         loot.update(); // a claim found by the expiry is no outcome: the loot's node reads the stored row now
 
@@ -2224,7 +2224,7 @@ unittest
     }
 
     otherNode.database = new Crashing(db);
-    otherNode.groupLootRollArrived(1, awards[0]);
+    otherNode.groupRelay.groupLootRollArrived(1, awards[0]);
     const key = lootAwardKey(awards[0]);
     assert(db.loadLootAward(key).claimed && !saved(), "claimed, and the item's write is lost");
 
@@ -2248,10 +2248,10 @@ unittest
     };
     auto back = loggedIn(recovered, db, 8, "Jaina", nearCorpse);
     assert(!back.session.character.inventory.count(itemJerky));
-    recovered.groupLootRollArrived(1, resent);
+    recovered.groupRelay.groupLootRollArrived(1, resent);
     assert(results.length == 1 && results[0].stored && db.loadLootAward(key).decided && saved() == 1);
     assert(back.session.character.inventory.count(itemJerky) == 1);
-    recovered.groupLootRollArrived(1, resent);
+    recovered.groupRelay.groupLootRollArrived(1, resent);
     assert(results.length == 1 && saved() == 1, "a late copy of the award stores nothing more");
     now += 3.seconds;
     loot.update();
@@ -2329,7 +2329,7 @@ unittest
         anduin.write(Opcode.CMSG_LOOT_MASTER_GIVE, ClientLootMasterGive(victim.guid, 0, 9));
         assert(awards.length == 0 && !item.remoteAward, "a non-member cannot receive the item");
         const stray = GroupLootRoll(GroupLootRoll.Action.masterAward, 0, victim.guid, 9, 12_345, 0, itemJerky, 1);
-        otherNode.groupLootRollArrived(1, stray);
+        otherNode.groupRelay.groupLootRollArrived(1, stray);
         assert(results.length == 1 && !results[0].stored && !varian.session.character.inventory.count(itemJerky),
             "the recipient's node refuses a master award for a player in no group");
         results = null;
@@ -2348,12 +2348,12 @@ unittest
             "the pending slot cannot be assigned again");
         anduin.read();
 
-        otherNode.groupLootRollArrived(1, awards[0]);
-        otherNode.groupLootRollArrived(1, awards[0]);
+        otherNode.groupRelay.groupLootRollArrived(1, awards[0]);
+        otherNode.groupRelay.groupLootRollArrived(1, awards[0]);
         assert(results.length == 1);
-        corpseNode.groupLootRollArrived(3, results[0]);
+        corpseNode.groupRelay.groupLootRollArrived(3, results[0]);
         assert(item.blocked, "only the recipient's node can confirm the award");
-        corpseNode.groupLootRollArrived(2, results[0]);
+        corpseNode.groupRelay.groupLootRollArrived(2, results[0]);
         assert(!item.remoteAward && !item.blocked);
 
         if (scenario == Case.full || scenario == Case.conditioned)
@@ -2366,23 +2366,23 @@ unittest
             {
                 jaina.write(Opcode.CMSG_DESTROYITEM, ClientDestroyItem(inventorySlotBag0, inventorySlotItemStart,
                     0, [0, 0, 0]));
-                otherNode.groupLootRollArrived(1, awards[0]);
+                otherNode.groupRelay.groupLootRollArrived(1, awards[0]);
                 assert(results.length == 1 && jaina.session.character.inventory.count(itemJerky) == 0,
                     "replaying a rejected award after freeing a slot cannot grant an item");
                 anduin.write(Opcode.CMSG_LOOT_MASTER_GIVE, assignment);
                 assert(awards.length == 2 && awards[1].roll > awards[0].roll);
-                corpseNode.groupLootRollArrived(2, results[0]);
+                corpseNode.groupRelay.groupLootRollArrived(2, results[0]);
                 assert(item.blocked, "a previous rejection cannot unlock a new award");
-                otherNode.groupLootRollArrived(1, awards[1]);
+                otherNode.groupRelay.groupLootRollArrived(1, awards[1]);
                 assert(results.length == 2 && results[1].stored);
-                corpseNode.groupLootRollArrived(2, results[1]);
+                corpseNode.groupRelay.groupLootRollArrived(2, results[1]);
             }
             else
                 anduin.write(Opcode.CMSG_LOOT_MASTER_GIVE, ClientLootMasterGive(victim.guid, 0, 7));
         }
 
         anduin.write(Opcode.CMSG_LOOT_MASTER_GIVE, assignment);
-        corpseNode.groupLootRollArrived(2, results[$ - 1]);
+        corpseNode.groupRelay.groupLootRollArrived(2, results[$ - 1]);
         assert(awards.length == (scenario == Case.full ? 2 : 1) && item.allowed.length == 0);
         const recipient = scenario == Case.conditioned ? 7 : 8;
         assert(anduin.session.character.inventory.count(itemJerky) == (recipient == 7 ? 1 : 0));
@@ -2482,12 +2482,12 @@ unittest
         lootNode.sendRemoteGroupLoot = (ushort peer, const ref GroupLootRoll message) {
             assert(peer == 1 && message.action == GroupLootRoll.Action.masterAward);
             award = message;
-            masterNode.groupLootRollArrived(2, message);
+            masterNode.groupRelay.groupLootRollArrived(2, message);
             return true;
         };
         masterNode.sendRemoteGroupLoot = (ushort peer, const ref GroupLootRoll message) {
             assert(peer == 2 && message.action == GroupLootRoll.Action.result);
-            lootNode.groupLootRollArrived(1, message);
+            lootNode.groupRelay.groupLootRollArrived(1, message);
             return true;
         };
         lootNode.data.items.edit(itemJerky).details.quality = 2;
@@ -2578,7 +2578,7 @@ unittest
         if (recipientIsRemote)
         {
             assert(award.player == 9);
-            masterNode.groupLootRollArrived(2, award);
+            masterNode.groupRelay.groupLootRollArrived(2, award);
         }
         assert(item.allowed.length == 0);
         assert(anduin.session.character.inventory.count(itemJerky) == 0);
@@ -2641,8 +2641,8 @@ unittest
             paid = message;
             if (delivery == Delivery.refused)
                 return false;
-            memberNode.lootCoinShareArrived(1, message);
-            memberNode.lootCoinShareArrived(1, message);
+            memberNode.groupRelay.lootCoinShareArrived(1, message);
+            memberNode.groupRelay.lootCoinShareArrived(1, message);
             return true;
         };
         auto victim = lootableInnkeeper(corpseNode);
@@ -2693,7 +2693,7 @@ unittest
             // A share paid on entering the world was announced with the login packets.
             assert(notifications == (delivery == Delivery.refused ? 0 : 1),
                 "a replay neither credits coins nor repeats the notification");
-            memberNode.lootCoinShareArrived(1, paid);
+            memberNode.groupRelay.lootCoinShareArrived(1, paid);
             assert(jaina.session.character.money == otherBefore + Copper(5));
         }
     }
@@ -2714,11 +2714,11 @@ unittest
     db.saveInventory(7, 1000, purse.values[PLAYER_BYTES_2], null);
     purse.pay(Copper(400)); // a taxi fare, say: only the field changes until the next save
     db.saveLootCoinSplit(1, 77, [LootCoinCredit(7, 5)]);
-    context.redeemLootCoinShare(7);
+    context.groupRelay.redeemLootCoinShare(7);
     assert(purse.money == Copper(605), "the stale saved purse would have refunded the fare");
     assert(db.moneySaves[7][0] == 605);
     assert(!db.pendingLootCoinPlayers().length);
-    context.redeemLootCoinShare(7);
+    context.groupRelay.redeemLootCoinShare(7);
     assert(purse.money == Copper(605) && db.moneySaves[7][0] == 605, "a credit is paid once");
 }
 
