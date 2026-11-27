@@ -777,7 +777,7 @@ private:
         {
             import dmangos.script.api : EntityRef;
 
-            context.gameObjectQuestAccepted(go, map, EntityRef(player.guid), id);
+            context.objectScripts.gameObjectQuestAccepted(go, map, EntityRef(player.guid), id);
         }
         if (fromParty)
             questShareResponse(guid, QuestShare.accepted);
@@ -1016,7 +1016,7 @@ private:
         {
             import dmangos.script.api : EntityRef;
 
-            context.gameObjectQuestRewarded(go, map, EntityRef(player.guid), id);
+            context.objectScripts.gameObjectQuestRewarded(go, map, EntityRef(player.guid), id);
         }
         if (quest.nextQuestInChain)
             if (const next = context.data.quests.quest(quest.nextQuestInChain))

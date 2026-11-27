@@ -272,7 +272,7 @@ final class RemoteSpells
             if (dragon is null || dragon.spawn.entry != 12435 || !dragon.petOwner || !dragon.alive
                 || map_.id != 469 || object.spawn.entry != 177807)
                 return false;
-            world.gameObjectUsed(object, map_, casterGuid);
+            world.objectScripts.gameObjectUsed(object, map_, casterGuid);
         }
         else if (spell.miscValue[effect] == GameObjectAction.disturb)
         {
@@ -309,7 +309,7 @@ final class RemoteSpells
     {
         import dmangos.world.dbscripts : DbScriptType;
 
-        if (world.gameObjectUsed(object, map_, casterGuid))
+        if (world.objectScripts.gameObjectUsed(object, map_, casterGuid))
             return;
         world.startScript(DbScriptType.goTemplateUse, object.spawn.entry, map_, casterGuid, object.guid);
         world.startScript(DbScriptType.goUse, object.spawn.guid, map_, casterGuid, object.guid);

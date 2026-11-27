@@ -218,7 +218,7 @@ mixin template GameObjectHandlers()
         if (worldPvpObjectUsed(go))
             return;
         // Its script first: it may handle the use itself.
-        if (context.gameObjectUsed(go, map, player.guid))
+        if (context.objectScripts.gameObjectUsed(go, map, player.guid))
             return;
         import dmangos.world.dbscripts : DbScriptType;
 

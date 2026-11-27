@@ -969,14 +969,14 @@ mixin template CreatureScripting()
     {
         if (world_ is null || lore is null)
             return EntityRef.init;
-        return EntityRef(lore.gameObjectNear(world_, me.position, entry, range));
+        return EntityRef(lore.objectScripts.gameObjectNear(world_, me.position, entry, range));
     }
 
     ActionResult hostUseObject(EntityRef object)
     {
         if (world_ is null || lore is null)
             return ActionResult.notHere;
-        return lore.useGameObject(world_, object.guid);
+        return lore.objectScripts.useGameObject(world_, object.guid);
     }
 
     ActionResult hostRemoveAura(EntityRef who, uint spell)

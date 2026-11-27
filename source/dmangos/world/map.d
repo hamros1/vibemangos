@@ -1701,7 +1701,7 @@ final class Map : MotionWorld
             }
         if (auto go = cast(GameObject) object)
             if (world !is null)
-                world.noteTickingObject(go, this); // its script can resume ticking
+                world.objectScripts.noteTickingObject(go, this); // its script can resume ticking
         replicate(slot, at_);
         updateObjectVisibility(object);
     }
