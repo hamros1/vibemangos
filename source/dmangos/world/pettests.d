@@ -1181,3 +1181,47 @@ unittest
     assert(pet.values.get!UNIT_FIELD_HEALTH < petHealth, "the pet struck");
     assert(neighbour.values.get!UNIT_FIELD_HEALTH == neighbourHealth, "its friend not");
 }
+
+/// A creature's spell at its friends around it (`TARGET_ENUM_UNITS_FRIEND_AOE_AT_SRC_LOC`: a Battle Command)
+/// reaches itself and the friend beside it, and not the player's pet there.
+unittest
+{
+    import dmangos.bytes : floatBits;
+    import dmangos.script.api : ActionResult;
+    import dmangos.world.auras : AuraType;
+    import dmangos.world.clientdata : spellRadiusFormat;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.spellids : ImplicitTarget, SpellEffect;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    uint[spellRadiusFormat.length] radiusRow;
+    radiusRow[0] = 1;
+    radiusRow[1] = floatBits(20);
+    context.client.spellRadii = typeof(context.client.spellRadii).parse(buildDbc(spellRadiusFormat, [radiusRow[]]),
+        "SpellRadius.dbc");
+    auto rexxar = loggedIn(context, db, 7, "Rexxar", Position(-8949.95f, -132.49f, 83.53f, 0), AccountLevel.player,
+        raceOrc);
+    rexxar.read();
+    addPetData(&rexxar, context);
+    auto session = rexxar.session.inWorld;
+    auto map = context.map(0);
+    auto beast = context.summonCreature(map, wolf, Position(-8947, -132.49f, 83.53f, 0), TempSpawnType.dead, 0, 0);
+    auto tame = effectSpell(spellTameBeastDone, 55);
+    session.tameCreature(&tame, beast.guid);
+    auto pet = session.ownPet;
+
+    enum uint command = 97902;
+    auto spell = testSpell(command, SpellEffect.applyAura, ImplicitTarget.casterSource, 10);
+    spell.casting.implicitTargetB[0] = ImplicitTarget.friendsAroundSource;
+    spell.casting.radiusIndex[0] = 1;
+    spell.casting.applyAuraName[0] = AuraType.modAttackPower;
+    context.data.spells.spells[command] = spell;
+    auto caster = context.summonCreature(map, boar, Position(-8945, -132.49f, 83.53f, 0), TempSpawnType.dead, 0, 0);
+    auto friend = context.summonCreature(map, boar, Position(-8944, -130, 83.53f, 0), TempSpawnType.dead, 0, 0);
+    assert(caster.ai.castFor(map, command, caster.guid, true) == ActionResult.ok);
+    assert(caster.auras.find(command) !is null && friend.auras.find(command) !is null, "itself and its friend");
+    assert(pet.auras.find(command) is null, "not its enemy's pet");
+}

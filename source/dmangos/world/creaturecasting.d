@@ -1018,6 +1018,39 @@ mixin template CreatureCasting()
 
             return mostAffected(world_, found, spell.casting.maxAffectedTargets, target, center);
         }
+        // Its friends around it or the destination (`TARGET_ENUM_UNITS_FRIEND_AOE_AT_SRC_LOC`, `_DEST_LOC`: a Battle
+        // Command, a Frenzied Command): every creature there that is not its enemy (as a creature's heal picks its
+        // friends) and every player friendly to it, itself too, at most as many as the
+        // spell says (CMaNGOS's `SPELL_TARGETS_ASSISTABLE`). A party of its own it has none: a party spell is its own.
+        {
+            import std.algorithm.comparison : among;
+            import dmangos.world.relations : isEnemy, isFriend;
+            import dmangos.world.spellselection : mostAffected;
+
+            with (ImplicitTarget)
+            {
+                const friends = a.among(friendsAroundSource, friendsAroundDest) || b.among(friendsAroundSource,
+                    friendsAroundDest);
+                const atDest = a == friendsAroundDest || b == friendsAroundDest;
+                const r = friends ? radius(*spell, i, lore.clientData) : 0;
+                if (friends && r > 0)
+                {
+                    auto center = me.position;
+                    if (atDest && target != me.guid)
+                        if (auto other = world_.unit(target))
+                            center = other.position;
+                    ulong[] found;
+                    foreach (other; world_.creaturesNear(center, r))
+                        if (other.alive && other.ai !is null
+                                && (other is me || !isEnemy(relating, other.ai.relatingOf, me.client)))
+                            found ~= other.guid;
+                    foreach (other; world_.playersNear(center, r))
+                        if (other.alive && isFriend(relating, other.relating, me.client))
+                            found ~= other.combatGuid;
+                    return mostAffected(world_, found, spell.casting.maxAffectedTargets, target, center);
+                }
+            }
+        }
         // A script's area around the caster (`TARGET_ENUM_UNITS_SCRIPT_AOE_AT_SRC_LOC`): the living creatures there
         // `spell_script_target` names, or (it names none) every unit there, the caster too, which its script picks
         // from (CMaNGOS's `SPELL_TARGETS_ALL`). Without either, its target as before.
