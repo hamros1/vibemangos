@@ -1316,6 +1316,18 @@ private:
                 f.weaponSkillMax[type] = now[1];
             }
             f.damage[type] = [stats.damage[type].min, stats.damage[type].max];
+            // Its attack power against a creature type, as damage a blow at its speed (CMaNGOS's
+            // `MeleeDamageBonusDone`: AP / 14 a second), and its flat damage against one.
+            if (auras.list.length)
+                foreach (t; 1 .. imported!"dmangos.world.combat".creatureTypes)
+                {
+                    const typeMask = 1 << (t - 1);
+                    const ap = auras.totalByMiscMask(type == AttackType.ranged ? AuraType.modRangedAttackPowerVersus
+                        : AuraType.modMeleeAttackPowerVersus, typeMask);
+                    const flat = auras.totalByMiscMask(AuraType.modDamageDoneCreature, typeMask);
+                    if (ap || flat)
+                        f.damageVersusFlat[type][t] = ap / 14.0f * stats.attackTime[type] / 1000.0f + flat;
+                }
             if (item !is null)
                 f.damageSchool[type] = item.proto.details.damage[0].school;
             if (f.damageSchool[type] == 0)

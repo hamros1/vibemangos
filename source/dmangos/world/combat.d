@@ -111,6 +111,10 @@ struct Fighter
     bool dualWield;            /// it has an off-hand weapon to attack with
     float[3] damageDone = 1;   /// by attack type: what its auras multiply its blows by (`MOD_DAMAGE_PERCENT_DONE`)
     float[creatureTypes] damageVersus = 1; /// by the victim's creature type (`MOD_DAMAGE_DONE_VERSUS`)
+    /// by attack type and the victim's creature type: damage more a blow (`MOD_MELEE_ATTACK_POWER_VERSUS`,
+    /// `MOD_RANGED_ATTACK_POWER_VERSUS` as attack power: the Elixir of Demonslaying, the Holy Mightstone;
+    /// `MOD_DAMAGE_DONE_CREATURE`)
+    float[creatureTypes][3] damageVersusFlat = 0;
     float[creatureTypes] critVersus = 0;   /// crit percent more by the victim's type (`MOD_CRIT_PERCENT_VERSUS`)
 
     // What it defends with.
@@ -882,7 +886,8 @@ MeleeDamage calculateMeleeDamage(const Fighter attacker, const Fighter victim, A
         d.damage = d.cleanDamage = 0;
         return d;
     }
-    float damage = weaponDamage(attacker, type, rng) * damageFactor(attacker, victim, type, d.school);
+    const versusFlat = victim.creatureType < creatureTypes ? attacker.damageVersusFlat[type][victim.creatureType] : 0;
+    float damage = (weaponDamage(attacker, type, rng) + versusFlat) * damageFactor(attacker, victim, type, d.school);
     // The victim's auras of its melee or ranged blows (CMaNGOS's `MeleeDamageBonusTaken`): their flat part (Elune's
     // Grace, Stoneskin), then their percent.
     if (type == AttackType.ranged && victim.rangedTakenFlat)
@@ -1102,6 +1107,30 @@ unittest
     sitting.standing = false;
     wolf.position.orientation = PI;
     assert(rollMeleeOutcome(wolf, sitting, AttackType.mainHand, 600) == MeleeHitOutcome.crit);
+}
+
+/// An attacker's flat damage against a creature type (attack power versus: an Elixir of Demonslaying) adds to its
+/// blows at a creature of that type only.
+unittest
+{
+    auto rng = Random(7);
+    auto player = testPlayer(10);
+    auto demon = testCreature(10), beast = testCreature(10);
+    demon.creatureType = 3;
+    beast.creatureType = 1;
+    player.damage = [[100, 100], [100, 100], [100, 100]];
+    player.damageVersusFlat[AttackType.mainHand][3] = 40;
+    uint hit(ref Fighter victim)
+    {
+        foreach (_; 0 .. 1000)
+        {
+            const d = calculateMeleeDamage(player, victim, AttackType.mainHand, rng);
+            if (d.outcome == MeleeHitOutcome.normal)
+                return d.damage;
+        }
+        assert(0, "no ordinary hit");
+    }
+    assert(hit(demon) > hit(beast) + 30, "more at the demon, by about its bonus (before armor)");
 }
 
 /// A melee blow against a victim with Stoneskin (`MOD_MELEE_DAMAGE_TAKEN`) is less by its amount, then by its percent

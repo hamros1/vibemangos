@@ -259,6 +259,16 @@ struct Caster
 
         if (school >= 7)
             return damage;
+        // Its flat bonus against the victim's creature type first (`MOD_FLAT_SPELL_DAMAGE_VERSUS`: the Holy
+        // Mightstone's, `MOD_DAMAGE_DONE_CREATURE`), as CMaNGOS's `SpellDamageBonusDone` adds it before the percents.
+        if (const all = auras)
+            if (victim.creatureType > 0 && victim.creatureType <= 31)
+            {
+                const typeMask = 1 << (victim.creatureType - 1);
+                const versus = all.totalByMiscMask(AuraType.modFlatSpellDamageVersus, typeMask)
+                    + all.totalByMiscMask(AuraType.modDamageDoneCreature, typeMask);
+                damage = versus < 0 && -versus >= damage ? 0 : cast(uint)(damage + versus);
+            }
         final switch (kind)
         {
         case UnitKind.none:

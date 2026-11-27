@@ -349,6 +349,27 @@ private static immutable ModRow[] modTable = [
 ];
 
 /// Each modifier talent's ranks change their spell as the tooltip says (by the modifiers the cast pipeline reads).
+/// The Elixir of Demonslaying (11406: 265 attack power against demons) makes a warrior's blows at a demon harder, by
+/// the attack power at its weapon's speed, and at nothing else.
+unittest
+{
+    import std.math : abs;
+    import dmangos.world.combat : AttackType;
+
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = w.character(449, "Demonslayer", PlayerClass.warrior, 60, []);
+    auto me = who.session.inWorld;
+    giveAura(w, who, 11406, 265);
+    assert(me.player.auras.find(11406) !is null, "the elixir on");
+    const speed = me.player.values.get!UNIT_FIELD_BASEATTACKTIME(0) / 1000.0f;
+    const f = me.unit.fighter;
+    assert(abs(f.damageVersusFlat[AttackType.mainHand][3] - 265 / 14.0f * speed) < 0.01f,
+        format!"against demons: %s"(f.damageVersusFlat[AttackType.mainHand][3]));
+    assert(f.damageVersusFlat[AttackType.mainHand][1] == 0, "against beasts nothing");
+}
+
 unittest
 {
     if (!haveRealData())

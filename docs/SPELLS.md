@@ -167,6 +167,11 @@ primary sources (docs/FORMULAS.md); CMaNGOS and vmangos are second opinions.
 * **A creature's spell at the enemies around itself** (`TARGET_ENUM_UNITS_ENEMY_WITHIN_CASTER_RANGE`, with a
   radius: Walking Bomb's explosion, Biletoad Infection) strikes every enemy within the radius of it, as CMaNGOS's
   `PUSH_SELF_CENTER` does; it struck only the unit it was cast at.
+* **Damage against a creature type**: attack power versus it (`MOD_MELEE_ATTACK_POWER_VERSUS`, `_RANGED_`: the Elixir
+  of Demonslaying, the Holy Mightstone) makes a player's blows at it harder by the attack power at the weapon's speed
+  (AP / 14 a second), and `MOD_DAMAGE_DONE_CREATURE` by its amount; a spell's flat bonus against it
+  (`MOD_FLAT_SPELL_DAMAGE_VERSUS`, `MOD_DAMAGE_DONE_CREATURE`) is added before the percents, as CMaNGOS's. A creature's
+  own such auras count for its spells, not yet its swings.
 * **Reflects** are summed and rolled once (CMaNGOS's `GetReflectChance`): `REFLECT_SPELLS` of any school (the Sheen
   of Zanza; a creature's Ward of the Eye, Spell Reflection) and the ward of the spell's (Fire Ward, Frost Ward, with
   their talents), for a reflectable spell (`isReflectable`: magic, not an ability or a passive). A creature sends a
