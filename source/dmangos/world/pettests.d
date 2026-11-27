@@ -1225,3 +1225,36 @@ unittest
     assert(caster.auras.find(command) !is null && friend.auras.find(command) !is null, "itself and its friend");
     assert(pet.auras.find(command) is null, "not its enemy's pet");
 }
+
+/// A creature's chained spell (Chain Lightning) jumps from the player it struck to the player's pet beside it.
+unittest
+{
+    import dmangos.script.api : ActionResult;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.spellids : ImplicitTarget, SpellEffect;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    auto rexxar = loggedIn(context, db, 7, "Rexxar", Position(-8949.95f, -132.49f, 83.53f, 0), AccountLevel.player,
+        raceOrc);
+    rexxar.read();
+    addPetData(&rexxar, context);
+    auto session = rexxar.session.inWorld;
+    auto map = context.map(0);
+    auto beast = context.summonCreature(map, wolf, Position(-8947, -132.49f, 83.53f, 0), TempSpawnType.dead, 0, 0);
+    auto tame = effectSpell(spellTameBeastDone, 55);
+    session.tameCreature(&tame, beast.guid);
+    auto pet = session.ownPet;
+
+    enum uint lightning = 97903;
+    auto spell = testSpell(lightning, SpellEffect.schoolDamage, ImplicitTarget.enemy, 30);
+    spell.casting.chainTarget[0] = 3;
+    context.data.spells.spells[lightning] = spell;
+    auto caster = context.summonCreature(map, boar, Position(-8945, -132.49f, 83.53f, 0), TempSpawnType.dead, 0, 0);
+    const heroHealth = session.player.values.get!UNIT_FIELD_HEALTH, petHealth = pet.values.get!UNIT_FIELD_HEALTH;
+    assert(caster.ai.castFor(map, lightning, session.player.guid, true) == ActionResult.ok);
+    assert(session.player.values.get!UNIT_FIELD_HEALTH < heroHealth, "the player struck");
+    assert(pet.values.get!UNIT_FIELD_HEALTH < petHealth, "and the pet the chain jumped to");
+}

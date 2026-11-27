@@ -1109,6 +1109,32 @@ mixin template CreatureCasting()
         }
         if (a == ImplicitTarget.caster || target == 0)
             return [me.guid];
+        // A chain from its target (Chain Lightning; Chain Heal at the most hurt friends), as a player's chain jumps:
+        // at its enemies, the players and what they control; at its friends, as its friends' areas take them.
+        if (spell.casting.chainTarget[i] > 1 && target != me.guid
+            && (a == ImplicitTarget.enemy || a == ImplicitTarget.unitFriendChainHeal))
+        {
+            import dmangos.world.relations : isEnemy, isFriend;
+            import dmangos.world.spellselection : chainFrom;
+
+            const hostile = a == ImplicitTarget.enemy;
+            bool takes(UnitRef u)
+            {
+                if (!u.alive || u.combatGuid == me.guid)
+                    return false;
+                if (u.kind == UnitKind.creature)
+                {
+                    auto other = u.creature;
+                    if (other.ai is null)
+                        return false;
+                    return hostile ? other.ai.relatingOf.playerControlled && canAttack(relating, other.ai.relatingOf,
+                        me.client) : !isEnemy(relating, other.ai.relatingOf, me.client);
+                }
+                return hostile ? canAttack(relating, u.relating, me.client) : isFriend(relating, u.relating, me.client);
+            }
+            if (auto chain = chainFrom(world_, target, spell.casting.chainTarget[i] - 1, !hostile, &takes))
+                return chain;
+        }
         return [target];
     }
 
@@ -1432,7 +1458,11 @@ mixin template CreatureCasting()
                     continue;
                 if (!me.alive && !castOnDeath)
                     return;
-                applyEffect(caster, spell, i, guid, c);
+                // A chain's later targets are struck less, each by the spell's multiplier (`SpellBounce`).
+                import std.algorithm.searching : countUntil;
+
+                const bounce = spell.casting.chainTarget[i] > 1 ? reached[i].countUntil(guid) : 0;
+                applyEffect(caster, spell, i, guid, c, bounce > 0 ? cast(uint) bounce : 0);
             }
         }
         foreach (r; results) // its script hears whom it hit, once the effects are done (`SpellHitTarget`)

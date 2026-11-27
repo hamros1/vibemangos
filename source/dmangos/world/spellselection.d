@@ -297,6 +297,63 @@ package ulong[] unitsInArea(Map map, Position center, float r, bool cone, int co
 }
 
 /**
+ * A chained spell's targets from `first` (Chain Lightning, Chain Heal), any caster's: `first`, then up to `count`
+ * more, each the nearest unit within the jump's reach (`spellJumpRadius`) of the one before that `takes` and that
+ * was not struck yet, or (`mostHurt`: a heal's chain) the most hurt such unit. Here only: another node's units are
+ * the player's chain's own to reach.
+ */
+package ulong[] chainFrom(Map map, ulong first, uint count, bool mostHurt, scope bool delegate(UnitRef) takes)
+{
+    import dmangos.world.spelldamage : spellJumpRadius;
+    import dmangos.world.updatefields : UNIT_FIELD_HEALTH, UNIT_FIELD_MAXHEALTH;
+
+    auto start = map.unit(first);
+    if (!start)
+        return null;
+    ulong[] chain = [first];
+    bool[ulong] taken = [first: true];
+    auto at = start.position;
+    foreach (_; 0 .. count)
+    {
+        ulong next;
+        Position nextAt;
+        float nearest = spellJumpRadius ^^ 2;
+        uint mostMissing;
+        void consider(UnitRef u)
+        {
+            const p = u.position;
+            const d = (p.x - at.x) ^^ 2 + (p.y - at.y) ^^ 2 + (p.z - at.z) ^^ 2;
+            if (d > spellJumpRadius ^^ 2 || u.combatGuid in taken || !takes(u))
+                return;
+            if (mostHurt)
+            {
+                const f = u.fields;
+                const missing = f.get!UNIT_FIELD_MAXHEALTH - f.get!UNIT_FIELD_HEALTH;
+                if (missing <= mostMissing)
+                    return;
+                mostMissing = missing;
+            }
+            else if (d > nearest)
+                return;
+            else
+                nearest = d;
+            next = u.combatGuid;
+            nextAt = p;
+        }
+        foreach (unit; map.playersNear(at, spellJumpRadius))
+            consider(unit);
+        foreach (creature; map.creaturesNear(at, spellJumpRadius))
+            consider(map.unitOf(creature));
+        if (!next)
+            break;
+        chain ~= next;
+        taken[next] = true;
+        at = nextAt;
+    }
+    return chain;
+}
+
+/**
  * At most `most` of an area's targets `found` (the spell's `MaxAffectedTargets`: "up to 5 total nearby enemies",
  * Thunder Clap's "up to 4 targets"; 0: no limit), any caster's: the one aimed at (`aimed`) among them, then the
  * nearest to `center`, the same for each of its effects.

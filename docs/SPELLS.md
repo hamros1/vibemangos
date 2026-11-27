@@ -158,6 +158,9 @@ primary sources (docs/FORMULAS.md); CMaNGOS and vmangos are second opinions.
   melee ability (range 5 at most, of the melee class) as far as a melee swing, 5 yards at least; a range of 0 at
   another unit as far as the two reaches. A creature's reached its range, its own reach and a fixed 1.5 yards,
   a melee ability farther than a player's.
+* **A creature's chained spell jumps** (Chain Lightning; Chain Heal to the most hurt friend), as a player's does,
+  to units near the one before (`chainFrom`): at its enemies, the players and what they control; each jump struck
+  less by the spell's multiplier. It struck its first target only before. The jumps are to units on its node.
 * **A creature's Dual Wield does nothing yet**: creatures swing no off-hand weapon. Giving them one (its own
   timer, an off-hand's damage) changes the damage of every mob that casts it, a decision of its own.
 
@@ -171,7 +174,7 @@ primary sources (docs/FORMULAS.md); CMaNGOS and vmangos are second opinions.
 | 3. auras and their ticks | done | 556 |
 | 4. what creatures lacked: wild objects, persistent areas, pets, items, spells taught, spawn, dispels, charges, extra attacks, totems, mana; the hit roll shared | done | 204 (101 with no creature to cast them) |
 | 4b. the rest of the sweep's: object open, disturb and despawn, resurrection, quest credit, sanctuary, traps, Infernals, flights, drunkenness, Thundercrash, the cone of 54; the sweep's own misreadings (its player dying, debuffs seen as friendly, stunned casters) | done | 108: 101 with no creature to cast them, Dual Wield, and six rockets whose object (180856) is not in the world database |
-| 5. targets once | in part: one walk of an area's units (`unitsInArea`), one cone (`spellCone`, `inSpellCone`) and one target limit (`mostAffected`) and one reach (`spellRangeResult`) for every caster, each saying only whom its spell is for; friends' areas for creatures; a creature still resolves its other implicit targets in `creaturecasting.d` (`targetsFor`), a player in `spellhandlers.d` (`go`, `areaTargets`) |  |
+| 5. targets once | in part: one walk of an area's units (`unitsInArea`), one cone (`spellCone`, `inSpellCone`) and one target limit (`mostAffected`), one reach (`spellRangeResult`) and chains (`chainFrom`) for every caster, each saying only whom its spell is for; friends' areas for creatures; a creature still resolves its other implicit targets in `creaturecasting.d` (`targetsFor`), a player in `spellhandlers.d` (`go`, `areaTargets`) |  |
 | 6. procs once | in part: every creature's auras proc now (a mob's Thrash, not only a pet's), through `creatureprocs.d`; a player's are `procs.d`'s, with its class rules, cooldowns and weapon checks |  |
 
 Performance: the 500-player crowd (`tools/harness/bench.sh LABEL crowd 500`, release builds, run in turn
