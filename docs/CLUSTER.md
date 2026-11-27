@@ -234,7 +234,7 @@ The unit of ownership is the map **cell** (66.67 yards, `grid.d`), which maps al
 * `WorldContext.ownsCell` tells maps which cells are this node's. A map creates a cell's spawns only
   if the cell is owned. Because a map holds only what its node owns (and replicas), the tick needs no
   ownership checks.
-* `WorldContext.regionsChanged` applies a new table: services stop or start, dungeon copies go or
+* `RegionRecoverer.regionsChanged` (`WorldContext.recovery`) applies a new table: services stop or start, dungeon copies go or
   come, the objects of lost regions leave the maps (`Map.release`), and players near gained regions
   look around again so the cells near them load.
 

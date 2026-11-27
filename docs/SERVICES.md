@@ -100,7 +100,7 @@ A gateway node (docs/CLUSTER.md) is never granted a service.
 
 Every node holds a copy of the region table, so every node knows where each service runs with no
 round trip: `regions.ownerAt(serviceMap(kind), 0)`. When a node's regions change
-(`WorldContext.regionsChanged`), a service region it lost is stopped, its `saveState` bytes going
+(`RegionRecoverer.regionsChanged` (`WorldContext.recovery`)), a service region it lost is stopped, its `saveState` bytes going
 along with the region to the next owner; a service region it gained is started from the bytes that
 arrived with it. Both are logged (`services: channels runs here`, `services: channels moves to node
 2`).
@@ -208,7 +208,7 @@ dying calls `colossusDied`; `current` answers a node starting. Its `tick` moves 
 
 Every change is saved to the characters database (`world_state`, row 1, in CMaNGOS's text, through the
 writes behind the game loop) by the node hosting it, and announced to every node as news (the whole
-`WarEffort`), and again once a minute. Each node keeps what it heard (`WorldContext.warEffort`) and follows
+`WarEffort`), and again once a minute. Each node keeps what it heard (`WarEffortFollower.warEffort` (`WorldContext.warEffortHere`)) and follows
 it: it starts and stops the phases' game events (120 to 124, and 125 to 127 for fallen Colossi) through
 `GameEvents.start`, brings and takes away the piles of supplies (a spawn's presence is worked out from the
 state), and sends the capitals' world states to its own players as they change. After a move the service
