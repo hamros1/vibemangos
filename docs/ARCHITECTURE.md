@@ -148,7 +148,7 @@ final class Character : OnlinePlayer, Looter
     mixin LootHandlers;             // loothandlers.d: looting, kill experience, tapping
     mixin SpellHandlers;            // spellhandlers.d: casting, channels, spell effects
     mixin AuraHandlers;             // aurahandlers.d: what each aura does, and its ticks
-    ...                             // trade, duels, quests, talents, auctions,
+    ...                             // trade, duels, quests, talents,
                                     // reputation, exploration, social, guilds, pets, scripts,
                                     // and the GM commands (commands.d, gm*.d, gmdebug.d)
 }
@@ -158,8 +158,8 @@ A mixin template's members become members of the class. They can use the class's
 and the dispatcher finds their `@Handles` attributes like any others.
 
 A domain that keeps to itself is a class the character owns instead, with the character as `me`:
-`Character.taxi` (taxihandlers.d: flight masters and the flight under way), `Character.mailbox`
-(mailhandlers.d). Their handlers are routed
+`Character.taxi` (taxihandlers.d: flight masters and the flight under way), `Character.mailbox`,
+(mailhandlers.d), `Character.auctioneer` (auctionhandlers.d). Their handlers are routed
 by naming the field to the dispatcher (`mixin PacketDispatch!(Handles, "taxi", "mailbox")`), and what it uses
 of the character reads as `me.player`, `me.context` and the like. A new handler group is one of
 these.

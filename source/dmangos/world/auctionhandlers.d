@@ -1,6 +1,5 @@
 /**
- * Auctions at an auctioneer: the client's auction requests, mixed into
- * `dmangos.world.character.Character`.
+ * Auctions at an auctioneer: the client's auction requests.
  *
  * An item put up (not bound, conjured or temporary) for 2, 8 or 24 hours costs a deposit, and
  * waits in its house (`dmangos.world.auctionhouse`) for bids of at least the start bid and 5% more
@@ -15,8 +14,19 @@ module dmangos.world.auctionhandlers;
 import dmangos.world.money : Copper;
 
 /// See the module documentation.
-mixin template AuctionHandlers()
+final class Auctioneer
 {
+    import dmangos.world.character : Character, Handles;
+    import dmangos.world.session : WorldState;
+
+    private Character me;
+
+    ///
+    this(Character me)
+    {
+        this.me = me;
+    }
+
     import dmangos.world.money : Copper;
     import std.algorithm.searching : canFind;
     import std.uni : toLower;
@@ -31,17 +41,17 @@ mixin template AuctionHandlers()
     /// The house of an auctioneer near; null if none.
     const(AuctionHouseEntry)* auctionHouseOf(ulong auctioneer)
     {
-        auto npc = interactableNpc(auctioneer, NpcFlag.auctioneer);
+        auto npc = me.interactableNpc(auctioneer, NpcFlag.auctioneer);
         if (npc is null)
             return null;
         const factionTemplate = npc.npcValues.get!UNIT_FIELD_FACTIONTEMPLATE;
         uint houseId = 1;
-        if (!context.config.allowTwoSideInteractionAuction)
+        if (!me.context.config.allowTwoSideInteractionAuction)
         {
-            const t = context.client.factionTemplates.lookup(factionTemplate);
+            const t = me.context.client.factionTemplates.lookup(factionTemplate);
             houseId = auctionHouseFor(factionTemplate, t is null ? 0 : t.groupMask);
         }
-        return context.postOffice.auctionHouse(houseId);
+        return me.context.postOffice.auctionHouse(houseId);
     }
 
     /// Tells the client how an auction command went (`SMSG_AUCTION_COMMAND_RESULT`).
@@ -62,7 +72,7 @@ mixin template AuctionHandlers()
             w.put(auction.bid);
             w.put(auction.outBid);
         }
-        deliver(Opcode.SMSG_AUCTION_COMMAND_RESULT, w.data);
+        me.deliver(Opcode.SMSG_AUCTION_COMMAND_RESULT, w.data);
     }
 
     /// The player talks to an auctioneer: the auction window, with its house.
@@ -81,7 +91,7 @@ mixin template AuctionHandlers()
         ByteWriter w;
         w.put(guid);
         w.put(house.houseId);
-        deliver(Opcode.MSG_AUCTION_HELLO, w.data);
+        me.deliver(Opcode.MSG_AUCTION_HELLO, w.data);
     }
 
     /// The player puts an item up for auction.
@@ -104,39 +114,39 @@ mixin template AuctionHandlers()
             return;
         if (bid > maxMoney || buyout > maxMoney)
             return sendAuctionResult(0, AuctionAction.started, AuctionError.database);
-        auto item = itemByGuid(itemGuid);
-        if (item is null || !canBeTraded(item))
+        auto item = me.itemByGuid(itemGuid);
+        if (item is null || !me.canBeTraded(item))
             return sendAuctionResult(0, AuctionAction.started, AuctionError.inventory, InventoryResult.itemNotFound);
-        const proto = item.entry in context.data.items;
+        const proto = item.entry in me.context.data.items;
         if (proto is null || (proto.flags & itemFlagConjured) || item.values[ITEM_FIELD_DURATION])
             return sendAuctionResult(0, AuctionAction.started, AuctionError.inventory, InventoryResult.itemNotFound);
         const deposit = Copper(auctionDeposit(*house, seconds, proto.details.sellPrice, item.count,
-            context.config.auctionRates));
-        if (!player.canAfford(deposit))
+            me.context.config.auctionRates));
+        if (!me.player.canAfford(deposit))
             return sendAuctionResult(0, AuctionAction.started, AuctionError.notEnoughMoney);
 
         // Out of the bags into the house, the deposit paid.
-        player.pay(deposit);
+        me.player.pay(deposit);
         auto record = item.record;
         AuctionRecord a;
-        a.id = context.nextMailId();
+        a.id = me.context.nextMailId();
         a.houseId = house.houseId;
         a.itemGuid = record.guid;
         a.itemEntry = record.entry;
         a.itemCount = record.count;
         a.randomPropertyId = record.randomPropertyId;
-        a.owner = player.data.guid;
+        a.owner = me.player.data.guid;
         a.startBid = bid;
         a.buyout = buyout;
-        a.expireTime = context.unixTime + auctionDuration(seconds, context.config.auctionRates);
+        a.expireTime = me.context.unixTime + auctionDuration(seconds, me.context.config.auctionRates);
         a.deposit = deposit.amount; // the row keeps the plain number
-        player.inventory.destroy(item.bagSlot, item.slot);
-        flushInventory(true);
+        me.player.inventory.destroy(item.bagSlot, item.slot);
+        me.flushInventory(true);
         record.bag = 0;
-        context.database.saveLooseItem(record, player.data.guid);
-        context.database.insertAuction(a);
+        me.context.database.saveLooseItem(record, me.player.data.guid);
+        me.context.database.insertAuction(a);
         sendAuctionResult(a.id, AuctionAction.started, AuctionError.ok);
-        info!"%s: '%s' put up %s x%s for auction %s (%s to %s, deposit %s)"(remoteAddress, player.data.name,
+        info!"%s: '%s' put up %s x%s for auction %s (%s to %s, deposit %s)"(me.remoteAddress, me.player.data.name,
             a.itemEntry, a.itemCount, a.id, bid, buyout, deposit);
     }
 
@@ -151,12 +161,12 @@ mixin template AuctionHandlers()
         const house = auctionHouseOf(auctioneer);
         if (house is null)
             return;
-        auto found = context.database.auctionById(id);
-        if (found.isNull || found.get.houseId != house.houseId || found.get.owner == player.data.guid)
+        auto found = me.context.database.auctionById(id);
+        if (found.isNull || found.get.houseId != house.houseId || found.get.owner == me.player.data.guid)
             return sendAuctionResult(0, AuctionAction.bidPlaced, AuctionError.bidOwn);
         const a = found.get;
         // Not on an auction of another character of this account.
-        if (context.database.characterRaceAccount(a.owner)[1] == account.id)
+        if (me.context.database.characterRaceAccount(a.owner)[1] == me.account.id)
             return sendAuctionResult(0, AuctionAction.bidPlaced, AuctionError.bidOwn);
         if (price <= a.bid)
             return sendAuctionResult(a.id, AuctionAction.bidPlaced, AuctionError.higherBid, 0, &a);
@@ -167,36 +177,36 @@ mixin template AuctionHandlers()
         // No more than the buyout; the same bidder pays only what it adds.
         if (a.buyout && price > a.buyout)
             price = a.buyout;
-        const ownBid = a.bidder == player.data.guid;
+        const ownBid = a.bidder == me.player.data.guid;
         const pays = Copper(price) - Copper(ownBid ? a.bid : 0);
-        if (!player.canAfford(pays))
+        if (!me.player.canAfford(pays))
             return;
         const buyout = a.buyout && price >= a.buyout;
         // The table decides: the bid is placed only if the auction is still as it was seen.
-        const placed = buyout ? context.database.deleteAuction(a.id, a.bid)
-            : context.database.bidOnAuction(a.id, a.bidder, a.bid, player.data.guid, price);
+        const placed = buyout ? me.context.database.deleteAuction(a.id, a.bid)
+            : me.context.database.bidOnAuction(a.id, a.bidder, a.bid, me.player.data.guid, price);
         if (!placed)
         {
-            auto now = context.database.auctionById(id);
+            auto now = me.context.database.auctionById(id);
             if (now.isNull)
                 return sendAuctionResult(0, AuctionAction.bidPlaced, AuctionError.database);
             return sendAuctionResult(id, AuctionAction.bidPlaced, AuctionError.higherBid, 0, &now.get());
         }
-        player.pay(pays);
-        flushPlayerChanges();
+        me.player.pay(pays);
+        me.flushPlayerChanges();
         if (a.bidder && !ownBid)
-            context.postOffice.auctionOutbid(a); // the old bidder's money back
+            me.context.postOffice.auctionOutbid(a); // the old bidder's money back
         AuctionRecord after = a;
-        after.bidder = player.data.guid;
+        after.bidder = me.player.data.guid;
         after.bid = price;
         sendAuctionResult(a.id, AuctionAction.bidPlaced, AuctionError.ok, 0, &after);
         if (buyout)
         {
-            context.postOffice.auctionSold(after);
-            info!"%s: '%s' bought out auction %s for %s"(remoteAddress, player.data.name, a.id, price);
+            me.context.postOffice.auctionSold(after);
+            info!"%s: '%s' bought out auction %s for %s"(me.remoteAddress, me.player.data.name, a.id, price);
         }
         else
-            context.deliverTo(a.owner, Opcode.SMSG_AUCTION_OWNER_NOTIFICATION, ownerNotification(after, false));
+            me.context.deliverTo(a.owner, Opcode.SMSG_AUCTION_OWNER_NOTIFICATION, ownerNotification(after, false));
     }
 
     /// The seller takes an auction back; the item comes by mail.
@@ -207,24 +217,24 @@ mixin template AuctionHandlers()
         const house = auctionHouseOf(auctioneer);
         if (house is null)
             return;
-        auto found = context.database.auctionById(id);
-        if (found.isNull || found.get.owner != player.data.guid)
+        auto found = me.context.database.auctionById(id);
+        if (found.isNull || found.get.owner != me.player.data.guid)
             return sendAuctionResult(0, AuctionAction.removed, AuctionError.database);
         const a = found.get;
-        const cut = Copper(a.bid ? a.cut(*house, context.config.rateAuctionCut) : 0);
-        if (!player.canAfford(cut))
+        const cut = Copper(a.bid ? a.cut(*house, me.context.config.rateAuctionCut) : 0);
+        if (!me.player.canAfford(cut))
             return;
-        if (!context.database.deleteAuction(a.id, a.bid))
+        if (!me.context.database.deleteAuction(a.id, a.bid))
             return sendAuctionResult(0, AuctionAction.removed, AuctionError.database); // bid on meanwhile
         if (a.bidder)
         {
             // The bidder is told, and gets the bid back by mail.
-            context.deliverTo(a.bidder, Opcode.SMSG_AUCTION_REMOVED_NOTIFICATION, removedNotification(a));
-            context.postOffice.auctionMail(a.bidder, a, AuctionMail.cancelledToBidder, a.bid, false);
+            me.context.deliverTo(a.bidder, Opcode.SMSG_AUCTION_REMOVED_NOTIFICATION, removedNotification(a));
+            me.context.postOffice.auctionMail(a.bidder, a, AuctionMail.cancelledToBidder, a.bid, false);
         }
-        player.pay(cut);
-        flushPlayerChanges();
-        context.postOffice.auctionMail(player.data.guid, a, AuctionMail.cancelled, 0, true);
+        me.player.pay(cut);
+        me.flushPlayerChanges();
+        me.context.postOffice.auctionMail(me.player.data.guid, a, AuctionMail.cancelled, 0, true);
         sendAuctionResult(a.id, AuctionAction.removed, AuctionError.ok);
     }
 
@@ -233,7 +243,7 @@ mixin template AuctionHandlers()
     {
         ByteWriter lines;
         uint count;
-        const now = context.unixTime;
+        const now = me.context.unixTime;
         foreach (i, ref a; auctions)
             if (i >= listFrom && count < auctionPageSize)
             {
@@ -244,7 +254,7 @@ mixin template AuctionHandlers()
         w.put(count);
         w.putBytes(lines.data);
         w.put(cast(uint) auctions.length);
-        deliver(opcode, w.data);
+        me.deliver(opcode, w.data);
     }
 
     /// The list of the player's own auctions.
@@ -256,8 +266,8 @@ mixin template AuctionHandlers()
         if (house is null)
             return;
         AuctionRecord[] mine;
-        foreach (ref a; context.database.loadAuctions(house.houseId))
-            if (a.owner == player.data.guid)
+        foreach (ref a; me.context.database.loadAuctions(house.houseId))
+            if (a.owner == me.player.data.guid)
                 mine ~= a;
         sendAuctionList(Opcode.SMSG_AUCTION_OWNER_LIST_RESULT, mine, listFrom);
     }
@@ -279,17 +289,17 @@ mixin template AuctionHandlers()
         if (house is null)
             return;
         AuctionRecord[] wanted, mine;
-        foreach (ref a; context.database.loadAuctions(house.houseId))
+        foreach (ref a; me.context.database.loadAuctions(house.houseId))
         {
             if (outbid.canFind(a.id))
                 wanted ~= a;
-            if (a.bidder == player.data.guid)
+            if (a.bidder == me.player.data.guid)
                 mine ~= a;
         }
         // After the outbid ones: all of those are shown, then the page of bids.
         ByteWriter lines;
         uint count;
-        const now = context.unixTime;
+        const now = me.context.unixTime;
         foreach (ref a; wanted)
         {
             a.write(lines, now);
@@ -309,7 +319,7 @@ mixin template AuctionHandlers()
         w.put(count);
         w.putBytes(lines.data);
         w.put(total);
-        deliver(Opcode.SMSG_AUCTION_BIDDER_LIST_RESULT, w.data);
+        me.deliver(Opcode.SMSG_AUCTION_BIDDER_LIST_RESULT, w.data);
     }
 
     /// The search.
@@ -327,9 +337,9 @@ mixin template AuctionHandlers()
         if (house is null)
             return;
         AuctionRecord[] found;
-        foreach (ref a; context.database.loadAuctions(house.houseId))
+        foreach (ref a; me.context.database.loadAuctions(house.houseId))
         {
-            const proto = a.itemEntry in context.data.items;
+            const proto = a.itemEntry in me.context.data.items;
             if (proto is null)
                 continue;
             if (itemClass != any && proto.itemClass != itemClass)
@@ -342,7 +352,7 @@ mixin template AuctionHandlers()
                 continue;
             if (levelMin && (proto.requiredLevel < levelMin || (levelMax && proto.requiredLevel > levelMax)))
                 continue;
-            if (usable && !canUseItem(a.itemEntry))
+            if (usable && !me.canUseItem(a.itemEntry))
                 continue;
             if (name.length && !proto.details.name.toLower.canFind(name))
                 continue;

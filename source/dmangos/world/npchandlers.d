@@ -496,7 +496,7 @@ private:
             break;
         case GossipOption.auctioneer:
             closeGossip();
-            sendAuctionHello(creature.guid);
+            auctioneer.sendAuctionHello(creature.guid);
             break;
         case GossipOption.spiritHealer:
         {
