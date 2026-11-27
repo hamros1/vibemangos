@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 129; // a clean handoff carries the GM tag, its flag and `.invisible` too
+enum ushort protocolVersion = 130; // a creature's swing at a remote unit says whether it is its off hand, and whether it dual wields
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -280,6 +280,8 @@ struct CreatureSwing
     int spellValue; /// the attacker's roll for its weapon effect
     float spellThreat = 1;
     bool secondary; /// another target of the same weapon cast will announce it
+    bool offHand;   /// a swing of its off hand (its damage is the off hand's)
+    bool dualWield; /// it swings two (its swings miss more)
 
     // The target's node returns the outcome of an accepted swing.
     bool reply;
@@ -1416,7 +1418,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 129, recordedFingerprint = 0x2092e74d343f5c6dUL;
+private enum recordedVersion = 130, recordedFingerprint = 0xe481293cb2d660c4UL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

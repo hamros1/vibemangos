@@ -4,7 +4,6 @@
 # (DMANGOS_NPC_SWEEP_REPORT); the causes: "not done: <effect>" (dmangos.world.spelleffects.doneBy says a creature's
 # cast does not do the effect), "aura <type>: not on the <unit>" (or on it without its effect), "targeting: ...",
 # "refused: <reason>", "crash: ...", "no caster: ..." (no creature casts it in the data).
-674: Dual Wield: not done: dualWield (effect 0)
 7344: Recombobulate: no caster: no creature casts it in the data
 9738: Rift Spawn Becomes Visible: no caster: no creature casts it in the data
 10454: Into the Rift: no caster: no creature casts it in the data

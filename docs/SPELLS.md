@@ -161,8 +161,13 @@ primary sources (docs/FORMULAS.md); CMaNGOS and vmangos are second opinions.
 * **A creature's chained spell jumps** (Chain Lightning; Chain Heal to the most hurt friend), as a player's does,
   to units near the one before (`chainFrom`): at its enemies, the players and what they control; each jump struck
   less by the spell's multiplier. It struck its first target only before. The jumps are to units on its node.
-* **A creature's Dual Wield does nothing yet**: creatures swing no off-hand weapon. Giving them one (its own
-  timer, an off-hand's damage) changes the damage of every mob that casts it, a decision of its own.
+* **A creature swings its off hand** as CMaNGOS's does: when it holds a weapon there (310 creatures' equipment),
+  its template forces it (`CREATURE_EXTRA_FLAG_DUAL_WIELD_FORCED`, 14) or Dual Wield (674) taught it
+  (`Creature.canDualWield`). The off hand has its own timer, never within 200 ms of the main hand's, hits for half
+  (the off-hand damage fields), shows as a left swing, and a parry hastens whichever hand swings next. Both hands
+  miss 19% more, as a player's do with two weapons. A swing at a unit on another node says which hand and whether
+  it dual wields (protocol 130). Not kept yet: a Dual Wield taught by a spell is lost in a crash or a migration
+  (the template's flag and the off-hand weapon are not).
 
 ## Status
 
@@ -173,7 +178,7 @@ primary sources (docs/FORMULAS.md); CMaNGOS and vmangos are second opinions.
 | 2. damage, heals, power | done | 606 |
 | 3. auras and their ticks | done | 556 |
 | 4. what creatures lacked: wild objects, persistent areas, pets, items, spells taught, spawn, dispels, charges, extra attacks, totems, mana; the hit roll shared | done | 204 (101 with no creature to cast them) |
-| 4b. the rest of the sweep's: object open, disturb and despawn, resurrection, quest credit, sanctuary, traps, Infernals, flights, drunkenness, Thundercrash, the cone of 54; the sweep's own misreadings (its player dying, debuffs seen as friendly, stunned casters) | done | 108: 101 with no creature to cast them, Dual Wield, and six rockets whose object (180856) is not in the world database |
+| 4b. the rest of the sweep's: object open, disturb and despawn, resurrection, quest credit, sanctuary, traps, Infernals, flights, drunkenness, Thundercrash, the cone of 54; the sweep's own misreadings (its player dying, debuffs seen as friendly, stunned casters) | done | 107: 101 with no creature to cast them, and six rockets whose object (180856) is not in the world database |
 | 5. targets once | in part: one walk of an area's units (`unitsInArea`), one cone (`spellCone`, `inSpellCone`) and one target limit (`mostAffected`), one reach (`spellRangeResult`) and chains (`chainFrom`) for every caster, each saying only whom its spell is for; friends' areas for creatures; a creature still resolves its other implicit targets in `creaturecasting.d` (`targetsFor`), a player in `spellhandlers.d` (`go`, `areaTargets`) |  |
 | 6. procs once | in part: every creature's auras proc now (a mob's Thrash, not only a pet's), through `creatureprocs.d`; a player's are `procs.d`'s, with its class rules, cooldowns and weapon checks |  |
 
@@ -193,5 +198,5 @@ alongside other spell effects. A creature's open (a goober: Sharpbeak's cage, a 
 disturb (a trap's spell, or a button: Celebras's staff) use the object as a player's use does, without
 what is the player's own (quest credit, a page); despawn takes it away (Despawn Putrid Mushrooms).
 
-What a creature's cast does not do yet: Dual Wield (above), and effects that need a player's
+What a creature's cast does not do yet: effects that need a player's
 spellbook, inventory or client.

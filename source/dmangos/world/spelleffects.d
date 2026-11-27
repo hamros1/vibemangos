@@ -53,7 +53,7 @@ private enum SpellEffect[] notDoneByAny = [SpellEffect.portalTeleport, SpellEffe
     SpellEffect.bind, SpellEffect.ritualBase, SpellEffect.ritualSpecialize,
     SpellEffect.ritualActivatePortal, SpellEffect.dodge, SpellEffect.evade, SpellEffect.parry, SpellEffect.block,
     SpellEffect.weapon, SpellEffect.defense, SpellEffect.triggerMissile, SpellEffect.summonChangeItem,
-    SpellEffect.spellDefense, SpellEffect.language, SpellEffect.dualWield,
+    SpellEffect.spellDefense, SpellEffect.language,
     SpellEffect.addHonor, SpellEffect.tradeSkill, SpellEffect.stealth,
     SpellEffect.forceCriticalHit, SpellEffect.guaranteeHit, SpellEffect.proficiency, SpellEffect.healthFunnel,
     SpellEffect.powerFunnel, SpellEffect.pull, SpellEffect.healMechanical, SpellEffect.createHouse,
@@ -93,7 +93,7 @@ private enum SpellEffect[] creaturesDo = [SpellEffect.none, SpellEffect.schoolDa
     SpellEffect.learnSpell, SpellEffect.createItem, SpellEffect.addComboPoints, SpellEffect.spawn, SpellEffect.detect,
     SpellEffect.attackMe, SpellEffect.attack, SpellEffect.persistentAreaAura, SpellEffect.dispel, SpellEffect.dispelMechanic,
     SpellEffect.charge, SpellEffect.leap, SpellEffect.addExtraAttacks, SpellEffect.summonTotem, SpellEffect.summonTotemSlot1,
-    SpellEffect.summonTotemSlot2, SpellEffect.summonTotemSlot3, SpellEffect.summonTotemSlot4,
+    SpellEffect.summonTotemSlot2, SpellEffect.summonTotemSlot3, SpellEffect.summonTotemSlot4, SpellEffect.dualWield,
     // What CMaNGOS does for a creature's cast: nothing for a temporary enchantment, a lock, a skill step or Portal
     // (a player's, an item's, unused); the rest as for a player's.
     SpellEffect.enchantItemTemporary, SpellEffect.openLock, SpellEffect.openLockItem, SpellEffect.skillStep,
@@ -664,6 +664,17 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
             ubyte* owed = p !is null ? &p.extraAttacks : &ai.extraAttacks;
             *owed = cast(ubyte)(*owed + value > 5 ? 5 : *owed + value);
             logExecute(caster, spell, i, executeTarget(target, cast(uint) value));
+        }
+        break;
+    case SpellEffect.dualWield: // SPELL_EFFECT_DUAL_WIELD: Dual Wield (674), learned by a player, cast by a creature
+        // Its target may swing an off hand: a creature even with none in it (CMaNGOS's `EffectDualWield`,
+        // `Creature.canDualWield`); a player with an off-hand weapon (as learning the spell gives it).
+        if (auto u = caster.map.unit(target))
+        {
+            if (u.creature !is null)
+                u.creature.canDualWield = true;
+            else if (u.session !is null && u.session.player !is null)
+                u.session.player.dualWield = true;
         }
         break;
     case SpellEffect.dispelMechanic: // SPELL_EFFECT_DISPEL_MECHANIC: Escape Artist

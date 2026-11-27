@@ -2434,9 +2434,10 @@ final class Map : MotionWorld
 
     /// Sends a due melee swing from a creature here to its target's node; false if it could not be sent.
     bool remoteCreatureSwing(Creature attacker, UnitRef target, uint spell, int spellValue, float spellThreat,
-        bool secondary)
+        bool secondary, bool offHand = false)
     {
-        return swingsRemotely() && world.remoteSpells.queueCreatureSwing(attacker, target, spell, spellValue, spellThreat, secondary);
+        return swingsRemotely() && world.remoteSpells.queueCreatureSwing(attacker, target, spell, spellValue, spellThreat,
+            secondary, offHand);
     }
 
     /// Keep player replicas near this creature while it has an active fight, even without a local player.

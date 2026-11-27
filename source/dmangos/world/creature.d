@@ -1297,6 +1297,19 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     }
 
     /// What the melee formulas (`dmangos.world.combat`) need of it now.
+    /**
+     * It swings an off hand even without an off-hand weapon: its template says so
+     * (`CREATURE_EXTRA_FLAG_DUAL_WIELD_FORCED`), or a Dual Wield spell (674) taught it (CMaNGOS's `SetCanDualWield`).
+     */
+    bool canDualWield;
+
+    /// Whether it swings an off hand: it holds a weapon there (CMaNGOS's `Creature::hasWeapon(OFF_ATTACK)`), or may anyway.
+    bool hasOffhandWeapon() const
+    {
+        enum uint itemClassWeapon = 2;
+        return canDualWield || (values.get!UNIT_VIRTUAL_ITEM_INFO(2) & 0xFF) == itemClassWeapon;
+    }
+
     Fighter fighter() const
     {
         enum uint noParry = 0x04, noBlock = 0x10; // `extra_flags`: never parries, never blocks
@@ -1329,6 +1342,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         }
         f.damageSchool[] = template_.damageSchool;
         f.creatureType = template_.creatureType;
+        f.dualWield = hasOffhandWeapon; // its swings miss more, as a player's do with two weapons
         {
             import dmangos.world.combat : AttackType, DamageMods;
 
@@ -1751,6 +1765,8 @@ private:
         values.set!UNIT_DYNAMIC_FLAGS(t.dynamicFlags);
         values.set!UNIT_FIELD_BASEATTACKTIME(t.meleeBaseAttackTime);
         values.set!UNIT_FIELD_BASEATTACKTIME(1, t.meleeBaseAttackTime);
+        enum uint dualWieldForced = 0x0080_0000; // CREATURE_EXTRA_FLAG_DUAL_WIELD_FORCED
+        canDualWield = (t.extraFlags & dualWieldForced) != 0;
         values.set!UNIT_FIELD_RANGEDATTACKTIME(t.rangedBaseAttackTime);
         values.setByte!UNIT_FIELD_BYTES_2(0, cast(ubyte) sheathMelee);
         values.setByte!UNIT_FIELD_BYTES_2(1, cast(ubyte) unitByte2FlagAuras);

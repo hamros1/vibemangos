@@ -677,7 +677,7 @@ final class RemoteSpells
     package ulong[ushort] lastCreatureSwing, lastCreatureSwingReply;
 
     package bool queueCreatureSwing(Creature attacker, UnitRef target, uint spell, int spellValue, float spellThreat,
-        bool secondary)
+        bool secondary, bool offHand = false)
     {
         import dmangos.world.combat : creatureTypeHumanoid;
         import dmangos.world.updatefields : OBJECT_FIELD_ENTRY, TypeId;
@@ -699,10 +699,10 @@ final class RemoteSpells
             target: target.combatGuid, controller: attacker.meleeController, map: target.map.id, instance: target.map.instanceId,
             destination: target.replica.owner,
             facing: fighter.position.orientation, running: fighter.runningAround, school: fighter.damageSchool[0],
-            armorIgnored: fighter.armorIgnored, minDamage: fighter.damage[0][0], maxDamage: fighter.damage[0][1],
-            damageFactor: fighter.damageDone[0] * damageVersus, crit: fighter.crit,
-            critVersus: critVersus, hitBonus: fighter.hitBonus, spell: spell, spellValue: spellValue,
-            spellThreat: spellThreat, secondary: secondary);
+            armorIgnored: fighter.armorIgnored, minDamage: fighter.damage[offHand][0],
+            maxDamage: fighter.damage[offHand][1], damageFactor: fighter.damageDone[offHand] * damageVersus,
+            crit: fighter.crit, critVersus: critVersus, hitBonus: fighter.hitBonus, spell: spell, spellValue: spellValue,
+            spellThreat: spellThreat, secondary: secondary, offHand: offHand, dualWield: fighter.dualWield);
         return world.sendCreatureSwing(request.destination, request);
     }
 
@@ -771,15 +771,17 @@ final class RemoteSpells
             return;
         attacker.worldBoss = template_.rank == 3;
         attacker.armorIgnored = request.armorIgnored;
-        attacker.damage[0] = [request.minDamage, request.maxDamage];
-        attacker.damageSchool[0] = request.school;
-        attacker.damageDone[0] = request.damageFactor;
+        const hand = request.offHand && !request.spell ? AttackType.offHand : AttackType.mainHand; // a weapon cast: main
+        attacker.damage[hand] = [request.minDamage, request.maxDamage];
+        attacker.damageSchool[hand] = request.school;
+        attacker.damageDone[hand] = request.damageFactor;
         attacker.crit = request.crit;
         if (defender.creatureType < attacker.critVersus.length)
             attacker.critVersus[defender.creatureType] = request.critVersus;
         attacker.hitBonus = request.hitBonus;
+        attacker.dualWield = request.dualWield;
 
-        auto hit = calculateMeleeDamage(attacker, defender, AttackType.mainHand, map_.random);
+        auto hit = calculateMeleeDamage(attacker, defender, hand, map_.random);
         auto result = cast(CreatureSwing) request;
         result.reply = true;
         result.spellMiss = 0;

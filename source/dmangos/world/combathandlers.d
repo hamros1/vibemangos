@@ -884,6 +884,84 @@ unittest
     assert(innkeeperSpawn in db.creatureRespawns, "its respawn time, from the deaths phase");
 }
 
+/**
+ * A creature with a weapon in its off hand swings both hands at their speed, never within 200 ms of each other, the
+ * off hand's shown as left swings (CMaNGOS's `UpdateMeleeAttackingState`); one with none swings only its main hand.
+ */
+unittest
+{
+    import core.time : MonoTime, msecs;
+    import dmangos.bytes : ByteReader;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.clientdata : factionTemplateFormat;
+    import dmangos.world.combat : HitInfo;
+    import dmangos.world.creature : CreatureSpawn, VirtualItem;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields;
+
+    enum hostileFaction = 14;
+    foreach (offHand; [true, false])
+    {
+        auto db = newDatabase();
+        auto context = newCreationContext(db);
+        auto now = MonoTime.currTime;
+        context.clock = () => now;
+        const at = Position(100, 100, 40);
+        auto anduin = loggedIn(context, db, 7, "Anduin", Position(at.x + 2, at.y, at.z), characterLevel: 20);
+        anduin.read();
+        auto me = anduin.session.inWorld;
+        me.player.values.set!UNIT_FIELD_MAXHEALTH(1_000_000u);
+        me.player.values.set!UNIT_FIELD_HEALTH(1_000_000u);
+        const humanFaction = me.player.values.get!UNIT_FIELD_FACTIONTEMPLATE;
+        context.client.factionTemplates = typeof(context.client.factionTemplates).parse(buildDbc(factionTemplateFormat,
+            [[humanFaction, 1, 0, 1 | 2, 2, 8, 0, 0, 0, 0, 0, 0, 0, 0],
+            [hostileFaction, 14u, 0, 8, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]]), "FactionTemplate.dbc");
+        auto template_ = context.data.creatureTemplates.edit(creatureInnkeeper);
+        template_.faction = hostileFaction;
+        template_.minLevel = template_.maxLevel = 20;
+        auto map = context.map(0);
+        auto spawn = CreatureSpawn(91_070, creatureInnkeeper, map.id, at.x, at.y, at.z);
+        auto creature = context.makeCreature(&spawn);
+        map.addObject(creature);
+        creature.values.set!UNIT_FIELD_BASEATTACKTIME(0, 2000u);
+        creature.values.set!UNIT_FIELD_BASEATTACKTIME(1, 2000u);
+        if (offHand)
+            creature.setVirtualItem(1, VirtualItem(display: 1, itemClass: 2)); // a weapon
+        assert(creature.hasOffhandWeapon == offHand && creature.fighter.dualWield == offHand);
+        creature.ai.attackedBy(me.unit, map);
+        anduin.read();
+
+        long[] mainAt, offAt;
+        foreach (step; 0 .. 140) // 7 seconds
+        {
+            now += 50.msecs;
+            context.update(now);
+            foreach (packet; anduin.read())
+                if (packet.opcode == Opcode.SMSG_ATTACKERSTATEUPDATE)
+                {
+                    auto r = ByteReader(packet.body_);
+                    const hitInfo = r.read!uint;
+                    if (r.readPackedGuid != creature.guid)
+                        continue;
+                    ((hitInfo & HitInfo.leftSwing) ? offAt : mainAt) ~= step * 50;
+                }
+        }
+        assert(mainAt.length >= 3, "its main hand swings");
+        if (!offHand)
+        {
+            assert(offAt.length == 0, "no off hand, no left swings");
+            continue;
+        }
+        assert(offAt.length >= 3, "its off hand swings too");
+        foreach (o; offAt)
+            foreach (m; mainAt)
+                assert(o - m >= 200 || m - o >= 200, "the two hands 200 ms apart at least");
+    }
+}
+
 /// The creature keeps a player's threat across a handoff; only the player's owner rolls and applies each swing.
 unittest
 {

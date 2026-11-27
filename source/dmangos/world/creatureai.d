@@ -151,6 +151,7 @@ final class CreatureAI : Scripted, CreatureHost, ScourgeCampHost
         bool victimReachable = true; // its last way to the victim ended within reach
         bool[ulong] suppressed;    // given up on, while it has others to fight
         int attackTimer;           // until the next swing
+        int offAttackTimer;        // until the next swing of its off hand, if it has one (`Creature.hasOffhandWeapon`)
         int combatTimer;           // the pursuit time left
         int combatTick;            // until the next leash check
         int restoringThreat;       // allow replicas to arrive after their target's region handoff
@@ -429,6 +430,7 @@ final class CreatureAI : Scripted, CreatureHost, ScourgeCampHost
             return petUpdate(world, diff);
         restoringThreat = restoringThreat > diff ? restoringThreat - diff : 0;
         attackTimer = attackTimer > diff ? attackTimer - diff : 0;
+        offAttackTimer = offAttackTimer > diff ? offAttackTimer - diff : 0;
         updateCasting(diff);
         if (!me.alive)
             return;
@@ -1444,50 +1446,84 @@ private:
         import dmangos.world.combat : parryHasted;
 
         enum uint noParryHasten = 0x08;
-        if (me.template_.extraFlags & noParryHasten || attackTimer <= 0)
+        if (me.template_.extraFlags & noParryHasten)
             return;
-        attackTimer = parryHasted(attackTimer, me.values.get!UNIT_FIELD_BASEATTACKTIME);
+        // The hand that swings next comes sooner (CMaNGOS's `DealMeleeDamage`: the off hand, if it is the nearer).
+        if (me.hasOffhandWeapon && offAttackTimer < attackTimer)
+        {
+            if (offAttackTimer > 0)
+                offAttackTimer = parryHasted(offAttackTimer, me.values.get!UNIT_FIELD_BASEATTACKTIME(1));
+        }
+        else if (attackTimer > 0)
+            attackTimer = parryHasted(attackTimer, me.values.get!UNIT_FIELD_BASEATTACKTIME);
     }
 
-    /// A creature's melee: a swing whenever it is ready and can.
+    /**
+     * A creature's melee: a swing of each hand whenever it is ready and can. With an off hand
+     * (`Creature.hasOffhandWeapon`) the two keep 200 ms apart, as CMaNGOS's `UpdateMeleeAttackingState` keeps them
+     * (`ATTACK_DISPLAY_DELAY`): a hand about to swing as the other does waits that long.
+     */
     void meleeAttackIfReady(UnitRef target, Map world)
     {
-        if (!meleeAttacking || attackTimer || !meleeEnabled || (me.values.get!UNIT_FIELD_FLAGS & UnitFlags.pacified))
+        import dmangos.world.combat : AttackType;
+
+        enum displayDelay = 200;
+        if (!meleeAttacking || !meleeEnabled || (me.values.get!UNIT_FIELD_FLAGS & UnitFlags.pacified))
+            return;
+        const offHand = me.hasOffhandWeapon;
+        if (attackTimer && !(offHand && !offAttackTimer))
             return;
         if (!creatureSwingInReach(me.fighter, target.fighter))
         {
-            attackTimer = 100; // delaying a weapon that is not ready would make it ready sooner
+            // Delaying a weapon that is not ready would make it ready sooner.
+            if (!attackTimer)
+                attackTimer = 100;
+            if (offHand && !offAttackTimer)
+                offAttackTimer = 100;
             return;
         }
-        attackTimer = me.values.get!UNIT_FIELD_BASEATTACKTIME;
-        if (swingSpell(target))
-            return;
-        swing(target, world);
-        // The extra swings it is owed (Thrash, Sword Specialization: `SPELL_EFFECT_ADD_EXTRA_ATTACKS`), at once; they
-        // give no more of them (CMaNGOS's `DoExtraAttacks`).
-        for (; extraAttacks && target.alive && me.alive; --extraAttacks)
+        if (!attackTimer)
         {
-            extraSwing = true;
-            scope (exit)
-                extraSwing = false;
-            swing(target, world);
+            if (offHand && offAttackTimer < displayDelay)
+                offAttackTimer = displayDelay;
+            attackTimer = me.values.get!UNIT_FIELD_BASEATTACKTIME;
+            if (!swingSpell(target))
+            {
+                swing(target, world, AttackType.mainHand);
+                // The extra swings it is owed (Thrash, Sword Specialization: `SPELL_EFFECT_ADD_EXTRA_ATTACKS`), at
+                // once; they give no more of them (CMaNGOS's `DoExtraAttacks`).
+                for (; extraAttacks && target.alive && me.alive; --extraAttacks)
+                {
+                    extraSwing = true;
+                    scope (exit)
+                        extraSwing = false;
+                    swing(target, world, AttackType.mainHand);
+                }
+            }
+        }
+        if (offHand && !offAttackTimer && target.alive && me.alive)
+        {
+            if (attackTimer < displayDelay)
+                attackTimer = displayDelay;
+            offAttackTimer = me.values.get!UNIT_FIELD_BASEATTACKTIME(1);
+            swing(target, world, AttackType.offHand);
         }
     }
 
     package ubyte extraAttacks; /// swings owed (`SPELL_EFFECT_ADD_EXTRA_ATTACKS`)
     private bool extraSwing;    /// one of them being swung
 
-    /// One swing at `target`.
-    private void swing(UnitRef target, Map world)
+    /// One swing at `target`, of its main hand or its off hand.
+    private void swing(UnitRef target, Map world, AttackType hand)
     {
         if (target.replica !is null)
         {
             if (auto map = remoteMeleeMap(world))
-                map.remoteCreatureSwing(me, target, 0, 0, 1, false);
+                map.remoteCreatureSwing(me, target, 0, 0, 1, false, hand == AttackType.offHand);
             return;
         }
         const self = me.fighter, other = target.fighter;
-        auto d = calculateMeleeDamage(self, other, AttackType.mainHand, world.random);
+        auto d = calculateMeleeDamage(self, other, hand, world.random);
         if ((d.absorbed = target.absorb(d.school, d.damage)) != 0)
             d.hitInfo |= HitInfo.absorb;
         world.sendToObservers(me.guid, Opcode.SMSG_ATTACKERSTATEUPDATE, attackerStateUpdate(d));
