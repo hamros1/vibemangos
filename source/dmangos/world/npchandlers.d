@@ -111,7 +111,7 @@ private:
     // -----------------------------------------------------------------------
 
     /// The creature `guid` on the player's map, if it has one of `npcFlags` (0: any) and is close enough.
-    Npc interactableNpc(ulong guid, uint npcFlags)
+    package Npc interactableNpc(ulong guid, uint npcFlags)
     {
         if (transferring || !map.questSpawnVisible(player, guid))
             return null;
@@ -492,7 +492,7 @@ private:
             break;
         case GossipOption.taxiVendor:
             closeGossip();
-            handleTaxiQueryAvailableNodes(ClientGuid(creature.guid)); // a new node learned, or the map
+            taxi.handleTaxiQueryAvailableNodes(ClientGuid(creature.guid)); // a new node learned, or the map
             break;
         case GossipOption.auctioneer:
             closeGossip();

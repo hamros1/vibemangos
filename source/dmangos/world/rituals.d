@@ -483,9 +483,9 @@ mixin template RitualSummoning()
                 return;
             }
         summonPoint = PartySummon.init;
-        if (flying) // the flight stops (`TaxiFlightInterrupt`)
+        if (taxi.flying) // the flight stops (`TaxiFlightInterrupt`)
         {
-            taxiDestination = 0;
+            taxi.taxiDestination = 0;
             player.data.taxiPath = null;
             player.values.set!UNIT_FIELD_MOUNTDISPLAYID(0u);
             player.values.set!UNIT_FIELD_FLAGS(player.values.get!UNIT_FIELD_FLAGS & ~UnitFlags.taxiFlight);

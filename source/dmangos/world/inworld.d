@@ -107,7 +107,7 @@ private:
         if (!savedUnread)
             saveBattleground();
         deathOnLogout();
-        taxiOnLeave();
+        taxi.taxiOnLeave();
         const progress = player.progress(secondsInWorld());
         if (saveProgressOnLeave)
             context.database.saveProgress(progress);
@@ -189,7 +189,7 @@ private:
             return 0;
         // Combat and control of another unit stay with that unit's simulation. Ordinary balancing
         // lets a taxi flight finish on its current node.
-        if (inCombat || flying || duel !is null || tradeSide !is null || charmed !is null || npcCharmer)
+        if (inCombat || taxi.flying || duel !is null || tradeSide !is null || charmed !is null || npcCharmer)
             return 0;
         // A gateway owns no ground, including the edge between two world nodes.
         const margin = context.config.cluster.gateway ? 0 : migrationMargin;
@@ -913,7 +913,7 @@ private:
         updateTotems();
         updateTotemEnchants();
         updatePetMood(elapsed);
-        updateTaxi(cast(int) elapsed.total!"msecs");
+        taxi.updateTaxi(cast(int) elapsed.total!"msecs");
         player.soberUp(cast(int) elapsed.total!"msecs");
         updateCrowdControl(cast(int) elapsed.total!"msecs");
         updateReactives(cast(int) elapsed.total!"msecs");
@@ -1012,7 +1012,7 @@ private:
     package bool takeMovement(const MovementInfo movement, Opcode opcode)
     {
         // In flight, feared or disoriented the server moves the player (the client may still send heartbeats).
-        if (flying || !inControl)
+        if (taxi.flying || !inControl)
             return false;
         // A position the client cannot be at.
         const p = movement.position;

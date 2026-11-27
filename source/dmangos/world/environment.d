@@ -699,7 +699,7 @@ mixin template EnvironmentHandlers()
         final switch (type)
         {
         case MirrorTimerType.fatigue:
-            return (environment & E.highSea) && !flying && !player.movement.has(MovementFlags.onTransport);
+            return (environment & E.highSea) && !taxi.flying && !player.movement.has(MovementFlags.onTransport);
         case MirrorTimerType.breath:
             return (environment & E.underwater) && breathingInterval;
         case MirrorTimerType.feignDeath:
@@ -942,7 +942,7 @@ mixin template EnvironmentHandlers()
      */
     package void landed(const MovementInfo movement)
     {
-        if (flying || player.deathState != DeathState.alive || spared
+        if (taxi.flying || player.deathState != DeathState.alive || spared
             || player.movement.has(MovementFlags.onTransport) || player.auras.has(AuraType.hover)
             || player.auras.has(AuraType.featherFall) || immuneToSchools(1))
             return;

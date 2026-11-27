@@ -54,7 +54,7 @@ import dmangos.world.mailhandlers : MailHandlers;
 import dmangos.world.reputationhandlers : ReputationHandlers;
 import dmangos.world.gameobjecthandlers : GameObjectHandlers;
 import dmangos.world.auctionhandlers : AuctionHandlers;
-import dmangos.world.taxihandlers : TaxiHandlers;
+import dmangos.world.taxihandlers : Taxi;
 import dmangos.world.crowdcontrol : CrowdControlHandlers;
 import dmangos.world.mounting : MountRules;
 import dmangos.world.guardians : GuardianSummons;
@@ -95,7 +95,7 @@ import dmangos.world.packets;
 
 import dmangos.world.session : WorldSession, WorldState;
 
-private alias Handles = HandlesFor!(Opcode, WorldState);
+package alias Handles = HandlesFor!(Opcode, WorldState);
 
 /// See the module documentation.
 final class Character : OnlinePlayer, Looter
@@ -103,7 +103,9 @@ final class Character : OnlinePlayer, Looter
     /// The connection its client talks through (here, or relaying to its home node).
     WorldSession connection;
 
-    mixin PacketDispatch!Handles;
+    mixin PacketDispatch!(Handles, "taxi");
+
+    Taxi taxi; /// flight masters and the flight under way (`dmangos.world.taxihandlers`)
 
     package
     {
@@ -154,6 +156,7 @@ final class Character : OnlinePlayer, Looter
     {
         this.connection = connection;
         this.context = context;
+        taxi = new Taxi(this);
     }
 
     /// One of the player's packets (the connection's protocol state `state`): handled here, or not one of its.
@@ -591,7 +594,7 @@ final class Character : OnlinePlayer, Looter
         import std.math : sqrt;
         import dmangos.world.movement : jumpGravity, SpellPullMotion;
 
-        if (player is null || flying || !inControl || teleporting != Teleport.none)
+        if (player is null || taxi.flying || !inControl || teleporting != Teleport.none)
             return;
         const start = player.position;
         const dx = caster.x - start.x, dy = caster.y - start.y;
@@ -923,7 +926,6 @@ private:
     mixin ReputationHandlers;
     mixin GameObjectHandlers;
     mixin AuctionHandlers;
-    mixin TaxiHandlers;
     mixin CrowdControlHandlers;
     mixin MountRules;
     mixin GuardianSummons;

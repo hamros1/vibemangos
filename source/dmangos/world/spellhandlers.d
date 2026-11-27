@@ -68,7 +68,7 @@ private:
     /// A persistent area aura's spot under way (`dmangos.world.spellareas`).
     alias PersistentArea = imported!"dmangos.world.spellareas".PersistentArea;
 
-    Casting generic;                 // the spell being cast (with a cast time), if any
+    package Casting generic;         // the spell being cast (with a cast time), if any
 
     private static struct CastHandoff
     {
@@ -198,7 +198,7 @@ private:
             if (auto replica = cast(Replica) map.findObject(targets.unit))
                 if (replica.fields.type == TypeId.player && context.onlinePlayer(targets.unit) is null)
                 {
-                    const result = duel is null && !inCombat && !flying
+                    const result = duel is null && !inCombat && !taxi.flying
                         ? checkCast(spell, targets, false, 0, true, replica) : SpellCastResult.badTargets;
                     if (result == SpellCastResult.ok
                         && actAtReplica(targets.unit, ArrivalAction(0, id, targets.unit)))
@@ -375,7 +375,7 @@ private:
             result = SpellCastResult.badTargets;
         else if (inCombat)
             result = SpellCastResult.affectingCombat;
-        else if (flying)
+        else if (taxi.flying)
             result = SpellCastResult.notOnTaxi;
         else if (channelSpell !is null || nextSwing.active || autoRepeat !is null || pendingHits.length
             || persistentAreas.length)
@@ -452,7 +452,7 @@ private:
                     return;
             const target = spell.id == dominionOfSoul ? 0 : explicitItemTarget(*spell, targets);
             if (auto replica = cast(Replica) map.findObject(target))
-                if (replica.fieldsOf.type != TypeId.player || (!inCombat && !flying && isPlayerHandoffSpell(*spell)
+                if (replica.fieldsOf.type != TypeId.player || (!inCombat && !taxi.flying && isPlayerHandoffSpell(*spell)
                     && checkCast(spell, targets, false, proto.entry, true, replica, true) == SpellCastResult.ok))
                     if (actAtReplica(target, ArrivalAction(useItem: item.fullGuid, castTargets: targets)))
                         return;
@@ -1100,7 +1100,7 @@ private:
     }
 
     /// The cast in progress stops; the player and everyone around are told.
-    void interruptCast(SpellCastResult reason)
+    package void interruptCast(SpellCastResult reason)
     {
         if (!generic.active)
             return;

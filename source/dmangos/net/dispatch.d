@@ -82,56 +82,69 @@ struct Handles(Op, State) if (is(State == enum))
  * from its `@Attribute`-tagged `handle*` methods. `Attribute` is an
  * instance of `Handles`. Two handlers for one opcode are a compile error.
  */
-mixin template PacketDispatch(Attribute)
+mixin template PacketDispatch(Attribute, parts...)
 {
     private DispatchResult dispatchPacket(Attribute.OpcodeType opcode, Attribute.StateType state,
         ref ByteReader reader)
     {
+        import std.meta : AliasSeq;
         import std.traits : Parameters, Unqual;
         import dmangos.serialization : deserialize;
 
-        alias Self = typeof(this);
-        // A route on a method not named handle*, or on one of several overloads, would never be taken (the
-        // overloads' attributes are not all seen): both refuse to compile.
-        static foreach (member; __traits(allMembers, Self))
-            static if (__traits(compiles, __traits(getOverloads, Self, member)))
-                static foreach (overload; __traits(getOverloads, Self, member))
-                    static foreach (route; __traits(getAttributes, overload))
-                        static if (is(typeof(route) == Attribute))
-                        {
-                            static assert(member.length > 6 && member[0 .. 6] == "handle",
-                                member ~ " has a route, so it must be named handle...");
-                            static assert(__traits(getOverloads, Self, member).length == 1,
-                                member ~ " has a route and is overloaded: give the overloads different names");
-                        }
+        // The session's own handlers (`""`), then those of each of its parts (a field holding an object).
+        static foreach (part; AliasSeq!("", parts))
+        {
+            // A route on a method not named handle*, or on one of several overloads, would never be taken (the
+            // overloads' attributes are not all seen): both refuse to compile.
+            static foreach (member; __traits(allMembers, typeof(mixin("this" ~ (part.length ? "." ~ part : "")))))
+                static if (__traits(compiles, __traits(getOverloads,
+                        typeof(mixin("this" ~ (part.length ? "." ~ part : ""))), member)))
+                    static foreach (overload; __traits(getOverloads,
+                            typeof(mixin("this" ~ (part.length ? "." ~ part : ""))), member))
+                        static foreach (route; __traits(getAttributes, overload))
+                            static if (is(typeof(route) == Attribute))
+                            {
+                                static assert(member.length > 6 && member[0 .. 6] == "handle",
+                                    member ~ " has a route, so it must be named handle...");
+                                static assert(__traits(getOverloads,
+                                    typeof(mixin("this" ~ (part.length ? "." ~ part : ""))), member).length == 1,
+                                    member ~ " has a route and is overloaded: give the overloads different names");
+                            }
+        }
         switch (opcode)
         {
-            static foreach (member; __traits(allMembers, Self))
+            static foreach (part; AliasSeq!("", parts))
             {
-                static if (member.length > 6 && member[0 .. 6] == "handle")
+                static foreach (member; __traits(allMembers, typeof(mixin("this" ~ (part.length ? "." ~ part : "")))))
                 {
-                    static foreach (route; __traits(getAttributes, __traits(getMember, Self, member)))
+                    static if (member.length > 6 && member[0 .. 6] == "handle")
                     {
-                        static if (is(typeof(route) == Attribute))
+                        static foreach (route; __traits(getAttributes,
+                                __traits(getMember, typeof(mixin("this" ~ (part.length ? "." ~ part : ""))), member)))
                         {
-                            static foreach (code; route.opcodes)
+                            static if (is(typeof(route) == Attribute))
                             {
-        case code:
+                                static foreach (code; route.opcodes)
+                                {
+            case code:
+                                }
+                                if (!route.allows(state))
+                                    return DispatchResult.wrongState;
+                                {
+                                    auto receiver = mixin("this" ~ (part.length ? "." ~ part : ""));
+                                    alias Params = Parameters!(__traits(getMember, receiver, member));
+                                    static if (Params.length == 0)
+                                        __traits(getMember, receiver, member)();
+                                    else static if (is(Params[0] == ByteReader))
+                                        __traits(getMember, receiver, member)(reader);
+                                    else static if (Params.length == 1)
+                                        __traits(getMember, receiver, member)(deserialize!(Unqual!(Params[0]))(reader));
+                                    else
+                                        __traits(getMember, receiver, member)(deserialize!(Unqual!(Params[0]))(reader),
+                                            opcode);
+                                }
+                                return DispatchResult.handled;
                             }
-                            if (!route.allows(state))
-                                return DispatchResult.wrongState;
-                            {
-                                alias Params = Parameters!(__traits(getMember, Self, member));
-                                static if (Params.length == 0)
-                                    __traits(getMember, this, member)();
-                                else static if (is(Params[0] == ByteReader))
-                                    __traits(getMember, this, member)(reader);
-                                else static if (Params.length == 1)
-                                    __traits(getMember, this, member)(deserialize!(Unqual!(Params[0]))(reader));
-                                else
-                                    __traits(getMember, this, member)(deserialize!(Unqual!(Params[0]))(reader), opcode);
-                            }
-                            return DispatchResult.handled;
                         }
                     }
                 }
@@ -154,6 +167,7 @@ unittest
         bye = 3,
         left = 4,
         right = 5,
+        knock = 6,
     }
 
     enum State
@@ -169,9 +183,28 @@ unittest
         ubyte sequence;
     }
 
+    static final class Door // a part of the machine: its handlers are the machine's too
+    {
+        string[]* log;
+
+        @On(Op.knock, State.ready)
+        void handleKnock()
+        {
+            *log ~= "knock";
+        }
+    }
+
     static final class Machine
     {
-        mixin PacketDispatch!On;
+        mixin PacketDispatch!(On, "door");
+
+        Door door;
+
+        this()
+        {
+            door = new Door;
+            door.log = &log;
+        }
 
         string[] log;
 
@@ -216,5 +249,7 @@ unittest
     assert(machine.feed(Op.right, State.ready, seven) == DispatchResult.handled);
     assert(machine.feed(Op.left, State.fresh, seven) == DispatchResult.wrongState);
     assert(machine.feed(Op.hello, State.ready, null) == DispatchResult.wrongState);
-    assert(machine.log == ["hello", "ping 7", "bye, 1 bytes", "right 7"]);
+    assert(machine.feed(Op.knock, State.ready, null) == DispatchResult.handled); // a part's route
+    assert(machine.feed(Op.knock, State.fresh, null) == DispatchResult.wrongState);
+    assert(machine.log == ["hello", "ping 7", "bye, 1 bytes", "right 7", "knock"]);
 }

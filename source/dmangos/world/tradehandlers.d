@@ -268,7 +268,7 @@ private:
             return sendTradeStatus(TradeStatus.targetTooFar);
         ArrivalAction action;
         action.tradeTarget = target;
-        if (inCombat || flying || !actAtReplica(target, action))
+        if (inCombat || taxi.flying || !actAtReplica(target, action))
             sendTradeStatus(TradeStatus.busy);
     }
 

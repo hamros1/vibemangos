@@ -1712,7 +1712,7 @@ mixin template PetHandlers()
             auto state = ByteReader(fromHex(saved));
             const home = connection.gatewayHome;
             const version_ = state.read!ubyte;
-            if (state.read!ushort == home.node && state.read!ulong == home.incarnation && player.alive && !flying)
+            if (state.read!ushort == home.node && state.read!ulong == home.incarnation && player.alive && !taxi.flying)
             {
                 if (version_ == 1)
                     restorePlayerSummons(state, true);
@@ -1836,7 +1836,7 @@ mixin template PetHandlers()
         import dmangos.world.player : DeathState;
 
         // Not in flight: it comes back at the landing (`Player::IsPetNeedBeTemporaryUnsummoned`).
-        if (pet_ !is null || player is null || player.deathState != DeathState.alive || flying)
+        if (pet_ !is null || player is null || player.deathState != DeathState.alive || taxi.flying)
             return;
         foreach (r; savedPets())
             if (r.slot == PetSlot.current)

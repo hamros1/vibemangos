@@ -1005,7 +1005,7 @@ private final class NpcSweeper
                     checked = false;
                 break;
             case sendTaxi: // the player on the path
-                if (!me.flying)
+                if (!me.taxi.flying)
                     failed = "the player not flying";
                 break;
             case resurrect, resurrectNew: // the dead player offered to come back

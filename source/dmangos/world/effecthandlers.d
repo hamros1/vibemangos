@@ -521,7 +521,7 @@ mixin template EffectHandlers()
         import dmangos.world.player : DeathState;
 
         enum uint hearthstoneSpell = 8690, hearthstoneItem = 6948;
-        if (flying)
+        if (taxi.flying)
             return;
         if (player.deathState == DeathState.ghost)
             return repopAtGraveyard();

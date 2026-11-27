@@ -374,7 +374,7 @@ mixin template CharacterLogin()
         readSaved(() => loadItemDurations(player.data.logoutTime > 0 ? context.unixTime - player.data.logoutTime : 0));
         applyPassiveSpells();
         petsOnArrival(); // the saved current pet comes back
-        resumeSavedFlight(); // logged out in flight: it flies on
+        taxi.resumeSavedFlight(); // logged out in flight: it flies on
         openPartySummonCheckpoint(checkpoints);
         openSummonCheckpoint(checkpoints);
         info!"%s: '%s' entered the world as '%s' (guid %s, map %s at %.1f %.1f %.1f)"(remoteAddress,

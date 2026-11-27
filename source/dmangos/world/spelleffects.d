@@ -540,7 +540,7 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
     {
         auto who = p !is null && target == caster.guid ? p : cast(typeof(p)) context.onlinePlayer(target);
         if (who !is null && who.player !is null && spell.miscValue[i] > 0)
-            who.flyTaxiPath(cast(uint) spell.miscValue[i]);
+            who.taxi.flyTaxiPath(cast(uint) spell.miscValue[i]);
         break;
     }
     case SpellEffect.summonDemon: // SPELL_EFFECT_SUMMON_DEMON: a creature's (Inferno): its demons at the destination
