@@ -203,6 +203,11 @@ struct ShutdownTimer
  */
 final class WorldContext : GroupDirectory, IdCounters, SessionHandler
 {
+    import dmangos.world.spawnediting : SpawnEditor;
+
+    /// See `dmangos.world.spawnediting`.
+    SpawnEditor spawnEditor;
+
     import dmangos.world.scourge : InvasionFollower;
 
     /// See `dmangos.world.scourge`.
@@ -3079,6 +3084,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         LoginDatabase accounts = null, Battlegroup sharedBattles = null)
     in (database !is null && data !is null && client !is null)
     {
+        spawnEditor = new SpawnEditor(this);
         invasionHere = new InvasionFollower(this);
         calendar = new EventCalendar(this);
         links = new Linking(this);
@@ -4799,7 +4805,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     {
         return spawn.guid < temporaryCounterStart && spawn.respawnSeconds >= 0
             && proto.type != GameObjectType.transport && proto.type != GameObjectType.moTransport
-            && spawn.guid !in unsavedGameObjectSpawns && !gameObjectPools.manages(spawn.guid)
+            && spawn.guid !in spawnEditor.unsavedGameObjectSpawns && !gameObjectPools.manages(spawn.guid)
             && (data.pools is null || !data.pools.inPool(PoolMember.Kind.gameObject, spawn.guid));
     }
 
@@ -5249,7 +5255,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                     saved.respawnSeconds = old.respawnSeconds;
                     if (saved == old || (!contains(old.x, old.y) && !contains(saved.x, saved.y)))
                         continue;
-                    replaceGameObjectSpawn(*index, saved);
+                    spawnEditor.replaceGameObjectSpawn(*index, saved);
                     edited ~= *index;
                     if (const template_ = old.entry in data.gameObjectTemplates)
                         movedElevator |= template_.type == GameObjectType.transport;
@@ -5946,7 +5952,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                 if (saved.isNull || saved.get.entry !in data.creatureTemplates
                     || !atHome(saved.get.map, saved.get.x, saved.get.y, saved.get.z))
                     return null;
-                registerCreatureSpawn(saved.get);
+                spawnEditor.registerCreatureSpawn(saved.get);
             }
             else if (durable && migrant.kind == MigrantKind.gameObject && migrant.spawn !in gameObjectSpawnIndex)
             {
@@ -5956,7 +5962,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                 const template_ = saved.get.entry in data.gameObjectTemplates;
                 if (template_ is null || template_.type == GameObjectType.moTransport)
                     return null;
-                registerGameObjectSpawn(saved.get);
+                spawnEditor.registerGameObjectSpawn(saved.get);
                 if (template_.type == GameObjectType.transport)
                     fleet.refreshElevatorHomes(destination);
             }
@@ -5976,7 +5982,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                     return null;
                 if (placement != *previous)
                 {
-                    replaceGameObjectSpawn(*index, placement);
+                    spawnEditor.replaceGameObjectSpawn(*index, placement);
                     if (const template_ = placement.entry in data.gameObjectTemplates)
                         if (template_.type == GameObjectType.transport)
                             fleet.refreshElevatorHomes(destination);
@@ -6062,7 +6068,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
             foreach (ref saved; database.savedCreatureSpawnsAfter(initialCreatureSpawn))
                 if (saved.guid < temporaryCounterStart && saved.guid !in spawnIndex && saved.entry in data.creatureTemplates
                     && gainedHome(saved.map, saved.x, saved.y, saved.z, saved.orientation))
-                    registerCreatureSpawn(saved);
+                    spawnEditor.registerCreatureSpawn(saved);
             foreach (ref saved; database.savedGameObjectSpawnsAfter(initialGameObjectSpawn))
             {
                 if (saved.guid >= temporaryCounterStart || saved.guid in gameObjectSpawnIndex
@@ -6071,7 +6077,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                 const template_ = saved.entry in data.gameObjectTemplates;
                 if (template_ is null || template_.type == GameObjectType.moTransport)
                     continue;
-                registerGameObjectSpawn(saved);
+                spawnEditor.registerGameObjectSpawn(saved);
                 if (template_.type == GameObjectType.transport)
                 {
                     fleet.longElevatorHomes.remove(saved.map);
@@ -6084,7 +6090,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
             warning!"could not discover newly saved spawns for gained regions: %s"(error.msg);
     }
 
-    private void indexSpawns()
+    package void indexSpawns()
     {
         foreach (i; indexedCreatureSpawns .. data.creatureSpawns.length)
             spawnIndex[data.creatureSpawns[i].guid] = i;
@@ -6416,7 +6422,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     // -----------------------------------------------------------------------
 
     /// Creatures that are dead now: spawn guid -> when they come back (Unix time), as `creature_respawn` has it.
-    private long[uint] respawnAt;
+    package long[uint] respawnAt;
     private MonoTime lastRespawnCheck;
     private InstanceCorpseRecord[uint] outdoorCorpses;
 
@@ -6929,228 +6935,15 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     // Spawns made and deleted by GMs (`.npc spawn`, `.gobject spawn`, the deletes)
     // -----------------------------------------------------------------------
 
-    private bool[uint] unsavedGameObjectSpawns;
 
-    /**
-     * A new `creature` row of `entry` at `at` on `map` (saved, in the world data and its cell, so that
-     * it comes back when the cell loads again), and its creature there now; null if it cannot be made.
-     */
-    Creature spawnCreatureAt(Map map, uint entry, Position at)
-    {
-        import dmangos.log : warning;
-        import dmangos.mysql : DatabaseException;
 
-        if (!canWrite() || entry !in data.creatureTemplates)
-            return null;
-        CreatureSpawn spawn = {entry: entry, map: map.id, x: at.x, y: at.y, z: at.z,
-            orientation: at.orientation, respawnSeconds: 120, respawnSecondsMax: 120};
-        try
-            spawn.guid = database.createCreatureSpawn(spawn);
-        catch (DatabaseException error)
-        {
-            warning!"could not save the new creature spawn %s: %s"(entry, error.msg);
-            return null;
-        }
-        if (!spawn.guid)
-            return null;
-        // Load the other spawns first so addObject installs and returns this creature.
-        map.loadCell(cellKeyAt(spawn.x, spawn.y));
-        const index = registerCreatureSpawn(spawn);
-        auto creature = makeCreature(&data.creatureSpawns[index]);
-        if (creature is null)
-            return null;
-        creature.instanceId = map.instanceId;
-        map.addObject(creature);
-        return creature;
-    }
 
-    private size_t registerCreatureSpawn(const ref CreatureSpawn spawn)
-    {
-        const index = data.creatureSpawns.length;
-        data.creatureSpawns ~= spawn;
-        data.creatureCells.require(spawn.map, null).require(cellKeyAt(spawn.x, spawn.y), null) ~= index;
-        spawnIndex[spawn.guid] = index;
-        return index;
-    }
 
-    /// The creature's spawn deleted: gone from the map, the world data's cell and the database.
-    bool deleteCreatureSpawn(Map map, Creature creature)
-    {
-        import std.algorithm.mutation : remove;
-        import dmangos.world.grid : cellKeyAt;
 
-        const s = creature.spawn;
-        if (!canWrite())
-            return false;
-        indexSpawns();
-        if (s.guid in spawnIndex && !eraseSavedSpawn(s.guid, false))
-            return false;
-        if (auto cells = s.map in data.creatureCells)
-            if (auto list = cellKeyAt(s.x, s.y) in *cells)
-                foreach (i, index; *list)
-                    if (data.creatureSpawns[index].guid == s.guid)
-                    {
-                        *list = (*list).remove(i);
-                        break;
-                    }
-        respawnAt.remove(s.guid);
-        spawnIndex.remove(s.guid);
-        map.removeObject(creature.guid);
-        return true;
-    }
 
-    /// A new `gameobject` row of `entry` at `at` (facing as it), and its object there now; null if unknown.
-    GameObject spawnGameObjectAt(Map map, uint entry, Position at, bool save)
-    {
-        import std.math : cos, sin;
-        import dmangos.log : warning;
-        import dmangos.mysql : DatabaseException;
 
-        if (!canWrite() || entry !in data.gameObjectTemplates)
-            return null;
-        GameObjectSpawn spawn = {entry: entry, map: map.id, x: at.x, y: at.y, z: at.z,
-            orientation: at.orientation, rotation: [0, 0, sin(at.orientation / 2), cos(at.orientation / 2)]};
-        if (save)
-        {
-            try
-                spawn.guid = database.createGameObjectSpawn(spawn);
-            catch (DatabaseException error)
-            {
-                warning!"could not save the new game object spawn %s: %s"(entry, error.msg);
-                return null;
-            }
-            if (!spawn.guid)
-                return null;
-        }
-        else
-        {
-            spawn.guid = nextTemporaryCounter();
-            unsavedGameObjectSpawns[spawn.guid] = true;
-        }
-        map.loadCell(cellKeyAt(spawn.x, spawn.y));
-        const index = registerGameObjectSpawn(spawn);
-        auto go = makeGameObject(data.gameObjectSpawns[index]);
-        go.instanceId = map.instanceId;
-        if (go.type == GameObjectType.transport)
-            fleet.refreshElevatorHomes(map);
-        map.addObject(go);
-        return go;
-    }
 
-    private size_t registerGameObjectSpawn(const ref GameObjectSpawn spawn)
-    {
-        const index = data.gameObjectSpawns.length;
-        data.gameObjectSpawns ~= spawn;
-        data.gameObjectCells.require(spawn.map, null).require(cellKeyAt(spawn.x, spawn.y), null) ~= index;
-        gameObjectSpawnIndex[spawn.guid] = index;
-        return index;
-    }
 
-    /**
-     * The game object's spawn changed (moved, turned): its row and the world data rewritten, and the
-     * object made anew from it, so that the clients see it there. Returns null if it could not save.
-     */
-    GameObject respawnGameObjectAs(Map map, GameObject go, GameObjectSpawn changed)
-    {
-        import dmangos.log : warning;
-        import dmangos.mysql : DatabaseException;
-
-        if (!canWrite())
-            return null;
-        const home = cellKeyAt(changed.x, changed.y);
-        if (!map.instanceId && ownsCell !is null && !ownsCell(changed.map, home))
-            return null;
-        indexSpawns();
-        const at = go.spawn.guid in gameObjectSpawnIndex;
-        if (at is null)
-            return null;
-        if (changed.guid !in unsavedGameObjectSpawns)
-            try
-            {
-                if (!database.updateGameObjectPlacement(changed))
-                    return null;
-            }
-            catch (DatabaseException error)
-            {
-                warning!"could not save changes to game object %s: %s"(changed.guid, error.msg);
-                return null;
-            }
-        if (home != cellKeyAt(go.spawn.x, go.spawn.y))
-            map.loadCell(home);
-        replaceGameObjectSpawn(*at, changed);
-        map.removeObject(go.guid);
-        auto made = makeGameObject(data.gameObjectSpawns[*at]);
-        made.instanceId = map.instanceId;
-        if (made.type == GameObjectType.transport)
-            fleet.refreshElevatorHomes(map);
-        map.addObject(made);
-        return made;
-    }
-
-    /// Adjust a saved spawn and its cell index together, on a GM edit or at region arrival.
-    private void replaceGameObjectSpawn(size_t at, const ref GameObjectSpawn changed)
-    {
-        import std.algorithm.mutation : remove;
-
-        const old = data.gameObjectSpawns[at];
-        const oldCell = cellKeyAt(old.x, old.y), newCell = cellKeyAt(changed.x, changed.y);
-        if (old.map != changed.map || oldCell != newCell)
-        {
-            if (auto cells = old.map in data.gameObjectCells)
-                if (auto list = oldCell in *cells)
-                    foreach (i, index; *list)
-                        if (index == at)
-                        {
-                            *list = (*list).remove(i);
-                            break;
-                        }
-            data.gameObjectCells.require(changed.map, null).require(newCell, null) ~= at;
-        }
-        data.gameObjectSpawns[at] = changed;
-    }
-
-    /// The game object's spawn deleted: gone from the map, the world data's cell and the database.
-    bool deleteGameObjectSpawn(Map map, GameObject go)
-    {
-        import std.algorithm.mutation : remove;
-        import dmangos.world.grid : cellKeyAt;
-
-        const s = go.spawn;
-        if (!canWrite())
-            return false;
-        indexSpawns();
-        if (s.guid in gameObjectSpawnIndex && s.guid !in unsavedGameObjectSpawns && !eraseSavedSpawn(s.guid, true))
-            return false;
-        if (auto cells = s.map in data.gameObjectCells)
-            if (auto list = cellKeyAt(s.x, s.y) in *cells)
-                foreach (i, index; *list)
-                    if (data.gameObjectSpawns[index].guid == s.guid)
-                    {
-                        *list = (*list).remove(i);
-                        break;
-                    }
-        gameObjectRespawnAt.remove(s.guid);
-        gameObjectSpawnIndex.remove(s.guid);
-        unsavedGameObjectSpawns.remove(s.guid);
-        map.removeObject(go.guid);
-        if (go.type == GameObjectType.transport)
-            fleet.refreshElevatorHomes(map);
-        return true;
-    }
-
-    private bool eraseSavedSpawn(uint guid, bool gameObject)
-    {
-        import dmangos.log : warning;
-        import dmangos.mysql : DatabaseException;
-
-        try
-            return database.eraseSavedSpawn(guid, gameObject);
-        catch (DatabaseException error)
-        {
-            warning!"could not delete world spawn %s: %s"(guid, error.msg);
-            return false;
-        }
-    }
 
     /**
      * A trap (`GAMEOBJECT_TYPE_TRAP`) a player stepped near: one not friendly
@@ -8258,7 +8051,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     }
 
     /// Game objects used up: spawn guid -> when they come back (Unix time), as `gameobject_respawn` has it.
-    private long[uint] gameObjectRespawnAt;
+    package long[uint] gameObjectRespawnAt;
     private GameObjectPools gameObjectPools;
     private InstanceChestRecord[uint] outdoorChests;
 
@@ -8317,7 +8110,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         if (go.instanceId)
             return isInstanceReward(go);
         if (!config.cluster.enabled || go.spawn.guid >= temporaryCounterStart || go.type != GameObjectType.chest
-            || !go.consumable || go.spawn.guid in unsavedGameObjectSpawns)
+            || !go.consumable || go.spawn.guid in spawnEditor.unsavedGameObjectSpawns)
             return false;
         if (go.spawn.respawnSeconds < 0)
             return durableScriptedSpawn(go.spawn, *go.template_)
@@ -9782,7 +9575,7 @@ unittest
     to.data.gameObjectTemplates[template_.entry] = template_;
     auto copy = from.battlegrounds.open(instance, BattlegroundType.warsongGulch);
     auto field = from.map(mapWarsongGulch, instance);
-    auto ground = from.spawnGameObjectAt(field, template_.entry, at, true);
+    auto ground = from.spawnEditor.spawnGameObjectAt(field, template_.entry, at, true);
     assert(ground !is null);
     copy.status = BattlegroundStatus.inProgress;
     copy.testing = true;
@@ -9838,7 +9631,7 @@ unittest
     to.data.gameObjectTemplates[banner.entry] = banner;
     auto match = from.battlegrounds.open(instance, BattlegroundType.warsongGulch);
     auto map = from.map(mapWarsongGulch, instance);
-    auto flag = from.spawnGameObjectAt(map, banner.entry, Position(1500, 1480, 353), true);
+    auto flag = from.spawnEditor.spawnGameObjectAt(map, banner.entry, Position(1500, 1480, 353), true);
     assert(flag !is null);
     match.status = BattlegroundStatus.inProgress;
     match.setWorldState(stateCapturesAlliance, 1);
@@ -9883,7 +9676,7 @@ unittest
     const at = Position(-8930, -120, 83.53f);
     auto oldMap = from.map(0), newMap = to.map(0);
     auto summon = from.summonWildGameObject(oldMap, template_.entry, at, 5);
-    auto focus = from.spawnGameObjectAt(oldMap, template_.entry, at, true);
+    auto focus = from.spawnEditor.spawnGameObjectAt(oldMap, template_.entry, at, true);
     focus.forceDespawn(oldMap, 700);
     focus.tick(oldMap, 100);
 
@@ -9938,8 +9731,8 @@ unittest
         context.data.spells.spells[slow] = snare;
     }
     auto oldMap = oldOwner.map(0), newMap = newOwner.map(0);
-    auto creature = oldOwner.spawnCreatureAt(oldMap, creatureInnkeeper, at);
-    auto object = oldOwner.spawnGameObjectAt(oldMap, door.entry, at, true);
+    auto creature = oldOwner.spawnEditor.spawnCreatureAt(oldMap, creatureInnkeeper, at);
+    auto object = oldOwner.spawnEditor.spawnGameObjectAt(oldMap, door.entry, at, true);
     assert(oldMap.findObject(creature.guid) is creature && oldMap.findObject(object.guid) is object);
     creature.values.set!UNIT_FIELD_MAXHEALTH(100u);
     creature.values.set!UNIT_FIELD_HEALTH(1u);
@@ -10147,7 +9940,7 @@ unittest
         row.skills = [NewSkill(182, 10, 75)];
     });
     auto oldMap = source.map(0), newMap = destination.map(0);
-    auto chest = source.spawnGameObjectAt(oldMap, template_.entry, at, true);
+    auto chest = source.spawnEditor.spawnGameObjectAt(oldMap, template_.entry, at, true);
     assert(chest !is null);
     auto character = cast(Player) client.session.character;
     ByteWriter open;
@@ -10223,7 +10016,7 @@ unittest
     foreach (world; [from, to])
     {
         world.data.gameObjectTemplates[template_.entry] = template_;
-        world.registerGameObjectSpawn(original);
+        world.spawnEditor.registerGameObjectSpawn(original);
     }
     auto source = from.map(0);
     const oldHome = cellKeyAt(original.x, original.y);
@@ -10236,11 +10029,11 @@ unittest
     changed.rotation = [0, 0, 0.68f, 0.73f];
     const newHome = cellKeyAt(changed.x, changed.y);
     from.ownsCell = (uint, ulong cell) => cell == oldHome;
-    assert(from.respawnGameObjectAs(source, old, changed) is null);
+    assert(from.spawnEditor.respawnGameObjectAs(source, old, changed) is null);
     assert(db.savedGameObjectSpawn(original.guid).get == original && source.gameObjectAt(old.guid) is old);
     // Both cells are now on the same owner. The command can move the object between them.
     from.ownsCell = (uint, ulong) => true;
-    auto moved = from.respawnGameObjectAs(source, old, changed);
+    auto moved = from.spawnEditor.respawnGameObjectAs(source, old, changed);
     assert(moved !is null && moved.spawn == changed && db.savedGameObjectSpawn(original.guid).get == changed);
     moved.useDoorOrButton(source);
 
@@ -10283,7 +10076,7 @@ unittest
     foreach (world; [from, to])
     {
         world.data.gameObjectTemplates[door.entry] = door;
-        world.registerGameObjectSpawn(original);
+        world.spawnEditor.registerGameObjectSpawn(original);
     }
     const guid = makeGuid(HighGuid.gameObject, door.entry, original.guid);
     const oldHome = cellKeyAt(original.x, original.y);
@@ -10294,7 +10087,7 @@ unittest
     changed.orientation = 1.5f;
     changed.rotation = [0, 0, 0.68f, 0.73f];
     const newHome = cellKeyAt(changed.x, changed.y);
-    assert(from.respawnGameObjectAs(oldMap, oldMap.gameObjectAt(guid), changed) !is null);
+    assert(from.spawnEditor.respawnGameObjectAs(oldMap, oldMap.gameObjectAt(guid), changed) !is null);
 
     // The replacement gets the new cell first. Its copy of the row still points into the old cell.
     auto replacement = to.map(0);
@@ -10343,8 +10136,8 @@ unittest
             node.clock = () => now;
             node.startClock = now;
             node.startUnixTime = oldOwner.startUnixTime;
-            node.registerCreatureSpawn(creature);
-            node.registerGameObjectSpawn(object);
+            node.spawnEditor.registerCreatureSpawn(creature);
+            node.spawnEditor.registerGameObjectSpawn(object);
             node.data.gameObjectTemplates[door.entry] = door;
         }
         bool moving;

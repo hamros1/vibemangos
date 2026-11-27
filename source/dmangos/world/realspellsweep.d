@@ -564,7 +564,7 @@ private struct Sweeper
             {
                 auto at = player.position;
                 at.y += 2;
-                context.spawnGameObjectAt(map, entry, at, false);
+                context.spawnEditor.spawnGameObjectAt(map, entry, at, false);
             }
         }
 

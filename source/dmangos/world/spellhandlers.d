@@ -6565,7 +6565,7 @@ unittest
     destination.clock = () => now;
     auto relay = new TestPlayerRelay(context, destination);
     auto nextMap = destination.map(0);
-    auto anchor = destination.spawnGameObjectAt(nextMap, school.entry, at, false);
+    auto anchor = destination.spawnEditor.spawnGameObjectAt(nextMap, school.entry, at, false);
     map.replicaCreated(2, cellKeyAt(at.x, at.y), anchor.guid, encodeState(anchor, 0));
     assert(anduin.session.inWorld.actAtReplica(anchor.guid, ArrivalAction.init));
     assert(relay.remote !is null && map.gameObjectAt(originalBobber) is null);

@@ -355,7 +355,7 @@ bool handleDeleteCommand(Character gm)
     if (creature is null)
         return true;
     const at = creature.position;
-    if (!gm.context.deleteCreatureSpawn(gm.map, creature))
+    if (!gm.context.spawnEditor.deleteCreatureSpawn(gm.map, creature))
     {
         gm.redSystemMessage("Could not delete the creature.");
         return true;
@@ -377,7 +377,7 @@ bool handleGameObjectSpawnCommand(Character gm, uint entry = 0, int save = 0)
         return true;
     }
     const at = gm.player.position;
-    auto go = gm.context.spawnGameObjectAt(gm.map, entry, at, save > 0);
+    auto go = gm.context.spawnEditor.spawnGameObjectAt(gm.map, entry, at, save > 0);
     if (go is null)
     {
         gm.redSystemMessage("Could not spawn the game object.");
@@ -395,7 +395,7 @@ bool handleGameObjectDeleteCommand(Character gm)
     auto go = gm.selectedGameObject(true);
     if (go is null)
         return true;
-    if (!gm.context.deleteGameObjectSpawn(gm.map, go))
+    if (!gm.context.spawnEditor.deleteGameObjectSpawn(gm.map, go))
     {
         gm.redSystemMessage("Could not delete the game object.");
         return true;
@@ -469,7 +469,7 @@ bool handleGameObjectMoveCommand(Character gm)
     changed.y = at.y;
     changed.z = at.z;
     changed.orientation = at.orientation;
-    if (auto moved = gm.context.respawnGameObjectAs(gm.map, go, changed))
+    if (auto moved = gm.context.spawnEditor.respawnGameObjectAs(gm.map, go, changed))
         gm.selectedGo = moved.guid;
     else
         gm.redSystemMessage("Could not move the game object.");
@@ -507,7 +507,7 @@ bool handleGameObjectRotateCommand(Character gm, string axis = null, float degre
         gm.redSystemMessage("Choose an axis: x, y, or o.");
         return true;
     }
-    if (auto rotated = gm.context.respawnGameObjectAs(gm.map, go, changed))
+    if (auto rotated = gm.context.spawnEditor.respawnGameObjectAs(gm.map, go, changed))
         gm.selectedGo = rotated.guid;
     else
         gm.redSystemMessage("Could not rotate the game object.");
@@ -1244,16 +1244,16 @@ unittest
     foreach (node; [left, right])
     {
         node.data.gameObjectTemplates[chair.entry] = chair;
-        assert(node.spawnCreatureAt(node.map(0), 6774, at) !is null);
-        assert(node.spawnGameObjectAt(node.map(0), chair.entry, at, true) !is null);
+        assert(node.spawnEditor.spawnCreatureAt(node.map(0), 6774, at) !is null);
+        assert(node.spawnEditor.spawnGameObjectAt(node.map(0), chair.entry, at, true) !is null);
     }
     assert(db.creatureSpawnRows.length == 2 && db.gameObjectSpawnRows.length == 2);
-    auto transient = right.spawnGameObjectAt(right.map(0), chair.entry, at, false);
+    auto transient = right.spawnEditor.spawnGameObjectAt(right.map(0), chair.entry, at, false);
     auto changed = cast(imported!"dmangos.world.gameobject".GameObjectSpawn) transient.spawn;
     changed.y += 1;
-    transient = right.respawnGameObjectAs(right.map(0), transient, changed);
+    transient = right.spawnEditor.respawnGameObjectAs(right.map(0), transient, changed);
     assert(transient.position.y == changed.y && db.gameObjectSpawnRows.length == 2);
-    right.deleteGameObjectSpawn(right.map(0), transient);
+    right.spawnEditor.deleteGameObjectSpawn(right.map(0), transient);
     assert(db.gameObjectSpawnRows.length == 2);
 }
 

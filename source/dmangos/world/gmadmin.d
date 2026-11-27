@@ -1324,7 +1324,7 @@ bool handleCreatureSpawnCommand(Character gm, uint entry = 0)
         return true;
     }
     const at = gm.player.position;
-    if (gm.context.spawnCreatureAt(gm.map, entry, at) is null)
+    if (gm.context.spawnEditor.spawnCreatureAt(gm.map, entry, at) is null)
     {
         gm.redSystemMessage("Could not spawn the creature.");
         return true;
