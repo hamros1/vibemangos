@@ -1299,6 +1299,50 @@ unittest
     assert(session.player.values.get!UNIT_FIELD_HEALTH == playerHealth, "the player it was cast at, five yards off, not");
 }
 
+/**
+ * What a creature's spell summons at the creature it names nearest it (`TARGET_LOCATION_SCRIPT_NEAR_CASTER`: a
+ * firework at its launcher) comes there, as CMaNGOS's `CheckScriptTargeting` sets the destination; not before it.
+ */
+unittest
+{
+    import dmangos.script.api : ActionResult;
+    import dmangos.world.gameobject : GameObject, GameObjectTemplate, GameObjectType;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.spellids : ImplicitTarget, SpellEffect;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    auto rexxar = loggedIn(context, db, 7, "Rexxar", Position(-8949.95f, -132.49f, 83.53f, 0), AccountLevel.player,
+        raceOrc); // a player there: the map's cells loaded
+    rexxar.read();
+    addPetData(&rexxar, context); // the wolf and boar templates
+    auto map = context.map(0);
+    enum uint rocketEntry = 91_507, launch = 97905;
+    GameObjectTemplate rocket = {entry: rocketEntry, type: GameObjectType.generic, displayId: 1, name: "Firework Rocket"};
+    context.data.gameObjectTemplates[rocketEntry] = rocket;
+    auto spell = testSpell(launch, SpellEffect.summonObjectWild, ImplicitTarget.locationScriptNearCaster, 30);
+    spell.miscValue[0] = rocketEntry;
+    context.data.spells.spells[launch] = spell;
+    context.data.spellScriptTargets[launch] = [boar];
+    auto caster = context.summonCreature(map, wolf, Position(-8945, -132.49f, 83.53f, 0), TempSpawnType.dead, 0, 0);
+    auto launcher = context.summonCreature(map, boar, Position(-8941, -132.49f, 83.53f, 0), TempSpawnType.dead, 0, 0);
+    assert(caster !is null && launcher !is null);
+    assert(caster.ai.castFor(map, launch, caster.guid, true) == ActionResult.ok);
+    bool atLauncher, beforeCaster;
+    foreach (o; map.objectsNear(caster.position, 30))
+        if (auto go = cast(GameObject) o)
+            if (go.template_.entry == rocketEntry)
+            {
+                const dl = (go.position.x - launcher.position.x) ^^ 2 + (go.position.y - launcher.position.y) ^^ 2;
+                const dc = (go.position.x - caster.position.x) ^^ 2 + (go.position.y - caster.position.y) ^^ 2;
+                atLauncher |= dl < 1;
+                beforeCaster |= dc < 4;
+            }
+    assert(atLauncher && !beforeCaster, "the rocket at its launcher, not before the caster");
+}
+
 /// A creature's spell at its friends around it (`TARGET_ENUM_UNITS_FRIEND_AOE_AT_SRC_LOC`: a Battle Command)
 /// reaches itself and the friend beside it, and not the player's pet there.
 unittest

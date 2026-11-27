@@ -1459,6 +1459,37 @@ mixin template CreatureCasting()
                         c.targets.dest = [other.position.x, other.position.y, other.position.z];
                     }
             }
+        // A destination at what its spell names nearest it (`TARGET_LOCATION_SCRIPT_NEAR_CASTER`, `spell_script_target`,
+        // a creature before an object: CMaNGOS's `CheckScriptTargeting`), within its range: what it summons comes there
+        // (Rockwing Gargoyles at their statue, a firework at its launcher). None named or near: before it, as before.
+        foreach (i; 0 .. 3)
+            if (spell.effect[i] && spell.implicitTargetA[i] == ImplicitTarget.locationScriptNearCaster
+                    && !(c.targets.mask & TargetFlags.destLocation) && lore !is null)
+            {
+                import dmangos.world.spellselection : namedCreatureRange, nearestNamedCreature, nearestNamedGameObject;
+
+                const reach = namedCreatureRange(*spell, lore.clientData);
+                bool found;
+                Position at;
+                if (const entries = lore.spellScriptTargets(spell.id, i))
+                    if (auto nearest = nearestNamedCreature(world_, me.position, reach, entries, me.guid, false))
+                    {
+                        at = nearest.position;
+                        found = true;
+                    }
+                if (!found && context !is null)
+                    if (const objects = spell.id in context.data.spellScriptObjects)
+                        if (auto object = nearestNamedGameObject(world_, me.position, reach, i, *objects, false))
+                        {
+                            at = object.position;
+                            found = true;
+                        }
+                if (found)
+                {
+                    c.targets.mask |= TargetFlags.destLocation;
+                    c.targets.dest = [at.x, at.y, at.z];
+                }
+            }
         auto caster = spellCaster();
         foreach (i; 0 .. 3)
         {
