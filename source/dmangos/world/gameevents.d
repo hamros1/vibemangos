@@ -102,9 +102,9 @@ final class EventCalendar
     /// Whether creature spawn `guid` is in the world as its game event (if any) stands.
     bool creatureInEvents(uint guid)
     {
-        if (world.invasionLayout !is null)
-            if (const site = guid in world.invasionLayout.creatures)
-                if (!site.present(world.invasion)) return false;
+        if (world.invasionHere.invasionLayout !is null)
+            if (const site = guid in world.invasionHere.invasionLayout.creatures)
+                if (!site.present(world.invasionHere.invasion)) return false;
         if (const e = guid in world.data.creatureGameEvents)
             return gameEvents.spawnIn(*e);
         return true;
@@ -116,9 +116,9 @@ final class EventCalendar
     {
         import dmangos.world.wareffort : isSupplyPile;
 
-        if (world.invasionLayout !is null)
-            if (const site = guid in world.invasionLayout.objects)
-                if (!site.present(world.invasion)) return false;
+        if (world.invasionHere.invasionLayout !is null)
+            if (const site = guid in world.invasionHere.invasionLayout.objects)
+                if (!site.present(world.invasionHere.invasion)) return false;
         if (isSupplyPile(guid))
             return world.warEffortHere.warEffort.pileUp(guid);
         if (WorldPvp.follows(guid))
@@ -130,8 +130,8 @@ final class EventCalendar
 
     package bool eventActivatesObject(uint guid)
     {
-        return WorldPvp.follows(guid) || (world.invasionLayout !is null && guid in world.invasionLayout.objects
-            && world.invasionLayout.objects[guid].present(world.invasion));
+        return WorldPvp.follows(guid) || (world.invasionHere.invasionLayout !is null && guid in world.invasionHere.invasionLayout.objects
+            && world.invasionHere.invasionLayout.objects[guid].present(world.invasionHere.invasion));
     }
 
     /// The events made active and inactive by the clock; their spawns come and go in the loaded cells.
@@ -212,8 +212,8 @@ final class EventCalendar
             m.forEachObject((MapObject o) {
                 if (auto c = cast(Creature) o)
                 {
-                    if (!creatureInEvents(c.spawnId) || (world.invasionLayout !is null && c.summon.type != TempSpawnType.none
-                        && !world.invasionLayout.actorPresent(c.template_.entry, c.spawn, world.invasion)))
+                    if (!creatureInEvents(c.spawnId) || (world.invasionHere.invasionLayout !is null && c.summon.type != TempSpawnType.none
+                        && !world.invasionHere.invasionLayout.actorPresent(c.template_.entry, c.spawn, world.invasionHere.invasion)))
                         gone ~= c.guid;
                     else if (c.spawnId in world.data.eventCreatures && !c.petOwner && c.summon.type == TempSpawnType.none
                             && c.alive && (c.ai is null || !c.ai.inCombat) && world.eventShapeOf(c.spawnId) != c.eventShape)
@@ -225,8 +225,8 @@ final class EventCalendar
                 }
                 else if (auto go = cast(GameObject) o)
                     if ((eventObject(go.spawn.guid) && !gameObjectInEvents(go.spawn.guid)) ||
-                        (world.invasionLayout !is null && go.template_.entry == 181142 &&
-                         !world.invasionLayout.actorPresent(16230, go.spawn, world.invasion)))
+                        (world.invasionHere.invasionLayout !is null && go.template_.entry == 181142 &&
+                         !world.invasionHere.invasionLayout.actorPresent(16230, go.spawn, world.invasionHere.invasion)))
                         gone ~= go.guid;
             });
             foreach (guid; gone)

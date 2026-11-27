@@ -3,7 +3,10 @@
  */
 module dmangos.world.scourge;
 
-import core.time : Duration, seconds;
+import core.time : Duration, minutes, MonoTime, msecs, seconds;
+import dmangos.world.opcodes : ChatType, Language, Opcode;
+import dmangos.world.context : WorldContext;
+
 import dmangos.cluster.services : Call, Service, ServiceKind;
 
 enum uint invasionSaveId = 3; // character database world_state
@@ -233,6 +236,76 @@ struct InvasionHost
 }
 
 /// Three camps per ship, multiple ships per zone, stale deliveries after restarts and successive defenses.
+/**
+ * The Scourge invasion as this node follows it (`WorldContext.invasionHere`): its service made where the cluster
+ * places it, the state it last told, and the layout of its camps here.
+ */
+final class InvasionFollower
+{
+    import dmangos.world.scourgelayout : InvasionLayout;
+
+    private WorldContext world;
+
+    this(WorldContext world)
+    {
+        this.world = world;
+    }
+
+    InvasionLayout invasionLayout;
+
+    InvasionState invasion;
+
+    package InvasionHost newInvasionHost(const(ubyte)[] moved)
+    {
+        import dmangos.plaindata : decode;
+        import dmangos.world.scourge : invasionSaveId;
+        InvasionHost host;
+        if (moved.length)
+            decode(moved, host.state);
+        if (!host.state.campaign)
+            host.restore(world.database.worldState(invasionSaveId));
+        host.clock = () => world.unixTime;
+        host.save = (string text) { world.database.saveWorldState(invasionSaveId, text); };
+        host.announce = (const ref InvasionState s) { world.services.announce!InvasionHost(s); };
+        return host;
+    }
+
+    void askInvasion()
+    {
+        import dmangos.world.scourge : InvasionQuery;
+        world.services.call!(InvasionHost.current)(InvasionQuery(world.nodeId), (InvasionState s) { invasionHeard(s); });
+    }
+
+    void invasionHeard(const ref InvasionState state)
+    {
+        import dmangos.world.map : packetBody;
+        import dmangos.world.packets : ServerUpdateWorldState;
+        if (state.campaign < invasion.campaign ||
+            (state.campaign == invasion.campaign && state.revision <= invasion.revision))
+            return;
+        if (state.running && invasionLayout is null) invasionLayout = new InvasionLayout(world.data);
+        const before = invasion;
+        invasion = state;
+        bool changed;
+        foreach (ushort id; 17 .. 100)
+            if ((id == 17 || id >= 89) && world.calendar.gameEvents.started(id) != state.eventOn(id))
+            {
+                world.calendar.gameEvents.start(id, state.eventOn(id));
+                changed = true;
+            }
+        if (changed)
+            world.calendar.updateGameEvents(world.clock(), true);
+        if (invasionLayout !is null && !changed) world.calendar.gameEventSpawnsChanged();
+        const previous = before.worldStates();
+        foreach (i, field; state.worldStates())
+            if (field[1] != previous[i][1])
+                foreach (player; world.online.values)
+                    if (player.character !is null)
+                        player.deliver(Opcode.SMSG_UPDATE_WORLD_STATE,
+                            packetBody(ServerUpdateWorldState(field[0], field[1])));
+    }
+}
+
 unittest
 {
     import dmangos.plaindata : decode, encode;
@@ -281,25 +354,25 @@ unittest
     a.services.sendNews = (const ref ServiceNews n) { b.services.receiveNews(1, n); };
     b.services.sendNews = (const ref ServiceNews n) { a.services.receiveNews(2, n); };
     b.services.call!(InvasionHost.control)(InvasionControl(true));
-    assert(a.invasion.running && a.invasion == b.invasion && !realmTwo.invasion.running);
-    const original = a.invasion;
+    assert(a.invasionHere.invasion.running && a.invasionHere.invasion == b.invasionHere.invasion && !realmTwo.invasionHere.invasion.running);
+    const original = a.invasionHere.invasion;
     auto camp = CampDefeated(1,0,0,0,original.campaign);
     b.services.call!(InvasionHost.defeated)(camp);
-    assert(a.invasion == b.invasion && a.invasion.cleared(camp));
+    assert(a.invasionHere.invasion == b.invasionHere.invasion && a.invasionHere.invasion.cleared(camp));
     const moved = a.services.stop(ServiceKind.scourge);
     owner = 2;
     b.services.start(ServiceKind.scourge,moved);
     a.services.call!(InvasionHost.defeated)(camp);
-    a.askInvasion();
-    a.invasionHeard(original);
-    assert(a.invasion == b.invasion && a.invasion.revision == original.revision + 1);
+    a.invasionHere.askInvasion();
+    a.invasionHere.invasionHeard(original);
+    assert(a.invasionHere.invasion == b.invasionHere.invasion && a.invasionHere.invasion.revision == original.revision + 1);
     auto restarted = newContext(db);
-    assert(restarted.invasion == a.invasion);
+    assert(restarted.invasionHere.invasion == a.invasionHere.invasion);
     b.services.call!(InvasionHost.control)(InvasionControl(false));
     b.services.call!(InvasionHost.control)(InvasionControl(true));
-    assert(b.invasion.campaign > camp.campaign && !b.invasion.zones[0].cleared);
+    assert(b.invasionHere.invasion.campaign > camp.campaign && !b.invasionHere.invasion.zones[0].cleared);
     b.services.call!(InvasionHost.defeated)(camp);
-    assert(!b.invasion.zones[0].cleared);
+    assert(!b.invasionHere.invasion.zones[0].cleared);
     InvasionHost corrupt;
     corrupt.restore("1 invalid");
     assert(corrupt.unreadableSave);

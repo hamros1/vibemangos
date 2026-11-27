@@ -464,7 +464,7 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
                 if (n.kind != ServiceKind.weather || context.services.placement(ServiceKind.weather) == peer)
                     context.services.receiveNews(peer, n);
             };
-            context.askInvasion();
+            context.invasionHere.askInvasion();
             context.warEffortHere.askWarEffort(); // how it stands, once its service is placed (and every change after)
             context.worldPvp.ask(); // the same for world PvP
         }

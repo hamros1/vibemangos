@@ -1643,11 +1643,11 @@ mixin template CreatureScripting()
     {
         import dmangos.world.context : WorldContext;
         auto context = lore;
-        if (context is null || context.invasionLayout is null || world_ is null) return 0;
-        const site = context.invasionLayout.nearest(context.invasionLayout.camps, me.spawn.map, me.position);
-        if (site is null || !site.present(context.invasion)) return 0;
-        generation = context.invasion.zones[site.zone].generation;
-        return context.invasion.campaign;
+        if (context is null || context.invasionHere.invasionLayout is null || world_ is null) return 0;
+        const site = context.invasionHere.invasionLayout.nearest(context.invasionHere.invasionLayout.camps, me.spawn.map, me.position);
+        if (site is null || !site.present(context.invasionHere.invasion)) return 0;
+        generation = context.invasionHere.invasion.zones[site.zone].generation;
+        return context.invasionHere.invasion.campaign;
     }
 
     void hostCampDefeated(long campaign, uint generation)
@@ -1655,10 +1655,10 @@ mixin template CreatureScripting()
         import dmangos.world.context : WorldContext;
         import dmangos.world.scourge : InvasionHost;
         auto context = lore;
-        if (!campaign || context is null || context.invasionLayout is null) return;
-        const site = context.invasionLayout.nearest(context.invasionLayout.camps, me.spawn.map, me.position);
+        if (!campaign || context is null || context.invasionHere.invasionLayout is null) return;
+        const site = context.invasionHere.invasionLayout.nearest(context.invasionHere.invasionLayout.camps, me.spawn.map, me.position);
         if (site is null) return;
-        auto event = site.stamp(context.invasion);
+        auto event = site.stamp(context.invasionHere.invasion);
         event.campaign = campaign;
         event.generation = generation;
         context.services.call!(InvasionHost.defeated)(event);

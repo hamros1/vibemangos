@@ -171,7 +171,7 @@ bool handleScourgeCommand(Character gm, string action = "status")
     {
     case "status":
         gm.systemMessage(format!"Scourge Invasion %s. Zones defended: %s."(
-            gm.context.invasion.running ? "active" : "inactive", gm.context.invasion.victories));
+            gm.context.invasionHere.invasion.running ? "active" : "inactive", gm.context.invasionHere.invasion.victories));
         return true;
     case "start", "stop":
         gm.context.services.call!(InvasionHost.control)(InvasionControl(action == "start"));

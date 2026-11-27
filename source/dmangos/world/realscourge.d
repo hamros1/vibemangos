@@ -20,7 +20,7 @@ unittest
     me.godModeCheat = true;
     w.context.services.call!(InvasionHost.control)(InvasionControl(true));
     assert(w.context.calendar.gameEvents.isActive(93));
-    const layout = w.context.invasionLayout;
+    const layout = w.context.invasionHere.invasionLayout;
     assert(layout.ships.length == 14 && layout.camps.length == 42);
     ubyte[3][6] counts;
     foreach (ref site; layout.camps) ++counts[site.zone][site.ship];
@@ -109,11 +109,11 @@ unittest
             step(400);
             assert(bosses == 4 || broken.alive);
         }
-        assert(!broken.alive && w.context.invasion.cleared(site.stamp(w.context.invasion)));
+        assert(!broken.alive && w.context.invasionHere.invasion.cleared(site.stamp(w.context.invasionHere.invasion)));
     }
-    assert(!w.context.invasion.remaining(3) && w.context.invasion.victories == 1);
-    assert(w.context.invasion.remaining(4) == 2 && w.context.calendar.gameEvents.isActive(94));
+    assert(!w.context.invasionHere.invasion.remaining(3) && w.context.invasionHere.invasion.victories == 1);
+    assert(w.context.invasionHere.invasion.remaining(4) == 2 && w.context.calendar.gameEvents.isActive(94));
     InvasionHost restored;
     restored.restore(w.db.worldState(invasionSaveId));
-    assert(restored.state == w.context.invasion && !restored.unreadableSave);
+    assert(restored.state == w.context.invasionHere.invasion && !restored.unreadableSave);
 }

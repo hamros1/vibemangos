@@ -203,6 +203,11 @@ struct ShutdownTimer
  */
 final class WorldContext : GroupDirectory, IdCounters, SessionHandler
 {
+    import dmangos.world.scourge : InvasionFollower;
+
+    /// See `dmangos.world.scourge`.
+    InvasionFollower invasionHere;
+
     import dmangos.world.gameevents : EventCalendar;
 
     /// See `dmangos.world.gameevents`.
@@ -3074,6 +3079,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         LoginDatabase accounts = null, Battlegroup sharedBattles = null)
     in (database !is null && data !is null && client !is null)
     {
+        invasionHere = new InvasionFollower(this);
         calendar = new EventCalendar(this);
         links = new Linking(this);
         warEffortHere = new WarEffortFollower(this);
@@ -3144,8 +3150,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         calendar.updateGameEvents(clock(), true); // before any cell loads, so its spawns follow the events now
         services.provide!ChannelsHost((const(ubyte)[] state) => ChannelsHost(new ChannelService(this, client,
             ChannelSettings(config.allowTwoSideInteractionChannel), state)));
-        services.provide!InvasionHost(&newInvasionHost);
-        services.listen!(InvasionHost, InvasionState)(&invasionHeard);
+        services.provide!InvasionHost(&invasionHere.newInvasionHost);
+        services.listen!(InvasionHost, InvasionState)(&invasionHere.invasionHeard);
         services.provide!WeatherHost((const(ubyte)[] state) => WeatherHost(this, state));
         weather = ZoneWeather(this);
         services.listen!(WeatherHost, WeatherNotice)(&weather.heard);
@@ -3352,58 +3358,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
 
 
     import dmangos.world.scourgelayout : InvasionLayout;
-    InvasionLayout invasionLayout;
-    InvasionState invasion;
 
-    private InvasionHost newInvasionHost(const(ubyte)[] moved)
-    {
-        import dmangos.plaindata : decode;
-        import dmangos.world.scourge : invasionSaveId;
-        InvasionHost host;
-        if (moved.length)
-            decode(moved, host.state);
-        if (!host.state.campaign)
-            host.restore(database.worldState(invasionSaveId));
-        host.clock = () => unixTime;
-        host.save = (string text) { database.saveWorldState(invasionSaveId, text); };
-        host.announce = (const ref InvasionState s) { services.announce!InvasionHost(s); };
-        return host;
-    }
 
-    void askInvasion()
-    {
-        import dmangos.world.scourge : InvasionQuery;
-        services.call!(InvasionHost.current)(InvasionQuery(nodeId), (InvasionState s) { invasionHeard(s); });
-    }
 
-    void invasionHeard(const ref InvasionState state)
-    {
-        import dmangos.world.map : packetBody;
-        import dmangos.world.packets : ServerUpdateWorldState;
-        if (state.campaign < invasion.campaign ||
-            (state.campaign == invasion.campaign && state.revision <= invasion.revision))
-            return;
-        if (state.running && invasionLayout is null) invasionLayout = new InvasionLayout(data);
-        const before = invasion;
-        invasion = state;
-        bool changed;
-        foreach (ushort id; 17 .. 100)
-            if ((id == 17 || id >= 89) && calendar.gameEvents.started(id) != state.eventOn(id))
-            {
-                calendar.gameEvents.start(id, state.eventOn(id));
-                changed = true;
-            }
-        if (changed)
-            calendar.updateGameEvents(clock(), true);
-        if (invasionLayout !is null && !changed) calendar.gameEventSpawnsChanged();
-        const previous = before.worldStates();
-        foreach (i, field; state.worldStates())
-            if (field[1] != previous[i][1])
-                foreach (player; online.values)
-                    if (player.character !is null)
-                        player.deliver(Opcode.SMSG_UPDATE_WORLD_STATE,
-                            packetBody(ServerUpdateWorldState(field[0], field[1])));
-    }
 
     // -----------------------------------------------------------------------
     // The Ahn'Qiraj war effort (`dmangos.world.wareffort`)
@@ -3504,9 +3461,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         foreach (i, ref zone; invasionZones)
         {
             if (zone.marker == id)
-                return invasion.remaining(i) != 0;
+                return invasionHere.invasion.remaining(i) != 0;
             if (zone.remaining == id)
-                return cast(int) invasion.remaining(i);
+                return cast(int) invasionHere.invasion.remaining(i);
         }
         return 0;
     }
@@ -3523,7 +3480,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                 return warEffortHere.warEffort.counters[i] >= resource.goal;
         foreach (i, ref zone; invasionZones)
             if (zone.marker == id)
-                return invasion.remaining(i) != 0;
+                return invasionHere.invasion.remaining(i) != 0;
         return false;
     }
 
