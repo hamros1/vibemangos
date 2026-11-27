@@ -186,7 +186,7 @@ final class Taxi
             > (2 * interactionDistance) ^^ 2)
             return sendTaxiReply(TaxiReply.tooFarAway);
         TaxiFlight flight;
-        if (!planFlight(me.context.client, nodes, me.reputationPriceDiscount(npc.npcValues.get!UNIT_FIELD_FACTIONTEMPLATE),
+        if (!planFlight(me.context.client, nodes, me.reputations.reputationPriceDiscount(npc.npcValues.get!UNIT_FIELD_FACTIONTEMPLATE),
                 flight))
             return sendTaxiReply(TaxiReply.unspecified);
         // The mount: the first node's, for the player's team.

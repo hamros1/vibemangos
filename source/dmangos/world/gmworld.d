@@ -595,7 +595,7 @@ bool handleResetReputationCommand(Character gm)
     if (target.player.reputation !is null)
     {
         target.player.reputation.initialize();
-        target.saveReputation();
+        target.reputations.saveReputation();
     }
     gm.greenSystemMessage("Done. Relog for changes to take effect.");
     gm.gmLog(format!"used reset reputation for %s"(target.player.data.name));

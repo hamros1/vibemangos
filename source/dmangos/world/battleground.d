@@ -2714,9 +2714,9 @@ mixin template BattlegroundHandlers()
         if (draft !is null)
         {
             player.reputation = draft;
-            sendReputationChanges(-1);
+            reputations.sendReputationChanges(-1);
             foreach (ref gain; reward.reputation)
-                reputationChanged(gain.faction);
+                reputations.reputationChanged(gain.faction);
         }
         if (reward.honor)
         {

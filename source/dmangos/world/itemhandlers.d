@@ -657,7 +657,7 @@ private:
             return sendBuyError(BuyResult.rankRequired, vendor, vendorSlot);
         import std.math : floor;
 
-        const price = Copper(cast(uint) floor(proto.details.buyPrice * count * buyPriceDiscount(vendor.npcValues.get!UNIT_FIELD_FACTIONTEMPLATE)));
+        const price = Copper(cast(uint) floor(proto.details.buyPrice * count * reputations.buyPriceDiscount(vendor.npcValues.get!UNIT_FIELD_FACTIONTEMPLATE)));
         if (!player.canAfford(price))
             return sendBuyError(BuyResult.notEnoughMoney, vendor, vendorSlot);
 
@@ -706,7 +706,7 @@ private:
         auto npc = interactableNpc(request.npc, NpcFlag.repair);
         if (npc is null)
             return;
-        const discount = repairDiscount(npc.npcValues.get!UNIT_FIELD_FACTIONTEMPLATE,
+        const discount = reputations.repairDiscount(npc.npcValues.get!UNIT_FIELD_FACTIONTEMPLATE,
             (npc.npcValues.get!UNIT_FIELD_FLAGS & UnitFlags.pvp) != 0);
         if (request.item)
         {

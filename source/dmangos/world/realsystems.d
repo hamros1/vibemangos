@@ -155,7 +155,7 @@ unittest
     assert(me.player.inventory.equipped(15) !is null, "wielded");
     assert(me.player.auras.find(itemAura) !is null, "its equip aura");
     assert(me.player.auras.find(effect001) !is null, "AB Effect 001, cast by the aura's script");
-    assert(me.forcedReactions.get(scarletCrusade, ReputationRank.hated) == ReputationRank.friendly);
+    assert(me.reputations.forcedReactions.get(scarletCrusade, ReputationRank.hated) == ReputationRank.friendly);
     // The client told, last of all both forced: the Argent Dawn's (529) by the item's own aura, then the Crusade's.
     const(ubyte)[] told;
     foreach (p; packets)
@@ -175,7 +175,7 @@ unittest
     c.write(Opcode.CMSG_AUTOSTORE_BAG_ITEM, cast(const(ubyte)[]) [inventorySlotBag0, ubyte(15), inventorySlotBag0]);
     c.read();
     assert(me.player.inventory.equipped(15) is null, "put away");
-    assert(me.player.auras.find(effect001) is null && scarletCrusade !in me.forcedReactions);
+    assert(me.player.auras.find(effect001) is null && scarletCrusade !in me.reputations.forcedReactions);
 }
 
 /**

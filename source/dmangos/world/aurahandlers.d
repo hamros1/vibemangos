@@ -615,7 +615,7 @@ private:
                 breathing = true;
                 break;
             case AuraType.forceReaction: // a disguise: `dmangos.world.reputationhandlers`
-                forceReaction(cast(uint) aura.misc(i), aura.amount[i], apply);
+                reputations.forceReaction(cast(uint) aura.misc(i), aura.amount[i], apply);
                 break;
             // A transform (the Wondervolt's shapes, a hex): the model of its misc value's creature (a script's for none:
             // the Orb of Deception's), until it goes and the newest left shows (CMaNGOS's `HandleAuraTransform`).

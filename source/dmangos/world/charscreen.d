@@ -430,7 +430,7 @@ mixin template CharacterLogin()
             context.config.maxPlayerLevel);
         made.setDrunkAfter(character.drunk, character.logoutTime > 0 ? context.unixTime - character.logoutTime : 0);
         made.loadQuestLog(context.data.quests);
-        made.reputation = loadedReputation(character.guid, character.race, character.classId);
+        made.reputation = reputations.loadedReputation(character.guid, character.race, character.classId);
         made.clearChanges();
         return made;
     }
@@ -496,7 +496,7 @@ mixin template CharacterLogin()
         send(spells);
         sendAllSpellMods(); // the talents' modifiers, as the client adds them to its spells
         send(ServerActionButtons(player.actionButtons));
-        deliver(Opcode.SMSG_INITIALIZE_FACTIONS, initialReputations());
+        deliver(Opcode.SMSG_INITIALIZE_FACTIONS, reputations.initialReputations());
         send(ServerLoginSetTimeSpeed(gameTimeBits()));
     }
 

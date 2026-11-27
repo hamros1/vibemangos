@@ -1312,7 +1312,7 @@ mixin template WorldPvpHandlers()
         carriedSilithyst = false;
         battlegroundRemoveAuraHere(spellSilithyst);
         battlegroundCastHere(spellTracesOfSilithyst);
-        modifyReputation(factionCenarionCircle, reputationGain(ReputationSource.spell, silithystReputation,
+        reputations.modifyReputation(factionCenarionCircle, reputations.reputationGain(Reputations.ReputationSource.spell, silithystReputation,
             factionCenarionCircle, 0));
         addHonorPoints(silithystHonorUnits * round(rankOneHonorAt(player.data.level)), HonorType.honorable);
         scriptKillCredit(turnInCredit[team], 0);

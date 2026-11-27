@@ -777,7 +777,7 @@ private:
         {
             if (auto local = context.onlinePlayer(tapper))
             {
-                local.rewardKillReputation(victim, 1);
+                local.reputations.rewardKillReputation(victim, 1);
                 local.rewardHonorForCreature(victim);
                 local.killedMonster(victim.template_.entry, victim.guid);
                 const xp = killGain(local.player.data.level, value);
@@ -873,7 +873,7 @@ private:
                 if (m.alive)
                     m.here.rewardHonorForCreature(victim);
                 if (m.reputationRate > 0)
-                    m.here.rewardKillReputation(victim, m.reputationRate);
+                    m.here.reputations.rewardKillReputation(victim, m.reputationRate);
                 if (m.xp)
                 {
                     m.here.petGainsXp(m.xp / 2); // half for its pet
@@ -894,7 +894,7 @@ private:
     {
         killedMonster(entry, victim);
         if (reputationRate > 0)
-            rewardKillReputation(entry, level, reputationRate);
+            reputations.rewardKillReputation(entry, level, reputationRate);
         if (xp)
             giveXP(xp, victim, rate);
         flushPlayerChanges();

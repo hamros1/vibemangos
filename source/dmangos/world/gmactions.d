@@ -189,7 +189,7 @@ private:
         saveAuras();
         saveCooldowns();
         saveQuests();
-        saveReputation();
+        reputations.saveReputation();
         saveHonor();
         saveBattleground();
         saveEnchantmentTimes();

@@ -450,7 +450,7 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         {
             auto who = target == caster.guid ? p : cast(typeof(p)) context.onlinePlayer(target);
             if (who !is null && who.player !is null && spell.miscValue[i] > 0)
-                who.modifyReputation(cast(uint) spell.miscValue[i], value);
+                who.reputations.modifyReputation(cast(uint) spell.miscValue[i], value);
         }
         else if (auto other = map.unit(target)) // a player it hits gains (or loses) standing
             if (other.session !is null && spell.miscValue[i] > 0)

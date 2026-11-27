@@ -763,7 +763,7 @@ private:
             return;
         ServerTrainerList list;
         list.trainer = guid;
-        const discount = reputationPriceDiscount(trainer.npcValues.get!UNIT_FIELD_FACTIONTEMPLATE);
+        const discount = reputations.reputationPriceDiscount(trainer.npcValues.get!UNIT_FIELD_FACTIONTEMPLATE);
         const spells = context.data.spells;
         foreach (ref trainerSpell; trainerSpells(trainer))
         {
@@ -819,7 +819,7 @@ private:
         if (trainerSpellState(*found, trainerRequiredLevel(*found, fitLevel)) != TrainerSpellState.green)
             return;
         const money = player.values.get!PLAYER_FIELD_COINAGE;
-        const cost = cast(uint) floor(found.cost * reputationPriceDiscount(trainer.npcValues.get!UNIT_FIELD_FACTIONTEMPLATE));
+        const cost = cast(uint) floor(found.cost * reputations.reputationPriceDiscount(trainer.npcValues.get!UNIT_FIELD_FACTIONTEMPLATE));
         if (money < cost)
             return;
         player.values.set!PLAYER_FIELD_COINAGE(money - cost);
@@ -938,7 +938,7 @@ private:
         StockRead[] reads;
         ServerListInventory list;
         list.vendor = guid;
-        const discount = reputationPriceDiscount(vendor.npcValues.get!UNIT_FIELD_FACTIONTEMPLATE);
+        const discount = reputations.reputationPriceDiscount(vendor.npcValues.get!UNIT_FIELD_FACTIONTEMPLATE);
         foreach (i, ref vendorItem; vendorItems(vendor))
         {
             const proto = vendorItem.item in context.data.items;

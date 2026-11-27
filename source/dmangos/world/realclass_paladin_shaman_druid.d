@@ -151,7 +151,7 @@ private void guestOfStormwind(ref TestClient who)
     auto me = who.session.inWorld;
     foreach (c; me.currentMap.creaturesNear(me.player.position, 200))
         if (c.factionTemplate !is null)
-            me.forcedReactions[c.factionTemplate.faction] = ReputationRank.friendly;
+            me.reputations.forcedReactions[c.factionTemplate.faction] = ReputationRank.friendly;
 }
 
 /// A shaman's four totems, the tools its totem spells need.

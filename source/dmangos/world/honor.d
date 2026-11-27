@@ -396,7 +396,7 @@ mixin template HonorHandlers()
     }
 
     /// The player's rank, as last worked out by `updateHonor`.
-    @property HonorRank honorRank() const
+    package @property HonorRank honorRank() const
     {
         return honorRank_;
     }

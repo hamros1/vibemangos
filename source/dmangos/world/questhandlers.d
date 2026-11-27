@@ -232,7 +232,7 @@ private:
         }
 
         return satisfyStatus(quest) && satisfyExclusiveGroup(quest) && satisfyClassRaceLevel(quest, true)
-            && satisfyPrevious(quest) && satisfyQuestReputation(quest) && satisfyQuestTimed(quest)
+            && satisfyPrevious(quest) && reputations.satisfyQuestReputation(quest) && satisfyQuestTimed(quest)
             && questInSeason(quest);
     }
 
@@ -276,7 +276,7 @@ private:
     {
         enum int highLevelHideDiff = 7; // levels above the player a quest is still shown
         return satisfyClassRaceLevel(quest, false) && satisfyExclusiveGroup(quest) && satisfyPrevious(quest)
-            && satisfyQuestReputation(quest) && player.data.level + highLevelHideDiff >= quest.minLevel
+            && reputations.satisfyQuestReputation(quest) && player.data.level + highLevelHideDiff >= quest.minLevel
             && player.data.level <= quest.maxLevel && questInSeason(quest);
     }
 
@@ -832,7 +832,7 @@ private:
     }
 
     /// The quest's objectives met; the log shows it complete.
-    void completeQuest(uint id)
+    package void completeQuest(uint id)
     {
         questObjectsStale = true;
         auto q = &statusOf(id);
@@ -1119,7 +1119,7 @@ private:
             player.pay(Copper(-quest.rewOrReqMoney));
             player.receive(Copper(maxLevelMoney));
         }
-        rewardQuestReputation(quest);
+        reputations.rewardQuestReputation(quest);
         auto q = &statusOf(quest.id);
         q.status = quest.repeatable ? QuestState.none : QuestState.complete;
         q.rewarded = true;

@@ -1359,7 +1359,7 @@ bool handleSetStandingCommand(Character gm, uint faction, int standing)
         return true;
     gm.blueSystemMessage(format!"Setting standing of %u to %d on %s."(faction, standing, target.player.data.name));
     if (target.player.reputation !is null)
-        target.modifyReputation(faction, standing - target.player.reputation.standingWith(faction), true);
+        target.reputations.modifyReputation(faction, standing - target.player.reputation.standingWith(faction), true);
     target.flushPlayerChanges();
     target.greenSystemMessage(format!"%s set your standing of faction %u to %d."(gm.player.data.name, faction,
         standing));

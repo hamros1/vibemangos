@@ -188,7 +188,7 @@ unittest
         auto chief = v.meet(cavalryChiefs[side]);
         foreach (_; 1 .. 25) v.rules.questRewarded(v.copy, v.me.player.guid, stableQuest[side]);
         foreach (_; 0 .. 24) v.rules.questRewarded(v.copy, v.me.player.guid, hideQuest[side]);
-        v.me.modifyReputation(factions[side], 10000);
+        v.me.reputations.modifyReputation(factions[side], 10000);
         assert(!v.select(chief, "Riders, assemble for the assault!"));
         v.rules.questRewarded(v.copy, v.me.player.guid, hideQuest[side]);
         assert(v.select(chief, "Riders, assemble for the assault!"));
@@ -217,7 +217,7 @@ unittest
             v.rules.questRewarded(v.copy, v.me.player.guid, mineQuest[side][1-side]);
         const order = "Give me the ground assault orders.";
         assert(!v.select(quartermaster, order), "a neutral recruit was offered command");
-        v.me.modifyReputation(factions[side], 10000);
+        v.me.reputations.modifyReputation(factions[side], 10000);
         assert(v.select(quartermaster, order) && v.me.player.inventory.count(orderItems[side]) == 1);
         assert(!v.select(quartermaster, order));
         auto commander = v.meet(groundChiefs[side]);
@@ -274,7 +274,7 @@ unittest
         v.move(npc.position);
         foreach (_; 0 .. wing.needed - 1)
             v.rules.questRewarded(v.copy,v.me.player.guid,wing.quest);
-        v.me.modifyReputation(factions[v.side],22000);
+        v.me.reputations.modifyReputation(factions[v.side],22000);
         assert(!v.select(npc,"Give me a beacon for your air support."));
         v.rules.questRewarded(v.copy,v.me.player.guid,wing.quest);
         assert(v.select(npc,"Give me a beacon for your air support.") && v.me.player.inventory.count(wing.item) == 1);

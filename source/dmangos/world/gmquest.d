@@ -164,7 +164,7 @@ bool handleQuestFinishCommand(Character gm, uint questId = 0)
             .canFind!(creature => creature.template_.entry == giverId))
         {
             gm.greenSystemMessage("Found a quest_giver creature.");
-            target.rewardQuestReputation(*quest);
+            target.reputations.rewardQuestReputation(*quest);
         }
         else
             gm.redSystemMessage("Unable to find quest_giver object.");

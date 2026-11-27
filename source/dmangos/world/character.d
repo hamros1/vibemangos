@@ -51,7 +51,7 @@ import dmangos.world.duelhandlers : DuelHandlers;
 import dmangos.world.questhandlers : QuestHandlers;
 import dmangos.world.talenthandlers : TalentHandlers;
 import dmangos.world.mailhandlers : Mailbox;
-import dmangos.world.reputationhandlers : ReputationHandlers;
+import dmangos.world.reputationhandlers : Reputations;
 import dmangos.world.gameobjecthandlers : GameObjectHandlers;
 import dmangos.world.auctionhandlers : Auctioneer;
 import dmangos.world.taxihandlers : Taxi;
@@ -103,9 +103,10 @@ final class Character : OnlinePlayer, Looter
     /// The connection its client talks through (here, or relaying to its home node).
     WorldSession connection;
 
-    mixin PacketDispatch!(Handles, "taxi", "mailbox", "auctioneer");
+    mixin PacketDispatch!(Handles, "taxi", "mailbox", "auctioneer", "reputations");
 
     Taxi taxi; /// flight masters and the flight under way (`dmangos.world.taxihandlers`)
+    Reputations reputations; /// factions: standing, at war, inactive, watched (`dmangos.world.reputationhandlers`)
     Auctioneer auctioneer; /// the auction house: listing, bidding and buying out (`dmangos.world.auctionhandlers`)
     Mailbox mailbox; /// the mailbox: letters sent, read and taken (`dmangos.world.mailhandlers`)
 
@@ -159,6 +160,7 @@ final class Character : OnlinePlayer, Looter
         this.connection = connection;
         this.context = context;
         taxi = new Taxi(this);
+        reputations = new Reputations(this);
         auctioneer = new Auctioneer(this);
         mailbox = new Mailbox(this);
     }
@@ -521,7 +523,7 @@ final class Character : OnlinePlayer, Looter
     void battlegroundReputation(uint faction, int amount)
     {
         if (player !is null)
-            modifyReputation(faction, amount);
+            reputations.modifyReputation(faction, amount);
     }
 
     /// Its battleground takes an aura off it (a flag it no longer carries).
@@ -567,7 +569,7 @@ final class Character : OnlinePlayer, Looter
     void spellReputation(uint faction, int amount)
     {
         if (player !is null)
-            modifyReputation(faction, amount);
+            reputations.modifyReputation(faction, amount);
     }
 
     /// Thrown from `from` (a creature's knockback): its client is told how, and moves.
@@ -926,7 +928,6 @@ private:
     mixin DuelHandlers;
     mixin QuestHandlers;
     mixin TalentHandlers;
-    mixin ReputationHandlers;
     mixin GameObjectHandlers;
     mixin CrowdControlHandlers;
     mixin MountRules;
@@ -1167,10 +1168,10 @@ unittest
     }
     me.honorStored.storedRating = 5000;
     me.updateHonor();
-    assert(me.buyPriceDiscount(11) < 0.95f);
+    assert(me.reputations.buyPriceDiscount(11) < 0.95f);
     me.honorStored.storedRating = 1000; // Private: no rank discount
     me.updateHonor();
-    assert(me.buyPriceDiscount(11) > 0.95f);
+    assert(me.reputations.buyPriceDiscount(11) > 0.95f);
 
     // The Hall of Champions takes a visual rank of 6.
     AreaTriggerTeleport hall;

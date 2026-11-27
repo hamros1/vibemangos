@@ -12,8 +12,19 @@
 module dmangos.world.reputationhandlers;
 
 /// See the module documentation.
-mixin template ReputationHandlers()
+final class Reputations
 {
+    import dmangos.world.character : Character, Handles;
+    import dmangos.world.session : WorldState;
+
+    private Character me;
+
+    ///
+    this(Character me)
+    {
+        this.me = me;
+    }
+
     import dmangos.bytes : ByteReader, ByteWriter;
     import dmangos.log : info;
     import dmangos.world.creature : Creature;
@@ -30,19 +41,19 @@ mixin template ReputationHandlers()
     /// The reputations loaded from the database, for a player made from its saved character.
     package Reputation loadedReputation(uint guid, ubyte race, ubyte classId)
     {
-        auto reputation = new Reputation(context.client, 1u << (race - 1), 1u << (classId - 1));
-        reputation.load(context.database.loadReputation(guid));
+        auto reputation = new Reputation(me.context.client, 1u << (race - 1), 1u << (classId - 1));
+        reputation.load(me.context.database.loadReputation(guid));
         return reputation;
     }
 
     /// Saves the factions that changed.
     package void saveReputation()
     {
-        if (player is null || player.reputation is null)
+        if (me.player is null || me.player.reputation is null)
             return;
-        const rows = player.reputation.takeChanged();
+        const rows = me.player.reputation.takeChanged();
         if (rows.length)
-            context.database.saveReputation(player.data.guid, rows);
+            me.context.database.saveReputation(me.player.data.guid, rows);
     }
 
     /// The whole list, as `SMSG_INITIALIZE_FACTIONS`.
@@ -50,13 +61,13 @@ mixin template ReputationHandlers()
     {
         ByteWriter w;
         w.put(uint(reputationListSize));
-        foreach (ref s; player.reputation.states)
+        foreach (ref s; me.player.reputation.states)
         {
             w.put(cast(ubyte)(s.exists ? s.flags : 0));
             w.put(s.exists ? s.standing : 0);
             s.needSend = false;
         }
-        player.reputation.made = null;
+        me.player.reputation.made = null;
         return w.data.dup;
     }
 
@@ -66,12 +77,12 @@ mixin template ReputationHandlers()
      */
     void sendReputationChanges(int first)
     {
-        auto rep = player.reputation;
+        auto rep = me.player.reputation;
         foreach (id; rep.made)
         {
             ByteWriter v;
             v.put(id);
-            deliver(Opcode.SMSG_SET_FACTION_VISIBLE, v.data);
+            me.deliver(Opcode.SMSG_SET_FACTION_VISIBLE, v.data);
         }
         rep.made = null;
         ByteWriter w;
@@ -93,7 +104,7 @@ mixin template ReputationHandlers()
         ByteWriter packet;
         packet.put(count);
         packet.putBytes(w.data);
-        deliver(Opcode.SMSG_SET_FACTION_STANDING, packet.data);
+        me.deliver(Opcode.SMSG_SET_FACTION_STANDING, packet.data);
     }
 
     /**
@@ -101,10 +112,10 @@ mixin template ReputationHandlers()
      */
     package void modifyReputation(uint faction, int amount, bool noSpillover = false)
     {
-        const entry = context.client.factions.lookup(faction);
-        if (entry is null || player.reputation is null)
+        const entry = me.context.client.factions.lookup(faction);
+        if (entry is null || me.player.reputation is null)
             return;
-        player.reputation.change(entry, amount, true, context.data.spillovers, noSpillover);
+        me.player.reputation.change(entry, amount, true, me.context.data.spillovers, noSpillover);
         sendReputationChanges(entry.reputationListId);
         reputationChanged(faction);
     }
@@ -112,11 +123,11 @@ mixin template ReputationHandlers()
     /// A standing changed: a quest whose objective is this standing completes when it is reached.
     void reputationChanged(uint faction)
     {
-        foreach (id, ref q; player.questStatus)
+        foreach (id, ref q; me.player.questStatus)
             if (q.status == QuestState.incomplete)
-                if (const quest = context.data.quests.quest(id))
-                    if (quest.repObjectiveFaction == faction && canCompleteQuest(id))
-                        completeQuest(id);
+                if (const quest = me.context.data.quests.quest(id))
+                    if (quest.repObjectiveFaction == faction && me.canCompleteQuest(id))
+                        me.completeQuest(id);
     }
 
     /// The reputation `rep` from `source` is worth to this player: less for low levels, scaled by the rates.
@@ -128,30 +139,30 @@ mixin template ReputationHandlers()
         // a gain and down for a loss (CMaNGOS's `Player::CalculateReputationGain`).
         import dmangos.world.spellids : AuraType;
 
-        float bonus = player.auras.total(AuraType.modReputationGain);
+        float bonus = me.player.auras.total(AuraType.modReputationGain);
         if (source == ReputationSource.kill)
-            bonus += player.auras.totalByMisc(AuraType.modFactionReputationGain, cast(int) faction);
+            bonus += me.player.auras.totalByMisc(AuraType.modFactionReputationGain, cast(int) faction);
         float percent = 100 + (rep > 0 ? bonus : -bonus);
-        const current = player.data.level;
+        const current = me.player.data.level;
         if (level > 0)
         {
             // A grey kill: a fifth (Wowpedia "Reputation": "Grey mobs used to give 20% of the normal reputation
             // until the release of Patch 3.0.8").
             if (source == ReputationSource.kill && isGray(current, level))
-                percent *= context.config.rateReputationLowLevelKill;
+                percent *= me.context.config.rateReputationLowLevelKill;
             else if (source == ReputationSource.quest && rep > 0 && current > level + 5)
-                percent *= max(context.config.rateReputationLowLevelQuest, 1.0f - 0.2f * (current - (level + 5)));
+                percent *= max(me.context.config.rateReputationLowLevelQuest, 1.0f - 0.2f * (current - (level + 5)));
         }
         if (percent <= 0)
             return 0;
-        if (const rates = faction in context.data.reputationRates)
+        if (const rates = faction in me.context.data.reputationRates)
         {
             const rate = (*rates)[source == ReputationSource.quest ? 0 : source == ReputationSource.kill ? 1 : 2];
             if (rate <= 0)
                 return 0;
             percent *= rate;
         }
-        return cast(int)(context.config.rateReputationGain * rep * percent / 100.0f);
+        return cast(int)(me.context.config.rateReputationGain * rep * percent / 100.0f);
     }
 
     /// What a kill does to the factions it concerns.
@@ -165,18 +176,18 @@ mixin template ReputationHandlers()
     {
         import dmangos.world.clientdata : Team;
 
-        const onKill = creatureEntry in context.data.onKillReputation;
-        if (onKill is null || player.reputation is null)
+        const onKill = creatureEntry in me.context.data.onKillReputation;
+        if (onKill is null || me.player.reputation is null)
             return;
-        const team = context.client.teamForRace(player.data.race);
+        const team = me.context.client.teamForRace(me.player.data.race);
         foreach (i; 0 .. 2)
         {
             if (!onKill.faction[i] || (onKill.teamDependent && team != (i == 0 ? Team.alliance : Team.horde)))
                 continue;
             const amount = cast(int)(reputationGain(ReputationSource.kill, onKill.value[i], onKill.faction[i], level)
                 * rate);
-            const entry = context.client.factions.lookup(onKill.faction[i]);
-            if (entry is null || player.reputation.rankWith(entry) > onKill.maxStanding[i])
+            const entry = me.context.client.factions.lookup(onKill.faction[i]);
+            if (entry is null || me.player.reputation.rankWith(entry) > onKill.maxStanding[i])
                 continue;
             modifyReputation(onKill.faction[i], amount);
             // Team factions get half (Wiki).
@@ -188,7 +199,7 @@ mixin template ReputationHandlers()
     /// The reputation a quest turned in gives.
     package void rewardQuestReputation(const ref Quest quest)
     {
-        const level = quest.questLevel > 0 ? cast(uint) quest.questLevel : player.data.level;
+        const level = quest.questLevel > 0 ? cast(uint) quest.questLevel : me.player.data.level;
         foreach (i; 0 .. questReputations)
             if (quest.rewRepFaction[i] && quest.rewRepValue[i])
                 modifyReputation(quest.rewRepFaction[i],
@@ -201,10 +212,10 @@ mixin template ReputationHandlers()
      */
     package float reputationPriceDiscount(uint factionTemplate)
     {
-        const t = context.client.factionTemplates.lookup(factionTemplate);
-        if (t is null || !t.faction || player.reputation is null)
+        const t = me.context.client.factionTemplates.lookup(factionTemplate);
+        if (t is null || !t.faction || me.player.reputation is null)
             return 1;
-        return player.reputation.rankWith(t.faction) >= ReputationRank.honored ? 0.9f : 1;
+        return me.player.reputation.rankWith(t.faction) >= ReputationRank.honored ? 0.9f : 1;
     }
 
     /**
@@ -216,9 +227,9 @@ mixin template ReputationHandlers()
         import dmangos.world.relations : isFriend, Relating;
 
         float discount = reputationPriceDiscount(factionTemplate);
-        if (honorRank.visualRank >= 3)
-            if (const t = context.client.factionTemplates.lookup(factionTemplate))
-                if (isFriend(Relating(0, t, false, 0, 0, true), relatingNow(), context.client))
+        if (me.honorRank.visualRank >= 3)
+            if (const t = me.context.client.factionTemplates.lookup(factionTemplate))
+                if (isFriend(Relating(0, t, false, 0, 0, true), me.relatingNow(), me.context.client))
                     discount -= 0.1f;
         return discount;
     }
@@ -232,7 +243,7 @@ mixin template ReputationHandlers()
         float discount = reputationPriceDiscount(factionTemplate);
         if (vendorFlagged)
         {
-            const rank = player.values.getByte!PLAYER_BYTES_3(3);
+            const rank = me.player.values.getByte!PLAYER_BYTES_3(3);
             if (rank >= 6)
                 discount -= 0.05f;
             if (rank >= 8)
@@ -244,24 +255,24 @@ mixin template ReputationHandlers()
     /// Whether the player is within the standings the quest asks for.
     package bool satisfyQuestReputation(const ref Quest quest)
     {
-        if (player.reputation is null)
+        if (me.player.reputation is null)
             return true;
         if (quest.requiredMinRepFaction
-            && player.reputation.standingWith(quest.requiredMinRepFaction) < quest.requiredMinRepValue)
+            && me.player.reputation.standingWith(quest.requiredMinRepFaction) < quest.requiredMinRepValue)
             return false;
         if (quest.requiredMaxRepFaction
-            && player.reputation.standingWith(quest.requiredMaxRepFaction) >= quest.requiredMaxRepValue)
+            && me.player.reputation.standingWith(quest.requiredMaxRepFaction) >= quest.requiredMaxRepValue)
             return false;
         return true;
     }
 
-private:
+package:
     /// The player sets or clears war with a faction.
     @Handles(Opcode.CMSG_SET_FACTION_ATWAR, WorldState.inWorld)
     void handleSetFactionAtWar(ref ByteReader reader)
     {
         const id = reader.read!uint, flag = reader.read!ubyte;
-        player.reputation.setAtWarById(id, flag != 0);
+        me.player.reputation.setAtWarById(id, flag != 0);
     }
 
     /// The player moves a faction to or from the inactive list.
@@ -269,7 +280,7 @@ private:
     void handleSetFactionInactive(ref ByteReader reader)
     {
         const id = reader.read!uint, flag = reader.read!ubyte;
-        player.reputation.setInactive(id, flag != 0);
+        me.player.reputation.setInactive(id, flag != 0);
     }
 
     /// Reactions forced by auras (`SPELL_AURA_FORCE_REACTION`: disguises), by faction (`ReputationMgr::m_forcedReactions`).
@@ -293,9 +304,9 @@ private:
             w.put(id);
             w.put(uint(forced));
         }
-        deliver(Opcode.SMSG_SET_FORCED_REACTIONS, w.data);
+        me.deliver(Opcode.SMSG_SET_FORCED_REACTIONS, w.data);
         if ((apply && rank >= ReputationRank.friendly)
-                || (!apply && player.reputation.rankWith(faction) >= ReputationRank.friendly))
+                || (!apply && me.player.reputation.rankWith(faction) >= ReputationRank.friendly))
             stopAttackFaction(faction);
     }
 
@@ -304,24 +315,24 @@ private:
     {
         bool ofFaction(Creature c)
         {
-            const t = c is null ? null : context.client.factionTemplates.lookup(c.values.get!UNIT_FIELD_FACTIONTEMPLATE);
+            const t = c is null ? null : me.context.client.factionTemplates.lookup(c.values.get!UNIT_FIELD_FACTIONTEMPLATE);
             return t !is null && t.faction == faction;
         }
 
-        if (attacking && ofFaction(cast(Creature) map.findObject(attacking)))
-            stopAttack(false);
-        foreach (guid; threateners)
-            if (auto c = cast(Creature) map.findObject(guid))
+        if (me.attacking && ofFaction(cast(Creature) me.map.findObject(me.attacking)))
+            me.stopAttack(false);
+        foreach (guid; me.threateners)
+            if (auto c = cast(Creature) me.map.findObject(guid))
                 if (ofFaction(c) && c.ai !is null)
-                    c.ai.forget(player.guid, map);
+                    c.ai.forget(me.player.guid, me.map);
     }
 
     /// The player picks the faction shown on the experience bar.
     @Handles(Opcode.CMSG_SET_WATCHED_FACTION, WorldState.inWorld)
     void handleSetWatchedFaction(ref ByteReader reader)
     {
-        player.values.set!PLAYER_FIELD_WATCHED_FACTION_INDEX(reader.read!int);
-        flushPlayerChanges();
+        me.player.values.set!PLAYER_FIELD_WATCHED_FACTION_INDEX(reader.read!int);
+        me.flushPlayerChanges();
     }
 }
 
@@ -377,7 +388,7 @@ unittest
     context.data.onKillReputation[creatureInnkeeper] = OnKillReputation([guild, 0], [ReputationRank.exalted, 0],
         [true, false], [25, 0], false);
 
-    anduin.session.inWorld.rewardKillReputation(keeper, 1);
+    anduin.session.inWorld.reputations.rewardKillReputation(keeper, 1);
     auto got = anduin.read();
     assert(opcodesOf(got).canFind(Opcode.SMSG_SET_FACTION_VISIBLE));
     assert(me.reputation.standingWith(guild) == 25 && me.reputation.standingWith(team) == 12, "half to the team");
@@ -394,14 +405,14 @@ unittest
 
     // A creature grey to a level 20 player: a fifth.
     me.data.level = 20;
-    anduin.session.inWorld.rewardKillReputation(keeper, 1);
+    anduin.session.inWorld.reputations.rewardKillReputation(keeper, 1);
     assert(me.reputation.standingWith(guild) == 25 + 5);
 
     Quest quest;
     quest.questLevel = 1;
     quest.rewRepFaction[0 .. 2] = [guild, team];
     quest.rewRepValue[0 .. 2] = [250, -500];
-    anduin.session.inWorld.rewardQuestReputation(quest);
+    anduin.session.inWorld.reputations.rewardQuestReputation(quest);
     assert(me.reputation.standingWith(guild) == 80 && me.reputation.standingWith(team) == -486);
 
     // War, by the client's checkbox.
