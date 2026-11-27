@@ -561,10 +561,10 @@ mixin template CreatureCasting()
             return context.namedCreatureRouting(spell);
 
         const effect = namedCreatureEffect(*spell);
-        if (effect != size_t.max && !databaseSpellEffect(spell.effect[effect])
+        if (effect != noEffect && !databaseSpellEffect(spell.effect[effect])
             && lore.spellScriptTargets(spell.id).length && !lore.spellScript(spell.id))
             return effect;
-        return size_t.max;
+        return noEffect;
     }
 
     /**
@@ -660,10 +660,10 @@ mixin template CreatureCasting()
         const namedObject = context !is null && context.onlyNamedGameObjectEffects(spell);
         const channelEffect = (!triggered || imported!"dmangos.world.spelldamage".permanentNamedCreatureVisual(spell.id))
             && !me.meleeController && context !is null
-            ? context.namedCreatureChannel(spell) : size_t.max;
-        if (selectedChannelTarget && channelEffect == size_t.max)
+            ? context.namedCreatureChannel(spell) : noEffect;
+        if (selectedChannelTarget && channelEffect == noEffect)
             return refuse(SpellCastResult.badTargets);
-        const selectsTargets = namedObject || channelEffect != size_t.max || (namedEffect != size_t.max
+        const selectsTargets = namedObject || channelEffect != noEffect || (namedEffect != noEffect
             && (namedCreatureShape(*spell, namedEffect) != ImplicitTarget.unitScriptNearCaster
                 || (context !is null && context.sendAreaDamage !is null)));
         if (selectsTargets && !selectedChannelTarget)
@@ -1082,14 +1082,14 @@ mixin template CreatureCasting()
 
         const channelEffect = (takeMana || permanentNamedCreatureVisual(spell.id)) && !me.meleeController
             && selectedWeaponTargets is null && context !is null
-            ? context.namedCreatureChannel(spell) : size_t.max;
+            ? context.namedCreatureChannel(spell) : noEffect;
         const missiles = takeMana && selectedWeaponTargets is null && isArcaneMissilesChannel(*spell);
-        if (selectedChannelTarget && channelEffect == size_t.max)
+        if (selectedChannelTarget && channelEffect == noEffect)
             return;
         UnitRef channelTarget;
-        size_t firstChannelEffect = size_t.max;
+        size_t firstChannelEffect = noEffect;
         uint channelExclusions;
-        if (channelEffect != size_t.max)
+        if (channelEffect != noEffect)
         {
             import dmangos.world.spellselection : namedCreatureRange;
 
@@ -1123,7 +1123,7 @@ mixin template CreatureCasting()
             // The periodic aura is on the caster. Each missile routes to the target separately.
             remotePrimary = other.replica !is null;
         }
-        else if (selectedWeaponTargets is null && channelEffect == size_t.max)
+        else if (selectedWeaponTargets is null && channelEffect == noEffect)
         if (auto other = spellTarget(target))
             if (other.replica !is null)
             {
@@ -1154,13 +1154,13 @@ mixin template CreatureCasting()
         bool[ulong] all;
         ulong[] inOrder; // each target once, in the order the effects found them (as the packet lists them)
         ulong[] remoteNamed;
-        const namedEffect = selectedWeaponTargets is null ? selectableNamedCreatureEffect(spell) : size_t.max;
+        const namedEffect = selectedWeaponTargets is null ? selectableNamedCreatureEffect(spell) : noEffect;
         const namedEntries = context is null ? lore.spellScriptTargets(spell.id) : context.namedCreatureEntries(spell, namedEffect);
         const objectOrigin = me.position;
         Position objectDestination;
         bool hasObjectDestination;
-        const namedShape = namedEffect != size_t.max ? namedCreatureShape(*spell, namedEffect) : ImplicitTarget.none;
-        const namedRange = namedEffect != size_t.max ? namedCreatureRadius(*spell, namedEffect, lore.clientData) : 0;
+        const namedShape = namedEffect != noEffect ? namedCreatureShape(*spell, namedEffect) : ImplicitTarget.none;
+        const namedRange = namedEffect != noEffect ? namedCreatureRadius(*spell, namedEffect, lore.clientData) : 0;
         const routeNamed = context !is null && context.sendAreaDamage !is null;
         const namedArea = namedShape != ImplicitTarget.none && namedShape != ImplicitTarget.unitScriptNearCaster;
         auto namedCenter = me.position;
@@ -1185,7 +1185,7 @@ mixin template CreatureCasting()
             {
                 const objectShape = selectedWeaponTargets is null && context !is null
                     ? context.namedGameObjectRouting(spell, i) : ImplicitTarget.none;
-                if (channelEffect != size_t.max)
+                if (channelEffect != noEffect)
                 {
                     import dmangos.world.spellselection : namedCreatureRange;
 
@@ -1960,8 +1960,8 @@ mixin template CreatureCasting()
                 const spell = action.type == ActionType.castSpell && action.params[1] == EventTarget.eventSpecific
                     && !(action.params[2] & (castTriggered | castForceTargetSelf))
                     ? lore.spellInfo(action.params[0]) : null;
-                const effect = spell is null ? size_t.max : context.namedCreatureChannel(spell);
-                if (effect == size_t.max)
+                const effect = spell is null ? noEffect : context.namedCreatureChannel(spell);
+                if (effect == noEffect)
                 {
                     count = 0;
                     break;

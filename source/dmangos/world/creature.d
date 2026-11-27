@@ -1128,6 +1128,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         import std.random : uniform01;
         import dmangos.world.spellauras : channelAuraActive;
         import dmangos.world.spelldamage : crystalPrison, namedChannelTriggerEffect, namedCreatureChannelEffect;
+        import dmangos.world.spellids : noEffect;
 
         AuraTick[] ticks;
         Aura[] expired, heartbeats;
@@ -1139,7 +1140,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             if (tick.aura.channelToken && namedChannelTriggerEffect(*tick.aura.spell) == tick.effect)
                 continue; // Only the caster can confirm that the channel finished.
             if (tick.aura.caster
-                && namedCreatureChannelEffect(*tick.aura.spell) != size_t.max
+                && namedCreatureChannelEffect(*tick.aura.spell) != noEffect
                 && !channelAuraActive(world.unitOf(this), tick.aura, true))
                 continue;
             selfTick(world, tick.aura, tick.effect); // what heals or gives it power, whoever cast it
@@ -1161,8 +1162,8 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         foreach (aura; expired)
         {
             const effect = aura.channelToken && !aura.detachedChannel
-                ? namedChannelTriggerEffect(*aura.spell) : size_t.max;
-            if (alive && ai !is null && effect != size_t.max && (aura.effects & (1u << effect)))
+                ? namedChannelTriggerEffect(*aura.spell) : noEffect;
+            if (alive && ai !is null && effect != noEffect && (aura.effects & (1u << effect)))
                 if (auto context = ai.spellCaster(world).context)
                 {
                     const now = context.transportNow();

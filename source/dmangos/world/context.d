@@ -85,7 +85,7 @@ import dmangos.world.online : OnlinePlayer;
 import dmangos.world.character : Character;
 import dmangos.world.player : Player;
 import dmangos.world.playercreate : CreationSettings;
-import dmangos.world.spellids : ImplicitTarget, SpellEffect;
+import dmangos.world.spellids : ImplicitTarget, SpellEffect, noEffect;
 import dmangos.world.worlddata : EventCreature, EventMail, PoolMember, Ship, SpawnGroupCondition, SpellListEntry, WorldData;
 
 /// A cluster member has no ids of a kind left (`WorldContext.nextItemGuid`): the coordinator's next block has not come.
@@ -924,10 +924,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         import dmangos.world.spelldamage : databaseSpellEffect, namedCreatureEffect;
 
         const effect = namedCreatureEffect(*spell);
-        if (effect == size_t.max || !spellScriptTargets(spell.id).length || spellScript(spell.id))
-            return size_t.max;
+        if (effect == noEffect || !spellScriptTargets(spell.id).length || spellScript(spell.id))
+            return noEffect;
         if (databaseSpellEffect(spell.effect[effect]) && !data.dbScripts.targetsOnly(spell.id))
-            return size_t.max;
+            return noEffect;
         return effect;
     }
 
@@ -936,8 +936,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     {
         import dmangos.world.spelldamage : remoteTargetAuraEffects;
 
-        if (first == size_t.max)
-            return size_t.max;
+        if (first == noEffect)
+            return noEffect;
         const excluded = scriptTargetExclusions(spell.id, entry);
         if (!(excluded & (1u << first)))
             return first;
@@ -948,7 +948,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                 if (auras & (1u << i))
                     return i;
         }
-        return size_t.max;
+        return noEffect;
     }
 
     package const(uint)[] namedCreatureEntries(const(SpellInfo)* spell, size_t first)
@@ -958,7 +958,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
             return entries;
         uint[] eligible;
         foreach (entry; entries)
-            if (namedCreatureEffectFor(spell, first, entry) != size_t.max)
+            if (namedCreatureEffectFor(spell, first, entry) != noEffect)
                 eligible ~= entry;
         return eligible;
     }
@@ -971,10 +971,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
 
         const effect = namedCreatureChannelEffect(*spell);
         const ms = duration(*spell, client, spell.spellLevel);
-        return effect != size_t.max && namedCreatureEntries(spell, effect).length && !spellScript(spell.id)
+        return effect != noEffect && namedCreatureEntries(spell, effect).length && !spellScript(spell.id)
             && (ms > 0 || (ms < 0 && permanentNamedCreatureVisual(spell.id)))
-            && (namedChannelTriggerEffect(*spell) == size_t.max || namedChannelCompletionSpell(spell) !is null)
-            ? effect : size_t.max;
+            && (namedChannelTriggerEffect(*spell) == noEffect || namedChannelCompletionSpell(spell) !is null)
+            ? effect : noEffect;
     }
 
     /// A single terminal dummy hit with no spell script of its own can run where its creature is owned.
@@ -986,7 +986,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         import dmangos.world.spellids : SpellEffect;
 
         const effect = namedChannelTriggerEffect(*spell);
-        if (effect == size_t.max || spell.casting.amplitude[effect] != duration(*spell, client, spell.spellLevel))
+        if (effect == noEffect || spell.casting.amplitude[effect] != duration(*spell, client, spell.spellLevel))
             return null;
         const child = data.spells.spell(spell.triggerSpell[effect]);
         if (child is null || (child.casting.speed != 0 && child.id != crystalPrisonCompletion)
@@ -1893,18 +1893,18 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
             import std.algorithm.searching : canFind;
             import dmangos.world.spellselection : namedCreatureRange;
 
-            const named = message.namedCreature ? namedCreatureChannel(spell) : size_t.max;
+            const named = message.namedCreature ? namedCreatureChannel(spell) : noEffect;
             const actorCanChannel = attacker.player ? !message.creatureCast : message.creatureCast && message.namedCreature;
             if (!actorCanChannel || message.triggered || message.creatureArea
-                || (message.namedCreature ? named == size_t.max : !isRemoteLeechChannel(*spell)))
+                || (message.namedCreature ? named == noEffect : !isRemoteLeechChannel(*spell)))
                 return;
-            size_t targetEffect = size_t.max;
+            size_t targetEffect = noEffect;
             if (message.namedCreature)
             {
                 if (victim.kind != UnitKind.creature || !spellScriptTargets(spell.id).canFind(victim.creature.spawn.entry))
                     return replyCreatureCast(peer, message, SpellMissInfo.evade);
                 targetEffect = namedCreatureEffectFor(spell, named, victim.creature.spawn.entry);
-                if (targetEffect == size_t.max)
+                if (targetEffect == noEffect)
                     return replyCreatureCast(peer, message, SpellMissInfo.evade);
             }
             const operation = message.channelOperation;

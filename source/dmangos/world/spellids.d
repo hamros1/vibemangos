@@ -9,6 +9,9 @@
  */
 module dmangos.world.spellids;
 
+/// No effect of a spell: what a function looking for one of a spell's three effects returns when none is it.
+enum size_t noEffect = size_t.max;
+
 /**
  * Every spell effect of 1.12 (`Spell.dbc`'s `Effect` columns), numbered as the client numbers them. Members
  * with a comment naming the reference's constant were added from its list; whether the server handles each

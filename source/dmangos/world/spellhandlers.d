@@ -506,8 +506,8 @@ private:
         if (context.playerRelay is null || (targets.mask != TargetFlags.self && spell.id != dominionOfSoul)
             || generic.active || channelSpell !is null)
             return 0;
-        if (context.sendAreaDamage !is null && (context.namedCreatureRouting(spell) != size_t.max
-                || context.namedCreatureChannel(spell) != size_t.max))
+        if (context.sendAreaDamage !is null && (context.namedCreatureRouting(spell) != noEffect
+                || context.namedCreatureChannel(spell) != noEffect))
             return 0;
         auto chosen = singleNamedScriptTarget(spell, true);
         return chosen.replica !is null && map.inLineOfSight(player.position, chosen.position) ? chosen.combatGuid : 0;
@@ -891,7 +891,7 @@ private:
 
     private Replica remoteChannelTarget(const(SpellInfo)* spell, ulong target)
     {
-        if (context.namedCreatureChannel(spell) != size_t.max)
+        if (context.namedCreatureChannel(spell) != noEffect)
         {
             auto copy = cast(Replica) map.findObject(target);
             return copy !is null && copy.fields.type == TypeId.unit ? copy : null;
@@ -1126,7 +1126,7 @@ private:
             endChannel(true);
         channelSpell = spell;
         channelCreditPeer = 0;
-        followingNamedCreature = context.namedCreatureChannel(spell) != size_t.max;
+        followingNamedCreature = context.namedCreatureChannel(spell) != noEffect;
         namedChannelSequence = followingNamedCreature ? context.nextGameplaySequence() : 0;
         namedChannelConfirmed = false;
         namedChannelPeer = 0;
@@ -2974,15 +2974,15 @@ private:
         enum uint unitTargetFlags = 0x0002 | 0x0080 | 0x0100 | 0x0200 | 0x0400 | 0x8000;
         const spell = c.spell;
         auto drain = !c.triggered ? remoteLeechTarget(spell, c.targets.unit) : null;
-        const namedChannel = c.triggered ? size_t.max : context.namedCreatureChannel(spell);
-        auto recipient = namedChannel == size_t.max ? UnitRef.init
+        const namedChannel = c.triggered ? noEffect : context.namedCreatureChannel(spell);
+        auto recipient = namedChannel == noEffect ? UnitRef.init
             : scriptTargetNear(spell, context.namedCreatureEntries(spell, namedChannel), context.sendAreaDamage !is null);
         const recipientEntry = recipient ? namedCreatureEntry(recipient) : 0;
         const channelExclusions = recipient ? context.scriptTargetExclusions(spell.id, recipientEntry) : 0;
         auto remoteChannel = recipient.replica is null ? drain : recipient.replica;
         auto result = checkCast(spell, c.targets, c.triggered, c.castItemEntry, false, drain,
             c.playerHandoff || drain !is null);
-        if (result == SpellCastResult.ok && namedChannel != size_t.max)
+        if (result == SpellCastResult.ok && namedChannel != noEffect)
         {
             if (!recipient)
                 result = SpellCastResult.badTargets;
@@ -3059,8 +3059,8 @@ private:
         const namedEffect = context.namedCreatureRouting(spell);
         const entries = context.namedCreatureEntries(spell, namedEffect);
         c.gameObjectOrigin = player.position;
-        const namedShape = namedEffect != size_t.max ? namedCreatureShape(*spell, namedEffect) : ImplicitTarget.none;
-        const namedRange = namedEffect != size_t.max ? namedCreatureRadius(*spell, namedEffect, context.client) : 0;
+        const namedShape = namedEffect != noEffect ? namedCreatureShape(*spell, namedEffect) : ImplicitTarget.none;
+        const namedRange = namedEffect != noEffect ? namedCreatureRadius(*spell, namedEffect, context.client) : 0;
         const routeNamed = context.sendAreaDamage !is null;
         Position namedCenter;
         bool hasNamedCenter;
@@ -3102,7 +3102,7 @@ private:
                 : areaTargets(spell, i, c.targets, remoteArea);
             if (spell.effect[i] == SpellEffect.persistentAreaAura) // SPELL_EFFECT_PERSISTENT_AREA_AURA: once, whoever stands there
                 targets = [player.guid];
-            else if (namedChannel != size_t.max)
+            else if (namedChannel != noEffect)
             {
                 if (!(channelExclusions & (1u << i)))
                     targets = [recipient.combatGuid];

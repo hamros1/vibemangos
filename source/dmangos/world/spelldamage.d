@@ -289,8 +289,8 @@ package size_t namedCreatureEffect(const ref SpellInfo spell)
     import dmangos.world.classspells : SpellFamily;
 
     if (spell.attributesEx & (0x04 | 0x40))
-        return size_t.max; // channels need their own lifetime and interrupt routing
-    size_t first = size_t.max;
+        return noEffect; // channels need their own lifetime and interrupt routing
+    size_t first = noEffect;
     foreach (i, effect; spell.effect)
     {
         if (effect == SpellEffect.none)
@@ -300,22 +300,22 @@ package size_t namedCreatureEffect(const ref SpellInfo spell)
             continue;
         const shape = namedCreatureShape(spell, i);
         if (shape == ImplicitTarget.none || spell.casting.chainTarget[i] > 1 || spell.casting.school >= 7)
-            return size_t.max;
-        if (first != size_t.max && (spell.implicitTargetA[i] != spell.implicitTargetA[first]
+            return noEffect;
+        if (first != noEffect && (spell.implicitTargetA[i] != spell.implicitTargetA[first]
             || spell.casting.implicitTargetB[i] != spell.casting.implicitTargetB[first]
             || (shape != ImplicitTarget.unitScriptNearCaster
                 && spell.casting.radiusIndex[i] != spell.casting.radiusIndex[first])))
-            return size_t.max;
+            return noEffect;
         if (effect == SpellEffect.applyAura)
         {
-            if (!remoteTargetAuraEffects(spell, i) || (first != size_t.max
+            if (!remoteTargetAuraEffects(spell, i) || (first != noEffect
                 && spell.effect[first] != SpellEffect.applyAura && spell.effect[first] != SpellEffect.schoolDamage))
-                return size_t.max;
+                return noEffect;
         }
-        else if (first != size_t.max || (effect != SpellEffect.heal && !isDirectMagicDamageEffect(spell, i)
+        else if (first != noEffect || (effect != SpellEffect.heal && !isDirectMagicDamageEffect(spell, i)
             && !(databaseSpellEffect(effect) && spell.casting.spellFamilyName == SpellFamily.generic)))
-            return size_t.max;
-        if (first == size_t.max)
+            return noEffect;
+        if (first == noEffect)
             first = i;
     }
     return first;
@@ -365,7 +365,7 @@ package size_t namedCreatureChannelEffect(const ref SpellInfo spell)
     import std.algorithm.comparison : among;
 
     if (!(spell.attributesEx & (0x04 | 0x40)))
-        return size_t.max;
+        return noEffect;
     // The prison's three effects share the Doomguard Commander. The periodic aura
     // carries the channel token, the immunity shares its hit, and the opening effect adds threat.
     if (spell.id == crystalPrison && spell.effect == [SpellEffect.threat, SpellEffect.applyAura, SpellEffect.applyAura]
@@ -374,7 +374,7 @@ package size_t namedCreatureChannelEffect(const ref SpellInfo spell)
         && spell.triggerSpell[1] == crystalPrisonCompletion && spell.casting.applyAuraName[1] == AuraType.periodicTriggerSpell
         && spell.casting.applyAuraName[2] == AuraType.stateImmunity)
         return 1;
-    size_t first = size_t.max;
+    size_t first = noEffect;
     bool finish, threat;
     foreach (i, effect; spell.effect)
     {
@@ -382,7 +382,7 @@ package size_t namedCreatureChannelEffect(const ref SpellInfo spell)
             continue;
         if (effect != SpellEffect.applyAura || spell.casting.chainTarget[i] > 1
             || namedCreatureShape(spell, i) != ImplicitTarget.unitScriptNearCaster)
-            return size_t.max;
+            return noEffect;
         const aura = spell.casting.applyAuraName[i];
         if (aura == AuraType.modThreat)
             threat = true;
@@ -391,17 +391,17 @@ package size_t namedCreatureChannelEffect(const ref SpellInfo spell)
             if (spell.triggerSpell[i])
             {
                 if (finish || !spell.casting.amplitude[i])
-                    return size_t.max;
+                    return noEffect;
                 finish = true;
             }
         }
         else if (!(aura == AuraType.dummy && namedCreatureVisual(spell.id))
             && !aura.among(AuraType.periodicHeal, AuraType.modDamageDone, AuraType.modMeleeHaste, AuraType.modScale))
-            return size_t.max;
-        if (first == size_t.max)
+            return noEffect;
+        if (first == noEffect)
             first = i;
     }
-    return threat && !finish ? size_t.max : first;
+    return threat && !finish ? noEffect : first;
 }
 
 /// The potential completion effect. The world also checks its timing and the child spell.
@@ -411,7 +411,7 @@ package size_t namedChannelTriggerEffect(const ref SpellInfo spell)
         if (trigger && spell.effect[i] == SpellEffect.applyAura
             && spell.casting.applyAuraName[i] == AuraType.periodicTriggerSpell)
             return i;
-    return size_t.max;
+    return noEffect;
 }
 
 unittest
@@ -421,11 +421,11 @@ unittest
     channel.effect[0] = SpellEffect.applyAura;
     channel.implicitTargetA[0] = ImplicitTarget.unitScriptNearCaster;
     channel.casting.applyAuraName[0] = AuraType.dummy;
-    assert(namedCreatureChannelEffect(channel) == size_t.max);
+    assert(namedCreatureChannelEffect(channel) == noEffect);
     channel.casting.applyAuraName[0] = AuraType.periodicTriggerSpell;
     assert(namedCreatureChannelEffect(channel) == 0);
     channel.triggerSpell[0] = 1;
-    assert(namedCreatureChannelEffect(channel) == size_t.max);
+    assert(namedCreatureChannelEffect(channel) == noEffect);
     channel.casting.amplitude[0] = 2000;
     assert(namedCreatureChannelEffect(channel) == 0 && namedChannelTriggerEffect(channel) == 0);
     channel.casting.applyAuraName[0] = AuraType.periodicHeal;
@@ -436,7 +436,7 @@ unittest
     channel.casting.applyAuraName[1] = AuraType.modMeleeHaste;
     assert(namedCreatureChannelEffect(channel) == 0 && remoteTargetAuraEffects(channel, 0) == 0b011);
     channel.implicitTargetA[1] = ImplicitTarget.caster;
-    assert(namedCreatureChannelEffect(channel) == size_t.max);
+    assert(namedCreatureChannelEffect(channel) == noEffect);
 }
 
 package ImplicitTarget creatureAreaShape(const ref SpellInfo spell, size_t i)
