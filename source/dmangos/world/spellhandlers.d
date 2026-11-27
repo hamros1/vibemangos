@@ -4407,25 +4407,9 @@ private:
                     if (object.guid != excluded && remoteEnemy(replica) && within(replica.position))
                         found ~= replica.guid;
                 }
-            // At most `MaxAffectedTargets` ("Up to 5 total nearby enemies", Thunder Clap's "up to 4 targets"): the one
-            // aimed at among them, then the nearest (the same for each of its effects).
-            const most = spell.casting.maxAffectedTargets;
-            if (most && found.length > most)
-            {
-                import std.algorithm.sorting : sort;
+            import dmangos.world.spellselection : mostAffected;
 
-                double away(ulong guid)
-                {
-                    if (guid == targets.unit)
-                        return -1;
-                    const u = map.unit(guid);
-                    const p = u ? u.position : map.findObject(guid).position;
-                    return (p.x - center.x) ^^ 2 + (p.y - center.y) ^^ 2 + (p.z - center.z) ^^ 2;
-                }
-                found.sort!((x, y) => away(x) < away(y) || (away(x) == away(y) && x < y));
-                found = found[0 .. most];
-            }
-            return found;
+            return mostAffected(map, found, spell.casting.maxAffectedTargets, targets.unit, center);
         }
         // The party (or every friend, here the party too) within the radius, itself included: in a raid, its own
         // subgroup's (`Spell::SetTargetMap`'s party targets).

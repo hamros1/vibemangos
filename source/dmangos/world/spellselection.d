@@ -273,6 +273,32 @@ private void visitNamedCreatures(Map world, Position center, float reach, const(
 }
 
 /// Players and creatures cast a recorded animation on the nearest eligible game object.
+/**
+ * At most `most` of an area's targets `found` (the spell's `MaxAffectedTargets`: "up to 5 total nearby enemies",
+ * Thunder Clap's "up to 4 targets"; 0: no limit), any caster's: the one aimed at (`aimed`) among them, then the
+ * nearest to `center`, the same for each of its effects.
+ */
+package ulong[] mostAffected(Map map, ulong[] found, uint most, ulong aimed, Position center)
+{
+    import std.algorithm.sorting : sort;
+
+    if (!most || found.length <= most)
+        return found;
+    double away(ulong guid)
+    {
+        if (guid == aimed)
+            return -1;
+        const u = map.unit(guid);
+        const object = u ? null : map.findObject(guid);
+        if (!u && object is null)
+            return double.infinity;
+        const p = u ? u.position : object.position;
+        return (p.x - center.x) ^^ 2 + (p.y - center.y) ^^ 2 + (p.z - center.z) ^^ 2;
+    }
+    found.sort!((x, y) => away(x) < away(y) || (away(x) == away(y) && x < y));
+    return found[0 .. most];
+}
+
 unittest
 {
     import dmangos.bytes : ByteReader, ByteWriter, floatBits;

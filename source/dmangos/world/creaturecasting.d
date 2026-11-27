@@ -1011,7 +1011,9 @@ mixin template CreatureCasting()
                             && canAttack(relating, other.ai.relatingOf, me.client)
                             && (!cone || inSpellCone(me.position, other.position, coneDegrees)))
                         found ~= other.guid;
-            return found;
+            import dmangos.world.spellselection : mostAffected;
+
+            return mostAffected(world_, found, spell.casting.maxAffectedTargets, target, center);
         }
         // A script's area around the caster (`TARGET_ENUM_UNITS_SCRIPT_AOE_AT_SRC_LOC`): the living creatures there
         // `spell_script_target` names, or (it names none) every unit there, the caster too, which its script picks

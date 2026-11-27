@@ -143,6 +143,8 @@ primary sources (docs/FORMULAS.md); CMaNGOS and vmangos are second opinions.
   where it has no row), a player's and a creature's alike, and a negative angle is behind the caster (a dragon's
   Tail Sweep and Tail Lash, -82). Before, a player's cone was 120 degrees whatever the spell (Cone of Cold is 90)
   and a creature's 90, always in front.
+* **An area spell's `MaxAffectedTargets` limits a creature's as it does a player's**: the one aimed at, then the
+  nearest (`mostAffected`). A creature's area reached everyone in it before.
 * **A creature's Dual Wield does nothing yet**: creatures swing no off-hand weapon. Giving them one (its own
   timer, an off-hand's damage) changes the damage of every mob that casts it, a decision of its own.
 
@@ -156,7 +158,7 @@ primary sources (docs/FORMULAS.md); CMaNGOS and vmangos are second opinions.
 | 3. auras and their ticks | done | 556 |
 | 4. what creatures lacked: wild objects, persistent areas, pets, items, spells taught, spawn, dispels, charges, extra attacks, totems, mana; the hit roll shared | done | 204 (101 with no creature to cast them) |
 | 4b. the rest of the sweep's: object open, disturb and despawn, resurrection, quest credit, sanctuary, traps, Infernals, flights, drunkenness, Thundercrash, the cone of 54; the sweep's own misreadings (its player dying, debuffs seen as friendly, stunned casters) | done | 108: 101 with no creature to cast them, Dual Wield, and six rockets whose object (180856) is not in the world database |
-| 5. targets once | in part: one cone for every caster (`spellCone`, `inSpellCone`); a creature still resolves its other implicit targets in `creaturecasting.d` (`targetsFor`), a player in `spellhandlers.d` (`go`, `areaTargets`) |  |
+| 5. targets once | in part: one cone (`spellCone`, `inSpellCone`) and one target limit (`mostAffected`) for every caster; a creature still resolves its other implicit targets in `creaturecasting.d` (`targetsFor`), a player in `spellhandlers.d` (`go`, `areaTargets`) |  |
 | 6. procs once | in part: every creature's auras proc now (a mob's Thrash, not only a pet's), through `creatureprocs.d`; a player's are `procs.d`'s, with its class rules, cooldowns and weapon checks |  |
 
 Performance: the 500-player crowd (`tools/harness/bench.sh LABEL crowd 500`, release builds, run in turn
