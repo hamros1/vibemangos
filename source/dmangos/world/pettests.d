@@ -1145,6 +1145,7 @@ unittest
     import dmangos.bytes : floatBits;
     import dmangos.script.api : ActionResult;
     import dmangos.world.clientdata : spellRadiusFormat;
+    import dmangos.world.spellcast : spellAttrEx3AlwaysHit;
     import dmangos.world.spellhandlers : testSpell;
     import dmangos.world.spellids : ImplicitTarget, SpellEffect;
 
@@ -1173,6 +1174,7 @@ unittest
     auto spell = testSpell(nova, SpellEffect.schoolDamage, ImplicitTarget.casterSource, 30);
     spell.casting.implicitTargetB[0] = ImplicitTarget.enemiesAroundSource;
     spell.casting.radiusIndex[0] = 1;
+    spell.casting.attributesEx3 |= spellAttrEx3AlwaysHit; // no miss to make the test a roll
     context.data.spells.spells[nova] = spell;
     auto caster = context.summonCreature(map, boar, Position(-8945, -132.49f, 83.53f, 0), TempSpawnType.dead, 0, 0);
     auto neighbour = context.summonCreature(map, boar, Position(-8944, -130, 83.53f, 0), TempSpawnType.dead, 0, 0);
@@ -1230,6 +1232,7 @@ unittest
 unittest
 {
     import dmangos.script.api : ActionResult;
+    import dmangos.world.spellcast : spellAttrEx3AlwaysHit;
     import dmangos.world.spellhandlers : testSpell;
     import dmangos.world.spellids : ImplicitTarget, SpellEffect;
 
@@ -1251,6 +1254,7 @@ unittest
     enum uint lightning = 97903;
     auto spell = testSpell(lightning, SpellEffect.schoolDamage, ImplicitTarget.enemy, 30);
     spell.casting.chainTarget[0] = 3;
+    spell.casting.attributesEx3 |= spellAttrEx3AlwaysHit; // no miss to make the test a roll
     context.data.spells.spells[lightning] = spell;
     auto caster = context.summonCreature(map, boar, Position(-8945, -132.49f, 83.53f, 0), TempSpawnType.dead, 0, 0);
     const heroHealth = session.player.values.get!UNIT_FIELD_HEALTH, petHealth = pet.values.get!UNIT_FIELD_HEALTH;
