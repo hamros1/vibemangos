@@ -203,6 +203,11 @@ struct ShutdownTimer
  */
 final class WorldContext : GroupDirectory, IdCounters, SessionHandler
 {
+    import dmangos.world.objectrespawns : ObjectRespawns;
+
+    /// See `dmangos.world.objectrespawns`.
+    ObjectRespawns objectRespawns;
+
     import dmangos.world.objectscripts : ObjectScripts;
 
     /// See `dmangos.world.objectscripts`.
@@ -724,7 +729,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     package MonoTime startClock;
 
     /// Chooses creatures' models and levels.
-    private Random spawnRandom;
+    package Random spawnRandom;
 
     /// The most sessions that were online at once, for the `uptime` table.
     size_t peakSessions;
@@ -747,6 +752,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         LoginDatabase accounts = null, Battlegroup sharedBattles = null)
     in (database !is null && data !is null && client !is null)
     {
+        objectRespawns = new ObjectRespawns(this);
         objectScripts = new ObjectScripts(this);
         groupRelay = new GroupRelay(this);
         remoteSpells = new RemoteSpells(this);
@@ -799,8 +805,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         groupService = new GroupService(this);
         deadCreatures.respawnAt = database.loadCreatureRespawns();
         creaturePools = new CreaturePools(() => this.database, config.realmId, data, deadCreatures.respawnAt);
-        gameObjectRespawnAt = database.loadGameObjectRespawns();
-        gameObjectPools = new GameObjectPools(() => this.database, config.realmId, data, gameObjectRespawnAt,
+        objectRespawns.gameObjectRespawnAt = database.loadGameObjectRespawns();
+        objectRespawns.gameObjectPools = new GameObjectPools(() => this.database, config.realmId, data, objectRespawns.gameObjectRespawnAt,
             config.cluster.enabled);
         groups.load(database.loadGroups());
         guilds = new Guilds;
@@ -969,8 +975,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     {
         if (kind == PoolMember.Kind.creature && creaturePools.manages(guid))
             return creaturePools.selected(guid);
-        if (kind == PoolMember.Kind.gameObject && gameObjectPools.manages(guid))
-            return gameObjectPools.selected(guid);
+        if (kind == PoolMember.Kind.gameObject && objectRespawns.gameObjectPools.manages(guid))
+            return objectRespawns.gameObjectPools.selected(guid);
         return data.pools is null || data.pools.spawns(kind, guid);
     }
 
@@ -979,7 +985,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
      * itself; otherwise the member rolled in its place comes after a respawn time of its own (`respawnIn`, given
      * the member: saved as its respawn), and this one stays away.
      */
-    private bool rerolledBack(PoolMember.Kind kind, uint guid, scope void delegate(uint member) respawnIn)
+    package bool rerolledBack(PoolMember.Kind kind, uint guid, scope void delegate(uint member) respawnIn)
     {
         if (data.pools is null || !data.pools.inPool(kind, guid))
             return true;
@@ -1708,7 +1714,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                         if (creature.loot !is null)
                             creature.loot.resumeRollsFor(who.character.guid);
             }
-            foreach (guid; outdoorChests.byKey)
+            foreach (guid; objectRespawns.outdoorChests.byKey)
                 if (const index = guid in gameObjectSpawnIndex)
                 {
                     const spawn = &data.gameObjectSpawns[*index];
@@ -1781,7 +1787,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                 recovery.outdoorQuestActors.remove(go.guid);
                 if (go.type == GameObjectType.chest)
                 {
-                    outdoorChests.remove(go.spawn.guid);
+                    objectRespawns.outdoorChests.remove(go.spawn.guid);
                     database.finishScriptedOutdoorChest(config.realmId, go.guid, go.spawn.guid);
                 }
                 else
@@ -2016,13 +2022,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     package GameObject spawnWorldGameObject(const ref GameObjectSpawn spawn)
     {
         // Negative respawn times reserve the spawn for an event, a script or world PvP.
-        if ((spawn.respawnSeconds < 0 && !calendar.eventActivatesObject(spawn.guid)) || gameObjectAwaitingRespawn(spawn.guid)
+        if ((spawn.respawnSeconds < 0 && !calendar.eventActivatesObject(spawn.guid)) || objectRespawns.gameObjectAwaitingRespawn(spawn.guid)
             || !calendar.gameObjectInEvents(spawn.guid) || !upInPool(PoolMember.Kind.gameObject, spawn.guid)
             || !dungeons.groupSpawnAllowed(existingMap(spawn.map), 1, spawn.guid))
             return null;
         auto object = makeGameObject(spawn);
-        if (const saved = spawn.guid in outdoorChests)
-            restoreOutdoorChest(object, *saved);
+        if (const saved = spawn.guid in objectRespawns.outdoorChests)
+            objectRespawns.restoreOutdoorChest(object, *saved);
         return object;
     }
 
@@ -3294,10 +3300,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         map.corpseExpired(corpse);
     }
 
-    /// Game objects used up: spawn guid -> when they come back (Unix time), as `gameobject_respawn` has it.
-    package long[uint] gameObjectRespawnAt;
-    package GameObjectPools gameObjectPools;
-    package InstanceChestRecord[uint] outdoorChests;
 
     /// A game object from its spawn, with what it needs to show players their quests' objects.
     GameObject makeGameObject(scope const ref GameObjectSpawn spawn)
@@ -3339,297 +3341,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         return false;
     }
 
-    /// Persistent rewards are one-shot dungeon chest spawns with no gathering refills.
-    package bool isInstanceReward(const GameObject go)
-    {
-        import dmangos.world.gameobject : GameObjectType;
-
-        return go.instanceId in dungeons.instances && go.spawn.guid < temporaryCounterStart
-            && go.type == GameObjectType.chest && go.consumable && go.spawn.respawnSeconds < 0
-            && !go.template_.data[4] && !go.template_.data[5];
-    }
-
-    package bool canCheckpointChest(const GameObject go)
-    {
-        if (go.instanceId)
-            return isInstanceReward(go);
-        if (!config.cluster.enabled || go.spawn.guid >= temporaryCounterStart || go.type != GameObjectType.chest
-            || !go.consumable || go.spawn.guid in spawnEditor.unsavedGameObjectSpawns)
-            return false;
-        if (go.spawn.respawnSeconds < 0)
-            return recovery.durableScriptedSpawn(go.spawn, *go.template_)
-                && GameObjectOnMap(existingMap(go.spawn.map), go.guid) in scriptedGameObjects;
-        return gameObjectPools.manages(go.spawn.guid)
-            || data.pools is null || !data.pools.inPool(PoolMember.Kind.gameObject, go.spawn.guid);
-    }
-
-    package void saveOpenedChest(Map map, GameObject go)
-    {
-        if (!canCheckpointChest(go))
-            return;
-        if (!go.instanceId)
-            deadCreatures.saveOutdoorLootPositions(map, go.loot);
-        database.saveInstanceChest(checkpointReward(map, go));
-    }
-
-    package void saveRefilledChest(Map map, GameObject go)
-    {
-        if (!go.instanceId && go.spawn.guid in outdoorChests)
-            database.saveInstanceChest(checkpointReward(map, go));
-    }
-
-    package InstanceChestRecord checkpointReward(Map map, GameObject go,
-        const imported!"dmangos.world.loot".LootItem claimed = null, ulong looter = 0)
-    {
-        import dmangos.bytes : ByteWriter;
-        import dmangos.world.instancescripting : toHex;
-
-        if (!go.instanceId)
-        {
-            import std.algorithm.comparison : min;
-
-            const visibleUntil = scriptedGameObjects.get(GameObjectOnMap(map, go.guid), long.max);
-            ByteWriter w;
-            go.saveState(w, fleet.transportNow(), 0, claimed, looter);
-            const previous = outdoorChests.get(go.spawn.guid, InstanceChestRecord.init);
-            const openedUntil = go.despawnTimer > 0 ? unixTime + (go.despawnTimer + 999L) / 1000 : 0;
-            auto record = InstanceChestRecord(0, go.spawn.guid,
-                min(visibleUntil, openedUntil && previous.expiresAt ? previous.expiresAt : openedUntil), toHex(w.data));
-            outdoorChests[go.spawn.guid] = record;
-            return record;
-        }
-        auto state = go.instanceId in dungeons.instances;
-        if (state is null)
-            return InstanceChestRecord.init;
-        const now = unixTime;
-        const visibleUntil = scriptedGameObjects.get(GameObjectOnMap(map, go.guid), long.max);
-        const openedUntil = now + (go.despawnTimer + 999) / 1000;
-        const previous = state.chests.get(go.spawn.guid, InstanceChestRecord.init);
-        ByteWriter w;
-        w.put(ubyte(1));
-        go.loot.saveHandoff(w, claimed, looter);
-        auto record = InstanceChestRecord(go.instanceId, go.spawn.guid,
-            previous.loot.length ? previous.expiresAt : visibleUntil < openedUntil ? visibleUntil : openedUntil,
-            toHex(w.data));
-        state.chests[go.spawn.guid] = record;
-        return record;
-    }
-
-    private void rememberUnopenedReward(GameObject go, long deadline)
-    {
-        if (!isInstanceReward(go))
-            return;
-        auto record = InstanceChestRecord(go.instanceId, go.spawn.guid, deadline, null);
-        dungeons.instances[go.instanceId].chests[go.spawn.guid] = record;
-        database.saveInstanceChest(record);
-    }
-
-    package bool restoreReward(GameObject go, const ref InstanceChestRecord reward)
-    {
-        import dmangos.bytes : ByteReader, PacketException;
-        import dmangos.log : warning;
-        import dmangos.world.gameobject : GoLootState;
-        import dmangos.world.instancescripting : fromHex;
-        import dmangos.world.loot : Loot;
-        import std.algorithm.searching : all;
-
-        const remaining = reward.expiresAt - unixTime;
-        if (remaining <= 0 || !isInstanceReward(go))
-            return false;
-        if (!reward.loot.length)
-        {
-            scriptedGameObjects[GameObjectOnMap(dungeons.instanceMaps[go.instanceId], go.guid)] = reward.expiresAt;
-            return true;
-        }
-        auto r = ByteReader(fromHex(reward.loot));
-        try
-        {
-            if (r.read!ubyte != 1)
-                throw new PacketException("unknown instance reward version");
-            auto loot = Loot.loadHandoff(go.guid, r);
-            if (!loot.gold && loot.items.all!(item => item.allowed.length == 0))
-                return false;
-            go.loot = loot;
-            go.lootState = GoLootState.activated;
-            go.despawnTimer = cast(int)(remaining > int.max / 1000 ? int.max : remaining * 1000);
-            migrants.bindMigrantLoot(go, dungeons.instanceMaps[go.instanceId]);
-            return true;
-        }
-        catch (PacketException e)
-        {
-            warning!"could not restore reward chest %s of instance %s: %s"(reward.spawn, reward.instance, e.msg);
-            return false;
-        }
-    }
-
-    package void restoreOutdoorChest(GameObject go, const ref InstanceChestRecord chest)
-    {
-        import dmangos.log : warning;
-        import dmangos.world.instancescripting : fromHex;
-
-        if (!canCheckpointChest(go))
-            return;
-        try
-        {
-            auto bytes = ByteReader(fromHex(chest.loot));
-            go.loadState(bytes, fleet.transportNow());
-            if (chest.expiresAt && chest.expiresAt <= unixTime)
-            {
-                go.loot = null;
-                go.lootState = GoLootState.justDeactivated;
-                return;
-            }
-            if (go.loot is null)
-                return;
-            go.despawnTimer = cast(int)((chest.expiresAt - unixTime) * 1000);
-            migrants.bindMigrantLoot(go, existingMap(go.spawn.map));
-            if (go.lootState == GoLootState.activated && go.loot.lootedForEveryone())
-                go.loot.lootedForAll();
-            else
-                go.loot.resumeRemoteRolls();
-        }
-        catch (Exception error)
-            warning!"map %s: could not restore outdoor chest %s: %s"(go.spawn.map, chest.spawn, error.msg);
-    }
-
-    /// A game object used up: it comes back after its spawn's respawn time.
-    package void gameObjectUsedUp(GameObject go)
-    {
-        if (go.spawn.guid >= temporaryCounterStart)
-            return;
-        if (go.instanceId)
-        {
-            if (auto state = go.instanceId in dungeons.instances)
-            {
-                state.usedUp[go.spawn.guid] = true;
-                if (auto copy = battlegrounds.find(go.instanceId))
-                    return copy.objectiveChanged();
-                database.saveInstanceRespawn(true, go.spawn.guid, go.instanceId,
-                    state.resetAt ? state.resetAt : unixTime + 86_400);
-            }
-            return;
-        }
-        if (go.spawn.respawnSeconds < 0)
-            return;
-        const at = outdoorObjectRespawnDeadline(go);
-        const hadChest = outdoorChests.remove(go.spawn.guid);
-        if (gameObjectPools.manages(go.spawn.guid))
-            return gameObjectPools.exhausted(go.spawn.guid, at, hadChest);
-        gameObjectRespawnAt[go.spawn.guid] = at;
-        if (hadChest)
-            database.finishOutdoorChest(go.spawn.guid, at);
-        else
-            database.saveGameObjectRespawn(go.spawn.guid, at);
-    }
-
-    private long outdoorObjectRespawnDeadline(const GameObject go)
-    {
-        const saved = go.spawn.guid in outdoorChests;
-        const finished = saved !is null && saved.expiresAt && saved.expiresAt < unixTime ? saved.expiresAt : unixTime;
-        return finished + (go.spawn.respawnSeconds > 0 ? go.spawn.respawnSeconds : 0);
-    }
-
-    /// Whether a game object spawn is used up and waiting to come back.
-    bool gameObjectAwaitingRespawn(uint spawnGuid)
-    {
-        if (gameObjectPools.manages(spawnGuid))
-            return gameObjectPools.waiting(spawnGuid);
-        if (auto at = spawnGuid in gameObjectRespawnAt)
-            return *at > unixTime;
-        return false;
-    }
-
-    /// The game objects whose time has come, made anew where their cell is loaded.
-    private void gameObjectsDue()
-    {
-        const time = unixTime;
-        gameObjectPoolsDue(time);
-        uint[] due;
-        foreach (guid, at; gameObjectRespawnAt)
-            if (at <= time)
-                due ~= guid;
-        if (due.length)
-            indexSpawns();
-        foreach (guid; due)
-        {
-            const index = guid in gameObjectSpawnIndex;
-            const spawn = index is null ? null : &data.gameObjectSpawns[*index];
-            gameObjectRespawnAt.remove(guid);
-            if (ownsCell !is null && (spawn is null || !ownsCell(spawn.map, cellKeyAt(spawn.x, spawn.y))))
-                continue;
-            database.saveGameObjectRespawn(guid, 0);
-            if (spawn is null)
-                continue;
-            if (!rerolledBack(PoolMember.Kind.gameObject, guid, (uint member) {
-                    if (const i = member in gameObjectSpawnIndex)
-                    {
-                        gameObjectRespawnAt[member] = time + data.gameObjectSpawns[*i].respawnSeconds;
-                        database.saveGameObjectRespawn(member, gameObjectRespawnAt[member]);
-                    }
-                }))
-                continue;
-            auto there = existingMap(spawn.map);
-            if (there !is null && there.cellLoaded(cellKeyAt(spawn.x, spawn.y)))
-                there.addObject(makeGameObject(*spawn));
-        }
-    }
-
-    private uint[uint] rollsInDoubt; // pool -> the placement a refused roll kept (`gameObjectPoolsDue`)
-
-    private void gameObjectPoolsDue(long time)
-    {
-        import std.algorithm.searching : canFind;
-        import dmangos.world.database : GameObjectPoolPlacement, GameObjectPoolState;
-
-        if (!gameObjectPools.refresh())
-            return;
-        // A roll that kept its placement whose answer was lost reads as refused, though it committed: the saved
-        // selection, read again, says so, and the object comes back now rather than when its cell next loads.
-        foreach (pool, kept; rollsInDoubt)
-            if (const state = pool in gameObjectPools.states())
-                if (state.placements.canFind!(slot => slot.spawn == kept && !slot.due))
-                    if (const spawn = gameObjectSpawnOf(kept))
-                    {
-                        const home = cellKeyAt(spawn.x, spawn.y);
-                        auto where = existingMap(spawn.map);
-                        if (where !is null && where.cellLoaded(home) && (ownsCell is null || ownsCell(spawn.map, home))
-                            && where.gameObjectAt(makeGuid(HighGuid.gameObject, spawn.entry, spawn.guid)) is null)
-                            if (auto object = spawnWorldGameObject(*spawn))
-                                where.addObject(object);
-                    }
-        rollsInDoubt = null;
-        foreach (pool, state; gameObjectPools.states())
-            foreach (i, slot; state.placements)
-            {
-                if (!slot.due || slot.due > time)
-                    continue;
-                const spawn = gameObjectSpawnOf(slot.spawn);
-                if (spawn is null)
-                    continue;
-                const home = cellKeyAt(spawn.x, spawn.y);
-                if (ownsCell !is null && !ownsCell(spawn.map, home))
-                    continue;
-                const next = gameObjectSpawnOf(gameObjectPools.roll(pool, slot.spawn, state, spawnRandom));
-                if (next is null)
-                    continue;
-                const due = next.guid == slot.spawn ? 0 : time + next.respawnSeconds;
-                auto placements = state.placements.dup;
-                placements[i] = GameObjectPoolPlacement(next.guid, due);
-                const selection = GameObjectPoolState(state.revision, placements);
-                if (!gameObjectPools.change(pool, selection))
-                {
-                    if (!due)
-                        rollsInDoubt[pool] = next.guid;
-                    continue;
-                }
-                if (!due)
-                    if (auto where = existingMap(spawn.map))
-                        if (where.cellLoaded(home))
-                            if (auto object = spawnWorldGameObject(*spawn))
-                                where.addObject(object);
-                break;
-            }
-    }
 
     // -----------------------------------------------------------------------
     // Mail and auctions settled outside a session
@@ -3665,7 +3376,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         if (now - deadCreatures.lastRespawnCheck < 1.seconds || !canWrite())
             return;
         deadCreatures.lastRespawnCheck = now;
-        gameObjectsDue();
+        objectRespawns.gameObjectsDue();
         const time = unixTime;
         respawnCreaturePools(time);
         respawnMoltenCoreTrash(time);
@@ -5390,7 +5101,7 @@ unittest
         bystander.ownsCell = (uint, ulong) => false;
         const deadline = oldOwner.unixTime + 10;
         oldOwner.deadCreatures.respawnAt[creature.guid] = deadline;
-        oldOwner.gameObjectRespawnAt[object.guid] = deadline;
+        oldOwner.objectRespawns.gameObjectRespawnAt[object.guid] = deadline;
         if (!clean)
         {
             db.saveCreatureRespawn(creature.guid, deadline);
@@ -5411,7 +5122,7 @@ unittest
         region.next = 0;
         const(ubyte)[][uint] arriving = clean ? [region.id: cast(const(ubyte)[]) leaving[region.id]] : null;
         newOwner.recovery.regionsChanged([region], null, arriving, unused);
-        assert(newOwner.awaitingRespawn(creature.guid) && newOwner.gameObjectAwaitingRespawn(object.guid));
+        assert(newOwner.awaitingRespawn(creature.guid) && newOwner.objectRespawns.gameObjectAwaitingRespawn(object.guid));
         auto map = newOwner.map(0);
         map.loadCell(home);
         const creatureGuid = makeGuid(HighGuid.unit, creature.entry, creature.guid);
@@ -5421,7 +5132,7 @@ unittest
         db.saveCreatureRespawn(creature.guid, deadline); // by then the departing writer has settled
         db.saveGameObjectRespawn(object.guid, deadline);
         bystander.deadCreatures.respawnAt[creature.guid] = deadline;
-        bystander.gameObjectRespawnAt[object.guid] = deadline;
+        bystander.objectRespawns.gameObjectRespawnAt[object.guid] = deadline;
         now += 11.seconds;
         bystander.respawnDue(now);
         assert(db.creatureRespawns[creature.guid] == deadline && db.gameObjectRespawns[object.guid] == deadline,
@@ -5716,7 +5427,7 @@ unittest
     opened.loot.owners[7] = true;
     opened.lootState = GoLootState.activated;
     opened.despawnTimer = 300_000;
-    original.saveOpenedChest(original.map(0), opened);
+    original.objectRespawns.saveOpenedChest(original.map(0), opened);
     assert(db.loadOutdoorChests().length == 1);
 
     auto replacement = worker(3);
@@ -5731,7 +5442,7 @@ unittest
 
     other.map(0).gameObjectUsedUp(neighboring); // its cached pool revision predates the first use
     assert(db.loadGameObjectPoolStates(realm)[pool].revision == 1);
-    assert(other.gameObjectPools.refresh());
+    assert(other.objectRespawns.gameObjectPools.refresh());
     const state = db.loadGameObjectPoolStates(realm)[pool];
     assert(state.revision == 2 && state.placements.length == 2 && state.placements.all!(slot => slot.due == epoch + 30));
 
@@ -5810,7 +5521,7 @@ unittest
     opened.loot.owners[7] = true;
     opened.lootState = GoLootState.activated;
     opened.despawnTimer = 300_000;
-    original.saveOpenedChest(original.map(0), opened);
+    original.objectRespawns.saveOpenedChest(original.map(0), opened);
     assert(db.loadOutdoorChests().length == 1);
 
     auto away = new Failing(db);

@@ -2631,7 +2631,7 @@ final class Map : MotionWorld
     {
         removeObject(go.guid);
         if (world !is null)
-            world.gameObjectUsedUp(go); // to bring it back later
+            world.objectRespawns.gameObjectUsedUp(go); // to bring it back later
     }
 
     /// Sends what changed in the creature's fields to those who see it.

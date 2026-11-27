@@ -170,6 +170,7 @@ source/dmangos/world/       the world server
   remotespells.d              spells between this node's units and those other nodes simulate (`WorldContext.remoteSpells`)
   grouprelay.d                a group's loot, coins, quests and summons across nodes (`WorldContext.groupRelay`)
   objectscripts.d             game objects' scripts: their events, ticks and host (`WorldContext.objectScripts`)
+  objectrespawns.d            chests checkpointed and restored, game objects used up and respawning (`WorldContext.objectRespawns`)
   wareffort.d                 the Ahn'Qiraj war effort, its service, and how a node follows it (`WorldContext.warEffortHere`)
 source/dmangos/extractor/   the client data extractor: main.d, dbc.d (DBC files), maps.d (terrain to .map files),
                               vmaps.d and assembler.d (buildings and doodads to vmaps), mmaps.d (movement maps)

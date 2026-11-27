@@ -812,7 +812,7 @@ final class Dungeons
             return null;
         auto go = world.makeGameObject(spawn);
         go.instanceId = instance;
-        if (reward !is null && !world.restoreReward(go, *reward))
+        if (reward !is null && !world.objectRespawns.restoreReward(go, *reward))
         {
             world.scripts.destroy(go.behaviour);
             return null;

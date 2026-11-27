@@ -31,22 +31,22 @@ package void bindChestLoot(WorldContext context, Map map, GameObject chest, Loot
         return session is null || session.currentMap !is map ? null : cast(Looter) session;
     };
     loot.clock = () => context.unixTime;
-    if (context.canCheckpointChest(chest))
+    if (context.objectRespawns.canCheckpointChest(chest))
     {
         loot.storeReward = (Looter looter, imported!"dmangos.world.loot".LootItem item, bool sendError) {
             auto player = cast(Character) looter;
             return player.storeLootItem(item.itemId, item.count, item.randomPropertyId, sendError,
-                () => context.checkpointReward(map, chest, item, looter.looterGuid));
+                () => context.objectRespawns.checkpointReward(map, chest, item, looter.looterGuid));
         };
         loot.checkpoint = () {
             if (chest.loot is loot)
-                context.database.saveInstanceChest(context.checkpointReward(map, chest));
+                context.database.saveInstanceChest(context.objectRespawns.checkpointReward(map, chest));
             return context.settleWrites();
         };
     }
     loot.changed = () {
         if (loot.checkpoint !is null && chest.loot is loot)
-            context.database.saveInstanceChest(context.checkpointReward(map, chest));
+            context.database.saveInstanceChest(context.objectRespawns.checkpointReward(map, chest));
         map.flushGameObject(chest);
     };
     loot.lootedForAll = () {
@@ -55,7 +55,7 @@ package void bindChestLoot(WorldContext context, Map map, GameObject chest, Loot
             chest.loot = null;
             chest.lootState = GoLootState.ready;
             chest.despawnTimer = 0;
-            context.saveRefilledChest(map, chest);
+            context.objectRespawns.saveRefilledChest(map, chest);
             return;
         }
         chest.lootState = GoLootState.justDeactivated;
@@ -497,7 +497,7 @@ mixin template GameObjectHandlers()
                 return;
             go.loot = makeGameObjectLoot(go);
             go.lootState = GoLootState.activated;
-            context.saveOpenedChest(map, go);
+            context.objectRespawns.saveOpenedChest(map, go);
             map.wake(go.guid);
             go.loot.beginQuestLootChecks(map.id, &context.nextGameplaySequence, context.sendQuestLootCheck);
             if (go.loot is null)
@@ -901,7 +901,7 @@ unittest
     anduin.write(Opcode.CMSG_LOOT_RELEASE, ClientGuid(gos[1].guid));
     assert(me.inventory.count(itemJerky) >= 1);
     tick(100);
-    assert(map.findObject(gos[1].guid) is null && context.gameObjectAwaitingRespawn(90002), "picked: gone");
+    assert(map.findObject(gos[1].guid) is null && context.objectRespawns.gameObjectAwaitingRespawn(90002), "picked: gone");
     now += 61.seconds;
     tick(1000);
     assert(map.findObject(gos[1].guid) !is null, "back after its minute");
@@ -1054,7 +1054,7 @@ unittest
     (cast(Player) anduin.session.character).movement.position = Position(-8945.5f, -132, 83.53f);
     map.relocated(anduin.session.inWorld);
     assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_SPELL_GO), "sprung");
-    assert(map.findObject(go.guid) is null && context.gameObjectAwaitingRespawn(90020), "its one charge used");
+    assert(map.findObject(go.guid) is null && context.objectRespawns.gameObjectAwaitingRespawn(90020), "its one charge used");
 
     // Linked traps: a button standing on its trap springs it when used; a goober with none casts the trap's spell.
     import dmangos.world.packets : ClientGuid;

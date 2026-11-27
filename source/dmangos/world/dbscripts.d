@@ -1269,7 +1269,7 @@ mixin template DbScriptRunner()
                             database.retireOutdoorSummon(config.realmId, request);
                             return;
                         }
-                        respawnAt = outdoorObjectRespawnDeadline(object);
+                        respawnAt = objectRespawns.outdoorObjectRespawnDeadline(object);
                     }
                     const chest = proto.type == GameObjectType.chest ? spawn.guid : 0u;
                     if (database.commitOutdoorDespawn(config.realmId, request, action.guid, chest, respawnAt)
@@ -1295,9 +1295,9 @@ mixin template DbScriptRunner()
         // The checkpoint is already gone. A clean bundle can still have the former owner's visible copy.
         const counter = counterOf(guid);
         recovery.outdoorQuestActors.remove(guid);
-        outdoorChests.remove(counter);
+        objectRespawns.outdoorChests.remove(counter);
         if (respawnAt)
-            gameObjectRespawnAt[counter] = respawnAt;
+            objectRespawns.gameObjectRespawnAt[counter] = respawnAt;
         if (where.gameObjectAt(guid) !is null)
             where.removeObject(guid);
     }
@@ -1319,7 +1319,7 @@ mixin template DbScriptRunner()
         {
             recovery.outdoorQuestActors[state.actor] = state;
             if (chest)
-                outdoorChests.remove(chest);
+                objectRespawns.outdoorChests.remove(chest);
             published = true;
             publishGameObjectSummon(where, object, expires);
             database.retireOutdoorSummon(config.realmId, request);
@@ -1956,9 +1956,9 @@ mixin template DbScriptRunner()
         {
             const deadline = unixTime + despawnSeconds;
             scriptedGameObjects[GameObjectOnMap(map, made.guid)] = deadline;
-            rememberUnopenedReward(made, deadline);
+            objectRespawns.rememberUnopenedReward(made, deadline);
         }
-        if (!map.instanceId && gameObjectRespawnAt.remove(spawn.guid))
+        if (!map.instanceId && objectRespawns.gameObjectRespawnAt.remove(spawn.guid))
             database.saveGameObjectRespawn(spawn.guid, 0);
         map.addObject(made);
         // The dungeon's script hears of it as of any object of the copy (a ritual's bell, a trap).

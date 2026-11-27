@@ -221,7 +221,7 @@ final class SpawnEditor
                         *list = (*list).remove(i);
                         break;
                     }
-        world.gameObjectRespawnAt.remove(s.guid);
+        world.objectRespawns.gameObjectRespawnAt.remove(s.guid);
         world.gameObjectSpawnIndex.remove(s.guid);
         unsavedGameObjectSpawns.remove(s.guid);
         map.removeObject(go.guid);

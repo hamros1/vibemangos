@@ -601,7 +601,7 @@ final class RegionRecoverer
     {
         return spawn.guid < temporaryCounterStart && spawn.respawnSeconds >= 0
             && proto.type != GameObjectType.transport && proto.type != GameObjectType.moTransport
-            && spawn.guid !in world.spawnEditor.unsavedGameObjectSpawns && !world.gameObjectPools.manages(spawn.guid)
+            && spawn.guid !in world.spawnEditor.unsavedGameObjectSpawns && !world.objectRespawns.gameObjectPools.manages(spawn.guid)
             && (world.data.pools is null || !world.data.pools.inPool(PoolMember.Kind.gameObject, spawn.guid));
     }
 
@@ -835,8 +835,8 @@ final class RegionRecoverer
                     }
                     if (savedChest.spawn)
                     {
-                        world.outdoorChests[spawn] = savedChest;
-                        world.restoreOutdoorChest(go, savedChest);
+                        world.objectRespawns.outdoorChests[spawn] = savedChest;
+                        world.objectRespawns.restoreOutdoorChest(go, savedChest);
                     }
                     restoredActor = true;
                     return object;
@@ -872,7 +872,7 @@ final class RegionRecoverer
                 outdoorQuestActors[actor.actor] = actor;
             else if (savedChest.spawn)
             {
-                world.outdoorChests.remove(spawn);
+                world.objectRespawns.outdoorChests.remove(spawn);
                 world.database.finishScriptedOutdoorChest(world.config.realmId, actor.actor, spawn);
             }
             else if (!actor.player)
@@ -976,10 +976,10 @@ final class RegionRecoverer
 
         if (!world.config.cluster.enabled)
             return true;
-        foreach (guid; world.outdoorChests.keys)
+        foreach (guid; world.objectRespawns.outdoorChests.keys)
             if (const index = guid in world.gameObjectSpawnIndex)
                 if (outdoorRegionCovers(&world.data.gameObjectSpawns[*index], lost))
-                    world.outdoorChests.remove(guid);
+                    world.objectRespawns.outdoorChests.remove(guid);
         if (!gained.any!(r => physicalWorldRegion(r)))
             return true;
         try
@@ -987,7 +987,7 @@ final class RegionRecoverer
             foreach (chest; world.database.loadOutdoorChests())
                 if (const index = chest.spawn in world.gameObjectSpawnIndex)
                     if (outdoorRegionCovers(&world.data.gameObjectSpawns[*index], gained))
-                        world.outdoorChests[chest.spawn] = chest;
+                        world.objectRespawns.outdoorChests[chest.spawn] = chest;
         }
         catch (DatabaseException error)
         {
@@ -1106,7 +1106,7 @@ final class RegionRecoverer
             }
         }
         take(world.deadCreatures.respawnAt, world.data.creatureSpawns, world.spawnIndex, MigrantKind.creatureRespawn);
-        take(world.gameObjectRespawnAt, world.data.gameObjectSpawns, world.gameObjectSpawnIndex, MigrantKind.gameObjectRespawn);
+        take(world.objectRespawns.gameObjectRespawnAt, world.data.gameObjectSpawns, world.gameObjectSpawnIndex, MigrantKind.gameObjectRespawn);
         return timers;
     }
 
@@ -1119,7 +1119,7 @@ final class RegionRecoverer
         if (!gained.length)
             return true;
         world.creaturePools.refresh();
-        world.gameObjectPools.refresh();
+        world.objectRespawns.gameObjectPools.refresh();
         const(Region)[] cold;
         foreach (ref region; gained)
         {
@@ -1155,7 +1155,7 @@ final class RegionRecoverer
                         return false; // the durable pool row owns this deadline
                 }
                 else
-                    if (world.gameObjectPools.manages(guid))
+                    if (world.objectRespawns.gameObjectPools.manages(guid))
                         return false;
                 ulong home;
                 return cold.any!(region => timerHome(region, guid, spawns, index, home));
@@ -1170,7 +1170,7 @@ final class RegionRecoverer
         try
         {
             sync(world.deadCreatures.respawnAt, world.database.loadCreatureRespawns(), world.data.creatureSpawns, world.spawnIndex);
-            sync(world.gameObjectRespawnAt, world.database.loadGameObjectRespawns(), world.data.gameObjectSpawns, world.gameObjectSpawnIndex);
+            sync(world.objectRespawns.gameObjectRespawnAt, world.database.loadGameObjectRespawns(), world.data.gameObjectSpawns, world.gameObjectSpawnIndex);
         }
         catch (DatabaseException error)
         {
@@ -1208,7 +1208,7 @@ final class RegionRecoverer
             if (creature && !world.creaturePools.manages(migrant.spawn))
                 world.deadCreatures.respawnAt[migrant.spawn] = at;
             else if (!creature)
-                world.gameObjectRespawnAt[migrant.spawn] = at;
+                world.objectRespawns.gameObjectRespawnAt[migrant.spawn] = at;
         }
         return null;
     }
