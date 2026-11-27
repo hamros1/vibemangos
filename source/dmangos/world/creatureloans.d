@@ -103,7 +103,7 @@ final class CreatureLoans
         const bundle = map_.releaseCreatureLoan(guid, r.next, (MapObject object) {
             if (!r.next)
                 (cast(Creature) object).ai.finishCreatureChannel(true);
-            return world.saveMigrant(object);
+            return world.migrants.saveMigrant(object);
         });
         if (!bundle.length && r.id !in localCreatureLoans)
             return null;
@@ -139,8 +139,8 @@ final class CreatureLoans
             foreach (ref migrant; migrants)
                 migrant.home = noCell; // physical ownership stays reserved until the lease is retired
             map_.migrateIn(encodeBundle(null, migrants), (const ref Migrant migrant) {
-                auto restored = world.restoreMigrant(migrant);
-                world.bindMigrantLoot(restored, map_);
+                auto restored = world.migrants.restoreMigrant(migrant);
+                world.migrants.bindMigrantLoot(restored, map_);
                 return restored;
             });
             if (auto corpse = map_.creatureAt(guid))

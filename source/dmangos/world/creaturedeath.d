@@ -189,7 +189,7 @@ final class DeadCreatures
 
         const expiresAt = world.unixTime + (creature.corpseTimer + 999L) / 1000;
         const record = InstanceCorpseRecord(creature.instanceId, creature.spawn.guid, expiresAt,
-            toHex(world.saveMigratingObject(creature, false, claimed, looter).state));
+            toHex(world.migrants.saveMigratingObject(creature, false, claimed, looter).state));
         if (auto state = creature.instanceId in world.dungeons.instances)
             state.corpses[record.spawn] = record;
         else if (!creature.instanceId)
@@ -258,7 +258,7 @@ final class DeadCreatures
 
         try
         {
-            auto creature = cast(Creature) world.restoreWorldMigrant(migrant, map);
+            auto creature = cast(Creature) world.migrants.restoreWorldMigrant(migrant, map);
             if (creature is null || creature.alive || creature.summon.update(creature, 0))
                 return null;
             // The inventory transaction may have committed before the corpse was cleared.

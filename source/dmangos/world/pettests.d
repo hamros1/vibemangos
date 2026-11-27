@@ -685,9 +685,9 @@ unittest
 
     pet.ai.update(here, 2000);
     assert(swings.length == 2 && swings[1].destination == first.nodeId);
-    const bundle = oldRegion.releaseCreatureLoan(guid, second.nodeId, &first.saveMigrant);
+    const bundle = oldRegion.releaseCreatureLoan(guid, second.nodeId, &first.migrants.saveMigrant);
     assert(bundle.length && oldRegion.isReplica(guid));
-    newRegion.migrateIn(bundle, &second.restoreMigrant);
+    newRegion.migrateIn(bundle, &second.migrants.restoreMigrant);
     auto arrived = newRegion.creatureAt(guid);
     assert(arrived !is null && arrived.values.get!UNIT_FIELD_HEALTH == 8);
     assert(arrived.ai.threatOf(pet.guid) == 8 && arrived.ai.currentVictim == pet.guid
@@ -863,9 +863,9 @@ unittest
 
         attacker.ai.update(here, 2000);
         assert(swings.length == 2);
-        const bundle = oldRegion.migrateOut((ulong key) => key == cell, second.nodeId, &first.saveMigrant);
+        const bundle = oldRegion.migrateOut((ulong key) => key == cell, second.nodeId, &first.migrants.saveMigrant);
         assert(oldRegion.isReplica(guid));
-        newRegion.migrateIn(bundle, &second.restoreMigrant);
+        newRegion.migrateIn(bundle, &second.migrants.restoreMigrant);
         auto arrived = newRegion.creatureAt(guid);
         assert(arrived !is null && arrived.ai.currentVictim == attacker.guid
             && arrived.ai.threatOf(attacker.guid) == 8 && arrived.lootRecipient == controller);

@@ -1053,7 +1053,7 @@ unittest
     auto destination = successor.map(0);
     const x = cellCoordinate(row.x), y = cellCoordinate(row.y);
     const gained = Region(7, 0, CellRect(x, y, x + 1, y + 1), 3, 2, RegionState.granted);
-    const bundle = to.migrateOut(key => key == cell, 3, &owner.saveMigrant);
+    const bundle = to.migrateOut(key => key == cell, 3, &owner.migrants.saveMigrant);
     ubyte[][uint] unused;
     successor.recovery.regionsChanged([gained], null, [gained.id: bundle], unused);
     auto migrated = cast(Creature) destination.findObject(target.guid);

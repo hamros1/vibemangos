@@ -1580,7 +1580,7 @@ mixin template PetHandlers()
             auto creature = map.creatureAt(guid);
             if (creature is null || !creature.alive)
                 return;
-            const moved = context.savePlayerSummon(creature, departing);
+            const moved = context.migrants.savePlayerSummon(creature, departing);
             if (moved.kind != MigrantKind.summonedCreature)
                 return;
             state.put(slot);
@@ -1786,7 +1786,7 @@ mixin template PetHandlers()
                 || (slot < totems.length && totems[slot]))
                 continue;
             const moved = Migrant(MigrantKind.summonedCreature, spawn, home, bytes);
-            if (auto creature = context.restorePlayerSummon(map, moved, player.guid))
+            if (auto creature = context.migrants.restorePlayerSummon(map, moved, player.guid))
             {
                 if (slot == guardianSlot)
                 {

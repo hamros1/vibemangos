@@ -203,6 +203,11 @@ struct ShutdownTimer
  */
 final class WorldContext : GroupDirectory, IdCounters, SessionHandler
 {
+    import dmangos.world.migration : MigrantKeeper;
+
+    /// See `dmangos.world.migration`.
+    MigrantKeeper migrants;
+
     import dmangos.world.creatureloans : CreatureLoans;
 
     /// See `dmangos.world.creatureloans`.
@@ -3099,6 +3104,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         LoginDatabase accounts = null, Battlegroup sharedBattles = null)
     in (database !is null && data !is null && client !is null)
     {
+        migrants = new MigrantKeeper(this);
         loans = new CreatureLoans(this);
         recovery = new RegionRecoverer(this);
         deadCreatures = new DeadCreatures(this);
@@ -3841,14 +3847,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                         {
                             if (!creature.alive || creature.petOwner || creature.meleeController)
                                 return Migrant.init;
-                            auto migrant = saveMigratingObject(creature, false);
+                            auto migrant = migrants.saveMigratingObject(creature, false);
                             migrant.home = cellKeyAt(creature.spawn.x, creature.spawn.y);
                             return migrant;
                         }
                         if (auto go = cast(GameObject) object)
                         {
                             const expires = scriptedGameObjects.get(GameObjectOnMap(created, go.guid), 0L);
-                            auto migrant = saveMigratingObject(go, false, expiresOverride: expires);
+                            auto migrant = migrants.saveMigratingObject(go, false, expiresOverride: expires);
                             migrant.home = cellKeyAt(go.spawn.x, go.spawn.y);
                             return migrant;
                         }
@@ -3859,7 +3865,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
 
                         try
                         {
-                            auto object = restoreWorldMigrant(migrant, created);
+                            auto object = migrants.restoreWorldMigrant(migrant, created);
                             if (object !is null && !config.cluster.enabled && migrant.spawn >= temporaryCounterStart)
                             {
                                 import std.algorithm.comparison : max;
@@ -4587,295 +4593,15 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     // Migration (docs/CLUSTER.md)
     // -----------------------------------------------------------------------
 
-    /// An object's state for its next owner; kind 0 for one that does not move (a player's corpse stays with its player).
-    Migrant saveMigrant(MapObject object)
-    {
-        if (auto creature = cast(Creature) object)
-            if (creature.meleeController || creature.totemOwner)
-                return Migrant.init; // controlled creatures follow their owner's rules
-        return saveMigratingObject(object);
-    }
 
-    package Migrant savePlayerSummon(Creature creature, bool departing)
-    {
-        if (!(creature.guardianOwner || creature.totemOwner) || creature.summon.type == TempSpawnType.none
-            || creature.spawn.guid < temporaryCounterStart)
-            return Migrant.init;
-        auto migrant = saveMigratingObject(creature, departing, carryImpacts: departing);
-        migrant.home = cellKeyAt(creature.spawn.x, creature.spawn.y);
-        return migrant;
-    }
 
-    package Migrant saveMigratingObject(MapObject object, bool departing = true,
-        const LootItem claimed = null, ulong looter = 0, long expiresOverride = 0, bool carryImpacts = true,
-        scope const uint* factionOverride = null)
-    {
-        import dmangos.bytes : ByteWriter;
-        import dmangos.serialization : serialize;
-        import dmangos.world.gameobject : GameObject;
-        import dmangos.world.migration : MigrantKind;
 
-        ByteWriter w;
-        if (auto creature = cast(Creature) object)
-        {
-            if (departing && creature.loot !is null)
-                creature.loot.sendReleaseForAll();
-            const now = fleet.transportNow();
-            auto kind = MigrantKind.creature;
-            if (creature.spawn.guid >= temporaryCounterStart && creature.summon.type != TempSpawnType.none)
-            {
-                kind = MigrantKind.summonedCreature;
-                serialize(w, creature.spawn);
-                serialize(w, creature.summon);
-                w.put(now);
-            }
-            ByteWriter state;
-            creature.saveState(state, now, claimed, looter, factionOverride);
-            w.put(cast(uint) state.data.length);
-            w.putBytes(state.data);
-            if (carryImpacts)
-                writeReplicaImpacts(creature.guid, w, departing);
-            else
-                w.put(0u);
-            if (departing)
-                creature.ai.detachGroundHandoff();
-            return Migrant(kind, creature.spawn.guid, 0, w.data);
-        }
-        auto gameObject = cast(GameObject) object;
-        if (gameObject is null)
-            return Migrant.init;
-        if (gameObject.owner && (gameObject.type == GameObjectType.fishingNode
-            || gameObject.type == GameObjectType.summoningRitual || gameObject.type == GameObjectType.trap))
-            return Migrant.init; // follows its player's handoff
-        if (departing && gameObject.loot !is null)
-            gameObject.loot.sendReleaseForAll();
-        long expires = expiresOverride;
-        if (!gameObject.instanceId && !expires)
-            if (auto active = existingMap(gameObject.spawn.map))
-                expires = scriptedGameObjects.get(GameObjectOnMap(active, gameObject.guid), 0L);
-        auto kind = MigrantKind.gameObject;
-        if ((gameObject.instanceId || expires) && !gameObject.owner && gameObject.spawn.guid >= temporaryCounterStart)
-        {
-            kind = MigrantKind.summonedGameObject;
-            serialize(w, gameObject.spawn);
-        }
-        gameObject.saveState(w, fleet.transportNow(), expires);
-        return Migrant(kind, gameObject.spawn.guid, 0, w.data);
-    }
 
-    package Creature restorePlayerSummon(Map destination, const ref Migrant migrant, ulong owner)
-    {
-        import dmangos.serialization : deserialize;
-        import dmangos.world.migration : MigrantKind;
 
-        if (migrant.kind != MigrantKind.summonedCreature)
-            return null;
-        auto reader = ByteReader(migrant.state);
-        deserialize!CreatureSpawn(reader);
-        const summon = deserialize!TempSpawn(reader);
-        const elapsed = cast(int) (fleet.transportNow() - reader.read!uint);
-        if (summon.summoner != owner || (summon.timed && summon.timer <= elapsed))
-            return null;
-        return cast(Creature) restoreWorldMigrant(migrant, destination);
-    }
 
-    /// An object rebuilt from its spawn and the state its last owner sent; null if the spawn is unknown here.
-    MapObject restoreMigrant(const ref Migrant m)
-    {
-        return restoreMigrantInInstance(m, 0);
-    }
 
-    private MapObject restoreMigrantInInstance(const ref Migrant m, uint instance)
-    {
-        import dmangos.bytes : ByteReader;
-        import dmangos.log : warning;
-        import dmangos.world.gameobject : GameObject;
-        import dmangos.world.migration : MigrantKind;
 
-        indexSpawns();
-        auto r = ByteReader(m.state);
-        if (m.kind == MigrantKind.creature)
-        {
-            const at = m.spawn in spawnIndex;
-            if (at is null)
-                return null;
-            auto creature = makeCreature(&data.creatureSpawns[*at]);
-            if (creature is null)
-                return null;
-            loadMigrantCreature(creature, instance, fleet.transportNow(), r);
-            return creature;
-        }
-        const at = m.spawn in gameObjectSpawnIndex;
-        if (at is null)
-        {
-            warning!"migration: game object spawn %s is not known here"(m.spawn);
-            return null;
-        }
-        auto gameObject = makeGameObject(data.gameObjectSpawns[*at]);
-        gameObject.loadState(r, fleet.transportNow());
-        return gameObject;
-    }
 
-    private void loadMigrantCreature(Creature creature, uint instance, uint now, ref ByteReader reader)
-    {
-        import dmangos.world.updatefields : UNIT_FIELD_FACTIONTEMPLATE;
-
-        auto state = ByteReader(reader.readBytes(reader.read!uint));
-        creature.instanceId = instance;
-        creature.loadState(state, now, &spellInfo, data.waypoints);
-        creature.factionTemplate = client.factionTemplates.lookup(creature.values.get!UNIT_FIELD_FACTIONTEMPLATE);
-        readReplicaImpacts(creature.guid, creature.spawn.map, instance, reader);
-    }
-
-    /// A region may bring a saved GM spawn created after this node loaded its world data.
-    package MapObject restoreWorldMigrant(const ref Migrant migrant, Map destination)
-    {
-        import dmangos.bytes : ByteReader;
-        import dmangos.log : warning;
-        import dmangos.mysql : DatabaseException;
-        import dmangos.serialization : deserialize;
-        import dmangos.world.migration : MigrantKind;
-
-        indexSpawns();
-        const durable = migrant.spawn < temporaryCounterStart;
-        bool atHome(uint mapId, float x, float y, float z)
-        {
-            return mapId == destination.id && client.isValidMapCoord(mapId, x, y, z) && cellKeyAt(x, y) == migrant.home;
-        }
-        if (migrant.kind == MigrantKind.summonedGameObject)
-        {
-            auto state = ByteReader(migrant.state);
-            const spawn = deserialize!GameObjectSpawn(state);
-            const template_ = spawn.entry in data.gameObjectTemplates;
-            if (durable || migrant.spawn > 0xFF_FFFF || spawn.guid != migrant.spawn
-                || template_ is null || template_.type == GameObjectType.moTransport
-                || !atHome(spawn.map, spawn.x, spawn.y, spawn.z)
-                || !client.isValidMapCoord(spawn.map, spawn.x, spawn.y, spawn.z, spawn.orientation))
-                return null;
-            auto restored = makeGameObject(spawn);
-            restored.instanceId = destination.instanceId;
-            restored.loadState(state, fleet.transportNow());
-            if (!registerMigratedExpiry(restored, destination, !destination.instanceId))
-                return null;
-            bindMigrantLoot(restored, destination);
-            return restored;
-        }
-        if (migrant.kind == MigrantKind.summonedCreature)
-        {
-            auto state = ByteReader(migrant.state);
-            const spawn = deserialize!CreatureSpawn(state);
-            const summon = deserialize!TempSpawn(state);
-            const now = fleet.transportNow();
-            const transit = cast(int)(now - state.read!uint);
-            if (durable || migrant.spawn > 0xFF_FFFF || spawn.guid != migrant.spawn
-                || spawn.entry !in data.creatureTemplates || summon.type > TempSpawnType.timedOutOfCombatOrCorpse
-                || !atHome(spawn.map, spawn.x, spawn.y, spawn.z)
-                || !client.isValidMapCoord(spawn.map, spawn.x, spawn.y, spawn.z, spawn.orientation))
-                return null;
-            auto restored = makeCreature(&spawn);
-            if (restored is null)
-                return null;
-            restored.summon = summon;
-            loadMigrantCreature(restored, destination.instanceId, now, state);
-            if (transit > 0)
-                restored.summon.update(restored, transit);
-            bindMigrantLoot(restored, destination);
-            return restored;
-        }
-        try
-        {
-            if (durable && migrant.kind == MigrantKind.creature && migrant.spawn !in spawnIndex)
-            {
-                const saved = database.savedCreatureSpawn(migrant.spawn);
-                if (saved.isNull || saved.get.entry !in data.creatureTemplates
-                    || !atHome(saved.get.map, saved.get.x, saved.get.y, saved.get.z))
-                    return null;
-                spawnEditor.registerCreatureSpawn(saved.get);
-            }
-            else if (durable && migrant.kind == MigrantKind.gameObject && migrant.spawn !in gameObjectSpawnIndex)
-            {
-                const saved = database.savedGameObjectSpawn(migrant.spawn);
-                if (saved.isNull || !atHome(saved.get.map, saved.get.x, saved.get.y, saved.get.z))
-                    return null;
-                const template_ = saved.get.entry in data.gameObjectTemplates;
-                if (template_ is null || template_.type == GameObjectType.moTransport)
-                    return null;
-                spawnEditor.registerGameObjectSpawn(saved.get);
-                if (template_.type == GameObjectType.transport)
-                    fleet.refreshElevatorHomes(destination);
-            }
-        }
-        catch (DatabaseException error)
-        {
-            warning!"migration: could not load the saved spawn %s: %s"(migrant.spawn, error.msg);
-            return null;
-        }
-        if (durable && migrant.kind == MigrantKind.gameObject)
-            if (const index = migrant.spawn in gameObjectSpawnIndex)
-            {
-                const previous = &data.gameObjectSpawns[*index];
-                const placement = GameObject.migrantPlacement(*previous, migrant.state);
-                if (!atHome(placement.map, placement.x, placement.y, placement.z)
-                    || !client.isValidMapCoord(placement.map, placement.x, placement.y, placement.z, placement.orientation))
-                    return null;
-                if (placement != *previous)
-                {
-                    spawnEditor.replaceGameObjectSpawn(*index, placement);
-                    if (const template_ = placement.entry in data.gameObjectTemplates)
-                        if (template_.type == GameObjectType.transport)
-                            fleet.refreshElevatorHomes(destination);
-                }
-            }
-        auto restored = restoreMigrantInInstance(migrant, destination.instanceId);
-        if (auto go = cast(GameObject) restored)
-        {
-            go.instanceId = destination.instanceId;
-            if (!registerMigratedExpiry(go, destination, false))
-                return null;
-        }
-        bindMigrantLoot(restored, destination);
-        return restored;
-    }
-
-    private bool registerMigratedExpiry(GameObject go, Map destination, bool requiresExpiry)
-    {
-        const at = go.carriedExpiry;
-        if (at > unixTime)
-        {
-            scriptedGameObjects[GameObjectOnMap(destination, go.guid)] = at;
-            return true;
-        }
-        if (!at && !requiresExpiry)
-            return true;
-        scripts.destroy(go.behaviour);
-        return false;
-    }
-
-    package void bindMigrantLoot(MapObject restored, Map destination)
-    {
-        import dmangos.world.gameobjecthandlers : bindChestLoot;
-        import dmangos.world.loothandlers : bindCreatureLoot, bindLootDelivery;
-        import dmangos.world.loot : Loot, LootRule;
-
-        Loot loot;
-        if (auto chest = cast(GameObject) restored)
-        {
-            if ((loot = chest.loot) !is null)
-                bindChestLoot(this, destination, chest, loot);
-        }
-        else if (auto creature = cast(Creature) restored)
-        {
-            if ((loot = creature.loot) !is null)
-                bindCreatureLoot(this, destination, creature, loot);
-        }
-        if (loot !is null)
-        {
-            if (loot.rule != LootRule.notGroup || loot.checkpoint !is null)
-                bindLootDelivery(this, destination, loot,
-                    loot.rule == LootRule.groupLoot || loot.rule == LootRule.needBeforeGreed, loot.rule == LootRule.masterLoot);
-            loot.resumeQuestLootChecks(destination.id, sendQuestLootCheck);
-        }
-    }
 
     package size_t[uint] spawnIndex, gameObjectSpawnIndex; // spawn guid -> its place in the world data
     private size_t indexedCreatureSpawns, indexedGameObjectSpawns;
@@ -6561,7 +6287,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
             go.loot = loot;
             go.lootState = GoLootState.activated;
             go.despawnTimer = cast(int)(remaining > int.max / 1000 ? int.max : remaining * 1000);
-            bindMigrantLoot(go, dungeons.instanceMaps[go.instanceId]);
+            migrants.bindMigrantLoot(go, dungeons.instanceMaps[go.instanceId]);
             return true;
         }
         catch (PacketException e)
@@ -6591,7 +6317,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
             if (go.loot is null)
                 return;
             go.despawnTimer = cast(int)((chest.expiresAt - unixTime) * 1000);
-            bindMigrantLoot(go, existingMap(go.spawn.map));
+            migrants.bindMigrantLoot(go, existingMap(go.spawn.map));
             if (go.lootState == GoLootState.activated && go.loot.lootedForEveryone())
                 go.loot.lootedForAll();
             else
@@ -8099,9 +7825,9 @@ unittest
     creature.refreshAuraMovement(oldMap);
     assert(creature.speeds[MoveType.run] == normalRun * 0.5f);
 
-    auto wrongCell = oldOwner.saveMigrant(object);
+    auto wrongCell = oldOwner.migrants.saveMigrant(object);
     wrongCell.home = cellKeyAt(at.x + 100, at.y);
-    assert(newOwner.restoreWorldMigrant(wrongCell, newMap) is null);
+    assert(newOwner.migrants.restoreWorldMigrant(wrongCell, newMap) is null);
     assert(object.spawn.guid !in newOwner.gameObjectSpawnIndex);
 
     const x = cellCoordinate(at.x), y = cellCoordinate(at.y);
@@ -8173,12 +7899,12 @@ unittest
     now += 1700.msecs;
     assert(summon.summon.timer == 1300);
     summon.totemOwner = 7;
-    assert(oldOwner.saveMigrant(summon).kind == MigrantKind.none, "totems use their existing owner lifecycle");
+    assert(oldOwner.migrants.saveMigrant(summon).kind == MigrantKind.none, "totems use their existing owner lifecycle");
     summon.totemOwner = 0;
 
-    auto wrongHome = oldOwner.saveMigrant(summon);
+    auto wrongHome = oldOwner.migrants.saveMigrant(summon);
     wrongHome.home = cellKeyAt(at.x + 100, at.y);
-    assert(newOwner.restoreWorldMigrant(wrongHome, destination) is null);
+    assert(newOwner.migrants.restoreWorldMigrant(wrongHome, destination) is null);
     const x = cellCoordinate(at.x), y = cellCoordinate(at.y);
     auto region = Region(1, 0, CellRect(x, y, x + 1, y + 1), 1, 1, RegionState.revoking, 2);
     ubyte[][uint] leaving, unused;

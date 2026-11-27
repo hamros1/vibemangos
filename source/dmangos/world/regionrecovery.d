@@ -102,7 +102,7 @@ final class RegionRecoverer
                     {
                         const before = m.objectCount - m.replicaCount;
                         leaving[r.id] = cast(ubyte[]) m.migrateOut((ulong cell) => r.rect.containsKey(cell), r.next,
-                            &world.saveMigrant, timers);
+                            &world.migrants.saveMigrant, timers);
                         info!"migration: region %s leaves for node %s with %s objects (%s KiB)"(r.id, r.next,
                             before - (m.objectCount - m.replicaCount), leaving[r.id].length / 1024);
                     }
@@ -302,13 +302,13 @@ final class RegionRecoverer
         }
         if (!immediate && previous.player == player && previous.savedAt + 2 > world.unixTime)
             return;
-        auto root = world.saveMigratingObject(creature, false);
+        auto root = world.migrants.saveMigratingObject(creature, false);
         root.home = cellKeyAt(creature.spawn.x, creature.spawn.y);
         Migrant[] actors = [root];
         foreach (child; map.creaturesNear(creature.position, 150))
             if (child.alive && child.summon.summoner == creature.guid && ownsQuestActor(child))
             {
-                auto snapshot = world.saveMigratingObject(child, false);
+                auto snapshot = world.migrants.saveMigratingObject(child, false);
                 snapshot.home = cellKeyAt(child.spawn.x, child.spawn.y);
                 actors ~= snapshot;
             }
@@ -403,7 +403,7 @@ final class RegionRecoverer
         }
         if (tracked !is null && tracked.savedAt + 2 > world.unixTime)
             return;
-        auto migrant = world.saveMigratingObject(creature, false);
+        auto migrant = world.migrants.saveMigratingObject(creature, false);
         migrant.home = cellKeyAt(creature.spawn.x, creature.spawn.y);
         dungeonFights[instance][spawn] = ActiveDungeonFight(creature.guid, world.unixTime);
         world.database.saveDungeonFight(instance, DungeonFightCheckpoint(spawn, toHex(encodeBundle(null, [migrant]))));
@@ -479,7 +479,7 @@ final class RegionRecoverer
                 where.migrateIn(fromHex(saved.state), (const ref Migrant migrant) {
                     if (migrant.kind != MigrantKind.creature || migrant.spawn != saved.spawn)
                         return null;
-                    auto creature = cast(Creature) world.restoreWorldMigrant(migrant, where);
+                    auto creature = cast(Creature) world.migrants.restoreWorldMigrant(migrant, where);
                     if (creature is null || !creature.alive)
                         return null;
                     waitForCombatPlayer(creature);
@@ -549,7 +549,7 @@ final class RegionRecoverer
     {
         if (!world.config.cluster.enabled || !creature.alive || !ownsQuestActor(creature))
             return QuestActorCheckpoint.init;
-        auto migrant = world.saveMigratingObject(creature, false, carryImpacts: false, factionOverride: faction);
+        auto migrant = world.migrants.saveMigratingObject(creature, false, carryImpacts: false, factionOverride: faction);
         if (migrant.kind != MigrantKind.summonedCreature && migrant.kind != MigrantKind.creature)
             return QuestActorCheckpoint.init;
         migrant.home = cellKeyAt(creature.spawn.x, creature.spawn.y);
@@ -590,7 +590,7 @@ final class RegionRecoverer
         const home = cellKeyAt(go.spawn.x, go.spawn.y);
         if (expires <= world.unixTime || (world.ownsCell !is null && !world.ownsCell(map.id, home)))
             return QuestActorCheckpoint.init;
-        auto migrant = world.saveMigratingObject(go, false, expiresOverride: expires);
+        auto migrant = world.migrants.saveMigratingObject(go, false, expiresOverride: expires);
         if (migrant.kind != (nativeSpawn ? MigrantKind.gameObject : MigrantKind.summonedGameObject))
             return QuestActorCheckpoint.init;
         migrant.home = home;
@@ -825,7 +825,7 @@ final class RegionRecoverer
                 if ((!root && !restoredActor) || (!actor.player && (!root || saved.kind != kind))
                     || !ownsHome(saved.home))
                     return null;
-                auto object = world.restoreWorldMigrant(saved, where);
+                auto object = world.migrants.restoreWorldMigrant(saved, where);
                 if (auto go = cast(GameObject) object)
                 {
                     if (actor.player || go.guid != actor.actor)
@@ -1195,7 +1195,7 @@ final class RegionRecoverer
         if (migrant.kind == MigrantKind.summonedCreature && !region.rect.containsKey(migrant.home))
             return null;
         if (!creature && migrant.kind != MigrantKind.gameObjectRespawn)
-            return world.restoreWorldMigrant(migrant, destination);
+            return world.migrants.restoreWorldMigrant(migrant, destination);
         ulong home;
         const inside = creature ? timerHome(region, migrant.spawn, world.data.creatureSpawns, world.spawnIndex, home)
             : timerHome(region, migrant.spawn, world.data.gameObjectSpawns, world.gameObjectSpawnIndex, home);

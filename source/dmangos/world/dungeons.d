@@ -404,7 +404,7 @@ final class Dungeons
         {
             auto m = instanceMaps.get(id, null);
             const before = m is null ? 0 : m.objectCount - m.replicaCount;
-            const bundle = m is null ? encodeBundle(null, null) : m.migrateOut((ulong) => true, next, &world.saveMigrant);
+            const bundle = m is null ? encodeBundle(null, null) : m.migrateOut((ulong) => true, next, &world.migrants.saveMigrant);
             w.put(id);
             w.put(cast(uint) bundle.length);
             w.putBytes(bundle);
@@ -444,7 +444,7 @@ final class Dungeons
             if (auto creature = cast(Creature) object)
                 if (creature.meleeController || creature.totemOwner || creature.guardianOwner)
                     return Migrant.init;
-            return world.saveMigratingObject(object, false);
+            return world.migrants.saveMigratingObject(object, false);
         });
         ByteWriter w, match;
         auto state = BattlegroundState(world.clock(), writer: &match);
@@ -536,7 +536,7 @@ final class Dungeons
         auto copy = battlegroundOfMap(mapId) ? world.battlegrounds.find(id) : null;
         ArrivedObject[] arrived;
         m.migrateIn(bundle, (const ref Migrant migrant) {
-            auto object = world.restoreWorldMigrant(migrant, m);
+            auto object = world.migrants.restoreWorldMigrant(migrant, m);
             if (auto creature = cast(Creature) object)
                 creature.instanceId = id;
             else if (auto go = cast(GameObject) object)

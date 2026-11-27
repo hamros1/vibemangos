@@ -406,7 +406,7 @@ unittest
         {
             const x = cellCoordinate(origin.x), y = cellCoordinate(origin.y);
             const region = Region(7, 0, CellRect(x, y, x + 1, y + 1), 3, 1, RegionState.granted);
-            const bundle = from.migrateOut(cell => cell == originCell, 3, &source.context.saveMigrant);
+            const bundle = from.migrateOut(cell => cell == originCell, 3, &source.context.migrants.saveMigrant);
             ubyte[][uint] unused;
             successor.context.recovery.regionsChanged([region], null, [region.id: bundle], unused);
             from = successor.context.map(0);
@@ -941,7 +941,7 @@ unittest
     const x = cellCoordinate(at.x), y = cellCoordinate(at.y);
     const region = Region(7, 0, CellRect(x, y, x + 1, y + 1), 2, 1, RegionState.granted);
     const home = cellKeyAt(at.x, at.y);
-    const bundle = from.migrateOut(cell => cell == home, 2, &source.context.saveMigrant);
+    const bundle = from.migrateOut(cell => cell == home, 2, &source.context.migrants.saveMigrant);
     ubyte[][uint] unused;
     owner.context.recovery.regionsChanged([region], null, [region.id: bundle], unused);
     assert(from.findObject(spot) is null && cast(DynamicObject) to.findObject(spot) !is null);
@@ -1296,7 +1296,7 @@ unittest
     const at = target.position;
     const x = cellCoordinate(at.x), y = cellCoordinate(at.y), home = cellKeyAt(at.x, at.y);
     const region = Region(11, 0, CellRect(x, y, x + 1, y + 1), 2, 1, RegionState.granted);
-    const state = from.migrateOut(cell => cell == home, 2, &source.context.saveMigrant);
+    const state = from.migrateOut(cell => cell == home, 2, &source.context.migrants.saveMigrant);
     ubyte[][uint] unused;
     owner.context.recovery.regionsChanged([region], null, [region.id: state], unused);
     assert(caster.actAtReplica(guid, ArrivalAction.init));
@@ -1429,7 +1429,7 @@ unittest
 
         const x = cellCoordinate(at.x), y = cellCoordinate(at.y), home = cellKeyAt(at.x, at.y);
         const region = Region(8, 0, CellRect(x, y, x + 1, y + 1), 2, 1, RegionState.granted);
-        const bundle = from.migrateOut(cell => cell == home, 2, &source.context.saveMigrant);
+        const bundle = from.migrateOut(cell => cell == home, 2, &source.context.migrants.saveMigrant);
         ubyte[][uint] unused;
         owner.context.recovery.regionsChanged([region], null, [region.id: bundle], unused);
         auto spellSession = client.session;
@@ -1612,7 +1612,7 @@ unittest
 
         const x = cellCoordinate(at.x), y = cellCoordinate(at.y);
         const gained = Region(7, 0, CellRect(x, y, x + 1, y + 1), 3, 2, RegionState.granted);
-        const bundle = to.migrateOut(key => key == cell, 3, &owner.context.saveMigrant);
+        const bundle = to.migrateOut(key => key == cell, 3, &owner.context.migrants.saveMigrant);
         ubyte[][uint] unused;
         successor.context.recovery.regionsChanged([gained], null, [gained.id: bundle], unused);
         auto migrated = destination.creatureAt(target.guid);
@@ -1643,7 +1643,7 @@ unittest
         const casterCell = cellKeyAt(origin.x, origin.y);
         const casterX = cellCoordinate(origin.x), casterY = cellCoordinate(origin.y);
         const gainedCaster = Region(8, 0, CellRect(casterX, casterY, casterX + 1, casterY + 1), 2, 1, RegionState.granted);
-        const casterBundle = from.migrateOut(key => key == casterCell, 2, &source.context.saveMigrant);
+        const casterBundle = from.migrateOut(key => key == casterCell, 2, &source.context.migrants.saveMigrant);
         owner.context.recovery.regionsChanged([gainedCaster], null, [gainedCaster.id: casterBundle], unused);
         auto movedCaster = to.creatureAt(caster.guid);
         assert(movedCaster !is null && from.creatureAt(caster.guid) is null);
@@ -1779,7 +1779,7 @@ unittest
             assert(completions == 1 && owner.context.runningScripts == 1 && !successor.context.runningScripts);
             continue;
         }
-        const bundle = to.migrateOut(key => key == cell, 3, &owner.context.saveMigrant);
+        const bundle = to.migrateOut(key => key == cell, 3, &owner.context.migrants.saveMigrant);
         ubyte[][uint] unused;
         successor.context.recovery.regionsChanged([gained], null, [gained.id: bundle], unused);
         auto moved = destination.creatureAt(boss.guid);

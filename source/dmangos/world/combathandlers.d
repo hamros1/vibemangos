@@ -1124,9 +1124,9 @@ unittest
     // Queue again with a remote victim, then hand the attacker off before it gets its next swing.
     assert(weaponUser.ai.castSpell(source.data.spells.spell(weaponSpell), playerGuid, 0));
     owner.data.creatureSpawns ~= weaponSpawn;
-    const moved = from.releaseCreatureLoan(weaponUser.guid, owner.nodeId, &source.saveMigrant);
+    const moved = from.releaseCreatureLoan(weaponUser.guid, owner.nodeId, &source.migrants.saveMigrant);
     assert(moved.length && from.isReplica(weaponUser.guid));
-    to.migrateIn(moved, &owner.restoreMigrant);
+    to.migrateIn(moved, &owner.migrants.restoreMigrant);
     auto arrived = to.creatureAt(weaponUser.guid);
     assert(arrived !is null && arrived.values.get!UNIT_FIELD_POWER1 == 80 - 2 * manaCost);
     victim.player.values.setByte!UNIT_FIELD_BYTES_1(0, 1);
