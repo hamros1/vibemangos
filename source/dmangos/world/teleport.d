@@ -1085,11 +1085,11 @@ unittest
     auto dungeon = [Region(40, mapDeadmines)];
     auto moving = dungeon.dup;
     moving[0].next = 2;
-    a.regionsChanged(null, moving, null, leaving);
+    a.recovery.regionsChanged(null, moving, null, leaving);
     const(ubyte)[][uint] arriving;
     foreach (id, bytes; leaving)
         arriving[id] = bytes;
-    b.regionsChanged(dungeon, null, arriving, leaving);
+    b.recovery.regionsChanged(dungeon, null, arriving, leaving);
     import dmangos.world.creature : Creature;
 
     auto there = b.dungeons.instanceMap(copy);

@@ -408,7 +408,7 @@ unittest
             const region = Region(7, 0, CellRect(x, y, x + 1, y + 1), 3, 1, RegionState.granted);
             const bundle = from.migrateOut(cell => cell == originCell, 3, &source.context.saveMigrant);
             ubyte[][uint] unused;
-            successor.context.regionsChanged([region], null, [region.id: bundle], unused);
+            successor.context.recovery.regionsChanged([region], null, [region.id: bundle], unused);
             from = successor.context.map(0);
             caster = from.creatureAt(caster.guid);
             assert(caster !is null && caster.ai.castingNow
@@ -746,12 +746,12 @@ unittest
     const x = cellCoordinate(at.x), y = cellCoordinate(at.y);
     auto region = Region(42, kalimdor, CellRect(x, y, x + 1, y + 1), 2, 5, RegionState.revoking, 3);
     ubyte[][uint] leaving, unused;
-    owner.context.regionsChanged(null, [region], null, leaving);
+    owner.context.recovery.regionsChanged(null, [region], null, leaving);
     destination = 3;
     region.owner = destination;
     region.state = RegionState.granted;
     region.next = 0;
-    next.context.regionsChanged([region], null, [region.id: cast(const(ubyte)[]) leaving[region.id]], unused);
+    next.context.recovery.regionsChanged([region], null, [region.id: cast(const(ubyte)[]) leaving[region.id]], unused);
     auto current = next.context.map(kalimdor);
     auto resumed = current.creatureAt(guid);
     assert(to.creatureAt(guid) is null && resumed !is null);
@@ -772,7 +772,7 @@ unittest
     replacement.context.database = next.db;
     replacement.context.clock = () => frozen;
     region.owner = 4;
-    replacement.context.regionsChanged([region], null, null, unused);
+    replacement.context.recovery.regionsChanged([region], null, null, unused);
     auto fresh = replacement.context.map(kalimdor);
     auto corpse = fresh.creatureAt(guid);
     assert(corpse !is null && !corpse.alive && corpse.loot.gold == gold);
@@ -943,7 +943,7 @@ unittest
     const home = cellKeyAt(at.x, at.y);
     const bundle = from.migrateOut(cell => cell == home, 2, &source.context.saveMigrant);
     ubyte[][uint] unused;
-    owner.context.regionsChanged([region], null, [region.id: bundle], unused);
+    owner.context.recovery.regionsChanged([region], null, [region.id: bundle], unused);
     assert(from.findObject(spot) is null && cast(DynamicObject) to.findObject(spot) !is null);
     auto moved = to.creatureAt(caster.guid);
     assert(moved !is null);
@@ -1298,7 +1298,7 @@ unittest
     const region = Region(11, 0, CellRect(x, y, x + 1, y + 1), 2, 1, RegionState.granted);
     const state = from.migrateOut(cell => cell == home, 2, &source.context.saveMigrant);
     ubyte[][uint] unused;
-    owner.context.regionsChanged([region], null, [region.id: state], unused);
+    owner.context.recovery.regionsChanged([region], null, [region.id: state], unused);
     assert(caster.actAtReplica(guid, ArrivalAction.init));
     assert(relay.remote !is null && relay.remote.inWorld.player.values.get!UNIT_CHANNEL_SPELL == missiles);
     auto moved = relay.remote.inWorld.player.auras.find(missiles);
@@ -1431,7 +1431,7 @@ unittest
         const region = Region(8, 0, CellRect(x, y, x + 1, y + 1), 2, 1, RegionState.granted);
         const bundle = from.migrateOut(cell => cell == home, 2, &source.context.saveMigrant);
         ubyte[][uint] unused;
-        owner.context.regionsChanged([region], null, [region.id: bundle], unused);
+        owner.context.recovery.regionsChanged([region], null, [region.id: bundle], unused);
         auto spellSession = client.session;
         auto receiver = to.creatureAt(guid);
         assert(receiver !is null && receiver.values.get!UNIT_FIELD_HEALTH == 1000);
@@ -1614,7 +1614,7 @@ unittest
         const gained = Region(7, 0, CellRect(x, y, x + 1, y + 1), 3, 2, RegionState.granted);
         const bundle = to.migrateOut(key => key == cell, 3, &owner.context.saveMigrant);
         ubyte[][uint] unused;
-        successor.context.regionsChanged([gained], null, [gained.id: bundle], unused);
+        successor.context.recovery.regionsChanged([gained], null, [gained.id: bundle], unused);
         auto migrated = destination.creatureAt(target.guid);
         assert(migrated !is null && to.creatureAt(target.guid) is null);
         auto movedAura = migrated.auras.find(expectedSpell, caster.guid);
@@ -1644,7 +1644,7 @@ unittest
         const casterX = cellCoordinate(origin.x), casterY = cellCoordinate(origin.y);
         const gainedCaster = Region(8, 0, CellRect(casterX, casterY, casterX + 1, casterY + 1), 2, 1, RegionState.granted);
         const casterBundle = from.migrateOut(key => key == casterCell, 2, &source.context.saveMigrant);
-        owner.context.regionsChanged([gainedCaster], null, [gainedCaster.id: casterBundle], unused);
+        owner.context.recovery.regionsChanged([gainedCaster], null, [gainedCaster.id: casterBundle], unused);
         auto movedCaster = to.creatureAt(caster.guid);
         assert(movedCaster !is null && from.creatureAt(caster.guid) is null);
         assert(movedCaster.ai.castingNow && movedCaster.values.get!UNIT_CHANNEL_SPELL == expectedSpell
@@ -1781,7 +1781,7 @@ unittest
         }
         const bundle = to.migrateOut(key => key == cell, 3, &owner.context.saveMigrant);
         ubyte[][uint] unused;
-        successor.context.regionsChanged([gained], null, [gained.id: bundle], unused);
+        successor.context.recovery.regionsChanged([gained], null, [gained.id: bundle], unused);
         auto moved = destination.creatureAt(boss.guid);
         assert(moved !is null && to.creatureAt(boss.guid) is null);
 
@@ -1885,7 +1885,7 @@ unittest
             const x = cellCoordinate(targetAt.x), y = cellCoordinate(targetAt.y);
             auto region = Region(82, 1, CellRect(x, y, x + 1, y + 1), 2, 1, RegionState.revoking, 3);
             ubyte[][uint] leaving, unused;
-            owner.context.regionsChanged(null, [region], null, leaving);
+            owner.context.recovery.regionsChanged(null, [region], null, leaving);
             assert(moved.charmed is null && !moved.player.values.get!UNIT_CHANNEL_SPELL);
             assert(to.creatureAt(guid) is null && leaving.get(region.id, null).length,
                 "release must include the original creature in the region handoff");
@@ -1893,7 +1893,7 @@ unittest
             region.owner = 3;
             region.state = RegionState.granted;
             region.next = 0;
-            successor.context.regionsChanged([region], null, [region.id: cast(const(ubyte)[]) leaving[region.id]], unused);
+            successor.context.recovery.regionsChanged([region], null, [region.id: cast(const(ubyte)[]) leaving[region.id]], unused);
             auto destination = successor.context.map(1);
             auto restored = destination.creatureAt(guid);
             assert(restored !is null && restored.values.get!UNIT_FIELD_HEALTH == woundedHealth);

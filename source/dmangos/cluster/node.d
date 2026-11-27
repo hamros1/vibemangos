@@ -3038,7 +3038,7 @@ unittest
         world.nodeId = bound.id;
         world.ownsCell = (uint map, ulong cell) => bound.regions.ownsCell(map, cell);
         world.database = new FencedDatabase(db, () => bound.regions.leaseHolds(cluster.now));
-        bound.onOwnership = &world.regionsChanged;
+        bound.onOwnership = &world.recovery.regionsChanged;
         auto bridge = new ClusterBridge(bound, world, 5000);
         bound.sessions = world;
         bound.players = bridge;
@@ -3181,7 +3181,7 @@ unittest
         world.nodeId = bound.id;
         world.ownsCell = (uint map, ulong cell) => bound.regions.ownsCell(map, cell);
         world.database = new FencedDatabase(db, () => bound.regions.leaseHolds(cluster.now));
-        bound.onOwnership = &world.regionsChanged;
+        bound.onOwnership = &world.recovery.regionsChanged;
         auto bridge = new ClusterBridge(bound, world, 5000);
         bound.sessions = world;
         bound.players = bridge;
@@ -3291,7 +3291,7 @@ version (linux) unittest
         world.nodeId = node.id;
         world.ownsCell = (uint map, ulong cell) => node.regions.ownsCell(map, cell);
         world.database = new FencedDatabase(db, () => node.regions.leaseHolds(cluster.now));
-        node.onOwnership = &world.regionsChanged;
+        node.onOwnership = &world.recovery.regionsChanged;
         auto bridge = new ClusterBridge(node, world, 5000);
         node.onTermChanged = &bridge.fenceGatewaySimulations;
         node.sessions = world;
@@ -3417,7 +3417,7 @@ unittest
             world.nodeId = node.id;
             world.ownsCell = (uint map, ulong cell) => node.regions.ownsCell(map, cell);
             world.database = new FencedDatabase(db, () => node.regions.leaseHolds(cluster.now));
-            node.onOwnership = &world.regionsChanged;
+            node.onOwnership = &world.recovery.regionsChanged;
             auto bridge = new ClusterBridge(node, world, 5000);
             node.sessions = world;
             node.players = bridge;
@@ -3555,7 +3555,7 @@ unittest
                 context.creatureLease = &bound.regions.creatureRegion;
                 context.sendCreatureLoan = &bound.creatureLoan;
                 bound.onCreatureRelease = &context.releaseCreatureLoan;
-                bound.onOwnership = &context.regionsChanged;
+                bound.onOwnership = &context.recovery.regionsChanged;
             }
             connect(node, world);
             foreach (ref spawn; world.data.creatureSpawns)

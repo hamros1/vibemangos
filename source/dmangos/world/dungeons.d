@@ -550,8 +550,8 @@ final class Dungeons
                 arrived ~= ArrivedObject(object.guid, migrant.kind);
             return object;
         });
-        if (world.ownsDungeonFights(m))
-            world.restoreDungeonFights(m, true);
+        if (world.recovery.ownsDungeonFights(m))
+            world.recovery.restoreDungeonFights(m, true);
         const restored = m.objectCount - m.replicaCount - before;
         if (copy !is null)
             copy.reconcilePowerUps(m);
@@ -746,7 +746,7 @@ final class Dungeons
             {
                 if (state !is null && world.data.creatureSpawns[index].guid in state.dead)
                     continue;
-                if (const tracking = instance in world.dungeonFights)
+                if (const tracking = instance in world.recovery.dungeonFights)
                     if (const fight = world.data.creatureSpawns[index].guid in *tracking)
                         if (instanceMaps[instance].creatureAt(fight.guid) !is null)
                             continue;
@@ -929,8 +929,8 @@ final class Dungeons
         if (keep)
             if (auto script = world.instanceScripts.get(id, null))
                 script.saveNow();
-        world.dungeonFights.remove(id);
-        world.pendingDungeonFights.remove(id);
+        world.recovery.dungeonFights.remove(id);
+        world.recovery.pendingDungeonFights.remove(id);
         if (auto m = instanceMaps.get(id, null))
             m.forEachObject((MapObject o) => world.objectGone(m, o));
         instanceMaps.remove(id);

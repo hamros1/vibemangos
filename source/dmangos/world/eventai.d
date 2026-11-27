@@ -1252,11 +1252,11 @@ unittest
     const x = cellCoordinate(at.x), y = cellCoordinate(at.y);
     auto region = Region(7, 0, CellRect(x, y, x + 1, y + 1), 1, 1, RegionState.revoking, 2);
     ubyte[][uint] leaving, unused;
-    source.regionsChanged(null, [region], null, leaving);
+    source.recovery.regionsChanged(null, [region], null, leaving);
     region.owner = 2;
     region.state = RegionState.granted;
     region.next = 0;
-    destination.regionsChanged([region], null, [region.id: cast(const(ubyte)[]) leaving[region.id]], unused);
+    destination.recovery.regionsChanged([region], null, [region.id: cast(const(ubyte)[]) leaving[region.id]], unused);
     auto moved = to.creatureAt(creature.guid);
     assert(moved !is null);
     moved.tick(to, 399);

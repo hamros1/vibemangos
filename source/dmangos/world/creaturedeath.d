@@ -65,7 +65,7 @@ final class DeadCreatures
                         world.database.saveInstanceRespawn(false, guid, creature.instanceId,
                             instanceDeathDeadline(*state, creature));
                     }
-                    world.discardDungeonFight(creature.instanceId, guid);
+                    world.recovery.discardDungeonFight(creature.instanceId, guid);
                 }
             // What the script makes of the death is a checkpoint: the death is queued already, and a crash between
             // the two writes would leave the creature dead but its encounter waiting on it (a door shut for good).

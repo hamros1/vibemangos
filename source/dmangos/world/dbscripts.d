@@ -779,7 +779,7 @@ mixin template DbScriptRunner()
         return finished ? EarlierClaim.committed : EarlierClaim.elsewhere;
     }
 
-    private void restoreOutdoorScripts(const(imported!"dmangos.cluster.regions".Region)[] gained = null)
+    package void restoreOutdoorScripts(const(imported!"dmangos.cluster.regions".Region)[] gained = null)
     {
         import dmangos.log : warning;
         import dmangos.mysql : DatabaseException;
@@ -791,7 +791,7 @@ mixin template DbScriptRunner()
         if (!config.cluster.enabled)
             return;
         const allOwned = retryOutdoorScriptRecovery && ownsCell !is null;
-        if (!allOwned && !gained.any!(r => physicalWorldRegion(r)))
+        if (!allOwned && !gained.any!(r => recovery.physicalWorldRegion(r)))
             return;
         if (!canWrite())
         {
@@ -814,7 +814,7 @@ mixin template DbScriptRunner()
         foreach (ref row; saved)
         {
             if (allOwned ? !ownsCell(row.map, row.home)
-                : !gained.any!(r => physicalWorldRegion(r) && r.map == row.map && r.rect.containsKey(row.home)))
+                : !gained.any!(r => recovery.physicalWorldRegion(r) && r.map == row.map && r.rect.containsKey(row.home)))
                 continue;
             if (scriptRuns.any!(run => run.outdoorOrigin == row.origin && run.outdoorSequence == row.sequence))
                 continue;
@@ -856,7 +856,7 @@ mixin template DbScriptRunner()
     }
 
     /// Move outdoor scripts with their first local world object and keep their completed steps consumed.
-    private imported!"dmangos.world.migration".Migrant[] takeRegionScriptRuns(Map map,
+    package imported!"dmangos.world.migration".Migrant[] takeRegionScriptRuns(Map map,
         const ref imported!"dmangos.cluster.regions".Region region)
     {
         import std.algorithm.mutation : remove;
@@ -890,7 +890,7 @@ mixin template DbScriptRunner()
         return runs;
     }
 
-    private void restoreRegionScriptRun(uint mapId, const ref imported!"dmangos.world.migration".Migrant migrant)
+    package void restoreRegionScriptRun(uint mapId, const ref imported!"dmangos.world.migration".Migrant migrant)
     {
         import std.algorithm.comparison : max, min;
 
@@ -1125,19 +1125,19 @@ mixin template DbScriptRunner()
             {
                 if (request.checkpoint.actor)
                 {
-                    const installed = request.actor in outdoorQuestActors;
+                    const installed = request.actor in recovery.outdoorQuestActors;
                     if (installed is null || installed.state != request.checkpoint.state)
                     {
                         if (savedOpenableToggle(request.checkpoint.state))
                             restoreOutdoorOpenable(where, request.checkpoint);
-                        else if (where.gameObjectAt(request.actor) is null && !restoreQueuedSummon(where, request.checkpoint))
+                        else if (where.gameObjectAt(request.actor) is null && !recovery.restoreQueuedSummon(where, request.checkpoint))
                             return;
                     }
                 }
             }
             else if (request.checkpoint.actor && where.creatureAt(request.actor) is null && where.gameObjectAt(request.actor) is null)
             {
-                if (!restoreQueuedSummon(where, request.checkpoint))
+                if (!recovery.restoreQueuedSummon(where, request.checkpoint))
                     return;
                 // A former owner may have committed after this worker loaded the region.
                 retryOutdoorScriptRecovery = true;
@@ -1217,7 +1217,7 @@ mixin template DbScriptRunner()
         }
         const proto = payload.entry in data.gameObjectTemplates;
         const at = payload.at;
-        if (payload.expiresAt <= unixTime || proto is null || !durableOutdoorObject(where, proto.type)
+        if (payload.expiresAt <= unixTime || proto is null || !recovery.durableOutdoorObject(where, proto.type)
             || cellKeyAt(at.x, at.y) != request.home || !client.isValidMapCoord(where.id, at.x, at.y, at.z, at.orientation))
         {
             database.retireOutdoorSummon(config.realmId, request);
@@ -1255,7 +1255,7 @@ mixin template DbScriptRunner()
             const proto = spawn.entry in data.gameObjectTemplates;
             const staticDespawn = request.kind == OutdoorSummonKind.staticDespawn;
             if (proto !is null && cellKeyAt(spawn.x, spawn.y) == request.home
-                && (staticDespawn ? durableStaticDespawn(*spawn, *proto) : durableScriptedSpawn(*spawn, *proto)))
+                && (staticDespawn ? recovery.durableStaticDespawn(*spawn, *proto) : recovery.durableScriptedSpawn(*spawn, *proto)))
             {
                 if (staticDespawn || request.kind == OutdoorSummonKind.scriptedDespawn)
                 {
@@ -1294,7 +1294,7 @@ mixin template DbScriptRunner()
 
         // The checkpoint is already gone. A clean bundle can still have the former owner's visible copy.
         const counter = counterOf(guid);
-        outdoorQuestActors.remove(guid);
+        recovery.outdoorQuestActors.remove(guid);
         outdoorChests.remove(counter);
         if (respawnAt)
             gameObjectRespawnAt[counter] = respawnAt;
@@ -1310,14 +1310,14 @@ mixin template DbScriptRunner()
         scope (exit)
             if (!published)
                 scripts.destroy(object.behaviour);
-        const state = outdoorObjectCheckpoint(where, object, expires);
+        const state = recovery.outdoorObjectCheckpoint(where, object, expires);
         const chest = object.type == GameObjectType.chest ? object.spawn.guid : 0u;
         if (!state.actor || !database.commitOutdoorSummon(config.realmId, request, state, null, chest))
             return;
         request.actor = state.actor;
         if (canWrite() && ownsCell(request.map, request.home))
         {
-            outdoorQuestActors[state.actor] = state;
+            recovery.outdoorQuestActors[state.actor] = state;
             if (chest)
                 outdoorChests.remove(chest);
             published = true;
@@ -1367,14 +1367,14 @@ mixin template DbScriptRunner()
         }
     }
 
-    private static bool savedOpenableToggle(string state)
+    package static bool savedOpenableToggle(string state)
     {
         // The compact toggle has a deadline and a bool, with the visibility deadline appended in newer rows.
         enum toggleSize = (long.sizeof + bool.sizeof) * 2;
         return state.length == toggleSize || state.length == toggleSize + long.sizeof * 2;
     }
 
-    private void restoreOutdoorOpenable(Map where, const ref QuestActorCheckpoint checkpoint)
+    package void restoreOutdoorOpenable(Map where, const ref QuestActorCheckpoint checkpoint)
     {
         import dmangos.log : warning;
         import dmangos.world.gameobject : GameObjectType;
@@ -1404,7 +1404,7 @@ mixin template DbScriptRunner()
         if (door is null && state.expiresAt > unixTime)
             if (const spawn = gameObjectSpawnOf(counterOf(checkpoint.actor)))
                 if (const proto = spawn.entry in data.gameObjectTemplates)
-                    if (proto.type == GameObjectType.button && durableScriptedSpawn(*spawn, *proto) && spawn.map == where.id
+                    if (proto.type == GameObjectType.button && recovery.durableScriptedSpawn(*spawn, *proto) && spawn.map == where.id
                         && cellKeyAt(spawn.x, spawn.y) == checkpoint.home
                         && scriptGameObjectGuid(spawn.guid, where.id) == checkpoint.actor)
                     {
@@ -1422,17 +1422,17 @@ mixin template DbScriptRunner()
                 where.flushGameObject(door);
             if (remaining)
             {
-                outdoorQuestActors[door.guid] = checkpoint;
+                recovery.outdoorQuestActors[door.guid] = checkpoint;
                 where.wake(door.guid);
                 return;
             }
             if (state.expiresAt)
             {
-                checkpointOutdoorScriptObject(where, door);
+                recovery.checkpointOutdoorScriptObject(where, door);
                 return;
             }
         }
-        outdoorQuestActors.remove(checkpoint.actor);
+        recovery.outdoorQuestActors.remove(checkpoint.actor);
         database.deleteQuestActor(config.realmId, checkpoint.actor);
     }
 
@@ -1883,7 +1883,7 @@ mixin template DbScriptRunner()
         map.wake(creature.guid);
     }
 
-    private long[GameObjectOnMap] scriptedGameObjects; // spawned by a script: when it goes (Unix time)
+    package long[GameObjectOnMap] scriptedGameObjects; // spawned by a script: when it goes (Unix time)
 
     package void saveDungeonObjectDeadlines(uint mapId, ref ByteWriter w, uint onlyInstance = 0)
     {
@@ -2036,8 +2036,8 @@ mixin template DbScriptRunner()
             const spawn = &data.gameObjectSpawns[gameObjectSpawnIndex[counter]];
             if (const proto = spawn.entry in data.gameObjectTemplates)
             {
-                const staticDespawn = !respawn && durableStaticDespawn(*spawn, *proto);
-                if (staticDespawn || durableScriptedSpawn(*spawn, *proto))
+                const staticDespawn = !respawn && recovery.durableStaticDespawn(*spawn, *proto);
+                if (staticDespawn || recovery.durableScriptedSpawn(*spawn, *proto))
                 {
                     ByteWriter bytes;
                     serialize(bytes, OutdoorScriptedObject(guid, delay));
@@ -2146,13 +2146,13 @@ mixin template DbScriptRunner()
             }
         }
         if (auto object = summonWildGameObject(map, entry, at, duration))
-            checkpointOutdoorScriptObject(map, object, true);
+            recovery.checkpointOutdoorScriptObject(map, object, true);
     }
 
     package bool usesOutdoorObjectQueue(Map map, uint entry, uint duration)
     {
         const proto = entry in data.gameObjectTemplates;
-        return duration && ownsCell !is null && proto !is null && durableOutdoorObject(map, proto.type);
+        return duration && ownsCell !is null && proto !is null && recovery.durableOutdoorObject(map, proto.type);
     }
 
     package bool queueOutdoorObject(Map map, uint entry, Position at, uint duration)
@@ -2243,7 +2243,7 @@ mixin template DbScriptRunner()
     private void stageScriptCreature(Map map, ScriptCreatureSpawn spawn, ref OutdoorScriptStep planned)
     {
         scope (failure) spawn.creature.ai.releaseBehaviour();
-        spawn.checkpoint = outdoorCreatureCheckpoint(spawn.creature);
+        spawn.checkpoint = recovery.outdoorCreatureCheckpoint(spawn.creature);
         if (spawn.checkpoint.actor && spawn.relay)
             if (auto steps = data.dbScripts.steps(DbScriptType.relay, spawn.relay))
             {
@@ -2261,10 +2261,10 @@ mixin template DbScriptRunner()
     private void publishScriptCreature(Map map, ScriptCreatureSpawn summon)
     {
         if (summon.checkpoint.actor)
-            outdoorQuestActors[summon.creature.guid] = summon.checkpoint;
+            recovery.outdoorQuestActors[summon.creature.guid] = summon.checkpoint;
         publishCreatureSummon(map, summon.creature);
         if (!summon.checkpoint.actor)
-            checkpointOutdoorCreature(summon.creature, true);
+            recovery.checkpointOutdoorCreature(summon.creature, true);
         if (summon.relayRun !is null)
             scriptRuns ~= summon.relayRun;
         else if (summon.relay)
@@ -2487,18 +2487,18 @@ mixin template DbScriptRunner()
             else
             {
                 QuestActorCheckpoint saved;
-                const current = creature.guid in outdoorQuestActors;
+                const current = creature.guid in recovery.outdoorQuestActors;
                 if (creature.ai !is null && (current is null || !current.player)
                     && faction != creature.values.get!UNIT_FIELD_FACTIONTEMPLATE)
-                    saved = outdoorCreatureCheckpoint(creature, &faction);
+                    saved = recovery.outdoorCreatureCheckpoint(creature, &faction);
                 if (saved.actor)
                     planned.changedActors ~= saved;
                 planned.afterCommit ~= () {
                     if (saved.actor)
                     {
-                        if (!ownsQuestActor(creature))
+                        if (!recovery.ownsQuestActor(creature))
                             return;
-                        outdoorQuestActors[saved.actor] = saved;
+                        recovery.outdoorQuestActors[saved.actor] = saved;
                     }
                     apply();
                 };
@@ -2748,12 +2748,12 @@ unittest
     const x = cellCoordinate(at.x), y = cellCoordinate(at.y);
     auto region = Region(7, 0, CellRect(x, y, x + 1, y + 1), 1, 1, RegionState.revoking, 2);
     ubyte[][uint] leaving, unused;
-    source.regionsChanged(null, [region], null, leaving);
+    source.recovery.regionsChanged(null, [region], null, leaving);
     now += 200.msecs;
     region.owner = 2;
     region.state = RegionState.granted;
     region.next = 0;
-    destination.regionsChanged([region], null, [region.id: cast(const(ubyte)[]) leaving[region.id]], unused);
+    destination.recovery.regionsChanged([region], null, [region.id: cast(const(ubyte)[]) leaving[region.id]], unused);
     auto resumed = to.creatureAt(speaker.guid);
     assert(resumed !is null && from.creatureAt(speaker.guid) is null);
     assert(cast(PointMovement) resumed.generator !is null && resumed.spline.timePassed == speaker.spline.timePassed);

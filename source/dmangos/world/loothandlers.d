@@ -1406,13 +1406,13 @@ unittest
     const x = cellCoordinate(victim.spawn.x), y = cellCoordinate(victim.spawn.y);
     Region region = Region(1, 0, CellRect(x, y, x + 1, y + 1), 1, 1, RegionState.revoking, 2);
     ubyte[][uint] leaving, unused;
-    first.regionsChanged(null, [region], null, leaving);
+    first.recovery.regionsChanged(null, [region], null, leaving);
     assert(first.map(0).isReplica(victim.guid) && opcodesOf(client.read()).canFind(Opcode.SMSG_LOOT_RELEASE_RESPONSE));
     now += 2.seconds;
     region.owner = 2;
     region.state = RegionState.granted;
     region.next = 0;
-    second.regionsChanged([region], null, [region.id: cast(const(ubyte)[]) leaving[region.id]], unused);
+    second.recovery.regionsChanged([region], null, [region.id: cast(const(ubyte)[]) leaving[region.id]], unused);
     auto restored = cast(Creature) second.map(0).findObject(victim.guid);
     assert(restored !is null && !restored.alive && restored.loot.canLoot(7));
     assert(restored.corpseTimer >= 9950 && restored.corpseTimer <= 10050 && restored.respawnAt == respawn);
@@ -1805,13 +1805,13 @@ unittest
         const x = cellCoordinate(victim.spawn.x), y = cellCoordinate(victim.spawn.y);
         Region region = Region(1, 0, CellRect(x, y, x + 1, y + 1), 1, 1, RegionState.revoking, 3);
         ubyte[][uint] leaving, unused;
-        first.regionsChanged(null, [region], null, leaving);
+        first.recovery.regionsChanged(null, [region], null, leaving);
         if (inFlight)
             first.groupLootRollArrived(member.nodeId, pending);
         region.owner = successor.nodeId;
         region.state = RegionState.granted;
         region.next = 0;
-        successor.regionsChanged([region], null, [region.id: cast(const(ubyte)[]) leaving[region.id]], unused);
+        successor.recovery.regionsChanged([region], null, [region.id: cast(const(ubyte)[]) leaving[region.id]], unused);
         auto copy = successor.map(0).creatureAt(victim.guid);
         assert(copy !is null && copy.loot !is null && copy.loot.rolls.length == (lostConfirmation ? 0 : 1));
         auto loot = copy.loot;

@@ -768,10 +768,10 @@ final class Dungeon
             Region moving = Region(regionId, mapId);
             moving.next = next;
             ubyte[][uint] leaving;
-            old.regionsChanged(null, [moving], null, leaving);
+            old.recovery.regionsChanged(null, [moving], null, leaving);
             const(ubyte)[][uint] arriving;
             arriving[regionId] = leaving[regionId];
-            w.context.regionsChanged([Region(regionId, mapId)], null, arriving, leaving);
+            w.context.recovery.regionsChanged([Region(regionId, mapId)], null, arriving, leaving);
             assert(w.context.dungeons.instanceMap(copy) !is null, "the copy arrived");
         }
         if (!crash)

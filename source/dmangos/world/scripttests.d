@@ -386,7 +386,7 @@ unittest
         const(ubyte)[][uint] arriving;
         if (clean)
             arriving[region.id] = encodeBundle(null, null);
-        world.regionsChanged([region], null, arriving, unused);
+        world.recovery.regionsChanged([region], null, arriving, unused);
         world.map(mapEasternKingdoms).loadCell(home);
         return world;
     }

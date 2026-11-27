@@ -371,7 +371,7 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
                     return region.epoch;
             return 0UL;
         };
-        cluster.onOwnership = &context.regionsChanged;
+        cluster.onOwnership = &context.recovery.regionsChanged;
         cluster.onCreatureRelease = &context.releaseCreatureLoan;
         context.sendCreatureLoan = &cluster.creatureLoan;
         context.creatureLease = &cluster.regions.creatureRegion;
