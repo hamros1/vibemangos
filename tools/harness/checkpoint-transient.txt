@@ -3,24 +3,24 @@
 # the encounter's to decide.
 blackwinglair.d: npcNefarian: not reviewed
 blackwinglair.d: npcVictorNefarius: not reviewed
-gnomeregan.d: t.entry: not reviewed
+gnomeregan.d: t.entry: the troggs of a pack, of Grubbis's event: summoned again
 naxxramas.d: npcCryptGuard: not reviewed
 naxxramas.d: npcFalloutSlime: not reviewed
-naxxramas.d: npcGrobbulusCloud: not reviewed
-naxxramas.d: npcSpiderling: not reviewed
-naxxramas.d: npcSpore: not reviewed
-naxxramas.d: npcWebWrap: not reviewed
-naxxramas.d: npcZombieChow: not reviewed
-onyxia.d: npcOnyxiaWhelp: not reviewed
-ruinsofahnqiraj.d: npcHatchling: not reviewed
-ruinsofahnqiraj.d: npcLarva: not reviewed
+naxxramas.d: npcGrobbulusCloud: a poison cloud of seconds
+naxxramas.d: npcSpiderling: Maexxna's spiderlings, weak and summoned again on her timer
+naxxramas.d: npcSpore: Loatheb's spores come every few seconds on his timer: a crash loses one at most
+naxxramas.d: npcWebWrap: a web wrap holds a player for seconds; lost, the player is free
+naxxramas.d: npcZombieChow: Gluth's zombie chow come every few seconds
+onyxia.d: npcOnyxiaWhelp: her whelps come in waves for as long as she flies
+ruinsofahnqiraj.d: npcHatchling: hatchlings of a broken egg, summoned again
+ruinsofahnqiraj.d: npcLarva: Ayamiss's larva, of seconds, for the one sacrificed
 ruinsofahnqiraj.d: npcManaFiend: not reviewed
 ruinsofahnqiraj.d: npcSandVortex: not reviewed
-ruinsofahnqiraj.d: npcSwarmer: not reviewed
-templeofahnqiraj.d: npcDirtMound: not reviewed
-templeofahnqiraj.d: npcGlobOfViscidus: not reviewed
-templeofahnqiraj.d: npcSkeram: not reviewed
+ruinsofahnqiraj.d: npcSwarmer: Ayamiss's swarmers, summoned again on her timer
+templeofahnqiraj.d: npcDirtMound: Ouro's mounds live 30 s, while he is down; a crash then loses those (not covered by aq40-ouro-recovery, which crashes after his rise)
+templeofahnqiraj.d: npcGlobOfViscidus: by design: after a crash Viscidus rises and the lost globs count as come back (aq40-viscidus-recovery)
+templeofahnqiraj.d: npcSkeram: Skeram's images: gone at his next split anyway
 templeofahnqiraj.d: npcSpawnOfFankriss: not reviewed
-templeofahnqiraj.d: npcVeknissHatchling: not reviewed
+templeofahnqiraj.d: npcVeknissHatchling: hatchlings of an egg, summoned again
 templeofahnqiraj.d: npcYaujBrood: not reviewed
-zulfarrak.d: zf.random: not reviewed
+zulfarrak.d: zf.random: Zum'rah's grave zombies, summoned again as graves open
