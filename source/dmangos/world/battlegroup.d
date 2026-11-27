@@ -192,7 +192,7 @@ unittest
     {
         auto who = user.session.inWorld;
         assert(who.pvp.isPvP);
-        who.pvp.updatePvPTimers(pvpFlagMs + 1);
+        who.pvp.update(pvpFlagMs + 1);
         assert(who.pvp.isPvP, "the flag stays on for the entire match without /pvp");
     }
     void checkName(ref TestClient user, ulong guid, string expectedName, string expectedRealm)

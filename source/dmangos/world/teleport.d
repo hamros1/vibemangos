@@ -300,7 +300,7 @@ private:
             releaseLootOnLeave();
             spellsOnLeave();
             trading.cancelTrade(true);
-            dueling.duelComplete(imported!"dmangos.world.duelhandlers".DuelEnd.fled);
+            dueling.end(imported!"dmangos.world.duelhandlers".DuelEnd.fled);
             petsOnLeave(); // it comes out again on the other side
             dismissCompanion(); // a companion does not
             flushPlayerChanges();

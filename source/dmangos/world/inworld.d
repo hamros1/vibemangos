@@ -87,7 +87,7 @@ private:
         petsOnLeave();
         dismissCompanion();
         trading.cancelTrade(false, TradeStatus.targetLogout);
-        dueling.duelComplete(DuelEnd.fled);
+        dueling.end(DuelEnd.fled);
         if (!savedUnread) // the records it could not read stay as saved (`readSaved`)
         {
             if (player.deathState == DeathState.alive)
@@ -107,7 +107,7 @@ private:
         if (!savedUnread)
             saveBattleground();
         deathOnLogout();
-        taxi.taxiOnLeave();
+        taxi.onLeave();
         const progress = player.progress(secondsInWorld());
         if (saveProgressOnLeave)
             context.database.saveProgress(progress);
@@ -323,7 +323,7 @@ private:
             return false;
         if (!context.settleWrites())
             return false;
-        dueling.duelComplete(DuelEnd.fled); // a forced move (such as draining) ends it for both players
+        dueling.end(DuelEnd.fled); // a forced move (such as draining) ends it for both players
         trading.cancelTrade(true);
         const petControl = preparePetHandoff(action.teleportMap == uint.max);
         flushPlayerChanges();
@@ -906,23 +906,23 @@ private:
         updateMirrorTimers(elapsed);
         if (player is null)
             return;
-        enchanting.updateEnchantments(elapsed);
+        enchanting.update(elapsed);
         updateItemDurations(elapsed);
         updateAutoRepeat(elapsed);
         updateAreaAuras(elapsed);
         updateTotems();
         updateTotemEnchants();
         updatePetMood(elapsed);
-        taxi.updateTaxi(cast(int) elapsed.total!"msecs");
+        taxi.update(cast(int) elapsed.total!"msecs");
         player.soberUp(cast(int) elapsed.total!"msecs");
         crowdControl.updateCrowdControl(cast(int) elapsed.total!"msecs");
         updateReactives(cast(int) elapsed.total!"msecs");
         updateTimedQuests();
         refreshQuestObjects();
         updateRaidReset();
-        homebind.updateHomebindTimer(cast(int) elapsed.total!"msecs");
-        dueling.updateDuel();
-        pvp.updatePvPTimers(cast(int) elapsed.total!"msecs");
+        homebind.update(cast(int) elapsed.total!"msecs");
+        dueling.update();
+        pvp.update(cast(int) elapsed.total!"msecs");
         updateDeath(elapsed);
         if (regenTimer.update(elapsed))
         {

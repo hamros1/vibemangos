@@ -5091,7 +5091,7 @@ unittest
     assert(opcodesOf(caster.read()).count(Opcode.SMSG_SPELL_GO) == 1);
 
     targets[11].write(Opcode.CMSG_TOGGLE_PVP, [ubyte(0)]);
-    targets[11].session.inWorld.pvp.updatePvPTimers(pvpFlagMs);
+    targets[11].session.inWorld.pvp.update(pvpFlagMs);
     targets[12].session.inWorld.addAura(makeAura(shield in owner.data.spells.spells, 12, 20, -1, true, [0, 0, 0]));
     auto moving = cast(Player) targets[13].session.character;
     moving.movement.position = Position(center.x + 40, center.y, center.z);
@@ -5280,7 +5280,7 @@ unittest
         if (scenario == Scenario.movedAndUnflagged)
         {
             third.write(Opcode.CMSG_TOGGLE_PVP, [ubyte(0)]);
-            third.session.inWorld.pvp.updatePvPTimers(pvpFlagMs);
+            third.session.inWorld.pvp.update(pvpFlagMs);
             moving.movement.position.x += 50;
             owner.map(0).relocated(second.session.inWorld);
         }
@@ -5982,7 +5982,7 @@ unittest
         {
             caster.write(Opcode.CMSG_TOGGLE_PVP, [ubyte(1)]);
             caster.write(Opcode.CMSG_TOGGLE_PVP, [ubyte(0)]);
-            caster.session.inWorld.pvp.updatePvPTimers(pvpFlagMs - 500);
+            caster.session.inWorld.pvp.update(pvpFlagMs - 500);
         }
         auto target = loggedIn(owner, db, 8, "Jaina", targetAt, race: otherFaction ? raceOrc : raceHuman);
         if (scenario == Scenario.combat)
@@ -6047,7 +6047,7 @@ unittest
         if (scenario == Scenario.flagExpiresOnArrival)
         {
             target.write(Opcode.CMSG_TOGGLE_PVP, [ubyte(0)]);
-            target.session.inWorld.pvp.updatePvPTimers(pvpFlagMs);
+            target.session.inWorld.pvp.update(pvpFlagMs);
             assert(!(recipient.values.get!UNIT_FIELD_FLAGS & UnitFlags.pvp));
         }
         if (scenario == Scenario.cancel || scenario == Scenario.hostileCancel)

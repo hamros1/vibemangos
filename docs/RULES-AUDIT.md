@@ -497,7 +497,7 @@ risk.
 | death.d:handleReclaimCorpse (+ corpse.d:corpseReclaimRadius) | Reclaim within 39 yd after delay; back with 50% health/mana, rage 0 | CORPSE_RECLAIM_RADIUS, ResurrectPlayer(0.5) | Wowpedia "Corpse" (verify) | H: every corpse run |
 | death.d:handleSpiritHealerActivate | Spirit healer: 50% health/mana; 25% durability on worn and carried; res sickness | HandleSpiritHealerActivate | Wowpedia "Spirit healer" (verify) | H. **Done:** 25% of maximum, worn and carried, agrees (WoWWiki "Spirit Healer" 2006-11) |
 | death.d:applyResurrectionSickness | Spell 15007; none below level 11; 1 min per level above 10, 10 min max | ResurrectPlayer (death sickness config) | Spell.dbc 15007 + SpellDuration; Wowpedia "Resurrection sickness" (verify) | H: level scaling is emulator config. **Done:** none to 10, a minute a level over 10, 10 minutes from 20: agrees (WoWWiki "Spirit Healer") |
-| pvp.d:updatePvPTimers | PvP flag lasts 5 min after leaving PvP | UpdatePvPFlagTimer | Wowpedia "PvP flag" (verify); Blizzard 1.x patch notes | H. **Done:** 5 minutes agrees (WoWWiki "PvP flag" 2006-10) |
+| pvp.d:update | PvP flag lasts 5 min after leaving PvP | UpdatePvPFlagTimer | Wowpedia "PvP flag" (verify); Blizzard 1.x patch notes | H. **Done:** 5 minutes agrees (WoWWiki "PvP flag" 2006-10) |
 | pvp.d:enforcedPvPZone / isPvPRealm | Enemy capital flags; PvP realms flag in enemy/contested zones | UpdateZone | AreaTable.dbc Flags/team | H. **Done:** the other side's land flags on every realm (WoWWiki "PvP flag" 2006-10; it was PvP realms only), contested on PvP realms |
 | pvp.d:pvpHitBy | Hitting flagged player flags attacker; flagged attacker flags victim | SetInCombatWith(Aggressor) | none found | H |
 | pvp.d:pvpAssisted | Healing/buffing a flagged player in combat flags helper | SetInCombatWithAssisted | none found | H. **Done:** a heal flags the healer in combat or not (was: only when the healed was in combat); buffs left (FORMULAS.md "The PvP flag") |
@@ -506,8 +506,8 @@ risk.
 | death.d:closestGraveyard | Nearest own-team graveyard by area→zone→map links; instance: nearest the entrance | GetClosestGraveYard | WorldSafeLocs.dbc (positions); links none found (game_graveyard_zone is emulator data) | M |
 | itemuse.d:applyEquipCooldowns | Equipping an on-use item: 30 s cooldown | ApplyEquipCooldown | none found | M |
 | duelhandlers.d:handleDuelAccepted | 3 s countdown | Player::Update (duel) | Wowpedia "Duel" (verify) | M |
-| duelhandlers.d:updateDuel (bounds) | >50 yd warns; back in 40 yd; 10 s out = fled | CheckDuelDistance | Wowpedia "Duel" (verify) | M |
-| duelhandlers.d:duelLost / duelComplete | Lethal blow leaves 1 HP; loser begs; cancel after start = loss | DuelComplete | none found | M |
+| duelhandlers.d:update (bounds) | >50 yd warns; back in 40 yd; 10 s out = fled | CheckDuelDistance | Wowpedia "Duel" (verify) | M |
+| duelhandlers.d:duelLost / end | Lethal blow leaves 1 HP; loser begs; cancel after start = loss | DuelComplete | none found | M |
 | pvp.d:updatePvPContested | Contested 30 s after attacking a flagged player | UpdatePvPContested | none found | M |
 | pvp.d:pvpAreaChanged | FFA flag in arena areas | UpdateArea | AreaTable.dbc Flags | M |
 | mounting.d:mountedCastError | Mounted: only ALLOW_WHILE_MOUNTED spells | Spell::CheckCast | Spell.dbc Attributes | M |
@@ -590,7 +590,7 @@ risk.
 | (missing) 5 instances per hour | Not implemented; only the transfer-abort enum exists | — | Blizzard (Kaivax 2020-06-16: "the current limit of 5 instances per hour", realm-wide, not battlegrounds) | H. **Done:** FORMULAS.md "Instances per hour" (per node, in memory) |
 | death.d:removedInsignia | Insignia gold = rand(50..150)×0.016×(level/5.76)^2.5 | RemovedInsignia | none found | M: arbitrary formula |
 | mounting.d:dismountOnArrival | Dungeon with mountAllowed=0 dismounts | Map::IsMountAllowed | none found (instance_template) | M |
-| homebind.d:updateHomebindTimer | Ungrouped player in instance ported out after 60 s | UpdateHomebindTime | Wowpedia "Instance" (verify) | M |
+| homebind.d:update | Ungrouped player in instance ported out after 60 s | UpdateHomebindTime | Wowpedia "Instance" (verify) | M |
 | rituals.d:useMeetingStoneToSummon | Meeting stone summon within level range | MEETINGSTONE | Wowpedia "Meeting Stone" (verify) | M |
 | battleground.d:end | 2 min end delay; mark spells winner/loser | EndBattleGround | Spell.dbc 24950–24955 | M |
 | battleground.d:checkPrematureEnd | Under min players 300 s → ends | BattleGround::Update | none found | M. **Done:** 5 minutes agrees (WoWWiki "Warsong Gulch") |

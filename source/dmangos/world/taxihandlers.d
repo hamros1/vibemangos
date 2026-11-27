@@ -360,7 +360,7 @@ final class Taxi
     private uint taxiSplineId;
 
     /// The flight goes on: the server follows the spline; at its end the player lands.
-    void updateTaxi(int ms)
+    void update(int ms)
     {
         if (!flying)
             return;
@@ -396,7 +396,7 @@ final class Taxi
      * Leaving the world in flight: saved at the path point ahead with `taxi_path` (CMaNGOS puts the character
      * there when it loads it), unmounted; the next login flies on (`resumeSavedFlight`).
      */
-    package void taxiOnLeave()
+    package void onLeave()
     {
         if (!flying)
             return;

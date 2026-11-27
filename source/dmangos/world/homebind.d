@@ -87,7 +87,7 @@ final class Homebind
     }
 
     /// Each tick (`Player::UpdateHomebindTime`): the countdown started, run, or cancelled.
-    package void updateHomebindTimer(int ms)
+    package void update(int ms)
     {
         if (me.player is null || me.teleporting != Teleport.none)
             return;

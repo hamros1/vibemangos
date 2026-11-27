@@ -59,7 +59,7 @@ package:
     DuelState duel; // this player's side of its duel, while one is asked or on
 
     /// The other duelist's session, while a duel is asked or on.
-    Dueling duelOpponent()
+    Dueling opponent()
     {
         if (duel is null)
             return null;
@@ -125,7 +125,7 @@ package:
     @Handles(Opcode.CMSG_DUEL_ACCEPTED, WorldState.inWorld)
     void handleDuelAccepted(ref ByteReader reader)
     {
-        auto other = duelOpponent();
+        auto other = opponent();
         if (other is null || duel.initiator == me.player.guid)
             return;
         if (duel.startTimer || duel.startTime || other.duel.startTimer || other.duel.startTime)
@@ -142,7 +142,7 @@ package:
     @Handles(Opcode.CMSG_DUEL_CANCELLED, WorldState.inWorld)
     void handleDuelCancelled(ref ByteReader reader)
     {
-        auto other = duelOpponent();
+        auto other = opponent();
         if (other is null)
             return;
         if (duel.startTime)
@@ -150,20 +150,20 @@ package:
             me.stopAttack(false);
             other.me.stopAttack(false);
             beg();
-            return duelComplete(DuelEnd.won);
+            return end(DuelEnd.won);
         }
-        duelComplete(DuelEnd.interrupted);
+        end(DuelEnd.interrupted);
     }
 
     /// The duel each tick: it begins 3 seconds after it was accepted; the flag's distance is watched.
-    void updateDuel()
+    void update()
     {
         if (duel is null)
             return;
         const now = me.context.unixTime;
         // The countdown over, by the initiator's side: the teams are set, and the duel is on.
         if (duel.startTimer && now >= duel.startTimer + 3 && duel.initiator == me.player.guid)
-            if (auto other = duelOpponent())
+            if (auto other = opponent())
             {
                 me.player.values.set!PLAYER_DUEL_TEAM(1u);
                 other.me.player.values.set!PLAYER_DUEL_TEAM(2u);
@@ -191,7 +191,7 @@ package:
             me.deliver(Opcode.SMSG_DUEL_INBOUNDS, null);
         }
         else if (now >= duel.outOfBound + 10)
-            duelComplete(DuelEnd.fled);
+            end(DuelEnd.fled);
     }
 
     /// `EMOTE_ONESHOT_BEG` (spell 7267's): the loser begs.
@@ -210,13 +210,13 @@ package:
      */
     package void duelLost()
     {
-        auto other = duelOpponent();
+        auto other = opponent();
         me.player.values.set!UNIT_FIELD_HEALTH(1u);
         me.stopAttack(false);
         if (other !is null)
             other.me.stopAttack(false);
         beg();
-        duelComplete(DuelEnd.won);
+        end(DuelEnd.won);
     }
 
     /**
@@ -224,11 +224,11 @@ package:
      * players around who won, the flag goes, the debuffs each put on the other in it go, and the
      * duel fields are cleared.
      */
-    package void duelComplete(DuelEnd how)
+    package void end(DuelEnd how)
     {
         if (duel is null)
             return;
-        auto other = duelOpponent();
+        auto other = opponent();
         ByteWriter complete;
         complete.put(ubyte(how != DuelEnd.interrupted));
         me.deliver(Opcode.SMSG_DUEL_COMPLETE, complete.data);

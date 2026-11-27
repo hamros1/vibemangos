@@ -173,7 +173,7 @@ final class PvP
     {
         const on = isPvP;
         const playerFlags = me.player.values.get!PLAYER_FLAGS;
-        void update(imported!"dmangos.world.creature".Creature creature)
+        void carry(imported!"dmangos.world.creature".Creature creature)
         {
             const flags = creature.values.get!UNIT_FIELD_FLAGS;
             if (((flags & UnitFlags.pvp) != 0) != on)
@@ -184,9 +184,9 @@ final class PvP
             creature.controllerPlayerFlags = playerFlags;
         }
         if (auto pet = me.ownPet)
-            update(pet);
+            carry(pet);
         foreach (guardian; me.guardians.ownGuardians())
-            update(guardian);
+            carry(guardian);
     }
 
     /**
@@ -231,7 +231,7 @@ final class PvP
     }
 
     /// The flags' timers, every tick: they run only while nothing keeps the flag.
-    package void updatePvPTimers(int diff)
+    package void update(int diff)
     {
         const kept = pvpInCombat || pvpEnforcedArea || hasPlayerFlag(PlayerFlagsPvP.desired);
         if (!kept && pvpTimer > 0 && me.currentBattleground() is null)

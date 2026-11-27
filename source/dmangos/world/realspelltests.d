@@ -1199,10 +1199,10 @@ unittest
     ally.player.movement.position.x += 80; // The sender still sees the old position.
     source.now += 5.seconds;
     owner.now += 5.seconds;
-    ally.enchanting.updateEnchantments(5.seconds);
+    ally.enchanting.update(5.seconds);
     caster.updateTotemEnchants();
     assert(pulses == 4);
-    ally.enchanting.updateEnchantments(5.seconds);
+    ally.enchanting.update(5.seconds);
     assert(!weapon.enchantment(EnchantmentSlot.temporary), "an out-of-range pulse cannot renew Windfury");
 }
 

@@ -140,7 +140,7 @@ final class Enchanting
     }
 
     /// Each tick: temporary enchantments run down, and go when their time is up.
-    package void updateEnchantments(Duration elapsed)
+    package void update(Duration elapsed)
     {
         if (enchantmentsLeft.length == 0)
             return;

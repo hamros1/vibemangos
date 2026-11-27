@@ -992,13 +992,13 @@ unittest
     assert(pvpFlagged(anduin) && me.pvp.hasPlayerFlag(PlayerFlagsPvP.desired));
     anduin.write(Opcode.CMSG_TOGGLE_PVP, [ubyte(0)]);
     assert(!me.pvp.hasPlayerFlag(PlayerFlagsPvP.desired) && pvpFlagged(anduin), "still flagged, for now");
-    me.pvp.updatePvPTimers(299_000);
+    me.pvp.update(299_000);
     assert(pvpFlagged(anduin));
-    me.pvp.updatePvPTimers(1000);
+    me.pvp.update(1000);
     assert(!pvpFlagged(anduin), "five minutes on: off");
     // While wanted, the timer stands still.
     anduin.write(Opcode.CMSG_TOGGLE_PVP, [ubyte(1)]);
-    me.pvp.updatePvPTimers(600_000);
+    me.pvp.update(600_000);
     assert(pvpFlagged(anduin));
 }
 
@@ -1015,10 +1015,10 @@ unittest
     anduin.session.inWorld.updateZone(zoneStormwind, zoneStormwind);
     assert(!pvpFlagged(anduin), "a human at home");
     thrall.session.inWorld.updateZone(zoneElwynn, zoneElwynn);
-    thrall.session.inWorld.pvp.updatePvPTimers(300_000);
+    thrall.session.inWorld.pvp.update(300_000);
     assert(pvpFlagged(thrall), "Alliance land flags him on a normal realm too");
     thrall.session.inWorld.updateZone(zoneStranglethorn, zoneStranglethorn);
-    thrall.session.inWorld.pvp.updatePvPTimers(300_000);
+    thrall.session.inWorld.pvp.update(300_000);
     assert(!pvpFlagged(thrall), "contested land on a normal realm: off after five minutes");
 
     auto me = anduin.session.inWorld;
@@ -1045,10 +1045,10 @@ unittest
     assert(!pvpFlagged(thrall));
     human.pvp.pvpHitBy(orc, orc.pvp.isPvP);
     assert(pvpFlagged(thrall) && orc.pvp.isPvPContested, "the attacker: flagged and contested");
-    orc.pvp.updatePvPTimers(29_000);
+    orc.pvp.update(29_000);
     assert(orc.pvp.isPvPContested, "while in PvP combat it stays");
     orc.pvp.pvpLeftCombat();
-    orc.pvp.updatePvPTimers(30_000);
+    orc.pvp.update(30_000);
     assert(!orc.pvp.isPvPContested && pvpFlagged(thrall), "30 s out of combat: not contested; flagged 5 minutes");
 }
 
@@ -1412,9 +1412,9 @@ unittest
     foreach (p; anduin.read())
         timeSent = timeSent || p.opcode == Opcode.SMSG_ITEM_ENCHANT_TIME_UPDATE;
     assert(timeSent, "the client is told how long it lasts");
-    me.enchanting.updateEnchantments(9.minutes);
+    me.enchanting.update(9.minutes);
     assert(shirt.enchantment(1) == 901 && shirt.values.get!ITEM_FIELD_ENCHANTMENT(4) < 600_000, "running down, saved");
-    me.enchanting.updateEnchantments(61.seconds);
+    me.enchanting.update(61.seconds);
     assert(shirt.enchantment(1) == 0 && me.player.stats.stats[Stat.stamina] == stamina, "gone when its time is up");
     assert(shirt.enchantment(0) == 900, "the permanent one stays");
 }
