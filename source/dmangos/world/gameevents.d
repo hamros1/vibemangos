@@ -30,6 +30,14 @@
  */
 module dmangos.world.gameevents;
 
+import core.time : Duration, minutes, MonoTime, msecs, seconds;
+import dmangos.world.creature : Creature, CreatureParts, CreatureSpawn, CreatureTemplate, Npc, NpcStandIn, TempSpawn, TempSpawnType, VirtualItem;
+import dmangos.world.gameobject : GameObject, GameObjectSpawn, GameObjectTemplate, GameObjectType, GoLootState;
+import dmangos.world.worldpvp : WorldPvp, WorldPvpFollower, WorldPvpHost;
+import dmangos.world.map : Inhabitant, Map, MapObject, MapSettings, VisibilityFacts;
+import dmangos.world.worlddata : EventCreature, EventMail, PoolMember, Ship, SpawnGroupCondition, SpellListEntry, WorldData;
+import dmangos.world.context : WorldContext;
+
 import std.datetime : Date, DateTime, SysTime, UTC, LocalTime, dur;
 
 /// `game_event.schedule_type`
@@ -67,6 +75,217 @@ struct GameEvent
         if (occurence == 0 || length == 0 || occurence < length || !(start < now && now < end))
             return false;
         return (now - start) % (cast(long) occurence * 60) < cast(long) length * 60;
+    }
+}
+
+/**
+ * The game events as this node keeps them (`WorldContext.calendar`): which are on, checked once a minute and worked
+ * out again each day; the spawns and objects that come and go with them; the letters an event sends; what was on
+ * across a restart (`game_event_status`).
+ */
+final class EventCalendar
+{
+    private WorldContext world;
+
+    this(WorldContext world)
+    {
+        this.world = world;
+    }
+
+    /// The game events, and which are active (`dmangos.world.gameevents`).
+    GameEvents gameEvents;
+
+    package MonoTime gameEventsChecked;
+
+    package long scheduledDay; // the day the events' dates were last worked out for
+
+    /// Whether creature spawn `guid` is in the world as its game event (if any) stands.
+    bool creatureInEvents(uint guid)
+    {
+        if (world.invasionLayout !is null)
+            if (const site = guid in world.invasionLayout.creatures)
+                if (!site.present(world.invasion)) return false;
+        if (const e = guid in world.data.creatureGameEvents)
+            return gameEvents.spawnIn(*e);
+        return true;
+    }
+
+    /// Whether game object spawn `guid` is in the world as its game event (if any) stands, or as the war
+    /// effort does (its piles of supplies).
+    bool gameObjectInEvents(uint guid)
+    {
+        import dmangos.world.wareffort : isSupplyPile;
+
+        if (world.invasionLayout !is null)
+            if (const site = guid in world.invasionLayout.objects)
+                if (!site.present(world.invasion)) return false;
+        if (isSupplyPile(guid))
+            return world.warEffortHere.warEffort.pileUp(guid);
+        if (WorldPvp.follows(guid))
+            return world.worldPvp.state.spawnUp(guid);
+        if (const e = guid in world.data.gameObjectGameEvents)
+            return gameEvents.spawnIn(*e);
+        return true;
+    }
+
+    package bool eventActivatesObject(uint guid)
+    {
+        return WorldPvp.follows(guid) || (world.invasionLayout !is null && guid in world.invasionLayout.objects
+            && world.invasionLayout.objects[guid].present(world.invasion));
+    }
+
+    /// The events made active and inactive by the clock; their spawns come and go in the loaded cells.
+    package void updateGameEvents(MonoTime now, bool force = false)
+    {
+        import core.time : seconds;
+        import dmangos.log : info;
+
+        if (!force && gameEventsChecked != MonoTime.init && now - gameEventsChecked < 10.seconds)
+            return;
+        gameEventsChecked = now;
+        // Yearly and Easter dates move to the new year once it comes.
+        const day = world.unixTime / 86_400;
+        if (day != scheduledDay)
+        {
+            scheduledDay = day;
+            foreach (e; world.data.gameEvents)
+            {
+                scheduleFor(e, world.unixTime);
+                gameEvents.events[e.id] = e;
+            }
+        }
+        ushort[] started, stopped;
+        gameEvents.update(world.unixTime, started, stopped);
+        foreach (id; started)
+            info!"game event %s (%s) starts"(id, gameEvents.events[id].description);
+        foreach (id; stopped)
+            info!"game event %s (%s) ends"(id, gameEvents.events[id].description);
+
+        if (started.length || stopped.length)
+            gameEventSpawnsChanged();
+    }
+
+    package bool eventStatusRead;
+
+    package bool[ushort] eventsOnBefore; /// `game_event_status`: what was on when last looked (across restarts)
+
+    /**
+     * A game event's letters (`game_event_mail`): as it starts, and (negative rows) as it ends, compared with
+     * what `game_event_status` says was on, so a restart sends nothing for an event already on; one that
+     * ended while the server was down sends its ending letters when it comes back up.
+     */
+    package void eventMails()
+    {
+        if (!eventStatusRead)
+        {
+            eventStatusRead = true;
+            foreach (id; world.database.gameEventStatus())
+                eventsOnBefore[id] = true;
+        }
+        foreach (id, ref e; gameEvents.events)
+        {
+            const on = gameEvents.isActive(id);
+            const was = (id in eventsOnBefore) !is null;
+            if (on == was)
+                continue;
+            if (on)
+                eventsOnBefore[id] = true;
+            else
+                eventsOnBefore.remove(id);
+            world.database.setGameEventStatus(id, on);
+            foreach (ref m; world.data.gameEventMails.get(on ? cast(short) id : cast(short)(-cast(int) id), null))
+                foreach (guid; world.database.charactersFor(m.raceMask, m.quest))
+                    world.templateLetter(m.mailTemplate, m.sender, guid);
+        }
+    }
+
+    /// After events changed: in every loaded map, spawns now away go, and spawns now in come (where their cells are loaded).
+    package void gameEventSpawnsChanged()
+    {
+        import dmangos.world.grid : cellKeyAt;
+
+        void refresh(Map m)
+        {
+            // Those to go; and those an event changes (or changed), alive and out of a fight, to be made again.
+            ulong[] gone;
+            const(CreatureSpawn)*[] remade;
+            m.forEachObject((MapObject o) {
+                if (auto c = cast(Creature) o)
+                {
+                    if (!creatureInEvents(c.spawnId) || (world.invasionLayout !is null && c.summon.type != TempSpawnType.none
+                        && !world.invasionLayout.actorPresent(c.template_.entry, c.spawn, world.invasion)))
+                        gone ~= c.guid;
+                    else if (c.spawnId in world.data.eventCreatures && !c.petOwner && c.summon.type == TempSpawnType.none
+                            && c.alive && (c.ai is null || !c.ai.inCombat) && world.eventShapeOf(c.spawnId) != c.eventShape)
+                        if (const spawn = world.creatureSpawnOf(c.spawnId))
+                        {
+                            gone ~= c.guid;
+                            remade ~= spawn;
+                        }
+                }
+                else if (auto go = cast(GameObject) o)
+                    if ((eventObject(go.spawn.guid) && !gameObjectInEvents(go.spawn.guid)) ||
+                        (world.invasionLayout !is null && go.template_.entry == 181142 &&
+                         !world.invasionLayout.actorPresent(16230, go.spawn, world.invasion)))
+                        gone ~= go.guid;
+            });
+            foreach (guid; gone)
+                m.removeObject(guid);
+            foreach (spawn; remade)
+                if (auto c = world.makeCreature(spawn))
+                {
+                    c.instanceId = m.instanceId;
+                    m.addObject(c);
+                }
+            // Those to come, in loaded cells.
+            bool[ulong] present;
+            m.forEachObject((MapObject o) { present[o.guid] = true; });
+            if (auto cells = m.id in world.data.creatureCells)
+                foreach (key, indexes; *cells)
+                    if (m.cellLoaded(key))
+                        foreach (index; indexes)
+                        {
+                            const spawn = &world.data.creatureSpawns[index];
+                            if (spawn.guid !in world.data.creatureGameEvents || !creatureInEvents(spawn.guid)
+                                    || !world.dungeons.groupSpawnAllowed(m, 0, spawn.guid) || !world.upInPool(PoolMember.Kind.creature, spawn.guid))
+                                continue;
+                            if (world.awaitingRespawn(spawn.guid) || world.creatureOnLoan(spawn.guid))
+                                continue;
+                            auto c = world.makeCreature(spawn);
+                            if (c is null || c.guid in present)
+                                continue;
+                            c.instanceId = m.instanceId;
+                            m.addObject(c);
+                        }
+            if (auto cells = m.id in world.data.gameObjectCells)
+                foreach (key, indexes; *cells)
+                    if (m.cellLoaded(key))
+                        foreach (index; indexes)
+                        {
+                            const spawn = &world.data.gameObjectSpawns[index];
+                            if (!eventObject(spawn.guid) || !gameObjectInEvents(spawn.guid)
+                                || (spawn.respawnSeconds < 0 && !eventActivatesObject(spawn.guid))
+                                || !world.upInPool(PoolMember.Kind.gameObject, spawn.guid))
+                                continue;
+                            auto go = world.makeGameObject(*spawn);
+                            if (go.guid in present)
+                                continue;
+                            go.instanceId = m.instanceId;
+                            m.addObject(go);
+                        }
+        }
+        foreach (m; world.maps.values)
+            refresh(m);
+        foreach (m; world.dungeons.instanceMaps.values)
+            refresh(m);
+    }
+
+    /// Whether game object spawn `guid` comes and goes as the events (or the war effort) say.
+    package bool eventObject(uint guid)
+    {
+        import dmangos.world.wareffort : isSupplyPile;
+
+        return (guid in world.data.gameObjectGameEvents) !is null || isSupplyPile(guid) || WorldPvp.follows(guid);
     }
 }
 

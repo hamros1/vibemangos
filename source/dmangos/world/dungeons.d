@@ -687,7 +687,7 @@ final class Dungeons
                 }
                 if (alive !is null || (instance ? deadInInstance(instance, spawn.guid)
                         : world.awaitingRespawn(spawn.guid) || world.creatureOnLoan(spawn.guid))
-                    || !world.creatureInEvents(spawn.guid) || !world.upInPool(PoolMember.Kind.creature, spawn.guid))
+                    || !world.calendar.creatureInEvents(spawn.guid) || !world.upInPool(PoolMember.Kind.creature, spawn.guid))
                     continue;
                 if (auto creature = world.makeCreature(spawn))
                 {
@@ -753,7 +753,7 @@ final class Dungeons
                 if (script !is null && script.restoringEntity(EntityRef(makeGuid(HighGuid.unit,
                     world.data.creatureSpawns[index].entry, world.data.creatureSpawns[index].guid))))
                     continue;
-                if (!world.creatureInEvents(world.data.creatureSpawns[index].guid)
+                if (!world.calendar.creatureInEvents(world.data.creatureSpawns[index].guid)
                         || !groupSpawnAllowed(world.existingMap(mapId, instance), 0, world.data.creatureSpawns[index].guid)
                         || !world.upInPool(PoolMember.Kind.creature, world.data.creatureSpawns[index].guid))
                     continue;
@@ -802,7 +802,7 @@ final class Dungeons
         const state = instance in instances;
         const reward = state is null ? null : spawn.guid in state.chests;
         if ((spawn.respawnSeconds < 0 && reward is null) || (state !is null && spawn.guid in state.usedUp)
-            || !world.gameObjectInEvents(spawn.guid) || !groupSpawnAllowed(world.existingMap(mapId, instance), 1, spawn.guid))
+            || !world.calendar.gameObjectInEvents(spawn.guid) || !groupSpawnAllowed(world.existingMap(mapId, instance), 1, spawn.guid))
             return null;
         auto copy = battlegroundOfMap(mapId) ? world.battlegrounds.find(instance) : null;
         const available = copy !is null && spawn.battlegroundPowerUp ? copy.powerUpAvailable(spawn.guid)

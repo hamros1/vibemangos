@@ -203,6 +203,11 @@ struct ShutdownTimer
  */
 final class WorldContext : GroupDirectory, IdCounters, SessionHandler
 {
+    import dmangos.world.gameevents : EventCalendar;
+
+    /// See `dmangos.world.gameevents`.
+    EventCalendar calendar;
+
     import dmangos.world.creaturelinking : Linking;
 
     /// What the links of this node's creatures do (`dmangos.world.creaturelinking.Linking`).
@@ -3069,6 +3074,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         LoginDatabase accounts = null, Battlegroup sharedBattles = null)
     in (database !is null && data !is null && client !is null)
     {
+        calendar = new EventCalendar(this);
         links = new Linking(this);
         warEffortHere = new WarEffortFollower(this);
         fleet = new Ships(this);
@@ -3132,10 +3138,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                 battlegroup is null || battlegroup.host is this, this));
         battlegrounds = new Battlegrounds(this);
         if (sharedBattles !is null) sharedBattles.attach(this);
-        gameEvents = new GameEvents;
-        data.npcs.conditions.eventActive = (uint id) => gameEvents.isActive(id);
-        data.npcs.conditions.holidayActive = (uint holiday) => gameEvents.holidayActive(holiday);
-        updateGameEvents(clock(), true); // before any cell loads, so its spawns follow the events now
+        calendar.gameEvents = new GameEvents;
+        data.npcs.conditions.eventActive = (uint id) => calendar.gameEvents.isActive(id);
+        data.npcs.conditions.holidayActive = (uint holiday) => calendar.gameEvents.holidayActive(holiday);
+        calendar.updateGameEvents(clock(), true); // before any cell loads, so its spawns follow the events now
         services.provide!ChannelsHost((const(ubyte)[] state) => ChannelsHost(new ChannelService(this, client,
             ChannelSettings(config.allowTwoSideInteractionChannel), state)));
         services.provide!InvasionHost(&newInvasionHost);
@@ -3272,45 +3278,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
 
 
 
-    /// The game events, and which are active (`dmangos.world.gameevents`).
-    GameEvents gameEvents;
-    private MonoTime gameEventsChecked;
-    private long scheduledDay; // the day the events' dates were last worked out for
 
-    /// Whether creature spawn `guid` is in the world as its game event (if any) stands.
-    bool creatureInEvents(uint guid)
-    {
-        if (invasionLayout !is null)
-            if (const site = guid in invasionLayout.creatures)
-                if (!site.present(invasion)) return false;
-        if (const e = guid in data.creatureGameEvents)
-            return gameEvents.spawnIn(*e);
-        return true;
-    }
 
-    /// Whether game object spawn `guid` is in the world as its game event (if any) stands, or as the war
-    /// effort does (its piles of supplies).
-    bool gameObjectInEvents(uint guid)
-    {
-        import dmangos.world.wareffort : isSupplyPile;
 
-        if (invasionLayout !is null)
-            if (const site = guid in invasionLayout.objects)
-                if (!site.present(invasion)) return false;
-        if (isSupplyPile(guid))
-            return warEffortHere.warEffort.pileUp(guid);
-        if (WorldPvp.follows(guid))
-            return worldPvp.state.spawnUp(guid);
-        if (const e = guid in data.gameObjectGameEvents)
-            return gameEvents.spawnIn(*e);
-        return true;
-    }
-
-    private bool eventActivatesObject(uint guid)
-    {
-        return WorldPvp.follows(guid) || (invasionLayout !is null && guid in invasionLayout.objects
-            && invasionLayout.objects[guid].present(invasion));
-    }
 
     /// Whether a spawn is up in its pool (`pool_*`): in none, or rolled.
     bool upInPool(PoolMember.Kind kind, uint guid)
@@ -3339,69 +3309,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         return false;
     }
 
-    /// The events made active and inactive by the clock; their spawns come and go in the loaded cells.
-    package void updateGameEvents(MonoTime now, bool force = false)
-    {
-        import core.time : seconds;
-        import dmangos.log : info;
 
-        if (!force && gameEventsChecked != MonoTime.init && now - gameEventsChecked < 10.seconds)
-            return;
-        gameEventsChecked = now;
-        // Yearly and Easter dates move to the new year once it comes.
-        const day = unixTime / 86_400;
-        if (day != scheduledDay)
-        {
-            scheduledDay = day;
-            foreach (e; data.gameEvents)
-            {
-                scheduleFor(e, unixTime);
-                gameEvents.events[e.id] = e;
-            }
-        }
-        ushort[] started, stopped;
-        gameEvents.update(unixTime, started, stopped);
-        foreach (id; started)
-            info!"game event %s (%s) starts"(id, gameEvents.events[id].description);
-        foreach (id; stopped)
-            info!"game event %s (%s) ends"(id, gameEvents.events[id].description);
 
-        if (started.length || stopped.length)
-            gameEventSpawnsChanged();
-    }
-
-    private bool eventStatusRead;
-    private bool[ushort] eventsOnBefore; /// `game_event_status`: what was on when last looked (across restarts)
-
-    /**
-     * A game event's letters (`game_event_mail`): as it starts, and (negative rows) as it ends, compared with
-     * what `game_event_status` says was on, so a restart sends nothing for an event already on; one that
-     * ended while the server was down sends its ending letters when it comes back up.
-     */
-    private void eventMails()
-    {
-        if (!eventStatusRead)
-        {
-            eventStatusRead = true;
-            foreach (id; database.gameEventStatus())
-                eventsOnBefore[id] = true;
-        }
-        foreach (id, ref e; gameEvents.events)
-        {
-            const on = gameEvents.isActive(id);
-            const was = (id in eventsOnBefore) !is null;
-            if (on == was)
-                continue;
-            if (on)
-                eventsOnBefore[id] = true;
-            else
-                eventsOnBefore.remove(id);
-            database.setGameEventStatus(id, on);
-            foreach (ref m; data.gameEventMails.get(on ? cast(short) id : cast(short)(-cast(int) id), null))
-                foreach (guid; database.charactersFor(m.raceMask, m.quest))
-                    templateLetter(m.mailTemplate, m.sender, guid);
-        }
-    }
 
     /**
      * A letter of `MailTemplate.dbc` from creature `sender` to character `guid` (a `game_event_mail`'s, a
@@ -3440,94 +3349,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         postOffice.postMail(mail, 0);
     }
 
-    /// After events changed: in every loaded map, spawns now away go, and spawns now in come (where their cells are loaded).
-    package void gameEventSpawnsChanged()
-    {
-        import dmangos.world.grid : cellKeyAt;
 
-        void refresh(Map m)
-        {
-            // Those to go; and those an event changes (or changed), alive and out of a fight, to be made again.
-            ulong[] gone;
-            const(CreatureSpawn)*[] remade;
-            m.forEachObject((MapObject o) {
-                if (auto c = cast(Creature) o)
-                {
-                    if (!creatureInEvents(c.spawnId) || (invasionLayout !is null && c.summon.type != TempSpawnType.none
-                        && !invasionLayout.actorPresent(c.template_.entry, c.spawn, invasion)))
-                        gone ~= c.guid;
-                    else if (c.spawnId in data.eventCreatures && !c.petOwner && c.summon.type == TempSpawnType.none
-                            && c.alive && (c.ai is null || !c.ai.inCombat) && eventShapeOf(c.spawnId) != c.eventShape)
-                        if (const spawn = creatureSpawnOf(c.spawnId))
-                        {
-                            gone ~= c.guid;
-                            remade ~= spawn;
-                        }
-                }
-                else if (auto go = cast(GameObject) o)
-                    if ((eventObject(go.spawn.guid) && !gameObjectInEvents(go.spawn.guid)) ||
-                        (invasionLayout !is null && go.template_.entry == 181142 &&
-                         !invasionLayout.actorPresent(16230, go.spawn, invasion)))
-                        gone ~= go.guid;
-            });
-            foreach (guid; gone)
-                m.removeObject(guid);
-            foreach (spawn; remade)
-                if (auto c = makeCreature(spawn))
-                {
-                    c.instanceId = m.instanceId;
-                    m.addObject(c);
-                }
-            // Those to come, in loaded cells.
-            bool[ulong] present;
-            m.forEachObject((MapObject o) { present[o.guid] = true; });
-            if (auto cells = m.id in data.creatureCells)
-                foreach (key, indexes; *cells)
-                    if (m.cellLoaded(key))
-                        foreach (index; indexes)
-                        {
-                            const spawn = &data.creatureSpawns[index];
-                            if (spawn.guid !in data.creatureGameEvents || !creatureInEvents(spawn.guid)
-                                    || !dungeons.groupSpawnAllowed(m, 0, spawn.guid) || !upInPool(PoolMember.Kind.creature, spawn.guid))
-                                continue;
-                            if (awaitingRespawn(spawn.guid) || creatureOnLoan(spawn.guid))
-                                continue;
-                            auto c = makeCreature(spawn);
-                            if (c is null || c.guid in present)
-                                continue;
-                            c.instanceId = m.instanceId;
-                            m.addObject(c);
-                        }
-            if (auto cells = m.id in data.gameObjectCells)
-                foreach (key, indexes; *cells)
-                    if (m.cellLoaded(key))
-                        foreach (index; indexes)
-                        {
-                            const spawn = &data.gameObjectSpawns[index];
-                            if (!eventObject(spawn.guid) || !gameObjectInEvents(spawn.guid)
-                                || (spawn.respawnSeconds < 0 && !eventActivatesObject(spawn.guid))
-                                || !upInPool(PoolMember.Kind.gameObject, spawn.guid))
-                                continue;
-                            auto go = makeGameObject(*spawn);
-                            if (go.guid in present)
-                                continue;
-                            go.instanceId = m.instanceId;
-                            m.addObject(go);
-                        }
-        }
-        foreach (m; maps.values)
-            refresh(m);
-        foreach (m; dungeons.instanceMaps.values)
-            refresh(m);
-    }
-
-    /// Whether game object spawn `guid` comes and goes as the events (or the war effort) say.
-    private bool eventObject(uint guid)
-    {
-        import dmangos.world.wareffort : isSupplyPile;
-
-        return (guid in data.gameObjectGameEvents) !is null || isSupplyPile(guid) || WorldPvp.follows(guid);
-    }
 
     import dmangos.world.scourgelayout : InvasionLayout;
     InvasionLayout invasionLayout;
@@ -3566,14 +3388,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         invasion = state;
         bool changed;
         foreach (ushort id; 17 .. 100)
-            if ((id == 17 || id >= 89) && gameEvents.started(id) != state.eventOn(id))
+            if ((id == 17 || id >= 89) && calendar.gameEvents.started(id) != state.eventOn(id))
             {
-                gameEvents.start(id, state.eventOn(id));
+                calendar.gameEvents.start(id, state.eventOn(id));
                 changed = true;
             }
         if (changed)
-            updateGameEvents(clock(), true);
-        if (invasionLayout !is null && !changed) gameEventSpawnsChanged();
+            calendar.updateGameEvents(clock(), true);
+        if (invasionLayout !is null && !changed) calendar.gameEventSpawnsChanged();
         const previous = before.worldStates();
         foreach (i, field; state.worldStates())
             if (field[1] != previous[i][1])
@@ -3653,7 +3475,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         // Map-wide random expressions give the same result to every worker evaluating the same second.
         const seed = cast(uint) now ^ (where.id * 31) ^ where.instanceId ^ (expression * 16777619u);
         return data.worldStateExpressions.matches(expression, id => conditionMapWorldState(where, id),
-            &gameEvents.holidayActive, now, seed);
+            &calendar.gameEvents.holidayActive, now, seed);
     }
 
     package bool conditionEncounterCompleted(Map where, uint id)
@@ -3730,7 +3552,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     /// The shrines world PvP brings and takes away: the spawns of loaded cells made to agree with it.
     void worldPvpSpawnsChanged()
     {
-        gameEventSpawnsChanged();
+        calendar.gameEventSpawnsChanged();
     }
 
     /// The battleground queues, as the service on this node runs them (docs/SERVICES.md).
@@ -4868,7 +4690,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         {
             const spawn = creatureSpawnOf(saved.spawn);
             if (spawn is null || spawn.map != where.id || dungeons.deadInInstance(instance, saved.spawn)
-                || !creatureInEvents(saved.spawn) || !upInPool(PoolMember.Kind.creature, saved.spawn)
+                || !calendar.creatureInEvents(saved.spawn) || !upInPool(PoolMember.Kind.creature, saved.spawn)
                 || cantSpawnWhileBossDead(*spawn, instance in dungeons.instances))
             {
                 database.deleteDungeonFight(instance, saved.spawn);
@@ -5169,7 +4991,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
             const nativeFight = !actor.player && highGuidOf(actor.actor) == HighGuid.unit && spawn < temporaryCounterStart;
             if (highGuidOf(actor.actor) != HighGuid.gameObject
                 && ((actor.player && actor.savedAt + 300 <= unixTime) || awaitingRespawn(spawn) || spawn in outdoorCorpses
-                || (nativeFight && (creatureOnLoan(spawn) || !creatureInEvents(spawn)
+                || (nativeFight && (creatureOnLoan(spawn) || !calendar.creatureInEvents(spawn)
                     || !upInPool(PoolMember.Kind.creature, spawn)))))
             {
                 database.deleteQuestActor(config.realmId, actor.actor);
@@ -5721,7 +5543,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                     }
                 if (awaitingRespawn(spawn.guid))
                     continue; // dead: it comes back when its time is up
-                if (!creatureInEvents(spawn.guid) || !dungeons.groupSpawnAllowed(existingMap(mapId), 0, spawn.guid))
+                if (!calendar.creatureInEvents(spawn.guid) || !dungeons.groupSpawnAllowed(existingMap(mapId), 0, spawn.guid))
                     continue; // its game event or spawn group says it is away
                 if (!upInPool(PoolMember.Kind.creature, spawn.guid))
                     continue; // another of its pool is up
@@ -5741,8 +5563,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     package GameObject spawnWorldGameObject(const ref GameObjectSpawn spawn)
     {
         // Negative respawn times reserve the spawn for an event, a script or world PvP.
-        if ((spawn.respawnSeconds < 0 && !eventActivatesObject(spawn.guid)) || gameObjectAwaitingRespawn(spawn.guid)
-            || !gameObjectInEvents(spawn.guid) || !upInPool(PoolMember.Kind.gameObject, spawn.guid)
+        if ((spawn.respawnSeconds < 0 && !calendar.eventActivatesObject(spawn.guid)) || gameObjectAwaitingRespawn(spawn.guid)
+            || !calendar.gameObjectInEvents(spawn.guid) || !upInPool(PoolMember.Kind.gameObject, spawn.guid)
             || !dungeons.groupSpawnAllowed(existingMap(spawn.map), 1, spawn.guid))
             return null;
         auto object = makeGameObject(spawn);
@@ -5766,7 +5588,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         if (!petNumber)
             if (auto list = spawn.guid in data.eventCreatures)
                 foreach (ref e; *list)
-                    if (gameEvents.isActive(e.event))
+                    if (calendar.gameEvents.isActive(e.event))
                     {
                         shape = &e;
                         if (e.entry && e.entry in data.creatureTemplates)
@@ -5915,11 +5737,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     }
 
     /// The event whose `game_event_creature_data` spawn `guid` should be made with now (0: none).
-    private ushort eventShapeOf(uint guid)
+    package ushort eventShapeOf(uint guid)
     {
         if (auto list = guid in data.eventCreatures)
             foreach (ref e; *list)
-                if (gameEvents.isActive(e.event))
+                if (calendar.gameEvents.isActive(e.event))
                     return e.event;
         return 0;
     }
@@ -6468,7 +6290,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
             }
             if (hasOutdoorRespawn(spawn.guid) && restoreLoanCorpse(map_, *spawn))
                 return;
-            if (!awaitingRespawn(spawn.guid) && creatureInEvents(spawn.guid)
+            if (!awaitingRespawn(spawn.guid) && calendar.creatureInEvents(spawn.guid)
                 && dungeons.groupSpawnAllowed(map_, 0, spawn.guid) && upInPool(PoolMember.Kind.creature, spawn.guid))
                 if (auto creature = makeCreature(spawn))
                     map_.addObject(creature);
@@ -8964,7 +8786,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                 if (!creaturePools.change(pool, state.revision, next.guid, due) || due)
                     continue;
             }
-            if (there !is null && there.cellLoaded(home) && creatureInEvents(spawn.guid)
+            if (there !is null && there.cellLoaded(home) && calendar.creatureInEvents(spawn.guid)
                 && dungeons.groupSpawnAllowed(there, 0, spawn.guid))
                 if (auto creature = makeCreature(spawn))
                 {
@@ -9326,7 +9148,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         worldPvp.tick(elapsed);
         if (battlegroup is null || battlegroup.host is this) battlegrounds.tick(elapsed);
         landObjectAnimations(now);
-        updateGameEvents(now);
+        calendar.updateGameEvents(now);
         if (lastConditionalSpawnCheck == MonoTime.init || now - lastConditionalSpawnCheck >= 1.seconds)
         {
             lastConditionalSpawnCheck = now;
@@ -9335,7 +9157,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         removeExpiredBones();
         if (forwardGroup is null) // the coordinator, or alone (not while starting: who coordinates is not known yet)
         {
-            eventMails();
+            calendar.eventMails();
             groupService.meetingStonesTick(elapsed); // the meeting stones' queue is the groups' keeper's
         }
         fleet.updateShips();
@@ -9709,19 +9531,19 @@ unittest
     auto context = newCreationContext(db);
     context.data.creatureGameEvents[innkeeperSpawn] = 5;
     const now = context.unixTime;
-    context.gameEvents.events[5] = GameEvent(5, ScheduleType.date, now + 3600, now + 7200, 1440, 60, 0, "test");
-    context.updateGameEvents(context.clock(), true);
+    context.calendar.gameEvents.events[5] = GameEvent(5, ScheduleType.date, now + 3600, now + 7200, 1440, 60, 0, "test");
+    context.calendar.updateGameEvents(context.clock(), true);
     auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
     anduin.read();
     const guid = makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn);
     assert(context.map(0).findObject(guid) is null, "its event has not started");
 
-    context.gameEvents.events[5].start = now - 60; // it is on now
-    context.updateGameEvents(context.clock(), true);
-    assert(context.gameEvents.isActive(5) && context.map(0).findObject(guid) !is null, "it came with its event");
+    context.calendar.gameEvents.events[5].start = now - 60; // it is on now
+    context.calendar.updateGameEvents(context.clock(), true);
+    assert(context.calendar.gameEvents.isActive(5) && context.map(0).findObject(guid) !is null, "it came with its event");
 
-    context.gameEvents.events[5].end = now - 1; // and over
-    context.updateGameEvents(context.clock(), true);
+    context.calendar.gameEvents.events[5].end = now - 1; // and over
+    context.calendar.updateGameEvents(context.clock(), true);
     assert(context.map(0).findObject(guid) is null, "it went when the event ended");
 }
 
@@ -9849,8 +9671,8 @@ unittest
     auto context = newCreationContext(db);
     context.data.eventCreatures[bankerSpawn] = [EventCreature(6, 0, 4242, 0, 0)];
     const now = context.unixTime;
-    context.gameEvents.events[6] = GameEvent(6, ScheduleType.date, now + 3600, now + 7200, 1440, 60, 0, "test");
-    context.updateGameEvents(context.clock(), true);
+    context.calendar.gameEvents.events[6] = GameEvent(6, ScheduleType.date, now + 3600, now + 7200, 1440, 60, 0, "test");
+    context.calendar.updateGameEvents(context.clock(), true);
     auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
     anduin.read();
     const guid = makeGuid(HighGuid.unit, creatureBanker, bankerSpawn);
@@ -9858,13 +9680,13 @@ unittest
     const usual = (cast(Creature) m.findObject(guid)).values.get!UNIT_FIELD_DISPLAYID;
     assert(usual != 4242);
 
-    context.gameEvents.events[6].start = now - 60;
-    context.updateGameEvents(context.clock(), true);
+    context.calendar.gameEvents.events[6].start = now - 60;
+    context.calendar.updateGameEvents(context.clock(), true);
     auto dressed = cast(Creature) m.findObject(guid);
     assert(dressed.values.get!UNIT_FIELD_DISPLAYID == 4242 && dressed.eventShape == 6, "the event's model");
 
-    context.gameEvents.events[6].end = now - 1;
-    context.updateGameEvents(context.clock(), true);
+    context.calendar.gameEvents.events[6].end = now - 1;
+    context.calendar.updateGameEvents(context.clock(), true);
     auto plain = cast(Creature) m.findObject(guid);
     assert(plain !is dressed && plain.eventShape == 0 && plain.values.get!UNIT_FIELD_DISPLAYID != 4242, "as it was");
 }
@@ -9909,32 +9731,32 @@ unittest
     auto db = newDatabase();
     auto context = newCreationContext(db);
     const now = context.unixTime;
-    context.gameEvents.events[5] = GameEvent(5, ScheduleType.date, now + 3600, now + 7200, 1440, 60, 0, "test");
+    context.calendar.gameEvents.events[5] = GameEvent(5, ScheduleType.date, now + 3600, now + 7200, 1440, 60, 0, "test");
     context.data.gameEventMails[5] = [EventMail(0x1, 0, 0, 16285)]; // to humans
     context.data.gameEventMails[-5] = [EventMail(0x2, 0, 0, 16285)]; // to orcs, as it ends: none here
     auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
     anduin.read();
-    context.updateGameEvents(context.clock(), true);
-    context.eventMails();
+    context.calendar.updateGameEvents(context.clock(), true);
+    context.calendar.eventMails();
     assert(db.mails.length == 0, "not on yet");
 
-    context.gameEvents.events[5].start = now - 60;
-    context.updateGameEvents(context.clock(), true);
-    context.eventMails();
-    context.eventMails();
+    context.calendar.gameEvents.events[5].start = now - 60;
+    context.calendar.updateGameEvents(context.clock(), true);
+    context.calendar.eventMails();
+    context.calendar.eventMails();
     assert(db.mails.length == 1 && db.mails.values[0].receiver == 7 && db.mails.values[0].sender == 16285, "one letter");
     assert(db.gameEventStatusRows.keys == [ushort(5)]);
 
     auto restarted = newCreationContext(db); // the same database: the event was on
-    restarted.gameEvents.events[5] = context.gameEvents.events[5];
+    restarted.calendar.gameEvents.events[5] = context.calendar.gameEvents.events[5];
     restarted.data.gameEventMails = context.data.gameEventMails;
-    restarted.updateGameEvents(restarted.clock(), true);
-    restarted.eventMails();
+    restarted.calendar.updateGameEvents(restarted.clock(), true);
+    restarted.calendar.eventMails();
     assert(db.mails.length == 1, "nothing again after a restart");
 
-    restarted.gameEvents.events[5].end = now - 1;
-    restarted.updateGameEvents(restarted.clock(), true);
-    restarted.eventMails();
+    restarted.calendar.gameEvents.events[5].end = now - 1;
+    restarted.calendar.updateGameEvents(restarted.clock(), true);
+    restarted.calendar.eventMails();
     assert(db.mails.length == 1 && db.gameEventStatusRows.length == 0, "its end: no orcs to write to");
 }
 

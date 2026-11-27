@@ -243,7 +243,7 @@ private:
         if (events is null)
             return true;
         foreach (e; *events)
-            if (context.gameEvents.isActive(e))
+            if (context.calendar.gameEvents.isActive(e))
                 return true;
         return false;
     }

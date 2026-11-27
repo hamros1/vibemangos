@@ -518,15 +518,15 @@ final class WarEffortFollower
         const on = now.events;
         bool eventsChanged;
         foreach (id; phaseEvents[] ~ colossusEvents[])
-            if (on.canFind(id) != world.gameEvents.started(id))
+            if (on.canFind(id) != world.calendar.gameEvents.started(id))
             {
-                world.gameEvents.start(id, on.canFind(id));
+                world.calendar.gameEvents.start(id, on.canFind(id));
                 eventsChanged = true;
             }
         if (eventsChanged)
-            world.updateGameEvents(world.clock(), true);
+            world.calendar.updateGameEvents(world.clock(), true);
         if (before.pilesUp != now.pilesUp)
-            world.gameEventSpawnsChanged();
+            world.calendar.gameEventSpawnsChanged();
 
         // The capitals' counters and days.
         const time = world.unixTime;
@@ -935,8 +935,8 @@ unittest
 
     auto db = newDatabase();
     auto context = warEffortWorld(db, "1 0");
-    assert(context.warEffortHere.warEffort.phase == AqPhase.gathering && context.gameEvents.isActive(120));
-    assert(!context.gameEvents.isActive(121));
+    assert(context.warEffortHere.warEffort.phase == AqPhase.gathering && context.calendar.gameEvents.isActive(120));
+    assert(!context.calendar.gameEvents.isActive(121));
     auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.player,
         raceHuman, 0, 1, (ref CharacterData c) { c.zone = 1519; });
     anduin.read();
@@ -960,7 +960,7 @@ unittest
     foreach (i, ref r; resources)
         context.services.call!(WarEffortHost.contribute)(WarEffortContribution(cast(AqResource) i, r.goal));
     assert(context.warEffortHere.warEffort.phase == AqPhase.transporting);
-    assert(!context.gameEvents.isActive(120) && context.gameEvents.isActive(121));
+    assert(!context.calendar.gameEvents.isActive(120) && context.calendar.gameEvents.isActive(121));
     bool days;
     foreach (p; anduin.read())
         days = days || (p.opcode == Opcode.SMSG_UPDATE_WORLD_STATE && p.body_ == [0x41, 8, 0, 0, 5, 0, 0, 0]);
@@ -987,7 +987,7 @@ unittest
     assert(b.warEffortHere.warEffort.phase == AqPhase.disabled, "its own row says nothing");
 
     b.warEffortHere.askWarEffort();
-    assert(b.warEffortHere.warEffort.phase == AqPhase.gathering && b.warEffortHere.warEffort.counters[0] == 5 && b.gameEvents.isActive(120));
+    assert(b.warEffortHere.warEffort.phase == AqPhase.gathering && b.warEffortHere.warEffort.counters[0] == 5 && b.calendar.gameEvents.isActive(120));
     b.warEffortHere.warEffortColossusFell(Colossus.ashi);
     b.services.call!(WarEffortHost.contribute)(WarEffortContribution(AqResource.peacebloom, 20));
     assert(a.warEffortHere.warEffort.counters[0] == 25 && b.warEffortHere.warEffort.counters[0] == 25, "counted on a, heard on b");

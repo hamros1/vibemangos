@@ -19,7 +19,7 @@ unittest
     auto me = who.session.inWorld;
     me.godModeCheat = true;
     w.context.services.call!(InvasionHost.control)(InvasionControl(true));
-    assert(w.context.gameEvents.isActive(93));
+    assert(w.context.calendar.gameEvents.isActive(93));
     const layout = w.context.invasionLayout;
     assert(layout.ships.length == 14 && layout.camps.length == 42);
     ubyte[3][6] counts;
@@ -112,7 +112,7 @@ unittest
         assert(!broken.alive && w.context.invasion.cleared(site.stamp(w.context.invasion)));
     }
     assert(!w.context.invasion.remaining(3) && w.context.invasion.victories == 1);
-    assert(w.context.invasion.remaining(4) == 2 && w.context.gameEvents.isActive(94));
+    assert(w.context.invasion.remaining(4) == 2 && w.context.calendar.gameEvents.isActive(94));
     InvasionHost restored;
     restored.restore(w.db.worldState(invasionSaveId));
     assert(restored.state == w.context.invasion && !restored.unreadableSave);

@@ -410,7 +410,7 @@ final class Battleground
         this.rules = rules is null ? new BattlegroundRules : rules;
         made = context.clock();
         static immutable uint[4] callToArms = [0, 283, 284, 285];
-        weekend = context.gameEvents !is null && context.gameEvents.holidayActive(callToArms[type]);
+        weekend = context.calendar.gameEvents !is null && context.calendar.gameEvents.holidayActive(callToArms[type]);
         activeEvents[eventDoors] = 0; // the doors are there, closed
         this.rules.reset(this);
     }
@@ -1316,7 +1316,7 @@ final class Battleground
         import dmangos.world.objects : HighGuid, makeGuid;
 
         const spawn = context.gameObjectSpawnOf(guid);
-        if (spawn is null || !map.cellLoaded(cellKeyAt(spawn.x, spawn.y)) || !context.gameObjectInEvents(guid)
+        if (spawn is null || !map.cellLoaded(cellKeyAt(spawn.x, spawn.y)) || !context.calendar.gameObjectInEvents(guid)
             || !spawnAllowed(guid in context.data.gameObjectBattleEvents)
             || map.gameObjectAt(makeGuid(HighGuid.gameObject, spawn.entry, guid)) !is null)
             return;
