@@ -790,7 +790,7 @@ unittest
     inCopy.addObject(a);
     inMine.addObject(b);
     a.die(inCopy, context.unixTime);
-    context.creatureDied(a);
+    context.deadCreatures.creatureDied(a);
     assert(b.alive && a.guid == b.guid, "the same spawn, two copies");
 
     // Everyone out of Anduin's copy (he was never in it): it goes after a minute, and his bind with it.
@@ -842,7 +842,7 @@ unittest
     creature.instanceId = his;
     context.map(mapMoltenCore, his).addObject(creature);
     creature.die(context.map(mapMoltenCore, his), context.unixTime);
-    context.creatureDied(creature);
+    context.deadCreatures.creatureDied(creature);
     assert(context.dungeons.deadInInstance(his, 56000));
 
     // Grouped under Jaina, whose copy the group is bound to: Anduin is locked to his own.

@@ -155,7 +155,7 @@ unittest
     auto guard = cast(Creature) map.findObject(makeCreatureGuid(rhahkZor, 90002));
     assert(guard !is null);
     guard.die(map, context.unixTime);
-    context.creatureDied(guard);
+    context.deadCreatures.creatureDied(guard);
     assert(door.goState == 0, "open");
     const saved = db.loadInstances().instances;
     assert(saved.length == 1 && saved[0].data.length > instanceDataPrefix.length
@@ -976,7 +976,7 @@ unittest
 
     assert(options == 0, "locked in while Rethilgore lives");
     guard.die(map, context.unixTime);
-    context.creatureDied(guard);
+    context.deadCreatures.creatureDied(guard);
     assert(options == 1, "free: he offers to open the courtyard");
     hero.write(Opcode.CMSG_GOSSIP_SELECT_OPTION, ClientGossipSelectOption(prisoner.guid, 0));
     foreach (_; 0 .. 80)
@@ -1077,7 +1077,7 @@ unittest
     {
         auto c = find(lord);
         c.die(map, context.unixTime);
-        context.creatureDied(c);
+        context.deadCreatures.creatureDied(c);
     }
     assert(options == 1, "the event may begin");
     hero.write(Opcode.CMSG_GOSSIP_SELECT_OPTION, ClientGossipSelectOption(guide.guid, 0));
@@ -1382,7 +1382,7 @@ unittest
     run(5);
     assert(theFire.goState == 1 && snapjaws == 0, "not while Kelris lives");
     boss.die(map, context.unixTime);
-    context.creatureDied(boss);
+    context.deadCreatures.creatureDied(boss);
     hero.session.inWorld.useGameObject(theFire);
     run(5);
     assert(theFire.goState == 0 && snapjaws == 3, "lit: the first wave comes");

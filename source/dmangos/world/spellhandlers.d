@@ -2759,7 +2759,7 @@ private:
         creature.skinned = true;
         creature.loot = loot;
         bindCreatureLoot(context, map, creature, loot);
-        context.saveCorpseLoot(creature);
+        context.deadCreatures.saveCorpseLoot(creature);
         map.flushObjectChanges(creature);
         if (lootTarget && lootTarget != creature.guid)
             if (auto other = lootOf(lootTarget))
@@ -2782,7 +2782,7 @@ private:
         if (creature is null || !creature.alive || !creature.template_.pickpocketLootId)
             return;
         if (creature.loot is null)
-            context.restorePickpocket(map, creature);
+            context.deadCreatures.restorePickpocket(map, creature);
         enum ubyte lootErrorAlreadyPickpocketed = 15;
         if (creature.loot !is null && creature.pocketsEmptied)
         {

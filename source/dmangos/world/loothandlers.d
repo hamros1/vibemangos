@@ -146,11 +146,11 @@ package void bindCreatureLoot(WorldContext context, Map map, Creature creature, 
             creature.pocketsEmptied = true;
             creature.pocketsRestockAt = context.unixTime + context.config.creaturePickpocketRestockDelay;
         };
-        if (context.canCheckpointPickpocket(creature))
+        if (context.deadCreatures.canCheckpointPickpocket(creature))
         {
             loot.changed = () {
                 if (creature.alive && creature.loot is loot)
-                    context.database.savePickpocket(context.checkpointPickpocket(creature));
+                    context.database.savePickpocket(context.deadCreatures.checkpointPickpocket(creature));
             };
             loot.checkpoint = () {
                 loot.changed();
@@ -159,26 +159,26 @@ package void bindCreatureLoot(WorldContext context, Map map, Creature creature, 
             loot.storeReward = (Looter looter, imported!"dmangos.world.loot".LootItem item, bool sendError) {
                 auto player = cast(Character) looter;
                 return player.storeLootItem(item.itemId, item.count, item.randomPropertyId, sendError,
-                    pocketCheckpoint: () => context.checkpointPickpocket(creature, item, looter.looterGuid));
+                    pocketCheckpoint: () => context.deadCreatures.checkpointPickpocket(creature, item, looter.looterGuid));
             };
             bindLootDelivery(context, map, loot, false, false);
         }
         return;
     }
-    if (context.canCheckpointCorpse(creature))
+    if (context.deadCreatures.canCheckpointCorpse(creature))
     {
         loot.checkpoint = () {
-            context.saveCorpseLoot(creature);
+            context.deadCreatures.saveCorpseLoot(creature);
             return context.settleWrites();
         };
         loot.storeReward = (Looter looter, imported!"dmangos.world.loot".LootItem item, bool sendError) {
             auto player = cast(Character) looter;
             return player.storeLootItem(item.itemId, item.count, item.randomPropertyId, sendError,
-                corpseCheckpoint: () => context.checkpointCorpse(creature, item, looter.looterGuid));
+                corpseCheckpoint: () => context.deadCreatures.checkpointCorpse(creature, item, looter.looterGuid));
         };
     }
     loot.changed = () {
-        context.saveCorpseLoot(creature);
+        context.deadCreatures.saveCorpseLoot(creature);
         map.refreshViewers(creature);
         if (!skin && loot.replicatesLootView)
             map.refreshReplicaLootView(creature);
@@ -425,7 +425,7 @@ private:
         recheckRemoteMasterLoot(creature.loot);
         creature.inspectingLoot();
         creature.loot.showContentTo(this);
-        context.saveCorpseLoot(creature);
+        context.deadCreatures.saveCorpseLoot(creature);
     }
 
     /// The client takes the money from the open window.
@@ -1001,7 +1001,7 @@ private:
             lootedOutNow(context, map, victim);
         else if (victim.loot !is null)
         {
-            context.saveNewCorpse(victim);
+            context.deadCreatures.saveNewCorpse(victim);
             if (loot.replicatesLootView)
                 map.refreshReplicaLootView(victim);
         }
@@ -1012,7 +1012,7 @@ private:
     {
         victim.lootedOut();
         if (victim.skinnable)
-            context.saveNewCorpse(victim);
+            context.deadCreatures.saveNewCorpse(victim);
         map.flushObjectChanges(victim);
     }
 

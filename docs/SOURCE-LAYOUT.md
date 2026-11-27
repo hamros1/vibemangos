@@ -163,6 +163,7 @@ source/dmangos/world/       the world server
   postoffice.d                mail posted outside a session, auctions over and old mail settled (`WorldContext.postOffice`)
   ships.d                     the ships at sea, the transport clock, and elevators' homes and paths (`WorldContext.fleet`)
   spawnediting.d              spawns game masters make, move and delete, saved to the world database (`WorldContext.spawnEditor`)
+  creaturedeath.d             creatures that died here: when each comes back, its corpse and loot kept for a crash (`WorldContext.deadCreatures`)
   wareffort.d                 the Ahn'Qiraj war effort, its service, and how a node follows it (`WorldContext.warEffortHere`)
 source/dmangos/extractor/   the client data extractor: main.d, dbc.d (DBC files), maps.d (terrain to .map files),
                               vmaps.d and assembler.d (buildings and doodads to vmaps), mmaps.d (movement maps)

@@ -2617,7 +2617,7 @@ final class Map : MotionWorld
     {
         removeObject(creature.guid);
         if (world !is null)
-            world.corpseRemoved(creature);
+            world.deadCreatures.corpseRemoved(creature);
     }
 
     /// Sends what changed in its fields to those who see it.

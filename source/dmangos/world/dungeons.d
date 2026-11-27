@@ -324,7 +324,7 @@ final class Dungeons
                         if (!world.config.cluster.enabled && r.spawnGuid >= temporaryCounterStart)
                             world.summonsMade = max(world.summonsMade, r.spawnGuid - temporaryCounterStart);
                         if (const spawn = world.creatureSpawnOf(r.spawnGuid))
-                            if (world.moltenCoreTrash(*spawn) && r.until > 0 && (!state.resetAt || r.until < state.resetAt))
+                            if (world.deadCreatures.moltenCoreTrash(*spawn) && r.until > 0 && (!state.resetAt || r.until < state.resetAt))
                                 state.trashRespawns[r.spawnGuid] = r.until;
                     }
                 }

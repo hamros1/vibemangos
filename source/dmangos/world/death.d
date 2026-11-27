@@ -980,7 +980,7 @@ unittest
     // A creature killed: its corpse lasts 60 s, then it goes; it comes back 120 s after its death.
     keeper.values.set!UNIT_FIELD_HEALTH(0u);
     keeper.die(context.map(0), context.unixTime);
-    context.creatureDied(keeper);
+    context.deadCreatures.creatureDied(keeper);
     assert(innkeeperSpawn in db.creatureRespawns);
     foreach (_; 0 .. 70)
     {

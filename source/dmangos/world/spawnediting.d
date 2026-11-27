@@ -85,7 +85,7 @@ final class SpawnEditor
                         *list = (*list).remove(i);
                         break;
                     }
-        world.respawnAt.remove(s.guid);
+        world.deadCreatures.respawnAt.remove(s.guid);
         world.spawnIndex.remove(s.guid);
         map.removeObject(creature.guid);
         return true;
