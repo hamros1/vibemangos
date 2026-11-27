@@ -2309,7 +2309,7 @@ unittest
     enum uint firePower = 12378, fireball = 133;
     auto mage = w.character(10, "Kaelthas", classMageId, 60, [firePower]);
     auto me = mage.session.inWorld;
-    me.applyPassive(w.context.data.spells.spell(firePower));
+    me.talents.applyPassive(w.context.data.spells.spell(firePower));
     assert(me.player.auras.find(firePower) !is null);
     assert(applySpellMod(me.player.auras.list, SpellModOp.damage, *w.context.data.spells.spell(fireball), 1000) == 1040,
         "4% more");
@@ -2350,7 +2350,7 @@ unittest
     enum uint passive = 20608, reincarnation = 21169, improved = 16209, ankh = 17030;
     auto thrall = w.character(3, "Thrall", classShamanId, 60, [passive, improved], raceOrc);
     auto me = thrall.session.inWorld;
-    me.applyPassive(w.context.data.spells.spell(improved));
+    me.talents.applyPassive(w.context.data.spells.spell(improved));
     assert(me.player.auras.find(improved) !is null, "the talent's aura");
     me.storeLoot(ankh, 1, 0, false);
     thrall.read();

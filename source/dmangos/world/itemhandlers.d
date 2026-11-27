@@ -102,8 +102,8 @@ private:
     {
         if (inventory.equipmentChanged)
         {
-            refreshEquipSpells(); // their equip spells on or off
-            refreshEquipBoundPassives(); // the talents bound to a weapon or a shield
+            talents.refreshEquipSpells(); // their equip spells on or off
+            talents.refreshEquipBoundPassives(); // the talents bound to a weapon or a shield
             player.refreshEquipmentStats(context.data);
         }
         if (inventory.justEquipped.length)

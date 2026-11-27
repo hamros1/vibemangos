@@ -344,7 +344,7 @@ mixin template CharacterLogin()
         player = makePlayer(character, !recovered);
         restoreGmSession(checkpoints); // before the player is shown: the GM flag and `.invisible` are seen
         readSaved(() => loadCooldowns()); // before the spellbook is sent: it shows them
-        readSaved(() => loadTalentReset());
+        readSaved(() => talents.loadTalentReset());
         readSaved(() => loadSocial());
         saveTimer = IntervalTimer(sessionSaveInterval());
         regenTimer.reset();
@@ -372,7 +372,7 @@ mixin template CharacterLogin()
         readSaved(() => loadEnchantmentTimers());
         // Timed items that run in real time lose the time logged out.
         readSaved(() => loadItemDurations(player.data.logoutTime > 0 ? context.unixTime - player.data.logoutTime : 0));
-        applyPassiveSpells();
+        talents.applyPassiveSpells();
         petsOnArrival(); // the saved current pet comes back
         taxi.resumeSavedFlight(); // logged out in flight: it flies on
         openPartySummonCheckpoint(checkpoints);

@@ -457,7 +457,7 @@ private:
             break;
         case GossipOption.unlearnTalents:
             closeGossip();
-            offerTalentWipe(creature.guid);
+            talents.offerTalentWipe(creature.guid);
             break;
         case GossipOption.unlearnPetSkills:
             closeGossip();
@@ -626,7 +626,7 @@ private:
      * Whether this trainer teaches the player. With `tell`, the trainer says why not, with the
      * `npc_text` for that kind of trainer.
      */
-    bool isTrainerOf(Npc trainer, bool tell)
+    package bool isTrainerOf(Npc trainer, bool tell)
     {
         if (!(trainer.npcValues.get!UNIT_NPC_FLAGS & NpcFlag.trainer) || trainerSpells(trainer).length == 0)
             return false;

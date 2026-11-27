@@ -86,7 +86,7 @@ private Creature tamed(ref RealWorld w, ref TestClient who)
 private void talent(ref RealWorld w, ref TestClient who, uint id)
 {
     auto me = who.session.inWorld;
-    me.applyPassive(spellOf(w, id));
+    me.talents.applyPassive(spellOf(w, id));
     assert(me.player.auras.find(id) !is null, format!"talent %s on"(id));
     pass(w, who, 100.msecs);
 }

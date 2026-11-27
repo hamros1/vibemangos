@@ -95,7 +95,7 @@ private void learn(ref RealWorld w, ref TestClient who, uint talent)
 {
     auto me = who.session.inWorld;
     if (spellOf(w, talent).isPassive)
-        me.applyPassive(spellOf(w, talent));
+        me.talents.applyPassive(spellOf(w, talent));
     else
         giveAura(w, who, talent);
     assert(me.player.auras.find(talent) !is null, format!"talent %s on"(talent));

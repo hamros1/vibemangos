@@ -14,8 +14,21 @@ module dmangos.world.talenthandlers;
 import dmangos.world.money : Copper;
 
 /// See the module documentation.
-mixin template TalentHandlers()
+final class Talents
 {
+    import dmangos.world.character : Character, Handles;
+    import dmangos.world.session : WorldState;
+    import dmangos.world.packets : ClientGuid;
+    import dmangos.bytes : ByteReader, ByteWriter;
+
+    private Character me;
+
+    ///
+    this(Character me)
+    {
+        this.me = me;
+    }
+
     import dmangos.world.money : Copper;
     import dmangos.bytes : ByteReader;
     import dmangos.log : info;
@@ -26,25 +39,25 @@ mixin template TalentHandlers()
     import dmangos.world.spells : SpellInfo;
     import dmangos.world.updatefields;
 
-private:
+package:
     /// The client learns a talent rank: checked, then learned.
     @Handles(Opcode.CMSG_LEARN_TALENT, WorldState.inWorld)
     void handleLearnTalent(ref ByteReader reader)
     {
         const talentId = reader.read!uint, rank = reader.read!uint;
-        const free = player.values.get!PLAYER_CHARACTER_POINTS1;
+        const free = me.player.values.get!PLAYER_CHARACTER_POINTS1;
         if (free == 0 || rank >= maxTalentRank)
             return;
-        const talent = context.client.talents.lookup(talentId);
+        const talent = me.context.client.talents.lookup(talentId);
         if (talent is null)
             return;
-        const tab = context.client.talentTabs.lookup(talent.talentTab);
-        if (tab is null || !(tab.classMask & (1u << (player.data.classId - 1))))
+        const tab = me.context.client.talentTabs.lookup(talent.talentTab);
+        if (tab is null || !(tab.classMask & (1u << (me.player.data.classId - 1))))
             return;
         // The highest rank known.
         uint known;
         foreach_reverse (k; 0 .. maxTalentRank)
-            if (talent.rankId[k] && player.knowsSpell(talent.rankId[k]))
+            if (talent.rankId[k] && me.player.knowsSpell(talent.rankId[k]))
             {
                 known = k + 1;
                 break;
@@ -53,49 +66,49 @@ private:
             return;
         // What it depends on.
         if (talent.dependsOn)
-            if (const needed = context.client.talents.lookup(talent.dependsOn))
+            if (const needed = me.context.client.talents.lookup(talent.dependsOn))
             {
                 bool enough;
                 foreach (i; talent.dependsOnRank .. maxTalentRank)
-                    if (needed.rankId[i] && player.knowsSpell(needed.rankId[i]))
+                    if (needed.rankId[i] && me.player.knowsSpell(needed.rankId[i]))
                         enough = true;
                 if (!enough)
                     return;
             }
-        if (talent.dependsOnSpell && !player.knowsSpell(talent.dependsOnSpell))
+        if (talent.dependsOnSpell && !me.player.knowsSpell(talent.dependsOnSpell))
             return;
         // 5 points in the tree for each row above.
         if (talent.row > 0)
         {
             uint spent;
-            foreach (id; 0 .. context.client.talents.idLimit)
-                if (const other = context.client.talents.lookup(id))
+            foreach (id; 0 .. me.context.client.talents.idLimit)
+                if (const other = me.context.client.talents.lookup(id))
                     if (other.talentTab == talent.talentTab)
                         foreach (j; 0 .. maxTalentRank)
-                            if (other.rankId[j] && player.knowsSpell(other.rankId[j]))
+                            if (other.rankId[j] && me.player.knowsSpell(other.rankId[j]))
                                 spent += j + 1;
             if (spent < talent.row * maxTalentRank)
                 return;
         }
         const spellId = talent.rankId[rank];
-        if (spellId == 0 || player.knowsSpell(spellId))
+        if (spellId == 0 || me.player.knowsSpell(spellId))
             return;
         // The rank before goes (`learnSpell` of a talent), and its passive aura with it.
         foreach (k; 0 .. rank)
-            if (talent.rankId[k] && player.knowsSpell(talent.rankId[k]))
+            if (talent.rankId[k] && me.player.knowsSpell(talent.rankId[k]))
             {
-                if (auto aura = player.auras.find(talent.rankId[k]))
-                    removeAura(aura);
-                unlearn(talent.rankId[k]);
+                if (auto aura = me.player.auras.find(talent.rankId[k]))
+                    me.removeAura(aura);
+                me.unlearn(talent.rankId[k]);
             }
-        learn(spellId);
-        player.values.set!PLAYER_CHARACTER_POINTS1(free - (rank + 1 - known));
-        if (const spell = context.data.spells.spell(spellId))
+        me.learn(spellId);
+        me.player.values.set!PLAYER_CHARACTER_POINTS1(free - (rank + 1 - known));
+        if (const spell = me.context.data.spells.spell(spellId))
             applyPassive(spell);
         refreshEquipBoundPassives();
         refreshFormBoundPassives();
-        flushPlayerChanges();
-        info!"%s: '%s' learned talent %s rank %s (spell %s)"(remoteAddress, player.data.name, talentId, rank + 1,
+        me.flushPlayerChanges();
+        info!"%s: '%s' learned talent %s rank %s (spell %s)"(me.remoteAddress, me.player.data.name, talentId, rank + 1,
             spellId);
     }
 
@@ -107,17 +120,17 @@ private:
     {
         import dmangos.world.player : talentPointsForLevel;
 
-        foreach (id; 0 .. context.client.talents.idLimit)
-            if (const talent = context.client.talents.lookup(id))
+        foreach (id; 0 .. me.context.client.talents.idLimit)
+            if (const talent = me.context.client.talents.lookup(id))
                 foreach (spell; talent.rankId)
-                    if (spell && player.knowsSpell(spell))
+                    if (spell && me.player.knowsSpell(spell))
                     {
-                        if (auto aura = player.auras.find(spell))
-                            removeAura(aura);
-                        unlearn(spell);
+                        if (auto aura = me.player.auras.find(spell))
+                            me.removeAura(aura);
+                        me.unlearn(spell);
                     }
-        player.values.set!PLAYER_CHARACTER_POINTS1(talentPointsForLevel(player.data.level));
-        flushPlayerChanges();
+        me.player.values.set!PLAYER_CHARACTER_POINTS1(talentPointsForLevel(me.player.data.level));
+        me.flushPlayerChanges();
     }
 
     private uint talentResetCost_; // what the last reset cost (copper)
@@ -126,7 +139,7 @@ private:
     /// Loads `resettalents_cost` and `resettalents_time`.
     package void loadTalentReset()
     {
-        context.database.loadTalentReset(player.data.guid, talentResetCost_, talentResetTime_);
+        me.context.database.loadTalentReset(me.player.data.guid, talentResetCost_, talentResetTime_);
     }
 
     /// The next reset's price: 1 gold the first time, then 5, then 10; after that 5 more each time up
@@ -141,7 +154,7 @@ private:
             return 5 * gold;
         if (talentResetCost_ < 10 * gold)
             return 10 * gold;
-        const months = (context.unixTime - talentResetTime_) / month;
+        const months = (me.context.unixTime - talentResetTime_) / month;
         if (months > 0)
         {
             const cost = cast(long) talentResetCost_ - 5 * gold * months;
@@ -155,10 +168,10 @@ private:
     package uint talentRanksKnown()
     {
         uint count;
-        foreach (id; 0 .. context.client.talents.idLimit)
-            if (const talent = context.client.talents.lookup(id))
+        foreach (id; 0 .. me.context.client.talents.idLimit)
+            if (const talent = me.context.client.talents.lookup(id))
                 foreach (rank, spell; talent.rankId)
-                    if (spell && player.knowsSpell(spell))
+                    if (spell && me.player.knowsSpell(spell))
                         count = count + 1;
         return count;
     }
@@ -175,11 +188,11 @@ private:
             ByteWriter w;
             w.put(ulong(0));
             w.put(uint(0));
-            deliver(Opcode.MSG_TALENT_WIPE_CONFIRM, w.data);
+            me.deliver(Opcode.MSG_TALENT_WIPE_CONFIRM, w.data);
         }
 
-        auto trainer = interactableNpc(request.guid, NpcFlag.trainer);
-        if (trainer is null || !isTrainerOf(trainer, false))
+        auto trainer = me.interactableNpc(request.guid, NpcFlag.trainer);
+        if (trainer is null || !me.isTrainerOf(trainer, false))
             return refuse();
         if (talentRanksKnown() == 0)
         {
@@ -187,21 +200,21 @@ private:
             return;
         }
         const cost = talentResetCost();
-        if (!player.canAfford(Copper(cost)))
+        if (!me.player.canAfford(Copper(cost)))
             return refuse();
-        player.pay(Copper(cost));
+        me.player.pay(Copper(cost));
         resetTalents();
         talentResetCost_ = cost;
-        talentResetTime_ = context.unixTime;
-        context.database.saveTalentReset(player.data.guid, cost, talentResetTime_);
+        talentResetTime_ = me.context.unixTime;
+        me.context.database.saveTalentReset(me.player.data.guid, cost, talentResetTime_);
         // Spell 14867, "Untalent Visual Effect", on the player, where the server has it.
-        if (const visual = context.data.spells.spell(14_867))
+        if (const visual = me.context.data.spells.spell(14_867))
         {
             import dmangos.world.spellcast : SpellTargets, TargetFlags;
 
-            castSpell(visual, SpellTargets(TargetFlags.self, player.guid), true, 0);
+            me.castSpell(visual, SpellTargets(TargetFlags.self, me.player.guid), true, 0);
         }
-        flushPlayerChanges();
+        me.flushPlayerChanges();
     }
 
     /// The trainer's "unlearn talents" option: the price, for the client to ask the player.
@@ -210,20 +223,20 @@ private:
         ByteWriter w;
         w.put(trainer);
         w.put(talentResetCost());
-        deliver(Opcode.MSG_TALENT_WIPE_CONFIRM, w.data);
+        me.deliver(Opcode.MSG_TALENT_WIPE_CONFIRM, w.data);
     }
 
     /// A passive spell's aura effects on the player for good (no slot, never ending).
     package void applyPassive(const(SpellInfo)* spell)
     {
         enum uint applyAura = 6;
-        if (!spell.isPassive || player.auras.find(spell.id) !is null)
+        if (!spell.isPassive || me.player.auras.find(spell.id) !is null)
             return;
         // Those bound to a kind of weapon or armour, or to shapeshift forms, are on while those are
         // (`refreshEquipBoundPassives`, `refreshFormBoundPassives`).
         if (spell.equippedItemClass >= 0 || formBound(spell))
             return;
-        foreach (ref granted; classFormPassives())
+        foreach (ref granted; me.classFormPassives())
             if (granted.spell == spell.id)
                 return;
         int[3] values;
@@ -231,14 +244,14 @@ private:
         foreach (i; 0 .. 3)
             if (spell.effect[i] == applyAura)
             {
-                values[i] = effectValue(*spell, i, player.data.level, 0);
+                values[i] = effectValue(*spell, i, me.player.data.level, 0);
                 any = true;
             }
         if (!any)
             return;
-        auto aura = makeAura(spell, player.guid, player.data.level, -1, true, values);
+        auto aura = makeAura(spell, me.player.guid, me.player.data.level, -1, true, values);
         aura.passive = true;
-        addAura(aura);
+        me.addAura(aura);
     }
 
     /// Every passive spell known puts its auras on.
@@ -261,7 +274,7 @@ private:
         uint[uint] worn; // item set -> items of it worn
         foreach (ubyte slot; 0 .. inventorySlotBagEnd)
         {
-            const item = player.inventory[inventorySlotBag0, slot];
+            const item = me.player.inventory[inventorySlotBag0, slot];
             if (item is null || item.proto is null || (item.maxDurability && item.durability == 0))
                 continue;
             foreach (ref s; item.proto.details.spells)
@@ -269,7 +282,7 @@ private:
                     ++wanted[s.id];
             // Its enchantments' equip spells (most of a random property's stats are these).
             foreach (enchantSlot; [0, 1, 3, 4, 5])
-                if (const effects = item.enchantment(enchantSlot) in context.data.enchantmentEffects)
+                if (const effects = item.enchantment(enchantSlot) in me.context.data.enchantmentEffects)
                     foreach (ref e; *effects)
                         if (e.type == EnchantmentType.equipSpell && e.arg)
                             ++wanted[e.arg];
@@ -278,9 +291,9 @@ private:
         }
         // A set's bonuses for as many of its items as are worn (and its skill).
         foreach (set, count; worn)
-            if (const entry = context.client.itemSets.lookup(set))
+            if (const entry = me.context.client.itemSets.lookup(set))
             {
-                if (entry.requiredSkill && player.skillValue(entry.requiredSkill)[0] < entry.requiredSkillValue)
+                if (entry.requiredSkill && me.player.skillValue(entry.requiredSkill)[0] < entry.requiredSkillValue)
                     continue;
                 foreach (k; 0 .. 8)
                     if (entry.spells[k] && entry.thresholds[k] && count >= entry.thresholds[k])
@@ -290,16 +303,16 @@ private:
         foreach (id, count; equipSpells.dup)
             if (wanted.get(id, 0) != count)
             {
-                if (auto aura = player.auras.find(id))
-                    removeAura(aura);
+                if (auto aura = me.player.auras.find(id))
+                    me.removeAura(aura);
                 equipSpells.remove(id);
             }
         foreach (id, count; wanted)
         {
             if (id in equipSpells)
                 continue;
-            const spell = context.data.spells.spell(id);
-            if (spell is null || player.auras.find(id) !is null)
+            const spell = me.context.data.spells.spell(id);
+            if (spell is null || me.player.auras.find(id) !is null)
                 continue;
             int[3] values;
             bool any;
@@ -307,14 +320,14 @@ private:
                 if (spell.effect[i] == applyAura)
                 {
                     // (with the player's talents: Elemental Weapons on Rockbiter Weapon's attack power)
-                    values[i] = effectMod(spell, i, effectValue(*spell, i, player.data.level, 0)) * cast(int) count;
+                    values[i] = me.effectMod(spell, i, effectValue(*spell, i, me.player.data.level, 0)) * cast(int) count;
                     any = true;
                 }
             if (!any)
                 continue;
-            auto aura = makeAura(spell, player.guid, player.data.level, -1, true, values);
+            auto aura = makeAura(spell, me.player.guid, me.player.data.level, -1, true, values);
             aura.passive = true;
-            addAura(aura);
+            me.addAura(aura);
             equipSpells[id] = count;
         }
     }
@@ -322,8 +335,8 @@ private:
     package void applyPassiveSpells()
     {
         refreshEquipSpells();
-        foreach (id; player.spells)
-            if (const spell = context.data.spells.spell(id))
+        foreach (id; me.player.spells)
+            if (const spell = me.context.data.spells.spell(id))
                 if (spell.isPassive)
                     applyPassive(spell);
         refreshEquipBoundPassives();
@@ -347,32 +360,32 @@ private:
         import dmangos.world.updatefields : UNIT_FIELD_BYTES_1;
 
         enum uint applyAura = 6;
-        const form = player.values.getByte!UNIT_FIELD_BYTES_1(2);
+        const form = me.player.values.getByte!UNIT_FIELD_BYTES_1(2);
         void set(const(SpellInfo)* spell, bool wanted, int[3] values)
         {
-            auto on = player.auras.find(spell.id);
+            auto on = me.player.auras.find(spell.id);
             if (on !is null && (!wanted || on.amount != values))
-                removeAura(on);
+                me.removeAura(on);
             if (wanted && (on is null || on.amount != values))
             {
-                auto aura = makeAura(spell, player.guid, player.data.level, -1, true, values);
+                auto aura = makeAura(spell, me.player.guid, me.player.data.level, -1, true, values);
                 aura.passive = true;
-                addAura(aura);
+                me.addAura(aura);
             }
         }
-        foreach (id; player.spells)
+        foreach (id; me.player.spells)
         {
-            const spell = context.data.spells.spell(id);
+            const spell = me.context.data.spells.spell(id);
             if (spell is null || !spell.isPassive || !formBound(spell) || spell.equippedItemClass >= 0)
                 continue;
             int[3] values;
             foreach (i; 0 .. 3)
                 if (spell.effect[i] == applyAura)
-                    values[i] = effectMod(spell, i, effectValue(*spell, i, player.data.level, 0));
+                    values[i] = me.effectMod(spell, i, effectValue(*spell, i, me.player.data.level, 0));
             set(spell, form && (spell.stances & (1u << (form - 1))), values);
         }
-        foreach (ref granted; classFormPassives())
-            if (const spell = context.data.spells.spell(granted.spell))
+        foreach (ref granted; me.classFormPassives())
+            if (const spell = me.context.data.spells.spell(granted.spell))
                 set(spell, form && ((granted.forms ? granted.forms : spell.stances) & (1u << (form - 1))) && granted.known,
                     granted.values);
     }
@@ -391,22 +404,22 @@ private:
             const slots = spell.equippedItemClass == ItemClass.armor ? [equipmentSlotOffhand]
                 : [equipmentSlotMainhand, equipmentSlotOffhand];
             foreach (slot; slots)
-                if (const item = player.inventory.equipped(cast(ubyte) slot))
+                if (const item = me.player.inventory.equipped(cast(ubyte) slot))
                     if (item.proto !is null && item.proto.itemClass == spell.equippedItemClass
                             && (item.durability != 0 || item.maxDurability == 0)
                             && (spell.equippedItemSubClassMask <= 0 || (spell.equippedItemSubClassMask & (1 << item.proto.subClass))))
                         return true;
             return false;
         }
-        foreach (id; player.spells)
+        foreach (id; me.player.spells)
         {
-            const spell = context.data.spells.spell(id);
+            const spell = me.context.data.spells.spell(id);
             if (spell is null || !spell.isPassive || spell.equippedItemClass < 0)
                 continue;
-            auto on = player.auras.find(id);
+            auto on = me.player.auras.find(id);
             const wanted = worn(spell);
             if (on !is null && !wanted)
-                removeAura(on);
+                me.removeAura(on);
             else if (on is null && wanted)
             {
                 int[3] values;
@@ -414,14 +427,14 @@ private:
                 foreach (i; 0 .. 3)
                     if (spell.effect[i] == applyAura)
                     {
-                        values[i] = effectValue(*spell, i, player.data.level, 0);
+                        values[i] = effectValue(*spell, i, me.player.data.level, 0);
                         any = true;
                     }
                 if (!any)
                     continue;
-                auto aura = makeAura(spell, player.guid, player.data.level, -1, true, values);
+                auto aura = makeAura(spell, me.player.guid, me.player.data.level, -1, true, values);
                 aura.passive = true;
-                addAura(aura);
+                me.addAura(aura);
             }
         }
     }

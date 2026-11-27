@@ -88,7 +88,7 @@ private Aura giveAura(ref RealWorld w, ref TestClient who, uint id, int amount =
 private void talent(ref RealWorld w, ref TestClient who, uint id)
 {
     auto me = who.session.inWorld;
-    me.applyPassive(spellOf(w, id));
+    me.talents.applyPassive(spellOf(w, id));
     if (me.player.auras.find(id) is null) // one bound to a weapon: on as if it were in hand
         giveAura(w, who, id);
     assert(me.player.auras.find(id) !is null, format!"talent %s on"(id));

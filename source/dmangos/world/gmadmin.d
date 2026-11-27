@@ -795,7 +795,7 @@ bool handleResetTalentsCommand(Character gm)
     auto target = gm.selectedCharacter(true);
     if (target is null)
         return true;
-    target.resetTalents();
+    target.talents.resetTalents();
     gm.greenSystemMessage(format!"Reset talents of %s."(target.player.data.name));
     target.blueSystemMessage(format!"%s reset all your talents."(gm.player.data.name));
     gm.gmLog("reset talents of " ~ target.player.data.name);

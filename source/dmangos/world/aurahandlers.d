@@ -721,7 +721,7 @@ private:
                 player.values.setByte!UNIT_FIELD_BYTES_1(2, apply ? cast(ubyte) aura.misc(i) : 0);
                 if (apply)
                     interruptAuras(AuraInterrupt.shapeshifting, aura);
-                refreshFormBoundPassives(); // the form's own passives, its talents'
+                talents.refreshFormBoundPassives(); // the form's own passives, its talents'
                 if (apply)
                     classShapeshifted(cast(ubyte) aura.misc(i));
                 if (apply && map !is null) // (in the world: a stance taken, not one put back at login)

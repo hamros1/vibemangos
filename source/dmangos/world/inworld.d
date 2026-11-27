@@ -581,10 +581,10 @@ private:
         readSaved(() => loadEnchantmentTimers());
         readSaved(() => loadItemDurations(0));
         readSaved(() => loadCooldowns());
-        readSaved(() => loadTalentReset());
+        readSaved(() => talents.loadTalentReset());
         readSaved(() => loadSocial());
         refreshGuildFields();
-        applyPassiveSpells();
+        talents.applyPassiveSpells();
         readFlightHandoff(r);
         resetMovementCheck();
         readEnvironmentHandoff(r);

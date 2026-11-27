@@ -76,9 +76,9 @@ private void learnPassive(ref RealWorld w, ref TestClient who, uint id)
     auto me = who.session.inWorld;
     if (!me.player.knowsSpell(id))
         me.player.spells ~= id;
-    me.applyPassive(spellOf(w, id));
-    me.refreshEquipBoundPassives(); // (one bound to a weapon or a shield: if worn; to forms: in them)
-    me.refreshFormBoundPassives();
+    me.talents.applyPassive(spellOf(w, id));
+    me.talents.refreshEquipBoundPassives(); // (one bound to a weapon or a shield: if worn; to forms: in them)
+    me.talents.refreshFormBoundPassives();
     const spell = spellOf(w, id);
     if (!spell.stances && spell.equippedItemClass < 0)
         assert(me.player.auras.find(id) !is null, format!"%s's aura on"(id));
@@ -2172,7 +2172,7 @@ private TestClient druid(ref RealWorld w, uint guid, const(uint)[] spells, ubyte
     auto who = w.character(guid, "Malfurion", PlayerClass.druid, 60, spells ~ formPassives, race);
     if (race == raceTauren)
         guestOfStormwind(who);
-    who.session.inWorld.applyPassiveSpells();
+    who.session.inWorld.talents.applyPassiveSpells();
     return who;
 }
 
@@ -2371,7 +2371,7 @@ unittest
         group.addLeaderInvite(me.player.guid, "Malfurion");
         group.create();
         group.addMember(friend.session.inWorld.player.guid, "Tyrande");
-        me.applyPassiveSpells();
+        me.talents.applyPassiveSpells();
         assert(me.player.auras.find(24932) is null, "no form, no pack");
         shift(w, who, 768);
         pass(w, who, 1100.msecs);
