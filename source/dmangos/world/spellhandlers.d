@@ -4391,15 +4391,21 @@ private:
         }
         with (ImplicitTarget) if (kind == enemiesAroundSource || kind == enemiesAroundDest || kind == enemiesInCone)
         {
+            import dmangos.world.spellselection : unitsInArea;
+
             const excluded = excludedAreaTarget(spell.id, i, targets.unit);
-            foreach (creature; map.creaturesNear(center, r))
-                if (creature.guid != excluded && spellEnemy(creature) && within(creature.position))
-                    found ~= creature.guid;
-            foreach (who; map.near(center, r))
-                if (who.character.guid != excluded)
-                    if (auto other = enemyPlayer(who.character.guid))
-                        if (other.player.alive && within(other.player.position))
-                            found ~= other.player.guid;
+            // Its enemies there: the creatures it may hurt, and the players it may fight (a duel's, an enemy faction's).
+            bool enemy(UnitRef u)
+            {
+                if (u.kind == UnitKind.creature)
+                    return spellEnemy(u.creature);
+                auto other = enemyPlayer(u.combatGuid);
+                return other !is null && other.player.alive;
+            }
+            auto coneFrom = center;
+            coneFrom.orientation = player.position.orientation;
+            found = unitsInArea(map, center, r, kind == ImplicitTarget.enemiesInCone, coneDegrees, coneFrom, excluded,
+                &enemy);
             if (remoteEnemies)
                 foreach (object; map.objectsNear(center, r))
                 {

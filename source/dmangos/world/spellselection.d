@@ -274,6 +274,29 @@ private void visitNamedCreatures(Map world, Position center, float reach, const(
 
 /// Players and creatures cast a recorded animation on the nearest eligible game object.
 /**
+ * The units of an area, any caster's: the players and then the creatures on `map` within `r` yards of `center` (and,
+ * for a cone, in the cone of `coneDegrees` the caster at `coneFrom` faces), not `excluded`, that `takes` (who the
+ * caster's spell is for: its enemies, its friends). The caller limits them (`mostAffected`).
+ */
+package ulong[] unitsInArea(Map map, Position center, float r, bool cone, int coneDegrees, Position coneFrom,
+    ulong excluded, scope bool delegate(UnitRef) takes)
+{
+    bool inside(Position p)
+    {
+        return (p.x - center.x) ^^ 2 + (p.y - center.y) ^^ 2 + (p.z - center.z) ^^ 2 <= r * r
+            && (!cone || inSpellCone(coneFrom, p, coneDegrees));
+    }
+    ulong[] found;
+    foreach (unit; map.playersNear(center, r))
+        if (unit.combatGuid != excluded && inside(unit.position) && takes(unit))
+            found ~= unit.combatGuid;
+    foreach (creature; map.creaturesNear(center, r))
+        if (creature.guid != excluded && inside(creature.position) && takes(map.unitOf(creature)))
+            found ~= creature.guid;
+    return found;
+}
+
+/**
  * At most `most` of an area's targets `found` (the spell's `MaxAffectedTargets`: "up to 5 total nearby enemies",
  * Thunder Clap's "up to 4 targets"; 0: no limit), any caster's: the one aimed at (`aimed`) among them, then the
  * nearest to `center`, the same for each of its effects.

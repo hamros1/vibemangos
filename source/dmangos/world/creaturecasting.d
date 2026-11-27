@@ -983,39 +983,42 @@ mixin template CreatureCasting()
             if (rule.areaSeenFromCenter && a == ImplicitTarget.database)
                 if (const fixed = spell.id in lore.data.spellTargets)
                     center = fixed.at;
-            const r = radius(*spell, i, lore.clientData);
-            const excluded = excludedAreaTarget(spell.id, i, target);
-            ulong[] found;
-            foreach (other; world_.playersNear(center, r))
-            {
-                const f = other.fighter;
-                if (other.combatGuid == excluded || !f.alive || !canAttack(relating, other.relating, me.client))
-                    continue;
-                if (rule.areaSeenFromCenter && (!world_.inLineOfSight(center, other.position)
-                    || (f.stealthed && !detects(me.fighter, f, r))))
-                    continue;
-                if (cone && !inSpellCone(me.position, f.position, coneDegrees))
-                    continue;
-                found ~= other.combatGuid;
-            }
-            if (rule.areaOneAtRandom && found.length)
-            {
-                import std.random : uniform;
+            import dmangos.world.spellselection : mostAffected, unitsInArea;
 
-                return [found[uniform(0, found.length, world_.random)]];
-            }
-            // The creatures there it may attack too: a creature's area strikes what the players control (their pets,
-            // guardians and totems), and a player's totem's (Fire Nova, Magma Totem) the creatures its owner may fight.
+            const r = radius(*spell, i, lore.clientData);
+            // Its enemies there: the players it may attack, and of the creatures what the players control (their pets,
+            // guardians and totems); a player's totem's (Fire Nova, Magma Totem) every creature its owner may fight.
             // Not one creature's area at another of the world's: an escort's fight (Isillien's Mana Burn at Taelan) is
             // scripted as it is.
-            foreach (other; world_.creaturesNear(center, r))
-                if (other !is me && other.alive && other.ai !is null && other.guid != excluded
-                        && (me.totemOwner ? !other.totemOwner : other.ai.relatingOf.playerControlled)
-                        && canAttack(relating, other.ai.relatingOf, me.client)
-                        && (!cone || inSpellCone(me.position, other.position, coneDegrees)))
-                    found ~= other.guid;
-            import dmangos.world.spellselection : mostAffected;
+            bool enemy(UnitRef u)
+            {
+                if (!u.alive)
+                    return false;
+                if (u.kind == UnitKind.creature)
+                {
+                    auto other = u.creature;
+                    if (other is me || other.ai is null || !canAttack(relating, other.ai.relatingOf, me.client)
+                        || !(me.totemOwner ? !other.totemOwner : other.ai.relatingOf.playerControlled))
+                        return false;
+                }
+                else if (!canAttack(relating, u.relating, me.client))
+                    return false;
+                // Only what its centre sees (`SpellRule.areaSeenFromCenter`: Frost Breath and the ice blocks).
+                const f = u.fighter;
+                return !rule.areaSeenFromCenter || (world_.inLineOfSight(center, u.position)
+                    && (!f.stealthed || detects(me.fighter, f, r)));
+            }
+            auto found = unitsInArea(world_, center, r, cone, coneDegrees, me.position,
+                excludedAreaTarget(spell.id, i, target), &enemy);
+            if (rule.areaOneAtRandom) // one of the players there (Sand Trap)
+            {
+                import std.algorithm.iteration : filter;
+                import std.array : array;
+                import std.random : uniform;
 
+                auto players = found.filter!(g => world_.unit(g).kind == UnitKind.player).array;
+                return players.length ? [players[uniform(0, players.length, world_.random)]] : null;
+            }
             return mostAffected(world_, found, spell.casting.maxAffectedTargets, target, center);
         }
         // Its friends around it or the destination (`TARGET_ENUM_UNITS_FRIEND_AOE_AT_SRC_LOC`, `_DEST_LOC`: a Battle
@@ -1039,14 +1042,18 @@ mixin template CreatureCasting()
                     if (atDest && target != me.guid)
                         if (auto other = world_.unit(target))
                             center = other.position;
-                    ulong[] found;
-                    foreach (other; world_.creaturesNear(center, r))
-                        if (other.alive && other.ai !is null
-                                && (other is me || !isEnemy(relating, other.ai.relatingOf, me.client)))
-                            found ~= other.guid;
-                    foreach (other; world_.playersNear(center, r))
-                        if (other.alive && isFriend(relating, other.relating, me.client))
-                            found ~= other.combatGuid;
+                    import dmangos.world.spellselection : unitsInArea;
+
+                    bool friend(UnitRef u)
+                    {
+                        if (!u.alive)
+                            return false;
+                        if (u.kind == UnitKind.creature)
+                            return u.creature is me
+                                || (u.creature.ai !is null && !isEnemy(relating, u.creature.ai.relatingOf, me.client));
+                        return isFriend(relating, u.relating, me.client);
+                    }
+                    auto found = unitsInArea(world_, center, r, false, 0, me.position, 0, &friend);
                     return mostAffected(world_, found, spell.casting.maxAffectedTargets, target, center);
                 }
             }
