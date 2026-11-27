@@ -2,7 +2,7 @@
 """Every creature an encounter script summons is either kept across a crash or listed as not kept.
 
 A dungeon's script keeps a creature across a crash by checkpointing it (`checkpointCreature`), in a `case` of the
-creature entries it hears arrive. A summon its creatures' scripts make that no such case names comes back from no
+creature entries it hears arrive, or as it summons it. A summon its creatures' scripts make that no such case names comes back from no
 checkpoint: after a crash the fight goes on without it. That may be meant (a spore, a slime that lives seconds), or a
 forgotten case. Each summoned entry no checkpointing case names must be listed, with why, in
 tools/harness/checkpoint-transient.txt ("file: entry: why"); this fails at one that is not, and at a listed one that
@@ -17,7 +17,13 @@ LIST = REPO / "tools/harness/checkpoint-transient.txt"
 
 def entries(script):
     """The entries `script` summons that no checkpointing case names."""
-    summoned = set(re.findall(r"\bsummon\w*\(\s*(npc\w+|\w+\.\w+)", script))
+    summoned = set()
+    lines = script.split("\n")
+    for i, line in enumerate(lines):
+        for m in re.finditer(r"\bsummon\w*\(\s*(npc\w+|\w+\.\w+)", line):
+            # Checkpointed as it comes, a few lines on (Blackrock Spire's rookery adds): kept.
+            if not any("checkpointCreature(" in later for later in lines[i:i + 5]):
+                summoned.add(m.group(1))
     kept = set()
     for m in re.finditer(r"case ([^:]+):(.*?)(?=\n\s*case |\n\s*default:|\n    }\n)", script, re.S):
         if "checkpointCreature(" in m.group(2):

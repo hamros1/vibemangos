@@ -1,7 +1,6 @@
 # Creatures encounter scripts summon that are not kept across a crash (tools/harness/checkpoint-lint.py):
 # "file: entry: why". Those marked "not reviewed" were so when the lint came: whether each should be kept is
 # the encounter's to decide.
-blackrockspire.d: brs.random: not reviewed
 blackwinglair.d: npcNefarian: not reviewed
 blackwinglair.d: npcVictorNefarius: not reviewed
 gnomeregan.d: t.entry: not reviewed
