@@ -436,7 +436,7 @@ struct TheCleaner
 
 /**
  * A Stormwind guard: Reginald Windsor's inspiration passing by, it salutes him (at most once in two
- * minutes). Open-world round 2: like every guard, killed by a player it puts its zone under attack, and
+ * minutes). Like every guard, killed by a player it puts its zone under attack, and
  * it answers the emotes of the Alliance.
  */
 @creature("guard_stormwind")
@@ -511,7 +511,6 @@ struct SpellDummyNpc
 }
 
 
-// Open-world round 2:
 
 /**
  * A Guardian of Blizzard, keeping players out of where they may not go: whoever it fights it touches
@@ -662,7 +661,7 @@ unittest
     assert(henze.host.log[$ - 1] == "stand 7");
 }
 
-unittest // Open-world round 2
+unittest
 {
     import dmangos.scripts.kalimdortesting;
     alias self = dmangos.scripts.npcs;

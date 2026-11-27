@@ -5,7 +5,7 @@
  */
 module dmangos.scripts.tanaris;
 
-// Open-world round 2: and the Stone Watcher of Norgannon, who tells of the Plates of Uldum ("The Morrow Stone", 2954).
+// And the Stone Watcher of Norgannon, who tells of the Plates of Uldum ("The Morrow Stone", 2954).
 
 import dmangos.script;
 
@@ -251,7 +251,6 @@ struct Tooga
     }
 }
 
-// Open-world round 2:
 
 /**
  * The Stone Watcher of Norgannon: asked about its function on "The Morrow Stone" (2954), it explains the
@@ -324,7 +323,7 @@ unittest
     assert(t.host.has("say as 6015 -1000398") && t.host.has("move 1"));
 }
 
-unittest // Open-world round 2
+unittest
 {
     import dmangos.scripts.kalimdortesting;
     alias self = dmangos.scripts.tanaris;

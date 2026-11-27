@@ -117,7 +117,6 @@ final class FakeCreature : CreatureHost
     QuestProgress hostQuestStatus(EntityRef, uint) { return QuestProgress.none; }
     void hostSendGossip(EntityRef, uint, const(MenuOption)[], bool) {}
 
-    // Eastern Kingdoms scripts:
     uint faction;
     void hostSetFaction(uint f) { faction = f; }
     void hostUnitFlags(uint, bool) {}
@@ -141,7 +140,6 @@ final class FakeCreature : CreatureHost
     // Dungeon scripts:
     EntityRef hostPlayerNearby(float) { return EntityRef.init; }
     void hostKillCredit(EntityRef, uint) {}
-    // Kalimdor scripts:
     ActionResult hostFactionOf(EntityRef, uint) { return ActionResult.ok; }
     ActionResult hostUnitFlagsOf(EntityRef, uint, bool) { return ActionResult.ok; }
     void hostFollow(EntityRef, float, float) {}
@@ -156,7 +154,6 @@ final class FakeCreature : CreatureHost
     uint hostItemCount(EntityRef, uint) { return 0; }
     uint hostGiveItem(EntityRef, uint, uint) { return 0; }
 
-    // Raid scripts:
     int hostAskDungeon(uint) { return 0; }
     EntityRef hostSelectTarget(Pick, uint, uint) { return EntityRef.init; }
     size_t hostThreatList(EntityRef[]) { return 0; }
@@ -175,12 +172,10 @@ final class FakeCreature : CreatureHost
     void hostSpellList(uint) {}
     ubyte hostClassOf(EntityRef) { return 0; }
 
-    // Instance round 2:
     ActionResult hostTeleportPlayer(EntityRef, Location) { return ActionResult.ok; }
     ActionResult hostMovementScriptOf(EntityRef, uint) { return ActionResult.ok; }
     float hostThreatOf(EntityRef) { return 0; }
 
-    // Open-world round 2:
     uint hostLevelOf(EntityRef) { return 0; }
     uint hostSkillOf(EntityRef, uint) { return 0; }
     bool hostKnowsSpell(EntityRef, uint) { return false; }

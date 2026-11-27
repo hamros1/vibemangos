@@ -2800,7 +2800,7 @@ final class Map : MotionWorld
         if (!shipsShown) // the session showed them already, before the player's own create block
             foreach (object; everywhere_)
                 deliverUpdate(who, object.appearance(serverTime()));
-        if (world !is null) // Raid scripts: a copy's script hears of it
+        if (world !is null) // a copy's script hears of it
             world.playerAdded(this, who);
     }
 

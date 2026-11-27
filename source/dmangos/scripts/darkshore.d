@@ -381,7 +381,7 @@ struct RabidBear
 
 /**
  * The Blackwood furbolgs: a warrior in Battle Stance with Thunderclap, a totemic with Healing Wards.
- * Open-world round 2: lured by the purified food a player put by their bonfire (`event_purify_food`),
+ * Lured by the purified food a player put by their bonfire (`event_purify_food`),
  * they come to it, eat, and are themselves again for a minute and a half.
  */
 @creature("npc_blackwood_warrior", "npc_blackwood_totemic")
@@ -447,7 +447,7 @@ struct BlackwoodFurbolg
 
     void on(ref CreatureContext me, Step step)
     {
-        switch (step) // open-world round 2: the food
+        switch (step) // the food
         {
         case Step.lured:
             if (first)
@@ -501,7 +501,7 @@ private void corruptedAgain(ref CreatureContext me)
 }
 
 /**
- * Open-world round 2: the purified food put by the Blackwood bonfire (the "Cleansing of the Infected"
+ * The purified food put by the Blackwood bonfire (the "Cleansing of the Infected"
  * event, 3938): two more warriors come, and the furbolgs near who are not fighting are lured to it, the
  * last one called telling of them. The event's database script goes on (Xabraxxis comes).
  */
@@ -586,7 +586,7 @@ unittest
     assert(b.host.has("despawn"));
 }
 
-unittest // Open-world round 2: a furbolg lured by the purified food
+unittest // a furbolg lured by the purified food
 {
     import dmangos.scripts.kalimdortesting;
     alias self = dmangos.scripts.darkshore;

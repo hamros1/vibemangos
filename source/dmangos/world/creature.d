@@ -1471,7 +1471,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         {
             if (auto combat = cast(Map) world)
             {
-                // Eastern Kingdoms scripts: alive, its summoner's script hears it went.
+                // Alive, its summoner's script hears it went.
                 if (alive && summon.summoner)
                     if (auto summoner = combat.creatureAt(summon.summoner))
                         if (summoner.ai !is null)

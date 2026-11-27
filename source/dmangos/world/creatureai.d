@@ -210,7 +210,7 @@ final class CreatureAI : Scripted, CreatureHost, ScourgeCampHost
     /// (`moveInLineOfSight`'s first checks, for the map to skip it early).
     @property bool mayNotice() const
     {
-        // Eastern Kingdoms scripts: a script that wants to hear of the players in its sight (`UnitInSight`) does.
+        // A script that wants to hear of the players in its sight (`UnitInSight`) does.
         if (behaviour && me.alive && scripts_.handles!UnitInSight(behaviour))
             return true;
         if (script !is null && script.watchesLineOfSight && me.alive && !me.petOwner) // `EVENT_T_OOC_LOS`
@@ -388,7 +388,7 @@ final class CreatureAI : Scripted, CreatureHost, ScourgeCampHost
             script.died(this, victim);
         if (world !is null)
             raiseScript(Died(EntityRef(victim)));
-        // Eastern Kingdoms scripts: its summoner's script hears of it.
+        // Its summoner's script hears of it.
         if (world !is null && me.summon.summoner)
             if (auto summoner = world.creatureAt(me.summon.summoner))
                 if (summoner.ai !is null)

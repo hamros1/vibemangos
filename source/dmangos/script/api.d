@@ -124,7 +124,6 @@ enum StandState : ubyte
     kneel = 8,
 }
 
-// Eastern Kingdoms scripts:
 
 /// How a creature reacts to others (`ReactStates`).
 enum Reaction : ubyte
@@ -198,7 +197,7 @@ struct SpellHit
 {
     EntityRef caster;
     uint spell;
-    uint schoolMask; /// Raid scripts: the schools it struck with (`SpellSchoolMask`: 1 physical, 4 fire, 8 nature, 16 frost, ...)
+    uint schoolMask; /// the schools it struck with (`SpellSchoolMask`: 1 physical, 4 fire, 8 nature, 16 frost, ...)
 }
 
 /// This creature finished a cast and resolved its spell effects.
@@ -213,7 +212,6 @@ struct CreatureHealed
     uint spell;
 }
 
-// Instance round 2:
 
 /// Its aura of `spell`, from `caster`, went: it ran out, was dispelled or cancelled, or a script took it away
 /// (not when it died).
@@ -266,7 +264,6 @@ struct QuestRewarded
     uint quest;
 }
 
-// Kalimdor scripts:
 
 /// `UnitFlags` a script sets or clears (`CreatureContext.unitFlags`).
 enum UnitFlag : uint
@@ -302,10 +299,9 @@ struct Waypoint
 {
     Location at;
     uint waitMs; /// how long it stays there
-    uint scriptId; /// Eastern Kingdoms scripts: its `dbscripts_on_creature_movement` script (0: none)
+    uint scriptId; /// its `dbscripts_on_creature_movement` script (0: none)
 }
 
-// Eastern Kingdoms scripts:
 
 /// A creature it summoned died (`SummonedCreatureJustDied`), or went away alive, its time up
 /// (`SummonedCreatureDespawn`; `gone`).
@@ -388,7 +384,6 @@ interface CreatureHost
     ActionResult hostDespawnOther(EntityRef creature, uint delayMs);
     void hostSendGossip(EntityRef player, uint textId, const(MenuOption)[] options, bool withQuests);
 
-    // Eastern Kingdoms scripts:
     void hostSetFaction(uint faction);
     void hostUnitFlags(uint flags, bool set);
     void hostReactState(Reaction state);
@@ -409,7 +404,6 @@ interface CreatureHost
     void hostMovementScript(uint id);
     void hostRelay(int id, EntityRef target);
     void hostKillCredit(EntityRef player, uint entry);
-    // Kalimdor scripts:
     ActionResult hostFactionOf(EntityRef creature, uint faction);
     ActionResult hostUnitFlagsOf(EntityRef creature, uint flags, bool set);
     void hostFollow(EntityRef leader, float distance, float angle);
@@ -426,7 +420,6 @@ interface CreatureHost
     // Dungeon scripts:
     EntityRef hostPlayerNearby(float range);
 
-    // Raid scripts:
     int hostAskDungeon(uint id);
     EntityRef hostSelectTarget(Pick pick, uint filter, uint skip);
     size_t hostThreatList(EntityRef[] into);
@@ -445,12 +438,10 @@ interface CreatureHost
     void hostSpellList(uint id);
     ubyte hostClassOf(EntityRef who);
 
-    // Instance round 2:
     ActionResult hostTeleportPlayer(EntityRef player, Location at);
     ActionResult hostMovementScriptOf(EntityRef creature, uint id);
     float hostThreatOf(EntityRef who);
 
-    // Open-world round 2:
     uint hostLevelOf(EntityRef who);
     uint hostSkillOf(EntityRef player, uint skill);
     bool hostKnowsSpell(EntityRef player, uint spell);
@@ -468,7 +459,6 @@ interface CreatureHost
     void hostWarEffortColossus(uint colossus);
 }
 
-// Open-world round 2:
 
 /// Where a player stands with a faction (`ReputationRank`).
 enum Standing : ubyte
@@ -683,7 +673,6 @@ struct CreatureContext
     /// Whether a handler called `consume`.
     @property bool consumed() const { return consumed_; }
 
-    // Eastern Kingdoms scripts:
 
     /// Its faction (`FactionTemplate.dbc`), until it respawns; 0: its template's again.
     void setFaction(uint faction) { host.hostSetFaction(faction); }
@@ -756,7 +745,6 @@ struct CreatureContext
         return host.hostSayOther(speaker, entry, target);
     }
 
-    // Raid scripts:
 
     /// Its dungeon script's answer to question `id` (`Asked`); 0 outside a dungeon or unanswered.
     int askDungeon(uint id) { return host.hostAskDungeon(id); }
@@ -790,7 +778,6 @@ struct CreatureContext
     void interrupt() { host.hostInterrupt(); }
 
 
-    // Kalimdor scripts:
 
     /// Another creature here takes faction `faction` (0: its template's).
     ActionResult setFactionOf(EntityRef creature, uint faction) { return host.hostFactionOf(creature, faction); }
@@ -874,7 +861,6 @@ struct CreatureContext
     /// The nearest living player within `range` yards that may be attacked; nothing if none.
     EntityRef playerNearby(float range) { return host.hostPlayerNearby(range); }
 
-    // Instance round 2:
 
     /// `player` (here) is at `at` at once, on this map (C'Thun swallowing a player).
     ActionResult teleport(EntityRef player, Location at) { return host.hostTeleportPlayer(player, at); }
@@ -886,7 +872,6 @@ struct CreatureContext
     /// `who`'s threat on it (0 if `who` is not on its threat list).
     float threatOf(EntityRef who) { return host.hostThreatOf(who); }
 
-    // Open-world round 2:
 
     /// A unit's level (a player's or a creature's here); 0 if it is not here.
     uint levelOf(EntityRef who) { return host.hostLevelOf(who); }
@@ -957,7 +942,6 @@ interface GameObjectHost
     void hostSignalDungeon(uint id, int value);
     void hostLog(string text);
 
-    // Eastern Kingdoms scripts:
     QuestProgress hostQuestStatus(EntityRef player, uint quest);
     void hostQuestEvent(EntityRef player, uint quest);
     EntityRef hostObjectNearby(uint entry, float range);
@@ -967,17 +951,14 @@ interface GameObjectHost
     EntityRef hostSummon(uint entry, Location at, uint despawnMs, EntityRef attack);
     ActionResult hostSayAs(EntityRef speaker, uint text, EntityRef target);
     void hostKillCredit(EntityRef player, uint entry);
-    // Kalimdor scripts:
     Location hostObjectLocation();
     ActionResult hostObjectSignal(EntityRef to, uint id, int value);
     ActionResult hostObjectCast(EntityRef caster, uint spell, EntityRef target);
     size_t hostObjectCreaturesNear(uint entry, float range, EntityRef[] found);
 
-    // Raid scripts:
     int hostAskDungeon(uint id);
     void hostPulseTrap();
 
-    // Open-world round 2:
     void hostCustomAnim();
     void hostPlaySound(uint sound, bool music);
     ActionResult hostMoveCreature(EntityRef creature, Location at, uint point, bool run);
@@ -993,7 +974,6 @@ interface GameObjectHost
     ActionResult hostZoneNotice(uint text);
 }
 
-// Open-world round 2:
 
 /**
  * A unit (a player) comes within reach of it, a trap, and sets it off (`pTrapSearching`): the trap's
@@ -1042,7 +1022,6 @@ struct GameObjectContext
     /// Whether a handler called `consume`.
     @property bool consumed() const { return consumed_; }
 
-    // Eastern Kingdoms scripts:
 
     /// Where `player` stands with `quest`.
     QuestProgress questStatus(EntityRef player, uint quest) { return host.hostQuestStatus(player, quest); }
@@ -1079,7 +1058,6 @@ struct GameObjectContext
     /// `KilledMonsterCredit` of `entry` for `player`.
     void killCredit(EntityRef player, uint entry) { host.hostKillCredit(player, entry); }
 
-    // Kalimdor scripts:
 
     /// Where it is.
     @property Location location() { return host.hostObjectLocation(); }
@@ -1098,7 +1076,6 @@ struct GameObjectContext
     {
         return host.hostObjectCreaturesNear(entry, range, found);
     }
-    // Raid scripts:
 
     /// Its dungeon script's answer to question `id` (`Asked`); 0 outside a dungeon or unanswered.
     int askDungeon(uint id) { return host.hostAskDungeon(id); }
@@ -1106,7 +1083,6 @@ struct GameObjectContext
     /// Apply this trap's area aura to eligible players within the spell's radius.
     void pulseTrap() { host.hostPulseTrap(); }
 
-    // Open-world round 2:
 
     /// Plays its custom animation for those who see it (a lightning bolt's flash).
     void customAnim() { host.hostCustomAnim(); }
@@ -1173,7 +1149,7 @@ struct CreatureDied
 {
     EntityRef creature;
     EntityRef killer;
-    bool summoned; /// Open-world round 2: it was summoned (a script's, a spell's), not a spawn of the map's
+    bool summoned; /// it was summoned (a script's, a spell's), not a spawn of the map's
 }
 
 // Dungeon scripts:
@@ -1242,7 +1218,6 @@ interface InstanceHost
     EntityRef hostAnyPlayer();
     void hostKillCreditAll(uint entry);
     bool hostChangeEntry(EntityRef creature, uint entry);
-    // Raid scripts:
     ActionResult hostDespawnObject(EntityRef object);
     bool hostRespawnObject(uint entry, uint seconds);
     ActionResult hostUseObject(EntityRef object);
@@ -1250,7 +1225,6 @@ interface InstanceHost
     ActionResult hostZoneCombat(EntityRef creature);
     EntityRef hostSummonObject(uint entry, Location at, uint seconds);
     size_t hostCreaturesNear(Location at, uint entry, float range, EntityRef[] into);
-    // Dungeons round 2:
     ActionResult hostWalkPath(EntityRef creature, uint pathId);
     bool hostHasAura(EntityRef creature, uint spell);
     bool hostEntryKilled(uint entry);
@@ -1385,7 +1359,6 @@ struct InstanceContext
     package(dmangos) @property EntityRef[] releasedCheckpointActors() { return releasedActors_; }
     package(dmangos) @property void savedSummons(const(EntityRef)[] creatures) { savedSummons_ = creatures; }
 
-    // Raid scripts:
 
     private bool answered_;
     private int answer_;
@@ -2052,22 +2025,17 @@ interface AreaTriggerHost
     void hostSignalDungeon(uint id, int value);
     void hostLog(string text);
 
-    // Eastern Kingdoms scripts:
     void hostKillCreditAt(EntityRef player, uint entry);
     ActionResult hostSayAt(EntityRef speaker, int entry, EntityRef target);
-    // Kalimdor scripts:
     ActionResult hostSignalCreature(EntityRef to, uint id, int value);
     // Dungeon scripts:
     bool hostHasItem(EntityRef player, uint item);
 
-    // Raid scripts:
     int hostAskDungeon(uint id);
 
-    // Instance round 2:
     ActionResult hostTeleportPlayer(EntityRef player, Location at);
     bool hostHasAura(EntityRef who, uint spell);
 
-    // Open-world round 2:
     bool hostLocationOf(EntityRef who, out Location at);
     uint hostHealthPercentOf(EntityRef who);
     uint hostRespawnObjectsNear(uint entry, Location at, float range, uint seconds);
@@ -2133,7 +2101,6 @@ struct AreaTriggerContext
     /// Whether a handler called `consume`.
     @property bool consumed() const { return consumed_; }
 
-    // Eastern Kingdoms scripts:
 
     /// `KilledMonsterCredit` of `entry` for `player`.
     void killCredit(EntityRef player, uint entry) { host.hostKillCreditAt(player, entry); }
@@ -2143,17 +2110,14 @@ struct AreaTriggerContext
     {
         return host.hostSayAt(speaker, entry, target);
     }
-    // Kalimdor scripts:
 
     /// A `Signal` for a creature's script (on another node: sent there).
     ActionResult signal(EntityRef to, uint id, int value = 0) { return host.hostSignalCreature(to, id, value); }
 
-    // Raid scripts:
 
     /// The dungeon script's answer to question `id` (`Asked`); 0 outside a dungeon copy.
     int askDungeon(uint id) { return host.hostAskDungeon(id); }
 
-    // Instance round 2:
 
     /// `player` is at `at` at once, on this map (out of C'Thun's stomach).
     ActionResult teleport(EntityRef player, Location at) { return host.hostTeleportPlayer(player, at); }
@@ -2161,7 +2125,6 @@ struct AreaTriggerContext
     /// Whether `who` (a player or a creature here) has `spell`'s aura.
     bool hasAura(EntityRef who, uint spell) { return host.hostHasAura(who, spell); }
 
-    // Open-world round 2:
 
     /// Where a unit or object on the player's map is; false if it is not seen here.
     bool locationOf(EntityRef who, out Location at) { return host.hostLocationOf(who, at); }
@@ -2191,7 +2154,7 @@ struct AreaTriggerContext
 }
 
 // ---------------------------------------------------------------------------
-// Open-world round 2: world map scripts (`@world`, bound by `world_template.ScriptName`), one per continent
+// World map scripts (`@world`, bound by `world_template.ScriptName`), one per continent
 // ---------------------------------------------------------------------------
 
 /**
@@ -2214,7 +2177,7 @@ struct WorldMapContext
 }
 
 // ---------------------------------------------------------------------------
-// Open-world round 2: item scripts (`@item`, bound by `item_template.ScriptName`), one per item
+// Item scripts (`@item`, bound by `item_template.ScriptName`), one per item
 // ---------------------------------------------------------------------------
 
 /// A player uses item `item` (its spell about to be cast at `target`): `ItemContext.consume` makes the
@@ -2242,7 +2205,7 @@ struct ItemContext
 }
 
 // ---------------------------------------------------------------------------
-// Raid scripts: questions to a dungeon, players arriving, picking targets, flags
+// Questions to a dungeon, players arriving, picking targets, flags
 // ---------------------------------------------------------------------------
 
 /// A script asks its dungeon's script question `id` (`CreatureContext.askDungeon`), which answers with

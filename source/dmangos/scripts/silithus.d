@@ -1,7 +1,7 @@
 /**
  * Silithus: Nelson the Nice, who shows a hunter on "Stave of the Ancients" (7636) his real face,
  * Solenor the Slayer, a demon to be fought alone: anyone else joining in, the demon leaves and The
- * Cleaner comes for them all. Open-world round 2: the opening of Ahn'Qiraj played again for "A Pawn on
+ * Cleaner comes for them all. The opening of Ahn'Qiraj played again for "A Pawn on
  * the Eternal Board" (Anachronos the Ancient, called by the Crystalline Tear), and the Colossi waking
  * (and falling, which the war effort remembers).
  */
@@ -126,7 +126,7 @@ struct Solenor
 
 
 // ---------------------------------------------------------------------------
-// Open-world round 2: the opening of Ahn'Qiraj
+// The opening of Ahn'Qiraj
 // ---------------------------------------------------------------------------
 
 /// Who plays a part in "A Pawn on the Eternal Board".
@@ -560,7 +560,7 @@ unittest
     s.raise(Damaged(EntityRef(8), 100, 100, 95));
     assert(s.host.has("summon 14503") && s.host.has("despawn"), "another player: the Cleaner");
 
-    // Open-world round 2: the Tear calls Anachronos; the scene runs to its end and its credit.
+    // The Tear calls Anachronos; the scene runs to its end and its credit.
     // The war effort: a Colossus's fall.
     auto regal = Driven!self("npc_silithus_boss", 15_741);
     regal.raise(Died(hero));

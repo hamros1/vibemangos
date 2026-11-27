@@ -139,7 +139,6 @@ mixin template SessionScripting()
         return c.consumed;
     }
 
-    // Kalimdor scripts:
 
     /// A script gives this player `count` of `entry`: onto stacks first, then free slots, as many as
     /// fit (as a quest's reward is given). How many it got.
@@ -209,7 +208,6 @@ mixin template SessionScripting()
         bool hostHasItem(EntityRef who, uint item) { return this.outer.hostHasItem(who, item); }
         int hostAskDungeon(uint id) { return this.outer.hostAskDungeon(id); }
         void hostLog(string text) { this.outer.hostLog(text); }
-        // Instance round 2:
         ActionResult hostTeleportPlayer(EntityRef who, Location at) { return this.outer.hostTeleportPlayer(who, at); }
         bool hostHasAura(EntityRef who, uint spell) { return this.outer.hostHasAura(who, spell); }
         ActionResult hostModifyThreat(EntityRef creature, EntityRef target, int percent) { return this.outer.hostModifyThreat(creature, target, percent); }
@@ -233,7 +231,6 @@ mixin template SessionScripting()
         private imported!"dmangos.world.map".Map scriptWorld() { return map; }
         import dmangos.world.spellscripting : SpellScriptActions;
         mixin SpellScriptActions;
-        // Eastern Kingdoms scripts:
         void hostKillCreditAt(EntityRef who, uint entry) { this.outer.hostKillCredit(who, entry); }
         ActionResult hostSayAt(EntityRef speaker, int entry, EntityRef target)
         {
@@ -243,7 +240,6 @@ mixin template SessionScripting()
             return c.ai.sayScriptFor(map, entry, target);
         }
 
-        // Open-world round 2:
 
         bool hostLocationOf(EntityRef who, out Location at)
         {
@@ -313,7 +309,7 @@ mixin template SessionScripting()
         }
     }
 
-    /// Open-world round 2: a creature's script opens its goods (or its training) for this player.
+    /// A creature's script opens its goods (or its training) for this player.
     public void scriptOpenWindow(ulong npc, bool training)
     {
         if (training)
@@ -322,7 +318,7 @@ mixin template SessionScripting()
             sendListInventory(npc);
     }
 
-    /// Open-world round 2: this player casts `spell` at `target` (itself if nothing) for a creature's script.
+    /// This player casts `spell` at `target` (itself if nothing) for a creature's script.
     public ActionResult scriptCast(uint spell, ulong target, bool triggered)
     {
         if (player is null)
@@ -330,7 +326,7 @@ mixin template SessionScripting()
         return hostCastFrom(EntityRef(player.guid), spell, EntityRef(target), triggered);
     }
 
-    /// Open-world round 2: a script takes `copper` of this player's money; false (nothing taken) if it has less.
+    /// A script takes `copper` of this player's money; false (nothing taken) if it has less.
     public bool scriptTakeMoney(uint copper)
     {
         import dmangos.world.updatefields : PLAYER_FIELD_COINAGE;
@@ -345,7 +341,7 @@ mixin template SessionScripting()
         return true;
     }
 
-    /// Open-world round 2: whether this player wears an item that needs `spell` (`item_template.requiredspell`).
+    /// Whether this player wears an item that needs `spell` (`item_template.requiredspell`).
     public bool scriptWearsItemNeeding(uint spell)
     {
         import dmangos.world.defines : equipmentSlotEnd;
@@ -360,7 +356,7 @@ mixin template SessionScripting()
     }
 
     /**
-     * Open-world round 2: this player forgets `spell` (a specialization) and the recipes it learned from
+     * This player forgets `spell` (a specialization) and the recipes it learned from
      * the items that need it (a plan's or a pattern's learning spell teaches the recipe).
      */
     public void scriptUnlearnSpecialization(uint spell)
@@ -383,7 +379,7 @@ mixin template SessionScripting()
     }
 
     /**
-     * Open-world round 2: this player uses item `entry` (at `target`): the item's script hears of it; true
+     * This player uses item `entry` (at `target`): the item's script hears of it; true
      * if it refused the use (the item's spell is not cast).
      */
     package bool itemScript(uint entry, ulong target)
@@ -560,7 +556,6 @@ mixin template SessionScripting()
         return QuestProgress.none;
     }
 
-    // Instance round 2:
 
     /// See `AreaTriggerContext.teleport`.
     ActionResult hostTeleportPlayer(EntityRef who, Location at)
@@ -610,11 +605,11 @@ mixin template SessionScripting()
     {
         if (instanceId_)
             context.signalDungeon(instanceId_, EntityRef(player.guid), id, value);
-        else if (map !is null) // open-world round 2: the continent's script
+        else if (map !is null) // the continent's script
             context.signalWorld(map.id, EntityRef(player.guid), id, value);
     }
 
-    /// Raid scripts: see `AreaTriggerHost.hostAskDungeon`.
+    /// See `AreaTriggerHost.hostAskDungeon`.
     int hostAskDungeon(uint id)
     {
         return instanceId_ ? context.askDungeon(instanceId_, EntityRef(player.guid), id) : 0;

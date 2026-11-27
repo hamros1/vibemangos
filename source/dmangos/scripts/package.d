@@ -29,7 +29,6 @@ static import dmangos.scripts.silithus;
 static import dmangos.scripts.winterspring;
 static import dmangos.scripts.azshara;
 static import dmangos.scripts.moonglade;
-// Eastern Kingdoms scripts:
 static import dmangos.scripts.redridge;
 static import dmangos.scripts.arathi;
 static import dmangos.scripts.lochmodan;
@@ -60,7 +59,6 @@ static import dmangos.scripts.blackrockspire;
 static import dmangos.scripts.stratholme;
 static import dmangos.scripts.scholomance;
 static import dmangos.scripts.diremaul;
-// Raid scripts:
 static import dmangos.scripts.moltencore;
 static import dmangos.scripts.onyxia;
 static import dmangos.scripts.zulgurub;
@@ -68,7 +66,6 @@ static import dmangos.scripts.blackwinglair;
 static import dmangos.scripts.ruinsofahnqiraj;
 static import dmangos.scripts.templeofahnqiraj;
 static import dmangos.scripts.naxxramas;
-// Open-world round 2:
 static import dmangos.scripts.professions;
 static import dmangos.scripts.emeralddragons;
 static import dmangos.scripts.worldobjects;
@@ -84,13 +81,11 @@ static import dmangos.scripts.wareffort; // the war effort
 alias scriptModules = AliasSeq!(dmangos.scripts.scourgeinvasion, dmangos.scripts.deadmines, dmangos.scripts.westfall, dmangos.scripts.spells,
     dmangos.scripts.stormwind, dmangos.scripts.ungoro, dmangos.scripts.shadowfang,
     dmangos.scripts.wailingcaverns,
-    // Kalimdor scripts:
     dmangos.scripts.barrens, dmangos.scripts.ashenvale, dmangos.scripts.darkshore,
     dmangos.scripts.desolace, dmangos.scripts.durotar, dmangos.scripts.dustwallow,
     dmangos.scripts.felwood, dmangos.scripts.feralas, dmangos.scripts.thousandneedles,
     dmangos.scripts.tanaris, dmangos.scripts.teldrassil, dmangos.scripts.stonetalon, dmangos.scripts.silithus,
     dmangos.scripts.winterspring, dmangos.scripts.azshara, dmangos.scripts.moonglade,
-    // Eastern Kingdoms scripts:
     dmangos.scripts.redridge, dmangos.scripts.arathi, dmangos.scripts.lochmodan, dmangos.scripts.silverpine,
     dmangos.scripts.wetlands, dmangos.scripts.hinterlands, dmangos.scripts.swamp, dmangos.scripts.searinggorge,
     dmangos.scripts.tirisfal, dmangos.scripts.burningsteppes, dmangos.scripts.blastedlands,
@@ -101,10 +96,8 @@ alias scriptModules = AliasSeq!(dmangos.scripts.scourgeinvasion, dmangos.scripts
     dmangos.scripts.scarletmonastery, dmangos.scripts.uldaman, dmangos.scripts.zulfarrak, dmangos.scripts.maraudon,
     dmangos.scripts.blackfathomdeeps, dmangos.scripts.sunkentemple, dmangos.scripts.blackrockdepths,
     dmangos.scripts.blackrockspire, dmangos.scripts.stratholme, dmangos.scripts.scholomance, dmangos.scripts.diremaul,
-    // Raid scripts:
     dmangos.scripts.moltencore, dmangos.scripts.onyxia, dmangos.scripts.zulgurub, dmangos.scripts.blackwinglair,
     dmangos.scripts.ruinsofahnqiraj, dmangos.scripts.templeofahnqiraj, dmangos.scripts.naxxramas,
-    // Open-world round 2:
     dmangos.scripts.professions, dmangos.scripts.emeralddragons, dmangos.scripts.worldobjects,
     dmangos.scripts.guards, dmangos.scripts.worldmaps,
     // Spell scripts of items, quests and the world:

@@ -668,7 +668,7 @@ mixin template CreatureScripting()
     {
         if (lore !is null && me.instanceId)
             lore.signalDungeon(me.instanceId, EntityRef(me.guid), id, value);
-        else if (lore !is null && world_ !is null) // open-world round 2: its continent's script
+        else if (lore !is null && world_ !is null) // its continent's script
             lore.signalWorldMap(world_, EntityRef(me.guid), id, value);
     }
 
@@ -989,7 +989,6 @@ mixin template CreatureScripting()
         return false;
     }
 
-    // Instance round 2:
 
     float hostThreatOf(EntityRef who)
     {
@@ -1117,7 +1116,7 @@ mixin template CreatureScripting()
     {
         if (caster.guid == me.guid)
             return hostCast(spell, target, triggered);
-        // Open-world round 2: a player here casts it (a mark on the one it killed, a lesson it learns).
+        // A player here casts it (a mark on the one it killed, a lesson it learns).
         if (caster.isPlayer)
         {
             auto session = playerSession(caster);
@@ -1248,7 +1247,6 @@ mixin template CreatureScripting()
     }
 
     // -----------------------------------------------------------------------
-    // Raid scripts:
     // -----------------------------------------------------------------------
 
     int hostAskDungeon(uint id)
@@ -1493,7 +1491,7 @@ mixin template CreatureScripting()
     }
 
     // -----------------------------------------------------------------------
-    // Open-world round 2: `CreatureHost`
+    // `CreatureHost`
     // -----------------------------------------------------------------------
 
     /// The session of a player on its map; null if `who` is no player here.

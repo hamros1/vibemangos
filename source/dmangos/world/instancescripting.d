@@ -41,7 +41,7 @@ final class InstanceScript : InstanceHost
         void delegate(string data, bool checkpoint) persist;
         string saved;
         uint id, mapId;
-        bool world; // open-world round 2: a continent's script (`@world`), kept in memory only
+        bool world; // a continent's script (`@world`), kept in memory only
         EntityRef[] durableSummons;
         Migrant[] pendingSummons;
         bool summonsPending;
@@ -77,7 +77,6 @@ final class InstanceScript : InstanceHost
     bool delegate(uint instance, ulong guid) spawnKilled;
     void delegate(Map map, uint entry) respawnKilled;
 
-    // Raid scripts:
 
     /// Puts the game object of a spawn of `entry` on the copy's map in the world for `seconds` (0: for
     /// good); false if there is none (`WorldContext` sets it).
@@ -284,7 +283,7 @@ final class InstanceScript : InstanceHost
         return durableSummons.canFind(entity);
     }
 
-    /// Open-world round 2: the script `name` (`world_template.ScriptName`) of continent `mapId`; null if none serves it.
+    /// The script `name` (`world_template.ScriptName`) of continent `mapId`; null if none serves it.
     static InstanceScript makeWorld(ScriptRuntime runtime, string name, uint mapId)
     {
         if (runtime is null || !runtime.serves(ScriptKind.world, name))
@@ -514,7 +513,7 @@ final class InstanceScript : InstanceHost
         }
     }
 
-    /// Raid scripts: asks the script question `id` (`Asked`) from `from`; its answer, 0 if it gave none.
+    /// Asks the script question `id` (`Asked`) from `from`; its answer, 0 if it gave none.
     int ask(EntityRef from, uint id)
     {
         if (world)
@@ -858,7 +857,6 @@ final class InstanceScript : InstanceHost
         return below == 0 ? 0 : uniform(0, below);
     }
 
-    // Raid scripts:
 
     ActionResult hostDespawnObject(EntityRef object)
     {

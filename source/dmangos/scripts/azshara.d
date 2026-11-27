@@ -5,7 +5,7 @@
  */
 module dmangos.scripts.azshara;
 
-// Open-world round 2: and Loramus Thalipedes, who helps and tells his story (2744, 3141).
+// And Loramus Thalipedes, who helps and tells his story (2744, 3141).
 
 import dmangos.script;
 
@@ -146,7 +146,7 @@ struct Maws
     {
         me.castSelf(spellThrash, true);
         steps.after(Step.leave, 150 * 60.seconds);
-        me.walkPath(); // Open-world round 2: called up by the Arcanite Buoy, it swims its way (`MoveWaypoint`)
+        me.walkPath(); // called up by the Arcanite Buoy, it swims its way (`MoveWaypoint`)
     }
 
     void on(ref CreatureContext me, const ref Reset e)
@@ -269,7 +269,6 @@ struct Azuregos
     }
 }
 
-// Open-world round 2:
 
 /**
  * Loramus Thalipedes: asked for help (2744) it is the quest's event; on
@@ -345,7 +344,7 @@ unittest
     assert(a.host.has("cast 21147") && a.host.has("say -1000100") && a.host.has("cast 19983"));
 }
 
-unittest // Open-world round 2
+unittest
 {
     import dmangos.scripts.kalimdortesting;
     alias self = dmangos.scripts.azshara;

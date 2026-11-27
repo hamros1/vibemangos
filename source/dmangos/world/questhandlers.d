@@ -772,7 +772,7 @@ private:
 
             creature.ai.raiseFrom(map, QuestAccepted(EntityRef(player.guid), id));
         }
-        // Open-world round 2: a game object giver's script too (the Crystalline Tear).
+        // A game object giver's script too (the Crystalline Tear).
         else if (auto go = cast(imported!"dmangos.world.gameobject".GameObject) map.findObject(giver.guid))
         {
             import dmangos.script.api : EntityRef;

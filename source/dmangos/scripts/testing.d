@@ -176,7 +176,6 @@ final class TestCreature : CreatureHost
     bool hostChangeEntry(uint entry) { did ~= format("become %s", entry); return true; }
     void hostKillCredit(EntityRef, uint entry) { did ~= format("credit %s", entry); }
 
-    // Raid scripts:
     int hostAskDungeon(uint) { return 0; }
     EntityRef hostSelectTarget(Pick, uint, uint) { return EntityRef.init; }
     size_t hostThreatList(EntityRef[]) { return 0; }
@@ -195,12 +194,10 @@ final class TestCreature : CreatureHost
     void hostSpellList(uint) {}
     ubyte hostClassOf(EntityRef) { return 0; }
 
-    // Instance round 2:
     ActionResult hostTeleportPlayer(EntityRef who, Location) { did ~= format("teleport %s", who.guid); return ActionResult.ok; }
     ActionResult hostMovementScriptOf(EntityRef, uint) { return ActionResult.ok; }
     float hostThreatOf(EntityRef) { return 0; }
 
-    // Open-world round 2:
     uint hostLevelOf(EntityRef) { return 0; }
     uint hostSkillOf(EntityRef, uint) { return 0; }
     bool hostKnowsSpell(EntityRef, uint) { return false; }
@@ -314,7 +311,6 @@ final class TestInstance : InstanceHost
     void hostKillCreditAll(uint entry) { did ~= format("credit %s", entry); }
     bool hostChangeEntry(EntityRef c, uint entry) { did ~= format("become %s %s", c.entry, entry); return true; }
 
-    // Raid scripts:
     ActionResult hostDespawnObject(EntityRef o) { did ~= format("despawn object %s", o.entry); return ActionResult.ok; }
     bool hostRespawnObject(uint, uint) { return false; }
     ActionResult hostUseObject(EntityRef) { return ActionResult.ok; }

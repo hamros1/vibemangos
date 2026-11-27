@@ -452,7 +452,7 @@ final class WorldData
     SpellTarget[uint] spellTargets;         /// `spell_target_position`: where a spell sends its target, by spell
     bool[uint] spellFacing;                 /// `spell_facing`: spells whose target must be in front of the caster
     int[uint] spellConeDegrees;              /// `spell_cone`: signed angle by first spell rank
-    /// Instance round 2: `spell_script_target` (type 1, living creatures): the creatures of these entries a spell's
+    /// `spell_script_target` (type 1, living creatures): the creatures of these entries a spell's
     /// `TARGET_UNIT_SCRIPT_NEAR_CASTER` means, by spell.
     uint[][uint] spellScriptTargets;
     uint[uint][uint] spellScriptTargetMasks; /// excluded effects by spell and creature entry
@@ -524,8 +524,8 @@ final class WorldData
     string[uint] spellScriptNames;                  /// `spell_scripts`, by spell
     string[uint] areaTriggerScriptNames;            /// `scripted_areatrigger`, by trigger
     string[uint] eventScriptNames;                  /// `scripted_event_id`, by event
-    string[uint] itemScriptNames;                   /// `item_template.ScriptName`, by entry (open-world round 2)
-    string[uint] worldScriptNames;                  /// `world_template.ScriptName`, by map (open-world round 2)
+    string[uint] itemScriptNames;                   /// `item_template.ScriptName`, by entry
+    string[uint] worldScriptNames;                  /// `world_template.ScriptName`, by map
     Waypoint[][uint] escortPaths;                   /// `script_waypoint` (path 0), by creature entry
     BroadcastText[int] scriptTexts;                 /// `script_texts`, by (negative) entry
     uint[int] scriptTextSounds;                     /// their sounds
@@ -1054,8 +1054,8 @@ final class WorldData
                 continue;
             if (s.entry == 0)
             {
-                // (Dungeon-script tests, a small fix: as a creature's, one of `gameobject_spawn_entry`'s first;
-                // Zul'Farrak's forty graves had none.)
+                // As a creature's, one of `gameobject_spawn_entry`'s first;
+                // Zul'Farrak's forty graves had none.
                 import std.random : uniform;
 
                 if (auto entries = s.guid in objectSpawnEntries)

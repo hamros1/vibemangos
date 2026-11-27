@@ -251,7 +251,7 @@ mixin template CreatureCasting()
     {
         import dmangos.script.api : EmoteReceived;
 
-        if (behaviour) // Eastern Kingdoms scripts: its script hears of it
+        if (behaviour) // its script hears of it
         {
             world_ = world;
             raiseScript(EmoteReceived(EntityRef(player), textEmote));
@@ -1039,14 +1039,14 @@ mixin template CreatureCasting()
                     found ~= other.combatGuid;
             return found;
         }
-        // (Dungeon-script tests, a small fix: a script's area at a destination this cast does not resolve
+        // A script's area at a destination this cast does not resolve
         // (`TARGET_ENUM_UNITS_SCRIPT_AOE_AT_DEST_LOC`, none named) reaches nobody, not its caster: Emi Shortfuse's
-        // Explosion, an instant kill at the tunnel's `spell_target_position`, killed Emi herself.)
+        // Explosion, an instant kill at the tunnel's `spell_target_position`, killed Emi herself.
         if (b == ImplicitTarget.enumUnitsScriptAoeAtDestLoc && !named.length)
             return null;
-        // (Dungeons round 2, a small fix: `TARGET_UNIT_SCRIPT_NEAR_CASTER` is the nearest living creature
+        // `TARGET_UNIT_SCRIPT_NEAR_CASTER` is the nearest living creature
         // `spell_script_target` names within the spell's range, as a player's cast has it: a Nightmare
-        // Suppressor's Suppression reaches the Shade of Hakkar, not itself. None near, the caster as before.)
+        // Suppressor's Suppression reaches the Shade of Hakkar, not itself. None near, the caster as before.
         if (a == ImplicitTarget.unitScriptNearCaster && named.length)
         {
             import dmangos.world.spellselection : namedCreatureRange, nearestNamedCreature;
@@ -1323,8 +1323,8 @@ mixin template CreatureCasting()
         foreach (r; results) // the combat log's line for each miss, as for a player's spell
             if (r.miss != SpellMissInfo.none)
                 world_.sendToObservers(me.guid, Opcode.SMSG_SPELLLOGMISS, spellMissLog(spell.id, me.guid, r.guid, r.miss));
-        // (Dungeon-script tests, a small fix: creatures hit by a creature's spell hear of it, `SpellHit`, as they do of
-        // a player's; Whitemane's Scarlet Resurrection raising Mograine waits on it. Not the caster itself.)
+        // Creatures hit by a creature's spell hear of it, `SpellHit`, as they do of
+        // a player's; Whitemane's Scarlet Resurrection raising Mograine waits on it. Not the caster itself.
         foreach (r; results)
             if (r.miss == SpellMissInfo.none && r.guid != me.guid)
                 if (auto hit = world_.creatureAt(r.guid))
@@ -2398,8 +2398,8 @@ mixin template CreatureCasting()
         }
         else
         {
-            // (Dungeon-script tests, a small fix: a zone yell, `CHAT_TYPE_ZONE_YELL` 6, is heard in the whole zone: in a
-            // dungeon, its whole copy (Baron Rivendare's warnings across Stratholme). The open world's still by range.)
+            // A zone yell, `CHAT_TYPE_ZONE_YELL` 6, is heard in the whole zone: in a
+            // dungeon, its whole copy (Baron Rivendare's warnings across Stratholme). The open world's still by range.
             const zoneWide = text.chatType == 6 && me.instanceId;
             world_.sendInRange(me.position, zoneWide ? 2000 : lore.listenRange(type == ChatType.CHAT_MSG_RAID_BOSS_EMOTE
                 ? ChatType.CHAT_MSG_MONSTER_YELL : type), Opcode.SMSG_MESSAGECHAT, body_);

@@ -1488,7 +1488,7 @@ unittest
     assert(count(npcMajordomo) == 1, "summoned once");
 }
 
-/// Instance round 2: a creature's SEND_EVENT spell starts its event as a player's does: the event's script runs,
+/// A creature's SEND_EVENT spell starts its event as a player's does: the event's script runs,
 /// around the player it was cast at (`event_test_summon` puts a creature beside them).
 unittest
 {
@@ -1526,7 +1526,7 @@ unittest
     assert(trainers() == before + 1, "the event's script ran");
 }
 
-/// Instance round 2: a creature's script hears its aura go when it runs out (`AuraRemoved`).
+/// A creature's script hears its aura go when it runs out (`AuraRemoved`).
 unittest
 {
     import dmangos.world.auras : makeAura;

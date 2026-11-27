@@ -113,7 +113,7 @@ struct scriptedEvent
     }
 }
 
-/// Open-world round 2: an item script, for the `item_template` rows with these `ScriptName`s.
+/// An item script, for the `item_template` rows with these `ScriptName`s.
 struct item
 {
     string[] names;
@@ -125,7 +125,7 @@ struct item
     }
 }
 
-/// Open-world round 2: a world map's script, for the `world_template` row (a continent) with this `ScriptName`.
+/// A world map's script, for the `world_template` row (a continent) with this `ScriptName`.
 struct world
 {
     string[] names;
@@ -146,7 +146,7 @@ enum ScriptKind : ubyte
     spell,
     areaTrigger,
     event,
-    item, /// Open-world round 2
+    item,
     world, /// ditto
 }
 
@@ -158,9 +158,7 @@ template KindInfo(ScriptKind kind)
         alias Context = CreatureContext;
         alias Events = AliasSeq!(Spawned, Reset, EnteredCombat, Damaged, KilledUnit, Died, Evaded, SpellHit, Signal,
             MovementDone, GossipHello, GossipSelect, QuestAccepted, QuestRewarded,
-            // Eastern Kingdoms scripts:
             SummonedDied, SummonedArrived, UnitInSight, EmoteReceived,
-            // Instance round 2:
             AuraRemoved,
             StealthAlert, CreatureCastFinished, CreatureHealed);
         alias Attribute = .creature;
@@ -168,17 +166,17 @@ template KindInfo(ScriptKind kind)
     else static if (kind == ScriptKind.gameObject)
     {
         alias Context = GameObjectContext;
-        alias Events = AliasSeq!(ObjectUsed, Signal, /* Open-world round 2: */ Spawned, QuestAccepted, TrapSprung,
+        alias Events = AliasSeq!(ObjectUsed, Signal, Spawned, QuestAccepted, TrapSprung,
             /* the war effort: */ QuestRewarded, TrapDisarmed);
         alias Attribute = .gameObject;
     }
-    else static if (kind == ScriptKind.item) // Open-world round 2
+    else static if (kind == ScriptKind.item)
     {
         alias Context = ItemContext;
         alias Events = AliasSeq!(ItemUsed);
         alias Attribute = .item;
     }
-    else static if (kind == ScriptKind.world) // Open-world round 2
+    else static if (kind == ScriptKind.world)
     {
         alias Context = WorldMapContext;
         alias Events = AliasSeq!(CreatureDied, Signal, Asked);
@@ -192,7 +190,6 @@ template KindInfo(ScriptKind kind)
             CastChecked, CastStarted, AuraHeartbeat, AuraEnded, AuraTickEnded, TargetChecked,
             // Class spells:
             SpellCast, SpellLanded,
-            // Raid scripts:
             AuraStacked);
         alias Attribute = .spell;
     }
@@ -212,7 +209,7 @@ template KindInfo(ScriptKind kind)
     {
         alias Context = InstanceContext;
         alias Events = AliasSeq!(CreatureLoaded, ObjectLoaded, CreatureDied, Signal, CreatureEngaged, CreatureEvaded,
-            EventHappened, /* Raid scripts: */ Asked, PlayerEntered, ObjectUsedHere, /* Dungeons round 2: */ Restored,
+            EventHappened, Asked, PlayerEntered, ObjectUsedHere, Restored,
             InstanceCondition);
         alias Attribute = .instance;
     }

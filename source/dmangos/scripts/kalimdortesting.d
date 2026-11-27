@@ -198,7 +198,6 @@ final class RecordingCreature : CreatureHost
     // Dungeon scripts:
     EntityRef hostPlayerNearby(float) { return EntityRef.init; }
 
-    // Raid scripts:
     int hostAskDungeon(uint) { return 0; }
     EntityRef hostSelectTarget(Pick, uint, uint) { return EntityRef.init; }
     size_t hostThreatList(EntityRef[]) { return 0; }
@@ -217,12 +216,11 @@ final class RecordingCreature : CreatureHost
     void hostSpellList(uint) {}
     ubyte hostClassOf(EntityRef) { return 0; }
 
-    // Instance round 2:
     ActionResult hostTeleportPlayer(EntityRef, Location) { return ActionResult.ok; }
     ActionResult hostMovementScriptOf(EntityRef, uint) { return ActionResult.ok; }
     float hostThreatOf(EntityRef) { return 0; }
 
-    // Open-world round 2: a player's facts as a test sets them, and what the script did with them.
+    // A player's facts as a test sets them, and what the script did with them.
     uint level = 60;
     uint[uint] skills;          /// the hero's, by skill
     bool[uint] spells;          /// the hero's spellbook
@@ -379,11 +377,9 @@ final class RecordingObject : GameObjectHost
         return ActionResult.ok;
     }
 
-    // Raid scripts:
     int hostAskDungeon(uint) { return 0; }
     void hostPulseTrap() { did ~= "pulse trap"; }
 
-    // Open-world round 2:
     bool[uint] items;   /// what the hero carries
     uint minute;        /// the time of day
     uint area;          /// where it stands
@@ -414,7 +410,7 @@ final class RecordingObject : GameObjectHost
     }
 }
 
-/// Open-world round 2: a game object script of `Module` on a recording object, and the means to drive it.
+/// A game object script of `Module` on a recording object, and the means to drive it.
 struct DrivenObject(alias Module)
 {
     ScriptRuntime runtime;

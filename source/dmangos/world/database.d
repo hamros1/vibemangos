@@ -1054,7 +1054,7 @@ interface WorldDatabase
     /// A creature (or game object) spawn dead (used up) in an instance until `until` (`creature_respawn`, `gameobject_respawn`).
     void saveInstanceRespawn(bool gameObject, uint spawnGuid, uint instance, long until);
 
-    /// Instance round 2: a creature spawn of an instance alive again (its `creature_respawn` row goes).
+    /// A creature spawn of an instance alive again (its `creature_respawn` row goes).
     void deleteInstanceRespawn(uint spawnGuid, uint instance);
 
     /// Name, race, gender and class of a character, or null.

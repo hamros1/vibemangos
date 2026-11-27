@@ -111,7 +111,7 @@ version (unittest)
         }
     }
 
-    /// Instance round 2: a creature script for the tests of `AuraRemoved`: a creature beside it when its aura goes.
+    /// A creature script for the tests of `AuraRemoved`: a creature beside it when its aura goes.
     @creature("npc_test_aura_removed")
     struct TestAuraRemoved
     {

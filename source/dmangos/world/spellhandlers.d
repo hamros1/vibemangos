@@ -4318,7 +4318,7 @@ private:
         return creature.alive && creature.ai !is null && canAttack(relatingNow(), relatingOf(creature), context.client);
     }
 
-    /// Instance round 2: the nearest living creature within the spell's range (at least 5 yards) of an entry
+    /// The nearest living creature within the spell's range (at least 5 yards) of an entry
     /// `spell_script_target` gives the spell; 0 if none.
     private UnitRef scriptTargetNear(const(SpellInfo)* spell, const(uint)[] entries, bool acrossNodes)
     {

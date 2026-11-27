@@ -1961,7 +1961,7 @@ mixin template DbScriptRunner()
         if (!map.instanceId && gameObjectRespawnAt.remove(spawn.guid))
             database.saveGameObjectRespawn(spawn.guid, 0);
         map.addObject(made);
-        // Instance round 2: the dungeon's script hears of it as of any object of the copy (a ritual's bell, a trap).
+        // The dungeon's script hears of it as of any object of the copy (a ritual's bell, a trap).
         if (map.instanceId)
             if (auto script = map.instanceId in instanceScripts)
             {

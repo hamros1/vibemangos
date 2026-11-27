@@ -109,7 +109,6 @@ final class TestCreature : CreatureHost
         note("gossip", textId, options.length);
     }
 
-    // Eastern Kingdoms scripts:
     void hostSetFaction(uint f) { faction = f; note("faction", f); }
     void hostUnitFlags(uint flags, bool set) { note(set ? "flags on" : "flags off", flags); }
     void hostReactState(Reaction r) { note("react", cast(uint) r); }
@@ -138,7 +137,6 @@ final class TestCreature : CreatureHost
     void hostMovementScript(uint id) { note("movement script", id); }
     void hostRelay(int id, EntityRef) { note("relay", id); }
     void hostKillCredit(EntityRef, uint entry) { note("credit", entry); }
-    // Kalimdor scripts:
     ActionResult hostFactionOf(EntityRef c, uint f) { note("faction of", c.entry, f); return ActionResult.ok; }
     ActionResult hostUnitFlagsOf(EntityRef c, uint flags, bool) { note("flags of", c.entry, flags); return ActionResult.ok; }
     void hostFollow(EntityRef leader, float, float) { note(leader ? "follow" : "unfollow"); }
@@ -155,7 +153,6 @@ final class TestCreature : CreatureHost
     // Dungeon scripts:
     EntityRef hostPlayerNearby(float) { return EntityRef.init; }
 
-    // Raid scripts:
     int hostAskDungeon(uint) { return 0; }
     EntityRef hostSelectTarget(Pick, uint, uint) { return EntityRef.init; }
     size_t hostThreatList(EntityRef[]) { return 0; }
@@ -174,12 +171,10 @@ final class TestCreature : CreatureHost
     void hostSpellList(uint) {}
     ubyte hostClassOf(EntityRef) { return 0; }
 
-    // Instance round 2:
     ActionResult hostTeleportPlayer(EntityRef, Location) { return ActionResult.ok; }
     ActionResult hostMovementScriptOf(EntityRef, uint) { return ActionResult.ok; }
     float hostThreatOf(EntityRef) { return 0; }
 
-    // Open-world round 2:
     uint hostLevelOf(EntityRef) { return 0; }
     uint hostSkillOf(EntityRef, uint) { return 0; }
     bool hostKnowsSpell(EntityRef, uint) { return false; }
