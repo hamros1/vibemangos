@@ -2459,7 +2459,7 @@ final class Map : MotionWorld
     void linked(Creature source, LinkEvent event, ulong enemy)
     {
         if (world !is null)
-            world.linkedEvent(this, source, event, enemy);
+            world.links.linkedEvent(this, source, event, enemy);
     }
 
     /**

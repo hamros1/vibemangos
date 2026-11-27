@@ -203,6 +203,11 @@ struct ShutdownTimer
  */
 final class WorldContext : GroupDirectory, IdCounters, SessionHandler
 {
+    import dmangos.world.creaturelinking : Linking;
+
+    /// What the links of this node's creatures do (`dmangos.world.creaturelinking.Linking`).
+    Linking links;
+
     import dmangos.world.wareffort : WarEffortFollower;
 
     /// See `dmangos.world.wareffort`.
@@ -3064,6 +3069,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         LoginDatabase accounts = null, Battlegroup sharedBattles = null)
     in (database !is null && data !is null && client !is null)
     {
+        links = new Linking(this);
         warEffortHere = new WarEffortFollower(this);
         fleet = new Ships(this);
         postOffice = new PostOffice(this);
@@ -3171,112 +3177,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         return null;
     }
 
-    /// The creatures on `m` linked to `master`, and their links.
-    private Creature[] slavesOf(Map m, Creature master, out const(CreatureLink)*[] links)
-    {
-        Creature[] found;
-        const links_ = data.creatureLinks;
-        foreach (guid; links_.slavesOfGuid.get(master.spawnId, null))
-            if (const spawn = creatureSpawnOf(guid))
-                if (auto c = cast(Creature) m.findObject(makeGuid(HighGuid.unit, spawn.entry, guid)))
-                {
-                    found ~= c;
-                    links ~= guid in links_.bySlaveGuid;
-                }
-        const entries = links_.slaveEntriesOf.get(master.template_.entry, null);
-        if (entries.length)
-        {
-            const ms = master.spawn;
-            foreach (c; m.creaturesNear(Position(ms.x, ms.y, ms.z), 120))
-                foreach (entry; entries)
-                    if (c.template_.entry == entry && c !is master)
-                        if (auto l = links_.linkOf(c.spawnId, entry, m.id))
-                            if (l.masterEntry == master.template_.entry && inLinkRange(c.spawn.x, c.spawn.y, ms.x, ms.y, l.range))
-                            {
-                                found ~= c;
-                                links ~= l;
-                            }
-        }
-        return found;
-    }
 
-    /// The master of `slave` on `m`, if it is here, and the link.
-    private Creature masterOf(Map m, Creature slave, out const(CreatureLink)* link)
-    {
-        link = data.creatureLinks.linkOf(slave.spawnId, slave.template_.entry, m.id);
-        if (link is null)
-            return null;
-        if (link.masterGuid)
-        {
-            if (const spawn = creatureSpawnOf(link.masterGuid))
-                return cast(Creature) m.findObject(makeGuid(HighGuid.unit, spawn.entry, link.masterGuid));
-            return null;
-        }
-        const ss = slave.spawn;
-        foreach (c; m.creaturesNear(Position(ss.x, ss.y, ss.z), link.range ? link.range : 120))
-            if (c.template_.entry == link.masterEntry && inLinkRange(ss.x, ss.y, c.spawn.x, c.spawn.y, link.range))
-                return c;
-        return null;
-    }
 
-    /// `source` was attacked by `enemy` or evades: its linked creatures follow (see the module).
-    package void linkedEvent(Map m, Creature source, LinkEvent event, ulong enemy)
-    {
-        if (!data.creatureLinks.involves(source.spawnId, source.template_.entry))
-            return;
-        const(CreatureLink)*[] links;
-        auto slaves = slavesOf(m, source, links);
-        foreach (i, slave; slaves)
-        {
-            if (event == LinkEvent.evade && !slave.alive && (links[i].flags & LinkFlag.respawnOnEvade))
-                respawnLinked(m, slave);
-            if (!slave.alive || slave.ai is null)
-                continue;
-            final switch (event)
-            {
-            case LinkEvent.aggro:
-                if (links[i].flags & LinkFlag.aggroOnAggro)
-                    joinFight(m, slave, enemy);
-                break;
-            case LinkEvent.despawn:
-                if (links[i].flags & LinkFlag.despawnOnDespawn)
-                    slave.ai.despawnFor(m, 0);
-                break;
-            case LinkEvent.evade:
-                if (links[i].flags & LinkFlag.despawnOnEvade)
-                    slave.ai.despawnFor(m, 0);
-                else if (links[i].flags & LinkFlag.evadeOnEvade)
-                    slave.ai.evadeWithLinked(m);
-                break;
-            }
-        }
-        if (event == LinkEvent.evade)
-            respawnLinkedSpawns(m, source, LinkFlag.respawnOnEvade);
-        // The other way: a slave attacked brings its master in; a slave evading brings its dead master back.
-        const(CreatureLink)* link;
-        if (auto master = masterOf(m, source, link))
-        {
-            if (event == LinkEvent.aggro && (link.flags & LinkFlag.toAggroOnAggro) && master.alive && master.ai !is null)
-                joinFight(m, master, enemy);
-            if (event == LinkEvent.evade && (link.flags & LinkFlag.toRespawnOnEvade) && !master.alive)
-                respawnLinked(m, master);
-        }
-    }
 
-    /**
-     * A dead creature of a pack comes back now: its corpse goes and its respawn is due at once (the next
-     * second's respawns bring it). Summons and dungeon creatures are left alone.
-     */
-    private void respawnLinked(Map m, Creature c)
-    {
-        if (c.alive || c.summon.type != TempSpawnType.none || c.petOwner)
-            return;
-        if (c.instanceId)
-            return respawnInCopy(m, &c.spawn, c);
-        if (m.findObject(c.guid) is c)
-            m.corpseExpired(c);
-        respawnSpawnNow(c.spawn.guid);
-    }
 
     /// A dead creature of dungeon copy `m` (its corpse `corpse`, or none: gone already) is back
     /// now, as a linked boss's wipe brings its adds back; the copy's script hears of it as of any creature.
@@ -3297,7 +3200,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
             return;
         back.instanceId = m.instanceId;
         m.addObject(back);
-        queueLinked(m.id, m.instanceId, back);
+        links.queueLinked(m.id, m.instanceId, back);
         if (auto script = m.instanceId in instanceScripts)
         {
             import dmangos.script.api : CreatureLoaded, EntityRef;
@@ -3307,7 +3210,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     }
 
     /// Spawn `guid`, dead and waiting, is due now.
-    private void respawnSpawnNow(uint guid)
+    package void respawnSpawnNow(uint guid)
     {
         if (creaturePools.manages(guid))
         {
@@ -3323,86 +3226,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
             }
     }
 
-    /// The slaves (by spawn) of `master` linked with `flag` whose corpses are already gone come back too.
-    private void respawnLinkedSpawns(Map m, Creature master, LinkFlag flag)
-    {
-        foreach (guid; data.creatureLinks.slavesOfGuid.get(master.spawnId, null))
-            if (const l = guid in data.creatureLinks.bySlaveGuid)
-                if (l.flags & flag)
-                    if (const spawn = creatureSpawnOf(guid))
-                        if (m.findObject(makeGuid(HighGuid.unit, spawn.entry, guid)) is null)
-                        {
-                            if (master.instanceId)
-                            {
-                                // In a copy only the dead come back (one not loaded yet is not dead).
-                                if (auto state = master.instanceId in dungeons.instances)
-                                    if (guid in state.dead)
-                                        respawnInCopy(m, spawn, null);
-                            }
-                            else
-                                respawnSpawnNow(guid);
-                        }
-    }
 
-    /// `master` has respawned: its dead slaves linked so come back with it, and those linked so go.
-    private void linkedRespawn(Map m, Creature master)
-    {
-        if (!data.creatureLinks.involves(master.spawnId, master.template_.entry))
-            return;
-        const(CreatureLink)*[] links;
-        foreach (i, slave; slavesOf(m, master, links))
-        {
-            if (!slave.alive && (links[i].flags & LinkFlag.respawnOnRespawn))
-                respawnLinked(m, slave);
-            else if (slave.alive && (links[i].flags & LinkFlag.despawnOnRespawn) && slave.ai !is null)
-                slave.ai.despawnFor(m, 0);
-        }
-        respawnLinkedSpawns(m, master, LinkFlag.respawnOnRespawn);
-    }
 
-    /// `c` fights `enemy` too: attacking it, or (fighting already) counting it as a threat.
-    private void joinFight(Map m, Creature c, ulong enemy)
-    {
-        auto who = m.unit(enemy);
-        if (who.kind == UnitKind.none)
-            return;
-        c.ai.joinLinkedFight(who, m);
-    }
 
-    /// `master` dies: its slaves that die or go with it do.
-    private void linkedDeath(Map m, Creature master)
-    {
-        if (!data.creatureLinks.involves(master.spawnId, master.template_.entry))
-            return;
-        const(CreatureLink)*[] links;
-        foreach (i, slave; slavesOf(m, master, links))
-        {
-            if (!slave.alive)
-            {
-                if (links[i].flags & LinkFlag.respawnOnDeath)
-                    respawnLinked(m, slave);
-                continue;
-            }
-            if (links[i].flags & LinkFlag.selfKillOnDeath)
-            {
-                import dmangos.world.updatefields : UNIT_FIELD_HEALTH;
 
-                slave.values.set!UNIT_FIELD_HEALTH(0u);
-                m.creatureDeath(slave);
-            }
-            else if ((links[i].flags & LinkFlag.despawnOnDeath) && slave.ai !is null)
-                slave.ai.despawnFor(m, 0);
-        }
-    }
-
-    /// A spawned creature of a pack waits to be linked (once its cell holds it).
-    package void queueLinked(uint mapId, uint instance, Creature c)
-    {
-        if (!data.creatureLinks.involves(c.spawnId, c.template_.entry) && c.spawnId !in data.formationSlots)
-            return;
-        linkSpawned ~= c;
-        linkSpawnedOn ~= instance ? map(mapId, instance) : map(mapId);
-    }
 
     /**
      * In a dungeon copy, a slave that waits on its master: `cantSpawnIfBossDead` while its master
@@ -3441,127 +3268,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
             || ((link.flags & LinkFlag.cantSpawnIfBossAlive) && !bossDead);
     }
 
-    /// Creatures just spawned that may follow or be followed: worked out once their cell holds them.
-    private Creature[] linkSpawned;
-    private Map[] linkSpawnedOn;
 
-    /// Each spawned creature of a pack follows its master (`follow`), and a master's followers follow it.
-    private void linkFollowers()
-    {
-        if (linkSpawned.length == 0)
-            return;
-        auto spawned = linkSpawned, maps_ = linkSpawnedOn;
-        linkSpawned = null;
-        linkSpawnedOn = null;
-        foreach (i, c; spawned)
-        {
-            auto m = maps_[i];
-            if (!c.alive || m.findObject(c.guid) !is c)
-                continue;
-            if (const slot = c.spawnId in data.formationSlots)
-            {
-                arrangeFormation(m, (*slot)[0]);
-                continue;
-            }
-            const(CreatureLink)* link;
-            if (auto master = masterOf(m, c, link))
-                if (link.flags & LinkFlag.follow)
-                    follow(m, c, master);
-            const(CreatureLink)*[] links;
-            foreach (j, slave; slavesOf(m, c, links))
-                if (links[j].flags & LinkFlag.follow)
-                    follow(m, slave, c);
-        }
-    }
 
-    private uint[][uint] formationMembers; // group -> member spawns, by slot
 
-    /**
-     * Formation `group`'s members on `m`: its leader (slot 0) walks the formation's path; the others take
-     * their places around it in slot order (`formationPlace`), and follow it.
-     */
-    private void arrangeFormation(Map m, uint group)
-    {
-        import std.algorithm.sorting : sort;
-        import dmangos.world.creaturelinking : formationPlace;
-        import dmangos.world.motion : FollowMovement, WaypointMovement;
-
-        if (formationMembers is null)
-        {
-            uint[2][][uint] bySlot;
-            foreach (guid, gs; data.formationSlots)
-                bySlot[gs[0]] ~= [gs[1], guid];
-            foreach (g, list; bySlot)
-            {
-                list.sort!((a, b) => a[0] < b[0]);
-                foreach (e; list)
-                    formationMembers[g] ~= e[1];
-            }
-        }
-        const f = group in data.formations;
-        if (f is null)
-            return;
-        Creature find(uint guid)
-        {
-            if (const spawn = creatureSpawnOf(guid))
-                return cast(Creature) m.findObject(makeGuid(HighGuid.unit, spawn.entry, guid));
-            return null;
-        }
-        const members = formationMembers.get(group, null);
-        if (members.length == 0)
-            return;
-        auto leader = find(members[0]);
-        if (leader is null || !leader.alive)
-            return;
-        if (f.pathId && cast(WaypointMovement) leader.generator is null && (leader.ai is null || !leader.ai.inCombat))
-            if (const path = data.waypoints.path(f.pathId))
-            {
-                leader.generator = new WaypointMovement(path, f.movementType == 4, f.pathId, true);
-                m.wake(leader.guid);
-            }
-        uint index;
-        foreach (guid; members[1 .. $])
-        {
-            auto c = find(guid);
-            if (c is null || !c.alive)
-                continue;
-            ++index;
-            if (c.ai !is null && c.ai.inCombat)
-                continue;
-            float distance, angle;
-            formationPlace(*f, index, cast(uint) members.length, distance, angle);
-            if (auto following = cast(FollowMovement) c.generator)
-                if (following.leader == leader.guid && following.distance == distance && following.angle == angle)
-                    continue;
-            c.generator = new FollowMovement(leader.guid, distance, angle);
-            m.wake(c.guid);
-        }
-    }
-
-    /// `slave` follows `master` (not while fighting), at their spawns' distance and angle.
-    private void follow(Map m, Creature slave, Creature master)
-    {
-        import std.math : atan2, sqrt;
-        import dmangos.world.motion : FollowMovement;
-
-        if (!slave.alive || !master.alive || (slave.ai !is null && slave.ai.inCombat))
-            return;
-        if (auto f = cast(FollowMovement) slave.generator)
-            if (f.leader == master.guid)
-                return;
-        if (const link = slave.spawnId in data.creatureLinks.bySlaveGuid)
-            if (link.hasOffset && link.masterGuid == master.spawnId)
-            {
-                slave.generator = new FollowMovement(master.guid, link.distance, link.angle);
-                m.wake(slave.guid);
-                return;
-            }
-        const s = slave.spawn, ms = master.spawn;
-        const dx = s.x - ms.x, dy = s.y - ms.y;
-        const distance = sqrt(dx * dx + dy * dy);
-        slave.generator = new FollowMovement(master.guid, distance, atan2(dy, dx) - ms.orientation);
-        m.wake(slave.guid);
-    }
 
     /// The game events, and which are active (`dmangos.world.gameevents`).
     GameEvents gameEvents;
@@ -4464,7 +4173,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     /// deaths phase.
     package void creatureDies(Map map, Creature c)
     {
-        linkedDeath(map, c); // its pack's part first, while it is still known
+        links.linkedDeath(map, c); // its pack's part first, while it is still known
         c.die(map, unixTime);
         if (const checkpoint = c.guid in outdoorQuestActors)
             if (!checkpoint.player)
@@ -6019,7 +5728,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                 if (auto creature = makeCreature(spawn))
                 {
                     spawned ~= creature;
-                    queueLinked(mapId, 0, creature);
+                    links.queueLinked(mapId, 0, creature);
                 }
             }
         if (auto cells = mapId in data.gameObjectCells)
@@ -9185,7 +8894,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
             if (auto creature = makeCreature(spawn))
             {
                 there.addObject(creature);
-                linkedRespawn(there, creature);
+                links.linkedRespawn(there, creature);
             }
         }
     }
@@ -9260,7 +8969,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                 if (auto creature = makeCreature(spawn))
                 {
                     there.addObject(creature);
-                    linkedRespawn(there, creature);
+                    links.linkedRespawn(there, creature);
                 }
         }
     }
@@ -9630,7 +9339,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
             groupService.meetingStonesTick(elapsed); // the meeting stones' queue is the groups' keeper's
         }
         fleet.updateShips();
-        linkFollowers();
+        links.linkFollowers();
         scriptedGameObjectsDue();
         respawnDue(now);
         if (forwardGroup is null) // by one node

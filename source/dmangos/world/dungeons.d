@@ -693,7 +693,7 @@ final class Dungeons
                 {
                     creature.instanceId = instance;
                     where.addObject(creature);
-                    world.queueLinked(where.id, instance, creature);
+                    world.links.queueLinked(where.id, instance, creature);
                 }
             }
             foreach (index; selected.objects)
@@ -765,7 +765,7 @@ final class Dungeons
                 {
                     creature.instanceId = instance;
                     spawned ~= creature;
-                    world.queueLinked(mapId, instance, creature);
+                    world.links.queueLinked(mapId, instance, creature);
                 }
             }
         if (auto cells = mapId in world.data.gameObjectCells)
