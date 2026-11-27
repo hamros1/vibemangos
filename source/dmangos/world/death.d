@@ -988,7 +988,7 @@ unittest
         context.update(now);
     }
     assert(context.map(0).findObject(innkeeper) is null, "its corpse is gone");
-    assert(context.awaitingRespawn(innkeeperSpawn));
+    assert(context.deadCreatures.awaitingRespawn(innkeeperSpawn));
     foreach (_; 0 .. 60)
     {
         now += 1.seconds;

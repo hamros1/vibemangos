@@ -169,7 +169,7 @@ final class CreatureLoans
             }
             if (world.recovery.hasOutdoorRespawn(spawn.guid) && restoreLoanCorpse(map_, *spawn))
                 return;
-            if (!world.awaitingRespawn(spawn.guid) && world.calendar.creatureInEvents(spawn.guid)
+            if (!world.deadCreatures.awaitingRespawn(spawn.guid) && world.calendar.creatureInEvents(spawn.guid)
                 && world.dungeons.groupSpawnAllowed(map_, 0, spawn.guid) && world.upInPool(PoolMember.Kind.creature, spawn.guid))
                 if (auto creature = world.makeCreature(spawn))
                     map_.addObject(creature);

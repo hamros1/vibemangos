@@ -1,7 +1,7 @@
 /**
  * The creatures that died on this node (`WorldContext.deadCreatures`): the death and when each comes back
  * (`respawnAt`), a dead creature's corpse and loot (and a pickpocketed one's) kept for a crash and given back, and the
- * corpse removed in its time.
+ * corpse removed in its time; and the respawns that come due each update, by spawn, by pool, and Molten Core's trash.
  */
 module dmangos.world.creaturedeath;
 
@@ -16,6 +16,8 @@ import dmangos.world.database : DungeonFightCheckpoint, InstanceChestRecord, Ins
     QuestActorCheckpoint, WorldDatabase;
 import dmangos.world.loot : Loot, LootItem;
 import dmangos.world.map : Map, MapObject;
+import dmangos.world.objects : HighGuid, makeGuid;
+import dmangos.world.worlddata : PoolMember;
 import dmangos.world.context : WorldContext;
 
 /// See the module documentation.
@@ -309,6 +311,153 @@ final class DeadCreatures
             const next = creature.respawnAt ? max(world.unixTime, creature.respawnAt) : world.unixTime + creature.spawn.respawnSeconds;
             respawnAt[creature.spawn.guid] = next;
             world.database.saveCreatureRespawn(creature.spawn.guid, respawnAt[creature.spawn.guid]);
+        }
+    }
+
+    /// Whether a spawn is dead and waiting to come back.
+    bool awaitingRespawn(uint spawnGuid)
+    {
+        if (world.creaturePools.manages(spawnGuid))
+            return world.creaturePools.waiting(spawnGuid);
+        if (auto at = spawnGuid in world.deadCreatures.respawnAt)
+            return *at > world.unixTime;
+        return false;
+    }
+
+    /**
+     * Respawning the dead (`DEAD`): once a second, the creatures whose time has come are
+     * made anew at their spawn point, on maps whose cell they spawn in is loaded (elsewhere they come
+     * when it loads).
+     */
+    void respawnDue(MonoTime now)
+    {
+        import core.time : seconds;
+
+        if (now - world.deadCreatures.lastRespawnCheck < 1.seconds || !world.canWrite())
+            return;
+        world.deadCreatures.lastRespawnCheck = now;
+        world.objectRespawns.gameObjectsDue();
+        const time = world.unixTime;
+        respawnCreaturePools(time);
+        respawnMoltenCoreTrash(time);
+        uint[] due;
+        foreach (guid, at; world.deadCreatures.respawnAt)
+            if (at <= time && !world.loans.creatureOnLoan(guid))
+                due ~= guid;
+        if (due.length == 0)
+            return;
+        world.indexSpawns();
+        foreach (guid; due)
+        {
+            const index = guid in world.spawnIndex;
+            const spawn = index is null ? null : &world.data.creatureSpawns[*index];
+            const home = spawn is null ? ulong.max : cellKeyAt(spawn.x, spawn.y);
+            if (world.ownsCell !is null && (spawn is null || !world.ownsCell(spawn.map, home)))
+            {
+                world.deadCreatures.respawnAt.remove(guid);
+                continue;
+            }
+            auto there = spawn is null ? null : world.existingMap(spawn.map);
+            if (there !is null)
+                if (auto corpse = there.creatureAt(world.loans.loanGuid(spawn)))
+                    if (!corpse.alive)
+                        continue;
+            world.deadCreatures.respawnAt.remove(guid);
+            if (world.deadCreatures.outdoorCorpses.remove(guid))
+                world.database.deleteInstanceCorpse(0, guid);
+            world.database.saveCreatureRespawn(guid, 0);
+            if (spawn is null)
+                continue;
+            if (!world.rerolledBack(PoolMember.Kind.creature, guid, (uint member) {
+                    if (const i = member in world.spawnIndex)
+                    {
+                        world.deadCreatures.respawnAt[member] = time + world.data.creatureSpawns[*i].respawnSeconds;
+                        world.database.saveCreatureRespawn(member, world.deadCreatures.respawnAt[member]);
+                    }
+                }))
+                continue;
+            if (there is null || !there.cellLoaded(home) || !world.dungeons.groupSpawnAllowed(there, 0, spawn.guid))
+                continue;
+            if (auto creature = world.makeCreature(spawn))
+            {
+                there.addObject(creature);
+                world.links.linkedRespawn(there, creature);
+            }
+        }
+    }
+
+    private void respawnMoltenCoreTrash(long now)
+    {
+        foreach (id, map; world.dungeons.instanceMaps)
+            if (auto state = id in world.dungeons.instances)
+                foreach (guid; state.trashRespawns.keys)
+                {
+                    const readyAt = guid in state.trashRespawns;
+                    if (readyAt is null || *readyAt > now)
+                        continue;
+                    const spawn = world.creatureSpawnOf(guid);
+                    if (spawn is null || world.cantSpawnWhileBossDead(*spawn, state))
+                    {
+                        state.trashRespawns.remove(guid);
+                        world.database.saveInstanceRespawn(false, guid, id, state.resetAt ? state.resetAt : now + 86_400);
+                        continue;
+                    }
+                    const at = cellKeyAt(spawn.x, spawn.y);
+                    if (map.cellLoaded(at))
+                    {
+                        auto corpse = map.creatureAt(makeGuid(HighGuid.unit, spawn.entry, guid));
+                        world.respawnInCopy(map, spawn, corpse is null || corpse.alive ? null : corpse);
+                    }
+                    else
+                    {
+                        state.trashRespawns.remove(guid);
+                        state.dead.remove(guid);
+                        world.database.deleteInstanceRespawn(guid, id);
+                    }
+                }
+    }
+
+    /// Only the selected placement's owner may roll it. Once a placement is ready, its owner loads it once.
+    private void respawnCreaturePools(long time)
+    {
+        import std.random : uniform;
+
+        if (!world.creaturePools.refresh())
+            return;
+        foreach (pool, state; world.creaturePools.states())
+        {
+            if (state.due > time || !world.creaturePools.contains(pool, state.spawn) || world.loans.creatureOnLoan(state.spawn))
+                continue;
+            const spawn = world.creatureSpawnOf(state.spawn);
+            if (spawn is null)
+                continue;
+            const home = cellKeyAt(spawn.x, spawn.y);
+            if (world.ownsCell !is null && !world.ownsCell(spawn.map, home))
+                continue;
+            auto there = world.existingMap(spawn.map);
+            if (there !is null && there.creatureAt(world.loans.loanGuid(spawn)) !is null)
+                continue; // a corpse is still waiting for loot or the live creature is already here
+            if (state.due)
+            {
+                if (world.deadCreatures.outdoorCorpses.remove(state.spawn))
+                    world.database.deleteInstanceCorpse(0, state.spawn);
+                const next = world.creatureSpawnOf(world.creaturePools.roll(pool, state.spawn, world.spawnRandom));
+                if (next is null)
+                    continue;
+                long due;
+                if (next.guid != state.spawn)
+                    due = time + (next.respawnSecondsMax > next.respawnSeconds
+                        ? uniform!"[]"(next.respawnSeconds, next.respawnSecondsMax, world.spawnRandom) : next.respawnSeconds);
+                if (!world.creaturePools.change(pool, state.revision, next.guid, due) || due)
+                    continue;
+            }
+            if (there !is null && there.cellLoaded(home) && world.calendar.creatureInEvents(spawn.guid)
+                && world.dungeons.groupSpawnAllowed(there, 0, spawn.guid))
+                if (auto creature = world.makeCreature(spawn))
+                {
+                    there.addObject(creature);
+                    world.links.linkedRespawn(there, creature);
+                }
         }
     }
 }

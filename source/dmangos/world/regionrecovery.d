@@ -749,7 +749,7 @@ final class RegionRecoverer
             const openable = outdoorOpenableActor(actor);
             const nativeFight = !actor.player && highGuidOf(actor.actor) == HighGuid.unit && spawn < temporaryCounterStart;
             if (highGuidOf(actor.actor) != HighGuid.gameObject
-                && ((actor.player && actor.savedAt + 300 <= world.unixTime) || world.awaitingRespawn(spawn) || spawn in world.deadCreatures.outdoorCorpses
+                && ((actor.player && actor.savedAt + 300 <= world.unixTime) || world.deadCreatures.awaitingRespawn(spawn) || spawn in world.deadCreatures.outdoorCorpses
                 || (nativeFight && (world.loans.creatureOnLoan(spawn) || !world.calendar.creatureInEvents(spawn)
                     || !world.upInPool(PoolMember.Kind.creature, spawn)))))
             {
@@ -793,7 +793,7 @@ final class RegionRecoverer
         import dmangos.world.objects : counterOf;
 
         const spawn = counterOf(actor.actor);
-        if (highGuidOf(actor.actor) == HighGuid.gameObject || (!world.awaitingRespawn(spawn) && spawn !in world.deadCreatures.outdoorCorpses))
+        if (highGuidOf(actor.actor) == HighGuid.gameObject || (!world.deadCreatures.awaitingRespawn(spawn) && spawn !in world.deadCreatures.outdoorCorpses))
             return restoreQuestActor(where, actor, false, home => home == actor.home);
         world.database.deleteQuestActor(world.config.realmId, actor.actor);
         return true;

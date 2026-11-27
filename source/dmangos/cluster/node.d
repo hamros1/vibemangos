@@ -3655,7 +3655,7 @@ unittest
         {
             assert(!returned.alive && returned.loot !is null && returned.loot.gold == 25);
             assert(returned.loot.owners[playerGuid]);
-            assert(worlds[home].awaitingRespawn(trainerSpawn), "the same death still owns the spawn");
+            assert(worlds[home].deadCreatures.awaitingRespawn(trainerSpawn), "the same death still owns the spawn");
         }
         else
             assert(returned.alive);

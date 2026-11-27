@@ -118,7 +118,7 @@ unittest
     auto restarted = new WorldContext(w.context.config, w.db, data, w.context.client);
     auto restored = restarted.map(selected.map);
     restored.loadCell(cell);
-    assert(restarted.awaitingRespawn(selected.guid) && restored.creatureAt(guid) is null);
+    assert(restarted.deadCreatures.awaitingRespawn(selected.guid) && restored.creatureAt(guid) is null);
 }
 
 /// The five-second rule after a channel paid at its start: as long as it channels (Tranquility, 10 seconds), five
