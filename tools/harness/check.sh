@@ -58,6 +58,8 @@ stage "engine modules that import a script module"
 if grep -nE 'import dmangos\.scripts\.' $(ls "$REPO"/source/dmangos/world/*.d | grep -vE '/(real[^/]*|[^/]*tests?|testclient|testdata)\.d$'); then
     echo "FAIL: an engine module imports a script module"; kill $servers_pid $unit_pid 2>/dev/null; exit 1
 fi
+stage "encounter summons kept across a crash, or listed as not"
+python3 "$REPO/tools/harness/checkpoint-lint.py" || { echo "FAIL: a summon neither checkpointed nor listed in tools/harness/checkpoint-transient.txt"; kill $servers_pid $unit_pid 2>/dev/null; exit 1; }
 stage "names defined twice in Character"
 python3 "$REPO/tools/harness/mixin-names.py" || { echo "FAIL: a name is defined twice in Character"; kill $servers_pid $unit_pid 2>/dev/null; exit 1; }
 db_start || exit 1

@@ -1,0 +1,27 @@
+# Creatures encounter scripts summon that are not kept across a crash (tools/harness/checkpoint-lint.py):
+# "file: entry: why". Those marked "not reviewed" were so when the lint came: whether each should be kept is
+# the encounter's to decide.
+blackrockspire.d: brs.random: not reviewed
+blackwinglair.d: npcNefarian: not reviewed
+blackwinglair.d: npcVictorNefarius: not reviewed
+gnomeregan.d: t.entry: not reviewed
+naxxramas.d: npcCryptGuard: not reviewed
+naxxramas.d: npcFalloutSlime: not reviewed
+naxxramas.d: npcGrobbulusCloud: not reviewed
+naxxramas.d: npcSpiderling: not reviewed
+naxxramas.d: npcSpore: not reviewed
+naxxramas.d: npcWebWrap: not reviewed
+naxxramas.d: npcZombieChow: not reviewed
+onyxia.d: npcOnyxiaWhelp: not reviewed
+ruinsofahnqiraj.d: npcHatchling: not reviewed
+ruinsofahnqiraj.d: npcLarva: not reviewed
+ruinsofahnqiraj.d: npcManaFiend: not reviewed
+ruinsofahnqiraj.d: npcSandVortex: not reviewed
+ruinsofahnqiraj.d: npcSwarmer: not reviewed
+templeofahnqiraj.d: npcDirtMound: not reviewed
+templeofahnqiraj.d: npcGlobOfViscidus: not reviewed
+templeofahnqiraj.d: npcSkeram: not reviewed
+templeofahnqiraj.d: npcSpawnOfFankriss: not reviewed
+templeofahnqiraj.d: npcVeknissHatchling: not reviewed
+templeofahnqiraj.d: npcYaujBrood: not reviewed
+zulfarrak.d: zf.random: not reviewed
