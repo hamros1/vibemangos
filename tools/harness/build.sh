@@ -20,7 +20,9 @@ servers)
     if [ "$2" = fast ]; then
         # Unoptimized: the optimizer alone takes minutes over the world server's largest module (context.d).
         mkdir -p "$BUILD/fastbin"
-        files=$(find source -name '*.d' ! -path '*/auth/main.d' ! -path '*/extractor/*' ! -path '*/loadgen/main.d')
+        # Sorted, as dub gives them: the order decides how dmd meets an import cycle, and a cycle that compiles in
+        # one order may not in another (a recursive alias), so the fast build must fail where the full one does.
+        files=$(find source -name '*.d' ! -path '*/auth/main.d' ! -path '*/extractor/*' ! -path '*/loadgen/main.d' | sort)
         dmd -release -version=Have_dmangos -Isource -of="$BUILD/fastbin/worldserver" $files thirdparty/build/libdmnav.a \
             -L-lstdc++ > "$U/fast-worldserver.log" 2>&1 || exit 1
         dmd -release -i=dmangos -version=Have_dmangos -Isource -of="$BUILD/fastbin/authserver" \
