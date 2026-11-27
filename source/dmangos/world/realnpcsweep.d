@@ -509,7 +509,9 @@ private final class NpcSweeper
         if (databaseArea)
             heroAt = databaseAt.at;
         const guid = nextGuid++;
-        auto hero = player(guid, takesMana ? 8 : 1, level, heroAt);
+        // An interrupt (Counterspell) at the player: a mage, casting at the caster as it is cast.
+        const interrupts = s.hasEffect(SpellEffect.interruptCast);
+        auto hero = player(guid, takesMana || interrupts ? 8 : 1, level, heroAt);
         auto me = hero.session.inWorld;
         const speedSlack = context.config.movementSpeedSlack;
         scope (exit) context.config.movementSpeedSlack = speedSlack;
@@ -709,6 +711,26 @@ private final class NpcSweeper
             if (auto unit = unitOf(x))
                 displayBefore[x] = unit.fields.get!UNIT_FIELD_DISPLAYID;
 
+        // The player's cast (a Frostbolt, 1.5 s) begins half a second before the interrupt lands: still under way then.
+        enum uint frostbolt = 116;
+        const castMs = (sp.flags & 0x02) ? 0 : castTime(*s, context.client, caster.values.get!UNIT_FIELD_LEVEL);
+        const playerCastAt = interrupts && target == me.player.guid ? max(0, cast(int) castMs - 500) : -1;
+        bool playerCasting;
+        void beginPlayerCast()
+        {
+            import dmangos.world.spellcast : SpellCastResult, SpellTargets, TargetFlags;
+
+            if (!me.player.knowsSpell(frostbolt))
+                me.player.spells ~= frostbolt;
+            SpellTargets at;
+            at.mask = TargetFlags.unit;
+            at.unit = caster.guid;
+            const began = me.castSpell(data.spells.spell(frostbolt), at, false, 0);
+            playerCasting = began == SpellCastResult.ok && me.generic.active;
+        }
+        if (playerCastAt == 0)
+            beginPlayerCast();
+
         // The cast, as its AI casts it.
         const ok = caster.ai.castSpell(s, target, sp.flags);
         map.wake(caster.guid);
@@ -728,8 +750,8 @@ private final class NpcSweeper
         foreach (i; 0 .. 3)
             if (s.effect[i].among(SpellEffect.applyAura, SpellEffect.persistentAreaAura, SpellEffect.applyAreaAuraParty))
                 amplitude = max(amplitude, s.casting.amplitude[i]);
-        const total = ((sp.flags & 0x02) ? 0 : castTime(*s, context.client, caster.values.get!UNIT_FIELD_LEVEL))
-            + 1200 + min(amplitude, 5000) + (amplitude ? 300 : 0);
+        const total = max(((sp.flags & 0x02) ? 0 : castTime(*s, context.client, caster.values.get!UNIT_FIELD_LEVEL))
+            + 1200 + min(amplitude, 5000) + (amplitude ? 300 : 0), playerCastAt >= 0 ? playerCastAt + 2500 : 0);
         bool[Who][3] auraSeen;
         bool[Who][3] flagSeen;
         bool[3] summonSeen, healLogged;
@@ -765,6 +787,8 @@ private final class NpcSweeper
                 me.update(step.msecs);
                 map.update(step.msecs);
                 map.wake(caster.guid);
+                if (playerCastAt > 0 && ms >= playerCastAt && ms - step < playerCastAt)
+                    beginPlayerCast();
             }
             foreach (p; hero.read())
             {
@@ -1034,6 +1058,15 @@ private final class NpcSweeper
             case instantKill:
                 if (unit && !diedSeen.get(x, false))
                     failed = format!"the %s lives"(name);
+                break;
+            case interruptCast: // the player's cast stopped: its Frostbolt never goes off
+                if (x != Who.enemy || !playerCasting)
+                    checked = false;
+                else if (spellsGone.get(frostbolt, false))
+                {
+                    failed = "the player's cast was not interrupted";
+                    mayRoll = true;
+                }
                 break;
             case knockBack: // the player is thrown (a creature is moved by the server, not told)
                 if (x != Who.enemy || !unit)
