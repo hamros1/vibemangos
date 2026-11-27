@@ -1,14 +1,24 @@
 /**
- * The client's chat channel requests (join, leave, list, moderate), mixed into
- * `dmangos.world.character.Character`. Each finds the channel in the
+ * The client's chat channel requests (join, leave, list, moderate). Each finds the channel in the
  * player's command to the channels, wherever they are kept
  * (`dmangos.world.channelservice`); `dmangos.world.channel` does the rest.
  */
 module dmangos.world.channelhandlers;
 
 /// See the module documentation.
-mixin template ChannelHandlers()
+final class Channels
 {
+    import dmangos.world.character : Character, Handles;
+    import dmangos.world.session : WorldState;
+
+    private Character me;
+
+    ///
+    this(Character me)
+    {
+        this.me = me;
+    }
+
     import std.algorithm.searching : canFind;
     import std.uni : sicmp;
     import dmangos.auth.accounts : AccountLevel;
@@ -18,7 +28,7 @@ mixin template ChannelHandlers()
     import dmangos.world.opcodes;
     import dmangos.world.packets;
 
-private:
+package:
     /// Checks a channel name and password: names are cut at 128 characters, passwords are not.
     bool checkChannelName(ref string channel, string password)
     {
@@ -26,13 +36,13 @@ private:
             channel = channel[0 .. 128];
         if (password.length > 128)
         {
-            deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.wrongPassword, channel));
+            me.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.wrongPassword, channel));
             return false;
         }
         // Chat links and colours ('|') are for game masters.
-        if (!isStaff && channel.canFind('|'))
+        if (!me.isStaff && channel.canFind('|'))
         {
-            deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.invalidName, channel));
+            me.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.invalidName, channel));
             return false;
         }
         return true;
@@ -41,7 +51,7 @@ private:
     /// Runs `op` on `channel` where the channels are (`ChannelService`).
     void channelCommand(ChannelOp op, string channel, string arg = null)
     {
-        context.channelCommand(this, op, channel, arg);
+        me.context.channelCommand(me, op, channel, arg);
     }
 
     @Handles(Opcode.CMSG_JOIN_CHANNEL, WorldState.inWorld)
@@ -51,8 +61,8 @@ private:
         if (name.length == 0 || !checkChannelName(name, request.password))
             return;
         // The GM client channel (`gm_client_channel`): only accounts with permissions may join it.
-        const gmChannel = context.config.gmClientChannel;
-        if (gmChannel.length && sicmp(gmChannel, name) == 0 && !isStaff)
+        const gmChannel = me.context.config.gmClientChannel;
+        if (gmChannel.length && sicmp(gmChannel, name) == 0 && !me.isStaff)
             return;
         channelCommand(ChannelOp.join, name, request.password);
     }

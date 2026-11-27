@@ -96,7 +96,7 @@ private:
             saveQuests();
             reputations.saveReputation();
             saveHonor();
-            saveEnchantmentTimes();
+            enchanting.saveEnchantmentTimes();
             saveItemDurations();
         }
         // A fenced simulation can be replaced behind a gateway. Its queue and channel state
@@ -131,7 +131,7 @@ private:
         leaveGroupsOnLogout(loggingOut);
         if (authoritative)
             context.channelCommand(this, ChannelOp.leaveAll, null);
-        announceToFriends(false);
+        contacts.announceToFriends(false);
         guildLogout();
         auto group = context.groups.of(player.guid);
         context.leaveWorld(this, leaving);
@@ -578,11 +578,11 @@ private:
         readSaved(() => loadAuras());
         readSaved(() => loadHonor());
         readSaved(() => loadBattleground());
-        readSaved(() => loadEnchantmentTimers());
+        readSaved(() => enchanting.loadEnchantmentTimers());
         readSaved(() => loadItemDurations(0));
         readSaved(() => loadCooldowns());
         readSaved(() => talents.loadTalentReset());
-        readSaved(() => loadSocial());
+        readSaved(() => contacts.loadSocial());
         refreshGuildFields();
         talents.applyPassiveSpells();
         readFlightHandoff(r);
@@ -906,7 +906,7 @@ private:
         updateMirrorTimers(elapsed);
         if (player is null)
             return;
-        updateEnchantments(elapsed);
+        enchanting.updateEnchantments(elapsed);
         updateItemDurations(elapsed);
         updateAutoRepeat(elapsed);
         updateAreaAuras(elapsed);
@@ -920,7 +920,7 @@ private:
         updateTimedQuests();
         refreshQuestObjects();
         updateRaidReset();
-        updateHomebindTimer(cast(int) elapsed.total!"msecs");
+        homebind.updateHomebindTimer(cast(int) elapsed.total!"msecs");
         dueling.updateDuel();
         updatePvPTimers(cast(int) elapsed.total!"msecs");
         updateDeath(elapsed);

@@ -370,7 +370,7 @@ mixin template GameObjectHandlers()
      * or the lock type the effect opens and enough of its skill (the effect's points at the skill's rank). Gives the
      * skill and the values the skill-up needs.
      */
-    SpellCastResult canOpenLock(const(SpellInfo)* spell, size_t i, uint lockId, uint castItem, out uint skillId,
+    package SpellCastResult canOpenLock(const(SpellInfo)* spell, size_t i, uint lockId, uint castItem, out uint skillId,
         out int required, out int skillValue)
     {
         import dmangos.world.spellcast : effectValue;
@@ -664,7 +664,7 @@ mixin template GameObjectHandlers()
      * nearer the skill is to the lock's (with the grey, green and yellow levels
      * 100, 50 and 25 above it).
      */
-    void updateGatherSkill(uint skill, uint value, int redLevel, int multiplier = 1)
+    package void updateGatherSkill(uint skill, uint value, int redLevel, int multiplier = 1)
     {
         enum uint skillSkinning = 393;
         if (skill != skillHerbalism && skill != skillLockpicking && skill != skillMining && skill != skillSkinning)

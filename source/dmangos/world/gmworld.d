@@ -850,7 +850,7 @@ bool handleInvisibleCommand(Character gm)
     const on = !gm.player.gmInvisible;
     gm.player.gmInvisible = on;
     gm.invincible = on;
-    gm.announceToFriends(!on);
+    gm.contacts.announceToFriends(!on);
     gm.map.refreshVisibility(gm);
     // Two spaces before ON or OFF, as players have always seen it.
     gm.greenSystemMessage(format!("Invisibility and Invincibility are now  %s. You may have to leave and re-enter "

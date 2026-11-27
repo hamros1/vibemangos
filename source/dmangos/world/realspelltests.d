@@ -1185,12 +1185,12 @@ unittest
 
     group.members[1].subGroup = 0;
     owner.context.groups.mirror(group);
-    ally.enchantItem(weapon.fullGuid, flametongue, true, 15);
+    ally.enchanting.enchantItem(weapon.fullGuid, flametongue, true, 15);
     source.now += 5.seconds;
     owner.now += 5.seconds;
     caster.updateTotemEnchants();
     assert(pulses == 2 && weapon.enchantment(EnchantmentSlot.temporary) == flametongue);
-    ally.setEnchantment(weapon, EnchantmentSlot.temporary, 0, 0);
+    ally.enchanting.setEnchantment(weapon, EnchantmentSlot.temporary, 0, 0);
 
     source.now += 5.seconds;
     owner.now += 5.seconds;
@@ -1199,10 +1199,10 @@ unittest
     ally.player.movement.position.x += 80; // The sender still sees the old position.
     source.now += 5.seconds;
     owner.now += 5.seconds;
-    ally.updateEnchantments(5.seconds);
+    ally.enchanting.updateEnchantments(5.seconds);
     caster.updateTotemEnchants();
     assert(pulses == 4);
-    ally.updateEnchantments(5.seconds);
+    ally.enchanting.updateEnchantments(5.seconds);
     assert(!weapon.enchantment(EnchantmentSlot.temporary), "an out-of-range pulse cannot renew Windfury");
 }
 

@@ -192,7 +192,7 @@ private:
         reputations.saveReputation();
         saveHonor();
         saveBattleground();
-        saveEnchantmentTimes();
+        enchanting.saveEnchantmentTimes();
         saveItemDurations();
     }
 

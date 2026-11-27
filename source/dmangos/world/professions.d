@@ -1,6 +1,5 @@
 /**
- * What professions need beyond reagents, and the professions that work on an item, mixed into
- * `dmangos.world.character.Character`, as CMaNGOS's `Spell::CheckItems`, `Spell::CheckCast`,
+ * What professions need beyond reagents, and the professions that work on an item, as CMaNGOS's `Spell::CheckItems`, `Spell::CheckCast`,
  * `Spell::EffectDisEnchant` and `Spell::EffectOpenLock` do it:
  *
  * $(UL
@@ -116,16 +115,27 @@ unittest
     }
     observe(1, 801, at.z);
     observe(2, 800, at.z + 20);
-    assert(caster.checkSpellFocus(&spell) == SpellCastResult.requiresSpellFocus);
+    assert(caster.professions.checkSpellFocus(&spell) == SpellCastResult.requiresSpellFocus);
     const near = observe(3, 800, at.z + 5);
-    assert(caster.checkSpellFocus(&spell) == SpellCastResult.ok);
+    assert(caster.professions.checkSpellFocus(&spell) == SpellCastResult.ok);
     map.replicaRemoved(2, near);
-    assert(caster.checkSpellFocus(&spell) == SpellCastResult.requiresSpellFocus);
+    assert(caster.professions.checkSpellFocus(&spell) == SpellCastResult.requiresSpellFocus);
 }
 
 /// See the module documentation.
-mixin template ProfessionHandlers()
+final class Professions
 {
+    import dmangos.world.character : Character, Handles;
+    import dmangos.world.session : WorldState;
+
+    private Character me;
+
+    ///
+    this(Character me)
+    {
+        this.me = me;
+    }
+
     import std.random : uniform;
     import dmangos.world.gameobject : GameObject, GameObjectTemplate, GameObjectType;
     import dmangos.world.inventory : Item, ItemState, itemDynFlagUnlocked;
@@ -143,16 +153,16 @@ mixin template ProfessionHandlers()
         const focus = spell.casting.requiresSpellFocus;
         if (!focus || spell.isPassive)
             return SpellCastResult.ok;
-        const at = player.position, reach = player.values.get!UNIT_FIELD_COMBATREACH;
+        const at = me.player.position, reach = me.player.values.get!UNIT_FIELD_COMBATREACH;
         enum float search = 100; // the farthest focus distance in the data
-        foreach (object; map.objectsNear(at, search))
+        foreach (object; me.map.objectsNear(at, search))
         {
             const(GameObjectTemplate)* template_;
             if (auto go = cast(GameObject) object)
                 template_ = go.template_;
             else if (auto copy = cast(Replica) object)
                 if (copy.fields.type == TypeId.gameObject)
-                    template_ = copy.fields.get!OBJECT_FIELD_ENTRY in context.data.gameObjectTemplates;
+                    template_ = copy.fields.get!OBJECT_FIELD_ENTRY in me.context.data.gameObjectTemplates;
             if (template_ is null)
                 continue;
             const p = object.position;
@@ -167,7 +177,7 @@ mixin template ProfessionHandlers()
     package SpellCastResult checkTools(const(SpellInfo)* spell)
     {
         foreach (tool; spell.casting.totems)
-            if (tool && player.inventory.count(tool) == 0)
+            if (tool && me.player.inventory.count(tool) == 0)
                 return SpellCastResult.totems;
         return SpellCastResult.ok;
     }
@@ -185,7 +195,7 @@ mixin template ProfessionHandlers()
             case SpellEffect.disenchant:
             {
                 // The caster's own (not one in the trade window), and one that disenchants.
-                const item = trading.itemByGuid(targets.item);
+                const item = me.trading.itemByGuid(targets.item);
                 if (item is null || !item.proto.details.disenchantId)
                     return SpellCastResult.cantBeDisenchanted;
                 break;
@@ -194,7 +204,7 @@ mixin template ProfessionHandlers()
             {
                 if (targets.gameObject || !targets.item)
                     break; // a game object's: `checkGameObjectTarget`
-                const item = trading.itemByGuid(targets.item);
+                const item = me.trading.itemByGuid(targets.item);
                 if (item is null)
                     return SpellCastResult.itemGone;
                 const lockId = item.proto.details.lockId;
@@ -202,11 +212,11 @@ mixin template ProfessionHandlers()
                     return SpellCastResult.alreadyOpen;
                 uint skillId;
                 int required, value;
-                const result = canOpenLock(spell, i, lockId, castItem, skillId, required, value);
+                const result = me.canOpenLock(spell, i, lockId, castItem, skillId, required, value);
                 if (result != SpellCastResult.ok)
                     return result;
                 // An orange lock may resist as the cast completes (lockpicking may fail even at the most skill).
-                if (!start && skillId && !castItem && lockResists(required, uniform!"[]"(value - 25, value + 37, map.random)))
+                if (!start && skillId && !castItem && lockResists(required, uniform!"[]"(value - 25, value + 37, me.map.random)))
                     return SpellCastResult.tryAgain;
                 break;
             }
@@ -219,11 +229,11 @@ mixin template ProfessionHandlers()
     /// `SPELL_EFFECT_DISENCHANT` on the player's item `itemGuid`: see the module documentation.
     package void disenchantItem(const(SpellInfo)* spell, ulong itemGuid)
     {
-        auto item = trading.itemByGuid(itemGuid);
+        auto item = me.trading.itemByGuid(itemGuid);
         if (item is null || !item.proto.details.disenchantId)
             return;
-        updateCraftSkill(spell.id);
-        showItemLoot(item, true);
+        me.enchanting.updateCraftSkill(spell.id);
+        me.showItemLoot(item, true);
     }
 
     /**
@@ -233,19 +243,19 @@ mixin template ProfessionHandlers()
      */
     package void openItemLock(const(SpellInfo)* spell, size_t i, ulong itemGuid, uint castItem)
     {
-        auto item = trading.itemByGuid(itemGuid);
+        auto item = me.trading.itemByGuid(itemGuid);
         if (item is null)
             return;
         uint skillId;
         int required, value;
-        if (canOpenLock(spell, i, item.proto.details.lockId, castItem, skillId, required, value) != SpellCastResult.ok)
+        if (me.canOpenLock(spell, i, item.proto.details.lockId, castItem, skillId, required, value) != SpellCastResult.ok)
             return;
-        if (skillId && !castItem && itemGuid !in itemLoots)
-            if (const pure_ = player.skillValue(skillId)[0])
-                updateGatherSkill(skillId, pure_, required);
+        if (skillId && !castItem && itemGuid !in me.itemLoots)
+            if (const pure_ = me.player.skillValue(skillId)[0])
+                me.updateGatherSkill(skillId, pure_, required);
         item.values.set!ITEM_FIELD_FLAGS(item.values[ITEM_FIELD_FLAGS] | itemDynFlagUnlocked);
-        player.inventory.setState(item, ItemState.changed);
-        flushInventory();
-        showItemLoot(item);
+        me.player.inventory.setState(item, ItemState.changed);
+        me.flushInventory();
+        me.showItemLoot(item);
     }
 }

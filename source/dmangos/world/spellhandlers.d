@@ -2545,11 +2545,11 @@ private:
         if (goResult != SpellCastResult.ok)
             return goResult;
         // An item: disenchanted, its lock picked (`dmangos.world.professions`).
-        const itemResult = checkItemTarget(spell, targets, itemEntry, start);
+        const itemResult = professions.checkItemTarget(spell, targets, itemEntry, start);
         if (itemResult != SpellCastResult.ok)
             return itemResult;
         // Its spell focus near (an anvil, a forge, a fire), then reagents, then tools in the bags.
-        const focusResult = checkSpellFocus(spell);
+        const focusResult = professions.checkSpellFocus(spell);
         if (focusResult != SpellCastResult.ok)
             return focusResult;
         if (!triggered && itemEntry == 0)
@@ -2572,7 +2572,7 @@ private:
         }
         if (!triggered)
         {
-            const toolResult = checkTools(spell);
+            const toolResult = professions.checkTools(spell);
             if (toolResult != SpellCastResult.ok)
                 return toolResult;
         }
@@ -6751,7 +6751,7 @@ unittest
         context.data.enchantmentEffects[poison] = [EnchantmentEffect(EnchantmentType.combatSpell, 100, smite),
             EnchantmentEffect.init, EnchantmentEffect.init];
         auto sword = me.inventory.equipped(equipmentSlotMainhand);
-        anduin.session.inWorld.enchantItem(sword.fullGuid, poison, true, 1800);
+        anduin.session.inWorld.enchanting.enchantItem(sword.fullGuid, poison, true, 1800);
         anduin.read();
         const poisoned = keeper.values.get!UNIT_FIELD_HEALTH;
         anduin.session.inWorld.castItemCombatSpells(keeper, AttackType.mainHand);

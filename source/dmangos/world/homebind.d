@@ -36,8 +36,19 @@ unittest
 }
 
 /// See the module documentation.
-mixin template HomebindTimer()
+final class Homebind
 {
+    import dmangos.world.character : Character, Handles;
+    import dmangos.world.session : WorldState;
+
+    private Character me;
+
+    ///
+    this(Character me)
+    {
+        this.me = me;
+    }
+
     import dmangos.world.homebind : homebindDelayMs, raidGroupOnly;
     import dmangos.world.movement : Position;
     import dmangos.world.opcodes : Opcode;
@@ -50,8 +61,8 @@ mixin template HomebindTimer()
     /// In a dungeon or raid copy (not a battleground).
     private bool inDungeonCopy()
     {
-        const entry = context.client.maps.lookup(player.data.map);
-        return instanceId != 0 && entry !is null && entry.isDungeon;
+        const entry = me.context.client.maps.lookup(me.player.data.map);
+        return me.instanceId != 0 && entry !is null && entry.isDungeon;
     }
 
     /**
@@ -60,11 +71,11 @@ mixin template HomebindTimer()
      */
     package void instanceValidityOnGroupChange()
     {
-        if (player is null || !inDungeonCopy() || player.hasFlag(PlayerFlags.gm))
+        if (me.player is null || !inDungeonCopy() || me.player.hasFlag(PlayerFlags.gm))
             return;
-        if (context.groups.of(player.guid) is null)
+        if (me.context.groups.of(me.player.guid) is null)
             instanceValid = false;
-        else if (context.dungeons.boundInstance(player.guid, player.data.map) == instanceId)
+        else if (me.context.dungeons.boundInstance(me.player.guid, me.player.data.map) == me.instanceId)
             instanceValid = true;
     }
 
@@ -78,12 +89,12 @@ mixin template HomebindTimer()
     /// Each tick (`Player::UpdateHomebindTime`): the countdown started, run, or cancelled.
     package void updateHomebindTimer(int ms)
     {
-        if (player is null || teleporting != Teleport.none)
+        if (me.player is null || me.teleporting != Teleport.none)
             return;
-        if (instanceValid || player.hasFlag(PlayerFlags.gm))
+        if (instanceValid || me.player.hasFlag(PlayerFlags.gm))
         {
             if (homebindTimer)
-                deliver(Opcode.SMSG_RAID_GROUP_ONLY, raidGroupOnly(0)); // the countdown hidden
+                me.deliver(Opcode.SMSG_RAID_GROUP_ONLY, raidGroupOnly(0)); // the countdown hidden
             homebindTimer = 0;
             return;
         }
@@ -94,13 +105,13 @@ mixin template HomebindTimer()
             {
                 homebindTimer = 0;
                 instanceValid = true;
-                const home = player.data.homeBind;
-                teleportTo(home.map, Position(home.x, home.y, home.z, player.position.orientation));
+                const home = me.player.data.homeBind;
+                me.teleportTo(home.map, Position(home.x, home.y, home.z, me.player.position.orientation));
             }
             return;
         }
         homebindTimer = homebindDelayMs;
-        deliver(Opcode.SMSG_RAID_GROUP_ONLY, raidGroupOnly(homebindTimer));
+        me.deliver(Opcode.SMSG_RAID_GROUP_ONLY, raidGroupOnly(homebindTimer));
     }
 }
 

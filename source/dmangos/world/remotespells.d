@@ -1890,7 +1890,7 @@ final class RemoteSpells
         const reach = radius(*spell, pulse.weaponEffect, world.client);
         const at = totem.position, where = member.player.position;
         if ((at.x - where.x) ^^ 2 + (at.y - where.y) ^^ 2 + (at.z - where.z) ^^ 2 <= reach * reach)
-            member.enchantWeaponFromTotem(spell.miscValue[pulse.weaponEffect], duration);
+            member.enchanting.enchantWeaponFromTotem(spell.miscValue[pulse.weaponEffect], duration);
     }
 
     void partyHealArrived(ushort peer, const ref PartyHeal message)

@@ -38,8 +38,19 @@ unittest
 }
 
 /// See the module documentation.
-mixin template EnchantingHandlers()
+final class Enchanting
 {
+    import dmangos.world.character : Character, Handles;
+    import dmangos.world.session : WorldState;
+
+    private Character me;
+
+    ///
+    this(Character me)
+    {
+        this.me = me;
+    }
+
     import core.time : Duration, msecs, seconds;
     import dmangos.bytes : ByteWriter;
     import dmangos.world.enchantments : EnchantmentSlot, enchantmentSlots, fieldsPerSlot;
@@ -58,8 +69,8 @@ mixin template EnchantingHandlers()
      */
     package void enchantItem(ulong itemGuid, uint enchantment, bool temporary, int durationSeconds)
     {
-        auto item = player.inventory.byGuid(itemGuid);
-        if (item is null || enchantment == 0 || enchantment !in context.data.enchantmentEffects)
+        auto item = me.player.inventory.byGuid(itemGuid);
+        if (item is null || enchantment == 0 || enchantment !in me.context.data.enchantmentEffects)
             return;
         if (temporary)
             keepTemporaryEnchantment(item, enchantment, (durationSeconds > 0 ? durationSeconds : 3600) * 1000);
@@ -79,9 +90,9 @@ mixin template EnchantingHandlers()
     {
         import dmangos.world.defines : equipmentSlotMainhand;
 
-        auto weapon = player.inventory.equipped(equipmentSlotMainhand);
+        auto weapon = me.player.inventory.equipped(equipmentSlotMainhand);
         if (weapon is null || weapon.proto is null || weapon.proto.itemClass != 2
-            || !enchantment || enchantment !in context.data.enchantmentEffects)
+            || !enchantment || enchantment !in me.context.data.enchantmentEffects)
             return;
         const previous = weapon.enchantment(EnchantmentSlot.temporary);
         if (previous && (previous != enchantment || enchantmentsLeft.get(weapon.fullGuid, Duration.zero) >= ms.msecs))
@@ -95,10 +106,10 @@ mixin template EnchantingHandlers()
         item.values.set!ITEM_FIELD_ENCHANTMENT(slot * fieldsPerSlot, enchantment);
         item.values.set!ITEM_FIELD_ENCHANTMENT(slot * fieldsPerSlot + 1, durationMs);
         item.values.set!ITEM_FIELD_ENCHANTMENT(slot * fieldsPerSlot + 2, 0u);
-        player.inventory.setState(item, ItemState.changed);
+        me.player.inventory.setState(item, ItemState.changed);
         if (item.isEquipped)
-            player.inventory.equipmentChanged = true;
-        flushInventory();
+            me.player.inventory.equipmentChanged = true;
+        me.flushInventory();
     }
 
     /// `SMSG_ITEM_ENCHANT_TIME_UPDATE`: the time a temporary enchantment has left, in seconds.
@@ -108,15 +119,15 @@ mixin template EnchantingHandlers()
         w.put(item.fullGuid);
         w.put(cast(uint) slot);
         w.put(secondsLeft);
-        w.put(player.guid);
-        deliver(Opcode.SMSG_ITEM_ENCHANT_TIME_UPDATE, w.data);
+        w.put(me.player.guid);
+        me.deliver(Opcode.SMSG_ITEM_ENCHANT_TIME_UPDATE, w.data);
     }
 
     /// At login: the temporary enchantments the items came with, from their saved durations.
     package void loadEnchantmentTimers()
     {
         enchantmentsLeft = null;
-        foreach (item; player.inventory.all())
+        foreach (item; me.player.inventory.all())
         {
             if (item.enchantment(EnchantmentSlot.temporary) == 0)
                 continue;
@@ -139,7 +150,7 @@ mixin template EnchantingHandlers()
             sinceEnchantWrite = Duration.zero;
         foreach (guid; enchantmentsLeft.keys)
         {
-            auto item = player.inventory.byGuid(guid);
+            auto item = me.player.inventory.byGuid(guid);
             if (item is null || item.enchantment(EnchantmentSlot.temporary) == 0)
             {
                 enchantmentsLeft.remove(guid);
@@ -157,36 +168,36 @@ mixin template EnchantingHandlers()
                 writeEnchantmentTime(item, *left);
         }
         if (write)
-            flushInventory();
+            me.flushInventory();
     }
 
     /// Before a save: every temporary enchantment's time left into its item's duration field.
     package void saveEnchantmentTimes()
     {
         foreach (guid, left; enchantmentsLeft)
-            if (auto item = player.inventory.byGuid(guid))
+            if (auto item = me.player.inventory.byGuid(guid))
                 writeEnchantmentTime(item, left);
         if (enchantmentsLeft.length)
-            flushInventory();
+            me.flushInventory();
     }
 
     private void writeEnchantmentTime(Item item, Duration left)
     {
         item.values.set!ITEM_FIELD_ENCHANTMENT(EnchantmentSlot.temporary * fieldsPerSlot + 1,
             cast(uint) left.total!"msecs");
-        player.inventory.setState(item, ItemState.changed);
+        me.player.inventory.setState(item, ItemState.changed);
     }
 
     /// Crafting with `spell` may raise its profession (see the module documentation).
     package void updateCraftSkill(uint spell)
     {
-        foreach (ability; context.client.abilitiesForSpell(spell))
+        foreach (ability; me.context.client.abilitiesForSpell(spell))
             if (ability.skillId)
             {
-                const skill = player.skillValue(ability.skillId);
+                const skill = me.player.skillValue(ability.skillId);
                 if (skill[1] == 0)
                     return; // not known
-                updateSkillPro(ability.skillId, craftSkillChance(skill[0], ability.maxValue, ability.minValue), 1);
+                me.updateSkillPro(ability.skillId, craftSkillChance(skill[0], ability.maxValue, ability.minValue), 1);
                 return;
             }
     }

@@ -446,7 +446,7 @@ private:
         resetMovementCheck();
         startFallAt(player.position.z);
         dismountOnArrival(); // a dungeon without mounts
-        instanceValidityOnArrival(); // out of a dungeon: welcome again (`dmangos.world.homebind`)
+        homebind.instanceValidityOnArrival(); // out of a dungeon: welcome again (`dmangos.world.homebind`)
         petsOnArrival();
         pvpArrived();
         battlegroundArrived();

@@ -158,14 +158,11 @@ A mixin template's members become members of the class. They can use the class's
 and the dispatcher finds their `@Handles` attributes like any others.
 
 A domain that keeps to itself is a class the character owns instead, with the character as `me`:
-`Character.taxi` (taxihandlers.d: flight masters and the flight under way), `mailbox`
-(mailhandlers.d), `auctioneer` (auctionhandlers.d), `reputations` (reputationhandlers.d),
-`talents` (talenthandlers.d: talents and passive spells), `trading` (tradehandlers.d), `dueling`
-(duelhandlers.d). Their
-handlers are routed by naming the fields to the dispatcher (`mixin PacketDispatch!(Handles, "taxi",
-...)`), and what they use of the character reads as `me.player`, `me.context` and the like. Beware
-`this` there: it is the part, not the character (`other is me`, not `other is this`). A new
-handler group is one of these.
+`Character.taxi` (taxihandlers.d: flight masters and the flight under way), `mailbox`, `trading`,
+`dueling`, `talents` and others; `Character`'s `mixin PacketDispatch!(Handles, "taxi", ...)` names
+them all, and that is how their handlers are routed. What they use of the character reads as
+`me.player`, `me.context` and the like. Beware `this` there: it is the part, not the character
+(`other is me`, not `other is this`). A new handler group is one of these.
 
 ## Static data
 

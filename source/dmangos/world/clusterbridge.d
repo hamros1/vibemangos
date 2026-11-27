@@ -787,7 +787,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         const info = FriendInfo(cast(FriendStatus) m.status, m.area, m.level, m.classId);
         foreach (session; context.onlinePlayers)
             if (session.character !is null)
-                session.friendNews(m.guid, m.online, info);
+                session.contacts.friendNews(m.guid, m.online, info);
     }
 
     private uint nextEntryRequest = 1;

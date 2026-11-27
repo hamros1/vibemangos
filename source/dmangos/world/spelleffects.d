@@ -371,7 +371,7 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         if (c.targets.gameObject)
             p.openLock(spell, i, c.targets.gameObject, c.castItemEntry);
         else if (c.targets.item)
-            p.openItemLock(spell, i, c.targets.item, c.castItemEntry);
+            p.professions.openItemLock(spell, i, c.targets.item, c.castItemEntry);
         break;
     case SpellEffect.questComplete: // SPELL_EFFECT_QUEST_COMPLETE: the target player's quest of the misc value (`AreaExploredOrEventHappens`)
     {
@@ -381,7 +381,7 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         break;
     }
     case SpellEffect.disenchant: // SPELL_EFFECT_DISENCHANT
-        p.disenchantItem(spell, c.targets.item);
+        p.professions.disenchantItem(spell, c.targets.item);
         break;
     case SpellEffect.interruptCast: // SPELL_EFFECT_INTERRUPT_CAST: the target's cast ends, and its school is locked out for the interrupt's time
     {
@@ -509,7 +509,7 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         if (p !is null)
         {
             if (p.giveItem(spell.itemType[i], value > 0 ? value : 1, true, true, creator: p.player.guid)) // "You create"
-                p.updateCraftSkill(spell.id); // made: a chance to learn from it
+                p.enchanting.updateCraftSkill(spell.id); // made: a chance to learn from it
         }
         else if (auto other = map.unit(target))
             if (other.kind == UnitKind.player)
@@ -520,7 +520,7 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         break;
     case SpellEffect.enchantItem: // SPELL_EFFECT_ENCHANT_ITEM (at the trade window: the other's item)
         p.trading.enchantTarget(c.targets, cast(uint) spell.miscValue[i], false, 0);
-        p.updateCraftSkill(spell.id);
+        p.enchanting.updateCraftSkill(spell.id);
         break;
     case SpellEffect.enchantItemTemporary: // SPELL_EFFECT_ENCHANT_ITEM_TEMPORARY: a player's item; a creature's poison is nothing
         if (p !is null)

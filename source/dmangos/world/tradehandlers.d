@@ -579,9 +579,9 @@ package:
         import dmangos.world.spellcast : TargetFlags;
 
         if (!(targets.mask & TargetFlags.tradeItem))
-            return me.enchantItem(targets.item, enchantment, temporary, durationSeconds);
+            return me.enchanting.enchantItem(targets.item, enchantment, temporary, durationSeconds);
         if (auto owner = tradePartner())
-            owner.me.enchantItem(targets.item, enchantment, temporary, durationSeconds);
+            owner.me.enchanting.enchantItem(targets.item, enchantment, temporary, durationSeconds);
     }
 
     /// The items leave this player's inventory for `taker`: copies of them (same guids) are returned.

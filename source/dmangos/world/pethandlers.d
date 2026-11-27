@@ -2233,7 +2233,7 @@ mixin template PetHandlers()
         }
         const enchantment = cast(uint) spell.miscValue[effect];
         if (near(player.position))
-            enchantWeaponFromTotem(enchantment, ms);
+            enchanting.enchantWeaponFromTotem(enchantment, ms);
         auto group = context.groups.of(player.guid);
         if (group is null)
             return;
@@ -2245,7 +2245,7 @@ mixin template PetHandlers()
             {
                 if (local.player !is null && local.map is map && local.player.deathState == DeathState.alive
                     && !local.dueling.duelingWith(player.guid) && near(local.player.position))
-                    local.enchantWeaponFromTotem(enchantment, ms);
+                    local.enchanting.enchantWeaponFromTotem(enchantment, ms);
             }
             else if (context.sendTotemWeaponEnchant !is null)
                 if (auto mirror = cast(Replica) map.findObject(member.guid))

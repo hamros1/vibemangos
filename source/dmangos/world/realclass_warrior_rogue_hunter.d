@@ -1855,7 +1855,7 @@ unittest
         auto p = poisoner.session.inWorld;
         if (rank)
             talent(w, poisoner, rank);
-        p.setEnchantment(cast() p.player.inventory.equipped(15), 1, 625, 1_800_000);
+        p.enchanting.setEnchantment(cast() p.player.inventory.equipped(15), 1, 625, 1_800_000);
         const hogger = foe(w, poisoner, 448);
         uint poisoned;
         enum n = 600;

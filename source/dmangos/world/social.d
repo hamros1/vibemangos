@@ -75,8 +75,19 @@ const(ubyte)[] friendStatusPacket(FriendsResult result, ulong guid, const Friend
 }
 
 /// See the module documentation.
-mixin template SocialHandlers()
+final class Contacts
 {
+    import dmangos.world.character : Character, Handles;
+    import dmangos.world.session : WorldState;
+
+    private Character me;
+
+    ///
+    this(Character me)
+    {
+        this.me = me;
+    }
+
     import dmangos.bytes : ByteReader, ByteWriter;
     import dmangos.world.opcodes;
     import dmangos.world.packets : ClientGuid;
@@ -91,8 +102,8 @@ mixin template SocialHandlers()
         import dmangos.world.objects : HighGuid, makeGuid;
 
         social = null;
-        foreach (row; context.database.loadSocial(player.data.guid))
-            social[context.playerGuid(row.other)] |= row.flags; // rows of older servers may split them
+        foreach (row; me.context.database.loadSocial(me.player.data.guid))
+            social[me.context.playerGuid(row.other)] |= row.flags; // rows of older servers may split them
     }
 
     /// Whether this player ignores `guid` (see also `OnlinePlayer.ignores`).
@@ -138,8 +149,8 @@ mixin template SocialHandlers()
         friends.putBytes(friendEntries.data);
         ignored.put(ignoredCount);
         ignored.putBytes(ignoredEntries.data);
-        deliver(Opcode.SMSG_FRIEND_LIST, friends.data);
-        deliver(Opcode.SMSG_IGNORE_LIST, ignored.data);
+        me.deliver(Opcode.SMSG_FRIEND_LIST, friends.data);
+        me.deliver(Opcode.SMSG_IGNORE_LIST, ignored.data);
     }
 
     /// A friend's state, here or on another node; offline if it is not online
@@ -149,20 +160,20 @@ mixin template SocialHandlers()
         import dmangos.world.player : PlayerFlags;
         import dmangos.world.character : Character;
 
-        if (auto other = context.onlinePlayer(guid))
-            if (other.character !is null && (!other.character.gmTagOn || isStaff))
+        if (auto other = me.context.onlinePlayer(guid))
+            if (other.character !is null && (!other.character.gmTagOn || me.isStaff))
             {
                 const c = other.character;
                 const status = c.hasFlag(PlayerFlags.afk) ? FriendStatus.afk
                     : c.hasFlag(PlayerFlags.dnd) ? FriendStatus.dnd : FriendStatus.online;
                 return FriendInfo(status, c.data.zone, c.data.level, c.data.classId);
             }
-        if (auto remote = context.remotePlayer(guid))
+        if (auto remote = me.context.remotePlayer(guid))
         {
             import dmangos.world.context : PresenceFlags;
 
             const e = remote.entry;
-            if ((e.flags & PresenceFlags.gmTag) && !isStaff)
+            if ((e.flags & PresenceFlags.gmTag) && !me.isStaff)
                 return FriendInfo.init;
             const status = (e.flags & PresenceFlags.afk) ? FriendStatus.afk
                 : (e.flags & PresenceFlags.dnd) ? FriendStatus.dnd : FriendStatus.online;
@@ -185,23 +196,23 @@ mixin template SocialHandlers()
         import dmangos.world.names : normalizedName;
 
         const name = normalizedName(reader.readCString());
-        const low = name.length ? context.database.characterGuid(name) : 0;
+        const low = name.length ? me.context.database.characterGuid(name) : 0;
         if (low == 0)
-            return deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.notFound, 0));
-        const guid = context.playerGuid(low);
-        if (guid == player.guid)
-            return deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.self, guid));
+            return me.deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.notFound, 0));
+        const guid = me.context.playerGuid(low);
+        if (guid == me.player.guid)
+            return me.deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.self, guid));
         if (befriends(guid))
-            return deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.already, guid));
-        const info = context.database.nameInfo(low);
-        if (!isStaff && !context.config.allowTwoSideAddFriend && !info.isNull
-            && context.client.teamForRace(info.get.race) != context.client.teamForRace(player.data.race))
-            return deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.enemy, guid));
+            return me.deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.already, guid));
+        const info = me.context.database.nameInfo(low);
+        if (!me.isStaff && !me.context.config.allowTwoSideAddFriend && !info.isNull
+            && me.context.client.teamForRace(info.get.race) != me.context.client.teamForRace(me.player.data.race))
+            return me.deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.enemy, guid));
         if (countWith(SocialFlag.friend) >= friendLimit)
-            return deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.listFull, guid));
+            return me.deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.listFull, guid));
         setSocial(guid, cast(ubyte)(social.get(guid, 0) | SocialFlag.friend));
         const state = friendInfo(guid);
-        deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(state.status != FriendStatus.offline
+        me.deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(state.status != FriendStatus.offline
             ? FriendsResult.addedOnline : FriendsResult.addedOffline, guid, state));
     }
 
@@ -211,7 +222,7 @@ mixin template SocialHandlers()
         if (!befriends(request.guid))
             return;
         setSocial(request.guid, cast(ubyte)(social[request.guid] & ~SocialFlag.friend));
-        deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.removed, request.guid));
+        me.deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.removed, request.guid));
     }
 
     /// The player ignores someone: by name, not itself, not twice.
@@ -222,18 +233,18 @@ mixin template SocialHandlers()
         import dmangos.world.names : normalizedName;
 
         const name = normalizedName(reader.readCString());
-        const low = name.length ? context.database.characterGuid(name) : 0;
+        const low = name.length ? me.context.database.characterGuid(name) : 0;
         if (low == 0)
-            return deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.ignoreNotFound, 0));
-        const guid = context.playerGuid(low);
-        if (guid == player.guid)
-            return deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.ignoreSelf, guid));
+            return me.deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.ignoreNotFound, 0));
+        const guid = me.context.playerGuid(low);
+        if (guid == me.player.guid)
+            return me.deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.ignoreSelf, guid));
         if (ignores(guid))
-            return deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.ignoreAlready, guid));
+            return me.deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.ignoreAlready, guid));
         if (countWith(SocialFlag.ignored) >= ignoreLimit)
-            return deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.ignoreFull, guid));
+            return me.deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.ignoreFull, guid));
         setSocial(guid, cast(ubyte)(social.get(guid, 0) | SocialFlag.ignored));
-        deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.ignoreAdded, guid));
+        me.deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.ignoreAdded, guid));
     }
 
     @Handles(Opcode.CMSG_DEL_IGNORE, WorldState.inWorld)
@@ -242,7 +253,7 @@ mixin template SocialHandlers()
         if (!ignores(request.guid))
             return;
         setSocial(request.guid, cast(ubyte)(social[request.guid] & ~SocialFlag.ignored));
-        deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.ignoreRemoved, request.guid));
+        me.deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.ignoreRemoved, request.guid));
     }
 
     /**
@@ -253,14 +264,14 @@ mixin template SocialHandlers()
     {
         import dmangos.world.character : Character;
 
-        if (player.gmTagOn)
+        if (me.player.gmTagOn)
             return;
         const info = online ? friendInfoOfSelf() : FriendInfo.init;
-        foreach (session; context.onlinePlayers)
-            if (session !is this && session.character !is null)
-                session.friendNews(player.guid, online, info);
-        if (context.announceFriendElsewhere !is null)
-            context.announceFriendElsewhere(player.guid, online, info.status, info.area, info.level, info.classId);
+        foreach (session; me.context.onlinePlayers)
+            if (session !is me && session.character !is null)
+                session.contacts.friendNews(me.player.guid, online, info);
+        if (me.context.announceFriendElsewhere !is null)
+            me.context.announceFriendElsewhere(me.player.guid, online, info.status, info.area, info.level, info.classId);
     }
 
     /// A player came online or went offline: told if it is a friend of this one.
@@ -268,7 +279,7 @@ mixin template SocialHandlers()
     {
         if (!befriends(guid))
             return;
-        deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(online ? FriendsResult.online : FriendsResult.offline,
+        me.deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(online ? FriendsResult.online : FriendsResult.offline,
             guid, info));
     }
 
@@ -276,9 +287,9 @@ mixin template SocialHandlers()
     {
         import dmangos.world.player : PlayerFlags;
 
-        const status = player.hasFlag(PlayerFlags.afk) ? FriendStatus.afk
-            : player.hasFlag(PlayerFlags.dnd) ? FriendStatus.dnd : FriendStatus.online;
-        return FriendInfo(status, player.data.zone, player.data.level, player.data.classId);
+        const status = me.player.hasFlag(PlayerFlags.afk) ? FriendStatus.afk
+            : me.player.hasFlag(PlayerFlags.dnd) ? FriendStatus.dnd : FriendStatus.online;
+        return FriendInfo(status, me.player.data.zone, me.player.data.level, me.player.data.classId);
     }
 
     private uint countWith(SocialFlag flag)
@@ -295,7 +306,7 @@ mixin template SocialHandlers()
             social[guid] = flags;
         else
             social.remove(guid);
-        context.database.saveSocial(player.data.guid, cast(uint) guid, flags);
+        me.context.database.saveSocial(me.player.data.guid, cast(uint) guid, flags);
     }
 }
 

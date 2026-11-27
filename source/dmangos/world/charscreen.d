@@ -345,7 +345,7 @@ mixin template CharacterLogin()
         restoreGmSession(checkpoints); // before the player is shown: the GM flag and `.invisible` are seen
         readSaved(() => loadCooldowns()); // before the spellbook is sent: it shows them
         readSaved(() => talents.loadTalentReset());
-        readSaved(() => loadSocial());
+        readSaved(() => contacts.loadSocial());
         saveTimer = IntervalTimer(sessionSaveInterval());
         regenTimer.reset();
         enteredWorld = context.clock();
@@ -369,7 +369,7 @@ mixin template CharacterLogin()
         deathOnLogin();
         readSaved(() => loadAuras(recovered));
         readSaved(() => loadHonor());
-        readSaved(() => loadEnchantmentTimers());
+        readSaved(() => enchanting.loadEnchantmentTimers());
         // Timed items that run in real time lose the time logged out.
         readSaved(() => loadItemDurations(player.data.logoutTime > 0 ? context.unixTime - player.data.logoutTime : 0));
         talents.applyPassiveSpells();
@@ -383,7 +383,7 @@ mixin template CharacterLogin()
         if (savedUnread)
             return leaveIfUnread(); // back to the character screen, its records as saved
         if (!player.gmInvisible) // restored `.invisible`: its friends keep seeing it offline
-            announceToFriends(true);
+            contacts.announceToFriends(true);
         guildLogin();
         // An interrupted battleground can send the character straight to another node.
         battlegroundOnLogin();
@@ -504,7 +504,7 @@ mixin template CharacterLogin()
     void sendInitialPacketsAfterAddToMap()
     {
         setZoneOnArrival();
-        sendSocialLists();
+        contacts.sendSocialLists();
         sendInitWorldStates(player.data.zone);
         deliver(Opcode.SMSG_WEATHER, context.weather.packetFor(player.data.zone));
     }

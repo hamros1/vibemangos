@@ -242,7 +242,7 @@ private:
     }
 
     /// The loot of the items this player opened and has not emptied, by item guid.
-    Loot[ulong] itemLoots;
+    package Loot[ulong] itemLoots;
 
     /**
      * The client opens a lootable item in the bags (not locked, or unlocked, and the

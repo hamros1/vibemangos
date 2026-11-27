@@ -20,9 +20,9 @@ import dmangos.world.honor : HonorHandlers;
 import dmangos.world.pvp : PvPHandlers;
 import dmangos.world.battleground : BattlegroundHandlers;
 import dmangos.world.worldpvp : WorldPvpHandlers;
-import dmangos.world.enchanting : EnchantingHandlers;
+import dmangos.world.enchanting : Enchanting;
 import dmangos.world.itemuse : ItemUseHandlers;
-import dmangos.world.professions : ProfessionHandlers;
+import dmangos.world.professions : Professions;
 import core.time : Duration, MonoTime, msecs, seconds;
 import std.algorithm.searching : canFind;
 
@@ -31,7 +31,7 @@ import dmangos.bytes;
 import dmangos.timer : IntervalTimer;
 import dmangos.log;
 import dmangos.net.dispatch : DispatchResult, HandlesFor = Handles, PacketDispatch;
-import dmangos.world.channelhandlers : ChannelHandlers;
+import dmangos.world.channelhandlers : Channels;
 import dmangos.world.charscreen : CharacterLogin;
 import dmangos.world.commands : ChatCommands;
 import dmangos.world.gmactions : GmActions;
@@ -60,7 +60,7 @@ import dmangos.world.mounting : MountRules;
 import dmangos.world.guardians : GuardianSummons;
 import dmangos.world.durability : DurabilityRules;
 import dmangos.world.rituals : RitualSummoning;
-import dmangos.world.homebind : HomebindTimer;
+import dmangos.world.homebind : Homebind;
 import dmangos.world.unit : Blow, UnitRef;
 import dmangos.world.auras : Aura, makeAura;
 import dmangos.world.spells : SpellInfo;
@@ -69,7 +69,7 @@ import dmangos.world.loot : Looter;
 import dmangos.world.combat : Fighter, MeleeDamage;
 import dmangos.world.relations : Relating;
 import dmangos.world.sessionscripting : SessionScripting;
-import dmangos.world.social : FriendInfo, SocialHandlers;
+import dmangos.world.social : FriendInfo, Contacts;
 import dmangos.world.guildhandlers : GuildHandlers;
 import dmangos.world.pethandlers : PetHandlers;
 import dmangos.world.petauras : PetAuraRules;
@@ -103,9 +103,20 @@ final class Character : OnlinePlayer, Looter
     /// The connection its client talks through (here, or relaying to its home node).
     WorldSession connection;
 
-    mixin PacketDispatch!(Handles, "taxi", "mailbox", "auctioneer", "reputations", "talents", "trading", "dueling");
+    mixin PacketDispatch!(Handles, "taxi", "mailbox", "auctioneer", "reputations", "talents", "trading", "dueling", "channels", "contacts", "enchanting", "professions", "homebind");
 
     Taxi taxi; /// flight masters and the flight under way (`dmangos.world.taxihandlers`)
+    Homebind homebind; /// the inn the hearthstone returns to (`dmangos.world.homebind`)
+    Professions professions; /// professions' skills and recipes (`dmangos.world.professions`)
+    Enchanting enchanting; /// enchantments put on items (`dmangos.world.enchanting`)
+    Contacts contacts; /// friends and ignored players (`dmangos.world.social`)
+
+    /// `OnlinePlayer.ignores`: whether this player ignores `guid` (`contacts`).
+    bool ignores(ulong guid) const
+    {
+        return contacts.ignores(guid);
+    }
+    Channels channels; /// chat channels joined, left and spoken in (`dmangos.world.channelhandlers`)
     Dueling dueling; /// a duel asked, under way and ended (`dmangos.world.duelhandlers`)
     Trading trading; /// trading with another player (`dmangos.world.tradehandlers`)
     Talents talents; /// talents learned and reset (`dmangos.world.talenthandlers`)
@@ -163,6 +174,11 @@ final class Character : OnlinePlayer, Looter
         this.connection = connection;
         this.context = context;
         taxi = new Taxi(this);
+        homebind = new Homebind(this);
+        professions = new Professions(this);
+        enchanting = new Enchanting(this);
+        contacts = new Contacts(this);
+        channels = new Channels(this);
         dueling = new Dueling(this);
         trading = new Trading(this);
         talents = new Talents(this);
@@ -783,7 +799,7 @@ final class Character : OnlinePlayer, Looter
         if (player is null)
             return;
         updateLeaderFlag();
-        instanceValidityOnGroupChange(); // out of the group inside a dungeon: sent out (`dmangos.world.homebind`)
+        homebind.instanceValidityOnGroupChange(); // out of the group inside a dungeon: sent out (`dmangos.world.homebind`)
         if (transferring)
             return;
         map.refreshVisibility(this); // a ghost and its group see each other
@@ -901,7 +917,6 @@ private:
     mixin InWorldHandlers;
     mixin TeleportHandlers;
     mixin GroupHandlers;
-    mixin ChannelHandlers;
     mixin NpcHandlers;
     mixin ItemHandlers;
     mixin Exploration;
@@ -917,7 +932,6 @@ private:
     mixin ChatCommands;
     mixin GmActions;
     mixin GmTargets;
-    mixin SocialHandlers;
     mixin GuildHandlers;
     mixin PetHandlers;
     mixin PetAuraRules;
@@ -937,13 +951,10 @@ private:
     mixin GuardianSummons;
     mixin DurabilityRules;
     mixin RitualSummoning;
-    mixin HomebindTimer;
     mixin PvPHandlers;
     mixin BattlegroundHandlers;
     mixin WorldPvpHandlers;
-    mixin EnchantingHandlers;
     mixin ItemUseHandlers;
-    mixin ProfessionHandlers;
     mixin HonorHandlers;
     mixin SessionScripting;
 }
@@ -1388,17 +1399,17 @@ unittest
     me.flushInventory();
     const strength = me.player.stats.stats[Stat.strength], stamina = me.player.stats.stats[Stat.stamina];
 
-    me.enchantItem(shirt.fullGuid, 900, false, 0);
+    me.enchanting.enchantItem(shirt.fullGuid, 900, false, 0);
     assert(shirt.enchantment(0) == 900 && me.player.stats.stats[Stat.strength] == strength + 3, "permanent, counted");
-    me.enchantItem(shirt.fullGuid, 901, true, 600);
+    me.enchanting.enchantItem(shirt.fullGuid, 901, true, 600);
     assert(shirt.enchantment(1) == 901 && me.player.stats.stats[Stat.stamina] == stamina + 2, "temporary, counted");
     bool timeSent;
     foreach (p; anduin.read())
         timeSent = timeSent || p.opcode == Opcode.SMSG_ITEM_ENCHANT_TIME_UPDATE;
     assert(timeSent, "the client is told how long it lasts");
-    me.updateEnchantments(9.minutes);
+    me.enchanting.updateEnchantments(9.minutes);
     assert(shirt.enchantment(1) == 901 && shirt.values.get!ITEM_FIELD_ENCHANTMENT(4) < 600_000, "running down, saved");
-    me.updateEnchantments(61.seconds);
+    me.enchanting.updateEnchantments(61.seconds);
     assert(shirt.enchantment(1) == 0 && me.player.stats.stats[Stat.stamina] == stamina, "gone when its time is up");
     assert(shirt.enchantment(0) == 900, "the permanent one stays");
 }
