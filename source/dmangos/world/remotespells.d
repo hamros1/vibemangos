@@ -751,7 +751,7 @@ final class RemoteSpells
         if (request.controller != controller
             || (!controller && (relation.playerControlled
                 || (victim.kind == UnitKind.creature && !victim.creature.meleeController)))
-            || (controller && victim.kind == UnitKind.player && victim.session.duelingWith(controller))
+            || (controller && victim.kind == UnitKind.player && victim.session.dueling.duelingWith(controller))
             || (relation.unitFlags & disabled) || !canAttackNow(relation, victim.relating(), world.client))
             return;
         const template_ = copy.fields.get!OBJECT_FIELD_ENTRY in world.data.creatureTemplates;
@@ -966,7 +966,7 @@ final class RemoteSpells
             return;
         }
         if (!victim.alive || (victim.kind == UnitKind.player
-            && (victim.session.transferring || victim.session.duelingWith(message.caster)))
+            && (victim.session.transferring || victim.session.dueling.duelingWith(message.caster)))
             || (victim.kind == UnitKind.creature && (victim.creature.ai is null || victim.creature.ai.evading)))
             return;
         const p = victim.position;
@@ -1866,7 +1866,7 @@ final class RemoteSpells
             return;
         auto member = world.onlinePlayer(pulse.target);
         if (member is null || member.player is null || !member.player.alive || member.transferring
-            || member.duelingWith(pulse.controller))
+            || member.dueling.duelingWith(pulse.controller))
             return;
         auto map_ = member.currentMap;
         if (map_.id != pulse.map || map_.instanceId != pulse.instance)
@@ -1927,7 +1927,7 @@ final class RemoteSpells
         {
             if (!isChainHealEffect(*spell, message.effect) || message.radius != spellJumpRadius
                 || message.previous == message.target || !group.isMember(message.previous)
-                || target.duelingWith(message.caster))
+                || target.dueling.duelingWith(message.caster))
                 return;
         }
         else if (!isPartyHealEffect(*spell, message.effect)

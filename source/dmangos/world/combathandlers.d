@@ -109,10 +109,10 @@ mixin template CombatHandlers()
         if (damage)
             interruptAuras(0x2 | 0x01000000); // AURA_INTERRUPT_FLAG_DAMAGE, _NON_PERIODIC_DAMAGE
         const health = player.values.get!UNIT_FIELD_HEALTH;
-        if (damage >= health && attacker.kind == UnitKind.player && duelingWith(attacker.combatGuid))
+        if (damage >= health && attacker.kind == UnitKind.player && dueling.duelingWith(attacker.combatGuid))
         {
             flushPlayerChanges();
-            return duelLost();
+            return dueling.duelLost();
         }
         if (damage && damage >= health && spiritOfRedemption()) // a priest's last breath (Spirit of Redemption)
             return;

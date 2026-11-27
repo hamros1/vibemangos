@@ -2244,7 +2244,7 @@ mixin template PetHandlers()
             if (auto local = context.onlinePlayer(member.guid))
             {
                 if (local.player !is null && local.map is map && local.player.deathState == DeathState.alive
-                    && !local.duelingWith(player.guid) && near(local.player.position))
+                    && !local.dueling.duelingWith(player.guid) && near(local.player.position))
                     local.enchantWeaponFromTotem(enchantment, ms);
             }
             else if (context.sendTotemWeaponEnchant !is null)

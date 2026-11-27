@@ -47,7 +47,7 @@ import dmangos.world.physicalclasses : PhysicalClassRules;
 import dmangos.world.procs : ProcHandlers;
 import dmangos.world.effecthandlers : EffectHandlers;
 import dmangos.world.tradehandlers : Trading;
-import dmangos.world.duelhandlers : DuelHandlers;
+import dmangos.world.duelhandlers : Dueling;
 import dmangos.world.questhandlers : QuestHandlers;
 import dmangos.world.talenthandlers : Talents;
 import dmangos.world.mailhandlers : Mailbox;
@@ -103,9 +103,10 @@ final class Character : OnlinePlayer, Looter
     /// The connection its client talks through (here, or relaying to its home node).
     WorldSession connection;
 
-    mixin PacketDispatch!(Handles, "taxi", "mailbox", "auctioneer", "reputations", "talents", "trading");
+    mixin PacketDispatch!(Handles, "taxi", "mailbox", "auctioneer", "reputations", "talents", "trading", "dueling");
 
     Taxi taxi; /// flight masters and the flight under way (`dmangos.world.taxihandlers`)
+    Dueling dueling; /// a duel asked, under way and ended (`dmangos.world.duelhandlers`)
     Trading trading; /// trading with another player (`dmangos.world.tradehandlers`)
     Talents talents; /// talents learned and reset (`dmangos.world.talenthandlers`)
     Reputations reputations; /// factions: standing, at war, inactive, watched (`dmangos.world.reputationhandlers`)
@@ -162,6 +163,7 @@ final class Character : OnlinePlayer, Looter
         this.connection = connection;
         this.context = context;
         taxi = new Taxi(this);
+        dueling = new Dueling(this);
         trading = new Trading(this);
         talents = new Talents(this);
         reputations = new Reputations(this);
@@ -928,7 +930,6 @@ private:
     mixin ClassSpells;
     mixin PhysicalClassRules;
     mixin EffectHandlers;
-    mixin DuelHandlers;
     mixin QuestHandlers;
     mixin GameObjectHandlers;
     mixin CrowdControlHandlers;

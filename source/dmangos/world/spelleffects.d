@@ -290,7 +290,7 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
             context.scriptedEvent(cast(uint) spell.miscValue[i], map, caster.guid, target == caster.guid ? 0 : target);
         break;
     case SpellEffect.duel: // SPELL_EFFECT_DUEL
-        p.startDuel(target);
+        p.dueling.startDuel(target);
         break;
     case SpellEffect.tamecreature: // SPELL_EFFECT_TAMECREATURE
         p.tameCreature(spell, target ? target : c.targets.unit);

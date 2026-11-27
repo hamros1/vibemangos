@@ -34,8 +34,19 @@ final class DuelState
 }
 
 /// See the module documentation.
-mixin template DuelHandlers()
+final class Dueling
 {
+    import dmangos.world.character : Character, Handles;
+    import dmangos.world.session : WorldState;
+
+    private Character me;
+
+    ///
+    this(Character me)
+    {
+        this.me = me;
+    }
+
     import dmangos.bytes : ByteReader, ByteWriter;
     import dmangos.log : info;
     import dmangos.world.duelhandlers;
@@ -44,16 +55,16 @@ mixin template DuelHandlers()
     import dmangos.world.opcodes;
     import dmangos.world.updatefields;
 
-private:
+package:
     DuelState duel; // this player's side of its duel, while one is asked or on
 
     /// The other duelist's session, while a duel is asked or on.
-    typeof(this) duelOpponent()
+    Dueling duelOpponent()
     {
         if (duel is null)
             return null;
-        auto other = context.onlinePlayer(duel.opponent);
-        return other is null || other.duel is null || other.player is null ? null : other;
+        auto other = me.context.onlinePlayer(duel.opponent);
+        return other is null || other.dueling.duel is null || other.player is null ? null : other.dueling;
     }
 
     /// Whether this player is in a duel that has begun with `guid`.
@@ -68,43 +79,43 @@ private:
      */
     package void startDuel(ulong target)
     {
-        auto other = context.onlinePlayer(target);
-        if (other is null || other is this || other.player is null || other.map !is map)
+        auto other = me.context.onlinePlayer(target);
+        if (other is null || other is me || other.player is null || other.map !is me.map)
             return;
-        if (duel !is null || other.duel !is null)
+        if (duel !is null || other.dueling.duel !is null)
             return;
-        const a = player.position, b = other.player.position;
+        const a = me.player.position, b = other.player.position;
         const at = [(a.x + b.x) / 2, (a.y + b.y) / 2, a.z];
         import core.atomic : atomicOp;
 
         static shared uint flags; // one count for the node, whichever thread the duel is on
-        const spawnGuid = (uint(context.nodeId) << 20) | (0x80000 + (atomicOp!"+="(flags, 1) & 0x7FFFF));
+        const spawnGuid = (uint(me.context.nodeId) << 20) | (0x80000 + (atomicOp!"+="(flags, 1) & 0x7FFFF));
         ulong arbiter = makeGuid(HighGuid.gameObject, duelFlagEntry, spawnGuid);
-        if (auto template_ = duelFlagEntry in context.data.gameObjectTemplates)
+        if (auto template_ = duelFlagEntry in me.context.data.gameObjectTemplates)
         {
-            auto spawn = GameObjectSpawn(spawnGuid, duelFlagEntry, player.data.map, at[0], at[1], at[2],
+            auto spawn = GameObjectSpawn(spawnGuid, duelFlagEntry, me.player.data.map, at[0], at[1], at[2],
                 a.orientation);
             auto flag = new GameObject(spawn, template_);
-            flag.values.set!GAMEOBJECT_FACTION(player.values.get!UNIT_FIELD_FACTIONTEMPLATE);
-            flag.values.set!GAMEOBJECT_LEVEL(player.data.level + 1);
+            flag.values.set!GAMEOBJECT_FACTION(me.player.values.get!UNIT_FIELD_FACTIONTEMPLATE);
+            flag.values.set!GAMEOBJECT_LEVEL(me.player.data.level + 1);
             flag.values.clearChanges();
             arbiter = flag.guid;
-            map.addObject(flag);
+            me.map.addObject(flag);
         }
         ByteWriter w;
         w.put(arbiter);
-        w.put(player.guid);
-        deliver(Opcode.SMSG_DUEL_REQUESTED, w.data);
+        w.put(me.player.guid);
+        me.deliver(Opcode.SMSG_DUEL_REQUESTED, w.data);
         other.deliver(Opcode.SMSG_DUEL_REQUESTED, w.data);
-        foreach (pair; [[this, other], [other, this]])
+        foreach (pair; [[me, other], [other, me]])
         {
             auto side = pair[0], against = pair[1];
             auto state = new DuelState;
-            state.initiator = player.guid;
+            state.initiator = me.player.guid;
             state.opponent = against.player.guid;
             state.arbiter = arbiter;
             state.flagAt = at;
-            side.duel = state;
+            side.dueling.duel = state;
             side.player.values.set!PLAYER_DUEL_ARBITER(arbiter);
             side.flushPlayerChanges();
         }
@@ -115,16 +126,16 @@ private:
     void handleDuelAccepted(ref ByteReader reader)
     {
         auto other = duelOpponent();
-        if (other is null || duel.initiator == player.guid)
+        if (other is null || duel.initiator == me.player.guid)
             return;
         if (duel.startTimer || duel.startTime || other.duel.startTimer || other.duel.startTime)
             return;
-        const now = context.unixTime;
+        const now = me.context.unixTime;
         duel.startTimer = other.duel.startTimer = now;
         ByteWriter w;
         w.put(3000u);
-        deliver(Opcode.SMSG_DUEL_COUNTDOWN, w.data);
-        other.deliver(Opcode.SMSG_DUEL_COUNTDOWN, w.data);
+        me.deliver(Opcode.SMSG_DUEL_COUNTDOWN, w.data);
+        other.me.deliver(Opcode.SMSG_DUEL_COUNTDOWN, w.data);
     }
 
     /// Declined (or, once begun, given up: lost).
@@ -136,8 +147,8 @@ private:
             return;
         if (duel.startTime)
         {
-            stopAttack(false);
-            other.stopAttack(false);
+            me.stopAttack(false);
+            other.me.stopAttack(false);
             beg();
             return duelComplete(DuelEnd.won);
         }
@@ -149,35 +160,35 @@ private:
     {
         if (duel is null)
             return;
-        const now = context.unixTime;
+        const now = me.context.unixTime;
         // The countdown over, by the initiator's side: the teams are set, and the duel is on.
-        if (duel.startTimer && now >= duel.startTimer + 3 && duel.initiator == player.guid)
+        if (duel.startTimer && now >= duel.startTimer + 3 && duel.initiator == me.player.guid)
             if (auto other = duelOpponent())
             {
-                player.values.set!PLAYER_DUEL_TEAM(1u);
-                other.player.values.set!PLAYER_DUEL_TEAM(2u);
+                me.player.values.set!PLAYER_DUEL_TEAM(1u);
+                other.me.player.values.set!PLAYER_DUEL_TEAM(2u);
                 duel.startTimer = other.duel.startTimer = 0;
                 duel.startTime = other.duel.startTime = now;
-                flushPlayerChanges();
-                other.flushPlayerChanges();
+                me.flushPlayerChanges();
+                other.me.flushPlayerChanges();
             }
         if (duel is null || duel.startTime == 0)
             return;
         // The flag's distance: 50 yards out, 10 seconds to come within 40 again.
-        const p = player.position;
+        const p = me.player.position;
         const d2 = (p.x - duel.flagAt[0]) ^^ 2 + (p.y - duel.flagAt[1]) ^^ 2 + (p.z - duel.flagAt[2]) ^^ 2;
         if (duel.outOfBound == 0)
         {
             if (d2 > 50 ^^ 2)
             {
                 duel.outOfBound = now;
-                deliver(Opcode.SMSG_DUEL_OUTOFBOUNDS, null);
+                me.deliver(Opcode.SMSG_DUEL_OUTOFBOUNDS, null);
             }
         }
         else if (d2 <= 40 ^^ 2)
         {
             duel.outOfBound = 0;
-            deliver(Opcode.SMSG_DUEL_INBOUNDS, null);
+            me.deliver(Opcode.SMSG_DUEL_INBOUNDS, null);
         }
         else if (now >= duel.outOfBound + 10)
             duelComplete(DuelEnd.fled);
@@ -189,8 +200,8 @@ private:
         enum uint emoteBeg = 20;
         ByteWriter w;
         w.put(emoteBeg);
-        w.put(player.guid);
-        map.sendToWatchers(this, Opcode.SMSG_EMOTE, w.data, true);
+        w.put(me.player.guid);
+        me.map.sendToWatchers(me, Opcode.SMSG_EMOTE, w.data, true);
     }
 
     /**
@@ -200,10 +211,10 @@ private:
     package void duelLost()
     {
         auto other = duelOpponent();
-        player.values.set!UNIT_FIELD_HEALTH(1u);
-        stopAttack(false);
+        me.player.values.set!UNIT_FIELD_HEALTH(1u);
+        me.stopAttack(false);
         if (other !is null)
-            other.stopAttack(false);
+            other.me.stopAttack(false);
         beg();
         duelComplete(DuelEnd.won);
     }
@@ -220,31 +231,31 @@ private:
         auto other = duelOpponent();
         ByteWriter complete;
         complete.put(ubyte(how != DuelEnd.interrupted));
-        deliver(Opcode.SMSG_DUEL_COMPLETE, complete.data);
+        me.deliver(Opcode.SMSG_DUEL_COMPLETE, complete.data);
         if (other !is null)
-            other.deliver(Opcode.SMSG_DUEL_COMPLETE, complete.data);
+            other.me.deliver(Opcode.SMSG_DUEL_COMPLETE, complete.data);
         if (how != DuelEnd.interrupted && other !is null)
         {
             ByteWriter w;
             w.put(ubyte(how == DuelEnd.won ? 0 : 1));
-            w.putCString(other.player.data.name);
-            w.putCString(player.data.name);
-            map.sendToWatchers(this, Opcode.SMSG_DUEL_WINNER, w.data, true);
-            info!"%s: '%s' %s a duel with '%s'"(remoteAddress, player.data.name, how == DuelEnd.won ? "lost" : "fled",
-                other.player.data.name);
+            w.putCString(other.me.player.data.name);
+            w.putCString(me.player.data.name);
+            me.map.sendToWatchers(me, Opcode.SMSG_DUEL_WINNER, w.data, true);
+            info!"%s: '%s' %s a duel with '%s'"(me.remoteAddress, me.player.data.name, how == DuelEnd.won ? "lost" : "fled",
+                other.me.player.data.name);
         }
-        if (map.findObject(duel.arbiter) !is null)
-            map.removeObject(duel.arbiter);
+        if (me.map.findObject(duel.arbiter) !is null)
+            me.map.removeObject(duel.arbiter);
         foreach (side; other is null ? [this] : [this, other])
         {
-            const enemy = side is this ? (other is null ? 0 : other.player.guid) : player.guid;
-            foreach (aura; side.player.auras.list.dup)
+            const enemy = side is this ? (other is null ? 0 : other.me.player.guid) : me.player.guid;
+            foreach (aura; side.me.player.auras.list.dup)
                 if (!aura.positive && aura.caster == enemy)
-                    side.removeAura(aura);
-            side.player.values.set!PLAYER_DUEL_ARBITER(0UL);
-            side.player.values.set!PLAYER_DUEL_TEAM(0u);
+                    side.me.removeAura(aura);
+            side.me.player.values.set!PLAYER_DUEL_ARBITER(0UL);
+            side.me.player.values.set!PLAYER_DUEL_TEAM(0u);
             side.duel = null;
-            side.flushPlayerChanges();
+            side.me.flushPlayerChanges();
         }
     }
 }
@@ -261,6 +272,26 @@ unittest
 {
     testDuel(false);
     testDuel(true);
+}
+
+/// A player's duel with themselves is no duel: no request, no flag, no side.
+unittest
+{
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    import std.algorithm.searching : canFind;
+
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    anduin.read();
+    auto me = anduin.session.inWorld;
+    me.dueling.startDuel(me.player.guid);
+    assert(me.dueling.duel is null, "no side of a duel");
+    assert(!opcodesOf(anduin.read()).canFind(Opcode.SMSG_DUEL_REQUESTED), "no request");
 }
 
 version (unittest)

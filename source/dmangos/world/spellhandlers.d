@@ -198,7 +198,7 @@ private:
             if (auto replica = cast(Replica) map.findObject(targets.unit))
                 if (replica.fields.type == TypeId.player && context.onlinePlayer(targets.unit) is null)
                 {
-                    const result = duel is null && !inCombat && !taxi.flying
+                    const result = dueling.duel is null && !inCombat && !taxi.flying
                         ? checkCast(spell, targets, false, 0, true, replica) : SpellCastResult.badTargets;
                     if (result == SpellCastResult.ok
                         && actAtReplica(targets.unit, ArrivalAction(0, id, targets.unit)))
@@ -4452,7 +4452,7 @@ private:
         if (target is null || target.owner == context.nodeId
             || (target.fields.type != TypeId.player && target.fields.type != TypeId.unit))
             return false;
-        if (target.fields.type == TypeId.player && (context.onlinePlayer(target.guid) !is null || duelingWith(target.guid)))
+        if (target.fields.type == TypeId.player && (context.onlinePlayer(target.guid) !is null || dueling.duelingWith(target.guid)))
             return false;
         const other = target.unitRelations(context.client);
         return other.alive && canAttack(relatingNow(), other, context.client,
@@ -4504,7 +4504,7 @@ private:
                     if (replica is null || replica.owner == context.nodeId || replica.fields.type != TypeId.player)
                         continue;
                     const guid = replica.guid;
-                    if (guid in taken || !group.isMember(guid) || context.onlinePlayer(guid) !is null || duelingWith(guid))
+                    if (guid in taken || !group.isMember(guid) || context.onlinePlayer(guid) !is null || dueling.duelingWith(guid))
                         continue;
                     if (!canAttack(caster, replica.playerRelations(context.client), context.client, true))
                         consider(SpellJump(guid, replica.position, replica.owner), replica.missingHealth);

@@ -127,7 +127,7 @@ private:
         if (expiresIn <= 0 || expiresIn > PartyAreaAura.lifetime + 500 || renewal.radius <= 0
             || !isFinite(renewal.radius) || !context.client.isValidMapCoord(renewal.map, renewal.x, renewal.y, renewal.z)
             || !inPartyAuraRange(player.position, Position(renewal.x, renewal.y, renewal.z), renewal.radius)
-            || duelingWith(renewal.controller))
+            || dueling.duelingWith(renewal.controller))
             return;
         const effects = renewal.effects & partyAuraEffects(spell);
         if (!effects)
@@ -162,7 +162,7 @@ private:
             auto row = receivedAreaAuras[key];
             const r = &row.renewal;
             if (cast(int)(r.deadline - now) > 0 && player.alive && map.id == r.map && map.instanceId == r.instance
-                && context.remoteSpells.sameAuraSubgroup(r.controller, player.guid, r.group) && !duelingWith(r.controller)
+                && context.remoteSpells.sameAuraSubgroup(r.controller, player.guid, r.group) && !dueling.duelingWith(r.controller)
                 && inPartyAuraRange(player.position, Position(r.x, r.y, r.z), r.radius))
                 continue;
             receivedAreaAuras.remove(key);
@@ -281,7 +281,7 @@ private:
                 foreach (m; members)
                 {
                     if ((m is this && !src.toOwner) || m.player.deathState != DeathState.alive
-                        || m.duelingWith(player.guid))
+                        || m.dueling.duelingWith(player.guid))
                         continue;
                     if (!inPartyAuraRange(m.player.position, src.at, r))
                         continue;

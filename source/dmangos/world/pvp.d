@@ -314,7 +314,7 @@ mixin template PvPHandlers()
      */
     package void pvpHitBy(typeof(this) attacker, bool attackerFlagged)
     {
-        if (attacker is null || attacker is this || duelingWith(attacker.player.guid))
+        if (attacker is null || attacker is this || dueling.duelingWith(attacker.player.guid))
             return;
         flagFromPvPHit(attackerFlagged);
         if (isPvP)
