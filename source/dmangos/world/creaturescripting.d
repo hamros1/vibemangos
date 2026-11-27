@@ -1669,12 +1669,12 @@ mixin template CreatureScripting()
     void hostWarEffortHandIn(uint quest, uint resource)
     {
         if (lore !is null)
-            lore.warEffortHandIn(quest, resource);
+            lore.warEffortHere.warEffortHandIn(quest, resource);
     }
 
     void hostWarEffortColossus(uint colossus)
     {
         if (lore !is null)
-            lore.warEffortColossusFell(colossus);
+            lore.warEffortHere.warEffortColossusFell(colossus);
     }
 }

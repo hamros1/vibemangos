@@ -465,7 +465,7 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
                     context.services.receiveNews(peer, n);
             };
             context.askInvasion();
-            context.askWarEffort(); // how it stands, once its service is placed (and every change after)
+            context.warEffortHere.askWarEffort(); // how it stands, once its service is placed (and every change after)
             context.worldPvp.ask(); // the same for world PvP
         }
         // And a queued write is dropped if the writer reaches it after the lease lapsed (step 6).

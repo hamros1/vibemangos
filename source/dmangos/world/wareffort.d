@@ -26,7 +26,10 @@
  */
 module dmangos.world.wareffort;
 
-import core.time : Duration, seconds;
+import core.time : Duration, minutes, MonoTime, msecs, seconds;
+import dmangos.world.opcodes : ChatType, Language, Opcode;
+import dmangos.world.context : WorldContext;
+
 
 import dmangos.cluster.services : Call, Service, ServiceKind;
 
@@ -451,6 +454,129 @@ struct WarEffort
 // --- tests: the state ---
 
 // Gathering: counts while gathering only; the last goal reached sets the supplies out for five days.
+/**
+ * The war effort as this node follows it (`WorldContext.warEffortHere`): its service made where the cluster places
+ * it, what it last said, and this node's events, piles and capitals' world states kept to it; the quests' hand-ins
+ * and the Colossi's falls told to it.
+ */
+final class WarEffortFollower
+{
+    private WorldContext world;
+
+    this(WorldContext world)
+    {
+        this.world = world;
+    }
+
+    /// The war effort as this node last heard it from its service: the events, piles and capitals follow it.
+    WarEffort warEffort;
+
+    /// The war effort's service, on the node the cluster places it on: from the state it moved with, or
+    /// from the characters database's row.
+    package WarEffortHost newWarEffortHost(const(ubyte)[] moved)
+    {
+        import dmangos.log : error, info;
+        import dmangos.plaindata : decode;
+        import dmangos.world.wareffort : saveId;
+
+        WarEffortHost host;
+        if (moved.length)
+            decode(moved, host.state);
+        else
+        {
+            const text = world.database.worldState(saveId);
+            if (!WarEffort.parse(text, world.unixTime, host.state))
+                error!"world_state %s: '%s' is not the war effort's state; it starts anew"(saveId, text);
+            else
+                info!"the war effort: phase %s"(host.state.phase);
+        }
+        host.clock = () => world.unixTime;
+        host.save = (string text) { world.database.saveWorldState(saveId, text); };
+        host.announce = (const ref WarEffort w) { world.services.announce!WarEffortHost(w); };
+        return host;
+    }
+
+    /// Asks the war effort's service how it stands (a cluster node starting: wherever it is placed).
+    void askWarEffort()
+    {
+        import dmangos.world.wareffort : WarEffortQuery;
+
+        world.services.call!(WarEffortHost.current)(WarEffortQuery(world.nodeId), (WarEffort w) { warEffortHeard(w); });
+    }
+
+    /**
+     * The war effort's service told how it stands: this node starts and stops its phases' game events,
+     * brings or takes away its piles of supplies, and updates the world states of its players in the capitals.
+     */
+    void warEffortHeard(const ref WarEffort now)
+    {
+        import std.algorithm.searching : canFind;
+        import dmangos.world.wareffort : colossusEvents, phaseEvents;
+
+        const before = warEffort;
+        warEffort = now;
+        const on = now.events;
+        bool eventsChanged;
+        foreach (id; phaseEvents[] ~ colossusEvents[])
+            if (on.canFind(id) != world.gameEvents.started(id))
+            {
+                world.gameEvents.start(id, on.canFind(id));
+                eventsChanged = true;
+            }
+        if (eventsChanged)
+            world.updateGameEvents(world.clock(), true);
+        if (before.pilesUp != now.pilesUp)
+            world.gameEventSpawnsChanged();
+
+        // The capitals' counters and days.
+        const time = world.unixTime;
+        foreach (player; world.online.values)
+        {
+            if (player.character is null)
+                continue;
+            const zone = player.character.data.zone;
+            uint[uint] was;
+            foreach (s; before.worldStates(zone, time))
+                was[s[0]] = s[1];
+            foreach (s; now.worldStates(zone, time))
+                if (was.get(s[0], uint.max) != s[1])
+                {
+                    import dmangos.world.map : packetBody;
+                    import dmangos.world.packets : ServerUpdateWorldState;
+
+                    player.deliver(Opcode.SMSG_UPDATE_WORLD_STATE, packetBody(ServerUpdateWorldState(s[0], s[1])));
+                }
+        }
+    }
+
+    /// The war effort's world states for a player in `zone` (`SMSG_INIT_WORLD_STATES`).
+    uint[2][] warEffortWorldStates(uint zone)
+    {
+        return warEffort.worldStates(zone, world.unixTime);
+    }
+
+    /// The war effort: what quest `quest` asked for counts as `resource` (`dmangos.world.wareffort`): the quest's
+    /// first required items, for the service to count.
+    void warEffortHandIn(uint quest, uint resource)
+    {
+        import dmangos.world.wareffort : AqResource, resourceCount, WarEffortContribution;
+
+        const q = world.data.quests.quest(quest);
+        if (q is null || resource >= resourceCount)
+            return;
+        world.services.call!(WarEffortHost.contribute)(WarEffortContribution(cast(AqResource) resource, q.reqItemCount[0]));
+    }
+
+    /// The war effort: a Colossus of Silithus fell (`Colossus`).
+    void warEffortColossusFell(uint colossus)
+    {
+        import dmangos.world.wareffort : Colossus, WarEffortColossus;
+
+        if (colossus <= Colossus.max)
+            world.services.call!(WarEffortHost.colossusDied)(WarEffortColossus(cast(Colossus) colossus));
+    }
+}
+
 unittest
 {
     WarEffort w;
@@ -809,7 +935,7 @@ unittest
 
     auto db = newDatabase();
     auto context = warEffortWorld(db, "1 0");
-    assert(context.warEffort.phase == AqPhase.gathering && context.gameEvents.isActive(120));
+    assert(context.warEffortHere.warEffort.phase == AqPhase.gathering && context.gameEvents.isActive(120));
     assert(!context.gameEvents.isActive(121));
     auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.player,
         raceHuman, 0, 1, (ref CharacterData c) { c.zone = 1519; });
@@ -833,7 +959,7 @@ unittest
     // Every goal reached: the supplies set out, the second phase's event on.
     foreach (i, ref r; resources)
         context.services.call!(WarEffortHost.contribute)(WarEffortContribution(cast(AqResource) i, r.goal));
-    assert(context.warEffort.phase == AqPhase.transporting);
+    assert(context.warEffortHere.warEffort.phase == AqPhase.transporting);
     assert(!context.gameEvents.isActive(120) && context.gameEvents.isActive(121));
     bool days;
     foreach (p; anduin.read())
@@ -858,14 +984,14 @@ unittest
     b.services.sendCall = (ushort node, const ref ServiceCall c) { a.services.receiveCall(2, c); return true; };
     a.services.sendReply = (ushort node, const ref ServiceReply r) { b.services.receiveReply(1, r); return true; };
     a.services.sendNews = (const ref ServiceNews n) { b.services.receiveNews(1, n); };
-    assert(b.warEffort.phase == AqPhase.disabled, "its own row says nothing");
+    assert(b.warEffortHere.warEffort.phase == AqPhase.disabled, "its own row says nothing");
 
-    b.askWarEffort();
-    assert(b.warEffort.phase == AqPhase.gathering && b.warEffort.counters[0] == 5 && b.gameEvents.isActive(120));
-    b.warEffortColossusFell(Colossus.ashi);
+    b.warEffortHere.askWarEffort();
+    assert(b.warEffortHere.warEffort.phase == AqPhase.gathering && b.warEffortHere.warEffort.counters[0] == 5 && b.gameEvents.isActive(120));
+    b.warEffortHere.warEffortColossusFell(Colossus.ashi);
     b.services.call!(WarEffortHost.contribute)(WarEffortContribution(AqResource.peacebloom, 20));
-    assert(a.warEffort.counters[0] == 25 && b.warEffort.counters[0] == 25, "counted on a, heard on b");
+    assert(a.warEffortHere.warEffort.counters[0] == 25 && b.warEffortHere.warEffort.counters[0] == 25, "counted on a, heard on b");
     assert(dbA.worldStateRows[saveId].startsWith("1 0 25 ") && dbB.worldStateRows.get(saveId, "") == "",
         "saved by the service's node only");
-    assert(a.warEffort.killedBosses == 1, "a Colossus's fall is remembered whatever the phase");
+    assert(a.warEffortHere.warEffort.killedBosses == 1, "a Colossus's fall is remembered whatever the phase");
 }

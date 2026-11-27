@@ -203,6 +203,11 @@ struct ShutdownTimer
  */
 final class WorldContext : GroupDirectory, IdCounters, SessionHandler
 {
+    import dmangos.world.wareffort : WarEffortFollower;
+
+    /// See `dmangos.world.wareffort`.
+    WarEffortFollower warEffortHere;
+
     import dmangos.world.ships : Ships;
 
     /// See `dmangos.world.ships`.
@@ -3059,6 +3064,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         LoginDatabase accounts = null, Battlegroup sharedBattles = null)
     in (database !is null && data !is null && client !is null)
     {
+        warEffortHere = new WarEffortFollower(this);
         fleet = new Ships(this);
         postOffice = new PostOffice(this);
         dungeons = new Dungeons(this);
@@ -3131,8 +3137,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         services.provide!WeatherHost((const(ubyte)[] state) => WeatherHost(this, state));
         weather = ZoneWeather(this);
         services.listen!(WeatherHost, WeatherNotice)(&weather.heard);
-        services.provide!WarEffortHost(&newWarEffortHost);
-        services.listen!(WarEffortHost, WarEffort)(&warEffortHeard); // before it starts: it tells as it does
+        services.provide!WarEffortHost(&warEffortHere.newWarEffortHost);
+        services.listen!(WarEffortHost, WarEffort)(&warEffortHere.warEffortHeard); // before it starts: it tells as it does
         worldPvp = new WorldPvpFollower(this);
         services.provide!WorldPvpHost(&newWorldPvpHost);
         services.listen!(WorldPvpHost, WorldPvp)(&worldPvp.heard);
@@ -3583,7 +3589,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
             if (const site = guid in invasionLayout.objects)
                 if (!site.present(invasion)) return false;
         if (isSupplyPile(guid))
-            return warEffort.pileUp(guid);
+            return warEffortHere.warEffort.pileUp(guid);
         if (WorldPvp.follows(guid))
             return worldPvp.state.spawnUp(guid);
         if (const e = guid in data.gameObjectGameEvents)
@@ -3625,7 +3631,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     }
 
     /// The events made active and inactive by the clock; their spawns come and go in the loaded cells.
-    private void updateGameEvents(MonoTime now, bool force = false)
+    package void updateGameEvents(MonoTime now, bool force = false)
     {
         import core.time : seconds;
         import dmangos.log : info;
@@ -3726,7 +3732,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     }
 
     /// After events changed: in every loaded map, spawns now away go, and spawns now in come (where their cells are loaded).
-    private void gameEventSpawnsChanged()
+    package void gameEventSpawnsChanged()
     {
         import dmangos.world.grid : cellKeyAt;
 
@@ -3872,92 +3878,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     // The Ahn'Qiraj war effort (`dmangos.world.wareffort`)
     // -----------------------------------------------------------------------
 
-    /// The war effort as this node last heard it from its service: the events, piles and capitals follow it.
-    WarEffort warEffort;
 
-    /// The war effort's service, on the node the cluster places it on: from the state it moved with, or
-    /// from the characters database's row.
-    private WarEffortHost newWarEffortHost(const(ubyte)[] moved)
-    {
-        import dmangos.log : error, info;
-        import dmangos.plaindata : decode;
-        import dmangos.world.wareffort : saveId;
 
-        WarEffortHost host;
-        if (moved.length)
-            decode(moved, host.state);
-        else
-        {
-            const text = database.worldState(saveId);
-            if (!WarEffort.parse(text, unixTime, host.state))
-                error!"world_state %s: '%s' is not the war effort's state; it starts anew"(saveId, text);
-            else
-                info!"the war effort: phase %s"(host.state.phase);
-        }
-        host.clock = () => unixTime;
-        host.save = (string text) { database.saveWorldState(saveId, text); };
-        host.announce = (const ref WarEffort w) { services.announce!WarEffortHost(w); };
-        return host;
-    }
 
-    /// Asks the war effort's service how it stands (a cluster node starting: wherever it is placed).
-    void askWarEffort()
-    {
-        import dmangos.world.wareffort : WarEffortQuery;
 
-        services.call!(WarEffortHost.current)(WarEffortQuery(nodeId), (WarEffort w) { warEffortHeard(w); });
-    }
-
-    /**
-     * The war effort's service told how it stands: this node starts and stops its phases' game events,
-     * brings or takes away its piles of supplies, and updates the world states of its players in the capitals.
-     */
-    void warEffortHeard(const ref WarEffort now)
-    {
-        import std.algorithm.searching : canFind;
-        import dmangos.world.wareffort : colossusEvents, phaseEvents;
-
-        const before = warEffort;
-        warEffort = now;
-        const on = now.events;
-        bool eventsChanged;
-        foreach (id; phaseEvents[] ~ colossusEvents[])
-            if (on.canFind(id) != gameEvents.started(id))
-            {
-                gameEvents.start(id, on.canFind(id));
-                eventsChanged = true;
-            }
-        if (eventsChanged)
-            updateGameEvents(clock(), true);
-        if (before.pilesUp != now.pilesUp)
-            gameEventSpawnsChanged();
-
-        // The capitals' counters and days.
-        const time = unixTime;
-        foreach (player; online.values)
-        {
-            if (player.character is null)
-                continue;
-            const zone = player.character.data.zone;
-            uint[uint] was;
-            foreach (s; before.worldStates(zone, time))
-                was[s[0]] = s[1];
-            foreach (s; now.worldStates(zone, time))
-                if (was.get(s[0], uint.max) != s[1])
-                {
-                    import dmangos.world.map : packetBody;
-                    import dmangos.world.packets : ServerUpdateWorldState;
-
-                    player.deliver(Opcode.SMSG_UPDATE_WORLD_STATE, packetBody(ServerUpdateWorldState(s[0], s[1])));
-                }
-        }
-    }
-
-    /// The war effort's world states for a player in `zone` (`SMSG_INIT_WORLD_STATES`).
-    uint[2][] warEffortWorldStates(uint zone)
-    {
-        return warEffort.worldStates(zone, unixTime);
-    }
 
     package bool mapConditionMet(Map where, uint id)
     {
@@ -4038,11 +3962,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         import dmangos.world.wareffort : resources, worldStateDaysLeft;
 
         if (id == worldStateDaysLeft)
-            return cast(int) warEffort.daysLeft(unixTime);
+            return cast(int) warEffortHere.warEffort.daysLeft(unixTime);
         foreach (i, ref resource; resources)
         {
             if (resource.nowState == id)
-                return cast(int) warEffort.counters[i];
+                return cast(int) warEffortHere.warEffort.counters[i];
             if (resource.goalState == id)
                 return cast(int) resource.goal;
         }
@@ -4062,36 +3986,17 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         import dmangos.world.wareffort : resources, worldStateDaysLeft;
 
         if (id == worldStateDaysLeft)
-            return warEffort.daysLeft(unixTime) == expected;
+            return warEffortHere.warEffort.daysLeft(unixTime) == expected;
         foreach (i, ref resource; resources)
             if (resource.nowState == id)
-                return warEffort.counters[i] >= resource.goal;
+                return warEffortHere.warEffort.counters[i] >= resource.goal;
         foreach (i, ref zone; invasionZones)
             if (zone.marker == id)
                 return invasion.remaining(i) != 0;
         return false;
     }
 
-    /// The war effort: what quest `quest` asked for counts as `resource` (`dmangos.world.wareffort`): the quest's
-    /// first required items, for the service to count.
-    void warEffortHandIn(uint quest, uint resource)
-    {
-        import dmangos.world.wareffort : AqResource, resourceCount, WarEffortContribution;
 
-        const q = data.quests.quest(quest);
-        if (q is null || resource >= resourceCount)
-            return;
-        services.call!(WarEffortHost.contribute)(WarEffortContribution(cast(AqResource) resource, q.reqItemCount[0]));
-    }
-
-    /// The war effort: a Colossus of Silithus fell (`Colossus`).
-    void warEffortColossusFell(uint colossus)
-    {
-        import dmangos.world.wareffort : Colossus, WarEffortColossus;
-
-        if (colossus <= Colossus.max)
-            services.call!(WarEffortHost.colossusDied)(WarEffortColossus(cast(Colossus) colossus));
-    }
 
     // -----------------------------------------------------------------------
     // World PvP: the Eastern Plaguelands' towers, Silithus's Silithyst (`dmangos.world.worldpvp`)
@@ -8339,7 +8244,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
 
         uint hostWarEffortPhase()
         {
-            return warEffort.phase;
+            return warEffortHere.warEffort.phase;
         }
 
         void hostWarEffortGong(EntityRef player)

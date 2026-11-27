@@ -162,6 +162,7 @@ source/dmangos/world/       the world server
                               (`WorldContext.dungeons`)
   postoffice.d                mail posted outside a session, auctions over and old mail settled (`WorldContext.postOffice`)
   ships.d                     the ships at sea, the transport clock, and elevators' homes and paths (`WorldContext.fleet`)
+  wareffort.d                 the Ahn'Qiraj war effort, its service, and how a node follows it (`WorldContext.warEffortHere`)
 source/dmangos/extractor/   the client data extractor: main.d, dbc.d (DBC files), maps.d (terrain to .map files),
                               vmaps.d and assembler.d (buildings and doodads to vmaps), mmaps.d (movement maps)
 source/dmangos/vmap/        the vmap format and queries: math.d (vectors, boxes, rays), bih.d (the tree), model.d, maptree.d

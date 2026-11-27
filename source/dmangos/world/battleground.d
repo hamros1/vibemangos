@@ -2814,7 +2814,7 @@ mixin template BattlegroundHandlers()
         auto copy = currentBattleground();
         if (copy is null)
         {
-            auto states = context.warEffortWorldStates(zone) ~ worldPvpStates(zone);
+            auto states = context.warEffortHere.warEffortWorldStates(zone) ~ worldPvpStates(zone);
             if (context.invasion.running) states ~= context.invasion.worldStates();
             w.put(cast(ushort) states.length);
             foreach (s; states)
