@@ -18,8 +18,8 @@ import dmangos.world.money : Copper;
 /// See the module documentation.
 final class Taxi
 {
-    import dmangos.world.character : Character, Handles;
-    import dmangos.world.session : WorldState;
+    import dmangos.world.character : Character;
+    import dmangos.world.session : Handles, WorldState;
     import dmangos.world.spellcast : SpellCastResult;
 
     private Character me;
@@ -386,7 +386,7 @@ final class Taxi
         me.player.values.set!UNIT_FIELD_MOUNTDISPLAYID(0u);
         me.player.values.set!UNIT_FIELD_FLAGS(me.player.values.get!UNIT_FIELD_FLAGS & ~UnitFlags.taxiFlight);
         me.flushPlayerChanges();
-        me.pvpArrived();
+        me.pvp.pvpArrived();
         if (destination !is null)
             me.teleportTo(me.map.id, Position(destination.x, destination.y, destination.z, me.player.position.orientation));
         me.petsOnArrival(); // the pet comes back (`Player::Unmount`: `ResummonPetTemporaryUnSummonedIfAny`)

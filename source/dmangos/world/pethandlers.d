@@ -1250,7 +1250,7 @@ mixin template PetHandlers()
     /// The owner attacks or is attacked: the pet joins its owner's fight against `enemy`.
     package void petAssistAgainst(ulong enemy)
     {
-        guardiansAssist(enemy); // and the guardians (`dmangos.world.guardians`)
+        guardians.guardiansAssist(enemy); // and the guardians (`dmangos.world.guardians`)
         if (pet_ is null || !pet_.alive || petState().command == CommandState.stay)
             return;
         if (auto other = map.unit(enemy))
@@ -1460,7 +1460,7 @@ mixin template PetHandlers()
         endCharm(); // a charm stays where it is, its own again
         if (!handoff)
         {
-            removeGuardians(player is null || player.alive); // at its death, only those not fighting
+            guardians.removeGuardians(player is null || player.alive); // at its death, only those not fighting
             unsummonTotems();
             if (player !is null && map !is null)
                 checkpointSummons(true);
@@ -1610,7 +1610,7 @@ mixin template PetHandlers()
                 carry(guid, cast(ubyte) slot);
         if (loneTotem)
             carry(loneTotem, loneTotemSlot);
-        foreach (guid; guardians_)
+        foreach (guid; guardians.guardians_)
             carry(guid, guardianSlot);
         const traps = playerTrapState(removed);
         if (!count && !traps.length)
@@ -1626,7 +1626,7 @@ mixin template PetHandlers()
         detachingSummons = true;
         scope(exit) detachingSummons = false;
         unsummonTotems();
-        removeGuardians(true);
+        guardians.removeGuardians(true);
         removeTraps();
         return state;
     }
@@ -1791,7 +1791,7 @@ mixin template PetHandlers()
                 if (slot == guardianSlot)
                 {
                     creature.guardianOwner = player.guid;
-                    guardians_ ~= creature.guid;
+                    guardians.guardians_ ~= creature.guid;
                 }
                 else
                 {

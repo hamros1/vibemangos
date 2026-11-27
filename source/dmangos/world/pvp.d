@@ -84,9 +84,22 @@ unittest
     assert(!enforcedPvPZone(AreaTeam.none, 0, true, normal) && !enforcedPvPZone(6, 0, true, pvp));
 }
 
-/// The PvP flag on the player's side: `Character` mixes it in.
-mixin template PvPHandlers()
+/// See the module documentation.
+final class PvP
 {
+    import dmangos.world.character : Character;
+    import dmangos.world.session : Handles, WorldState;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.spellcast : SpellTargets, TargetFlags;
+
+    private Character me;
+
+    ///
+    this(Character me)
+    {
+        this.me = me;
+    }
+
     import dmangos.bytes : ByteReader, ByteWriter;
     import dmangos.world.clientdata : Team;
     import dmangos.world.defines : UnitFlags;
@@ -112,13 +125,13 @@ mixin template PvPHandlers()
         setPlayerFlag(PlayerFlagsPvP.desired, desired);
         if (desired)
             updatePvP(true);
-        flushPlayerChanges();
+        me.flushPlayerChanges();
     }
 
     /// Whether the player has the PvP flag.
     package @property bool isPvP() const
     {
-        return (player.values.get!UNIT_FIELD_FLAGS & UnitFlags.pvp) != 0;
+        return (me.player.values.get!UNIT_FIELD_FLAGS & UnitFlags.pvp) != 0;
     }
 
     /// Whether the player has the contested flag.
@@ -133,46 +146,46 @@ mixin template PvPHandlers()
         return hasPlayerFlag(PlayerFlagsPvP.freeForAll);
     }
 
-    private bool hasPlayerFlag(uint flag) const
+    package bool hasPlayerFlag(uint flag) const
     {
-        return (player.values.get!PLAYER_FLAGS & flag) != 0;
+        return (me.player.values.get!PLAYER_FLAGS & flag) != 0;
     }
 
     private void setPlayerFlag(uint flag, bool on)
     {
-        const flags = player.values.get!PLAYER_FLAGS;
-        player.values.set!PLAYER_FLAGS(on ? flags | flag : flags & ~flag);
+        const flags = me.player.values.get!PLAYER_FLAGS;
+        me.player.values.set!PLAYER_FLAGS(on ? flags | flag : flags & ~flag);
         pvpFlagsToCreatures();
     }
 
     /// The flag on the player and its controlled creatures; its group hears.
     void setPvP(bool on)
     {
-        const flags = player.values.get!UNIT_FIELD_FLAGS;
-        player.values.set!UNIT_FIELD_FLAGS(on ? flags | UnitFlags.pvp : flags & ~UnitFlags.pvp);
+        const flags = me.player.values.get!UNIT_FIELD_FLAGS;
+        me.player.values.set!UNIT_FIELD_FLAGS(on ? flags | UnitFlags.pvp : flags & ~UnitFlags.pvp);
         pvpFlagsToCreatures();
-        if (auto group = context.groups.of(player.guid))
-            group.updatePlayerOutOfRange(this, GroupUpdate.status);
+        if (auto group = me.context.groups.of(me.player.guid))
+            group.updatePlayerOutOfRange(me, GroupUpdate.status);
     }
 
     /// Controlled creatures carry the player's PvP flag and the player flags the relations read.
     private void pvpFlagsToCreatures()
     {
         const on = isPvP;
-        const playerFlags = player.values.get!PLAYER_FLAGS;
+        const playerFlags = me.player.values.get!PLAYER_FLAGS;
         void update(imported!"dmangos.world.creature".Creature creature)
         {
             const flags = creature.values.get!UNIT_FIELD_FLAGS;
             if (((flags & UnitFlags.pvp) != 0) != on)
             {
                 creature.values.set!UNIT_FIELD_FLAGS(on ? flags | UnitFlags.pvp : flags & ~UnitFlags.pvp);
-                map.flushObjectChanges(creature);
+                me.map.flushObjectChanges(creature);
             }
             creature.controllerPlayerFlags = playerFlags;
         }
-        if (auto pet = ownPet)
+        if (auto pet = me.ownPet)
             update(pet);
-        foreach (guardian; ownGuardians())
+        foreach (guardian; me.guardians.ownGuardians())
             update(guardian);
     }
 
@@ -221,15 +234,15 @@ mixin template PvPHandlers()
     package void updatePvPTimers(int diff)
     {
         const kept = pvpInCombat || pvpEnforcedArea || hasPlayerFlag(PlayerFlagsPvP.desired);
-        if (!kept && pvpTimer > 0 && currentBattleground() is null)
+        if (!kept && pvpTimer > 0 && me.currentBattleground() is null)
             pvpTimer = pvpTimer > diff ? pvpTimer - diff : 0;
         if (!pvpInCombat && pvpContestedTimer > 0)
             pvpContestedTimer = pvpContestedTimer > diff ? pvpContestedTimer - diff : 0;
-        const before = player.values.get!UNIT_FIELD_FLAGS, beforeFlags = player.values.get!PLAYER_FLAGS;
+        const before = me.player.values.get!UNIT_FIELD_FLAGS, beforeFlags = me.player.values.get!PLAYER_FLAGS;
         updatePvP(false);
         updatePvPContested(false);
-        if (before != player.values.get!UNIT_FIELD_FLAGS || beforeFlags != player.values.get!PLAYER_FLAGS)
-            flushPlayerChanges();
+        if (before != me.player.values.get!UNIT_FIELD_FLAGS || beforeFlags != me.player.values.get!PLAYER_FLAGS)
+            me.flushPlayerChanges();
     }
 
     /// Out of combat, out of PvP combat.
@@ -242,7 +255,7 @@ mixin template PvPHandlers()
     void writePvPHandoff(ref ByteWriter w)
     {
         w.put(isPvP);
-        w.put(player.values.get!PLAYER_FLAGS & handoffPvPFlags);
+        w.put(me.player.values.get!PLAYER_FLAGS & handoffPvPFlags);
         w.put(pvpTimer);
         w.put(pvpContestedTimer);
         w.put(pvpEnforcedArea);
@@ -251,9 +264,9 @@ mixin template PvPHandlers()
 
     void readPvPHandoff(ref ByteReader r)
     {
-        const flags = player.values.get!UNIT_FIELD_FLAGS;
-        player.values.set!UNIT_FIELD_FLAGS(r.read!bool ? flags | UnitFlags.pvp : flags & ~UnitFlags.pvp);
-        player.values.set!PLAYER_FLAGS((player.values.get!PLAYER_FLAGS & ~handoffPvPFlags) | r.read!uint);
+        const flags = me.player.values.get!UNIT_FIELD_FLAGS;
+        me.player.values.set!UNIT_FIELD_FLAGS(r.read!bool ? flags | UnitFlags.pvp : flags & ~UnitFlags.pvp);
+        me.player.values.set!PLAYER_FLAGS((me.player.values.get!PLAYER_FLAGS & ~handoffPvPFlags) | r.read!uint);
         pvpTimer = r.read!int;
         pvpContestedTimer = r.read!int;
         pvpEnforcedArea = r.read!bool;
@@ -268,37 +281,37 @@ mixin template PvPHandlers()
      */
     package void pvpZoneChanged(uint zone)
     {
-        const entry = context.client.areas.lookup(zone);
+        const entry = me.context.client.areas.lookup(zone);
         if (entry is null)
             return;
-        const alliance = context.client.teamForRace(player.data.race) == Team.alliance;
+        const alliance = me.context.client.teamForRace(me.player.data.race) == Team.alliance;
         bool enemyStart; // a zone the other side's races begin in (playercreateinfo)
-        foreach (key, ref info; context.data.playerInfo)
-            if (info.zone == zone && (context.client.teamForRace(cast(ubyte)(key >> 8)) == Team.alliance) != alliance)
+        foreach (key, ref info; me.context.data.playerInfo)
+            if (info.zone == zone && (me.context.client.teamForRace(cast(ubyte)(key >> 8)) == Team.alliance) != alliance)
             {
                 enemyStart = true;
                 break;
             }
-        pvpEnforcedArea = enforcedPvPZone(entry.team, entry.flags, alliance, context.config.gameType, enemyStart);
+        pvpEnforcedArea = enforcedPvPZone(entry.team, entry.flags, alliance, me.context.config.gameType, enemyStart);
         if (pvpEnforcedArea)
             updatePvP(true);
         if (pvpArrivedFar)
         {
             pvpArrivedFar = false;
             if (pvpEnforcedArea)
-                if (const spell = context.data.spells.spell(spellHonorlessTarget))
-                    castSpell(spell, SpellTargets(TargetFlags.self, 0), true, 0);
+                if (const spell = me.context.data.spells.spell(spellHonorlessTarget))
+                    me.castSpell(spell, SpellTargets(TargetFlags.self, 0), true, 0);
         }
     }
 
     /// The area changed: the free-for-all arenas.
     package void pvpAreaChanged(uint area)
     {
-        const entry = context.client.areas.lookup(area);
-        const arena = entry !is null && (entry.flags & areaFlagArena) && !player.gmTagOn;
+        const entry = me.context.client.areas.lookup(area);
+        const arena = entry !is null && (entry.flags & areaFlagArena) && !me.player.gmTagOn;
         if (arena)
             setPlayerFlag(PlayerFlagsPvP.freeForAll, true);
-        else if (isFreeForAll && !isFreeForAllRealm(context.config.gameType))
+        else if (isFreeForAll && !isFreeForAllRealm(me.context.config.gameType))
             setPlayerFlag(PlayerFlagsPvP.freeForAll, false);
     }
 
@@ -312,13 +325,13 @@ mixin template PvPHandlers()
      * This player was hit by `attacker`: a hit between players (not duellists) flags the attacker if
      * the victim is flagged, and the victim if the attacker is; the attacker becomes contested.
      */
-    package void pvpHitBy(typeof(this) attacker, bool attackerFlagged)
+    package void pvpHitBy(Character attacker, bool attackerFlagged)
     {
-        if (attacker is null || attacker is this || dueling.duelingWith(attacker.player.guid))
+        if (attacker is null || attacker is me || me.dueling.duelingWith(attacker.player.guid))
             return;
         flagFromPvPHit(attackerFlagged);
         if (isPvP)
-            attacker.attackedFlaggedPlayer();
+            attacker.pvp.attackedFlaggedPlayer();
     }
 
     package void flagFromPvPHit(bool attackerFlagged)
@@ -335,19 +348,19 @@ mixin template PvPHandlers()
         // Fighting a flagged player ends Stealth, Divine Shield and the like (`PVP_ACTIVE_CANCELS`).
         import dmangos.world.auras : AuraInterrupt;
 
-        interruptAuras(AuraInterrupt.pvpActiveCancels);
+        me.interruptAuras(AuraInterrupt.pvpActiveCancels);
         pvpInCombat = true;
         updatePvP(true);
         updatePvPContested(true);
-        flushPlayerChanges();
+        me.flushPlayerChanges();
     }
 
     /// Healing a flagged player flags the helper, in combat or not ("If you cast a healing spell or resurrect a
     /// flagged player, your flag will go up", WoWWiki "PvP flag", 2006-10; docs/FORMULAS.md "The PvP flag").
-    package void pvpAssisted(typeof(this) other)
+    package void pvpAssisted(Character other)
     {
-        if (other !is null && other !is this)
-            pvpAssisted(other.isPvP, other.isPvPContested, other.pvpInCombat);
+        if (other !is null && other !is me)
+            pvpAssisted(other.pvp.isPvP, other.pvp.isPvPContested, other.pvp.pvpInCombat);
     }
 
     package @property bool inPvPCombat() const

@@ -77,7 +77,7 @@ private:
     void leaveWorld(string why, bool loggingOut)
     {
         // The map it is on: `deathOnLogout` may put its saved place at a graveyard of another map.
-        releaseNpcCharm();
+        crowdControl.releaseNpcCharm();
         auto leaving = map;
         worldPvpLeaving(); // a Silithyst carrier's falls here
         if (loggingOut)
@@ -189,7 +189,7 @@ private:
             return 0;
         // Combat and control of another unit stay with that unit's simulation. Ordinary balancing
         // lets a taxi flight finish on its current node.
-        if (inCombat || taxi.flying || dueling.duel !is null || trading.tradeSide !is null || charmed !is null || npcCharmer)
+        if (inCombat || taxi.flying || dueling.duel !is null || trading.tradeSide !is null || charmed !is null || crowdControl.npcCharmer)
             return 0;
         // A gateway owns no ground, including the edge between two world nodes.
         const margin = context.config.cluster.gateway ? 0 : migrationMargin;
@@ -331,7 +331,7 @@ private:
         context.database.saveProgress(progress);
         if (channelSpell !is null && !petControl.guid && !carriesChannelOnHandoff())
             endChannel(true);
-        releaseNpcCharm();
+        crowdControl.releaseNpcCharm();
         savePlayerDetails();
         checkpointSummons();
         if (!context.settleWrites())
@@ -417,7 +417,7 @@ private:
             w.put(speed);
         writeSessionHandoff(w);
         writeDeathHandoff(w);
-        writePvPHandoff(w);
+        pvp.writePvPHandoff(w);
         context.remoteSpells.writeReplicaImpacts(player.guid, w);
         writeChannelAndGroundHandoff(w);
         serialize(w, camera);
@@ -559,7 +559,7 @@ private:
         player.speeds = speeds; // as the client has them; auras loaded below change them as they did there
         readSessionHandoff(r);
         readDeathHandoff(r);
-        readPvPHandoff(r);
+        pvp.readPvPHandoff(r);
         saveTimer = IntervalTimer(sessionSaveInterval());
         enteredWorld = context.clock();
         migratedAt = context.clock();
@@ -915,14 +915,14 @@ private:
         updatePetMood(elapsed);
         taxi.updateTaxi(cast(int) elapsed.total!"msecs");
         player.soberUp(cast(int) elapsed.total!"msecs");
-        updateCrowdControl(cast(int) elapsed.total!"msecs");
+        crowdControl.updateCrowdControl(cast(int) elapsed.total!"msecs");
         updateReactives(cast(int) elapsed.total!"msecs");
         updateTimedQuests();
         refreshQuestObjects();
         updateRaidReset();
         homebind.updateHomebindTimer(cast(int) elapsed.total!"msecs");
         dueling.updateDuel();
-        updatePvPTimers(cast(int) elapsed.total!"msecs");
+        pvp.updatePvPTimers(cast(int) elapsed.total!"msecs");
         updateDeath(elapsed);
         if (regenTimer.update(elapsed))
         {
@@ -1012,7 +1012,7 @@ private:
     package bool takeMovement(const MovementInfo movement, Opcode opcode)
     {
         // In flight, feared or disoriented the server moves the player (the client may still send heartbeats).
-        if (taxi.flying || !inControl)
+        if (taxi.flying || !crowdControl.inControl)
             return false;
         // A position the client cannot be at.
         const p = movement.position;

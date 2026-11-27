@@ -600,7 +600,7 @@ private:
             switch (aura.type(i))
             {
             case AuraType.aoeCharm:
-                npcCharmChanged(aura, apply);
+                crowdControl.npcCharmChanged(aura, apply);
                 break;
             // Speeds (`dmangos.world.moveorders`: `speedRate`).
             case AuraType.modIncreaseSpeed, AuraType.modDecreaseSpeed, AuraType.modIncreaseSwimSpeed,
@@ -645,7 +645,7 @@ private:
                         display = t.modelId1;
                 player.values.set!UNIT_FIELD_MOUNTDISPLAYID(display);
                 interruptAuras(apply ? AuraInterrupt.mounting : AuraInterrupt.dismount, aura);
-                petModeAtMount(apply); // the pet's bar greyed out while riding (`dmangos.world.mounting`)
+                mounting.petModeAtMount(apply); // the pet's bar greyed out while riding (`dmangos.world.mounting`)
                 break;
             // An immunity purges what ends with one (a carried flag: `AURA_INTERRUPT_FLAG_INVULNERABILITY_BUFF_CANCELS`):
             // an effect immunity that helps, a school immunity with `SPELL_ATTR_EX_IMMUNITY_PURGES_EFFECT`.

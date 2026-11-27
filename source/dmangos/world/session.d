@@ -65,7 +65,7 @@ enum WorldState
     closed,
 }
 
-private alias Handles = HandlesFor!(Opcode, WorldState);
+package alias Handles = HandlesFor!(Opcode, WorldState); /// the attribute that routes a world packet to its handler
 
 /// Pings closer together than this count as over-speed.
 private enum minimumPingInterval = 27.seconds;

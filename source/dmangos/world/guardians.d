@@ -63,8 +63,19 @@ unittest
 }
 
 /// See the module documentation.
-mixin template GuardianSummons()
+final class Guardians
 {
+    import dmangos.world.character : Character;
+    import dmangos.world.session : Handles, WorldState;
+
+    private Character me;
+
+    ///
+    this(Character me)
+    {
+        this.me = me;
+    }
+
     import std.math : cos, sin, sqrt;
     import std.random : uniform01;
     import dmangos.world.creature : Creature, TempSpawnType;
@@ -77,14 +88,14 @@ mixin template GuardianSummons()
     import dmangos.world.spells : SpellInfo;
     import dmangos.world.updatefields;
 
-    private ulong[] guardians_; /// the guardians out (`m_guardianPets`)
+    package ulong[] guardians_; /// the guardians out (`m_guardianPets`)
 
     /// The guardians out and alive here.
     package Creature[] ownGuardians()
     {
         Creature[] found;
         foreach (guid; guardians_)
-            if (auto c = cast(Creature) map.findObject(guid))
+            if (auto c = cast(Creature) me.map.findObject(guid))
                 if (c.alive)
                     found ~= c;
         return found;
@@ -100,8 +111,8 @@ mixin template GuardianSummons()
         import dmangos.world.defines : InventoryType;
 
         const entry = cast(uint) spell.miscValue[i];
-        const t = entry in context.data.creatureTemplates;
-        if (t is null || (summonOne && ownPet !is null))
+        const t = entry in me.context.data.creatureTemplates;
+        if (t is null || (summonOne && me.ownPet !is null))
             return;
         // Cast again: the ones of its entry go, and unless it may summon anew, that is all.
         if (!summonOne && !triggered)
@@ -116,46 +127,46 @@ mixin template GuardianSummons()
             if (found && !resummonsGuardians(spell.casting.durationIndex, spell.category))
                 return;
         }
-        uint level = player.data.level;
+        uint level = me.player.data.level;
         if (!summonOne)
         {
             enum uint skillEngineering = 202;
-            const item = castItemEntry ? castItemEntry in context.data.items : null;
+            const item = castItemEntry ? castItemEntry in me.context.data.items : null;
             const trinket = item !is null && item.requiredSkill == skillEngineering
                 && item.inventoryType == InventoryType.trinket;
-            level = guardianLevel(player.data.level, t.minLevel, t.maxLevel, trinket,
-                trinket ? player.skillRank(skillEngineering) : 0);
+            level = guardianLevel(me.player.data.level, t.minLevel, t.maxLevel, trinket,
+                trinket ? me.player.skillRank(skillEngineering) : 0);
         }
-        const ms = modDuration(spell, duration(*spell, context.client, player.data.level));
+        const ms = me.modDuration(spell, duration(*spell, me.context.client, me.player.data.level));
         const count = summonOne ? 1 : value > 0 ? value : 1;
-        const spread = radius(*spell, i, context.client);
+        const spread = radius(*spell, i, me.context.client);
         foreach (n; 0 .. count)
             makeGuardian(spell, entry, guardianSpot(targets, n, spread), level, ms);
-        checkpointSummons(true);
+        me.checkpointSummons(true);
     }
 
     /// Where guardian `n` stands: the first at the destination, the others around it within `spread`; without one,
     /// two yards from the caster.
     private Position guardianSpot(const ref SpellTargets targets, int n, float spread)
     {
-        const me = player.position;
+        const here = me.player.position;
         if (!(targets.mask & TargetFlags.destLocation))
         {
-            auto at = Position(me.x + 2 * cos(me.orientation), me.y + 2 * sin(me.orientation), me.z, me.orientation);
-            const ground = map.groundHeight(at.x, at.y, me.z + 2, false);
+            auto at = Position(here.x + 2 * cos(here.orientation), here.y + 2 * sin(here.orientation), here.z, here.orientation);
+            const ground = me.map.groundHeight(at.x, at.y, here.z + 2, false);
             if (ground > -100_000 && (ground - at.z) ^^ 2 < 25)
                 at.z = ground;
             return at;
         }
-        auto at = Position(targets.dest[0], targets.dest[1], targets.dest[2], me.orientation);
+        auto at = Position(targets.dest[0], targets.dest[1], targets.dest[2], here.orientation);
         if (n > 0 && spread > 0)
         {
             import std.math : PI;
 
-            const angle = uniform01(map.random) * 2 * PI, d = sqrt(uniform01(map.random)) * spread;
+            const angle = uniform01(me.map.random) * 2 * PI, d = sqrt(uniform01(me.map.random)) * spread;
             at.x += d * cos(angle);
             at.y += d * sin(angle);
-            const ground = map.groundHeight(at.x, at.y, at.z + 2, false);
+            const ground = me.map.groundHeight(at.x, at.y, at.z + 2, false);
             if (ground > -100_000)
                 at.z = ground;
         }
@@ -164,40 +175,40 @@ mixin template GuardianSummons()
 
     package bool summonStaffHelper(uint entry, uint seconds)
     {
-        if (!player.alive || !seconds || seconds > int.max / 1000)
+        if (!me.player.alive || !seconds || seconds > int.max / 1000)
             return false;
         const targets = SpellTargets.init;
-        if (!makeGuardian(null, entry, guardianSpot(targets, 0, 0), player.data.level,
+        if (!makeGuardian(null, entry, guardianSpot(targets, 0, 0), me.player.data.level,
             cast(int) seconds * 1000))
             return false;
-        checkpointSummons(true);
+        me.checkpointSummons(true);
         return true;
     }
 
     /// One guardian of `entry` at `at`, for `ms` (0: until it dies).
     private bool makeGuardian(const(SpellInfo)* spell, uint entry, Position at, uint level, int ms)
     {
-        auto g = context.summonCreature(map, entry, at, ms > 0 ? TempSpawnType.timedOrCorpse : TempSpawnType.corpse,
-            ms > 0 ? ms : 0, player.guid);
+        auto g = me.context.summonCreature(me.map, entry, at, ms > 0 ? TempSpawnType.timedOrCorpse : TempSpawnType.corpse,
+            ms > 0 ? ms : 0, me.player.guid);
         if (g is null)
             return false;
         if (level != g.values.get!UNIT_FIELD_LEVEL)
-            context.setCreatureLevel(g, level);
+            me.context.setCreatureLevel(g, level);
         ref v = g.values;
-        const faction = player.values.get!UNIT_FIELD_FACTIONTEMPLATE;
+        const faction = me.player.values.get!UNIT_FIELD_FACTIONTEMPLATE;
         v.set!UNIT_FIELD_FACTIONTEMPLATE(faction);
-        g.factionTemplate = context.client.factionTemplates.lookup(faction);
+        g.factionTemplate = me.context.client.factionTemplates.lookup(faction);
         enum uint copied = UnitFlags.playerControlled | UnitFlags.pvp | UnitFlags.immuneToPlayer | UnitFlags.immuneToNpc;
-        v.set!UNIT_FIELD_FLAGS(g.template_.unitFlags | (player.values.get!UNIT_FIELD_FLAGS & copied));
+        v.set!UNIT_FIELD_FLAGS(g.template_.unitFlags | (me.player.values.get!UNIT_FIELD_FLAGS & copied));
         v.set!UNIT_NPC_FLAGS(g.template_.npcFlags);
         v.set!UNIT_CREATED_BY_SPELL(spell is null ? 0 : spell.id);
-        v.set!UNIT_FIELD_SUMMONEDBY(player.guid);
-        v.set!UNIT_FIELD_CREATEDBY(player.guid);
+        v.set!UNIT_FIELD_SUMMONEDBY(me.player.guid);
+        v.set!UNIT_FIELD_CREATEDBY(me.player.guid);
         v.setByte!UNIT_FIELD_BYTES_2(1, guardianMiscFlags);
-        g.guardianOwner = player.guid;
-        g.controllerPlayerFlags = player.values.get!PLAYER_FLAGS;
-        g.generator = new FollowMovement(player.guid, guardianFollowDistance, guardianFollowAngle);
-        map.flushObjectChanges(g);
+        g.guardianOwner = me.player.guid;
+        g.controllerPlayerFlags = me.player.values.get!PLAYER_FLAGS;
+        g.generator = new FollowMovement(me.player.guid, guardianFollowDistance, guardianFollowAngle);
+        me.map.flushObjectChanges(g);
         guardians_ ~= g.guid;
         return true;
     }
@@ -207,7 +218,7 @@ mixin template GuardianSummons()
     {
         import std.algorithm.mutation : remove;
 
-        map.removeObject(guid);
+        me.map.removeObject(guid);
         guardians_ = guardians_.remove!(g => g == guid);
     }
 
@@ -217,11 +228,11 @@ mixin template GuardianSummons()
      */
     package void removeGuardians(bool force)
     {
-        if (map is null)
+        if (me.map is null)
             return;
         foreach (guid; guardians_.dup)
         {
-            auto g = cast(Creature) map.findObject(guid);
+            auto g = cast(Creature) me.map.findObject(guid);
             if (g is null || force || g.ai is null || !g.ai.inCombat)
                 unsummonGuardian(guid);
         }
@@ -239,10 +250,10 @@ mixin template GuardianSummons()
         {
             if (g.ai is null || g.ai.inCombat)
                 continue;
-            auto foe = g.ai.combatTarget(map, enemy);
+            auto foe = g.ai.combatTarget(me.map, enemy);
             if (foe.alive && (foe.replica is null
-                || canAttack(g.ai.relatingOf, foe.combatRelations(context.client), context.client)))
-                g.ai.attackedBy(foe, map); // out of a fight: it starts one (`AttackStart`)
+                || canAttack(g.ai.relatingOf, foe.combatRelations(me.context.client), me.context.client)))
+                g.ai.attackedBy(foe, me.map); // out of a fight: it starts one (`AttackStart`)
         }
     }
 
@@ -252,8 +263,8 @@ mixin template GuardianSummons()
         import dmangos.world.caster : Caster;
         import dmangos.world.spellsummons : summonWildObject;
 
-        auto me = Caster.of(this);
-        summonWildObject(me, spell, i, targets);
+        auto caster = Caster.of(me);
+        summonWildObject(caster, spell, i, targets);
     }
 }
 
@@ -301,7 +312,7 @@ unittest
     Creature cast_(bool triggered = false)
     {
         me.castSpell(context.data.spells.spell(summon), SpellTargets(TargetFlags.self, 0), triggered, 0);
-        auto out_ = me.ownGuardians();
+        auto out_ = me.guardians.ownGuardians();
         return out_.length ? out_[0] : null;
     }
 
@@ -328,8 +339,8 @@ unittest
     assert(g.ai.inCombat && g.ai.currentVictim == innkeeper, "at its owner's enemy");
 
     // Off the map with its owner.
-    me.removeGuardians(true);
-    assert(me.ownGuardians().length == 0 && map.findObject(g.guid) is null);
+    me.guardians.removeGuardians(true);
+    assert(me.guardians.ownGuardians().length == 0 && map.findObject(g.guid) is null);
 
     // A wild object: beside the caster, no one's.
     me.castSpell(context.data.spells.spell(picnic), SpellTargets(TargetFlags.self, 0), false, 0);

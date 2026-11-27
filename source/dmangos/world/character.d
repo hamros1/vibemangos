@@ -17,7 +17,7 @@ module dmangos.world.character;
 import dmangos.world.spellids;
 
 import dmangos.world.honor : HonorHandlers;
-import dmangos.world.pvp : PvPHandlers;
+import dmangos.world.pvp : PvP;
 import dmangos.world.battleground : BattlegroundHandlers;
 import dmangos.world.worldpvp : WorldPvpHandlers;
 import dmangos.world.enchanting : Enchanting;
@@ -30,7 +30,7 @@ import dmangos.auth.accounts : AccountLevel;
 import dmangos.bytes;
 import dmangos.timer : IntervalTimer;
 import dmangos.log;
-import dmangos.net.dispatch : DispatchResult, HandlesFor = Handles, PacketDispatch;
+import dmangos.net.dispatch : DispatchResult, PacketDispatch;
 import dmangos.world.channelhandlers : Channels;
 import dmangos.world.charscreen : CharacterLogin;
 import dmangos.world.commands : ChatCommands;
@@ -55,9 +55,9 @@ import dmangos.world.reputationhandlers : Reputations;
 import dmangos.world.gameobjecthandlers : GameObjectHandlers;
 import dmangos.world.auctionhandlers : Auctioneer;
 import dmangos.world.taxihandlers : Taxi;
-import dmangos.world.crowdcontrol : CrowdControlHandlers;
-import dmangos.world.mounting : MountRules;
-import dmangos.world.guardians : GuardianSummons;
+import dmangos.world.crowdcontrol : CrowdControl;
+import dmangos.world.mounting : Mounting;
+import dmangos.world.guardians : Guardians;
 import dmangos.world.durability : DurabilityRules;
 import dmangos.world.rituals : RitualSummoning;
 import dmangos.world.homebind : Homebind;
@@ -93,9 +93,8 @@ import dmangos.world.queries : chatMessage;
 import dmangos.world.opcodes;
 import dmangos.world.packets;
 
-import dmangos.world.session : WorldSession, WorldState;
+import dmangos.world.session : Handles, WorldSession, WorldState;
 
-package alias Handles = HandlesFor!(Opcode, WorldState);
 
 /// See the module documentation.
 final class Character : OnlinePlayer, Looter
@@ -103,9 +102,13 @@ final class Character : OnlinePlayer, Looter
     /// The connection its client talks through (here, or relaying to its home node).
     WorldSession connection;
 
-    mixin PacketDispatch!(Handles, "taxi", "mailbox", "auctioneer", "reputations", "talents", "trading", "dueling", "channels", "contacts", "enchanting", "professions", "homebind");
+    mixin PacketDispatch!(Handles, "taxi", "mailbox", "auctioneer", "reputations", "talents", "trading", "dueling", "channels", "contacts", "enchanting", "professions", "homebind", "guardians", "crowdControl", "mounting", "pvp");
 
     Taxi taxi; /// flight masters and the flight under way (`dmangos.world.taxihandlers`)
+    PvP pvp; /// the PvP flag (`dmangos.world.pvp`)
+    Mounting mounting; /// mounts (`dmangos.world.mounting`)
+    CrowdControl crowdControl; /// fear, charm and mind control (`dmangos.world.crowdcontrol`)
+    Guardians guardians; /// guardians and companions summoned (`dmangos.world.guardians`)
     Homebind homebind; /// the inn the hearthstone returns to (`dmangos.world.homebind`)
     Professions professions; /// professions' skills and recipes (`dmangos.world.professions`)
     Enchanting enchanting; /// enchantments put on items (`dmangos.world.enchanting`)
@@ -174,6 +177,10 @@ final class Character : OnlinePlayer, Looter
         this.connection = connection;
         this.context = context;
         taxi = new Taxi(this);
+        pvp = new PvP(this);
+        mounting = new Mounting(this);
+        crowdControl = new CrowdControl(this);
+        guardians = new Guardians(this);
         homebind = new Homebind(this);
         professions = new Professions(this);
         enchanting = new Enchanting(this);
@@ -622,7 +629,7 @@ final class Character : OnlinePlayer, Looter
         import std.math : sqrt;
         import dmangos.world.movement : jumpGravity, SpellPullMotion;
 
-        if (player is null || taxi.flying || !inControl || teleporting != Teleport.none)
+        if (player is null || taxi.flying || !crowdControl.inControl || teleporting != Teleport.none)
             return;
         const start = player.position;
         const dx = caster.x - start.x, dy = caster.y - start.y;
@@ -946,12 +953,8 @@ private:
     mixin EffectHandlers;
     mixin QuestHandlers;
     mixin GameObjectHandlers;
-    mixin CrowdControlHandlers;
-    mixin MountRules;
-    mixin GuardianSummons;
     mixin DurabilityRules;
     mixin RitualSummoning;
-    mixin PvPHandlers;
     mixin BattlegroundHandlers;
     mixin WorldPvpHandlers;
     mixin ItemUseHandlers;
@@ -984,16 +987,16 @@ unittest
     auto anduin = loggedIn(context, db, 7, "Anduin", Position(0, 0, 0));
     auto me = anduin.session.inWorld;
     anduin.write(Opcode.CMSG_TOGGLE_PVP, null);
-    assert(pvpFlagged(anduin) && me.hasPlayerFlag(PlayerFlagsPvP.desired));
+    assert(pvpFlagged(anduin) && me.pvp.hasPlayerFlag(PlayerFlagsPvP.desired));
     anduin.write(Opcode.CMSG_TOGGLE_PVP, [ubyte(0)]);
-    assert(!me.hasPlayerFlag(PlayerFlagsPvP.desired) && pvpFlagged(anduin), "still flagged, for now");
-    me.updatePvPTimers(299_000);
+    assert(!me.pvp.hasPlayerFlag(PlayerFlagsPvP.desired) && pvpFlagged(anduin), "still flagged, for now");
+    me.pvp.updatePvPTimers(299_000);
     assert(pvpFlagged(anduin));
-    me.updatePvPTimers(1000);
+    me.pvp.updatePvPTimers(1000);
     assert(!pvpFlagged(anduin), "five minutes on: off");
     // While wanted, the timer stands still.
     anduin.write(Opcode.CMSG_TOGGLE_PVP, [ubyte(1)]);
-    me.updatePvPTimers(600_000);
+    me.pvp.updatePvPTimers(600_000);
     assert(pvpFlagged(anduin));
 }
 
@@ -1010,17 +1013,17 @@ unittest
     anduin.session.inWorld.updateZone(zoneStormwind, zoneStormwind);
     assert(!pvpFlagged(anduin), "a human at home");
     thrall.session.inWorld.updateZone(zoneElwynn, zoneElwynn);
-    thrall.session.inWorld.updatePvPTimers(300_000);
+    thrall.session.inWorld.pvp.updatePvPTimers(300_000);
     assert(pvpFlagged(thrall), "Alliance land flags him on a normal realm too");
     thrall.session.inWorld.updateZone(zoneStranglethorn, zoneStranglethorn);
-    thrall.session.inWorld.updatePvPTimers(300_000);
+    thrall.session.inWorld.pvp.updatePvPTimers(300_000);
     assert(!pvpFlagged(thrall), "contested land on a normal realm: off after five minutes");
 
     auto me = anduin.session.inWorld;
     me.updateZone(zoneStranglethorn, areaGurubashiArena);
-    assert(me.isFreeForAll);
+    assert(me.pvp.isFreeForAll);
     me.updateArea(zoneStranglethorn);
-    assert(!me.isFreeForAll, "out of the arena");
+    assert(!me.pvp.isFreeForAll, "out of the arena");
 }
 
 // A hit between players: the attacker of a flagged player is flagged and contested; an unflagged one
@@ -1038,13 +1041,13 @@ unittest
     anduin.write(Opcode.CMSG_TOGGLE_PVP, null);
     assert(canAttack(orc.relatingNow(), human.relatingNow(), context.client), "flagged: a target");
     assert(!pvpFlagged(thrall));
-    human.pvpHitBy(orc, orc.isPvP);
-    assert(pvpFlagged(thrall) && orc.isPvPContested, "the attacker: flagged and contested");
-    orc.updatePvPTimers(29_000);
-    assert(orc.isPvPContested, "while in PvP combat it stays");
-    orc.pvpLeftCombat();
-    orc.updatePvPTimers(30_000);
-    assert(!orc.isPvPContested && pvpFlagged(thrall), "30 s out of combat: not contested; flagged 5 minutes");
+    human.pvp.pvpHitBy(orc, orc.pvp.isPvP);
+    assert(pvpFlagged(thrall) && orc.pvp.isPvPContested, "the attacker: flagged and contested");
+    orc.pvp.updatePvPTimers(29_000);
+    assert(orc.pvp.isPvPContested, "while in PvP combat it stays");
+    orc.pvp.pvpLeftCombat();
+    orc.pvp.updatePvPTimers(30_000);
+    assert(!orc.pvp.isPvPContested && pvpFlagged(thrall), "30 s out of combat: not contested; flagged 5 minutes");
 }
 
 /// Mixed-faction groups see the ally template and cannot attack each other after grouping.
@@ -1093,7 +1096,7 @@ unittest
     auto jaina = loggedIn(context, db, 8, "Jaina", Position(2, 0, 0));
     anduin.write(Opcode.CMSG_TOGGLE_PVP, null);
     assert(pvpFlagged(anduin) && !pvpFlagged(jaina) && !anduin.session.inWorld.inCombat);
-    jaina.session.inWorld.pvpAssisted(anduin.session.inWorld);
+    jaina.session.inWorld.pvp.pvpAssisted(anduin.session.inWorld);
     assert(pvpFlagged(jaina));
 }
 

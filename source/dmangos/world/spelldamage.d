@@ -657,7 +657,7 @@ uint spellHeal(ref Caster caster, const(SpellInfo)* spell, UnitRef target, int v
     if (!how.plain)
     {
         if (p !is null && target.kind == UnitKind.player && !self)
-            p.pvpAssisted(target.session);
+            p.pvp.pvpAssisted(target.session);
         if (p !is null)
             value = p.classHeal(spell, target, value); // Swiftmend, Blessing of Light, Healing Way
         rolled = rollHealing(caster, spell, value, crit, how.bounce);
@@ -881,7 +881,7 @@ void healMaxHealth(ref Caster caster, const(SpellInfo)* spell, UnitRef target)
     v.set!UNIT_FIELD_HEALTH(health + amount > maxHealth ? maxHealth : health + amount);
     auto p = caster.character;
     if (p !is null && target.kind == UnitKind.player && target.combatGuid != caster.guid)
-        p.pvpAssisted(target.session);
+        p.pvp.pvpAssisted(target.session);
     caster.sendAround(Opcode.SMSG_SPELLHEALLOG, healLog(target.combatGuid, caster.guid, spell.id, amount, false));
     if (target.kind == UnitKind.player)
         target.session.flushPlayerChanges();

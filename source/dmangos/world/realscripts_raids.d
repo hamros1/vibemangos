@@ -3429,7 +3429,7 @@ unittest
     foreach (k; 0 .. s.heroes.length)
         if (s.hero(k).auras.find(28410) !is null)
         {
-            assert(s.hero(k).values.get!UNIT_FIELD_CHARMEDBY == kt.guid && !s.heroes[k].session.inWorld.inControl);
+            assert(s.hero(k).values.get!UNIT_FIELD_CHARMEDBY == kt.guid && !s.heroes[k].session.inWorld.crowdControl.inControl);
             assert(s.hero(k).auras.find(28409) !is null);
             chained ~= k;
         }
@@ -3448,7 +3448,7 @@ unittest
     foreach (k; chained)
     {
         assert(s.hero(k).values.get!UNIT_FIELD_CHARMEDBY == 0 && s.hero(k).values.get!UNIT_FIELD_FACTIONTEMPLATE == faction);
-        assert(s.heroes[k].session.inWorld.inControl && s.hero(k).auras.find(28409) is null);
+        assert(s.heroes[k].session.inWorld.crowdControl.inControl && s.hero(k).auras.find(28409) is null);
         assert(!canAttack(s.heroUnit(free).relating, s.heroUnit(k).relating, s.w.context.client));
     }
 }
@@ -3853,14 +3853,14 @@ unittest
         && abs(bound.auras.find(shackle).duration - shackleLeft) <= 1_000, "the shackled guardian came back free");
     foreach (k; chained)
         assert(s.hero(k).auras.find(chainsTarget) !is null
-            && s.hero(k).values.get!UNIT_FIELD_CHARMEDBY == kt.guid && !s.heroes[k].session.inWorld.inControl,
+            && s.hero(k).values.get!UNIT_FIELD_CHARMEDBY == kt.guid && !s.heroes[k].session.inWorld.crowdControl.inControl,
             format!"raider %s came back free of the Chains"(k));
     s.stayWith = kt;
     assert(s.runUntil(() => s.hero(chained[0]).auras.find(chainsTarget) is null, 25.seconds));
     const freedAt = s.elapsedMs - chainedAt;
     assert(freedAt >= 19_000 && freedAt <= 21_400, format!"the Chains held %s ms, not their twenty seconds"(freedAt));
     foreach (k; chained)
-        assert(s.hero(k).values.get!UNIT_FIELD_CHARMEDBY == 0 && s.heroes[k].session.inWorld.inControl);
+        assert(s.hero(k).values.get!UNIT_FIELD_CHARMEDBY == 0 && s.heroes[k].session.inWorld.crowdControl.inControl);
     minions.run(s, 40.seconds);
     assert(minions.count(npcGuardianIcecrown) == guardianCount, format!"%s Guardians of Icecrown, not %s"(
         minions.count(npcGuardianIcecrown), guardianCount));

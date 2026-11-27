@@ -42,7 +42,7 @@ mixin template CombatHandlers()
     package Relating relatingNow()
     {
         ref const v = player.values;
-        if (npcCharmer)
+        if (crowdControl.npcCharmer)
             return Relating(v.get!UNIT_FIELD_FLAGS, context.client.factionTemplates.lookup(v.get!UNIT_FIELD_FACTIONTEMPLATE), false, 0, 0, player.alive);
         Relating r = Relating(v.get!UNIT_FIELD_FLAGS,
             context.client.factionTemplates.lookup(v.get!UNIT_FIELD_FACTIONTEMPLATE), true, 1u << (player.data.race - 1),
@@ -71,12 +71,12 @@ mixin template CombatHandlers()
             return;
         // Between players (a pet for its owner): the PvP flags (`dmangos.world.pvp`).
         if (attacker.kind == UnitKind.player)
-            pvpHitBy(attacker.session, attacker.session.isPvP);
+            pvp.pvpHitBy(attacker.session, attacker.session.pvp.isPvP);
         else if (attacker.kind == UnitKind.creature && attacker.creature.petOwner)
-            pvpHitBy(playerOnMap(attacker.creature.petOwner),
+            pvp.pvpHitBy(playerOnMap(attacker.creature.petOwner),
                 (attacker.creature.values.get!UNIT_FIELD_FLAGS & UnitFlags.pvp) != 0);
         else if (blow.remotePlayer)
-            flagFromPvPHit(blow.remotePlayerPvP);
+            pvp.flagFromPvPHit(blow.remotePlayerPvP);
         if (blow.kind != BlowKind.periodic && player.values.getByte!UNIT_FIELD_BYTES_1(0) != 0)
         {
             player.values.setByte!UNIT_FIELD_BYTES_1(0, 0);
@@ -197,7 +197,7 @@ private:
     @Handles(Opcode.CMSG_ATTACKSWING, WorldState.inWorld)
     void handleAttackSwing(const ClientGuid request)
     {
-        if (npcCharmer)
+        if (crowdControl.npcCharmer)
             return;
         auto enemy = cast(Creature) map.findObject(request.guid);
         if (enemy is null)
@@ -232,7 +232,7 @@ private:
     @Handles(Opcode.CMSG_ATTACKSTOP, WorldState.inWorld)
     void handleAttackStop()
     {
-        if (npcCharmer)
+        if (crowdControl.npcCharmer)
             return;
         const meleeOn = meleeAttacking && attacking != 0;
         stopAttack(true);
@@ -269,7 +269,7 @@ private:
     /// Attacks `victim` in melee; false if it cannot.
     bool attack(Creature victim)
     {
-        if (!player.alive || !victim.alive || victim.ai.runningHome || mounted) // no melee mounted (`Unit::Attack`)
+        if (!player.alive || !victim.alive || victim.ai.runningHome || mounting.mounted) // no melee mounted (`Unit::Attack`)
             return false;
         if (attacking)
         {
@@ -307,9 +307,9 @@ private:
     }
 
     /// Attacks a player (a duel's opponent) in melee.
-    void attackPlayer(typeof(this) other)
+    package void attackPlayer(typeof(this) other)
     {
-        if (!player.alive || mounted)
+        if (!player.alive || mounting.mounted)
             return;
         if (attacking && attacking != other.player.guid)
             stopAttack(false, true);
@@ -408,7 +408,7 @@ private:
             && context.clock() >= combatUntil)
         {
             player.values.set!UNIT_FIELD_FLAGS(player.values.get!UNIT_FIELD_FLAGS & ~UnitFlags.inCombat);
-            pvpLeftCombat();
+            pvp.pvpLeftCombat();
             flushPlayerChanges();
         }
     }

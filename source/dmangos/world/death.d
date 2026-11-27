@@ -314,7 +314,7 @@ private:
     /// The player's team as `game_graveyard_zone` knows it.
     @property uint teamId()
     {
-        return context.client.teamForRace(player.data.race) == Team.horde ? teamHorde : teamAlliance;
+        return context.client.teamForRace(player.data.race) == imported!"dmangos.world.clientdata".Team.horde ? teamHorde : teamAlliance;
     }
 
     /**

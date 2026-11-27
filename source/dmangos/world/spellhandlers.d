@@ -181,7 +181,7 @@ private:
     @Handles(Opcode.CMSG_CAST_SPELL, WorldState.inWorld)
     void handleCastSpell(ref ByteReader reader)
     {
-        if (npcCharmer)
+        if (crowdControl.npcCharmer)
             return;
         const id = reader.read!uint;
         auto targets = SpellTargets.read(reader);
@@ -397,7 +397,7 @@ private:
     @Handles(Opcode.CMSG_CANCEL_CAST, WorldState.inWorld)
     void handleCancelCast(ref ByteReader reader)
     {
-        if (npcCharmer)
+        if (crowdControl.npcCharmer)
             return;
         const id = reader.read!uint;
         if (mindVisionAsked.spell == id && id)
@@ -417,7 +417,7 @@ private:
     @Handles(Opcode.CMSG_USE_ITEM, WorldState.inWorld)
     void handleUseItem(ref ByteReader reader)
     {
-        if (npcCharmer)
+        if (crowdControl.npcCharmer)
             return;
         const bag = reader.read!ubyte, slot = reader.read!ubyte;
         reader.read!ubyte; // spell count
@@ -429,7 +429,7 @@ private:
 
     private void useInventoryItem(Item item, const ref SpellTargets targets, bool handoff, ulong namedCreature = 0)
     {
-        if (npcCharmer)
+        if (crowdControl.npcCharmer)
             return;
         if (item is null)
             return sendEquipError(InventoryResult.itemNotFound);
@@ -2478,7 +2478,7 @@ private:
             const refused = crowdControlRefusal(spell);
             if (refused != SpellCastResult.ok)
                 return refused;
-            const riding = mountedCastRefusal(spell, triggered); // "You are mounted" (`dmangos.world.mounting`)
+            const riding = mounting.mountedCastRefusal(spell, triggered); // "You are mounted" (`dmangos.world.mounting`)
             if (riding != SpellCastResult.ok)
                 return riding;
         }
@@ -5091,7 +5091,7 @@ unittest
     assert(opcodesOf(caster.read()).count(Opcode.SMSG_SPELL_GO) == 1);
 
     targets[11].write(Opcode.CMSG_TOGGLE_PVP, [ubyte(0)]);
-    targets[11].session.inWorld.updatePvPTimers(pvpFlagMs);
+    targets[11].session.inWorld.pvp.updatePvPTimers(pvpFlagMs);
     targets[12].session.inWorld.addAura(makeAura(shield in owner.data.spells.spells, 12, 20, -1, true, [0, 0, 0]));
     auto moving = cast(Player) targets[13].session.character;
     moving.movement.position = Position(center.x + 40, center.y, center.z);
@@ -5280,7 +5280,7 @@ unittest
         if (scenario == Scenario.movedAndUnflagged)
         {
             third.write(Opcode.CMSG_TOGGLE_PVP, [ubyte(0)]);
-            third.session.inWorld.updatePvPTimers(pvpFlagMs);
+            third.session.inWorld.pvp.updatePvPTimers(pvpFlagMs);
             moving.movement.position.x += 50;
             owner.map(0).relocated(second.session.inWorld);
         }
@@ -5842,13 +5842,13 @@ unittest
         && otherSubgroup.session.character.values.get!UNIT_FIELD_HEALTH == 20u
         && movingPlayer.values.get!UNIT_FIELD_HEALTH == 20u);
     assert(replies.length == 1 && replies[0].amount == 15);
-    assert(!caster.session.inWorld.isPvP);
+    assert(!caster.session.inWorld.pvp.isPvP);
     origin.remoteSpells.partyHealArrived(2, replies[0]);
     origin.remoteSpells.partyHealArrived(2, replies[0]);
     const logged = caster.read();
     assert(opcodesOf(logged).count(Opcode.SMSG_SPELLHEALLOG) == 1);
     assert(bodyOf(logged, Opcode.SMSG_SPELLHEALLOG) == healLog(9, 7, heal, 15, false));
-    assert(caster.session.inWorld.isPvP, "helping a flagged member flags the caster only after the heal lands");
+    assert(caster.session.inWorld.pvp.isPvP, "helping a flagged member flags the caster only after the heal lands");
     const cooldowns = caster.session.inWorld.initialCooldowns();
     assert(cooldowns.length == 1 && cooldowns[0].spell == heal);
     caster.write(Opcode.CMSG_CAST_SPELL, request.data);
@@ -5982,7 +5982,7 @@ unittest
         {
             caster.write(Opcode.CMSG_TOGGLE_PVP, [ubyte(1)]);
             caster.write(Opcode.CMSG_TOGGLE_PVP, [ubyte(0)]);
-            caster.session.inWorld.updatePvPTimers(pvpFlagMs - 500);
+            caster.session.inWorld.pvp.updatePvPTimers(pvpFlagMs - 500);
         }
         auto target = loggedIn(owner, db, 8, "Jaina", targetAt, race: otherFaction ? raceOrc : raceHuman);
         if (scenario == Scenario.combat)
@@ -6047,7 +6047,7 @@ unittest
         if (scenario == Scenario.flagExpiresOnArrival)
         {
             target.write(Opcode.CMSG_TOGGLE_PVP, [ubyte(0)]);
-            target.session.inWorld.updatePvPTimers(pvpFlagMs);
+            target.session.inWorld.pvp.updatePvPTimers(pvpFlagMs);
             assert(!(recipient.values.get!UNIT_FIELD_FLAGS & UnitFlags.pvp));
         }
         if (scenario == Scenario.cancel || scenario == Scenario.hostileCancel)

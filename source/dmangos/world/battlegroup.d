@@ -191,9 +191,9 @@ unittest
     foreach (user; [&left, &right])
     {
         auto who = user.session.inWorld;
-        assert(who.isPvP);
-        who.updatePvPTimers(pvpFlagMs + 1);
-        assert(who.isPvP, "the flag stays on for the entire match without /pvp");
+        assert(who.pvp.isPvP);
+        who.pvp.updatePvPTimers(pvpFlagMs + 1);
+        assert(who.pvp.isPvP, "the flag stays on for the entire match without /pvp");
     }
     void checkName(ref TestClient user, ulong guid, string expectedName, string expectedRealm)
     {

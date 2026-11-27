@@ -739,7 +739,7 @@ unittest
     second.remoteSpells.creatureSwingArrived(home.nodeId, swings[4]);
     assert(defender.player.values.get!UNIT_FIELD_HEALTH == 84 && replies.length == 3 && replies[2].targetPvP);
     home.remoteSpells.creatureSwingArrived(second.nodeId, replies[2]);
-    assert(hunter.isPvP && hunter.isPvPContested, "the pet's owner receives the PvP flag and contested status");
+    assert(hunter.pvp.isPvP && hunter.pvp.isPvPContested, "the pet's owner receives the PvP flag and contested status");
 }
 
 /// Controlled creatures fight across a handoff, and swings from an expired control or summon are rejected.
@@ -806,8 +806,8 @@ unittest
         else
         {
             const targets = SpellTargets.init;
-            player.summonGuardianEffect(&control, 0, 1, targets, false, 0, false);
-            attacker = player.ownGuardians()[0];
+            player.guardians.summonGuardianEffect(&control, 0, 1, targets, false, 0, false);
+            attacker = player.guardians.ownGuardians()[0];
             client.write(Opcode.CMSG_TOGGLE_PVP, cast(const(ubyte)[]) [1]);
             assert(attacker.values.get!UNIT_FIELD_FLAGS & UnitFlags.pvp);
         }
@@ -920,7 +920,7 @@ unittest
         }
         else
         {
-            player.removeGuardians(true);
+            player.guardians.removeGuardians(true);
             assert(here.findObject(attacker.guid) is null);
             newRegion.replicaRemoved(home.nodeId, attacker.guid);
         }
@@ -1080,7 +1080,7 @@ unittest
     session.addAura(makeAura(context.data.spells.spell(horse), session.character.guid, 1, -1, true, [0, 0, 0]));
     auto mode = ByteReader(bodyOf(gul.read(), Opcode.SMSG_PET_MODE));
     assert(mode.read!ulong == pet.guid && mode.read!uint == petModeDisableActions);
-    session.dismount();
+    session.mounting.dismount();
     mode = ByteReader(bodyOf(gul.read(), Opcode.SMSG_PET_MODE));
     assert(mode.read!ulong == pet.guid && mode.read!uint != petModeDisableActions);
 }

@@ -2409,7 +2409,7 @@ mixin template BattlegroundHandlers()
                 context.settleWrites(); // recovery must be able to find the character on this map
             }
             copy.arrived(player, battleground_.team); // its world states went with the map's packets
-            updatePvP(true);
+            pvp.updatePvP(true);
             flushPlayerChanges();
             joinTeamRaid(copy);
         }
@@ -2494,7 +2494,7 @@ mixin template BattlegroundHandlers()
                 // A login on another node can send an empty world-state packet before this handoff.
                 if (migrated)
                     sendInitWorldStates(player.data.zone);
-                updatePvP(true);
+                pvp.updatePvP(true);
                 flushPlayerChanges();
                 copy.rules.playerRestored(copy, player.guid);
                 // A gateway's login packets cannot see the temporary raid on the shared match host.

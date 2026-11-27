@@ -445,10 +445,10 @@ private:
         sendInitialPacketsAfterAddToMap();
         resetMovementCheck();
         startFallAt(player.position.z);
-        dismountOnArrival(); // a dungeon without mounts
+        mounting.dismountOnArrival(); // a dungeon without mounts
         homebind.instanceValidityOnArrival(); // out of a dungeon: welcome again (`dmangos.world.homebind`)
         petsOnArrival();
-        pvpArrived();
+        pvp.pvpArrived();
         battlegroundArrived();
         raidArrived();
         if (auto group = context.groups.of(player.guid))
@@ -520,7 +520,7 @@ private:
         teleporting = Teleport.none;
         resetMovementCheck();
         startFallAt(player.position.z);
-        pvpArrived();
+        pvp.pvpArrived();
         if (auto group = context.groups.of(player.guid))
             group.updatePlayerOutOfRange(this, GroupUpdate.position);
     }

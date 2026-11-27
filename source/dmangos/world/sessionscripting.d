@@ -321,7 +321,7 @@ mixin template SessionScripting()
         {
             if (auto other = sessionHere(who))
             {
-                other.updatePvP(true);
+                other.pvp.updatePvP(true);
                 other.flushPlayerChanges();
             }
         }

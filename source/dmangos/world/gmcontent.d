@@ -250,7 +250,7 @@ bool handleCreatePetCommand(Character gm, uint entry)
 /// `.pet helper`: a temporary guardian that follows the GM.
 bool handleSummonHelperCommand(Character gm, uint entry, uint seconds = 60)
 {
-    if (entry !in gm.context.data.creatureTemplates || !gm.summonStaffHelper(entry, seconds))
+    if (entry !in gm.context.data.creatureTemplates || !gm.guardians.summonStaffHelper(entry, seconds))
     {
         gm.redSystemMessage("Use a valid creature entry and a positive duration in seconds while alive.");
         return true;

@@ -106,7 +106,7 @@ void applyAura(ref Caster caster, const(SpellInfo)* spell, size_t i, UnitRef tar
         {
             aura.periodicThreat = p.player.damageMods.threat[school] * caster.spellMod(SpellModOp.threat, spell, 1.0f);
             aura.periodicResistanceMod = caster.auras.totalByMiscMask(AuraType.modTargetResistance, 1 << school);
-            aura.periodicCasterPvP = p.isPvP;
+            aura.periodicCasterPvP = p.pvp.isPvP;
         }
         if (hostile)
             aura.setHeartbeatResist(heartbeatResistChance(caster.fighter, target.fighter, *spell,

@@ -16,8 +16,8 @@ import dmangos.world.money : Copper;
 /// See the module documentation.
 final class Auctioneer
 {
-    import dmangos.world.character : Character, Handles;
-    import dmangos.world.session : WorldState;
+    import dmangos.world.character : Character;
+    import dmangos.world.session : Handles, WorldState;
 
     private Character me;
 

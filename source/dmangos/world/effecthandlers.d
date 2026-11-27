@@ -168,7 +168,7 @@ mixin template EffectHandlers()
         if (flags & UnitFlags.inCombat)
         {
             player.values.set!UNIT_FIELD_FLAGS(flags & ~UnitFlags.inCombat);
-            pvpLeftCombat();
+            pvp.pvpLeftCombat();
         }
         flushPlayerChanges();
     }

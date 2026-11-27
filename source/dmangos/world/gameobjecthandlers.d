@@ -141,7 +141,7 @@ mixin template GameObjectHandlers()
     void handleGameObjectUse(const ClientGuid request)
     {
         enum uint goFlagNoInteract = 0x10;
-        if (player.deathState != DeathState.alive || transferring || npcCharmer
+        if (player.deathState != DeathState.alive || transferring || crowdControl.npcCharmer
             || !map.questSpawnVisible(player, request.guid))
             return;
         auto go = cast(GameObject) map.findObject(request.guid);
@@ -162,7 +162,7 @@ mixin template GameObjectHandlers()
         const flags = go.values.get!GAMEOBJECT_FLAGS;
         if (go.type == GameObjectType.generic || (flags & goFlagNoInteract) || (go.doorOrButton && (flags & goFlagLocked)))
             return;
-        dismountToUse(go); // by hand, off the mount unless usable mounted (`dmangos.world.mounting`)
+        mounting.dismountToUse(go); // by hand, off the mount unless usable mounted (`dmangos.world.mounting`)
         import dmangos.world.alterac : AlteracRules;
         if (auto copy = currentBattleground())
             if (auto valley = cast(AlteracRules) copy.rules)

@@ -1194,14 +1194,14 @@ mixin template WorldPvpHandlers()
                 sendWorldPvpChanges(before, context.worldPvp.state.worldStates(zoneEasternPlaguelands, near));
         }
         const flying = (player.values.get!UNIT_FIELD_FLAGS & UnitFlags.taxiFlight) != 0;
-        worldPvpCounted = near >= 0 && alive && isPvP && !flying && !player.auras.has(AuraType.modStealth)
+        worldPvpCounted = near >= 0 && alive && pvp.isPvP && !flying && !player.auras.has(AuraType.modStealth)
             && !player.auras.has(AuraType.modInvisibility);
         worldPvpBuffs();
 
         const carrying = player.auras.find(spellSilithyst) !is null;
         if (carrying)
         {
-            updatePvP(true);
+            pvp.updatePvP(true);
             flushPlayerChanges();
         }
         else if (carriedSilithyst && player.data.zone == zoneSilithus)
@@ -1283,7 +1283,7 @@ mixin template WorldPvpHandlers()
             if (player.auras.find(spellSilithyst) is null)
                 return true;
             carriedSilithyst = true;
-            updatePvP(true);
+            pvp.updatePvP(true);
             flushPlayerChanges();
             return false; // the goober's own use follows: it is used up
         }

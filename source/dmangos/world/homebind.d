@@ -38,8 +38,8 @@ unittest
 /// See the module documentation.
 final class Homebind
 {
-    import dmangos.world.character : Character, Handles;
-    import dmangos.world.session : WorldState;
+    import dmangos.world.character : Character;
+    import dmangos.world.session : Handles, WorldState;
 
     private Character me;
 

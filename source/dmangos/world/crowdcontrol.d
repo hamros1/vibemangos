@@ -11,8 +11,19 @@
 module dmangos.world.crowdcontrol;
 
 /// See the module documentation.
-mixin template CrowdControlHandlers()
+final class CrowdControl
 {
+    import dmangos.world.character : Character;
+    import dmangos.world.session : Handles, WorldState;
+
+    private Character me;
+
+    ///
+    this(Character me)
+    {
+        this.me = me;
+    }
+
     import dmangos.bytes : ByteWriter;
     import dmangos.vmap.math : Vector3;
     import dmangos.world.auras : Aura, AuraType;
@@ -28,26 +39,26 @@ mixin template CrowdControlHandlers()
     private int controlledRelocate;      // until the map is next told where it is, in milliseconds
     private int controlledRetry;         // delay before trying a blocked route again
 
-    private ulong npcCharmer;
+    package ulong npcCharmer;
     private uint factionBeforeCharm;
     private int charmDecision;
 
-    private void npcCharmChanged(Aura aura, bool apply)
+    package void npcCharmChanged(Aura aura, bool apply)
     {
         import dmangos.world.updatefields : UNIT_FIELD_CHARMEDBY, UNIT_FIELD_FACTIONTEMPLATE;
         import dmangos.world.spellcast : SpellCastResult;
         if (apply)
         {
-            auto caster = map is null ? null : map.creatureAt(aura.caster);
+            auto caster = me.map is null ? null : me.map.creatureAt(aura.caster);
             if (caster is null || !caster.alive)
                 return;
             if (!npcCharmer)
-                factionBeforeCharm = player.values.get!UNIT_FIELD_FACTIONTEMPLATE;
+                factionBeforeCharm = me.player.values.get!UNIT_FIELD_FACTIONTEMPLATE;
             npcCharmer = caster.guid;
-            player.values.set!UNIT_FIELD_CHARMEDBY(npcCharmer);
-            player.values.set!UNIT_FIELD_FACTIONTEMPLATE(caster.values.get!UNIT_FIELD_FACTIONTEMPLATE);
-            interruptCast(SpellCastResult.interrupted);
-            stopAttack(false);
+            me.player.values.set!UNIT_FIELD_CHARMEDBY(npcCharmer);
+            me.player.values.set!UNIT_FIELD_FACTIONTEMPLATE(caster.values.get!UNIT_FIELD_FACTIONTEMPLATE);
+            me.interruptCast(SpellCastResult.interrupted);
+            me.stopAttack(false);
             if (!controlLost)
                 loseControl();
             charmDecision = 0;
@@ -56,24 +67,24 @@ mixin template CrowdControlHandlers()
         {
             npcCharmer = 0;
             if (aura.spell.id == 28410)
-                if (auto scale = player.auras.find(28409))
-                    removeAura(scale);
-            player.values.set!UNIT_FIELD_CHARMEDBY(0UL);
-            player.values.set!UNIT_FIELD_FACTIONTEMPLATE(factionBeforeCharm);
-            stopAttack(false);
-            interruptCast(SpellCastResult.interrupted);
+                if (auto scale = me.player.auras.find(28409))
+                    me.removeAura(scale);
+            me.player.values.set!UNIT_FIELD_CHARMEDBY(0UL);
+            me.player.values.set!UNIT_FIELD_FACTIONTEMPLATE(factionBeforeCharm);
+            me.stopAttack(false);
+            me.interruptCast(SpellCastResult.interrupted);
             if (controlLost)
                 regainControl();
             updateCrowdControl(0);
         }
     }
 
-    private void releaseNpcCharm()
+    package void releaseNpcCharm()
     {
         if (npcCharmer)
-            foreach (aura; player.auras.list.dup)
+            foreach (aura; me.player.auras.list.dup)
                 if (aura.caster == npcCharmer && aura.has(AuraType.aoeCharm))
-                    removeAura(aura);
+                    me.removeAura(aura);
     }
 
     /// A charmed raider can use its learned direct heals on its master or attack another raider.
@@ -85,20 +96,20 @@ mixin template CrowdControlHandlers()
         import dmangos.world.spellcast : SpellTargets, TargetFlags, SpellCastResult;
         import dmangos.world.spells : ImplicitTarget, SpellEffect, SpellInfo;
         import dmangos.world.unit : UnitRef;
-        auto master = map.creatureAt(npcCharmer);
+        auto master = me.map.creatureAt(npcCharmer);
         if (master is null || !master.alive)
             return releaseNpcCharm();
-        if ((charmDecision -= ms) > 0 || castingSpell)
+        if ((charmDecision -= ms) > 0 || me.castingSpell)
             return;
         charmDecision = 1000;
-        if (player.values.get!UNIT_FIELD_FLAGS & UnitFlags.stunned)
+        if (me.player.values.get!UNIT_FIELD_FLAGS & UnitFlags.stunned)
             return;
         UnitRef enemy;
         float best = float.max;
-        const at = player.position;
-        foreach (who; map.playersNear(at, 100))
+        const at = me.player.position;
+        foreach (who; me.map.playersNear(at, 100))
         {
-            if (who.session is null || who.session is this || !who.alive || who.untouchable || !canAttack(relatingNow(), who.relating, context.client))
+            if (who.session is null || who.session is me || !who.alive || who.untouchable || !canAttack(me.relatingNow(), who.relating, me.context.client))
                 continue;
             // Another the same master holds is on its side (CMaNGOS: the charmer's faction, a friend).
             if (who.session.player !is null && who.session.player.values.get!(imported!"dmangos.world.updatefields".UNIT_FIELD_CHARMEDBY) == npcCharmer)
@@ -111,9 +122,9 @@ mixin template CrowdControlHandlers()
             }
         }
         const(SpellInfo)* heal, attack;
-        foreach (id; player.spells)
+        foreach (id; me.player.spells)
         {
-            auto spell = context.data.spells.spell(id);
+            auto spell = me.context.data.spells.spell(id);
             if (spell is null || spell.isPassive || !spell.casting.spellFamilyName)
                 continue;
             if (spell.hasEffect(SpellEffect.heal) && spell.implicitTargetA[0] == ImplicitTarget.friend
@@ -123,20 +134,20 @@ mixin template CrowdControlHandlers()
                 && (attack is null || spell.spellLevel > attack.spellLevel))
                 attack = spell;
         }
-        if (heal !is null && map.unitOf(master).healthPercent < 100
-            && castSpell(heal, SpellTargets(TargetFlags.unit, master.guid), false, 0) == SpellCastResult.ok)
+        if (heal !is null && me.map.unitOf(master).healthPercent < 100
+            && me.castSpell(heal, SpellTargets(TargetFlags.unit, master.guid), false, 0) == SpellCastResult.ok)
             return;
         if (!enemy)
             return;
         auto to = enemy.position;
-        player.movement.position.orientation = atan2(to.y - at.y, to.x - at.x);
-        if (attack !is null && castSpell(attack, SpellTargets(TargetFlags.unit, enemy.combatGuid), false, 0) == SpellCastResult.ok)
+        me.player.movement.position.orientation = atan2(to.y - at.y, to.x - at.x);
+        if (attack !is null && me.castSpell(attack, SpellTargets(TargetFlags.unit, enemy.combatGuid), false, 0) == SpellCastResult.ok)
             return;
-        if (attacking != enemy.combatGuid)
-            attackPlayer(enemy.session);
-        if (canReachWithMelee(player.fighter, enemy.fighter) || player.auras.hasType(AuraType.modRoot))
+        if (me.attacking != enemy.combatGuid)
+            me.attackPlayer(enemy.session);
+        if (canReachWithMelee(me.player.fighter, enemy.fighter) || me.player.auras.hasType(AuraType.modRoot))
             return;
-        const speed = player.speeds[MoveType.run];
+        const speed = me.player.speeds[MoveType.run];
         if (speed <= 0 || best <= 1)
             return;
         const distance = sqrt(best);
@@ -154,12 +165,12 @@ mixin template CrowdControlHandlers()
     /// Each tick: under fear or disorientation, the walk goes on (or begins); without, control comes back.
     void updateCrowdControl(int ms)
     {
-        if (player is null || map is null)
+        if (me.player is null || me.map is null)
             return;
         // Curse of Recklessness (`PREVENTS_FLEEING`) keeps a feared player in control (`HandlePreventFleeing`).
-        const feared = player.auras.hasType(AuraType.modFear) && !player.auras.hasType(AuraType.preventsFleeing);
-        const confused = player.auras.hasType(AuraType.modConfuse);
-        if ((!feared && !confused && !npcCharmer) || player.deathState != imported!"dmangos.world.player".DeathState.alive)
+        const feared = me.player.auras.hasType(AuraType.modFear) && !me.player.auras.hasType(AuraType.preventsFleeing);
+        const confused = me.player.auras.hasType(AuraType.modConfuse);
+        if ((!feared && !confused && !npcCharmer) || me.player.deathState != imported!"dmangos.world.player".DeathState.alive)
         {
             if (controlLost)
                 regainControl();
@@ -168,30 +179,30 @@ mixin template CrowdControlHandlers()
         if (!controlLost)
         {
             // Let a jump or fall finish before taking over the player's movement.
-            if (player.movement.flags & (MovementFlags.jumping | MovementFlags.fallingFar))
+            if (me.player.movement.flags & (MovementFlags.jumping | MovementFlags.fallingFar))
                 return;
             loseControl();
         }
-        const immobilized = (player.values.get!UNIT_FIELD_FLAGS & UnitFlags.stunned)
-            || player.auras.hasType(AuraType.modRoot);
+        const immobilized = (me.player.values.get!UNIT_FIELD_FLAGS & UnitFlags.stunned)
+            || me.player.auras.hasType(AuraType.modRoot);
         if (immobilized && !controlledWalk.finalized)
         {
             stopControlledWalk();
-            map.relocated(this);
+            me.map.relocated(me);
         }
         if (!controlledWalk.finalized)
         {
             controlledWalk.update(ms);
-            player.movement.position = controlledWalk.position();
+            me.player.movement.position = controlledWalk.position();
             controlledRelocate -= ms;
             if (controlledRelocate <= 0)
             {
                 controlledRelocate = 500;
-                map.relocated(this);
+                me.map.relocated(me);
             }
             if (!controlledWalk.finalized)
                 return;
-            map.relocated(this);
+            me.map.relocated(me);
         }
         if (feared || confused)
         {
@@ -206,7 +217,7 @@ mixin template CrowdControlHandlers()
     private void loseControl()
     {
         controlLost = true;
-        stopAttack(false);
+        me.stopAttack(false);
         sendClientControl(false);
     }
 
@@ -216,15 +227,15 @@ mixin template CrowdControlHandlers()
         controlLost = false;
         stopControlledWalk();
         controlledRetry = 0;
-        resetMovementCheck();
-        map.relocated(this);
+        me.resetMovementCheck();
+        me.map.relocated(me);
         sendClientControl(true);
     }
 
     private void stopControlledWalk()
     {
         if (!controlledWalk.finalized)
-            map.sendToWatchers(this, Opcode.SMSG_MONSTER_MOVE, monsterStop(player.guid, player.position,
+            me.map.sendToWatchers(me, Opcode.SMSG_MONSTER_MOVE, monsterStop(me.player.guid, me.player.position,
                 controlledWalkId), true);
         controlledWalk = MoveSpline.init;
     }
@@ -232,9 +243,9 @@ mixin template CrowdControlHandlers()
     private void sendClientControl(bool enabled)
     {
         ByteWriter w;
-        w.putPackedGuid(player.guid);
+        w.putPackedGuid(me.player.guid);
         w.put(ubyte(enabled));
-        deliver(Opcode.SMSG_CLIENT_CONTROL_UPDATE, w.data);
+        me.deliver(Opcode.SMSG_CLIENT_CONTROL_UPDATE, w.data);
     }
 
     /**
@@ -246,52 +257,52 @@ mixin template CrowdControlHandlers()
         import std.math : atan2, cos, sin, PI;
         import std.random : uniform;
 
-        const at = player.position;
+        const at = me.player.position;
         float angle, distance;
         if (feared)
         {
             Position from = at;
-            foreach (aura; player.auras.list)
+            foreach (aura; me.player.auras.list)
                 if (aura.has(AuraType.modFear))
-                    if (auto caster = map.unit(aura.caster))
+                    if (auto caster = me.map.unit(aura.caster))
                     {
                         from = caster.position;
                         break;
                     }
-            angle = (from.x == at.x && from.y == at.y) ? uniform(0.0f, 2 * PI, map.random)
-                : atan2(at.y - from.y, at.x - from.x) + uniform(-0.6f, 0.6f, map.random);
+            angle = (from.x == at.x && from.y == at.y) ? uniform(0.0f, 2 * PI, me.map.random)
+                : atan2(at.y - from.y, at.x - from.x) + uniform(-0.6f, 0.6f, me.map.random);
             distance = 10;
         }
         else
         {
-            angle = uniform(0.0f, 2 * PI, map.random);
-            distance = uniform(3.0f, 6.0f, map.random);
+            angle = uniform(0.0f, 2 * PI, me.map.random);
+            distance = uniform(3.0f, 6.0f, me.map.random);
         }
         beginControlledWalk(Vector3(at.x + distance * cos(angle), at.y + distance * sin(angle), at.z), feared);
     }
 
     private void beginControlledWalk(Vector3 destination, bool run)
     {
-        const at = player.position;
+        const at = me.player.position;
         const from = Vector3(at.x, at.y, at.z);
         Vector3[] path;
-        if (!player.movement.has(MovementFlags.onTransport))
+        if (!me.player.movement.has(MovementFlags.onTransport))
         {
-            if (player.movement.has(MovementFlags.swimming))
-                map.pathInWater(from, destination, 1.0f, path);
+            if (me.player.movement.has(MovementFlags.swimming))
+                me.map.pathInWater(from, destination, 1.0f, path);
             else
-                path = map.controlledGroundPath(from, destination);
+                path = me.map.controlledGroundPath(from, destination);
         }
         if (path.length < 2)
         {
             controlledRetry = 250;
             return;
         }
-        const speed = player.speeds[run ? MoveType.run : MoveType.walk];
+        const speed = me.player.speeds[run ? MoveType.run : MoveType.walk];
         controlledWalk = MoveSpline(path, run ? SplineFlags.runMode : SplineFlags.none,
             speed > 0 ? speed : 2.5f, ++controlledWalkId);
         controlledRelocate = 500;
-        map.sendToWatchers(this, Opcode.SMSG_MONSTER_MOVE, monsterMove(player.guid, controlledWalk), true);
+        me.map.sendToWatchers(me, Opcode.SMSG_MONSTER_MOVE, monsterMove(me.player.guid, controlledWalk), true);
     }
 }
 
@@ -343,7 +354,7 @@ unittest
     const got = opcodesOf(priest.read());
     assert(got.canFind(Opcode.SMSG_CLIENT_CONTROL_UPDATE) && got.canFind(Opcode.SMSG_MONSTER_MOVE),
         "control taken, and the walk shown to the player itself");
-    assert(!session.inControl);
+    assert(!session.crowdControl.inControl);
     const start = me.position;
     priest.session.update(1000.msecs);
     assert(me.position.x != start.x || me.position.y != start.y, "the server moves it");
@@ -362,7 +373,7 @@ unittest
     assert(!(me.values.get!UNIT_FIELD_FLAGS & UnitFlags.fleeing));
     priest.read();
     priest.session.update(100.msecs);
-    assert(opcodesOf(priest.read()).canFind(Opcode.SMSG_CLIENT_CONTROL_UPDATE) && session.inControl, "control back");
+    assert(opcodesOf(priest.read()).canFind(Opcode.SMSG_CLIENT_CONTROL_UPDATE) && session.crowdControl.inControl, "control back");
 }
 
 /// The straight line near the Farm passes below the sloping ground even though both ends are on it.

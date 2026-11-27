@@ -839,7 +839,7 @@ final class RemoteSpells
             result.damage = hit.damage;
             result.absorbed = hit.absorbed;
             result.killed = !victim.alive;
-            result.targetPvP = victim.kind == UnitKind.player && victim.session.character !is null && victim.session.isPvP;
+            result.targetPvP = victim.kind == UnitKind.player && victim.session.character !is null && victim.session.pvp.isPvP;
             result.retaliation = retaliation;
             world.sendCreatureSwing(peer, result);
         }
@@ -869,7 +869,7 @@ final class RemoteSpells
         auto target = attacker.ai.combatTarget(map_, reply.target);
         if (reply.targetPvP && reply.controller)
             if (auto owner = world.onlinePlayer(reply.controller))
-                owner.attackedFlaggedPlayer();
+                owner.pvp.attackedFlaggedPlayer();
         if (reply.spell)
         {
             const spell = world.data.spells.spell(reply.spell);
@@ -1193,7 +1193,7 @@ final class RemoteSpells
             result.killed = dealRemoteDamage(peer && attacker.player ? UnitRef.init : caster, victim, result.damage, blow);
             if (victim.kind == UnitKind.player)
             {
-                result.targetPvP = victim.session.isPvP;
+                result.targetPvP = victim.session.pvp.isPvP;
                 if (result.killed)
                 {
                     result.honorless = honor.honorless;
@@ -1698,7 +1698,7 @@ final class RemoteSpells
         {
             caster.enterCombatFor(Character.combatLinger);
             if (message.targetPvP)
-                caster.attackedFlaggedPlayer();
+                caster.pvp.attackedFlaggedPlayer();
             if (peer && message.damage && !message.groundTick)
                 caster.wearOnHit();
         }
@@ -1951,9 +1951,9 @@ final class RemoteSpells
                     UnitRef.observed(copy, target.currentMap), threat, *spell, &helper);
             }
         result.landed = true;
-        result.pvp = target.isPvP;
-        result.contested = target.isPvPContested;
-        result.inPvPCombat = target.inPvPCombat;
+        result.pvp = target.pvp.isPvP;
+        result.contested = target.pvp.isPvPContested;
+        result.inPvPCombat = target.pvp.inPvPCombat;
         if (world.sendPartyHeal !is null)
             world.sendPartyHeal(peer, result);
     }
@@ -1972,7 +1972,7 @@ final class RemoteSpells
         if (caster is null || caster.player is null || caster.transferring
             || caster.currentMap.id != message.map || caster.currentMap.instanceId != message.instance)
             return;
-        caster.pvpAssisted(message.pvp, message.contested, message.inPvPCombat);
+        caster.pvp.pvpAssisted(message.pvp, message.contested, message.inPvPCombat);
         if (message.causedThreat && caster.player.alive)
             caster.enterCombatFor(Character.combatLinger);
         caster.flushPlayerChanges();

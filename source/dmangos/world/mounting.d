@@ -84,8 +84,19 @@ unittest
 }
 
 /// See the module documentation.
-mixin template MountRules()
+final class Mounting
 {
+    import dmangos.world.character : Character;
+    import dmangos.world.session : Handles, WorldState;
+
+    private Character me;
+
+    ///
+    this(Character me)
+    {
+        this.me = me;
+    }
+
     import dmangos.world.auras : AuraType;
     import dmangos.world.defines : UnitFlags;
     import dmangos.world.mounting : mountedCastError, petModeDisableActions, usableMounted;
@@ -95,24 +106,24 @@ mixin template MountRules()
     /// Whether the player rides: on a mount, or a flight's (`Unit::GetMountID`).
     package @property bool mounted()
     {
-        return player !is null && player.values.get!UNIT_FIELD_MOUNTDISPLAYID != 0;
+        return me.player !is null && me.player.values.get!UNIT_FIELD_MOUNTDISPLAYID != 0;
     }
 
     /// Why this player may not cast `spell` mounted; `ok` if it may.
     package SpellCastResult mountedCastRefusal(const(imported!"dmangos.world.spells".SpellInfo)* spell, bool triggered)
     {
-        const onTaxi = (player.values.get!UNIT_FIELD_FLAGS & UnitFlags.taxiFlight) != 0;
+        const onTaxi = (me.player.values.get!UNIT_FIELD_FLAGS & UnitFlags.taxiFlight) != 0;
         return mountedCastError(mounted, onTaxi, triggered, spell.isPassive, spell.attributes);
     }
 
     /// Off its mount: every aura that mounts it ends (`RemoveSpellsCausingAura(SPELL_AURA_MOUNTED)`).
     package void dismount()
     {
-        if (player is null)
+        if (me.player is null)
             return;
-        foreach (aura; player.auras.list.dup)
+        foreach (aura; me.player.auras.list.dup)
             if (aura.has(AuraType.mounted))
-                removeAura(aura);
+                me.removeAura(aura);
     }
 
     /// Using `go` by hand: off the mount first, unless it is usable mounted (`GameObject::Use`, not for traps).
@@ -127,8 +138,8 @@ mixin template MountRules()
     /// Arrived on another map: off the mount in a dungeon that allows none (`Map::IsMountAllowed`).
     package void dismountOnArrival()
     {
-        const entry = context.client.maps.lookup(player.data.map);
-        if (entry !is null && entry.isDungeon && !context.data.instanceMountAllowed.get(player.data.map, false))
+        const entry = me.context.client.maps.lookup(me.player.data.map);
+        if (entry !is null && entry.isDungeon && !me.context.data.instanceMountAllowed.get(me.player.data.map, false))
             dismount();
     }
 
@@ -138,13 +149,13 @@ mixin template MountRules()
         import dmangos.bytes : ByteWriter;
         import dmangos.world.opcodes : Opcode;
 
-        auto pet = ownPet;
+        auto pet = me.ownPet;
         if (pet is null || pet.petData is null || pet.ai is null)
             return;
         ByteWriter w;
         w.put(pet.guid);
         w.put(apply ? petModeDisableActions : uint(pet.ai.react) | uint(pet.petData.command) * 0x100);
-        deliver(Opcode.SMSG_PET_MODE, w.data);
+        me.deliver(Opcode.SMSG_PET_MODE, w.data);
     }
 }
 
@@ -191,7 +202,7 @@ unittest
     map.addObject(box);
     anduin.read();
     me.addAura(makeAura(context.data.spells.spell(horse), me.player.guid, 1, -1, true, [0, 0, 0]));
-    assert(me.mounted && me.player.values.get!UNIT_FIELD_MOUNTDISPLAYID != 0);
+    assert(me.mounting.mounted && me.player.values.get!UNIT_FIELD_MOUNTDISPLAYID != 0);
     anduin.read();
     ubyte[] castAt(uint spell)
     {
@@ -206,7 +217,7 @@ unittest
     assert(bodyOf(anduin.read(), Opcode.SMSG_CAST_RESULT) == castResultPacket(bolt, SpellCastResult.notMounted));
     anduin.write(Opcode.CMSG_CAST_SPELL, castAt(banner));
     assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_SPELL_GO), "allowed while mounted");
-    assert(me.mounted, "the server does not dismount for a cast");
+    assert(me.mounting.mounted, "the server does not dismount for a cast");
     // A triggered one is never refused.
     assert(me.castSpell(context.data.spells.spell(bolt), SpellTargets(TargetFlags.self, 0), true, 0)
         == SpellCastResult.ok);
@@ -218,10 +229,10 @@ unittest
     assert(opcodesOf(anduin.read()) == [Opcode.SMSG_ATTACKSTOP]);
 
     // The mailbox is used mounted; the chest takes the player off its mount.
-    me.dismountToUse(box);
-    assert(me.mounted);
+    me.mounting.dismountToUse(box);
+    assert(me.mounting.mounted);
     anduin.write(Opcode.CMSG_GAMEOBJ_USE, ClientGuid(loot.guid));
-    assert(!me.mounted, "off the mount for a chest");
+    assert(!me.mounting.mounted, "off the mount for a chest");
 
     // Dismounted, the spell goes.
     anduin.read();

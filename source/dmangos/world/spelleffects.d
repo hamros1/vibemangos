@@ -716,7 +716,7 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         else if (p is null)
             ai.summonBySpell(spell, i, value, c.targets);
         else
-            p.summonGuardianEffect(spell, i, value, c.targets, c.triggered, c.castItemEntry, effect == SpellEffect.summon);
+            p.guardians.summonGuardianEffect(spell, i, value, c.targets, c.triggered, c.castItemEntry, effect == SpellEffect.summon);
         break;
     case SpellEffect.summonPossessed: // SPELL_EFFECT_SUMMON_POSSESSED: a creature the caster becomes (Eye of Kilrogg)
         if (c.once(i))

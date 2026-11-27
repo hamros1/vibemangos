@@ -1228,8 +1228,8 @@ unittest
     auto from = source.context.map(0), to = owner.context.map(0);
     caster.castTriggeredAt(stoneskin, caster.player.guid);
     caster.castTriggeredAt(dragonling, caster.player.guid);
-    assert(caster.ownTotems().length == 1 && caster.ownGuardians().length == 1);
-    auto totem = caster.ownTotems()[0], guardian = caster.ownGuardians()[0];
+    assert(caster.ownTotems().length == 1 && caster.guardians.ownGuardians().length == 1);
+    auto totem = caster.ownTotems()[0], guardian = caster.guardians.ownGuardians()[0];
     const totemGuid = totem.guid, guardianGuid = guardian.guid;
     const totemSpell = totem.totemSpell;
     const position = totem.position;
@@ -1245,8 +1245,8 @@ unittest
     assert(relay.remote !is null && !from.creatureAt(totemGuid) && !from.creatureAt(guardianGuid));
     auto moved = relay.remote.inWorld;
     assert(moved.ownTotems().length == 1, "the totem is still in its slot");
-    assert(moved.ownGuardians().length == 1, "the guardian is still owned and alive");
-    auto nextTotem = moved.ownTotems()[0], nextGuardian = moved.ownGuardians()[0];
+    assert(moved.guardians.ownGuardians().length == 1, "the guardian is still owned and alive");
+    auto nextTotem = moved.ownTotems()[0], nextGuardian = moved.guardians.ownGuardians()[0];
     assert(nextTotem.guid == totemGuid && nextTotem.position == position && nextTotem.totemOwner == 7);
     assert(nextTotem.totemSpell == totemSpell && nextTotem.auras.find(totemSpell, totemGuid) !is null);
     assert(nextGuardian.guid == guardianGuid && nextGuardian.guardianOwner == 7
