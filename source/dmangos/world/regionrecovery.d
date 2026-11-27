@@ -53,7 +53,7 @@ final class RegionRecoverer
         // Retire a returned creature before handing over any newly revoked physical home region.
         foreach (ref r; lost)
             if (r.creature.spawn)
-                world.creatureLoanLost(r);
+                world.loans.creatureLoanLost(r);
 
         foreach (ref r; lost)
             if (world.dungeons.instanceable(r.map) || physicalWorldRegion(r))
@@ -146,7 +146,7 @@ final class RegionRecoverer
         }
         foreach (ref r; gained)
             if (r.creature.spawn)
-                world.creatureLoanGained(r, arriving.get(r.id, null));
+                world.loans.creatureLoanGained(r, arriving.get(r.id, null));
         recoveryRead &= refreshOutdoorCorpses(gained, lost);
         recoveryRead &= refreshOutdoorChests(gained, lost);
         if (!recoveryRead)
@@ -261,7 +261,7 @@ final class RegionRecoverer
 
     package bool ownsQuestActor(const Creature creature)
     {
-        return world.canWrite() && !creature.instanceId && !world.creatureOnLoan(creature.spawn.guid)
+        return world.canWrite() && !creature.instanceId && !world.loans.creatureOnLoan(creature.spawn.guid)
             && (world.ownsCell is null || world.ownsCell(creature.spawn.map, cellKeyAt(creature.spawn.x, creature.spawn.y)));
     }
 
@@ -750,7 +750,7 @@ final class RegionRecoverer
             const nativeFight = !actor.player && highGuidOf(actor.actor) == HighGuid.unit && spawn < temporaryCounterStart;
             if (highGuidOf(actor.actor) != HighGuid.gameObject
                 && ((actor.player && actor.savedAt + 300 <= world.unixTime) || world.awaitingRespawn(spawn) || spawn in world.deadCreatures.outdoorCorpses
-                || (nativeFight && (world.creatureOnLoan(spawn) || !world.calendar.creatureInEvents(spawn)
+                || (nativeFight && (world.loans.creatureOnLoan(spawn) || !world.calendar.creatureInEvents(spawn)
                     || !world.upInPool(PoolMember.Kind.creature, spawn)))))
             {
                 world.database.deleteQuestActor(world.config.realmId, actor.actor);
@@ -914,11 +914,11 @@ final class RegionRecoverer
             const spawn = outdoorCorpseSpawn(corpse);
             if (!spawn.guid || corpse.expiresAt <= world.unixTime || !outdoorRegionCovers(&spawn, gained))
                 continue;
-            if (spawn.guid < temporaryCounterStart && (world.creatureOnLoan(spawn.guid) || !hasOutdoorRespawn(spawn.guid)))
+            if (spawn.guid < temporaryCounterStart && (world.loans.creatureOnLoan(spawn.guid) || !hasOutdoorRespawn(spawn.guid)))
                 continue;
             auto where = world.map(spawn.map);
             world.deadCreatures.outdoorCorpses[corpse.spawn] = corpse;
-            if (where.creatureAt(world.loanGuid(&spawn)) !is null)
+            if (where.creatureAt(world.loans.loanGuid(&spawn)) !is null)
                 continue; // the clean bundle contains the newer live state
             try
             {

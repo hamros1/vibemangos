@@ -686,7 +686,7 @@ final class Dungeons
                     continue;
                 }
                 if (alive !is null || (instance ? deadInInstance(instance, spawn.guid)
-                        : world.awaitingRespawn(spawn.guid) || world.creatureOnLoan(spawn.guid))
+                        : world.awaitingRespawn(spawn.guid) || world.loans.creatureOnLoan(spawn.guid))
                     || !world.calendar.creatureInEvents(spawn.guid) || !world.upInPool(PoolMember.Kind.creature, spawn.guid))
                     continue;
                 if (auto creature = world.makeCreature(spawn))

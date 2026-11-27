@@ -1743,7 +1743,7 @@ final class Map : MotionWorld
     void askRemoteAssistance(Creature caller, UnitRef enemy, float radius)
     {
         if (mayAskRemoteAssistance())
-            world.askCreatureLoans(this, caller, enemy, radius);
+            world.loans.askCreatureLoans(this, caller, enemy, radius);
     }
 
     /// Cells were gained: every player looks around again, so those near them load, and so do cells other nodes want.

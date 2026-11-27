@@ -165,6 +165,7 @@ source/dmangos/world/       the world server
   spawnediting.d              spawns game masters make, move and delete, saved to the world database (`WorldContext.spawnEditor`)
   creaturedeath.d             creatures that died here: when each comes back, its corpse and loot kept for a crash (`WorldContext.deadCreatures`)
   regionrecovery.d            regions moving to and from a node, and what it keeps for a crash and brings back (`WorldContext.recovery`)
+  creatureloans.d             creatures lent across a region's border into a fight, and sent home (`WorldContext.loans`)
   wareffort.d                 the Ahn'Qiraj war effort, its service, and how a node follows it (`WorldContext.warEffortHere`)
 source/dmangos/extractor/   the client data extractor: main.d, dbc.d (DBC files), maps.d (terrain to .map files),
                               vmaps.d and assembler.d (buildings and doodads to vmaps), mmaps.d (movement maps)

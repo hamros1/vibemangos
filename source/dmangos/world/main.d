@@ -372,7 +372,7 @@ private int run(WorldConfig config, string configPath, Battlegroup pool = null, 
             return 0UL;
         };
         cluster.onOwnership = &context.recovery.regionsChanged;
-        cluster.onCreatureRelease = &context.releaseCreatureLoan;
+        cluster.onCreatureRelease = &context.loans.releaseCreatureLoan;
         context.sendCreatureLoan = &cluster.creatureLoan;
         context.creatureLease = &cluster.regions.creatureRegion;
         // Replicas go both ways between nodes.

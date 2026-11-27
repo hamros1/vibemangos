@@ -1728,7 +1728,7 @@ mixin template DbScriptRunner()
         if (highGuidOf(source.guid) != HighGuid.unit || counter >= temporaryCounterStart || regionOwnerAround is null)
             return noCell;
         const spawn = creatureSpawnOf(counter);
-        if (spawn is null || spawn.map != map.id || creatureOnLoan(counter)
+        if (spawn is null || spawn.map != map.id || loans.creatureOnLoan(counter)
             || regionOwnerAround(map.id, Position(spawn.x, spawn.y, spawn.z), 0) != source.mirror.owner)
             return noCell;
         return cellKeyAt(spawn.x, spawn.y);

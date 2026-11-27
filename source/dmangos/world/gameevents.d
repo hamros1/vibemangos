@@ -249,7 +249,7 @@ final class EventCalendar
                             if (spawn.guid !in world.data.creatureGameEvents || !creatureInEvents(spawn.guid)
                                     || !world.dungeons.groupSpawnAllowed(m, 0, spawn.guid) || !world.upInPool(PoolMember.Kind.creature, spawn.guid))
                                 continue;
-                            if (world.awaitingRespawn(spawn.guid) || world.creatureOnLoan(spawn.guid))
+                            if (world.awaitingRespawn(spawn.guid) || world.loans.creatureOnLoan(spawn.guid))
                                 continue;
                             auto c = world.makeCreature(spawn);
                             if (c is null || c.guid in present)

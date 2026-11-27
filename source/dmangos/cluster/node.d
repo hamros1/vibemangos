@@ -3554,7 +3554,7 @@ unittest
                 context.ownsCell = (uint map, ulong cell) => bound.regions.ownsCell(map, cell);
                 context.creatureLease = &bound.regions.creatureRegion;
                 context.sendCreatureLoan = &bound.creatureLoan;
-                bound.onCreatureRelease = &context.releaseCreatureLoan;
+                bound.onCreatureRelease = &context.loans.releaseCreatureLoan;
                 bound.onOwnership = &context.recovery.regionsChanged;
             }
             connect(node, world);
