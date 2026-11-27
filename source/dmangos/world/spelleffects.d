@@ -519,12 +519,12 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         p.feedPet(c.targets.item);
         break;
     case SpellEffect.enchantItem: // SPELL_EFFECT_ENCHANT_ITEM (at the trade window: the other's item)
-        p.enchantTarget(c.targets, cast(uint) spell.miscValue[i], false, 0);
+        p.trading.enchantTarget(c.targets, cast(uint) spell.miscValue[i], false, 0);
         p.updateCraftSkill(spell.id);
         break;
     case SpellEffect.enchantItemTemporary: // SPELL_EFFECT_ENCHANT_ITEM_TEMPORARY: a player's item; a creature's poison is nothing
         if (p !is null)
-            p.enchantTarget(c.targets, cast(uint) spell.miscValue[i], true, value);
+            p.trading.enchantTarget(c.targets, cast(uint) spell.miscValue[i], true, value);
         break;
     case SpellEffect.portal: // SPELL_EFFECT_PORTAL: unused since 1.2 (CMaNGOS's `EffectUnused`)
     case SpellEffect.skillStep: // SPELL_EFFECT_SKILL_STEP: a creature's (Beast Tracking on itself) is nothing

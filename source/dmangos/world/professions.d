@@ -185,7 +185,7 @@ mixin template ProfessionHandlers()
             case SpellEffect.disenchant:
             {
                 // The caster's own (not one in the trade window), and one that disenchants.
-                const item = itemByGuid(targets.item);
+                const item = trading.itemByGuid(targets.item);
                 if (item is null || !item.proto.details.disenchantId)
                     return SpellCastResult.cantBeDisenchanted;
                 break;
@@ -194,7 +194,7 @@ mixin template ProfessionHandlers()
             {
                 if (targets.gameObject || !targets.item)
                     break; // a game object's: `checkGameObjectTarget`
-                const item = itemByGuid(targets.item);
+                const item = trading.itemByGuid(targets.item);
                 if (item is null)
                     return SpellCastResult.itemGone;
                 const lockId = item.proto.details.lockId;
@@ -219,7 +219,7 @@ mixin template ProfessionHandlers()
     /// `SPELL_EFFECT_DISENCHANT` on the player's item `itemGuid`: see the module documentation.
     package void disenchantItem(const(SpellInfo)* spell, ulong itemGuid)
     {
-        auto item = itemByGuid(itemGuid);
+        auto item = trading.itemByGuid(itemGuid);
         if (item is null || !item.proto.details.disenchantId)
             return;
         updateCraftSkill(spell.id);
@@ -233,7 +233,7 @@ mixin template ProfessionHandlers()
      */
     package void openItemLock(const(SpellInfo)* spell, size_t i, ulong itemGuid, uint castItem)
     {
-        auto item = itemByGuid(itemGuid);
+        auto item = trading.itemByGuid(itemGuid);
         if (item is null)
             return;
         uint skillId;

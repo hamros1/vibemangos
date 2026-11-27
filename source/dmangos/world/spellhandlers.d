@@ -857,7 +857,7 @@ private:
         }
         if (!triggered)
         {
-            c.timer = castTimeCheat || tradeSpellCompleting ? 0 : max(0, cast(int)(spellMod(SpellModOp.castingTime, spell,
+            c.timer = castTimeCheat || trading.tradeSpellCompleting ? 0 : max(0, cast(int)(spellMod(SpellModOp.castingTime, spell,
                 castTime(*spell, context.client, player.data.level)) * player.auras.castTimeFactor()));
             c.castTime = c.timer;
             pushbacks = 0;
@@ -2445,7 +2445,7 @@ private:
         return true;
     }
 
-    SpellCastResult checkCast(const(SpellInfo)* spell, const ref SpellTargets targets, bool triggered, uint itemEntry,
+    package SpellCastResult checkCast(const(SpellInfo)* spell, const ref SpellTargets targets, bool triggered, uint itemEntry,
         bool start, const(Replica) targetReplica = null, bool playerHandoff = false)
     {
         enum uint castableWhileSitting = 0x08000000; // SPELL_ATTR_CASTABLE_WHILE_SITTING
@@ -2589,7 +2589,7 @@ private:
         }
         // At the trade window's "will not be traded" item: kept for the trade's end (`dmangos.world.tradehandlers`).
         if (targets.mask & TargetFlags.tradeItem)
-            return tradeSpellCheck(spell, targets, itemEntry);
+            return trading.tradeSpellCheck(spell, targets, itemEntry);
         return SpellCastResult.ok;
     }
 

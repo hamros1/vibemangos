@@ -378,7 +378,7 @@ private:
             return true;
         }
         // An item in the bags that begins a quest.
-        if (auto item = itemByGuid(guid))
+        if (auto item = trading.itemByGuid(guid))
         {
             const proto = item.entry in context.data.items;
             if (proto is null || !proto.details.startQuest)
@@ -790,7 +790,7 @@ private:
             import std.algorithm.searching : canFind;
 
             if (!quest.reqItemId[].canFind(giver.itemEntry))
-                if (auto item = itemByGuid(guid))
+                if (auto item = trading.itemByGuid(guid))
                 {
                     player.inventory.destroy(item.bagSlot, item.slot);
                     flushInventory(true);

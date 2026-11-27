@@ -220,7 +220,7 @@ private:
         worldPvpDied(); // Silithyst falls where its carrier does
         removeAurasOnDeath();
         player.setDrunk(0); // death sobers (`SetDeathState`)
-        cancelTrade(true);
+        trading.cancelTrade(true);
         stopAttack(false);
         if (byCreature)
         {

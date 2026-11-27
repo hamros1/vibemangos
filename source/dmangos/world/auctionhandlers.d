@@ -114,8 +114,8 @@ final class Auctioneer
             return;
         if (bid > maxMoney || buyout > maxMoney)
             return sendAuctionResult(0, AuctionAction.started, AuctionError.database);
-        auto item = me.itemByGuid(itemGuid);
-        if (item is null || !me.canBeTraded(item))
+        auto item = me.trading.itemByGuid(itemGuid);
+        if (item is null || !me.trading.canBeTraded(item))
             return sendAuctionResult(0, AuctionAction.started, AuctionError.inventory, InventoryResult.itemNotFound);
         const proto = item.entry in me.context.data.items;
         if (proto is null || (proto.flags & itemFlagConjured) || item.values[ITEM_FIELD_DURATION])

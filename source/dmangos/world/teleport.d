@@ -299,7 +299,7 @@ private:
             player.setTarget(0);
             releaseLootOnLeave();
             spellsOnLeave();
-            cancelTrade(true);
+            trading.cancelTrade(true);
             duelComplete(dmangos.world.duelhandlers.DuelEnd.fled);
             petsOnLeave(); // it comes out again on the other side
             dismissCompanion(); // a companion does not

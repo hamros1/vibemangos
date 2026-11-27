@@ -148,7 +148,7 @@ final class Character : OnlinePlayer, Looter
     mixin LootHandlers;             // loothandlers.d: looting, kill experience, tapping
     mixin SpellHandlers;            // spellhandlers.d: casting, channels, spell effects
     mixin AuraHandlers;             // aurahandlers.d: what each aura does, and its ticks
-    ...                             // trade, duels, quests,
+    ...                             // duels, quests,
                                     // exploration, social, guilds, pets, scripts,
                                     // and the GM commands (commands.d, gm*.d, gmdebug.d)
 }
@@ -159,9 +159,11 @@ and the dispatcher finds their `@Handles` attributes like any others.
 
 A domain that keeps to itself is a class the character owns instead, with the character as `me`:
 `Character.taxi` (taxihandlers.d: flight masters and the flight under way), `mailbox`
-(mailhandlers.d), `auctioneer` (auctionhandlers.d), `reputations` (reputationhandlers.d), `talents` (talenthandlers.d: talents and passive spells). Their
+(mailhandlers.d), `auctioneer` (auctionhandlers.d), `reputations` (reputationhandlers.d),
+`talents` (talenthandlers.d: talents and passive spells), `trading` (tradehandlers.d). Their
 handlers are routed by naming the fields to the dispatcher (`mixin PacketDispatch!(Handles, "taxi",
-...)`), and what they use of the character reads as `me.player`, `me.context` and the like. A new
+...)`), and what they use of the character reads as `me.player`, `me.context` and the like. Beware
+`this` there: it is the part, not the character (`other is me`, not `other is this`). A new
 handler group is one of these.
 
 ## Static data

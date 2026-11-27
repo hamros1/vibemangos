@@ -498,7 +498,7 @@ mixin template GuildHandlers()
             return turnResult(petitionTurnNeedMoreSignatures);
         if (context.guilds.named(p.get.name) !is null)
             return guildResult(GuildCommand.create, p.get.name, GuildError.nameExistsS);
-        auto item = itemByGuid(request.guid);
+        auto item = trading.itemByGuid(request.guid);
         if (item is null)
             return;
         player.inventory.destroy(item.bagSlot, item.slot);

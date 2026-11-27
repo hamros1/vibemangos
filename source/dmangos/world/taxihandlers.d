@@ -199,7 +199,7 @@ final class Taxi
             return sendTaxiReply(TaxiReply.notEnoughMoney);
 
         me.stopAttack(false);
-        me.cancelTrade(true);
+        me.trading.cancelTrade(true);
         me.player.pay(Copper(flight.cost));
         sendTaxiReply(TaxiReply.ok);
         takeOff(flight, display);
@@ -258,7 +258,7 @@ final class Taxi
         const mountTemplate = mountCreature in me.context.data.creatureTemplates;
         const display = mountTemplate is null ? 0 : chooseDisplay(*mountTemplate, me.map.random);
         me.stopAttack(false);
-        me.cancelTrade(true);
+        me.trading.cancelTrade(true);
         sendTaxiReply(TaxiReply.ok);
         takeOff(flight, display);
         info!"%s: '%s' flies by a spell along path %s from node %s to %s (%s ms)"(me.remoteAddress, me.player.data.name,

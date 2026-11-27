@@ -150,8 +150,8 @@ package:
         Item item;
         if (itemGuid)
         {
-            item = me.itemByGuid(itemGuid);
-            if (item is null || !me.canBeTraded(item) || item.values[ITEM_FIELD_DURATION])
+            item = me.trading.itemByGuid(itemGuid);
+            if (item is null || !me.trading.canBeTraded(item) || item.values[ITEM_FIELD_DURATION])
                 return sendMailResult(0, MailAction.send, MailError.attachmentInvalid);
         }
         sendMailResult(0, MailAction.send, MailError.ok);

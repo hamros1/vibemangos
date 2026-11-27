@@ -1,6 +1,5 @@
 /**
- * Trading between two players, mixed into
- * `dmangos.world.character.Character`.
+ * Trading between two players.
  *
  * One player opens a trade with another of its faction within 11 yards; the other's client asks
  * it to begin, and both see the window. Each puts up to six items and some money on its side;
@@ -63,8 +62,19 @@ final class TradeSide
 }
 
 /// See the module documentation.
-mixin template TradeHandlers()
+final class Trading
 {
+    import dmangos.world.character : Character, Handles;
+    import dmangos.world.session : WorldState;
+
+    private Character me;
+
+    ///
+    this(Character me)
+    {
+        this.me = me;
+    }
+
     import dmangos.world.money : Copper;
     import dmangos.bytes : ByteReader, ByteWriter;
     import dmangos.log : info;
@@ -78,16 +88,16 @@ mixin template TradeHandlers()
     import dmangos.world.tradehandlers;
     import dmangos.world.updatefields;
 
-private:
+package:
     TradeSide tradeSide; // this player's side of the trade under way; null if none
 
     /// The other side's session, while trading.
-    typeof(this) tradePartner()
+    Trading tradePartner()
     {
         if (tradeSide is null)
             return null;
-        auto other = context.onlinePlayer(tradeSide.trader);
-        return other is null || other.tradeSide is null || other.player is null ? null : other;
+        auto other = me.context.onlinePlayer(tradeSide.trader);
+        return other is null || other.trading.tradeSide is null || other.player is null ? null : other.trading;
     }
 
     /// Sends `SMSG_TRADE_STATUS`.
@@ -103,7 +113,7 @@ private:
             w.put(ubyte(targetResult));
             w.put(0u);
         }
-        deliver(Opcode.SMSG_TRADE_STATUS, w.data);
+        me.deliver(Opcode.SMSG_TRADE_STATUS, w.data);
     }
 
     /// The item at `guid` in this player's inventory; null if it is not there.
@@ -112,13 +122,13 @@ private:
         if (guid == 0)
             return null;
         foreach (ubyte slot; 0 .. inventorySlotItemEnd)
-            if (auto item = player.inventory[inventorySlotBag0, slot])
+            if (auto item = me.player.inventory[inventorySlotBag0, slot])
             {
                 if (item.fullGuid == guid)
                     return item;
                 if (item.isBag && slot >= inventorySlotBagStart && slot < inventorySlotBagEnd)
                     foreach (ubyte i; 0 .. cast(ubyte) item.contents.length)
-                        if (auto inner = player.inventory[slot, i])
+                        if (auto inner = me.player.inventory[slot, i])
                             if (inner.fullGuid == guid)
                                 return inner;
             }
@@ -172,7 +182,7 @@ private:
                 foreach (_; 0 .. 15)
                     w.put(0u);
         }
-        deliver(Opcode.SMSG_TRADE_STATUS_EXTENDED, w.data);
+        me.deliver(Opcode.SMSG_TRADE_STATUS_EXTENDED, w.data);
     }
 
     /// Both sides' acceptance taken back: something changed, so both look again.
@@ -216,18 +226,18 @@ private:
     {
         if (tradeSide !is null)
             return;
-        if (player.deathState != DeathState.alive)
+        if (me.player.deathState != DeathState.alive)
             return sendTradeStatus(TradeStatus.youDead);
-        if (player.values.get!UNIT_FIELD_FLAGS & UnitFlags.stunned)
+        if (me.player.values.get!UNIT_FIELD_FLAGS & UnitFlags.stunned)
             return sendTradeStatus(TradeStatus.youStunned);
-        if (loggingOut)
+        if (me.loggingOut)
             return sendTradeStatus(TradeStatus.youLogout);
-        auto other = context.onlinePlayer(target);
+        auto other = me.context.onlinePlayer(target);
         if (other is null && mayMigrate)
             return initiateTradeAtReplica(target);
-        if (other is null || other.player is null || other.map !is map)
+        if (other is null || other.player is null || other.map !is me.map)
             return sendTradeStatus(TradeStatus.noTarget);
-        if (other is this || other.tradeSide !is null)
+        if (other is me || other.trading.tradeSide !is null)
             return sendTradeStatus(TradeStatus.busy);
         if (other.player.deathState != DeathState.alive)
             return sendTradeStatus(TradeStatus.targetDead);
@@ -235,16 +245,16 @@ private:
             return sendTradeStatus(TradeStatus.targetStunned);
         if (other.loggingOut)
             return sendTradeStatus(TradeStatus.targetLogout);
-        if (context.client.teamForRace(player.data.race) != context.client.teamForRace(other.player.data.race))
+        if (me.context.client.teamForRace(me.player.data.race) != me.context.client.teamForRace(other.player.data.race))
             return sendTradeStatus(TradeStatus.wrongFaction);
-        const a = player.position, b = other.player.position;
+        const a = me.player.position, b = other.player.position;
         if ((a.x - b.x) ^^ 2 + (a.y - b.y) ^^ 2 + (a.z - b.z) ^^ 2 > tradeDistance ^^ 2)
             return sendTradeStatus(TradeStatus.targetTooFar);
         tradeSide = new TradeSide;
         tradeSide.trader = other.player.guid;
-        other.tradeSide = new TradeSide;
-        other.tradeSide.trader = player.guid;
-        other.sendTradeStatus(TradeStatus.beginTrade, player.guid);
+        other.trading.tradeSide = new TradeSide;
+        other.trading.tradeSide.trader = me.player.guid;
+        other.trading.sendTradeStatus(TradeStatus.beginTrade, me.player.guid);
     }
 
     /// Check what the local replica can tell us before moving. The owner checks the live player.
@@ -253,22 +263,22 @@ private:
         import dmangos.world.inworld : ArrivalAction;
         import dmangos.world.replication : Replica;
 
-        auto replica = cast(Replica) map.findObject(target);
+        auto replica = cast(Replica) me.map.findObject(target);
         if (replica is null || replica.fields.type != TypeId.player)
             return sendTradeStatus(TradeStatus.noTarget);
         if (!replica.fields.get!UNIT_FIELD_HEALTH)
             return sendTradeStatus(TradeStatus.targetDead);
         if (replica.fields.get!UNIT_FIELD_FLAGS & UnitFlags.stunned)
             return sendTradeStatus(TradeStatus.targetStunned);
-        if (context.client.teamForRace(player.data.race)
-            != context.client.teamForRace(replica.fields.getByte!UNIT_FIELD_BYTES_0(0)))
+        if (me.context.client.teamForRace(me.player.data.race)
+            != me.context.client.teamForRace(replica.fields.getByte!UNIT_FIELD_BYTES_0(0)))
             return sendTradeStatus(TradeStatus.wrongFaction);
-        const a = player.position, b = replica.position;
+        const a = me.player.position, b = replica.position;
         if ((a.x - b.x) ^^ 2 + (a.y - b.y) ^^ 2 + (a.z - b.z) ^^ 2 > tradeDistance ^^ 2)
             return sendTradeStatus(TradeStatus.targetTooFar);
         ArrivalAction action;
         action.tradeTarget = target;
-        if (inCombat || taxi.flying || !actAtReplica(target, action))
+        if (me.inCombat || me.taxi.flying || !me.actAtReplica(target, action))
             sendTradeStatus(TradeStatus.busy);
     }
 
@@ -311,7 +321,7 @@ private:
         const tradeSlot = reader.read!ubyte, bag = reader.read!ubyte, slot = reader.read!ubyte;
         if (tradeSide is null)
             return;
-        auto item = tradeSlot < tradeSlotCount ? player.inventory[bag, slot] : null;
+        auto item = tradeSlot < tradeSlotCount ? me.player.inventory[bag, slot] : null;
         if (item is null || (tradeSlot != tradeSlotTradedCount && !canBeTraded(item)))
             return sendTradeStatus(TradeStatus.tradeCanceled);
         foreach (put; tradeSide.items)
@@ -365,13 +375,13 @@ private:
     {
         uint free;
         foreach (ubyte slot; inventorySlotItemStart .. inventorySlotItemEnd)
-            if (player.inventory[inventorySlotBag0, slot] is null)
+            if (me.player.inventory[inventorySlotBag0, slot] is null)
                 ++free;
         foreach (ubyte bag; inventorySlotBagStart .. inventorySlotBagEnd)
-            if (auto container = player.inventory[inventorySlotBag0, bag])
+            if (auto container = me.player.inventory[inventorySlotBag0, bag])
                 if (container.isBag && container.proto.bagFamily == 0)
                     foreach (ubyte i; 0 .. cast(ubyte) container.contents.length)
-                        if (player.inventory[bag, i] is null)
+                        if (me.player.inventory[bag, i] is null)
                             ++free;
         return free;
     }
@@ -385,20 +395,20 @@ private:
             return;
         auto mine = tradeSide, his = partner.tradeSide;
         mine.accepted = true;
-        const a = player.position, b = partner.player.position;
+        const a = me.player.position, b = partner.me.player.position;
         if ((a.x - b.x) ^^ 2 + (a.y - b.y) ^^ 2 + (a.z - b.z) ^^ 2 > tradeDistance ^^ 2)
         {
             sendTradeStatus(TradeStatus.targetTooFar);
             mine.accepted = false;
             return;
         }
-        if (!player.canAfford(Copper(mine.money)))
+        if (!me.player.canAfford(Copper(mine.money)))
         {
             sendTradeStatus(TradeStatus.closeWindow, 0, InventoryResult.notEnoughMoney);
             mine.accepted = false;
             return partner.sendTradeStatus(TradeStatus.backToTrade);
         }
-        if (!partner.player.canAfford(Copper(his.money)))
+        if (!partner.me.player.canAfford(Copper(his.money)))
         {
             partner.sendTradeStatus(TradeStatus.closeWindow, 0, InventoryResult.notEnoughMoney);
             his.accepted = false;
@@ -444,25 +454,25 @@ private:
         }
 
         // The items change hands: gone from the giver (its rows deleted), new to the taker (rows inserted).
-        auto mineGiven = giveAway(myItems, partner.player.guid);
-        auto hisGiven = partner.giveAway(hisItems, player.guid);
-        flushInventory();
-        partner.flushInventory();
+        auto mineGiven = giveAway(myItems, partner.me.player.guid);
+        auto hisGiven = partner.giveAway(hisItems, me.player.guid);
+        me.flushInventory();
+        partner.me.flushInventory();
         receiveTraded(hisGiven);
         partner.receiveTraded(mineGiven);
         // Each pays what it put up (checked above), then gets the other's.
-        player.pay(Copper(mine.money));
-        partner.player.pay(Copper(his.money));
-        player.receive(Copper(his.money));
-        partner.player.receive(Copper(mine.money));
+        me.player.pay(Copper(mine.money));
+        partner.me.player.pay(Copper(his.money));
+        me.player.receive(Copper(his.money));
+        partner.me.player.receive(Copper(mine.money));
         castTradeSpell(partner);
         partner.castTradeSpell(this);
         tradeSide = null;
         partner.tradeSide = null;
-        flushInventory(true);
-        partner.flushInventory(true);
-        info!"%s: '%s' traded %s items and %s copper for %s items and %s copper with '%s'"(remoteAddress,
-            player.data.name, myItems.length, mine.money, hisItems.length, his.money, partner.player.data.name);
+        me.flushInventory(true);
+        partner.me.flushInventory(true);
+        info!"%s: '%s' traded %s items and %s copper for %s items and %s copper with '%s'"(me.remoteAddress,
+            me.player.data.name, myItems.length, mine.money, hisItems.length, his.money, partner.me.player.data.name);
         partner.sendTradeStatus(TradeStatus.tradeComplete);
         sendTradeStatus(TradeStatus.tradeComplete);
     }
@@ -504,7 +514,7 @@ private:
             return SpellCastResult.notTrading;
         if (targets.item != tradeSlotTradedCount)
             return SpellCastResult.itemNotReady;
-        setTradeSpell(spell.id, castItemEntry ? usingItemGuid : 0, castItemEntry);
+        setTradeSpell(spell.id, castItemEntry ? me.usingItemGuid : 0, castItemEntry);
         return SpellCastResult.dontReport;
     }
 
@@ -525,7 +535,7 @@ private:
 
         if (!tradeSide.spell)
             return true;
-        const spell = context.data.spells.spell(tradeSide.spell);
+        const spell = me.context.data.spells.spell(tradeSide.spell);
         auto targets = tradeSpellTargets(partner);
         bool ready = spell !is null && partner.itemByGuid(targets.item) !is null
             && (!tradeSide.spellItem || itemByGuid(tradeSide.spellItem) !is null);
@@ -534,10 +544,10 @@ private:
             tradeSpellCompleting = true;
             scope (exit)
                 tradeSpellCompleting = false;
-            const result = checkCast(spell, targets, false, tradeSide.spellItemEntry, true);
+            const result = me.checkCast(spell, targets, false, tradeSide.spellItemEntry, true);
             if (result != SpellCastResult.ok)
             {
-                deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, result, spell));
+                me.deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, result, spell));
                 ready = false;
             }
         }
@@ -551,14 +561,14 @@ private:
     {
         if (!tradeSide.spell)
             return;
-        if (const spell = context.data.spells.spell(tradeSide.spell))
+        if (const spell = me.context.data.spells.spell(tradeSide.spell))
         {
             tradeSpellCompleting = true;
             scope (exit)
                 tradeSpellCompleting = false;
-            usingItemGuid = tradeSide.spellItem;
-            castSpell(spell, tradeSpellTargets(partner), false, tradeSide.spellItemEntry);
-            usingItemGuid = 0;
+            me.usingItemGuid = tradeSide.spellItem;
+            me.castSpell(spell, tradeSpellTargets(partner), false, tradeSide.spellItemEntry);
+            me.usingItemGuid = 0;
         }
     }
 
@@ -569,9 +579,9 @@ private:
         import dmangos.world.spellcast : TargetFlags;
 
         if (!(targets.mask & TargetFlags.tradeItem))
-            return enchantItem(targets.item, enchantment, temporary, durationSeconds);
+            return me.enchantItem(targets.item, enchantment, temporary, durationSeconds);
         if (auto owner = tradePartner())
-            owner.enchantItem(targets.item, enchantment, temporary, durationSeconds);
+            owner.me.enchantItem(targets.item, enchantment, temporary, durationSeconds);
     }
 
     /// The items leave this player's inventory for `taker`: copies of them (same guids) are returned.
@@ -581,9 +591,9 @@ private:
         foreach (item; items)
         {
             auto record = item.record;
-            record.giftCreator = player.data.guid; // `ITEM_FIELD_GIFTCREATOR`: who gave it
+            record.giftCreator = me.player.data.guid; // `ITEM_FIELD_GIFTCREATOR`: who gave it
             copies ~= Item.load(record, item.proto, taker);
-            player.inventory.destroy(item.bagSlot, item.slot);
+            me.player.inventory.destroy(item.bagSlot, item.slot);
         }
         return copies;
     }
@@ -595,8 +605,8 @@ private:
         {
             ItemPosCount[] dest;
             ubyte bagSlot;
-            if (player.inventory.canStore(nullBag, nullSlot, dest, item, false, bagSlot) == InventoryResult.ok)
-                player.inventory.store(dest, item);
+            if (me.player.inventory.canStore(nullBag, nullSlot, dest, item, false, bagSlot) == InventoryResult.ok)
+                me.player.inventory.store(dest, item);
         }
     }
 }
@@ -677,6 +687,27 @@ unittest
     auto loaded = Item.load(db.itemRows[shirt.guid], shirt.proto, j.guid);
     assert(loaded.values.get!ITEM_FIELD_CREATOR == a.guid);
     assert(opcodesOf(jaina.read()).canFind(Opcode.SMSG_TRADE_STATUS));
+}
+
+/// A player who asks to trade with themselves is told they are busy, and no trade begins.
+unittest
+{
+    import dmangos.bytes : ByteReader, ByteWriter;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    anduin.read();
+    ByteWriter target;
+    target.put(anduin.session.character.guid);
+    anduin.write(Opcode.CMSG_INITIATE_TRADE, target.data);
+    const status = bodyOf(anduin.read(), Opcode.SMSG_TRADE_STATUS);
+    assert(status.length >= 4 && ByteReader(status).read!uint == TradeStatus.busy, "busy");
+    assert(anduin.session.inWorld.trading.tradeSide is null, "no trade begun");
 }
 
 /// A trade requested across nodes uses the ordinary trade there, including cancellation and disconnect.

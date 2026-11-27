@@ -352,7 +352,7 @@ private:
             // An item's loot released: emptied, the item is destroyed.
             loot.lootedForAll = () {
                 itemLoots.remove(guid);
-                if (auto still = itemByGuid(guid))
+                if (auto still = trading.itemByGuid(guid))
                 {
                     player.inventory.destroy(still.bagSlot, still.slot);
                     flushInventory(true);

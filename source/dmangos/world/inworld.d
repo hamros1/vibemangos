@@ -86,7 +86,7 @@ private:
         spellsOnLeave();
         petsOnLeave();
         dismissCompanion();
-        cancelTrade(false, TradeStatus.targetLogout);
+        trading.cancelTrade(false, TradeStatus.targetLogout);
         duelComplete(DuelEnd.fled);
         if (!savedUnread) // the records it could not read stay as saved (`readSaved`)
         {
@@ -189,7 +189,7 @@ private:
             return 0;
         // Combat and control of another unit stay with that unit's simulation. Ordinary balancing
         // lets a taxi flight finish on its current node.
-        if (inCombat || taxi.flying || duel !is null || tradeSide !is null || charmed !is null || npcCharmer)
+        if (inCombat || taxi.flying || duel !is null || trading.tradeSide !is null || charmed !is null || npcCharmer)
             return 0;
         // A gateway owns no ground, including the edge between two world nodes.
         const margin = context.config.cluster.gateway ? 0 : migrationMargin;
@@ -222,7 +222,7 @@ private:
         if (action.attack)
             handleAttackSwing(ClientGuid(action.attack));
         if (action.tradeTarget)
-            initiateTrade(action.tradeTarget, false);
+            trading.initiateTrade(action.tradeTarget, false);
         if (action.noticedBy)
             if (auto creature = cast(Creature) map.findObject(action.noticedBy))
                 if (creature.ai !is null && creature.ai.mayNotice)
@@ -297,7 +297,7 @@ private:
     {
         if (!owner || owner == context.nodeId || context.playerRelay is null || !context.canWrite())
             return false;
-        if (teleporting != Teleport.none || loggingOut || transferring || duel !is null || tradeSide !is null)
+        if (teleporting != Teleport.none || loggingOut || transferring || duel !is null || trading.tradeSide !is null)
             return false;
         info!"%s: '%s' acts at %s, which node %s simulates: moving there"(remoteAddress, player.data.name,
             target & 0xFFFF_FFFF, owner);
@@ -324,7 +324,7 @@ private:
         if (!context.settleWrites())
             return false;
         duelComplete(DuelEnd.fled); // a forced move (such as draining) ends it for both players
-        cancelTrade(true);
+        trading.cancelTrade(true);
         const petControl = preparePetHandoff(action.teleportMap == uint.max);
         flushPlayerChanges();
         const progress = player.progress(secondsInWorld());
