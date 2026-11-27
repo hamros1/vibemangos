@@ -141,7 +141,7 @@ final class MigrantKeeper
             w.put(cast(uint) state.data.length);
             w.putBytes(state.data);
             if (carryImpacts)
-                world.writeReplicaImpacts(creature.guid, w, departing);
+                world.remoteSpells.writeReplicaImpacts(creature.guid, w, departing);
             else
                 w.put(0u);
             if (departing)
@@ -231,7 +231,7 @@ final class MigrantKeeper
         creature.instanceId = instance;
         creature.loadState(state, now, &world.spellInfo, world.data.waypoints);
         creature.factionTemplate = world.client.factionTemplates.lookup(creature.values.get!UNIT_FIELD_FACTIONTEMPLATE);
-        world.readReplicaImpacts(creature.guid, creature.spawn.map, instance, reader);
+        world.remoteSpells.readReplicaImpacts(creature.guid, creature.spawn.map, instance, reader);
     }
 
     /// A region may bring a saved GM spawn created after this node loaded its world data.

@@ -1069,13 +1069,13 @@ unittest
     const specialDamage = 2 * cast(uint) armorReducedDamage(20, armor, 20)
         + cast(uint) armorReducedDamage(20, armor, weaponBonus);
     to.random.seed(20_261_121);
-    owner.creatureSwingArrived(1, queued);
-    owner.creatureSwingArrived(1, queued);
+    owner.remoteSpells.creatureSwingArrived(1, queued);
+    owner.remoteSpells.creatureSwingArrived(1, queued);
     assert(replies.length == 1 && replies[0].spellMiss == SpellMissInfo.none && replies[0].damage == specialDamage);
     assert(victim.player.values.get!UNIT_FIELD_HEALTH == 200 - specialDamage);
     const resolved = throughWire(replies[0]);
-    source.creatureSwingArrived(2, resolved);
-    source.creatureSwingArrived(2, resolved);
+    source.remoteSpells.creatureSwingArrived(2, resolved);
+    source.remoteSpells.creatureSwingArrived(2, resolved);
     const logs = client.read();
     const codes = opcodesOf(logs);
     assert(codes.count(Opcode.SMSG_SPELL_GO) == 1 && codes.count(Opcode.SMSG_SPELLNONMELEEDAMAGELOG) == 1
@@ -1114,8 +1114,8 @@ unittest
     weaponUser.ai.update(from, 2000);
     assert(requests.length == 3 && requests[2].spell == cleave && requests[2].target == playerGuid);
     assert(requests[2].secondary && weaponUser.values.get!UNIT_FIELD_POWER1 == 80 - 2 * manaCost);
-    owner.creatureSwingArrived(1, requests[2]);
-    owner.creatureSwingArrived(1, requests[2]);
+    owner.remoteSpells.creatureSwingArrived(1, requests[2]);
+    owner.remoteSpells.creatureSwingArrived(1, requests[2]);
     assert(replies.length == 2 && victim.player.values.get!UNIT_FIELD_HEALTH == beforeCleave - specialDamage);
     assert(extra.values.get!UNIT_FIELD_HEALTH < 200 && outsideCap.values.get!UNIT_FIELD_HEALTH == 200);
     from.removeObject(extra.guid);
@@ -1166,16 +1166,16 @@ unittest
     assert(requests.length == 1 && requests[0].target == playerGuid);
     assert(creature.ai.currentVictim == playerGuid && creature.ai.threatOf(playerGuid) == 42);
     const first = throughWire(requests[0]);
-    owner.creatureSwingArrived(3, first);
+    owner.remoteSpells.creatureSwingArrived(3, first);
     assert(victim.player.values.get!UNIT_FIELD_HEALTH == 100 && !replies.length, "only the creature owner can send");
-    owner.creatureSwingArrived(1, first);
-    owner.creatureSwingArrived(1, first);
+    owner.remoteSpells.creatureSwingArrived(1, first);
+    owner.remoteSpells.creatureSwingArrived(1, first);
     assert(victim.player.values.get!UNIT_FIELD_HEALTH == afterFirst && victim.inCombat && !victim.hasAuraOf(shield));
     assert(replies.length == 1 && replies[0].damage == damage - 7 && replies[0].retaliation.length == 1);
     assert(opcodesOf(client.read()).count(Opcode.SMSG_ATTACKERSTATEUPDATE) == 1);
     const confirmation = throughWire(replies[0]);
-    source.creatureSwingArrived(2, confirmation);
-    source.creatureSwingArrived(2, confirmation);
+    source.remoteSpells.creatureSwingArrived(2, confirmation);
+    source.remoteSpells.creatureSwingArrived(2, confirmation);
     assert(creature.values.get!UNIT_FIELD_HEALTH == 111, "Thorns struck the authoritative creature once");
 
     creature.ai.update(from, 50);
@@ -1183,16 +1183,16 @@ unittest
     creature.ai.update(from, 2000);
     assert(requests.length == 2);
     victim.player.movement.position.x += 20; // the sender still sees the old position
-    owner.creatureSwingArrived(1, requests[1]);
+    owner.remoteSpells.creatureSwingArrived(1, requests[1]);
     victim.player.movement.position = near;
-    owner.creatureSwingArrived(1, requests[1]); // a rejected swing cannot be replayed after the player returns
+    owner.remoteSpells.creatureSwingArrived(1, requests[1]); // a rejected swing cannot be replayed after the player returns
     assert(victim.player.values.get!UNIT_FIELD_HEALTH == afterFirst && replies.length == 1);
     assert(opcodesOf(client.read()).count(Opcode.SMSG_ATTACKERSTATEUPDATE) == 0);
 
     creature.ai.update(from, 2000);
     assert(requests.length == 3);
     victim.player.values.setByte!UNIT_FIELD_BYTES_1(0, 1);
-    owner.creatureSwingArrived(1, requests[2]);
+    owner.remoteSpells.creatureSwingArrived(1, requests[2]);
     assert(victim.player.values.get!UNIT_FIELD_HEALTH == afterFirst - damage && replies.length == 2);
 
     enum smite = 91_062, curse = 91_064, castMs = 1500, cost = 12, damagePerCast = 15;
@@ -1250,29 +1250,29 @@ unittest
     assert(creature.ai.castSpell(spell, playerGuid, 0));
     creature.ai.update(from, castMs);
     assert(casts.length == 1 && creature.values.get!UNIT_FIELD_POWER1 == 80 - cost);
-    owner.areaDamageArrived(1, casts[0]);
-    owner.areaDamageArrived(1, casts[0]);
+    owner.remoteSpells.areaDamageArrived(1, casts[0]);
+    owner.remoteSpells.areaDamageArrived(1, casts[0]);
     assert(castReplies.length == 1 && castReplies[0].damage == damagePerCast);
     assert(victim.player.values.get!UNIT_FIELD_HEALTH == health - damagePerCast);
     client.read();
-    source.areaDamageArrived(2, castReplies[0]);
-    source.areaDamageArrived(2, castReplies[0]);
+    source.remoteSpells.areaDamageArrived(2, castReplies[0]);
+    source.remoteSpells.areaDamageArrived(2, castReplies[0]);
     assert(opcodesOf(client.read()).count(Opcode.SMSG_SPELL_GO) == 1);
 
     assert(creature.ai.castSpell(spell, playerGuid, 0));
     creature.ai.update(from, castMs);
     assert(casts.length == 2);
     victim.player.movement.position.x += 30;
-    owner.areaDamageArrived(1, casts[1]);
+    owner.remoteSpells.areaDamageArrived(1, casts[1]);
     victim.player.movement.position = near;
-    owner.areaDamageArrived(1, casts[1]);
+    owner.remoteSpells.areaDamageArrived(1, casts[1]);
     assert(castReplies.length == 2 && castReplies[1].miss == SpellMissInfo.evade);
     assert(victim.player.values.get!UNIT_FIELD_HEALTH == health - damagePerCast);
 
     assert(creature.ai.castSpell(source.data.spells.spell(curse), playerGuid, castTriggered));
     assert(casts.length == 3 && casts[2].triggered);
-    owner.areaDamageArrived(1, casts[2]);
-    owner.areaDamageArrived(1, casts[2]);
+    owner.remoteSpells.areaDamageArrived(1, casts[2]);
+    owner.remoteSpells.areaDamageArrived(1, casts[2]);
     const applied = victim.player.auras.find(curse);
     assert(applied !is null && applied.effects == 3 && applied.stacks == 1);
     assert(applied.amount[0] == 4 && applied.amount[1] == 9);
@@ -1304,8 +1304,8 @@ unittest
     victim.player.values.set!UNIT_FIELD_HEALTH(100u);
     assert(creature.ai.castSpell(source.data.spells.spell(breath), creature.guid, castTriggered));
     assert(casts.length == 4 && casts[3].creatureArea && casts[3].target == playerGuid);
-    owner.areaDamageArrived(1, casts[3]);
-    owner.areaDamageArrived(1, casts[3]);
+    owner.remoteSpells.areaDamageArrived(1, casts[3]);
+    owner.remoteSpells.areaDamageArrived(1, casts[3]);
     assert(victim.player.values.get!UNIT_FIELD_HEALTH == 94);
 
     auto now = MonoTime.currTime;
@@ -1318,11 +1318,11 @@ unittest
     now += 1.msecs;
     source.update(now);
     assert(casts.length == 6 && casts[4].effect == 0 && casts[5].effect == 1);
-    owner.areaDamageArrived(1, casts[4]);
-    owner.areaDamageArrived(1, casts[4]);
+    owner.remoteSpells.areaDamageArrived(1, casts[4]);
+    owner.remoteSpells.areaDamageArrived(1, casts[4]);
     assert(victim.player.values.get!UNIT_FIELD_HEALTH == 87);
-    owner.areaDamageArrived(1, casts[5]);
-    owner.areaDamageArrived(1, casts[5]);
+    owner.remoteSpells.areaDamageArrived(1, casts[5]);
+    owner.remoteSpells.areaDamageArrived(1, casts[5]);
     auto projectileAura = victim.player.auras.find(bolt);
     assert(projectileAura !is null && projectileAura.effects == 2 && projectileAura.stacks == 1);
 
@@ -1368,8 +1368,8 @@ unittest
         const sent = throughWire(requests[$ - 1]);
         const replyCount = replies.length;
         client.read();
-        owner.creatureSwingArrived(1, sent);
-        owner.creatureSwingArrived(1, sent);
+        owner.remoteSpells.creatureSwingArrived(1, sent);
+        owner.remoteSpells.creatureSwingArrived(1, sent);
         assert(replies.length == replyCount + 1);
         const result = throughWire(replies[$ - 1]);
         assert((result.outcome == MeleeHitOutcome.block) == block);
@@ -1380,8 +1380,8 @@ unittest
 
         const beforeHealth = creature.values.get!UNIT_FIELD_HEALTH;
         const beforeThreat = creature.ai.threatOf(playerGuid);
-        source.creatureSwingArrived(2, result);
-        source.creatureSwingArrived(2, result);
+        source.remoteSpells.creatureSwingArrived(2, result);
+        source.remoteSpells.creatureSwingArrived(2, result);
         assert(creature.values.get!UNIT_FIELD_HEALTH == beforeHealth - 9 - (block ? 14 : 0) - (holy ? 65 : 0));
         assert(isClose(creature.ai.threatOf(playerGuid) - beforeThreat, 9 + (block ? 7 : 0) + (holy ? 39 : 0)));
         uint[] loggedSpells;

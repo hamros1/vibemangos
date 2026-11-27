@@ -2436,7 +2436,7 @@ final class Map : MotionWorld
     bool remoteCreatureSwing(Creature attacker, UnitRef target, uint spell, int spellValue, float spellThreat,
         bool secondary)
     {
-        return swingsRemotely() && world.queueCreatureSwing(attacker, target, spell, spellValue, spellThreat, secondary);
+        return swingsRemotely() && world.remoteSpells.queueCreatureSwing(attacker, target, spell, spellValue, spellThreat, secondary);
     }
 
     /// Keep player replicas near this creature while it has an active fight, even without a local player.
@@ -2696,7 +2696,7 @@ final class Map : MotionWorld
         version (unittest)
             timedTrapsFired ~= trap.guid;
         if (world !is null)
-            world.disturbEncounterTrap(this, trap);
+            world.remoteSpells.disturbEncounterTrap(this, trap);
     }
 
     /// The players who see a creature are noticed by it, when it has moved; a pet that moved is noticed by the creatures near it.

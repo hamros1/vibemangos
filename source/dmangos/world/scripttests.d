@@ -803,8 +803,8 @@ unittest
         ByteWriter payload;
         serialize(payload, tick);
         const decoded = decode!PeriodicResult(payload.data);
-        destination.periodicResultArrived(1, decoded);
-        destination.periodicResultArrived(1, decoded);
+        destination.remoteSpells.periodicResultArrived(1, decoded);
+        destination.remoteSpells.periodicResultArrived(1, decoded);
     }
     assert(moved.player.values.get!UNIT_FIELD_HEALTH == 60 && moved.player.values.get!UNIT_FIELD_POWER1(Power.mana) == 16);
     assert(procEffect.charges == 1 && moved.hasAuraOf(procBuff));
@@ -856,8 +856,8 @@ unittest
     destination.sendAreaDamage = (ushort node, const ref AreaDamage hit) {
         assert(node == 1 && hit.channelled && hit.target == drained.guid);
         map.replicaCreated(2, casterCell, guid, encodePlayerState(moved.player, 0));
-        source.areaDamageArrived(2, hit);
-        source.areaDamageArrived(2, hit);
+        source.remoteSpells.areaDamageArrived(2, hit);
+        source.remoteSpells.areaDamageArrived(2, hit);
         return true;
     };
     assert(moved.castSpell(destination.data.spells.spell(channelled), SpellTargets(TargetFlags.unit, drained.guid),
@@ -867,8 +867,8 @@ unittest
     drained.updateAuras(map, period);
     assert(ticks.length == 3 && ticks[2].drained == 20 && drained.values.get!UNIT_FIELD_HEALTH == 20);
     assert(victimProc.charges == 1 && drained.auras.find(procBuff) !is null);
-    destination.periodicResultArrived(1, ticks[2]);
-    destination.periodicResultArrived(1, ticks[2]);
+    destination.remoteSpells.periodicResultArrived(1, ticks[2]);
+    destination.remoteSpells.periodicResultArrived(1, ticks[2]);
     assert(moved.player.values.get!UNIT_FIELD_HEALTH == 70);
     moved.endChannel(true);
     assert(drained.auras.find(channelled) is null);
@@ -881,11 +881,11 @@ unittest
     elsewhere.sequence = ticks[2].sequence + 1;
     elsewhere.map = mapKalimdor;
     destination.map(mapKalimdor);
-    destination.periodicResultArrived(1, elsewhere);
+    destination.remoteSpells.periodicResultArrived(1, elsewhere);
     assert(moved.player.values.get!UNIT_FIELD_HEALTH == 70, "the caster left the drained target's map");
     elsewhere.sequence++;
     elsewhere.map = map.id;
-    destination.periodicResultArrived(1, elsewhere);
+    destination.remoteSpells.periodicResultArrived(1, elsewhere);
     assert(moved.player.values.get!UNIT_FIELD_HEALTH == 80, "but takes it on the same map");
 }
 

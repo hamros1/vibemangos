@@ -418,7 +418,7 @@ private:
         writeSessionHandoff(w);
         writeDeathHandoff(w);
         writePvPHandoff(w);
-        context.writeReplicaImpacts(player.guid, w);
+        context.remoteSpells.writeReplicaImpacts(player.guid, w);
         writeChannelAndGroundHandoff(w);
         serialize(w, camera);
         w.put(cast(uint) fishing.length);
@@ -568,7 +568,7 @@ private:
         connection.playing = this; // in the world from here on
         context.enterWorldMigrated(this, known);
         corpseArrivingFromHandoff();
-        context.readReplicaImpacts(player.guid, map.id, map.instanceId, r);
+        context.remoteSpells.readReplicaImpacts(player.guid, map.id, map.instanceId, r);
         readChannelAndGroundHandoff(r);
         restoreCameraHandoff(r);
         restoreFishingHandoff(r);

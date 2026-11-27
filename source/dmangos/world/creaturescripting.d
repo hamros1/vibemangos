@@ -520,7 +520,7 @@ mixin template CreatureScripting()
         {
             if (lore is null || world_ is null)
                 return ActionResult.notHere;
-            return lore.placeFusedTrap(world_, entry, Position(at.x, at.y, at.z, at.orientation), seconds, fuseMs)
+            return lore.remoteSpells.placeFusedTrap(world_, entry, Position(at.x, at.y, at.z, at.orientation), seconds, fuseMs)
                 ? ActionResult.ok : ActionResult.failed;
         }
         ActionResult hostSignalCreature(EntityRef to, uint id, int value) { return hostSignal(to, id, value); }

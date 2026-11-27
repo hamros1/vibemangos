@@ -677,8 +677,8 @@ unittest
     pet.ai.update(here, 50);
     assert(swings.length == 1 && swings[0].destination == first.nodeId);
     oldRegion.random.seed(20_261_121);
-    first.creatureSwingArrived(home.nodeId, swings[0]);
-    first.creatureSwingArrived(home.nodeId, swings[0]);
+    first.remoteSpells.creatureSwingArrived(home.nodeId, swings[0]);
+    first.remoteSpells.creatureSwingArrived(home.nodeId, swings[0]);
     assert(target.values.get!UNIT_FIELD_HEALTH == 8 && replies.length == 1);
     assert(target.ai.threatOf(pet.guid) == 8 && target.ai.threatOf(playerGuid) == 0
         && target.ai.currentVictim == pet.guid && target.lootRecipient == playerGuid);
@@ -692,21 +692,21 @@ unittest
     assert(arrived !is null && arrived.values.get!UNIT_FIELD_HEALTH == 8);
     assert(arrived.ai.threatOf(pet.guid) == 8 && arrived.ai.currentVictim == pet.guid
         && arrived.lootRecipient == playerGuid);
-    first.creatureSwingArrived(home.nodeId, swings[1]);
-    second.creatureSwingArrived(home.nodeId, swings[0]);
-    second.creatureSwingArrived(home.nodeId, swings[1]);
+    first.remoteSpells.creatureSwingArrived(home.nodeId, swings[1]);
+    second.remoteSpells.creatureSwingArrived(home.nodeId, swings[0]);
+    second.remoteSpells.creatureSwingArrived(home.nodeId, swings[1]);
     assert(arrived.values.get!UNIT_FIELD_HEALTH == 8 && replies.length == 1);
 
     here.replicaRemoved(first.nodeId, guid);
     pet.ai.update(here, 100);
     assert(pet.ai.currentVictim == guid && swings.length == 2);
     here.replicaCreated(second.nodeId, cell, guid, encodeState(arrived, 0));
-    home.creatureSwingArrived(first.nodeId, replies[0]); // the already accepted first swing can still reply
+    home.remoteSpells.creatureSwingArrived(first.nodeId, replies[0]); // the already accepted first swing can still reply
     pet.ai.update(here, 2000);
     assert(swings.length == 3 && swings[2].destination == second.nodeId);
     newRegion.random.seed(20_261_121);
-    second.creatureSwingArrived(home.nodeId, swings[2]);
-    second.creatureSwingArrived(home.nodeId, swings[2]);
+    second.remoteSpells.creatureSwingArrived(home.nodeId, swings[2]);
+    second.remoteSpells.creatureSwingArrived(home.nodeId, swings[2]);
     assert(!arrived.alive && replies.length == 2 && rewards.length == 1);
     assert(rewards[0].target == playerGuid && rewards[0].victim == guid && rewards[0].xp > 0);
 
@@ -727,7 +727,7 @@ unittest
     rexxar.write(Opcode.CMSG_PET_ACTION, command.data);
     pet.ai.update(here, 2000);
     assert(swings.length == 4 && swings[3].target == enemy);
-    second.creatureSwingArrived(home.nodeId, swings[3]);
+    second.remoteSpells.creatureSwingArrived(home.nodeId, swings[3]);
     assert(defender.player.values.get!UNIT_FIELD_HEALTH == 100 && replies.length == 2);
 
     defender.player.values.set!UNIT_FIELD_FLAGS(flags | UnitFlags.pvp);
@@ -735,10 +735,10 @@ unittest
     pet.ai.update(here, 2000);
     assert(swings.length == 5);
     newRegion.random.seed(20_261_121);
-    second.creatureSwingArrived(home.nodeId, swings[4]);
-    second.creatureSwingArrived(home.nodeId, swings[4]);
+    second.remoteSpells.creatureSwingArrived(home.nodeId, swings[4]);
+    second.remoteSpells.creatureSwingArrived(home.nodeId, swings[4]);
     assert(defender.player.values.get!UNIT_FIELD_HEALTH == 84 && replies.length == 3 && replies[2].targetPvP);
-    home.creatureSwingArrived(second.nodeId, replies[2]);
+    home.remoteSpells.creatureSwingArrived(second.nodeId, replies[2]);
     assert(hunter.isPvP && hunter.isPvPContested, "the pet's owner receives the PvP flag and contested status");
 }
 
@@ -848,8 +848,8 @@ unittest
         attacker.ai.update(here, 50);
         assert(swings.length == 1 && swings[0].controller == controller && swings[0].destination == first.nodeId);
         oldRegion.random.seed(20_261_121);
-        first.creatureSwingArrived(home.nodeId, swings[0]);
-        first.creatureSwingArrived(home.nodeId, swings[0]);
+        first.remoteSpells.creatureSwingArrived(home.nodeId, swings[0]);
+        first.remoteSpells.creatureSwingArrived(home.nodeId, swings[0]);
         assert(target.values.get!UNIT_FIELD_HEALTH == 16 && replies.length == 1);
         assert(target.ai.currentVictim == attacker.guid && target.ai.threatOf(attacker.guid) == 8
             && target.ai.threatOf(controller) == 0 && target.lootRecipient == controller);
@@ -857,8 +857,8 @@ unittest
         assert(counters.length == 1 && counters[0].controller == 0 && counters[0].target == attacker.guid);
         here.random.seed(20_261_121);
         const beforeCounter = attacker.values.get!UNIT_FIELD_HEALTH;
-        home.creatureSwingArrived(first.nodeId, counters[0]);
-        home.creatureSwingArrived(first.nodeId, counters[0]);
+        home.remoteSpells.creatureSwingArrived(first.nodeId, counters[0]);
+        home.remoteSpells.creatureSwingArrived(first.nodeId, counters[0]);
         assert(counterReplies.length == 1 && attacker.values.get!UNIT_FIELD_HEALTH < beforeCounter);
 
         attacker.ai.update(here, 2000);
@@ -869,8 +869,8 @@ unittest
         auto arrived = newRegion.creatureAt(guid);
         assert(arrived !is null && arrived.ai.currentVictim == attacker.guid
             && arrived.ai.threatOf(attacker.guid) == 8 && arrived.lootRecipient == controller);
-        first.creatureSwingArrived(home.nodeId, swings[1]);
-        second.creatureSwingArrived(home.nodeId, swings[1]);
+        first.remoteSpells.creatureSwingArrived(home.nodeId, swings[1]);
+        second.remoteSpells.creatureSwingArrived(home.nodeId, swings[1]);
         assert(arrived.values.get!UNIT_FIELD_HEALTH == 16 && replies.length == 1);
 
         here.replicaRemoved(first.nodeId, guid);
@@ -880,13 +880,13 @@ unittest
         attacker.ai.update(here, 2000);
         assert(swings.length == 3 && swings[2].destination == second.nodeId);
         newRegion.random.seed(20_261_121);
-        second.creatureSwingArrived(home.nodeId, swings[2]);
-        second.creatureSwingArrived(home.nodeId, swings[2]);
+        second.remoteSpells.creatureSwingArrived(home.nodeId, swings[2]);
+        second.remoteSpells.creatureSwingArrived(home.nodeId, swings[2]);
         assert(arrived.values.get!UNIT_FIELD_HEALTH == 8 && replies.length == 2);
         attacker.ai.update(here, 2000);
         assert(swings.length == 4);
         newRegion.random.seed(20_261_121);
-        second.creatureSwingArrived(home.nodeId, swings[3]);
+        second.remoteSpells.creatureSwingArrived(home.nodeId, swings[3]);
         assert(!arrived.alive && rewards.length == 1 && rewards[0].target == controller && rewards[0].victim == guid);
 
         auto opponent = loggedIn(second, db, 9, "Anduin", at);
@@ -915,7 +915,7 @@ unittest
             auto late = replies[$ - 1];
             late.retaliation = [SwingRetaliation(5, 0)];
             const health = attacker.values.get!UNIT_FIELD_HEALTH;
-            home.creatureSwingArrived(second.nodeId, late);
+            home.remoteSpells.creatureSwingArrived(second.nodeId, late);
             assert(attacker.values.get!UNIT_FIELD_HEALTH == health);
         }
         else
@@ -925,7 +925,7 @@ unittest
             newRegion.replicaRemoved(home.nodeId, attacker.guid);
         }
         const health = enemy.player.values.get!UNIT_FIELD_HEALTH;
-        second.creatureSwingArrived(home.nodeId, swings[4]);
+        second.remoteSpells.creatureSwingArrived(home.nodeId, swings[4]);
         assert(enemy.player.values.get!UNIT_FIELD_HEALTH == health && replies.length == 3);
     }
 }

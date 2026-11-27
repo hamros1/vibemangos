@@ -564,16 +564,16 @@ unittest
     castGround(slow);
     tick();
     assert(requests.length == 1);
-    oldOwner.areaDamageArrived(casterNode.nodeId, requests[$ - 1]);
+    oldOwner.remoteSpells.areaDamageArrived(casterNode.nodeId, requests[$ - 1]);
     auto aura = victim.auras.find(slow);
     assert(aura !is null, format!"the remote aura landed: %s"(requests[$ - 1]));
     assert(aura.amount[0] < 0 && aura.stacks == 1, format!"slow amount %s, stack count %s"(aura.amount[0], aura.stacks));
     tick();
-    oldOwner.areaDamageArrived(casterNode.nodeId, requests[$ - 1]);
+    oldOwner.remoteSpells.areaDamageArrived(casterNode.nodeId, requests[$ - 1]);
     assert(victim.auras.find(slow) is aura && aura.stacks == 1, "renewal keeps the same aura and stack count");
     victim.movement.position = outside;
     tick();
-    oldOwner.areaDamageArrived(casterNode.nodeId, requests[$ - 1]); // the caster still sees the older position
+    oldOwner.remoteSpells.areaDamageArrived(casterNode.nodeId, requests[$ - 1]); // the caster still sees the older position
     target.session.update((amplitude + 200).msecs);
     assert(victim.auras.find(slow) is null, "a departed target is never renewed");
     cancelGround(slow);
@@ -584,9 +584,9 @@ unittest
     tick();
     assert(requests.length == 1);
     foreach (_; 0 .. 2)
-        oldOwner.areaDamageArrived(casterNode.nodeId, requests[0]);
+        oldOwner.remoteSpells.areaDamageArrived(casterNode.nodeId, requests[0]);
     assert(victim.values.get!UNIT_FIELD_HEALTH == startingHealth - 10 && replies.length == 1);
-    casterNode.areaDamageArrived(oldOwner.nodeId, replies[0]);
+    casterNode.remoteSpells.areaDamageArrived(oldOwner.nodeId, replies[0]);
 
     tick();
     assert(requests.length == 2);
@@ -598,10 +598,10 @@ unittest
     auto migrated = cast(Player) relay.remote.character;
     assert(migrated.values.get!UNIT_FIELD_HEALTH == startingHealth - 10, "handoff keeps damage already applied");
     foreach (_; 0 .. 2)
-        oldOwner.areaDamageArrived(casterNode.nodeId, requests[1]);
+        oldOwner.remoteSpells.areaDamageArrived(casterNode.nodeId, requests[1]);
     assert(replies.length == 2 && replies[1].redirectOwner == casterNode.nodeId);
     foreach (_; 0 .. 2)
-        casterNode.areaDamageArrived(oldOwner.nodeId, replies[1]);
+        casterNode.remoteSpells.areaDamageArrived(oldOwner.nodeId, replies[1]);
     assert(migrated.values.get!UNIT_FIELD_HEALTH == startingHealth - 20, "the in-flight tick follows its victim exactly once");
     tick();
     assert(migrated.values.get!UNIT_FIELD_HEALTH == startingHealth - 30 && requests.length == 2, "the next tick is local only");

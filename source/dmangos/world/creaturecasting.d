@@ -419,7 +419,7 @@ mixin template CreatureCasting()
             else if (auto map_ = world_)
                 if (const peer = currentChannelPeer(map_, guid))
                     if (auto context = lore)
-                        context.sendReplicaSpell(map_, peer, spell,
+                        context.remoteSpells.sendReplicaSpell(map_, peer, spell,
                             AreaDamage(caster: me.guid, target: guid, spell: spell.id, map: map_.id,
                                 instance: map_.instanceId, creatureCast: true, namedCreature: true,
                                 channelled: true, channelUpdate: true, channelToken: channelToken));
@@ -430,7 +430,7 @@ mixin template CreatureCasting()
         if (!cancelled && channelToken)
             if (auto context = lore)
                 if (auto map = world_)
-                    context.completeNamedChannel(map, map.unitOf(me), guid, spell, channelToken);
+                    context.remoteSpells.completeNamedChannel(map, map.unitOf(me), guid, spell, channelToken);
     }
 
     package void namedCreatureChannelRejected(ulong sequence)
@@ -489,7 +489,7 @@ mixin template CreatureCasting()
         if (peer)
         {
             if (auto context = lore)
-                context.sendReplicaSpell(target.map, peer, spell,
+                context.remoteSpells.sendReplicaSpell(target.map, peer, spell,
                     AreaDamage(caster: me.guid, target: target.combatGuid, spell: spell.id, map: target.map.id,
                         instance: target.map.instanceId, creatureCast: true, namedCreature: true, channelled: true,
                         channelUpdate: true, channelToken: namedChannelSequence, auraMs: namedVisualLifetimeMs));
@@ -558,7 +558,7 @@ mixin template CreatureCasting()
         import dmangos.world.spelldamage : databaseSpellEffect, namedCreatureEffect;
 
         if (auto context = lore)
-            return context.namedCreatureRouting(spell);
+            return context.remoteSpells.namedCreatureRouting(spell);
 
         const effect = namedCreatureEffect(*spell);
         if (effect != noEffect && !databaseSpellEffect(spell.effect[effect])
@@ -657,10 +657,10 @@ mixin template CreatureCasting()
         }
         const namedEffect = selectableNamedCreatureEffect(spell);
         auto context = lore;
-        const namedObject = context !is null && context.onlyNamedGameObjectEffects(spell);
+        const namedObject = context !is null && context.remoteSpells.onlyNamedGameObjectEffects(spell);
         const channelEffect = (!triggered || imported!"dmangos.world.spelldamage".permanentNamedCreatureVisual(spell.id))
             && !me.meleeController && context !is null
-            ? context.namedCreatureChannel(spell) : noEffect;
+            ? context.remoteSpells.namedCreatureChannel(spell) : noEffect;
         if (selectedChannelTarget && channelEffect == noEffect)
             return refuse(SpellCastResult.badTargets);
         const selectsTargets = namedObject || channelEffect != noEffect || (namedEffect != noEffect
@@ -1160,7 +1160,7 @@ mixin template CreatureCasting()
 
         const channelEffect = (takeMana || permanentNamedCreatureVisual(spell.id)) && !me.meleeController
             && selectedWeaponTargets is null && context !is null
-            ? context.namedCreatureChannel(spell) : noEffect;
+            ? context.remoteSpells.namedCreatureChannel(spell) : noEffect;
         const missiles = takeMana && selectedWeaponTargets is null && isArcaneMissilesChannel(*spell);
         if (selectedChannelTarget && channelEffect == noEffect)
             return;
@@ -1183,11 +1183,11 @@ mixin template CreatureCasting()
             }
             else
                 channelTarget = nearestNamedCreature(world_, me.position, namedCreatureRange(*spell, lore.clientData),
-                    context.namedCreatureEntries(spell, channelEffect), me.guid, context.sendAreaDamage !is null);
+                    context.remoteSpells.namedCreatureEntries(spell, channelEffect), me.guid, context.sendAreaDamage !is null);
             if (!channelTarget || !beginCreatureChannel(spell, channelTarget, true))
                 return;
             const entry = namedCreatureEntry(channelTarget);
-            firstChannelEffect = context.namedCreatureEffectFor(spell, channelEffect, entry);
+            firstChannelEffect = context.remoteSpells.namedCreatureEffectFor(spell, channelEffect, entry);
             channelExclusions = context.scriptTargetExclusions(spell.id, entry);
         }
         bool remotePrimary, sentArea;
@@ -1233,7 +1233,7 @@ mixin template CreatureCasting()
         ulong[] inOrder; // each target once, in the order the effects found them (as the packet lists them)
         ulong[] remoteNamed;
         const namedEffect = selectedWeaponTargets is null ? selectableNamedCreatureEffect(spell) : noEffect;
-        const namedEntries = context is null ? lore.spellScriptTargets(spell.id) : context.namedCreatureEntries(spell, namedEffect);
+        const namedEntries = context is null ? lore.spellScriptTargets(spell.id) : context.remoteSpells.namedCreatureEntries(spell, namedEffect);
         const objectOrigin = me.position;
         Position objectDestination;
         bool hasObjectDestination;
@@ -1262,7 +1262,7 @@ mixin template CreatureCasting()
             if (spell.effect[i])
             {
                 const objectShape = selectedWeaponTargets is null && context !is null
-                    ? context.namedGameObjectRouting(spell, i) : ImplicitTarget.none;
+                    ? context.remoteSpells.namedGameObjectRouting(spell, i) : ImplicitTarget.none;
                 if (channelEffect != noEffect)
                 {
                     import dmangos.world.spellselection : namedCreatureRange;
@@ -1285,7 +1285,7 @@ mixin template CreatureCasting()
                     if (auto map = world_)
                     {
                         Position center;
-                        reached[i] = context.namedGameObjectTargets(map, spell, i, objectShape, objectOrigin, center);
+                        reached[i] = context.remoteSpells.namedGameObjectTargets(map, spell, i, objectShape, objectOrigin, center);
                         if (objectShape == ImplicitTarget.enumGameobjectsScriptAoeAtDestLoc && reached[i].length)
                         {
                             objectDestination = center;
@@ -1303,7 +1303,7 @@ mixin template CreatureCasting()
                             continue;
                         if (other.replica is null)
                             reached[i] ~= other.combatGuid;
-                        else if (i == context.namedCreatureEffectFor(spell, namedEffect, entry)
+                        else if (i == context.remoteSpells.namedCreatureEffectFor(spell, namedEffect, entry)
                             && sendCreatureTargetSpell(context, spell, other, !takeMana, auraAbsent,
                                 cast(int) i, namedCenter, namedRange, true))
                             remoteNamed ~= other.combatGuid;
@@ -2015,7 +2015,7 @@ mixin template CreatureCasting()
         if (!target.alive || target.combatGuid == me.guid || (target.creature is null
             && (target.replica is null || target.replica.fields.type != TypeId.unit)))
             return false;
-        if (!context.namedCreatureEntries(spell, effect).canFind(namedCreatureEntry(target))
+        if (!context.remoteSpells.namedCreatureEntries(spell, effect).canFind(namedCreatureEntry(target))
             || isEnemy(relating, combatRelations(target, me.client), me.client))
             return false;
         const from = me.position, to = target.position;
@@ -2044,7 +2044,7 @@ mixin template CreatureCasting()
                 const spell = action.type == ActionType.castSpell && action.params[1] == EventTarget.eventSpecific
                     && !(action.params[2] & (castTriggered | castForceTargetSelf))
                     ? lore.spellInfo(action.params[0]) : null;
-                const effect = spell is null ? noEffect : context.namedCreatureChannel(spell);
+                const effect = spell is null ? noEffect : context.remoteSpells.namedCreatureChannel(spell);
                 if (effect == noEffect)
                 {
                     count = 0;

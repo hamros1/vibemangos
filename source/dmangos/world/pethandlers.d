@@ -1646,7 +1646,7 @@ mixin template PetHandlers()
         const ground = player.alive && persistentAreas.length ? groundRecoveryState() : null;
         const environmentState = player.alive ? environmentRecoveryState() : null;
         const encounterAuras = player.alive ? encounterAuraRecoveryState() : null;
-        const casting = player.alive && (generic.active || pendingHits.length || context.replicaImpactCount(player.guid)
+        const casting = player.alive && (generic.active || pendingHits.length || context.remoteSpells.replicaImpactCount(player.guid)
             || activeRecoveryChannelAura() !is null || ritualChannelOwner || cameraChannel())
             ? castRecoveryState() : null;
         const active = summons.length || fishing.length || ground.length || casting.length || environmentState.length

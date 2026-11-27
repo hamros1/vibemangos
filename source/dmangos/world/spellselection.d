@@ -488,10 +488,10 @@ unittest
     client.write(Opcode.CMSG_CAST_SPELL, packet.data);
     assert(requests.length == 1 && requests[0].target == remote.guid && requests[0].caster == player.guid);
     assert(player.questStatus[quest.id].mobCount[0] == 0);
-    owner.gameObjectSpellArrived(3, requests[0]);
+    owner.remoteSpells.gameObjectSpellArrived(3, requests[0]);
     assert(witness.read().length == 0);
-    owner.gameObjectSpellArrived(1, requests[0]);
-    owner.gameObjectSpellArrived(1, requests[0]);
+    owner.remoteSpells.gameObjectSpellArrived(1, requests[0]);
+    owner.remoteSpells.gameObjectSpellArrived(1, requests[0]);
     void checkRemoteAnimation(uint slot = 2)
     {
         uint played;
@@ -506,18 +506,18 @@ unittest
     }
     checkRemoteAnimation();
     assert(replies.length == 1);
-    context.gameObjectSpellArrived(2, replies[0]);
-    context.gameObjectSpellArrived(2, replies[0]);
+    context.remoteSpells.gameObjectSpellArrived(2, replies[0]);
+    context.remoteSpells.gameObjectSpellArrived(2, replies[0]);
     assert(player.questStatus[quest.id].mobCount[0] == 1, "confirmed remote animation credits the objective once");
 
     auto tooFar = requests[0];
     tooFar.sequence = context.nextGameplaySequence();
     tooFar.x += 10;
-    owner.gameObjectSpellArrived(1, tooFar);
+    owner.remoteSpells.gameObjectSpellArrived(1, tooFar);
     assert(witness.read().length == 0 && replies.length == 1, "the owner checks current range");
     assert(npc.ai.castSpell(context.data.spells.spell(animation), npc.guid, castTriggered));
     assert(requests.length == 2 && requests[1].triggered && requests[1].caster == npc.guid);
-    owner.gameObjectSpellArrived(1, requests[1]);
+    owner.remoteSpells.gameObjectSpellArrived(1, requests[1]);
     checkRemoteAnimation();
     assert(replies.length == 1, "only a player's cast needs credit returned");
 
@@ -555,7 +555,7 @@ unittest
         }
     assert(localAnimations == 1 && requests.length == 3 && requests[2].target == remote.guid
         && requests[2].effect == 1 && requests[2].spell == eruption);
-    owner.gameObjectSpellArrived(1, requests[2]);
+    owner.remoteSpells.gameObjectSpellArrived(1, requests[2]);
     checkRemoteAnimation(0);
 
     // A node with only idle objects need not observe the caster's cell.
@@ -563,7 +563,7 @@ unittest
     assert(to.findObject(player.guid) is null);
     client.write(Opcode.CMSG_CAST_SPELL, packet.data);
     assert(requests.length == 4);
-    owner.gameObjectSpellArrived(1, requests[3]);
+    owner.remoteSpells.gameObjectSpellArrived(1, requests[3]);
     checkRemoteAnimation();
     assert(replies.length == 3, "the idle owner can confirm the cast without a caster replica");
 
@@ -586,7 +586,7 @@ unittest
         SpellTargets(TargetFlags.self, 0).write(castPacket);
         client.write(Opcode.CMSG_CAST_SPELL, castPacket.data);
         assert(requests.length == before + 1 && requests[$ - 1].target == remote.guid);
-        owner.gameObjectSpellArrived(1, requests[$ - 1]);
+        owner.remoteSpells.gameObjectSpellArrived(1, requests[$ - 1]);
     }
     changeDoor(blast, GameObjectAction.destroy);
     assert(remote.goState == goStateActiveAlternative && chosen.goState == goStateReady);
@@ -732,8 +732,8 @@ unittest
     SpellTargets(TargetFlags.self, 0).write(castPacket);
     caster.write(Opcode.CMSG_CAST_SPELL, castPacket.data);
     assert(requests.length == 1 && requests[0].target == remote.guid && !farther.auras.find(ward));
-    owner.areaDamageArrived(1, requests[0]);
-    owner.areaDamageArrived(1, requests[0]);
+    owner.remoteSpells.areaDamageArrived(1, requests[0]);
+    owner.remoteSpells.areaDamageArrived(1, requests[0]);
     auto aura = remote.auras.find(ward);
     assert(aura && aura.caster == player.guid && aura.effects == 3 && aura.stacks == 1);
     assert(results.length == 1 && results[0].miss == SpellMissInfo.none);
@@ -742,7 +742,7 @@ unittest
     auto wrongEntry = requests[0];
     wrongEntry.target = wrong.guid;
     wrongEntry.sequence = source.nextGameplaySequence();
-    owner.areaDamageArrived(1, wrongEntry);
+    owner.remoteSpells.areaDamageArrived(1, wrongEntry);
     assert(!wrong.auras.find(ward) && results.length == 2 && results[1].miss == SpellMissInfo.evade);
 
     assert(npcCaster.ai.spellCaster(from));
@@ -751,13 +751,13 @@ unittest
     assert(npcCaster.ai.castSpell(source.data.spells.spell(heal), npcCaster.guid, castTriggered));
     assert(requests.length == 2 && requests[1].target == remote.guid && requests[1].caster == npcCaster.guid);
     remote.movement.position.x = at.x + 10;
-    owner.areaDamageArrived(1, requests[1]);
+    owner.remoteSpells.areaDamageArrived(1, requests[1]);
     assert(remote.values.get!UNIT_FIELD_HEALTH == 40u && results.length == 2, "owner checks current range");
     remote.movement.position.x = at.x + 3;
     assert(npcCaster.ai.castSpell(source.data.spells.spell(heal), npcCaster.guid, castTriggered));
     assert(requests.length == 3);
-    owner.areaDamageArrived(1, requests[2]);
-    owner.areaDamageArrived(1, requests[2]);
+    owner.remoteSpells.areaDamageArrived(1, requests[2]);
+    owner.remoteSpells.areaDamageArrived(1, requests[2]);
     assert(remote.values.get!UNIT_FIELD_HEALTH == 60u && results.length == 3);
 
     auto overTargetLimit = npc(source, 91004, creatureInnkeeper, 5);
@@ -765,7 +765,7 @@ unittest
     assert(requests.length == 4 && requests[3].creatureCast && requests[3].target == remote.guid);
     assert(farther.auras.find(groupWard) && !overTargetLimit.auras.find(groupWard), "one cap across both nodes");
     remote.movement.position.z += 15;
-    owner.areaDamageArrived(1, requests[3]);
+    owner.remoteSpells.areaDamageArrived(1, requests[3]);
     assert(!remote.auras.find(groupWard), "a normal creature cast also rechecks the recipient's position");
     remote.movement.position.z -= 15;
 
@@ -774,8 +774,8 @@ unittest
     SpellTargets(TargetFlags.self, 0).write(castPacket);
     caster.write(Opcode.CMSG_CAST_SPELL, castPacket.data);
     assert(requests.length == 5 && requests[4].target == remote.guid && requests[4].radius == 6);
-    owner.areaDamageArrived(1, requests[4]);
-    owner.areaDamageArrived(1, requests[4]);
+    owner.remoteSpells.areaDamageArrived(1, requests[4]);
+    owner.remoteSpells.areaDamageArrived(1, requests[4]);
     aura = remote.auras.find(groupWard);
     assert(aura && aura.caster == player.guid && aura.stacks == 1 && aura.effects == 3);
     assert(results.length == 4 && !wrong.auras.find(groupWard) && !overTargetLimit.auras.find(groupWard));
@@ -794,12 +794,12 @@ unittest
     assert(requests.length == 6 && requests[5].target == atImpact.guid && requests[5].x == ground.x);
     auto misdirected = requests[5];
     misdirected.x += 1;
-    owner.areaDamageArrived(1, misdirected);
+    owner.remoteSpells.areaDamageArrived(1, misdirected);
     assert(!atImpact.auras.find(groundWard), "the receiving node checks the database's actual center");
     auto correct = requests[5];
     correct.sequence = source.nextGameplaySequence();
-    owner.areaDamageArrived(1, correct);
-    owner.areaDamageArrived(1, correct);
+    owner.remoteSpells.areaDamageArrived(1, correct);
+    owner.remoteSpells.areaDamageArrived(1, correct);
     aura = atImpact.auras.find(groundWard);
     assert(aura && aura.effects == 3 && aura.stacks == 1 && !farther.auras.find(groundWard));
 
@@ -977,12 +977,12 @@ unittest
             to.replicaCreated(1, cell, healer.guid, encodeState(healer, 0));
         else
             to.replicaCreated(1, cell, player.guid, encodePlayerState(player, 0));
-        owner.areaDamageArrived(1, request);
+        owner.remoteSpells.areaDamageArrived(1, request);
         return true;
     };
     owner.sendAreaDamage = (ushort peer, const ref AreaDamage reply) {
         assert(peer == 1 && reply.reply);
-        source.areaDamageArrived(2, reply);
+        source.remoteSpells.areaDamageArrived(2, reply);
         return true;
     };
     bool added;
@@ -990,7 +990,7 @@ unittest
     ByteWriter castPacket;
     castPacket.put(mend);
     SpellTargets(TargetFlags.self, 0).write(castPacket);
-    assert(source.namedCreatureChannel(source.data.spells.spell(mend)) == 0);
+    assert(source.remoteSpells.namedCreatureChannel(source.data.spells.spell(mend)) == 0);
     client.write(Opcode.CMSG_CAST_SPELL, castPacket.data);
     assert(player.values.get!UNIT_FIELD_CHANNEL_OBJECT == target.guid, "the caster starts on its selected creature");
     assert(target.auras.find(mend, player.guid), "the selected creature's owner installs the aura");
@@ -1075,19 +1075,19 @@ unittest
         else
             ++applications;
         destination.replicaCreated(1, cell, player.guid, encodePlayerState(player, 0));
-        successor.areaDamageArrived(1, request);
+        successor.remoteSpells.areaDamageArrived(1, request);
         return true;
     };
     successor.sendAreaDamage = (ushort peer, const ref AreaDamage reply) {
         assert(peer == 1 && reply.reply);
-        source.areaDamageArrived(3, reply);
+        source.remoteSpells.areaDamageArrived(3, reply);
         return true;
     };
     client.session.update(50.msecs);
     assert(rebinds == 1 && player.values.get!UNIT_CHANNEL_SPELL == mend);
     const late = AreaDamage(sequence: source.nextGameplaySequence(), caster: player.guid, target: migrated.guid,
         spell: mend, map: 0, namedCreature: true, channelled: true, channelUpdate: true, channelToken: token - 1);
-    successor.areaDamageArrived(1, late);
+    successor.remoteSpells.areaDamageArrived(1, late);
     assert(migrated.auras.find(mend, player.guid), "a cancellation from an earlier cast leaves this aura in place");
     migrated.updateAuras(destination, 599);
     assert(migrated.values.get!UNIT_FIELD_HEALTH == 80, "ownership change preserves the pending tick");
@@ -1193,8 +1193,8 @@ unittest
     assert(caster.ai.spellCaster(source.map(0)));
     assert(caster.ai.castSpell(source.data.spells.spell(strike), caster.guid, castTriggered));
     assert(requests.length == 1 && requests[0].effect == 0 && requests[0].auraMs == 10_000);
-    owner.areaDamageArrived(1, requests[0]);
-    owner.areaDamageArrived(1, requests[0]);
+    owner.remoteSpells.areaDamageArrived(1, requests[0]);
+    owner.remoteSpells.areaDamageArrived(1, requests[0]);
     auto aura = target.auras.find(strike);
     assert(aura && aura.stacks == 1 && aura.effects == 2, "the stun-immunity filters only that aura effect");
     assert(target.values.get!UNIT_FIELD_HEALTH == health - 20);
@@ -1205,13 +1205,13 @@ unittest
     assert(caster.ai.castSpell(source.data.spells.spell(cone), caster.guid, castTriggered));
     assert(requests.length == 2 && requests[1].target == rear.guid, "the first rank sets the rear-facing cone");
     rear.movement.position.x = at.x + 3; // still within the radius, but now outside the cone
-    owner.areaDamageArrived(1, requests[1]);
+    owner.remoteSpells.areaDamageArrived(1, requests[1]);
     assert(rear.values.get!UNIT_FIELD_HEALTH == health && !rear.auras.find(cone));
     assert(replies.length == 2 && replies[1].miss == SpellMissInfo.evade);
     rear.movement.position.x = at.x - 3;
     assert(caster.ai.castSpell(source.data.spells.spell(cone), caster.guid, castTriggered));
     assert(requests.length == 3 && requests[2].target == rear.guid);
-    owner.areaDamageArrived(1, requests[2]);
+    owner.remoteSpells.areaDamageArrived(1, requests[2]);
     assert(rear.values.get!UNIT_FIELD_HEALTH == health - 20 && rear.auras.find(cone));
 
     target.auras.remove(aura, target.values);
@@ -1219,7 +1219,7 @@ unittest
         node.data.spellScriptTargetMasks[strike][creatureInnkeeper] = 0b110;
     assert(caster.ai.castSpell(source.data.spells.spell(strike), caster.guid, castTriggered));
     assert(requests.length == 4 && requests[3].effect == 0);
-    owner.areaDamageArrived(1, requests[3]);
+    owner.remoteSpells.areaDamageArrived(1, requests[3]);
     assert(target.values.get!UNIT_FIELD_HEALTH == health - 40 && target.auras.find(strike) is null,
         "the database can exclude all attached auras while retaining damage");
 
@@ -1227,8 +1227,8 @@ unittest
         node.data.spellScriptTargetMasks[strike][creatureInnkeeper] = 0b101;
     assert(caster.ai.castSpell(source.data.spells.spell(strike), caster.guid, castTriggered));
     assert(requests.length == 5 && requests[4].effect == 1, "the allowed aura becomes the routed effect");
-    owner.areaDamageArrived(1, requests[4]);
-    owner.areaDamageArrived(1, requests[4]);
+    owner.remoteSpells.areaDamageArrived(1, requests[4]);
+    owner.remoteSpells.areaDamageArrived(1, requests[4]);
     assert(target.values.get!UNIT_FIELD_HEALTH == health - 40);
     const allowed = target.auras.find(strike);
     assert(allowed && allowed.effects == 0b010 && allowed.stacks == 1);
@@ -1313,8 +1313,8 @@ unittest
     }
     castFromPlayer(scripted);
     assert(requests.length == 1 && requests[0].target == target.guid);
-    owner.areaDamageArrived(1, requests[0]);
-    owner.areaDamageArrived(1, requests[0]);
+    owner.remoteSpells.areaDamageArrived(1, requests[0]);
+    owner.remoteSpells.areaDamageArrived(1, requests[0]);
     assert(replies.length == 1 && replies[0].miss == SpellMissInfo.none, "the named script hit once");
     auto aura = target.auras.find(buff);
     assert(aura, "the target executed its self-cast step");
@@ -1327,7 +1327,7 @@ unittest
     assert(npc.ai.spellCaster(source.map(0)));
     assert(npc.ai.castSpell(source.data.spells.spell(scripted), npc.guid, castTriggered));
     assert(requests.length == 2 && requests[1].caster == npc.guid && requests[1].target == target.guid);
-    owner.areaDamageArrived(1, requests[1]);
+    owner.remoteSpells.areaDamageArrived(1, requests[1]);
     aura = target.auras.find(buff);
     assert(aura && aura.caster == target.guid && aura.stacks == 2 && replies.length == 2);
     source.map(0).replicaRemoved(2, target.guid);

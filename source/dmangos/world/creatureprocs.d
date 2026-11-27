@@ -157,7 +157,7 @@ mixin template CreatureProcs()
                 hit.critBonusFactor = source.spellMod(SpellModOp.critDamageBonus, spell, 1.0f);
                 hit.resistanceModifier = source.auras.totalByMiscMask(AuraType.modTargetResistance, 1 << school);
             }
-            sent |= context.sendReplicaSpell(other.map, other.replica.owner, spell, hit);
+            sent |= context.remoteSpells.sendReplicaSpell(other.map, other.replica.owner, spell, hit);
         }
         return sent;
     }

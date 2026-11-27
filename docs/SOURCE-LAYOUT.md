@@ -167,6 +167,7 @@ source/dmangos/world/       the world server
   regionrecovery.d            regions moving to and from a node, and what it keeps for a crash and brings back (`WorldContext.recovery`)
   creatureloans.d             creatures lent across a region's border into a fight, and sent home (`WorldContext.loans`)
   migration.d                 objects saved as they leave a node and made again where they arrive (`WorldContext.migrants`)
+  remotespells.d              spells between this node's units and those other nodes simulate (`WorldContext.remoteSpells`)
   wareffort.d                 the Ahn'Qiraj war effort, its service, and how a node follows it (`WorldContext.warEffortHere`)
 source/dmangos/extractor/   the client data extractor: main.d, dbc.d (DBC files), maps.d (terrain to .map files),
                               vmaps.d and assembler.d (buildings and doodads to vmaps), mmaps.d (movement maps)

@@ -391,7 +391,7 @@ unittest
             assert(peer == 2 && sender == expectedOwner && hit.caster == caster.guid
                 && hit.target == player.guid && hit.spell == 15736);
             ++impacts;
-            owner.context.areaDamageArrived(sender, hit);
+            owner.context.remoteSpells.areaDamageArrived(sender, hit);
             return true;
         }
         source.context.sendAreaDamage = (ushort peer, const ref AreaDamage hit) => dispatch(1, peer, hit);
@@ -877,7 +877,7 @@ unittest
         else
             ++interruptions;
         to.replicaCreated(1, casterCell, cultist.guid, encodeState(cultist, 0));
-        owner.context.areaDamageArrived(1, effect);
+        owner.context.remoteSpells.areaDamageArrived(1, effect);
         return true;
     };
 
@@ -1455,18 +1455,18 @@ unittest
                 formerOwner.map(0).replicaCreated(2, home, guid, view);
                 formerOwner.sendAreaDamage = (ushort peer, const ref AreaDamage reply) {
                     assert(peer == 1 && reply.reply && reply.redirectOwner == 2);
-                    source.context.areaDamageArrived(3, reply);
+                    source.context.remoteSpells.areaDamageArrived(3, reply);
                     return true;
                 };
             }
             source.context.sendAreaDamage = (ushort peer, const ref AreaDamage hit) {
                 assert(hit.playerProjectile && hit.target == guid);
                 if (peer == 3 && formerOwner !is null)
-                    formerOwner.areaDamageArrived(1, hit);
+                    formerOwner.remoteSpells.areaDamageArrived(1, hit);
                 else
                 {
                     assert(peer == 2);
-                    owner.context.areaDamageArrived(1, hit);
+                    owner.context.remoteSpells.areaDamageArrived(1, hit);
                 }
                 return true;
             };
@@ -1568,7 +1568,7 @@ unittest
                 assert(peer == 2);
                 ++applications;
             }
-            targets[peer].areaDamageArrived(1, request);
+            targets[peer].remoteSpells.areaDamageArrived(1, request);
             return true;
         };
         for (int elapsed; elapsed < 29_000; elapsed += 500)
@@ -1637,7 +1637,7 @@ unittest
         owner.context.sendAreaDamage = (ushort peer, const ref AreaDamage request) {
             assert(peer == 3 && request.channelUpdate && request.channelToken == token && request.auraMs == 0);
             ++interruptions;
-            successor.context.areaDamageArrived(2, request);
+            successor.context.remoteSpells.areaDamageArrived(2, request);
             return true;
         };
         const casterCell = cellKeyAt(origin.x, origin.y);
@@ -1734,7 +1734,7 @@ unittest
                 ++completions;
                 delivered = cast(AreaDamage) message;
             }
-            world.areaDamageArrived(1, message);
+            world.remoteSpells.areaDamageArrived(1, message);
             return true;
         };
         ByteWriter use;
@@ -1770,7 +1770,7 @@ unittest
             successor.context.sendAreaDamage = (ushort peer, const ref AreaDamage message) {
                 assert(peer == 3 && message.auraMs == AreaDamage.completedChannel);
                 to.replicaCreated(2, casterCell, player.guid, encodePlayerState(relay.remote.character, 0));
-                owner.context.areaDamageArrived(2, message);
+                owner.context.remoteSpells.areaDamageArrived(2, message);
                 ++completions;
                 return true;
             };
@@ -1809,7 +1809,7 @@ unittest
         assert(completions == 2 && successor.context.runningScripts == 1,
             "only the current owner starts the real EventAI relay");
         delivered.sequence = source.context.nextGameplaySequence();
-        successor.context.areaDamageArrived(1, delivered);
+        successor.context.remoteSpells.areaDamageArrived(1, delivered);
         assert(successor.context.runningScripts == 1, "a replay cannot start the relay again");
         successor.context.updateScripts(1);
         assert(moved.values.get!UNIT_FIELD_FACTIONTEMPLATE == 7, "the actual relay changes Ras's faction");
@@ -2055,7 +2055,7 @@ unittest
         hero.storeLoot(item, 1, 0, false);
         auto creature = owner.context.summonCreature(to, doomguard, at, TempSpawnType.manual, 0, 0);
         from.replicaCreated(2, targetCell, creature.guid, encodeState(creature, 0));
-        assert(source.context.namedCreatureChannel(source.context.spellInfo(prison)) == 1, "the real prison row routes");
+        assert(source.context.remoteSpells.namedCreatureChannel(source.context.spellInfo(prison)) == 1, "the real prison row routes");
         AreaDamage completion;
         uint sent;
         import dmangos.world.spellcast : SpellMissInfo;
@@ -2066,13 +2066,13 @@ unittest
             to.replicaCreated(1, casterCell, hero.player.guid, encodePlayerState(hero.player, 0));
             if (effect.auraMs == AreaDamage.completedChannel)
                 completion = cast(AreaDamage) effect;
-            owner.context.areaDamageArrived(1, effect);
+            owner.context.remoteSpells.areaDamageArrived(1, effect);
             return true;
         };
         owner.context.sendAreaDamage = (ushort peer, const ref AreaDamage response) {
             assert(peer == 1 && response.reply);
             rejected = cast(SpellMissInfo) response.miss;
-            source.context.areaDamageArrived(2, response);
+            source.context.remoteSpells.areaDamageArrived(2, response);
             return true;
         };
         ByteWriter use;
@@ -2126,7 +2126,7 @@ unittest
         source.context.update(source.now);
         assert(completion.sequence && crystals() == 1 && !creature.auras.find(prison, caster));
         completion.sequence = source.context.nextGameplaySequence();
-        owner.context.areaDamageArrived(1, completion);
+        owner.context.remoteSpells.areaDamageArrived(1, completion);
         assert(crystals() == 1, "replaying the completion does not conjure another prison");
         creature.tick(to, 10);
         assert(to.creatureAt(creature.guid) is null);

@@ -1259,7 +1259,7 @@ private:
             {
                 periodicLog(player.guid, aura, i, damage, 0, absorbed);
                 if (!attacker && aura.caster && aura.caster <= uint.max)
-                    return context.dealRemotePeriodicDamage(unit, aura, damage, i);
+                    return context.remoteSpells.dealRemotePeriodicDamage(unit, aura, damage, i);
                 return dealDamage(attacker, unit, damage, Blow.periodic());
             }
             // A creature's drain: the periodic damage log (as CMaNGOS's leech sends), and its health back.

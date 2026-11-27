@@ -623,7 +623,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
 
     void areaDamage(ushort peer, const ref AreaDamage message)
     {
-        context.areaDamageArrived(peer, message);
+        context.remoteSpells.areaDamageArrived(peer, message);
     }
 
     bool sendGameObjectSpell(ushort peer, const ref GameObjectSpell message)
@@ -634,7 +634,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
 
     void gameObjectSpell(ushort peer, const ref GameObjectSpell message)
     {
-        context.gameObjectSpellArrived(peer, message);
+        context.remoteSpells.gameObjectSpellArrived(peer, message);
     }
 
     bool sendScriptGameObject(ushort peer, const ref ScriptGameObject message)
@@ -712,7 +712,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
 
     void creatureSwing(ushort peer, const ref CreatureSwing message)
     {
-        context.creatureSwingArrived(peer, message);
+        context.remoteSpells.creatureSwingArrived(peer, message);
     }
 
     void sendPeriodicResult(ushort peer, const ref PeriodicResult message)
@@ -722,7 +722,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
 
     void periodicResult(ushort peer, const ref PeriodicResult message)
     {
-        context.periodicResultArrived(peer, message);
+        context.remoteSpells.periodicResultArrived(peer, message);
     }
 
     /// For the context: guild news for every other node.

@@ -506,8 +506,8 @@ private:
         if (context.playerRelay is null || (targets.mask != TargetFlags.self && spell.id != dominionOfSoul)
             || generic.active || channelSpell !is null)
             return 0;
-        if (context.sendAreaDamage !is null && (context.namedCreatureRouting(spell) != noEffect
-                || context.namedCreatureChannel(spell) != noEffect))
+        if (context.sendAreaDamage !is null && (context.remoteSpells.namedCreatureRouting(spell) != noEffect
+                || context.remoteSpells.namedCreatureChannel(spell) != noEffect))
             return 0;
         auto chosen = singleNamedScriptTarget(spell, true);
         return chosen.replica !is null && map.inLineOfSight(player.position, chosen.position) ? chosen.combatGuid : 0;
@@ -891,7 +891,7 @@ private:
 
     private Replica remoteChannelTarget(const(SpellInfo)* spell, ulong target)
     {
-        if (context.namedCreatureChannel(spell) != noEffect)
+        if (context.remoteSpells.namedCreatureChannel(spell) != noEffect)
         {
             auto copy = cast(Replica) map.findObject(target);
             return copy !is null && copy.fields.type == TypeId.unit ? copy : null;
@@ -1126,7 +1126,7 @@ private:
             endChannel(true);
         channelSpell = spell;
         channelCreditPeer = 0;
-        followingNamedCreature = context.namedCreatureChannel(spell) != noEffect;
+        followingNamedCreature = context.remoteSpells.namedCreatureChannel(spell) != noEffect;
         namedChannelSequence = followingNamedCreature ? context.nextGameplaySequence() : 0;
         namedChannelConfirmed = false;
         namedChannelPeer = 0;
@@ -1399,7 +1399,7 @@ private:
         player.values.set!UNIT_FIELD_CHANNEL_OBJECT(0UL);
         flushPlayerChanges();
         if (!cancelled && channelToken)
-            context.completeNamedChannel(map, map.unit(player.guid), channelTarget, spell, channelToken);
+            context.remoteSpells.completeNamedChannel(map, map.unit(player.guid), channelTarget, spell, channelToken);
     }
 
     /// The client stops channelling.
@@ -1745,7 +1745,7 @@ private:
         endChannel(true);
         endGroundCasts();
         removeTraps();
-        if (leavingMap && (context.discardReplicaImpacts(player.guid) || pendingHits.length))
+        if (leavingMap && (context.remoteSpells.discardReplicaImpacts(player.guid) || pendingHits.length))
         {
             pendingHits = null;
             missileSpends = null;
@@ -2132,7 +2132,7 @@ private:
         state.put(context.fleet.transportNow());
         writeCastHandoff(state);
         writeFlightHandoff(state);
-        context.writeReplicaImpacts(player.guid, state, false);
+        context.remoteSpells.writeReplicaImpacts(player.guid, state, false);
         auto aura = activeRecoveryChannelAura();
         state.put(aura !is null);
         if (aura !is null)
@@ -2168,7 +2168,7 @@ private:
         if (!state.empty)
             readFlightHandoff(state);
         if (!state.empty)
-            context.readReplicaImpacts(player.guid, map.id, map.instanceId, state);
+            context.remoteSpells.readReplicaImpacts(player.guid, map.id, map.instanceId, state);
         if (!state.empty && state.read!bool)
             restorePeriodicChannel(state, elapsed);
         if (!state.empty && (!cameraFormat || state.read!bool))
@@ -2972,9 +2972,9 @@ private:
         enum uint unitTargetFlags = 0x0002 | 0x0080 | 0x0100 | 0x0200 | 0x0400 | 0x8000;
         const spell = c.spell;
         auto drain = !c.triggered ? remoteLeechTarget(spell, c.targets.unit) : null;
-        const namedChannel = c.triggered ? noEffect : context.namedCreatureChannel(spell);
+        const namedChannel = c.triggered ? noEffect : context.remoteSpells.namedCreatureChannel(spell);
         auto recipient = namedChannel == noEffect ? UnitRef.init
-            : scriptTargetNear(spell, context.namedCreatureEntries(spell, namedChannel), context.sendAreaDamage !is null);
+            : scriptTargetNear(spell, context.remoteSpells.namedCreatureEntries(spell, namedChannel), context.sendAreaDamage !is null);
         const recipientEntry = recipient ? namedCreatureEntry(recipient) : 0;
         const channelExclusions = recipient ? context.scriptTargetExclusions(spell.id, recipientEntry) : 0;
         auto remoteChannel = recipient.replica is null ? drain : recipient.replica;
@@ -3054,8 +3054,8 @@ private:
         import dmangos.world.spellselection : namedCreatureCenter, spellCone, namedCreatureRadius,
             namedCreatureEntry, namedCreaturesInArea, nearestNamedCreature;
 
-        const namedEffect = context.namedCreatureRouting(spell);
-        const entries = context.namedCreatureEntries(spell, namedEffect);
+        const namedEffect = context.remoteSpells.namedCreatureRouting(spell);
+        const entries = context.remoteSpells.namedCreatureEntries(spell, namedEffect);
         c.gameObjectOrigin = player.position;
         const namedShape = namedEffect != noEffect ? namedCreatureShape(*spell, namedEffect) : ImplicitTarget.none;
         const namedRange = namedEffect != noEffect ? namedCreatureRadius(*spell, namedEffect, context.client) : 0;
@@ -3092,7 +3092,7 @@ private:
             if (remoteChannel !is null)
                 continue; // The channel's aura is installed on its target after the caster starts the channel.
             const a = spell.implicitTargetA[i];
-            const objectShape = context.namedGameObjectRouting(spell, i);
+            const objectShape = context.remoteSpells.namedGameObjectRouting(spell, i);
             ulong[] targets;
             const remoteArea = !c.castTime && context.sendAreaDamage !is null
                 && !(c.targets.mask & TargetFlags.sourceLocation) && isHostileAreaEffect(*spell, i);
@@ -3108,7 +3108,7 @@ private:
             else if (objectShape != ImplicitTarget.none)
             {
                 Position center;
-                targets = context.namedGameObjectTargets(map, spell, i, objectShape, c.gameObjectOrigin, center, &visible);
+                targets = context.remoteSpells.namedGameObjectTargets(map, spell, i, objectShape, c.gameObjectOrigin, center, &visible);
                 if (objectShape == ImplicitTarget.enumGameobjectsScriptAoeAtDestLoc && targets.length)
                 {
                     objectDestination = center;
@@ -3209,7 +3209,7 @@ private:
                         continue;
                     if (creature.replica is null)
                         targets ~= creature.combatGuid;
-                    else if (i == context.namedCreatureEffectFor(spell, namedEffect, entry))
+                    else if (i == context.remoteSpells.namedCreatureEffectFor(spell, namedEffect, entry))
                     {
                         auto hit = AreaDamage(caster: player.guid, target: creature.combatGuid, spell: spell.id,
                             effect: cast(ubyte) i, map: map.id, instance: map.instanceId,
@@ -3399,7 +3399,7 @@ private:
             {
                 const at = player.position;
                 namedChannelPeer = recipient.replica.owner;
-                const first = context.namedCreatureEffectFor(spell, namedChannel, recipientEntry);
+                const first = context.remoteSpells.namedCreatureEffectFor(spell, namedChannel, recipientEntry);
                 auto hit = AreaDamage(channelToken: namedChannelSequence, caster: player.guid,
                     target: recipient.combatGuid, spell: spell.id,
                     effect: cast(ubyte) first, map: map.id, instance: map.instanceId,
@@ -3610,7 +3610,7 @@ private:
             const amount = spellMod(SpellModOp.damage, spell, effectAmount(spell, i));
             hit.amount = amount > 0 ? rollHealing(me, spell, amount, hit.critical) : 0;
         }
-        return context.sendReplicaSpell(map, remote.peer, spell, *hit);
+        return context.remoteSpells.sendReplicaSpell(map, remote.peer, spell, *hit);
     }
 
     /// A proc's effects on a named target are applied where that target is simulated.
@@ -3656,7 +3656,7 @@ private:
         auto hit = AreaDamage(caster: player.guid, target: target.guid, spell: spell.id, map: map.id,
             instance: map.instanceId, namedCreature: namedToken != 0, channelled: true,
             channelUpdate: true, auraMs: remaining, channelToken: namedToken);
-        context.sendReplicaSpell(map, target.owner, spell, hit);
+        context.remoteSpells.sendReplicaSpell(map, target.owner, spell, hit);
     }
 
     private void collectPartyHeals(const(SpellInfo)* spell, size_t i, ref RemotePartyHeal[] found)
@@ -5098,8 +5098,8 @@ unittest
     owner.map(0).relocated(targets[13].session.inWorld);
     foreach (ref hit; requests)
     {
-        owner.areaDamageArrived(1, hit);
-        owner.areaDamageArrived(1, hit);
+        owner.remoteSpells.areaDamageArrived(1, hit);
+        owner.remoteSpells.areaDamageArrived(1, hit);
     }
     assert(targets[9].session.character.values.get!UNIT_FIELD_HEALTH == 65u, "the remote modifier is applied once");
     assert(targets[10].session.character.values.get!UNIT_FIELD_HEALTH == 0u, "a remote hit can kill");
@@ -5108,17 +5108,17 @@ unittest
     assert(replies.length == 3 && replies[0].damage == 15 && replies[1].killed
         && replies[2].miss == SpellMissInfo.immune);
     targets[11].write(Opcode.CMSG_TOGGLE_PVP, [ubyte(1)]);
-    owner.areaDamageArrived(1, requests[2]);
+    owner.remoteSpells.areaDamageArrived(1, requests[2]);
     moving.movement.position = Position(center.x + 6, center.y, center.z);
     owner.map(0).relocated(targets[13].session.inWorld);
-    owner.areaDamageArrived(1, requests[4]);
+    owner.remoteSpells.areaDamageArrived(1, requests[4]);
     assert(targets[11].session.character.values.get!UNIT_FIELD_HEALTH == 80u
         && moving.values.get!UNIT_FIELD_HEALTH == 80u && replies.length == 3);
 
     foreach (ref result; replies)
     {
-        origin.areaDamageArrived(2, result);
-        origin.areaDamageArrived(2, result);
+        origin.remoteSpells.areaDamageArrived(2, result);
+        origin.remoteSpells.areaDamageArrived(2, result);
     }
     const packets = opcodesOf(caster.read());
     assert(packets.count(Opcode.SMSG_SPELLNONMELEEDAMAGELOG) == 2 && packets.count(Opcode.SMSG_SPELLLOGMISS) == 1);
@@ -5288,8 +5288,8 @@ unittest
             third.session.inWorld.addAura(makeAura(shield in owner.data.spells.spells, 10, 40, -1, true, [0, 0, 0]));
         foreach (ref hit; requests)
         {
-            owner.areaDamageArrived(1, hit);
-            owner.areaDamageArrived(1, hit);
+            owner.remoteSpells.areaDamageArrived(1, hit);
+            owner.remoteSpells.areaDamageArrived(1, hit);
         }
         if (scenario == Scenario.movedAndUnflagged)
         {
@@ -5297,7 +5297,7 @@ unittest
             owner.map(0).relocated(second.session.inWorld);
             third.write(Opcode.CMSG_TOGGLE_PVP, [ubyte(1)]);
             foreach (ref hit; requests)
-                owner.areaDamageArrived(1, hit);
+                owner.remoteSpells.areaDamageArrived(1, hit);
             assert(!replies.length && moving.values.get!UNIT_FIELD_HEALTH == 60u
                 && third.session.character.values.get!UNIT_FIELD_HEALTH == 200u);
             continue;
@@ -5308,8 +5308,8 @@ unittest
             assert(replies[1].miss == SpellMissInfo.immune);
         foreach (ref hit; replies)
         {
-            origin.areaDamageArrived(2, hit);
-            origin.areaDamageArrived(2, hit);
+            origin.remoteSpells.areaDamageArrived(2, hit);
+            origin.remoteSpells.areaDamageArrived(2, hit);
         }
         const packets = opcodesOf(caster.read());
         assert(packets.count(Opcode.SMSG_PVP_CREDIT) == 1);
@@ -5681,23 +5681,23 @@ unittest
     caster.write(Opcode.CMSG_CAST_SPELL, attack.data);
     assert(relay.remote is null, "a caster-centered attack stays here even with a remote unit selected");
     assert(hits.length == 1 && hits[0].target == mob.guid);
-    owner.areaDamageArrived(1, hits[0]);
-    owner.areaDamageArrived(1, hits[0]);
+    owner.remoteSpells.areaDamageArrived(1, hits[0]);
+    owner.remoteSpells.areaDamageArrived(1, hits[0]);
     assert(mob.values.get!UNIT_FIELD_HEALTH == 20u && mob.lootRecipient == 7 && mob.ai.threatOf(7) == 40,
         format!"health %s, tapper %s, threat %s, hit %s, replies %s"(mob.values.get!UNIT_FIELD_HEALTH,
             mob.lootRecipient, mob.ai.threatOf(7), hits[0].amount, replies));
     assert(replies.length == 1);
     assert(counterattacks.length == 1 && counterattacks[0].triggered && counterattacks[0].caster == mob.guid);
-    origin.areaDamageArrived(2, counterattacks[0]);
+    origin.remoteSpells.areaDamageArrived(2, counterattacks[0]);
     const after = healer.values.get!UNIT_FIELD_HEALTH;
     assert(after < 200, "the creature's proc struck a player on another node");
-    origin.areaDamageArrived(2, counterattacks[0]);
+    origin.remoteSpells.areaDamageArrived(2, counterattacks[0]);
     assert(healer.values.get!UNIT_FIELD_HEALTH == after);
-    origin.areaDamageArrived(2, replies[0]);
-    origin.areaDamageArrived(2, replies[0]);
+    origin.remoteSpells.areaDamageArrived(2, replies[0]);
+    origin.remoteSpells.areaDamageArrived(2, replies[0]);
     assert(hits.length == 2 && hits[1].triggered && hits[1].spell == bolt);
-    owner.areaDamageArrived(1, hits[1]);
-    owner.areaDamageArrived(1, hits[1]);
+    owner.remoteSpells.areaDamageArrived(1, hits[1]);
+    owner.remoteSpells.areaDamageArrived(1, hits[1]);
     assert(!mob.alive && mob.loot !is null && 7UL in mob.loot.owners);
     assert(mob.loot.canLoot(7) && mob.loot.replicaLooters() == [7UL]);
     assert(mob.loot.remoteMembers.get(7, 0) == 1, "the solo tapper can also receive quest-loot eligibility checks");

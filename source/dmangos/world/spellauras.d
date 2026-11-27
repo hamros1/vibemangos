@@ -309,7 +309,7 @@ package void remotePeriodicCreatureTick(imported!"dmangos.world.context".WorldCo
         return remoteLeechTick(context, victim, aura, i, damage);
     victim.map.sendToObservers(victim.combatGuid, Opcode.SMSG_PERIODICAURALOG,
         periodicLogPacket(victim.combatGuid, aura, i, damage, school));
-    context.dealRemotePeriodicDamage(victim, aura, damage, i);
+    context.remoteSpells.dealRemotePeriodicDamage(victim, aura, damage, i);
 }
 
 package void remoteLeechTick(imported!"dmangos.world.context".WorldContext context, UnitRef victim, Aura aura,
@@ -329,7 +329,7 @@ package void remoteLeechTick(imported!"dmangos.world.context".WorldContext conte
         victim.session.tellAround(victim.combatGuid, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, log);
     else
         victim.map.sendToObservers(victim.combatGuid, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, log);
-    context.dealRemotePeriodicDamage(victim, aura, damage, i, min(damage, victim.health));
+    context.remoteSpells.dealRemotePeriodicDamage(victim, aura, damage, i, min(damage, victim.health));
 }
 
 package void remoteManaLeechTick(imported!"dmangos.world.context".WorldContext context, UnitRef victim, Aura aura,
@@ -374,7 +374,7 @@ package void remoteManaLeechTick(imported!"dmangos.world.context".WorldContext c
         if (victim.creature.ai !is null && drained && factor > 0)
             victim.creature.ai.addRemoteThreat(aura.caster, drained * factor * 0.5f);
     }
-    context.reportPeriodicResult(victim, aura, i, 0, drained);
+    context.remoteSpells.reportPeriodicResult(victim, aura, i, 0, drained);
 }
 
 /// A channel's caster must still be channeling it at this target.

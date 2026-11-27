@@ -209,7 +209,7 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
     }
     case SpellEffect.activateObject:
         if (context !is null && map !is null)
-            context.activateNamedGameObject(caster.unit, spell, i, target, c.gameObjectOrigin, c.triggered);
+            context.remoteSpells.activateNamedGameObject(caster.unit, spell, i, target, c.gameObjectOrigin, c.triggered);
         break;
     case SpellEffect.dummy, SpellEffect.scriptEffect: // SPELL_EFFECT_DUMMY, SPELL_EFFECT_SCRIPT_EFFECT: the spell's script, then its database script
     {
@@ -224,7 +224,7 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         else
         {
             ai.spellEffectScript(spell, i, target, value);
-            if (map.creatureAt(target) !is null && context.namedCreatureRouting(spell) == i)
+            if (map.creatureAt(target) !is null && context.remoteSpells.namedCreatureRouting(spell) == i)
                 context.startScript(DbScriptType.spell, spell.id, map, caster.guid, target);
         }
         break;

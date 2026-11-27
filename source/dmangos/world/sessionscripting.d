@@ -216,7 +216,7 @@ mixin template SessionScripting()
 
             if (map is null)
                 return ActionResult.notHere;
-            return context.placeFusedTrap(map, entry, Position(at.x, at.y, at.z, at.orientation), seconds, fuseMs)
+            return context.remoteSpells.placeFusedTrap(map, entry, Position(at.x, at.y, at.z, at.orientation), seconds, fuseMs)
                 ? ActionResult.ok : ActionResult.failed;
         }
         ActionResult hostSignalCreature(EntityRef to, uint id, int value) { return this.outer.hostSignalCreature(to, id, value); }
