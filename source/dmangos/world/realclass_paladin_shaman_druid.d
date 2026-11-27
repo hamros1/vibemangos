@@ -2934,6 +2934,20 @@ unittest
     assert(me.player.auras.find(24905) is null && me.player.auras.find(24907) is null, "out of it");
 }
 
+/// Stoneskin (the totem's aura, 10405: 31 less damage from each melee blow) makes each melee blow at its holder less.
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = shaman(w, 439, []);
+    auto me = who.session.inWorld;
+    assert(me.unit.fighter.meleeTakenFlat == 0);
+    giveAura(w, who, 10405, [-31, 0, 0]); // its value (the helper takes the amounts as given)
+    assert(me.player.auras.find(10405) !is null, "Stoneskin on");
+    assert(me.unit.fighter.meleeTakenFlat == -31, format!"its melee damage taken less: %s"(me.unit.fighter.meleeTakenFlat));
+}
+
 /**
  * Regrowth with the Dreamwalker Raiment's six pieces (28744, override class script 4537): its heal and each of its
  * ticks give its target Blessing of the Claw (28750: 50 more maximum health), stacking to 7.

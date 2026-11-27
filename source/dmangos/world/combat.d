@@ -126,6 +126,8 @@ struct Fighter
     /// Winter's Chill, Sleight of Hand), hits on it (`MOD_ATTACKER_*_HIT_CHANCE`: Heightened Senses).
     float[3] attackerCrit = 0, attackerHit = 0;
     int rangedTakenFlat;       /// `MOD_RANGED_DAMAGE_TAKEN` (Elune's Grace): added to each ranged blow against it
+    int meleeTakenFlat;        /// `MOD_MELEE_DAMAGE_TAKEN` (Stoneskin): added to each melee blow against it
+    float[2] weaponTaken = 1;  /// melee, ranged: what `MOD_MELEE_DAMAGE_TAKEN_PCT`, `_RANGED_` multiply those blows by
     /// Its invisibility by type (`MOD_INVISIBILITY`'s misc value: 0 general, ...), the levels summed, and what it
     /// sees through (`MOD_INVISIBILITY_DETECTION`): only the strongest of a type counts, as in Classic (CMaNGOS's
     /// `HandleInvisibilityDetect`: Detect Invisibility's 200 and a Magic Potion's 200 see 200, not Fade's 500).
@@ -164,6 +166,8 @@ struct Fighter
         attackerHit = [auras.total(AuraType.modAttackerMeleeHitChance), auras.total(AuraType.modAttackerRangedHitChance),
             auras.total(AuraType.modAttackerSpellHitChance)];
         rangedTakenFlat = auras.total(AuraType.modRangedDamageTaken);
+        meleeTakenFlat = auras.total(AuraType.modMeleeDamageTaken);
+        weaponTaken = [auras.multiplier(AuraType.modMeleeDamageTakenPct), auras.multiplier(AuraType.modRangedDamageTakenPct)];
     }
     float[mechanics] mechanicResist = 0; /// percent more often it resists spells of each mechanic (`MOD_MECHANIC_RESISTANCE`)
     uint creatureType = creatureTypeHumanoid; /// `CreatureType` (a player is a humanoid)
@@ -879,8 +883,13 @@ MeleeDamage calculateMeleeDamage(const Fighter attacker, const Fighter victim, A
         return d;
     }
     float damage = weaponDamage(attacker, type, rng) * damageFactor(attacker, victim, type, d.school);
+    // The victim's auras of its melee or ranged blows (CMaNGOS's `MeleeDamageBonusTaken`): their flat part (Elune's
+    // Grace, Stoneskin), then their percent.
     if (type == AttackType.ranged && victim.rangedTakenFlat)
         damage = imported!"std.algorithm.comparison".max(0.0f, damage + victim.rangedTakenFlat);
+    if (type != AttackType.ranged && victim.meleeTakenFlat)
+        damage = imported!"std.algorithm.comparison".max(0.0f, damage + victim.meleeTakenFlat);
+    damage *= victim.weaponTaken[type == AttackType.ranged];
     if (d.school < 7 && victim.damageTakenFlat[d.school]) // the victim's flat part, as its percent takes it
         damage = imported!"std.algorithm.comparison".max(0.0f, damage + victim.damageTakenFlat[d.school] * victim.damageTaken[d.school]);
     if (d.school == 0)
@@ -1093,6 +1102,33 @@ unittest
     sitting.standing = false;
     wolf.position.orientation = PI;
     assert(rollMeleeOutcome(wolf, sitting, AttackType.mainHand, 600) == MeleeHitOutcome.crit);
+}
+
+/// A melee blow against a victim with Stoneskin (`MOD_MELEE_DAMAGE_TAKEN`) is less by its amount, then by its percent
+/// (`MOD_MELEE_DAMAGE_TAKEN_PCT`); a ranged blow is not.
+unittest
+{
+    auto rng = Random(7);
+    auto player = testPlayer(10);
+    auto wolf = testCreature(10);
+    player.damage = [[100, 100], [100, 100], [100, 100]];
+    uint hit(AttackType type)
+    {
+        foreach (_; 0 .. 1000)
+        {
+            const d = calculateMeleeDamage(player, wolf, type, rng);
+            if (d.outcome == MeleeHitOutcome.normal)
+                return d.damage;
+        }
+        assert(0, "no ordinary hit");
+    }
+    const plain = hit(AttackType.mainHand), plainRanged = hit(AttackType.ranged);
+    wolf.meleeTakenFlat = -20;
+    const stoneskin = hit(AttackType.mainHand);
+    assert(plain - stoneskin >= 15 && plain - stoneskin <= 20, "less by its amount (before armor)");
+    wolf.weaponTaken[0] = 0.5f;
+    assert(hit(AttackType.mainHand) * 2 >= stoneskin - 1 && hit(AttackType.mainHand) * 2 <= stoneskin + 1, "then halved");
+    assert(hit(AttackType.ranged) == plainRanged, "a ranged blow neither");
 }
 
 /// Damage: armor, crits, blocks, and an evading victim.
