@@ -979,8 +979,12 @@ mixin template CreatureCasting()
         const coneDegrees = spellCone(lore is null ? null : lore.data, spell.id);
         if (area || cone)
         {
+            // Around its target, unless it is at its own place: itself, its source, or the destination at itself
+            // (`TARGET_LOCATION_CASTER_DEST`: a creature's cast at a unit gives no destination, so CMaNGOS sets it
+            // at the caster).
             auto center = me.position;
-            if (area && a != ImplicitTarget.casterSource && a != ImplicitTarget.caster && target != me.guid)
+            if (area && a != ImplicitTarget.casterSource && a != ImplicitTarget.caster
+                    && a != ImplicitTarget.locationCasterDest && target != me.guid)
                 if (auto other = world_.unit(target))
                     center = other.position;
             import dmangos.world.combat : detects;
@@ -1047,7 +1051,7 @@ mixin template CreatureCasting()
                 if (friends && r > 0)
                 {
                     auto center = me.position;
-                    if (atDest && target != me.guid)
+                    if (atDest && a != locationCasterDest && target != me.guid) // (at itself: as for its enemies)
                         if (auto other = world_.unit(target))
                             center = other.position;
                     import dmangos.world.spellselection : unitsInArea;

@@ -161,6 +161,9 @@ primary sources (docs/FORMULAS.md); CMaNGOS and vmangos are second opinions.
 * **A creature's chained spell jumps** (Chain Lightning; Chain Heal to the most hurt friend), as a player's does,
   to units near the one before (`chainFrom`): at its enemies, the players and what they control; each jump struck
   less by the spell's multiplier. It struck its first target only before. The jumps are to units on its node.
+* **A creature's area at the destination at itself** (`TARGET_LOCATION_CASTER_DEST`, then the enemies or friends
+  there: Torch, Starfall, Mana Burn 22936) is around it even when it casts it at a player away from it: a creature's
+  cast at a unit gives no destination, so CMaNGOS sets the destination at the caster. It was around the player.
 * **A creature's area at its place in the database** (`TARGET_LOCATION_DATABASE`, `spell_target_position`) is
   there, on its map, as CMaNGOS's is: Onyxia's Deep Breath, each Breath of its chain at the next point across her
   lair. It was around her (or its target) unless a `SpellRule` said otherwise (Sapphiron's Frost Breath).
