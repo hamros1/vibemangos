@@ -509,6 +509,20 @@ mixin template CreatureScripting()
         {
             return hostSummon(entry, at, despawnMs, attack);
         }
+        Location hostLocationOf(EntityRef who)
+        {
+            Position at;
+            if (world_ is null || !world_.positionOf(who.guid, at))
+                return Location.init;
+            return Location(at.x, at.y, at.z, at.orientation);
+        }
+        ActionResult hostPlaceTrap(uint entry, Location at, uint seconds, uint fuseMs)
+        {
+            if (lore is null || world_ is null)
+                return ActionResult.notHere;
+            return lore.placeFusedTrap(world_, entry, Position(at.x, at.y, at.z, at.orientation), seconds, fuseMs)
+                ? ActionResult.ok : ActionResult.failed;
+        }
         ActionResult hostSignalCreature(EntityRef to, uint id, int value) { return hostSignal(to, id, value); }
         void hostLog(string text) { this.outer.hostLog(text); }
         ActionResult hostModifyThreat(EntityRef creature, EntityRef target, int percent)

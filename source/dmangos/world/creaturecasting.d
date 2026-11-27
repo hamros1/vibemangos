@@ -977,15 +977,10 @@ mixin template CreatureCasting()
                 if (auto other = world_.unit(target))
                     center = other.position;
             import dmangos.world.combat : detects;
-            const frostBreath = spell.id == 28524 || spell.id == 29318;
-            if (frostBreath && a == ImplicitTarget.database)
-            {
-                import dmangos.world.context : WorldContext;
-                auto context = lore;
-                if (context !is null)
-                    if (const fixed = spell.id in context.data.spellTargets)
-                        center = fixed.at;
-            }
+            const rule = lore is null ? typeof(lore.scripts.rule(0)).init : lore.scripts.rule(spell.id);
+            if (rule.areaSeenFromCenter && a == ImplicitTarget.database)
+                if (const fixed = spell.id in lore.data.spellTargets)
+                    center = fixed.at;
             const r = radius(*spell, i, lore.clientData);
             const excluded = excludedAreaTarget(spell.id, i, target);
             ulong[] found;
@@ -994,15 +989,14 @@ mixin template CreatureCasting()
                 const f = other.fighter;
                 if (other.combatGuid == excluded || !f.alive || !canAttack(relating, other.relating, me.client))
                     continue;
-                if (frostBreath && (!world_.inLineOfSight(center, other.position)
+                if (rule.areaSeenFromCenter && (!world_.inLineOfSight(center, other.position)
                     || (f.stealthed && !detects(me.fighter, f, r))))
                     continue;
                 if (cone && !hasInArc(me.position, f.position, PI / 2))
                     continue;
                 found ~= other.combatGuid;
             }
-            // Kurinnaxx's Sand Trap selects one player under whom to place the trap.
-            if (spell.id == 26524 && found.length)
+            if (rule.areaOneAtRandom && found.length)
             {
                 import std.random : uniform;
 

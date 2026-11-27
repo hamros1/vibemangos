@@ -1568,6 +1568,25 @@ struct AnubisathGuardian
     }
 }
 
+/// Kurinnaxx's Sand Trap (26524) is at one player of those around him (`SpellRule`).
+immutable SpellRule[] spellRules = [SpellRule(KurinnaxxSandTrap.sandTrap, areaOneAtRandom: true)];
+
+/// Kurinnaxx's Sand Trap: under the player it picked, a trap (180647) for ten seconds that springs by itself after
+/// four (CMaNGOS's `npc_sand_trap`).
+@spell("spell_kurinnaxx_sand_trap") @spellIds(KurinnaxxSandTrap.sandTrap)
+struct KurinnaxxSandTrap
+{
+    enum uint sandTrap = 26_524, trapObject = 180_647;
+
+    void on(ref SpellContext it, const ref EffectHit e)
+    {
+        if (!e.target.isPlayer)
+            return;
+        it.consume();
+        it.placeTrap(trapObject, it.location(e.target), 10, 4000);
+    }
+}
+
 /**
  * General Rajaxx's Thundercrash (25599): half the health of each it strikes, at least 200, and that one's threat
  * on him doubled (CMaNGOS's `EffectSchoolDMG`).

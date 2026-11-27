@@ -201,6 +201,24 @@ mixin template SessionScripting()
         void hostQuestEvent(EntityRef who, uint quest) { this.outer.hostQuestEvent(who, quest); }
         void hostKillCredit(EntityRef who, uint entry) { this.outer.hostKillCredit(who, entry); }
         EntityRef hostSummonAt(uint entry, Location at, uint despawnMs, EntityRef attack) { return this.outer.hostSummonAt(entry, at, despawnMs, attack); }
+        Location hostLocationOf(EntityRef who)
+        {
+            import dmangos.world.movement : Position;
+
+            Position at;
+            if (map is null || !map.positionOf(who.guid, at))
+                return Location.init;
+            return Location(at.x, at.y, at.z, at.orientation);
+        }
+        ActionResult hostPlaceTrap(uint entry, Location at, uint seconds, uint fuseMs)
+        {
+            import dmangos.world.movement : Position;
+
+            if (map is null)
+                return ActionResult.notHere;
+            return context.placeFusedTrap(map, entry, Position(at.x, at.y, at.z, at.orientation), seconds, fuseMs)
+                ? ActionResult.ok : ActionResult.failed;
+        }
         ActionResult hostSignalCreature(EntityRef to, uint id, int value) { return this.outer.hostSignalCreature(to, id, value); }
         QuestProgress hostQuestStatusOf(EntityRef who, uint quest) { return this.outer.hostQuestStatusOf(who, quest); }
         EntityRef hostCreatureNear(uint entry, Location at, float range) { return this.outer.hostCreatureNear(entry, at, range); }

@@ -1551,6 +1551,13 @@ struct SpellRule
     /// Its area effect, cast for a player by a script with amounts of its own, is at the player's friends around
     /// it and not the player (Kel'Thuzad's Detonate Mana: the mana lost burns the others near).
     bool harmsFriendsAround;
+
+    /// A creature's area of it reaches only those its centre sees (line of sight, and stealth the caster detects);
+    /// at a database target its centre is the spell's `spell_target_position` (Sapphiron's Frost Breath).
+    bool areaSeenFromCenter;
+
+    /// A creature's area of it reaches one of those in it, at random (Kurinnaxx's Sand Trap: one player).
+    bool areaOneAtRandom;
 }
 
 /**
@@ -1711,6 +1718,8 @@ interface SpellHost
     void hostQuestEvent(EntityRef player, uint quest);
     void hostKillCredit(EntityRef player, uint entry);
     EntityRef hostSummonAt(uint entry, Location at, uint despawnMs, EntityRef attack);
+    Location hostLocationOf(EntityRef who);
+    ActionResult hostPlaceTrap(uint entry, Location at, uint seconds, uint fuseMs);
     ActionResult hostSignalCreature(EntityRef to, uint id, int value);
     void hostLog(string text);
     ActionResult hostModifyThreat(EntityRef creature, EntityRef target, int percent);
@@ -1800,6 +1809,15 @@ struct SpellContext
 
     /// `KilledMonsterCredit` of `entry` for `player`.
     void killCredit(EntityRef player, uint entry) { host.hostKillCredit(player, entry); }
+
+    /// Where `who` is; nothing (all zeros) if it is not here.
+    Location location(EntityRef who) { return host.hostLocationOf(who); }
+
+    /// A trap (game object `entry`) at `at` for `seconds`, set to spring by itself after `fuseMs` (0: when stepped on).
+    ActionResult placeTrap(uint entry, Location at, uint seconds, uint fuseMs = 0)
+    {
+        return host.hostPlaceTrap(entry, at, seconds, fuseMs);
+    }
 
     /// A creature of `entry` at `at` (zero: near the caster), gone after `despawnMs` (0: when it dies).
     EntityRef summon(uint entry, Location at = Location.init, uint despawnMs = 0, EntityRef attack = EntityRef.init)

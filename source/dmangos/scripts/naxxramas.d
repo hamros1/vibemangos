@@ -2906,6 +2906,9 @@ immutable SpellRule[] spellRules = [
     SpellRule(Kelthuzad.frostBlast, keptThroughCrash: true, pausesWithFight: true, savedEachTick: true),
     SpellRule(Kelthuzad.manaDetonation, keptThroughCrash: true, pausesWithFight: true),
     SpellRule(DetonateManaKelthuzad.detonation, harmsFriendsAround: true),
+    // Sapphiron's Frost Breath (both ranks): from where it lands, at those it sees there and not behind an ice block.
+    SpellRule(Sapphiron.frostBreath, areaSeenFromCenter: true),
+    SpellRule(29_318, areaSeenFromCenter: true),
 ];
 
 /**

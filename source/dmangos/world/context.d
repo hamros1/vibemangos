@@ -1093,13 +1093,19 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
     }
     private ObjectAnimationImpact[] objectAnimations;
 
-    package void placeKurinnaxxTrap(Map map, Position at)
+    /// A trap (game object `entry`) at `at` on `map` for `seconds`, its fuse lit for `fuseMs` (0: none); false if it
+    /// could not be made.
+    package bool placeFusedTrap(Map map, uint entry, Position at, uint seconds, uint fuseMs)
     {
-        if (auto trap = summonWildGameObject(map, 180647, at, 10))
+        auto trap = summonWildGameObject(map, entry, at, seconds);
+        if (trap is null)
+            return false;
+        if (fuseMs)
         {
-            trap.restoreTimer = 4000;
+            trap.restoreTimer = fuseMs;
             map.wake(trap.guid);
         }
+        return true;
     }
 
     private void landObjectAnimations(MonoTime now)

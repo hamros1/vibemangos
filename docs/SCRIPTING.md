@@ -142,7 +142,9 @@ not say, the module that owns the spell or quest declares, and the server asks t
 * `immutable SpellRule[] spellRules` in a script module (`ScriptRuntime.rule(spell)`): a player's aura
   kept with its raid's crash checkpoint (`keptThroughCrash`), one that waits with its fight
   (`pausesWithFight`), one whose every tick is saved (`savedEachTick`), an area effect at the caster's
-  friends and not the caster (`harmsFriendsAround`). Naxxramas and Blackwing Lair declare theirs.
+  friends and not the caster (`harmsFriendsAround`), a creature's area that reaches only what its centre
+  sees (`areaSeenFromCenter`: Frost Breath and the ice blocks) or one of those in it (`areaOneAtRandom`:
+  Sand Trap). Naxxramas, Blackwing Lair and the Ruins of Ahn'Qiraj declare theirs.
 * `immutable QuestRule[] questRules` (`ScriptRuntime.questRules`): a quest whose creature is told when
   another player helps (`aidWatcher`, `aidSignal`: Eris Havenfire's).
 * A spell's own formula is its `@spell` script's: `EffectDamage` is raised before a creature's direct
@@ -150,8 +152,8 @@ not say, the module that owns the spell or quest declares, and the server asks t
   health).
 
 `tools/harness/check.sh` fails if a module of `dmangos.world` other than a test imports a module of
-`dmangos.scripts`. Still in the server's code, to move the same way: Kurinnaxx's Sand Trap and
-Sapphiron's Frost Breath targets (`creaturecasting.d`), and the class spells' ids.
+`dmangos.scripts`. The class spells' ids (talents, stances, procs in `classspells.d` and its kin) are the
+server's own rules and stay in its code.
 
 ### Components: the escort
 
