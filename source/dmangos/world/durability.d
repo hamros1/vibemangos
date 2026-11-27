@@ -35,8 +35,19 @@ unittest
 }
 
 /// See the module documentation.
-mixin template DurabilityRules()
+final class Durability
 {
+    import dmangos.world.character : Character;
+    import dmangos.world.session : Handles, WorldState;
+
+    private Character me;
+
+    ///
+    this(Character me)
+    {
+        this.me = me;
+    }
+
     import dmangos.world.defines : equipmentSlotEnd, inventorySlotBag0, inventorySlotBagEnd, inventorySlotBagStart,
         inventorySlotItemEnd, inventorySlotItemStart;
     import dmangos.world.durability : durabilityAfter, durabilityShare;
@@ -53,8 +64,8 @@ mixin template DurabilityRules()
             return;
         item.values.set!ITEM_FIELD_DURABILITY(now);
         if ((now == 0 || old == 0) && item.isEquipped)
-            player.inventory.equipmentChanged = true; // broken, or whole again: its stats go or come back
-        player.inventory.setState(item, ItemState.changed);
+            me.player.inventory.equipmentChanged = true; // broken, or whole again: its stats go or come back
+        me.player.inventory.setState(item, ItemState.changed);
     }
 
     /// `item` loses `percent` of its most durability (at least a point; none without durability).
@@ -68,29 +79,29 @@ mixin template DurabilityRules()
     private void forEachWornOrCarried(bool inventory, scope void delegate(Item) dg)
     {
         foreach (ubyte slot; 0 .. equipmentSlotEnd)
-            dg(player.inventory[inventorySlotBag0, slot]);
+            dg(me.player.inventory[inventorySlotBag0, slot]);
         if (!inventory)
             return;
         foreach (ubyte slot; inventorySlotItemStart .. inventorySlotItemEnd)
-            dg(player.inventory[inventorySlotBag0, slot]);
+            dg(me.player.inventory[inventorySlotBag0, slot]);
         foreach (ubyte bag; inventorySlotBagStart .. inventorySlotBagEnd)
-            if (player.inventory[inventorySlotBag0, bag] !is null)
+            if (me.player.inventory[inventorySlotBag0, bag] !is null)
                 foreach (ubyte slot; 0 .. maxBagSize)
-                    dg(player.inventory[bag, slot]);
+                    dg(me.player.inventory[bag, slot]);
     }
 
     /// What it wears (and with `inventory` what it carries) loses `percent` of its durability.
     package void durabilityLossAll(double percent, bool inventory)
     {
         forEachWornOrCarried(inventory, (Item item) { durabilityLoss(item, percent); });
-        flushInventory(true);
+        me.flushInventory(true);
     }
 
     /// What it wears (and with `inventory` what it carries) loses `points` of durability.
     package void durabilityPointsLossAll(int points, bool inventory)
     {
         forEachWornOrCarried(inventory, (Item item) { durabilityPointsLoss(item, points); });
-        flushInventory(true);
+        me.flushInventory(true);
     }
 
     /**
@@ -107,8 +118,8 @@ mixin template DurabilityRules()
         void log(int entry)
         {
             if (!percent)
-                map.sendToWatchers(this, Opcode.SMSG_SPELLLOGEXECUTE, executeLog(caster, spell.id,
-                    cast(uint) spell.effect[i], executeTarget(player.guid, entry, value)), true);
+                me.map.sendToWatchers(me, Opcode.SMSG_SPELLLOGEXECUTE, executeLog(caster, spell.id,
+                    cast(uint) spell.effect[i], executeTarget(me.player.guid, entry, value)), true);
         }
 
         if (slot < 0)
@@ -121,7 +132,7 @@ mixin template DurabilityRules()
         }
         if (slot >= inventorySlotBagEnd || (percent && value <= 0))
             return;
-        auto item = player.inventory[inventorySlotBag0, cast(ubyte) slot];
+        auto item = me.player.inventory[inventorySlotBag0, cast(ubyte) slot];
         if (item is null)
             return;
         log(cast(int) item.proto.entry);
@@ -129,7 +140,7 @@ mixin template DurabilityRules()
             durabilityLoss(item, value / 100.0);
         else
             durabilityPointsLoss(item, value);
-        flushInventory();
+        me.flushInventory();
     }
 }
 
@@ -183,6 +194,6 @@ unittest
     assert(worn.durability == 5 && carried.durability == 15, "half of its most, the main hand only");
 
     // The spirit healer's quarter: what is in the bag too (five points of twenty).
-    me.durabilityLossAll(0.25, true);
+    me.durability.durabilityLossAll(0.25, true);
     assert(worn.durability == 0 && carried.durability == 10);
 }

@@ -58,7 +58,7 @@ import dmangos.world.taxihandlers : Taxi;
 import dmangos.world.crowdcontrol : CrowdControl;
 import dmangos.world.mounting : Mounting;
 import dmangos.world.guardians : Guardians;
-import dmangos.world.durability : DurabilityRules;
+import dmangos.world.durability : Durability;
 import dmangos.world.rituals : Rituals;
 import dmangos.world.homebind : Homebind;
 import dmangos.world.unit : Blow, UnitRef;
@@ -102,9 +102,10 @@ final class Character : OnlinePlayer, Looter
     /// The connection its client talks through (here, or relaying to its home node).
     WorldSession connection;
 
-    mixin PacketDispatch!(Handles, "taxi", "mailbox", "auctioneer", "reputations", "talents", "trading", "dueling", "channels", "contacts", "enchanting", "professions", "homebind", "guardians", "crowdControl", "mounting", "pvp", "rituals");
+    mixin PacketDispatch!(Handles, "taxi", "mailbox", "auctioneer", "reputations", "talents", "trading", "dueling", "channels", "contacts", "enchanting", "professions", "homebind", "guardians", "crowdControl", "mounting", "pvp", "rituals", "durability");
 
     Taxi taxi; /// flight masters and the flight under way (`dmangos.world.taxihandlers`)
+    Durability durability; /// worn items' durability: lost to hits, death and repair (`dmangos.world.durability`)
     Rituals rituals; /// summoning rituals: the portal, its clickers and the summoned (`dmangos.world.rituals`)
     PvP pvp; /// the PvP flag (`dmangos.world.pvp`)
     Mounting mounting; /// mounts (`dmangos.world.mounting`)
@@ -178,6 +179,7 @@ final class Character : OnlinePlayer, Looter
         this.connection = connection;
         this.context = context;
         taxi = new Taxi(this);
+        durability = new Durability(this);
         rituals = new Rituals(this);
         pvp = new PvP(this);
         mounting = new Mounting(this);
@@ -955,7 +957,6 @@ private:
     mixin EffectHandlers;
     mixin QuestHandlers;
     mixin GameObjectHandlers;
-    mixin DurabilityRules;
     mixin BattlegroundHandlers;
     mixin WorldPvpHandlers;
     mixin ItemUseHandlers;

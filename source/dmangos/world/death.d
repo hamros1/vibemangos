@@ -224,7 +224,7 @@ private:
         stopAttack(false);
         if (byCreature)
         {
-            durabilityLossAll(0.10, false);
+            durability.durabilityLossAll(0.10, false);
             deliver(Opcode.SMSG_DURABILITY_DAMAGE_DEATH, null);
         }
         player.values.set!UNIT_FIELD_HEALTH(0u);
@@ -368,7 +368,7 @@ private:
         if (interactableNpc(request.guid, spiritHealer) is null)
             return;
         bringBack(0.5f);
-        durabilityLossAll(0.25, true);
+        durability.durabilityLossAll(0.25, true);
         applyResurrectionSickness();
         // To the graveyard nearest the corpse, if that is another than the one nearest the ghost.
         const(WorldSafeLocsEntry)* corpseGrave, ghostGrave;

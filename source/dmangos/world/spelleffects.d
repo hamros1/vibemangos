@@ -730,7 +730,7 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
     {
         auto other = target == caster.guid ? caster.unit : map.unit(target);
         if (other.kind == UnitKind.player)
-            other.session.durabilityDamageEffect(spell, i, value, effect == SpellEffect.durabilityDamagePct, caster.guid);
+            other.session.durability.durabilityDamageEffect(spell, i, value, effect == SpellEffect.durabilityDamagePct, caster.guid);
         break;
     }
     case SpellEffect.knockBack: // SPELL_EFFECT_KNOCK_BACK: a player thrown from the caster
