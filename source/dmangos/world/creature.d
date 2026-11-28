@@ -1434,6 +1434,12 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
 
             f.crit += auras.total(AuraType.modCritPercent);
             f.hitBonus += auras.total(AuraType.modHitChance); // Insect Swarm's less
+            // Its physical blows' flat part (`MOD_DAMAGE_DONE` of physical: Curse of Weakness's less), as CMaNGOS's
+            // `MeleeDamageBonusDone` adds it to a creature's blows as to a player's.
+            const physical = auras.totalByMiscMask(AuraType.modDamageDone, 1);
+            foreach (type; 0 .. 3)
+                if (f.damageSchool[type] == 0)
+                    f.weaponDamageFlat[type] = physical;
             f.dodge += auras.total(AuraType.modDodgePercent);
             f.parry += auras.total(AuraType.modParryPercent);
             f.block += auras.total(AuraType.modBlockPercent);

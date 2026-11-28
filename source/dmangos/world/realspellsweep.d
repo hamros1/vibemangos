@@ -1543,6 +1543,8 @@ float auraMeasureOn(UnitRef unit, AuraType type, int misc)
     }
     case modDamagePercentDone:
         return misc & 1 ? f.damageDone[0] : float.nan;
+    case modDamageDone: // its physical blows' flat part (Curse of Weakness)
+        return misc & 1 ? f.weaponDamageFlat[0] : float.nan;
     default:
         return float.nan;
     }
