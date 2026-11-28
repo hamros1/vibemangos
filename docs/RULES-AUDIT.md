@@ -279,7 +279,7 @@ risk.
 | spellhandlers.d:dispelEffect | Random auras of dispel type | EffectDispel | SpellCategories.DispelType | M |
 | spellhandlers.d:areaTargets | 3D radius; cone ±60°; party spells subgroup | SetTargetMap | SpellTargetRestrictions.ConeDegrees (DB2) | M: cone hard-coded |
 | spellhandlers.d:chainTargets | Chain jumps within 10 yd; chain heal lowest HP% | SetTargetMap | SpellEffect.EffectChainTargets (count only) | M |
-| spellhandlers.d:addComboPoints | Max 5, reset on new target, spent unless missed | AddComboPoints | none found | M |
+| spellhandlers.d:addComboPoints | Max 5, reset on new target, spent unless missed | AddComboPoints | none found | MM. **Checked 2026-11-28 against CMaNGOS** (`Unit::AddComboPoints`): the same (retaining auras dropped, a new target starts over, 0 to 5) |
 | spellhandlers.d:spendChargedMods | Charged mods lose a charge per cast | RemoveSpellMods | SpellAuraOptions.ProcCharges | M |
 | creatureai.d:taunt | Taunt sets threat to top and forces target while aura lasts | EffectTaunt | Wowpedia "Taunt" (verify) | MM. **Checked 2026-11-28 against CMaNGOS** (`EffectTaunt`): the same (no effect on a creature already attacking the taunter; the taunter's threat raised to the highest, unmodified, and the victim forced to it; the `MOD_TAUNT` aura holds it) |
 | creatureai.d:forget | Feign Death/Vanish/Divine Intervention drop from threat list | Unit::CombatStop | none found | M |
