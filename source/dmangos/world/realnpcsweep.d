@@ -35,7 +35,7 @@ import dmangos.world.creature : Creature, TempSpawnType;
 import dmangos.world.movement : Position;
 import dmangos.world.opcodes : Opcode;
 import dmangos.world.realspelltests : haveRealData, RealWorld;
-import dmangos.world.realspellsweep : auraMeasureName, auraMeasureOn, harms, hasDispellable, objectNear, summoned,
+import dmangos.world.realspellsweep : auraMeasureName, auraMeasureOn, harms, isImmunityMeasure, hasDispellable, objectNear, summoned,
     summonsCreature, summonsObject, Who, whoOf;
 import dmangos.world.spellids : AuraType, ImplicitTarget, SpellEffect;
 import dmangos.world.spells : SpellInfo;
@@ -988,7 +988,14 @@ private final class NpcSweeper
                     if (!isNaN(measuredBefore[i]))
                         if (auto on = unit.kind == UnitKind.player ? unit.session.player.auras.find(s.id)
                                 : unit.kind == UnitKind.creature ? unit.creature.auras.find(s.id) : null)
-                            if (on.amount[i] != 0)
+                        {
+                            if (isImmunityMeasure(kind))
+                            {
+                                if (measuredBefore[i] == 0 && auraMeasureOn(unit, kind, s.miscValue[i]) != 1)
+                                    failed = format!"aura %s: on the %s, but %s show nothing of it (misc %s)"(kind, name,
+                                        auraMeasureName(kind), s.miscValue[i]);
+                            }
+                            else if (on.amount[i] != 0)
                             {
                                 const now = auraMeasureOn(unit, kind, s.miscValue[i]);
                                 // (A resistance of none goes no lower; a negative `MOD_SPEED_ALWAYS` slows nothing, as in
@@ -999,6 +1006,7 @@ private final class NpcSweeper
                                     failed = format!"aura %s: on the %s, but %s did not move by %s (still %s)"(kind, name,
                                         auraMeasureName(kind), on.amount[i], now);
                             }
+                        }
                 }
                 break;
             case persistentAreaAura:

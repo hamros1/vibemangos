@@ -909,8 +909,9 @@ private struct Sweeper
                             // An immunity whatever its amount: not immune before (else nothing to see), immune now.
                             const now = auraMeasureOn(unit, cast(AuraType) s.casting.applyAuraName[i], s.miscValue[i]);
                             if (measuredBefore[i] == 0 && now != 1)
-                                problem(format!"effect %s (%s %s): on the %s, but it is not immune (misc %s)"(i, effect,
-                                    s.casting.applyAuraName[i], who, s.miscValue[i]));
+                                problem(format!"effect %s (%s %s): on the %s, but %s show nothing of it (misc %s)"(i,
+                                    effect, s.casting.applyAuraName[i], who, auraMeasureName(
+                                    cast(AuraType) s.casting.applyAuraName[i]), s.miscValue[i]));
                         }
                         else if (on.amount[i] != 0)
                         {
@@ -1508,6 +1509,8 @@ float auraMeasure(Character who, AuraType type, int misc)
     }
     case schoolImmunity, mechanicImmunity, modMechanicResistance:
         return fighterMeasure(who.unit.fighter, type, misc);
+    case modStun, modFear, modConfuse, modSilence, modPacify, modDisarm:
+        return controlMeasure(p.values, type);
     case modSkill, modSkillTalent: // a skill it has (a weapon's, a profession's): its value with bonuses
         return misc > 0 && p.skillSlot(misc) >= 0 ? p.skillWithBonus(misc) : float.nan;
     case modScale: // its size (Enlarge, a giant's growth)
@@ -1555,6 +1558,8 @@ float auraMeasureOn(UnitRef unit, AuraType type, int misc)
     }
     case schoolImmunity, mechanicImmunity, modMechanicResistance:
         return fighterMeasure(f, type, misc);
+    case modStun, modFear, modConfuse, modSilence, modPacify, modDisarm:
+        return controlMeasure(c.values, type);
     case modHitChance:
         return f.hitBonus;
     case modCritPercent:
@@ -1579,10 +1584,36 @@ float auraMeasureOn(UnitRef unit, AuraType type, int misc)
 }
 
 /// What `auraMeasure` measures of `type`, for the sweep's report.
-/// The immunities the oracle checks as on or off (1 or 0), not by their amount (`fighterMeasure`).
+/// The immunities and crowd control the oracle checks as on or off (1 or 0), not by their amount
+/// (`fighterMeasure`, `controlMeasure`).
 bool isImmunityMeasure(AuraType type)
 {
-    return type == AuraType.schoolImmunity || type == AuraType.mechanicImmunity;
+    with (AuraType) return type == schoolImmunity || type == mechanicImmunity || controlFlag(type) != 0;
+}
+
+/// The unit flag a crowd control aura puts on (CMaNGOS's `SetStunned`, `SetFleeing`, ...), 0 for others.
+uint controlFlag(AuraType type)
+{
+    import dmangos.world.defines : UnitFlags;
+
+    with (AuraType) switch (type)
+    {
+    case modStun: return UnitFlags.stunned;
+    case modFear: return UnitFlags.fleeing;
+    case modConfuse: return UnitFlags.confused;
+    case modSilence: return UnitFlags.silenced;
+    case modPacify: return UnitFlags.pacified;
+    case modDisarm: return UnitFlags.disarmed;
+    default: return 0;
+    }
+}
+
+/// 1 if the unit's flags show what a crowd control aura of `type` puts on, else 0.
+float controlMeasure(V)(const ref V values, AuraType type)
+{
+    import dmangos.world.updatefields : UNIT_FIELD_FLAGS;
+
+    return (values.get!UNIT_FIELD_FLAGS & controlFlag(type)) ? 1 : 0;
 }
 
 /// What a fighter shows of an immunity (1 immune to all of `misc`'s, 0 not) or of a mechanic's resist chance.
@@ -1629,7 +1660,8 @@ string auraMeasureName(AuraType type)
     case modIncreaseSpeed, modSpeedAlways, modSpeedNotStack, modDecreaseSpeed: return "its run speed";
     case modSkill, modSkillTalent: return "its skill";
     case modScale: return "its size";
-    case schoolImmunity, mechanicImmunity: return "its immunity";
+    case schoolImmunity, mechanicImmunity: return "its immunities";
+    case modStun, modFear, modConfuse, modSilence, modPacify, modDisarm: return "its flags";
     case modMechanicResistance: return "its resistance to the mechanic";
     default: return "nothing";
     }
