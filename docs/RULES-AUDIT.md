@@ -429,7 +429,7 @@ risk.
 
 | where | what | emulator origin | primary source | risk |
 |---|---|---|---|---|
-| combathandlers.d:updateCombatSkills | Weapon/defense skill-up chance = max(room/5,1)/(cap/5)×100, +2%/INT pt; extra rise gate | Player::UpdateCombatSkills | Wowpedia "Weapon skill" (verify) | H: every swing while levelling; looks emulator-invented |
+| combathandlers.d:updateCombatSkills | Weapon/defense skill-up chance = max(room/5,1)/(cap/5)×100, +2%/INT pt; extra rise gate | Player::UpdateCombatSkills | Wowpedia "Weapon skill" (verify) | H: every swing while levelling; looks emulator-invented. **Not changed, 2026-11-28 (the owner's call):** CMaNGOS replaced this formula (PR 628, January 2026) by a tuned curve (logarithmic catch-up while 7+ points behind, quadratic near the cap, intellect bonus up to 10%) and removed `UpdateSkill`'s second roll as an unintended double gate, our "extra rise gate"; its reasons are how levelling felt, no period source, so one guess would replace another |
 | spellhandlers.d:useBobber | Catch if roll ≤ skill − zone + 5; skill-up (skill<75 ? 100 : 2500/(skill−50)) | UpdateFishingSkill | Warcraft Wiki "Fishing" (pre-3.1: no skill-up on a getaway); measured Classic Era catches per point | H. **Done:** FORMULAS.md "Fishing" (zone skills stay emulator data) |
 | spellhandlers.d:checkSkinning / skinCreature | Required skill skill<100 ? (lvl−10)×10 : lvl×5; skill-up requirement formula differs | CheckCast skinning, UpdateGatherSkill | Wowpedia "Skinning" (1 / 10L−100 / 5L) | H. **Done:** one formula (FORMULAS.md "Skinning") |
 | player.d:updateSkillsForLevel | Weapon/defense max = 5×level | UpdateSkillsForLevel | SkillRaceClassInfo flags; SkillTiers.dbc | H: feeds combat table |
