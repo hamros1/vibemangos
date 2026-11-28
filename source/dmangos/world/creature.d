@@ -1047,11 +1047,15 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         auto applied = auras.apply(aura, values, isNew);
         if (isNew && applied.has(AuraType.transform))
             refreshLook();
+        refreshAuraStats(); // its armor, resistances and attack power at once (Sunder Armor's next blow)
         // Its crowd control at once (CMaNGOS's `SetStunned` as the aura lands), not at its next tick: a stun of a
         // tenth of a second (Arcane Explosion's on its caster) would run out first.
+        // So are its attack and cast times (Thunder Clap, Chilled: CMaNGOS's `ApplyAttackTimePercentMod` as it lands).
         with (AuraType)
             if (isNew && (applied.has(modStun) || applied.has(modFear) || applied.has(modConfuse) || applied.has(modSilence)
-                    || applied.has(modPacify) || applied.has(modDisarm) || applied.has(modRoot)))
+                    || applied.has(modPacify) || applied.has(modDisarm) || applied.has(modRoot)
+                    || applied.has(modMeleeHaste) || applied.has(modAttackSpeed) || applied.has(modRangedHaste)
+                    || applied.has(modCastingSpeed)))
                 if (auto motion = cast(MotionWorld) world)
                     refreshAuraMovement(motion);
         return applied;
@@ -1085,6 +1089,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         import dmangos.script.api : AuraEnded, EntityRef;
 
         auras.remove(aura, values);
+        refreshAuraStats(); // its stats back as the aura goes
         if (aura.has(AuraType.transform))
             refreshLook();
         if (auto caster = world.unit(aura.caster)) // its caster's class rules (Wyvern Sting's poison as it wakes)
@@ -1297,6 +1302,58 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     }
 
     /// What the melee formulas (`dmangos.world.combat`) need of it now.
+    private int[7] baseResistances;  /// its armor and resistances before its auras (`refreshAuraStats`)
+    private int[2] baseAttackPower;  /// melee, ranged, likewise
+    private float[2][3] baseDamage;  /// by attack type, likewise
+    private uint statsAuraChanges = uint.max; /// `auras.changes` its stats were last worked out at
+
+    /**
+     * Its armor, resistances, attack power and damage again from its auras (CMaNGOS's `UpdateResistances`,
+     * `UpdateAttackPowerAndDamage`), when they changed: what it spawned with, `MOD_BASE_RESISTANCE_PCT` of that, the
+     * flat `MOD_RESISTANCE` (Sunder Armor, Faerie Fire, Curse of the Elements) and the strongest
+     * `MOD_RESISTANCE_EXCLUSIVE`, times `MOD_RESISTANCE_PCT`; `MOD_ATTACK_POWER` and `MOD_RANGED_ATTACK_POWER`
+     * (Demoralizing Shout), and its blows by them (a fourteenth of it a second of its swing). A pet's are its own
+     * (`showPetStats`).
+     */
+    void refreshAuraStats()
+    {
+        import std.algorithm.comparison : max;
+        import dmangos.world.spellids : AuraType;
+
+        if (petData !is null || statsAuraChanges == auras.changes)
+            return;
+        statsAuraChanges = auras.changes;
+        foreach (uint school; 0 .. 7)
+        {
+            const mask = 1 << school;
+            bool matches(int misc) { return (misc & mask) != 0; }
+            float value = baseResistances[school] * auras.multiplier(AuraType.modBaseResistancePct, &matches)
+                + auras.totalByMiscMask(AuraType.modResistance, mask)
+                + auras.greatestByMiscMask(AuraType.modResistanceExclusive, mask);
+            value *= auras.multiplier(AuraType.modResistancePct, &matches);
+            values.set!UNIT_FIELD_RESISTANCES(school, cast(uint) max(0.0f, value));
+        }
+        const int[2] mods = [auras.total(AuraType.modAttackPower), auras.total(AuraType.modRangedAttackPower)];
+        values.set!UNIT_FIELD_ATTACK_POWER(baseAttackPower[0]);
+        values.set!UNIT_FIELD_ATTACK_POWER_MODS(cast(uint) cast(ushort) cast(short) mods[0]);
+        values.set!UNIT_FIELD_RANGED_ATTACK_POWER(baseAttackPower[1]);
+        values.set!UNIT_FIELD_RANGED_ATTACK_POWER_MODS(cast(uint) cast(ushort) cast(short) mods[1]);
+        const uint[3] swing = [values.get!UNIT_FIELD_BASEATTACKTIME(0), values.get!UNIT_FIELD_BASEATTACKTIME(1),
+            values.get!UNIT_FIELD_RANGEDATTACKTIME];
+        float[2][3] damage;
+        foreach (type; 0 .. 3)
+        {
+            const more = mods[type == 2] / 14.0f * swing[type] / 1000.0f;
+            damage[type] = [max(0.0f, baseDamage[type][0] + more), max(0.0f, baseDamage[type][1] + more)];
+        }
+        values.set!UNIT_FIELD_MINDAMAGE(damage[0][0]);
+        values.set!UNIT_FIELD_MAXDAMAGE(damage[0][1]);
+        values.set!UNIT_FIELD_MINOFFHANDDAMAGE(damage[1][0]);
+        values.set!UNIT_FIELD_MAXOFFHANDDAMAGE(damage[1][1]);
+        values.set!UNIT_FIELD_MINRANGEDDAMAGE(damage[2][0]);
+        values.set!UNIT_FIELD_MAXRANGEDDAMAGE(damage[2][1]);
+    }
+
     /**
      * It swings an off hand even without an off-hand weapon: its template says so
      * (`CREATURE_EXTRA_FLAG_DUAL_WIELD_FORCED`), or a Dual Wield spell (674) taught it (CMaNGOS's `SetCanDualWield`).
@@ -1374,6 +1431,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             import dmangos.world.spellids : AuraType;
 
             f.crit += auras.total(AuraType.modCritPercent);
+            f.hitBonus += auras.total(AuraType.modHitChance); // Insect Swarm's less
             f.dodge += auras.total(AuraType.modDodgePercent);
             f.parry += auras.total(AuraType.modParryPercent);
             f.block += auras.total(AuraType.modBlockPercent);
@@ -1520,6 +1578,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         if (auras.list.length || auraHeld || auraSpeedFactor != 1 || (movement.flags & movementAuraFlags)
             || (values.get!UNIT_FIELD_FLAGS & crowdControlFlags))
             refreshAuraMovement(world);
+        refreshAuraStats(); // (an aura gone since: its stats back)
         if (petData !is null && petData.statsShownAt != auras.changes) // a pet's stats are made of its auras too
         {
             import dmangos.world.pet : showPetStats;
@@ -1750,6 +1809,13 @@ private:
         values.set!UNIT_FIELD_MAXOFFHANDDAMAGE(combat.damage[1][1]);
         values.set!UNIT_FIELD_MINRANGEDDAMAGE(combat.damage[2][0]);
         values.set!UNIT_FIELD_MAXRANGEDDAMAGE(combat.damage[2][1]);
+        // What its auras work from (`refreshAuraStats`).
+        foreach (uint school; 0 .. 7)
+            baseResistances[school] = cast(int) values.get!UNIT_FIELD_RESISTANCES(school);
+        baseAttackPower = [cast(int) combat.meleeAttackPower, cast(int) combat.rangedAttackPower];
+        foreach (type; 0 .. 3)
+            baseDamage[type] = [combat.damage[type][0], combat.damage[type][1]];
+        statsAuraChanges = uint.max; // worked out again at its next update
         values.set!UNIT_FIELD_HEALTH(health);
         values.set!UNIT_FIELD_MAXHEALTH(health);
         values.set!UNIT_FIELD_POWER1(0, mana);

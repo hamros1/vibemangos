@@ -172,6 +172,11 @@ primary sources (docs/FORMULAS.md); CMaNGOS and vmangos are second opinions.
   (AP / 14 a second), and `MOD_DAMAGE_DONE_CREATURE` by its amount; a spell's flat bonus against it
   (`MOD_FLAT_SPELL_DAMAGE_VERSUS`, `MOD_DAMAGE_DONE_CREATURE`) is added before the percents, as CMaNGOS's. A creature's
   own such auras count for its spells, not yet its swings.
+* **A creature's debuffs change its stats**: its armor and resistances (Sunder Armor, Expose Armor, Faerie Fire,
+  Curse of the Elements), attack power and so its blows (Demoralizing Shout and Roar), hit chance (Insect Swarm) are
+  worked out again from what it spawned with and its auras as one lands or goes (`Creature.refreshAuraStats`, CMaNGOS's
+  `UpdateResistances`, `UpdateAttackPowerAndDamage`); its attack and cast times as a slow lands (Thunder Clap,
+  Chilled), not at its next tick. They went on and did nothing before. A resistance goes no lower than none.
 * **Reflects** are summed and rolled once (CMaNGOS's `GetReflectChance`): `REFLECT_SPELLS` of any school (the Sheen
   of Zanza; a creature's Ward of the Eye, Spell Reflection) and the ward of the spell's (Fire Ward, Frost Ward, with
   their talents), for a reflectable spell (`isReflectable`: magic, not an ability or a passive). A creature sends a

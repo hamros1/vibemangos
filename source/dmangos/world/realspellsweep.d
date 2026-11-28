@@ -26,7 +26,7 @@ import std.algorithm.comparison : among, max, min;
 import std.algorithm.searching : canFind;
 import std.format : format;
 import dmangos.world.character : Character;
-import dmangos.world.unit : UnitKind;
+import dmangos.world.unit : UnitKind, UnitRef;
 import dmangos.world.clientdata : ClientData;
 import dmangos.world.creature : Creature, TempSpawnType;
 import dmangos.world.defines : Power;
@@ -745,9 +745,7 @@ private struct Sweeper
         foreach (i; 0 .. 3)
             if (s.effect[i] == SpellEffect.applyAura || s.effect[i] == SpellEffect.applyAreaAuraParty)
                 if (auto unit = unitFor(i))
-                    if (unit.kind == UnitKind.player)
-                        measuredBefore[i] = auraMeasure(unit.session, cast(AuraType) s.casting.applyAuraName[i],
-                            s.miscValue[i]);
+                    measuredBefore[i] = auraMeasureOn(unit, cast(AuraType) s.casting.applyAuraName[i], s.miscValue[i]);
         foreach (i; 0 .. 3)
             if (auto unit = unitFor(i))
             {
@@ -902,13 +900,16 @@ private struct Sweeper
                 // What it does, where the sweep measures it: still on, the value moved the way its amount says.
                 import std.math : isNaN;
 
-                if (!isNaN(measuredBefore[i]) && unit.kind == UnitKind.player && effect != persistentAreaAura)
-                    if (auto on = unit.session.player.auras.find(s.id))
+                if (!isNaN(measuredBefore[i]) && effect != persistentAreaAura)
+                    if (auto on = unit.kind == UnitKind.player ? unit.session.player.auras.find(s.id)
+                            : unit.kind == UnitKind.creature ? unit.creature.auras.find(s.id) : null)
                         if (on.amount[i] != 0)
                         {
-                            const now = auraMeasure(unit.session, cast(AuraType) s.casting.applyAuraName[i],
-                                s.miscValue[i]);
-                            if (on.amount[i] > 0 ? now <= measuredBefore[i] : now >= measuredBefore[i])
+                            const now = auraMeasureOn(unit, cast(AuraType) s.casting.applyAuraName[i], s.miscValue[i]);
+                            // (A resistance of none goes no lower: Curse of the Elements at a creature without one.)
+                            const floor = cast(AuraType) s.casting.applyAuraName[i] == AuraType.modResistance
+                                && on.amount[i] < 0 && measuredBefore[i] <= 0;
+                            if (!floor && (on.amount[i] > 0 ? now <= measuredBefore[i] : now >= measuredBefore[i]))
                                 problem(format!"effect %s (%s %s): on the %s, but %s did not move by %s (still %s)"(i,
                                     effect, s.casting.applyAuraName[i], who, auraMeasureName(
                                     cast(AuraType) s.casting.applyAuraName[i]), on.amount[i], now));
@@ -1493,6 +1494,41 @@ float auraMeasure(Character who, AuraType type, int misc)
 
         return p.inventory.equipped(equipmentSlotRanged) is null ? float.nan : -cast(float) p.stats.attackTime[2];
     }
+    default:
+        return float.nan;
+    }
+}
+
+/// `auraMeasure` for a player; for a creature (a debuff at the sweep's enemy), what its fighter and fields show.
+float auraMeasureOn(UnitRef unit, AuraType type, int misc)
+{
+    import core.bitop : bsf;
+    import dmangos.world.updatefields : UNIT_FIELD_BASEATTACKTIME, UNIT_FIELD_RESISTANCES;
+
+    if (unit.kind == UnitKind.player)
+        return auraMeasure(unit.session, type, misc);
+    if (unit.kind != UnitKind.creature)
+        return float.nan;
+    auto c = unit.creature;
+    const f = c.fighter;
+    with (AuraType) switch (type)
+    {
+    case modResistance, modResistanceExclusive:
+        return misc > 0 ? cast(int) c.values.get!UNIT_FIELD_RESISTANCES(bsf(misc)) : float.nan;
+    case modDamagePercentTaken:
+        return misc > 0 ? f.damageTaken[bsf(misc)] : float.nan;
+    case modDamageTaken:
+        return misc > 0 ? f.damageTakenFlat[bsf(misc)] : float.nan;
+    case modHitChance:
+        return f.hitBonus;
+    case modCritPercent:
+        return f.crit;
+    case modMeleeHaste, modAttackSpeed: // slower: more time between swings (Thunder Clap)
+        return -cast(float) c.values.get!UNIT_FIELD_BASEATTACKTIME(0);
+    case modAttackPower: // its blows (Demoralizing Shout)
+        return f.damage[0][1];
+    case modDamagePercentDone:
+        return misc & 1 ? f.damageDone[0] : float.nan;
     default:
         return float.nan;
     }

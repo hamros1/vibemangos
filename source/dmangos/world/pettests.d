@@ -1501,6 +1501,47 @@ unittest
     assert(against >= 130, format!"its bonus against the boar's type added: %s"(against));
 }
 
+/// A creature's armor and attack power go down by its debuffs (Sunder Armor's `MOD_RESISTANCE`, Demoralizing Shout's
+/// `MOD_ATTACK_POWER`, its blows by that) as they land, and come back as they go.
+unittest
+{
+    import dmangos.world.auras : AuraType, makeAura;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.spellids : ImplicitTarget, SpellEffect;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto rexxar = loggedIn(context, db, 7, "Rexxar", Position(-8949.95f, -132.49f, 83.53f, 0), AccountLevel.player,
+        raceOrc);
+    rexxar.read();
+    addPetData(&rexxar, context);
+    auto map = context.map(0);
+    enum uint sunder = 97912, shout = 97913;
+    auto armor = testSpell(sunder, SpellEffect.applyAura, ImplicitTarget.enemy, -100);
+    armor.casting.applyAuraName[0] = AuraType.modResistance;
+    armor.miscValue[0] = 1; // armor
+    context.data.spells.spells[sunder] = armor;
+    auto power = testSpell(shout, SpellEffect.applyAura, ImplicitTarget.enemy, -140);
+    power.casting.applyAuraName[0] = AuraType.modAttackPower;
+    context.data.spells.spells[shout] = power;
+    auto boarTemplate = context.data.creatureTemplates.edit(boar); // armor to lose and blows to weaken
+    boarTemplate.armor = 300;
+    boarTemplate.minMeleeDmg = 20;
+    boarTemplate.maxMeleeDmg = 30;
+    auto boar_ = context.summonCreature(map, boar, Position(-8945, -132.49f, 83.53f, 0), TempSpawnType.dead, 0, 0);
+    const armorBefore = boar_.values.get!UNIT_FIELD_RESISTANCES(0), damageBefore = boar_.values.get!UNIT_FIELD_MAXDAMAGE;
+    assert(armorBefore > 100 && damageBefore > 0, "a boar with armor to lose and blows to weaken");
+    bool added;
+    auto a = boar_.receiveAura(makeAura(context.data.spells.spell(sunder), 0, 60, -1, false, [-100, 0, 0]), map, added);
+    auto b = boar_.receiveAura(makeAura(context.data.spells.spell(shout), 0, 60, -1, false, [-140, 0, 0]), map, added);
+    assert(boar_.values.get!UNIT_FIELD_RESISTANCES(0) == armorBefore - 100, "less armor");
+    assert(boar_.values.get!UNIT_FIELD_MAXDAMAGE < damageBefore, "weaker blows");
+    boar_.loseAura(a, map);
+    boar_.loseAura(b, map);
+    assert(boar_.values.get!UNIT_FIELD_RESISTANCES(0) == armorBefore && boar_.values.get!UNIT_FIELD_MAXDAMAGE == damageBefore,
+        "both back as they go");
+}
+
 /// A creature's spell at its friends around it (`TARGET_ENUM_UNITS_FRIEND_AOE_AT_SRC_LOC`: a Battle Command)
 /// reaches itself and the friend beside it, and not the player's pet there.
 unittest
