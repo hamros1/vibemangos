@@ -22,5 +22,4 @@ templeofahnqiraj.d: npcGlobOfViscidus: by design: after a crash Viscidus rises a
 templeofahnqiraj.d: npcSkeram: Skeram's images: gone at his next split anyway
 templeofahnqiraj.d: npcSpawnOfFankriss: not reviewed
 templeofahnqiraj.d: npcVeknissHatchling: hatchlings of an egg, summoned again
-templeofahnqiraj.d: npcYaujBrood: not reviewed
 zulfarrak.d: zf.random: Zum'rah's grave zombies, summoned again as graves open

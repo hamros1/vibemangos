@@ -13,7 +13,7 @@ module dmangos.scripts.templeofahnqiraj;
 import core.time : Duration;
 
 import dmangos.script;
-import dmangos.script.state : appended;
+import dmangos.script.state : AppendedSince, appended;
 
 /// Where `who` is, as `ctx` sees it (`Location.init` if it is not here).
 private Location where(C)(ref C ctx, EntityRef who)
@@ -153,6 +153,7 @@ struct TempleOfAhnQiraj
 
     // Appended to keep earlier lockout saves readable.
     @appended EntityRef[] cthunAdds; /// the tentacles living in C'Thun's fight under way (saved with it)
+    @AppendedSince(2) EntityRef[] trioBrood; /// Yauj's brood living in the trio's fight under way (saved with it)
     @transient bool recoveringCthun, respawnEye;
     /// The Bug Trio devoured in their fight a worker's crash resumed (a bit for each of `trio`): they stay away.
     @transient ubyte trioDevoured;
@@ -235,6 +236,17 @@ struct TempleOfAhnQiraj
             if (!e.summoned)
                 royalLoaded(copy, e.creature);
             break;
+        case npcYaujBrood:
+            import std.algorithm.searching : canFind;
+
+            // Yauj's brood, come at her death, fights until slain: kept with the trio's fight, as the tentacles
+            // with C'Thun's (and once only, as the checkpoint brings them back).
+            if (e.summoned && trioActive && !trioBrood.canFind(e.creature))
+            {
+                trioBrood ~= e.creature;
+                copy.checkpointCreature(e.creature);
+            }
+            break;
         default:
             break;
         }
@@ -299,6 +311,13 @@ struct TempleOfAhnQiraj
             foreach (royal; trio)
                 if (royal)
                     copy.releaseCheckpointActor(royal);
+            foreach (brood; trioBrood) // the fight over, its brood goes with it
+            {
+                copy.releaseCheckpointActor(brood);
+                if (copy.alive(brood))
+                    copy.despawn(brood);
+            }
+            trioBrood = null;
         }
         copy.checkpoint();
     }
@@ -332,12 +351,16 @@ struct TempleOfAhnQiraj
             }
         if (trioDeaths < royalEntries.length)
         {
+            import std.algorithm.mutation : remove;
+
             recoveringTrio = true;
+            trioBrood = trioBrood.remove!(brood => !copy.hasSavedCreature(brood)); // those the checkpoint kept
             copy.waitForPlayer();
             return;
         }
         trioDevoured = 0;
         trioDeaths = 0;
+        trioBrood = null;
         encounters[Aq40Encounter.bugTrio] = EncounterState.failed;
         copy.checkpoint();
     }
@@ -690,6 +713,13 @@ struct TempleOfAhnQiraj
 
         if (!e.summoned && e.creature.entry == npcCthun)
             return setCthun(copy, EncounterState.done);
+        // A brood slain is no longer kept.
+        if (const index = trioBrood.countUntil(e.creature) + 1)
+        {
+            trioBrood = trioBrood.remove(index - 1);
+            copy.releaseCheckpointActor(e.creature);
+            return;
+        }
         if (!e.summoned && e.creature.entry == npcEyeOfCthun)
         {
             copy.releaseCheckpointActor(e.creature);
@@ -3237,6 +3267,18 @@ unittest
             runtime.raise(h, c, CreatureLoaded(actor));
         runtime.raise(h, c, Signal(kri, Aq40Encounter.bugTrio, EncounterState.inProgress));
         assert(c.checkpointSummons == [kri, yauj, vem] && c.checkpointRequested, "the trio's pull saves the three");
+    }
+    {
+        // Yauj's brood, come at her death, is kept with the fight; once only, and not once slain.
+        const brood = creature(npcYaujBrood, 900_001), other = creature(npcYaujBrood, 900_002);
+        auto c = InstanceContext(room);
+        runtime.raise(h, c, CreatureLoaded(brood, true));
+        runtime.raise(h, c, CreatureLoaded(other, true));
+        runtime.raise(h, c, CreatureLoaded(brood, true)); // brought back by a handoff
+        assert(c.checkpointSummons == [brood, other], "the brood saved with the fight, each once");
+        auto d = InstanceContext(room);
+        runtime.raise(h, d, CreatureDied(other, EntityRef.init, true));
+        assert(d.releasedCheckpointActors == [other], "a brood slain no longer saved");
     }
     {
         auto c = InstanceContext(room);

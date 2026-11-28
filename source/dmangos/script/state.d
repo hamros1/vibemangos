@@ -371,8 +371,10 @@ unittest
 
     static assert(fnv1a(layoutOf!(TempleOfAhnQiraj, 0)) == 0x2b625e18f5cc90f1UL);
     // The Bug Trio's, the Twins' and Ouro's recovery keeps its state transient: lockouts saved with C'Thun's list
-    // load as they are.
-    static assert(layoutFingerprint!TempleOfAhnQiraj == 0xf0112dfb37a20ee9UL, "C'Thun's layout, as main saved it");
+    // load as they are. Yauj's brood of the trio's fight was appended after it (`@AppendedSince(2)`): those saved
+    // with C'Thun's list load with no brood to restore.
+    static assert(fnv1a(layoutOf!(TempleOfAhnQiraj, 1)) == 0xf0112dfb37a20ee9UL, "C'Thun's layout, as main saved it");
+    static assert(layoutFingerprint!TempleOfAhnQiraj == 0x71006dc1fc4a48a7UL);
     static assert(legacyDungeonLayout(0x2b625e18f5cc90f1UL) == 0x1930997e372b81b0UL);
 
     TempleOfAhnQiraj temple;
