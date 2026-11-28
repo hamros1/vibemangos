@@ -163,7 +163,7 @@ uint spellDamage(ref Caster caster, const(SpellInfo)* spell, UnitRef victim, uin
         crit = !how.periodic && !(spell.attributesEx2 & spellAttrEx2CantCrit)
             && uniform01(map.random) * 100 < caster.critChance(spell, victim) + victimCrit; // (a weapon's has the victim's in it)
         if (crit)
-            damage = caster.critDamage(spell, damage);
+            damage = caster.critDamage(spell, damage, target.creatureType);
         if (school == 0)
             damage = cast(uint) armorReducedDamage(caster.level, armorAgainst(caster.fighter, target), damage);
         else if (school != 1 && !isBinarySpell(*spell)) // holy: no resistance; a binary spell: all or nothing

@@ -115,7 +115,9 @@ struct Fighter
     /// `MOD_RANGED_ATTACK_POWER_VERSUS` as attack power: the Elixir of Demonslaying, the Holy Mightstone;
     /// `MOD_DAMAGE_DONE_CREATURE`)
     float[creatureTypes][3] damageVersusFlat = 0;
-    float[creatureTypes] critVersus = 0;   /// crit percent more by the victim's type (`MOD_CRIT_PERCENT_VERSUS`)
+    /// Crit damage percent more by the victim's type (`MOD_CRIT_PERCENT_VERSUS`: the Slaying talents' "critical
+    /// damage caused against Humanoid targets by an additional 1%"; CMaNGOS's `GetCritMultiplier`, not a chance).
+    float[creatureTypes] critVersus = 0;
 
     // What it defends with.
     uint defenseSkill, defenseSkillMax; /// a player's
@@ -769,8 +771,7 @@ MeleeHitOutcome rollMeleeOutcome(const Fighter attacker, const Fighter victim, A
         // Players glance against creatures above level 10; creatures crush players.
         if (attacker.playerControlled && !victim.playerControlled && levelFor(victim, attacker) > 10)
             chance[4] = hundredths(glanceChance(attacker, victim, type));
-        chance[5] = hundredths(critChance(attacker, victim, type)
-            + (victim.creatureType < creatureTypes ? attacker.critVersus[victim.creatureType] : 0));
+        chance[5] = hundredths(critChance(attacker, victim, type));
         if (!attacker.playerControlled && victim.playerControlled)
             chance[6] = hundredths(crushChance(attacker, victim, type));
     }
@@ -865,6 +866,12 @@ uint glanceAmount(const Fighter attacker, const Fighter victim, AttackType type,
  * table's outcome: nothing for a miss, dodge or parry, double for a crit, less what the shield
  * stops for a block, less for a glance, half again for a crushing blow.
  */
+/// What a crit's multiplier is more by against `victim`'s creature type (`MOD_CRIT_PERCENT_VERSUS`).
+float critVersusFactor(const ref Fighter attacker, const ref Fighter victim) pure nothrow @nogc @safe
+{
+    return victim.creatureType < creatureTypes ? 1 + attacker.critVersus[victim.creatureType] / 100 : 1;
+}
+
 MeleeDamage calculateMeleeDamage(const Fighter attacker, const Fighter victim, AttackType type, ref Random rng)
     @safe
 {
@@ -921,7 +928,7 @@ MeleeDamage calculateMeleeDamage(const Fighter attacker, const Fighter victim, A
     case MeleeHitOutcome.crit:
         d.hitInfo |= HitInfo.criticalHit;
         d.targetState = VictimState.normal;
-        d.damage *= 2; // a critical attack does double
+        d.damage *= 2 * critVersusFactor(attacker, victim); // a critical attack does double (the Slaying talents more)
         break;
     case MeleeHitOutcome.parry:
         d.targetState = VictimState.parry;
@@ -1499,7 +1506,7 @@ unittest
     victim.creatureType = 7;
     assert(isClose(damageFactor(attacker, victim, AttackType.mainHand, 0), 1.1f * 0.9f), "not dragonkin");
 
-    // 3% more crit against beasts moves the crit band.
+    // 3% more crit damage against beasts (Monster Slaying), not more crits: the crit band stays.
     attacker.player = attacker.playerControlled = true;
     attacker.level = victim.level = 10;
     attacker.weaponSkill[0] = attacker.weaponSkillMax[0] = 50;
@@ -1510,7 +1517,10 @@ unittest
     const plain = rollMeleeOutcome(attacker, victim, AttackType.mainHand, 1100); // past 5% miss and 5% crit
     attacker.critVersus[1] = 3;
     const withTalent = rollMeleeOutcome(attacker, victim, AttackType.mainHand, 1100);
-    assert(plain == MeleeHitOutcome.normal && withTalent == MeleeHitOutcome.crit, "8% crit now: the 11th percent is one");
+    assert(plain == MeleeHitOutcome.normal && withTalent == MeleeHitOutcome.normal, "no more crits");
+    assert(isClose(critVersusFactor(attacker, victim), 1.03f), "3% more on a crit");
+    victim.creatureType = 2;
+    assert(critVersusFactor(attacker, victim) == 1, "not at a dragon");
 }
 
 // Stealth (CMaNGOS's numbers): a level 60 monster sees Stealth rank 4 (300) at 7.5 yards, in front only; an alert

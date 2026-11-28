@@ -335,14 +335,18 @@ struct Caster
     }
 
     /**
-     * A crit's damage (`SpellCriticalDamageBonus`): double for a melee or ranged ability, half again for a spell; the
-     * bonus more by the spell's modifiers (`SPELLMOD_CRIT_DAMAGE_BONUS`: Ice Shards, Ruin double a spell's half).
+     * A crit's damage (CMaNGOS's `GetCritMultiplier`): double for a melee or ranged ability, half again for a spell,
+     * times what `MOD_CRIT_PERCENT_VERSUS` adds against `victimType` (the Slaying talents); the bonus over the damage
+     * more by the spell's modifiers (`SPELLMOD_CRIT_DAMAGE_BONUS`: Ice Shards, Ruin double a spell's half).
      */
-    uint critDamage(const(SpellInfo)* spell, uint damage)
+    uint critDamage(const(SpellInfo)* spell, uint damage, uint victimType = 0)
     {
+        import dmangos.world.combat : creatureTypes;
         import dmangos.world.spellmods : SpellModOp;
 
-        const bonus = weaponCrit(spell) ? damage : damage / 2;
+        const versus = victimType && victimType < creatureTypes ? fighter.critVersus[victimType] : 0;
+        const multiplier = (weaponCrit(spell) ? 2.0f : 1.5f) * (1 + versus / 100);
+        const bonus = versus ? cast(uint)(damage * (multiplier - 1)) : weaponCrit(spell) ? damage : damage / 2;
         return damage + spellMod(SpellModOp.critDamageBonus, spell, bonus);
     }
 

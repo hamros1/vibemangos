@@ -4275,11 +4275,11 @@ private:
     }
 
     /// A crit's damage (`Caster.critDamage`).
-    package uint critDamage(const(SpellInfo)* spell, uint damage)
+    package uint critDamage(const(SpellInfo)* spell, uint damage, uint victimType = 0)
     {
         import dmangos.world.caster : Caster;
 
-        return Caster.of(this).critDamage(spell, damage);
+        return Caster.of(this).critDamage(spell, damage, victimType);
     }
 
     package float spellCritOf(const(SpellInfo)* spell)
@@ -4751,7 +4751,7 @@ private:
         if (uniform01(map.random) * 100 < critChanceOf(spell, victim))
         {
             crit = true;
-            damage = critDamage(spell, cast(uint) damage);
+            damage = critDamage(spell, cast(uint) damage, it.creatureType);
         }
         uint blocked;
         if (uniform01(map.random) * 100 < blockChance(it, me, type))

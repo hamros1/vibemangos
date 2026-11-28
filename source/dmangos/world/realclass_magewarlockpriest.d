@@ -474,6 +474,21 @@ unittest
     assert(me.critDamage(spellOf(w, 10151), 1000) == 1500, "fire: half again");
 }
 
+/// Humanoid Slaying rank 3 (19153: `MOD_CRIT_PERCENT_VERSUS` 3 at humanoids) makes a crit's multiplier 3% more there,
+/// as its tooltip's "critical damage ... by an additional 3%" and CMaNGOS's `GetCritMultiplier` have it: an Arcane
+/// Shot's (14287) 1000 crits for 2060 at a humanoid (7), 2000 at a beast (1).
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = w.character(1008, "Slayer", PlayerClass.hunter, 60, [], 3); // a dwarf
+    auto me = who.session.inWorld;
+    learn(w, who, 19153);
+    assert(me.critDamage(spellOf(w, 14287), 1000, 7) == 2060, "3% more at a humanoid");
+    assert(me.critDamage(spellOf(w, 14287), 1000, 1) == 2000, "not at a beast");
+}
+
 /// Elemental Precision rank 3 (29440) and Arcane Focus rank 5 (12842): the hit chance their spells are rolled with.
 unittest
 {
