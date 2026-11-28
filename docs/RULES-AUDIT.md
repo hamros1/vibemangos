@@ -265,14 +265,14 @@ risk.
 | aurahandlers.d:auraTick | Player DoT on creature: physical → armor; partial resist (binary 1/10); no DoT crits | Aura::PeriodicTick | Wowpedia "Resistance" (verify) | M |
 | spellhandlers.d:takeAmmo | One ammo per shot; thrown weapons lose durability or stack | Spell::TakeAmmo | none found | M |
 | mounting.d (MountRules) | No melee mounted | Unit::CanAttackNow | none found | M |
-| effecthandlers.d:chargeEffect | Charge at spell speed else 27 yd/s; stop at reach | EffectCharge, BASE_CHARGE_SPEED | Spell.dbc Speed | M |
+| effecthandlers.d:chargeEffect | Charge at spell speed else 27 yd/s; stop at reach | EffectCharge, BASE_CHARGE_SPEED | Spell.dbc Speed | MM. **Checked 2026-11-28 against CMaNGOS** (`EffectCharge`): the same (the spell's speed, else `BASE_CHARGE_SPEED` 27) |
 | effecthandlers.d:leechTick / manaLeechTick | Leech heal = min(dmg,HP)×mult, no SP; mana leech threat 0.5×gain | PeriodicTick LEECH | Spell.dbc EffectMultipleValue | M |
-| effecthandlers.d:addExtraAttacksEffect | At most 5 owed extra swings; extra swings grant none | EffectAddExtraAttacks | none found | M |
+| effecthandlers.d:addExtraAttacksEffect | At most 5 owed extra swings; extra swings grant none | EffectAddExtraAttacks | none found | MM. **Checked 2026-11-28 against CMaNGOS** (`EffectAddExtraAttacks`): the same (owed swings added, at most 5) |
 | effecthandlers.d:summonTrapEffect / updateTraps | One trap per slot; fires on first enemy; re-arm 4 s | GameObject::Update (traps) | none found | M |
 | spellhandlers.d:lockOutSchool | Interrupt locks school only for PreventionType=silence spells | IsSpellReady | SpellCategories.PreventionType | M |
 | spellhandlers.d:checkCast / crowdControlRefusal | Refusals when dead, stunned, silenced, fleeing, sitting, wrong equipment | CheckCast, CheckCasterAuras | SpellMisc Attributes, SpellCategories | M |
 | spellhandlers.d:checkCastAttributes | Stance masks, outdoors via vmaps, stealth-only, behind/front from attribute heuristics, spell_facing | CheckCast | SpellCastingRequirements.FacingCasterFlags (DB2), SpellShapeshift | M: heuristics replaceable by data |
-| spellhandlers.d:go (discountPowerOnMiss) | Miss/dodge/parry refunds 80% | Spell::finish | SpellMisc Attributes; Wowpedia (verify 1.12: 80% refund) | M |
+| spellhandlers.d:go (discountPowerOnMiss) | Miss/dodge/parry refunds 80% | Spell::finish | SpellMisc Attributes; Wowpedia (verify 1.12: 80% refund) | MM. **Checked 2026-11-28 against CMaNGOS** (`Spell::finish`, `SPELL_ATTR_EX_DISCOUNT_POWER_ON_MISS`): the same (80% back for each target missed, dodged, parried or deflected) |
 | spellhandlers.d:updateAutoRepeat | First shot after 500 ms; interval = ranged time + recovery; moving resets | Spell::update (autorepeat) | none found | M |
 | spellhandlers.d:critChanceOf / spellCritOf | Weapon abilities melee crit; spells spellCrit + mods | RollSpellCritOutcome | none found | M |
 | spellhandlers.d:weaponSpellDamage | First weapon effect deals; fixed × pct; block 0 | EffectWeaponDmg | none found | M |
@@ -281,7 +281,7 @@ risk.
 | spellhandlers.d:chainTargets | Chain jumps within 10 yd; chain heal lowest HP% | SetTargetMap | SpellEffect.EffectChainTargets (count only) | M |
 | spellhandlers.d:addComboPoints | Max 5, reset on new target, spent unless missed | AddComboPoints | none found | M |
 | spellhandlers.d:spendChargedMods | Charged mods lose a charge per cast | RemoveSpellMods | SpellAuraOptions.ProcCharges | M |
-| creatureai.d:taunt | Taunt sets threat to top and forces target while aura lasts | EffectTaunt | Wowpedia "Taunt" (verify) | M |
+| creatureai.d:taunt | Taunt sets threat to top and forces target while aura lasts | EffectTaunt | Wowpedia "Taunt" (verify) | MM. **Checked 2026-11-28 against CMaNGOS** (`EffectTaunt`): the same (no effect on a creature already attacking the taunter; the taunter's threat raised to the highest, unmodified, and the victim forced to it; the `MOD_TAUNT` aura holds it) |
 | creatureai.d:forget | Feign Death/Vanish/Divine Intervention drop from threat list | Unit::CombatStop | none found | M |
 | creatureai.d:meleeAttackIfReady | Creature swings only in reach and 120° front arc; retry 100 ms | UpdateMeleeAttackingState | none found | M |
 | creatureai.d:parried | Parry haste unless NO_PARRY_HASTEN flag | CREATURE_EXTRA_FLAG_NO_PARRY_HASTEN | Magey "Parry-haste" | M |
@@ -383,7 +383,7 @@ risk.
 | creatureai.d:enterEvadeMode / reachedHome | Evade clears threat and tap, removes auras, runs home; no instant full heal (regen 1/3 per 5 s) | EnterEvadeMode, HomeMovementGenerator::Finalize | Warcraft Wiki "Evade" (checked: regenerates as out of combat, no instant heal) | H. **Done:** already matches (FORMULAS.md "Evade") |
 | unit.d:dealDamage / creatureDamaged | Any damage wears gear; parry haste; 0 damage still aggros; tap credit to owner of pet/totem/guardian | Unit::DealDamage | none found | M |
 | effecthandlers.d:threatEffect | Threat × MOD_THREAT; reduction capped | EffectThreat | Spell.dbc | M |
-| effecthandlers.d:attackMeEffect | Taunt sets top target | EffectTaunt | none found | M |
+| effecthandlers.d:attackMeEffect | Taunt sets top target | EffectTaunt | none found | MM. **Checked 2026-11-28 against CMaNGOS** (`EffectTaunt`): the same (no effect on a creature already attacking the taunter; the taunter's threat raised to the highest, unmodified, and the victim forced to it; the `MOD_TAUNT` aura holds it) |
 | effecthandlers.d:fadeThreat | MOD_TOTAL_THREAT removed while active, returned at end | threatTemporaryFade | Spell.dbc | M |
 | creatureai.d:canAssistAgainst / answersCallsForHelp | Helper must be aggressive, friendly to caller, free; in dungeons/BGs any able creature joins; answers only with FactionTemplate flag 0x01 | CanAssistInCombatAgainst, OnCallForHelp | FactionTemplate.Flags (DBC/DB2) | M |
 | creatureai.d:checkForHelp | Fighting creature pulls free allies within 5 yd every 1000 ms, first after 2000 ms | UnitAI::CheckForHelp | none found | M |
