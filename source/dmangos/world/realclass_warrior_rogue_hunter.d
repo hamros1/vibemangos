@@ -545,6 +545,12 @@ unittest
     const spells = w.context.data.spells;
     assert(spells.spell(8092).casting.threatMultiplier == 2 && spells.spell(10947).casting.threatMultiplier == 2);
     assert(spells.spell(11597).casting.threatFlat == 261 && spells.spell(7386).casting.threatFlat == 100);
+    // Magey's measured ranks in place of the database's: Revenge 6 is 270 and 2.25 times its damage; Thunder Clap 6
+    // none and 2.5 times; Disarm 99; Battle Shout 6 is 52 while its rank 5, not measured, keeps rank 1's 60.
+    assert(spells.spell(25288).casting.threatFlat == 270 && spells.spell(25288).casting.threatMultiplier == 2.25f);
+    assert(spells.spell(11581).casting.threatFlat == 0 && spells.spell(11581).casting.threatMultiplier == 2.5f);
+    assert(spells.spell(676).casting.threatFlat == 99 && spells.spell(6572).casting.threatFlat == 155);
+    assert(spells.spell(11551).casting.threatFlat == 52 && spells.spell(11550).casting.threatFlat == 60);
 }
 
 /**

@@ -559,6 +559,25 @@ would (the parry by the same patch note, at the dodge's amount); a miss none. A 
 **What changed:** dodged and parried swings earned nothing. The rage from damage taken (2.5 × damage / C) is
 unchanged; no source for it was found beyond the same formula's emulator copies.
 
+## Threat of the warrior's abilities
+
+**What:** the threat a warrior ability adds on top of its damage, and the multiplier on its damage's threat
+(spells.d `measuredThreat`, `SpellCast.threatFlat`, `threatMultiplier`).
+
+**Source: measured on Classic Era.** Magey's classic-warrior wiki, "Threat Mechanics": "Every 1 point of damage done
+generates 1 threat", stances multiply it (Battle and Berserker 0.8, Defensive 1.3, Defiance 5/5 1.15 more, "Threat
+multipliers are multiplicative"), and its table of the ranks a level 60 uses, a bonus ("Threat") and a multiplier on
+the damage: Shield Slam 4: 254; Sunder Armor 5: 261; Revenge 6: 270 and 2.25 (5: 243 and 2.25); Heroic Strike 9: 173
+(8: 145); Cleave 5: 100 ("It does not split its threat"); Battle Shout 7: 60 (6: 52); Demoralizing Shout 5: 43;
+Disarm: 99; Shield Bash 3: 156 and 1.5; Thunder Clap 6: none and 2.5; Hamstring 3: 135 and 1.25; Overpower 4: none and
+0.75. The stances' passive auras have the same multipliers in the 1.12 data (Defensive Stance Passive `MOD_THREAT` +30,
+Battle and Berserker −20; Bear Form +30, Cat Form −29).
+
+**Rule:** those ranks take the measured values; the ranks it did not measure keep the world database's
+`spell_threat`, a rank without a row its lower rank's. **What changed:** Revenge 6 had 355 and no multiplier, Thunder
+Clap 6 180 and none, Shield Bash 3 180 (rank 1's) and none, Hamstring 3 141 and none, Overpower none and the damage's
+whole threat, Battle Shout 6 rank 1's 60, Disarm none; Heroic Strike 9 175, Shield Slam 4 250.
+
 ## Spell resistance
 
 **What:** a hostile spell's chance to be resisted whole, and the share of a direct-damage spell resisted

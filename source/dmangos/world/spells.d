@@ -279,6 +279,34 @@ struct SpellLearnSkillNode
 }
 
 /// See the module documentation.
+
+/// One ability's measured threat (`SpellData.applyMeasuredThreat`): a bonus, and a multiplier on its damage's.
+struct MeasuredThreat
+{
+    uint spell;
+    int flat;
+    float multiplier = 1;
+}
+
+/// Magey's classic-warrior wiki, "Threat Mechanics" (measured on Classic Era): the ranks its table lists.
+immutable MeasuredThreat[] measuredThreat = [
+    MeasuredThreat(23925, 254),        // Shield Slam 4
+    MeasuredThreat(11597, 261),        // Sunder Armor 5
+    MeasuredThreat(25288, 270, 2.25f), // Revenge 6
+    MeasuredThreat(11601, 243, 2.25f), // Revenge 5
+    MeasuredThreat(25286, 173),        // Heroic Strike 9
+    MeasuredThreat(11567, 145),        // Heroic Strike 8
+    MeasuredThreat(20569, 100),        // Cleave 5 ("It does not split its threat")
+    MeasuredThreat(25289, 60),         // Battle Shout 7
+    MeasuredThreat(11551, 52),         // Battle Shout 6
+    MeasuredThreat(11556, 43),         // Demoralizing Shout 5
+    MeasuredThreat(676, 99),           // Disarm
+    MeasuredThreat(1672, 156, 1.5f),   // Shield Bash 3
+    MeasuredThreat(11581, 0, 2.5f),    // Thunder Clap 6
+    MeasuredThreat(7373, 135, 1.25f),  // Hamstring 3
+    MeasuredThreat(11585, 0, 0.75f),   // Overpower 4
+];
+
 final class SpellData
 {
     enum holdsStaticData = true; // `dmangos.frozen.freezeAll` goes into it
@@ -347,6 +375,23 @@ final class SpellData
     }
 
     /// A rank without a `spell_threat` row of its own takes its nearest lower rank's (CMaNGOS's `FillHigherRanks`).
+    /**
+     * The warrior abilities' threat as measured on Classic Era (Magey's classic-warrior wiki, "Threat Mechanics": its
+     * table of the ranks a level 60 uses, "Threat" a bonus added and "Multiplier" one on the damage), in place of the
+     * world database's `spell_threat` for those ranks; the ranks it did not measure keep theirs.
+     */
+    void applyMeasuredThreat()
+    {
+        foreach (ref m; measuredThreat)
+            if (auto spell = spells.edit(m.spell))
+            {
+                spell.casting.threatFlat = m.flat;
+                spell.casting.threatMultiplier = m.multiplier;
+                spell.casting.threatApBonus = 0;
+                spell.casting.threatRow = true;
+            }
+    }
+
     void fillThreatRanks()
     {
         uint[] ids;
@@ -405,6 +450,7 @@ final class SpellData
                 spell.casting.threatApBonus = row.get!float(3);
                 spell.casting.threatRow = true;
             }
+        data.applyMeasuredThreat();
         // Marksman Hit is a scripted event delivered to the unit the DB relay selects.
         if (auto shot = data.spells.edit(12198))
             if (shot.effect[0] == SpellEffect.dummy && shot.implicitTargetA[0] == ImplicitTarget.caster)

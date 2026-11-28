@@ -159,12 +159,6 @@ float crusaderDamageFactor(A)(const(A)[] auras)
     return factor;
 }
 
-/// `Unit::CalculateLevelPenalty`: the share of the spell power a spell learned before level 20 gets (3.75% less a level).
-float levelPenalty(const(SpellInfo)* spell) pure nothrow @nogc @safe
-{
-    return spell.spellLevel > 0 && spell.spellLevel < 20 ? 1.0f - (20.0f - spell.spellLevel) * 0.0375f : 1.0f;
-}
-
 /// The spell of `table` for `rank` (a rank of a talent or spell, as CMaNGOS lists them); 0 if none.
 uint rankSpell(const(uint[2])[] table, uint rank) pure nothrow @nogc @safe
 {
