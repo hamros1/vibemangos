@@ -26,6 +26,7 @@ import std.algorithm.comparison : among, max, min;
 import std.algorithm.searching : canFind;
 import std.format : format;
 import dmangos.world.character : Character;
+import dmangos.world.unit : UnitKind;
 import dmangos.world.clientdata : ClientData;
 import dmangos.world.creature : Creature, TempSpawnType;
 import dmangos.world.defines : Power;
@@ -739,6 +740,14 @@ private struct Sweeper
                 itemsBefore[i] = player.inventory.count(s.itemType[i]);
         uint[3] healthOf, powerOf;
         bool[3] dispellableBefore;
+        // What each aura on a player should change (`auraMeasure`), before it: NaN where the sweep has no measure.
+        float[3] measuredBefore = float.nan;
+        foreach (i; 0 .. 3)
+            if (s.effect[i] == SpellEffect.applyAura || s.effect[i] == SpellEffect.applyAreaAuraParty)
+                if (auto unit = unitFor(i))
+                    if (unit.kind == UnitKind.player)
+                        measuredBefore[i] = auraMeasure(unit.session, cast(AuraType) s.casting.applyAuraName[i],
+                            s.miscValue[i]);
         foreach (i; 0 .. 3)
             if (auto unit = unitFor(i))
             {
@@ -890,6 +899,20 @@ private struct Sweeper
                     problem(format!"effect %s (%s %s): no aura on the %s"(i, effect, s.casting.applyAuraName[i], who));
                     break;
                 }
+                // What it does, where the sweep measures it: still on, the value moved the way its amount says.
+                import std.math : isNaN;
+
+                if (!isNaN(measuredBefore[i]) && unit.kind == UnitKind.player && effect != persistentAreaAura)
+                    if (auto on = unit.session.player.auras.find(s.id))
+                        if (on.amount[i] != 0)
+                        {
+                            const now = auraMeasure(unit.session, cast(AuraType) s.casting.applyAuraName[i],
+                                s.miscValue[i]);
+                            if (on.amount[i] > 0 ? now <= measuredBefore[i] : now >= measuredBefore[i])
+                                problem(format!"effect %s (%s %s): on the %s, but %s did not move by %s (still %s)"(i,
+                                    effect, s.casting.applyAuraName[i], who, auraMeasureName(
+                                    cast(AuraType) s.casting.applyAuraName[i]), on.amount[i], now));
+                        }
                 const expected = expectedDuration(*s, context.client, comboPointsUsed);
                 // A persistent area's lasts what the area has left as one comes in (its first tick's).
                 const early = effect == persistentAreaAura ? 2 * max(1000, s.casting.amplitude[i]) + 100 : 0;
@@ -1400,4 +1423,107 @@ unittest
     foreach (line; news)
         stderr.writeln("realspellsweep: FAILS: ", line);
     assert(!news.length, "a spell on the real data does not do what its data says (see above)");
+}
+
+/**
+ * What an aura of `type` (its misc value `misc`) changes on `who`, as a number its amount moves: a stat, a
+ * resistance, attack power, the maximum health, spell or healing power, the melee damage it takes. NaN where the
+ * sweep has no measure of the type (most: an aura's being on is all it checks of them).
+ */
+float auraMeasure(Character who, AuraType type, int misc)
+{
+    import core.bitop : bsf;
+
+    auto p = who.player;
+    with (AuraType) switch (type)
+    {
+    case modStat:
+        if (misc >= 0 && misc < 5)
+            return p.stats.stats[misc];
+        float all = 0;
+        foreach (v; p.stats.stats)
+            all += v;
+        return all;
+    case modResistance, modResistanceExclusive:
+        return misc > 0 ? p.stats.resistances[bsf(misc)] : float.nan;
+    case modAttackPower:
+        return p.stats.attackPower;
+    case modRangedAttackPower:
+        return p.stats.rangedAttackPower;
+    case modIncreaseHealth:
+        return p.stats.maxHealth;
+    case modDamageDone:
+        return misc > 0 ? who.spellPower(misc) : float.nan;
+    case modHealingDone:
+        return who.healingPower();
+    case modMeleeDamageTaken:
+        return who.unit.fighter.meleeTakenFlat;
+    case modCritPercent:
+        return who.unit.fighter.crit;
+    case modHitChance:
+        return who.unit.fighter.hitBonus;
+    case modDodgePercent:
+        return who.unit.fighter.dodge;
+    case modParryPercent:
+        return who.unit.fighter.canParry ? who.unit.fighter.parry : float.nan;
+    case modBlockPercent:
+        return who.unit.fighter.canBlock ? who.unit.fighter.block : float.nan;
+    case modDamagePercentDone: // its physical part only (a school's spells go another way)
+        return misc & 1 ? who.unit.fighter.damageDone[0] : float.nan;
+    case modDamageTaken:
+        return misc > 0 ? who.unit.fighter.damageTakenFlat[bsf(misc)] : float.nan;
+    case modDamagePercentTaken:
+        return misc > 0 ? who.unit.fighter.damageTaken[bsf(misc)] : float.nan;
+    case modIncreaseEnergy:
+        return misc >= 0 && misc < 5 ? p.stats.maxPower[misc] : float.nan;
+    case modIncreaseHealthPercent:
+        return p.stats.maxHealth;
+    case modPercentStat, modTotalStatPercentage:
+        if (misc >= 0 && misc < 5)
+            return p.stats.stats[misc];
+        float sum = 0;
+        foreach (v; p.stats.stats)
+            sum += v;
+        return sum;
+    case modMeleeHaste, modAttackSpeed: // faster: less time between swings
+        return -cast(float) p.stats.attackTime[0];
+    case modRangedHaste: // a ranged weapon's speed: none worn (Rapid Fire asks for none), nothing to see
+    {
+        import dmangos.world.defines : equipmentSlotRanged;
+
+        return p.inventory.equipped(equipmentSlotRanged) is null ? float.nan : -cast(float) p.stats.attackTime[2];
+    }
+    default:
+        return float.nan;
+    }
+}
+
+/// What `auraMeasure` measures of `type`, for the sweep's report.
+string auraMeasureName(AuraType type)
+{
+    with (AuraType) switch (type)
+    {
+    case modStat: return "its stat";
+    case modResistance, modResistanceExclusive: return "its resistance";
+    case modAttackPower: return "its attack power";
+    case modRangedAttackPower: return "its ranged attack power";
+    case modIncreaseHealth: return "its maximum health";
+    case modDamageDone: return "its spell power";
+    case modHealingDone: return "its healing power";
+    case modMeleeDamageTaken: return "its melee damage taken";
+    case modCritPercent: return "its crit chance";
+    case modHitChance: return "its hit chance";
+    case modDodgePercent: return "its dodge chance";
+    case modParryPercent: return "its parry chance";
+    case modBlockPercent: return "its block chance";
+    case modDamagePercentDone: return "its physical damage done";
+    case modDamageTaken: return "its flat damage taken";
+    case modDamagePercentTaken: return "its damage taken";
+    case modIncreaseEnergy: return "its maximum power";
+    case modIncreaseHealthPercent: return "its maximum health";
+    case modPercentStat, modTotalStatPercentage: return "its stat";
+    case modMeleeHaste, modAttackSpeed: return "its swing speed";
+    case modRangedHaste: return "its ranged speed";
+    default: return "nothing";
+    }
 }
