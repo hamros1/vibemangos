@@ -4180,6 +4180,12 @@ private:
     /// What a spell's threat is times (`Caster.threatFactor`): its threat modifiers, its `spell_threat` multiplier.
     package float threatFactor(const(SpellInfo)* spell)
     {
+        import dmangos.world.creatureai : spellAttrExNoThreat;
+
+        // A spell that angers no one (`SPELL_ATTR_EX_NO_THREAT`: Twin Empathy, Elune's Candle): its damage none either
+        // (CMaNGOS's `HandleDamageDealt`).
+        if (spell.attributesEx & spellAttrExNoThreat)
+            return 0;
         return spellMod(SpellModOp.threat, spell, 1.0f) * spell.casting.threatMultiplier;
     }
 

@@ -414,9 +414,10 @@ int powerCost(const ref SpellInfo spell, uint level, uint createMana, uint creat
 
 /**
  * The chance a magic spell misses: 4%, and the level difference (1% a level up to
- * two above; then 11% a level against creatures, 7% against players), 1% at least.
+ * two above; then 11% a level against creatures, 7% against players), 1% at least (`bounded`; else not yet: the
+ * caster's hit comes off first).
  */
-float spellMissChance(uint casterLevel, uint victimLevel, bool victimIsPlayer) pure nothrow @nogc @safe
+float spellMissChance(uint casterLevel, uint victimLevel, bool victimIsPlayer, bool bounded = true) pure nothrow @nogc @safe
 {
     float chance = 4;
     const difference = cast(int) victimLevel - cast(int) casterLevel;
@@ -424,6 +425,8 @@ float spellMissChance(uint casterLevel, uint victimLevel, bool victimIsPlayer) p
         chance += 2 + (difference - 2) * (victimIsPlayer ? 7 : 11);
     else
         chance += difference;
+    if (!bounded)
+        return chance;
     if (chance < 1)
         chance = 1;
     return chance > 100 ? 100 : chance;
@@ -755,7 +758,12 @@ float magicMissChance(const Fighter caster, const Fighter victim, const ref Spel
 
     import dmangos.world.combat : mechanics;
 
-    float chance = spellMissChance(caster.level, victim.level, victim.player) - hitBonus - victim.attackerHit[2];
+    // At least 1% and at most all of it once the caster's hit and the victim's auras of it are counted (CMaNGOS's
+    // `CalculateSpellMissChance`: "unavoidable spell miss is at least 1%"), then its resists on top.
+    import std.algorithm.comparison : clamp;
+
+    float chance = clamp(spellMissChance(caster.level, victim.level, victim.player, false) - hitBonus
+        - victim.attackerHit[2], 1.0f, 100.0f);
     // Resisted more often for its mechanic (a fear, a stun): the victim's `MOD_MECHANIC_RESISTANCE`.
     if (spell.casting.mechanic && spell.casting.mechanic < mechanics)
         chance += victim.mechanicResist[spell.casting.mechanic];
@@ -996,6 +1004,8 @@ unittest
     fear.casting.dmgClass = DamageClass.magic;
     fear.casting.school = 5; // shadow
     fear.casting.mechanic = 5; // MECHANIC_FEAR
+    // Hit takes it down to 1%, never lower (+10% at the same level: 4% - 10% is 1%, not none).
+    assert(isClose(magicMissChance(caster, victim, fear, 0, 2), 2) && isClose(magicMissChance(caster, victim, fear, 0, 10), 1));
     const plain = magicMissChance(caster, victim, fear, 0, 0);
     victim.mechanicResist[5] = 15;
     assert(isClose(magicMissChance(caster, victim, fear, 0, 0), plain + 15));
